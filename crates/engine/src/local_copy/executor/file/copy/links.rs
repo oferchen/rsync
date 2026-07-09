@@ -178,6 +178,48 @@ pub(super) fn process_links(
         ignore_times_enabled,
         checksum_enabled,
     )? {
+        let preserve_xattrs_flag = {
+            #[cfg(all(unix, feature = "xattr"))]
+            {
+                preserve_xattrs
+            }
+            #[cfg(not(all(unix, feature = "xattr")))]
+            {
+                false
+            }
+        };
+        // upstream: generator.c:967-1054 try_dests_reg() - a LINK_DEST candidate
+        // that passes the quick-check (data matches) is hard-linked only when its
+        // preserved attributes also match the source (match_level 3). When the
+        // attributes differ (match_level 2) upstream does NOT hard-link: it falls
+        // through to try_a_copy -> copy_altdest_file(), copying the basis contents
+        // into a fresh destination inode and reapplying the source attributes via
+        // set_file_attrs. Hard-linking a match_level-2 file would share the basis
+        // inode, so reapplying the differing attrs (e.g. a changed -X value under
+        // --fake-super) would corrupt the basis and leave the file carrying an
+        // extra hard link.
+        let attrs_match = link_dest_attrs_unchanged(
+            &link_target,
+            source,
+            metadata,
+            &metadata_options,
+            preserve_xattrs_flag,
+        );
+        // On Unix a match_level-2 basis is routed through the same reference-copy
+        // path used by --copy-dest. The non-Unix stub cannot evaluate the
+        // fake-super/xattr channel (it returns false), so it keeps the legacy
+        // hard-link-then-reapply flow rather than degrading every match to a copy.
+        #[cfg(unix)]
+        if !attrs_match {
+            return Ok(LinkOutcome {
+                copy_source_override: Some(link_target.clone()),
+                reference_basis: Some(link_target),
+                completed: false,
+            });
+        }
+
+        // match_level 3 (Unix): data and attributes both match - hard-link the
+        // basis. Non-Unix: hard-link and reapply metadata below.
         let mut attempted_commit = false;
         loop {
             match fast_io::hard_link(&link_target, destination) {
@@ -263,30 +305,13 @@ pub(super) fn process_links(
             destination_previously_existed,
         );
         remove_source_entry_if_requested(context, source, Some(record_path), file_type)?;
-        // upstream: generator.c:995-1024 try_dests_reg() - for a LINK_DEST match
-        // at match_level 3 (data AND attrs already match the basis) the file is
-        // only hard-linked; set_file_attrs runs *only* under --atimes. Rewriting
-        // metadata unconditionally would, under --fake-super, write a
-        // `user.rsync.%stat` xattr onto the shared basis inode that upstream
-        // never creates. At match_level 2 (attrs differ) upstream does rewrite,
-        // so gate the reapply on whether the basis attributes already match.
-        let preserve_xattrs_flag = {
-            #[cfg(all(unix, feature = "xattr"))]
-            {
-                preserve_xattrs
-            }
-            #[cfg(not(all(unix, feature = "xattr")))]
-            {
-                false
-            }
-        };
-        let attrs_match = link_dest_attrs_unchanged(
-            &link_target,
-            source,
-            metadata,
-            &metadata_options,
-            preserve_xattrs_flag,
-        );
+        // upstream: generator.c:1006-1007 try_dests_reg() - at match_level 3 the
+        // file is only hard-linked; set_file_attrs runs *only* under --atimes.
+        // Rewriting metadata unconditionally would, under --fake-super, write a
+        // `user.rsync.%stat` xattr onto the shared basis inode that upstream never
+        // creates. On Unix a match_level-2 basis (attrs differ) is handled by the
+        // reference-copy path above, so `attrs_match` is always true here; the
+        // non-Unix stub cannot evaluate attrs, so it reapplies as before.
         if !attrs_match || metadata_options.atimes() {
             apply_file_metadata_with_options(destination, metadata, &metadata_options)
                 .map_err(map_metadata_error)?;
