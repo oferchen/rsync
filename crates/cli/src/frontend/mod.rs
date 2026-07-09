@@ -148,7 +148,7 @@ pub(crate) use filter_rules::MergeDirective;
 #[cfg(test)]
 pub(crate) use filter_rules::{
     FilterDirective, append_filter_rules_from_files, apply_merge_directive,
-    collect_filter_arguments, merge_directive_options, parse_filter_directive,
+    merge_directive_options, parse_filter_directive,
 };
 use help::help_text;
 use lsm_status::render_lsm_status;

@@ -123,16 +123,17 @@ where
         atimes,
         crtimes,
         acls,
-        excludes,
-        includes,
+        excludes: _,
+        includes: _,
         compare_destinations,
         copy_destinations,
         link_destinations,
-        exclude_from,
-        include_from,
-        filters,
-        cvs_exclude,
-        apple_double_skip,
+        exclude_from: _,
+        include_from: _,
+        filters: _,
+        filter_order,
+        cvs_exclude: _,
+        apple_double_skip: _,
         rsync_filter_shortcuts: _,
         files_from,
         from0,
@@ -951,13 +952,7 @@ where
     let builder = config::build_base_config(config_inputs);
 
     let filter_inputs = filters::FilterInputs {
-        exclude_from,
-        include_from,
-        excludes,
-        includes,
-        filters,
-        cvs_exclude,
-        apple_double_skip,
+        order: filter_order,
     };
 
     let builder = match filters::apply_filters(builder, filter_inputs, stderr) {
