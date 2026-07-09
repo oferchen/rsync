@@ -51,87 +51,78 @@ fn receiver_config_with_itemize() -> ServerConfig {
 }
 
 #[test]
-fn emit_itemize_new_file_transfer() {
+fn render_itemize_new_file_transfer() {
     let handshake = test_handshake();
     let config = receiver_config_with_itemize();
     let ctx = ReceiverContext::new_for_test(&handshake, config);
-    let mut writer = MockMsgInfoWriter::new();
 
     let entry = FileEntry::new_file("docs/readme.txt".into(), 1024, 0o644);
     let iflags = ItemFlags::from_raw(ItemFlags::ITEM_TRANSFER | ItemFlags::ITEM_IS_NEW);
 
-    ctx.emit_itemize(&mut writer, &iflags, &entry).unwrap();
-
-    assert_eq!(writer.messages.len(), 1);
-    let msg = String::from_utf8_lossy(&writer.messages[0]);
     // upstream: log.c:707-710 - a server-mode receiver is the remote end of a
     // push (the client is the sender), so the transfer glyph is `<`.
-    assert_eq!(msg, "<f+++++++++ docs/readme.txt\n");
+    assert_eq!(
+        ctx.render_itemize_line(&iflags, &entry).as_deref(),
+        Some("<f+++++++++ docs/readme.txt\n")
+    );
 }
 
 #[test]
-fn emit_itemize_updated_file_transfer() {
+fn render_itemize_updated_file_transfer() {
     let handshake = test_handshake();
     let config = receiver_config_with_itemize();
     let ctx = ReceiverContext::new_for_test(&handshake, config);
-    let mut writer = MockMsgInfoWriter::new();
 
     let entry = FileEntry::new_file("data.bin".into(), 512, 0o644);
     let iflags = ItemFlags::from_raw(ItemFlags::ITEM_TRANSFER);
 
-    ctx.emit_itemize(&mut writer, &iflags, &entry).unwrap();
-
-    assert_eq!(writer.messages.len(), 1);
-    let msg = String::from_utf8_lossy(&writer.messages[0]);
     // upstream: log.c:707-710 - server-mode receiver renders the push `<` glyph.
-    assert_eq!(msg, "<f......... data.bin\n");
+    assert_eq!(
+        ctx.render_itemize_line(&iflags, &entry).as_deref(),
+        Some("<f......... data.bin\n")
+    );
 }
 
 #[test]
-fn emit_itemize_directory_creation() {
+fn render_itemize_directory_creation() {
     let handshake = test_handshake();
     let config = receiver_config_with_itemize();
     let ctx = ReceiverContext::new_for_test(&handshake, config);
-    let mut writer = MockMsgInfoWriter::new();
 
     let entry = FileEntry::new_directory("subdir".into(), 0o755);
     let iflags = ItemFlags::from_raw(ItemFlags::ITEM_LOCAL_CHANGE | ItemFlags::ITEM_IS_NEW);
 
-    ctx.emit_itemize(&mut writer, &iflags, &entry).unwrap();
-
-    assert_eq!(writer.messages.len(), 1);
-    let msg = String::from_utf8_lossy(&writer.messages[0]);
-    assert_eq!(msg, "cd+++++++++ subdir/\n");
+    assert_eq!(
+        ctx.render_itemize_line(&iflags, &entry).as_deref(),
+        Some("cd+++++++++ subdir/\n")
+    );
 }
 
 #[test]
-fn emit_itemize_root_directory_emits_creation_glyph_when_freshly_created() {
+fn render_itemize_root_directory_emits_creation_glyph_when_freshly_created() {
     // Regression: upstream `testsuite/itemize.test` expects `cd+++++++++ ./`
     // as the second line of `-iplr from/ to/` against a non-existent dest.
-    // The root entry (path == ".") arrives at emit_itemize with iflags == 0
-    // because oc-rsync's create_directory_incremental cannot observe the
-    // pre-flight mkdir performed by `ensure_dest_root_exists`. When that
-    // pre-flight actually created the root (`dest_root_created == true`),
-    // mirror upstream main.c:794-796 FLAG_DIR_CREATED by forcing the
-    // created-directory glyph for the root entry.
+    // The root entry (path == ".") arrives with iflags == 0 because oc-rsync's
+    // create_directory_incremental cannot observe the pre-flight mkdir
+    // performed by `ensure_dest_root_exists`. When that pre-flight actually
+    // created the root (`dest_root_created == true`), mirror upstream
+    // main.c:794-796 FLAG_DIR_CREATED by forcing the created-directory glyph.
     let handshake = test_handshake();
     let config = receiver_config_with_itemize();
     let mut ctx = ReceiverContext::new_for_test(&handshake, config);
     ctx.dest_root_created = true;
-    let mut writer = MockMsgInfoWriter::new();
 
     let entry = FileEntry::new_directory(".".into(), 0o755);
     let iflags = ItemFlags::from_raw(0);
 
-    ctx.emit_itemize(&mut writer, &iflags, &entry).unwrap();
-
-    assert_eq!(writer.messages.len(), 1);
-    let msg = String::from_utf8_lossy(&writer.messages[0]);
-    assert_eq!(msg, "cd+++++++++ ./\n");
+    assert_eq!(
+        ctx.render_itemize_line(&iflags, &entry).as_deref(),
+        Some("cd+++++++++ ./\n")
+    );
 }
 
 #[test]
-fn emit_itemize_root_directory_no_glyph_when_dest_root_preexisted() {
+fn render_itemize_root_directory_no_glyph_when_dest_root_preexisted() {
     // upstream main.c:794-796 only sets FLAG_DIR_CREATED when the receiver
     // had to mkdir the destination root. When the root already existed
     // (e.g. `up1/ -> up2/` where up2 is present), the flag stays clear and
@@ -142,32 +133,47 @@ fn emit_itemize_root_directory_no_glyph_when_dest_root_preexisted() {
     let config = receiver_config_with_itemize();
     let ctx = ReceiverContext::new_for_test(&handshake, config);
     // dest_root_created defaults to false (root pre-existed).
-    let mut writer = MockMsgInfoWriter::new();
 
     let entry = FileEntry::new_directory(".".into(), 0o755);
     let iflags = ItemFlags::from_raw(0);
 
-    ctx.emit_itemize(&mut writer, &iflags, &entry).unwrap();
-
-    assert!(writer.messages.is_empty());
+    assert_eq!(ctx.render_itemize_line(&iflags, &entry), None);
 }
 
 #[test]
-fn emit_itemize_up_to_date_file() {
+fn render_itemize_up_to_date_file() {
     let handshake = test_handshake();
     let config = receiver_config_with_itemize();
     let ctx = ReceiverContext::new_for_test(&handshake, config);
-    let mut writer = MockMsgInfoWriter::new();
 
     let entry = FileEntry::new_file("unchanged.txt".into(), 256, 0o644);
     // No flags - file is up-to-date, no changes
     let iflags = ItemFlags::from_raw(0);
 
+    // upstream: generator.c:574-576 - no line when iflags has no significant
+    // flags (file is completely unchanged)
+    assert_eq!(ctx.render_itemize_line(&iflags, &entry), None);
+}
+
+#[test]
+fn emit_itemize_server_mode_does_not_forward_msg_info() {
+    // upstream: log.c:822 gates the FCLIENT itemize write on `!am_server`, and
+    // generator.c:583-599 writes the iflags over the wire so the client's
+    // SENDER prints the push row (sender.c:461). A server-mode receiver (the
+    // remote end of a push) must therefore forward NO pre-rendered MSG_INFO
+    // row, or every pushed file would itemize twice against the sender's own
+    // row.
+    let handshake = test_handshake();
+    let config = receiver_config_with_itemize();
+    let ctx = ReceiverContext::new_for_test(&handshake, config);
+    let mut writer = MockMsgInfoWriter::new();
+
+    let entry = FileEntry::new_file("docs/readme.txt".into(), 1024, 0o644);
+    let iflags = ItemFlags::from_raw(ItemFlags::ITEM_TRANSFER | ItemFlags::ITEM_IS_NEW);
+
     ctx.emit_itemize(&mut writer, &iflags, &entry).unwrap();
 
-    // upstream: generator.c:574-576 - no output when iflags has no significant
-    // flags (file is completely unchanged)
-    assert_eq!(writer.messages.len(), 0);
+    assert!(writer.messages.is_empty());
 }
 
 #[test]
@@ -208,20 +214,18 @@ fn emit_itemize_skipped_without_itemize_flag() {
 }
 
 #[test]
-fn emit_itemize_symlink_with_target() {
+fn render_itemize_symlink_with_target() {
     let handshake = test_handshake();
     let config = receiver_config_with_itemize();
     let ctx = ReceiverContext::new_for_test(&handshake, config);
-    let mut writer = MockMsgInfoWriter::new();
 
     let entry = FileEntry::new_symlink("mylink".into(), "target".into());
     let iflags = ItemFlags::from_raw(ItemFlags::ITEM_LOCAL_CHANGE | ItemFlags::ITEM_IS_NEW);
 
-    ctx.emit_itemize(&mut writer, &iflags, &entry).unwrap();
-
-    assert_eq!(writer.messages.len(), 1);
-    let msg = String::from_utf8_lossy(&writer.messages[0]);
-    assert_eq!(msg, "cL+++++++++ mylink -> target\n");
+    assert_eq!(
+        ctx.render_itemize_line(&iflags, &entry).as_deref(),
+        Some("cL+++++++++ mylink -> target\n")
+    );
 }
 
 #[test]
