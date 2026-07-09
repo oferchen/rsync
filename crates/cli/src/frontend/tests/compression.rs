@@ -91,14 +91,22 @@ fn compress_threads_negative_reports_error() {
 }
 
 #[test]
-fn compress_level_out_of_range_reports_error() {
-    let (code, stdout, stderr) =
-        run_with_args([OsString::from(RSYNC), OsString::from("--compress-level=12")]);
+fn compress_level_out_of_range_is_clamped() {
+    // upstream: token.c:init_compression_level() clamps out-of-range levels to
+    // the codec's valid range instead of rejecting them.
+    let parsed = parse_args([
+        OsString::from(RSYNC),
+        OsString::from("--compress-level=12"),
+        OsString::from("source"),
+        OsString::from("dest"),
+    ])
+    .expect("--compress-level=12 should clamp, not error");
 
-    assert_eq!(code, 1);
-    assert!(stdout.is_empty());
-    let rendered = String::from_utf8(stderr).expect("diagnostic is valid UTF-8");
-    assert!(rendered.contains("--compress-level=12 must be between 0 and 9"));
+    assert!(
+        parsed.compress,
+        "--compress-level=12 should enable compression"
+    );
+    assert_eq!(parsed.compress_level, Some(OsString::from("12")));
 }
 
 #[test]
