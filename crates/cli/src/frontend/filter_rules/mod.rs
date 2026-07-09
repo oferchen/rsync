@@ -9,7 +9,7 @@ mod parsing;
 mod sources;
 
 pub(crate) use apple_double::append_apple_double_exclude_rules;
-pub(crate) use arguments::{collect_filter_arguments, locate_filter_arguments};
+pub(crate) use arguments::{FilterOrderToken, build_filter_order};
 pub(crate) use cvs::{append_cvs_exclude_rules, cvs_default_exclude_rules};
 pub(crate) use directive::{FilterDirective, merge_directive_options, os_string_to_pattern};
 pub(crate) use merge::apply_merge_directive;

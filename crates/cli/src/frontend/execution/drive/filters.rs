@@ -11,23 +11,27 @@ use logging_sink::MessageSink;
 
 use super::messages::fail_with_message;
 use crate::frontend::filter_rules::{
-    FilterDirective, append_apple_double_exclude_rules, append_cvs_exclude_rules,
+    FilterDirective, FilterOrderToken, append_apple_double_exclude_rules, append_cvs_exclude_rules,
     append_filter_rules_from_files, apply_merge_directive, cvs_default_exclude_rules,
     merge_directive_options, os_string_to_pattern, parse_filter_directive, parse_old_prefix_rule,
 };
 
 /// Filter configuration supplied by the command line.
+///
+/// The ordered token stream preserves the argv position of every
+/// filter-producing option so evaluation is first-match-wins over encounter
+/// order, mirroring upstream options.c.
 pub(crate) struct FilterInputs {
-    pub(crate) exclude_from: Vec<OsString>,
-    pub(crate) include_from: Vec<OsString>,
-    pub(crate) excludes: Vec<OsString>,
-    pub(crate) includes: Vec<OsString>,
-    pub(crate) filters: Vec<OsString>,
-    pub(crate) cvs_exclude: bool,
-    pub(crate) apple_double_skip: bool,
+    pub(crate) order: Vec<FilterOrderToken>,
 }
 
 /// Applies CLI-provided filter rules to the [`ClientConfigBuilder`].
+///
+/// Rules are appended in command-line order so the filter engine's
+/// first-match-wins evaluation matches upstream rsync, where each
+/// `--include`/`--exclude`/`--filter`/`--include-from`/`--exclude-from`/`-C`/
+/// `-F` is fed to the rule list at its argv position (exclude.c:parse_filter_str
+/// appends in encounter order).
 pub(crate) fn apply_filters<Err>(
     mut builder: ClientConfigBuilder,
     inputs: FilterInputs,
@@ -37,74 +41,40 @@ where
     Err: std::io::Write,
 {
     let mut filter_rules = Vec::new();
-    if let Err(message) = append_filter_rules_from_files(
-        &mut filter_rules,
-        &inputs.include_from,
-        FilterRuleKind::Include,
-    ) {
-        return Err(fail_with_message(message, stderr));
-    }
-
-    for pattern in inputs.includes {
-        if let Err(message) =
-            push_old_prefix_rule(&mut filter_rules, pattern, FilterRuleKind::Include)
-        {
-            return Err(fail_with_message(message, stderr));
-        }
-    }
-
-    if let Err(message) = append_filter_rules_from_files(
-        &mut filter_rules,
-        &inputs.exclude_from,
-        FilterRuleKind::Exclude,
-    ) {
-        return Err(fail_with_message(message, stderr));
-    }
-
-    for pattern in inputs.excludes {
-        if let Err(message) =
-            push_old_prefix_rule(&mut filter_rules, pattern, FilterRuleKind::Exclude)
-        {
-            return Err(fail_with_message(message, stderr));
-        }
-    }
-
-    if inputs.cvs_exclude
-        && let Err(message) = append_cvs_exclude_rules(&mut filter_rules)
-    {
-        return Err(fail_with_message(message, stderr));
-    }
-
-    if inputs.apple_double_skip
-        && let Err(message) = append_apple_double_exclude_rules(&mut filter_rules)
-    {
-        return Err(fail_with_message(message, stderr));
-    }
-
     let mut merge_stack = HashSet::new();
     let merge_base = env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
-    for filter in &inputs.filters {
-        match parse_filter_directive(filter.as_os_str()) {
-            Ok(FilterDirective::Rule(spec)) => filter_rules.push(spec),
-            Ok(FilterDirective::Merge(directive)) => {
-                let effective_options =
-                    merge_directive_options(&DirMergeOptions::default(), &directive);
-                let directive = directive.with_options(effective_options);
-                if let Err(message) = apply_merge_directive(
-                    directive,
-                    merge_base.as_path(),
-                    &mut filter_rules,
-                    &mut merge_stack,
-                ) {
-                    return Err(fail_with_message(message, stderr));
-                }
+
+    for token in inputs.order {
+        let result = match token {
+            FilterOrderToken::Include(pattern) => {
+                push_old_prefix_rule(&mut filter_rules, pattern, FilterRuleKind::Include)
             }
-            Ok(FilterDirective::Clear) => filter_rules.clear(),
-            Ok(FilterDirective::CvsDefaults) => match cvs_default_exclude_rules() {
-                Ok(rules) => filter_rules.extend(rules),
-                Err(message) => return Err(fail_with_message(message, stderr)),
-            },
-            Err(message) => return Err(fail_with_message(message, stderr)),
+            FilterOrderToken::Exclude(pattern) => {
+                push_old_prefix_rule(&mut filter_rules, pattern, FilterRuleKind::Exclude)
+            }
+            FilterOrderToken::IncludeFrom(file) => append_filter_rules_from_files(
+                &mut filter_rules,
+                std::slice::from_ref(&file),
+                FilterRuleKind::Include,
+            ),
+            FilterOrderToken::ExcludeFrom(file) => append_filter_rules_from_files(
+                &mut filter_rules,
+                std::slice::from_ref(&file),
+                FilterRuleKind::Exclude,
+            ),
+            FilterOrderToken::Filter(rule) => push_filter_directive(
+                &mut filter_rules,
+                &rule,
+                merge_base.as_path(),
+                &mut merge_stack,
+            ),
+            FilterOrderToken::CvsExclude => append_cvs_exclude_rules(&mut filter_rules),
+            FilterOrderToken::AppleDoubleSkip => {
+                append_apple_double_exclude_rules(&mut filter_rules)
+            }
+        };
+        if let Err(message) = result {
+            return Err(fail_with_message(message, stderr));
         }
     }
 
@@ -113,6 +83,27 @@ where
     }
 
     Ok(builder)
+}
+
+/// Parses one `--filter`/`-f`/`-F` directive and appends its rules.
+fn push_filter_directive(
+    filter_rules: &mut Vec<FilterRuleSpec>,
+    rule: &OsString,
+    merge_base: &std::path::Path,
+    merge_stack: &mut HashSet<PathBuf>,
+) -> Result<(), Message> {
+    match parse_filter_directive(rule.as_os_str())? {
+        FilterDirective::Rule(spec) => filter_rules.push(spec),
+        FilterDirective::Merge(directive) => {
+            let effective_options =
+                merge_directive_options(&DirMergeOptions::default(), &directive);
+            let directive = directive.with_options(effective_options);
+            apply_merge_directive(directive, merge_base, filter_rules, merge_stack)?;
+        }
+        FilterDirective::Clear => filter_rules.clear(),
+        FilterDirective::CvsDefaults => filter_rules.extend(cvs_default_exclude_rules()?),
+    }
+    Ok(())
 }
 
 /// Adds a CLI-supplied `--exclude`/`--include` pattern to `destination`,

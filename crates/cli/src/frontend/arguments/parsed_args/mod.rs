@@ -9,6 +9,7 @@ use core::client::{
 
 use super::bandwidth::BandwidthArgument;
 use super::program_name::ProgramName;
+use crate::frontend::filter_rules::FilterOrderToken;
 use crate::frontend::progress::{NameOutputLevel, ProgressSetting};
 
 /// Parsed command-line arguments for the rsync frontend.
@@ -390,6 +391,11 @@ pub struct ParsedArgs {
 
     /// `--filter`, `-f` - general filter rules.
     pub filters: Vec<OsString>,
+
+    /// Every filter-producing option (`--include`/`--exclude`/`--filter`/
+    /// `--include-from`/`--exclude-from`/`-C`/`-F`) captured in true
+    /// command-line order for first-match-wins evaluation.
+    pub filter_order: Vec<FilterOrderToken>,
 
     /// `--cvs-exclude`, `-C` - use CVS-style ignore patterns.
     pub cvs_exclude: bool,

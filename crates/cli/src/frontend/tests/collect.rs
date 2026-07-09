@@ -1,19 +1,28 @@
 use super::common::*;
 use super::*;
 
+/// `-F` shortcuts interleave with `--filter`/`-f` rules at their argv position.
+///
+/// upstream: options.c:1589-1598 - the first `-F` adds `dir-merge
+/// /.rsync-filter`, the second adds `exclude .rsync-filter`; each is inserted
+/// where the flag appears on the command line.
 #[test]
-fn collect_filter_arguments_merges_shortcuts_with_filters() {
-    use std::ffi::OsString;
+fn short_f_shortcuts_interleave_with_filters_in_argv_order() {
+    let parsed = parse_args([
+        OsString::from(RSYNC),
+        OsString::from("-F"),
+        OsString::from("--filter"),
+        OsString::from("+ foo"),
+        OsString::from("-F"),
+        OsString::from("--filter"),
+        OsString::from("- bar"),
+        OsString::from("source"),
+        OsString::from("dest"),
+    ])
+    .expect("parse");
 
-    let filters = vec![OsString::from("+ foo"), OsString::from("- bar")];
-    let filter_indices = vec![5_usize, 9_usize];
-    let rsync_indices = vec![1_usize, 7_usize];
-
-    let merged = collect_filter_arguments(&filters, &filter_indices, &rsync_indices);
-
-    // upstream: options.c:1589-1598 - first -F adds dir-merge, second adds exclude
     assert_eq!(
-        merged,
+        parsed.filters,
         vec![
             OsString::from("dir-merge /.rsync-filter"),
             OsString::from("+ foo"),
@@ -23,17 +32,21 @@ fn collect_filter_arguments_merges_shortcuts_with_filters() {
     );
 }
 
+/// Two `-F` flags with no explicit `--filter` rules still expand to the
+/// dir-merge and exclude directives in occurrence order.
 #[test]
-fn collect_filter_arguments_handles_shortcuts_without_filters() {
-    use std::ffi::OsString;
+fn short_f_shortcuts_expand_without_explicit_filters() {
+    let parsed = parse_args([
+        OsString::from(RSYNC),
+        OsString::from("-F"),
+        OsString::from("-F"),
+        OsString::from("source"),
+        OsString::from("dest"),
+    ])
+    .expect("parse");
 
-    let filters: Vec<OsString> = Vec::new();
-    let filter_indices: Vec<usize> = Vec::new();
-    let merged = collect_filter_arguments(&filters, &filter_indices, &[2_usize, 4_usize]);
-
-    // upstream: options.c:1589-1598 - first -F adds dir-merge, second adds exclude
     assert_eq!(
-        merged,
+        parsed.filters,
         vec![
             OsString::from("dir-merge /.rsync-filter"),
             OsString::from("exclude .rsync-filter"),

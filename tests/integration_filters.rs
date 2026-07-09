@@ -254,7 +254,7 @@ fn filter_with_wildcards() {
 }
 
 #[test]
-fn later_filter_rule_wins() {
+fn first_matching_filter_rule_wins() {
     let test_dir = TestDir::new().expect("create test dir");
     let src_dir = test_dir.mkdir("src").unwrap();
     let dest_dir = test_dir.mkdir("dest").unwrap();
@@ -266,16 +266,19 @@ fn later_filter_rule_wins() {
     cmd.args([
         "-r",
         "--exclude=*.log",
-        "--include=file.log", // Include after exclude, so include wins (last rule wins)
+        // file.log already matches the earlier --exclude=*.log; rsync filters are
+        // first-match-wins (upstream exclude.c), so this later --include never fires.
+        "--include=file.log",
         &format!("{}/", src_dir.display()),
         &format!("{}/", dest_dir.display()),
     ]);
     cmd.assert_success();
 
-    // Last matching rule wins in rsync filter processing
+    // First matching rule wins: the earlier --exclude=*.log matched file.log first,
+    // so the later --include=file.log does not resurrect it (matches upstream rsync).
     assert!(
-        dest_dir.join("file.log").exists(),
-        "later include should override earlier exclude"
+        !dest_dir.join("file.log").exists(),
+        "earlier exclude matches first; a later include must not override it"
     );
     assert!(dest_dir.join("file.txt").exists());
 }
