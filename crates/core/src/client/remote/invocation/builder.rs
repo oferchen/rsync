@@ -512,12 +512,16 @@ impl<'a> RemoteInvocationBuilder<'a> {
             args.push(OsString::from("--preallocate"));
         }
 
-        // upstream: options.c:2750-2762 - itemize-changes is forwarded as
-        // --log-format=%i, not as a compact flag character. Upstream also
-        // supports --log-format=%i%I when stdout_format_has_i > 1, but we
-        // use the simpler single-%i form that covers the common case.
+        // upstream: options.c:164-175 server_options - itemize-changes is
+        // forwarded as --log-format, not as a compact flag character. `%i%I` is
+        // the `-ii` form (stdout_format_has_i > 1) that itemizes unchanged
+        // entries too; `%i` alone is the `-i` form.
         if self.config.itemize_changes() {
-            args.push(OsString::from("--log-format=%i"));
+            if self.config.itemize_unchanged() {
+                args.push(OsString::from("--log-format=%i%I"));
+            } else {
+                args.push(OsString::from("--log-format=%i"));
+            }
         }
 
         // upstream: options.c:2962-2974 - `if (files_from && (!am_sender ||

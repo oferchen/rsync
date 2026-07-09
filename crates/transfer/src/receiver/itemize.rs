@@ -59,8 +59,9 @@ impl ReceiverContext {
     /// Emits a MSG_INFO frame with itemize output for a file entry.
     ///
     /// Formats the itemize string (`"%i %n%L\n"`) and sends it as a MSG_INFO
-    /// multiplexed message. Uses `is_sender: false` since the daemon is receiving
-    /// files (producing `>` direction indicator).
+    /// multiplexed message. The direction glyph follows upstream `log.c:707-710`:
+    /// a server-mode receiver is the remote end of a push (client is the sender)
+    /// and renders `<`; a client-mode receiver is a local pull and renders `>`.
     ///
     /// Suppresses output when `iflags` has no significant flags set (the file is
     /// completely unchanged), matching upstream's gate in `itemize()` at
@@ -114,8 +115,20 @@ impl ReceiverContext {
             *iflags
         };
         let ctx = self.itemize_context();
-        let line =
-            crate::generator::itemize::format_itemize_line(&effective_iflags, entry, false, &ctx);
+        // upstream: log.c:707-710 - the direction glyph is `<` when
+        // `!local_server && *op == 's'` (this side's peer is the sender's
+        // client) and `>` otherwise. `op` is `am_sender ? "send" : "recv"`
+        // (log.c:820), and the client-visible itemize is always produced by the
+        // non-`am_server` side. A server-mode receiver is only ever the remote
+        // end of a push (the client is the sender), so it renders `<`; a
+        // client-mode receiver is a local pull and renders `>`.
+        let is_sender = !self.config.connection.client_mode;
+        let line = crate::generator::itemize::format_itemize_line(
+            &effective_iflags,
+            entry,
+            is_sender,
+            &ctx,
+        );
         self.emit_info_line(writer, &line)
     }
 }
