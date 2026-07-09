@@ -685,11 +685,57 @@ fn for_existing_directory_flags_time_change_when_mtimes_differ() {
 
     let options = MetadataOptions::new().preserve_times(true);
     let change_set = LocalCopyChangeSet::for_existing_directory(
-        &src_meta, &dst_meta, &options, false, false, false,
+        &src_meta,
+        &dst_meta,
+        &options,
+        false,
+        false,
+        false,
+        Duration::ZERO,
     );
 
     assert_eq!(change_set.time_change(), Some(TimeChange::Modified));
     assert!(change_set.has_any_change());
+}
+
+/// upstream: generator.c:526 via same_time() (util1.c:1478) - directory
+/// itemize compares whole seconds under modify_window == 0, so a sub-second
+/// mtime drift within the same whole second must NOT report a time change.
+/// This mirrors the file/symlink paths, which already ignore sub-second drift.
+#[cfg(unix)]
+#[test]
+fn for_existing_directory_ignores_sub_second_mtime_drift() {
+    use filetime::{FileTime, set_file_mtime};
+
+    let temp = tempfile::tempdir().expect("tempdir");
+    let src_dir = temp.path().join("src");
+    let dst_dir = temp.path().join("dst");
+    fs::create_dir(&src_dir).expect("create src");
+    fs::create_dir(&dst_dir).expect("create dst");
+
+    // Same whole second, different nanoseconds: upstream same_time() treats
+    // these as equal, so no `t` glyph.
+    set_file_mtime(&src_dir, FileTime::from_unix_time(1_500_000, 500_000_000))
+        .expect("set src mtime");
+    set_file_mtime(&dst_dir, FileTime::from_unix_time(1_500_000, 100_000_000))
+        .expect("set dst mtime");
+
+    let src_meta = fs::metadata(&src_dir).expect("src meta");
+    let dst_meta = fs::metadata(&dst_dir).expect("dst meta");
+
+    let options = MetadataOptions::new().preserve_times(true);
+    let change_set = LocalCopyChangeSet::for_existing_directory(
+        &src_meta,
+        &dst_meta,
+        &options,
+        false,
+        false,
+        false,
+        Duration::ZERO,
+    );
+
+    assert_eq!(change_set.time_change(), None);
+    assert!(!change_set.has_any_change());
 }
 
 #[cfg(unix)]
@@ -712,7 +758,13 @@ fn for_existing_directory_no_change_when_mtimes_match() {
 
     let options = MetadataOptions::new().preserve_times(true);
     let change_set = LocalCopyChangeSet::for_existing_directory(
-        &src_meta, &dst_meta, &options, false, false, false,
+        &src_meta,
+        &dst_meta,
+        &options,
+        false,
+        false,
+        false,
+        Duration::ZERO,
     );
 
     assert_eq!(change_set.time_change(), None);
@@ -738,7 +790,13 @@ fn for_existing_directory_omit_dir_times_suppresses_time_flag() {
 
     let options = MetadataOptions::new().preserve_times(true);
     let change_set = LocalCopyChangeSet::for_existing_directory(
-        &src_meta, &dst_meta, &options, true, false, false,
+        &src_meta,
+        &dst_meta,
+        &options,
+        true,
+        false,
+        false,
+        Duration::ZERO,
     );
 
     assert_eq!(change_set.time_change(), None);
