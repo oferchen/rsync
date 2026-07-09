@@ -166,6 +166,7 @@ impl LocalCopyMetadata {
     /// - `xattrs.c:1135 get_stat_xattr()` - overrides `st_mode`/`st_rdev` from
     ///   the `%stat` xattr on the sender when `am_root < 0` (fake-super).
     #[must_use]
+    #[cfg_attr(not(all(unix, feature = "xattr")), allow(unused_mut))]
     pub(in crate::local_copy) fn virtualize_fake_super(
         mut self,
         source: &Path,
