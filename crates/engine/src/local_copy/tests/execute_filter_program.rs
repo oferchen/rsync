@@ -847,7 +847,7 @@ fn filter_segment_delete_excluded_protected_path() {
 }
 
 #[test]
-fn filter_segment_perishable_exclude_ignored_in_deletion() {
+fn filter_segment_perishable_exclude_protects_top_level_deletion() {
     let mut segment = FilterSegment::default();
     segment
         .push_rule(FilterRule::exclude("*.tmp").with_perishable(true))
@@ -866,7 +866,9 @@ fn filter_segment_perishable_exclude_ignored_in_deletion() {
         "perishable exclude must block transfer"
     );
 
-    // Deletion: perishable rules are skipped.
+    // Deletion: the top-level scan runs with `ignore_perishable` unset
+    // (upstream exclude.c:1044 / delete.c:147), so a perishable exclude
+    // protects a matching candidate just like a plain exclude.
     let mut deletion_outcome = FilterOutcome::default();
     segment.apply(
         Path::new("data.tmp"),
@@ -875,13 +877,13 @@ fn filter_segment_perishable_exclude_ignored_in_deletion() {
         FilterContext::Deletion,
     );
     assert!(
-        deletion_outcome.allows_deletion(),
-        "perishable exclude must be ignored in deletion context"
+        !deletion_outcome.allows_deletion(),
+        "perishable exclude must protect a matching entry from deletion"
     );
 }
 
 #[test]
-fn filter_segment_perishable_protect_ignored_in_deletion() {
+fn filter_segment_perishable_protect_applies_in_deletion() {
     let mut segment = FilterSegment::default();
     segment
         .push_rule(FilterRule::protect("*.tmp").with_perishable(true))
@@ -894,11 +896,11 @@ fn filter_segment_perishable_protect_ignored_in_deletion() {
         &mut outcome,
         FilterContext::Deletion,
     );
-    // Perishable protect should be skipped in deletion context, so the path
-    // remains deletable.
+    // A perishable protect is honoured at the top-level delete scan (upstream
+    // exclude.c:1044 / delete.c:147), so the path is protected.
     assert!(
-        outcome.allows_deletion(),
-        "perishable protect must be skipped in deletion context"
+        !outcome.allows_deletion(),
+        "perishable protect must protect a matching entry from deletion"
     );
 }
 

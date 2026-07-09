@@ -588,11 +588,33 @@ pub fn run_server_with_handshake<W: Write>(
     };
 
     if should_send_filter_list {
-        protocol::filters::write_filter_list(
-            &mut writer,
-            &config.connection.filter_rules,
-            handshake.protocol,
-        )?;
+        // upstream: exclude.c:1605-1614 send_rules() elides any rule that applies
+        // to the local side only, so the peer never sees it. On a pull (client is
+        // the receiver) a receiver-side (`r`) rule is applied locally in the
+        // deletion pass and must NOT reach the sender - otherwise the sender would
+        // wrongly drop the matching file from the transfer (this is exactly the
+        // upstream `elide == LOCAL_RULE -> continue` case). Symmetrically, on a
+        // push (client is the sender) a sender-side (`s`) rule is applied locally
+        // by the generator and must not reach the remote receiver, where it would
+        // wrongly protect a matching destination file from --delete. A both-sided
+        // rule (neither flag set) is always sent. The local deletion chain reads
+        // `config.connection.filter_rules` directly (receiver/transfer/setup),
+        // so this elision changes only the bytes placed on the wire.
+        let client_is_sender = config.role == ServerRole::Generator;
+        let wire_rules: Vec<protocol::filters::FilterRuleWireFormat> = config
+            .connection
+            .filter_rules
+            .iter()
+            .filter(|rule| {
+                if client_is_sender {
+                    !rule.sender_side
+                } else {
+                    !rule.receiver_side
+                }
+            })
+            .cloned()
+            .collect();
+        protocol::filters::write_filter_list(&mut writer, &wire_rules, handshake.protocol)?;
         writer.flush()?;
     }
 
