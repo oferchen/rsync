@@ -586,7 +586,10 @@ pub(in crate::local_copy) fn execute_transfer(
                 if let Some(guard) = guard.take() {
                     guard.discard();
                 }
-                if existing_metadata.is_none() {
+                // In --partial/--partial-dir mode discard() finalised the temp
+                // onto its partial destination; removing it here would defeat
+                // the whole point of keeping the partial.
+                if existing_metadata.is_none() && !partial_enabled {
                     remove_incomplete_destination(destination);
                 }
                 return Err(timeout_error);
@@ -611,7 +614,7 @@ pub(in crate::local_copy) fn execute_transfer(
             if let Some(guard) = guard.take() {
                 guard.discard();
             }
-            if existing_metadata.is_none() {
+            if existing_metadata.is_none() && !partial_enabled {
                 remove_incomplete_destination(destination);
             }
             return Err(error);

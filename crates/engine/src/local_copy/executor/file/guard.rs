@@ -14,9 +14,66 @@ use std::sync::atomic::Ordering as AtomicOrdering;
 use crate::local_copy::LocalCopyError;
 
 use super::super::super::NEXT_TEMP_FILE_ID;
-use super::paths::{
-    partial_destination_path, partial_directory_destination_path, temporary_destination_path,
-};
+use super::paths::{partial_dir_fname, temp_name_with_suffix, temporary_destination_path};
+use crate::CleanupManager;
+
+/// Where an interrupted `--partial` temp file is finalised, and how the temp is
+/// cleaned up on failure. Mirrors upstream's `keep_partial`/`partial_dir`
+/// handling in `receiver.c`/`cleanup.c`.
+#[derive(Debug, Clone)]
+enum PartialKind {
+    /// Non-partial transfer: unlink the temp file on failure.
+    Discard,
+    /// `--partial` (no dir): on failure the temp is moved onto the real
+    /// destination, and its modtime is tweaked to epoch 0 so a later `--update`
+    /// will not skip the unfinished file. upstream: `cleanup.c` `tweak_modtime`.
+    Keep,
+    /// `--partial-dir=DIR`: on failure the temp is moved onto the partial-dir
+    /// entry `file`; on success that entry is removed and, for a relative dir,
+    /// the now-empty `remove_dir` is rmdir'd. upstream: `handle_partial_dir()`.
+    Dir {
+        file: PathBuf,
+        remove_dir: Option<PathBuf>,
+    },
+}
+
+impl PartialKind {
+    /// The path an interrupted temp is finalised onto, or `None` to unlink it.
+    fn partial_dest<'a>(&'a self, final_path: &'a Path) -> Option<&'a Path> {
+        match self {
+            Self::Discard => None,
+            Self::Keep => Some(final_path),
+            Self::Dir { file, .. } => Some(file),
+        }
+    }
+
+    /// Whether the finalised partial's modtime should be reset to epoch 0.
+    const fn tweak_mtime(&self) -> bool {
+        matches!(self, Self::Keep)
+    }
+}
+
+/// Generates a six-character mkstemp-style suffix from process-unique inputs.
+///
+/// upstream fills the `.XXXXXX` template via `mkstemp`; we retry `create_new`
+/// with fresh suffixes on the rare collision, so the suffix only needs to vary.
+fn temp_suffix() -> String {
+    const ALPHABET: &[u8; 62] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
+    let counter = NEXT_TEMP_FILE_ID.fetch_add(1, AtomicOrdering::Relaxed) as u64;
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| d.as_nanos() as u64);
+    let mut state =
+        (u64::from(std::process::id()) ^ nanos).wrapping_mul(0x9E37_79B9_7F4A_7C15) ^ counter;
+    let mut suffix = String::with_capacity(6);
+    for _ in 0..6 {
+        state = state
+            .wrapping_mul(6_364_136_223_846_793_005)
+            .wrapping_add(1_442_695_040_888_963_407);
+        suffix.push(ALPHABET[(state >> 33) as usize % ALPHABET.len()] as char);
+    }
+    suffix
+}
 
 /// Removes an existing destination file.
 ///
@@ -59,7 +116,7 @@ enum GuardStrategy {
     /// Traditional named temp file - commit via rename.
     NamedTempFile {
         temp_path: PathBuf,
-        preserve_on_error: bool,
+        partial: PartialKind,
     },
     /// Linux `O_TMPFILE` anonymous file - commit via `linkat(2)`.
     ///
@@ -129,66 +186,72 @@ impl DestinationWriteGuard {
         partial_dir: Option<&Path>,
         temp_dir: Option<&Path>,
     ) -> Result<(Self, fs::File), LocalCopyError> {
-        if partial {
-            let temp_path = if let Some(dir) = partial_dir {
-                partial_directory_destination_path(destination, dir)?
-            } else {
-                partial_destination_path(destination)
-            };
-            if let Err(error) = fs::remove_file(&temp_path)
-                && error.kind() != io::ErrorKind::NotFound
-            {
-                return Err(LocalCopyError::io(
-                    "remove existing partial file",
-                    temp_path,
-                    error,
-                ));
+        let partial_kind = if partial {
+            match partial_dir {
+                Some(dir) => {
+                    let file = partial_dir_fname(destination, dir);
+                    // upstream: handle_partial_dir() only rmdir's a *relative*
+                    // partial dir; an absolute one is a reserved location.
+                    let remove_dir = if dir.is_relative() {
+                        file.parent().map(Path::to_path_buf)
+                    } else {
+                        None
+                    };
+                    PartialKind::Dir { file, remove_dir }
+                }
+                None => PartialKind::Keep,
             }
-            let file = fs::OpenOptions::new()
-                .create(true)
-                .write(true)
-                .truncate(true)
-                .open(&temp_path)
-                .map_err(|error| LocalCopyError::io("copy file", temp_path.clone(), error))?;
-            Ok((
-                Self {
-                    final_path: destination.to_path_buf(),
-                    strategy: GuardStrategy::NamedTempFile {
-                        temp_path,
-                        preserve_on_error: true,
-                    },
-                    committed: false,
-                },
-                file,
-            ))
         } else {
-            loop {
+            PartialKind::Discard
+        };
+
+        // upstream: receiver.c always stages into a `.name.XXXXXX` temp beside
+        // the destination (or in --temp-dir), regardless of partial mode; the
+        // partial only appears at its final resting place on interrupt/success.
+        loop {
+            let temp_path = if partial {
+                temp_name_with_suffix(destination, temp_dir, &temp_suffix())
+            } else {
                 let unique = NEXT_TEMP_FILE_ID.fetch_add(1, AtomicOrdering::Relaxed);
-                let temp_path = temporary_destination_path(destination, unique, temp_dir);
-                match fs::OpenOptions::new()
-                    .write(true)
-                    .create_new(true)
-                    .open(&temp_path)
-                {
-                    Ok(file) => {
-                        return Ok((
-                            Self {
-                                final_path: destination.to_path_buf(),
-                                strategy: GuardStrategy::NamedTempFile {
-                                    temp_path,
-                                    preserve_on_error: false,
-                                },
-                                committed: false,
+                temporary_destination_path(destination, unique, temp_dir)
+            };
+            match fs::OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(&temp_path)
+            {
+                Ok(file) => {
+                    let final_path = destination.to_path_buf();
+                    // Only --partial/--partial-dir temps need the abort-path
+                    // registry; a plain temp is unlinked by its own guard, so
+                    // registering it would only add global-lock traffic to the
+                    // hot non-partial copy path.
+                    if partial {
+                        CleanupManager::global().register_partial(
+                            temp_path.clone(),
+                            partial_kind
+                                .partial_dest(&final_path)
+                                .map(Path::to_path_buf),
+                            partial_kind.tweak_mtime(),
+                        );
+                    }
+                    return Ok((
+                        Self {
+                            final_path,
+                            strategy: GuardStrategy::NamedTempFile {
+                                temp_path,
+                                partial: partial_kind,
                             },
-                            file,
-                        ));
-                    }
-                    Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {
-                        continue;
-                    }
-                    Err(error) => {
-                        return Err(LocalCopyError::io("copy file", temp_path, error));
-                    }
+                            committed: false,
+                        },
+                        file,
+                    ));
+                }
+                Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {
+                    continue;
+                }
+                Err(error) => {
+                    return Err(LocalCopyError::io("copy file", temp_path, error));
                 }
             }
         }
@@ -266,17 +329,40 @@ impl DestinationWriteGuard {
             Anonymous(Option<std::fs::File>),
         }
 
-        let action = match &mut self.strategy {
-            GuardStrategy::NamedTempFile {
-                temp_path,
-                preserve_on_error: _,
-            } => CommitAction::Named(temp_path.clone()),
+        let (action, partial) = match &mut self.strategy {
+            GuardStrategy::NamedTempFile { temp_path, partial } => (
+                CommitAction::Named(temp_path.clone()),
+                Some(partial.clone()),
+            ),
             #[cfg(target_os = "linux")]
-            GuardStrategy::Anonymous { file } => CommitAction::Anonymous(file.take()),
+            GuardStrategy::Anonymous { file } => (CommitAction::Anonymous(file.take()), None),
         };
 
         let cross_device = match action {
-            CommitAction::Named(temp_path) => self.commit_named_temp_file(temp_path)?,
+            CommitAction::Named(temp_path) => {
+                let cross = self.commit_named_temp_file(temp_path.clone())?;
+                match partial {
+                    Some(PartialKind::Keep) => {
+                        CleanupManager::global().unregister_partial(&temp_path);
+                    }
+                    // upstream: handle_partial_dir(partialptr, PDIR_DELETE) after
+                    // a successful finish_transfer removes the partial-dir basis
+                    // entry and rmdir's a now-empty relative partial dir. Only
+                    // rmdir when we actually consumed a partial from the dir, so
+                    // an empty, unused partial dir the user pre-created survives.
+                    Some(PartialKind::Dir { file, remove_dir }) => {
+                        CleanupManager::global().unregister_partial(&temp_path);
+                        let consumed = fs::remove_file(&file).is_ok();
+                        if consumed {
+                            if let Some(dir) = remove_dir {
+                                let _ = fs::remove_dir(dir);
+                            }
+                        }
+                    }
+                    _ => {}
+                }
+                cross
+            }
             #[cfg(target_os = "linux")]
             CommitAction::Anonymous(file) => {
                 self.commit_anonymous(file)?;
@@ -405,45 +491,35 @@ impl DestinationWriteGuard {
     ///
     /// This method consumes the guard, preventing accidental use after discard.
     pub fn discard(mut self) {
-        match &self.strategy {
-            GuardStrategy::NamedTempFile {
+        self.finalize_partial_on_failure();
+        self.committed = true;
+    }
+
+    /// Finalises the staging temp on an unsuccessful transfer: moves it onto the
+    /// partial destination for `--partial`/`--partial-dir`, or unlinks it
+    /// otherwise. Shared by [`discard`](Self::discard) and [`Drop`].
+    fn finalize_partial_on_failure(&mut self) {
+        #[allow(irrefutable_let_patterns)]
+        if let GuardStrategy::NamedTempFile { temp_path, partial } = &self.strategy {
+            crate::finalize_partial(
                 temp_path,
-                preserve_on_error,
-            } => {
-                if *preserve_on_error {
-                    // upstream: receiver.c - set mtime to epoch 0 on partial files so
-                    // --update won't skip them during a subsequent retry.
-                    let epoch = std::time::SystemTime::UNIX_EPOCH;
-                    let times = fs::FileTimes::new().set_modified(epoch);
-                    if let Ok(file) = fs::File::options().write(true).open(temp_path) {
-                        let _ = file.set_times(times);
-                    }
-                } else if let Err(error) = fs::remove_file(temp_path)
-                    && error.kind() != io::ErrorKind::NotFound
-                {
-                    // Best-effort cleanup: the file may have been removed concurrently.
-                }
-            }
-            #[cfg(target_os = "linux")]
-            GuardStrategy::Anonymous { .. } => {
-                // Dropping the guard drops the anonymous fd; the kernel reclaims the inode.
+                partial.partial_dest(&self.final_path),
+                partial.tweak_mtime(),
+            );
+            // Only partial temps were registered on the abort path.
+            if !matches!(partial, PartialKind::Discard) {
+                CleanupManager::global().unregister_partial(temp_path);
             }
         }
-        self.committed = true;
     }
 
     /// Returns the action description for error messages.
     const fn finalise_action(&self) -> &'static str {
         match &self.strategy {
-            GuardStrategy::NamedTempFile {
-                preserve_on_error, ..
-            } => {
-                if *preserve_on_error {
-                    "finalise partial file"
-                } else {
-                    "finalise temporary file"
-                }
-            }
+            GuardStrategy::NamedTempFile { partial, .. } => match partial {
+                PartialKind::Discard => "finalise temporary file",
+                PartialKind::Keep | PartialKind::Dir { .. } => "finalise partial file",
+            },
             #[cfg(target_os = "linux")]
             GuardStrategy::Anonymous { .. } => "finalise anonymous temp file",
         }
@@ -455,20 +531,11 @@ impl Drop for DestinationWriteGuard {
         if self.committed {
             return;
         }
-        match &self.strategy {
-            GuardStrategy::NamedTempFile {
-                temp_path,
-                preserve_on_error,
-            } => {
-                if !preserve_on_error {
-                    let _ = fs::remove_file(temp_path);
-                }
-            }
-            #[cfg(target_os = "linux")]
-            GuardStrategy::Anonymous { .. } => {
-                // Anonymous fd is dropped, kernel reclaims the inode.
-            }
-        }
+        // An uncommitted guard means the transfer failed or was interrupted:
+        // preserve the partial (--partial/--partial-dir) or unlink the temp.
+        // upstream: cleanup.c moves the temp onto its partial destination when
+        // keep_partial, otherwise do_unlink_at() removes it.
+        self.finalize_partial_on_failure();
     }
 }
 
@@ -619,8 +686,60 @@ mod tests {
         let staging = guard.staging_path().to_path_buf();
         guard.discard();
 
-        // In partial mode, discard preserves the file
-        assert!(staging.exists());
+        // upstream: --partial moves the interrupted temp onto the destination
+        // file itself. The staging temp is consumed by the move; the partial
+        // now lives at `dest`.
+        assert!(!staging.exists(), "staging temp is renamed onto the dest");
+        assert!(
+            dest.exists(),
+            "partial data is preserved at the destination"
+        );
+        assert_eq!(fs::read(&dest).expect("read"), b"partial content");
+    }
+
+    #[test]
+    fn destination_write_guard_partial_temp_uses_upstream_naming() {
+        let temp = tempdir().expect("tempdir");
+        let dest = temp.path().join("f3");
+
+        let (guard, _file) = DestinationWriteGuard::new(&dest, true, None, None).expect("guard");
+        let name = guard
+            .staging_path()
+            .file_name()
+            .unwrap()
+            .to_string_lossy()
+            .into_owned();
+        // upstream get_tmpname(): `.f3.XXXXXX` with a six-character suffix.
+        assert!(name.starts_with(".f3."), "got {name}");
+        assert_eq!(name.len(), ".f3.".len() + 6, "six-char suffix: {name}");
+        guard.discard();
+    }
+
+    #[test]
+    fn destination_write_guard_partial_dir_moves_temp_into_dir_on_discard() {
+        let temp = tempdir().expect("tempdir");
+        let dest_dir = temp.path().join("d1");
+        fs::create_dir(&dest_dir).expect("mkdir");
+        let dest = dest_dir.join("f3");
+        let partial_dir = std::path::Path::new(".rsync-partial");
+
+        let (guard, mut file) =
+            DestinationWriteGuard::new(&dest, true, Some(partial_dir), None).expect("guard");
+        // The in-progress temp lives beside the destination, not in the dir.
+        let staging = guard.staging_path().to_path_buf();
+        assert_eq!(staging.parent(), Some(dest_dir.as_path()));
+        file.write_all(b"partialdata").expect("write");
+        drop(file);
+        guard.discard();
+
+        // On interrupt the temp is moved into the (created) partial dir.
+        let landed = dest_dir.join(".rsync-partial").join("f3");
+        assert!(landed.exists(), "partial moved into --partial-dir");
+        assert!(!staging.exists());
+        assert!(
+            !dest.exists(),
+            "dest not written on interrupt for --partial-dir"
+        );
     }
 
     #[test]

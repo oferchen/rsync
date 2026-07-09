@@ -202,11 +202,11 @@ fn guard_partial_mode_preserves_file_on_discard() {
     let staging = guard.staging_path().to_path_buf();
     guard.discard();
 
-    // In partial mode, file should be preserved for resume
-    assert!(
-        staging.exists(),
-        "Partial mode should preserve file on discard"
-    );
+    // upstream: --partial moves the interrupted temp onto the destination so a
+    // later run resumes from it. The temp is consumed; the partial is at `dest`.
+    assert!(!staging.exists(), "temp is renamed onto the destination");
+    assert!(dest.exists(), "partial data preserved at the destination");
+    assert_eq!(fs::read(&dest).expect("read"), b"partial data");
 }
 
 
@@ -493,12 +493,13 @@ fn disk_full_during_copy_preserves_partial_file_in_partial_mode() {
     file.write_all(b"partial content before error").expect("write");
     drop(file);
 
-    // Simulate disk full - in partial mode, discard should preserve the file
+    // Simulate disk full - in partial mode, discard moves the temp onto the
+    // destination so the partial content survives for a later resume.
     guard.discard();
 
-    // Partial file should be preserved
-    assert!(staging.exists(), "Partial file should be preserved");
-    let content = fs::read(&staging).expect("read partial");
+    assert!(!staging.exists(), "temp is consumed by the move");
+    assert!(dest.exists(), "partial content preserved at the destination");
+    let content = fs::read(&dest).expect("read partial");
     assert_eq!(content, b"partial content before error");
 }
 

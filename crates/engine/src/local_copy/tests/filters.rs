@@ -295,7 +295,9 @@ fn deferred_updates_flush_commits_pending_files() {
 
     let metadata = fs::metadata(&source).expect("metadata");
     let metadata_options = context.metadata_options();
-    let partial_path = partial_destination_path(&destination);
+    // upstream: the staging temp is `.name.XXXXXX` beside the destination and is
+    // renamed onto the destination when the deferred update flushes.
+    let staging_path = guard.staging_path().to_path_buf();
     let final_path = guard.final_path().to_path_buf();
     let update = DeferredUpdate::new(
         guard,
@@ -318,7 +320,7 @@ fn deferred_updates_flush_commits_pending_files() {
     context.register_deferred_update(update);
 
     assert!(!destination.exists());
-    assert!(partial_path.exists());
+    assert!(staging_path.exists());
 
     context
         .flush_deferred_updates()
@@ -326,7 +328,7 @@ fn deferred_updates_flush_commits_pending_files() {
 
     assert!(destination.exists());
     assert_eq!(fs::read(&destination).expect("read dest"), b"payload");
-    assert!(!partial_path.exists());
+    assert!(!staging_path.exists());
 }
 
 #[test]

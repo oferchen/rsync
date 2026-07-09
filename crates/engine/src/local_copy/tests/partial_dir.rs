@@ -41,9 +41,12 @@ fn partial_dir_places_partial_file_in_specified_directory() {
         fs::read(&destination).expect("read dest"),
         b"partial dir test content"
     );
-    // After successful completion, the partial file should be moved to destination
-    // and the partial directory may or may not be empty
-    assert!(partial_dir.exists(), "partial directory should be created");
+    // upstream: a clean transfer stages beside the destination and never
+    // touches the partial dir (it is only created on interrupt/resume).
+    assert!(
+        !partial_dir.exists(),
+        "partial dir is not created by a clean transfer"
+    );
 }
 
 #[test]
@@ -73,9 +76,12 @@ fn partial_dir_creates_directory_if_not_exists() {
         .expect("copy succeeds");
 
     assert_eq!(summary.files_copied(), 1);
-    // Partial dir should have been created
-    assert!(partial_dir.exists(), "partial directory should be auto-created");
-    assert!(partial_dir.is_dir(), "partial directory should be a directory");
+    // upstream: the partial dir is created on interrupt/resume, not by a clean
+    // transfer that stages a temp beside the destination.
+    assert!(
+        !partial_dir.exists(),
+        "partial dir is not created by a clean transfer"
+    );
 }
 
 #[test]
@@ -101,9 +107,11 @@ fn partial_dir_moves_file_to_destination_on_commit() {
     file.write_all(b"content to commit").expect("write");
     drop(file);
 
-    // Before commit: staging path should exist in partial dir
+    // upstream: the in-progress temp is `.name.XXXXXX` beside the destination,
+    // not inside the partial dir (that only receives the partial on interrupt).
     assert!(staging_path.exists());
-    assert!(staging_path.starts_with(&partial_dir));
+    assert_eq!(staging_path.parent(), Some(dest_dir.as_path()));
+    assert!(!staging_path.starts_with(&partial_dir));
     assert!(!destination.exists());
 
     // Commit the file
@@ -123,7 +131,7 @@ fn partial_dir_preserves_partial_file_on_discard() {
     let temp = tempdir().expect("tempdir");
     let dest_dir = temp.path().join("dest");
     let partial_dir_name = ".interrupt-partial";
-    let _partial_dir = dest_dir.join(partial_dir_name);
+    let partial_dir = dest_dir.join(partial_dir_name);
     fs::create_dir_all(&dest_dir).expect("create dest dir");
 
     let destination = dest_dir.join("interrupted.txt");
@@ -144,11 +152,14 @@ fn partial_dir_preserves_partial_file_on_discard() {
     // Discard simulates an interrupted transfer
     guard.discard();
 
-    // After discard: partial file should still exist in partial dir
-    assert!(staging_path.exists(), "partial file should be preserved on discard");
+    // upstream: on interrupt the temp is moved into the (created) partial dir
+    // by basename; the destination is left untouched.
+    let partial_entry = partial_dir.join("interrupted.txt");
+    assert!(!staging_path.exists(), "temp consumed by the move into the partial dir");
+    assert!(partial_entry.exists(), "partial preserved inside the partial dir");
     assert!(!destination.exists(), "destination should not exist after discard");
     assert_eq!(
-        fs::read(&staging_path).expect("read partial"),
+        fs::read(&partial_entry).expect("read partial"),
         b"partial content before interrupt"
     );
 }
@@ -272,7 +283,11 @@ fn partial_dir_supports_absolute_path() {
         .expect("copy succeeds");
 
     assert_eq!(summary.files_copied(), 1);
-    assert!(partial_dir.exists(), "absolute partial dir should be created");
+    // upstream: a clean transfer never populates the (absolute) partial dir.
+    assert!(
+        !partial_dir.exists(),
+        "partial dir is not created by a clean transfer"
+    );
     assert_eq!(
         fs::read(&destination).expect("read dest"),
         b"absolute partial dir test"
@@ -302,11 +317,13 @@ fn partial_dir_absolute_path_preserves_partial_on_discard() {
 
     guard.discard();
 
-    // Partial should be in the absolute path
-    assert!(staging_path.starts_with(&partial_dir));
-    assert!(staging_path.exists());
+    // upstream: on interrupt the temp is moved into the absolute partial dir by
+    // basename.
+    let partial_entry = partial_dir.join("file.txt");
+    assert!(!staging_path.exists(), "temp consumed by the move");
+    assert!(partial_entry.exists(), "partial moved into absolute partial dir");
     assert_eq!(
-        fs::read(&staging_path).expect("read"),
+        fs::read(&partial_entry).expect("read"),
         b"absolute path partial"
     );
 }
@@ -336,14 +353,10 @@ fn partial_dir_relative_to_destination_directory() {
     file.write_all(b"relative test").expect("write");
     drop(file);
 
-    // Verify staging path is under dest_dir/.partial-relative
-    let expected_partial_dir = dest_dir.join(".partial-relative");
-    assert!(
-        staging_path.starts_with(&expected_partial_dir),
-        "staging path {} should start with {}",
-        staging_path.display(),
-        expected_partial_dir.display()
-    );
+    // upstream: the in-progress temp lives beside the destination, not in the
+    // partial dir. The partial dir only receives the file on interrupt.
+    assert_eq!(staging_path.parent(), Some(dest_dir.as_path()));
+    assert!(!staging_path.starts_with(dest_dir.join(".partial-relative")));
 
     guard.commit().expect("commit");
     assert!(destination.exists());
@@ -479,8 +492,13 @@ fn partial_dir_differs_from_non_partial_behavior() {
     drop(file2);
     guard2.discard();
 
-    // Partial mode preserves file, non-partial removes it
-    assert!(staging1.exists(), "partial mode should preserve file");
+    // Partial mode moves the temp into the partial dir; non-partial unlinks it.
+    let partial_entry = dest_dir.join(partial_dir_name).join("partial.txt");
+    assert!(
+        !staging1.exists(),
+        "partial temp consumed by move into partial dir"
+    );
+    assert!(partial_entry.exists(), "partial preserved in the partial dir");
     assert!(!staging2.exists(), "non-partial mode should remove file");
 }
 
@@ -1161,20 +1179,15 @@ fn partial_dir_guard_staging_path_is_inside_partial_dir() {
     .expect("guard");
 
     let staging = guard.staging_path();
-    let expected_partial_dir = dest_dir.join(partial_dir_name);
 
+    // upstream: the in-progress temp is `.output.txt.XXXXXX` beside the
+    // destination, not inside the partial dir.
+    assert_eq!(staging.parent(), Some(dest_dir.as_path()));
+    assert!(!staging.starts_with(dest_dir.join(partial_dir_name)));
+    let staging_name = staging.file_name().unwrap().to_string_lossy();
     assert!(
-        staging.starts_with(&expected_partial_dir),
-        "staging path {} should be inside {}",
-        staging.display(),
-        expected_partial_dir.display()
-    );
-
-    // The filename should match the destination filename
-    assert_eq!(
-        staging.file_name(),
-        destination.file_name(),
-        "staging filename should match destination filename"
+        staging_name.starts_with(".output.txt."),
+        "staging name {staging_name} derives from the destination filename"
     );
 
     guard.discard();
@@ -1244,17 +1257,18 @@ fn partial_dir_guard_discard_preserves_for_later_resume() {
 
     guard.discard();
 
-    // Partial file preserved
-    assert!(staging.exists(), "partial file should be preserved for resume");
+    // upstream: on interrupt the temp is moved into the partial dir by basename,
+    // where a later run finds it as the delta basis.
+    let partial_entry = dest_dir.join(partial_dir_name).join("resumable.txt");
+    assert!(!staging.exists(), "temp consumed by move into partial dir");
+    assert!(partial_entry.exists(), "partial preserved for resume");
 
-    // Now verify PartialFileManager can find it
-    let manager = PartialFileManager::new(PartialMode::PartialDir(
-        PathBuf::from(partial_dir_name),
-    ));
+    // Now verify PartialFileManager can find it in the partial dir.
+    let manager = PartialFileManager::new(PartialMode::PartialDir(PathBuf::from(partial_dir_name)));
     let basis = manager.find_basis(&destination).expect("find_basis");
-    assert_eq!(basis, Some(staging.clone()));
+    assert_eq!(basis, Some(partial_entry.clone()));
     assert_eq!(
-        fs::read(&staging).expect("read partial"),
+        fs::read(&partial_entry).expect("read partial"),
         b"partial data for resume"
     );
 }
@@ -1281,14 +1295,12 @@ fn partial_dir_with_deeply_nested_relative_path() {
     file.write_all(b"nested partial dir content").expect("write");
     drop(file);
 
+    // upstream: the temp stages beside the destination regardless of how deep
+    // the (multi-component) partial dir is; the partial dir only receives the
+    // file on interrupt.
     let staging = guard.staging_path().to_path_buf();
-    let expected_base = dest_dir.join(partial_dir_name);
-    assert!(
-        staging.starts_with(&expected_base),
-        "staging {} should be under {}",
-        staging.display(),
-        expected_base.display()
-    );
+    assert_eq!(staging.parent(), Some(dest_dir.as_path()));
+    assert!(!staging.starts_with(dest_dir.join(partial_dir_name)));
 
     guard.commit().expect("commit");
     assert!(destination.exists());
@@ -1445,14 +1457,11 @@ fn partial_dir_successful_copy_creates_and_uses_partial_dir() {
         fs::read(&destination).expect("read dest"),
         b"end-to-end partial dir test content"
     );
-    // Partial dir should have been created during the transfer
+    // upstream: a clean transfer stages beside the destination and never
+    // creates the partial dir (that only happens on interrupt/resume).
     assert!(
-        partial_dir_path.exists(),
-        "partial dir should be auto-created during transfer"
-    );
-    assert!(
-        partial_dir_path.is_dir(),
-        "partial dir should be a directory"
+        !partial_dir_path.exists(),
+        "partial dir is not created by a clean transfer"
     );
 }
 
