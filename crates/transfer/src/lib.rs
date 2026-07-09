@@ -481,6 +481,7 @@ pub fn run_server_with_handshake<W: Write>(
         do_compression,
         compress_choice: compress_choice_algo,
         compression_level,
+        checksum_choice: config.checksum_choice,
         checksum_seed: config.checksum_seed,
         allow_inc_recurse,
     };

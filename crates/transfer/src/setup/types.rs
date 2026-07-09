@@ -2,7 +2,9 @@
 //!
 //! Contains the result and configuration structs used by `setup_protocol()`.
 
-use protocol::{CompatibilityFlags, CompressionAlgorithm, NegotiationResult, ProtocolVersion};
+use protocol::{
+    ChecksumAlgorithm, CompatibilityFlags, CompressionAlgorithm, NegotiationResult, ProtocolVersion,
+};
 
 /// Result of protocol setup containing negotiated algorithms and compatibility flags.
 #[derive(Debug, Clone)]
@@ -97,6 +99,18 @@ pub struct ProtocolSetupConfig<'a> {
     /// unless `--compress-level` was passed.
     pub compression_level: i32,
 
+    /// Explicit checksum algorithm from `--checksum-choice=ALGO`.
+    ///
+    /// When set, this algorithm is forced during Protocol 30+ capability
+    /// negotiation instead of using automatic negotiation. Passed through as
+    /// the negotiator's `checksum_override`, mirroring how `compress_choice`
+    /// feeds `compression_override`.
+    ///
+    /// upstream: compat.c:819 parse_checksum_choice(1) - an explicit
+    /// `checksum_choice` bypasses `negotiate_the_strings()` (compat.c:541
+    /// only sends the checksum vstring `if (!checksum_choice)`).
+    pub checksum_choice: Option<ChecksumAlgorithm>,
+
     /// Optional user-specified checksum seed from `--checksum-seed=NUM`.
     ///
     /// When `Some(seed)`, the server uses this fixed seed instead of generating
@@ -149,6 +163,7 @@ impl<'a> ProtocolSetupConfig<'a> {
             do_compression: false,
             compress_choice: None,
             compression_level: protocol::nstr::CLVL_NOT_SPECIFIED,
+            checksum_choice: None,
             checksum_seed: None,
             allow_inc_recurse: false,
         }
@@ -207,6 +222,13 @@ impl<'a> ProtocolSetupConfig<'a> {
     #[must_use]
     pub const fn with_compress_choice(mut self, choice: Option<CompressionAlgorithm>) -> Self {
         self.compress_choice = choice;
+        self
+    }
+
+    /// Sets [`Self::checksum_choice`].
+    #[must_use]
+    pub const fn with_checksum_choice(mut self, choice: Option<ChecksumAlgorithm>) -> Self {
+        self.checksum_choice = choice;
         self
     }
 
