@@ -108,11 +108,13 @@ impl LocalCopyMetadata {
         // upstream: log.c:643-654 - `%L` renders ` -> %s` for symlinks
         // (`F_SYMLINK(file)`) and ` => %s` for hardlink aliases (`hlink`).
         // Both reuse this `symlink_target` slot; keep the caller-supplied
-        // reference target for files too so the CLI placeholder can
-        // distinguish the two by the event kind.
+        // reference target for files and special files (devices/FIFOs/sockets)
+        // too so a hard-linked device alias can render `hD+++++++++ x => leader`.
+        // The CLI placeholder distinguishes ` -> ` from ` => ` by the event kind.
+        // Directories never carry a `%L` trailer.
         let target = match kind {
-            LocalCopyFileKind::Symlink | LocalCopyFileKind::File => symlink_target,
-            _ => None,
+            LocalCopyFileKind::Directory => None,
+            _ => symlink_target,
         };
 
         Self {
