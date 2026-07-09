@@ -105,6 +105,21 @@ impl LocalCopyError {
         })
     }
 
+    /// Constructs a partial-transfer error (exit code 23, `RERR_PARTIAL`).
+    ///
+    /// Raised at the end of a copy that skipped one or more entries without a
+    /// per-source error to propagate - for example an `--iconv` filename that
+    /// could not be transcoded to the remote charset. The per-entry diagnostic
+    /// is emitted at the skip site; this error only carries the exit code and
+    /// the summary message.
+    ///
+    /// upstream: `main.c:1338-1345` `log_exit()` maps `io_error &
+    /// IOERR_GENERAL` to `RERR_PARTIAL`.
+    #[must_use]
+    pub const fn partial_transfer() -> Self {
+        Self::new(LocalCopyErrorKind::PartialTransfer)
+    }
+
     /// Constructs an error representing an inactivity timeout.
     #[must_use]
     pub const fn timeout(duration: Duration) -> Self {
@@ -156,6 +171,7 @@ impl LocalCopyError {
             }
             LocalCopyErrorKind::DeleteLimitExceeded { .. } => MAX_DELETE_EXIT_CODE,
             LocalCopyErrorKind::FilterSyntax { .. } => MISSING_OPERANDS_EXIT_CODE,
+            LocalCopyErrorKind::PartialTransfer => INVALID_OPERAND_EXIT_CODE,
         }
     }
 
@@ -180,6 +196,7 @@ impl LocalCopyError {
             }
             LocalCopyErrorKind::DeleteLimitExceeded { .. } => "RERR_DEL_LIMIT",
             LocalCopyErrorKind::FilterSyntax { .. } => "RERR_SYNTAX",
+            LocalCopyErrorKind::PartialTransfer => "RERR_PARTIAL",
         }
     }
 
@@ -304,6 +321,14 @@ pub enum LocalCopyErrorKind {
         /// Human-readable error message (already formatted to match upstream).
         message: String,
     },
+    /// One or more entries were skipped, so the transfer completes with
+    /// `RERR_PARTIAL` (exit 23). The per-entry cause was already reported at
+    /// the skip site (e.g. an unconvertible `--iconv` filename).
+    ///
+    /// upstream: `main.c:1356` prints `some files/attrs were not transferred
+    /// (see previous errors)` when `io_error` is set at exit.
+    #[error("some files/attrs were not transferred (see previous errors)")]
+    PartialTransfer,
 }
 
 impl LocalCopyErrorKind {

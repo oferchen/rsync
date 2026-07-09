@@ -131,38 +131,54 @@ impl FileListReader {
     /// Applies iconv encoding conversion to a filename.
     ///
     /// When `--iconv` is used, filenames are converted from the remote encoding
-    /// to the local encoding. Unconvertible bytes are replaced rather than
-    /// causing the transfer to abort, matching upstream rsync's behaviour of
-    /// warning and continuing.
+    /// to the local encoding using the strict converter. A name that cannot be
+    /// represented in the local charset is reported unconditionally, records
+    /// `IOERR_GENERAL` (exit 23), and is kept with a lossy-degraded name rather
+    /// than dropped - the entry must remain so the receiver's ndx stays aligned
+    /// with the sender's.
     ///
     /// # Upstream Reference
     ///
-    /// `flist.c:738-754` `recv_file_entry()` runs the freshly-read filename
-    /// through `iconvbufs(ic_recv, ...)` before `clean_fname()`. On failure,
-    /// upstream sets `io_error |= IOERR_GENERAL`, emits an `FERROR_UTF8`
-    /// warning, and zeroes the output length (effectively skipping the
-    /// entry). We use lossy conversion instead, which replaces unconvertible
-    /// bytes with `?` and warns via `trace_conversion_warning`.
+    /// `flist.c:749-763` `recv_file_entry()` runs the freshly-read filename
+    /// through `iconvbufs(ic_recv, ..., ICB_INIT)` (strict). On failure upstream
+    /// sets `io_error |= IOERR_GENERAL`, prints `[%s] cannot convert filename:
+    /// %s (%s)` via `FERROR_UTF8`, and zeroes the output length. We surface the
+    /// same message and error but degrade the name lossily to preserve ndx
+    /// alignment.
     ///
     /// The prefix-compression buffer (`lastname` / `state.prev_name()`)
     /// intentionally retains the wire bytes so subsequent entries can share
     /// the prefix before any conversion is applied.
-    pub(super) fn apply_encoding_conversion(&self, name: Vec<u8>) -> io::Result<Vec<u8>> {
-        if let Some(ref converter) = self.iconv {
-            let outcome = converter.remote_to_local_lossy(&name);
-            if outcome.had_replacements {
-                // upstream: flist.c:746-749 - warn about unconvertible filename
-                crate::iconv::trace_conversion_warning(
-                    crate::iconv::IconvRole::Client,
-                    &String::from_utf8_lossy(&name),
-                    converter.remote_encoding_name(),
-                    converter.local_encoding_name(),
-                );
-            }
-            Ok(outcome.output.into_owned())
-        } else {
-            Ok(name)
+    pub(super) fn apply_encoding_conversion(&mut self, name: Vec<u8>) -> io::Result<Vec<u8>> {
+        if self.iconv.is_none() {
+            return Ok(name);
         }
+
+        let (result, failed) = {
+            // Safe: `self.iconv` was just checked to be `Some`.
+            let converter = self.iconv.as_ref().expect("iconv present");
+            match converter.remote_to_local(&name) {
+                Ok(converted) => (converted.into_owned(), false),
+                Err(_) => {
+                    // upstream: flist.c:757 - unconditional FERROR_UTF8 message.
+                    eprintln!(
+                        "{}",
+                        crate::iconv::cannot_convert_filename_message("receiver", &name)
+                    );
+                    (
+                        converter.remote_to_local_lossy(&name).output.into_owned(),
+                        true,
+                    )
+                }
+            }
+        };
+
+        if failed {
+            // upstream: flist.c:759 - io_error |= IOERR_GENERAL (rsync.h: 1).
+            self.io_error |= 1;
+        }
+
+        Ok(result)
     }
 
     /// Cleans and validates a filename received from the sender.

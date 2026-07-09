@@ -112,6 +112,45 @@ pub(crate) fn transcode_filename_component<'a>(
     }
 }
 
+/// Reports whether `name` can be strictly transcoded LOCAL -> REMOTE under
+/// the configured converter.
+///
+/// Returns `true` when no converter is configured, the converter is an
+/// identity mapping, or the round-trip succeeds without loss. Returns `false`
+/// only when the converter is active and the name contains bytes that cannot
+/// be represented in the remote charset - the case upstream rsync skips.
+///
+/// # Upstream Reference
+///
+/// - `flist.c:1614-1638` `send_file1()` - `iconvbufs(ic_send, ..., ICB_INIT)`
+///   uses the strict (non-`ICB_INCLUDE_BAD`) mode; a `< 0` return skips the
+///   file rather than substituting replacement bytes.
+#[must_use]
+pub(crate) fn name_is_convertible(name: &OsStr, converter: Option<&FilenameConverter>) -> bool {
+    match converter {
+        Some(conv) if !conv.is_identity() => conv.local_to_remote(os_str_to_bytes(name)).is_ok(),
+        _ => true,
+    }
+}
+
+/// Emits the upstream `cannot convert filename` diagnostic to stderr.
+///
+/// The `who_am_i()` role for the sending half of a local copy is `sender`, so
+/// the message is unconditionally prefixed `[sender]`. Message formatting is
+/// shared with the flist sender/receiver via
+/// [`protocol::iconv::cannot_convert_filename_message`].
+///
+/// # Upstream Reference
+///
+/// - `flist.c:1631` `send_file1()` - `rprintf(FERROR_XFER, "[%s] cannot convert
+///   filename: %s (%s)\n", who_am_i(), f_name(file, fbuf), strerror(errno))`.
+pub(crate) fn emit_cannot_convert_filename(display: &OsStr) {
+    eprintln!(
+        "{}",
+        protocol::iconv::cannot_convert_filename_message("sender", os_str_to_bytes(display))
+    );
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -171,5 +210,26 @@ mod tests {
         let conv = FilenameConverter::new("UTF-8", "ISO-8859-1").expect("ctor");
         let out = transcode_filename_component(bad, Some(&conv));
         assert_eq!(out.as_bytes(), b"bad?name");
+    }
+
+    #[test]
+    fn convertible_without_converter_is_true() {
+        assert!(name_is_convertible(OsStr::new("caf\u{e9}.txt"), None));
+    }
+
+    #[cfg(all(unix, feature = "iconv"))]
+    #[test]
+    fn unconvertible_name_is_rejected_by_strict_check() {
+        use std::os::unix::ffi::OsStrExt;
+
+        // Byte 0xe9 alone is not valid UTF-8, so LOCAL=UTF-8 -> REMOTE=Latin-1
+        // strict conversion must fail: this is the entry upstream skips.
+        let bad = OsStr::from_bytes(b"caf\xe9.txt");
+        let conv = FilenameConverter::new("UTF-8", "ISO-8859-1").expect("ctor");
+        assert!(!name_is_convertible(bad, Some(&conv)));
+
+        // A clean name still round-trips.
+        let good = OsStr::from_bytes(b"caf\xc3\xa9.txt");
+        assert!(name_is_convertible(good, Some(&conv)));
     }
 }

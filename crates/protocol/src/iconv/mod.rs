@@ -29,6 +29,8 @@
 mod converter;
 mod error;
 mod pair;
+/// Diagnostics for filenames skipped because they cannot be transcoded.
+pub mod skip;
 /// `--debug=ICONV` producer emissions for charset setup.
 pub mod trace;
 
@@ -37,6 +39,7 @@ pub use converter::{
 };
 pub use error::{ConversionError, EncodingError};
 pub use pair::EncodingPair;
+pub use skip::{cannot_convert_filename_message, escape_filename};
 pub use trace::{
     IconvRole, trace_conversion_warning, trace_msg_checking_charset,
     trace_msg_checking_via_isprint, trace_peer_charset,

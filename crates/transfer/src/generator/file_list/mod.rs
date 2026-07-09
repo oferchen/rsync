@@ -21,6 +21,7 @@
 mod batch_stat;
 mod entry;
 mod hardlinks;
+mod iconv;
 mod inc_recurse;
 mod walk;
 
@@ -94,6 +95,11 @@ impl GeneratorContext {
                 self.emit_implied_parents(&base, &path, &mut implied_ancestors)?;
             }
         }
+
+        // upstream: flist.c:1614-1638 send_file1() - drop entries whose names
+        // cannot be strictly transcoded under --iconv before ndx assignment and
+        // INC_RECURSE segmentation, so sender/receiver ndx values stay aligned.
+        self.drop_unconvertible_entries();
 
         // upstream: flist.c:f_name_cmp() - sort both arrays via indirect permutation.
         // --qsort uses unstable sort (flist.c:2991).

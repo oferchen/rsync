@@ -271,6 +271,20 @@ pub(crate) fn map_local_copy_error(error: LocalCopyError) -> ClientError {
                 rsync_error!(code.as_i32(), "stopping at requested limit").with_role(Role::Client);
             ClientError::with_code(code, message)
         }
+        LocalCopyErrorKind::PartialTransfer => {
+            // upstream: main.c:1356 - `some files/attrs were not transferred
+            // (see previous errors)` is printed by the sending half when
+            // `io_error` is set (e.g. an unconvertible --iconv filename), so
+            // who_am_i() tags the diagnostic `[sender]`. The per-entry cause
+            // was already emitted at the skip site.
+            let code = ExitCode::PartialTransfer;
+            let message = rsync_error!(
+                code.as_i32(),
+                "some files/attrs were not transferred (see previous errors)"
+            )
+            .with_role(Role::Sender);
+            ClientError::with_code(code, message)
+        }
         LocalCopyErrorKind::FilterSyntax { message } => {
             let code = ExitCode::Syntax;
             let msg = rsync_error!(code.as_i32(), "{}", message).with_role(Role::Client);
