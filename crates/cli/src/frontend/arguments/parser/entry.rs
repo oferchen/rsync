@@ -8,6 +8,8 @@ use std::env;
 use std::ffi::OsString;
 use std::path::PathBuf;
 
+use compress::algorithm::CompressionAlgorithm;
+
 use crate::frontend::arguments::short_options::expand_short_options;
 use crate::frontend::command_builder::clap_command;
 use crate::frontend::execution::{parse_checksum_seed_argument, parse_compress_level_argument};
@@ -324,8 +326,12 @@ where
 
     let compress_level_opt = matches.get_one::<OsString>("compress-level").cloned();
     if let Some(ref value) = compress_level_opt
-        && let Ok(setting) = parse_compress_level_argument(value.as_os_str())
+        && let Ok(setting) =
+            parse_compress_level_argument(value.as_os_str(), CompressionAlgorithm::Zlib)
     {
+        // The codec here is only a base estimate for the `compress` flag; the
+        // authoritative codec-aware level is finalised in
+        // `parse_compression_settings()` once `--compress-choice` is known.
         compress = !setting.is_disabled();
     }
     let iconv = matches.remove_one::<OsString>("iconv");

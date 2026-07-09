@@ -14,9 +14,8 @@ use logging_sink::MessageSink;
 
 use super::super::{
     parse_bandwidth_limit, parse_block_size_argument, parse_compress_choice, parse_compress_level,
-    parse_compress_level_argument, parse_compress_threads, parse_debug_flags, parse_info_flags,
-    parse_max_alloc_argument, parse_max_delete_argument, parse_modify_window_argument,
-    parse_size_limit_argument,
+    parse_compress_threads, parse_debug_flags, parse_info_flags, parse_max_alloc_argument,
+    parse_max_delete_argument, parse_modify_window_argument, parse_size_limit_argument,
 };
 use super::messages::fail_with_message;
 use crate::frontend::{
@@ -393,21 +392,19 @@ where
     let mut compression_level_override = None;
     let mut compression_algorithm = None;
     let mut compress_choice_name = None;
+    let mut compress_level_setting: Option<CompressLevelArg> = None;
+    let mut compress_disabled_by_choice = false;
 
-    let mut compress_level_setting = match compress_level {
-        Some(value) => match parse_compress_level(value.as_os_str()) {
-            Ok(setting) => Some(setting),
-            Err(message) => return Err(fail_with_message(message, stderr)),
-        },
-        None => None,
-    };
-
+    // Parse `--compress-choice` before `--compress-level` so the level is
+    // clamped against the selected codec's range. This mirrors upstream, where
+    // `token.c:init_compression_level()` runs once `do_compression` is known.
     if let Some(choice) = compress_choice.as_ref() {
         match parse_compress_choice(choice.as_os_str()) {
             Ok(None) => {
                 compress = false;
                 compression_level_override = None;
                 compress_level_setting = Some(CompressLevelArg::Disable);
+                compress_disabled_by_choice = true;
             }
             Ok(Some(algorithm)) => {
                 compression_algorithm = Some(algorithm);
@@ -419,6 +416,15 @@ where
                     compress = true;
                 }
             }
+            Err(message) => return Err(fail_with_message(message, stderr)),
+        }
+    }
+
+    let codec = compression_algorithm.unwrap_or(CompressionAlgorithm::Zlib);
+
+    if !compress_disabled_by_choice && let Some(value) = compress_level {
+        match parse_compress_level(value.as_os_str(), codec) {
+            Ok(setting) => compress_level_setting = Some(setting),
             Err(message) => return Err(fail_with_message(message, stderr)),
         }
     }
@@ -467,21 +473,7 @@ where
         Some(CompressLevelArg::Level(level)) => {
             CompressionSetting::level(CompressionLevel::precise(level))
         }
-        None => {
-            if let Some(value) = compress_level {
-                match parse_compress_level_argument(value.as_os_str()) {
-                    Ok(setting) => {
-                        compress = !setting.is_disabled();
-                        setting
-                    }
-                    Err(message) => {
-                        return Err(fail_with_message(message, stderr));
-                    }
-                }
-            } else {
-                CompressionSetting::default()
-            }
-        }
+        None => CompressionSetting::default(),
     };
 
     Ok(CompressionResult {

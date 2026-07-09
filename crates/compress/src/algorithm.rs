@@ -4,12 +4,17 @@
 //! algorithm, matching upstream rsync defaults.
 
 use ::core::str::FromStr;
+use std::num::NonZeroU8;
 
 use thiserror::Error;
 
 /// Default zlib compression level matching upstream rsync.
 /// upstream: token.c - `Z_DEFAULT_COMPRESSION` resolves to 6.
 pub const ZLIB_DEFAULT_LEVEL: i32 = 6;
+
+/// Maximum zstd compression level accepted by `--compress-level`.
+/// upstream: token.c:74 - `ZSTD_maxCLevel()` returns 22 (ultra levels enabled).
+pub const ZSTD_MAX_LEVEL: i32 = 22;
 
 /// Default zstd compression level.
 /// upstream: token.c - `ZSTD_CLEVEL_DEFAULT` is 3.
@@ -104,6 +109,60 @@ impl CompressionAlgorithm {
             ALGORITHMS
         }
     }
+
+    /// Clamps a requested `--compress-level` value into this codec's valid
+    /// range, mirroring upstream `token.c:init_compression_level()`.
+    ///
+    /// Upstream never rejects an out-of-range level - it saturates the value to
+    /// the codec's `min_level`/`max_level` ("We don't bother with any errors or
+    /// warnings -- just make sure that the values are valid."). Returns `None`
+    /// when the level disables compression (zlib `off_level` of `0`); `Some`
+    /// with the clamped level otherwise.
+    #[must_use]
+    pub fn clamp_level(self, level: i32) -> Option<NonZeroU8> {
+        match self {
+            CompressionAlgorithm::Zlib => clamp_zlib_level(level),
+            #[cfg(feature = "lz4")]
+            // upstream: token.c:81-87 - lz4 forces min/max/def to 0 and never
+            // disables; oc represents this as the fastest expressible level.
+            CompressionAlgorithm::Lz4 => Some(clamped(1)),
+            #[cfg(feature = "zstd")]
+            CompressionAlgorithm::Zstd => Some(clamp_zstd_level(level)),
+        }
+    }
+}
+
+/// Wraps an already-clamped, guaranteed non-zero level.
+fn clamped(level: u8) -> NonZeroU8 {
+    NonZeroU8::new(level).expect("clamped level is non-zero")
+}
+
+/// Clamps into the zlib range, mirroring `token.c:59-70`.
+///
+/// `Z_DEFAULT_COMPRESSION` (`-1`) remaps to the real default level (6); `0` is
+/// upstream's `off_level` and disables compression; all other values saturate
+/// to `1..=9`.
+fn clamp_zlib_level(level: i32) -> Option<NonZeroU8> {
+    if level == -1 {
+        return Some(clamped(ZLIB_DEFAULT_LEVEL as u8));
+    }
+    if level == 0 {
+        return None;
+    }
+    Some(clamped(level.clamp(1, 9) as u8))
+}
+
+/// Clamps into the zstd range, mirroring `token.c:72-79`.
+///
+/// `0` selects `ZSTD_CLEVEL_DEFAULT` (3); zstd's `off_level` is
+/// `CLVL_NOT_SPECIFIED`, so `0` never disables. The representable range is
+/// `1..=ZSTD_MAX_LEVEL`.
+#[cfg(feature = "zstd")]
+fn clamp_zstd_level(level: i32) -> NonZeroU8 {
+    if level == 0 {
+        return clamped(ZSTD_DEFAULT_LEVEL as u8);
+    }
+    clamped(level.clamp(1, ZSTD_MAX_LEVEL) as u8)
 }
 
 impl Default for CompressionAlgorithm {
@@ -141,6 +200,42 @@ mod tests {
     fn available_algorithms_only_include_zlib_when_no_optional_features_enabled() {
         let available = CompressionAlgorithm::available();
         assert_eq!(available, &[CompressionAlgorithm::Zlib]);
+    }
+
+    fn level(algorithm: CompressionAlgorithm, raw: i32) -> Option<u8> {
+        algorithm.clamp_level(raw).map(NonZeroU8::get)
+    }
+
+    #[test]
+    fn zlib_clamp_saturates_and_disables_like_upstream() {
+        // upstream: token.c:init_compression_level() zlib branch.
+        assert_eq!(level(CompressionAlgorithm::Zlib, 0), None, "0 disables");
+        assert_eq!(
+            level(CompressionAlgorithm::Zlib, -1),
+            Some(6),
+            "-1 = default"
+        );
+        assert_eq!(level(CompressionAlgorithm::Zlib, -5), Some(1), "below min");
+        assert_eq!(level(CompressionAlgorithm::Zlib, 5), Some(5), "in range");
+        assert_eq!(level(CompressionAlgorithm::Zlib, 9), Some(9), "max");
+        assert_eq!(level(CompressionAlgorithm::Zlib, 10), Some(9), "above max");
+        assert_eq!(
+            level(CompressionAlgorithm::Zlib, 99),
+            Some(9),
+            "far above max"
+        );
+    }
+
+    #[cfg(feature = "zstd")]
+    #[test]
+    fn zstd_clamp_uses_wider_range_like_upstream() {
+        // upstream: token.c:init_compression_level() zstd branch - 0 selects the
+        // default (3), max_level is ZSTD_maxCLevel() (22), and 0 never disables.
+        assert_eq!(level(CompressionAlgorithm::Zstd, 0), Some(3), "0 = default");
+        assert_eq!(level(CompressionAlgorithm::Zstd, 15), Some(15), "in range");
+        assert_eq!(level(CompressionAlgorithm::Zstd, 22), Some(22), "max");
+        assert_eq!(level(CompressionAlgorithm::Zstd, 99), Some(22), "above max");
+        assert_eq!(level(CompressionAlgorithm::Zstd, -5), Some(1), "below min");
     }
 
     #[test]

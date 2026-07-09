@@ -18,7 +18,6 @@ pub(crate) enum CompressLevelArg {
 enum CompressionLevelParseError {
     Empty { original: String },
     Invalid { original: String, trimmed: String },
-    OutOfRange { trimmed: String, value: i32 },
 }
 
 impl CompressionLevelParseError {
@@ -27,31 +26,18 @@ impl CompressionLevelParseError {
             Self::Empty { original } | Self::Invalid { original, .. } => {
                 rsync_error!(1, "--compress-level={} is invalid", original).with_role(Role::Client)
             }
-            Self::OutOfRange { trimmed, .. } => {
-                rsync_error!(1, "--compress-level={} must be between 0 and 9", trimmed)
-                    .with_role(Role::Client)
-            }
         }
     }
 
     fn into_argument_message(self) -> Message {
         match self {
-            Self::Empty { .. } => rsync_error!(
-                1,
-                "compression level value must not be empty"
-            )
-            .with_role(Role::Client),
+            Self::Empty { .. } => {
+                rsync_error!(1, "compression level value must not be empty").with_role(Role::Client)
+            }
             Self::Invalid { trimmed, .. } => rsync_error!(
                 1,
                 format!(
-                    "invalid compression level '{trimmed}': compression level must be an integer between 0 and 9"
-                )
-            )
-            .with_role(Role::Client),
-            Self::OutOfRange { trimmed, value } => rsync_error!(
-                1,
-                format!(
-                    "invalid compression level '{trimmed}': compression level {value} is outside the supported range 0-9"
+                    "invalid compression level '{trimmed}': compression level must be an integer"
                 )
             )
             .with_role(Role::Client),
@@ -59,34 +45,41 @@ impl CompressionLevelParseError {
     }
 }
 
-fn parse_compress_level_value(
-    argument: &OsStr,
-) -> Result<CompressLevelArg, CompressionLevelParseError> {
+/// Parses the raw numeric `--compress-level` value.
+///
+/// Only genuinely malformed input (empty or non-numeric) is rejected, matching
+/// upstream: `--compress-level` is a `POPT_ARG_INT`, so any integer is accepted
+/// and only later clamped into the codec's range by
+/// `token.c:init_compression_level()`.
+fn parse_raw_level(argument: &OsStr) -> Result<i32, CompressionLevelParseError> {
     let original = argument.to_string_lossy().into_owned();
-    let trimmed_owned = original.trim().to_owned();
+    let trimmed = original.trim().to_owned();
 
-    if trimmed_owned.is_empty() {
+    if trimmed.is_empty() {
         return Err(CompressionLevelParseError::Empty { original });
     }
 
-    match trimmed_owned.parse::<i32>() {
-        Ok(0) => Ok(CompressLevelArg::Disable),
-        Ok(value @ 1..=9) => Ok(CompressLevelArg::Level(
-            NonZeroU8::new(value as u8).expect("range guarantees non-zero"),
-        )),
-        Ok(value) => Err(CompressionLevelParseError::OutOfRange {
-            trimmed: trimmed_owned,
-            value,
-        }),
-        Err(_) => Err(CompressionLevelParseError::Invalid {
-            original,
-            trimmed: trimmed_owned,
-        }),
+    trimmed
+        .parse::<i32>()
+        .map_err(|_| CompressionLevelParseError::Invalid { original, trimmed })
+}
+
+/// Clamps a raw level into `codec`'s range, mirroring
+/// `token.c:init_compression_level()`. Never rejects an out-of-range value.
+fn clamp_level(codec: CompressionAlgorithm, raw: i32) -> CompressLevelArg {
+    match codec.clamp_level(raw) {
+        Some(level) => CompressLevelArg::Level(level),
+        None => CompressLevelArg::Disable,
     }
 }
 
-pub(crate) fn parse_compress_level(argument: &OsStr) -> Result<CompressLevelArg, Message> {
-    parse_compress_level_value(argument).map_err(CompressionLevelParseError::into_flag_message)
+pub(crate) fn parse_compress_level(
+    argument: &OsStr,
+    codec: CompressionAlgorithm,
+) -> Result<CompressLevelArg, Message> {
+    parse_raw_level(argument)
+        .map(|raw| clamp_level(codec, raw))
+        .map_err(CompressionLevelParseError::into_flag_message)
 }
 
 pub(crate) fn parse_compress_choice(
@@ -204,8 +197,11 @@ pub(crate) fn parse_compress_threads(argument: &OsStr) -> Result<Option<NonZeroU
     }
 }
 
-pub(crate) fn parse_compress_level_argument(value: &OsStr) -> Result<CompressionSetting, Message> {
-    match parse_compress_level_value(value) {
+pub(crate) fn parse_compress_level_argument(
+    value: &OsStr,
+    codec: CompressionAlgorithm,
+) -> Result<CompressionSetting, Message> {
+    match parse_raw_level(value).map(|raw| clamp_level(codec, raw)) {
         Ok(CompressLevelArg::Disable) => Ok(CompressionSetting::disabled()),
         Ok(CompressLevelArg::Level(level)) => {
             Ok(CompressionSetting::level(CompressionLevel::precise(level)))

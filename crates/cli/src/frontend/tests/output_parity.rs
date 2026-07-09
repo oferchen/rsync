@@ -2739,9 +2739,10 @@ fn parity_compress_level_accepted_without_error() {
     fs::create_dir(&dest_dir).expect("create dest");
     fs::write(&source, b"compress level test").expect("write");
 
-    // Test various compression levels (upstream rsync supports 1-9)
-    for level in [1, 5, 9] {
-        let dest = temp.path().join(format!("dest{level}"));
+    // Valid levels plus out-of-range values that upstream clamps rather than
+    // rejecting (upstream: token.c:init_compression_level()).
+    for (index, level) in ["1", "5", "9", "-1", "22", "99"].iter().enumerate() {
+        let dest = temp.path().join(format!("dest{index}"));
         fs::create_dir(&dest).expect("create dest");
 
         let (code, _stdout, stderr) = run_with_args([

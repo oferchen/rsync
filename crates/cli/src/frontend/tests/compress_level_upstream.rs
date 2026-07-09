@@ -167,58 +167,42 @@ fn compress_level_without_z_flag_enables_compression() {
 }
 
 #[test]
-fn compress_level_negative_reports_error() {
-    let (code, stdout, stderr) = run_with_args([
+fn compress_level_negative_is_clamped_not_rejected() {
+    // upstream: token.c:init_compression_level() clamps out-of-range levels
+    // instead of erroring; -1 maps to the zlib default and enables compression.
+    let parsed = parse_args([
         OsString::from(RSYNC),
         OsString::from("--compress-level=-1"),
         OsString::from("source"),
         OsString::from("dest"),
-    ]);
+    ])
+    .expect("--compress-level=-1 should clamp, not error");
 
-    assert_eq!(code, 1);
-    assert!(stdout.is_empty());
-    let rendered = String::from_utf8(stderr).expect("diagnostic is valid UTF-8");
     assert!(
-        rendered.contains("--compress-level=-1"),
-        "error should reference the flag value: {rendered}"
+        parsed.compress,
+        "--compress-level=-1 should enable compression"
     );
+    assert_eq!(parsed.compress_level, Some(OsString::from("-1")));
 }
 
 #[test]
-fn compress_level_10_reports_error() {
-    let (code, stdout, stderr) = run_with_args([
-        OsString::from(RSYNC),
-        OsString::from("--compress-level=10"),
-        OsString::from("source"),
-        OsString::from("dest"),
-    ]);
+fn compress_level_above_max_is_clamped_not_rejected() {
+    // upstream saturates values above max_level (9) rather than rejecting them.
+    for level in ["10", "99"] {
+        let parsed = parse_args([
+            OsString::from(RSYNC),
+            OsString::from(format!("--compress-level={level}")),
+            OsString::from("source"),
+            OsString::from("dest"),
+        ])
+        .unwrap_or_else(|_| panic!("--compress-level={level} should clamp, not error"));
 
-    assert_eq!(code, 1);
-    assert!(stdout.is_empty());
-    let rendered = String::from_utf8(stderr).expect("diagnostic is valid UTF-8");
-    assert!(
-        rendered.contains("--compress-level=10"),
-        "error should reference the flag value: {rendered}"
-    );
-    assert!(
-        rendered.contains("between 0 and 9"),
-        "error should mention valid range: {rendered}"
-    );
-}
-
-#[test]
-fn compress_level_99_reports_error() {
-    let (code, stdout, stderr) = run_with_args([
-        OsString::from(RSYNC),
-        OsString::from("--compress-level=99"),
-        OsString::from("source"),
-        OsString::from("dest"),
-    ]);
-
-    assert_eq!(code, 1);
-    assert!(stdout.is_empty());
-    let rendered = String::from_utf8(stderr).expect("diagnostic is valid UTF-8");
-    assert!(rendered.contains("between 0 and 9"));
+        assert!(
+            parsed.compress,
+            "--compress-level={level} should enable compression"
+        );
+        assert_eq!(parsed.compress_level, Some(OsString::from(level)));
+    }
 }
 
 #[test]
@@ -318,9 +302,11 @@ fn compress_flag_alone_uses_default_level() {
 
 #[test]
 fn parse_compress_level_argument_accepts_all_valid_levels() {
+    use compress::algorithm::CompressionAlgorithm;
+
     for level in 0..=9 {
         let value = format!("{level}");
-        let result = parse_compress_level_argument(OsStr::new(&value));
+        let result = parse_compress_level_argument(OsStr::new(&value), CompressionAlgorithm::Zlib);
         assert!(
             result.is_ok(),
             "parse_compress_level_argument should accept level {level}"
@@ -342,30 +328,82 @@ fn parse_compress_level_argument_accepts_all_valid_levels() {
 }
 
 #[test]
-fn parse_compress_level_argument_rejects_10() {
-    let result = parse_compress_level_argument(OsStr::new("10"));
-    assert!(result.is_err(), "level 10 should be rejected");
-    let msg = result.unwrap_err().to_string();
-    assert!(
-        msg.contains("outside the supported range"),
-        "error should mention supported range: {msg}"
+fn parse_compress_level_argument_clamps_above_zlib_max() {
+    use compress::algorithm::CompressionAlgorithm;
+    use compress::zlib::CompressionLevel;
+
+    // upstream: token.c:init_compression_level() saturates to max_level (9)
+    // rather than rejecting the value.
+    for value in ["10", "22", "99"] {
+        let setting = parse_compress_level_argument(OsStr::new(value), CompressionAlgorithm::Zlib)
+            .unwrap_or_else(|_| panic!("level {value} should clamp, not error"));
+        assert_eq!(
+            setting.level_or_default(),
+            CompressionLevel::from_numeric(9).unwrap(),
+            "zlib level {value} should clamp to 9"
+        );
+    }
+}
+
+#[test]
+fn parse_compress_level_argument_maps_negative_one_to_zlib_default() {
+    use compress::algorithm::CompressionAlgorithm;
+    use compress::zlib::CompressionLevel;
+
+    // upstream: token.c - Z_DEFAULT_COMPRESSION (-1) remaps to the real default.
+    let setting = parse_compress_level_argument(OsStr::new("-1"), CompressionAlgorithm::Zlib)
+        .expect("-1 should map to the zlib default, not error");
+    assert_eq!(
+        setting.level_or_default(),
+        CompressionLevel::from_numeric(6).unwrap(),
+        "zlib -1 should map to default level 6"
     );
 }
 
 #[test]
-fn parse_compress_level_argument_rejects_negative() {
-    let result = parse_compress_level_argument(OsStr::new("-1"));
-    assert!(result.is_err(), "level -1 should be rejected");
-    let msg = result.unwrap_err().to_string();
-    assert!(
-        msg.contains("outside the supported range"),
-        "error should mention supported range: {msg}"
+fn parse_compress_level_argument_clamps_large_negative_to_min() {
+    use compress::algorithm::CompressionAlgorithm;
+    use compress::zlib::CompressionLevel;
+
+    // upstream: token.c saturates values below min_level (1).
+    let setting = parse_compress_level_argument(OsStr::new("-5"), CompressionAlgorithm::Zlib)
+        .expect("-5 should clamp, not error");
+    assert_eq!(
+        setting.level_or_default(),
+        CompressionLevel::from_numeric(1).unwrap(),
+        "zlib -5 should clamp to min level 1"
     );
+}
+
+#[cfg(feature = "zstd")]
+#[test]
+fn parse_compress_level_argument_clamps_to_zstd_range() {
+    use compress::algorithm::CompressionAlgorithm;
+    use compress::zlib::CompressionLevel;
+    use std::num::NonZeroU8;
+
+    // upstream: token.c zstd branch - max_level is ZSTD_maxCLevel() (22) and 0
+    // selects ZSTD_CLEVEL_DEFAULT (3) rather than disabling compression.
+    let expect = |raw: &str, level: u8| {
+        let setting = parse_compress_level_argument(OsStr::new(raw), CompressionAlgorithm::Zstd)
+            .unwrap_or_else(|_| panic!("zstd level {raw} should clamp, not error"));
+        assert_eq!(
+            setting.level_or_default(),
+            CompressionLevel::precise(NonZeroU8::new(level).unwrap()),
+            "zstd level {raw} should resolve to {level}"
+        );
+    };
+    expect("0", 3);
+    expect("22", 22);
+    expect("99", 22);
+    expect("15", 15);
 }
 
 #[test]
 fn parse_compress_level_argument_rejects_empty() {
-    let result = parse_compress_level_argument(OsStr::new(""));
+    use compress::algorithm::CompressionAlgorithm;
+
+    let result = parse_compress_level_argument(OsStr::new(""), CompressionAlgorithm::Zlib);
     assert!(result.is_err(), "empty value should be rejected");
     let msg = result.unwrap_err().to_string();
     assert!(
@@ -376,14 +414,18 @@ fn parse_compress_level_argument_rejects_empty() {
 
 #[test]
 fn parse_compress_level_argument_rejects_float() {
-    let result = parse_compress_level_argument(OsStr::new("3.5"));
+    use compress::algorithm::CompressionAlgorithm;
+
+    let result = parse_compress_level_argument(OsStr::new("3.5"), CompressionAlgorithm::Zlib);
     assert!(result.is_err(), "float value should be rejected");
 }
 
 #[test]
 fn parse_compress_level_argument_trims_whitespace() {
+    use compress::algorithm::CompressionAlgorithm;
+
     // Whitespace around the value should be handled
-    let result = parse_compress_level_argument(OsStr::new(" 6 "));
+    let result = parse_compress_level_argument(OsStr::new(" 6 "), CompressionAlgorithm::Zlib);
     assert!(result.is_ok(), "whitespace-padded value should be accepted");
     let setting = result.unwrap();
     assert!(setting.is_enabled());
