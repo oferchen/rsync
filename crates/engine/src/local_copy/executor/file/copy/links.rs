@@ -178,6 +178,48 @@ pub(super) fn process_links(
         ignore_times_enabled,
         checksum_enabled,
     )? {
+        let preserve_xattrs_flag = {
+            #[cfg(all(unix, feature = "xattr"))]
+            {
+                preserve_xattrs
+            }
+            #[cfg(not(all(unix, feature = "xattr")))]
+            {
+                false
+            }
+        };
+        // upstream: generator.c:967-1054 try_dests_reg() - a LINK_DEST candidate
+        // that passes the quick-check (data matches) is hard-linked only when its
+        // preserved attributes also match the source (match_level 3). When the
+        // attributes differ (match_level 2) upstream does NOT hard-link: it falls
+        // through to try_a_copy -> copy_altdest_file(), copying the basis contents
+        // into a fresh destination inode and reapplying the source attributes via
+        // set_file_attrs. Hard-linking a match_level-2 file would share the basis
+        // inode, so reapplying the differing attrs (e.g. a changed -X value under
+        // --fake-super) would corrupt the basis and leave the file carrying an
+        // extra hard link.
+        let attrs_match = link_dest_attrs_unchanged(
+            &link_target,
+            source,
+            metadata,
+            &metadata_options,
+            preserve_xattrs_flag,
+        );
+        // On Unix a match_level-2 basis is routed through the same reference-copy
+        // path used by --copy-dest. The non-Unix stub cannot evaluate the
+        // fake-super/xattr channel (it returns false), so it keeps the legacy
+        // hard-link-then-reapply flow rather than degrading every match to a copy.
+        #[cfg(unix)]
+        if !attrs_match {
+            return Ok(LinkOutcome {
+                copy_source_override: Some(link_target.clone()),
+                reference_basis: Some(link_target),
+                completed: false,
+            });
+        }
+
+        // match_level 3 (Unix): data and attributes both match - hard-link the
+        // basis. Non-Unix: hard-link and reapply metadata below.
         let mut attempted_commit = false;
         loop {
             match fast_io::hard_link(&link_target, destination) {
@@ -241,7 +283,8 @@ pub(super) fn process_links(
             });
         context.record_hard_link(metadata, destination);
         context.summary_mut().record_hard_link();
-        let metadata_snapshot = LocalCopyMetadata::from_metadata(metadata, leader_display);
+        let metadata_snapshot = LocalCopyMetadata::from_metadata(metadata, leader_display)
+            .virtualize_fake_super(source, metadata_options.fake_super_enabled());
         let total_bytes = Some(metadata_snapshot.len());
         context.record(
             LocalCopyRecord::new(
@@ -263,30 +306,13 @@ pub(super) fn process_links(
             destination_previously_existed,
         );
         remove_source_entry_if_requested(context, source, Some(record_path), file_type)?;
-        // upstream: generator.c:995-1024 try_dests_reg() - for a LINK_DEST match
-        // at match_level 3 (data AND attrs already match the basis) the file is
-        // only hard-linked; set_file_attrs runs *only* under --atimes. Rewriting
-        // metadata unconditionally would, under --fake-super, write a
-        // `user.rsync.%stat` xattr onto the shared basis inode that upstream
-        // never creates. At match_level 2 (attrs differ) upstream does rewrite,
-        // so gate the reapply on whether the basis attributes already match.
-        let preserve_xattrs_flag = {
-            #[cfg(all(unix, feature = "xattr"))]
-            {
-                preserve_xattrs
-            }
-            #[cfg(not(all(unix, feature = "xattr")))]
-            {
-                false
-            }
-        };
-        let attrs_match = link_dest_attrs_unchanged(
-            &link_target,
-            source,
-            metadata,
-            &metadata_options,
-            preserve_xattrs_flag,
-        );
+        // upstream: generator.c:1006-1007 try_dests_reg() - at match_level 3 the
+        // file is only hard-linked; set_file_attrs runs *only* under --atimes.
+        // Rewriting metadata unconditionally would, under --fake-super, write a
+        // `user.rsync.%stat` xattr onto the shared basis inode that upstream never
+        // creates. On Unix a match_level-2 basis (attrs differ) is handled by the
+        // reference-copy path above, so `attrs_match` is always true here; the
+        // non-Unix stub cannot evaluate attrs, so it reapplies as before.
         if !attrs_match || metadata_options.atimes() {
             apply_file_metadata_with_options(destination, metadata, &metadata_options)
                 .map_err(map_metadata_error)?;
@@ -394,7 +420,8 @@ pub(super) fn process_links(
             // Tagging the record as HardLink keeps position 0 at 'h'
             // instead of '.'; omitting `.with_creation(true)` keeps
             // positions 2-10 as deltas instead of `+++++++++`.
-            let reuse_snapshot = LocalCopyMetadata::from_metadata(metadata, None);
+            let reuse_snapshot = LocalCopyMetadata::from_metadata(metadata, None)
+                .virtualize_fake_super(source, metadata_options.fake_super_enabled());
             context.record(
                 LocalCopyRecord::new(
                     record_path.to_path_buf(),
@@ -472,7 +499,13 @@ pub(super) fn process_links(
         // status alongside the freshly-linked alias.
         info_log!(Name, 2, "{} is uptodate", record_path.display());
 
-        context.record_hard_link(metadata, destination);
+        // upstream: hlink.c:474-521 finish_hard_link() - every alias in a cohort
+        // is linked against the group's data-holder (`our_name` stays fixed for
+        // the whole `F_HL_PREV` walk), so all aliases itemize `=> <holder>` (a
+        // star), never chaining to the most recently created alias. The holder is
+        // already recorded in the tracker (it was transferred first), so a
+        // follower must NOT overwrite that mapping with its own path; doing so
+        // would point later followers at this alias instead of the holder.
         context.summary_mut().record_hard_link();
         // upstream: hlink.c:237 + log.c:643-654 - thread the leader's
         // relative path through the snapshot's `symlink_target` slot so the
@@ -483,7 +516,8 @@ pub(super) fn process_links(
             .map(std::path::Path::to_path_buf)
             .unwrap_or_else(|_| existing_target.clone());
         let metadata_snapshot =
-            LocalCopyMetadata::from_metadata(metadata, Some(link_target_display));
+            LocalCopyMetadata::from_metadata(metadata, Some(link_target_display))
+                .virtualize_fake_super(source, metadata_options.fake_super_enabled());
         let total_bytes = Some(metadata_snapshot.len());
         // upstream: hlink.c:218-222 - `itemize(..., ITEM_LOCAL_CHANGE, ...)`
         // is emitted whether the alias was created from scratch or the
@@ -637,7 +671,8 @@ pub(super) fn process_links(
                 let basis_metadata = fs::symlink_metadata(&basis).map_err(|error| {
                     LocalCopyError::io("inspect compare-dest basis", basis.clone(), error)
                 })?;
-                let metadata_snapshot = LocalCopyMetadata::from_metadata(metadata, None);
+                let metadata_snapshot = LocalCopyMetadata::from_metadata(metadata, None)
+                    .virtualize_fake_super(source, metadata_options.fake_super_enabled());
                 let total_bytes = Some(metadata_snapshot.len());
                 let change_set = LocalCopyChangeSet::for_file(
                     metadata,
@@ -768,7 +803,8 @@ pub(super) fn process_links(
                     info_log!(Name, 1, "{} => {}", record_path.display(), path.display());
                     context.record_hard_link(metadata, destination);
                     context.summary_mut().record_hard_link();
-                    let metadata_snapshot = LocalCopyMetadata::from_metadata(metadata, None);
+                    let metadata_snapshot = LocalCopyMetadata::from_metadata(metadata, None)
+                        .virtualize_fake_super(source, metadata_options.fake_super_enabled());
                     let total_bytes = Some(metadata_snapshot.len());
                     context.record(LocalCopyRecord::new(
                         record_path.to_path_buf(),

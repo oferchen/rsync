@@ -1,29 +1,30 @@
 //! Integration tests for perishable filter rules.
 //!
-//! These tests verify the behavior of perishable rules (`p` modifier) which
-//! are ignored during deletion checks. Perishable rules are useful for
-//! excluding files that should be skipped during transfer but not protected
-//! from deletion during `--delete` operations.
-//!
-//! Reference: rsync 3.4.1 exclude.c lines 1044-1045 for perishable handling.
+//! Perishable rules (`p` modifier) are excluded from transfer like any other
+//! rule and ALSO protect a matching destination entry from the top-level
+//! `--delete` scan. Upstream rsync only skips a perishable rule once
+//! `ignore_perishable` is set (exclude.c:1044), which happens exclusively
+//! while removing the contents of a directory being deleted wholesale
+//! (delete.c:147); the top-level scan runs with it unset, so perishable rules
+//! behave identically to non-perishable rules for the deletion decision.
 
 use filters::{FilterRule, FilterSet};
 use std::path::Path;
 
-/// Verifies perishable exclude is ignored during deletion checks.
+/// Verifies a perishable exclude protects a matching entry from deletion.
 ///
-/// From rsync man page: "The p is for perishable, which means that this
-/// rule does not apply during deletion."
+/// upstream: exclude.c:1044 / delete.c:147 - a perishable rule is only skipped
+/// inside a wholly-deleted directory, never during the top-level scan.
 #[test]
-fn perishable_exclude_ignored_during_deletion() {
+fn perishable_exclude_protects_during_top_level_deletion() {
     let rule = FilterRule::exclude("*.tmp").with_perishable(true);
     let set = FilterSet::from_rules([rule]).unwrap();
 
     // Transfer is excluded (perishable still applies to transfer)
     assert!(!set.allows(Path::new("scratch.tmp"), false));
 
-    // Deletion is allowed (perishable is ignored)
-    assert!(set.allows_deletion(Path::new("scratch.tmp"), false));
+    // Deletion is blocked: the perishable exclude protects like a plain exclude.
+    assert!(!set.allows_deletion(Path::new("scratch.tmp"), false));
 }
 
 /// Verifies non-perishable rules work normally.
@@ -48,9 +49,9 @@ fn perishable_flag_tracked() {
     assert!(!non_perishable.is_perishable());
 }
 
-/// Verifies perishable include is ignored during deletion.
+/// Verifies a perishable include is honoured during deletion (first-match-wins).
 #[test]
-fn perishable_include_ignored_during_deletion() {
+fn perishable_include_honoured_during_deletion() {
     // With first-match-wins, include comes before exclude
     let rules = [
         FilterRule::include("keep/**").with_perishable(true),
@@ -61,9 +62,9 @@ fn perishable_include_ignored_during_deletion() {
     // Transfer includes keep/** (perishable include applies first)
     assert!(set.allows(Path::new("keep/file.txt"), false));
 
-    // Deletion: perishable include is ignored, so exclude * applies
-    // This means the file can be deleted
-    assert!(!set.allows_deletion(Path::new("keep/file.txt"), false));
+    // Deletion: the perishable include matches first, so the entry is included
+    // (not excluded) and therefore a deletion candidate.
+    assert!(set.allows_deletion(Path::new("keep/file.txt"), false));
 }
 
 /// Verifies perishable and non-perishable includes interact correctly.
@@ -84,8 +85,9 @@ fn perishable_and_non_perishable_includes() {
     // For deletion: permanent/** matches (non-perishable), deletable
     assert!(set.allows_deletion(Path::new("permanent/file.txt"), false));
 
-    // For temporary: perishable include is skipped, exclude * matches, transfer_allowed=false
-    assert!(!set.allows_deletion(Path::new("temporary/file.txt"), false));
+    // For temporary: the perishable include matches first, so the entry is
+    // included and remains a deletion candidate.
+    assert!(set.allows_deletion(Path::new("temporary/file.txt"), false));
 }
 
 /// Verifies perishable affects delete-excluded behavior.
@@ -120,8 +122,8 @@ fn perishable_exclude_before_include() {
 
     // Temp txt files excluded from transfer (perishable applies on sender first)
     assert!(!set.allows(Path::new("temp_scratch.txt"), false));
-    // For deletion: perishable exclude skipped, include *.txt matches, deletable
-    assert!(set.allows_deletion(Path::new("temp_scratch.txt"), false));
+    // For deletion: the perishable exclude matches first and protects the entry.
+    assert!(!set.allows_deletion(Path::new("temp_scratch.txt"), false));
 
     // Regular txt files included in transfer (second rule)
     assert!(set.allows(Path::new("document.txt"), false));
@@ -146,8 +148,10 @@ fn non_perishable_exclude_before_perishable_include() {
     // Regular txt files included in transfer (second rule)
     assert!(set.allows(Path::new("document.txt"), false));
 
-    // But deletion: perishable include is ignored, so exclude * applies
-    assert!(!set.allows_deletion(Path::new("document.txt"), false));
+    // Deletion: the perishable include *.txt matches first, so the entry is
+    // included and remains a deletion candidate (the catch-all exclude never
+    // fires).
+    assert!(set.allows_deletion(Path::new("document.txt"), false));
 }
 
 /// Verifies perishable with directory pattern.
@@ -160,9 +164,9 @@ fn perishable_directory_pattern() {
     assert!(!set.allows(Path::new("cache"), true));
     assert!(!set.allows(Path::new("cache/file.dat"), false));
 
-    // But deletable
-    assert!(set.allows_deletion(Path::new("cache"), true));
-    assert!(set.allows_deletion(Path::new("cache/file.dat"), false));
+    // And protected from deletion (perishable exclude behaves like a plain one).
+    assert!(!set.allows_deletion(Path::new("cache"), true));
+    assert!(!set.allows_deletion(Path::new("cache/file.dat"), false));
 }
 
 /// Verifies perishable with nested directory patterns.
@@ -178,8 +182,9 @@ fn perishable_nested_directory() {
     assert!(!set.allows(Path::new("build/debug/file"), false));
     assert!(!set.allows(Path::new("build/release/binary"), false));
 
-    // Debug is deletable (perishable parent), release is not (non-perishable)
-    assert!(set.allows_deletion(Path::new("build/debug/file"), false));
+    // Both protected from deletion: the perishable `build/` exclude matches
+    // first for either path (its descendants) and protects them.
+    assert!(!set.allows_deletion(Path::new("build/debug/file"), false));
     assert!(!set.allows_deletion(Path::new("build/release/binary"), false));
 }
 
@@ -198,9 +203,9 @@ fn perishable_with_protect() {
     // Protected from deletion (protect applies regardless of perishable)
     assert!(!set.allows_deletion(Path::new("important.tmp"), false));
 
-    // Other tmp files excluded and deletable
+    // Other tmp files are excluded and now protected too (perishable exclude).
     assert!(!set.allows(Path::new("scratch.tmp"), false));
-    assert!(set.allows_deletion(Path::new("scratch.tmp"), false));
+    assert!(!set.allows_deletion(Path::new("scratch.tmp"), false));
 }
 
 /// Verifies perishable interacts correctly with risk.
@@ -218,8 +223,10 @@ fn perishable_with_risk() {
     assert!(!set.allows(Path::new("archive/current/file"), false));
     assert!(!set.allows(Path::new("archive/old/file"), false));
 
-    // Old is at risk (first protection rule matched), current is protected (second)
-    assert!(set.allows_deletion(Path::new("archive/old/file"), false));
+    // Deletion: the perishable `archive/` exclude now matches first for both
+    // paths, so the include/exclude chain reports them excluded and they are
+    // protected regardless of the risk/protect ordering.
+    assert!(!set.allows_deletion(Path::new("archive/old/file"), false));
     assert!(!set.allows_deletion(Path::new("archive/current/file"), false));
 }
 
@@ -234,7 +241,8 @@ fn perishable_sender_only() {
     // Excluded from transfer (sender side)
     assert!(!set.allows(Path::new("file.tmp"), false));
 
-    // Deletable (no receiver rule, and perishable anyway)
+    // Deletable: the rule is sender-only, so it never applies to the receiver's
+    // delete pass.
     assert!(set.allows_deletion(Path::new("file.tmp"), false));
 }
 
@@ -249,8 +257,8 @@ fn perishable_receiver_only() {
     // Transfer allowed (no sender rule)
     assert!(set.allows(Path::new("file.tmp"), false));
 
-    // Deletion: perishable is ignored, so file is deletable
-    assert!(set.allows_deletion(Path::new("file.tmp"), false));
+    // Deletion: the receiver-side perishable exclude matches and protects.
+    assert!(!set.allows_deletion(Path::new("file.tmp"), false));
 }
 
 /// Verifies clear removes perishable rules.
@@ -279,9 +287,9 @@ fn perishable_after_clear() {
     // Old rule cleared
     assert!(set.allows(Path::new("file.old"), false));
 
-    // New perishable rule works
+    // New perishable rule works: excluded from transfer and protected from delete.
     assert!(!set.allows(Path::new("file.tmp"), false));
-    assert!(set.allows_deletion(Path::new("file.tmp"), false));
+    assert!(!set.allows_deletion(Path::new("file.tmp"), false));
 }
 
 /// Verifies perishable with empty filter set.
@@ -294,9 +302,9 @@ fn only_perishable_rule() {
     assert!(set.allows(Path::new("file.txt"), false));
     assert!(set.allows_deletion(Path::new("file.txt"), false));
 
-    // Matching files excluded from transfer but deletable
+    // Matching files excluded from transfer and protected from deletion.
     assert!(!set.allows(Path::new("file.tmp"), false));
-    assert!(set.allows_deletion(Path::new("file.tmp"), false));
+    assert!(!set.allows_deletion(Path::new("file.tmp"), false));
 }
 
 /// Verifies all rules can be perishable.
@@ -314,9 +322,10 @@ fn all_perishable_rules() {
     // Transfer: scratch.tmp is excluded (second rule)
     assert!(!set.allows(Path::new("scratch.tmp"), false));
 
-    // Deletion: all perishable rules ignored, defaults to allow
+    // Deletion honours perishable rules like any other: important.tmp matches
+    // the include first (deletable), scratch.tmp matches the exclude (protected).
     assert!(set.allows_deletion(Path::new("important.tmp"), false));
-    assert!(set.allows_deletion(Path::new("scratch.tmp"), false));
+    assert!(!set.allows_deletion(Path::new("scratch.tmp"), false));
 }
 
 /// Verifies with_perishable is a builder method.
@@ -360,8 +369,8 @@ fn complex_perishable_scenario() {
     // exercises the perishable exclude where a top-level `src/scratch.tmp`
     // would not match it at all.
     assert!(!set.allows(Path::new("src/sub/scratch.tmp"), false));
-    // For deletion: perishable exclude skipped, include src/** matches, deletable
-    assert!(set.allows_deletion(Path::new("src/sub/scratch.tmp"), false));
+    // For deletion: the perishable exclude matches first and protects the entry.
+    assert!(!set.allows_deletion(Path::new("src/sub/scratch.tmp"), false));
 
     // src files included in transfer (second rule)
     assert!(set.allows(Path::new("src/main.rs"), false));
@@ -371,6 +380,7 @@ fn complex_perishable_scenario() {
     // cache files included in transfer (third rule)
     assert!(set.allows(Path::new("cache/data.bin"), false));
 
-    // cache deletion: perishable include ignored, exclude * applies
-    assert!(!set.allows_deletion(Path::new("cache/data.bin"), false));
+    // cache deletion: the perishable include cache/** matches first, so the
+    // entry is included and remains a deletion candidate.
+    assert!(set.allows_deletion(Path::new("cache/data.bin"), false));
 }

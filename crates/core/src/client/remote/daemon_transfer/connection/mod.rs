@@ -287,13 +287,25 @@ pub(crate) fn perform_daemon_handshake<R: std::io::Read, W: Write>(
     // @RSYNCD: EXIT. Other lines are MOTD output.
     loop {
         let mut line = String::new();
-        reader.read_line(&mut line).map_err(|e| {
+        let bytes = reader.read_line(&mut line).map_err(|e| {
             socket_error(
                 "read response from",
                 request.address.socket_addr_display(),
                 e,
             )
         })?;
+
+        // upstream: clientserver.c:359-361 - `read_line_old()` returns 0 (false)
+        // when the daemon closes the control socket without a proper terminator,
+        // and rsync fails with "didn't get server startup line". A 0-byte read is
+        // EOF: without this guard `trim()` yields an empty string that matches no
+        // branch below, so the loop would spin forever printing blank MOTD lines.
+        if bytes == 0 {
+            return Err(daemon_error(
+                "connection unexpectedly closed by daemon: didn't get server startup line",
+                CLIENT_SERVER_PROTOCOL_EXIT_CODE,
+            ));
+        }
 
         let trimmed = line.trim();
 

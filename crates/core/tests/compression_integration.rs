@@ -298,10 +298,11 @@ fn local_copy_emits_nstr_summaries_under_debug_nstr() {
         });
 
         // Checksum summary always fires. oc's default strong checksum choice
-        // (`Auto`) resolves locally to MD5, so that is the reported name -
-        // matching the algorithm the local delta path actually uses.
+        // (`Auto`) resolves to the strongest mutually negotiated checksum,
+        // which for a modern local copy is xxh128 - matching upstream's
+        // negotiated `file_sum_nni` (checksum.c parse_checksum_choice).
         assert!(
-            messages.iter().any(|m| m == "Client checksum: md5"),
+            messages.iter().any(|m| m == "Client checksum: xxh128"),
             "expected NSTR checksum summary for local copy: {messages:?}"
         );
         // Compress fires because -z is active. upstream calls

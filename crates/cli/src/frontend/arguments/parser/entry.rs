@@ -8,10 +8,12 @@ use std::env;
 use std::ffi::OsString;
 use std::path::PathBuf;
 
+use compress::algorithm::CompressionAlgorithm;
+
 use crate::frontend::arguments::short_options::expand_short_options;
 use crate::frontend::command_builder::clap_command;
 use crate::frontend::execution::{parse_checksum_seed_argument, parse_compress_level_argument};
-use crate::frontend::filter_rules::{collect_filter_arguments, locate_filter_arguments};
+use crate::frontend::filter_rules::{FilterOrderToken, build_filter_order};
 use crate::frontend::progress::{NameOutputLevel, ProgressSetting};
 use core::client::{
     AddressMode, DeleteMode, HumanReadableMode, StrongChecksumChoice, TcpFastOpenMode,
@@ -45,8 +47,7 @@ where
 
     let command = clap_command(program_name.as_str());
     let args = expand_short_options(&command, args);
-    let (filter_indices, rsync_filter_indices) = locate_filter_arguments(&args);
-    let mut matches = command.try_get_matches_from(args)?;
+    let mut matches = command.try_get_matches_from(args.clone())?;
 
     let show_help = matches.get_flag("help");
     let show_version = matches.get_count("version");
@@ -324,8 +325,12 @@ where
 
     let compress_level_opt = matches.get_one::<OsString>("compress-level").cloned();
     if let Some(ref value) = compress_level_opt
-        && let Ok(setting) = parse_compress_level_argument(value.as_os_str())
+        && let Ok(setting) =
+            parse_compress_level_argument(value.as_os_str(), CompressionAlgorithm::Zlib)
     {
+        // The codec here is only a base estimate for the `compress` flag; the
+        // authoritative codec-aware level is finalised in
+        // `parse_compression_settings()` once `--compress-choice` is known.
         compress = !setting.is_disabled();
     }
     let iconv = matches.remove_one::<OsString>("iconv");
@@ -655,6 +660,11 @@ where
             .remove_one::<OsString>("bwlimit")
             .map(BandwidthArgument::Limit)
     };
+    // Capture every filter-producing option in true command-line order before
+    // the per-option values below are drained. upstream: options.c dispatches
+    // each --include/--exclude/--filter/--include-from/--exclude-from/-C/-F at
+    // its argv position, so evaluation is first-match-wins over encounter order.
+    let filter_order = build_filter_order(&matches, &args);
     let excludes = matches
         .remove_many::<OsString>("exclude")
         .map(Iterator::collect)
@@ -679,12 +689,17 @@ where
         .remove_many::<OsString>("include-from")
         .map(Iterator::collect)
         .unwrap_or_default();
-    let filters: Vec<OsString> = matches
-        .remove_many::<OsString>("filter")
-        .map(Iterator::collect)
-        .unwrap_or_default();
-    let rsync_filter_shortcuts = rsync_filter_indices.len();
-    let filter_args = collect_filter_arguments(&filters, &filter_indices, &rsync_filter_indices);
+    let _ = matches.remove_many::<OsString>("filter");
+    let rsync_filter_shortcuts = matches.get_count("rsync-filter") as usize;
+    // parsed.filters is the ordered stream's `--filter`/`-f`/`-F` directives,
+    // preserving their command-line position relative to each other.
+    let filter_args: Vec<OsString> = filter_order
+        .iter()
+        .filter_map(|token| match token {
+            FilterOrderToken::Filter(rule) => Some(rule.clone()),
+            _ => None,
+        })
+        .collect();
     let cvs_exclude = matches.get_flag("cvs-exclude");
     let apple_double_skip = matches.get_flag("apple-double-skip");
     let files_from = matches
@@ -905,6 +920,7 @@ where
         exclude_from,
         include_from,
         filters: filter_args,
+        filter_order,
         cvs_exclude,
         apple_double_skip,
         rsync_filter_shortcuts,

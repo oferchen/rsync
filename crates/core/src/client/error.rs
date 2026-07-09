@@ -271,12 +271,44 @@ pub(crate) fn map_local_copy_error(error: LocalCopyError) -> ClientError {
                 rsync_error!(code.as_i32(), "stopping at requested limit").with_role(Role::Client);
             ClientError::with_code(code, message)
         }
+        LocalCopyErrorKind::PartialTransfer => {
+            // upstream: main.c:1356 - `some files/attrs were not transferred
+            // (see previous errors)` is printed by the sending half when
+            // `io_error` is set (e.g. an unconvertible --iconv filename), so
+            // who_am_i() tags the diagnostic `[sender]`. The per-entry cause
+            // was already emitted at the skip site.
+            let code = ExitCode::PartialTransfer;
+            let message = rsync_error!(
+                code.as_i32(),
+                "some files/attrs were not transferred (see previous errors)"
+            )
+            .with_role(Role::Sender);
+            ClientError::with_code(code, message)
+        }
         LocalCopyErrorKind::FilterSyntax { message } => {
             let code = ExitCode::Syntax;
             let msg = rsync_error!(code.as_i32(), "{}", message).with_role(Role::Client);
             ClientError::with_code(code, msg)
         }
+        LocalCopyErrorKind::Interrupted => signal_interrupt_error(),
     }
+}
+
+/// Builds the single signal-abort diagnostic emitted when a transfer is
+/// interrupted by SIGINT/SIGTERM/SIGHUP.
+///
+/// upstream: `rsync.c:sig_int()` calls `exit_cleanup(RERR_SIGNAL)` (20), and
+/// `cleanup.c:_exit_cleanup()` routes it through `log.c:log_exit()`, which
+/// renders the fixed `rerr_names` entry for `RERR_SIGNAL` (log.c:95) as
+/// `rsync error: received SIGINT, SIGTERM, or SIGHUP (code 20) at ... [<role>]`.
+/// The three interrupt signals share one message; upstream never names the
+/// specific signal here. who_am_i() tags the sending half `[sender]`.
+#[cold]
+pub(crate) fn signal_interrupt_error() -> ClientError {
+    let code = ExitCode::Signal;
+    let message =
+        rsync_error!(code.as_i32(), "received SIGINT, SIGTERM, or SIGHUP").with_role(Role::Sender);
+    ClientError::with_code(code, message)
 }
 
 #[cold]
@@ -671,6 +703,36 @@ mod tests {
             let msg = client_error.to_string();
             assert!(msg.contains("link_stat \"/tmp/nope\" failed"), "{msg}");
             assert!(!msg.contains("file has vanished"), "{msg}");
+        }
+
+        /// upstream: rsync.c:sig_int -> exit_cleanup(RERR_SIGNAL) (20);
+        /// log.c:log_exit renders the fixed log.c:95 rerr_names entry
+        /// `received SIGINT, SIGTERM, or SIGHUP (code 20)` once, tagged with the
+        /// sending half's role. The per-file RERR_PARTIAL (23) must not leak
+        /// into the code shown, and the wording must not read "interrupted by
+        /// signal".
+        #[test]
+        fn map_interrupted_uses_signal_code_and_upstream_wording() {
+            let client_error = map_local_copy_error(LocalCopyError::interrupted());
+
+            assert_eq!(client_error.code(), ExitCode::Signal);
+            assert_eq!(client_error.exit_code(), 20);
+            let msg = client_error.to_string();
+            assert!(msg.contains("received SIGINT, SIGTERM, or SIGHUP"), "{msg}");
+            assert!(msg.contains("(code 20)"), "{msg}");
+            assert!(msg.contains("[sender="), "{msg}");
+            assert!(!msg.contains("interrupted by signal"), "{msg}");
+            assert!(!msg.contains("(code 23)"), "{msg}");
+        }
+
+        #[test]
+        fn signal_interrupt_error_matches_map_output() {
+            let direct = signal_interrupt_error();
+            assert_eq!(direct.code(), ExitCode::Signal);
+            assert_eq!(
+                direct.to_string(),
+                map_local_copy_error(LocalCopyError::interrupted()).to_string()
+            );
         }
 
         #[test]

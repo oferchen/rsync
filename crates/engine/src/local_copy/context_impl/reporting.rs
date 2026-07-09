@@ -155,6 +155,15 @@ impl<'a> CopyContext<'a> {
     /// times independently of the generator's delayed-deletion phase.
     // upstream: generator.c:2419 do_delayed_deletions() runs after generate_files()
     pub(super) fn flush_deferred_deletions(&mut self) -> Result<(), LocalCopyError> {
+        // Nothing queued means no delete pass ran, so there is no notice to
+        // emit - upstream only prints the skip notice from inside delete_in_dir
+        // when a deletion was actually pending. Checking this first avoids a
+        // spurious "IO error encountered -- skipping file deletion" when an
+        // I/O error occurred (e.g. an unconvertible --iconv name) but --delete
+        // was not requested.
+        if self.deferred_ops.deletions.is_empty() {
+            return Ok(());
+        }
         if self.delete_pass_blocked_by_io_error() {
             // I/O errors occurred and --ignore-errors is not set; suppress
             // deletions to prevent data loss and emit the one-shot skip

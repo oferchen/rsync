@@ -7,7 +7,15 @@ use engine::signature::SignatureAlgorithm;
 /// Enumerates the strong checksum algorithms recognised by the client.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum StrongChecksumAlgorithm {
-    /// Automatically selects the negotiated algorithm (locally resolved to MD5).
+    /// Automatically selects the negotiated algorithm.
+    ///
+    /// Mirrors upstream `checksum.c` negotiation (`negotiate_the_strings`,
+    /// `parse_checksum_choice`): when no explicit `--checksum-choice` is given
+    /// and both peers advertise it, the strongest mutually supported checksum
+    /// wins. For a local copy - where upstream still negotiates over the forked
+    /// child's pipe with `do_negotiated_strings` set (protocol 31+) - that is
+    /// `xxh128` (`CSUM_XXH3_128`). MD5/MD4 remain the fallback for peers too old
+    /// to negotiate, reached via an explicit `--checksum-choice`.
     Auto,
     /// No transfer checksum; disables delta and forces whole-file transfers.
     ///
@@ -35,11 +43,15 @@ impl StrongChecksumAlgorithm {
     pub const fn to_signature_algorithm(self) -> SignatureAlgorithm {
         use checksums::strong::Md5Seed;
         match self {
-            StrongChecksumAlgorithm::Auto | StrongChecksumAlgorithm::Md5 => {
-                SignatureAlgorithm::Md5 {
-                    seed_config: Md5Seed::none(),
-                }
-            }
+            // `auto` resolves to the strongest mutually negotiated checksum,
+            // which for a modern (protocol 31+) transfer is xxh128. Upstream
+            // `parse_checksum_choice` sets `file_sum_nni` to the negotiated
+            // `valid_checksums.negotiated_nni`, whose ordering lists
+            // `CSUM_XXH3_128` first (`checksum.c`).
+            StrongChecksumAlgorithm::Auto => SignatureAlgorithm::Xxh3_128 { seed: 0 },
+            StrongChecksumAlgorithm::Md5 => SignatureAlgorithm::Md5 {
+                seed_config: Md5Seed::none(),
+            },
             // `none` disables delta (whole_file is forced upstream), but a
             // signature algorithm is still required by the engine's type
             // signature. MD4 matches upstream's default fallback semantics
@@ -233,6 +245,36 @@ mod tests {
         }
 
         #[test]
+        fn auto_resolves_to_xxh128() {
+            // upstream: checksum.c negotiate_the_strings/parse_checksum_choice -
+            // the negotiated (auto) checksum is the strongest mutually supported,
+            // which for a modern local copy is xxh128, not md5.
+            assert_eq!(
+                StrongChecksumAlgorithm::Auto.to_signature_algorithm(),
+                SignatureAlgorithm::Xxh3_128 { seed: 0 }
+            );
+        }
+
+        #[test]
+        fn explicit_md5_override_is_preserved() {
+            // An explicit --checksum-choice=md5 must still force MD5, not xxh128.
+            assert_eq!(
+                StrongChecksumAlgorithm::Md5.to_signature_algorithm(),
+                SignatureAlgorithm::Md5 {
+                    seed_config: checksums::strong::Md5Seed::none(),
+                }
+            );
+        }
+
+        #[test]
+        fn explicit_md4_override_is_preserved() {
+            assert_eq!(
+                StrongChecksumAlgorithm::Md4.to_signature_algorithm(),
+                SignatureAlgorithm::Md4
+            );
+        }
+
+        #[test]
         fn clone_and_copy() {
             let alg = StrongChecksumAlgorithm::Md5;
             let cloned = alg;
@@ -345,7 +387,34 @@ mod tests {
         #[test]
         fn file_signature_algorithm() {
             let choice = StrongChecksumChoice::parse("md5").unwrap();
-            let _ = choice.file_signature_algorithm();
+            assert_eq!(
+                choice.file_signature_algorithm(),
+                SignatureAlgorithm::Md5 {
+                    seed_config: checksums::strong::Md5Seed::none(),
+                }
+            );
+        }
+
+        #[test]
+        fn default_file_signature_algorithm_is_xxh128() {
+            // The default (Auto) --checksum whole-file compare uses xxh128,
+            // matching upstream's negotiated strongest checksum for a local copy.
+            let choice = StrongChecksumChoice::default();
+            assert_eq!(
+                choice.file_signature_algorithm(),
+                SignatureAlgorithm::Xxh3_128 { seed: 0 }
+            );
+        }
+
+        #[test]
+        fn explicit_md5_file_signature_algorithm_is_md5() {
+            let choice = StrongChecksumChoice::parse("md5").unwrap();
+            assert_eq!(
+                choice.file_signature_algorithm(),
+                SignatureAlgorithm::Md5 {
+                    seed_config: checksums::strong::Md5Seed::none(),
+                }
+            );
         }
     }
 }

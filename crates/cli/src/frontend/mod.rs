@@ -148,7 +148,7 @@ pub(crate) use filter_rules::MergeDirective;
 #[cfg(test)]
 pub(crate) use filter_rules::{
     FilterDirective, append_filter_rules_from_files, apply_merge_directive,
-    collect_filter_arguments, merge_directive_options, parse_filter_directive,
+    merge_directive_options, parse_filter_directive,
 };
 use help::help_text;
 use lsm_status::render_lsm_status;
@@ -287,8 +287,15 @@ where
         return server::run_daemon_mode(daemon_args, stdout, stderr);
     }
 
+    // Install signal handlers for the client transfer path so an interrupt
+    // (SIGINT/SIGTERM/SIGHUP) finalises any in-progress --partial file and
+    // exits with the rsync signal code instead of terminating abruptly.
+    // upstream: main.c installs sig handlers; cleanup.c:exit_cleanup finalises
+    // the partial and exits with RERR_SIGNAL.
+    install_client_signal_handling();
+
     let mut stderr_sink = MessageSink::with_brand(stderr, brand);
-    match parse_args(args) {
+    let exit_code = match parse_args(args) {
         Ok(parsed) => {
             let outbuf_mode = match parsed.outbuf.as_ref() {
                 Some(value) => match parse_outbuf_mode(value.as_os_str()) {
@@ -345,7 +352,50 @@ where
             }
             1
         }
+    };
+
+    // upstream: cleanup.c:exit_cleanup exits with RERR_SIGNAL after finalising
+    // partials when an interrupt signal was received. Override whatever the
+    // interrupted transfer returned with the signal's exit code. Restricted to
+    // SIGINT/SIGTERM/SIGHUP so a broken output pipe (SIGPIPE) does not rewrite
+    // an otherwise-successful exit code.
+    match core::signal::shutdown_reason() {
+        Some(
+            reason @ (core::signal::ShutdownReason::Interrupted
+            | core::signal::ShutdownReason::Terminated
+            | core::signal::ShutdownReason::HangUp),
+        ) => i32::from(reason.exit_code()),
+        _ => exit_code,
     }
+}
+
+/// Installs client-side signal handlers and a watcher that, on a second
+/// (abort) interrupt, finalises in-progress `--partial` temp files and exits
+/// with the rsync signal code. A single interrupt is handled gracefully by the
+/// copy loop, which stops mid-file and lets each transfer's guard finalise its
+/// partial during normal unwinding.
+fn install_client_signal_handling() {
+    use std::sync::atomic::{AtomicBool, Ordering};
+    static INSTALLED: AtomicBool = AtomicBool::new(false);
+    if INSTALLED.swap(true, Ordering::SeqCst) {
+        return;
+    }
+    // A failure here is non-fatal: the transfer still runs, just without
+    // graceful partial finalisation on signal.
+    let _ = core::signal::install_signal_handlers();
+    std::thread::spawn(|| {
+        loop {
+            if core::signal::is_abort_requested() {
+                engine::CleanupManager::global().finalize_partials();
+                let code = core::signal::shutdown_reason()
+                    .map_or(i32::from(core::exit_code::ExitCode::Signal), |r| {
+                        i32::from(r.exit_code())
+                    });
+                std::process::exit(code);
+            }
+            std::thread::sleep(std::time::Duration::from_millis(50));
+        }
+    });
 }
 
 /// Converts a numeric exit code into an [`std::process::ExitCode`].

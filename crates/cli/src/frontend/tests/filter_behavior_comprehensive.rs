@@ -380,6 +380,93 @@ fn transfer_with_short_f_include_then_exclude_all() {
     assert!(!dest_root.join("skip.log").exists());
 }
 
+/// Sets up a source tree with a nested `sub/note.log` and returns the
+/// trailing-slash source operand plus destination root for filter-order tests.
+#[cfg(test)]
+fn setup_nested_log_transfer(tmp: &std::path::Path) -> (OsString, std::path::PathBuf) {
+    let source_root = tmp.join("source");
+    let dest_root = tmp.join("dest");
+    std::fs::create_dir_all(source_root.join("sub")).expect("create source sub");
+    std::fs::create_dir_all(&dest_root).expect("create dest root");
+    std::fs::write(source_root.join("sub/note.log"), b"note").expect("write nested log");
+
+    let mut source_operand = source_root.into_os_string();
+    source_operand.push(std::path::MAIN_SEPARATOR.to_string());
+    (source_operand, dest_root)
+}
+
+/// upstream: options.c feeds `--exclude` then `--include` in argv order, so the
+/// earlier `- *.log` wins first-match and `sub/note.log` is excluded.
+#[test]
+fn transfer_exclude_before_include_excludes_nested_match() {
+    use tempfile::tempdir;
+
+    let tmp = tempdir().expect("tempdir");
+    let (source_operand, dest_root) = setup_nested_log_transfer(tmp.path());
+
+    let (code, _stdout, _stderr) = run_with_args([
+        OsString::from(RSYNC),
+        OsString::from("-r"),
+        OsString::from("--exclude"),
+        OsString::from("*.log"),
+        OsString::from("--include"),
+        OsString::from("sub/note.log"),
+        source_operand,
+        dest_root.clone().into_os_string(),
+    ]);
+
+    assert_eq!(code, 0);
+    assert!(!dest_root.join("sub/note.log").exists());
+}
+
+/// The reverse order re-includes the file before the exclude is evaluated, so
+/// `sub/note.log` is kept.
+#[test]
+fn transfer_include_before_exclude_keeps_nested_match() {
+    use tempfile::tempdir;
+
+    let tmp = tempdir().expect("tempdir");
+    let (source_operand, dest_root) = setup_nested_log_transfer(tmp.path());
+
+    let (code, _stdout, _stderr) = run_with_args([
+        OsString::from(RSYNC),
+        OsString::from("-r"),
+        OsString::from("--include"),
+        OsString::from("sub/note.log"),
+        OsString::from("--exclude"),
+        OsString::from("*.log"),
+        source_operand,
+        dest_root.clone().into_os_string(),
+    ]);
+
+    assert_eq!(code, 0);
+    assert!(dest_root.join("sub/note.log").exists());
+}
+
+/// A `-f '- *.log'` exclude ahead of `--include` also wins first-match, mirroring
+/// upstream's argv-order dispatch of `--filter` and `--include`.
+#[test]
+fn transfer_filter_exclude_before_include_excludes_nested_match() {
+    use tempfile::tempdir;
+
+    let tmp = tempdir().expect("tempdir");
+    let (source_operand, dest_root) = setup_nested_log_transfer(tmp.path());
+
+    let (code, _stdout, _stderr) = run_with_args([
+        OsString::from(RSYNC),
+        OsString::from("-r"),
+        OsString::from("-f"),
+        OsString::from("- *.log"),
+        OsString::from("--include"),
+        OsString::from("sub/note.log"),
+        source_operand,
+        dest_root.clone().into_os_string(),
+    ]);
+
+    assert_eq!(code, 0);
+    assert!(!dest_root.join("sub/note.log").exists());
+}
+
 #[test]
 fn transfer_with_short_f_clear_resets_rules() {
     use tempfile::tempdir;
@@ -673,78 +760,61 @@ fn exclude_from_and_filter_merge_produce_same_result() {
 }
 
 #[test]
-fn locate_filter_arguments_finds_short_f() {
-    use crate::frontend::filter_rules::locate_filter_arguments;
-
-    let args: Vec<OsString> = vec![
-        OsString::from("rsync"),
-        OsString::from("-f"),
-        OsString::from("- *.bak"),
-    ];
-    let (filter_indices, rsync_filter_indices) = locate_filter_arguments(&args);
-    assert_eq!(filter_indices, vec![1]);
-    assert!(rsync_filter_indices.is_empty());
-}
-
-#[test]
-fn locate_filter_arguments_finds_short_f_and_long_filter() {
-    use crate::frontend::filter_rules::locate_filter_arguments;
-
-    let args: Vec<OsString> = vec![
-        OsString::from("rsync"),
+fn filter_order_preserves_short_f_and_long_filter_sequence() {
+    let parsed = parse_args([
+        OsString::from(RSYNC),
         OsString::from("-f"),
         OsString::from("- *.bak"),
         OsString::from("--filter"),
         OsString::from("+ *.txt"),
-    ];
-    let (filter_indices, _) = locate_filter_arguments(&args);
-    assert_eq!(filter_indices, vec![1, 3]);
+        OsString::from("source"),
+        OsString::from("dest"),
+    ])
+    .expect("parse");
+
+    assert_eq!(
+        parsed.filters,
+        vec![OsString::from("- *.bak"), OsString::from("+ *.txt")]
+    );
 }
 
 #[test]
-fn locate_filter_arguments_short_f_stops_at_double_dash() {
-    use crate::frontend::filter_rules::locate_filter_arguments;
-
-    let args: Vec<OsString> = vec![
-        OsString::from("rsync"),
+fn filter_order_stops_at_double_dash() {
+    // After `--`, `-f` is a positional operand, not a filter option.
+    let parsed = parse_args([
+        OsString::from(RSYNC),
         OsString::from("--"),
         OsString::from("-f"),
-        OsString::from("- *.bak"),
-    ];
-    let (filter_indices, _) = locate_filter_arguments(&args);
-    assert!(filter_indices.is_empty());
+        OsString::from("dest"),
+    ])
+    .expect("parse");
+
+    assert!(parsed.filters.is_empty());
 }
 
 #[test]
-fn locate_filter_arguments_short_f_skips_value() {
-    use crate::frontend::filter_rules::locate_filter_arguments;
-
-    // After -f, the next argument is the value and should be skipped
-    let args: Vec<OsString> = vec![
-        OsString::from("rsync"),
-        OsString::from("-f"),
-        OsString::from("- *.bak"),
-        OsString::from("-f"),
-        OsString::from("+ *.txt"),
-    ];
-    let (filter_indices, _) = locate_filter_arguments(&args);
-    assert_eq!(filter_indices, vec![1, 3]);
-}
-
-#[test]
-fn locate_filter_arguments_interleaves_short_f_and_uppercase_f() {
-    use crate::frontend::filter_rules::locate_filter_arguments;
-
-    let args: Vec<OsString> = vec![
-        OsString::from("rsync"),
+fn filter_order_interleaves_short_f_and_uppercase_f() {
+    // upstream: options.c:1589-1598 - `-F` expands to a directive inserted at
+    // its argv position, so it interleaves with explicit `-f` rules in order.
+    let parsed = parse_args([
+        OsString::from(RSYNC),
         OsString::from("-F"),
         OsString::from("-f"),
         OsString::from("- *.bak"),
         OsString::from("-F"),
-    ];
-    let (filter_indices, rsync_filter_indices) = locate_filter_arguments(&args);
-    assert_eq!(filter_indices, vec![2]);
-    assert_eq!(rsync_filter_indices, vec![1, 4]);
+        OsString::from("source"),
+        OsString::from("dest"),
+    ])
+    .expect("parse");
+
+    assert_eq!(
+        parsed.filters,
+        vec![
+            OsString::from("dir-merge /.rsync-filter"),
+            OsString::from("- *.bak"),
+            OsString::from("exclude .rsync-filter"),
+        ]
+    );
 }
 
 #[test]

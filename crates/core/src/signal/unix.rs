@@ -131,6 +131,10 @@ static SIGNAL_COUNT: AtomicBool = AtomicBool::new(false);
 /// First signal: Sets graceful shutdown flag.
 /// Second signal: Sets abort flag for immediate termination.
 extern "C" fn handle_sigint(_signum: libc::c_int) {
+    // Also flip the low-level flag polled by the engine copy loop so an
+    // in-progress single-file transfer stops promptly and finalises its
+    // partial file in normal (non-signal) context.
+    fast_io::signal::mark_shutdown();
     let already_signaled = SIGNAL_COUNT.swap(true, Ordering::SeqCst);
 
     if already_signaled {
@@ -145,6 +149,7 @@ extern "C" fn handle_sigint(_signum: libc::c_int) {
 /// First signal: Sets graceful shutdown flag.
 /// Second signal: Sets abort flag for immediate termination.
 extern "C" fn handle_sigterm(_signum: libc::c_int) {
+    fast_io::signal::mark_shutdown();
     let already_signaled = SIGNAL_COUNT.swap(true, Ordering::SeqCst);
 
     if already_signaled {
@@ -159,6 +164,7 @@ extern "C" fn handle_sigterm(_signum: libc::c_int) {
 /// First signal: Sets graceful shutdown flag.
 /// Second signal: Sets abort flag for immediate termination.
 extern "C" fn handle_sighup(_signum: libc::c_int) {
+    fast_io::signal::mark_shutdown();
     let already_signaled = SIGNAL_COUNT.swap(true, Ordering::SeqCst);
 
     if already_signaled {

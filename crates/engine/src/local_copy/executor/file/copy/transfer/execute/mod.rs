@@ -297,7 +297,8 @@ pub(in crate::local_copy) fn execute_transfer(
     if matches!(append_mode, AppendMode::Skip) {
         context.record_hard_link(metadata, destination);
         context.summary_mut().record_regular_file_matched();
-        let metadata_snapshot = LocalCopyMetadata::from_metadata(metadata, None);
+        let metadata_snapshot = LocalCopyMetadata::from_metadata(metadata, None)
+            .virtualize_fake_super(source, metadata_options.fake_super_enabled());
         let total_bytes = Some(metadata_snapshot.len());
         context.record(LocalCopyRecord::new(
             record_path.to_path_buf(),
@@ -585,7 +586,10 @@ pub(in crate::local_copy) fn execute_transfer(
                 if let Some(guard) = guard.take() {
                     guard.discard();
                 }
-                if existing_metadata.is_none() {
+                // In --partial/--partial-dir mode discard() finalised the temp
+                // onto its partial destination; removing it here would defeat
+                // the whole point of keeping the partial.
+                if existing_metadata.is_none() && !partial_enabled {
                     remove_incomplete_destination(destination);
                 }
                 return Err(timeout_error);
@@ -610,7 +614,7 @@ pub(in crate::local_copy) fn execute_transfer(
             if let Some(guard) = guard.take() {
                 guard.discard();
             }
-            if existing_metadata.is_none() {
+            if existing_metadata.is_none() && !partial_enabled {
                 remove_incomplete_destination(destination);
             }
             return Err(error);
@@ -655,7 +659,8 @@ pub(in crate::local_copy) fn execute_transfer(
         .record_copy_method(CopyMethodKind::Standard);
     context.summary_mut().record_elapsed(elapsed);
 
-    let metadata_snapshot = LocalCopyMetadata::from_metadata(metadata, None);
+    let metadata_snapshot = LocalCopyMetadata::from_metadata(metadata, None)
+        .virtualize_fake_super(source, metadata_options.fake_super_enabled());
     let total_bytes = Some(metadata_snapshot.len());
     let wrote_data = outcome.literal_bytes() > 0 || append_offset > 0;
 
@@ -693,6 +698,25 @@ pub(in crate::local_copy) fn execute_transfer(
         flags.checksum_enabled,
         context.options().modify_window(),
     );
+    // upstream: generator.c itemizes a recreated --fake-super device with
+    // ITEM_REPORT_CHANGE ('c') when its %stat rdev/type differs from the
+    // destination's, even though the placeholder bytes are identical. The node
+    // is recreated, so ITEM_REPORT_TIME is set too - rendered 'T' when times
+    // are not preserved (the mtime is reset to the transfer time).
+    #[cfg(all(unix, feature = "xattr"))]
+    let change_set = if metadata_options.fake_super_enabled()
+        && destination_previously_existed
+        && super::super::super::comparison::fake_super_stat_differs(source, destination)
+    {
+        let change_set = change_set.with_checksum_changed(true);
+        if metadata_options.times() {
+            change_set
+        } else {
+            change_set.with_time_change(Some(crate::local_copy::TimeChange::TransferTime))
+        }
+    } else {
+        change_set
+    };
     let action = if is_reference_copy {
         LocalCopyAction::ReferenceCopied
     } else {

@@ -143,8 +143,9 @@ impl<'a> CopyContext<'a> {
             checksum_cache: None,
             io_errors_occurred: false,
             io_error_delete_warning_emitted: false,
+            iconv_conversion_error: false,
             multi_source: false,
-            verified_parents: HashSet::new(),
+            verified_parents: HashMap::new(),
             batch_flist_writer,
             batch_delta_buf,
             batch_delta_entries: Vec::new(),
@@ -886,8 +887,18 @@ impl<'a> CopyContext<'a> {
         Ok(())
     }
 
-    /// Forcibly removes a destination entry (backing it up first if needed),
-    /// and records the deletion in the summary.
+    /// Forcibly removes a type-conflicting destination entry (backing it up
+    /// first if needed) to make room for an incoming item of a different type.
+    ///
+    /// upstream: generator.c:1240 recv_generator() clears the conflicting
+    /// destination with `delete_item(fname, mode, del_opts | DEL_FOR_FILE)`.
+    /// delete.c:178-194 `delete_item()` suppresses `log_delete()` and the
+    /// `stats.deleted_files` bump whenever `flags & DEL_MAKE_ROOM` is set, so
+    /// the make-room removal of the conflicting entry itself is silent and
+    /// uncounted (unlike a genuine delete-pass deletion). When that entry is a
+    /// directory, `delete_dir_contents()` (delete.c:83) recurses with
+    /// DEL_MAKE_ROOM stripped, so its contents are itemized (`*deleting`) and
+    /// counted like ordinary deletions while the directory node stays silent.
     pub(super) fn force_remove_destination(
         &mut self,
         destination: &Path,
@@ -897,22 +908,18 @@ impl<'a> CopyContext<'a> {
         let file_type = metadata.file_type();
 
         if self.mode.is_dry_run() {
-            self.summary_mut().record_deletion(file_type);
-            if let Some(path) = relative {
-                self.record(LocalCopyRecord::new(
-                    path.to_path_buf(),
-                    LocalCopyAction::EntryDeleted,
-                    0,
-                    None,
-                    Duration::default(),
-                    None,
-                ));
+            if file_type.is_dir() {
+                self.record_make_room_contents(destination, relative)?;
             }
             self.register_progress();
             return Ok(());
         }
 
         self.backup_existing_entry(destination, relative, file_type)?;
+
+        if file_type.is_dir() {
+            self.record_make_room_contents(destination, relative)?;
+        }
 
         let context = if file_type.is_dir() {
             "remove existing directory"
@@ -938,20 +945,29 @@ impl<'a> CopyContext<'a> {
             }
         }
 
-        self.summary_mut().record_deletion(file_type);
-        if let Some(path) = relative {
-            self.record(LocalCopyRecord::new(
-                path.to_path_buf(),
-                LocalCopyAction::EntryDeleted,
-                0,
-                None,
-                Duration::default(),
-                None,
-            ));
-        }
         self.register_progress();
 
         Ok(())
+    }
+
+    /// Itemizes and counts the contents of a conflicting directory that is
+    /// being cleared to make room for an incoming item, mirroring upstream's
+    /// `delete_dir_contents()` recursion (delete.c:83): the children are
+    /// reported like delete-pass deletions (DEL_MAKE_ROOM stripped) while the
+    /// directory node itself is removed silently by the caller.
+    fn record_make_room_contents(
+        &mut self,
+        destination: &Path,
+        relative: Option<&Path>,
+    ) -> Result<(), LocalCopyError> {
+        let mut subtree_path = destination.to_path_buf();
+        let mut subtree_relative = relative.map(Path::to_path_buf).unwrap_or_else(|| {
+            destination
+                .file_name()
+                .map(PathBuf::from)
+                .unwrap_or_default()
+        });
+        record_directory_subtree(self, &mut subtree_path, &mut subtree_relative)
     }
 
     /// Commits a single deferred update: moves the staged file to its final
@@ -1047,6 +1063,23 @@ impl<'a> CopyContext<'a> {
     /// deletion operations are suppressed to prevent data loss.
     pub(super) fn record_io_error(&mut self) {
         self.io_errors_occurred = true;
+    }
+
+    /// Records that an `--iconv` filename could not be strictly transcoded and
+    /// its entry was skipped.
+    ///
+    /// Also suppresses deletions like any other general I/O error, matching
+    /// upstream where `io_error |= IOERR_GENERAL` gates the delete pass.
+    // upstream: flist.c:1631 send_file1() sets io_error |= IOERR_GENERAL.
+    pub(super) fn record_iconv_conversion_error(&mut self) {
+        self.iconv_conversion_error = true;
+        self.io_errors_occurred = true;
+    }
+
+    /// Reports whether any `--iconv` filename conversion was skipped, so the
+    /// transfer can finish with exit code 23 (`RERR_PARTIAL`).
+    pub(super) const fn iconv_conversion_error_occurred(&self) -> bool {
+        self.iconv_conversion_error
     }
 
     /// Reports whether deletions should proceed despite I/O errors.

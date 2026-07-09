@@ -331,11 +331,11 @@ fn perishable_exclude_with_protect() {
     assert!(!set.allows(Path::new("temp/scratch.txt"), false));
     assert!(!set.allows(Path::new("temp/keep/important.txt"), false));
 
-    // For deletion: perishable exclude ignored
-    // temp/scratch: no protection, deletable
-    assert!(set.allows_deletion(Path::new("temp/scratch.txt"), false));
+    // For deletion: the top-level scan runs with `ignore_perishable` unset
+    // (upstream delete.c:147), so the perishable exclude protects temp/scratch.
+    assert!(!set.allows_deletion(Path::new("temp/scratch.txt"), false));
 
-    // temp/keep: protected, not deletable
+    // temp/keep: protected by both the exclude and the protect rule.
     assert!(!set.allows_deletion(Path::new("temp/keep/important.txt"), false));
 }
 

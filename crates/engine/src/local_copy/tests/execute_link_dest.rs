@@ -1194,10 +1194,16 @@ fn link_dest_permission_mismatch_with_perms_enabled() {
 
 #[cfg(all(unix, feature = "xattr"))]
 #[test]
-fn link_dest_match_reapplies_differing_xattrs() {
-    // upstream: generator.c try_dests_reg() - a --link-dest DATA match whose
-    // attributes differ still runs set_file_attrs, so the linked inode ends
-    // with the source's xattrs.
+fn link_dest_copies_when_only_xattrs_differ() {
+    // upstream: generator.c:967-1054 try_dests_reg() - a --link-dest basis that
+    // matches the source's DATA (quick_check_ok) but whose preserved attributes
+    // differ is match_level 2, NOT match_level 3. Upstream does not hard-link a
+    // match_level-2 basis: it falls through to copy_altdest_file() + set_file_attrs,
+    // producing a fresh destination inode carrying the source's xattrs while the
+    // basis is left untouched. Hard-linking it and reapplying the source xattr
+    // would corrupt the shared basis inode and leave both files with an extra hard
+    // link - the failure the upstream `xattrs` conformance test catches when a
+    // single -X value on file1 is changed under --fake-super --link-dest.
     let temp = tempdir().expect("tempdir");
     let source_dir = temp.path().join("source");
     fs::create_dir_all(&source_dir).expect("create source");
@@ -1213,7 +1219,7 @@ fn link_dest_match_reapplies_differing_xattrs() {
     fs::write(&link_dest_file, b"identical content").expect("write link-dest");
     xattr::set(&link_dest_file, "user.k", b"v1").expect("set basis xattr");
 
-    // Same data + mtime so the basis is a DATA match.
+    // Same data + mtime so the basis is a DATA match (quick-check passes).
     let mtime = fs::metadata(&source_file)
         .expect("meta")
         .modified()
@@ -1234,17 +1240,30 @@ fn link_dest_match_reapplies_differing_xattrs() {
         .times(true)
         .xattrs(true)
         .extend_link_dests([link_dest_dir]);
-    plan.execute_with_options(LocalCopyExecution::Apply, options)
+    let summary = plan
+        .execute_with_options(LocalCopyExecution::Apply, options)
         .expect("copy succeeds");
 
-    // The source xattr (v2) wins, not the basis xattr (v1).
+    // The destination carries the source xattr (v2), copied from the basis data.
     let got = xattr::get(&dest_file, "user.k")
         .expect("read")
         .expect("present");
-    assert_eq!(got, b"v2", "differing link-dest xattr must be corrected");
+    assert_eq!(got, b"v2", "destination must carry the source xattr");
 
-    // Still hard-linked to the basis.
+    // match_level 2: the file is copied, not hard-linked.
     let dest_meta = fs::metadata(&dest_file).expect("dest meta");
     let basis_meta = fs::metadata(&link_dest_file).expect("basis meta");
-    assert_eq!(dest_meta.ino(), basis_meta.ino(), "must remain hard-linked");
+    assert_ne!(
+        dest_meta.ino(),
+        basis_meta.ino(),
+        "a match_level-2 basis (attrs differ) must be copied, not hard-linked"
+    );
+    assert_eq!(dest_meta.nlink(), 1, "copied file must not gain a hard link");
+    assert_eq!(summary.hard_links_created(), 0, "no hard link at match_level 2");
+
+    // The basis inode is left untouched - its xattr is not overwritten.
+    let basis_xattr = xattr::get(&link_dest_file, "user.k")
+        .expect("read basis")
+        .expect("basis xattr present");
+    assert_eq!(basis_xattr, b"v1", "link-dest basis must not be modified");
 }

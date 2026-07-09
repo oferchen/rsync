@@ -138,7 +138,7 @@ impl<'a> CopyContext<'a> {
 
         // Fast path: skip stat if this parent was already verified as a directory.
         // With 10K files in one directory, this avoids 9,999 redundant statx calls.
-        if self.verified_parents.contains(parent) {
+        if self.verified_parents.contains_key(parent) {
             return Ok(());
         }
 
@@ -277,8 +277,32 @@ impl<'a> CopyContext<'a> {
         };
 
         if result.is_ok() {
-            self.verified_parents.insert(parent.to_path_buf());
+            // Insert with an unresolved device id; the FICLONE fast path fills
+            // it in on the first sibling file that needs it.
+            self.verified_parents.insert(parent.to_path_buf(), None);
         }
         result
+    }
+
+    /// Returns whether `source` shares a filesystem with `destination`, reusing
+    /// the verified-parent device cache so sibling files in one directory do
+    /// not each re-`statx` the parent directory.
+    ///
+    /// The parent's device id is invariant across siblings and was already
+    /// verified to exist by [`prepare_parent_directory`](Self::prepare_parent_directory)
+    /// this transfer, so it is memoized rather than re-resolved per file.
+    /// Delegates the comparison to [`same_filesystem`]; returns `None` when
+    /// either device id is unavailable so the FICLONE fast path still attempts
+    /// the reflink and falls back on `EXDEV`.
+    #[cfg(target_os = "linux")]
+    pub(super) fn same_filesystem_as_source(
+        &mut self,
+        source: &Path,
+        source_metadata: &fs::Metadata,
+        destination: &Path,
+    ) -> Option<bool> {
+        let parent = destination.parent()?;
+        let parent_device = cached_parent_device(&mut self.verified_parents, parent);
+        same_filesystem(source, source_metadata, parent_device)
     }
 }

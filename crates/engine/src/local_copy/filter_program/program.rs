@@ -25,6 +25,13 @@ pub(crate) const INVALID_OPERAND_EXIT_CODE: i32 = 23;
 /// Maps to upstream rsync's `RERR_SYNTAX` (1) and `core::exit_code::ExitCode::Syntax`.
 pub(crate) const MISSING_OPERANDS_EXIT_CODE: i32 = 1;
 
+/// Exit code returned when the transfer is aborted by SIGINT/SIGTERM/SIGHUP.
+///
+/// Maps to upstream rsync's `RERR_SIGNAL` (20) and `core::exit_code::ExitCode::Signal`.
+/// upstream: cleanup.c:_exit_cleanup exits with `RERR_SIGNAL` after finalising
+/// partials when `sig_int` (rsync.c) requests a controlled shutdown.
+pub(crate) const SIGNAL_EXIT_CODE: i32 = 20;
+
 /// Exit code returned when the transfer exceeds the configured timeout.
 ///
 /// Maps to upstream rsync's `RERR_TIMEOUT` (30) and `core::exit_code::ExitCode::Timeout`.

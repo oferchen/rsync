@@ -9,7 +9,9 @@ mod sources;
 mod special;
 mod util;
 
-pub(crate) use cleanup::{delete_extraneous_entries, remove_source_entry_if_requested};
+pub(crate) use cleanup::{
+    delete_extraneous_entries, record_directory_subtree, remove_source_entry_if_requested,
+};
 pub(crate) use directory::ChecksumCache;
 pub(crate) use directory::{
     capture_batch_file_entry, copy_directory_recursive, copy_directory_walk_one_level, is_device,
@@ -34,7 +36,9 @@ pub(crate) use file::{
     files_checksum_match, maybe_preallocate_destination, partial_destination_path,
     temporary_destination_path,
 };
-pub(crate) use iconv::transcode_filename_component;
+pub(crate) use iconv::{
+    emit_cannot_convert_filename, name_is_convertible, transcode_filename_component,
+};
 pub(crate) use reference::{
     ReferenceDecision, ReferenceQuery, find_compare_dest_symlink, find_copy_dest_basis,
     find_copy_dest_symlink, find_reference_action,
