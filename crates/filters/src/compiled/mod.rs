@@ -45,6 +45,7 @@ impl CompiledRule {
             no_inherit: _,
             cvs_mode: _,
             abs_path: _,
+            word_split: _,
             no_prefixes: _,
             no_prefixes_include: _,
         } = rule;
@@ -207,6 +208,7 @@ mod tests {
             no_inherit: false,
             cvs_mode: false,
             abs_path: false,
+            word_split: false,
             no_prefixes: false,
             no_prefixes_include: false,
         };
@@ -231,6 +233,7 @@ mod tests {
             no_inherit: false,
             cvs_mode: false,
             abs_path: false,
+            word_split: false,
             no_prefixes: false,
             no_prefixes_include: false,
         };
@@ -252,6 +255,7 @@ mod tests {
             no_inherit: false,
             cvs_mode: false,
             abs_path: false,
+            word_split: false,
             no_prefixes: false,
             no_prefixes_include: false,
         };
@@ -278,6 +282,7 @@ mod tests {
             no_inherit: false,
             cvs_mode: false,
             abs_path: false,
+            word_split: false,
             no_prefixes: false,
             no_prefixes_include: false,
         };
@@ -309,6 +314,7 @@ mod tests {
             no_inherit: false,
             cvs_mode: false,
             abs_path: false,
+            word_split: false,
             no_prefixes: false,
             no_prefixes_include: false,
         };
@@ -352,6 +358,7 @@ mod tests {
                 no_inherit: false,
                 cvs_mode: false,
                 abs_path: false,
+                word_split: false,
                 no_prefixes: false,
                 no_prefixes_include: false,
             };
@@ -384,6 +391,7 @@ mod tests {
                 no_inherit: false,
                 cvs_mode: false,
                 abs_path: false,
+                word_split: false,
                 no_prefixes: false,
                 no_prefixes_include: false,
             };
@@ -413,6 +421,7 @@ mod tests {
                 no_inherit: false,
                 cvs_mode: false,
                 abs_path: false,
+                word_split: false,
                 no_prefixes: false,
                 no_prefixes_include: false,
             };
@@ -440,6 +449,7 @@ mod tests {
                 no_inherit: false,
                 cvs_mode: false,
                 abs_path: false,
+                word_split: false,
                 no_prefixes: false,
                 no_prefixes_include: false,
             };
@@ -473,6 +483,7 @@ mod tests {
             no_inherit: false,
             cvs_mode: false,
             abs_path: false,
+            word_split: false,
             no_prefixes: false,
             no_prefixes_include: false,
         };
@@ -508,6 +519,7 @@ mod tests {
             no_inherit: false,
             cvs_mode: false,
             abs_path: false,
+            word_split: false,
             no_prefixes: false,
             no_prefixes_include: false,
         };
@@ -534,6 +546,7 @@ mod tests {
             no_inherit: false,
             cvs_mode: false,
             abs_path: false,
+            word_split: false,
             no_prefixes: false,
             no_prefixes_include: false,
         };
@@ -595,6 +608,7 @@ mod tests {
             no_inherit: false,
             cvs_mode: false,
             abs_path: false,
+            word_split: false,
             no_prefixes: false,
             no_prefixes_include: false,
         })
@@ -795,6 +809,7 @@ mod tests {
             no_inherit: false,
             cvs_mode: false,
             abs_path: false,
+            word_split: false,
             no_prefixes: false,
             no_prefixes_include: false,
         };
@@ -813,6 +828,7 @@ mod tests {
             no_inherit: false,
             cvs_mode: false,
             abs_path: false,
+            word_split: false,
             no_prefixes: false,
             no_prefixes_include: false,
         };
