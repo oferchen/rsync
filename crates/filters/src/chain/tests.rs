@@ -947,3 +947,74 @@ fn cvs_dir_merge_preserves_both_sides_without_delete_excluded() {
 
     chain.leave_directory(guard);
 }
+
+// upstream: exclude.c:1279-1283, 1499 - a `:w` dir-merge (FILTRULE_WORD_SPLIT)
+// tokenises its merge file on any whitespace and parses each token as its own
+// rule. With the `_` separator standing in for the space between a rule's
+// prefix and its pattern, `-_*.log -_*.tmp -_*.bak` on one line becomes three
+// separate excludes. Without word-split the whole line is one malformed rule
+// and none of the three patterns take effect (the remote-sender bug this
+// guards against).
+#[test]
+fn dir_merge_word_split_parses_whitespace_separated_rules() {
+    let dir = TempDir::new().unwrap();
+    // Tab and space mixed, and split across two lines, to prove any whitespace
+    // acts as a token boundary (upstream isspace()).
+    fs::write(dir.path().join(".filt"), "-_*.log\t-_*.tmp -_*.bak\n").unwrap();
+
+    let mut chain = FilterChain::empty();
+    chain.add_merge_config(DirMergeConfig::new(".filt").with_word_split(true));
+
+    let guard = chain.enter_directory(dir.path()).unwrap();
+    assert_eq!(guard.pushed_count(), 1);
+
+    assert!(!chain.allows(Path::new("a.log"), false));
+    assert!(!chain.allows(Path::new("b.tmp"), false));
+    assert!(!chain.allows(Path::new("c.bak"), false));
+    assert!(chain.allows(Path::new("keep.dat"), false));
+
+    chain.leave_directory(guard);
+}
+
+// upstream: exclude.c:1122-1133, 1499 - `:w-` combines FILTRULE_WORD_SPLIT with
+// FILTRULE_NO_PREFIXES: the file is tokenised on whitespace and each token is a
+// literal exclude pattern (no `-`/`+` prefix). `*.log *.tmp *.bak` becomes three
+// literal excludes.
+#[test]
+fn dir_merge_word_split_no_prefixes_literal_excludes() {
+    let dir = TempDir::new().unwrap();
+    fs::write(dir.path().join(".filt"), "*.log\t*.tmp *.bak\n").unwrap();
+
+    let mut chain = FilterChain::empty();
+    chain.add_merge_config(
+        DirMergeConfig::new(".filt")
+            .with_word_split(true)
+            .with_no_prefixes(true, false),
+    );
+
+    let guard = chain.enter_directory(dir.path()).unwrap();
+    assert_eq!(guard.pushed_count(), 1);
+
+    assert!(!chain.allows(Path::new("a.log"), false));
+    assert!(!chain.allows(Path::new("b.tmp"), false));
+    assert!(!chain.allows(Path::new("c.bak"), false));
+    assert!(chain.allows(Path::new("keep.dat"), false));
+
+    chain.leave_directory(guard);
+}
+
+// upstream: exclude.c:903-960 rule_matches with ABS_ANCHOR - a leading-`/`
+// exclude anchors to the transfer root and must NOT match the same basename
+// nested in a subdirectory. This mirrors the remote-sender path where the rule
+// arrives over the wire and is compiled into the chain's global set.
+#[test]
+fn anchored_root_exclude_does_not_match_nested_basename() {
+    let global = FilterSet::from_rules([FilterRule::exclude("/drop.txt")]).unwrap();
+    let chain = FilterChain::new(global);
+
+    // Top-level `drop.txt` is excluded.
+    assert!(!chain.allows(Path::new("drop.txt"), false));
+    // Nested `sub/drop.txt` is NOT excluded by the anchored rule.
+    assert!(chain.allows(Path::new("sub/drop.txt"), false));
+    assert!(chain.allows(Path::new("keep.txt"), false));
+}

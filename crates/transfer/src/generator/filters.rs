@@ -499,6 +499,17 @@ fn wire_rule_to_dir_merge_config(
         config = config.with_perishable(true);
     }
 
+    // `w` modifier: FILTRULE_WORD_SPLIT. The per-directory merge file is
+    // tokenised on any whitespace, with each token parsed as its own rule
+    // (exclude.c:1279-1283, tokenised at exclude.c:1499). Without carrying
+    // this on the sender's merge load, a `:w .filt` whose file holds
+    // whitespace-separated patterns is parsed one-rule-per-line, so a line
+    // like `-_a -_b -_c` collapses into a single malformed rule instead of
+    // three. Mirror the local parser, which already word-splits.
+    if wire_rule.word_split {
+        config = config.with_word_split(true);
+    }
+
     // `C` modifier: CVS-style ignore list. Mirror upstream's implicit
     // NO_PREFIXES | WORD_SPLIT | NO_INHERIT | CVS_IGNORE so that the dir
     // merge filename's contents are parsed as whitespace-separated exclude
@@ -654,6 +665,32 @@ mod tests {
     /// `one-in-one-out` fail standard merge parsing and abort the walk.
     /// Upstream's `:C` does NOT exclude the merge file itself; only the
     /// explicit `e` modifier does.
+    /// A `:w .filt` dir-merge arrives over the wire with `word_split=true`.
+    /// The remote sender must carry that onto the `DirMergeConfig` so the
+    /// per-directory file is tokenised on whitespace, matching the local path.
+    /// Without this the sender parses the merge file one-rule-per-line and a
+    /// whitespace-separated rule list collapses into a single malformed rule.
+    #[test]
+    fn wire_rule_to_dir_merge_config_word_split_flag_sets_word_split() {
+        let mut wire_rule = make_dir_merge_wire_rule(".filt");
+        wire_rule.word_split = true;
+        let config = wire_rule_to_dir_merge_config(&wire_rule, true);
+        assert!(config.word_split());
+        // A plain `:w` must not imply CVS-mode or no-prefixes.
+        assert!(!config.cvs_mode());
+        assert!(!config.no_prefixes());
+    }
+
+    #[test]
+    fn wire_rule_to_dir_merge_config_word_split_combines_with_no_prefixes() {
+        let mut wire_rule = make_dir_merge_wire_rule(".filt");
+        wire_rule.word_split = true;
+        wire_rule.no_prefixes = true;
+        let config = wire_rule_to_dir_merge_config(&wire_rule, true);
+        assert!(config.word_split());
+        assert!(config.no_prefixes());
+    }
+
     #[test]
     fn wire_rule_to_dir_merge_config_cvs_flag_enables_cvs_mode() {
         let mut wire_rule = make_dir_merge_wire_rule(".cvsignore");

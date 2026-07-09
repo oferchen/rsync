@@ -115,7 +115,17 @@ fn build_modern_prefix(rule: &FilterRuleWireFormat, protocol: ProtocolVersion) -
     prefix.push(prefix_char);
 
     // Modifier emission order is part of the wire contract; do not reorder.
-    if rule.anchored {
+    // upstream: exclude.c:1543-1544 get_rule_prefix() emits the `/` modifier
+    // only for FILTRULE_ABS_PATH, which is set exclusively on merge/dir-merge
+    // rules (the `/` merge modifier, exclude.c:1238-1239). A command-line
+    // anchored rule such as `- /foo` keeps its leading slash in ent->pattern
+    // and never sets FILTRULE_ABS_PATH, so its anchor rides in the pattern body
+    // (see serialize_rule), not in the prefix. Emitting `/` for a plain exclude
+    // makes the remote parser read it as ABS_PATH plus a bare, non-anchored
+    // pattern that matches the basename at any depth (exclude.c:941-944
+    // rule_matches keys anchoring off a literal leading `/` in the pattern, not
+    // the modifier), wrongly excluding e.g. `sub/foo` as well as `foo`.
+    if rule.anchored && matches!(rule.rule_type, RuleType::Merge | RuleType::DirMerge) {
         prefix.push('/');
     }
 
@@ -195,12 +205,33 @@ mod tests {
     }
 
     #[test]
-    fn anchored_modifier() {
+    fn anchored_non_merge_omits_slash_modifier() {
+        // upstream: exclude.c:1543-1544 - a command-line anchored rule keeps its
+        // leading slash in the pattern, so FILTRULE_ABS_PATH is unset and no `/`
+        // modifier is emitted. The anchor is written into the pattern body by
+        // serialize_rule() instead.
         let protocol = ProtocolVersion::from_supported(32).unwrap();
         let rule = FilterRuleWireFormat::exclude("test".to_owned()).with_anchored(true);
 
         let prefix = build_rule_prefix(&rule, protocol).unwrap();
-        assert_eq!(prefix, "-/ ");
+        assert_eq!(prefix, "- ");
+    }
+
+    #[test]
+    fn anchored_dir_merge_emits_slash_modifier() {
+        // upstream: exclude.c:1238-1239 / 1543-1544 - the `/` modifier on a
+        // merge/dir-merge rule sets FILTRULE_ABS_PATH and is emitted in the
+        // prefix (e.g. `:/`), anchoring the merged rules to the transfer root.
+        let protocol = ProtocolVersion::from_supported(32).unwrap();
+        let rule = FilterRuleWireFormat {
+            rule_type: RuleType::DirMerge,
+            pattern: ".rules".to_owned(),
+            anchored: true,
+            ..FilterRuleWireFormat::default()
+        };
+
+        let prefix = build_rule_prefix(&rule, protocol).unwrap();
+        assert_eq!(prefix, ":/ ");
     }
 
     #[test]
@@ -211,8 +242,10 @@ mod tests {
         rule.no_inherit = true;
         rule.cvs_exclude = true;
 
+        // The anchor no longer appears as a `/` prefix modifier on a plain
+        // exclude; it rides in the pattern body (serialize_rule).
         let prefix = build_rule_prefix(&rule, protocol).unwrap();
-        assert_eq!(prefix, "-/Cn ");
+        assert_eq!(prefix, "-Cn ");
     }
 
     #[test]
@@ -296,8 +329,10 @@ mod tests {
         rule.receiver_side = true;
         rule.perishable = true;
 
+        // The `/` anchor is no longer a prefix modifier for a non-merge rule;
+        // it moves into the pattern body (serialize_rule).
         let prefix = build_rule_prefix(&rule, protocol).unwrap();
-        assert_eq!(prefix, "-/!Cnwexsrp ");
+        assert_eq!(prefix, "-!Cnwexsrp ");
     }
 
     #[test]

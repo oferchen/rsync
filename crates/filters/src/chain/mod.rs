@@ -39,7 +39,7 @@ use std::fs;
 use std::io;
 use std::path::{Component, Path, PathBuf};
 
-use crate::merge::parse::{parse_rules, parse_rules_no_prefixes};
+use crate::merge::parse::{parse_rules, parse_rules_no_prefixes, parse_rules_word_split};
 use crate::{FilterAction, FilterRule, FilterSet};
 
 pub use config::DirMergeConfig;
@@ -359,15 +359,32 @@ impl FilterChain {
                 // dir-merge template skips short-prefix dispatch, so each
                 // line becomes a literal exclude (or include for `+`). When
                 // CVS_IGNORE is also inherited (e.g. `:-C`), a bare `!` line
-                // clears the list per FILTRULE_CLEAR_LIST.
+                // clears the list per FILTRULE_CLEAR_LIST. The `w` modifier
+                // (e.g. `:w-`) tokenises on whitespace instead of per line.
                 parse_rules_no_prefixes(
                     &content,
                     &merge_path,
                     config.no_prefixes_include(),
                     config.cvs_mode(),
+                    config.word_split(),
                 )
             } else if config.cvs_mode() {
                 parse_cvs_ignore_tokens(&content)
+            } else if config.word_split() {
+                // upstream: exclude.c:1499 - the `w` modifier splits the merge
+                // file on any whitespace and parses every token as its own
+                // rule (comments are not stripped, line 1514).
+                match parse_rules_word_split(&content, &merge_path) {
+                    Ok(rules) => rules,
+                    Err(e) => {
+                        self.pop_scopes_at_depth(depth);
+                        self.current_depth -= 1;
+                        return Err(FilterChainError::Parse {
+                            path: merge_path,
+                            message: e.to_string(),
+                        });
+                    }
+                }
             } else {
                 match parse_rules(&content, &merge_path) {
                     Ok(rules) => rules,
@@ -488,6 +505,7 @@ impl FilterChain {
                                 descriptor.no_prefixes,
                                 descriptor.no_prefixes_include,
                             )
+                            .with_word_split(descriptor.word_split)
                             .with_anchor_root(descriptor.abs_path),
                     );
                 }
@@ -545,9 +563,22 @@ impl FilterChain {
                 &merge_path,
                 descriptor.no_prefixes_include,
                 descriptor.cvs_mode,
+                descriptor.word_split,
             )
         } else if descriptor.cvs_mode {
             parse_cvs_ignore_tokens(&content)
+        } else if descriptor.word_split {
+            match parse_rules_word_split(&content, &merge_path) {
+                Ok(rules) => rules,
+                Err(e) => {
+                    self.pop_scopes_at_depth(depth);
+                    self.current_depth -= 1;
+                    return Err(FilterChainError::Parse {
+                        path: merge_path,
+                        message: e.to_string(),
+                    });
+                }
+            }
         } else {
             match parse_rules(&content, &merge_path) {
                 Ok(rules) => rules,
@@ -754,6 +785,9 @@ struct InlineDirMerge {
     /// `/` modifier (FILTRULE_ABS_PATH): anchor merged rules to the transfer
     /// root rather than the merge file's own directory.
     abs_path: bool,
+    /// `w` modifier (FILTRULE_WORD_SPLIT): tokenise the merge file on any
+    /// whitespace instead of one rule per line.
+    word_split: bool,
 }
 
 /// Joins a relative path's normal components with `/`, ignoring any leading
@@ -814,6 +848,7 @@ fn split_dir_merge_rules(rules: Vec<FilterRule>) -> (Vec<FilterRule>, Vec<Inline
                 no_prefixes,
                 no_prefixes_include,
                 abs_path: rule.is_abs_path(),
+                word_split: rule.is_word_split(),
             });
         } else {
             keep.push(rule);

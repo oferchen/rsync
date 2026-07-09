@@ -80,6 +80,12 @@ pub struct FilterRule {
     ///
     /// upstream: exclude.c:1215-1216 - `case '/': rule->rflags |= FILTRULE_ABS_PATH;`
     pub(crate) abs_path: bool,
+    /// `w` modifier on a merge / dir-merge rule: FILTRULE_WORD_SPLIT. The
+    /// referenced file is tokenised on any whitespace (space, tab, newline)
+    /// with each token parsed as its own rule, rather than one rule per line.
+    ///
+    /// upstream: exclude.c:1279-1283 - `case 'w': rule->rflags |= FILTRULE_WORD_SPLIT;`
+    pub(crate) word_split: bool,
     /// `-`/`+` modifier on a merge / dir-merge rule: FILTRULE_NO_PREFIXES.
     /// Consumes the merged file's lines as literal patterns instead of running
     /// them through the prefix dispatch.
@@ -124,6 +130,7 @@ impl FilterRule {
             no_inherit: false,
             cvs_mode: false,
             abs_path: false,
+            word_split: false,
             no_prefixes: false,
             no_prefixes_include: false,
         }
@@ -158,6 +165,7 @@ impl FilterRule {
             no_inherit: false,
             cvs_mode: false,
             abs_path: false,
+            word_split: false,
             no_prefixes: false,
             no_prefixes_include: false,
         }
@@ -192,6 +200,7 @@ impl FilterRule {
             no_inherit: false,
             cvs_mode: false,
             abs_path: false,
+            word_split: false,
             no_prefixes: false,
             no_prefixes_include: false,
         }
@@ -216,6 +225,7 @@ impl FilterRule {
             no_inherit: false,
             cvs_mode: false,
             abs_path: false,
+            word_split: false,
             no_prefixes: false,
             no_prefixes_include: false,
         }
@@ -241,6 +251,7 @@ impl FilterRule {
             no_inherit: false,
             cvs_mode: false,
             abs_path: false,
+            word_split: false,
             no_prefixes: false,
             no_prefixes_include: false,
         }
@@ -269,6 +280,7 @@ impl FilterRule {
             no_inherit: false,
             cvs_mode: false,
             abs_path: false,
+            word_split: false,
             no_prefixes: false,
             no_prefixes_include: false,
         }
@@ -297,6 +309,7 @@ impl FilterRule {
             no_inherit: false,
             cvs_mode: false,
             abs_path: false,
+            word_split: false,
             no_prefixes: false,
             no_prefixes_include: false,
         }
@@ -329,6 +342,7 @@ impl FilterRule {
             no_inherit: false,
             cvs_mode: false,
             abs_path: false,
+            word_split: false,
             no_prefixes: false,
             no_prefixes_include: false,
         }
@@ -361,6 +375,7 @@ impl FilterRule {
             no_inherit: false,
             cvs_mode: false,
             abs_path: false,
+            word_split: false,
             no_prefixes: false,
             no_prefixes_include: false,
         }
@@ -510,6 +525,26 @@ impl FilterRule {
     #[must_use]
     pub const fn with_cvs_mode(mut self, cvs_mode: bool) -> Self {
         self.cvs_mode = cvs_mode;
+        self
+    }
+
+    /// Returns whether the rule carries the `w` (word-split) modifier.
+    ///
+    /// On merge / dir-merge rules, this signals that the referenced file must
+    /// be tokenised on any whitespace, with each token parsed as its own rule.
+    ///
+    /// upstream: exclude.c:1279-1283 - `w` sets FILTRULE_WORD_SPLIT.
+    #[must_use]
+    pub const fn is_word_split(&self) -> bool {
+        self.word_split
+    }
+
+    /// Sets the `w` (word-split) modifier on this rule.
+    ///
+    /// upstream: exclude.c:1279-1283 - `w` sets FILTRULE_WORD_SPLIT.
+    #[must_use]
+    pub const fn with_word_split(mut self, word_split: bool) -> Self {
+        self.word_split = word_split;
         self
     }
 

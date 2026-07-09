@@ -32,6 +32,7 @@ mod tests {
             no_inherit: false,
             cvs_mode: false,
             abs_path: false,
+            word_split: false,
             no_prefixes: false,
             no_prefixes_include: false,
         };
@@ -56,6 +57,7 @@ mod tests {
             no_inherit: false,
             cvs_mode: false,
             abs_path: false,
+            word_split: false,
             no_prefixes: false,
             no_prefixes_include: false,
         };
@@ -80,6 +82,7 @@ mod tests {
             no_inherit: false,
             cvs_mode: false,
             abs_path: false,
+            word_split: false,
             no_prefixes: false,
             no_prefixes_include: false,
         };
@@ -111,6 +114,7 @@ mod tests {
             no_inherit: false,
             cvs_mode: false,
             abs_path: false,
+            word_split: false,
             no_prefixes: false,
             no_prefixes_include: false,
         };
@@ -133,6 +137,7 @@ mod tests {
             no_inherit: false,
             cvs_mode: false,
             abs_path: false,
+            word_split: false,
             no_prefixes: false,
             no_prefixes_include: false,
         };

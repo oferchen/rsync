@@ -414,7 +414,23 @@ fn parse_wire_rule_modern(
         }
     }
 
-    let pattern_text = &text[pattern_start..];
+    let mut pattern_text = &text[pattern_start..];
+
+    // Non-merge rules encode the anchor as a leading `/` in the pattern body
+    // (upstream keeps it in ent->pattern with FILTRULE_ABS_PATH unset). Fold it
+    // back into the `anchored` flag so the parsed rule matches what
+    // build_wire_format_rules() produced (bare pattern + anchored bit) and
+    // round-trips byte-identically through serialize_rule(). Merge and
+    // dir-merge rules reserve the leading `/` for FILTRULE_ABS_PATH, consumed as
+    // the `/` prefix modifier in the loop above.
+    if !rule.anchored
+        && !matches!(rule.rule_type, RuleType::Merge | RuleType::DirMerge)
+        && pattern_text.len() > 1
+        && pattern_text.starts_with('/')
+    {
+        rule.anchored = true;
+        pattern_text = &pattern_text[1..];
+    }
 
     if let Some(stripped) = pattern_text.strip_suffix('/') {
         rule.directory_only = true;
@@ -442,6 +458,19 @@ fn serialize_rule(rule: &FilterRuleWireFormat, protocol: ProtocolVersion) -> io:
         )
     })?;
     let mut bytes = prefix.into_bytes();
+    // Non-merge anchored rules carry the anchor as a leading `/` in the pattern
+    // body, mirroring upstream whose command-line `- /foo` keeps the slash in
+    // ent->pattern with FILTRULE_ABS_PATH unset (exclude.c:200-208). The `/`
+    // prefix modifier is reserved for merge/dir-merge ABS_PATH rules
+    // (build_rule_prefix), so add the slash here for every other rule type.
+    // `pattern` stores the bare body; split_pattern_modifiers() (client) and
+    // parse_wire_rule_modern() (server) fold the leading `/` into `anchored`.
+    if rule.anchored
+        && !matches!(rule.rule_type, RuleType::Merge | RuleType::DirMerge)
+        && !rule.pattern.starts_with('/')
+    {
+        bytes.push(b'/');
+    }
     bytes.extend_from_slice(rule.pattern.as_bytes());
 
     if rule.directory_only {
@@ -500,7 +529,9 @@ mod tests {
     #[test]
     fn anchored_pattern() {
         let protocol = ProtocolVersion::from_supported(32).unwrap();
-        let rule = FilterRuleWireFormat::exclude("/tmp".to_owned()).with_anchored(true);
+        // Canonical client form: bare pattern body plus the `anchored` bit, as
+        // produced by build_wire_format_rules()/split_pattern_modifiers().
+        let rule = FilterRuleWireFormat::exclude("tmp".to_owned()).with_anchored(true);
 
         let mut buf = Vec::new();
         write_filter_list(&mut buf, std::slice::from_ref(&rule), protocol).unwrap();
@@ -508,7 +539,40 @@ mod tests {
         let parsed = read_filter_list(&mut &buf[..], protocol).unwrap();
         assert_eq!(parsed.len(), 1);
         assert!(parsed[0].anchored);
-        assert_eq!(parsed[0].pattern, "/tmp");
+        assert_eq!(parsed[0].pattern, "tmp");
+    }
+
+    #[test]
+    fn anchored_exclude_wire_bytes_match_upstream() {
+        // Regression: an anchored command-line rule (`--filter '- /drop.txt'`)
+        // must serialize as `- /drop.txt` (leading slash in the PATTERN), not
+        // `-/ drop.txt` (slash as the ABS_PATH prefix modifier). Upstream keeps
+        // the slash in ent->pattern with FILTRULE_ABS_PATH unset, so its sender
+        // anchors the match to the transfer root (exclude.c:941-944). Encoding
+        // the slash as the `/` modifier instead makes the remote sender treat
+        // it as an unanchored basename match, wrongly excluding `sub/drop.txt`
+        // as well as top-level `drop.txt` from the flist.
+        let protocol = ProtocolVersion::from_supported(32).unwrap();
+        let rule = FilterRuleWireFormat::exclude("drop.txt".to_owned()).with_anchored(true);
+
+        let mut buf = Vec::new();
+        write_filter_list(&mut buf, std::slice::from_ref(&rule), protocol).unwrap();
+
+        // 4-byte LE length (11 = len of "- /drop.txt"), the rule bytes, then the
+        // 4-byte LE zero terminator.
+        let mut expected = Vec::new();
+        expected.extend_from_slice(&11i32.to_le_bytes());
+        expected.extend_from_slice(b"- /drop.txt");
+        expected.extend_from_slice(&0i32.to_le_bytes());
+        assert_eq!(buf, expected, "anchored exclude must emit `- /drop.txt`");
+
+        // And it must round-trip back to the canonical bare-pattern + anchored
+        // representation so oc<->oc transfers stay symmetric.
+        let parsed = read_filter_list(&mut &buf[..], protocol).unwrap();
+        assert_eq!(parsed.len(), 1);
+        assert_eq!(parsed[0].rule_type, RuleType::Exclude);
+        assert!(parsed[0].anchored);
+        assert_eq!(parsed[0].pattern, "drop.txt");
     }
 
     #[test]

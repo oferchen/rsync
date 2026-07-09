@@ -10734,13 +10734,23 @@ CONF
   fmm_case "perishable"     --filter='-p drop.txt'
   fmm_case "cvs-exclude"    -C
   fmm_case "dironly"        --filter='- sub/'
+  # Anchored (leading-`/`) rule: matches only at the transfer root, so the
+  # top-level drop.txt is excluded while sub/drop.txt is transferred. The PUSH
+  # leg makes the oc client the sender, exercising its anchored-rule matching
+  # (exclude.c:903-960 rule_matches ABS_ANCHOR).
+  fmm_case "anchored-root"  --filter='- /drop.txt'
 
-  # Per-directory merge modifiers n / e / w are exercised in the pull direction:
-  # the merge file lives in the daemon module, the upstream daemon applies the
-  # dir-merge, and the oc client must land the same tree as the upstream client.
+  # Per-directory merge modifiers n / e / w are exercised in BOTH directions:
+  #   PULL - the merge file lives in the daemon module, the upstream daemon is
+  #          the sender, and the oc client (receiver) must land the same tree.
+  #   PUSH - the merge file lives in the client's source tree, so the oc client
+  #          is the SENDER that parses the per-directory merge file. This is the
+  #          only leg that exercises oc's own dir-merge parsing (FilterChain),
+  #          giving the word-split (`w`) modifier real teeth.
   fmm_case_merge() {
     local label=$1 mergefile=$2 mergebody=$3 dirmerge=$4
 
+    # --- PULL: upstream daemon is the sender ---
     fmm_seed_src "$fmm_mod"; printf '%s\n' "$mergebody" > "$fmm_mod/$mergefile"
     local d_oc="${base}/pm-oc" d_up="${base}/pm-up"
     fmm_seed_dst "$d_oc"; fmm_seed_dst "$d_up"
@@ -10755,16 +10765,41 @@ CONF
       sed 's/^/      /' "${log}.fmm.${label}.pull.diff" | head -8
       fail=1
     fi
+
+    # --- PUSH: the client is the sender and parses the merge file itself ---
+    local src="${base}/pm-push-src"
+    fmm_seed_src "$src"; printf '%s\n' "$mergebody" > "$src/$mergefile"
+    fmm_seed_dst "$fmm_mod"
+    timeout "$hard_timeout" "$oc_bin" -a --delete --timeout=10 --filter="$dirmerge" \
+      "$src/" "rsync://127.0.0.1:${upstream_port}/interop/" \
+      >"${log}.fmm.${label}.push-oc.out" 2>&1
+    local t_oc; t_oc=$(cd "$fmm_mod" && find . | LC_ALL=C sort && echo "--content--" && \
+      find . -type f | LC_ALL=C sort | xargs -r md5sum 2>/dev/null | sed "s#  .*/#  #")
+    fmm_seed_dst "$fmm_mod"
+    timeout "$hard_timeout" "$upstream_binary" -a --delete --timeout=10 --filter="$dirmerge" \
+      "$src/" "rsync://127.0.0.1:${upstream_port}/interop/" \
+      >"${log}.fmm.${label}.push-up.out" 2>&1
+    local t_up; t_up=$(cd "$fmm_mod" && find . | LC_ALL=C sort && echo "--content--" && \
+      find . -type f | LC_ALL=C sort | xargs -r md5sum 2>/dev/null | sed "s#  .*/#  #")
+    if [[ "$t_oc" != "$t_up" ]]; then
+      echo "    [$label] merge PUSH tree diverges from upstream:"
+      diff <(echo "$t_up") <(echo "$t_oc") | sed 's/^/      /' | head -8
+      fail=1
+    fi
   }
 
   # n: per-dir merge without inheritance. e: merge file excludes itself.
-  # w: whitespace-split rules. The positive `w` case pairs word-split with the
-  # `-` no-prefix modifier so the bare tokens "a.txt b.txt" become two separate
-  # excludes (a plain "- a.txt b.txt" is a syntax error under word-split because
-  # the "-" splits off as an empty rule - upstream exclude.c:1326).
-  fmm_case_merge "merge-n" ".rules" "- b.txt"      ":n .rules"
-  fmm_case_merge "merge-e" ".rules" "- b.txt"      ":e .rules"
-  fmm_case_merge "merge-w" ".rules" "a.txt b.txt"  ":w- .rules"
+  # w: whitespace-split rules. Three word-split shapes are pinned:
+  #   :w- (no-prefix) - bare tokens "a.txt b.txt" become two literal excludes.
+  #   :w  (prefixed)  - "_"-separated tokens "-_a.txt -_b.txt" become two excludes
+  #                     (a plain "- a.txt" is a syntax error under word-split
+  #                     because the "-" splits off as an empty rule, exclude.c:1326).
+  # A plain "- a.txt b.txt" under word-split MUST fail identically on both
+  # clients, so the byte-for-byte comparison covers the error path too.
+  fmm_case_merge "merge-n"   ".rules" "- b.txt"           ":n .rules"
+  fmm_case_merge "merge-e"   ".rules" "- b.txt"           ":e .rules"
+  fmm_case_merge "merge-w"   ".rules" "a.txt b.txt"       ":w- .rules"
+  fmm_case_merge "merge-w-p" ".rules" "-_a.txt	-_b.txt" ":w .rules"
 
   stop_upstream_daemon
 
