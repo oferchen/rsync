@@ -502,6 +502,82 @@ fn itemize_new_hard_link_follower_marked_created() {
     );
 }
 
+// upstream: hlink.c:385-414 hard_link_check() + generator.c:995-1052
+// try_dests_reg() - when a hard-link follower's destination is absent but its
+// name matches a --copy-dest basis (quick_check_ok), statret is bumped from < 0
+// to 1, so the itemize (log.c:736-738) never sets ITEM_IS_NEW: the follower
+// renders blank (`hf          `), mirroring the leader that was itself satisfied
+// from the copy-dest tree. Regression guard so the empty-destination
+// new-follower fix does not wrongly mark a copy-dest-matched follower created.
+#[cfg(unix)]
+#[test]
+fn itemize_copy_dest_hard_link_follower_not_marked_created() {
+    let temp = tempdir().expect("tempdir");
+    let source_dir = temp.path().join("source");
+    let copy_dest_dir = temp.path().join("copy_dest");
+    let dest_dir = temp.path().join("dest");
+
+    fs::create_dir(&source_dir).expect("create source dir");
+    fs::create_dir(&copy_dest_dir).expect("create copy_dest dir");
+    fs::create_dir(&dest_dir).expect("create dest dir");
+
+    // Source group leader and follower share one inode.
+    let leader = source_dir.join("config1");
+    let follower = source_dir.join("extra");
+    fs::write(&leader, b"shared content").expect("write leader");
+    fs::hard_link(&leader, &follower).expect("hard link extra -> config1");
+
+    // The destination mirrors the source directory name (`dest/source/...`),
+    // so the copy-dest basis is resolved at the same relative path. Hold
+    // matching content for both names so the quick-check passes for the
+    // follower's own basis.
+    let copy_dest_source = copy_dest_dir.join("source");
+    fs::create_dir(&copy_dest_source).expect("create copy_dest/source");
+    let copy_leader = copy_dest_source.join("config1");
+    let copy_follower = copy_dest_source.join("extra");
+    fs::write(&copy_leader, b"shared content").expect("write copy_dest leader");
+    fs::write(&copy_follower, b"shared content").expect("write copy_dest follower");
+
+    let timestamp = FileTime::from_unix_time(1_700_000_000, 0);
+    set_file_mtime(&leader, timestamp).expect("source leader mtime");
+    set_file_mtime(&follower, timestamp).expect("source follower mtime");
+    set_file_mtime(&copy_leader, timestamp).expect("copy_dest leader mtime");
+    set_file_mtime(&copy_follower, timestamp).expect("copy_dest follower mtime");
+
+    let operands = vec![
+        source_dir.into_os_string(),
+        dest_dir.into_os_string(),
+    ];
+    let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
+
+    let options = LocalCopyOptions::default()
+        .recursive(true)
+        .times(true)
+        .hard_links(true)
+        .collect_events(true)
+        .extend_reference_directories([ReferenceDirectory::new(
+            ReferenceDirectoryKind::Copy,
+            &copy_dest_dir,
+        )]);
+    let report = plan
+        .execute_with_report(LocalCopyExecution::Apply, options)
+        .expect("copy succeeds");
+
+    let records = report.records();
+
+    // The follower is hard-linked to a leader that was itself matched from
+    // --copy-dest, so upstream leaves ITEM_IS_NEW unset: it must render blank
+    // (`hf          `), never `hf+++++++++`.
+    let follower_record = records
+        .iter()
+        .find(|r| r.action() == &LocalCopyAction::HardLink)
+        .expect("follower hard-link record");
+    assert!(
+        !follower_record.was_created(),
+        "copy-dest hard-link follower must stay blank, not marked created"
+    );
+}
+
 #[cfg(unix)]
 #[test]
 fn itemize_size_change_detected_correctly() {
