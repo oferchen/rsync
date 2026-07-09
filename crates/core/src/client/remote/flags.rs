@@ -377,6 +377,13 @@ pub(crate) fn apply_common_server_flags(config: &ClientConfig, server_config: &m
     server_config.file_selection.delete_missing_args = config.delete_missing_args();
     // upstream: options.c:89 do_compression_threads, token.c:701 ZSTD_c_nbWorkers
     server_config.connection.compression_threads = config.compression_threads();
+    // upstream: compat.c:819 parse_checksum_choice(1) - an explicit
+    // --checksum-choice=ALGO forces the negotiated checksum for the transfer.
+    // Carry it onto this local ServerConfig so the in-process generator/receiver
+    // half (SSH and daemon transfers alike) forwards it into the capability
+    // negotiator's checksum_override; without this the choice is silently
+    // dropped at protocol >= 30 (binary negotiation).
+    server_config.checksum_choice = config.checksum_protocol_override();
 }
 
 #[cfg(test)]

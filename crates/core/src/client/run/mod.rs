@@ -468,9 +468,14 @@ const fn signature_checksum_nstr_name(
 /// copy, mirroring what upstream's forked `local_child` server prints via
 /// `parse_checksum_choice` / `parse_compress_choice`.
 ///
-/// The local path performs no vstring negotiation, so the `" negotiated"`
-/// qualifier stays blank (upstream leaves `negotiated_nni` NULL when the
-/// algorithm is not chosen through `negotiate_the_strings()`). The trace
+/// Upstream's local transfer forks a child connected over a socketpair and runs
+/// the full protocol, including `negotiate_the_strings()` with
+/// `do_negotiated_strings` set (the local child sends the `v` capability). So
+/// when the user did NOT force an algorithm, `valid_checksums.negotiated_nni`
+/// is set and the summary renders the `" negotiated"` qualifier; an explicit
+/// `--checksum-choice` / `--compress-choice` bypasses negotiation and the
+/// qualifier stays blank. The oc local path performs no wire negotiation, so we
+/// synthesize the same qualifier from whether a choice was forced. The trace
 /// helpers self-gate on the NSTR debug level, so this is a no-op unless
 /// `--debug=NSTR` is active.
 ///
@@ -480,9 +485,12 @@ const fn signature_checksum_nstr_name(
 fn emit_local_copy_nstr_summaries(config: &ClientConfig) {
     use protocol::nstr::{NstrSide, trace_checksum_summary, trace_compress_summary};
 
+    // upstream: checksum.c:209 - the qualifier renders iff negotiated_nni is
+    // set, which happens when no --checksum-choice forced the algorithm.
+    let checksum_negotiated = config.checksum_protocol_override().is_none();
     trace_checksum_summary(
         NstrSide::Client,
-        false,
+        checksum_negotiated,
         signature_checksum_nstr_name(config.checksum_signature_algorithm()),
     );
 
@@ -503,7 +511,11 @@ fn emit_local_copy_nstr_summaries(config: &ClientConfig) {
         .compress_choice_name()
         .unwrap_or_else(|| algorithm.name());
     let level = resolve_nstr_compress_level(algorithm, config.compression_level());
-    trace_compress_summary(NstrSide::Client, false, name, level);
+    // upstream: compat.c:218 - the compress " negotiated" qualifier renders
+    // when do_negotiated_strings selected the codec, i.e. when no explicit
+    // --compress-choice (compress_choice_name) forced it.
+    let compress_negotiated = config.compress_choice_name().is_none();
+    trace_compress_summary(NstrSide::Client, compress_negotiated, name, level);
 }
 
 /// Resolves the compress level rendered in the `--debug=NSTR` summary,

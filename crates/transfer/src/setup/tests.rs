@@ -75,6 +75,7 @@ fn ssh_server_flag_string_limits_compat_flags() {
         is_daemon_mode: false,
         do_compression: false,
         compress_choice: None,
+        checksum_choice: None,
         compression_level: protocol::nstr::CLVL_NOT_SPECIFIED,
         checksum_seed: Some(42),
         allow_inc_recurse: true,
@@ -111,6 +112,7 @@ fn ssh_server_flag_string_enables_advertised_caps() {
         is_daemon_mode: false,
         do_compression: false,
         compress_choice: None,
+        checksum_choice: None,
         compression_level: protocol::nstr::CLVL_NOT_SPECIFIED,
         checksum_seed: Some(42),
         allow_inc_recurse: true,
@@ -144,6 +146,7 @@ fn ssh_server_no_flag_string_uses_defaults() {
         is_daemon_mode: false,
         do_compression: false,
         compress_choice: None,
+        checksum_choice: None,
         compression_level: protocol::nstr::CLVL_NOT_SPECIFIED,
         checksum_seed: Some(42),
         allow_inc_recurse: false,
@@ -279,6 +282,7 @@ fn setup_protocol_below_30_returns_none_for_algorithms_and_compat() {
         is_daemon_mode: false,
         do_compression: false,
         compress_choice: None,
+        checksum_choice: None,
         compression_level: protocol::nstr::CLVL_NOT_SPECIFIED,
         checksum_seed: None,
         allow_inc_recurse: false,
@@ -319,6 +323,7 @@ fn setup_protocol_skip_compat_exchange_skips_flags() {
         is_daemon_mode: false,
         do_compression: false,
         compress_choice: None,
+        checksum_choice: None,
         compression_level: protocol::nstr::CLVL_NOT_SPECIFIED,
         checksum_seed: None,
         allow_inc_recurse: false,
@@ -362,6 +367,7 @@ fn setup_protocol_server_writes_compat_flags_and_seed() {
         is_daemon_mode: true, // server advertises, client reads
         do_compression: false,
         compress_choice: None,
+        checksum_choice: None,
         compression_level: protocol::nstr::CLVL_NOT_SPECIFIED,
         checksum_seed: None,
         allow_inc_recurse: false,
@@ -418,6 +424,7 @@ fn setup_protocol_client_reads_compat_flags_from_server() {
         is_daemon_mode: true,
         do_compression: false,
         compress_choice: None,
+        checksum_choice: None,
         compression_level: protocol::nstr::CLVL_NOT_SPECIFIED,
         checksum_seed: None,
         allow_inc_recurse: false,
@@ -462,6 +469,7 @@ fn setup_protocol_server_generates_deterministic_seeds() {
         is_daemon_mode: false,
         do_compression: false,
         compress_choice: None,
+        checksum_choice: None,
         compression_level: protocol::nstr::CLVL_NOT_SPECIFIED,
         checksum_seed: None,
         allow_inc_recurse: false,
@@ -512,6 +520,7 @@ fn setup_protocol_ssh_mode_bidirectional_exchange() {
         is_daemon_mode: false,
         do_compression: false,
         compress_choice: None,
+        checksum_choice: None,
         compression_level: protocol::nstr::CLVL_NOT_SPECIFIED,
         checksum_seed: None,
         allow_inc_recurse: false,
@@ -556,6 +565,7 @@ fn setup_protocol_client_args_affects_compat_flags() {
         is_daemon_mode: true,
         do_compression: false,
         compress_choice: None,
+        checksum_choice: None,
         compression_level: protocol::nstr::CLVL_NOT_SPECIFIED,
         checksum_seed: None,
         allow_inc_recurse: false,
@@ -588,6 +598,7 @@ fn setup_protocol_client_args_affects_compat_flags() {
         is_daemon_mode: true,
         do_compression: false,
         compress_choice: None,
+        checksum_choice: None,
         compression_level: protocol::nstr::CLVL_NOT_SPECIFIED,
         checksum_seed: None,
         allow_inc_recurse: false,
@@ -632,6 +643,7 @@ fn setup_protocol_protocol_30_minimum_for_compat_exchange() {
         is_daemon_mode: true,
         do_compression: false,
         compress_choice: None,
+        checksum_choice: None,
         compression_level: protocol::nstr::CLVL_NOT_SPECIFIED,
         checksum_seed: None,
         allow_inc_recurse: false,
@@ -1020,6 +1032,7 @@ fn setup_protocol_server_v_flag_uses_single_byte_encoding() {
         is_daemon_mode: true,
         do_compression: false,
         compress_choice: None,
+        checksum_choice: None,
         compression_level: protocol::nstr::CLVL_NOT_SPECIFIED,
         checksum_seed: None,
         allow_inc_recurse: false,
@@ -1067,6 +1080,7 @@ fn setup_protocol_server_v_flag_enables_negotiation() {
         is_daemon_mode: true,
         do_compression: false,
         compress_choice: None,
+        checksum_choice: None,
         compression_level: protocol::nstr::CLVL_NOT_SPECIFIED,
         checksum_seed: None,
         allow_inc_recurse: false,
@@ -1100,6 +1114,7 @@ fn setup_protocol_server_v_flag_with_both_v_and_uppercase_v() {
         is_daemon_mode: true,
         do_compression: false,
         compress_choice: None,
+        checksum_choice: None,
         compression_level: protocol::nstr::CLVL_NOT_SPECIFIED,
         checksum_seed: Some(42),
         allow_inc_recurse: false,
@@ -1120,6 +1135,7 @@ fn setup_protocol_server_v_flag_with_both_v_and_uppercase_v() {
         is_daemon_mode: true,
         do_compression: false,
         compress_choice: None,
+        checksum_choice: None,
         compression_level: protocol::nstr::CLVL_NOT_SPECIFIED,
         checksum_seed: Some(42),
         allow_inc_recurse: false,
@@ -1274,12 +1290,14 @@ impl CapabilityNegotiator for MockNegotiator {
         _stdout: &mut dyn std::io::Write,
         config: &protocol::NegotiationConfig,
     ) -> std::io::Result<protocol::NegotiationResult> {
-        // Honour the override when provided, matching the real negotiator
+        // Honour the overrides when provided, matching the real negotiator
+        // (negotiate.rs uses the forced choice directly instead of the list).
         let compression = config
             .compression_override
             .unwrap_or(self.fixed_compression);
+        let checksum = config.checksum_override.unwrap_or(self.fixed_checksum);
         Ok(protocol::NegotiationResult {
-            checksum: self.fixed_checksum,
+            checksum,
             compression,
         })
     }
@@ -1315,6 +1333,7 @@ fn setup_protocol_with_mock_negotiator_server_mode() {
         is_daemon_mode: true,
         do_compression: false,
         compress_choice: None,
+        checksum_choice: None,
         compression_level: protocol::nstr::CLVL_NOT_SPECIFIED,
         checksum_seed: None,
         allow_inc_recurse: false,
@@ -1361,6 +1380,7 @@ fn setup_protocol_with_mock_negotiator_client_mode() {
         is_daemon_mode: false,
         do_compression: false,
         compress_choice: None,
+        checksum_choice: None,
         compression_level: protocol::nstr::CLVL_NOT_SPECIFIED,
         checksum_seed: None,
         allow_inc_recurse: false,
@@ -1656,6 +1676,7 @@ fn compress_choice_override_skips_vstring_and_uses_algorithm() {
         is_daemon_mode: true,
         do_compression: true,
         compress_choice: Some(protocol::CompressionAlgorithm::Zstd),
+        checksum_choice: None,
         compression_level: protocol::nstr::CLVL_NOT_SPECIFIED,
         checksum_seed: Some(42),
         allow_inc_recurse: false,
@@ -1691,6 +1712,7 @@ fn compress_choice_none_allows_normal_negotiation() {
         is_daemon_mode: true,
         do_compression: true,
         compress_choice: None,
+        checksum_choice: None,
         compression_level: protocol::nstr::CLVL_NOT_SPECIFIED,
         checksum_seed: Some(42),
         allow_inc_recurse: false,
@@ -1726,6 +1748,7 @@ fn compress_choice_zlib_override_on_legacy_protocol() {
         is_daemon_mode: false,
         do_compression: true,
         compress_choice: Some(protocol::CompressionAlgorithm::ZlibX),
+        checksum_choice: None,
         compression_level: protocol::nstr::CLVL_NOT_SPECIFIED,
         checksum_seed: Some(42),
         allow_inc_recurse: false,
@@ -1741,6 +1764,109 @@ fn compress_choice_zlib_override_on_legacy_protocol() {
         algos.compression,
         protocol::CompressionAlgorithm::ZlibX,
         "compress_choice=zlibx should be used on legacy protocol"
+    );
+}
+
+// -- checksum-choice negotiation tests --
+
+#[test]
+fn checksum_choice_override_threads_into_negotiation() {
+    // upstream: compat.c:819 parse_checksum_choice(1) - an explicit
+    // --checksum-choice=ALGO forces the transfer checksum, skipping the
+    // vstring exchange. The setup layer must forward ProtocolSetupConfig's
+    // checksum_choice into NegotiationConfig::checksum_override.
+    let protocol = ProtocolVersion::try_from(31).unwrap();
+    let mut stdin = &b""[..];
+    let mut stdout = Vec::new();
+
+    let client_args = ["-efxCIvu".to_owned()];
+    let config = ProtocolSetupConfig {
+        protocol,
+        skip_compat_exchange: false,
+        client_args: Some(&client_args),
+        flag_string: None,
+        is_server: true,
+        is_daemon_mode: true,
+        do_compression: false,
+        compress_choice: None,
+        checksum_choice: Some(protocol::ChecksumAlgorithm::XXH128),
+        compression_level: protocol::nstr::CLVL_NOT_SPECIFIED,
+        checksum_seed: Some(42),
+        allow_inc_recurse: false,
+    };
+
+    let mock = MockNegotiator::new();
+    let result = setup_protocol_with(&mut stdout, &mut stdin, &config, &mock)
+        .expect("checksum-choice override setup should succeed");
+
+    let algos = result.negotiated_algorithms.unwrap();
+    assert_eq!(
+        algos.checksum,
+        protocol::ChecksumAlgorithm::XXH128,
+        "checksum_choice=xxh128 should override the negotiated checksum"
+    );
+}
+
+#[test]
+fn checksum_choice_none_allows_normal_negotiation() {
+    // Without an explicit --checksum-choice the negotiator picks the algorithm
+    // via the automatic list; the mock returns its default (MD5) unchanged.
+    let protocol = ProtocolVersion::try_from(31).unwrap();
+    let mut stdin = &b""[..];
+    let mut stdout = Vec::new();
+
+    let client_args = ["-efxCIvu".to_owned()];
+    let config = ProtocolSetupConfig {
+        protocol,
+        skip_compat_exchange: false,
+        client_args: Some(&client_args),
+        flag_string: None,
+        is_server: true,
+        is_daemon_mode: true,
+        do_compression: false,
+        compress_choice: None,
+        checksum_choice: None,
+        compression_level: protocol::nstr::CLVL_NOT_SPECIFIED,
+        checksum_seed: Some(42),
+        allow_inc_recurse: false,
+    };
+
+    let mock = MockNegotiator::new();
+    let result = setup_protocol_with(&mut stdout, &mut stdin, &config, &mock)
+        .expect("normal checksum negotiation should succeed");
+
+    let algos = result.negotiated_algorithms.unwrap();
+    assert_eq!(
+        algos.checksum,
+        protocol::ChecksumAlgorithm::MD5,
+        "without checksum_choice, the mock returns its default (MD5)"
+    );
+}
+
+#[test]
+fn with_checksum_choice_builder_method() {
+    let protocol = ProtocolVersion::try_from(31).unwrap();
+
+    let config = ProtocolSetupConfig::new(protocol, true)
+        .with_checksum_choice(Some(protocol::ChecksumAlgorithm::XXH128));
+
+    assert_eq!(
+        config.checksum_choice,
+        Some(protocol::ChecksumAlgorithm::XXH128)
+    );
+}
+
+#[test]
+fn with_checksum_choice_none_clears_override() {
+    let protocol = ProtocolVersion::try_from(31).unwrap();
+
+    let config = ProtocolSetupConfig::new(protocol, true)
+        .with_checksum_choice(Some(protocol::ChecksumAlgorithm::XXH128))
+        .with_checksum_choice(None);
+
+    assert!(
+        config.checksum_choice.is_none(),
+        "second with_checksum_choice(None) should clear the override"
     );
 }
 

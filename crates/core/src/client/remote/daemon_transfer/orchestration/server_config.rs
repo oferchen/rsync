@@ -101,7 +101,8 @@ fn apply_common_daemon_config(
     server_config.write.io_uring_policy = config.io_uring_policy();
     server_config.write.io_uring_depth = config.io_uring_depth();
     server_config.write.zero_copy_policy = config.zero_copy_policy();
-    server_config.checksum_choice = config.checksum_protocol_override();
+    // checksum_choice is set once in `apply_common_server_flags` (called above
+    // for both receiver and generator), shared with the SSH transfer paths.
     server_config.connection.compression_level = config.compression_level();
 
     // upstream: options.c:2704,2800-2805 - replicate the compress flag/option
