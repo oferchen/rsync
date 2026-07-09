@@ -249,6 +249,11 @@ pub use util::poison::{lock_or_recover, read_or_recover, write_or_recover};
 /// before writing and unregister them after a successful commit/rename.
 pub use util::cleanup::CleanupManager;
 
+/// Moves an interrupted `--partial` temp file onto its partial destination (or
+/// unlinks it when no partial is kept). Shared by the transfer guard and the
+/// signal-driven abort path so both finalise identically.
+pub use util::cleanup::finalize_partial;
+
 /// Async I/O operations (available with `async` feature).
 #[cfg(feature = "async")]
 pub use async_io::{AsyncBatchCopier, AsyncFileCopier, AsyncIoError, CopyProgress, CopyResult};

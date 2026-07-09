@@ -76,6 +76,7 @@ impl<'a> CopyContext<'a> {
         let mut bytes_since_timeout_check: usize = 0;
 
         loop {
+            self.check_shutdown(destination)?;
             if bytes_since_timeout_check >= TIMEOUT_CHECK_INTERVAL {
                 self.enforce_timeout()?;
                 bytes_since_timeout_check = 0;
