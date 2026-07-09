@@ -34,7 +34,9 @@ use destination::{check_destination_state, record_skipped_missing_destination};
 use dir_metadata::{apply_final_directory_metadata, record_directory_completion};
 use entry::process_planned_entry;
 
-use super::planner::{apply_pre_transfer_deletions, plan_directory_entries};
+use super::planner::{
+    apply_pre_transfer_deletions, plan_directory_entries, reorder_hardlink_group_holders,
+};
 use super::support::read_directory_entries_sorted_reuse;
 
 /// Maximum directory nesting depth the recursive executor descends before
@@ -466,7 +468,17 @@ fn copy_directory_recursive_inner(
         ensure_directory(context)?;
     }
 
-    let plan = plan_directory_entries(context, &entries, relative, root_device)?;
+    let mut plan = plan_directory_entries(context, &entries, relative, root_device)?;
+    // upstream: hlink.c:match_gnums / generator.c:1803-1806 - the last name-sorted
+    // member of a hard-link cohort is the transferred data-holder; earlier members
+    // follow it as `hf ... => <holder>` aliases. Reorder the plan so the executor's
+    // per-inode tracker records the holder first and every alias points at it.
+    reorder_hardlink_group_holders(
+        context.options().hard_links_enabled(),
+        !context.reference_directories().is_empty(),
+        destination,
+        &mut plan.planned_entries,
+    );
     apply_pre_transfer_deletions(context, destination, relative, &plan)?;
     // upstream: generator.c:1532-1537 - a non-INC_RECURSE `--delete-during`
     // sweep runs while the generator itemizes the directory entry, before it

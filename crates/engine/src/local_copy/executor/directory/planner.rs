@@ -395,6 +395,131 @@ pub(crate) fn plan_directory_entries<'a>(
     })
 }
 
+/// Reorders each hard-link cohort so the *last* name-sorted member is the
+/// transferred data-holder and the earlier members follow it as aliases.
+///
+/// upstream: `hlink.c:match_gnums()` sorts a cohort by group number then by
+/// name-sorted index and links the members into a list "from last to first",
+/// tagging the highest-index (last name-sorted) member `FLAG_HLINK_LAST`.
+/// `generator.c:1803-1806` then defers every non-last member whose destination
+/// is absent (`statret != 0 && F_HLINK_NOT_LAST`) and only transfers the last
+/// member; `finish_hard_link()` (`hlink.c:474-521`) walks the `F_HL_PREV` chain
+/// (last -> ... -> first) creating the aliases, so the itemize stream emits the
+/// holder first (`>f`) followed by the remaining members in descending name
+/// order, each pointing at the holder (`hf ... => <holder>`).
+///
+/// This reorder reproduces that ordering for the local-copy executor, whose
+/// per-inode [`HardLinkTracker`](crate::local_copy::HardLinkTracker) otherwise
+/// makes the first-processed (first name-sorted) member the data-holder.
+///
+/// The deferral is gated on the destination being absent, mirroring upstream's
+/// `statret != 0` guard: on a no-change rerun every member's destination exists,
+/// so upstream processes them in name order with the first member itemized `.f`
+/// and the rest blank `hf`. Only cohorts with two or more members whose
+/// destinations are missing are reordered.
+///
+/// The reorder is skipped entirely when a `--link-dest`/`--copy-dest`/
+/// `--compare-dest` basis is configured. Upstream's LAST-member deferral lives
+/// at `generator.c:1803`, *after* the alt-dest handling (`generator.c:995-1052`
+/// try_dests_reg); a cohort member satisfied from a basis is placed in name
+/// order and never reaches the deferral, so the FIRST name-sorted member stays
+/// the holder (e.g. `hf f1` / `hf f2 => f1`). Reordering those would swap the
+/// holder name while leaving the alt-dest followers correctly blank, so it is
+/// suppressed to preserve upstream fidelity.
+#[cfg(unix)]
+pub(crate) fn reorder_hardlink_group_holders(
+    hard_links_enabled: bool,
+    has_reference_directories: bool,
+    destination: &Path,
+    planned: &mut Vec<PlannedEntry<'_>>,
+) {
+    use std::os::unix::fs::MetadataExt;
+
+    use rustc_hash::FxHashMap;
+
+    if !hard_links_enabled || has_reference_directories {
+        return;
+    }
+
+    // Group regular-file copies with more than one link by (device, inode),
+    // preserving the name-sorted index order the planner already produced.
+    let mut groups: FxHashMap<(u64, u64), Vec<usize>> = FxHashMap::default();
+    for (idx, entry) in planned.iter().enumerate() {
+        if !matches!(entry.action, EntryAction::CopyFile) {
+            continue;
+        }
+        let meta = entry.metadata();
+        if meta.file_type().is_file() && meta.nlink() > 1 {
+            groups
+                .entry((meta.dev(), meta.ino()))
+                .or_default()
+                .push(idx);
+        }
+    }
+
+    // For each cohort, keep only the members whose destination is missing
+    // (upstream's `statret != 0` deferral guard). The last such member is the
+    // data-holder; the earlier ones are deferred to immediately after it.
+    let mut holder_followers: FxHashMap<usize, Vec<usize>> = FxHashMap::default();
+    let mut deferred: FxHashMap<usize, ()> = FxHashMap::default();
+    for indices in groups.values() {
+        let fresh: Vec<usize> = indices
+            .iter()
+            .copied()
+            .filter(|&i| {
+                fs::symlink_metadata(destination.join(&planned[i].entry.file_name)).is_err()
+            })
+            .collect();
+        if fresh.len() < 2 {
+            continue;
+        }
+        let (holder, followers) = fresh.split_last().expect("fresh has >= 2 members");
+        for &follower in followers {
+            deferred.insert(follower, ());
+        }
+        holder_followers.insert(*holder, followers.to_vec());
+    }
+
+    if deferred.is_empty() {
+        return;
+    }
+
+    // Rebuild the plan: drop each deferred member from its natural slot and, when
+    // the holder is reached, emit it followed by its deferred members in
+    // descending name order (the `F_HL_PREV` walk order).
+    let mut slots: Vec<Option<PlannedEntry<'_>>> = planned.drain(..).map(Some).collect();
+    let mut reordered = Vec::with_capacity(slots.len());
+    for idx in 0..slots.len() {
+        if deferred.contains_key(&idx) {
+            continue;
+        }
+        if let Some(entry) = slots[idx].take() {
+            reordered.push(entry);
+        }
+        if let Some(followers) = holder_followers.get(&idx) {
+            for &follower in followers.iter().rev() {
+                if let Some(entry) = slots[follower].take() {
+                    reordered.push(entry);
+                }
+            }
+        }
+    }
+
+    *planned = reordered;
+}
+
+/// No-op on platforms without inode metadata: source-side hard-link cohorts are
+/// not detected there (see [`HardLinkTracker`](crate::local_copy::HardLinkTracker)),
+/// so there is no holder to reorder.
+#[cfg(not(unix))]
+pub(crate) fn reorder_hardlink_group_holders(
+    _hard_links_enabled: bool,
+    _has_reference_directories: bool,
+    _destination: &Path,
+    _planned: &mut Vec<PlannedEntry<'_>>,
+) {
+}
+
 /// Applies pre-transfer deletions when `--delete-before` is active.
 // upstream: generator.c:do_delete_pass() - pre-transfer deletion
 pub(crate) fn apply_pre_transfer_deletions(
