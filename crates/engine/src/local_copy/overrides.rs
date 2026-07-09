@@ -2,6 +2,11 @@ use std::fs;
 use std::io;
 use std::path::Path;
 
+#[cfg(target_os = "linux")]
+use std::collections::HashMap;
+#[cfg(target_os = "linux")]
+use std::path::PathBuf;
+
 #[cfg(test)]
 use std::cell::RefCell;
 
@@ -159,91 +164,162 @@ pub(super) fn device_identifier(path: &Path, metadata: &fs::Metadata) -> Option<
     }
 }
 
-/// Returns whether `source` and `destination` reside on the same filesystem.
+/// Returns whether `source` shares a filesystem with a destination whose
+/// parent directory has device id `dest_parent_device`.
 ///
-/// Compares the device id of `source` against the device id of
-/// `destination`'s parent directory - the destination file itself may not
-/// exist yet, so its filesystem is the parent's. Returns `None` when either
-/// device id cannot be determined (e.g. the parent cannot be stat'd), letting
-/// callers fall back to attempting the operation. Used to gate reflink fast
-/// paths (`ioctl(FICLONE)`/`FICLONERANGE`) that only clone within a single
-/// filesystem and otherwise fail with `EXDEV`.
+/// The destination file itself may not exist yet, so its filesystem is the
+/// parent's; callers resolve the parent device - ideally from a cache to avoid
+/// a redundant per-file `statx` - and pass it here. Returns `None` when either
+/// device id is unavailable, letting callers attempt the operation and fall
+/// back on `EXDEV`. Used to gate reflink fast paths (`ioctl(FICLONE)`/
+/// `FICLONERANGE`) that only clone within a single filesystem.
 #[cfg(target_os = "linux")]
 pub(super) fn same_filesystem(
     source: &Path,
     source_metadata: &fs::Metadata,
-    destination: &Path,
+    dest_parent_device: Option<u64>,
 ) -> Option<bool> {
     let source_dev = device_identifier(source, source_metadata)?;
-    let parent = destination.parent()?;
-    let parent_metadata = fs::symlink_metadata(parent).ok()?;
-    let dest_dev = device_identifier(parent, &parent_metadata)?;
+    let dest_dev = dest_parent_device?;
     Some(source_dev == dest_dev)
+}
+
+/// Resolves the device id of `parent`, memoizing it in the verified-parent
+/// cache so sibling files in one directory pay a single `statx`.
+///
+/// `parent` is normally already present in `cache` (inserted by
+/// `prepare_parent_directory` with a `None` device placeholder). On a cache
+/// hit with a resolved device the stored id is returned with no syscall; on a
+/// placeholder the directory is stat'd once and the id written back. When the
+/// parent is absent from the cache - only reachable outside the normal
+/// per-file flow - the directory is stat'd without caching, matching the prior
+/// uncached behaviour. Returns `None` when the directory cannot be stat'd or
+/// its device id is unavailable.
+#[cfg(target_os = "linux")]
+pub(super) fn cached_parent_device(
+    cache: &mut HashMap<PathBuf, Option<u64>>,
+    parent: &Path,
+) -> Option<u64> {
+    if let Some(Some(dev)) = cache.get(parent) {
+        return Some(*dev);
+    }
+    let metadata = fs::symlink_metadata(parent).ok()?;
+    let dev = device_identifier(parent, &metadata)?;
+    // Only fill an existing verified entry, so an unverified parent is never
+    // recorded as verified. A FICLONE-path parent has already been through
+    // prepare_parent_directory, so the entry exists in the common case.
+    if let Some(slot) = cache.get_mut(parent) {
+        *slot = Some(dev);
+    }
+    Some(dev)
 }
 
 #[cfg(all(test, target_os = "linux"))]
 mod same_filesystem_tests {
-    use super::{same_filesystem, with_device_id_override};
+    use super::{
+        cached_parent_device, device_identifier, same_filesystem, with_device_id_override,
+    };
+    use std::collections::HashMap;
+    use std::path::PathBuf;
     use tempfile::tempdir;
 
     #[test]
     fn reports_same_device_when_ids_match() {
-        // Source and destination parent both resolve to device 1: the helper
-        // must report Some(true) so the FICLONE fast path proceeds.
+        // Source device 1 and a resolved parent device 1: the helper must
+        // report Some(true) so the FICLONE fast path proceeds.
         let temp = tempdir().expect("tempdir");
         let source = temp.path().join("src");
-        let dest = temp.path().join("dst");
         std::fs::write(&source, b"data").expect("write source");
         let source_meta = std::fs::symlink_metadata(&source).expect("source metadata");
 
         let verdict = with_device_id_override(
             |_path, _meta| Some(1),
-            || same_filesystem(&source, &source_meta, &dest),
+            || same_filesystem(&source, &source_meta, Some(1)),
         );
         assert_eq!(verdict, Some(true));
     }
 
     #[test]
     fn reports_cross_device_when_ids_differ() {
-        // Source resolves to device 1, the destination's parent to device 2:
-        // the helper must report Some(false) so the caller skips the doomed
-        // cross-filesystem FICLONE ioctl entirely.
-        let source_dir = tempdir().expect("source tempdir");
-        let dest_dir = tempdir().expect("dest tempdir");
-        let source = source_dir.path().join("src");
-        let dest = dest_dir.path().join("dst");
+        // Source device 1, parent device 2: the helper must report Some(false)
+        // so the caller skips the doomed cross-filesystem FICLONE ioctl.
+        let temp = tempdir().expect("tempdir");
+        let source = temp.path().join("src");
         std::fs::write(&source, b"data").expect("write source");
         let source_meta = std::fs::symlink_metadata(&source).expect("source metadata");
 
-        let dest_parent = dest_dir.path().to_path_buf();
         let verdict = with_device_id_override(
-            move |path, _meta| {
-                if path == dest_parent.as_path() {
-                    Some(2)
-                } else {
-                    Some(1)
-                }
-            },
-            || same_filesystem(&source, &source_meta, &dest),
+            |_path, _meta| Some(1),
+            || same_filesystem(&source, &source_meta, Some(2)),
         );
         assert_eq!(verdict, Some(false));
     }
 
     #[test]
-    fn reports_none_when_destination_parent_missing() {
-        // A destination whose parent directory does not exist cannot be
-        // stat'd, so the helper returns None and the caller falls through to
-        // try_ficlone rather than wrongly skipping it.
+    fn reports_none_when_parent_device_unknown() {
+        // An unresolved parent device makes the filesystem indeterminate, so
+        // the helper returns None and the caller falls through to try_ficlone
+        // rather than wrongly skipping it.
         let temp = tempdir().expect("tempdir");
         let source = temp.path().join("src");
         std::fs::write(&source, b"data").expect("write source");
         let source_meta = std::fs::symlink_metadata(&source).expect("source metadata");
-        let dest = temp.path().join("missing").join("dst");
 
         let verdict = with_device_id_override(
             |_path, _meta| Some(1),
-            || same_filesystem(&source, &source_meta, &dest),
+            || same_filesystem(&source, &source_meta, None),
         );
         assert_eq!(verdict, None);
+    }
+
+    #[test]
+    fn cached_parent_device_returns_stored_id_without_statting() {
+        // A verified parent whose device is already resolved must be served
+        // from the cache alone: the path does not exist on disk, so any statx
+        // would fail and yield None. A hit proves no syscall occurred - the
+        // per-file redundant parent statx is eliminated.
+        let mut cache: HashMap<PathBuf, Option<u64>> = HashMap::new();
+        let parent = PathBuf::from("/nonexistent/verified/parent");
+        cache.insert(parent.clone(), Some(4242));
+
+        assert_eq!(cached_parent_device(&mut cache, &parent), Some(4242));
+    }
+
+    #[test]
+    fn cached_parent_device_resolves_once_then_memoizes() {
+        // First call on a placeholder entry stats the directory and writes the
+        // device back; a second call is served from the cache even after the
+        // directory is removed, proving the stat happens once per directory,
+        // not once per file.
+        let temp = tempdir().expect("tempdir");
+        let parent = temp.path().to_path_buf();
+        let mut cache: HashMap<PathBuf, Option<u64>> = HashMap::new();
+        cache.insert(parent.clone(), None);
+
+        let expected = device_identifier(
+            &parent,
+            &std::fs::symlink_metadata(&parent).expect("parent metadata"),
+        )
+        .expect("device id");
+        let first = cached_parent_device(&mut cache, &parent).expect("device resolved");
+        assert_eq!(first, expected);
+        assert_eq!(cache.get(&parent), Some(&Some(expected)));
+
+        // Remove the directory: a re-stat would now fail, so a cache miss would
+        // return None. The cached value must still be returned.
+        drop(temp);
+        assert_eq!(cached_parent_device(&mut cache, &parent), Some(expected));
+    }
+
+    #[test]
+    fn cached_parent_device_does_not_cache_unverified_parent() {
+        // A parent absent from the cache (not verified this transfer) is stat'd
+        // but not inserted, so it never masquerades as a verified directory.
+        let temp = tempdir().expect("tempdir");
+        let parent = temp.path().to_path_buf();
+        let mut cache: HashMap<PathBuf, Option<u64>> = HashMap::new();
+
+        assert!(cached_parent_device(&mut cache, &parent).is_some());
+        assert!(cache.is_empty());
     }
 }
