@@ -61,6 +61,26 @@ impl LocalCopyFileKind {
         Self::Other
     }
 
+    /// Maps a POSIX `st_mode` (including the `S_IFMT` type bits) to the file
+    /// kind, returning `None` for a regular file or an unrecognised type.
+    ///
+    /// Used by the fake-super reporting override so a regular placeholder is
+    /// itemized as the virtual type its `user.rsync.%stat` xattr encodes,
+    /// while a `%stat` that still describes a regular file leaves the kind
+    /// untouched.
+    #[cfg(all(unix, feature = "xattr"))]
+    fn from_stat_mode(mode: u32) -> Option<Self> {
+        match mode & 0o170000 {
+            0o040000 => Some(Self::Directory),
+            0o120000 => Some(Self::Symlink),
+            0o010000 => Some(Self::Fifo),
+            0o020000 => Some(Self::CharDevice),
+            0o060000 => Some(Self::BlockDevice),
+            0o140000 => Some(Self::Socket),
+            _ => None,
+        }
+    }
+
     /// Returns whether the kind represents a directory.
     #[must_use]
     pub const fn is_directory(self) -> bool {
@@ -127,6 +147,46 @@ impl LocalCopyMetadata {
             nlink,
             symlink_target: target,
         }
+    }
+
+    /// Applies the upstream fake-super `st_mode` override for reporting.
+    ///
+    /// Under `--fake-super`, a device/FIFO/socket is stored on disk as a
+    /// regular placeholder file that carries the real mode and device numbers
+    /// in its `user.rsync.%stat` xattr. Upstream's sender virtualises the stat
+    /// via `get_stat_xattr()` before itemizing, so the placeholder is reported
+    /// as its true type. This mirrors that override for the local-copy path:
+    /// when `fake_super` is active and this snapshot describes a regular file
+    /// whose source `%stat` decodes to a non-regular type, the reported kind
+    /// and mode are replaced. The on-disk file and the copied destination stay
+    /// regular placeholders; only the itemized type char and mode change.
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `xattrs.c:1135 get_stat_xattr()` - overrides `st_mode`/`st_rdev` from
+    ///   the `%stat` xattr on the sender when `am_root < 0` (fake-super).
+    #[must_use]
+    pub(in crate::local_copy) fn virtualize_fake_super(
+        mut self,
+        source: &Path,
+        fake_super: bool,
+    ) -> Self {
+        #[cfg(all(unix, feature = "xattr"))]
+        {
+            if fake_super
+                && matches!(self.kind, LocalCopyFileKind::File)
+                && let Ok(Some(stat)) = ::metadata::load_fake_super(source)
+                && let Some(kind) = LocalCopyFileKind::from_stat_mode(stat.mode)
+            {
+                self.kind = kind;
+                self.mode = Some(stat.mode);
+            }
+        }
+        #[cfg(not(all(unix, feature = "xattr")))]
+        {
+            let _ = (source, fake_super);
+        }
+        self
     }
 
     /// Returns the entry kind associated with the metadata.
@@ -281,5 +341,80 @@ mod tests {
         );
         assert_ne!(LocalCopyFileKind::BlockDevice, LocalCopyFileKind::Socket);
         assert_ne!(LocalCopyFileKind::Socket, LocalCopyFileKind::Other);
+    }
+
+    // Under --fake-super a device/FIFO/socket is stored as a regular
+    // placeholder file whose `user.rsync.%stat` xattr encodes the real
+    // st_mode. The reporting override must map those mode bits back to the
+    // virtual kind (so the itemized type char matches upstream's
+    // get_stat_xattr sender override, xattrs.c:1135) while leaving a %stat
+    // that still describes a regular file untouched.
+    #[cfg(all(unix, feature = "xattr"))]
+    #[test]
+    fn from_stat_mode_maps_type_bits_to_kind() {
+        assert_eq!(
+            LocalCopyFileKind::from_stat_mode(0o020644),
+            Some(LocalCopyFileKind::CharDevice)
+        );
+        assert_eq!(
+            LocalCopyFileKind::from_stat_mode(0o060660),
+            Some(LocalCopyFileKind::BlockDevice)
+        );
+        assert_eq!(
+            LocalCopyFileKind::from_stat_mode(0o010644),
+            Some(LocalCopyFileKind::Fifo)
+        );
+        assert_eq!(
+            LocalCopyFileKind::from_stat_mode(0o140755),
+            Some(LocalCopyFileKind::Socket)
+        );
+        assert_eq!(
+            LocalCopyFileKind::from_stat_mode(0o120777),
+            Some(LocalCopyFileKind::Symlink)
+        );
+        // A regular file leaves the kind unchanged (returns None).
+        assert_eq!(LocalCopyFileKind::from_stat_mode(0o100644), None);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn virtualize_fake_super_is_noop_when_disabled() {
+        use std::fs;
+        let tmp = tempfile::TempDir::new().unwrap();
+        let path = tmp.path().join("placeholder");
+        fs::write(&path, b"x").unwrap();
+        let meta = fs::symlink_metadata(&path).unwrap();
+        let snapshot = LocalCopyMetadata::from_metadata(&meta, None);
+        // fake_super = false must never consult the xattr or change the kind.
+        let virtualized = snapshot.virtualize_fake_super(&path, false);
+        assert_eq!(virtualized.kind(), LocalCopyFileKind::File);
+    }
+
+    // A regular placeholder carrying a device `%stat` xattr must report as a
+    // device once fake-super virtualisation runs, matching the upstream
+    // sender itemize (`cD` instead of `>f`). Skips gracefully on filesystems
+    // that reject `user.*` xattrs so CI on such hosts does not flake.
+    #[cfg(all(unix, feature = "xattr"))]
+    #[test]
+    fn virtualize_fake_super_promotes_placeholder_to_device() {
+        use std::fs;
+        let tmp = tempfile::TempDir::new().unwrap();
+        let path = tmp.path().join("char");
+        fs::write(&path, b"").unwrap();
+        let stat = ::metadata::FakeSuperStat {
+            mode: 0o020644,
+            uid: 0,
+            gid: 0,
+            rdev: Some((41, 67)),
+        };
+        if ::metadata::store_fake_super(&path, &stat).is_err() {
+            eprintln!("skipping: user.* xattrs unsupported on test filesystem");
+            return;
+        }
+        let meta = fs::symlink_metadata(&path).unwrap();
+        let snapshot =
+            LocalCopyMetadata::from_metadata(&meta, None).virtualize_fake_super(&path, true);
+        assert_eq!(snapshot.kind(), LocalCopyFileKind::CharDevice);
+        assert_eq!(snapshot.mode(), Some(0o020644));
     }
 }

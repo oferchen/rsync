@@ -297,7 +297,8 @@ pub(in crate::local_copy) fn execute_transfer(
     if matches!(append_mode, AppendMode::Skip) {
         context.record_hard_link(metadata, destination);
         context.summary_mut().record_regular_file_matched();
-        let metadata_snapshot = LocalCopyMetadata::from_metadata(metadata, None);
+        let metadata_snapshot = LocalCopyMetadata::from_metadata(metadata, None)
+            .virtualize_fake_super(source, metadata_options.fake_super_enabled());
         let total_bytes = Some(metadata_snapshot.len());
         context.record(LocalCopyRecord::new(
             record_path.to_path_buf(),
@@ -655,7 +656,8 @@ pub(in crate::local_copy) fn execute_transfer(
         .record_copy_method(CopyMethodKind::Standard);
     context.summary_mut().record_elapsed(elapsed);
 
-    let metadata_snapshot = LocalCopyMetadata::from_metadata(metadata, None);
+    let metadata_snapshot = LocalCopyMetadata::from_metadata(metadata, None)
+        .virtualize_fake_super(source, metadata_options.fake_super_enabled());
     let total_bytes = Some(metadata_snapshot.len());
     let wrote_data = outcome.literal_bytes() > 0 || append_offset > 0;
 

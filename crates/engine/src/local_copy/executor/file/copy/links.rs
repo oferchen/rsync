@@ -283,7 +283,8 @@ pub(super) fn process_links(
             });
         context.record_hard_link(metadata, destination);
         context.summary_mut().record_hard_link();
-        let metadata_snapshot = LocalCopyMetadata::from_metadata(metadata, leader_display);
+        let metadata_snapshot = LocalCopyMetadata::from_metadata(metadata, leader_display)
+            .virtualize_fake_super(source, metadata_options.fake_super_enabled());
         let total_bytes = Some(metadata_snapshot.len());
         context.record(
             LocalCopyRecord::new(
@@ -419,7 +420,8 @@ pub(super) fn process_links(
             // Tagging the record as HardLink keeps position 0 at 'h'
             // instead of '.'; omitting `.with_creation(true)` keeps
             // positions 2-10 as deltas instead of `+++++++++`.
-            let reuse_snapshot = LocalCopyMetadata::from_metadata(metadata, None);
+            let reuse_snapshot = LocalCopyMetadata::from_metadata(metadata, None)
+                .virtualize_fake_super(source, metadata_options.fake_super_enabled());
             context.record(
                 LocalCopyRecord::new(
                     record_path.to_path_buf(),
@@ -508,7 +510,8 @@ pub(super) fn process_links(
             .map(std::path::Path::to_path_buf)
             .unwrap_or_else(|_| existing_target.clone());
         let metadata_snapshot =
-            LocalCopyMetadata::from_metadata(metadata, Some(link_target_display));
+            LocalCopyMetadata::from_metadata(metadata, Some(link_target_display))
+                .virtualize_fake_super(source, metadata_options.fake_super_enabled());
         let total_bytes = Some(metadata_snapshot.len());
         // upstream: hlink.c:218-222 - `itemize(..., ITEM_LOCAL_CHANGE, ...)`
         // is emitted whether the alias was created from scratch or the
@@ -662,7 +665,8 @@ pub(super) fn process_links(
                 let basis_metadata = fs::symlink_metadata(&basis).map_err(|error| {
                     LocalCopyError::io("inspect compare-dest basis", basis.clone(), error)
                 })?;
-                let metadata_snapshot = LocalCopyMetadata::from_metadata(metadata, None);
+                let metadata_snapshot = LocalCopyMetadata::from_metadata(metadata, None)
+                    .virtualize_fake_super(source, metadata_options.fake_super_enabled());
                 let total_bytes = Some(metadata_snapshot.len());
                 let change_set = LocalCopyChangeSet::for_file(
                     metadata,
@@ -793,7 +797,8 @@ pub(super) fn process_links(
                     info_log!(Name, 1, "{} => {}", record_path.display(), path.display());
                     context.record_hard_link(metadata, destination);
                     context.summary_mut().record_hard_link();
-                    let metadata_snapshot = LocalCopyMetadata::from_metadata(metadata, None);
+                    let metadata_snapshot = LocalCopyMetadata::from_metadata(metadata, None)
+                        .virtualize_fake_super(source, metadata_options.fake_super_enabled());
                     let total_bytes = Some(metadata_snapshot.len());
                     context.record(LocalCopyRecord::new(
                         record_path.to_path_buf(),

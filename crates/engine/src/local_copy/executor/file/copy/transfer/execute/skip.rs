@@ -160,7 +160,8 @@ pub(super) fn record_metadata_only_skip(
 
     context.record_hard_link(metadata, destination);
     context.summary_mut().record_regular_file_matched();
-    let metadata_snapshot = LocalCopyMetadata::from_metadata(metadata, None);
+    let metadata_snapshot = LocalCopyMetadata::from_metadata(metadata, None)
+        .virtualize_fake_super(source, metadata_options.fake_super_enabled());
     let total_bytes = Some(metadata_snapshot.len());
     let change_set = LocalCopyChangeSet::for_file(
         metadata,
