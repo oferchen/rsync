@@ -2044,3 +2044,115 @@ fn execute_dry_run_mixed_specials_and_symlinks_no_side_effects() {
     // But nothing should be created
     assert!(!dest_root.exists(), "dry run should not create destination");
 }
+
+/// A FIFO copied under archive-style options (`--times --perms`) must remain a
+/// FIFO. Regression for two defects: (1) applying the source mode with the
+/// S_IFMT bits intact rewrote the node type under fakeroot, and (2) applying
+/// times through filetime's follow variant opened the FIFO (`File::open`),
+/// blocking indefinitely on a real FIFO with no peer. Upstream skips the
+/// redundant chmod (`!BITS_EQUAL`) and sets times via `utimensat` on the path.
+#[cfg(unix)]
+#[test]
+fn execute_fifo_preserves_type_under_times_and_perms() {
+    use std::os::unix::fs::{FileTypeExt, PermissionsExt};
+
+    let temp = create_tempdir();
+    let source_fifo = temp.path().join("source.pipe");
+    mkfifo_for_tests(&source_fifo, 0o640).expect("mkfifo");
+    fs::set_permissions(&source_fifo, PermissionsExt::from_mode(0o640))
+        .expect("set fifo permissions");
+
+    let destination_fifo = temp.path().join("dest.pipe");
+    let operands = vec![
+        source_fifo.into_os_string(),
+        destination_fifo.clone().into_os_string(),
+    ];
+    let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
+
+    let summary = plan
+        .execute_with_options(
+            LocalCopyExecution::Apply,
+            LocalCopyOptions::default()
+                .times(true)
+                .permissions(true)
+                .specials(true),
+        )
+        .expect("fifo copy succeeds");
+
+    let dest_metadata = fs::symlink_metadata(&destination_fifo).expect("dest metadata");
+    assert!(
+        dest_metadata.file_type().is_fifo(),
+        "destination must remain a FIFO after --times --perms"
+    );
+    assert_eq!(dest_metadata.permissions().mode() & 0o777, 0o640);
+    assert_eq!(summary.fifos_created(), 1);
+}
+
+/// A `--link-dest` basis FIFO that exactly matches the source is hard-linked
+/// into place and itemized `hS` with blank attribute slots (no creation, empty
+/// change-set), mirroring upstream try_dests_non() match_level 3. Uses a FIFO
+/// because block/char device nodes require CAP_MKNOD, unavailable in CI.
+#[cfg(unix)]
+#[test]
+fn execute_link_dest_hardlinks_matching_special() {
+    use filetime::{FileTime, set_symlink_file_times};
+    use std::os::unix::fs::{FileTypeExt, MetadataExt};
+
+    let temp = create_tempdir();
+    let source_dir = temp.path().join("source");
+    fs::create_dir_all(&source_dir).expect("create source");
+    let source_fifo = source_dir.join("pipe");
+    mkfifo_for_tests(&source_fifo, 0o640).expect("mkfifo source");
+
+    let link_dest_dir = temp.path().join("previous");
+    fs::create_dir_all(&link_dest_dir).expect("create link-dest");
+    let basis_fifo = link_dest_dir.join("pipe");
+    mkfifo_for_tests(&basis_fifo, 0o640).expect("mkfifo basis");
+
+    // Match the basis mtime to the source so unchanged_attrs holds and the node
+    // reaches match_level 3 (hard-link) rather than a recreate.
+    let src_meta = fs::symlink_metadata(&source_fifo).expect("src meta");
+    let ftime = FileTime::from_last_modification_time(&src_meta);
+    set_symlink_file_times(&basis_fifo, ftime, ftime).expect("sync basis times");
+
+    let dest_dir = temp.path().join("dest");
+    fs::create_dir_all(&dest_dir).expect("create dest");
+    let dest_fifo = dest_dir.join("pipe");
+    let operands = vec![
+        source_fifo.into_os_string(),
+        dest_fifo.clone().into_os_string(),
+    ];
+    let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
+
+    let options = LocalCopyOptions::default()
+        .times(true)
+        .permissions(true)
+        .specials(true)
+        .collect_events(true)
+        .extend_link_dests([link_dest_dir]);
+    let report = plan
+        .execute_with_report(LocalCopyExecution::Apply, options)
+        .expect("copy succeeds");
+
+    let dest_meta = fs::symlink_metadata(&dest_fifo).expect("dest meta");
+    let basis_meta = fs::symlink_metadata(&basis_fifo).expect("basis meta");
+    assert!(dest_meta.file_type().is_fifo(), "dest is a FIFO");
+    assert_eq!(
+        dest_meta.ino(),
+        basis_meta.ino(),
+        "destination must be hard-linked to the link-dest basis"
+    );
+
+    let record = report
+        .records()
+        .iter()
+        .find(|record| record.relative_path() == Path::new("pipe"))
+        .expect("record for the hard-linked FIFO");
+    assert_eq!(record.action(), &LocalCopyAction::HardLink);
+    assert!(!record.was_created(), "hD/hS row is not a creation");
+    assert!(
+        !record.change_set().has_any_change(),
+        "an exact link-dest match itemizes with blank attribute slots"
+    );
+    assert!(report.summary().hard_links_created() >= 1);
+}

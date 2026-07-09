@@ -10,12 +10,12 @@ use std::io;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
+use super::link_special_from_link_dest;
 use crate::local_copy::remove_existing_destination;
 #[cfg(all(any(unix, windows), feature = "acl"))]
 use crate::local_copy::sync_acls_if_requested;
 #[cfg(all(unix, feature = "xattr"))]
 use crate::local_copy::sync_xattrs_if_requested;
-use super::link_special_from_link_dest;
 use crate::local_copy::{
     CopyContext, CreatedEntryKind, LocalCopyAction, LocalCopyArgumentError, LocalCopyChangeSet,
     LocalCopyError, LocalCopyMetadata, LocalCopyRecord, map_metadata_error,
@@ -23,7 +23,9 @@ use crate::local_copy::{
 };
 #[cfg(unix)]
 use ::metadata::create_fifo_with_fake_super;
-use ::metadata::{MetadataOptions, apply_file_metadata_with_options};
+use ::metadata::{
+    MetadataOptions, apply_file_metadata_if_changed, apply_file_metadata_with_options,
+};
 
 /// Copies a FIFO (named pipe) from source to destination.
 ///
@@ -341,8 +343,22 @@ pub(crate) fn copy_fifo(
         destination_previously_existed,
     );
 
-    apply_file_metadata_with_options(destination, metadata, metadata_options)
-        .map_err(map_metadata_error)?;
+    // upstream: rsync.c:set_file_attrs() chmods only when the freshly created
+    // node's permission bits differ from the source (`!BITS_EQUAL`). do_mknod()
+    // already created the FIFO with the source mode, so the perms match and the
+    // chmod is skipped. Skipping it is not merely an optimisation: under
+    // fakeroot a `mknod(S_IFIFO)` node is a regular inode carrying a faked type,
+    // and any chmod - even one masked to the permission bits - rewrites that
+    // faked type back to a regular file. Comparing against the just-created node
+    // (rather than an unconditional apply) mirrors upstream and preserves the
+    // FIFO type.
+    if let Ok(created_metadata) = fs::symlink_metadata(destination) {
+        apply_file_metadata_if_changed(destination, metadata, &created_metadata, metadata_options)
+            .map_err(map_metadata_error)?;
+    } else {
+        apply_file_metadata_with_options(destination, metadata, metadata_options)
+            .map_err(map_metadata_error)?;
+    }
 
     #[cfg(all(unix, feature = "xattr"))]
     sync_xattrs_if_requested(

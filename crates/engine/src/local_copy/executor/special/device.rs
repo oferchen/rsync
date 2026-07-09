@@ -10,12 +10,12 @@ use std::io;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
+use super::link_special_from_link_dest;
 use crate::local_copy::remove_existing_destination;
 #[cfg(all(any(unix, windows), feature = "acl"))]
 use crate::local_copy::sync_acls_if_requested;
 #[cfg(all(unix, feature = "xattr"))]
 use crate::local_copy::sync_xattrs_if_requested;
-use super::link_special_from_link_dest;
 use crate::local_copy::{
     CopyContext, CreatedEntryKind, LocalCopyAction, LocalCopyArgumentError, LocalCopyChangeSet,
     LocalCopyError, LocalCopyMetadata, LocalCopyRecord, map_metadata_error,

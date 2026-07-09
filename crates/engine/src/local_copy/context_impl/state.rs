@@ -576,12 +576,10 @@ impl<'a> CopyContext<'a> {
                 if metadata.rdev() != candidate_metadata.rdev() {
                     continue;
                 }
-            } else {
-                if source_type.is_fifo() != cand_type.is_fifo()
-                    || source_type.is_socket() != cand_type.is_socket()
-                {
-                    continue;
-                }
+            } else if source_type.is_fifo() != cand_type.is_fifo()
+                || source_type.is_socket() != cand_type.is_socket()
+            {
+                continue;
             }
 
             // upstream: generator.c:461-500 unchanged_attrs - preserved mtime,
