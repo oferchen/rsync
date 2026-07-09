@@ -65,6 +65,18 @@ pub(super) fn try_skip_up_to_date(
         prefetched_match,
     });
 
+    // upstream: generator.c:unchanged_file() compares st_rdev for devices. A
+    // --fake-super placeholder can have identical content and mtime while its
+    // %stat encodes a different device, so force a transfer when the encoded
+    // node changed.
+    #[cfg(all(unix, feature = "xattr"))]
+    if skip
+        && metadata_options.fake_super_enabled()
+        && super::super::super::super::comparison::fake_super_stat_differs(source, destination)
+    {
+        skip = false;
+    }
+
     if skip {
         let requires_content_verification =
             existing.is_file() && !flags.checksum_enabled && context.options().backup_enabled();
@@ -160,7 +172,8 @@ pub(super) fn record_metadata_only_skip(
 
     context.record_hard_link(metadata, destination);
     context.summary_mut().record_regular_file_matched();
-    let metadata_snapshot = LocalCopyMetadata::from_metadata(metadata, None);
+    let metadata_snapshot = LocalCopyMetadata::from_metadata(metadata, None)
+        .virtualize_fake_super(source, metadata_options.fake_super_enabled());
     let total_bytes = Some(metadata_snapshot.len());
     let change_set = LocalCopyChangeSet::for_file(
         metadata,
