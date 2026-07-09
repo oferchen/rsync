@@ -498,6 +498,53 @@ mod handle_at_error_tests {
         assert_eq!(err.exit_code(), CLIENT_SERVER_PROTOCOL_EXIT_CODE);
     }
 
+    /// Regression: an unexpected daemon disconnect during the module-response
+    /// phase must fail promptly, not busy-loop printing blank lines.
+    ///
+    /// A daemon that detects a fatal condition (e.g. a strict-modes secrets
+    /// violation) and drops the socket without a proper `@RSYNCD:`/`@ERROR`
+    /// line leaves the client's response reader at EOF. Before the fix, the
+    /// `read_line` loop ignored the 0-byte return, `trim()` produced an empty
+    /// string matching no branch, and the loop spun forever emitting empty
+    /// MOTD lines. The guard must convert EOF into a clean protocol error.
+    ///
+    /// upstream: clientserver.c:359-361 - `read_line_old()` returning false
+    /// yields "didn't get server startup line" and `return -1` (RERR_PROTOCOL).
+    #[test]
+    fn handshake_errors_on_daemon_eof_instead_of_looping() {
+        use std::io::{BufReader, Cursor};
+
+        let request = DaemonTransferRequest {
+            address: DaemonAddress::new("127.0.0.1".to_owned(), 873).unwrap(),
+            module: "mod".to_owned(),
+            path: String::new(),
+            username: None,
+        };
+
+        // Valid greeting, then EOF: the daemon accepted the greeting but closed
+        // the control socket before replying to the module request.
+        let mut reader = BufReader::new(Cursor::new(b"@RSYNCD: 32.0\n".to_vec()));
+        let mut writer: Vec<u8> = Vec::new();
+
+        let result = perform_daemon_handshake(
+            &mut reader,
+            &mut writer,
+            &request,
+            true,
+            &[],
+            None,
+            None,
+            None,
+        );
+
+        let err = result.expect_err("EOF mid-handshake must be an error, not a hang");
+        assert_eq!(
+            err.exit_code(),
+            CLIENT_SERVER_PROTOCOL_EXIT_CODE,
+            "daemon EOF must map to the client-server protocol exit code"
+        );
+    }
+
     #[test]
     fn ghsa_rjfm_3w2m_jf4f_payload_renders_intact() {
         // The exact wire string the daemon emits for the GHSA-rjfm-3w2m-jf4f
