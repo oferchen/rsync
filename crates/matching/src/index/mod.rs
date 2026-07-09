@@ -618,7 +618,7 @@ impl DeltaSignatureIndex {
     /// same (partial) length.
     ///
     /// The full-length matchers reject any window whose length differs from
-    /// `block_length`, and [`populate_index`] deliberately excludes partial
+    /// `block_length`, and `populate_index` deliberately excludes partial
     /// blocks from the tag/bithash/lookup tables. That leaves the basis file's
     /// final short block unmatchable through the fast paths, so the sender
     /// would always emit the source file's trailing partial block as literal
