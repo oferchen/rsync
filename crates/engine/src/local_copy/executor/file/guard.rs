@@ -499,6 +499,7 @@ impl DestinationWriteGuard {
     /// partial destination for `--partial`/`--partial-dir`, or unlinks it
     /// otherwise. Shared by [`discard`](Self::discard) and [`Drop`].
     fn finalize_partial_on_failure(&mut self) {
+        #[allow(irrefutable_let_patterns)]
         if let GuardStrategy::NamedTempFile { temp_path, partial } = &self.strategy {
             crate::finalize_partial(
                 temp_path,
