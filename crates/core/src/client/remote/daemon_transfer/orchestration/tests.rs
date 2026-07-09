@@ -425,6 +425,29 @@ mod protect_args_daemon_tests {
     }
 
     #[test]
+    fn build_full_args_uses_ii_log_format_for_itemize_unchanged_push() {
+        // upstream: options.c:164-175 server_options - `-ii`
+        // (stdout_format_has_i > 1) forwards `--log-format=%i%I` so the daemon
+        // receiver also itemizes unchanged entries. `-i` alone forwards `%i`.
+        let config = ClientConfig::builder()
+            .itemize_changes(true)
+            .itemize_unchanged(true)
+            .build();
+        let request = test_daemon_request();
+        let protocol = ProtocolVersion::try_from(32u8).unwrap();
+        let args = build_full_daemon_args(&config, &request, protocol, false);
+
+        assert!(
+            args.iter().any(|a| a == "--log-format=%i%I"),
+            "push with -ii should forward --log-format=%i%I: {args:?}"
+        );
+        assert!(
+            !args.iter().any(|a| a == "--log-format=%i"),
+            "the -i form must not also appear: {args:?}"
+        );
+    }
+
+    #[test]
     fn build_full_args_omits_log_format_without_itemize() {
         let config = ClientConfig::default();
         let request = test_daemon_request();

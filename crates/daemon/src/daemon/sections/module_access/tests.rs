@@ -292,6 +292,32 @@ mod module_access_tests {
         assert_eq!(mapping.spec(), "*:1234");
     }
 
+    // upstream: options.c:2345-2348 - the daemon parses the client-forwarded
+    // --log-format to set stdout_format_has_i. `%i` enables itemize of
+    // significant items; `%i%I` is the `-ii` level that also itemizes unchanged
+    // entries. Without the `%I` -> itemize_unchanged mapping a `-ii` push to an
+    // oc daemon drops every unchanged row.
+    #[test]
+    fn apply_long_form_args_maps_log_format_itemize_levels() {
+        let single = vec!["--log-format=%i".to_owned()];
+        let mut cfg = ServerConfig::default();
+        assert!(apply_long_form_args(&single, &mut cfg).is_none());
+        assert!(cfg.flags.info_flags.itemize, "%i enables itemize");
+        assert!(
+            !cfg.flags.info_flags.itemize_unchanged,
+            "%i alone must not itemize unchanged entries",
+        );
+
+        let double = vec!["--log-format=%i%I".to_owned()];
+        let mut cfg2 = ServerConfig::default();
+        assert!(apply_long_form_args(&double, &mut cfg2).is_none());
+        assert!(cfg2.flags.info_flags.itemize, "%i%I enables itemize");
+        assert!(
+            cfg2.flags.info_flags.itemize_unchanged,
+            "%I raises the itemize level to -ii (unchanged rows)",
+        );
+    }
+
     // UTS-8.REOPEN regression: the client's actual phase-1 wire for
     // secluded-args daemon push is `[--server, --sender, --secluded-args]`
     // (no standalone `.` or bare `-s`), and phase 2 carries the real

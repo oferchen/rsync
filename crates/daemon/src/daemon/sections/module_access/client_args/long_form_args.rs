@@ -295,14 +295,19 @@ fn apply_long_form_args(client_args: &[String], config: &mut ServerConfig) -> Op
                     config.file_selection.from0 = true;
                 // upstream: options.c:773,963 - --log-format is the deprecated
                 // alias for --out-format. The server parses it to set
-                // stdout_format_has_i (options.c:2327-2331) which drives itemize
-                // emission. We only need the %i presence, not the full format.
+                // stdout_format_has_i (options.c:2345-2348): `%i` sets has_i = 1
+                // (itemize significant items) and `%I` sets has_i = 2, the `-ii`
+                // level that also itemizes unchanged entries. The client
+                // forwards `--log-format=%i%I` for `-ii` (options.c:164-175).
                 } else if let Some(fmt) = arg
                     .strip_prefix("--log-format=")
                     .or_else(|| arg.strip_prefix("--out-format="))
                 {
                     if fmt.contains("%i") {
                         config.flags.info_flags.itemize = true;
+                    }
+                    if fmt.contains("%I") {
+                        config.flags.info_flags.itemize_unchanged = true;
                     }
                 } else if unknown.is_none() && is_client_only_flag_reaching_daemon(arg) {
                     // upstream: options.c:1444-1449 - the daemon's popt loop

@@ -215,12 +215,18 @@ where
         config.write.delay_updates = true;
     }
 
-    // upstream: options.c:2327-2338 - server parses --log-format to determine
-    // whether itemize data is needed. %i or %I in the format sets
-    // stdout_format_has_i, which controls generator itemize output.
+    // upstream: options.c:2345-2348 - the server parses --log-format to set
+    // stdout_format_has_i, which controls generator itemize output. `%i` sets
+    // has_i = 1 (itemize significant items); `%I` sets has_i = 2, the `-ii`
+    // level that also itemizes unchanged entries. The client forwards
+    // `--log-format=%i%I` for `-ii` (options.c:164-175 server_options), so a
+    // server that sees `%I` must also emit unchanged rows.
     if let Some(fmt) = &long_flags.log_format {
         if fmt.contains("%i") || fmt.contains("%I") {
             config.flags.info_flags.itemize = true;
+        }
+        if fmt.contains("%I") {
+            config.flags.info_flags.itemize_unchanged = true;
         }
     }
 
