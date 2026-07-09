@@ -372,16 +372,21 @@ fn partial_mode_preserves_temp_on_discard() {
 
     let staging = guard.staging_path().to_path_buf();
     assert!(staging.exists());
-    assert!(staging.to_string_lossy().contains(".rsync-partial-"));
+    // upstream get_tmpname(): the in-progress temp is `.file.txt.XXXXXX` beside
+    // the destination, not a visible `.rsync-partial-*` file.
+    let staging_name = staging.file_name().unwrap().to_string_lossy();
+    assert!(
+        staging_name.starts_with(".file.txt."),
+        "unexpected staging name {staging_name}"
+    );
 
     guard.discard();
 
-    // In partial mode, discard should preserve the file for resumption
-    assert!(
-        staging.exists(),
-        "partial file should be preserved on discard for resumption"
-    );
-    assert!(!dest.exists());
+    // upstream: --partial moves the interrupted temp onto the destination file
+    // itself so a later run resumes from it.
+    assert!(!staging.exists(), "temp is renamed onto the destination");
+    assert!(dest.exists(), "partial data preserved at the destination");
+    assert_eq!(fs::read(&dest).expect("read"), b"partial content");
 }
 
 #[test]

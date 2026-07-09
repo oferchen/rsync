@@ -1,4 +1,25 @@
 impl<'a> CopyContext<'a> {
+    /// Returns an `Interrupted` error once a shutdown signal has been received.
+    ///
+    /// Polled inside the per-chunk copy loops so a large single-file transfer
+    /// stops promptly mid-file. Unwinding then runs the destination guard's
+    /// finalisation (moving the temp onto its `--partial`/`--partial-dir`
+    /// destination) in normal, non-signal context. upstream: receiver.c's
+    /// per-block loop checks for a pending signal via `io_flush`/`check_timeout`.
+    fn check_shutdown(&self, path: &Path) -> Result<(), LocalCopyError> {
+        if fast_io::signal::shutdown_requested() {
+            return Err(LocalCopyError::io(
+                "copy file",
+                path,
+                io::Error::new(
+                    io::ErrorKind::Interrupted,
+                    "transfer interrupted by signal",
+                ),
+            ));
+        }
+        Ok(())
+    }
+
     fn start_compressor(
         &self,
         compress: bool,
@@ -573,6 +594,7 @@ impl<'a> CopyContext<'a> {
             if total_bytes >= expected_remaining {
                 break;
             }
+            self.check_shutdown(destination)?;
             if bytes_since_timeout_check >= TIMEOUT_CHECK_INTERVAL {
                 self.enforce_timeout()?;
                 bytes_since_timeout_check = 0;
@@ -680,6 +702,7 @@ impl<'a> CopyContext<'a> {
             if total_bytes >= expected_remaining {
                 break;
             }
+            self.check_shutdown(destination)?;
             if bytes_since_timeout_check >= TIMEOUT_CHECK_INTERVAL {
                 self.enforce_timeout()?;
                 bytes_since_timeout_check = 0;

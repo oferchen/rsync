@@ -12,6 +12,48 @@ use std::sync::{Mutex, OnceLock};
 /// Global cleanup manager instance.
 static CLEANUP_MANAGER: OnceLock<Mutex<CleanupManagerState>> = OnceLock::new();
 
+/// An in-progress temp file and where its partial data should end up if the
+/// transfer is cut short. Mirrors upstream's `cleanup_fname`/`cleanup_new_fname`
+/// pair (`cleanup.c:cleanup_set()`): `temp` is the `.name.XXXXXX` staging file,
+/// and `partial_dest` is the destination the partial is moved to on interrupt
+/// (the real file for `--partial`, or the partial-dir entry for
+/// `--partial-dir`). `None` means "no partial kept" - just unlink the temp.
+#[derive(Clone, Debug)]
+struct PartialEntry {
+    temp: PathBuf,
+    partial_dest: Option<PathBuf>,
+    tweak_mtime: bool,
+}
+
+/// Moves an interrupted temp file to its partial destination, or removes it.
+///
+/// upstream: `cleanup.c:exit_cleanup()` calls `finish_transfer()` to rename the
+/// temp onto `cleanup_new_fname` (creating the partial dir first via
+/// `handle_partial_dir(PDIR_CREATE)`), tweaking the modtime to epoch 0 when the
+/// partial lands on the real destination file so `--update` will not skip it.
+/// With no partial destination it unlinks the temp (`do_unlink_at`).
+pub fn finalize_partial(temp: &Path, partial_dest: Option<&Path>, tweak_mtime: bool) {
+    match partial_dest {
+        Some(dest) => {
+            if let Some(parent) = dest.parent() {
+                let _ = std::fs::create_dir_all(parent);
+            }
+            // Best-effort: an already-committed transfer leaves no temp, so a
+            // failed rename here is expected and harmless.
+            if std::fs::rename(temp, dest).is_ok() && tweak_mtime {
+                let epoch = std::time::SystemTime::UNIX_EPOCH;
+                let times = std::fs::FileTimes::new().set_modified(epoch);
+                if let Ok(file) = std::fs::File::options().write(true).open(dest) {
+                    let _ = file.set_times(times);
+                }
+            }
+        }
+        None => {
+            let _ = std::fs::remove_file(temp);
+        }
+    }
+}
+
 /// Cleanup manager for tracking and cleaning up temporary resources.
 ///
 /// This type provides a global registry for temporary files and resources
@@ -133,6 +175,63 @@ impl CleanupManager {
         0
     }
 
+    /// Registers an in-progress temp file and its partial destination.
+    ///
+    /// Called when a `--partial`/`--partial-dir` staging file is opened so that
+    /// a signal handler's abort path can finalise it even if the owning thread
+    /// never returns to run its RAII guard. `partial_dest` is `None` for a
+    /// non-partial transfer (the temp is simply unlinked on abort).
+    pub fn register_partial(
+        &self,
+        temp: PathBuf,
+        partial_dest: Option<PathBuf>,
+        tweak_mtime: bool,
+    ) {
+        if let Some(state) = CLEANUP_MANAGER.get() {
+            if let Ok(mut state) = state.lock() {
+                state.partials.retain(|entry| entry.temp != temp);
+                state.partials.push(PartialEntry {
+                    temp,
+                    partial_dest,
+                    tweak_mtime,
+                });
+            }
+        }
+    }
+
+    /// Removes a temp file from the partial registry after its guard committed
+    /// or already finalised it.
+    pub fn unregister_partial(&self, temp: &Path) {
+        if let Some(state) = CLEANUP_MANAGER.get() {
+            if let Ok(mut state) = state.lock() {
+                state.partials.retain(|entry| entry.temp != temp);
+            }
+        }
+    }
+
+    /// Finalises every registered in-progress temp: moves each onto its partial
+    /// destination (or unlinks it), then clears the registry. Invoked from the
+    /// abort path (a second interrupt signal) that cannot wait for graceful
+    /// unwinding. upstream: `cleanup.c:exit_cleanup()` on `RERR_SIGNAL`.
+    pub fn finalize_partials(&self) {
+        let entries = {
+            let Some(state) = CLEANUP_MANAGER.get() else {
+                return;
+            };
+            let Ok(mut state) = state.lock() else {
+                return;
+            };
+            std::mem::take(&mut state.partials)
+        };
+        for entry in entries {
+            finalize_partial(
+                &entry.temp,
+                entry.partial_dest.as_deref(),
+                entry.tweak_mtime,
+            );
+        }
+    }
+
     /// Clears all registered resources without performing cleanup.
     ///
     /// Primarily useful for testing.
@@ -142,6 +241,7 @@ impl CleanupManager {
             if let Ok(mut state) = state.lock() {
                 state.temp_files.clear();
                 state.cleanup_callbacks.clear();
+                state.partials.clear();
             }
         }
     }
@@ -154,6 +254,7 @@ static CLEANUP_MANAGER_INSTANCE: CleanupManager = CleanupManager;
 struct CleanupManagerState {
     temp_files: HashSet<PathBuf>,
     cleanup_callbacks: Vec<Box<dyn FnOnce() + Send>>,
+    partials: Vec<PartialEntry>,
 }
 
 impl CleanupManagerState {
@@ -161,6 +262,7 @@ impl CleanupManagerState {
         Self {
             temp_files: HashSet::new(),
             cleanup_callbacks: Vec::new(),
+            partials: Vec::new(),
         }
     }
 
