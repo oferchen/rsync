@@ -224,6 +224,31 @@ fn includes_log_format_for_itemize() {
 }
 
 #[test]
+fn includes_ii_log_format_for_itemize_unchanged() {
+    // upstream: options.c:164-175 server_options - `-ii` forwards
+    // `--log-format=%i%I` so the remote generator also itemizes unchanged rows.
+    let config = ClientConfig::builder()
+        .itemize_changes(true)
+        .itemize_unchanged(true)
+        .build();
+    let builder = RemoteInvocationBuilder::new(&config, RemoteRole::Sender);
+    let args = builder.build("/path");
+
+    let args_str: Vec<_> = args
+        .iter()
+        .map(|a| a.to_string_lossy().into_owned())
+        .collect();
+    assert!(
+        args_str.contains(&"--log-format=%i%I".to_string()),
+        "expected --log-format=%i%I in args: {args_str:?}"
+    );
+    assert!(
+        !args_str.contains(&"--log-format=%i".to_string()),
+        "the -i form must not also appear: {args_str:?}"
+    );
+}
+
+#[test]
 fn omits_log_format_when_itemize_disabled() {
     let config = ClientConfig::builder().itemize_changes(false).build();
     let builder = RemoteInvocationBuilder::new(&config, RemoteRole::Sender);

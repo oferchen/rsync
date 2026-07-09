@@ -64,8 +64,9 @@ fn emit_itemize_new_file_transfer() {
 
     assert_eq!(writer.messages.len(), 1);
     let msg = String::from_utf8_lossy(&writer.messages[0]);
-    // Receiver uses is_sender=false, producing '>' prefix
-    assert_eq!(msg, ">f+++++++++ docs/readme.txt\n");
+    // upstream: log.c:707-710 - a server-mode receiver is the remote end of a
+    // push (the client is the sender), so the transfer glyph is `<`.
+    assert_eq!(msg, "<f+++++++++ docs/readme.txt\n");
 }
 
 #[test]
@@ -82,7 +83,8 @@ fn emit_itemize_updated_file_transfer() {
 
     assert_eq!(writer.messages.len(), 1);
     let msg = String::from_utf8_lossy(&writer.messages[0]);
-    assert_eq!(msg, ">f......... data.bin\n");
+    // upstream: log.c:707-710 - server-mode receiver renders the push `<` glyph.
+    assert_eq!(msg, "<f......... data.bin\n");
 }
 
 #[test]

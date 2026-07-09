@@ -3,7 +3,6 @@
 //! Orchestrates the transfer lifecycle by configuring server infrastructure,
 //! establishing the handshake result, and delegating to `run_server_with_handshake`.
 
-use std::io::Write;
 use std::path::Path;
 use std::sync::Arc;
 use std::time::Instant;
@@ -142,15 +141,12 @@ pub(crate) fn run_push_transfer(
         .as_mut()
         .map(|a| a as &mut dyn TransferProgressCallback);
 
-    // upstream: log.c:330-340 - when !am_server, rwrite() sends itemize to
-    // FCLIENT (stdout); the callback writes directly to process stdout.
-    let wants_itemize = config.itemize_changes();
-    let stdout_handle = std::io::stdout();
-    let mut itemize_cb = move |line: &str| {
-        let mut out = stdout_handle.lock();
-        let _ = out.write_all(line.as_bytes());
-    };
-
+    // upstream: log.c:818-826 log_item() - the client-visible itemize row is
+    // produced exactly once, by the remote receiver's generator, and forwarded
+    // as a MSG_INFO frame (rwrite when `am_server`). The local sender must NOT
+    // also emit a row from the bare wire iflags it echoes back, or every pushed
+    // file itemizes twice. Passing `None` here mirrors the SSH push path
+    // (ssh_transfer/drive.rs) so both transports emit a single row.
     let result = crate::server::run_server_with_handshake(
         server_config,
         handshake,
@@ -158,11 +154,7 @@ pub(crate) fn run_push_transfer(
         writer,
         progress,
         batch_recording,
-        if wants_itemize {
-            Some(&mut itemize_cb as &mut dyn crate::server::ItemizeCallback)
-        } else {
-            None
-        },
+        None,
     );
 
     match result {
