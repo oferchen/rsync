@@ -79,9 +79,18 @@ fn same_file_type(source: &fs::Metadata, destination: &fs::Metadata) -> bool {
 /// mtime is newer.
 ///
 /// With `modify_window == 0` (the default), the destination must be strictly
-/// newer to trigger a skip. With `modify_window > 0`, timestamps within the
-/// tolerance are treated as equal, so the source must be newer by at least
-/// `modify_window` for the copy to proceed.
+/// newer by at least one whole second to trigger a skip. With
+/// `modify_window > 0`, timestamps within the tolerance are treated as equal,
+/// so the source must be newer by at least `modify_window` seconds for the
+/// copy to proceed.
+///
+/// The comparison is performed at whole-second (`time_t`) granularity, exactly
+/// like upstream: both `file->modtime` and `sx.st.st_mtime` are `time_t`
+/// values, so a purely sub-second (nanosecond) difference never makes the
+/// destination "newer". This matters for equal-mtime files whose two sides
+/// were written a few nanoseconds apart (e.g. the exclude testsuite's
+/// `same-newness`): upstream still itemizes them `.f` (unchanged) rather than
+/// skipping them as newer.
 pub(crate) fn destination_is_newer(
     source: &fs::Metadata,
     destination: &fs::Metadata,
@@ -93,14 +102,19 @@ pub(crate) fn destination_is_newer(
         return false;
     }
     match (source.modified(), destination.modified()) {
-        (Ok(src), Ok(dst)) => match src.duration_since(dst) {
-            // Source is newer than destination. Skip only when the
-            // difference is strictly less than the modify window.
-            // upstream: (source - dest) < modify_window
-            Ok(diff) => diff < modify_window,
-            // Source is older than destination - always skip.
-            Err(_) => true,
-        },
+        (Ok(src), Ok(dst)) => {
+            // upstream: generator.c:1721
+            //   file->modtime - sx.st.st_mtime < modify_window
+            // Both operands are whole-second `time_t` values and the
+            // subtraction is signed, so the destination counts as "newer"
+            // (and the copy is skipped) only when the source second is less
+            // than the destination second by more than `modify_window`. A
+            // sub-second-only difference collapses to zero and is never a skip.
+            let src_sec = unix_seconds(src);
+            let dst_sec = unix_seconds(dst);
+            let window_secs = modify_window.as_secs() as i64;
+            src_sec - dst_sec < window_secs
+        }
         _ => false,
     }
 }
@@ -665,6 +679,27 @@ mod tests {
     }
 
     #[test]
+    fn destination_is_not_newer_when_dest_subsecond_newer_same_second() {
+        // WHY: upstream generator.c:1721 gates the `--update` skip on
+        // `file->modtime - sx.st.st_mtime < modify_window`, where both operands
+        // are whole-second `time_t` values. A destination that is newer only in
+        // its fractional second (same whole second as the source) collapses to a
+        // zero-second delta, so at the default zero window it is NOT "newer" and
+        // `--update` must not skip it. The generator then falls through to the
+        // quick check, whose same_time() (util1.c:1478) also compares seconds and
+        // reports the file unchanged -> itemized `.f`.
+        //
+        // This is the exclude testsuite `same-newness` case: up1/up2 are touched
+        // together and may land a few nanoseconds apart. Comparing at nanosecond
+        // precision (the old behaviour) wrongly emitted `same-newness is newer`.
+        let src = FileTime::from_unix_time(1_700_000_000, 100_000_000);
+        let dst_newer = FileTime::from_unix_time(1_700_000_000, 900_000_000);
+        let (_temp, src_meta, dst_meta) = setup_timed_files(src, dst_newer);
+
+        assert!(!destination_is_newer(&src_meta, &dst_meta, Duration::ZERO));
+    }
+
+    #[test]
     fn destination_is_newer_when_dest_is_strictly_newer_no_window() {
         let older = FileTime::from_unix_time(1_700_000_000, 0);
         let newer = FileTime::from_unix_time(1_700_000_005, 0);
@@ -696,7 +731,8 @@ mod tests {
         let slightly_newer = FileTime::from_unix_time(1_700_000_000, 500_000_000);
         let (_temp, src_meta, dst_meta) = setup_timed_files(older, slightly_newer);
 
-        // upstream: source - dest < 0 < window -> skip (dest is genuinely newer)
+        // upstream: whole-second delta source - dest = 0 < window(1) -> skip
+        // (within window; the sub-second part is ignored by time_t comparison).
         assert!(destination_is_newer(
             &src_meta,
             &dst_meta,
