@@ -153,6 +153,7 @@ impl LocalCopyChangeSet {
         omit_dir_times: bool,
         xattrs_enabled: bool,
         acls_enabled: bool,
+        modify_window: Duration,
     ) -> Self {
         let mut change_set = Self::new();
 
@@ -160,8 +161,15 @@ impl LocalCopyChangeSet {
         if times_preserved {
             let new_mtime = metadata_modified_time(source);
             let old_mtime = metadata_modified_time(existing);
+            // upstream: generator.c:526 - itemize() sets ITEM_REPORT_TIME via
+            // `!same_time(file->modtime, 0, &sxp->st)`. same_time() (util1.c:1478)
+            // compares whole seconds under `--modify-window`, so a sub-second
+            // mtime drift on a directory must NOT light the `t` glyph. This is
+            // type-agnostic in upstream: directories use the same same_time()
+            // path as files.
             match (new_mtime, old_mtime) {
-                (Some(new_value), Some(old_value)) if new_value == old_value => {}
+                (Some(new_value), Some(old_value))
+                    if system_time_within_window(new_value, old_value, modify_window) => {}
                 _ => {
                     change_set = change_set.with_time_change(Some(TimeChange::Modified));
                 }

@@ -287,6 +287,7 @@ fn copy_directory_recursive_inner(
                 context.omit_dir_times_enabled(),
                 false,
                 false,
+                context.options().modify_window(),
             ))
         } else {
             record.with_creation(true)
@@ -326,6 +327,7 @@ fn copy_directory_recursive_inner(
             context.omit_dir_times_enabled(),
             false,
             false,
+            context.options().modify_window(),
         );
         context.record(
             LocalCopyRecord::new(
@@ -394,6 +396,7 @@ fn copy_directory_recursive_inner(
                     context.omit_dir_times_enabled(),
                     false,
                     false,
+                    context.options().modify_window(),
                 ))
             } else {
                 record.with_creation(true)
