@@ -175,20 +175,40 @@ verify_diff() {
 }
 
 check_daemon_quiet() {
-  # Fail if the 2.6.9 daemon log shows hard errors. The legacy daemon
-  # emits routine `rsync: connection from ...` notices; only `rsync error`
-  # and protocol-fatal lines should fail the fixture.
+  # Fail only on a genuine protocol error in the 2.6.9 daemon log. The
+  # legacy daemon emits routine `rsync: connection from ...` notices plus
+  # two classes of benign noise that must never fail a fixture:
+  #
+  #   1. Readiness-probe teardown. Before the first transfer the harness
+  #      confirms the daemon is bound with a bare `/dev/tcp` connect that
+  #      closes without speaking the rsync protocol. The daemon fails to
+  #      write its `@RSYNCD:` greeting into the already-closed socket and
+  #      logs, on its receiver side:
+  #        rsync: writefd_unbuffered failed to write N bytes [receiver]: Broken pipe
+  #        rsync error: error in rsync protocol data stream (code 12) at io.c(NNN) [receiver=2.6.9]
+  #      These come from the probe, not a fixture, and precede every
+  #      transfer - but because the log is cumulative they would otherwise
+  #      fail all 18 fixtures.
+  #   2. Daemon shutdown. The EXIT/TERM trap stops the daemon, which logs
+  #        rsync error: received SIGINT, SIGTERM, or SIGHUP (code 20)
+  #
+  # Only these two exact signatures are filtered. A genuine transfer
+  # failure surfaces differently (e.g. `code 11 at receiver.c` or a
+  # `[sender=...]`/`[generator=...]` protocol error) and is still caught
+  # here - and, as a backstop, by the client exit code, the `diff -r`
+  # tree compare, and `check_client_quiet` that gate every fixture.
   local label="$1"
-  local quiet=1
-  if grep -E "rsync error:" "${DAEMON_LOG}" >/dev/null 2>&1; then
-    echo "FAIL ${label}: daemon log contains rsync error: line" >&2
-    quiet=0
+  local residual
+  residual="$(grep -E "rsync error:|protocol mismatch|unexpected EOF" "${DAEMON_LOG}" 2>/dev/null \
+    | grep -vE "error in rsync protocol data stream \(code 12\) at io\.c\([0-9]+\) \[receiver=" \
+    | grep -vE "received SIG(INT|TERM|HUP).*\(code 20\)" \
+    || true)"
+  if [[ -n "${residual}" ]]; then
+    echo "FAIL ${label}: daemon log contains unexpected error:" >&2
+    printf '    %s\n' "${residual}" >&2
+    return 1
   fi
-  if grep -E "protocol mismatch|unexpected EOF" "${DAEMON_LOG}" >/dev/null 2>&1; then
-    echo "FAIL ${label}: daemon log contains protocol fatal" >&2
-    quiet=0
-  fi
-  [[ ${quiet} -eq 1 ]]
+  return 0
 }
 
 check_client_quiet() {
@@ -359,12 +379,13 @@ if run_client "${ROOT}/f8.pull.err" -avH "${URL_BASE}/f8/" "${CLIENT_DEST}/f8/" 
    && verify_diff "${DAEMON_SHARE}/f8" "${CLIENT_DEST}/f8"; then
   ino_a=$(stat -c '%i' "${CLIENT_DEST}/f8/a.txt")
   ino_b=$(stat -c '%i' "${CLIENT_DEST}/f8/b.txt")
-  if [[ "${ino_a}" == "${ino_b}" ]] \
-     && check_client_quiet F8.pull "${ROOT}/f8.pull.err" \
+  if [[ "${ino_a}" != "${ino_b}" ]]; then
+    record F8.pull FAIL "hardlink inodes differ (${ino_a} vs ${ino_b})"
+  elif check_client_quiet F8.pull "${ROOT}/f8.pull.err" \
      && check_daemon_quiet F8.pull; then
     record F8.pull PASS
   else
-    record F8.pull FAIL "hardlink inodes differ (${ino_a} vs ${ino_b})"
+    record F8.pull FAIL "see ${ROOT}/f8.pull.err"
   fi
 else
   record F8.pull FAIL "see ${ROOT}/f8.pull.err"
@@ -375,12 +396,13 @@ if run_client "${ROOT}/f8.push.err" -avH "${CLIENT_SRC}/f8/" "${URL_BASE}/f8_pus
    && verify_diff "${CLIENT_SRC}/f8" "${DAEMON_SHARE}/f8_push"; then
   ino_a=$(stat -c '%i' "${DAEMON_SHARE}/f8_push/a.txt")
   ino_b=$(stat -c '%i' "${DAEMON_SHARE}/f8_push/b.txt")
-  if [[ "${ino_a}" == "${ino_b}" ]] \
-     && check_client_quiet F8.push "${ROOT}/f8.push.err" \
+  if [[ "${ino_a}" != "${ino_b}" ]]; then
+    record F8.push FAIL "hardlink inodes differ (${ino_a} vs ${ino_b})"
+  elif check_client_quiet F8.push "${ROOT}/f8.push.err" \
      && check_daemon_quiet F8.push; then
     record F8.push PASS
   else
-    record F8.push FAIL "hardlink inodes differ (${ino_a} vs ${ino_b})"
+    record F8.push FAIL "see ${ROOT}/f8.push.err"
   fi
 else
   record F8.push FAIL "see ${ROOT}/f8.push.err"
