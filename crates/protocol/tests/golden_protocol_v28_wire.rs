@@ -732,7 +732,7 @@ fn golden_v28_stats_no_flist_times() {
     let mut buf = Vec::new();
     stats.write_to(&mut buf, proto28()).unwrap();
 
-    // Protocol 28: only 3 core stats, each as varlong30(min_bytes=3)
+    // Protocol 28: only 3 core stats, each via legacy write_longint.
     // No flist_buildtime or flist_xfertime.
     let mut cursor = Cursor::new(&buf);
     let decoded = TransferStats::read_from(&mut cursor, proto28()).unwrap();
@@ -1100,28 +1100,25 @@ fn golden_v28_mixed_hardlink_and_plain_roundtrip() {
 }
 
 // ---------------------------------------------------------------------------
-// Transfer stats exact wire bytes (protocol 28 - varlong30 only, no flist times)
-// upstream: main.c:handle_stats() - protocol < 29 omits flist times
+// Transfer stats exact wire bytes (protocol 28 - legacy longint, no flist times)
+// upstream: main.c:handle_stats() -> io.h:46 write_varlong30() routes protocol
+// < 30 through io.c write_longint() (4-byte LE for values <= 0x7FFFFFFF).
+// Protocol < 29 additionally omits flist_buildtime/flist_xfertime.
 // ---------------------------------------------------------------------------
 
 #[test]
 fn golden_v28_stats_wire_bytes_small_values() {
-    // Protocol 28 stats: 3 varlong30 fields with min_bytes=3.
-    // For small values that fit in 3 bytes, each is encoded as:
-    //   leading_byte + 3 value bytes (total 4 bytes per field).
-    //
-    // varlong30 with min_bytes=3 for value=4096 (0x1000):
-    //   bytes = [0x00, 0x10, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]
-    //   cnt starts at 8, strips trailing zeros to min_bytes=3
-    //   bytes[2] = 0x00, bit = 1<<(7+3-3) = 0x80
-    //   0x00 < 0x80 and cnt == min_bytes, so leading = bytes[2] = 0x00
-    //   output: [0x00] + bytes[0..2] = [0x00, 0x00, 0x10]
+    // Protocol 28 stats: 3 legacy longint fields.
+    // upstream: io.h:46 write_varlong30() routes protocol < 30 through
+    // io.c write_longint(), which writes each value <= 0x7FFFFFFF as a
+    // 4-byte little-endian i32. value=4096 (0x1000) => [0x00, 0x10, 0x00, 0x00].
     let stats = TransferStats::with_bytes(4096, 8192, 65536);
     let mut buf = Vec::new();
     stats.write_to(&mut buf, proto28()).unwrap();
 
-    // 3 fields, each varlong30 with min_bytes=3 for values fitting in 3 bytes
+    // 3 fields, each write_longint (4 bytes for values <= 0x7FFFFFFF) = 12 bytes.
     // No flist times for protocol 28.
+    assert_eq!(buf.len(), 12, "3 small longint fields = 12 bytes");
     let mut cursor = Cursor::new(&buf[..]);
     let decoded = TransferStats::read_from(&mut cursor, proto28()).unwrap();
 
@@ -1141,38 +1138,45 @@ fn golden_v28_stats_wire_bytes_small_values() {
 
 #[test]
 fn golden_v28_stats_wire_bytes_zero() {
-    // Zero-value stats: varlong30(0, min_bytes=3)
-    // bytes = [0,0,0,0,0,0,0,0], cnt=3 (min), leading = bytes[2]=0, output = [0x00, 0x00, 0x00]
+    // Zero-value stats via legacy longint (protocol < 30).
+    // upstream: io.h:46 write_varlong30() routes protocol < 30 through
+    // io.c write_longint(); value 0 fits in a signed 32-bit int, so each
+    // field is a 4-byte little-endian i32 zero.
     let stats = TransferStats::with_bytes(0, 0, 0);
     let mut buf = Vec::new();
     stats.write_to(&mut buf, proto28()).unwrap();
 
-    // 3 fields of varlong30(0, 3): each is [0x00, 0x00, 0x00] = 3 bytes
+    // 3 fields of write_longint(0): each is [0x00, 0x00, 0x00, 0x00] = 4 bytes
     assert_eq!(
         buf.len(),
-        9,
-        "3 zero-value varlong30(min=3) = 9 bytes total"
+        12,
+        "3 zero-value longint fields = 12 bytes total"
     );
 
     #[rustfmt::skip]
     let expected: &[u8] = &[
-        // total_read = 0: varlong30(0, 3)
-        0x00, 0x00, 0x00,
-        // total_written = 0: varlong30(0, 3)
-        0x00, 0x00, 0x00,
-        // total_size = 0: varlong30(0, 3)
-        0x00, 0x00, 0x00,
+        // total_read = 0: write_longint(0) = 4-byte LE
+        0x00, 0x00, 0x00, 0x00,
+        // total_written = 0: write_longint(0) = 4-byte LE
+        0x00, 0x00, 0x00, 0x00,
+        // total_size = 0: write_longint(0) = 4-byte LE
+        0x00, 0x00, 0x00, 0x00,
     ];
-    assert_eq!(buf, expected, "zero stats must be 9 bytes of zeros");
+    assert_eq!(buf, expected, "zero stats must be 12 bytes of zeros");
 }
 
 #[test]
 fn golden_v28_stats_wire_bytes_large() {
-    // Large transfer stats that require more than 3 bytes.
-    // total_read = 10_000_000_000 (~9.3 GB) requires 5 bytes in varlong30.
+    // Large transfer stats that exceed the signed 32-bit inline range.
+    // upstream: io.c write_longint() emits values > 0x7FFFFFFF as the
+    // 0xFFFFFFFF marker (4 bytes) followed by the full 8-byte LE i64 = 12 bytes.
+    // total_read/total_size = 10_000_000_000 (~9.3 GB) => 12 bytes each;
+    // total_written = 500 fits inline => 4 bytes. Total = 28 bytes.
     let stats = TransferStats::with_bytes(10_000_000_000, 500, 10_000_000_000);
     let mut buf = Vec::new();
     stats.write_to(&mut buf, proto28()).unwrap();
+
+    assert_eq!(buf.len(), 28, "two 12-byte longints + one 4-byte longint");
 
     let mut cursor = Cursor::new(&buf[..]);
     let decoded = TransferStats::read_from(&mut cursor, proto28()).unwrap();

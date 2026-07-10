@@ -457,24 +457,17 @@ fn golden_v28_ndx_sequence_roundtrip() {
 }
 
 // ---------------------------------------------------------------------------
-// Transfer stats exact wire bytes (protocol 28 - varlong30 encoding detail)
-// upstream: main.c:handle_stats() + io.c:write_varlong()
+// Transfer stats exact wire bytes (protocol 28 - legacy longint encoding)
+// upstream: main.c:handle_stats() + io.h:46 write_varlong30() -> io.c:2222 write_longint()
 // ---------------------------------------------------------------------------
 
 #[test]
 fn golden_v28_stats_exact_wire_bytes_known_values() {
-    // Protocol 28: 3 fields (total_read, total_written, total_size) as
-    // varlong30 with min_bytes=3. No flist timing fields.
-    //
-    // varlong30(1024, min_bytes=3):
-    //   value = 1024 = 0x0400
-    //   LE bytes = [0x00, 0x04, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]
-    //   cnt starts at 8, strip trailing zeros to min_bytes=3:
-    //     bytes[7..3] are all 0x00, so cnt goes 8->7->6->5->4->3 (stop at min)
-    //   leading byte = bytes[2] = 0x00
-    //   bit threshold = 1 << (7 + 3 - 3) = 0x80
-    //   0x00 < 0x80, cnt == min_bytes -> no extra byte needed
-    //   Output: [leading=0x00] + bytes[0..2] = [0x00, 0x00, 0x04]
+    // Protocol 28: 3 fields (total_read, total_written, total_size). No flist
+    // timing fields. upstream io.h:46 write_varlong30() routes protocol < 30
+    // through io.c:2222 write_longint(), which writes each small value
+    // (0..=0x7FFFFFFF) as a fixed 4-byte little-endian int:
+    //   longint(1024) = 1024 as i32 LE = [0x00, 0x04, 0x00, 0x00]
     let stats = TransferStats::with_bytes(1024, 2048, 4096);
     let mut buf = Vec::new();
     stats.write_to(&mut buf, proto28()).unwrap();
@@ -494,8 +487,8 @@ fn golden_v28_stats_exact_wire_bytes_known_values() {
 
 #[test]
 fn golden_v28_stats_vs_v29_different_length() {
-    // Protocol 28: 3 varlong30 fields.
-    // Protocol 29: 5 varlong30 fields (adds flist_buildtime, flist_xfertime).
+    // Protocol 28: 3 legacy longint fields.
+    // Protocol 29: 5 legacy longint fields (adds flist_buildtime, flist_xfertime).
     let stats = TransferStats::with_bytes(100, 200, 300).with_flist_times(500_000, 100_000);
 
     let v28 = proto28();
