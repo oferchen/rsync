@@ -57,6 +57,7 @@ fn config_iocp_policy_disabled() {
 
 #[test]
 fn spawn_with_iocp_disabled() {
+    let _registry_lock = test_support::cleanup_registry_test_guard();
     let config = DiskCommitConfig {
         iocp_policy: fast_io::IocpPolicy::Disabled,
         ..DiskCommitConfig::default()
@@ -74,6 +75,7 @@ fn spawn_with_iocp_disabled() {
 /// path yields a fully-formed handle.
 #[test]
 fn spawn_returns_io_result_handle() {
+    let _registry_lock = test_support::cleanup_registry_test_guard();
     let config = DiskCommitConfig::default();
     let result: std::io::Result<super::DiskThreadHandle> = spawn_disk_thread(config);
     let h = result.expect("spawn must succeed on a healthy runtime");
@@ -83,6 +85,7 @@ fn spawn_returns_io_result_handle() {
 
 #[test]
 fn spawn_with_io_uring_disabled() {
+    let _registry_lock = test_support::cleanup_registry_test_guard();
     let config = DiskCommitConfig {
         io_uring_policy: fast_io::IoUringPolicy::Disabled,
         ..DiskCommitConfig::default()
@@ -94,6 +97,7 @@ fn spawn_with_io_uring_disabled() {
 
 #[test]
 fn write_file_with_io_uring_auto_policy() {
+    let _registry_lock = test_support::cleanup_registry_test_guard();
     let dir = test_support::create_tempdir();
     let file_path = dir.path().join("io_uring_auto.dat");
 
@@ -182,6 +186,7 @@ fn channel_capacity_boundary_max() {
 
 #[test]
 fn spawn_with_custom_capacity() {
+    let _registry_lock = test_support::cleanup_registry_test_guard();
     let config = DiskCommitConfig {
         channel_capacity: 16,
         ..DiskCommitConfig::default()
@@ -193,6 +198,7 @@ fn spawn_with_custom_capacity() {
 
 #[test]
 fn spawn_and_shutdown() {
+    let _registry_lock = test_support::cleanup_registry_test_guard();
     let h = spawn_disk_thread(DiskCommitConfig::default()).unwrap();
     h.file_tx.send(FileMessage::Shutdown).unwrap();
     h.join_handle.join().unwrap();
@@ -200,6 +206,7 @@ fn spawn_and_shutdown() {
 
 #[test]
 fn write_and_commit_file() {
+    let _registry_lock = test_support::cleanup_registry_test_guard();
     let dir = test_support::create_tempdir();
     let file_path = dir.path().join("output.dat");
 
@@ -236,6 +243,7 @@ fn write_and_commit_file() {
 
 #[test]
 fn abort_cleans_up_temp_file() {
+    let _registry_lock = test_support::cleanup_registry_test_guard();
     let dir = test_support::create_tempdir();
     let file_path = dir.path().join("aborted.dat");
 
@@ -274,6 +282,7 @@ fn abort_cleans_up_temp_file() {
 
 #[test]
 fn multiple_files_sequential() {
+    let _registry_lock = test_support::cleanup_registry_test_guard();
     let dir = test_support::create_tempdir();
     let h = spawn_disk_thread(DiskCommitConfig::default()).unwrap();
 
@@ -310,6 +319,7 @@ fn multiple_files_sequential() {
 
 #[test]
 fn channel_disconnect_stops_thread() {
+    let _registry_lock = test_support::cleanup_registry_test_guard();
     let h = spawn_disk_thread(DiskCommitConfig::default()).unwrap();
     drop(h.file_tx);
 
@@ -323,6 +333,7 @@ fn channel_disconnect_stops_thread() {
 
 #[test]
 fn multi_chunk_file() {
+    let _registry_lock = test_support::cleanup_registry_test_guard();
     let dir = test_support::create_tempdir();
     let file_path = dir.path().join("multi_chunk.dat");
 
@@ -356,6 +367,7 @@ fn multi_chunk_file() {
 
 #[test]
 fn buffer_recycling() {
+    let _registry_lock = test_support::cleanup_registry_test_guard();
     let dir = test_support::create_tempdir();
     let file_path = dir.path().join("recycle.dat");
 
@@ -397,6 +409,7 @@ fn buffer_recycling() {
 
 #[test]
 fn whole_file_coalesced() {
+    let _registry_lock = test_support::cleanup_registry_test_guard();
     let dir = test_support::create_tempdir();
     let file_path = dir.path().join("whole.dat");
 
@@ -438,6 +451,7 @@ fn whole_file_coalesced() {
 /// production remote transfers.
 #[test]
 fn commit_file_rename_via_io_uring_or_fallback() {
+    let _registry_lock = test_support::cleanup_registry_test_guard();
     let dir = test_support::create_tempdir();
     let file_path = dir.path().join("iouring_rename_commit.dat");
 
@@ -478,6 +492,7 @@ fn commit_file_rename_via_io_uring_or_fallback() {
 /// Verifies the io_uring rename works when replacing an existing destination.
 #[test]
 fn commit_file_rename_replaces_existing_via_io_uring_or_fallback() {
+    let _registry_lock = test_support::cleanup_registry_test_guard();
     let dir = test_support::create_tempdir();
     let file_path = dir.path().join("iouring_replace.dat");
 
@@ -522,6 +537,7 @@ fn commit_file_rename_replaces_existing_via_io_uring_or_fallback() {
 /// upstream: receiver.c:906-929 - delay_updates stages to partial dir
 #[test]
 fn delay_updates_stages_to_partial_dir() {
+    let _registry_lock = test_support::cleanup_registry_test_guard();
     let dir = test_support::create_tempdir();
     let file_path = dir.path().join("delayed.dat");
 
@@ -585,6 +601,7 @@ fn delay_updates_stages_to_partial_dir() {
 /// when `delay_updates` is enabled.
 #[test]
 fn delay_updates_whole_file_stages_to_partial_dir() {
+    let _registry_lock = test_support::cleanup_registry_test_guard();
     let dir = test_support::create_tempdir();
     let file_path = dir.path().join("whole_delayed.dat");
 
@@ -629,6 +646,7 @@ fn delay_updates_whole_file_stages_to_partial_dir() {
 /// Verifies the whole-file path also uses the io_uring rename dispatch.
 #[test]
 fn whole_file_commit_via_io_uring_or_fallback() {
+    let _registry_lock = test_support::cleanup_registry_test_guard();
     let dir = test_support::create_tempdir();
     let file_path = dir.path().join("whole_iouring.dat");
 
@@ -670,6 +688,7 @@ fn partial_mode_default_is_none() {
 
 #[test]
 fn partial_mode_partial_retains_file_on_shutdown() {
+    let _registry_lock = test_support::cleanup_registry_test_guard();
     let dir = test_support::create_tempdir();
     let file_path = dir.path().join("partial_shutdown.dat");
 
@@ -715,6 +734,7 @@ fn partial_mode_partial_retains_file_on_shutdown() {
 
 #[test]
 fn partial_mode_none_deletes_file_on_shutdown() {
+    let _registry_lock = test_support::cleanup_registry_test_guard();
     let dir = test_support::create_tempdir();
     let file_path = dir.path().join("no_partial_shutdown.dat");
 
@@ -758,6 +778,7 @@ fn partial_mode_none_deletes_file_on_shutdown() {
 
 #[test]
 fn partial_mode_partial_retains_file_on_abort() {
+    let _registry_lock = test_support::cleanup_registry_test_guard();
     let dir = test_support::create_tempdir();
     let file_path = dir.path().join("partial_abort.dat");
 
@@ -805,6 +826,7 @@ fn partial_mode_partial_retains_file_on_abort() {
 
 #[test]
 fn partial_mode_partial_dir_retains_file_in_directory() {
+    let _registry_lock = test_support::cleanup_registry_test_guard();
     let dir = test_support::create_tempdir();
     let file_path = dir.path().join("partial_dir_test.dat");
     let partial_dir = dir.path().join(".rsync-partial");
@@ -856,6 +878,7 @@ fn partial_mode_partial_dir_retains_file_in_directory() {
 
 #[test]
 fn partial_mode_no_retention_without_data() {
+    let _registry_lock = test_support::cleanup_registry_test_guard();
     let dir = test_support::create_tempdir();
     let file_path = dir.path().join("no_data_partial.dat");
 
@@ -897,6 +920,7 @@ fn partial_mode_no_retention_without_data() {
 
 #[test]
 fn partial_mode_channel_disconnect_retains_file() {
+    let _registry_lock = test_support::cleanup_registry_test_guard();
     let dir = test_support::create_tempdir();
     let file_path = dir.path().join("disconnect_partial.dat");
 
@@ -938,6 +962,7 @@ fn partial_mode_channel_disconnect_retains_file() {
 
 #[test]
 fn partial_mode_relative_partial_dir() {
+    let _registry_lock = test_support::cleanup_registry_test_guard();
     let dir = test_support::create_tempdir();
     let dest_dir = dir.path().join("dest");
     fs::create_dir(&dest_dir).unwrap();
@@ -1355,6 +1380,7 @@ fn cleanup_manager_inplace_skips_registration() {
 /// again.
 #[test]
 fn inplace_abort_does_not_delete_existing_destination() {
+    let _registry_lock = test_support::cleanup_registry_test_guard();
     let dir = test_support::create_tempdir();
     let file_path = dir.path().join("inplace_abort_preexisting.dat");
 
@@ -1412,6 +1438,7 @@ fn inplace_abort_does_not_delete_existing_destination() {
 /// guard and does not weaken temp-file cleanup on the error path.
 #[test]
 fn non_inplace_abort_discards_temp_and_leaves_existing_dest() {
+    let _registry_lock = test_support::cleanup_registry_test_guard();
     let dir = test_support::create_tempdir();
     let file_path = dir.path().join("non_inplace_abort_preexisting.dat");
 
@@ -1490,6 +1517,7 @@ fn non_inplace_abort_discards_temp_and_leaves_existing_dest() {
 /// upstream: cleanup.c:105-115 - handle_partial_dir() on abort
 #[test]
 fn partial_dir_abort_mid_stream_moves_to_partial_dir() {
+    let _registry_lock = test_support::cleanup_registry_test_guard();
     let dir = test_support::create_tempdir();
     let file_path = dir.path().join("mid_abort.dat");
     let partial_dir = dir.path().join(".rsync-part");
@@ -1560,6 +1588,7 @@ fn partial_dir_abort_mid_stream_moves_to_partial_dir() {
 /// upstream: cleanup.c - retain partial on unexpected disconnect
 #[test]
 fn partial_dir_channel_disconnect_moves_to_partial_dir() {
+    let _registry_lock = test_support::cleanup_registry_test_guard();
     let dir = test_support::create_tempdir();
     let file_path = dir.path().join("disconnect_dir.dat");
     let partial_dir = dir.path().join(".rsync-part");
@@ -1608,6 +1637,7 @@ fn partial_dir_channel_disconnect_moves_to_partial_dir() {
 /// on demand via handle_partial_dir().
 #[test]
 fn partial_dir_auto_created_on_interrupt() {
+    let _registry_lock = test_support::cleanup_registry_test_guard();
     let dir = test_support::create_tempdir();
     let file_path = dir.path().join("autocreate.dat");
     let partial_dir = dir.path().join(".auto-partial");
@@ -1671,6 +1701,7 @@ fn partial_dir_auto_created_on_interrupt() {
 /// it captured a true partial transfer.
 #[test]
 fn partial_dir_mid_stream_has_intermediate_size() {
+    let _registry_lock = test_support::cleanup_registry_test_guard();
     let dir = test_support::create_tempdir();
     let file_path = dir.path().join("midsize.dat");
     let partial_dir = dir.path().join(".rsync-part");
@@ -1735,6 +1766,7 @@ fn partial_dir_mid_stream_has_intermediate_size() {
 /// use the partial-dir.
 #[test]
 fn partial_dir_whole_file_success_no_leftover_in_partial_dir() {
+    let _registry_lock = test_support::cleanup_registry_test_guard();
     let dir = test_support::create_tempdir();
     let file_path = dir.path().join("whole_ok.dat");
     let partial_dir = dir.path().join(".rsync-part");
@@ -1977,6 +2009,7 @@ fn delay_updates_empty_outcomes_is_noop() {
 /// 3. After all files complete, handle_delayed_updates renames to final.
 #[test]
 fn delay_updates_disk_thread_e2e_single_file() {
+    let _registry_lock = test_support::cleanup_registry_test_guard();
     let dir = test_support::create_tempdir();
     let staging_dir = dir.path().join(DELAY_UPDATES_PARTIAL_DIR);
     fs::create_dir(&staging_dir).unwrap();
@@ -2048,6 +2081,7 @@ fn delay_updates_disk_thread_e2e_single_file() {
 /// End-to-end: multiple files through the disk thread then bulk sweep.
 #[test]
 fn delay_updates_disk_thread_e2e_multiple_files() {
+    let _registry_lock = test_support::cleanup_registry_test_guard();
     let dir = test_support::create_tempdir();
     let staging_dir = dir.path().join(DELAY_UPDATES_PARTIAL_DIR);
     fs::create_dir(&staging_dir).unwrap();
@@ -2131,6 +2165,7 @@ fn delay_updates_disk_thread_e2e_multiple_files() {
 /// End-to-end with whole-file coalesced writes through the disk thread.
 #[test]
 fn delay_updates_disk_thread_e2e_whole_file() {
+    let _registry_lock = test_support::cleanup_registry_test_guard();
     let dir = test_support::create_tempdir();
     let staging_dir = dir.path().join(DELAY_UPDATES_PARTIAL_DIR);
     fs::create_dir(&staging_dir).unwrap();
@@ -2180,6 +2215,7 @@ fn delay_updates_disk_thread_e2e_whole_file() {
 /// End-to-end with nested subdirectories through the disk thread.
 #[test]
 fn delay_updates_disk_thread_e2e_nested_dirs() {
+    let _registry_lock = test_support::cleanup_registry_test_guard();
     let dir = test_support::create_tempdir();
     let sub = dir.path().join("subdir");
     fs::create_dir(&sub).unwrap();
@@ -2347,6 +2383,7 @@ fn delay_updates_sweep_replaces_existing_files() {
 /// subsequent `--update` run does not skip the partial file as "up to date".
 #[test]
 fn partial_mode_partial_stamps_mtime_zero_on_shutdown() {
+    let _registry_lock = test_support::cleanup_registry_test_guard();
     let dir = test_support::create_tempdir();
     let file_path = dir.path().join("partial_mtime_zero.dat");
 
@@ -2397,6 +2434,7 @@ fn partial_mode_partial_stamps_mtime_zero_on_shutdown() {
 /// `retain_partial_file`.
 #[test]
 fn partial_mode_partial_stamps_mtime_zero_on_abort() {
+    let _registry_lock = test_support::cleanup_registry_test_guard();
     let dir = test_support::create_tempdir();
     let file_path = dir.path().join("partial_mtime_zero_abort.dat");
 
@@ -2449,6 +2487,7 @@ fn partial_mode_partial_stamps_mtime_zero_on_abort() {
 /// `--partial` (cleanup.c:174-178), not `--partial-dir`.
 #[test]
 fn partial_mode_partial_dir_does_not_stamp_mtime_zero() {
+    let _registry_lock = test_support::cleanup_registry_test_guard();
     let dir = test_support::create_tempdir();
     let file_path = dir.path().join("partial_dir_mtime.dat");
     let partial_dir = dir.path().join(".rsync-partial");
@@ -2504,6 +2543,7 @@ fn partial_mode_partial_dir_does_not_stamp_mtime_zero() {
 /// through `retain_partial_file`.
 #[test]
 fn partial_mode_partial_stamps_mtime_zero_on_disconnect() {
+    let _registry_lock = test_support::cleanup_registry_test_guard();
     let dir = test_support::create_tempdir();
     let file_path = dir.path().join("partial_mtime_disconnect.dat");
 
@@ -2558,6 +2598,7 @@ fn partial_mode_partial_stamps_mtime_zero_on_disconnect() {
 /// upstream: receiver.c:584-585 - handle_delayed_updates() only at phase 2
 #[test]
 fn delay_updates_interrupt_leaves_committed_files_in_staging() {
+    let _registry_lock = test_support::cleanup_registry_test_guard();
     let dir = test_support::create_tempdir();
 
     let config = DiskCommitConfig {
@@ -2649,6 +2690,7 @@ fn delay_updates_interrupt_leaves_committed_files_in_staging() {
 /// completion; interrupted transfers leave staged files for resume.
 #[test]
 fn delay_updates_interrupt_mid_file_retains_prior_staged_files() {
+    let _registry_lock = test_support::cleanup_registry_test_guard();
     let dir = test_support::create_tempdir();
 
     let config = DiskCommitConfig {
@@ -2728,6 +2770,7 @@ fn delay_updates_interrupt_mid_file_retains_prior_staged_files() {
 /// upstream: receiver.c:422-450 - handle_delayed_updates() bulk rename
 #[test]
 fn delay_updates_manual_sweep_after_commit_moves_to_final() {
+    let _registry_lock = test_support::cleanup_registry_test_guard();
     let dir = test_support::create_tempdir();
 
     let config = DiskCommitConfig {
@@ -2806,6 +2849,7 @@ fn delay_updates_manual_sweep_after_commit_moves_to_final() {
 /// runs and staged files persist for resume.
 #[test]
 fn delay_updates_channel_disconnect_preserves_staged_files() {
+    let _registry_lock = test_support::cleanup_registry_test_guard();
     let dir = test_support::create_tempdir();
 
     let config = DiskCommitConfig {
@@ -2869,6 +2913,7 @@ fn delay_updates_channel_disconnect_preserves_staged_files() {
 /// thread's `VerbosityConfig` is never seeded with the user's `--info=backup`.
 #[test]
 fn pipelined_backup_default_suffix_returns_destination_relative_notice() {
+    let _registry_lock = test_support::cleanup_registry_test_guard();
     let dir = test_support::create_tempdir();
     let dest_dir = dir.path().to_path_buf();
     let file_path = dest_dir.join("payload.bin");
@@ -2928,6 +2973,7 @@ fn pipelined_backup_default_suffix_returns_destination_relative_notice() {
 /// ```
 #[test]
 fn pipelined_backup_with_backup_dir_reports_destination_relative_paths() {
+    let _registry_lock = test_support::cleanup_registry_test_guard();
     let dir = test_support::create_tempdir();
     let dest_dir = dir.path().join("todir");
     let backup_dir = dir.path().join("bakdir");

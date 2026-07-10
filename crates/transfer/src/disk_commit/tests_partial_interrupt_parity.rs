@@ -53,6 +53,7 @@ fn test_data(size: usize) -> Vec<u8> {
 /// when keep_partial is false.
 #[test]
 fn parity_none_shutdown_deletes_temp() {
+    let _registry_lock = test_support::cleanup_registry_test_guard();
     let dir = test_support::create_tempdir();
     let dest = dir.path().join("none_shutdown.dat");
 
@@ -75,6 +76,7 @@ fn parity_none_shutdown_deletes_temp() {
 /// upstream: cleanup.c:55-80 - do_unlink() removes temp on abort.
 #[test]
 fn parity_none_abort_deletes_temp() {
+    let _registry_lock = test_support::cleanup_registry_test_guard();
     let dir = test_support::create_tempdir();
     let dest = dir.path().join("none_abort.dat");
 
@@ -101,6 +103,7 @@ fn parity_none_abort_deletes_temp() {
 /// upstream: cleanup.c:55-80 - do_unlink() removes temp on disconnect.
 #[test]
 fn parity_none_disconnect_deletes_temp() {
+    let _registry_lock = test_support::cleanup_registry_test_guard();
     let dir = test_support::create_tempdir();
     let dest = dir.path().join("none_disconnect.dat");
 
@@ -175,6 +178,7 @@ fn run_partial_interrupt(
 /// cleanup.c:174-178 - stamps mtime=0 on retained partial.
 #[test]
 fn parity_partial_shutdown_retains_with_mtime_zero() {
+    let _registry_lock = test_support::cleanup_registry_test_guard();
     let dir = test_support::create_tempdir();
     let dest = run_partial_interrupt(&dir, "p_shutdown.dat", InterruptType::Shutdown, 200);
 
@@ -192,6 +196,7 @@ fn parity_partial_shutdown_retains_with_mtime_zero() {
 /// upstream: cleanup.c:130-135/174-178 - same behavior on abort.
 #[test]
 fn parity_partial_abort_retains_with_mtime_zero() {
+    let _registry_lock = test_support::cleanup_registry_test_guard();
     let dir = test_support::create_tempdir();
     let dest = run_partial_interrupt(&dir, "p_abort.dat", InterruptType::Abort, 200);
 
@@ -209,6 +214,7 @@ fn parity_partial_abort_retains_with_mtime_zero() {
 /// upstream: cleanup.c:130-135/174-178 - same behavior on disconnect.
 #[test]
 fn parity_partial_disconnect_retains_with_mtime_zero() {
+    let _registry_lock = test_support::cleanup_registry_test_guard();
     let dir = test_support::create_tempdir();
     let dest = run_partial_interrupt(&dir, "p_disconnect.dat", InterruptType::Disconnect, 200);
 
@@ -227,6 +233,7 @@ fn parity_partial_disconnect_retains_with_mtime_zero() {
 /// This rules out corruption during the partial write path.
 #[test]
 fn parity_partial_content_is_valid_prefix() {
+    let _registry_lock = test_support::cleanup_registry_test_guard();
     let dir = test_support::create_tempdir();
     let dest = dir.path().join("prefix_check.dat");
     let full_data = test_data(500);
@@ -315,6 +322,7 @@ fn run_partial_dir_interrupt(
 /// partial-dir. No mtime=0 stamp (only plain --partial does that).
 #[test]
 fn parity_partial_dir_shutdown_retains_without_mtime_zero() {
+    let _registry_lock = test_support::cleanup_registry_test_guard();
     let dir = test_support::create_tempdir();
     let (dest, partial_path) =
         run_partial_dir_interrupt(&dir, "pd_shutdown.dat", InterruptType::Shutdown, 200);
@@ -342,6 +350,7 @@ fn parity_partial_dir_shutdown_retains_without_mtime_zero() {
 /// upstream: cleanup.c:105-115 - same behavior on abort.
 #[test]
 fn parity_partial_dir_abort_retains_without_mtime_zero() {
+    let _registry_lock = test_support::cleanup_registry_test_guard();
     let dir = test_support::create_tempdir();
     let (dest, partial_path) =
         run_partial_dir_interrupt(&dir, "pd_abort.dat", InterruptType::Abort, 200);
@@ -365,6 +374,7 @@ fn parity_partial_dir_abort_retains_without_mtime_zero() {
 /// upstream: cleanup.c:105-115 - same behavior on disconnect.
 #[test]
 fn parity_partial_dir_disconnect_retains_without_mtime_zero() {
+    let _registry_lock = test_support::cleanup_registry_test_guard();
     let dir = test_support::create_tempdir();
     let (dest, partial_path) =
         run_partial_dir_interrupt(&dir, "pd_disconnect.dat", InterruptType::Disconnect, 200);
@@ -392,6 +402,7 @@ fn parity_partial_dir_disconnect_retains_without_mtime_zero() {
 /// is not retained even with --partial enabled.
 #[test]
 fn parity_zero_bytes_suppresses_partial_retention() {
+    let _registry_lock = test_support::cleanup_registry_test_guard();
     let dir = test_support::create_tempdir();
     let dest = dir.path().join("zero_partial.dat");
 
@@ -420,6 +431,7 @@ fn parity_zero_bytes_suppresses_partial_retention() {
 /// Same suppression for --partial-dir with zero bytes.
 #[test]
 fn parity_zero_bytes_suppresses_partial_dir_retention() {
+    let _registry_lock = test_support::cleanup_registry_test_guard();
     let dir = test_support::create_tempdir();
     let dest = dir.path().join("zero_pd.dat");
     let partial_dir = dir.path().join(".rsync-partial-zero");
@@ -558,6 +570,7 @@ fn parity_partial_dir_retention_unregisters_from_cleanup_manager() {
 /// upstream: receiver.c writes each token sequentially to the temp file.
 #[test]
 fn parity_multi_chunk_partial_captures_all_data() {
+    let _registry_lock = test_support::cleanup_registry_test_guard();
     let dir = test_support::create_tempdir();
     let dest = dir.path().join("multi_chunk_parity.dat");
 
@@ -603,6 +616,7 @@ fn parity_multi_chunk_partial_captures_all_data() {
 /// Same multi-chunk test for --partial-dir.
 #[test]
 fn parity_multi_chunk_partial_dir_captures_all_data() {
+    let _registry_lock = test_support::cleanup_registry_test_guard();
     let dir = test_support::create_tempdir();
     let dest = dir.path().join("multi_chunk_pd.dat");
     let partial_dir = dir.path().join(".rsync-partial-multi");
