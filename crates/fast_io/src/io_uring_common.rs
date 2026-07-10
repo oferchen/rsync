@@ -107,10 +107,13 @@ pub struct IoUringConfig {
     /// and may share buffers with this ring.
     ///
     /// Set by the caller before constructing the ring when the upstream
-    /// selector cannot guarantee `BufferedMap` for the basis file. The
-    /// Linux backend uses this to defensively disable SQPOLL when paired
-    /// with mmap'd basis files. The stub stores the flag for parity but
-    /// never acts on it.
+    /// selector cannot guarantee `BufferedMap` for the basis file. On Linux
+    /// this only disables SQPOLL when the default `sqpoll-mlock-basis` feature
+    /// is compiled out; with the feature on (the default) the basis window is
+    /// mlock-pinned so SQPOLL and an mmap'd basis coexist. Note SQPOLL is off
+    /// by default (`sqpoll` is `false`), so this flag has no effect in a stock
+    /// build. See `IoUringConfig::build_ring` for the full rule. The stub
+    /// stores the flag for parity but never acts on it.
     pub mmap_basis_active: bool,
     /// Whether to register fixed buffers
     /// (`IORING_REGISTER_BUFFERS` + `READ_FIXED` / `WRITE_FIXED`).

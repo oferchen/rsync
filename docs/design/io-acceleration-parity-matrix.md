@@ -63,6 +63,35 @@ compiled with runtime detection.
 | mmap (`MapFile` / adaptive / mmap strategy) | WIRED | WIRED | n/a (unix-only) | runtime | n/a | yes - `transfer/.../map_file/` |
 | sequential-read-hint (`posix_fadvise` Linux / `F_NOCACHE` macOS) | WIRED | WIRED | n/a | runtime | n/a | yes - `transfer/.../map_file/buffered.rs` |
 
+### mmap vs SQPOLL on the basis read
+
+Two big-I/O optimisations compete on the delta basis read: mmap of the basis
+file and an io_uring SQPOLL ring reading it. They interact but are **not**
+simultaneously active in a default build, which routinely confuses readers about
+which one is engaged.
+
+- **SQPOLL is opt-in.** `IoUringConfig::sqpoll` defaults to `false` on every
+  constructor, and the production reader/writer paths build from
+  `IoUringConfig::default()`. A stock transfer never requests the SQPOLL kthread,
+  so the default large-basis read runs on **mmap** (io_uring `READ_FIXED` basis
+  slurp is itself gated behind the non-default `iouring-data-reads` feature).
+- **The mmap+SQPOLL refusal is a backstop, not the default gate.** Pairing a
+  SQPOLL kthread with a file-backed mmap is a kernel hazard (the kthread has no
+  user `mm` context, so cold-page faults bounce to `task_work` and concurrent
+  truncation surfaces as in-kernel `SIGBUS`; see
+  `docs/audits/io-uring-sqpoll-mmap-interaction.md`). `IoUringConfig::build_ring`
+  refuses SQPOLL when `mmap_basis_active` is set **only** if the default
+  `sqpoll-mlock-basis` feature is compiled out.
+- **With the default feature set they coexist.** `sqpoll-mlock-basis` (a default
+  feature) pins each basis window via `mlock(2)` before submission
+  (`fast_io/src/sqpoll_basis.rs`), closing the fault race, so an operator who
+  opts into SQPOLL keeps it even against an mmap'd basis. Mutual exclusion only
+  reappears if that feature is disabled.
+
+Net: in the default configuration mmap is the live basis-read acceleration and
+SQPOLL is off - they never run together because SQPOLL is not requested, not
+because the code forbids the pairing.
+
 ## Network send
 
 Every kernel-async network-send path is built but not wired: production transport
