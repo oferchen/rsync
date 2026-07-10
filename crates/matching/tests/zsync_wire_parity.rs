@@ -27,8 +27,8 @@
 //! |------|--------|-------------------------------|---------------------|
 //! | ZSO-1| #2510  | shipped (PR #3737)            | active              |
 //! | ZSO-2| #2510  | landing on PR #4624           | active (see note)   |
-//! | ZSO-3| #2511  | pending                       | `#[ignore]` stub    |
-//! | ZSO-4| #2512  | pending                       | `#[ignore]` stub    |
+//! | ZSO-3| #2511  | shipped                       | active              |
+//! | ZSO-4| #2512  | shipped                       | active              |
 //!
 //! ZSO-2 (sequential-match lookahead) is implemented on branch
 //! `feat/matching-zsync-seq-match-lookahead-zso2` (PR #4624). The active
@@ -54,9 +54,12 @@
 //!    literal run for an all-miss source) so a future regression that
 //!    silently merges or splits tokens trips at least one assertion.
 //!
-//! When ZSO-3 / ZSO-4 land (or when a feature flag lets us toggle each
-//! optimization off), the ignored tests below should be enabled and
-//! amended to assert byte-identity against the opt-out reference run.
+//! ZSO-3 and ZSO-4 have shipped, so their tests are active. Because the
+//! prune bitmap and the compact rolling-key are on unconditionally in the
+//! public API, those two tests pin match correctness directly: a prune
+//! regression forces a matchable block to a literal, and a compact-key
+//! regression drops a well-separated match - both trip a token-shape
+//! assertion rather than needing an opt-out reference run.
 //!
 //! # Cross-references
 //!
@@ -334,66 +337,169 @@ fn seq_match_optimization_preserves_wire_bytes() {
 // ZSO-3 - hash-chain pruning (task #2511, pending)
 // ---------------------------------------------------------------------------
 
-/// ZSO-3 stub. Enable when hash-chain pruning lands (task #2511,
-/// design at `docs/design/zsync-prune.md`).
+/// ZSO-3 active test - hash-chain pruning (task #2511, shipped; design
+/// at `docs/design/zsync-prune.md`).
 ///
-/// Intended construction: a basis with many duplicate blocks (so the
-/// `lookup` hash map has long chains) and a source that matches each
-/// duplicate exactly once. ZSO-3 will prune each matched entry from its
-/// chain after the corresponding `write_blocks` event, mirroring
-/// upstream zsync `librcksum/hash.c:111`. The wire-byte stream must
-/// remain identical to the pre-pruning baseline (pruning is a
-/// performance optimization; it must not drop any matchable block).
+/// Construction: a duplicate-heavy basis whose blocks are three distinct
+/// 700-byte contents laid out `A B C A B C ...` so the rolling-sum lookup
+/// map holds three buckets, each carrying a long chain of identical-key
+/// entries. This is the long-chain topology ZSO-3's prune-on-match walk
+/// targets (upstream zsync `librcksum/hash.c:111`). The source is the
+/// whole basis, so every one of the duplicate blocks must be matched
+/// exactly once.
 ///
-/// When the optimization ships:
-///  1. Drop the `#[ignore]` attribute.
-///  2. Replace the placeholder basis/source with a duplicate-heavy
-///     fixture.
-///  3. Add the determinism + round-trip + token-shape assertions that
-///     mirror `bithash_optimization_preserves_wire_bytes`.
+/// Regression intent: pruning is a performance optimization; it must not
+/// drop a matchable block. If a prune regression retired a live chain
+/// entry too early, the corresponding source window would fall through to
+/// a literal - so the zero-literal / full-copy assertions below fail the
+/// moment pruning stops leaving each duplicate sibling findable until it
+/// is individually consumed.
 #[test]
-#[ignore = "pending ZSO-3 hash-chain pruning (task #2511)"]
 fn hash_chain_prune_preserves_wire_bytes() {
-    // Placeholder fixture; the assertions below pin only that the
-    // pipeline runs end-to-end on a duplicate-block input. Replace with
-    // the full ZSO-3 corpus when task #2511 lands.
-    let mut basis = Vec::with_capacity(8 * 1024);
-    for _ in 0..8 {
-        basis.extend_from_slice(&lcg_bytes(0x0DDB_A5E5_CAB7_E500, 1024));
+    const BLOCK_LEN: u32 = 700;
+    const REPEATS: usize = 5;
+
+    // Three distinct block contents. Distinct seeds keep the strong
+    // checksums apart so the three lookup buckets stay separate; the
+    // A/B/C repetition is what grows each bucket's chain to REPEATS deep.
+    let block_a = lcg_bytes(0x0DDB_A5E5_CAB7_E5A0, BLOCK_LEN as usize);
+    let block_b = lcg_bytes(0x0DDB_A5E5_CAB7_E5B0, BLOCK_LEN as usize);
+    let block_c = lcg_bytes(0x0DDB_A5E5_CAB7_E5C0, BLOCK_LEN as usize);
+    let mut basis = Vec::with_capacity(BLOCK_LEN as usize * 3 * REPEATS);
+    for _ in 0..REPEATS {
+        basis.extend_from_slice(&block_a);
+        basis.extend_from_slice(&block_b);
+        basis.extend_from_slice(&block_c);
     }
     let source = basis.clone();
-    let (script, wire) = run_pipeline(&basis, &source, 1024);
-    assert!(!wire.is_empty());
+
+    let (script, wire) = run_pipeline(&basis, &source, BLOCK_LEN);
+    assert!(!wire.is_empty(), "wire-byte stream must not be empty");
+
+    // Determinism gate: the prune bitmap is reset per `generate` call, so
+    // two runs on the same duplicate-heavy input must be byte-identical.
+    let (_, wire2) = run_pipeline(&basis, &source, BLOCK_LEN);
+    assert_eq!(
+        wire, wire2,
+        "ZSO-3 wire-byte output must be deterministic across runs"
+    );
+
+    // Functional correctness: the reconstruction equals the source.
     assert_round_trip(&basis, &source, &script);
+
+    // Prune correctness: a source that is exactly the basis must resolve
+    // to copies for every basis byte and zero literals. Any Literal token
+    // here means a matchable duplicate was pruned out of its chain before
+    // its source window arrived.
+    assert!(
+        script
+            .tokens()
+            .iter()
+            .all(|t| matches!(t, DeltaToken::Copy { .. })),
+        "prune must not force any duplicate block to a literal token"
+    );
+    assert_eq!(
+        script.literal_bytes(),
+        0,
+        "prune must not drop a matchable block (got {} literal bytes)",
+        script.literal_bytes()
+    );
+    assert_eq!(
+        script.copy_bytes(),
+        basis.len() as u64,
+        "every duplicate basis block must be matched exactly once"
+    );
 }
 
 // ---------------------------------------------------------------------------
 // ZSO-4 - compact rolling-key (task #2512, pending)
 // ---------------------------------------------------------------------------
 
-/// ZSO-4 stub. Enable when the compact rolling-key landing arrives
-/// (task #2512, design at `docs/design/zsync-compact-keys.md`).
+/// ZSO-4 active test - compact rolling-key (task #2512, shipped; design
+/// at `crates/matching/src/index/compact_lookup.rs`, which ports zsync's
+/// `librcksum/rsum.c:205` `rsum_a_mask` filter into an in-memory bucket
+/// keyed on the upper 16 bits of the rolling sum).
 ///
-/// Intended construction: a small basis (less than ~64 KiB so upstream's
-/// `rsum_a_mask` selector would drop or narrow the `a` half of the
-/// rolling sum) with a source containing well-separated matches that
-/// the compact-key probe must still find. Wire bytes must remain
-/// identical to the pre-compaction baseline; the strong-checksum gate
-/// continues to filter any rolling-key collisions the narrower key
-/// admits.
+/// Construction: a small (< 64 KiB) basis of eight distinct random
+/// blocks, and a source that interleaves three of those blocks (indices
+/// 2, 5, 0) with non-matching literal gaps. The gaps are shorter than a
+/// block so no window inside a gap can form a full-block match, which
+/// keeps the three planted matches well separated - exactly the layout
+/// the compact 16-bit key must still resolve.
 ///
-/// When the optimization ships, follow the same enable checklist as the
-/// ZSO-3 stub above.
+/// Regression intent: the narrower compact key must not lose a real
+/// match (the strong-checksum gate filters any collision the narrower key
+/// admits, but it can never manufacture a match). If the compact-key
+/// probe regressed and missed one planted block, that block would fall to
+/// a literal, shrinking `copy_bytes` and reordering the copy-index list -
+/// both pinned below.
 #[test]
-#[ignore = "pending ZSO-4 compact rolling-key (task #2512)"]
 fn compact_rolling_key_preserves_wire_bytes() {
-    // Placeholder fixture; structure mirrors the active ZSO tests so the
-    // template is ready when ZSO-4 lands.
-    let basis = lcg_bytes(0x000C_0AC7_C0EE_FACE, 4 * 1024);
-    let source = basis.clone();
-    let (script, wire) = run_pipeline(&basis, &source, 700);
-    assert!(!wire.is_empty());
+    const BLOCK_LEN: u32 = 700;
+    const N_BLOCKS: usize = 8;
+    const GAP_LEN: usize = 500;
+
+    let basis = lcg_bytes(0x000C_0AC7_C0EE_FACE, BLOCK_LEN as usize * N_BLOCKS);
+    let block = |i: usize| basis[i * BLOCK_LEN as usize..(i + 1) * BLOCK_LEN as usize].to_vec();
+
+    // Literal gaps drawn from disjoint seeds so they cannot collide with
+    // any basis block. GAP_LEN < BLOCK_LEN guarantees no in-gap window is
+    // wide enough to match.
+    let planted = [2usize, 5, 0];
+    let gap_seeds = [
+        0x11FF_0011_2233_4455u64,
+        0x22FF_1122_3344_5566,
+        0x33FF_2233_4455_6677,
+        0x44FF_3344_5566_7788,
+    ];
+    let mut source = Vec::new();
+    source.extend_from_slice(&lcg_bytes(gap_seeds[0], GAP_LEN));
+    for (slot, &b) in planted.iter().enumerate() {
+        source.extend_from_slice(&block(b));
+        source.extend_from_slice(&lcg_bytes(gap_seeds[slot + 1], GAP_LEN));
+    }
+
+    let (script, wire) = run_pipeline(&basis, &source, BLOCK_LEN);
+    assert!(!wire.is_empty(), "wire-byte stream must not be empty");
+
+    let (_, wire2) = run_pipeline(&basis, &source, BLOCK_LEN);
+    assert_eq!(
+        wire, wire2,
+        "ZSO-4 wire-byte output must be deterministic across runs"
+    );
+
     assert_round_trip(&basis, &source, &script);
+
+    // Every planted match must surface through the compact key, in order,
+    // referencing its true basis block index. A compact-key regression
+    // that dropped a match would delete or reorder an entry here.
+    let copy_indices: Vec<u64> = script
+        .tokens()
+        .iter()
+        .filter_map(|t| match t {
+            DeltaToken::Copy { index, .. } => Some(*index),
+            DeltaToken::Literal(_) => None,
+        })
+        .collect();
+    assert_eq!(
+        copy_indices,
+        planted.iter().map(|&b| b as u64).collect::<Vec<_>>(),
+        "compact-key probe must find every planted match at its true index"
+    );
+
+    // Byte accounting: exactly the three matched blocks are copies; every
+    // gap byte stays literal. A missed match would move BLOCK_LEN bytes
+    // from the copy total into the literal total.
+    assert_eq!(
+        script.copy_bytes(),
+        planted.len() as u64 * u64::from(BLOCK_LEN),
+        "copy bytes must equal the three planted blocks"
+    );
+    assert_eq!(
+        script.literal_bytes(),
+        (source.len() - planted.len() * BLOCK_LEN as usize) as u64,
+        "every non-matching gap byte must be emitted as a literal"
+    );
 }
 
 // ---------------------------------------------------------------------------
