@@ -469,6 +469,28 @@ impl IoUringConfig {
     /// the wiring fails with a downgrade-class errno at submission time, the
     /// refusal here remains the safety net: the ring is built without
     /// SQPOLL and `SQPOLL_FALLBACK` is set so callers see the degrade.
+    ///
+    /// # Default-configuration behaviour (which optimisation is actually live)
+    ///
+    /// The mmap-vs-SQPOLL refusal is *inert in a stock build*, and mmap and
+    /// SQPOLL are never simultaneously active by default - not because they are
+    /// forbidden from pairing, but because SQPOLL is opt-in:
+    ///
+    /// - [`sqpoll`](Self::sqpoll) defaults to `false` on every constructor
+    ///   ([`default`](Self::default), [`for_large_files`](Self::for_large_files),
+    ///   [`for_small_files`](Self::for_small_files)), and the production
+    ///   reader/writer paths all build from `IoUringConfig::default()`. A
+    ///   default transfer therefore never requests the SQPOLL kthread, so
+    ///   `sqpoll_requested` is `false` and this refusal is never reached.
+    /// - The large-basis read path runs on mmap - the default signature-read
+    ///   backend (io_uring `READ_FIXED` basis slurp is gated behind the
+    ///   non-default `iouring-data-reads` feature). So in a stock build mmap is
+    ///   the active big-I/O optimisation and SQPOLL simply stays off.
+    /// - When an operator *does* opt into SQPOLL, the default feature set still
+    ///   includes `sqpoll-mlock-basis`, so `sqpoll_safe` stays `true` even with
+    ///   an mmap'd basis: the wired-window pin above lets SQPOLL and mmap
+    ///   coexist. The two are only genuinely mutually exclusive once that
+    ///   feature is compiled out, at which point this refusal trips.
     pub(crate) fn build_ring(&self) -> io::Result<RawIoUring> {
         let policy_disabled = is_sqpoll_disabled_by_policy();
         let rootless_skip = self.sqpoll && !policy_disabled && should_skip_sqpoll_due_to_rootless();
