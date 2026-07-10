@@ -175,6 +175,7 @@ impl ReceiverContext {
             dest_dir,
             relative_path,
             file_entry.size(),
+            file_entry.mtime(),
             ctx.checksum_length,
             ctx.checksum_algorithm,
         );

@@ -404,6 +404,7 @@ impl ReceiverContext {
         dest_dir: &'a std::path::Path,
         relative_path: &'a std::path::Path,
         target_size: u64,
+        target_mtime: i64,
         checksum_length: NonZeroU8,
         checksum_algorithm: signature::SignatureAlgorithm,
     ) -> BasisFileConfig<'a> {
@@ -412,6 +413,7 @@ impl ReceiverContext {
             dest_dir,
             relative_path,
             target_size,
+            target_mtime,
             fuzzy_level: self.config.flags.fuzzy_level,
             reference_directories: &self.config.reference_directories,
             protocol: self.protocol,
