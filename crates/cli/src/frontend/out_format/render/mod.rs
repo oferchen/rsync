@@ -29,23 +29,27 @@ impl OutFormat {
         context: &OutFormatContext,
         writer: &mut W,
     ) -> io::Result<()> {
-        let mut buffer = String::new();
+        // The buffer is raw bytes, not a String: `%n`/`%f`/`%L` render filename
+        // bytes verbatim (see `escape_path`), so a lone invalid-UTF-8 byte under
+        // `--8-bit-output` must reach the writer unmodified. Interpolating
+        // through a String would replace it with U+FFFD.
+        let mut buffer: Vec<u8> = Vec::new();
         for token in self.tokens() {
             match token {
-                OutFormatToken::Literal(text) => buffer.push_str(text),
+                OutFormatToken::Literal(text) => buffer.extend_from_slice(text.as_bytes()),
                 OutFormatToken::Placeholder(spec) => {
                     if let Some(rendered) = render_placeholder_value(event, context, spec) {
                         let formatted = apply_placeholder_format(rendered, &spec.format);
-                        buffer.push_str(&formatted);
+                        buffer.extend_from_slice(&formatted);
                     }
                 }
             }
         }
 
-        if buffer.ends_with('\n') {
-            writer.write_all(buffer.as_bytes())
+        if buffer.last() == Some(&b'\n') {
+            writer.write_all(&buffer)
         } else {
-            writer.write_all(buffer.as_bytes())?;
+            writer.write_all(&buffer)?;
             writer.write_all(b"\n")
         }
     }
@@ -158,11 +162,11 @@ pub(crate) fn emit_out_format<W: Write + ?Sized>(
         // of `-i`/`-ii`.
         if matches!(event.kind(), ClientEventKind::SkippedNewerDestination) {
             if info_gte(InfoFlag::Skip, 1) {
-                writeln!(
-                    writer,
-                    "{} is newer",
-                    escape_path(event.relative_path(), context.eight_bit_output)
-                )?;
+                writer.write_all(&escape_path(
+                    event.relative_path(),
+                    context.eight_bit_output,
+                ))?;
+                writer.write_all(b" is newer\n")?;
             }
             continue;
         }

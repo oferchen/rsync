@@ -91,21 +91,32 @@ fn format_with_separator(value: i64) -> String {
 }
 
 /// Applies width and alignment formatting to a rendered placeholder value.
-pub(super) fn apply_placeholder_format(mut value: String, format: &PlaceholderFormat) -> String {
-    if let Some(width) = format.width() {
-        let capped_width = width.min(MAX_PLACEHOLDER_WIDTH);
-        let len = value.chars().count();
-        if len < capped_width {
-            let padding = " ".repeat(capped_width - len);
-            if format.align() == PlaceholderAlignment::Left {
-                value.push_str(&padding);
-            } else {
-                value.insert_str(0, &padding);
-            }
-        }
+///
+/// The value is a raw byte buffer so filename placeholders (`%n`/`%f`/`%L`)
+/// carry their bytes verbatim. Padding is measured in characters (matching the
+/// prior behavior for valid-UTF-8 values) via a lossy view used only for the
+/// length count; the value bytes themselves are never round-tripped through a
+/// String, so a lone invalid byte survives unchanged. Padding adds ASCII
+/// spaces only.
+pub(super) fn apply_placeholder_format(value: Vec<u8>, format: &PlaceholderFormat) -> Vec<u8> {
+    let Some(width) = format.width() else {
+        return value;
+    };
+    let capped_width = width.min(MAX_PLACEHOLDER_WIDTH);
+    let len = String::from_utf8_lossy(&value).chars().count();
+    if len >= capped_width {
+        return value;
     }
-
-    value
+    let pad = capped_width - len;
+    if format.align() == PlaceholderAlignment::Left {
+        let mut padded = value;
+        padded.extend(std::iter::repeat_n(b' ', pad));
+        padded
+    } else {
+        let mut padded = vec![b' '; pad];
+        padded.extend_from_slice(&value);
+        padded
+    }
 }
 
 #[cfg(test)]
@@ -214,7 +225,10 @@ mod tests {
     #[test]
     fn apply_placeholder_format_no_width() {
         let format = PlaceholderFormat::new(None, PlaceholderAlignment::Right, HumanizeMode::None);
-        assert_eq!(apply_placeholder_format("test".to_owned(), &format), "test");
+        assert_eq!(
+            apply_placeholder_format(b"test".to_vec(), &format),
+            b"test".to_vec()
+        );
     }
 
     #[test]
@@ -222,8 +236,8 @@ mod tests {
         let format =
             PlaceholderFormat::new(Some(10), PlaceholderAlignment::Right, HumanizeMode::None);
         assert_eq!(
-            apply_placeholder_format("test".to_owned(), &format),
-            "      test"
+            apply_placeholder_format(b"test".to_vec(), &format),
+            b"      test".to_vec()
         );
     }
 
@@ -232,8 +246,8 @@ mod tests {
         let format =
             PlaceholderFormat::new(Some(10), PlaceholderAlignment::Left, HumanizeMode::None);
         assert_eq!(
-            apply_placeholder_format("test".to_owned(), &format),
-            "test      "
+            apply_placeholder_format(b"test".to_vec(), &format),
+            b"test      ".to_vec()
         );
     }
 
@@ -241,14 +255,20 @@ mod tests {
     fn apply_placeholder_format_exact_width() {
         let format =
             PlaceholderFormat::new(Some(4), PlaceholderAlignment::Right, HumanizeMode::None);
-        assert_eq!(apply_placeholder_format("test".to_owned(), &format), "test");
+        assert_eq!(
+            apply_placeholder_format(b"test".to_vec(), &format),
+            b"test".to_vec()
+        );
     }
 
     #[test]
     fn apply_placeholder_format_exceed_width() {
         let format =
             PlaceholderFormat::new(Some(2), PlaceholderAlignment::Right, HumanizeMode::None);
-        assert_eq!(apply_placeholder_format("test".to_owned(), &format), "test");
+        assert_eq!(
+            apply_placeholder_format(b"test".to_vec(), &format),
+            b"test".to_vec()
+        );
     }
 
     #[test]
@@ -259,8 +279,20 @@ mod tests {
             PlaceholderAlignment::Right,
             HumanizeMode::None,
         );
-        let result = apply_placeholder_format("x".to_owned(), &format);
+        let result = apply_placeholder_format(b"x".to_vec(), &format);
         assert_eq!(result.len(), MAX_PLACEHOLDER_WIDTH);
+    }
+
+    #[test]
+    fn apply_placeholder_format_preserves_lone_invalid_byte() {
+        // A `%n` value carrying a lone invalid-UTF-8 byte under -8 must keep the
+        // raw byte through width padding (padding is ASCII spaces only).
+        let format =
+            PlaceholderFormat::new(Some(4), PlaceholderAlignment::Right, HumanizeMode::None);
+        assert_eq!(
+            apply_placeholder_format(vec![0x80], &format),
+            vec![b' ', b' ', b' ', 0x80]
+        );
     }
 
     #[test]
