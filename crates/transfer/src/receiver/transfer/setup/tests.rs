@@ -416,3 +416,237 @@ mod daemon_incoming_chmod_tests {
         );
     }
 }
+
+#[cfg(all(test, feature = "tokio-transfer"))]
+mod setup_transfer_async_parity {
+    //! Sync vs async wire-parity for the receiver's transfer setup phase, gated
+    //! on `tokio-transfer`.
+    //!
+    //! Proves that
+    //! [`setup_transfer_async`](crate::receiver::ReceiverContext::setup_transfer_async)
+    //! produces the identical observable [`PipelineSetup`] output to the blocking
+    //! [`setup_transfer`](crate::receiver::ReceiverContext::setup_transfer) for
+    //! the same wire bytes: the same filter chain (compiled from the same wire
+    //! filter list), the same received `file_list` and post-sanitize file count,
+    //! and the same checksum/metadata/dest-dir configuration. The async source is
+    //! driven through a [`ChunkedReader`] that hands over as little as one byte
+    //! per `poll_read`, so the equality also proves the async setup is
+    //! poll-correct: no filter-record or file-list entry is corrupted when a wire
+    //! read suspends mid-token across an `.await` boundary.
+    //!
+    //! Both paths run through the receiver's real multiplex demux (protocol 32,
+    //! server mode activates input multiplex), so the wire is MSG_DATA-framed via
+    //! [`send_msg`], exercising the shared demux core end to end under both the
+    //! blocking [`ServerReader`] and the async [`AsyncServerReader`].
+
+    use std::ffi::OsString;
+    use std::io::Cursor;
+    use std::num::NonZeroU8;
+    use std::path::{Path, PathBuf};
+    use std::pin::Pin;
+    use std::task::{Context, Poll};
+
+    use protocol::filters::{FilterRuleWireFormat, write_filter_list};
+    use protocol::flist::{FileEntry, FileListWriter};
+    use protocol::{MessageCode, ProtocolVersion, send_msg};
+    use tokio::io::{AsyncRead, ReadBuf};
+
+    use crate::config::ServerConfig;
+    use crate::flags::ParsedServerFlags;
+    use crate::handshake::HandshakeResult;
+    use crate::reader::{AsyncServerReader, ServerReader};
+    use crate::receiver::ReceiverContext;
+    use crate::role::ServerRole;
+
+    /// An [`AsyncRead`] that yields at most `chunk` bytes per `poll_read`,
+    /// forcing wire reads to cross `.await` boundaries mid-token when `chunk == 1`.
+    struct ChunkedReader {
+        data: Vec<u8>,
+        pos: usize,
+        chunk: usize,
+    }
+
+    impl ChunkedReader {
+        fn new(data: Vec<u8>, chunk: usize) -> Self {
+            Self {
+                data,
+                pos: 0,
+                chunk: chunk.max(1),
+            }
+        }
+    }
+
+    impl AsyncRead for ChunkedReader {
+        fn poll_read(
+            mut self: Pin<&mut Self>,
+            _cx: &mut Context<'_>,
+            buf: &mut ReadBuf<'_>,
+        ) -> Poll<std::io::Result<()>> {
+            let remaining = self.data.len() - self.pos;
+            if remaining == 0 {
+                return Poll::Ready(Ok(()));
+            }
+            let take = remaining.min(self.chunk).min(buf.remaining());
+            let start = self.pos;
+            let end = start + take;
+            buf.put_slice(&self.data[start..end]);
+            self.pos = end;
+            Poll::Ready(Ok(()))
+        }
+    }
+
+    /// Server-mode protocol-32 receiver config with `--delete` (so the setup
+    /// path reads the wire filter list) rooted at `dest`.
+    fn parity_config(dest: &Path) -> ServerConfig {
+        ServerConfig {
+            role: ServerRole::Receiver,
+            protocol: ProtocolVersion::try_from(32u8).unwrap(),
+            flag_string: "-logDtpre.".to_owned(),
+            flags: ParsedServerFlags {
+                delete: true,
+                ..ParsedServerFlags::default()
+            },
+            args: vec![OsString::from(dest)],
+            ..Default::default()
+        }
+    }
+
+    fn parity_handshake() -> HandshakeResult {
+        HandshakeResult {
+            protocol: ProtocolVersion::try_from(32u8).unwrap(),
+            buffered: Vec::new(),
+            compat_exchanged: false,
+            client_args: None,
+            io_timeout: None,
+            negotiated_algorithms: None,
+            compat_flags: None,
+            checksum_seed: 0,
+        }
+    }
+
+    /// Builds the receiver-facing inner wire: the 4-byte-framed filter list
+    /// followed by the file-list entries and end marker.
+    fn build_inner_wire() -> Vec<u8> {
+        let protocol = ProtocolVersion::try_from(32u8).unwrap();
+        let mut inner = Vec::new();
+
+        let rules = vec![
+            FilterRuleWireFormat::exclude("*.log".to_owned()),
+            FilterRuleWireFormat::exclude("build".to_owned()).with_anchored(true),
+        ];
+        write_filter_list(&mut inner, &rules, protocol).unwrap();
+
+        let mut writer = FileListWriter::new(protocol);
+        for (name, size, mode) in [
+            ("dir/alpha.txt", 1234u64, 0o100644u32),
+            ("dir/beta.bin", 0, 0o100600),
+            ("dir/gamma", 9_999_999, 0o100755),
+            ("other/delta.dat", 42, 0o100640),
+        ] {
+            let mut e = FileEntry::new_file(PathBuf::from(name), size, mode);
+            e.set_mtime(1_700_000_000, 0);
+            writer.write_entry(&mut inner, &e).unwrap();
+        }
+        writer.write_end(&mut inner, None).unwrap();
+        inner
+    }
+
+    /// Wraps `inner` in a single MSG_DATA multiplex frame, matching what the
+    /// receiver's activated input multiplex expects at protocol 32.
+    fn muxed(inner: &[u8]) -> Vec<u8> {
+        let mut wire = Vec::new();
+        send_msg(&mut wire, MessageCode::Data, inner).unwrap();
+        wire
+    }
+
+    /// The comparable projection of a completed setup: file count, per-entry
+    /// file-list fields, a filter-chain decision vector, and the derived
+    /// pipeline configuration (dest dir + checksum + metadata options).
+    type Observed = (
+        usize,
+        Vec<(String, u64, u32, i64)>,
+        Vec<bool>,
+        PathBuf,
+        NonZeroU8,
+        signature::SignatureAlgorithm,
+        metadata::MetadataOptions,
+    );
+
+    fn project_file_list(ctx: &ReceiverContext) -> Vec<(String, u64, u32, i64)> {
+        ctx.file_list()
+            .iter()
+            .map(|e| (e.name().to_string(), e.size(), e.mode(), e.mtime()))
+            .collect()
+    }
+
+    /// A deterministic decision vector over representative paths, capturing the
+    /// compiled filter chain's observable behaviour without reaching into its
+    /// private rule representation.
+    fn project_filter(ctx: &ReceiverContext) -> Vec<bool> {
+        let chain = ctx.filter_chain();
+        [
+            "app.log",
+            "keep.txt",
+            "build",
+            "build/output",
+            "dir/alpha.txt",
+            "other/delta.dat",
+        ]
+        .iter()
+        .map(|p| chain.allows(Path::new(p), false))
+        .collect()
+    }
+
+    fn run_sync(dest: &Path, muxed_wire: &[u8]) -> Observed {
+        let mut ctx = ReceiverContext::new_for_test(&parity_handshake(), parity_config(dest));
+        let reader = ServerReader::new_plain(Cursor::new(muxed_wire.to_vec()));
+        let mut sink = std::io::sink();
+        let (_reader, count, setup) = ctx.setup_transfer(reader, &mut sink).unwrap();
+        (
+            count,
+            project_file_list(&ctx),
+            project_filter(&ctx),
+            setup.dest_dir,
+            setup.checksum_length,
+            setup.checksum_algorithm,
+            setup.metadata_opts,
+        )
+    }
+
+    async fn run_async(dest: &Path, muxed_wire: &[u8], chunk: usize) -> Observed {
+        let mut ctx = ReceiverContext::new_for_test(&parity_handshake(), parity_config(dest));
+        let reader = AsyncServerReader::new_plain(ChunkedReader::new(muxed_wire.to_vec(), chunk));
+        let mut sink = std::io::sink();
+        let (_reader, count, setup) = ctx.setup_transfer_async(reader, &mut sink).await.unwrap();
+        (
+            count,
+            project_file_list(&ctx),
+            project_filter(&ctx),
+            setup.dest_dir,
+            setup.checksum_length,
+            setup.checksum_algorithm,
+            setup.metadata_opts,
+        )
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn setup_transfer_async_matches_sync() {
+        let inner = build_inner_wire();
+        let muxed_wire = muxed(&inner);
+
+        // A single destination root shared by both paths so the derived
+        // `dest_dir` is identical; the setup steps against it (mkdir, sandbox
+        // open) are idempotent and side-effect-free to compare.
+        let dir = tempfile::tempdir().unwrap();
+
+        let sync = run_sync(dir.path(), &muxed_wire);
+
+        for chunk in [1usize, 2, 3, 7, 13, muxed_wire.len()] {
+            let asyncd = run_async(dir.path(), &muxed_wire, chunk).await;
+            assert_eq!(
+                asyncd, sync,
+                "async setup diverged from sync at chunk={chunk}"
+            );
+        }
+    }
+}
