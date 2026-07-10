@@ -330,6 +330,93 @@ pub(super) fn stream_whole_file_transfer<R: Read, W: Write>(
     })
 }
 
+/// Streams the appended tail of a file to the wire in append mode.
+///
+/// In append mode the receiver already holds the first `flength` bytes, so the
+/// sender transmits only `[flength, file_size)` as literal tokens - never any
+/// block-match tokens (the sum_head carried no block checksums). The whole-file
+/// checksum folds in the existing prefix only when `append_verify` is set
+/// (upstream `append_mode == 2`); plain append trusts the prefix and sums just
+/// the new tail so both sides agree.
+///
+/// # Upstream Reference
+///
+/// - `match.c:371-390 match_sums()` - prefix `sum_update` gated on `append_mode == 2`,
+///   `s->count = 0`, `last_match = s->flength`.
+/// - `sender.c:89-95 receive_sums()` - append mode derives `flength` and reads no blocks.
+#[allow(clippy::too_many_arguments)]
+pub(super) fn stream_append_transfer<R: Read, W: Write>(
+    writer: &mut W,
+    mut source: R,
+    file_size: u64,
+    flength: u64,
+    append_verify: bool,
+    checksum_algorithm: ChecksumAlgorithm,
+    checksum_seed: i32,
+    encoder: Option<&mut CompressedTokenEncoder>,
+    buf: &mut Vec<u8>,
+) -> io::Result<StreamResult> {
+    let mut verifier = ChecksumVerifier::for_algorithm_seeded(checksum_algorithm, checksum_seed);
+
+    const MAX_READ_SIZE: usize = 256 * 1024;
+
+    // upstream: match.c:372-390 - consume the existing prefix. append_mode == 2
+    // folds it into the whole-file checksum (verify); append_mode == 1 skips the
+    // sum (trust). Either way the prefix bytes are never sent as tokens.
+    let mut prefix_remaining = flength.min(file_size);
+    if prefix_remaining > 0 {
+        buf.resize((prefix_remaining as usize).clamp(1, MAX_READ_SIZE), 0);
+        while prefix_remaining > 0 {
+            let to_read = buf.len().min(prefix_remaining as usize);
+            source.read_exact(&mut buf[..to_read])?;
+            if append_verify {
+                verifier.update(&buf[..to_read]);
+            }
+            prefix_remaining -= to_read as u64;
+        }
+    }
+
+    // Stream [flength, file_size) as literal tokens, folding into the checksum.
+    let mut remaining = file_size.saturating_sub(flength);
+    let read_size = (remaining as usize).clamp(1, MAX_READ_SIZE);
+
+    if let Some(encoder) = encoder {
+        buf.resize(read_size, 0);
+        while remaining > 0 {
+            let to_read = buf.len().min(remaining as usize);
+            source.read_exact(&mut buf[..to_read])?;
+            verifier.update(&buf[..to_read]);
+            encoder.send_literal(writer, &buf[..to_read])?;
+            remaining -= to_read as u64;
+        }
+        encoder.finish(writer)?;
+    } else {
+        buf.resize(4 + read_size, 0);
+        while remaining > 0 {
+            let to_read = (buf.len() - 4).min(remaining as usize);
+            source.read_exact(&mut buf[4..4 + to_read])?;
+            verifier.update(&buf[4..4 + to_read]);
+            let mut wire_off = 0;
+            while wire_off < to_read {
+                let chunk = (to_read - wire_off).min(CHUNK_SIZE);
+                buf[wire_off..wire_off + 4].copy_from_slice(&(chunk as i32).to_le_bytes());
+                writer.write_all(&buf[wire_off..wire_off + 4 + chunk])?;
+                wire_off += chunk;
+            }
+            remaining -= to_read as u64;
+        }
+        write_token_end(writer)?;
+    }
+
+    let mut checksum_buf = [0u8; ChecksumVerifier::MAX_DIGEST_LEN];
+    let checksum_len = verifier.finalize_into(&mut checksum_buf);
+
+    Ok(StreamResult {
+        checksum_buf,
+        checksum_len,
+    })
+}
+
 /// Converts engine delta script to wire protocol delta operations.
 ///
 /// Takes ownership of the script to avoid cloning literal data. Multi-block
@@ -725,6 +812,82 @@ mod tests {
             &result.checksum_buf[..result.checksum_len],
             &expected_buf[..expected_len],
             "inline checksum must equal checksum of source bytes covered by the script",
+        );
+    }
+
+    /// The append streamer must transmit only the tail past `flength` and fold
+    /// the existing prefix into the whole-file checksum only under append-verify
+    /// (append_mode == 2). Mirrors upstream match.c:371-390.
+    #[test]
+    fn stream_append_transfer_tail_and_prefix_checksum() {
+        let file: Vec<u8> = (0..100u32).map(|i| (i % 256) as u8).collect();
+        let flength: u64 = 40;
+        let tail_len = file.len() as u64 - flength;
+
+        // Trust mode (append_mode == 1): checksum covers only [flength, len).
+        let mut wire_trust = Vec::new();
+        let mut buf = Vec::new();
+        let res_trust = stream_append_transfer(
+            &mut wire_trust,
+            std::io::Cursor::new(file.clone()),
+            file.len() as u64,
+            flength,
+            false,
+            ChecksumAlgorithm::MD5,
+            0,
+            None,
+            &mut buf,
+        )
+        .expect("append stream (trust)");
+
+        let mut exp_tail = ChecksumVerifier::for_algorithm(ChecksumAlgorithm::MD5);
+        exp_tail.update(&file[flength as usize..]);
+        let mut exp_tail_buf = [0u8; ChecksumVerifier::MAX_DIGEST_LEN];
+        let exp_tail_len = exp_tail.finalize_into(&mut exp_tail_buf);
+        assert_eq!(
+            &res_trust.checksum_buf[..res_trust.checksum_len],
+            &exp_tail_buf[..exp_tail_len],
+            "append (trust) checksum must cover only the appended tail",
+        );
+
+        // Verify mode (append_mode == 2): checksum covers the whole file.
+        let mut wire_verify = Vec::new();
+        buf.clear();
+        let res_verify = stream_append_transfer(
+            &mut wire_verify,
+            std::io::Cursor::new(file.clone()),
+            file.len() as u64,
+            flength,
+            true,
+            ChecksumAlgorithm::MD5,
+            0,
+            None,
+            &mut buf,
+        )
+        .expect("append stream (verify)");
+
+        let mut exp_whole = ChecksumVerifier::for_algorithm(ChecksumAlgorithm::MD5);
+        exp_whole.update(&file);
+        let mut exp_whole_buf = [0u8; ChecksumVerifier::MAX_DIGEST_LEN];
+        let exp_whole_len = exp_whole.finalize_into(&mut exp_whole_buf);
+        assert_eq!(
+            &res_verify.checksum_buf[..res_verify.checksum_len],
+            &exp_whole_buf[..exp_whole_len],
+            "append-verify checksum must cover the existing prefix plus the tail",
+        );
+
+        // The prefix is never sent as tokens, so both modes emit the same wire:
+        // one literal chunk carrying exactly the tail, then the end token.
+        assert_eq!(wire_trust, wire_verify, "verify must not change the wire");
+        assert_eq!(
+            &wire_trust[0..4],
+            &(tail_len as i32).to_le_bytes(),
+            "first wire chunk length must equal the appended tail length",
+        );
+        assert_eq!(
+            wire_trust.len() as u64,
+            4 + tail_len + 4,
+            "wire is [len][tail][end], no prefix bytes",
         );
     }
 }

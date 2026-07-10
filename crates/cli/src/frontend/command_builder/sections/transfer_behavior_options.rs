@@ -110,14 +110,18 @@ pub(crate) fn add_transfer_behavior_options(command: ClapCommand) -> ClapCommand
                     .overrides_with("remove-source-files"),
             )
             .arg(
+                // upstream: options.c:1722-1726 - OPT_APPEND increments
+                // append_mode on the server side; two `--append` flags mean
+                // append_mode == 2 (verify). Count occurrences so the server
+                // parser can recover that from the wire, where a repeated
+                // `--append` (never `--append-verify`) carries the verify bit.
                 Arg::new("append")
                     .long("append")
                     .help(
                         "Append data to existing destination files without rewriting preserved bytes.",
                     )
-                    .action(ArgAction::SetTrue)
-                    .overrides_with("no-append")
-                    .overrides_with("append-verify"),
+                    .action(ArgAction::Count)
+                    .overrides_with("no-append"),
             )
             .arg(
                 Arg::new("no-append")

@@ -9,7 +9,7 @@ use std::io;
 
 use engine::CleanupManager;
 
-use crate::delta_apply::SparseWriteState;
+use crate::delta_apply::{ChecksumVerifier, SparseWriteState};
 use crate::pipeline::messages::{BeginMessage, CommitResult, FileMessage};
 use crate::pipeline::spsc;
 use crate::temp_guard::TempFileGuard;
@@ -22,6 +22,46 @@ use super::super::config::DiskCommitConfig;
 use super::super::writer::{ReusableBufWriter, Writer};
 use super::commit::{SparseFinalize, commit_file, retain_partial_file};
 use super::metadata::{apply_file_metadata, finalize_checksum};
+
+/// Folds the existing on-disk prefix into the whole-file checksum for
+/// `--append-verify` (append_mode == 2).
+///
+/// Reads `[0, append_offset)` from the destination and feeds it to `verifier`
+/// before the appended tokens are hashed, so a corrupted prefix fails
+/// verification and triggers a re-transmit. A no-op unless append-verify is
+/// active with a non-zero offset and a live verifier.
+///
+/// # Upstream Reference
+///
+/// - `receiver.c:357-373` - `if (append_mode == 2 && mapbuf)` sum_update loop
+///   over `sum.flength` bytes in `CHUNK_SIZE` steps.
+fn sum_append_prefix(
+    config: &DiskCommitConfig,
+    begin: &BeginMessage,
+    verifier: &mut Option<ChecksumVerifier>,
+) -> io::Result<()> {
+    use std::io::Read;
+
+    if !config.append_verify || begin.append_offset == 0 {
+        return Ok(());
+    }
+    let Some(verifier) = verifier.as_mut() else {
+        return Ok(());
+    };
+
+    // Append implies inplace (receiver.c:855), so the prefix lives at the final
+    // destination and is untouched until the appended tail is written.
+    let mut file = fs::File::open(&begin.file_path)?;
+    let mut remaining = begin.append_offset;
+    let mut buf = vec![0u8; 256 * 1024];
+    while remaining > 0 {
+        let to_read = buf.len().min(remaining as usize);
+        file.read_exact(&mut buf[..to_read])?;
+        verifier.update(&buf[..to_read]);
+        remaining -= to_read as u64;
+    }
+    Ok(())
+}
 
 /// Processes a single file: open, write chunks, commit or abort.
 ///
@@ -105,6 +145,10 @@ pub(in crate::disk_commit) fn process_file(
     // Computing the checksum here overlaps hashing with disk I/O and
     // removes ~42% of instructions from the network-critical path.
     let mut checksum_verifier = begin.checksum_verifier.take();
+
+    // upstream: receiver.c:357-373 - fold the existing prefix into the
+    // whole-file checksum under --append-verify before hashing the tail.
+    sum_append_prefix(config, &begin, &mut checksum_verifier)?;
 
     let mut bytes_written: u64 = 0;
 
@@ -314,6 +358,9 @@ pub(in crate::disk_commit) fn process_whole_file(
     let bytes_written = data.len() as u64;
 
     let mut checksum_verifier = begin.checksum_verifier.take();
+    // upstream: receiver.c:357-373 - fold the existing prefix into the
+    // whole-file checksum under --append-verify before hashing the tail.
+    sum_append_prefix(config, &begin, &mut checksum_verifier)?;
     if let Some(ref mut verifier) = checksum_verifier {
         verifier.update(&data);
     }

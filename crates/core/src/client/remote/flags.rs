@@ -313,6 +313,12 @@ pub(crate) fn apply_common_server_flags(config: &ClientConfig, server_config: &m
     server_config.trust_sender = config.trust_sender();
     server_config.qsort = config.qsort();
     server_config.write.inplace = config.inplace();
+    // upstream: receiver.c:855 - append mode implies inplace; the sum_head
+    // block-skip (generator.c:786) and flength derivation (sender.c:89) on both
+    // the local sender (push) and receiver (pull) roles gate on these flags, so
+    // they must be carried onto the in-process ServerConfig for SSH and daemon.
+    server_config.flags.append = config.append();
+    server_config.flags.append_verify = config.append_verify();
     server_config.has_partial_dir = config.partial_directory().is_some();
     server_config.partial_dir = config.partial_directory().map(std::path::Path::to_path_buf);
     server_config.file_selection.min_file_size = config.min_file_size();

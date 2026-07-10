@@ -174,6 +174,18 @@ pub struct DiskCommitConfig {
     /// - `receiver.c:906-929`: staging to partial dir when `delay_updates`
     /// - `receiver.c:584-585`: `handle_delayed_updates()` at phase 2
     pub delay_updates: bool,
+    /// Whether `--append-verify` (append_mode == 2) is active for the session.
+    ///
+    /// When true and a file is transferred with a non-zero append offset, the
+    /// disk thread reads the existing prefix `[0, append_offset)` and folds it
+    /// into the whole-file checksum before hashing the appended tokens, so a
+    /// corrupted prefix fails verification and triggers a re-transmit. Plain
+    /// `--append` leaves this false and trusts the prefix.
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `receiver.c:357-373` - `if (append_mode == 2 && mapbuf)` prefix `sum_update`
+    pub append_verify: bool,
 }
 
 impl Default for DiskCommitConfig {
@@ -196,6 +208,7 @@ impl Default for DiskCommitConfig {
             iocp_policy: fast_io::IocpPolicy::Auto,
             partial_mode: PartialMode::None,
             delay_updates: false,
+            append_verify: false,
         }
     }
 }

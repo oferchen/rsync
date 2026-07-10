@@ -569,8 +569,14 @@ where
     let remove_source_files =
         matches.get_flag("remove-source-files") || matches.get_flag("remove-sent-files");
     let inplace = tri_state_flag_positive_first(&matches, "inplace", "no-inplace");
-    let append_verify_flag = matches.get_flag("append-verify");
-    let append = if append_verify_flag || matches.get_flag("append") {
+    // upstream: options.c:1722-1726 - OPT_APPEND increments append_mode only on
+    // the server (`am_server`); a non-server invocation caps it at 1. A second
+    // `--append` on the server wire is the encoding of `--append-verify`
+    // (append_mode == 2). `--append-verify` sets it directly (options.c:719).
+    let append_count = matches.get_count("append");
+    let append_verify_flag =
+        matches.get_flag("append-verify") || (server_mode && append_count >= 2);
+    let append = if append_verify_flag || append_count >= 1 {
         Some(true)
     } else if matches.get_flag("no-append") {
         Some(false)

@@ -1625,38 +1625,37 @@ fn includes_temp_dir_long_arg() {
 
 #[test]
 fn includes_append_long_arg() {
+    // Plain --append (append_mode == 1) emits exactly one --append and never
+    // --append-verify. upstream: options.c:2951-2954 server_options().
     let config = ClientConfig::builder().append(true).build();
     let args = build_sender_args(&config);
+    let count = args.iter().filter(|a| *a == "--append").count();
+    assert_eq!(
+        count, 1,
+        "plain --append should emit one --append: {args:?}"
+    );
     assert!(
-        args.iter().any(|a| a == "--append"),
-        "expected --append in args: {args:?}"
+        !args.iter().any(|a| a == "--append-verify"),
+        "must not forward --append-verify to the server: {args:?}"
     );
 }
 
 #[test]
-fn append_verify_via_builder_emits_append() {
-    // The builder's append_verify(true) sets append=true internally,
-    // so the invocation emits --append (the append() check comes first).
-    // This mirrors upstream behavior where --append-verify implies --append.
+fn append_verify_emits_doubled_append() {
+    // --append-verify (append_mode == 2) is encoded on the wire as two bare
+    // --append flags, never --append-verify. The server's OPT_APPEND increments
+    // append_mode on am_server, so the second flag is what selects verify mode.
+    // upstream: options.c:2951-2954 server_options() + options.c:1722-1726.
     let config = ClientConfig::builder().append_verify(true).build();
     let args = build_sender_args(&config);
-    assert!(
-        args.iter().any(|a| a == "--append"),
-        "append_verify via builder should produce --append: {args:?}"
+    let count = args.iter().filter(|a| *a == "--append").count();
+    assert_eq!(
+        count, 2,
+        "append_verify should emit two --append flags: {args:?}"
     );
-}
-
-#[test]
-fn append_verify_emits_append_because_builder_sets_both() {
-    // The builder's append_verify(true) sets both append=true and
-    // append_verify=true. The invocation code checks append() first,
-    // so --append is emitted. To get --append-verify alone, one would
-    // need to set append_verify without append (not possible via builder).
-    let config = ClientConfig::builder().append_verify(true).build();
-    let args = build_sender_args(&config);
     assert!(
-        args.iter().any(|a| a == "--append"),
-        "append_verify via builder should emit --append: {args:?}"
+        !args.iter().any(|a| a == "--append-verify"),
+        "must not forward --append-verify to the server: {args:?}"
     );
 }
 

@@ -133,6 +133,17 @@ pub struct ParsedServerFlags {
     ///
     /// Not part of the compact flag string; set via long-form args.
     pub append: bool,
+    /// Re-verify the existing prefix by folding it into the whole-file
+    /// checksum (`--append-verify`, upstream `append_mode == 2`).
+    ///
+    /// Implies [`append`](Self::append). When set, both sender and receiver
+    /// `sum_update()` the bytes already present on disk so a corrupted prefix
+    /// fails the whole-file checksum and triggers a full re-transmit. Plain
+    /// `--append` (`append_mode == 1`) trusts the prefix and never sums it.
+    ///
+    /// Upstream: `options.c:719` (`append_mode = 2`), `match.c:373` and
+    /// `receiver.c:357` (`if (append_mode == 2)` prefix `sum_update`).
+    pub append_verify: bool,
     /// Make backups before overwriting (`b` flag, `--backup`).
     ///
     /// Upstream: `options.c:2613` - `argstr[x++] = 'b'`.
