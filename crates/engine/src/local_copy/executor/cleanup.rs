@@ -198,7 +198,10 @@ fn delete_extraneous_entries_capped<S: AsRef<OsStr>>(
             Some(base) => base.join(&name_path),
             None => name_path.clone(),
         };
-        remove_entry_capped(context, &path, &entry_relative, &mut skipped)?;
+        // `nested = false`: these are the top-level extraneous entries, reached
+        // by upstream's `delete_item` WITHOUT `DEL_DIR_IS_EMPTY`, so a survived
+        // top-level directory is not counted against the skipped total.
+        remove_entry_capped(context, &path, &entry_relative, &mut skipped, false)?;
     }
 
     if skipped > 0 {
@@ -238,11 +241,18 @@ fn cmp_child_delete_order(a: (&OsStr, bool), b: (&OsStr, bool)) -> std::cmp::Ord
 /// now-empty directory is itself subject to the same guard before its own
 /// removal. `skipped` accumulates the count reported to the user, matching
 /// upstream's `skipped_deletes` (`delete.c:157`).
+///
+/// `nested` distinguishes a directory reached during the recursion (upstream's
+/// `delete_item(..., DEL_DIR_IS_EMPTY)` call at `delete.c:107`) from a
+/// top-level extraneous entry (upstream's initial `delete_item` without
+/// `DEL_DIR_IS_EMPTY`). Only the former counts a cap-saturated non-empty
+/// directory toward `skipped` - see the `!all_children_removed` branch below.
 fn remove_entry_capped(
     context: &mut CopyContext,
     path: &Path,
     entry_relative: &Path,
     skipped: &mut u64,
+    nested: bool,
 ) -> Result<bool, LocalCopyError> {
     context.enforce_timeout()?;
 
@@ -296,22 +306,36 @@ fn remove_entry_capped(
         for (child_name, _) in children {
             let child_path = path.join(&child_name);
             let child_relative = entry_relative.join(&child_name);
-            if !remove_entry_capped(context, &child_path, &child_relative, skipped)? {
+            // Children are reached via the recursion, mirroring upstream's
+            // `delete_item(..., DEL_DIR_IS_EMPTY)` at delete.c:107; mark them
+            // `nested` so a cap-saturated non-empty subdir is counted.
+            if !remove_entry_capped(context, &child_path, &child_relative, skipped, true)? {
                 all_children_removed = false;
             }
         }
 
         if !all_children_removed {
-            // Contents survived (cap reached or filter-protected), so the
-            // directory cannot be removed. upstream: delete.c:117 prints this
-            // once per non-empty directory without counting it or flagging an
-            // I/O error.
+            // Contents survived because the cap was reached, so the directory
+            // cannot be removed. upstream: delete.c:117 prints this once per
+            // non-empty directory without flagging an I/O error.
             info_log!(
                 Nonreg,
                 1,
                 "cannot delete non-empty directory: {}",
                 path.display().to_string().replace('\\', "/")
             );
+            // A NESTED non-empty directory is still reached by upstream's
+            // `delete_item(..., DEL_DIR_IS_EMPTY)` (delete.c:107): with
+            // DEL_DIR_IS_EMPTY set, delete.c:144 is skipped and control falls
+            // straight to the max_delete guard (delete.c:156), which does
+            // `skipped_deletes++` because the cap is saturated. The TOP-LEVEL
+            // directory instead enters `delete_item` WITHOUT DEL_DIR_IS_EMPTY,
+            // so its survived contents take the `goto check_ret` path
+            // (delete.c:151-152) and it is never counted. Count the nested case
+            // to match upstream's skipped total exactly (issue #212).
+            if nested {
+                *skipped = skipped.saturating_add(1);
+            }
             return Ok(false);
         }
 
