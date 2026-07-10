@@ -369,9 +369,20 @@ impl FileListWriter {
     /// An abbreviated follower has its leader in the SAME flist segment
     /// (`hardlink_idx >= first_ndx`), so metadata is omitted. Unabbreviated
     /// followers (leader in a previous segment) carry full metadata.
-    /// upstream: flist.c:send_file_entry() line 572
+    ///
+    /// Abbreviation is a protocol 30+ feature: upstream only skips metadata
+    /// after writing `first_hlink_ndx` (`goto the_end`), and `first_hlink_ndx`
+    /// is set only when `protocol_version >= 30` (flist.c:517-587). For
+    /// protocols 28-29 hardlinks are identified by trailing `(dev, ino)` pairs
+    /// and every entry carries full metadata; abbreviating a follower there
+    /// desyncs the receiver (it still reads full metadata + dev/ino).
+    ///
+    /// upstream: flist.c:send_file_entry() lines 585-587 (`goto the_end`)
     #[inline]
     fn is_abbreviated_follower(&self, entry: &FileEntry, xflags: u32) -> bool {
+        if self.protocol.as_u8() < 30 {
+            return false;
+        }
         if !self.is_hardlink_follower(xflags) {
             return false;
         }

@@ -783,6 +783,7 @@ fn stream_whole_file_produces_correct_wire_format() {
         source,
         data.len() as u64,
         ChecksumAlgorithm::MD5,
+        0,
         None,
         &mut buf,
         None,
@@ -810,6 +811,7 @@ fn stream_whole_file_handles_empty_file() {
         source,
         0,
         ChecksumAlgorithm::MD5,
+        0,
         None,
         &mut buf,
         None,
@@ -840,6 +842,7 @@ fn stream_whole_file_computes_correct_checksum() {
         source,
         data.len() as u64,
         ChecksumAlgorithm::MD5,
+        0,
         None,
         &mut buf,
         None,
@@ -855,6 +858,64 @@ fn stream_whole_file_computes_correct_checksum() {
     assert_eq!(
         &result.checksum_buf[..result.checksum_len],
         &expected_buf[..expected_len]
+    );
+}
+
+#[test]
+fn stream_whole_file_md4_prepends_seed_for_proto29() {
+    // Regression (RP28 proto-29): the legacy MD4 whole-file sum must prepend
+    // the 4-byte LE checksum seed before file data (upstream CSUM_MD4_OLD in
+    // checksum.c:558 sum_init). A 2.6.9 receiver computes MD4(seed || data);
+    // if the sender omits the seed the file is rejected with "failed
+    // verification". The sender's digest must equal the receiver-side
+    // ChecksumVerifier's seeded MD4.
+    use std::io::Write;
+    use tempfile::NamedTempFile;
+
+    let data = b"hello 2.6.9\n";
+    let seed: i32 = 0x1234_5678;
+
+    let mut temp_file = NamedTempFile::new().unwrap();
+    temp_file.write_all(data).unwrap();
+    temp_file.flush().unwrap();
+
+    let source = fs::File::open(temp_file.path()).unwrap();
+    let mut wire_output = Vec::new();
+    let mut buf = vec![0u8; protocol::wire::CHUNK_SIZE];
+    let result = stream_whole_file_transfer(
+        &mut wire_output,
+        source,
+        data.len() as u64,
+        ChecksumAlgorithm::MD4,
+        seed,
+        None,
+        &mut buf,
+        None,
+    )
+    .unwrap();
+
+    // Receiver-side expectation: seeded MD4 over the reconstructed file.
+    let mut expected = ChecksumVerifier::for_algorithm_seeded(ChecksumAlgorithm::MD4, seed);
+    expected.update(data);
+    let mut expected_buf = [0u8; ChecksumVerifier::MAX_DIGEST_LEN];
+    let expected_len = expected.finalize_into(&mut expected_buf);
+
+    assert_eq!(
+        &result.checksum_buf[..result.checksum_len],
+        &expected_buf[..expected_len],
+        "sender MD4 whole-file sum must prepend the seed to match a proto-29 receiver"
+    );
+
+    // And it must differ from the unseeded digest (the pre-fix behaviour that
+    // caused the verification failure).
+    let mut unseeded = ChecksumVerifier::for_algorithm(ChecksumAlgorithm::MD4);
+    unseeded.update(data);
+    let mut unseeded_buf = [0u8; ChecksumVerifier::MAX_DIGEST_LEN];
+    let unseeded_len = unseeded.finalize_into(&mut unseeded_buf);
+    assert_ne!(
+        &result.checksum_buf[..result.checksum_len],
+        &unseeded_buf[..unseeded_len],
+        "seeded and unseeded MD4 digests must differ for a non-zero seed"
     );
 }
 
@@ -878,6 +939,7 @@ fn stream_whole_file_reuses_buffer() {
         source1,
         512,
         ChecksumAlgorithm::None,
+        0,
         None,
         &mut buf,
         None,
@@ -896,6 +958,7 @@ fn stream_whole_file_reuses_buffer() {
         source2,
         2048,
         ChecksumAlgorithm::None,
+        0,
         None,
         &mut buf,
         None,
@@ -925,6 +988,7 @@ fn stream_whole_file_none_checksum() {
         source,
         data.len() as u64,
         ChecksumAlgorithm::None,
+        0,
         None,
         &mut buf,
         None,

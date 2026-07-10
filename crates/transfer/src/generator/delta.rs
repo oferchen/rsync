@@ -246,6 +246,7 @@ pub(super) fn stream_whole_file_transfer<R: Read, W: Write>(
     mut source: R,
     file_size: u64,
     checksum_algorithm: ChecksumAlgorithm,
+    checksum_seed: i32,
     encoder: Option<&mut CompressedTokenEncoder>,
     buf: &mut Vec<u8>,
     serve_fds: Option<ServeFds>,
@@ -270,7 +271,11 @@ pub(super) fn stream_whole_file_transfer<R: Read, W: Write>(
         );
     }
 
-    let mut verifier = ChecksumVerifier::for_algorithm(checksum_algorithm);
+    // upstream: checksum.c:558 sum_init() - the legacy MD4 whole-file sum
+    // (CSUM_MD4_OLD, proto 27-29) prepends the 4-byte LE seed before file
+    // data; MD5 and the modern algorithms do not. Mirror the receiver's
+    // ChecksumVerifier::new so both sides agree at protocol < 30.
+    let mut verifier = ChecksumVerifier::for_algorithm_seeded(checksum_algorithm, checksum_seed);
 
     // Read buffer sized for fewer syscalls (up to 256KB per read).
     // Buffer is reused across files - no allocation after the first large file.
@@ -480,8 +485,13 @@ pub(super) fn write_delta_with_inline_checksum<W: Write>(
     source_path: &Path,
     use_noatime: bool,
     checksum_algorithm: ChecksumAlgorithm,
+    checksum_seed: i32,
 ) -> io::Result<InlineChecksumResult> {
-    let mut verifier = ChecksumVerifier::for_algorithm(checksum_algorithm);
+    // upstream: checksum.c:558 sum_init() - prepend the 4-byte LE seed for the
+    // legacy MD4 whole-file sum (CSUM_MD4_OLD, proto 27-29); MD5 and modern
+    // algorithms are unseeded. Keeps the sender symmetric with the receiver's
+    // ChecksumVerifier so protocol < 30 peers accept the reconstructed file.
+    let mut verifier = ChecksumVerifier::for_algorithm_seeded(checksum_algorithm, checksum_seed);
 
     // Lazily open source file only when Copy tokens are present.
     // A single file handle serves both checksum and dictionary sync.
@@ -693,6 +703,7 @@ mod tests {
             &source_path,
             false,
             ChecksumAlgorithm::MD5,
+            0,
         )
         .expect("write_delta_with_inline_checksum");
 

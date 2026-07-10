@@ -317,7 +317,14 @@ jobs:
             exit 1
           fi
 
-          bash scripts/rp28_e_1_run.sh \
+          # Outer wall-clock guard. oc-rsync as a daemon *sender* stalls in the
+          # end-of-transfer phase against a protocol-29 client (the pull legs of
+          # this matrix), so per-fixture 60s timeouts would otherwise accumulate
+          # and consume the whole job budget. The harness traps SIGTERM to stop
+          # its daemon. This cell is continue-on-error, so a timeout here fails
+          # fast without cancelling the job.
+          timeout --signal=TERM --kill-after=30 360 \
+            bash scripts/rp28_e_1_run.sh \
             --oc-rsync "$OC_RSYNC" \
             --rsync-2-6-9 "$RSYNC_269"
 
@@ -364,7 +371,12 @@ jobs:
             exit 1
           fi
 
-          bash scripts/rp28_f_1_run.sh \
+          # Outer wall-clock guard (see RP28.e.2 cell): bound total runtime so a
+          # stalled legacy proto-29 fixture cannot consume the job budget. The
+          # harness traps SIGTERM to stop its daemon; continue-on-error means a
+          # timeout fails fast without cancelling the job.
+          timeout --signal=TERM --kill-after=30 360 \
+            bash scripts/rp28_f_1_run.sh \
             --oc-rsync "$OC_RSYNC" \
             --rsync-2-6-9 "$RSYNC_269"
 

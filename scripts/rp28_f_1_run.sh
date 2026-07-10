@@ -89,6 +89,11 @@ cleanup() {
   fi
 }
 trap cleanup EXIT
+# Run the cleanup path (which stops the daemon) when an outer wall-clock guard
+# (`timeout` in CI) sends SIGTERM/SIGINT. A wedged legacy proto-29 peer can stall
+# a fixture; the outer guard bounds total runtime and this trap ensures the
+# background daemon is still reaped. Exit 124 mirrors coreutils `timeout`.
+trap 'exit 124' TERM INT
 
 echo "RP28.f.2: oc-rsync=$(${OC_RSYNC} --version 2>&1 | head -1)"
 echo "RP28.f.2: rsync-2.6.9=$(${RSYNC_269} --version 2>&1 | head -1)"
