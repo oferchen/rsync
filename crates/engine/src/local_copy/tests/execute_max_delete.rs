@@ -755,3 +755,122 @@ fn max_deletions_option_zero() {
     let options = LocalCopyOptions::new().max_deletions(Some(0));
     assert_eq!(options.max_deletion_limit(), Some(0));
 }
+
+/// Recursively counts every filesystem entry under `dir`, optionally skipping
+/// a single top-level name. Used to prove the exact number of entries a
+/// `--max-delete` run removed.
+fn count_entries_under(dir: &std::path::Path, skip_top: Option<&str>) -> usize {
+    let mut total = 0;
+    for entry in fs::read_dir(dir).expect("read_dir") {
+        let entry = entry.expect("dir entry");
+        if skip_top.is_some_and(|s| entry.file_name() == std::ffi::OsStr::new(s)) {
+            continue;
+        }
+        total += 1;
+        if entry.file_type().expect("file_type").is_dir() {
+            total += count_entries_under(&entry.path(), None);
+        }
+    }
+    total
+}
+
+/// DATA-SAFETY REGRESSION: a non-empty extraneous directory must count every
+/// leaf it contains against `--max-delete`, and the run must never remove more
+/// than the configured number of filesystem entries.
+///
+/// Before the fix the local-copy emitter removed a doomed subtree wholesale
+/// (`remove_dir_all`) and counted it as a single deletion, so `--max-delete=3`
+/// against a directory of five files plus two loose files silently deleted all
+/// eight entries. upstream `delete.c:156`/`:181` guards and counts each removed
+/// leaf, deleting exactly three and reporting `RERR_DEL_LIMIT` (25). Verified
+/// byte-for-byte against rsync 3.4.3 (3 deleted, 4 skipped, exit 25).
+#[test]
+fn max_delete_counts_leaves_inside_nonempty_directory() {
+    let ctx = test_helpers::setup_copy_test();
+    fs::create_dir_all(&ctx.dest).expect("create dest");
+    fs::write(ctx.source.join("keep.txt"), b"keep").expect("write keep");
+
+    let target_root = ctx.dest.join("source");
+    fs::create_dir_all(&target_root).expect("create target root");
+    fs::write(target_root.join("keep.txt"), b"old").expect("write old");
+
+    // One extraneous directory holding five files, plus two loose files: eight
+    // filesystem entries doomed by --delete.
+    let extra_dir = target_root.join("extra_dir");
+    fs::create_dir_all(&extra_dir).expect("create extra_dir");
+    for i in 1..=5 {
+        fs::write(extra_dir.join(format!("f{i}")), b"x").expect("write child");
+    }
+    fs::write(target_root.join("a1"), b"x").expect("write a1");
+    fs::write(target_root.join("a2"), b"x").expect("write a2");
+
+    let operands = vec![
+        ctx.source.clone().into_os_string(),
+        ctx.dest.clone().into_os_string(),
+    ];
+    let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
+    let options = LocalCopyOptions::default()
+        .delete(true)
+        .max_deletions(Some(3));
+
+    let error = plan
+        .execute_with_options(LocalCopyExecution::Apply, options)
+        .expect_err("must stop at the cap and report RERR_DEL_LIMIT");
+
+    assert_eq!(error.exit_code(), MAX_DELETE_EXIT_CODE);
+    match error.kind() {
+        LocalCopyErrorKind::DeleteLimitExceeded { skipped } => {
+            assert_eq!(*skipped, 4, "upstream reports 4 skipped for this layout");
+        }
+        other => panic!("unexpected error kind: {other:?}"),
+    }
+
+    // Exactly three of the eight doomed entries may be removed - never the whole
+    // subtree. Five must survive.
+    let survivors = count_entries_under(&target_root, Some("keep.txt"));
+    assert_eq!(
+        survivors, 5,
+        "exactly 3 of 8 entries may be deleted under --max-delete=3"
+    );
+}
+
+/// The same leaf-counting cap must hold under `--delete-delay` (collect then
+/// apply): a small `--max-delete` must not be defeated by the deferred pass.
+#[test]
+fn max_delete_counts_leaves_inside_nonempty_directory_delete_delay() {
+    let ctx = test_helpers::setup_copy_test();
+    fs::create_dir_all(&ctx.dest).expect("create dest");
+    fs::write(ctx.source.join("keep.txt"), b"keep").expect("write keep");
+
+    let target_root = ctx.dest.join("source");
+    fs::create_dir_all(&target_root).expect("create target root");
+    fs::write(target_root.join("keep.txt"), b"old").expect("write old");
+
+    let extra_dir = target_root.join("extra_dir");
+    fs::create_dir_all(&extra_dir).expect("create extra_dir");
+    for i in 1..=5 {
+        fs::write(extra_dir.join(format!("f{i}")), b"x").expect("write child");
+    }
+    fs::write(target_root.join("a1"), b"x").expect("write a1");
+    fs::write(target_root.join("a2"), b"x").expect("write a2");
+
+    let operands = vec![
+        ctx.source.clone().into_os_string(),
+        ctx.dest.clone().into_os_string(),
+    ];
+    let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
+    let options = LocalCopyOptions::default()
+        .delete_delay(true)
+        .max_deletions(Some(3));
+
+    let error = plan
+        .execute_with_options(LocalCopyExecution::Apply, options)
+        .expect_err("must stop at the cap under --delete-delay");
+
+    assert_eq!(error.exit_code(), MAX_DELETE_EXIT_CODE);
+    let survivors = count_entries_under(&target_root, Some("keep.txt"));
+    assert_eq!(
+        survivors, 5,
+        "exactly 3 of 8 entries may be deleted under --max-delete=3"
+    );
+}

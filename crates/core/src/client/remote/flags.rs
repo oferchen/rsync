@@ -335,12 +335,19 @@ pub(crate) fn apply_common_server_flags(config: &ClientConfig, server_config: &m
     // config (the wire-side sender conversion in build_wire_format_rules only
     // affects what the remote sender hides, not local delete protection).
     server_config.deletion.delete_excluded = config.delete_excluded();
+    // upstream: delete.c:156 - `--max-delete` is enforced by the generator,
+    // which for a remote-shell pull runs on the local client (the receiver).
+    // The `--max-delete=NUM` server arg is forwarded to the remote sender too,
+    // but a pull sender never deletes, so the cap must be carried onto this
+    // local receiver config or it is silently ignored (unbounded deletion).
+    server_config.deletion.max_delete = config.max_delete();
     logging::debug_log!(
         Del,
         2,
-        "receiver config: delete_excluded={} delete_mode={:?}",
+        "receiver config: delete_excluded={} delete_mode={:?} max_delete={:?}",
         config.delete_excluded(),
-        config.delete_mode()
+        config.delete_mode(),
+        config.max_delete()
     );
     // upstream: options.c:2881-2885 - copy_unsafe_links and safe_links are long-form only
     server_config.flags.copy_unsafe_links = config.copy_unsafe_links();

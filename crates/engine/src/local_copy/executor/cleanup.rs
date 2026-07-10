@@ -99,19 +99,24 @@ fn delete_extraneous_entries_via_emitter<S: AsRef<OsStr>, F>(
 where
     F: DeleteFs + Sync + Send + 'static,
 {
+    // When --max-delete is active the cap must count every filesystem entry
+    // that is actually removed, including the leaves inside an extraneous
+    // directory, and stop mid-traversal once the limit is reached. The
+    // emitter path below removes an extraneous directory wholesale
+    // (`remove_dir_all`) and counts it as a single deletion, silently
+    // exceeding the cap for directory subtrees. Route capped runs through
+    // the leaf-granular serial executor instead so the count matches
+    // upstream delete.c:156/181 (guard-before-delete, increment-on-success).
+    if context.options().max_deletion_limit().is_some() {
+        return delete_extraneous_entries_capped(context, destination, relative, source_entries);
+    }
+
     // Phase 1: scan the destination directory, compute extras, and
     // produce a single-directory DeletePlan in upstream emission order.
-    // The plan respects partial-dir protection, allows_deletion filter
-    // rules, and the max-delete limit before publication so the emitter
-    // sees only the entries that should actually unlink.
-    let mut skipped_due_to_limit = 0u64;
-    let plan = match build_plan_for_directory(
-        context,
-        destination,
-        relative,
-        source_entries,
-        &mut skipped_due_to_limit,
-    )? {
+    // The plan respects partial-dir protection and allows_deletion filter
+    // rules before publication so the emitter sees only the entries that
+    // should actually unlink.
+    let plan = match build_plan_for_directory(context, destination, relative, source_entries)? {
         Some(plan) => plan,
         None => return Ok(()),
     };
@@ -151,16 +156,242 @@ where
         })?;
     }
 
-    if skipped_due_to_limit > 0 {
+    Ok(())
+}
+
+/// Leaf-granular, serial deletion path used whenever `--max-delete` is
+/// active.
+///
+/// The emitter path counts an extraneous directory as a single deletion and
+/// removes its subtree with `remove_dir_all`, so a directory holding N files
+/// costs one unit against the cap even though N+1 filesystem entries vanish.
+/// That undercount lets a small `--max-delete` value silently remove an
+/// unbounded number of files. This path instead walks every candidate
+/// depth-first and checks the cap before each individual unlink, counting
+/// only successful deletions, exactly mirroring upstream
+/// `delete.c:delete_item`/`delete_dir_contents` where `stats.deleted_files`
+/// is compared against `max_delete` before every entry and incremented only
+/// on a successful removal (`delete.c:156` guard, `delete.c:181` increment).
+///
+/// The global running count is `context.summary().items_deleted()`, which the
+/// per-entry side effects already maintain across directories, so the cap is
+/// enforced consistently over the whole transfer, not just one directory.
+fn delete_extraneous_entries_capped<S: AsRef<OsStr>>(
+    context: &mut CopyContext,
+    destination: &Path,
+    relative: Option<&Path>,
+    source_entries: &[S],
+) -> Result<(), LocalCopyError> {
+    let plan = match build_plan_for_directory(context, destination, relative, source_entries)? {
+        Some(plan) => plan,
+        None => return Ok(()),
+    };
+
+    // Entries are visited in upstream `delete_in_dir` emission order (the
+    // reverse-sorted order `sort_by_name` locks in) so the prefix that
+    // survives when the cap trips matches upstream's traversal.
+    let mut skipped = 0u64;
+    for entry in &plan.extras {
+        let name_path = PathBuf::from(entry.name.as_os_str());
+        let path = destination.join(&name_path);
+        let entry_relative = match relative {
+            Some(base) => base.join(&name_path),
+            None => name_path.clone(),
+        };
+        remove_entry_capped(context, &path, &entry_relative, &mut skipped)?;
+    }
+
+    if skipped > 0 {
+        // upstream: generator.c:2431 emits one warning after the pass with
+        // the total number of entries skipped because of the limit; the run
+        // then exits RERR_DEL_LIMIT (25).
         info_log!(
             Del,
             1,
             "max deletions reached, skipping {} remaining",
-            skipped_due_to_limit
+            skipped
         );
-        return Err(LocalCopyError::delete_limit_exceeded(skipped_due_to_limit));
+        return Err(LocalCopyError::delete_limit_exceeded(skipped));
     }
 
+    Ok(())
+}
+
+/// Recursively removes one extraneous entry under the `--max-delete` cap,
+/// returning `true` when the entry was fully removed and `false` when it (or
+/// part of its subtree) was left in place because the cap was reached.
+///
+/// Mirrors upstream `delete_item`: a directory first has its contents peeled
+/// depth-first (`delete_dir_contents`, reverse-sorted iteration), then the
+/// now-empty directory is itself subject to the same guard before its own
+/// removal. `skipped` accumulates the count reported to the user, matching
+/// upstream's `skipped_deletes` (`delete.c:157`).
+fn remove_entry_capped(
+    context: &mut CopyContext,
+    path: &Path,
+    entry_relative: &Path,
+    skipped: &mut u64,
+) -> Result<bool, LocalCopyError> {
+    context.enforce_timeout()?;
+
+    let file_type = match fs::symlink_metadata(path) {
+        Ok(metadata) => metadata.file_type(),
+        // Vanished between scan and delete: upstream treats this as a
+        // successful no-op removal (nothing is left behind).
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(true),
+        Err(error) => {
+            return Err(LocalCopyError::io(
+                "inspect extraneous destination entry",
+                path.to_path_buf(),
+                error,
+            ));
+        }
+    };
+
+    if file_type.is_dir() {
+        // Peel the directory's contents depth-first in upstream reverse-sorted
+        // order before considering the directory itself.
+        let mut children: Vec<OsString> = Vec::new();
+        match fs::read_dir(path) {
+            Ok(iter) => {
+                for child in iter {
+                    let child = child.map_err(|error| {
+                        LocalCopyError::io("read extraneous directory entry", path, error)
+                    })?;
+                    children.push(child.file_name());
+                }
+            }
+            Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(true),
+            Err(error) => {
+                return Err(LocalCopyError::io(
+                    "read extraneous directory",
+                    path.to_path_buf(),
+                    error,
+                ));
+            }
+        }
+        // upstream: delete.c:85 iterates the sorted dirlist in reverse.
+        children.sort_unstable();
+        children.reverse();
+
+        let mut all_children_removed = true;
+        for child_name in children {
+            let child_path = path.join(&child_name);
+            let child_relative = entry_relative.join(&child_name);
+            if !remove_entry_capped(context, &child_path, &child_relative, skipped)? {
+                all_children_removed = false;
+            }
+        }
+
+        if !all_children_removed {
+            // Contents survived (cap reached or filter-protected), so the
+            // directory cannot be removed. upstream: delete.c:117 prints this
+            // once per non-empty directory without counting it or flagging an
+            // I/O error.
+            info_log!(
+                Nonreg,
+                1,
+                "cannot delete non-empty directory: {}",
+                path.display().to_string().replace('\\', "/")
+            );
+            return Ok(false);
+        }
+
+        // The directory is empty; it is itself a deletion subject to the cap.
+        if cap_reached(context) {
+            *skipped = skipped.saturating_add(1);
+            return Ok(false);
+        }
+        delete_leaf(context, path, entry_relative, file_type)?;
+        return Ok(true);
+    }
+
+    // Regular file, symlink, device, or special: a single deletion.
+    if cap_reached(context) {
+        *skipped = skipped.saturating_add(1);
+        return Ok(false);
+    }
+    delete_leaf(context, path, entry_relative, file_type)?;
+    Ok(true)
+}
+
+/// Returns `true` when the running deletion count has reached the configured
+/// `--max-delete` limit. upstream: delete.c:156 `stats.deleted_files >= max_delete`.
+fn cap_reached(context: &CopyContext) -> bool {
+    context
+        .options()
+        .max_deletion_limit()
+        .is_some_and(|limit| context.summary().items_deleted() >= limit)
+}
+
+/// Runs the per-entry side effects (backup, itemize log, [`LocalCopyRecord`],
+/// summary counter) and issues the actual removal for one leaf. Increments the
+/// global deletion count via `record_deletion` so the cap sees the update.
+///
+/// Kept in lockstep with [`apply_delete_side_effects`] for a single entry; the
+/// recursion in [`remove_entry_capped`] supplies the per-leaf walk that
+/// [`record_directory_subtree`] provides on the uncapped path.
+fn delete_leaf(
+    context: &mut CopyContext,
+    path: &Path,
+    entry_relative: &Path,
+    file_type: fs::FileType,
+) -> Result<(), LocalCopyError> {
+    let is_dir = file_type.is_dir();
+
+    // upstream: delete.c:165 - back up an extraneous file before deletion only
+    // when `backup_dir || !is_backup_file(fbuf)`.
+    if !context.mode().is_dry_run()
+        && !is_dir
+        && let Some(name) = path.file_name()
+        && context.options().should_backup_before_delete(name)
+    {
+        context.backup_existing_entry(path, Some(entry_relative), file_type)?;
+    }
+
+    if !context.options().is_itemize_active() {
+        if is_dir {
+            info_log!(Del, 1, "deleting {}/", entry_relative.display());
+        } else {
+            info_log!(Del, 1, "deleting {}", entry_relative.display());
+        }
+    }
+
+    if !context.mode().is_dry_run() {
+        let fs = RealDeleteFs;
+        let result = if is_dir {
+            fs.rmdir(path)
+        } else if file_type.is_symlink() {
+            fs.unlink_symlink(path)
+        } else {
+            fs.unlink_file(path)
+        };
+        if let Err(error) = result {
+            // A vanished entry is a benign no-op (upstream ENOENT path); any
+            // other failure surfaces so the exit code reflects it.
+            if error.kind() != io::ErrorKind::NotFound {
+                return Err(LocalCopyError::io(
+                    "delete extraneous destination entry",
+                    path.to_path_buf(),
+                    error,
+                ));
+            }
+        }
+    }
+
+    context.summary_mut().record_deletion(file_type);
+    context.record(
+        LocalCopyRecord::new(
+            entry_relative.to_path_buf(),
+            LocalCopyAction::EntryDeleted,
+            0,
+            None,
+            Duration::default(),
+            None,
+        )
+        .with_directory(is_dir),
+    );
+    context.register_progress();
     Ok(())
 }
 
@@ -174,7 +405,6 @@ fn build_plan_for_directory<S: AsRef<OsStr>>(
     destination: &Path,
     relative: Option<&Path>,
     source_entries: &[S],
-    skipped_due_to_limit: &mut u64,
 ) -> Result<Option<DeletePlan>, LocalCopyError> {
     // upstream: delete.c:63 - `delete_dir_contents()` calls
     // `push_local_filters(fname, dlen)` with the destination directory so the
@@ -275,10 +505,12 @@ fn build_plan_for_directory<S: AsRef<OsStr>>(
     };
 
     // Phase C (serial): apply the decisions in readdir order. Filter-protected
-    // entries log and are dropped; the rest count against the max-delete limit
-    // and join the plan. The final `sort_by_name` fixes the wire emission order.
-    // This sequence is identical to the original serial loop - only the matching
-    // in Phase B was parallelised.
+    // entries log and are dropped; the rest join the plan. The final
+    // `sort_by_name` fixes the wire emission order. The `--max-delete` cap is
+    // NOT applied here: it is enforced at leaf granularity during execution by
+    // `delete_extraneous_entries_capped` (upstream counts every removed entry,
+    // not just the top-level ones), so this plan carries the full extraneous
+    // set for the directory.
     let mut plan = DeletePlan::new(destination.to_path_buf());
     for (candidate, allowed) in candidates.into_iter().zip(allowed) {
         if !allowed {
@@ -288,17 +520,6 @@ fn build_plan_for_directory<S: AsRef<OsStr>>(
                 "filter protected {} from deletion",
                 candidate.entry_relative.display()
             );
-            continue;
-        }
-
-        if let Some(limit) = context.options().max_deletion_limit()
-            && context
-                .summary()
-                .items_deleted()
-                .saturating_add(plan.len() as u64)
-                >= limit
-        {
-            *skipped_due_to_limit = skipped_due_to_limit.saturating_add(1);
             continue;
         }
 
