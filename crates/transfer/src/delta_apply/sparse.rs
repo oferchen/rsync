@@ -261,17 +261,20 @@ mod tests {
 
     #[test]
     fn in_basis_zero_run_is_recorded_as_hole() {
-        // With a preallocated (basis) extent, a zero run starting inside it is
-        // recorded for punching; a run past the extent is only seeked.
+        // A zero run that is seeked over (accumulated as pending, then flushed
+        // by a following data write) starting inside the preallocated basis
+        // extent is recorded for punching, so an --inplace update deallocates
+        // stale basis blocks instead of leaving them on disk. The run is fed as
+        // a distinct write, mirroring receive_data streaming CHUNK_SIZE pieces;
+        // interior zeros within one write are written literally (as upstream)
+        // and correctly overwrite the basis, so only seeked runs are punched.
+        // upstream: fileio.c:90-99 write_sparse().
         let mut state = SparseWriteState::new();
         state.set_preallocated_len(1000);
         let mut cursor = Cursor::new(vec![0xAAu8; 2000]);
-        // Write 100 data bytes, then a 300-byte zero run starting at offset 100
-        // (inside the 1000-byte basis), then trailing data to force the flush.
-        let mut buf = vec![1u8; 100];
-        buf.extend(std::iter::repeat_n(0u8, 300));
-        buf.extend(std::iter::repeat_n(9u8, 10));
-        state.write(&mut cursor, &buf).unwrap();
+        state.write(&mut cursor, &[1u8; 100]).unwrap(); // data -> offset 100
+        state.write(&mut cursor, &[0u8; 300]).unwrap(); // zero run -> pending
+        state.write(&mut cursor, &[9u8; 10]).unwrap(); // data forces the flush
         let holes = state.take_holes();
         assert_eq!(holes, vec![(100, 300)], "in-basis run recorded for punch");
     }
@@ -281,10 +284,9 @@ mod tests {
         let mut state = SparseWriteState::new();
         state.set_preallocated_len(50);
         let mut cursor = Cursor::new(vec![0u8; 2000]);
-        let mut buf = vec![1u8; 100]; // data ends at offset 100 (> basis 50)
-        buf.extend(std::iter::repeat_n(0u8, 300)); // zero run starts at 100
-        buf.extend(std::iter::repeat_n(9u8, 10));
-        state.write(&mut cursor, &buf).unwrap();
+        state.write(&mut cursor, &[1u8; 100]).unwrap(); // data ends at 100 (> basis 50)
+        state.write(&mut cursor, &[0u8; 300]).unwrap(); // zero run starts at 100
+        state.write(&mut cursor, &[9u8; 10]).unwrap(); // data forces the flush
         assert!(
             state.take_holes().is_empty(),
             "run past basis extent needs no punch"
