@@ -86,48 +86,75 @@ pub(crate) fn reference_attrs_unchanged(
     options: &MetadataOptions,
     preserve_xattrs: bool,
 ) -> bool {
+    let Ok(basis_meta) = fs::symlink_metadata(basis) else {
+        return false;
+    };
+
+    // A --chmod tweak changes the intended mode away from the source's, so
+    // the basis (which carries the untweaked mode) can never be a
+    // match_level-3 attrs match; force a reapply.
+    if options.chmod().is_some() {
+        return false;
+    }
+
+    // upstream: generator.c:485 any_time_differs - the mtime must match for a
+    // level-3 basis. Compared through `SystemTime` (like the quick-check
+    // `unchanged_file` path) so the check holds on every platform, not just Unix
+    // where `st_mtime` is available.
+    if options.times() {
+        match (source_meta.modified(), basis_meta.modified()) {
+            (Ok(source_time), Ok(basis_time)) if source_time == basis_time => {}
+            _ => return false,
+        }
+    }
+
+    // upstream: generator.c:487 perms_differ - Unix compares the full permission
+    // bits; on platforms without POSIX modes (Windows) the only preserved
+    // permission is the read-only attribute, matching how oc applies and
+    // quick-checks permissions there.
+    if options.permissions() && !reference_permissions_match(source_meta, &basis_meta) {
+        return false;
+    }
+
     #[cfg(unix)]
     {
-        use filetime::FileTime;
         use std::os::unix::fs::MetadataExt;
 
-        let Ok(basis_meta) = fs::symlink_metadata(basis) else {
-            return false;
-        };
-
-        // A --chmod tweak changes the intended mode away from the source's, so
-        // the basis (which carries the untweaked mode) can never be a
-        // match_level-3 attrs match; force a reapply.
-        if options.chmod().is_some() {
-            return false;
-        }
-        if options.permissions() && (source_meta.mode() & 0o7777) != (basis_meta.mode() & 0o7777) {
-            return false;
-        }
         if options.owner() && source_meta.uid() != basis_meta.uid() {
             return false;
         }
         if options.group() && source_meta.gid() != basis_meta.gid() {
             return false;
         }
-        if options.times()
-            && FileTime::from_last_modification_time(source_meta)
-                != FileTime::from_last_modification_time(&basis_meta)
-        {
-            return false;
-        }
         // upstream: generator.c:501 - xattrs_differ() demotes to match_level 2,
         // forcing the copy + set_file_attrs that reapplies the source xattrs.
+        // Owner, group, and xattrs have no meaningful equivalent on non-Unix
+        // platforms, where oc preserves none of them.
         if preserve_xattrs && !::metadata::xattrs_match(source, basis, true).unwrap_or(false) {
             return false;
         }
-        true
     }
     #[cfg(not(unix))]
     {
-        let _ = (basis, source, source_meta, options, preserve_xattrs);
-        false
+        let _ = (source, preserve_xattrs);
     }
+
+    true
+}
+
+/// Reports whether two files carry the same preserved permission bits.
+///
+/// On Unix this is the low 12 mode bits (`0o7777`); on other platforms it is the
+/// read-only attribute, the only permission bit oc preserves there.
+#[cfg(unix)]
+fn reference_permissions_match(source_meta: &fs::Metadata, basis_meta: &fs::Metadata) -> bool {
+    use std::os::unix::fs::MetadataExt;
+    (source_meta.mode() & 0o7777) == (basis_meta.mode() & 0o7777)
+}
+
+#[cfg(not(unix))]
+fn reference_permissions_match(source_meta: &fs::Metadata, basis_meta: &fs::Metadata) -> bool {
+    source_meta.permissions().readonly() == basis_meta.permissions().readonly()
 }
 
 /// Searches configured reference directories for a file matching the source and
