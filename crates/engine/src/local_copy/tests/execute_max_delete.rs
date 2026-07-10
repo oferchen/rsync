@@ -904,6 +904,90 @@ fn max_delete_counts_leaves_inside_nonempty_directory() {
     );
 }
 
+/// COUNT-FIDELITY REGRESSION (#212): a cap-saturated non-empty NESTED
+/// directory must be counted toward the reported skipped total, exactly one
+/// per such directory, matching upstream.
+///
+/// upstream `delete.c` reaches a nested subdir via
+/// `delete_item(..., DEL_DIR_IS_EMPTY)` (delete.c:107). With `DEL_DIR_IS_EMPTY`
+/// set, delete.c:144 is skipped and control falls straight to the max_delete
+/// guard (delete.c:156), which does `skipped_deletes++` because the cap is
+/// saturated - even though the subdir is actually non-empty. The TOP-LEVEL
+/// directory instead enters `delete_item` WITHOUT `DEL_DIR_IS_EMPTY`, so its
+/// survived contents take the `goto check_ret` path (delete.c:151-152) and it
+/// is never counted.
+///
+/// Layout `a/{f4, b/{f3, c/{f1, f2}}}` plus loose `top`, all extraneous, with
+/// `--max-delete=1`: upstream deletes only `f2`, then reports 6 skipped -
+/// five leaves (`f1`, `f3`, `f4`, `top`, and the doomed-but-uncounted `f2` is
+/// the one deletion) plus the two non-empty NESTED subdirs `b` and `c`; the
+/// top-level `a` is NOT counted. Verified byte-for-byte against rsync 3.4.4
+/// (`Deletions stopped due to --max-delete limit (6 skipped)`, exit 25).
+///
+/// Guards #6446/#6440: the survivor set and exit code must stay unchanged;
+/// only the reported count moves from oc's old 4 to upstream's 6.
+#[test]
+fn max_delete_counts_nested_nonempty_directories_toward_skipped() {
+    let ctx = test_helpers::setup_copy_test();
+    fs::create_dir_all(&ctx.dest).expect("create dest");
+    fs::write(ctx.source.join("keep.txt"), b"keep").expect("write keep");
+
+    let target_root = ctx.dest.join("source");
+    fs::create_dir_all(&target_root).expect("create target root");
+    fs::write(target_root.join("keep.txt"), b"old").expect("write old");
+
+    // Deep extraneous nest: a/{f4, b/{f3, c/{f1, f2}}} plus a loose `top`.
+    let c_dir = target_root.join("a").join("b").join("c");
+    fs::create_dir_all(&c_dir).expect("create a/b/c");
+    fs::write(c_dir.join("f1"), b"x").expect("write f1");
+    fs::write(c_dir.join("f2"), b"x").expect("write f2");
+    fs::write(target_root.join("a").join("b").join("f3"), b"x").expect("write f3");
+    fs::write(target_root.join("a").join("f4"), b"x").expect("write f4");
+    fs::write(target_root.join("top"), b"x").expect("write top");
+
+    let operands = vec![
+        ctx.source.clone().into_os_string(),
+        ctx.dest.clone().into_os_string(),
+    ];
+    let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
+    let options = LocalCopyOptions::default()
+        .delete(true)
+        .max_deletions(Some(1));
+
+    let error = plan
+        .execute_with_options(LocalCopyExecution::Apply, options)
+        .expect_err("must stop at the cap and report RERR_DEL_LIMIT");
+
+    // Exit code unchanged (#6446/#6440): RERR_DEL_LIMIT (25).
+    assert_eq!(error.exit_code(), MAX_DELETE_EXIT_CODE);
+    match error.kind() {
+        LocalCopyErrorKind::DeleteLimitExceeded { skipped } => {
+            assert_eq!(
+                *skipped, 6,
+                "upstream counts 5 leaves + 2 nested non-empty dirs (b, c), \
+                 not the top-level a"
+            );
+        }
+        other => panic!("unexpected error kind: {other:?}"),
+    }
+
+    // Survivor set unchanged (#6446/#6440): only `f2` is removed; every other
+    // doomed entry (including both nested directories) must remain.
+    assert!(
+        !c_dir.join("f2").exists(),
+        "f2 is the single deletion the cap allows"
+    );
+    for survivor in ["a", "a/b", "a/b/c", "a/b/c/f1", "a/b/f3", "a/f4", "top"] {
+        assert!(
+            target_root.join(survivor).exists(),
+            "{survivor} must survive (upstream keeps it)"
+        );
+    }
+    // Exactly one of the eight doomed entries may be removed.
+    let survivors = count_entries_under(&target_root, Some("keep.txt"));
+    assert_eq!(survivors, 7, "only f2 may be deleted under --max-delete=1");
+}
+
 /// The same leaf-counting cap must hold under `--delete-delay` (collect then
 /// apply): a small `--max-delete` must not be defeated by the deferred pass.
 #[test]
