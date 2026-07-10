@@ -3,19 +3,47 @@
 //! Stats are exchanged at the end of a transfer in this order:
 //!
 //! ```text
-//! total_read      : varlong30 (bytes read by sender, written by receiver)
-//! total_written   : varlong30 (bytes written by sender, read by receiver)
-//! total_size      : varlong30 (total file size)
-//! flist_buildtime : varlong30 (protocol >= 29, microseconds)
-//! flist_xfertime  : varlong30 (protocol >= 29, microseconds)
+//! total_read      : longint(<30) / varlong(>=30) (bytes read by sender)
+//! total_written   : longint(<30) / varlong(>=30) (bytes written by sender)
+//! total_size      : longint(<30) / varlong(>=30) (total file size)
+//! flist_buildtime : longint(<30) / varlong(>=30) (protocol >= 29, microseconds)
+//! flist_xfertime  : longint(<30) / varlong(>=30) (protocol >= 29, microseconds)
 //! ```
 //!
+//! Each value is encoded with upstream's `write_varlong30` semantics: fixed
+//! 4-byte `write_longint` for protocol < 30, `write_varlong(_, 3)` for >= 30.
 //! The meaning of read/write swaps between sender and receiver perspectives.
 
 use std::io::{self, Read, Write};
 
-use crate::varint::{read_varlong30, write_varlong30};
+use crate::varint::{read_longint, read_varlong, write_longint, write_varlong};
 use crate::version::ProtocolVersion;
+
+/// Writes one stats value using the protocol-appropriate integer encoding.
+///
+/// Mirrors upstream's `write_varlong30(f, x, 3)` inline helper (io.h): protocol
+/// < 30 uses the fixed 4-byte `write_longint`, protocol >= 30 uses `write_varlong`
+/// with `min_bytes = 3`. A proto-29 peer (e.g. rsync 2.6.9) reads these via
+/// `read_longint`, so emitting varlong here truncates the 5-value stats block and
+/// deadlocks the end-of-transfer goodbye.
+fn write_stat<W: Write>(writer: &mut W, value: i64, varint: bool) -> io::Result<()> {
+    if varint {
+        write_varlong(writer, value, 3)
+    } else {
+        write_longint(writer, value)
+    }
+}
+
+/// Reads one stats value using the protocol-appropriate integer encoding.
+///
+/// Inverse of [`write_stat`]; mirrors upstream's `read_varlong30(f, 3)`.
+fn read_stat<R: Read>(reader: &mut R, varint: bool) -> io::Result<i64> {
+    if varint {
+        read_varlong(reader, 3)
+    } else {
+        read_longint(reader)
+    }
+}
 
 /// Transfer statistics exchanged between rsync processes.
 ///
@@ -197,13 +225,14 @@ impl TransferStats {
     ///
     /// Returns an error if writing to the stream fails.
     pub fn write_to<W: Write>(&self, writer: &mut W, protocol: ProtocolVersion) -> io::Result<()> {
-        write_varlong30(writer, self.total_read as i64, 3)?;
-        write_varlong30(writer, self.total_written as i64, 3)?;
-        write_varlong30(writer, self.total_size as i64, 3)?;
+        let varint = protocol.uses_varint_encoding();
+        write_stat(writer, self.total_read as i64, varint)?;
+        write_stat(writer, self.total_written as i64, varint)?;
+        write_stat(writer, self.total_size as i64, varint)?;
 
         if protocol.supports_flist_times() {
-            write_varlong30(writer, self.flist_buildtime as i64, 3)?;
-            write_varlong30(writer, self.flist_xfertime as i64, 3)?;
+            write_stat(writer, self.flist_buildtime as i64, varint)?;
+            write_stat(writer, self.flist_xfertime as i64, varint)?;
         }
 
         Ok(())
@@ -217,13 +246,14 @@ impl TransferStats {
     ///
     /// Returns an error if reading from the stream fails.
     pub fn read_from<R: Read>(reader: &mut R, protocol: ProtocolVersion) -> io::Result<Self> {
-        let total_read = read_varlong30(reader, 3)? as u64;
-        let total_written = read_varlong30(reader, 3)? as u64;
-        let total_size = read_varlong30(reader, 3)? as u64;
+        let varint = protocol.uses_varint_encoding();
+        let total_read = read_stat(reader, varint)? as u64;
+        let total_written = read_stat(reader, varint)? as u64;
+        let total_size = read_stat(reader, varint)? as u64;
 
         let (flist_buildtime, flist_xfertime) = if protocol.supports_flist_times() {
-            let buildtime = read_varlong30(reader, 3)? as u64;
-            let xfertime = read_varlong30(reader, 3)? as u64;
+            let buildtime = read_stat(reader, varint)? as u64;
+            let xfertime = read_stat(reader, varint)? as u64;
             (buildtime, xfertime)
         } else {
             (0, 0)

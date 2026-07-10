@@ -51,6 +51,73 @@ fn test_transfer_stats_roundtrip_proto28() {
     assert_eq!(decoded.flist_xfertime, 0);
 }
 
+/// Protocol 29 must encode each stats value as a fixed 4-byte `write_longint`,
+/// not a varlong. A proto-29 peer (rsync 2.6.9) reads the five-value stats block
+/// with `read_longint`; emitting varlong truncates the block and deadlocks the
+/// end-of-transfer goodbye (both peers block reading). This asserts the exact
+/// wire bytes so a regression to varlong encoding fails here rather than only
+/// against a live 2.6.9 peer.
+#[test]
+fn test_transfer_stats_proto29_uses_fixed_longint() {
+    let stats = TransferStats {
+        total_read: 1024,
+        total_written: 2048,
+        total_size: 10000,
+        flist_buildtime: 5,
+        flist_xfertime: 7,
+        ..Default::default()
+    };
+
+    let mut buf = Vec::new();
+    stats.write_to(&mut buf, ProtocolVersion::V29).unwrap();
+
+    // Five little-endian 4-byte longints: 5 * 4 = 20 bytes.
+    let expected: Vec<u8> = [1024u32, 2048, 10000, 5, 7]
+        .iter()
+        .flat_map(|v| v.to_le_bytes())
+        .collect();
+    assert_eq!(
+        buf, expected,
+        "proto-29 stats must be fixed 4-byte longints"
+    );
+    assert_eq!(buf.len(), 20);
+}
+
+/// Protocol 29 (legacy longint) and protocol 30 (varlong) must produce distinct
+/// encodings for the same values, and each must round-trip under its own version.
+/// Small values compress under varlong, so the byte lengths diverge.
+#[test]
+fn test_transfer_stats_proto29_differs_from_proto30() {
+    let stats = TransferStats {
+        total_read: 1024,
+        total_written: 2048,
+        total_size: 10000,
+        flist_buildtime: 5,
+        flist_xfertime: 7,
+        ..Default::default()
+    };
+
+    let mut buf29 = Vec::new();
+    stats.write_to(&mut buf29, ProtocolVersion::V29).unwrap();
+    let mut buf30 = Vec::new();
+    stats.write_to(&mut buf30, ProtocolVersion::V30).unwrap();
+
+    assert_ne!(
+        buf29, buf30,
+        "proto-29 longint and proto-30 varlong encodings must differ"
+    );
+
+    let d29 = TransferStats::read_from(&mut Cursor::new(&buf29), ProtocolVersion::V29).unwrap();
+    let d30 = TransferStats::read_from(&mut Cursor::new(&buf30), ProtocolVersion::V30).unwrap();
+    for d in [d29, d30] {
+        assert_eq!(d.total_read, 1024);
+        assert_eq!(d.total_written, 2048);
+        assert_eq!(d.total_size, 10000);
+        assert_eq!(d.flist_buildtime, 5);
+        assert_eq!(d.flist_xfertime, 7);
+    }
+}
+
 #[test]
 fn test_transfer_stats_swap_perspective() {
     let stats = TransferStats {
