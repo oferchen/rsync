@@ -410,6 +410,104 @@ fn test_batch_stats_zero_values() {
     assert_eq!(stats, restored);
 }
 
+/// Golden byte layout: a protocol 28 batch stats section is three fixed 4-byte
+/// little-endian longints (no flist times), NOT varlong.
+///
+/// upstream: main.c:374 `write_varlong30(batch_fd, x, 3)` -> io.h:46 falls back
+/// to `write_longint()` for protocol < 30. A proto-28 `--read-batch` peer reads
+/// these with `read_longint()`, so the varlong form would desync it.
+#[test]
+fn test_batch_stats_upstream_byte_layout_protocol_28() {
+    let stats = BatchStats {
+        total_read: 1024,
+        total_written: 2048,
+        total_size: 5000,
+        flist_buildtime: None,
+        flist_xfertime: None,
+    };
+
+    let mut buf = Vec::new();
+    stats.write_to(&mut buf, 28).unwrap();
+
+    // Three fields x 4-byte little-endian longint = 12 bytes, no flist times.
+    assert_eq!(
+        buf,
+        vec![
+            0x00, 0x04, 0x00, 0x00, // total_read   = 1024
+            0x00, 0x08, 0x00, 0x00, // total_written = 2048
+            0x88, 0x13, 0x00, 0x00, // total_size    = 5000
+        ]
+    );
+}
+
+/// Golden byte layout: a protocol 29 batch stats section is five fixed 4-byte
+/// little-endian longints (flist times included), NOT varlong.
+///
+/// upstream: main.c:378-382 adds `flist_buildtime`/`flist_xfertime` for
+/// protocol >= 29; each still encodes via `write_longint()` when protocol < 30.
+#[test]
+fn test_batch_stats_upstream_byte_layout_protocol_29() {
+    let stats = BatchStats {
+        total_read: 1024,
+        total_written: 2048,
+        total_size: 5000,
+        flist_buildtime: Some(42),
+        flist_xfertime: Some(100),
+    };
+
+    let mut buf = Vec::new();
+    stats.write_to(&mut buf, 29).unwrap();
+
+    // Five fields x 4-byte little-endian longint = 20 bytes.
+    assert_eq!(
+        buf,
+        vec![
+            0x00, 0x04, 0x00, 0x00, // total_read      = 1024
+            0x00, 0x08, 0x00, 0x00, // total_written    = 2048
+            0x88, 0x13, 0x00, 0x00, // total_size       = 5000
+            0x2A, 0x00, 0x00, 0x00, // flist_buildtime  = 42
+            0x64, 0x00, 0x00, 0x00, // flist_xfertime   = 100
+        ]
+    );
+}
+
+/// Golden byte layout: protocol >= 30 stats remain the varlong encoding, so
+/// proto 30/31/32 batch files are byte-identical before and after the
+/// version-gating fix (unchanged by construction).
+///
+/// Each field must equal `protocol::write_varlong(value, 3)`; the proto-28
+/// longint form must differ, proving the gate actually switches encodings.
+#[test]
+fn test_batch_stats_protocol_30_stays_varlong() {
+    let stats = BatchStats {
+        total_read: 1024,
+        total_written: 2048,
+        total_size: 5000,
+        flist_buildtime: Some(42),
+        flist_xfertime: Some(100),
+    };
+
+    let mut buf = Vec::new();
+    stats.write_to(&mut buf, 30).unwrap();
+
+    let mut expected = Vec::new();
+    for value in [1024_i64, 2048, 5000, 42, 100] {
+        protocol::write_varlong(&mut expected, value, 3).unwrap();
+    }
+    assert_eq!(buf, expected);
+
+    // Sanity: the varlong bytes must differ from the proto-28 longint layout.
+    let mut longint_form = Vec::new();
+    BatchStats {
+        flist_buildtime: None,
+        flist_xfertime: None,
+        ..stats
+    }
+    .write_to(&mut longint_form, 28)
+    .unwrap();
+    assert_ne!(buf, longint_form);
+}
+
 /// Verify the exact byte layout of a batch header matches upstream rsync.
 ///
 /// upstream: batch.c:write_stream_flags() writes the flags bitmap (i32 LE),
