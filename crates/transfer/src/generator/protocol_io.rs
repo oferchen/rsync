@@ -330,8 +330,9 @@ impl GeneratorContext {
     /// and sets `IOERR_VANISHED`. For other errors, logs the open failure as an error
     /// and sets `IOERR_GENERAL`.
     ///
-    /// The `path_display` parameter is a pre-formatted path string to avoid
-    /// borrow conflicts with `&mut self` (the path comes from `self.full_paths`).
+    /// The `path_display` parameter is a pre-formatted path string reconstructed
+    /// from the entry's interned source base (see
+    /// [`GeneratorContext::reconstruct_source_path`](super::GeneratorContext::reconstruct_source_path)).
     ///
     /// # Upstream Reference
     ///
@@ -677,15 +678,15 @@ impl GeneratorContext {
             return;
         }
 
-        let full_path = &self.full_paths[index];
+        let full_path = self.reconstruct_source_path(index);
         let mode = entry.mode();
 
         // upstream: acls.c:560-561 - read access ACL
-        let access_acl = metadata::get_rsync_acl(full_path, mode, false);
+        let access_acl = metadata::get_rsync_acl(&full_path, mode, false);
 
         // upstream: acls.c:566-569 - read default ACL for directories
         let default_acl = if entry.is_dir() {
-            Some(metadata::get_rsync_acl(full_path, mode, true))
+            Some(metadata::get_rsync_acl(&full_path, mode, true))
         } else {
             None
         };

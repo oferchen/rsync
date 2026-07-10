@@ -24,7 +24,7 @@ impl GeneratorContext {
     /// the remote charset under `--iconv`, emitting the upstream diagnostic and
     /// recording `IOERR_GENERAL` (exit 23) for each.
     ///
-    /// Runs after the filesystem walk populates `file_list`/`full_paths` and
+    /// Runs after the filesystem walk populates `file_list`/`source_bases` and
     /// before the sort, so dropped entries never receive an ndx. A directory
     /// whose own name is unconvertible is dropped here too; its children carry
     /// the same unconvertible bytes as a path prefix and are dropped alongside
@@ -43,12 +43,15 @@ impl GeneratorContext {
         }
 
         let entries = std::mem::take(&mut self.file_list).into_vec();
-        let paths = std::mem::take(&mut self.full_paths);
+        let bases = std::mem::take(&mut self.source_bases);
         self.file_list = DualFileList::with_capacity(entries.len());
-        self.full_paths = Vec::with_capacity(entries.len());
+        self.source_bases = Vec::with_capacity(entries.len());
 
         let mut any_dropped = false;
-        for (entry, path) in entries.into_iter().zip(paths) {
+        // Re-push surviving (entry, base) pairs directly to preserve the already
+        // interned source base; going through `push_file_item` would re-derive a
+        // base by treating the stored base as a full path, which is wrong.
+        for (entry, base) in entries.into_iter().zip(bases) {
             let convertible = {
                 let name = entry.name_bytes();
                 let ok = converter.local_to_remote(&name).is_ok();
@@ -62,7 +65,8 @@ impl GeneratorContext {
                 ok
             };
             if convertible {
-                self.push_file_item(entry, path);
+                self.file_list.push(entry);
+                self.source_bases.push(base);
             } else {
                 any_dropped = true;
             }
