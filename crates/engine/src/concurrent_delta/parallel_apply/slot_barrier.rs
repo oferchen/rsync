@@ -1,29 +1,18 @@
-//! Per-slot synchronisation primitive backing FFB-1 / FFB-2.
+//! Per-slot synchronisation primitives backing FFB-1 / FFB-2.
 //!
-//! Extracted from `parallel_apply.rs` as part of SPL-38.b. The DG-2.a/DG-3
-//! spec at `docs/design/dg-2a-option-b-spec.md` plans to split the per-slot
-//! state across [`BarrierState`] (in-flight counter + [`Condvar`]) and
-//! [`SlotData`] (per-file [`Mutex<FileSlot>`]) so [`SlotHandle`] and
-//! `finish_file` can hold independent Arc graphs.
+//! Extracted from `parallel_apply.rs` as part of SPL-38.b. The per-slot
+//! state is split across [`BarrierState`] (in-flight counter +
+//! [`Condvar`]) and [`SlotData`] (per-file [`Mutex<FileSlot>`]), stored
+//! together as a [`SlotEntry`] in the [`super::ParallelDeltaApplier`]
+//! [`DashMap`]. The split lets [`super::SlotHandle`] (the payload
+//! [`Arc<SlotData>`]) and `finish_file`'s writer reclaim
+//! ([`Arc::try_unwrap`] on the same payload Arc) hold independent Arc
+//! graphs from the notify-bearing [`Arc<BarrierState>`] the
+//! [`super::DecrementGuard`] carries, per the Option-B spec at
+//! `docs/design/dg-2a-option-b-spec.md`.
 //!
-//! DG-3.a (PR #4826) added the post-split types alongside the existing
-//! [`SlotBarrier`]. DG-3.b (PR #4841) swapped the
-//! [`super::ParallelDeltaApplier`] [`DashMap`] value type from
-//! [`Arc<SlotBarrier>`] to [`SlotEntry`] and reshaped [`SlotBarrier`]
-//! into a thin adapter that wraps shared [`Arc<SlotData>`] +
-//! [`Arc<BarrierState>`] handles. DG-3.c (this commit) retypes
-//! [`super::DecrementGuard`] to hold [`Arc<BarrierState>`] directly,
-//! sourced from the adapter via [`SlotBarrier::barrier`], and removes
-//! the now-dead forwarding `SlotBarrier::decrement_inflight`. The
-//! [`super::SlotHandle`] retype is deferred; the adapter survives only
-//! as that handle's bridge until a follow-on DG-3.x task collapses it
-//! and points the handle fields at [`Arc<SlotData>`] /
-//! [`Arc<BarrierState>`] directly.
-//!
-//! [`Arc<SlotBarrier>`]: std::sync::Arc
 //! [`Arc<SlotData>`]: std::sync::Arc
 //! [`Arc<BarrierState>`]: std::sync::Arc
-//! [`Arc`]: std::sync::Arc
 //! [`DashMap`]: dashmap::DashMap
 
 use std::io;
@@ -32,88 +21,6 @@ use std::sync::{Arc, Condvar, Mutex, MutexGuard};
 use super::super::types::FileNdx;
 use super::{FileSlot, ParallelApplyError};
 
-/// Transitional adapter that preserves the [`Arc<SlotBarrier>`] shape
-/// [`super::SlotHandle`] still consumes.
-///
-/// Originally colocated the file's [`Mutex<FileSlot>`], the in-flight
-/// counter, and the [`Condvar`] in one allocation. DG-3.b moves the
-/// canonical state into [`SlotData`] + [`BarrierState`] (stored together
-/// as [`SlotEntry`] in the DashMap) and leaves this struct as a thin
-/// wrapper that forwards through cloned [`Arc`] handles. New instances
-/// are minted by [`super::ParallelDeltaApplier::slot_for`] on each
-/// lookup; sibling adapters share the same underlying
-/// [`Arc<SlotData>`] + [`Arc<BarrierState>`] state, so the in-flight
-/// counter and Condvar remain coherent across workers.
-///
-/// DG-3.c retyped [`super::DecrementGuard`] to hold its own
-/// [`Arc<BarrierState>`] clone (sourced via [`Self::barrier`]) so the
-/// guard's strong-count trajectory is disjoint from the adapter's
-/// payload Arc. The adapter survives only as the bridge for
-/// [`super::SlotHandle`]; a future DG-3.x task retypes the handle and
-/// deletes this struct.
-///
-/// Holding the per-slot [`Arc<SlotBarrier>`] adapter is no longer the
-/// unit of "in-flight"; the counter inside [`BarrierState`] is. The
-/// adapter's lifetime continues to bound when [`super::SlotHandle`]
-/// drops, which keeps the lock-path FFB-1 invariant intact even though
-/// the decrement path now lives on [`Arc<BarrierState>`] directly.
-///
-/// [`Arc`]: std::sync::Arc
-/// [`Arc<SlotBarrier>`]: std::sync::Arc
-/// [`Arc<SlotData>`]: std::sync::Arc
-/// [`Arc<BarrierState>`]: std::sync::Arc
-/// [`SlotHandle`]: super::SlotHandle
-pub(super) struct SlotBarrier {
-    data: Arc<SlotData>,
-    barrier: Arc<BarrierState>,
-}
-
-impl SlotBarrier {
-    /// Builds an adapter that shares its inner state with `entry`.
-    /// Clones the entry's two Arcs so the adapter participates in the
-    /// same in-flight bookkeeping and per-file mutex as every other
-    /// adapter minted from the same entry.
-    pub(super) fn from_entry(entry: &SlotEntry) -> Self {
-        Self {
-            data: Arc::clone(&entry.data),
-            barrier: Arc::clone(&entry.barrier),
-        }
-    }
-
-    /// Locks the per-file slot mutex, mapping a poisoned mutex to the
-    /// typed [`ParallelApplyError::SlotPoisoned`] error.
-    pub(super) fn lock_slot(
-        &self,
-        ndx: FileNdx,
-        kind: &'static str,
-    ) -> io::Result<MutexGuard<'_, FileSlot>> {
-        self.data.lock_slot(ndx, kind)
-    }
-
-    /// Bumps the in-flight counter for this slot. Called by
-    /// [`super::SlotHandle::new`] once the caller has obtained an
-    /// [`Arc<SlotBarrier>`] clone from
-    /// [`super::ParallelDeltaApplier::slot_for`].
-    ///
-    /// [`Arc<SlotBarrier>`]: std::sync::Arc
-    pub(super) fn increment_inflight(&self) {
-        self.barrier.increment_inflight();
-    }
-
-    /// Returns the adapter's inner [`Arc<BarrierState>`] so the caller
-    /// can hand the bookkeeping Arc to [`super::DecrementGuard`] without
-    /// extending the adapter Arc's lifetime. DG-3.c routes the guard's
-    /// strong-count trajectory through this accessor; [`super::SlotHandle`]
-    /// keeps its own [`Arc<SlotBarrier>`] clone for the lock path until
-    /// a future DG-3.x task retypes the handle.
-    ///
-    /// [`Arc<BarrierState>`]: std::sync::Arc
-    /// [`Arc<SlotBarrier>`]: std::sync::Arc
-    pub(super) fn barrier(&self) -> &Arc<BarrierState> {
-        &self.barrier
-    }
-}
-
 /// Per-slot in-flight counter and [`Condvar`] (DG-3.a, Option B).
 ///
 /// Carries exactly the bookkeeping that the worker's drop path touches:
@@ -121,7 +28,7 @@ impl SlotBarrier {
 /// that wakes a parked `flush_workers`. Defined per the DG-2.a spec at
 /// `docs/design/dg-2a-option-b-spec.md` section 2.
 ///
-/// # Why split this out of [`SlotBarrier`]?
+/// # Why a dedicated bookkeeping type?
 ///
 /// The DG-1 audit (`docs/design/decrementguard-audit.md`, section 4)
 /// traced the `finish_file` release race to one [`Arc`] graph being
@@ -143,10 +50,9 @@ impl SlotBarrier {
 ///   re-checks the predicate after waking observes a consistent value.
 /// - The counter is monotonic per slot-lifetime: every
 ///   `increment_inflight` is matched 1:1 with a `decrement_inflight`
-///   via the [`super::DecrementGuard`] RAII pairing. DG-3.c retyped
-///   the guard's field to [`Arc<BarrierState>`] so the pairing now
-///   travels on this allocation directly rather than through the
-///   [`SlotBarrier`] adapter.
+///   via the [`super::DecrementGuard`] RAII pairing. The guard holds an
+///   [`Arc<BarrierState>`] so the pairing travels on this allocation
+///   directly.
 ///
 /// [`Arc<BarrierState>`]: std::sync::Arc
 ///
@@ -166,8 +72,8 @@ pub(super) struct BarrierState {
 impl BarrierState {
     /// Constructs a fresh bookkeeping primitive with a zero in-flight
     /// counter. The counter is bumped by [`Self::increment_inflight`]
-    /// once a [`SlotHandle`] is handed out and dropped back by
-    /// [`Self::decrement_inflight`] when the matching
+    /// once a [`super::handle::SlotHandle`] is handed out and dropped
+    /// back by [`Self::decrement_inflight`] when the matching
     /// [`super::DecrementGuard`] retires.
     pub(super) fn new() -> Self {
         Self {
@@ -176,9 +82,9 @@ impl BarrierState {
         }
     }
 
-    /// Bumps the in-flight counter. Body is verbatim from
-    /// [`SlotBarrier::increment_inflight`] so the DG-3.c retype is a
-    /// pure field-type swap with no behaviour change.
+    /// Bumps the in-flight counter under its mutex. Called from
+    /// [`super::handle::SlotHandle::new`] when a slot handle is handed
+    /// out.
     pub(super) fn increment_inflight(&self) {
         let mut guard = self
             .inflight
@@ -196,9 +102,7 @@ impl BarrierState {
     /// chance to re-evaluate the predicate; spurious wakeups are
     /// filtered by [`Self::wait_until_idle`]'s `wait_while` loop.
     ///
-    /// Invoked exclusively from [`super::DecrementGuard::drop`] (DG-3.c
-    /// retired the [`SlotBarrier`] forwarding shim that previously
-    /// stood between the guard and this method).
+    /// Invoked exclusively from [`super::DecrementGuard::drop`].
     pub(super) fn decrement_inflight(&self) {
         let mut guard = self
             .inflight
@@ -209,8 +113,7 @@ impl BarrierState {
     }
 
     /// Blocks until the in-flight counter reaches zero. Spurious
-    /// wakeups are filtered by the loop predicate. Body is verbatim
-    /// from [`SlotBarrier::wait_until_idle`].
+    /// wakeups are filtered by the loop predicate.
     pub(super) fn wait_until_idle(&self, ndx: FileNdx, kind: &'static str) -> io::Result<()> {
         let guard = self
             .inflight
@@ -232,7 +135,7 @@ impl BarrierState {
 /// writer at end-of-file. Defined per the DG-2.a spec at
 /// `docs/design/dg-2a-option-b-spec.md` section 2.
 ///
-/// # Why split this out of [`SlotBarrier`]?
+/// # Why a dedicated payload type?
 ///
 /// Together with [`BarrierState`], this type is the second half of the
 /// Option-B split that fixes the DG-1 release race. By keeping the
@@ -251,8 +154,8 @@ impl BarrierState {
 ///   sibling [`BarrierState`] in the same [`SlotEntry`]) before
 ///   removing the entry from the DashMap.
 /// - A poisoned mutex is mapped to the typed
-///   [`ParallelApplyError::SlotPoisoned`] so the io-error surface
-///   matches the existing [`SlotBarrier::lock_slot`] behaviour.
+///   [`ParallelApplyError::SlotPoisoned`] so the io-error surface is
+///   consistent across the lock and reclaim paths.
 ///
 /// # Visibility
 ///
@@ -263,8 +166,7 @@ pub(super) struct SlotData {
 }
 
 impl SlotData {
-    /// Wraps a [`FileSlot`] in its own mutex. Mirrors
-    /// [`SlotBarrier::new`] for the payload half of the split.
+    /// Wraps a [`FileSlot`] in its own mutex.
     pub(super) fn new(slot: FileSlot) -> Self {
         Self {
             slot: Mutex::new(slot),
@@ -272,8 +174,7 @@ impl SlotData {
     }
 
     /// Locks the per-file slot mutex, mapping a poisoned mutex to the
-    /// typed [`ParallelApplyError::SlotPoisoned`] error. Body is
-    /// verbatim from [`SlotBarrier::lock_slot`].
+    /// typed [`ParallelApplyError::SlotPoisoned`] error.
     pub(super) fn lock_slot(
         &self,
         ndx: FileNdx,
@@ -295,8 +196,7 @@ impl SlotData {
     }
 }
 
-/// DashMap value carrying both Arcs that together replace
-/// [`Arc<SlotBarrier>`] under Option B (DG-3.a).
+/// DashMap value carrying the two per-slot Arcs under Option B (DG-3.a).
 ///
 /// Cloning a [`SlotEntry`] clones both inner Arcs, keeping the
 /// register/lookup paths symmetric: producers insert one
@@ -313,9 +213,9 @@ impl SlotData {
 ///   without the other.
 /// - Strong counts are tracked separately: the payload Arc only flows
 ///   to `SlotHandle.data` and `finish_file`'s local binding; the
-///   barrier Arc additionally flows to `SlotHandle.barrier` and
-///   `DecrementGuard.barrier`. See DG-2.a spec section 3 for the
-///   steady-state strong-count table.
+///   barrier Arc flows to `DecrementGuard.barrier` and `flush_workers`'s
+///   local wait clone. See DG-2.a spec section 3 for the steady-state
+///   strong-count table.
 ///
 /// # Visibility
 ///
@@ -335,95 +235,14 @@ pub(super) struct SlotEntry {
 
 impl SlotEntry {
     /// Wraps a fresh [`FileSlot`] in the two Option-B Arcs. The
-    /// in-flight counter starts at zero; the first [`SlotHandle`]
-    /// constructed from a clone of this entry will bump it via
-    /// [`BarrierState::increment_inflight`].
+    /// in-flight counter starts at zero; the first
+    /// [`super::handle::SlotHandle`] constructed from a clone of this
+    /// entry will bump it via [`BarrierState::increment_inflight`].
     pub(super) fn new(slot: FileSlot) -> Self {
         Self {
             data: Arc::new(SlotData::new(slot)),
             barrier: Arc::new(BarrierState::new()),
         }
-    }
-}
-
-/// Post-split handle returned from `slot_for` once a future DG-3.x
-/// task lands the mod-level [`super::SlotHandle`] retype.
-///
-/// Holds one [`Arc<SlotData>`] for the payload lock plus one
-/// [`Arc<BarrierState>`] so the increment+decrement bookkeeping stays
-/// co-located with the lock site. Field declaration order is
-/// load-bearing: per the DG-2.a spec section 6, [`Self::data`] is
-/// dropped first (releasing the worker's payload Arc clone), then
-/// [`Self::barrier`], and finally a future `_decrement` field. That
-/// order keeps the payload Arc's strong-count trajectory disjoint from
-/// the notify-bearing Arc's, which is the invariant DG-1 found
-/// violated by the original [`SlotBarrier`] shape.
-///
-/// # Why a parallel type instead of editing the mod-level [`super::SlotHandle`]?
-///
-/// DG-3.a/b/c are sequenced so the mod-level [`super::SlotHandle`]
-/// keeps compiling against the [`SlotBarrier`] adapter while the
-/// underlying types migrate piece by piece. DG-3.c (this commit)
-/// retyped [`super::DecrementGuard`] only; the handle retype is
-/// deferred to a later task that renames this type into the mod-level
-/// slot.
-///
-/// # Missing field
-///
-/// The DG-2.a spec section 6 also calls for a third field,
-/// `_decrement: super::DecrementGuard`. Attaching that field here is
-/// possible now that DG-3.c has retyped the guard to
-/// [`Arc<BarrierState>`], but it is deferred to the same future task
-/// that retypes the mod-level [`super::SlotHandle`] so this struct
-/// stays inert until its call sites are ready.
-///
-/// # Visibility
-///
-/// `pub(super)` so the parent module can wire it in during the
-/// follow-on migration. Not exposed beyond `parallel_apply`. The
-/// mod-level [`super::SlotHandle`] is unaffected by this type's
-/// existence: neither shadows the other because `mod.rs` does not
-/// `use slot_barrier::SlotHandle`.
-//
-// `dead_code` allow: same rationale as `BarrierState`. The follow-on
-// task renames this type into the mod-level slot once its call sites
-// are ready.
-#[allow(dead_code)]
-pub(super) struct SlotHandle {
-    /// Per-file payload Arc. Dropped first when the handle goes out
-    /// of scope so the worker's clone is gone before any barrier
-    /// bookkeeping runs.
-    pub(super) data: Arc<SlotData>,
-    /// Per-file bookkeeping Arc. Dropped after `data` but before the
-    /// future `_decrement` field, keeping the lock path
-    /// ([`SlotData::lock_slot`]) and the counter path
-    /// ([`BarrierState::increment_inflight`]) co-located in the same
-    /// handle.
-    pub(super) barrier: Arc<BarrierState>,
-}
-
-#[allow(dead_code)]
-impl SlotHandle {
-    /// Bumps the entry's in-flight counter and constructs the handle.
-    /// Mirrors the DG-2.a spec section 6 constructor, modulo the
-    /// `_decrement` field deferred to the follow-on task that retypes
-    /// the mod-level [`super::SlotHandle`].
-    pub(super) fn new(entry: SlotEntry) -> Self {
-        entry.barrier.increment_inflight();
-        Self {
-            data: entry.data,
-            barrier: entry.barrier,
-        }
-    }
-
-    /// Locks the per-file slot mutex for the duration of the returned
-    /// guard. Delegates to [`SlotData::lock_slot`].
-    pub(super) fn lock_slot(
-        &self,
-        ndx: FileNdx,
-        kind: &'static str,
-    ) -> io::Result<MutexGuard<'_, FileSlot>> {
-        self.data.lock_slot(ndx, kind)
     }
 }
 
@@ -435,7 +254,8 @@ mod dg_3a_tests {
 
     use super::super::super::types::FileNdx;
     use super::super::FileSlot;
-    use super::{BarrierState, SlotData, SlotEntry, SlotHandle};
+    use super::super::handle::SlotHandle;
+    use super::{BarrierState, SlotData, SlotEntry};
 
     fn dummy_file_slot() -> FileSlot {
         FileSlot::new(Box::new(Vec::<u8>::new()), 4)
@@ -480,30 +300,29 @@ mod dg_3a_tests {
         assert!(slot.drained());
     }
 
-    /// Smoke test: building a [`SlotHandle`] from a [`SlotEntry`]
-    /// bumps the in-flight counter on the entry's barrier. Verifies
-    /// the constructor wires the increment side of the bookkeeping
-    /// even though the matching decrement (DG-3.c's retyped
-    /// `_decrement` field) is not attached yet.
+    /// Smoke test: building a [`SlotHandle`] from a [`SlotEntry`] bumps
+    /// the in-flight counter, and dropping the handle returns it to zero
+    /// via the companion `DecrementGuard`. Verifies the collapsed handle
+    /// wires both the increment (construction) and decrement (drop)
+    /// sides of the bookkeeping so a parked `wait_until_idle` unblocks.
     #[test]
-    fn slot_handle_constructor_increments_inflight() {
+    fn slot_handle_increments_then_decrements_on_drop() {
         let entry = SlotEntry::new(dummy_file_slot());
         let barrier = Arc::clone(&entry.barrier);
         let handle = SlotHandle::new(entry);
-        // Counter is now 1: a parked waiter must still see the
-        // predicate as non-idle. Probe by trying to lock the slot
-        // through the handle - this exercises the payload path - and
-        // by explicitly decrementing once so the counter returns to
-        // zero and a subsequent `wait_until_idle` resolves promptly.
+        // Counter is now 1. Probe the payload path by locking the slot
+        // through the handle.
         let guard = handle
             .lock_slot(FileNdx::new(3), "slot_handle_smoke")
-            .expect("lock_slot through the new handle should succeed");
+            .expect("lock_slot through the handle should succeed");
         assert_eq!(guard.bytes_written(), 0);
         drop(guard);
+        // Dropping the handle fires the DecrementGuard, returning the
+        // counter to zero so `wait_until_idle` resolves promptly without
+        // any manual decrement.
         drop(handle);
-        barrier.decrement_inflight();
         barrier
             .wait_until_idle(FileNdx::new(3), "slot_handle_smoke")
-            .expect("counter should be idle after manual decrement");
+            .expect("counter should be idle after handle drop");
     }
 }

@@ -415,8 +415,8 @@ fn finish_file_payload_arc_uncontended_after_worker_drop() {
     });
 
     // Wait until the worker owns the SlotHandle. While it is held the
-    // payload Arc strong count is at least 2 (DashMap + adapter's
-    // clone via SlotBarrier::from_entry) and would block `try_unwrap`.
+    // payload Arc strong count is at least 2 (DashMap + the handle's
+    // `data` clone) and would block `try_unwrap`.
     acquired_rx
         .recv_timeout(std::time::Duration::from_secs(5))
         .expect("worker acquired SlotHandle");
@@ -434,9 +434,8 @@ fn finish_file_payload_arc_uncontended_after_worker_drop() {
     // SlotHandle (including the DecrementGuard's drop body). The
     // dropped_tx send happens after `drop(handle)` returns, so by
     // the time we receive on `dropped_rx` every field of the handle
-    // - including the payload Arc clone the SlotBarrier adapter
-    // carried and the bookkeeping Arc the DecrementGuard carried -
-    // has been released.
+    // - including the payload Arc clone the handle held and the
+    // bookkeeping Arc the DecrementGuard carried - has been released.
     release_tx.send(()).expect("release send");
     dropped_rx
         .recv_timeout(std::time::Duration::from_secs(5))
