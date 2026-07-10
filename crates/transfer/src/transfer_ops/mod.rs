@@ -144,6 +144,16 @@ pub struct RequestConfig<'a> {
     /// - `generator.c:775-776` - generator skips writing signature blocks in append mode
     /// - `sender.c:87-92` - `receive_sums()` returns early without reading blocks
     pub append: bool,
+    /// Whether append-verify mode is active (`--append-verify`, append_mode == 2).
+    ///
+    /// When true the receiver folds the existing on-disk prefix into the
+    /// whole-file checksum so a corrupted prefix fails verification and triggers
+    /// a re-transmit. Plain `--append` trusts the prefix and never sums it.
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `receiver.c:357-373` - `if (append_mode == 2)` prefix `sum_update`
+    pub append_verify: bool,
 }
 
 impl RequestConfig<'_> {
@@ -322,6 +332,7 @@ mod tests {
             preserve_xattrs: false,
             want_xattr_optim: false,
             append: false,
+            append_verify: false,
         };
         let debug_str = format!("{config:?}");
         assert!(debug_str.contains("RequestConfig"));

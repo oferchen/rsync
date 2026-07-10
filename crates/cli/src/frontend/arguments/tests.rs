@@ -576,6 +576,32 @@ mod long_options {
     }
 
     #[test]
+    fn doubled_append_in_server_mode_is_append_verify() {
+        // upstream: options.c:1722-1726 - OPT_APPEND increments append_mode on
+        // am_server, so two --append flags select append-verify (append_mode == 2).
+        // The client encodes --append-verify this way; the server must recover it.
+        let parsed =
+            parse_test_args(["--server", "--sender", "--append", "--append", ".", "src"]).expect("parse");
+        assert_eq!(parsed.append, Some(true));
+        assert!(
+            parsed.append_verify,
+            "doubled --append on the server must set append_verify"
+        );
+    }
+
+    #[test]
+    fn doubled_append_client_mode_is_not_verify() {
+        // upstream: options.c:1726 - a non-server invocation caps append_mode at 1,
+        // so repeated --append on the client stays plain append (trust prefix).
+        let parsed = parse_test_args(["--append", "--append", "src/", "dst/"]).expect("parse");
+        assert_eq!(parsed.append, Some(true));
+        assert!(
+            !parsed.append_verify,
+            "doubled --append off-server must not imply verify"
+        );
+    }
+
+    #[test]
     fn dirs_long_flag() {
         let parsed = parse_test_args(["--dirs", "src/", "dst/"]).expect("parse");
         assert_eq!(parsed.dirs, Some(true));

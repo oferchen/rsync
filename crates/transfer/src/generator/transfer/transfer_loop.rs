@@ -18,7 +18,7 @@ use protocol::codec::{
 use protocol::stats::DeleteStats;
 
 use super::super::delta::{
-    create_token_encoder, script_to_wire_delta, stream_whole_file_transfer,
+    create_token_encoder, script_to_wire_delta, stream_append_transfer, stream_whole_file_transfer,
     write_delta_with_inline_checksum,
 };
 use super::super::item_flags::ItemFlags;
@@ -382,9 +382,20 @@ impl GeneratorContext {
             let source_path = self.reconstruct_source_path(ndx);
             let source_path_display = source_path.display().to_string();
 
-            let sig_blocks = read_signature_blocks(&mut *reader, &sum_head)?;
-            let bytes_per_block = 4 + sum_head.s2length as u64;
-            self.timing.total_bytes_read += sum_head.count as u64 * bytes_per_block;
+            // upstream: sender.c:89-95 receive_sums() - in append mode the
+            // receiver's generator writes only the sum_head, not the block
+            // checksums (generator.c:786 `if (append_mode > 0 && f_copy < 0)
+            // return 0`). Reading blocks here would block forever, so derive
+            // flength from the header and take the append literal path.
+            let is_append = self.config.flags.append;
+            let sig_blocks = if is_append {
+                Vec::new()
+            } else {
+                let blocks = read_signature_blocks(&mut *reader, &sum_head)?;
+                let bytes_per_block = 4 + sum_head.s2length as u64;
+                self.timing.total_bytes_read += sum_head.count as u64 * bytes_per_block;
+                blocks
+            };
 
             let block_length = sum_head.blength;
             let strong_sum_length = sum_head.s2length as u8;
@@ -396,7 +407,60 @@ impl GeneratorContext {
 
             let file_size = file_entry.size();
 
-            if has_basis {
+            if is_append && has_basis {
+                // upstream: match.c:371-390 - append mode streams only the tail
+                // past the existing prefix; the sum_head's count/blength encode
+                // that flength. No block matching, no signature blocks.
+                let (source, _src_fd): (Box<dyn Read>, Option<_>) = match self
+                    .open_source_unbuffered(&source_path, file_size)
+                {
+                    Ok(pair) => pair,
+                    Err(e) => {
+                        self.record_open_failure(&mut *writer, wire_ndx, &e, &source_path_display)?;
+                        continue;
+                    }
+                };
+
+                self.write_ndx_and_attrs(
+                    &mut *writer,
+                    &mut ndx_write_codec,
+                    &NdxAttrs {
+                        ndx: wire_ndx,
+                        iflags: &iflags,
+                        fnamecmp_type,
+                        xname: xname.as_deref(),
+                    },
+                    &sum_head,
+                    pending_xattr_response.as_mut(),
+                )?;
+
+                let checksum_algorithm = self.get_checksum_algorithm();
+                let use_compression = self.file_compression(&source_path).is_some();
+                let flength = sum_head.flength().min(file_size);
+                let append_verify = self.config.flags.append_verify;
+                let wire_bytes = {
+                    let mut cw = crate::writer::CountingWriter::new(&mut *writer);
+                    let result = stream_append_transfer(
+                        &mut cw,
+                        source,
+                        file_size,
+                        flength,
+                        append_verify,
+                        checksum_algorithm,
+                        self.checksum_seed,
+                        if use_compression {
+                            token_encoder.as_mut()
+                        } else {
+                            None
+                        },
+                        &mut stream_buf,
+                    )?;
+                    cw.write_all(&result.checksum_buf[..result.checksum_len])?;
+                    cw.bytes_written()
+                };
+                bytes_sent += wire_bytes;
+                literal_data += file_size.saturating_sub(flength);
+            } else if has_basis {
                 let source: Box<dyn Read> = match self.open_source_reader(&source_path, file_size) {
                     Ok(r) => r,
                     Err(e) => {

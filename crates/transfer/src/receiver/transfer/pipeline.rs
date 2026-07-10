@@ -95,7 +95,12 @@ impl ReceiverContext {
                 && self.compat_flags.is_some_and(|f| {
                     !f.contains(protocol::CompatibilityFlags::AVOID_XATTR_OPTIMIZATION)
                 }),
-            append: self.config.flags.append,
+            // upstream: receiver.c:761-773 - a phase-2 redo negates append_mode
+            // (`append_mode = -append_mode`), so the re-request is a full
+            // transfer that overwrites the file rather than appending to a
+            // prefix the verify pass already rejected.
+            append: self.config.flags.append && !is_redo_pass,
+            append_verify: self.config.flags.append_verify && !is_redo_pass,
         };
 
         // upstream: token.c uses a single compression context across all files.
@@ -152,6 +157,7 @@ impl ReceiverContext {
             io_uring_depth: self.config.write.io_uring_depth,
             partial_mode,
             delay_updates: self.config.write.delay_updates,
+            append_verify: self.config.flags.append_verify && !is_redo_pass,
             ..DiskCommitConfig::default()
         };
         let mut pipelined_receiver = PipelinedReceiver::new(disk_config)?;
