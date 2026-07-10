@@ -37,7 +37,7 @@
 //! across a large rayon pool. This is the path the pre-DashMap
 //! single-mutex map serialised end-to-end; the bench surfaces whether the
 //! shard layout actually lets N workers register/finish in parallel or
-//! whether some other lock (e.g. the per-file [`SlotBarrier`]) is now the
+//! whether some other lock (e.g. the per-file slot mutex) is now the
 //! gate. Numbers from this group complement - they do not replace - the
 //! main cores-vs-throughput sweep.
 //!
