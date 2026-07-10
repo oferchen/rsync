@@ -45,4 +45,6 @@ mod prefix;
 mod wire;
 
 pub use prefix::build_rule_prefix;
+#[cfg(feature = "tokio-transfer")]
+pub use wire::read_filter_list_async;
 pub use wire::{FilterRuleWireFormat, RuleType, read_filter_list, write_filter_list};
