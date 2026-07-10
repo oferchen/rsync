@@ -19,17 +19,21 @@ use super::rules::{
 
 pub(crate) fn parse_filter_directive(argument: &OsStr) -> Result<FilterDirective, Message> {
     let text = argument.to_string_lossy();
-    let trimmed_leading = text.trim_start();
+    // upstream: exclude.c:1100-1213 parse_rule_tok - leading whitespace is only
+    // skipped under FILTRULE_WORD_SPLIT, which a top-level `--filter` rule never
+    // carries. A leading space therefore reaches the prefix `switch` default and
+    // raises "Unknown filter rule" (RERR_SYNTAX). Do not trim the leading edge.
+    let rule: &str = &text;
 
-    if let Some(result) = parse_short_merge_directive(trimmed_leading) {
+    if let Some(result) = parse_short_merge_directive(rule) {
         return result;
     }
 
-    if let Some(result) = parse_long_merge_directive(trimmed_leading) {
+    if let Some(result) = parse_long_merge_directive(rule) {
         return result;
     }
 
-    parse_rule_directive(trimmed_leading)
+    parse_rule_directive(rule)
 }
 
 /// Parses a line under upstream rsync's `XFLG_OLD_PREFIXES` compatibility mode
@@ -93,7 +97,11 @@ pub(crate) fn parse_old_prefix_rule(
 }
 
 pub(super) fn parse_rule_directive(text: &str) -> Result<FilterDirective, Message> {
-    let trimmed = text.trim_end();
+    // upstream: exclude.c:1313 parse_rule_tok - the pattern length is strlen, so
+    // trailing whitespace is part of the pattern and is never stripped. A rule
+    // like `- *.o ` keeps the trailing space in its pattern, so `x.o` is not
+    // matched by `*.o ` and stays included.
+    let trimmed = text;
 
     if trimmed.is_empty() {
         let message = rsync_error!(

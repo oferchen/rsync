@@ -219,30 +219,30 @@ fn dir_merge_only_modifiers_no_pattern() {
 }
 
 #[test]
-fn dir_merge_with_leading_whitespace() {
+fn dir_merge_with_leading_whitespace_is_rejected() {
     let dir = TempDir::new().unwrap();
     let rules_path = dir.path().join("rules.txt");
 
-    // Leading whitespace before dir-merge
+    // upstream: exclude.c:1211-1213 - leading whitespace is not a valid rule
+    // prefix and errors; it is never trimmed away.
     fs::write(&rules_path, "   : .rsync-filter\n").unwrap();
 
-    let rules = filters::merge::read_rules(&rules_path).unwrap();
-    assert_eq!(rules.len(), 1);
-    assert_eq!(rules[0].action(), FilterAction::DirMerge);
+    let err = filters::merge::read_rules(&rules_path).expect_err("leading whitespace errors");
+    assert!(err.message.contains("Unknown filter rule"));
 }
 
 #[test]
-fn dir_merge_with_trailing_whitespace() {
+fn dir_merge_with_trailing_whitespace_kept() {
     let dir = TempDir::new().unwrap();
     let rules_path = dir.path().join("rules.txt");
 
-    // Trailing whitespace after pattern
+    // upstream: exclude.c:1313 - the pattern (merge-file name) length is strlen,
+    // so trailing whitespace stays part of the pattern verbatim.
     fs::write(&rules_path, ": .rsync-filter   \n").unwrap();
 
     let rules = filters::merge::read_rules(&rules_path).unwrap();
     assert_eq!(rules.len(), 1);
-    // Trailing whitespace should be trimmed from pattern
-    assert_eq!(rules[0].pattern(), ".rsync-filter");
+    assert_eq!(rules[0].pattern(), ".rsync-filter   ");
 }
 
 #[test]

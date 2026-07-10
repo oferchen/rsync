@@ -152,18 +152,19 @@ fn parse_merge_contents(
     }
 
     for line in contents.lines() {
-        let trimmed = line.trim();
-        if trimmed.is_empty() {
+        // upstream: exclude.c:1514 parse_filter_file - a line is skipped only
+        // when it is empty or (line parsing) begins with `;`/`#`. Whitespace is
+        // never stripped, so leading whitespace and whitespace-only lines fall
+        // through to the rule parser and error, while trailing whitespace stays
+        // part of the pattern verbatim (exclude.c:1313, strlen length).
+        if line.is_empty() {
             continue;
         }
-        if options.allows_comments() && trimmed.starts_with('#') {
-            continue;
-        }
-        if trimmed.starts_with(';') && options.allows_comments() {
+        if options.allows_comments() && (line.starts_with('#') || line.starts_with(';')) {
             continue;
         }
 
-        if trimmed == "!" {
+        if line == "!" {
             if options.list_clear_allowed() {
                 destination.clear();
                 continue;
@@ -177,16 +178,18 @@ fn parse_merge_contents(
         }
 
         if let Some(kind) = options.enforced_kind() {
+            // upstream: FILTRULE_NO_PREFIXES takes the whole line as the pattern
+            // verbatim (exclude.c:1122-1124,1313), so no whitespace is trimmed.
             let mut rule = match kind {
-                DirMergeEnforcedKind::Include => FilterRuleSpec::include(trimmed.to_owned()),
-                DirMergeEnforcedKind::Exclude => FilterRuleSpec::exclude(trimmed.to_owned()),
+                DirMergeEnforcedKind::Include => FilterRuleSpec::include(line.to_owned()),
+                DirMergeEnforcedKind::Exclude => FilterRuleSpec::exclude(line.to_owned()),
             };
             rule.apply_dir_merge_overrides(options);
             destination.push(rule);
             continue;
         }
 
-        process_merge_directive(trimmed, options, base_dir, display, destination, visited)?;
+        process_merge_directive(line, options, base_dir, display, destination, visited)?;
     }
 
     Ok(())

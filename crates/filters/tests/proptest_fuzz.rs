@@ -174,12 +174,21 @@ proptest! {
         prop_assert!(result.is_ok());
     }
 
-    /// Empty and whitespace-only inputs produce no rules.
+    /// Blank inputs (empty or newline-only) produce no rules. upstream:
+    /// exclude.c:1514 parse_filter_file skips only truly empty lines.
     #[test]
-    fn parse_rules_whitespace_only(input in "[ \t\n\r]*") {
+    fn parse_rules_blank_lines_produce_no_rules(input in "\n*") {
         let result = parse_rules(&input, Path::new("<fuzz>"));
         prop_assert!(result.is_ok());
         prop_assert!(result.unwrap().is_empty());
+    }
+
+    /// A line that contains whitespace is not blank: upstream does not strip it,
+    /// so it reaches parse_rule_tok and errors ("Unknown filter rule").
+    #[test]
+    fn parse_rules_whitespace_line_is_rejected(ws in "[ \t]{1,8}") {
+        let result = parse_rules(&ws, Path::new("<fuzz>"));
+        prop_assert!(result.is_err());
     }
 
     /// Comment-only inputs produce no rules.
@@ -726,9 +735,21 @@ fn parse_rules_windows_line_endings() {
 
 #[test]
 fn parse_rules_trailing_whitespace() {
-    let content = "  - *.bak   \n  + *.txt   \n";
-    let result = parse_rules(content, Path::new("<test>"));
-    assert!(result.is_ok());
+    // upstream: exclude.c:1313 - trailing whitespace is part of the pattern
+    // (strlen length), so the rules parse and keep the trailing spaces verbatim.
+    let content = "- *.bak   \n+ *.txt   \n";
+    let rules = parse_rules(content, Path::new("<test>")).unwrap();
+    assert_eq!(rules.len(), 2);
+    assert_eq!(rules[0].pattern(), "*.bak   ");
+    assert_eq!(rules[1].pattern(), "*.txt   ");
+}
+
+#[test]
+fn parse_rules_leading_whitespace_is_rejected() {
+    // upstream: exclude.c:1211-1213 - leading whitespace is not a valid rule
+    // prefix and errors; it must not be trimmed away.
+    let result = parse_rules("  - *.bak\n", Path::new("<test>"));
+    assert!(result.is_err());
 }
 
 #[test]

@@ -40,8 +40,12 @@ pub fn parse_rules(content: &str, source_path: &Path) -> Result<Vec<FilterRule>,
 
     for (line_num, line) in content.lines().enumerate() {
         let line_num = line_num + 1; // 1-indexed for error messages
-        let line = line.trim();
 
+        // upstream: exclude.c:1514 parse_filter_file - a line is skipped only
+        // when it is empty or (line parsing) begins with `;`/`#`. Whitespace is
+        // never stripped, so a whitespace-only line and a leading-whitespace
+        // rule both fall through to parse_rule_tok and raise "Unknown filter
+        // rule" (RERR_SYNTAX). Trailing whitespace stays part of the pattern.
         if line.is_empty() || line.starts_with('#') || line.starts_with(';') {
             continue;
         }
@@ -100,11 +104,14 @@ pub(crate) fn parse_rules_no_prefixes(
         }
     } else {
         for line in content.lines() {
-            let trimmed = line.trim();
-            if trimmed.is_empty() || trimmed.starts_with('#') || trimmed.starts_with(';') {
+            // upstream: exclude.c:1514 parse_filter_file - skip only empty and
+            // (line parsing) `;`/`#` comment lines; the surviving line becomes a
+            // literal pattern verbatim (FILTRULE_NO_PREFIXES takes strlen with no
+            // trimming, exclude.c:1313), so leading/trailing whitespace is kept.
+            if line.is_empty() || line.starts_with('#') || line.starts_with(';') {
                 continue;
             }
-            push_token(trimmed);
+            push_token(line);
         }
     }
 
@@ -306,8 +313,13 @@ pub(crate) fn parse_modifiers<'a>(
                 mods.no_prefixes_include = true;
             }
             ' ' | '_' => {
+                // upstream: exclude.c:1290-1291 - after the modifier loop stops
+                // at the first separator, exactly one separator is consumed
+                // (`if (*s) s++`). The pattern length is then strlen (line 1313),
+                // so any further leading/trailing whitespace stays in the
+                // pattern verbatim. Do not trim the remainder.
                 let remainder = &s[idx + ch.len_utf8()..];
-                return Ok((mods, remainder.trim_start()));
+                return Ok((mods, remainder));
             }
             _ => {
                 return Err(invalid_modifier(ch, idx, full_line, source_path, line_num));
@@ -470,7 +482,12 @@ fn try_parse_long_form(line: &str) -> Option<FilterRule> {
 
     for &(keyword, len, action) in keywords {
         if lower.starts_with(keyword) {
-            let pattern = line[len..].trim();
+            // upstream: exclude.c:1290-1313 - RULE_STRCMP matches the keyword and
+            // its single trailing separator, then strlen takes the rest of the
+            // line verbatim. The keyword table already includes that one
+            // separator, so the remainder must not be trimmed: trailing (and
+            // any embedded) whitespace stays part of the pattern.
+            let pattern = &line[len..];
             return Some(action.to_rule(pattern));
         }
     }
