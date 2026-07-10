@@ -487,8 +487,8 @@ fn golden_v28_stats_exact_wire_bytes_known_values() {
 
 #[test]
 fn golden_v28_stats_vs_v29_different_length() {
-    // Protocol 28: 3 varlong30 fields.
-    // Protocol 29: 5 varlong30 fields (adds flist_buildtime, flist_xfertime).
+    // Protocol 28: 3 legacy longint fields.
+    // Protocol 29: 5 legacy longint fields (adds flist_buildtime, flist_xfertime).
     let stats = TransferStats::with_bytes(100, 200, 300).with_flist_times(500_000, 100_000);
 
     let v28 = proto28();

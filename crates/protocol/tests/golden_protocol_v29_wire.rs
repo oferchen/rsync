@@ -2,11 +2,11 @@
 //!
 //! Protocol 29 is the first version to include flist build/transfer time
 //! fields in transfer statistics. It shares the same file list encoding as
-//! protocol 28 (fixed-width, no varint) but adds two varlong30 timing
+//! protocol 28 (fixed-width, no varint) but adds two legacy-longint timing
 //! fields after the core stats.
 //!
 //! Key protocol 29 characteristics:
-//! - Transfer stats include flist_buildtime and flist_xfertime (varlong30)
+//! - Transfer stats include flist_buildtime and flist_xfertime (legacy longint)
 //! - File list encoding identical to protocol 28 (fixed 4-byte LE integers)
 //! - No incremental recursion (introduced in v30)
 //! - No varint flist flags (introduced in v30)
@@ -36,12 +36,12 @@ fn v29() -> ProtocolVersion {
 
 /// Verifies that protocol 29 transfer stats include flist timing fields.
 ///
-/// Wire layout (all varlong30 with min_bytes=3):
-///   total_read      : varlong30
-///   total_written   : varlong30
-///   total_size      : varlong30
-///   flist_buildtime : varlong30 (microseconds, protocol >= 29 only)
-///   flist_xfertime  : varlong30 (microseconds, protocol >= 29 only)
+/// Wire layout (protocol < 30 routes write_varlong30 through legacy longint):
+///   total_read      : longint
+///   total_written   : longint
+///   total_size      : longint
+///   flist_buildtime : longint (microseconds, protocol >= 29 only)
+///   flist_xfertime  : longint (microseconds, protocol >= 29 only)
 #[test]
 fn golden_v29_stats_with_flist_times() {
     let stats = TransferStats::with_bytes(4096, 8192, 100_000).with_flist_times(500_000, 100_000);
@@ -50,7 +50,7 @@ fn golden_v29_stats_with_flist_times() {
     let mut buf = Vec::new();
     stats.write_to(&mut buf, protocol).unwrap();
 
-    // Protocol 29 encodes 5 fields (3 core + 2 flist times), each as varlong30(min_bytes=3).
+    // Protocol 29 encodes 5 fields (3 core + 2 flist times), each via legacy longint.
     // Verify round-trip decodes all 5 fields correctly.
     let mut cursor = Cursor::new(&buf[..]);
     let decoded = TransferStats::read_from(&mut cursor, protocol).unwrap();
