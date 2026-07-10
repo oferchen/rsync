@@ -6,7 +6,8 @@
 //! Construction-time setup happens in [`GeneratorContext::new`]; the full send
 //! workflow is driven by the `transfer` submodule via `GeneratorContext::run`.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use std::sync::atomic::Ordering;
 
 use ::filters::FilterChain;
@@ -53,14 +54,30 @@ pub struct GeneratorContext {
     pub(crate) config: ServerConfig,
     /// List of files to send (contains relative paths for wire transmission).
     ///
-    /// **Invariant**: `file_list` and `full_paths` must always have the same length.
+    /// **Invariant**: `file_list` and `source_bases` must always have the same length.
     /// Use [`Self::push_file_item`] to add entries and [`Self::clear_file_list`] to clear.
     pub(crate) file_list: DualFileList,
-    /// Full filesystem paths for each file in `file_list` (parallel array).
-    /// Used to open files for delta generation during transfer.
+    /// Interned source-directory base for each file in `file_list` (parallel array).
     ///
-    /// **Invariant**: `file_list[i]` corresponds to `full_paths[i]` for all valid indices.
-    pub(crate) full_paths: Vec<PathBuf>,
+    /// The on-disk path used to open a source file for delta generation is
+    /// `base.join(entry.name())` (see [`Self::reconstruct_source_path`]). Storing
+    /// only the base - which is identical for every entry produced by a single
+    /// source argument - lets all those entries share one `Arc<Path>` allocation
+    /// instead of each owning a full `PathBuf` that redundantly re-stores the
+    /// entry's relative name. At scale this removes the per-file path bytes (and
+    /// their allocator overhead) from the sender's resident set; the name bytes
+    /// already live in the `FileEntry`.
+    ///
+    /// **Invariant**: `file_list[i]` corresponds to `source_bases[i]` for all
+    /// valid indices, and `reconstruct_source_path(i)` reproduces the exact
+    /// on-disk path the walk recorded for entry `i`.
+    pub(crate) source_bases: Vec<Arc<Path>>,
+    /// One-entry interning cache for [`Self::push_file_item`].
+    ///
+    /// Consecutive entries from the same source argument derive the identical
+    /// base, so caching the last `Arc<Path>` collapses them onto a single shared
+    /// allocation without the overhead of a full interning map.
+    last_source_base: Option<Arc<Path>>,
     /// Per-directory scoped filter chain for file list building and deletion.
     ///
     /// Combines global filter rules (from command-line or wire) with per-directory
@@ -135,7 +152,8 @@ impl GeneratorContext {
             protocol: handshake.protocol,
             config,
             file_list: DualFileList::new(),
-            full_paths: Vec::new(),
+            source_bases: Vec::new(),
+            last_source_base: None,
             filter_chain: FilterChain::empty(),
             negotiated_algorithms: handshake.negotiated_algorithms,
             compat_flags: handshake.compat_flags,
@@ -315,33 +333,66 @@ impl GeneratorContext {
     pub fn file_list(&self) -> &[FileEntry] {
         debug_assert_eq!(
             self.file_list.len(),
-            self.full_paths.len(),
-            "file_list and full_paths must be kept in sync"
+            self.source_bases.len(),
+            "file_list and source_bases must be kept in sync"
         );
         self.file_list.as_slice()
     }
 
-    /// Adds a file entry and its corresponding full path to the file list.
+    /// Adds a file entry and its corresponding on-disk source path to the list.
     ///
-    /// This method maintains the invariant that `file_list` and `full_paths`
+    /// `full_path` is the exact path the walk recorded for the entry (used to
+    /// open the source for delta generation). Rather than storing it verbatim,
+    /// this derives and interns the source-directory base so that
+    /// `base.join(entry.name())` reproduces `full_path` byte-for-byte (see
+    /// [`reconstruct_source_path`](Self::reconstruct_source_path)). Entries from
+    /// one source argument share a single base allocation.
+    ///
+    /// This method maintains the invariant that `file_list` and `source_bases`
     /// have the same length and corresponding entries at each index.
     pub(crate) fn push_file_item(&mut self, entry: FileEntry, full_path: PathBuf) {
         debug_assert_eq!(
             self.file_list.len(),
-            self.full_paths.len(),
-            "file_list and full_paths must be kept in sync before push"
+            self.source_bases.len(),
+            "file_list and source_bases must be kept in sync before push"
         );
+        let base = self.intern_source_base(&full_path, entry.path());
         self.file_list.push(entry);
-        self.full_paths.push(full_path);
+        self.source_bases.push(base);
     }
 
-    /// Clears both the file list and full paths arrays.
+    /// Derives the source base for `full_path`/`name` and interns it against the
+    /// one-entry cache, returning a shared `Arc<Path>`.
+    fn intern_source_base(&mut self, full_path: &Path, name: &Path) -> Arc<Path> {
+        let base = derive_source_base(full_path, name);
+        match &self.last_source_base {
+            Some(cached) if cached.as_ref() == base.as_path() => Arc::clone(cached),
+            _ => {
+                let arc: Arc<Path> = Arc::from(base.as_path());
+                self.last_source_base = Some(Arc::clone(&arc));
+                arc
+            }
+        }
+    }
+
+    /// Reconstructs the on-disk source path recorded for entry `ndx`.
     ///
-    /// This method maintains the invariant that both arrays are cleared together.
-    /// The legacy Vec and flat stores (when enabled) are both cleared.
+    /// Inverts [`push_file_item`](Self::push_file_item): the returned path equals
+    /// the `full_path` originally passed in, byte-for-byte, for every non-
+    /// degenerate source (single or multiple positional args, `--files-from`
+    /// `/./` anchors, daemon module roots, and arbitrarily nested names).
+    pub(crate) fn reconstruct_source_path(&self, ndx: usize) -> PathBuf {
+        join_source_path(&self.source_bases[ndx], self.file_list[ndx].path())
+    }
+
+    /// Clears both the file list and the source-base array.
+    ///
+    /// This method maintains the invariant that both arrays are cleared together
+    /// and resets the interning cache so a fresh build starts clean.
     pub(crate) fn clear_file_list(&mut self) {
         self.file_list = DualFileList::new();
-        self.full_paths.clear();
+        self.source_bases.clear();
+        self.last_source_base = None;
     }
 
     /// Determines if input multiplex should be activated based on mode and protocol.
@@ -624,10 +675,209 @@ impl GeneratorContext {
         );
 
         self.file_list.reclaim_segment(start, end);
-        // Also reclaim the parallel full_paths entries.
-        for path in &mut self.full_paths[start..end] {
-            *path = std::path::PathBuf::new();
+        // Also reclaim the parallel source_bases entries. Point them at a single
+        // shared empty Arc so dropping the reclaimed slots releases the last
+        // reference to the segment's source base(s).
+        let empty: Arc<Path> = Arc::from(Path::new(""));
+        for base in &mut self.source_bases[start..end] {
+            *base = Arc::clone(&empty);
         }
         self.incremental.first_segment_idx += 1;
+    }
+}
+
+/// Joins an interned source base with an entry's relative name to reproduce the
+/// on-disk path the walk recorded.
+///
+/// The `.` transfer-root entry stores its full directory path as the base (its
+/// relative name is `.`), so it is returned unchanged rather than gaining a
+/// trailing `/.`. Every other entry pushes the name's *components* onto the
+/// base, so the platform separator is used uniformly: the wire name is
+/// `/`-separated even on Windows (the flist sorts on `/`), while the base
+/// carries native separators. Extending by component - never concatenating raw
+/// path strings - keeps the result natively separated on every platform and
+/// avoids any `/`-vs-`\` byte surgery.
+fn join_source_path(base: &Path, name: &Path) -> PathBuf {
+    if name == Path::new(".") {
+        return base.to_path_buf();
+    }
+    let mut path = base.to_path_buf();
+    path.extend(name.components());
+    path
+}
+
+/// Derives the interned base for a `(full_path, name)` pair such that
+/// [`join_source_path`]`(base, name)` reproduces `full_path`.
+///
+/// The base is `full_path` with the `name`'s components stripped from its tail -
+/// the constant source-argument directory shared by every entry of a source.
+/// [`Path::ends_with`] compares whole path components, so a `/`-separated wire
+/// name matches a natively separated on-disk path on any platform; the strip is
+/// done entirely through [`std::path::Components`], never through byte or string
+/// suffix operations (which would mis-handle `/` vs `\` on Windows). For a
+/// degenerate operand whose recorded name is not a component suffix of the
+/// on-disk path (e.g. a trailing-slash source that resolved to a non-directory),
+/// the parent directory is used instead - reconstruction then opens the same
+/// inode, matching the pre-existing behaviour for such malformed operands.
+fn derive_source_base(full: &Path, name: &Path) -> PathBuf {
+    if name == Path::new(".") {
+        return full.to_path_buf();
+    }
+    if full.ends_with(name) {
+        let keep = full.components().count() - name.components().count();
+        return full.components().take(keep).collect();
+    }
+    full.parent()
+        .map_or_else(|| full.to_path_buf(), Path::to_path_buf)
+}
+
+#[cfg(all(test, unix))]
+mod source_base_tests {
+    //! Round-trip proof that interning a source base and reconstructing
+    //! `base.join(name)` reproduces the exact on-disk path the walk recorded,
+    //! for every case that made naive "reconstruct from entry alone" fail:
+    //! multiple positional sources with distinct bases, `--files-from` `/./`
+    //! anchors, daemon module roots, and arbitrarily nested names. Unix-gated
+    //! so the byte-for-byte assertions use forward-slash literals; the derive
+    //! itself is separator-agnostic (it strips/re-joins native components).
+    use super::{derive_source_base, join_source_path};
+    use std::path::Path;
+
+    fn round_trips(full: &str, name: &str) {
+        let full_p = Path::new(full);
+        let base = derive_source_base(full_p, Path::new(name));
+        let rebuilt = join_source_path(&base, Path::new(name));
+        assert_eq!(
+            rebuilt.as_os_str().as_encoded_bytes(),
+            full_p.as_os_str().as_encoded_bytes(),
+            "reconstructed path for name {name:?} under {full:?} diverged: got {rebuilt:?}"
+        );
+    }
+
+    #[test]
+    fn single_source_nested_names_round_trip() {
+        // rsync /srv/data/ dst : one base, arbitrarily nested wire names.
+        round_trips("/srv/data/file.txt", "file.txt");
+        round_trips("/srv/data/sub/file.txt", "sub/file.txt");
+        round_trips("/srv/data/a/b/c/d/e.bin", "a/b/c/d/e.bin");
+    }
+
+    #[test]
+    fn multi_source_distinct_bases_round_trip() {
+        // rsync /a/foo /b/bar dst : each positional keeps its own base, and the
+        // wire name (basename) alone cannot recover it - the stored base must.
+        round_trips("/a/foo", "foo");
+        round_trips("/b/bar", "bar");
+        // Two sources whose basenames collide but live under different bases.
+        round_trips("/one/data/x/y", "x/y");
+        round_trips("/two/data/x/y", "x/y");
+    }
+
+    #[test]
+    fn files_from_dot_anchor_round_trip() {
+        // --files-from with `from/./dir/sub` : base is everything before /./,
+        // the wire name is everything after.
+        round_trips("/export/from/dir/sub", "dir/sub");
+        round_trips("/export/from/dir/sub/leaf.dat", "dir/sub/leaf.dat");
+    }
+
+    #[test]
+    fn absolute_and_bare_bases_round_trip() {
+        // Absolute source with `/` base (receiver strips the leading slash).
+        round_trips("/foo/bar", "foo/bar");
+        // Bare relative basename: empty base, name == full.
+        round_trips("file", "file");
+        round_trips("rel/dir/file", "rel/dir/file");
+    }
+
+    #[test]
+    fn dot_transfer_root_entry_round_trips() {
+        // The "." transfer-root entry stores its full directory as the base and
+        // must not gain a trailing "/.".
+        let base = derive_source_base(Path::new("/srv/data"), Path::new("."));
+        assert_eq!(base, Path::new("/srv/data"));
+        assert_eq!(
+            join_source_path(&base, Path::new(".")),
+            Path::new("/srv/data")
+        );
+    }
+
+    #[test]
+    fn same_base_derives_identical_value_for_sharing() {
+        // Every entry of one source derives the identical base value, which is
+        // what lets the one-entry interning cache collapse them onto a single
+        // Arc allocation.
+        let a = derive_source_base(Path::new("/srv/data/x/y"), Path::new("x/y"));
+        let b = derive_source_base(Path::new("/srv/data/z"), Path::new("z"));
+        let c = derive_source_base(
+            Path::new("/srv/data/deep/nested/f"),
+            Path::new("deep/nested/f"),
+        );
+        assert_eq!(a, Path::new("/srv/data"));
+        assert_eq!(a, b);
+        assert_eq!(b, c);
+    }
+
+    #[test]
+    fn degenerate_trailing_slash_file_reconstructs_same_inode() {
+        // A trailing-slash source that resolved to a non-directory: the trailing
+        // slash sits after the name and is dropped by component handling, so the
+        // reconstruction loses it but opens the same inode.
+        let base = derive_source_base(Path::new("/srv/mod/file/"), Path::new("file"));
+        assert_eq!(base, Path::new("/srv/mod"));
+        assert_eq!(
+            join_source_path(&base, Path::new("file")),
+            Path::new("/srv/mod/file")
+        );
+    }
+}
+
+#[cfg(all(test, windows))]
+mod source_base_windows_tests {
+    //! Windows regression coverage: the wire name is `/`-separated (the flist
+    //! sorts on `/`) while the on-disk path uses `\`. A byte- or string-based
+    //! suffix strip mis-derives the base here, so this must run in Windows CI.
+    use super::{derive_source_base, join_source_path};
+    use std::path::{Path, PathBuf};
+
+    #[test]
+    fn forward_slash_wire_name_over_backslash_path_round_trips() {
+        // Exact shape of the failing push: name `dir/file`, on-disk `C:\src\dir\file`.
+        let full = Path::new(r"C:\src\dir\file");
+        let name = Path::new("dir/file");
+        let base = derive_source_base(full, name);
+        assert_eq!(base, Path::new(r"C:\src"));
+        let rebuilt = join_source_path(&base, name);
+        // Reconstructed natively and byte-for-byte equal to the original path.
+        assert_eq!(rebuilt, PathBuf::from(r"C:\src\dir\file"));
+        assert_eq!(
+            rebuilt.as_os_str().as_encoded_bytes(),
+            full.as_os_str().as_encoded_bytes(),
+        );
+    }
+
+    #[test]
+    fn deep_forward_slash_name_round_trips() {
+        let full = Path::new(r"C:\a\b\c\d\e.bin");
+        let name = Path::new("b/c/d/e.bin");
+        let base = derive_source_base(full, name);
+        assert_eq!(base, Path::new(r"C:\a"));
+        assert_eq!(
+            join_source_path(&base, name),
+            PathBuf::from(r"C:\a\b\c\d\e.bin"),
+        );
+    }
+
+    #[test]
+    fn top_level_backslash_name_round_trips() {
+        // A top-level entry: on-disk `\` name, wire `/` (single component here).
+        let full = Path::new(r"C:\srv\module\foo");
+        let name = Path::new("foo");
+        let base = derive_source_base(full, name);
+        assert_eq!(base, Path::new(r"C:\srv\module"));
+        assert_eq!(
+            join_source_path(&base, name),
+            PathBuf::from(r"C:\srv\module\foo"),
+        );
     }
 }
