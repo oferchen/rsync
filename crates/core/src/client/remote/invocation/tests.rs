@@ -1606,7 +1606,10 @@ fn includes_append_long_arg() {
     let config = ClientConfig::builder().append(true).build();
     let args = build_sender_args(&config);
     let count = args.iter().filter(|a| *a == "--append").count();
-    assert_eq!(count, 1, "plain --append should emit one --append: {args:?}");
+    assert_eq!(
+        count, 1,
+        "plain --append should emit one --append: {args:?}"
+    );
     assert!(
         !args.iter().any(|a| a == "--append-verify"),
         "must not forward --append-verify to the server: {args:?}"

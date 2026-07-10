@@ -580,8 +580,8 @@ mod long_options {
         // upstream: options.c:1722-1726 - OPT_APPEND increments append_mode on
         // am_server, so two --append flags select append-verify (append_mode == 2).
         // The client encodes --append-verify this way; the server must recover it.
-        let parsed =
-            parse_test_args(["--server", "--sender", "--append", "--append", ".", "src"]).expect("parse");
+        let parsed = parse_test_args(["--server", "--sender", "--append", "--append", ".", "src"])
+            .expect("parse");
         assert_eq!(parsed.append, Some(true));
         assert!(
             parsed.append_verify,
