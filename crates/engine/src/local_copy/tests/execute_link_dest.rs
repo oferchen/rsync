@@ -280,6 +280,146 @@ fn link_dest_uses_first_matching_directory() {
     assert!(summary.hard_links_created() >= 1);
 }
 
+// upstream: generator.c:954-983 try_dests_reg() scans every basis dir and picks
+// the BEST match_level, so an earlier match_level-2 basis (data matches but perms
+// differ) must NOT shadow a later match_level-3 basis (data + attrs match). The
+// exact basis is hard-linked with no attr reapply; a first-match scan would
+// wrongly copy the earlier basis and reapply attrs.
+#[cfg(unix)]
+#[test]
+fn link_dest_best_match_prefers_exact_over_content_only() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let temp = tempdir().expect("tempdir");
+    let source_dir = temp.path().join("source");
+    fs::create_dir_all(&source_dir).expect("create source");
+    let source_file = source_dir.join("file.txt");
+    fs::write(&source_file, b"shared content").expect("write source");
+    fs::set_permissions(&source_file, fs::Permissions::from_mode(0o644)).expect("chmod source");
+
+    // backup1: data + mtime match but PERMS differ -> match_level 2.
+    let link_dest1 = temp.path().join("backup1");
+    fs::create_dir_all(&link_dest1).expect("create link-dest1");
+    let link_dest1_file = link_dest1.join("file.txt");
+    fs::write(&link_dest1_file, b"shared content").expect("write link-dest1");
+    fs::set_permissions(&link_dest1_file, fs::Permissions::from_mode(0o600)).expect("chmod ld1");
+
+    // backup2: data + mtime + perms all match -> match_level 3 (exact).
+    let link_dest2 = temp.path().join("backup2");
+    fs::create_dir_all(&link_dest2).expect("create link-dest2");
+    let link_dest2_file = link_dest2.join("file.txt");
+    fs::write(&link_dest2_file, b"shared content").expect("write link-dest2");
+    fs::set_permissions(&link_dest2_file, fs::Permissions::from_mode(0o644)).expect("chmod ld2");
+
+    let source_meta = fs::metadata(&source_file).expect("source metadata");
+    let ftime = FileTime::from_system_time(source_meta.modified().expect("source mtime"));
+    set_file_times(&link_dest1_file, ftime, ftime).expect("sync ld1");
+    set_file_times(&link_dest2_file, ftime, ftime).expect("sync ld2");
+
+    let dest_dir = temp.path().join("dest");
+    fs::create_dir_all(&dest_dir).expect("create dest");
+    let dest_file = dest_dir.join("file.txt");
+    let operands = vec![
+        source_file.into_os_string(),
+        dest_file.clone().into_os_string(),
+    ];
+    let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
+
+    let options = LocalCopyOptions::default()
+        .times(true)
+        .permissions(true)
+        .extend_link_dests([link_dest1.clone(), link_dest2.clone()]);
+    let summary = plan
+        .execute_with_options(LocalCopyExecution::Apply, options)
+        .expect("copy succeeds");
+
+    let dest_meta = fs::metadata(&dest_file).expect("dest metadata");
+    let link_dest2_meta = fs::metadata(&link_dest2_file).expect("link-dest2 metadata");
+    let link_dest1_meta = fs::metadata(&link_dest1_file).expect("link-dest1 metadata");
+
+    // The exact (match_level 3) basis wins even though it is second.
+    assert_eq!(
+        dest_meta.ino(),
+        link_dest2_meta.ino(),
+        "destination must hard-link the exact (level-3) basis, not the earlier level-2 one"
+    );
+    assert_ne!(
+        dest_meta.ino(),
+        link_dest1_meta.ino(),
+        "destination must not link the level-2 basis"
+    );
+    assert!(summary.hard_links_created() >= 1);
+    assert_eq!(summary.files_copied(), 0, "an exact basis is hard-linked, not copied");
+    // The level-2 basis inode must not be mutated (no attr reapply on a shared inode).
+    assert_eq!(
+        link_dest1_meta.permissions().mode() & 0o777,
+        0o600,
+        "the unused level-2 basis must keep its original permissions"
+    );
+}
+
+// upstream: generator.c:995-1031 - a LINK_DEST basis whose data matches but whose
+// attributes differ (match_level 2) is NOT hard-linked; upstream falls through to
+// try_a_copy/copy_altdest_file, copying into a fresh inode and reapplying the
+// source attrs. Hard-linking + reapplying would corrupt the shared basis inode.
+#[cfg(unix)]
+#[test]
+fn link_dest_content_match_attrs_differ_copies_not_links() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let temp = tempdir().expect("tempdir");
+    let source_dir = temp.path().join("source");
+    fs::create_dir_all(&source_dir).expect("create source");
+    let source_file = source_dir.join("file.txt");
+    fs::write(&source_file, b"payload").expect("write source");
+    fs::set_permissions(&source_file, fs::Permissions::from_mode(0o644)).expect("chmod source");
+
+    let link_dest_dir = temp.path().join("previous");
+    fs::create_dir_all(&link_dest_dir).expect("create link-dest");
+    let link_dest_file = link_dest_dir.join("file.txt");
+    fs::write(&link_dest_file, b"payload").expect("write link-dest");
+    fs::set_permissions(&link_dest_file, fs::Permissions::from_mode(0o600)).expect("chmod ld");
+
+    let source_meta = fs::metadata(&source_file).expect("source metadata");
+    let ftime = FileTime::from_system_time(source_meta.modified().expect("source mtime"));
+    set_file_times(&link_dest_file, ftime, ftime).expect("sync ld");
+
+    let dest_dir = temp.path().join("dest");
+    fs::create_dir_all(&dest_dir).expect("create dest");
+    let dest_file = dest_dir.join("file.txt");
+    let operands = vec![
+        source_file.into_os_string(),
+        dest_file.clone().into_os_string(),
+    ];
+    let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
+
+    let options = LocalCopyOptions::default()
+        .times(true)
+        .permissions(true)
+        .extend_link_dests([link_dest_dir.clone()]);
+    plan.execute_with_options(LocalCopyExecution::Apply, options)
+        .expect("copy succeeds");
+
+    let dest_meta = fs::metadata(&dest_file).expect("dest metadata");
+    let link_dest_meta = fs::metadata(&link_dest_file).expect("link-dest metadata");
+
+    // A match_level-2 basis is copied into a fresh inode, not hard-linked.
+    assert_ne!(
+        dest_meta.ino(),
+        link_dest_meta.ino(),
+        "a level-2 basis (attrs differ) must be copied, not hard-linked"
+    );
+    // The source's permissions are reapplied on the fresh copy.
+    assert_eq!(dest_meta.permissions().mode() & 0o777, 0o644);
+    // The basis inode is untouched (no shared-inode attr corruption).
+    assert_eq!(
+        link_dest_meta.permissions().mode() & 0o777,
+        0o600,
+        "the level-2 basis must keep its original permissions"
+    );
+    assert_eq!(fs::read(&dest_file).expect("read dest"), b"payload");
+}
+
 #[cfg(unix)]
 #[test]
 fn link_dest_works_with_directory_recursion() {

@@ -326,6 +326,16 @@ fn simulate_reference_match(
     }
 
     // --copy-dest / --compare-dest matches.
+    let preserve_xattrs = {
+        #[cfg(all(unix, feature = "xattr"))]
+        {
+            context.options().preserve_xattrs()
+        }
+        #[cfg(not(all(unix, feature = "xattr")))]
+        {
+            false
+        }
+    };
     let query = ReferenceQuery {
         destination,
         relative: record_path,
@@ -334,6 +344,8 @@ fn simulate_reference_match(
         size_only,
         ignore_times,
         checksum,
+        metadata_options: &metadata_options,
+        preserve_xattrs,
     };
     let Some(decision) = find_reference_action(context, query)? else {
         return Ok(false);
