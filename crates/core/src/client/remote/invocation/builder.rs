@@ -376,10 +376,15 @@ impl<'a> RemoteInvocationBuilder<'a> {
             args.push(OsString::from("--inplace"));
         }
 
+        // upstream: options.c:2951-2954 server_options() - append_mode is sent
+        // as one or two bare `--append` flags, never `--append-verify`. A
+        // second `--append` is what tells the server-side receiver to run in
+        // verify mode (append_mode == 2, OPT_APPEND increments it on am_server).
         if self.config.append() {
             args.push(OsString::from("--append"));
-        } else if self.config.append_verify() {
-            args.push(OsString::from("--append-verify"));
+            if self.config.append_verify() {
+                args.push(OsString::from("--append"));
+            }
         }
 
         if self.config.copy_unsafe_links() {

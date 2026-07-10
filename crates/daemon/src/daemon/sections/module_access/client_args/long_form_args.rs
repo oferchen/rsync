@@ -99,7 +99,14 @@ fn apply_long_form_args(client_args: &[String], config: &mut ServerConfig) -> Op
             "--inplace" => {
                 config.write.inplace = true;
             }
+            // upstream: options.c:1722-1726 - OPT_APPEND increments append_mode
+            // on the server side. A second `--append` (append_mode == 2) is the
+            // wire encoding of `--append-verify`; the client never sends the
+            // long-form `--append-verify` to a server.
             "--append" => {
+                if config.flags.append {
+                    config.flags.append_verify = true;
+                }
                 config.flags.append = true;
             }
             // upstream: options.c:2934-2935
