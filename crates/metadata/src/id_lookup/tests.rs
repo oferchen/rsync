@@ -1,12 +1,18 @@
 //! Tests for UID/GID lookup and mapping.
 
 use super::*;
-#[cfg(unix)]
 use std::sync::{Mutex, OnceLock};
 
 /// Global lock to serialize tests that modify shared caches.
 #[cfg(unix)]
 fn cache_lock() -> &'static Mutex<()> {
+    static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+    LOCK.get_or_init(|| Mutex::new(()))
+}
+
+/// Global lock serializing tests that touch the process-wide name memo and its
+/// miss counter (both are shared mutable state).
+fn name_cache_lock() -> &'static Mutex<()> {
     static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
     LOCK.get_or_init(|| Mutex::new(()))
 }
@@ -351,4 +357,139 @@ fn non_unix_map_uid_numeric_ids_flag_ignored() {
 #[test]
 fn non_unix_map_gid_numeric_ids_flag_ignored() {
     assert_eq!(map_gid(42, true), map_gid(42, false));
+}
+
+// Process-wide name memo (name_cache): each distinct id must trigger at most one
+// underlying NSS lookup, mirroring upstream add_uid()/add_gid().
+
+#[test]
+fn cached_user_name_looks_up_once_per_distinct_id() {
+    let _lock = name_cache_lock().lock().unwrap();
+    clear_name_caches();
+    reset_nss_lookup_count();
+
+    let first = lookup_user_name_cached(0).unwrap();
+    for _ in 0..8 {
+        let repeat = lookup_user_name_cached(0).unwrap();
+        assert_eq!(repeat, first, "cached name must be byte-for-byte identical");
+    }
+
+    assert_eq!(
+        nss_lookup_count(),
+        1,
+        "a distinct uid must hit NSS at most once"
+    );
+}
+
+#[test]
+fn cached_group_name_looks_up_once_per_distinct_id() {
+    let _lock = name_cache_lock().lock().unwrap();
+    clear_name_caches();
+    reset_nss_lookup_count();
+
+    let first = lookup_group_name_cached(0).unwrap();
+    for _ in 0..8 {
+        let repeat = lookup_group_name_cached(0).unwrap();
+        assert_eq!(repeat, first, "cached name must be byte-for-byte identical");
+    }
+
+    assert_eq!(
+        nss_lookup_count(),
+        1,
+        "a distinct gid must hit NSS at most once"
+    );
+}
+
+#[test]
+fn cached_user_name_matches_uncached_bytes() {
+    let _lock = name_cache_lock().lock().unwrap();
+    clear_name_caches();
+
+    let uncached = lookup_user_name(0).unwrap();
+    let cached = lookup_user_name_cached(0).unwrap();
+    assert_eq!(cached, uncached);
+}
+
+#[test]
+fn cached_group_name_matches_uncached_bytes() {
+    let _lock = name_cache_lock().lock().unwrap();
+    clear_name_caches();
+
+    let uncached = lookup_group_name(0).unwrap();
+    let cached = lookup_group_name_cached(0).unwrap();
+    assert_eq!(cached, uncached);
+}
+
+#[test]
+fn cached_lookup_memoizes_missing_id() {
+    let _lock = name_cache_lock().lock().unwrap();
+    clear_name_caches();
+    reset_nss_lookup_count();
+
+    // A non-existent id resolves to None; the None outcome must be cached too so
+    // repeated misses do not re-hit NSS.
+    let first = lookup_user_name_cached(999_999_999).unwrap();
+    let second = lookup_user_name_cached(999_999_999).unwrap();
+    assert_eq!(first, second);
+    assert_eq!(
+        nss_lookup_count(),
+        1,
+        "a cached None must not re-trigger NSS lookups"
+    );
+}
+
+#[test]
+fn cached_lookup_distinct_ids_each_look_up() {
+    let _lock = name_cache_lock().lock().unwrap();
+    clear_name_caches();
+    reset_nss_lookup_count();
+
+    let _ = lookup_user_name_cached(0).unwrap();
+    let _ = lookup_user_name_cached(999_999_998).unwrap();
+    assert_eq!(
+        nss_lookup_count(),
+        2,
+        "two distinct ids must each trigger exactly one NSS lookup"
+    );
+}
+
+struct FixedConverter;
+
+impl NameConverterCallbacks for FixedConverter {
+    fn uid_to_name(&mut self, _uid: u32) -> Option<String> {
+        Some("converted-user".to_string())
+    }
+    fn gid_to_name(&mut self, _gid: u32) -> Option<String> {
+        Some("converted-group".to_string())
+    }
+    fn name_to_uid(&mut self, _name: &str) -> Option<u32> {
+        None
+    }
+    fn name_to_gid(&mut self, _name: &str) -> Option<u32> {
+        None
+    }
+}
+
+#[test]
+fn cached_lookup_bypasses_cache_when_converter_installed() {
+    let _lock = name_cache_lock().lock().unwrap();
+    clear_name_caches();
+    reset_nss_lookup_count();
+
+    set_name_converter(Box::new(FixedConverter));
+
+    // The converter's per-thread result must win and must not consult or
+    // populate the process-wide memo.
+    let user = lookup_user_name_cached(4242).unwrap();
+    assert_eq!(user, Some(b"converted-user".to_vec()));
+    let group = lookup_group_name_cached(4242).unwrap();
+    assert_eq!(group, Some(b"converted-group".to_vec()));
+
+    assert_eq!(
+        nss_lookup_count(),
+        0,
+        "converter path must not touch the memo miss counter"
+    );
+
+    clear_name_converter();
 }

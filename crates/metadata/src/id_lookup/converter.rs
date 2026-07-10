@@ -49,3 +49,12 @@ pub fn clear_name_converter() {
         *slot.borrow_mut() = None;
     });
 }
+
+/// Reports whether a name converter is installed on the current thread.
+///
+/// The process-wide name memo bypasses caching when this returns `true`,
+/// because converter results are thread-local and must not be shared across
+/// threads.
+pub(super) fn has_name_converter() -> bool {
+    NAME_CONVERTER_SLOT.with(|slot| slot.borrow().is_some())
+}

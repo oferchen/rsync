@@ -11,7 +11,7 @@ use std::time::UNIX_EPOCH;
 
 use crate::local_copy::{CopyContext, LocalCopyError};
 #[cfg(unix)]
-use metadata::id_lookup::{lookup_group_name, lookup_user_name};
+use metadata::id_lookup::{lookup_group_name_cached, lookup_user_name_cached};
 
 /// Builds a protocol [`FileEntry`](protocol::flist::FileEntry) from filesystem metadata.
 ///
@@ -95,12 +95,12 @@ fn build_protocol_file_entry(
         // are set. The FileListWriter xflags computation checks whether the
         // entry has a name set via these accessors.
         if !numeric_ids {
-            if let Some(name) = lookup_user_name(uid).ok().flatten() {
+            if let Some(name) = lookup_user_name_cached(uid).ok().flatten() {
                 if let Ok(s) = String::from_utf8(name) {
                     entry.set_user_name(s);
                 }
             }
-            if let Some(name) = lookup_group_name(gid).ok().flatten() {
+            if let Some(name) = lookup_group_name_cached(gid).ok().flatten() {
                 if let Ok(s) = String::from_utf8(name) {
                     entry.set_group_name(s);
                 }

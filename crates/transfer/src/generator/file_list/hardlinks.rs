@@ -83,7 +83,7 @@ impl GeneratorContext {
     /// - `uidlist.c:add_uid()` / `add_gid()` - called during file list building
     #[cfg(unix)]
     pub fn collect_id_mappings(&mut self) {
-        use metadata::id_lookup::{lookup_group_name, lookup_user_name};
+        use metadata::id_lookup::{lookup_group_name_cached, lookup_user_name_cached};
 
         // Skip if numeric_ids is set - no name mapping needed
         if self.config.flags.numeric_ids {
@@ -99,7 +99,7 @@ impl GeneratorContext {
                 if let Some(uid) = entry.uid() {
                     // Skip expensive lookup if we already have this UID
                     if !self.uid_list.contains(uid) {
-                        let name = lookup_user_name(uid).ok().flatten();
+                        let name = lookup_user_name_cached(uid).ok().flatten();
                         self.uid_list.add_id(uid, name);
                     }
                 }
@@ -110,7 +110,7 @@ impl GeneratorContext {
                 if let Some(gid) = entry.gid() {
                     // Skip expensive lookup if we already have this GID
                     if !self.gid_list.contains(gid) {
-                        let name = lookup_group_name(gid).ok().flatten();
+                        let name = lookup_group_name_cached(gid).ok().flatten();
                         self.gid_list.add_id(gid, name);
                     }
                 }

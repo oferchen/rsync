@@ -99,7 +99,7 @@ impl GeneratorContext {
     /// or when the sender-side ACL cache is unavailable.
     #[cfg(unix)]
     pub(crate) fn collect_acl_id_mappings(&mut self) {
-        use metadata::id_lookup::{lookup_group_name, lookup_user_name};
+        use metadata::id_lookup::{lookup_group_name_cached, lookup_user_name_cached};
 
         if self.config.flags.numeric_ids || !self.config.flags.acls {
             return;
@@ -121,11 +121,11 @@ impl GeneratorContext {
         for (id, is_user) in named {
             if is_user {
                 if !self.uid_list.contains(id) {
-                    let name = lookup_user_name(id).ok().flatten();
+                    let name = lookup_user_name_cached(id).ok().flatten();
                     self.uid_list.add_id(id, name);
                 }
             } else if !self.gid_list.contains(id) {
-                let name = lookup_group_name(id).ok().flatten();
+                let name = lookup_group_name_cached(id).ok().flatten();
                 self.gid_list.add_id(id, name);
             }
         }

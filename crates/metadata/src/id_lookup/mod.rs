@@ -24,6 +24,7 @@
 #[cfg(unix)]
 mod cache;
 mod converter;
+mod name_cache;
 #[cfg(unix)]
 mod nss;
 #[cfg(not(unix))]
@@ -32,6 +33,7 @@ mod nss_stub;
 #[cfg(unix)]
 pub use cache::{map_gid, map_uid};
 pub use converter::{NameConverterCallbacks, clear_name_converter, set_name_converter};
+pub use name_cache::{lookup_group_name_cached, lookup_user_name_cached};
 #[cfg(unix)]
 pub use nss::{lookup_group_by_name, lookup_group_name, lookup_user_by_name, lookup_user_name};
 #[cfg(not(unix))]
@@ -60,6 +62,9 @@ pub fn map_gid(gid: u32, _numeric_ids: bool) -> Option<u32> {
 #[cfg(test)]
 #[cfg(unix)]
 pub use cache::{clear_id_caches, gid_cache_size, uid_cache_size};
+
+#[cfg(test)]
+pub use name_cache::{clear_name_caches, nss_lookup_count, reset_nss_lookup_count};
 
 #[cfg(test)]
 mod tests;
