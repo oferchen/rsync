@@ -141,6 +141,7 @@ impl<'a> CopyContext<'a> {
             buffer_pool,
             deferred_sync,
             checksum_cache: None,
+            destination_metadata_cache: HashMap::new(),
             io_errors_occurred: false,
             io_error_delete_warning_emitted: false,
             iconv_conversion_error: false,
@@ -644,6 +645,23 @@ impl<'a> CopyContext<'a> {
             .and_then(|cache| cache.lookup(source))
     }
 
+    /// Stores destination `lstat` metadata gathered during checksum-mode
+    /// prefetch so `copy_file` can reuse it instead of re-lstat'ing.
+    pub(super) fn set_destination_metadata_cache(
+        &mut self,
+        cache: HashMap<PathBuf, fs::Metadata>,
+    ) {
+        self.destination_metadata_cache = cache;
+    }
+
+    /// Removes and returns the cached destination `lstat` metadata for `dest`,
+    /// if the checksum-mode prefetch recorded it. Returns `None` when absent
+    /// (non-checksum mode, a non-regular destination, or already consumed), in
+    /// which case the caller performs its own `lstat`.
+    pub(super) fn take_cached_destination_metadata(&mut self, dest: &Path) -> Option<fs::Metadata> {
+        self.destination_metadata_cache.remove(dest)
+    }
+
     /// Returns a mutable reference to the reusable readdir buffer.
     ///
     /// Callers should `clear()` the buffer before filling it. The Vec's heap
@@ -658,6 +676,7 @@ impl<'a> CopyContext<'a> {
         if let Some(ref mut cache) = self.checksum_cache {
             cache.clear();
         }
+        self.destination_metadata_cache.clear();
     }
 
     /// Queues a deferred update for `--delay-updates` and records the hard-link
