@@ -17,6 +17,29 @@ use crate::temp_guard::TempFileGuard;
 
 use super::super::config::{BackupConfig, DiskCommitConfig, PartialMode};
 
+/// Sparse finalization carried from the write pass.
+///
+/// upstream: `fileio.c:43` `sparse_end()` - truncate the file to its logical
+/// length (leaving the trailing region a hole) and punch the in-basis zero
+/// runs so an `--inplace` update does not retain stale bytes.
+pub(super) struct SparseFinalize {
+    /// Logical end offset for `set_len` (`ftruncate`).
+    pub(super) logical_len: u64,
+    /// Absolute `(start, len)` ranges to punch out of the destination.
+    pub(super) holes: Vec<(u64, u64)>,
+}
+
+/// Truncates `target` to the sparse logical length and punches its in-basis
+/// zero runs. Runs before the file is put into place.
+fn finalize_sparse(target: &Path, sparse: &SparseFinalize) -> io::Result<()> {
+    let mut file = fs::OpenOptions::new().write(true).open(target)?;
+    file.set_len(sparse.logical_len)?;
+    for &(pos, len) in &sparse.holes {
+        fast_io::punch_hole(&mut file, pos, len)?;
+    }
+    Ok(())
+}
+
 /// Commit result indicating whether a cross-device copy occurred and
 /// whether the file was staged to the partial dir for delayed updates.
 pub(super) struct CommitOutcome {
@@ -54,7 +77,17 @@ pub(super) fn commit_file(
     cleanup_guard: &mut TempFileGuard,
     needs_rename: bool,
     bytes_written: u64,
+    sparse_final: Option<SparseFinalize>,
 ) -> io::Result<CommitOutcome> {
+    // upstream: fileio.c:43 sparse_end() - for the temp+rename path, truncate
+    // and punch the temp file before it is renamed into place. The inplace
+    // path finalizes in its dedicated branch below (after any backup).
+    if needs_rename {
+        if let Some(ref sparse) = sparse_final {
+            finalize_sparse(cleanup_guard.path(), sparse)?;
+        }
+    }
+
     // upstream: backup.c:make_backup() - rename existing file before overwrite
     // With delay_updates, backup happens during the sweep, not here.
     let backup_notice = if !config.delay_updates {
@@ -88,16 +121,22 @@ pub(super) fn commit_file(
         CleanupManager::global().unregister_temp_file(cleanup_guard.path());
         result
     } else if begin.is_inplace {
-        // upstream: receiver.c:340 - set_file_length(fd, F_LENGTH(file))
-        // In append mode, bytes_written only counts newly received data -
-        // the full file size includes the existing content we seeked past.
-        let final_size = if begin.append_offset > 0 {
-            begin.target_size
+        if let Some(ref sparse) = sparse_final {
+            // upstream: fileio.c:47-52 sparse_end() - punch stale basis blocks
+            // then ftruncate to the logical length for the in-place update.
+            finalize_sparse(&begin.file_path, sparse)?;
         } else {
-            bytes_written
-        };
-        let file = fs::OpenOptions::new().write(true).open(&begin.file_path)?;
-        file.set_len(final_size)?;
+            // upstream: receiver.c:340 - set_file_length(fd, F_LENGTH(file))
+            // In append mode, bytes_written only counts newly received data -
+            // the full file size includes the existing content we seeked past.
+            let final_size = if begin.append_offset > 0 {
+                begin.target_size
+            } else {
+                bytes_written
+            };
+            let file = fs::OpenOptions::new().write(true).open(&begin.file_path)?;
+            file.set_len(final_size)?;
+        }
         false
     } else {
         false
