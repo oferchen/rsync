@@ -51,6 +51,109 @@ fn test_transfer_stats_roundtrip_proto28() {
     assert_eq!(decoded.flist_xfertime, 0);
 }
 
+/// A real protocol-29 peer (rsync 2.6.9, or upstream `--protocol=29`) reads the
+/// end-of-run sender stats with `read_longint()` (io.h:29 `read_varlong30` ->
+/// `read_longint` for protocol < 30), i.e. 4 bytes per small value. Emitting the
+/// protocol >= 30 varlong form (3 bytes) leaves the peer's `handle_stats()` read
+/// short, so it never relays its final MSG_DONE and the goodbye exchange
+/// deadlocks. This pins the wire bytes to the legacy `write_longint` encoding so
+/// that regression cannot recur.
+#[test]
+fn test_transfer_stats_proto29_uses_legacy_longint_encoding() {
+    let stats = TransferStats {
+        total_read: 1024,
+        total_written: 2048,
+        total_size: 10000,
+        flist_buildtime: 500000,
+        flist_xfertime: 100000,
+        ..Default::default()
+    };
+
+    let mut buf = Vec::new();
+    stats.write_to(&mut buf, ProtocolVersion::V29).unwrap();
+
+    // 5 fields x write_longint (4 bytes each for values that fit in i32).
+    let expected: Vec<u8> = [1024i32, 2048, 10000, 500000, 100000]
+        .iter()
+        .flat_map(|v| v.to_le_bytes())
+        .collect();
+    assert_eq!(
+        buf, expected,
+        "proto-29 stats must be legacy 4-byte write_longint values"
+    );
+    assert_eq!(buf.len(), 20, "proto-29 stats: 5 fields x 4 bytes");
+}
+
+/// Protocol 28 omits the two flist-time fields (added at 29), so a proto-28 peer
+/// reads exactly 3 legacy `write_longint` values.
+#[test]
+fn test_transfer_stats_proto28_legacy_three_fields() {
+    let stats = TransferStats {
+        total_read: 5000,
+        total_written: 3000,
+        total_size: 50000,
+        flist_buildtime: 12345,
+        flist_xfertime: 67890,
+        ..Default::default()
+    };
+
+    let mut buf = Vec::new();
+    stats.write_to(&mut buf, ProtocolVersion::V28).unwrap();
+
+    let expected: Vec<u8> = [5000i32, 3000, 50000]
+        .iter()
+        .flat_map(|v| v.to_le_bytes())
+        .collect();
+    assert_eq!(buf, expected, "proto-28 omits flist times; 3 legacy fields");
+    assert_eq!(buf.len(), 12);
+}
+
+/// Protocol 30+ must remain byte-unchanged: the fix only redirects protocol < 30
+/// to the legacy encoding. Values that fit in `min_bytes=3` varlong stay 3 bytes.
+#[test]
+fn test_transfer_stats_proto30_varlong_bytes_unchanged() {
+    let stats = TransferStats {
+        total_read: 1024,
+        total_written: 2048,
+        total_size: 10000,
+        flist_buildtime: 500000,
+        flist_xfertime: 100000,
+        ..Default::default()
+    };
+
+    let mut buf = Vec::new();
+    stats.write_to(&mut buf, ProtocolVersion::V30).unwrap();
+
+    // 5 fields x varlong(min_bytes=3) = 15 bytes for these values.
+    assert_eq!(buf.len(), 15, "proto-30 stays on the varlong encoding");
+    assert_ne!(buf.len(), 20, "proto-30 must not use the legacy encoding");
+}
+
+/// Large values (> i32) exercise the `write_longint` 12-byte marker form on the
+/// legacy path and must round-trip against `read_from` at protocol 29.
+#[test]
+fn test_transfer_stats_proto29_large_value_roundtrip() {
+    let stats = TransferStats {
+        total_read: 5_000_000_000,
+        total_written: 3000,
+        total_size: 50000,
+        flist_buildtime: 12345,
+        flist_xfertime: 67890,
+        ..Default::default()
+    };
+
+    let mut buf = Vec::new();
+    stats.write_to(&mut buf, ProtocolVersion::V29).unwrap();
+
+    let mut cursor = Cursor::new(&buf);
+    let decoded = TransferStats::read_from(&mut cursor, ProtocolVersion::V29).unwrap();
+    assert_eq!(decoded.total_read, 5_000_000_000);
+    assert_eq!(decoded.total_written, 3000);
+    assert_eq!(decoded.total_size, 50000);
+    assert_eq!(decoded.flist_buildtime, 12345);
+    assert_eq!(decoded.flist_xfertime, 67890);
+}
+
 #[test]
 fn test_transfer_stats_swap_perspective() {
     let stats = TransferStats {

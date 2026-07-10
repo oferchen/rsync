@@ -14,8 +14,42 @@
 
 use std::io::{self, Read, Write};
 
-use crate::varint::{read_varlong30, write_varlong30};
+use crate::varint::{read_longint, read_varlong, write_longint, write_varlong};
 use crate::version::ProtocolVersion;
+
+/// Writes one stats field using upstream's `write_varlong30` macro semantics.
+///
+/// upstream: io.h:46 `write_varlong30()` - protocol < 30 uses the legacy
+/// `write_longint()` (4-byte little-endian, widening to 12 bytes for values
+/// that do not fit in a signed 32-bit int); protocol >= 30 uses the
+/// variable-length `write_varlong()` with `min_bytes`. A proto-29 peer reads
+/// these via `read_longint()`, so emitting the varlong form desyncs its
+/// end-of-run `handle_stats()` read and deadlocks the goodbye exchange.
+fn write_stat<W: Write>(
+    writer: &mut W,
+    value: i64,
+    min_bytes: u8,
+    protocol: ProtocolVersion,
+) -> io::Result<()> {
+    if protocol.as_u8() < 30 {
+        write_longint(writer, value)
+    } else {
+        write_varlong(writer, value, min_bytes)
+    }
+}
+
+/// Reads one stats field using upstream's `read_varlong30` macro semantics.
+///
+/// upstream: io.h:29 `read_varlong30()` - the read-side counterpart to
+/// [`write_stat`]; protocol < 30 uses `read_longint()`, protocol >= 30 uses
+/// `read_varlong()` with `min_bytes`.
+fn read_stat<R: Read>(reader: &mut R, min_bytes: u8, protocol: ProtocolVersion) -> io::Result<i64> {
+    if protocol.as_u8() < 30 {
+        read_longint(reader)
+    } else {
+        read_varlong(reader, min_bytes)
+    }
+}
 
 /// Transfer statistics exchanged between rsync processes.
 ///
@@ -197,13 +231,13 @@ impl TransferStats {
     ///
     /// Returns an error if writing to the stream fails.
     pub fn write_to<W: Write>(&self, writer: &mut W, protocol: ProtocolVersion) -> io::Result<()> {
-        write_varlong30(writer, self.total_read as i64, 3)?;
-        write_varlong30(writer, self.total_written as i64, 3)?;
-        write_varlong30(writer, self.total_size as i64, 3)?;
+        write_stat(writer, self.total_read as i64, 3, protocol)?;
+        write_stat(writer, self.total_written as i64, 3, protocol)?;
+        write_stat(writer, self.total_size as i64, 3, protocol)?;
 
         if protocol.supports_flist_times() {
-            write_varlong30(writer, self.flist_buildtime as i64, 3)?;
-            write_varlong30(writer, self.flist_xfertime as i64, 3)?;
+            write_stat(writer, self.flist_buildtime as i64, 3, protocol)?;
+            write_stat(writer, self.flist_xfertime as i64, 3, protocol)?;
         }
 
         Ok(())
@@ -217,13 +251,13 @@ impl TransferStats {
     ///
     /// Returns an error if reading from the stream fails.
     pub fn read_from<R: Read>(reader: &mut R, protocol: ProtocolVersion) -> io::Result<Self> {
-        let total_read = read_varlong30(reader, 3)? as u64;
-        let total_written = read_varlong30(reader, 3)? as u64;
-        let total_size = read_varlong30(reader, 3)? as u64;
+        let total_read = read_stat(reader, 3, protocol)? as u64;
+        let total_written = read_stat(reader, 3, protocol)? as u64;
+        let total_size = read_stat(reader, 3, protocol)? as u64;
 
         let (flist_buildtime, flist_xfertime) = if protocol.supports_flist_times() {
-            let buildtime = read_varlong30(reader, 3)? as u64;
-            let xfertime = read_varlong30(reader, 3)? as u64;
+            let buildtime = read_stat(reader, 3, protocol)? as u64;
+            let xfertime = read_stat(reader, 3, protocol)? as u64;
             (buildtime, xfertime)
         } else {
             (0, 0)
