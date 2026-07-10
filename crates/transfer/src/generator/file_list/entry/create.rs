@@ -261,7 +261,7 @@ impl GeneratorContext {
             // sending via XMIT_USER_NAME_FOLLOWS when INC_RECURSE is active.
             // Without names, the receiver can't map uid->name on the remote.
             if !self.config.flags.numeric_ids {
-                if let Ok(Some(name_bytes)) = metadata::id_lookup::lookup_user_name(uid) {
+                if let Ok(Some(name_bytes)) = metadata::id_lookup::lookup_user_name_cached(uid) {
                     if let Ok(name) = String::from_utf8(name_bytes) {
                         entry.set_user_name(name);
                     }
@@ -277,7 +277,7 @@ impl GeneratorContext {
             // upstream: flist.c:476-480 - add_gid() looks up name for inline
             // sending via XMIT_GROUP_NAME_FOLLOWS when INC_RECURSE is active.
             if !self.config.flags.numeric_ids {
-                if let Ok(Some(name_bytes)) = metadata::id_lookup::lookup_group_name(gid) {
+                if let Ok(Some(name_bytes)) = metadata::id_lookup::lookup_group_name_cached(gid) {
                     if let Ok(name) = String::from_utf8(name_bytes) {
                         entry.set_group_name(name);
                     }
