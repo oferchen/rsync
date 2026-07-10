@@ -32,8 +32,8 @@ use super::super::{DirSegment, GeneratorContext, PendingSegment, TaggedIndex};
 impl GeneratorContext {
     /// Partitions the sorted file list into segments for incremental recursion.
     ///
-    /// Reorders `file_list` and `full_paths` so that initial (top-level) entries
-    /// come first, followed by sub-directory entries in depth-first order. This
+    /// Reorders `file_list` and `source_bases` so that initial (top-level)
+    /// entries come first, then sub-directory entries in depth-first order. This
     /// makes NDX values correspond directly to indices in the reordered list.
     pub(in crate::generator) fn partition_file_list_for_inc_recurse(&mut self) {
         if !self.inc_recurse() || self.file_list.is_empty() {
@@ -131,7 +131,7 @@ impl GeneratorContext {
         }
     }
 
-    /// Reorders file_list/full_paths and builds pending segments from classification.
+    /// Reorders file_list/source_bases and builds pending segments from classification.
     ///
     /// Computes wire `dir_ndx` values that match the upstream receiver's `dir_flist`
     /// growth order:
@@ -154,20 +154,22 @@ impl GeneratorContext {
             .into_iter()
             .map(Some)
             .collect();
-        let mut paths: Vec<Option<std::path::PathBuf>> = std::mem::take(&mut self.full_paths)
-            .into_iter()
-            .map(Some)
-            .collect();
+        let mut bases: Vec<Option<std::sync::Arc<std::path::Path>>> =
+            std::mem::take(&mut self.source_bases)
+                .into_iter()
+                .map(Some)
+                .collect();
 
         let total = file_entries.len();
         self.file_list = protocol::flist::DualFileList::with_capacity(total);
-        self.full_paths = Vec::with_capacity(total);
+        self.source_bases = Vec::with_capacity(total);
 
         // Place initial entries first (move, not clone).
         for tagged in &initial_entries {
             self.file_list
                 .push(file_entries[tagged.file_idx].take().unwrap());
-            self.full_paths.push(paths[tagged.file_idx].take().unwrap());
+            self.source_bases
+                .push(bases[tagged.file_idx].take().unwrap());
         }
         self.incremental.initial_segment_count = Some(initial_entries.len());
 
@@ -208,7 +210,8 @@ impl GeneratorContext {
             for child in &seg.children {
                 self.file_list
                     .push(file_entries[child.file_idx].take().unwrap());
-                self.full_paths.push(paths[child.file_idx].take().unwrap());
+                self.source_bases
+                    .push(bases[child.file_idx].take().unwrap());
 
                 if let Some(child_nid) = child.node_id {
                     node_to_wire[child_nid] = wire_dir_ndx;

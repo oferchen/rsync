@@ -60,7 +60,7 @@ impl GeneratorContext {
         // upstream: flist.c:2192 - pre-allocate FLIST_START pointer slots
         const FLIST_START: usize = 4096;
         self.file_list.reserve(FLIST_START);
-        self.full_paths.reserve(FLIST_START);
+        self.source_bases.reserve(FLIST_START);
 
         let relative_paths = self.config.flags.relative;
         // upstream: flist.c:send_implied_dirs() - every parent directory of a
@@ -106,7 +106,7 @@ impl GeneratorContext {
         {
             let _t = PhaseTimer::new("file-list-sort");
             self.file_list
-                .sort_with_parallel(&mut self.full_paths, self.config.qsort);
+                .sort_with_parallel(&mut self.source_bases, self.config.qsort);
         }
 
         // upstream: hlink.c:match_hard_links() - must be called after sort
@@ -158,7 +158,7 @@ impl GeneratorContext {
 
         const FLIST_START: usize = 4096;
         self.file_list.reserve(FLIST_START);
-        self.full_paths.reserve(FLIST_START);
+        self.source_bases.reserve(FLIST_START);
 
         // upstream: flist.c:2287 - emit "." with XMIT_TOP_DIR for the root
         // transfer directory so --delete works correctly on the receiver side.
@@ -290,7 +290,7 @@ impl GeneratorContext {
         {
             let _t = PhaseTimer::new("file-list-sort");
             self.file_list
-                .sort_with_parallel(&mut self.full_paths, self.config.qsort);
+                .sort_with_parallel(&mut self.source_bases, self.config.qsort);
         }
 
         // upstream: hlink.c:match_hard_links() - must be called after sort

@@ -376,10 +376,10 @@ impl GeneratorContext {
             let file_entry = &self.file_list[ndx];
             debug_assert_eq!(
                 self.file_list.len(),
-                self.full_paths.len(),
-                "file_list and full_paths must be kept in sync"
+                self.source_bases.len(),
+                "file_list and source_bases must be kept in sync"
             );
-            let source_path = &self.full_paths[ndx];
+            let source_path = self.reconstruct_source_path(ndx);
             let source_path_display = source_path.display().to_string();
 
             let sig_blocks = read_signature_blocks(&mut *reader, &sum_head)?;
@@ -397,7 +397,7 @@ impl GeneratorContext {
             let file_size = file_entry.size();
 
             if has_basis {
-                let source: Box<dyn Read> = match self.open_source_reader(source_path, file_size) {
+                let source: Box<dyn Read> = match self.open_source_reader(&source_path, file_size) {
                     Ok(r) => r,
                     Err(e) => {
                         self.record_open_failure(&mut *writer, wire_ndx, &e, &source_path_display)?;
@@ -431,7 +431,7 @@ impl GeneratorContext {
                 let checksum_algorithm = self.get_checksum_algorithm();
                 let use_noatime = self.config.write.open_noatime;
                 let wire_ops = script_to_wire_delta(delta_script, block_length);
-                let use_compression = self.file_compression(source_path).is_some();
+                let use_compression = self.file_compression(&source_path).is_some();
                 let is_zlib = matches!(
                     negotiated_compression,
                     Some(protocol::CompressionAlgorithm::Zlib)
@@ -459,7 +459,7 @@ impl GeneratorContext {
                             None
                         },
                         is_zlib,
-                        source_path,
+                        &source_path,
                         use_noatime,
                         checksum_algorithm,
                     )?;
@@ -475,7 +475,7 @@ impl GeneratorContext {
                 // own 256 KB staging buffer with read_exact, so a BufReader would
                 // only add an extra memcpy per byte through its internal buffer.
                 let (source, src_fd): (Box<dyn Read>, Option<_>) = match self
-                    .open_source_unbuffered(source_path, file_size)
+                    .open_source_unbuffered(&source_path, file_size)
                 {
                     Ok(pair) => pair,
                     Err(e) => {
@@ -498,7 +498,7 @@ impl GeneratorContext {
                 )?;
 
                 let checksum_algorithm = self.get_checksum_algorithm();
-                let use_compression = self.file_compression(source_path).is_some();
+                let use_compression = self.file_compression(&source_path).is_some();
                 // upstream: io.c:859 - stats.total_written counts actual wire
                 // bytes after each write() syscall, not the source file size.
                 // Wrap the whole-file stream in a CountingWriter so the summary
@@ -556,7 +556,7 @@ impl GeneratorContext {
             // receiver's commit is confirmed; we run inline here at the
             // file-transfer boundary because the generator does not exchange
             // an MSG_SUCCESS round-trip with the receiver.
-            self.remove_source_file_if_requested(source_path);
+            self.remove_source_file_if_requested(&source_path);
 
             // upstream: sender.c:445-446
             // rprintf(FINFO, "sender finished %s%s%s\n", path,slash,fname)

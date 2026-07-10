@@ -3822,9 +3822,10 @@ fn empty_segment_sends_wire_bytes() {
     ctx.incremental.ndx_segments = vec![(0, 0)];
 
     // Add a dummy file entry so the file_list is non-empty (flist_start=0).
-    ctx.file_list
-        .push(protocol::flist::FileEntry::new_file("x".into(), 1, 0o644));
-    ctx.full_paths.push(PathBuf::from("x"));
+    ctx.push_file_item(
+        protocol::flist::FileEntry::new_file("x".into(), 1, 0o644),
+        PathBuf::from("x"),
+    );
 
     let seg = super::PendingSegment {
         parent_dir_ndx: 0,
@@ -3861,8 +3862,7 @@ fn nonempty_segment_also_sends_wire_bytes() {
 
     ctx.incremental.ndx_segments = vec![(0, 0)];
     let entry = protocol::flist::FileEntry::new_file("a.txt".into(), 10, 0o644);
-    ctx.file_list.push(entry);
-    ctx.full_paths.push(PathBuf::from("a.txt"));
+    ctx.push_file_item(entry, PathBuf::from("a.txt"));
 
     let seg = super::PendingSegment {
         parent_dir_ndx: 0,
@@ -4354,4 +4354,47 @@ mod itemize_emit_gate {
             "ITEM_XNAME_FOLLOWS must force an itemize line under upstream gate; got: {lines:?}"
         );
     }
+}
+
+/// Interned source bases must reconstruct the exact on-disk path pushed for
+/// every entry - including multiple positional sources with distinct bases and
+/// a `--files-from` `/./`-anchored source - and entries of one source must
+/// share a single base allocation instead of each owning a path copy.
+#[cfg(unix)]
+#[test]
+fn source_base_interning_round_trips_and_shares() {
+    let handshake = test_handshake();
+    let mut ctx = GeneratorContext::new_for_test(&handshake, test_config());
+
+    // (full on-disk path, wire-relative name) as the walk would record them.
+    let items: &[(&str, &str)] = &[
+        ("/a/foo", "foo"),                           // source 1, base /a
+        ("/a/foo/sub/leaf.txt", "foo/sub/leaf.txt"), // nested child, base /a
+        ("/b/bar", "bar"),                           // source 2, base /b
+        ("/export/from/dir/sub", "dir/sub"),         // /./ anchor, base /export/from
+    ];
+    for (full, name) in items {
+        let entry = protocol::flist::FileEntry::new_file(PathBuf::from(name), 1, 0o644);
+        ctx.push_file_item(entry, PathBuf::from(full));
+    }
+
+    // Each reconstructed path equals the exact full path pushed.
+    for (i, (full, _)) in items.iter().enumerate() {
+        assert_eq!(
+            ctx.reconstruct_source_path(i),
+            PathBuf::from(full),
+            "entry {i} reconstructed path diverged from the pushed full path",
+        );
+    }
+
+    // Consecutive same-source entries (base /a) share one interned Arc.
+    assert!(
+        std::sync::Arc::ptr_eq(&ctx.source_bases[0], &ctx.source_bases[1]),
+        "same-source entries must share one interned base Arc",
+    );
+    // A different source base is a distinct allocation.
+    assert!(
+        !std::sync::Arc::ptr_eq(&ctx.source_bases[1], &ctx.source_bases[2]),
+        "distinct source bases must not share an allocation",
+    );
 }
