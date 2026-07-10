@@ -141,20 +141,15 @@ fn protect_keeps_extraneous_dest_file_from_delete() {
 /// (exclude.c:1058-1061), so a risk (include) matched before a protect
 /// (exclude) yields "may delete" and the delete pass removes the file.
 ///
-/// KNOWN DIVERGENCE (verified on Linux against rsync 3.4.3-149):
-/// oc-rsync keeps `secret.log` here, whereas upstream deletes it. The engine's
-/// protect/risk evaluator in
-/// `crates/engine/src/local_copy/filter_program/segments.rs` iterates the whole
-/// `protect_risk` chain and applies every match, so a later `P *.log`
-/// (`outcome.protect()`) overwrites the earlier `R secret.log`
-/// (`outcome.unprotect()`) - last-match-wins instead of upstream's
-/// first-match-wins. The include/exclude loop in the same file already latches
-/// on the first match via `transfer_decided()`; the protect/risk loop lacks the
-/// equivalent guard.
+/// The engine's protect/risk evaluator in
+/// `crates/engine/src/local_copy/filter_program/segments.rs` latches on the
+/// first matching protect/risk rule via `outcome.protection_decided()`, so an
+/// earlier `R secret.log` (`outcome.unprotect()`) wins over a later `P *.log`
+/// (`outcome.protect()`) - first-match-wins, mirroring the include/exclude loop
+/// in the same file (which latches via `transfer_decided()`).
 ///
-/// This test asserts the UPSTREAM-CORRECT outcome and is `#[ignore]`d until the
-/// evaluator is fixed to break on the first matching protect/risk rule. It must
-/// not be changed to assert oc's current (wrong) last-match behaviour.
+/// This test asserts the UPSTREAM-CORRECT outcome. It must not be changed to
+/// assert last-match-wins behaviour.
 #[test]
 fn risk_re_exposes_protected_dest_file_to_delete() {
     let temp = tempdir().expect("tempdir");
