@@ -295,10 +295,10 @@ jobs:
       # build it inline via the RP28.b.1 helper to keep the cell
       # self-sufficient. The harness exits 77 when either binary is
       # missing so the cell becomes a no-op rather than a false failure.
-      # Non-blocking via `continue-on-error: true` until RP28.k promotes
-      # pre-30 parity to a required check.
+      # Blocking: the pre-30 daemon-sender end-of-transfer stats deadlock is
+      # fixed (proto < 30 now emits fixed 4-byte longint stats, matching
+      # `write_varlong30`), so the full D1-D10 matrix passes against 2.6.9.
       - name: Run rsync 2.6.9 daemon-mode client interop (RP28.e.2)
-        continue-on-error: true
         run: |
           set -euo pipefail
           RSYNC_269="target/interop/upstream-install/2.6.9/bin/rsync"
@@ -317,12 +317,9 @@ jobs:
             exit 1
           fi
 
-          # Outer wall-clock guard. oc-rsync as a daemon *sender* stalls in the
-          # end-of-transfer phase against a protocol-29 client (the pull legs of
-          # this matrix), so per-fixture 60s timeouts would otherwise accumulate
-          # and consume the whole job budget. The harness traps SIGTERM to stop
-          # its daemon. This cell is continue-on-error, so a timeout here fails
-          # fast without cancelling the job.
+          # Outer wall-clock guard: bound total runtime so an unexpected stall in
+          # any fixture cannot consume the whole job budget. The harness traps
+          # SIGTERM to stop its daemon; a timeout here surfaces as a hard failure.
           timeout --signal=TERM --kill-after=30 360 \
             bash scripts/rp28_e_1_run.sh \
             --oc-rsync "$OC_RSYNC" \
@@ -348,11 +345,10 @@ jobs:
       # `target/interop/upstream-install/2.6.9/bin/rsync`; falls back to
       # the RP28.b.1 build helper if the cache is cold. The harness
       # exits 77 when either binary is missing so the cell becomes a
-      # no-op rather than a false failure. Non-blocking via
-      # `continue-on-error: true` until RP28.k promotes pre-30 parity
-      # to a required check.
+      # no-op rather than a false failure. Blocking: the pre-30 stats
+      # deadlock that stalled the proto-29 legs is fixed, so the full
+      # F1-F12 matrix passes with 2.6.9 as the daemon.
       - name: Run rsync 2.6.9 client-mode daemon interop (RP28.f.2)
-        continue-on-error: true
         run: |
           set -euo pipefail
           RSYNC_269="target/interop/upstream-install/2.6.9/bin/rsync"
@@ -371,10 +367,9 @@ jobs:
             exit 1
           fi
 
-          # Outer wall-clock guard (see RP28.e.2 cell): bound total runtime so a
-          # stalled legacy proto-29 fixture cannot consume the job budget. The
-          # harness traps SIGTERM to stop its daemon; continue-on-error means a
-          # timeout fails fast without cancelling the job.
+          # Outer wall-clock guard (see RP28.e.2 cell): bound total runtime so an
+          # unexpected stall in any fixture cannot consume the job budget. The
+          # harness traps SIGTERM to stop its daemon; a timeout is a hard failure.
           timeout --signal=TERM --kill-after=30 360 \
             bash scripts/rp28_f_1_run.sh \
             --oc-rsync "$OC_RSYNC" \
