@@ -432,7 +432,18 @@ impl<'a> RemoteInvocationBuilder<'a> {
             args.push(OsString::from("--remove-source-files"));
         }
 
-        if !self.config.implied_dirs() {
+        // upstream: options.c:2976-2977 - `if (relative_paths && !implied_dirs
+        // && (!am_sender || protocol_version >= 30)) args[ac++] =
+        // "--no-implied-dirs";`. The flag is forwarded to the peer only when
+        // relative paths are active; implied dirs exist solely for
+        // relative-rooted transfers, so a non-relative transfer never sends it.
+        // The `(!am_sender || protocol_version >= 30)` guard is always satisfied
+        // for oc's modern protocol (>= 30), so gating on `relative_paths` alone
+        // matches upstream. Without the `relative_paths` gate a non-relative
+        // transfer with `implied_dirs = 0` (options.c:2207 forces this) would
+        // wrongly forward `--no-implied-dirs`, which the remote sender then
+        // link_stat()s as a source path (exit 23).
+        if self.config.relative_paths() && !self.config.implied_dirs() {
             args.push(OsString::from("--no-implied-dirs"));
         }
 

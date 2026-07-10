@@ -122,6 +122,16 @@ where
             }
         };
 
+    // upstream: main.c:1271 - "keep_dirlinks = 0; /* Must be disabled on the
+    // sender. */". keep-dirlinks is a receiver-only feature (it follows a
+    // destination dir-symlink); the sender reads the source, never the
+    // destination, so force it off whenever this process is the sender
+    // (Generator role). The client still forwards `-K` so the peer receiver
+    // honours it; only the sender's own copy is cleared.
+    if role == ServerRole::Generator {
+        config.flags.keep_dirlinks = false;
+    }
+
     // Apply value-bearing flags, returning parse errors to the client.
     // upstream: options.c - server_options() sends these as `--flag=value`.
     if let Err(code) = apply_value_flags(&mut config, &long_flags, stderr, program_brand) {
