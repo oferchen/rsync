@@ -543,8 +543,6 @@ where
     // upstream: options.c:2176-2177 - xfer_dirs = 1 when files_from is active
     let dirs = if files_from_active { Some(true) } else { dirs };
 
-    let implied_dirs = implied_dirs_option.unwrap_or(true);
-
     // upstream: compat.c:710-748 - local transfers negotiate compat_flags
     // between sender and receiver. For protocol 32 with full capability
     // string (`.LsfxCIvu`), the flags include SAFE_FILE_LIST,
@@ -737,6 +735,16 @@ where
         Some(true)
     } else {
         relative
+    };
+
+    // upstream: options.c:2207-2208 - `if (!relative_paths) implied_dirs = 0;`.
+    // Implied directories only exist for relative-rooted transfer paths, so
+    // when relative paths are disabled implied_dirs is forced off regardless
+    // of any explicit `--implied-dirs`. Otherwise it defaults on.
+    let implied_dirs = if effective_relative.unwrap_or(false) {
+        implied_dirs_option.unwrap_or(true)
+    } else {
+        false
     };
 
     let metadata = match metadata::compute_metadata_settings(metadata::MetadataInputs {
