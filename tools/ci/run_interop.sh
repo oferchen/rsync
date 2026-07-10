@@ -1257,6 +1257,18 @@ comp_run_scenario() {
       # Place a .rsync-filter merge file in source that excludes *.dat files
       printf 'exclude *.dat\n' > "$sdir/.rsync-filter"
       ;;
+    acls)
+      # Attach an extended (named-user) ACL to a source file so -avA has real
+      # ACL data to transfer. The named-user entry forces a non-trivial ACL
+      # plus a mask, which upstream encodes on the wire (rsync ACL flist
+      # fields). Verified in the acls) case below via getfacl src-vs-dst.
+      setfacl -m "u:$(id -u):rwx" "$sdir/hello.txt" 2>/dev/null || true
+      ;;
+    xattrs)
+      # Attach a user.* xattr to a source file so -avX has real xattr data to
+      # transfer. Verified in the xattrs) case below via getfattr src-vs-dst.
+      setfattr -n user.interop_test -v verifyme "$sdir/hello.txt" 2>/dev/null || true
+      ;;
     # parallel-threshold setup removed pending PIP-7 fix of parallel-receive-delta
     # receiver corruption (tracking #4720 follow-up). Re-add when the receiver
     # corruption fix lands and parallel-receive-delta returns to default features.
@@ -1264,6 +1276,9 @@ comp_run_scenario() {
 
   # shellcheck disable=SC2086
   local transfer_log="${log}.transfer"
+  # ACL/xattr signatures captured from the source pre-cleanup, asserted in the
+  # acls/xattrs verify arms below.
+  local src_acl_sig="" src_xattr_sig=""
   # Resolve --files-from path to absolute (file placed in dest dir during prep)
   local resolved_flags="$flags"
   if [[ "$resolved_flags" == *"--files-from=filelist.txt"* ]]; then
@@ -1294,6 +1309,17 @@ comp_run_scenario() {
     safe-links) rm -f "$sdir/unsafe_link.txt" ;;
     sparse) rm -f "$sdir/sparse_test.bin" ;;
     merge-filter) rm -f "$sdir/.rsync-filter" ;;
+    acls)
+      # Capture the source ACL before stripping so the verify below can assert
+      # the destination round-tripped it (source is reused across scenarios, so
+      # its extended ACL must not linger and perturb later perm comparisons).
+      src_acl_sig=$(getfacl -cn "$sdir/hello.txt" 2>/dev/null)
+      setfacl -b "$sdir/hello.txt" 2>/dev/null || true
+      ;;
+    xattrs)
+      src_xattr_sig=$(getfattr -d -m user.interop_test "$sdir/hello.txt" 2>/dev/null | grep '^user\.')
+      setfattr -x user.interop_test "$sdir/hello.txt" 2>/dev/null || true
+      ;;
     # parallel-threshold cleanup removed pending PIP-7 fix (#4720 follow-up).
   esac
 
@@ -1510,8 +1536,18 @@ comp_run_scenario() {
       return 0
       ;;
     acls)
-      # ACLs transfer should not break the transfer itself
+      # -avA must round-trip the named-user ACL attached to the source (the
+      # scenario is only registered when both the upstream binary and the host
+      # filesystem support ACLs, so this arm always has real ACL data).
       comp_verify_transfer "$sdir" "$ddir" || return 1
+      local dst_acl_sig
+      dst_acl_sig=$(getfacl -cn "$ddir/hello.txt" 2>/dev/null)
+      if [[ "$src_acl_sig" != "$dst_acl_sig" ]]; then
+        echo "    -avA: ACL not preserved on hello.txt"
+        echo "      src ACL: ${src_acl_sig//$'\n'/ | }"
+        echo "      dst ACL: ${dst_acl_sig//$'\n'/ | }"
+        return 1
+      fi
       return 0
       ;;
     compare-dest)
@@ -1628,8 +1664,18 @@ comp_run_scenario() {
       return 0
       ;;
     xattrs)
-      # -X transfer should not break the transfer itself
+      # -avX must round-trip the user.interop_test xattr attached to the source
+      # (scenario registered only when the upstream binary and host filesystem
+      # support xattrs, so this arm always has real xattr data).
       comp_verify_transfer "$sdir" "$ddir" || return 1
+      local dst_xattr_sig
+      dst_xattr_sig=$(getfattr -d -m user.interop_test "$ddir/hello.txt" 2>/dev/null | grep '^user\.')
+      if [[ "$src_xattr_sig" != "$dst_xattr_sig" ]]; then
+        echo "    -avX: xattr not preserved on hello.txt"
+        echo "      src xattr: ${src_xattr_sig:-<none>}"
+        echo "      dst xattr: ${dst_xattr_sig:-<none>}"
+        return 1
+      fi
       return 0
       ;;
     itemize)
@@ -10800,6 +10846,12 @@ CONF
   fmm_case_merge "merge-e"   ".rules" "- b.txt"           ":e .rules"
   fmm_case_merge "merge-w"   ".rules" "a.txt b.txt"       ":w- .rules"
   fmm_case_merge "merge-w-p" ".rules" "-_a.txt	-_b.txt" ":w .rules"
+  # C: CVS-style per-dir merge. The `C` modifier implies no-prefixes +
+  # word-split + no-inherit + cvs-ignore (upstream exclude.c:1248-1254), so the
+  # whitespace-separated tokens "a.txt b.txt" become two bare excludes parsed
+  # from `.cvsignore`. The PUSH leg gives oc's own `:C` dir-merge parse teeth
+  # (crates/filters/src/merge/parse.rs `C` modifier + chain cvs-token parse).
+  fmm_case_merge "merge-C"   ".cvsignore" "a.txt b.txt"   ":C .cvsignore"
 
   stop_upstream_daemon
 
@@ -11176,6 +11228,50 @@ run_standalone_interop_tests() {
   return "$unexpected"
 }
 
+# Detect whether the host toolchain and the workdir filesystem can actually
+# set and read back POSIX ACLs / user xattrs. Without this, -avA/-avX legs
+# would transfer nothing meaningful (source carries no ACL/xattr) and the
+# verify would degrade to a bare tree compare. Cached in HOST_ACL_OK /
+# HOST_XATTR_OK (1 = usable, 0 = not). Linux tooling (setfacl/getfacl,
+# setfattr/getfattr) - the interop harness runs on Linux CI hosts.
+detect_host_acl_xattr_support() {
+  [[ -n "${HOST_ACL_OK:-}" ]] && return
+  HOST_ACL_OK=0
+  HOST_XATTR_OK=0
+  local probe="${workdir}/.acl-xattr-probe"
+  if ! : > "$probe" 2>/dev/null; then
+    return
+  fi
+  if command -v setfacl >/dev/null 2>&1 && command -v getfacl >/dev/null 2>&1; then
+    if setfacl -m "u:$(id -u):rwx" "$probe" 2>/dev/null \
+        && getfacl -cn "$probe" 2>/dev/null | grep -q '^user:[0-9]'; then
+      HOST_ACL_OK=1
+    fi
+  fi
+  if command -v setfattr >/dev/null 2>&1 && command -v getfattr >/dev/null 2>&1; then
+    if setfattr -n user.acl_xattr_probe -v ok "$probe" 2>/dev/null \
+        && getfattr -n user.acl_xattr_probe "$probe" 2>/dev/null | grep -q 'acl_xattr_probe'; then
+      HOST_XATTR_OK=1
+    fi
+  fi
+  rm -f "$probe"
+}
+
+# Return 0 if the given upstream binary advertises ACL support in its
+# capability line. Upstream prints "ACLs" when SUPPORT_ACLS is compiled in and
+# "no ACLs" otherwise (upstream usage.c:104-107 print_info_flags).
+upstream_supports_acl() {
+  local caps; caps=$("$1" --version 2>&1 || true)
+  grep -qiw "ACLs" <<<"$caps" && ! grep -qi "no ACLs" <<<"$caps"
+}
+
+# Return 0 if the given upstream binary advertises xattr support (upstream
+# usage.c:109-112; "xattrs" vs "no xattrs").
+upstream_supports_xattr() {
+  local caps; caps=$("$1" --version 2>&1 || true)
+  grep -qiw "xattrs" <<<"$caps" && ! grep -qi "no xattrs" <<<"$caps"
+}
+
 # Uses global $comp_src, $oc_client, $up_identity, $hard_timeout.
 run_comprehensive_interop_case() {
   local version=$1 upstream_binary=$2 oc_port=$3 upstream_port=$4
@@ -11226,7 +11322,10 @@ run_comprehensive_interop_case() {
     "exclude|-av --exclude=*.log|exclude"
     "permissions|-rlpv|perms"
     "itemize|-avi|itemize"
-    "acls|-avA|acls"
+    # acls / xattrs are registered below, gated on both the upstream binary's
+    # advertised capability and the host filesystem actually supporting the
+    # feature (detect_host_acl_xattr_support). When unsupported the leg is
+    # honestly skipped rather than run as a no-op tree compare.
     # parallel-threshold-trip matrix entry removed pending PIP-7 fix of
     # parallel-receive-delta receiver corruption (tracking #4720 follow-up).
     # Re-add when the receiver corruption fix lands and parallel-receive-delta
@@ -11239,7 +11338,6 @@ run_comprehensive_interop_case() {
   # but may lack --enable-xattr-support).
   if [[ "${version}" == "3.4.4" ]]; then
     scenarios+=(
-      "xattrs|-avX|xattrs"
       "one-file-system|-avx|basic"
       "whole-file-replace|-avW|whole-file-replace"
       "delay-updates|-av --delay-updates|basic"
@@ -11317,6 +11415,40 @@ run_comprehensive_interop_case() {
   local fp=""; [[ -n "$protocol_flag" ]] && fp="${protocol_flag##*=}"
   if [[ -z "$fp" || "$fp" -ge 30 ]]; then
     scenarios+=("inc-recursive|-av --inc-recursive|inc-recursive")
+  fi
+
+  # Effective protocol for this run: forced value if set, else the version's
+  # native protocol. ACL/xattr wire formats require protocol >= 30 (upstream
+  # compat.c:655-668), so the legs below only apply at proto 30+.
+  local eff_proto="$fp"
+  if [[ -z "$eff_proto" ]]; then
+    case "$version" in
+      3.0.*) eff_proto=28 ;;
+      3.1.*) eff_proto=31 ;;
+      *) eff_proto=32 ;;
+    esac
+  fi
+
+  # ACL / xattr legs gated on real capability: protocol >= 30, the upstream
+  # binary must advertise the feature, AND the host filesystem must let us
+  # set+read the attribute. Only then does the leg run a real -avA/-avX
+  # transfer and assert the ACL/xattr round-trips (comp_run_scenario
+  # acls/xattrs verify). When unsupported the leg is skipped honestly instead
+  # of masquerading as a pass against an ACL/xattr-less peer.
+  detect_host_acl_xattr_support
+  if [[ "$eff_proto" -ge 30 && "${HOST_ACL_OK}" == 1 ]] && upstream_supports_acl "$upstream_binary"; then
+    scenarios+=("acls|-avA|acls")
+  else
+    echo "  [info] proto ${eff_proto} / upstream ${version} / host lacks ACL support, skipping acls"
+  fi
+  # xattrs only runs against the newest upstream (3.4.4) as before, now also
+  # capability- and protocol-gated.
+  if [[ "${version}" == "3.4.4" ]]; then
+    if [[ "$eff_proto" -ge 30 && "${HOST_XATTR_OK}" == 1 ]] && upstream_supports_xattr "$upstream_binary"; then
+      scenarios+=("xattrs|-avX|xattrs")
+    else
+      echo "  [info] proto ${eff_proto} / upstream ${version} / host lacks xattr support, skipping xattrs"
+    fi
   fi
 
   local total=0 passed=0 known=0 unexpected=0

@@ -133,23 +133,30 @@ fn build_modern_prefix(rule: &FilterRuleWireFormat, protocol: ProtocolVersion) -
         prefix.push('!');
     }
 
+    // upstream: exclude.c:1548-1561 get_rule_prefix() - when FILTRULE_CVS_IGNORE
+    // is set, emit ONLY `C`; the no-inherit/word-split/no-prefixes flags it
+    // implies must not also be emitted. The remote parser re-derives them from
+    // `C` (exclude.c:1248-1254) and rejects a redundant `-` after `C` because
+    // the `C` case already set NO_PREFIXES (exclude.c:1249 -> `invalid`), so
+    // emitting `:Cnw-` makes upstream fail with "invalid modifier '-'".
     if rule.cvs_exclude {
         prefix.push('C');
-    }
+    } else {
+        if rule.no_inherit {
+            prefix.push('n');
+        }
 
-    if rule.no_inherit {
-        prefix.push('n');
-    }
+        if rule.word_split {
+            prefix.push('w');
+        }
 
-    if rule.word_split {
-        prefix.push('w');
-    }
-
-    // upstream: exclude.c:1555-1560 - on a merge/dir-merge rule, emit `-` when
-    // FILTRULE_NO_PREFIXES is set and `+` when FILTRULE_NO_PREFIXES|FILTRULE_INCLUDE
-    // are both set. Order matches upstream: between `w` and `e`.
-    if rule.no_prefixes && matches!(rule.rule_type, RuleType::Merge | RuleType::DirMerge) {
-        prefix.push(if rule.no_prefixes_include { '+' } else { '-' });
+        // upstream: exclude.c:1555-1560 - on a merge/dir-merge rule, emit `-`
+        // when FILTRULE_NO_PREFIXES is set and `+` when
+        // FILTRULE_NO_PREFIXES|FILTRULE_INCLUDE are both set. Order matches
+        // upstream: between `w` and `e`.
+        if rule.no_prefixes && matches!(rule.rule_type, RuleType::Merge | RuleType::DirMerge) {
+            prefix.push(if rule.no_prefixes_include { '+' } else { '-' });
+        }
     }
 
     if rule.exclude_from_merge {
@@ -243,9 +250,34 @@ mod tests {
         rule.cvs_exclude = true;
 
         // The anchor no longer appears as a `/` prefix modifier on a plain
-        // exclude; it rides in the pattern body (serialize_rule).
+        // exclude; it rides in the pattern body (serialize_rule). With
+        // FILTRULE_CVS_IGNORE set, upstream get_rule_prefix() emits only `C`
+        // and suppresses the implied `n` (exclude.c:1548-1561), so the remote
+        // parser re-derives no-inherit from `C` rather than seeing `Cn`.
         let prefix = build_rule_prefix(&rule, protocol).unwrap();
-        assert_eq!(prefix, "-Cn ");
+        assert_eq!(prefix, "-C ");
+    }
+
+    #[test]
+    fn cvs_dir_merge_emits_only_c_modifier() {
+        // Regression: a `:C` dir-merge carries cvs_exclude + the implied
+        // no_inherit/word_split/no_prefixes flags. Upstream emits just `:C`
+        // (exclude.c:1548-1561); emitting `:Cnw-` makes the remote parser
+        // reject the redundant `-` after `C` ("invalid modifier '-'"), which
+        // aborts daemon/remote transfers using a CVS-style per-dir merge.
+        let protocol = ProtocolVersion::from_supported(32).unwrap();
+        let rule = FilterRuleWireFormat {
+            rule_type: RuleType::DirMerge,
+            pattern: ".cvsignore".to_owned(),
+            cvs_exclude: true,
+            no_inherit: true,
+            word_split: true,
+            no_prefixes: true,
+            ..FilterRuleWireFormat::default()
+        };
+
+        let prefix = build_rule_prefix(&rule, protocol).unwrap();
+        assert_eq!(prefix, ":C ");
     }
 
     #[test]
@@ -330,9 +362,12 @@ mod tests {
         rule.perishable = true;
 
         // The `/` anchor is no longer a prefix modifier for a non-merge rule;
-        // it moves into the pattern body (serialize_rule).
+        // it moves into the pattern body (serialize_rule). With
+        // FILTRULE_CVS_IGNORE set, upstream get_rule_prefix() emits only `C`
+        // and suppresses the implied `n`/`w` (exclude.c:1548-1561), so they do
+        // not appear even though no_inherit/word_split are set on the rule.
         let prefix = build_rule_prefix(&rule, protocol).unwrap();
-        assert_eq!(prefix, "-!Cnwexsrp ");
+        assert_eq!(prefix, "-!Cexsrp ");
     }
 
     #[test]
