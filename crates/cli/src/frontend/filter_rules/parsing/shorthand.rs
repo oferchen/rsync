@@ -3,7 +3,7 @@ use core::message::{Message, Role};
 use core::rsync_error;
 
 use super::super::directive::FilterDirective;
-use super::helpers::trim_short_rule_remainder;
+use super::helpers::consume_rule_separator;
 
 pub(super) fn parse_filter_shorthand(
     trimmed: &str,
@@ -32,7 +32,7 @@ pub(super) fn parse_filter_shorthand(
         return None;
     }
 
-    let pattern = trim_short_rule_remainder(remainder);
+    let pattern = consume_rule_separator(remainder);
     if pattern.is_empty() {
         let text = format!("filter rule '{trimmed}' is missing a pattern after '{label}'");
         let message = rsync_error!(1, text).with_role(Role::Client);

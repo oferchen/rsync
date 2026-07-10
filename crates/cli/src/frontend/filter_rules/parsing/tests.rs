@@ -462,8 +462,79 @@ fn trailing_whitespace_is_kept_in_pattern() {
 
 #[test]
 fn multiple_spaces_in_pattern() {
-    let result = parse_filter_directive(OsStr::new("+   *.txt"));
-    assert!(result.is_ok());
+    // upstream: exclude.c:1290-1291,1313 - exactly one separator is consumed
+    // after the rule char, so `+   *.txt` (three spaces) keeps the two extra
+    // leading spaces in the pattern.
+    match parse_filter_directive(OsStr::new("+   *.txt")).unwrap() {
+        FilterDirective::Rule(spec) => {
+            assert_eq!(spec.kind(), FilterRuleKind::Include);
+            assert_eq!(spec.pattern(), "  *.txt");
+        }
+        other => panic!("expected Rule directive, got {other:?}"),
+    }
+}
+
+#[test]
+fn single_space_separator_consumed_short_rule() {
+    // `-  x` (two spaces) keeps one leading space; verified against rsync 3.4.4
+    // which excludes only a file literally named " x".
+    match parse_filter_directive(OsStr::new("-  x")).unwrap() {
+        FilterDirective::Rule(spec) => {
+            assert_eq!(spec.kind(), FilterRuleKind::Exclude);
+            assert_eq!(spec.pattern(), " x");
+        }
+        other => panic!("expected Rule directive, got {other:?}"),
+    }
+}
+
+#[test]
+fn one_space_separator_leaves_no_leading_space() {
+    // `- x` (one space) consumes the single separator; pattern is `x`.
+    match parse_filter_directive(OsStr::new("- x")).unwrap() {
+        FilterDirective::Rule(spec) => {
+            assert_eq!(spec.kind(), FilterRuleKind::Exclude);
+            assert_eq!(spec.pattern(), "x");
+        }
+        other => panic!("expected Rule directive, got {other:?}"),
+    }
+}
+
+#[test]
+fn underscore_separator_leaves_following_space() {
+    // `-_ x` uses `_` as the single separator, leaving the following space in
+    // the pattern (` x`), matching rsync 3.4.4.
+    match parse_filter_directive(OsStr::new("-_ x")).unwrap() {
+        FilterDirective::Rule(spec) => {
+            assert_eq!(spec.kind(), FilterRuleKind::Exclude);
+            assert_eq!(spec.pattern(), " x");
+        }
+        other => panic!("expected Rule directive, got {other:?}"),
+    }
+}
+
+#[test]
+fn keyword_rule_keeps_extra_separator_in_pattern() {
+    // The keyword and its pattern are split on the first whitespace only, so
+    // `exclude   x` (three spaces) keeps the two extra leading spaces verbatim.
+    match parse_keyword_rule("exclude   x").unwrap() {
+        FilterDirective::Rule(spec) => {
+            assert_eq!(spec.kind(), FilterRuleKind::Exclude);
+            assert_eq!(spec.pattern(), "  x");
+        }
+        other => panic!("expected Rule directive, got {other:?}"),
+    }
+}
+
+#[test]
+fn shorthand_rule_keeps_extra_separator_in_pattern() {
+    // `P  x` (two spaces) consumes one separator, keeping one leading space.
+    match parse_shorthand_rules("P  x").unwrap().unwrap() {
+        FilterDirective::Rule(spec) => {
+            assert_eq!(spec.kind(), FilterRuleKind::Protect);
+            assert_eq!(spec.pattern(), " x");
+        }
+        other => panic!("expected Rule directive, got {other:?}"),
+    }
 }
 
 #[test]

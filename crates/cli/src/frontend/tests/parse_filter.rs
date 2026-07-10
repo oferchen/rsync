@@ -159,15 +159,28 @@ fn parse_filter_directive_rejects_clear_with_trailing_characters() {
 
 #[test]
 fn parse_filter_directive_rejects_missing_pattern() {
-    let error =
-        parse_filter_directive(OsStr::new("+   ")).expect_err("missing pattern should error");
+    // upstream: exclude.c:1290-1291,1326 - exactly one separator is consumed
+    // after the rule char, so an empty remainder (`+ ` / `P `) is a missing
+    // pattern ("unexpected end of filter rule"). A whitespace-only remainder is
+    // NOT empty: `+   ` keeps the two extra spaces as the pattern "  " and is
+    // accepted (verified against rsync 3.4.4), so only the single-separator
+    // forms error here.
+    let error = parse_filter_directive(OsStr::new("+ ")).expect_err("missing pattern should error");
     let rendered = error.to_string();
     assert!(rendered.contains("missing a pattern"));
 
     let shorthand_error =
-        parse_filter_directive(OsStr::new("P   ")).expect_err("shorthand protect requires pattern");
+        parse_filter_directive(OsStr::new("P ")).expect_err("shorthand protect requires pattern");
     let rendered = shorthand_error.to_string();
     assert!(rendered.contains("missing a pattern"));
+
+    // A whitespace-only remainder is a valid (if unusual) pattern, not an error.
+    let accepted =
+        parse_filter_directive(OsStr::new("+   ")).expect("whitespace pattern is accepted");
+    assert_eq!(
+        accepted,
+        FilterDirective::Rule(FilterRuleSpec::include("  ".to_owned()))
+    );
 }
 
 #[test]

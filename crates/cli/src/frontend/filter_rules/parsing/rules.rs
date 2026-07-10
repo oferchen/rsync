@@ -77,7 +77,10 @@ pub(super) fn parse_short_include_rule(
         Ok(state) => state,
         Err(error) => return Some(Err(error)),
     };
-    let pattern = remainder.trim_start_matches(|ch: char| ch == '_' || ch.is_ascii_whitespace());
+    // `split_short_rule_modifiers` already consumed the single separator that
+    // terminates the modifiers (upstream exclude.c:1290-1291), so the remainder
+    // is the pattern verbatim. Do not trim further leading whitespace/`_`.
+    let pattern = remainder;
     if pattern.is_empty() {
         let text = format!("filter rule '{trimmed}' is missing a pattern after '{prefix}'");
         let message = rsync_error!(1, text).with_role(Role::Client);
@@ -97,7 +100,10 @@ pub(super) fn parse_keyword_rule(trimmed: &str) -> Result<FilterDirective, Messa
     let keyword = parts.next().expect("split always yields at least one part");
     let remainder = parts.next().unwrap_or("");
     let (keyword, keyword_modifiers) = split_keyword_modifiers(keyword);
-    let pattern = remainder.trim_start_matches(|ch: char| ch == '_' || ch.is_ascii_whitespace());
+    // `splitn` on the first whitespace already consumed the single separator
+    // between the keyword and the pattern (upstream exclude.c:1290-1291), so the
+    // remainder is the pattern verbatim. Do not trim further leading separators.
+    let pattern = remainder;
 
     let build_rule = |builder: fn(String) -> FilterRuleSpec,
                       allow_perishable: bool,
