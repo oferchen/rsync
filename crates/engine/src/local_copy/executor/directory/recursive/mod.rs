@@ -700,7 +700,7 @@ mod tests {
             delete_timing: None,
         };
 
-        let pairs = collect_file_pairs_for_checksum(&plan, &dest_dir, None);
+        let (pairs, _dest_meta) = collect_file_pairs_for_checksum(&plan, &dest_dir, None);
 
         assert_eq!(pairs.len(), 2);
         assert!(pairs.iter().any(|p| p.source.ends_with("file1.txt")));
@@ -732,7 +732,7 @@ mod tests {
             delete_timing: None,
         };
 
-        let pairs = collect_file_pairs_for_checksum(&plan, &dest_dir, None);
+        let (pairs, _dest_meta) = collect_file_pairs_for_checksum(&plan, &dest_dir, None);
 
         assert!(pairs.is_empty());
     }
@@ -764,7 +764,7 @@ mod tests {
             delete_timing: None,
         };
 
-        let pairs = collect_file_pairs_for_checksum(&plan, &dest_dir, None);
+        let (pairs, _dest_meta) = collect_file_pairs_for_checksum(&plan, &dest_dir, None);
 
         assert!(pairs.is_empty());
     }
@@ -796,10 +796,110 @@ mod tests {
             delete_timing: None,
         };
 
-        let pairs = collect_file_pairs_for_checksum(&plan, &dest_dir, None);
+        let (pairs, dest_meta) = collect_file_pairs_for_checksum(&plan, &dest_dir, None);
 
         assert_eq!(pairs.len(), 1);
         assert_eq!(pairs[0].source_size, 100);
         assert_eq!(pairs[0].destination_size, 100);
+        // The regular-file destination lstat is cached for copy_file to reuse,
+        // avoiding a second lstat of the same path.
+        let cached = dest_meta
+            .get(&dest_dir.join("file.txt"))
+            .expect("destination metadata cached");
+        assert_eq!(cached.len(), 100);
+    }
+
+    // upstream: generator.c:recv_generator() lstats the destination; a symlink
+    // destination is never treated as a regular-file checksum candidate. The
+    // nofollow lstat must therefore exclude a symlink dest from both the pair
+    // list and the reusable metadata cache, even when it points at a same-size
+    // regular file (which a FOLLOW stat would have wrongly accepted).
+    #[cfg(unix)]
+    #[test]
+    fn collect_file_pairs_excludes_symlink_destination() {
+        let dir = create_tempdir();
+        let source_dir = dir.path().join("src");
+        let dest_dir = dir.path().join("dst");
+        std::fs::create_dir_all(&source_dir).unwrap();
+        std::fs::create_dir_all(&dest_dir).unwrap();
+
+        let entry = create_test_entry(source_dir.join("file.txt"), "file.txt", 100);
+
+        // A same-size regular file the destination symlink points at.
+        let referent = dest_dir.join("referent.bin");
+        std::fs::write(&referent, vec![0u8; 100]).unwrap();
+        std::os::unix::fs::symlink(&referent, dest_dir.join("file.txt")).unwrap();
+
+        let entries = [entry];
+        let planned: Vec<PlannedEntry> = vec![PlannedEntry {
+            entry: &entries[0],
+            relative: PathBuf::from("file.txt"),
+            action: EntryAction::CopyFile,
+            metadata_override: None,
+        }];
+
+        let plan = DirectoryPlan {
+            planned_entries: planned,
+            keep_names: Vec::new(),
+            deletion_enabled: false,
+            delete_timing: None,
+        };
+
+        let (pairs, dest_meta) = collect_file_pairs_for_checksum(&plan, &dest_dir, None);
+
+        assert!(pairs.is_empty(), "symlink dest is not a checksum candidate");
+        assert!(
+            !dest_meta.contains_key(&dest_dir.join("file.txt")),
+            "symlink dest metadata must not be cached as a regular file"
+        );
+    }
+
+    // A destination hardlinked to a sibling can have its shared inode's mtime
+    // mutated by copy_file when that sibling is updated earlier in the same
+    // directory pass, so its pre-pass lstat must NOT be cached for reuse (that
+    // would replay a stale mtime and add a phantom itemized time change). The
+    // destination still stays a checksum candidate; only the reuse cache skips
+    // it, so copy_file performs its own fresh lstat.
+    #[cfg(unix)]
+    #[test]
+    fn collect_file_pairs_excludes_hardlinked_destination_from_cache() {
+        let dir = create_tempdir();
+        let source_dir = dir.path().join("src");
+        let dest_dir = dir.path().join("dst");
+        std::fs::create_dir_all(&source_dir).unwrap();
+        std::fs::create_dir_all(&dest_dir).unwrap();
+
+        let entry = create_test_entry(source_dir.join("file.txt"), "file.txt", 100);
+
+        // A same-size regular destination with two links (nlink == 2).
+        std::fs::write(dest_dir.join("file.txt"), vec![0u8; 100]).unwrap();
+        std::fs::hard_link(dest_dir.join("file.txt"), dest_dir.join("alias.txt")).unwrap();
+
+        let entries = [entry];
+        let planned: Vec<PlannedEntry> = vec![PlannedEntry {
+            entry: &entries[0],
+            relative: PathBuf::from("file.txt"),
+            action: EntryAction::CopyFile,
+            metadata_override: None,
+        }];
+
+        let plan = DirectoryPlan {
+            planned_entries: planned,
+            keep_names: Vec::new(),
+            deletion_enabled: false,
+            delete_timing: None,
+        };
+
+        let (pairs, dest_meta) = collect_file_pairs_for_checksum(&plan, &dest_dir, None);
+
+        assert_eq!(
+            pairs.len(),
+            1,
+            "hardlinked dest is still a checksum candidate"
+        );
+        assert!(
+            !dest_meta.contains_key(&dest_dir.join("file.txt")),
+            "hardlinked dest metadata must not be cached (mtime can change mid-pass)"
+        );
     }
 }

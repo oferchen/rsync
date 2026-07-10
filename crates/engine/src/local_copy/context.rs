@@ -134,6 +134,13 @@ pub(crate) struct CopyContext<'a> {
     deferred_sync: DeferredSync,
     /// Cache of prefetched file checksums for parallel checksum mode.
     checksum_cache: Option<super::executor::ChecksumCache>,
+    /// Destination `lstat` metadata gathered during checksum-mode prefetch,
+    /// keyed by on-disk destination path. In `--checksum` mode the prefetch
+    /// already lstats every candidate destination to read its size; storing it
+    /// here lets `copy_file` reuse that lstat instead of issuing a second one,
+    /// matching upstream's single generator `link_stat` per destination. Empty
+    /// outside checksum mode, so the non-checksum path keeps its own lstat.
+    destination_metadata_cache: HashMap<PathBuf, fs::Metadata>,
     /// Tracks whether any I/O errors occurred during the transfer.
     /// When set to `true` and `--ignore-errors` is not enabled, deletions
     /// are suppressed to prevent data loss.

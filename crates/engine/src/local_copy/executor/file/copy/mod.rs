@@ -82,16 +82,22 @@ pub(crate) fn copy_file(
         return Ok(false);
     }
 
-    let mut existing_metadata = match fs::symlink_metadata(destination) {
-        Ok(existing) => Some(existing),
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
-        Err(error) => {
-            return Err(LocalCopyError::io(
-                "inspect existing destination",
-                destination.to_path_buf(),
-                error,
-            ));
-        }
+    // Reuse the destination lstat gathered by the checksum-mode prefetch when
+    // present; otherwise lstat here. This keeps checksum mode at one generator
+    // link_stat per destination instead of two. upstream: generator.c:recv_generator().
+    let mut existing_metadata = match context.take_cached_destination_metadata(destination) {
+        Some(cached) => Some(cached),
+        None => match fs::symlink_metadata(destination) {
+            Ok(existing) => Some(existing),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
+            Err(error) => {
+                return Err(LocalCopyError::io(
+                    "inspect existing destination",
+                    destination.to_path_buf(),
+                    error,
+                ));
+            }
+        },
     };
 
     let mut destination_previously_existed = existing_metadata.is_some();
