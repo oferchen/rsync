@@ -4,6 +4,8 @@ use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
 
+use ::metadata::MetadataOptions;
+
 use crate::local_copy::{CopyContext, LocalCopyError, ReferenceDirectoryKind};
 
 use super::{CopyComparison, should_skip_copy};
@@ -52,12 +54,102 @@ pub(crate) struct ReferenceQuery<'a> {
     pub(crate) size_only: bool,
     pub(crate) ignore_times: bool,
     pub(crate) checksum: bool,
+    /// Preserved-attribute options used to distinguish an exact (match_level 3)
+    /// basis from a data-only (match_level 2) one.
+    pub(crate) metadata_options: &'a MetadataOptions,
+    /// Whether `-X` xattr preservation is active, so an xattr difference demotes
+    /// a candidate from match_level 3 to match_level 2.
+    pub(crate) preserve_xattrs: bool,
 }
 
-/// Searches configured reference directories for a file matching the source.
+/// Reports whether a reference basis already carries the source's preserved
+/// attributes, mirroring upstream `generator.c:468 unchanged_attrs()`.
 ///
-/// Returns the first matching decision (skip, copy, or link) based on the
-/// reference directory kind, or `None` if no candidate matches.
+/// A `true` result is upstream match_level 3 (data and attributes both match):
+/// the basis is hard-linked (`--link-dest`) or treated as up-to-date
+/// (`--compare-dest`) with no attribute reapply, so no `user.rsync.%stat` xattr
+/// is written onto a shared basis inode. A `false` result is match_level 2 (data
+/// matches, attrs differ): upstream falls through to `copy_altdest_file`, copying
+/// the basis into a fresh inode and reapplying the source attributes via
+/// `set_file_attrs`.
+///
+/// Compares the attributes `unchanged_attrs` inspects for a regular file:
+/// permission bits (`perms_differ`), owner/group (`ownership_differs`), mtime
+/// (`any_time_differs`), and, when `-X` is active, the transferable extended
+/// attributes (`xattrs_differ`), each gated on the corresponding preserve option.
+///
+// upstream: generator.c:468-502 unchanged_attrs - perms/ownership/time/xattr.
+pub(crate) fn reference_attrs_unchanged(
+    basis: &Path,
+    source: &Path,
+    source_meta: &fs::Metadata,
+    options: &MetadataOptions,
+    preserve_xattrs: bool,
+) -> bool {
+    #[cfg(unix)]
+    {
+        use filetime::FileTime;
+        use std::os::unix::fs::MetadataExt;
+
+        let Ok(basis_meta) = fs::symlink_metadata(basis) else {
+            return false;
+        };
+
+        // A --chmod tweak changes the intended mode away from the source's, so
+        // the basis (which carries the untweaked mode) can never be a
+        // match_level-3 attrs match; force a reapply.
+        if options.chmod().is_some() {
+            return false;
+        }
+        if options.permissions() && (source_meta.mode() & 0o7777) != (basis_meta.mode() & 0o7777) {
+            return false;
+        }
+        if options.owner() && source_meta.uid() != basis_meta.uid() {
+            return false;
+        }
+        if options.group() && source_meta.gid() != basis_meta.gid() {
+            return false;
+        }
+        if options.times()
+            && FileTime::from_last_modification_time(source_meta)
+                != FileTime::from_last_modification_time(&basis_meta)
+        {
+            return false;
+        }
+        // upstream: generator.c:501 - xattrs_differ() demotes to match_level 2,
+        // forcing the copy + set_file_attrs that reapplies the source xattrs.
+        if preserve_xattrs && !::metadata::xattrs_match(source, basis, true).unwrap_or(false) {
+            return false;
+        }
+        true
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = (basis, source, source_meta, options, preserve_xattrs);
+        false
+    }
+}
+
+/// Searches configured reference directories for a file matching the source and
+/// returns the action for the BEST candidate.
+///
+/// upstream: generator.c:954-1054 `try_dests_reg()` scans every `basis_dir[]`,
+/// tracking the highest match_level (2 = data matches `quick_check_ok`, 3 = data
+/// and attributes both match `unchanged_attrs`), breaking early only on an exact
+/// (level-3) match, then acts on the best candidate. A first-match scan wrongly
+/// picks an earlier data-only basis over a later exact one, forcing an
+/// unnecessary copy/transfer and (for `--link-dest`) reapplying attrs onto a
+/// shared basis inode. The winning level then drives the action
+/// (generator.c:995-1054):
+///
+/// - `--compare-dest`: level 3 is up-to-date (skip, no write); level 2 copies the
+///   basis in and reapplies attrs (`copy_altdest_file`).
+/// - `--copy-dest`: always copies the basis (never hard-links), reapplying attrs.
+/// - `--link-dest`: level 3 hard-links without reapply; level 2 copies + reapplies
+///   (upstream `try_a_copy`) so a differing-attr basis inode is never shared.
+///
+/// Returns `None` when no candidate reaches match_level 2 (a level-1 basis is
+/// left to the normal transfer path).
 pub(crate) fn find_reference_action(
     context: &CopyContext<'_>,
     query: ReferenceQuery<'_>,
@@ -70,7 +162,11 @@ pub(crate) fn find_reference_action(
         size_only,
         ignore_times,
         checksum,
+        metadata_options,
+        preserve_xattrs,
     } = query;
+
+    let mut best: Option<(ReferenceDirectoryKind, PathBuf, u8)> = None;
     for reference in context.reference_directories() {
         let candidate = resolve_reference_candidate(reference.path(), relative, destination);
         let candidate_metadata = match fs::symlink_metadata(&candidate) {
@@ -89,7 +185,7 @@ pub(crate) fn find_reference_action(
             continue;
         }
 
-        if should_skip_copy(CopyComparison {
+        if !should_skip_copy(CopyComparison {
             source_path: source,
             source: metadata,
             destination_path: &candidate,
@@ -101,15 +197,58 @@ pub(crate) fn find_reference_action(
             modify_window: context.options().modify_window(),
             prefetched_match: None,
         }) {
-            return Ok(Some(match reference.kind() {
-                ReferenceDirectoryKind::Compare => ReferenceDecision::Skip(candidate),
-                ReferenceDirectoryKind::Copy => ReferenceDecision::Copy(candidate),
-                ReferenceDirectoryKind::Link => ReferenceDecision::Link(candidate),
-            }));
+            continue;
+        }
+
+        // The candidate is at least match_level 2 (data matches); it is
+        // match_level 3 when its preserved attributes also match the source.
+        let level = if reference_attrs_unchanged(
+            &candidate,
+            source,
+            metadata,
+            metadata_options,
+            preserve_xattrs,
+        ) {
+            3
+        } else {
+            2
+        };
+
+        if best
+            .as_ref()
+            .is_none_or(|(_, _, best_level)| level > *best_level)
+        {
+            best = Some((reference.kind(), candidate, level));
+        }
+        // upstream: generator.c:979 - an exact match ends the scan immediately.
+        if level == 3 {
+            break;
         }
     }
 
-    Ok(None)
+    let Some((kind, basis, level)) = best else {
+        return Ok(None);
+    };
+
+    let decision = match kind {
+        ReferenceDirectoryKind::Compare => {
+            if level == 3 {
+                ReferenceDecision::Skip(basis)
+            } else {
+                ReferenceDecision::Copy(basis)
+            }
+        }
+        ReferenceDirectoryKind::Copy => ReferenceDecision::Copy(basis),
+        ReferenceDirectoryKind::Link => {
+            if level == 3 {
+                ReferenceDecision::Link(basis)
+            } else {
+                ReferenceDecision::Copy(basis)
+            }
+        }
+    };
+
+    Ok(Some(decision))
 }
 
 /// Locates a `--copy-dest` basis symlink at `relative` whose target matches.
@@ -367,6 +506,7 @@ mod tests {
         let rel = PathBuf::from("relative");
         let src = PathBuf::from("/src");
         let meta = fs::metadata(".").unwrap_or_else(|_| fs::metadata("/").unwrap());
+        let metadata_options = MetadataOptions::default();
 
         let query = ReferenceQuery {
             destination: &dest,
@@ -376,6 +516,8 @@ mod tests {
             size_only: true,
             ignore_times: false,
             checksum: true,
+            metadata_options: &metadata_options,
+            preserve_xattrs: false,
         };
 
         assert_eq!(query.destination, Path::new("/dest"));
@@ -384,5 +526,6 @@ mod tests {
         assert!(query.size_only);
         assert!(!query.ignore_times);
         assert!(query.checksum);
+        assert!(!query.preserve_xattrs);
     }
 }
