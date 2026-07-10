@@ -17,7 +17,8 @@ use crate::local_copy::overrides::create_hard_link;
 use crate::local_copy::{
     CopyContext, CreatedEntryKind, LocalCopyAction, LocalCopyChangeSet, LocalCopyError,
     LocalCopyExecution, LocalCopyMetadata, LocalCopyRecord, ReferenceDecision, ReferenceQuery,
-    find_reference_action, map_metadata_error, remove_source_entry_if_requested,
+    find_reference_action, map_metadata_error, reference_attrs_unchanged,
+    remove_source_entry_if_requested,
 };
 
 #[cfg(all(any(unix, windows), feature = "acl"))]
@@ -54,76 +55,6 @@ fn is_already_hardlinked(destination: &Path, target: &Path) -> bool {
     #[cfg(not(unix))]
     {
         let _ = (destination, target);
-        false
-    }
-}
-
-/// Reports whether the `--link-dest` basis already carries the source's
-/// preserved attributes, mirroring upstream `generator.c:468 unchanged_attrs()`.
-///
-/// When this returns `true` the match is upstream's match_level 3 (data and
-/// attributes both match): the file is hard-linked and metadata is *not*
-/// reapplied (except `--atimes`), so no `user.rsync.%stat` xattr is written
-/// onto the shared basis inode. When `false` (match_level 2, attrs differ),
-/// the caller reapplies metadata like upstream's `try_a_copy` + set_file_attrs.
-///
-/// Compares the attributes `unchanged_attrs` inspects for a regular file:
-/// permission bits (`perms_differ`), owner/group (`ownership_differs`), mtime
-/// (`any_time_differs`), and, when `-X` is active, the transferable extended
-/// attributes (`xattrs_differ`), each gated on the corresponding preserve
-/// option. `source` is the source path (for the xattr read) and `source_meta`
-/// its stat.
-// upstream: generator.c:468-502 unchanged_attrs - perms/ownership/time/xattr
-fn link_dest_attrs_unchanged(
-    basis: &Path,
-    source: &Path,
-    source_meta: &fs::Metadata,
-    options: &MetadataOptions,
-    preserve_xattrs: bool,
-) -> bool {
-    #[cfg(unix)]
-    {
-        use filetime::FileTime;
-        use std::os::unix::fs::MetadataExt;
-
-        let Ok(basis_meta) = fs::symlink_metadata(basis) else {
-            return false;
-        };
-
-        // A --chmod tweak changes the intended mode away from the source's, so
-        // the basis (which carries the untweaked mode) can never be a
-        // match_level-3 attrs match; force a reapply. Mirrors upstream comparing
-        // file->mode (post dest_mode/tweak) against the basis stat.
-        if options.chmod().is_some() {
-            return false;
-        }
-
-        if options.permissions() && (source_meta.mode() & 0o7777) != (basis_meta.mode() & 0o7777) {
-            return false;
-        }
-        if options.owner() && source_meta.uid() != basis_meta.uid() {
-            return false;
-        }
-        if options.group() && source_meta.gid() != basis_meta.gid() {
-            return false;
-        }
-        if options.times()
-            && FileTime::from_last_modification_time(source_meta)
-                != FileTime::from_last_modification_time(&basis_meta)
-        {
-            return false;
-        }
-        // upstream: generator.c:501 - xattrs_differ() makes a changed xattr a
-        // match_level-2 (attr change) result, forcing the copy + set_file_attrs
-        // that reapplies the source's xattrs onto the destination.
-        if preserve_xattrs && !::metadata::xattrs_match(source, basis, true).unwrap_or(false) {
-            return false;
-        }
-        true
-    }
-    #[cfg(not(unix))]
-    {
-        let _ = (basis, source, source_meta, options, preserve_xattrs);
         false
     }
 }
@@ -169,6 +100,19 @@ pub(super) fn process_links(
     let mut copy_source_override: Option<PathBuf> = None;
     let mut reference_basis: Option<PathBuf> = None;
 
+    // Whether `-X` xattr preservation is active, used both to evaluate a
+    // link-dest basis's match_level and to seed reference-directory queries.
+    let preserve_xattrs_flag = {
+        #[cfg(all(unix, feature = "xattr"))]
+        {
+            preserve_xattrs
+        }
+        #[cfg(not(all(unix, feature = "xattr")))]
+        {
+            false
+        }
+    };
+
     // 1. --link-dest style linking
     if let Some(link_target) = context.link_dest_target(
         relative_for_link,
@@ -178,16 +122,6 @@ pub(super) fn process_links(
         ignore_times_enabled,
         checksum_enabled,
     )? {
-        let preserve_xattrs_flag = {
-            #[cfg(all(unix, feature = "xattr"))]
-            {
-                preserve_xattrs
-            }
-            #[cfg(not(all(unix, feature = "xattr")))]
-            {
-                false
-            }
-        };
         // upstream: generator.c:967-1054 try_dests_reg() - a LINK_DEST candidate
         // that passes the quick-check (data matches) is hard-linked only when its
         // preserved attributes also match the source (match_level 3). When the
@@ -198,7 +132,7 @@ pub(super) fn process_links(
         // inode, so reapplying the differing attrs (e.g. a changed -X value under
         // --fake-super) would corrupt the basis and leave the file carrying an
         // extra hard link.
-        let attrs_match = link_dest_attrs_unchanged(
+        let attrs_match = reference_attrs_unchanged(
             &link_target,
             source,
             metadata,
@@ -615,6 +549,8 @@ pub(super) fn process_links(
                     size_only: size_only_enabled,
                     ignore_times: ignore_times_enabled,
                     checksum: checksum_enabled,
+                    metadata_options: &metadata_options,
+                    preserve_xattrs: preserve_xattrs_flag,
                 },
             )?
             .is_some();
@@ -648,6 +584,8 @@ pub(super) fn process_links(
                 size_only: size_only_enabled,
                 ignore_times: ignore_times_enabled,
                 checksum: checksum_enabled,
+                metadata_options: &metadata_options,
+                preserve_xattrs: preserve_xattrs_flag,
             },
         )?
     {

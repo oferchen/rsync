@@ -415,8 +415,17 @@ impl<'a> CopyContext<'a> {
         Ok(())
     }
 
-    /// Searches `--link-dest` directories for a file matching the source,
-    /// returning the first candidate that passes the quick-check comparison.
+    /// Searches `--link-dest` directories for the BEST file matching the source.
+    ///
+    /// upstream: generator.c:954-983 `try_dests_reg()` scans every basis dir and
+    /// tracks the highest match_level (2 = data matches `quick_check_ok`, 3 = data
+    /// and attributes both match `unchanged_attrs`), breaking early only on an
+    /// exact (level-3) match. Returning the first data-only candidate instead
+    /// would let an earlier match_level-2 basis (attrs differ) shadow a later
+    /// exact one, forcing an unnecessary copy + attr reapply where upstream would
+    /// hard-link the exact basis with no reapply. The caller re-derives the
+    /// winning candidate's level to choose hard-link vs copy, so returning the
+    /// best candidate is sufficient to mirror upstream.
     pub(super) fn link_dest_target(
         &self,
         relative: &Path,
@@ -430,6 +439,19 @@ impl<'a> CopyContext<'a> {
             return Ok(None);
         }
 
+        let metadata_options = self.metadata_options();
+        let preserve_xattrs = {
+            #[cfg(all(unix, feature = "xattr"))]
+            {
+                self.options.preserve_xattrs()
+            }
+            #[cfg(not(all(unix, feature = "xattr")))]
+            {
+                false
+            }
+        };
+
+        let mut best: Option<(PathBuf, u8)> = None;
         for entry in self.options.link_dest_entries() {
             let candidate = entry.resolve(self.destination_root(), relative);
             let candidate_metadata = match fs::metadata(&candidate) {
@@ -448,7 +470,7 @@ impl<'a> CopyContext<'a> {
                 continue;
             }
 
-            if should_skip_copy(CopyComparison {
+            if !should_skip_copy(CopyComparison {
                 source_path: source,
                 source: metadata,
                 destination_path: candidate.as_path(),
@@ -460,11 +482,33 @@ impl<'a> CopyContext<'a> {
                 modify_window: self.options.modify_window(),
                 prefetched_match: None,
             }) {
-                return Ok(Some(candidate));
+                continue;
+            }
+
+            // At least match_level 2 (data matches); match_level 3 when the
+            // preserved attributes also match, which the caller hard-links.
+            let level = if crate::local_copy::reference_attrs_unchanged(
+                &candidate,
+                source,
+                metadata,
+                &metadata_options,
+                preserve_xattrs,
+            ) {
+                3
+            } else {
+                2
+            };
+
+            if best.as_ref().is_none_or(|(_, best_level)| level > *best_level) {
+                best = Some((candidate, level));
+            }
+            // upstream: generator.c:979 - an exact match ends the scan.
+            if level == 3 {
+                break;
             }
         }
 
-        Ok(None)
+        Ok(best.map(|(candidate, _)| candidate))
     }
 
     /// Locates a `--link-dest` basis symlink at `relative` that points at the
