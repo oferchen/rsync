@@ -27,7 +27,7 @@ use super::chunk::{DeltaChunk, VerifiedChunk};
 use super::error::ParallelApplyError;
 use super::file_slot::{FileSlot, IngestError};
 use super::handle::SlotHandle;
-use super::slot_barrier::{SlotBarrier, SlotEntry};
+use super::slot_barrier::SlotEntry;
 use super::{ring_cap_env, shard_sizing};
 
 /// Parallel receive-side delta applier.
@@ -50,14 +50,12 @@ pub struct ParallelDeltaApplier {
     /// [`std::sync::Mutex<FileSlot>`]) and the per-file bookkeeping
     /// (an [`Arc<slot_barrier::BarrierState>`] holding the in-flight
     /// counter and [`std::sync::Condvar`] that back FFB-2's
-    /// `flush_workers` barrier). DG-3.b (#2569) swapped the value type
-    /// from [`Arc<SlotBarrier>`] to [`SlotEntry`]; DG-3.c retyped
-    /// [`DecrementGuard`] to consume an
-    /// [`Arc<slot_barrier::BarrierState>`] sourced via
-    /// [`SlotBarrier::barrier`], and [`SlotHandle`] keeps its
-    /// [`Arc<SlotBarrier>`] adapter (minted by
-    /// [`SlotBarrier::from_entry`]) until a follow-on DG-3.x task
-    /// retypes the handle. The BR-3j.a audit (see
+    /// `flush_workers` barrier). [`SlotHandle`] consumes a [`SlotEntry`]
+    /// clone directly: it keeps the payload
+    /// [`Arc<slot_barrier::SlotData>`] for the lock path and hands the
+    /// bookkeeping [`Arc<slot_barrier::BarrierState>`] to
+    /// [`DecrementGuard`], so the two halves have disjoint strong-count
+    /// trajectories. The BR-3j.a audit (see
     /// `docs/audits/br-3j-a-dashmap-vs-sharded-2026-05-20.md`) selected
     /// DashMap as the right fit for the access pattern: short guard
     /// windows, no iteration in the hot path, and write rates that scale
@@ -77,9 +75,7 @@ pub struct ParallelDeltaApplier {
     /// [`slot_barrier::SlotData`]: super::slot_barrier::SlotData
     /// [`slot_barrier::BarrierState`]: super::slot_barrier::BarrierState
     /// [`DecrementGuard`]: super::decrement_guard::DecrementGuard
-    /// [`SlotBarrier::barrier`]: super::slot_barrier::SlotBarrier::barrier
-    /// [`SlotBarrier::from_entry`]: super::slot_barrier::SlotBarrier::from_entry
-    /// [`Arc<SlotBarrier>`]: std::sync::Arc
+    /// [`SlotHandle`]: super::handle::SlotHandle
     /// [`Arc<slot_barrier::SlotData>`]: std::sync::Arc
     /// [`Arc<slot_barrier::BarrierState>`]: std::sync::Arc
     pub(super) files: DashMap<FileNdx, SlotEntry>,
@@ -367,9 +363,9 @@ impl ParallelDeltaApplier {
     /// submissions), or the per-chunk strong-checksum verification fails
     /// when [`DeltaChunk::expected_strong`] was attached.
     pub fn apply_one_chunk(&self, chunk: DeltaChunk) -> io::Result<()> {
-        // `slot_for` returns a [`SlotHandle`] (RAII guard around an
-        // `Arc<SlotBarrier>` clone) and drops the DashMap shard guard
-        // before returning, so the rayon verify below never blocks
+        // `slot_for` returns a `SlotHandle` (RAII guard holding the
+        // per-file `Arc<SlotData>` clone) and drops the DashMap shard
+        // guard before returning, so the rayon verify below never blocks
         // shard-mates on unrelated NDX values. The handle's drop fires
         // `flush_workers`-visible decrement once this call returns.
         let ndx = chunk.ndx;
@@ -436,29 +432,21 @@ impl ParallelDeltaApplier {
     }
 
     pub(super) fn slot_for(&self, ndx: FileNdx) -> io::Result<SlotHandle> {
-        // Clone the per-file [`SlotEntry`] (two `Arc::clone` calls) while
+        // Clone the per-file `SlotEntry` (two `Arc::clone` calls) while
         // the shard read guard is alive, then drop the guard at the end
         // of this expression. Callers never see the DashMap guard, so
         // they cannot accidentally hold it across the per-file mutex lock
-        // or a rayon dispatch. The bridge below builds a fresh
-        // [`Arc<SlotBarrier>`] adapter from the entry's two inner Arcs.
-        // After DG-3.c the [`DecrementGuard`] no longer rides on the
-        // adapter: [`SlotHandle::new`] sources the bookkeeping
-        // [`Arc<BarrierState>`] through [`SlotBarrier::barrier`] and
-        // hands that clone to the guard, leaving the adapter Arc to
-        // bound the lock path only. The follow-on DG-3.x task retypes
-        // [`SlotHandle`] and deletes the adapter entirely. The adapter
-        // Arc is unique to this call site; the underlying [`SlotData`]
-        // and [`BarrierState`] Arcs are shared with every other adapter
-        // minted from the same entry, so the in-flight counter and
-        // Condvar remain coherent.
+        // or a rayon dispatch. `SlotHandle::new` consumes the entry
+        // directly: it hands the bookkeeping `Arc<BarrierState>` to the
+        // `DecrementGuard` and keeps the payload `Arc<SlotData>` for the
+        // lock path, sharing both with the DashMap entry so the in-flight
+        // counter and Condvar remain coherent across workers.
         let entry = self
             .files
             .get(&ndx)
             .map(|guard| guard.value().clone())
             .ok_or_else(|| io::Error::other(format!("parallel applier file {ndx} unknown")))?;
-        let barrier = Arc::new(SlotBarrier::from_entry(&entry));
-        Ok(SlotHandle::new(barrier))
+        Ok(SlotHandle::new(entry))
     }
 
     /// Pure CPU step that the rayon worker runs.

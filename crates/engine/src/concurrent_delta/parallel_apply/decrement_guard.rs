@@ -4,21 +4,17 @@
 //! decomposition; sibling to [`super::slot_barrier::BarrierState`]. The
 //! guard is the only call site of [`BarrierState::decrement_inflight`]
 //! and pairs with [`BarrierState::increment_inflight`] (invoked from
-//! [`super::SlotHandle::new`] via the [`super::slot_barrier::SlotBarrier`]
-//! adapter) so the FFB-1 invariant ("every Arc outstanding is reflected
-//! in the inflight counter") holds across early returns, `?`
-//! propagations, and panics.
+//! [`super::handle::SlotHandle::new`]) so the FFB-1 invariant ("every
+//! Arc outstanding is reflected in the inflight counter") holds across
+//! early returns, `?` propagations, and panics.
 //!
-//! DG-3.c retyped the guard's `barrier` field from `Arc<SlotBarrier>`
-//! to `Arc<BarrierState>` per the DG-2.a Option-B spec
-//! (`docs/design/dg-2a-option-b-spec.md` section 2). The payload Arc
-//! ([`super::slot_barrier::SlotData`]) and the notify-bearing Arc
-//! ([`BarrierState`]) now have independent strong-count trajectories,
-//! so the worker's lingering decrement-guard Arc no longer extends the
-//! payload Arc's strong count past the flusher's `Arc::try_unwrap`. The
-//! `SlotHandle` retype is deferred to a later DG-3.x task; the
-//! [`super::slot_barrier::SlotBarrier`] adapter stays as a bridge until
-//! then.
+//! The guard's `barrier` field holds an `Arc<BarrierState>` per the
+//! DG-2.a Option-B spec (`docs/design/dg-2a-option-b-spec.md` section
+//! 2). The payload Arc ([`super::slot_barrier::SlotData`]) and the
+//! notify-bearing Arc ([`BarrierState`]) have independent strong-count
+//! trajectories, so the worker's lingering decrement-guard Arc never
+//! extends the payload Arc's strong count past the flusher's
+//! `Arc::try_unwrap`.
 //!
 //! [`BarrierState`]: super::slot_barrier::BarrierState
 //! [`BarrierState::decrement_inflight`]: super::slot_barrier::BarrierState::decrement_inflight
@@ -34,11 +30,11 @@ use super::slot_barrier::BarrierState;
 /// panics mid-write or returns early via `?`, the counter still drops
 /// back to its pre-handoff value and `flush_workers` unblocks.
 ///
-/// The field holds [`Arc<BarrierState>`] (DG-3.c) rather than the
-/// previous `Arc<SlotBarrier>` adapter so the worker's lingering clone
-/// on drop lives on a strong-count graph disjoint from the payload Arc
-/// the flusher unwraps. See `docs/design/dg-2a-option-b-spec.md`
-/// section 2 for the wider rationale.
+/// The field holds [`Arc<BarrierState>`] so the worker's lingering
+/// clone on drop lives on a strong-count graph disjoint from the
+/// payload Arc the flusher unwraps. See
+/// `docs/design/dg-2a-option-b-spec.md` section 2 for the wider
+/// rationale.
 ///
 /// [`SlotHandle`]: super::SlotHandle
 /// [`Arc<BarrierState>`]: std::sync::Arc

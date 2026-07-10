@@ -1,7 +1,7 @@
 //! Batched parallel apply path for the receive-side delta applier (SPL-38.d).
 //!
 //! Extracted from `parallel_apply/mod.rs` as part of the SPL-38 module
-//! decomposition. Sibling to [`super::slot_barrier::SlotBarrier`] and
+//! decomposition. Sibling to [`super::handle::SlotHandle`] and
 //! [`super::decrement_guard::DecrementGuard`]; reuses both via the per-slot
 //! handle returned by [`ParallelDeltaApplier::slot_for`].
 //!
