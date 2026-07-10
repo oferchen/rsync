@@ -267,6 +267,28 @@ impl ReceiverContext {
             dirs_to_scan.len()
         );
 
+        // --max-delete must count every filesystem entry actually removed,
+        // including the leaves inside an extraneous directory, and stop
+        // mid-traversal once the limit is reached. The parallel path below
+        // removes a doomed subdirectory wholesale (`recursive_unlinkat`) and
+        // counts it as a single deletion, silently exceeding the cap for
+        // directory subtrees. Route capped runs through a serial,
+        // leaf-granular executor that mirrors upstream delete.c:156/181
+        // (guard-before-delete, increment-on-success).
+        if let Some(limit) = max_delete {
+            return self.delete_extraneous_files_capped(
+                dest_dir,
+                &dir_children,
+                &dirs_to_scan,
+                deletion_chain,
+                needs_perdir_merge,
+                #[cfg(unix)]
+                sandbox,
+                writer,
+                limit,
+            );
+        }
+
         // Atomic counter for max_delete enforcement across parallel workers.
         // upstream: main.c:1367 - deletion_count >= max_delete
         let deletions_performed = Arc::new(AtomicU64::new(0));
@@ -643,6 +665,386 @@ impl ReceiverContext {
         let limit_exceeded = max_delete.is_some_and(|limit| total_deletions >= limit);
 
         Ok((combined, limit_exceeded, io_err_bits))
+    }
+
+    /// Serial, leaf-granular deletion path used when `--max-delete` is set.
+    ///
+    /// The parallel path counts a doomed subdirectory as a single deletion and
+    /// removes its subtree wholesale, so a directory holding N files costs one
+    /// unit against the cap even though N+1 filesystem entries vanish. That
+    /// undercount lets a small `--max-delete` value silently remove an
+    /// unbounded number of files. This path walks every candidate depth-first
+    /// in upstream reverse-sorted order and checks the cap before each
+    /// individual removal, counting only successful deletions, mirroring
+    /// upstream `delete.c:delete_item`/`delete_dir_contents`
+    /// (`delete.c:156` guard, `delete.c:181` increment). Directory processing
+    /// order is the same ascending `dirs_to_scan` order used elsewhere; the
+    /// per-entry unlink and scan still route through the SEC-1.q2 sandbox
+    /// helpers so the security posture is unchanged.
+    #[allow(clippy::too_many_arguments)]
+    fn delete_extraneous_files_capped<W: crate::writer::MsgInfoSender + ?Sized>(
+        &self,
+        dest_dir: &Path,
+        dir_children: &std::collections::HashMap<
+            PathBuf,
+            std::collections::HashSet<std::ffi::OsString>,
+        >,
+        dirs_to_scan: &[PathBuf],
+        deletion_chain: &filters::FilterChain,
+        needs_perdir_merge: bool,
+        #[cfg(unix)] sandbox: Option<&std::sync::Arc<fast_io::DirSandbox>>,
+        writer: &mut W,
+        limit: u64,
+    ) -> io::Result<(DeleteStats, bool, i32)> {
+        let mut state = CappedDeleteState {
+            #[cfg(unix)]
+            dest_dir,
+            #[cfg(unix)]
+            sandbox,
+            limit,
+            deleted: 0,
+            skipped: 0,
+            combined: DeleteStats::new(),
+            io_err_bits: 0,
+            emit_itemize: self.should_emit_itemize(),
+            writer,
+        };
+
+        for dir_relative in dirs_to_scan {
+            // Stop scanning once the cap is exhausted: every further candidate
+            // would only add to the skipped count, and upstream stops issuing
+            // deletions the moment the limit is reached.
+            let dest_path = if dir_relative.as_os_str() == "." {
+                dest_dir.to_path_buf()
+            } else {
+                dest_dir.join(dir_relative)
+            };
+            let Some(keep) = dir_children.get(dir_relative) else {
+                continue;
+            };
+
+            // Reload this destination directory's per-directory merge rules so
+            // dir-merge self-exclusion and merge-driven excludes stay active,
+            // mirroring the parallel worker.
+            let local_chain = if needs_perdir_merge {
+                let mut chain = deletion_chain.clone();
+                chain.set_transfer_root(dest_dir.to_path_buf());
+                let _ = chain.enter_directory(dest_dir);
+                if dir_relative.as_os_str() != "." {
+                    let mut cur = dest_dir.to_path_buf();
+                    for comp in dir_relative.iter() {
+                        cur.push(comp);
+                        let _ = chain.enter_directory(&cur);
+                    }
+                }
+                Some(chain)
+            } else {
+                None
+            };
+
+            let scan_rel: &Path = if dir_relative.as_os_str() == "." {
+                Path::new("")
+            } else {
+                dir_relative.as_path()
+            };
+            let entries = match state.scan_dir(scan_rel, &dest_path) {
+                Ok(entries) => entries,
+                Err(e) => {
+                    if let Some(err) = fail_loud_unlink_error(e) {
+                        return Err(err);
+                    }
+                    // EACCES / NotFound: upstream leaves the directory alone.
+                    state.io_err_bits |= crate::generator::io_error_flags::IOERR_GENERAL;
+                    continue;
+                }
+            };
+
+            // Collect the extraneous candidates that survive the keep-set and
+            // filter rules, then visit them in upstream reverse-sorted order.
+            let mut candidates: Vec<CappedCandidate> = Vec::new();
+            for (name, is_dir, is_symlink) in entries {
+                let normalized = normalize_filename_for_compare(&name);
+                if keep.contains(&normalized) {
+                    continue;
+                }
+                let rel_for_filter = if dir_relative.as_os_str() == "." {
+                    PathBuf::from(&name)
+                } else {
+                    dir_relative.join(&name)
+                };
+                let allows = match &local_chain {
+                    Some(chain) => chain.allows_deletion(&rel_for_filter, is_dir),
+                    None => deletion_chain.allows_deletion(&rel_for_filter, is_dir),
+                };
+                if !allows {
+                    debug_log!(
+                        Del,
+                        3,
+                        "not deleting {} (protected by filter rule)",
+                        rel_for_filter.display()
+                    );
+                    continue;
+                }
+                candidates.push(CappedCandidate {
+                    name,
+                    rel: rel_for_filter,
+                    is_dir,
+                    is_symlink,
+                });
+            }
+            // upstream: delete_in_dir iterates the sorted dirlist in reverse.
+            // Sort ascending with the full comparator (files before dirs at a
+            // level) then reverse so the prefix deleted when the cap trips
+            // matches upstream's traversal.
+            candidates.sort_by(|a, b| f_name_cmp_full(&a.rel, a.is_dir, &b.rel, b.is_dir));
+            candidates.reverse();
+
+            for candidate in candidates {
+                let path = dest_path.join(&candidate.name);
+                state.remove_entry(
+                    &candidate.rel,
+                    &path,
+                    candidate.is_dir,
+                    candidate.is_symlink,
+                )?;
+            }
+        }
+
+        let CappedDeleteState {
+            combined,
+            skipped,
+            mut io_err_bits,
+            ..
+        } = state;
+        if skipped > 0 {
+            // upstream: generator.c:2430-2434 - one warning after the pass, then
+            // `io_error |= IOERR_DEL_LIMIT` so the run exits RERR_DEL_LIMIT (25).
+            // Nonreg renders at the default verbosity (info_verbosity[0]), the
+            // same channel the sibling delete notices use.
+            info_log!(
+                Nonreg,
+                1,
+                "Deletions stopped due to --max-delete limit ({skipped} skipped)"
+            );
+            io_err_bits |= crate::generator::io_error_flags::IOERR_DEL_LIMIT;
+        }
+        Ok((combined, skipped > 0, io_err_bits))
+    }
+}
+
+/// One extraneous destination entry awaiting a capped deletion decision.
+struct CappedCandidate {
+    name: std::ffi::OsString,
+    rel: PathBuf,
+    is_dir: bool,
+    is_symlink: bool,
+}
+
+/// Mutable bookkeeping threaded through the recursive capped deletion walk.
+struct CappedDeleteState<'w, W: ?Sized> {
+    // Only read by the Unix sandbox-anchored scan path; the non-Unix scan
+    // walks `target_path` directly, so gate the field like `sandbox` below.
+    #[cfg(unix)]
+    dest_dir: &'w Path,
+    #[cfg(unix)]
+    sandbox: Option<&'w std::sync::Arc<fast_io::DirSandbox>>,
+    limit: u64,
+    /// Successful deletions so far - the global cap counter
+    /// (upstream `stats.deleted_files`).
+    deleted: u64,
+    /// Entries skipped because the cap was reached
+    /// (upstream `skipped_deletes`).
+    skipped: u64,
+    combined: DeleteStats,
+    io_err_bits: i32,
+    emit_itemize: bool,
+    writer: &'w mut W,
+}
+
+impl<W: crate::writer::MsgInfoSender + ?Sized> CappedDeleteState<'_, W> {
+    /// Lists the immediate children of `target_path` as
+    /// `(name, is_dir, is_symlink)`, routing through the sandbox helper on
+    /// Unix so the listing is anchored the same way as the parallel worker.
+    fn scan_dir(
+        &self,
+        relative: &Path,
+        target_path: &Path,
+    ) -> io::Result<Vec<(std::ffi::OsString, bool, bool)>> {
+        #[cfg(unix)]
+        {
+            let mut out = Vec::new();
+            let iter = fast_io::read_dir_via_sandbox_or_fallback(
+                self.sandbox.map(|a| &**a),
+                self.dest_dir,
+                relative,
+                target_path,
+            )?;
+            for entry in iter {
+                let view = match entry {
+                    Ok(view) => view,
+                    Err(_) => continue,
+                };
+                let kind = view.file_type();
+                out.push((
+                    view.file_name().to_os_string(),
+                    kind.is_some_and(fast_io::EntryKind::is_dir),
+                    kind.is_some_and(fast_io::EntryKind::is_symlink),
+                ));
+            }
+            Ok(out)
+        }
+        #[cfg(not(unix))]
+        {
+            let _ = relative;
+            let mut out = Vec::new();
+            for entry in std::fs::read_dir(target_path)? {
+                let entry = match entry {
+                    Ok(e) => e,
+                    Err(_) => continue,
+                };
+                let ft = entry.file_type().ok();
+                out.push((
+                    entry.file_name(),
+                    ft.as_ref().is_some_and(std::fs::FileType::is_dir),
+                    ft.as_ref().is_some_and(std::fs::FileType::is_symlink),
+                ));
+            }
+            Ok(out)
+        }
+    }
+
+    /// Recursively removes one extraneous entry under the cap. Returns `true`
+    /// when the entry was fully removed and `false` when it (or part of its
+    /// subtree) was left in place because the cap was reached.
+    fn remove_entry(
+        &mut self,
+        rel: &Path,
+        path: &Path,
+        is_dir: bool,
+        is_symlink: bool,
+    ) -> io::Result<bool> {
+        if is_dir && !is_symlink {
+            // Peel the directory's contents depth-first before considering the
+            // directory itself (upstream delete_dir_contents, reverse order).
+            let mut children = match self.scan_dir(rel, path) {
+                Ok(children) => children,
+                Err(e) => {
+                    if let Some(err) = fail_loud_unlink_error(e) {
+                        return Err(err);
+                    }
+                    self.io_err_bits |= crate::generator::io_error_flags::IOERR_GENERAL;
+                    return Ok(false);
+                }
+            };
+            children.sort_by(|a, b| f_name_cmp_full(Path::new(&a.0), a.1, Path::new(&b.0), b.1));
+            children.reverse();
+
+            let mut all_removed = true;
+            for (child_name, child_is_dir, child_is_symlink) in children {
+                let child_rel = rel.join(&child_name);
+                let child_path = path.join(&child_name);
+                if !self.remove_entry(&child_rel, &child_path, child_is_dir, child_is_symlink)? {
+                    all_removed = false;
+                }
+            }
+
+            if !all_removed {
+                // upstream: delete.c:117 - one notice per non-empty directory,
+                // not counted and not an I/O error.
+                info_log!(
+                    Nonreg,
+                    1,
+                    "cannot delete non-empty directory: {}",
+                    path.display().to_string().replace('\\', "/")
+                );
+                return Ok(false);
+            }
+
+            if self.deleted >= self.limit {
+                self.skipped = self.skipped.saturating_add(1);
+                return Ok(false);
+            }
+            return self.unlink_leaf(rel, path, true, false);
+        }
+
+        if self.deleted >= self.limit {
+            self.skipped = self.skipped.saturating_add(1);
+            return Ok(false);
+        }
+        self.unlink_leaf(rel, path, false, is_symlink)
+    }
+
+    /// Issues the actual removal for one leaf, updates the stats/itemize on
+    /// success, and applies the receiver's error policy on failure. Returns
+    /// `true` on a successful (or vanished) removal.
+    fn unlink_leaf(
+        &mut self,
+        rel: &Path,
+        path: &Path,
+        is_dir: bool,
+        is_symlink: bool,
+    ) -> io::Result<bool> {
+        let result = self.raw_unlink(rel, path, is_dir);
+        match result {
+            Ok(()) => {
+                self.deleted = self.deleted.saturating_add(1);
+                if is_dir {
+                    self.combined.dirs = self.combined.dirs.saturating_add(1);
+                } else if is_symlink {
+                    self.combined.symlinks = self.combined.symlinks.saturating_add(1);
+                } else {
+                    self.combined.files = self.combined.files.saturating_add(1);
+                }
+                // upstream: log.c:log_delete() emits one line per deleted item.
+                if is_dir {
+                    info_log!(Del, 1, "deleting {}/", rel.display());
+                } else {
+                    info_log!(Del, 1, "deleting {}", rel.display());
+                }
+                if self.emit_itemize {
+                    let line = format!("*deleting   {}\n", rel.display());
+                    let _ = self.writer.send_msg_info(line.as_bytes());
+                }
+                Ok(true)
+            }
+            Err(e) => {
+                debug_log!(Del, 1, "failed to delete {}: {}", path.display(), e);
+                if let Some(err) = fail_loud_unlink_error(e) {
+                    return Err(err);
+                }
+                // EACCES / NotFound: upstream leaves the entry and continues.
+                Ok(false)
+            }
+        }
+    }
+
+    /// Performs the unlink/rmdir syscall, anchored through the sandbox helper
+    /// on Unix.
+    fn raw_unlink(&self, rel: &Path, path: &Path, is_dir: bool) -> io::Result<()> {
+        #[cfg(unix)]
+        {
+            let flags = if is_dir {
+                fast_io::UnlinkFlags::Dir
+            } else {
+                fast_io::UnlinkFlags::File
+            };
+            fast_io::unlink_via_sandbox_or_fallback(
+                self.sandbox.map(|a| &**a),
+                self.dest_dir,
+                rel,
+                path,
+                flags,
+            )
+        }
+        #[cfg(not(unix))]
+        {
+            let _ = rel;
+            if is_dir {
+                std::fs::remove_dir(path)
+            } else {
+                std::fs::remove_file(path)
+            }
+        }
     }
 }
 
