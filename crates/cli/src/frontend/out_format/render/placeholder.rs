@@ -37,14 +37,17 @@ fn symlink_target_connector(event: &ClientEvent) -> &'static str {
     }
 }
 
-/// Resolves a placeholder token to its string value for the given event and context.
+/// Resolves a placeholder token to its raw byte value for the given event and context.
 ///
-/// Returns `None` when the placeholder is inapplicable (e.g., symlink target on a regular file).
+/// Returns `None` when the placeholder is inapplicable (e.g., symlink target on
+/// a regular file). Path placeholders (`%n`/`%f`/`%L`) carry raw filename bytes
+/// so a lone invalid-UTF-8 byte under `--8-bit-output` survives verbatim to the
+/// writer; all other placeholders are valid UTF-8 rendered into bytes.
 pub(super) fn render_placeholder_value(
     event: &ClientEvent,
     context: &OutFormatContext,
     spec: &PlaceholderToken,
-) -> Option<String> {
+) -> Option<Vec<u8>> {
     let allow_8bit = context.eight_bit_output;
     match spec.kind {
         OutFormatPlaceholder::FileName => Some(render_path(event, true, allow_8bit)),
@@ -54,39 +57,49 @@ pub(super) fn render_placeholder_value(
                 .metadata()
                 .and_then(ClientEntryMetadata::symlink_target)
             {
-                rendered.push_str(symlink_target_connector(event));
-                rendered.push_str(&escape_path(target, allow_8bit));
+                rendered.extend_from_slice(symlink_target_connector(event).as_bytes());
+                rendered.extend_from_slice(&escape_path(target, allow_8bit));
             }
             Some(rendered)
         }
         OutFormatPlaceholder::FullPath => Some(render_path(event, false, allow_8bit)),
         OutFormatPlaceholder::ItemizedChanges => {
-            Some(format_itemized_changes(event, context.is_sender))
+            Some(format_itemized_changes(event, context.is_sender).into_bytes())
         }
         OutFormatPlaceholder::FileLength => {
             let length = event.metadata().map_or(0, ClientEntryMetadata::length);
-            Some(format_numeric_value(length as i64, &spec.format))
+            Some(format_numeric_value(length as i64, &spec.format).into_bytes())
         }
-        OutFormatPlaceholder::BytesTransferred => Some(format_numeric_value(
-            transfer_byte_count(event, context.is_sender, false) as i64,
-            &spec.format,
-        )),
-        OutFormatPlaceholder::ChecksumBytes => Some(format_numeric_value(
-            transfer_byte_count(event, context.is_sender, true) as i64,
-            &spec.format,
-        )),
-        OutFormatPlaceholder::Operation => Some(describe_event_kind(event.kind()).to_owned()),
-        OutFormatPlaceholder::ModifyTime => Some(format_out_format_mtime(event.metadata())),
+        OutFormatPlaceholder::BytesTransferred => Some(
+            format_numeric_value(
+                transfer_byte_count(event, context.is_sender, false) as i64,
+                &spec.format,
+            )
+            .into_bytes(),
+        ),
+        OutFormatPlaceholder::ChecksumBytes => Some(
+            format_numeric_value(
+                transfer_byte_count(event, context.is_sender, true) as i64,
+                &spec.format,
+            )
+            .into_bytes(),
+        ),
+        OutFormatPlaceholder::Operation => {
+            Some(describe_event_kind(event.kind()).to_owned().into_bytes())
+        }
+        OutFormatPlaceholder::ModifyTime => {
+            Some(format_out_format_mtime(event.metadata()).into_bytes())
+        }
         OutFormatPlaceholder::PermissionString => {
-            Some(format_out_format_permissions(event.metadata()))
+            Some(format_out_format_permissions(event.metadata()).into_bytes())
         }
         OutFormatPlaceholder::SymlinkTarget => match event
             .metadata()
             .and_then(ClientEntryMetadata::symlink_target)
         {
             Some(target) => {
-                let mut rendered = String::from(symlink_target_connector(event));
-                rendered.push_str(&escape_path(target, allow_8bit));
+                let mut rendered = symlink_target_connector(event).as_bytes().to_vec();
+                rendered.extend_from_slice(&escape_path(target, allow_8bit));
                 Some(rendered)
             }
             // upstream: log.c:648-654 - the `case 'L'` else-branch sets n = ""
@@ -98,16 +111,17 @@ pub(super) fn render_placeholder_value(
             None => spec
                 .format
                 .width()
-                .map(|width| " ".repeat(4 + width.min(MAX_PLACEHOLDER_WIDTH))),
+                .map(|width| vec![b' '; 4 + width.min(MAX_PLACEHOLDER_WIDTH)]),
         },
-        OutFormatPlaceholder::CurrentTime => Some(format_current_timestamp()),
-        OutFormatPlaceholder::OwnerName => Some(format_owner_name(event.metadata())),
-        OutFormatPlaceholder::GroupName => Some(format_group_name(event.metadata())),
+        OutFormatPlaceholder::CurrentTime => Some(format_current_timestamp().into_bytes()),
+        OutFormatPlaceholder::OwnerName => Some(format_owner_name(event.metadata()).into_bytes()),
+        OutFormatPlaceholder::GroupName => Some(format_group_name(event.metadata()).into_bytes()),
         OutFormatPlaceholder::OwnerUid => Some(
             event
                 .metadata()
                 .and_then(ClientEntryMetadata::uid)
-                .map_or_else(|| "0".to_owned(), |value| value.to_string()),
+                .map_or_else(|| "0".to_owned(), |value| value.to_string())
+                .into_bytes(),
         ),
         // upstream: log.c:574-576 - `case 'G'` renders the literal "DEFAULT"
         // when `!gid_ndx || file->flags & FLAG_SKIP_GROUP`; only an available
@@ -117,26 +131,23 @@ pub(super) fn render_placeholder_value(
             event
                 .metadata()
                 .and_then(ClientEntryMetadata::gid)
-                .map_or_else(|| "DEFAULT".to_owned(), |value| value.to_string()),
+                .map_or_else(|| "DEFAULT".to_owned(), |value| value.to_string())
+                .into_bytes(),
         ),
-        OutFormatPlaceholder::ProcessId => Some(std::process::id().to_string()),
-        OutFormatPlaceholder::RemoteHost => Some(remote_placeholder_value(
-            context.remote_host.as_deref(),
-            'h',
-        )),
-        OutFormatPlaceholder::RemoteAddress => Some(remote_placeholder_value(
-            context.remote_address.as_deref(),
-            'a',
-        )),
-        OutFormatPlaceholder::ModuleName => Some(remote_placeholder_value(
-            context.module_name.as_deref(),
-            'm',
-        )),
-        OutFormatPlaceholder::ModulePath => Some(remote_placeholder_value(
-            context.module_path.as_deref(),
-            'P',
-        )),
-        OutFormatPlaceholder::FullChecksum => Some(format_full_checksum(event)),
+        OutFormatPlaceholder::ProcessId => Some(std::process::id().to_string().into_bytes()),
+        OutFormatPlaceholder::RemoteHost => {
+            Some(remote_placeholder_value(context.remote_host.as_deref(), 'h').into_bytes())
+        }
+        OutFormatPlaceholder::RemoteAddress => {
+            Some(remote_placeholder_value(context.remote_address.as_deref(), 'a').into_bytes())
+        }
+        OutFormatPlaceholder::ModuleName => {
+            Some(remote_placeholder_value(context.module_name.as_deref(), 'm').into_bytes())
+        }
+        OutFormatPlaceholder::ModulePath => {
+            Some(remote_placeholder_value(context.module_path.as_deref(), 'P').into_bytes())
+        }
+        OutFormatPlaceholder::FullChecksum => Some(format_full_checksum(event).into_bytes()),
     }
 }
 
@@ -184,8 +195,9 @@ fn transfer_byte_count(event: &ClientEvent, is_sender: bool, want_checksum: bool
     }
 }
 
-/// Renders the path from an event, optionally appending a trailing slash for directories.
-fn render_path(event: &ClientEvent, ensure_trailing_slash: bool, allow_8bit: bool) -> String {
+/// Renders the path from an event as raw bytes, optionally appending a trailing
+/// slash for directories.
+fn render_path(event: &ClientEvent, ensure_trailing_slash: bool, allow_8bit: bool) -> Vec<u8> {
     let mut rendered = escape_path(event.relative_path(), allow_8bit);
     // upstream: flist.c / log.c - itemize and out-format paths use POSIX
     // forward-slash separators regardless of host OS. Normalize Windows
@@ -193,10 +205,14 @@ fn render_path(event: &ClientEvent, ensure_trailing_slash: bool, allow_8bit: boo
     // the platform-native form.
     #[cfg(windows)]
     {
-        rendered = rendered.replace('\\', "/");
+        for byte in rendered.iter_mut() {
+            if *byte == b'\\' {
+                *byte = b'/';
+            }
+        }
     }
     if ensure_trailing_slash
-        && !rendered.ends_with('/')
+        && rendered.last() != Some(&b'/')
         && event.metadata().map(ClientEntryMetadata::kind).map_or_else(
             // upstream: log.c:639-640 - %n appends `/` for any directory entry.
             // `EntryDeleted` rows carry no metadata snapshot, so fall back to the
@@ -206,7 +222,7 @@ fn render_path(event: &ClientEvent, ensure_trailing_slash: bool, allow_8bit: boo
             ClientEntryKind::is_directory,
         )
     {
-        rendered.push('/');
+        rendered.push(b'/');
     }
     rendered
 }
