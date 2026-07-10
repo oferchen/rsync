@@ -129,7 +129,17 @@ pub(in crate::local_copy) fn execute_transfer(
     // generator uses it as `fnamecmp` (the delta basis) instead of sending the
     // whole file.
     let fuzzy_basis = if !whole_file_enabled && existing_metadata.is_none() {
-        find_fuzzy_basis(context, destination, relative, file_type, file_size)
+        // upstream: generator.c:858 compares against the source file's mtime
+        // (whole seconds) for the fuzzy size/modtime fast-path.
+        let target_mtime = metadata.modified().ok().map(system_time_to_unix_secs);
+        find_fuzzy_basis(
+            context,
+            destination,
+            relative,
+            file_type,
+            file_size,
+            target_mtime,
+        )
     } else {
         None
     };
@@ -784,6 +794,7 @@ fn find_fuzzy_basis(
     relative: Option<&Path>,
     file_type: fs::FileType,
     file_size: u64,
+    target_mtime: Option<i64>,
 ) -> Option<(PathBuf, fs::Metadata)> {
     if context.fuzzy_level_enabled() == 0 || !file_type.is_file() {
         return None;
@@ -793,7 +804,7 @@ fn find_fuzzy_basis(
     let dest_dir = destination.parent()?;
 
     let matcher = FuzzyMatcher::with_level(context.fuzzy_level_enabled());
-    let candidate = matcher.find_fuzzy_basis(target_name, dest_dir, file_size)?;
+    let candidate = matcher.find_fuzzy_basis(target_name, dest_dir, file_size, target_mtime)?;
 
     let meta = fs::symlink_metadata(&candidate.path).ok()?;
     if !meta.is_file() {
@@ -818,4 +829,14 @@ fn find_fuzzy_basis(
     trace_fuzzy_basis_selected(&target_display, &basis_display);
 
     Some((candidate.path, meta))
+}
+
+/// Converts a [`std::time::SystemTime`] to whole seconds since the Unix epoch
+/// for the fuzzy size/modtime fast-path comparison. upstream: generator.c:858
+/// `same_time(fp->modtime, 0, file->modtime, 0)`.
+fn system_time_to_unix_secs(time: std::time::SystemTime) -> i64 {
+    match time.duration_since(std::time::UNIX_EPOCH) {
+        Ok(delta) => delta.as_secs() as i64,
+        Err(err) => -(err.duration().as_secs() as i64),
+    }
 }

@@ -22,7 +22,7 @@ fn level_1_searches_only_dest_directory() {
     let matcher =
         FuzzyMatcher::with_level(1).with_fuzzy_basis_dirs(vec![ref_dir.path().to_path_buf()]);
 
-    let result = matcher.find_fuzzy_basis(OsStr::new("file_v2.txt"), dest_dir.path(), 100);
+    let result = matcher.find_fuzzy_basis(OsStr::new("file_v2.txt"), dest_dir.path(), 100, None);
 
     // Should find the file in dest_dir, not ref_dir (level 1 doesn't search ref dirs)
     assert!(result.is_some());
@@ -50,7 +50,8 @@ fn level_2_searches_dest_and_reference_dirs() {
         ref_dir2.path().to_path_buf(),
     ]);
 
-    let result = matcher.find_fuzzy_basis(OsStr::new("app_v1.2.tar.gz"), dest_dir.path(), 100);
+    let result =
+        matcher.find_fuzzy_basis(OsStr::new("app_v1.2.tar.gz"), dest_dir.path(), 100, None);
 
     // Should find a file in one of the reference directories
     assert!(result.is_some());
@@ -77,7 +78,7 @@ fn level_2_chooses_best_match_across_all_dirs() {
     let matcher =
         FuzzyMatcher::with_level(2).with_fuzzy_basis_dirs(vec![ref_dir.path().to_path_buf()]);
 
-    let result = matcher.find_fuzzy_basis(OsStr::new("data_2024.csv"), dest_dir.path(), 1000);
+    let result = matcher.find_fuzzy_basis(OsStr::new("data_2024.csv"), dest_dir.path(), 1000, None);
 
     // Should choose the better match from ref_dir
     assert!(result.is_some());
@@ -86,7 +87,12 @@ fn level_2_chooses_best_match_across_all_dirs() {
         matched.path.starts_with(ref_dir.path()),
         "Should choose better match from reference directory"
     );
-    assert!(matched.score > 50, "Should have a good score");
+    // One-character version bump is a very close name match: a small distance.
+    assert!(
+        matched.distance < (5 << 16),
+        "close name match should have small distance: {}",
+        matched.distance
+    );
 }
 
 /// Verifies that default matcher uses level 1.
@@ -116,7 +122,7 @@ fn level_2_without_basis_dirs_acts_like_level_1() {
     // Level 2 but no basis dirs configured
     let matcher = FuzzyMatcher::with_level(2);
 
-    let result = matcher.find_fuzzy_basis(OsStr::new("test_v2.txt"), dest_dir.path(), 10);
+    let result = matcher.find_fuzzy_basis(OsStr::new("test_v2.txt"), dest_dir.path(), 10, None);
 
     // Should still find the file in dest_dir
     assert!(result.is_some());
@@ -132,7 +138,12 @@ fn real_world_versioned_file_rename() {
         .expect("write old version");
 
     let matcher = FuzzyMatcher::new();
-    let result = matcher.find_fuzzy_basis(OsStr::new("myapp-1.2.4.tar.gz"), dest_dir.path(), 5100);
+    let result = matcher.find_fuzzy_basis(
+        OsStr::new("myapp-1.2.4.tar.gz"),
+        dest_dir.path(),
+        5100,
+        None,
+    );
 
     assert!(result.is_some(), "Should find old version as basis");
     let matched = result.unwrap();
@@ -145,7 +156,13 @@ fn real_world_versioned_file_rename() {
             .contains("1.2.3"),
         "Should match old version"
     );
-    assert!(matched.score > 100, "Should have high similarity score");
+    // "myapp-1.2.3" vs "myapp-1.2.4": a single digit differs, so the distance
+    // stays close to one Levenshtein unit.
+    assert!(
+        matched.distance < (5 << 16),
+        "single-digit version diff should have small distance: {}",
+        matched.distance
+    );
 }
 
 /// Verifies real-world scenario: date-stamped backups.
@@ -161,20 +178,27 @@ fn real_world_dated_backup_files() {
     .expect("write backup");
 
     let matcher = FuzzyMatcher::new();
-    let result =
-        matcher.find_fuzzy_basis(OsStr::new("backup_2024-01-22.tar"), dest_dir.path(), 10500);
+    let result = matcher.find_fuzzy_basis(
+        OsStr::new("backup_2024-01-22.tar"),
+        dest_dir.path(),
+        10500,
+        None,
+    );
 
     assert!(result.is_some(), "Should find previous backup as basis");
     let matched = result.unwrap();
+    // "backup_2024-01-15" vs "backup_2024-01-22": two digits differ, so the
+    // distance is still a small number of Levenshtein units.
     assert!(
-        matched.score > 150,
-        "Date-stamped backups should score high"
+        matched.distance < (10 << 16),
+        "date-stamped backups should have small distance: {}",
+        matched.distance
     );
 }
 
-/// Verifies that fuzzy matching respects minimum score at each level.
+/// Verifies that fuzzy matching respects the distance cap at each level.
 #[test]
-fn minimum_score_respected_at_all_levels() {
+fn distance_cap_respected_at_all_levels() {
     let dest_dir = TempDir::new().expect("create dest dir");
     let ref_dir = TempDir::new().expect("create ref dir");
 
@@ -184,12 +208,13 @@ fn minimum_score_respected_at_all_levels() {
     // Poor match in ref
     fs::write(ref_dir.path().join("xyz.txt"), "data2").expect("write ref");
 
-    // Level 2 matcher with high threshold
+    // Level 2 matcher with a strict (low) distance cap: only near-identical
+    // names would qualify, so the unrelated candidates are rejected.
     let matcher = FuzzyMatcher::with_level(2)
-        .with_min_score(1000)
+        .with_max_distance(1 << 16)
         .with_fuzzy_basis_dirs(vec![ref_dir.path().to_path_buf()]);
 
-    let result = matcher.find_fuzzy_basis(OsStr::new("target.dat"), dest_dir.path(), 100);
+    let result = matcher.find_fuzzy_basis(OsStr::new("target.dat"), dest_dir.path(), 100, None);
 
     // Should find nothing due to high threshold
     assert!(

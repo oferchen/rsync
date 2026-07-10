@@ -1200,7 +1200,7 @@ fn regression_large_literal_then_copy() {
 }
 
 mod fuzzy_matching {
-    use matching::{FuzzyMatcher, compute_similarity_score};
+    use matching::FuzzyMatcher;
     use std::ffi::OsStr;
     use std::fs;
     use tempfile::TempDir;
@@ -1219,7 +1219,8 @@ mod fuzzy_matching {
         let result = matcher.find_fuzzy_basis(
             OsStr::new("report_2025.csv"),
             temp.path(),
-            100, // target size
+            100,
+            None, // target size
         );
 
         // Should find one of the similar report files
@@ -1246,35 +1247,35 @@ mod fuzzy_matching {
         fs::write(temp.path().join("alpha.bin"), "data1").expect("write file");
         fs::write(temp.path().join("beta.bin"), "data2").expect("write file");
 
-        let matcher = FuzzyMatcher::new().with_min_score(100);
-        let result = matcher.find_fuzzy_basis(OsStr::new("gamma.txt"), temp.path(), 50);
+        // A strict (low) distance cap rejects the unrelated candidates.
+        let matcher = FuzzyMatcher::new().with_max_distance(1 << 16);
+        let result = matcher.find_fuzzy_basis(OsStr::new("gamma.txt"), temp.path(), 50, None);
 
-        // High threshold should prevent matching unrelated files
+        // Strict cap should prevent matching unrelated files
         assert!(
             result.is_none(),
-            "should not find unrelated files with high threshold"
+            "should not find unrelated files under a strict distance cap"
         );
     }
 
-    /// Verifies fuzzy matching respects minimum score threshold.
+    /// Verifies fuzzy matching respects the distance cap.
     #[test]
-    fn respects_minimum_score_threshold() {
+    fn respects_distance_cap() {
         let temp = TempDir::new().expect("create temp dir");
 
         fs::write(temp.path().join("file_a.txt"), "data").expect("write file");
 
-        // Low threshold should match
-        let matcher_low = FuzzyMatcher::new().with_min_score(1);
-        let result_low = matcher_low.find_fuzzy_basis(OsStr::new("file_b.txt"), temp.path(), 100);
-        assert!(result_low.is_some(), "low threshold should find match");
+        // A permissive cap accepts the close "file_b" -> "file_a" match.
+        let matcher_low = FuzzyMatcher::new().with_max_distance(u32::MAX);
+        let result_low =
+            matcher_low.find_fuzzy_basis(OsStr::new("file_b.txt"), temp.path(), 100, None);
+        assert!(result_low.is_some(), "permissive cap should find match");
 
-        // Very high threshold should not match
-        let matcher_high = FuzzyMatcher::new().with_min_score(10000);
-        let result_high = matcher_high.find_fuzzy_basis(OsStr::new("file_b.txt"), temp.path(), 100);
-        assert!(
-            result_high.is_none(),
-            "very high threshold should not match"
-        );
+        // A zero cap rejects every non-fast-path candidate.
+        let matcher_high = FuzzyMatcher::new().with_max_distance(0);
+        let result_high =
+            matcher_high.find_fuzzy_basis(OsStr::new("file_b.txt"), temp.path(), 100, None);
+        assert!(result_high.is_none(), "zero cap should reject all matches");
     }
 
     /// Verifies fuzzy matching searches additional basis directories (level 2).
@@ -1294,6 +1295,7 @@ mod fuzzy_matching {
             OsStr::new("config_v2.json"),
             temp1.path(), // Empty primary directory
             100,
+            None,
         );
 
         assert!(result.is_some(), "should find file in additional basis dir");
@@ -1310,7 +1312,7 @@ mod fuzzy_matching {
         let temp = TempDir::new().expect("create temp dir");
 
         let matcher = FuzzyMatcher::new();
-        let result = matcher.find_fuzzy_basis(OsStr::new("anyfile.txt"), temp.path(), 100);
+        let result = matcher.find_fuzzy_basis(OsStr::new("anyfile.txt"), temp.path(), 100, None);
 
         assert!(result.is_none(), "empty directory should return no match");
     }
@@ -1325,8 +1327,9 @@ mod fuzzy_matching {
         // Create a file with different name
         fs::write(temp.path().join("different.bin"), "data").expect("write file");
 
-        let matcher = FuzzyMatcher::new().with_min_score(1);
-        let result = matcher.find_fuzzy_basis(OsStr::new("similar_file.txt"), temp.path(), 100);
+        let matcher = FuzzyMatcher::new().with_max_distance(u32::MAX);
+        let result =
+            matcher.find_fuzzy_basis(OsStr::new("similar_file.txt"), temp.path(), 100, None);
 
         // Should either find the different file (low score) or nothing,
         // but should not match the directory
@@ -1338,44 +1341,32 @@ mod fuzzy_matching {
         }
     }
 
-    /// Verifies similarity score computation for various file name patterns.
+    /// Verifies the lowest-distance candidate wins and a closer name yields a
+    /// smaller reported distance (upstream `find_fuzzy()` selection).
     #[test]
-    fn similarity_score_patterns() {
-        // Extension match adds a bonus
-        let score_same_ext = compute_similarity_score("a.txt", "b.txt", 1000, 1000);
-        let score_no_ext = compute_similarity_score("a", "b", 1000, 1000);
-        assert!(
-            score_same_ext > score_no_ext,
-            "same extension should add bonus: same_ext={score_same_ext}, no_ext={score_no_ext}"
-        );
+    fn closest_name_has_smallest_distance() {
+        let temp = TempDir::new().expect("create temp dir");
 
-        // Longer common prefix should score higher
-        let score_long_prefix = compute_similarity_score(
-            "application_config.json",
-            "application_settings.json",
-            1000,
-            1000,
-        );
-        let score_short_prefix =
-            compute_similarity_score("app_config.json", "application_settings.json", 1000, 1000);
-        assert!(
-            score_long_prefix > score_short_prefix,
-            "longer prefix should score higher: long={score_long_prefix}, short={score_short_prefix}"
-        );
+        // Near-identical name (one digit differs) and a distant name.
+        fs::write(temp.path().join("report_2023.csv"), "data").expect("write near");
+        fs::write(temp.path().join("zzzzzzzzzz.log"), "data").expect("write far");
 
-        // Similar file sizes should boost score
-        let score_similar_size = compute_similarity_score("file.dat", "data.dat", 1000, 900);
-        let score_very_different_size = compute_similarity_score("file.dat", "data.dat", 1000, 10);
-        assert!(
-            score_similar_size > score_very_different_size,
-            "similar sizes should score higher: similar={score_similar_size}, different={score_very_different_size}"
-        );
+        let matcher = FuzzyMatcher::new();
+        let matched = matcher
+            .find_fuzzy_basis(OsStr::new("report_2024.csv"), temp.path(), 100, None)
+            .expect("should select the closest name");
 
-        // Completely different files should score low
-        let score_unrelated = compute_similarity_score("abc.xyz", "def.uvw", 100, 50000);
+        assert_eq!(
+            matched.path.file_name().unwrap().to_string_lossy(),
+            "report_2023.csv",
+            "closest name must win"
+        );
+        // A single-character difference stays under one Levenshtein unit past
+        // the ASCII weighting.
         assert!(
-            score_unrelated < 50,
-            "unrelated files should score low: {score_unrelated}"
+            matched.distance < (2 << 16),
+            "close name should have a small distance: {}",
+            matched.distance
         );
     }
 
@@ -1393,7 +1384,8 @@ mod fuzzy_matching {
         let result = matcher.find_fuzzy_basis(
             OsStr::new("data_backup_2025.csv"),
             temp.path(),
-            1000, // Similar size to our candidates
+            1000,
+            None, // Similar size to our candidates
         );
 
         assert!(result.is_some(), "should find a match");
