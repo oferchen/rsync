@@ -171,22 +171,27 @@ fn sparse_state_finish_with_pending_zeros() {
     state.accumulate(100);
     let mut cursor = Cursor::new(vec![0u8; 200]);
     let pos = state.finish(&mut cursor).expect("finish with pending");
-    // finish() should write a single zero at the end after seeking
+    // finish() returns the logical length (seeking over the hole); the caller
+    // truncates to it. upstream: fileio.c:43 sparse_end() -> do_ftruncate.
     assert_eq!(pos, 100);
 }
 
 #[test]
-fn sparse_state_finish_writes_single_trailing_zero() {
+fn sparse_state_finish_returns_logical_length_without_writing() {
     let mut state = SparseWriteState::new();
     state.accumulate(10);
-    let buffer = vec![1u8; 20]; // Fill with ones
-    let mut cursor = Cursor::new(buffer);
+    let mut cursor = Cursor::new(Vec::new()); // fresh (empty) destination
+    // finish() seeks over the trailing hole and returns the logical length; it
+    // does NOT materialize a terminal byte (the caller establishes the size via
+    // set_len). upstream: fileio.c:43 sparse_end() -> do_ftruncate(f, size).
     let pos = state.finish(&mut cursor).expect("finish");
     assert_eq!(pos, 10);
 
-    // Check that a single zero was written at position 9
-    let buffer = cursor.into_inner();
-    assert_eq!(buffer[9], 0);
+    // Emulate the caller's set_len(pos); the hole reads back as zeros.
+    let mut buffer = cursor.into_inner();
+    buffer.resize(pos as usize, 0);
+    assert_eq!(buffer.len(), 10);
+    assert!(buffer.iter().all(|&b| b == 0), "hole reads back as zeros");
 }
 
 const CHUNK_SIZE: usize = 32 * 1024;

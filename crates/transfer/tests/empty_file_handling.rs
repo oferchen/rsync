@@ -253,18 +253,23 @@ fn sparse_state_finish_without_any_operations() {
 #[test]
 fn sparse_state_accumulate_then_finish_creates_hole() {
     let mut state = SparseWriteState::new();
-    let mut cursor = Cursor::new(vec![1u8; 100]); // Fill with ones
+    let mut cursor = Cursor::new(Vec::new());
 
-    // Accumulate some zeros
+    // Accumulate a pure zero run.
     state.accumulate(50);
 
-    // Finish should create a hole
+    // finish() returns the logical length and seeks over the hole without
+    // materializing a byte; the caller establishes the size via set_len
+    // (ftruncate), leaving the region a true hole that reads back as zeros.
+    // upstream: fileio.c:43 sparse_end() -> do_ftruncate(f, size).
     let pos = state.finish(&mut cursor).expect("finish");
     assert_eq!(pos, 50);
 
-    // Check that a single zero was written at position 49
-    let buffer = cursor.into_inner();
-    assert_eq!(buffer[49], 0, "position 49 should be zero");
+    // Emulate the caller's set_len(pos); the hole reads back as zeros.
+    let mut buffer = cursor.into_inner();
+    buffer.resize(pos as usize, 0);
+    assert_eq!(buffer.len(), 50);
+    assert!(buffer.iter().all(|&b| b == 0), "hole reads back as zeros");
 }
 
 #[test]

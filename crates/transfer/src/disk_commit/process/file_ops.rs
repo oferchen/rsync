@@ -20,7 +20,7 @@ use crate::temp_guard::open_tmpfile_sandboxed;
 
 use super::super::config::DiskCommitConfig;
 use super::super::writer::{ReusableBufWriter, Writer};
-use super::commit::{commit_file, retain_partial_file};
+use super::commit::{SparseFinalize, commit_file, retain_partial_file};
 use super::metadata::{apply_file_metadata, finalize_checksum};
 
 /// Processes a single file: open, write chunks, commit or abort.
@@ -74,6 +74,15 @@ pub(in crate::disk_commit) fn process_file(
         cleanup_guard.mark_registered();
     }
 
+    // Pre-existing basis length for sparse hole-punching: only in-place writes
+    // reuse existing bytes, so a zero run there must be punched rather than
+    // merely seeked over. upstream: receiver.c:318-338 preallocated_len.
+    let basis_len = if config.use_sparse && begin.is_inplace {
+        file.metadata().map(|m| m.len()).unwrap_or(0)
+    } else {
+        0
+    };
+
     let mut output = make_writer(
         file,
         write_buf,
@@ -85,7 +94,9 @@ pub(in crate::disk_commit) fn process_file(
     )?;
 
     let mut sparse_state = if config.use_sparse {
-        Some(SparseWriteState::default())
+        let mut state = SparseWriteState::default();
+        state.set_preallocated_len(basis_len);
+        Some(state)
     } else {
         None
     };
@@ -140,9 +151,18 @@ pub(in crate::disk_commit) fn process_file(
                 let _ = buf_return_tx.send(data);
             }
             FileMessage::Commit => {
-                if let Some(ref mut sparse) = sparse_state {
-                    let _final_pos = sparse.finish(output.buffered_for_sparse())?;
-                }
+                // upstream: fileio.c:43 sparse_end() - flush the trailing hole
+                // and hand the logical length + in-basis hole ranges to the
+                // commit step for ftruncate + punch (no materialized byte).
+                let sparse_final = if let Some(ref mut sparse) = sparse_state {
+                    let logical = sparse.finish(output.buffered_for_sparse())?;
+                    Some(SparseFinalize {
+                        logical_len: logical,
+                        holes: sparse.take_holes(),
+                    })
+                } else {
+                    None
+                };
 
                 output.flush_and_sync(config.do_fsync, &begin.file_path)?;
                 output.finish(config.do_fsync, &begin.file_path)?;
@@ -164,6 +184,7 @@ pub(in crate::disk_commit) fn process_file(
                     &mut cleanup_guard,
                     needs_rename,
                     bytes_written,
+                    sparse_final,
                 )?;
 
                 // Temp file has been renamed to its final destination (or
@@ -274,6 +295,13 @@ pub(in crate::disk_commit) fn process_whole_file(
         cleanup_guard.mark_registered();
     }
 
+    // Pre-existing basis length for sparse hole-punching (see process_file).
+    let basis_len = if config.use_sparse && begin.is_inplace {
+        file.metadata().map(|m| m.len()).unwrap_or(0)
+    } else {
+        0
+    };
+
     let mut output = make_writer(
         file,
         write_buf,
@@ -290,13 +318,19 @@ pub(in crate::disk_commit) fn process_whole_file(
         verifier.update(&data);
     }
 
-    if config.use_sparse {
+    let sparse_final = if config.use_sparse {
         let mut sparse = SparseWriteState::default();
+        sparse.set_preallocated_len(basis_len);
         sparse.write(output.buffered_for_sparse(), &data)?;
-        let _final_pos = sparse.finish(output.buffered_for_sparse())?;
+        let logical = sparse.finish(output.buffered_for_sparse())?;
+        Some(SparseFinalize {
+            logical_len: logical,
+            holes: sparse.take_holes(),
+        })
     } else {
         output.write_chunk(&data)?;
-    }
+        None
+    };
 
     let _ = buf_return_tx.send(data);
 
@@ -317,6 +351,7 @@ pub(in crate::disk_commit) fn process_whole_file(
         &mut cleanup_guard,
         needs_rename,
         bytes_written,
+        sparse_final,
     )?;
 
     if needs_rename && outcome.delayed_path.is_none() {

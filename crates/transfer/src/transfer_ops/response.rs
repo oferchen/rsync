@@ -117,6 +117,16 @@ pub fn process_file_response<R: Read>(
         file.seek(io::SeekFrom::Start(append_offset))?;
     }
 
+    // Length of the pre-existing basis extent for sparse hole-punching. Only
+    // in-place writes reuse existing bytes; a temp file is fresh, so its runs
+    // are seeked (natural holes) and need no punch.
+    // upstream: receiver.c:318-338 sets preallocated_len from the basis size.
+    let basis_len = if use_inplace {
+        file.metadata().map(|m| m.len()).unwrap_or(0)
+    } else {
+        0
+    };
+
     // Use io_uring when available (Linux 5.6+), falling back to BufWriter.
     // Buffer capacity is adaptive based on file size:
     // - Small files (< 64KB): 4KB buffer to avoid wasted memory
@@ -132,7 +142,9 @@ pub fn process_file_response<R: Read>(
     let mut total_bytes: u64 = 0;
 
     let mut sparse_state = if ctx.config.use_sparse {
-        Some(SparseWriteState::default())
+        let mut state = SparseWriteState::default();
+        state.set_preallocated_len(basis_len);
+        Some(state)
     } else {
         None
     };
@@ -276,9 +288,16 @@ pub fn process_file_response<R: Read>(
         }
     }
 
-    if let Some(ref mut sparse) = sparse_state {
-        let _final_pos = sparse.finish(&mut output)?;
-    }
+    // upstream: fileio.c:43 sparse_end() - flush the trailing hole and hand the
+    // caller the logical length (and any in-basis hole ranges) so the file is
+    // truncated to size and stale basis blocks are punched, instead of
+    // materializing a trailing byte.
+    let sparse_final = if let Some(ref mut sparse) = sparse_state {
+        let logical = sparse.finish(&mut output)?;
+        Some((logical, sparse.take_holes()))
+    } else {
+        None
+    };
 
     // Uses io_uring fsync op when available.
     if ctx.config.do_fsync {
@@ -293,6 +312,25 @@ pub fn process_file_response<R: Read>(
         })?;
     }
     drop(output);
+
+    // upstream: fileio.c:43-71 sparse_end() - establish the logical size via
+    // ftruncate (leaving the trailing region a hole) and punch any in-basis
+    // zero runs so an --inplace update does not retain stale bytes. Runs on the
+    // temp file before rename for the atomic path, on the final file for
+    // in-place.
+    if let Some((logical, holes)) = sparse_final {
+        let target = if needs_rename {
+            cleanup_guard.path().to_path_buf()
+        } else {
+            file_path.clone()
+        };
+        let mut sfile = fs::OpenOptions::new().write(true).open(&target)?;
+        sfile.set_len(logical)?;
+        for (pos, len) in holes {
+            fast_io::punch_hole(&mut sfile, pos, len)?;
+        }
+        drop(sfile);
+    }
 
     if needs_rename {
         // Atomic rename: temp file to final destination.
@@ -348,11 +386,12 @@ pub fn process_file_response<R: Read>(
             }
         }
         CleanupManager::global().unregister_temp_file(cleanup_guard.path());
-    } else if ctx.config.inplace {
+    } else if ctx.config.inplace && sparse_state.is_none() {
         // Inplace: truncate to final size.
         // upstream: receiver.c:340 - set_file_length(fd, F_LENGTH(file))
         // In append mode, total_bytes only counts newly received data -
         // the full file size includes the existing content we seeked past.
+        // The sparse path already truncated to its logical length above.
         let final_size = if append_offset > 0 {
             target_size
         } else {

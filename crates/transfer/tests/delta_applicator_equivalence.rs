@@ -269,8 +269,17 @@ fn reference_apply<R: Read>(
         }
     }
 
-    out.into_inner()
+    let file = out
+        .into_inner()
         .map_err(|e| std::io::Error::other(e.to_string()))?;
+    // upstream: fileio.c:43 sparse_end() -> do_ftruncate(f, size). finish() only
+    // seeks over the trailing hole; the caller establishes the logical length via
+    // set_len, mirroring DeltaApplicator. Punching in-basis holes is a block
+    // deallocation that reads back as zeros identically to the truncated tail, so
+    // set_len alone reproduces the applicator's byte-for-byte output here.
+    if let Some(pos) = final_pos {
+        file.set_len(pos)?;
+    }
     Ok(ReferenceResult {
         literal_bytes,
         final_pos,

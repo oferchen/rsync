@@ -160,6 +160,9 @@ pub mod platform_copy;
 /// Cross-platform abstraction seam for zero-copy file-to-socket transfer
 /// (`sendfile(2)` / `TransmitFile()`).
 pub mod platform_sendfile;
+/// Sparse-file hole punching via `fallocate(PUNCH_HOLE)` with a zero-write
+/// fallback, for reclaiming/zeroing basis blocks during in-place sparse writes.
+pub mod punch_hole;
 /// ReFS filesystem detection for Windows reflink support.
 pub mod refs_detect;
 /// Zero-copy file-to-socket transfer using `sendfile` with automatic fallback.
@@ -326,6 +329,7 @@ pub use platform_sendfile::{
     LinuxSendFile, MacOsSendFile, PlatformSendFile, SocketHandle, UnsupportedSendFile,
     WindowsTransmitFile, platform_default,
 };
+pub use punch_hole::punch_hole;
 pub use traits::{FileReader, FileWriter};
 
 #[cfg(all(target_os = "macos", feature = "macos-gcd"))]
