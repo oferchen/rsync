@@ -217,6 +217,18 @@ fn delete_extraneous_entries_capped<S: AsRef<OsStr>>(
     Ok(())
 }
 
+/// Orders two directory children the way upstream `get_dirlist` sorts them
+/// for a delete pass: protocol-29 `f_name_cmp` places non-directories before
+/// directories (t_ITEM before t_PATH, upstream: flist.c:3223), then by name.
+/// Callers `reverse()` the sorted slice to reproduce upstream's reverse
+/// dirlist iteration (`for (i = dirlist->used; i--; )`, delete.c:85 /
+/// generator.c:326), so directories are visited first, then files - the
+/// order that decides which entries survive a `--max-delete` cap and the
+/// order deletion log lines are emitted.
+fn cmp_child_delete_order(a: (&OsStr, bool), b: (&OsStr, bool)) -> std::cmp::Ordering {
+    a.1.cmp(&b.1).then_with(|| a.0.cmp(b.0))
+}
+
 /// Recursively removes one extraneous entry under the `--max-delete` cap,
 /// returning `true` when the entry was fully removed and `false` when it (or
 /// part of its subtree) was left in place because the cap was reached.
@@ -251,14 +263,19 @@ fn remove_entry_capped(
     if file_type.is_dir() {
         // Peel the directory's contents depth-first in upstream reverse-sorted
         // order before considering the directory itself.
-        let mut children: Vec<OsString> = Vec::new();
+        let mut children: Vec<(OsString, bool)> = Vec::new();
         match fs::read_dir(path) {
             Ok(iter) => {
                 for child in iter {
                     let child = child.map_err(|error| {
                         LocalCopyError::io("read extraneous directory entry", path, error)
                     })?;
-                    children.push(child.file_name());
+                    // `file_type()` uses readdir's d_type (falling back to
+                    // lstat) and does not follow symlinks, so a symlink to a
+                    // directory is classified as a non-directory - matching
+                    // upstream's S_ISDIR test on the lstat mode.
+                    let is_dir = child.file_type().map(|t| t.is_dir()).unwrap_or(false);
+                    children.push((child.file_name(), is_dir));
                 }
             }
             Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(true),
@@ -270,12 +287,13 @@ fn remove_entry_capped(
                 ));
             }
         }
-        // upstream: delete.c:85 iterates the sorted dirlist in reverse.
-        children.sort_unstable();
+        // Peel contents in upstream's reverse-sorted delete order so the
+        // prefix that survives when `--max-delete` trips matches upstream.
+        children.sort_unstable_by(|a, b| cmp_child_delete_order((&a.0, a.1), (&b.0, b.1)));
         children.reverse();
 
         let mut all_children_removed = true;
-        for child_name in children {
+        for (child_name, _) in children {
             let child_path = path.join(&child_name);
             let child_relative = entry_relative.join(&child_name);
             if !remove_entry_capped(context, &child_path, &child_relative, skipped)? {
@@ -676,21 +694,32 @@ pub(crate) fn record_directory_subtree(
             ));
         }
     };
+    // Collect the children with their type, then order them the way upstream
+    // `delete_in_dir` walks a directory (reverse of `get_dirlist`'s sorted
+    // order), so the emitted `*deleting` lines match upstream byte-for-byte.
+    let mut children: Vec<(OsString, fs::FileType)> = Vec::new();
     for entry in read_dir {
         context.enforce_timeout()?;
         let entry = entry.map_err(|error| {
             LocalCopyError::io("read extraneous directory entry", path_buf.as_path(), error)
         })?;
-        let name = entry.file_name();
-        path_buf.push(&name);
-        relative_buf.push(&name);
         let file_type = entry.file_type().map_err(|error| {
             LocalCopyError::io(
                 "inspect extraneous directory entry",
-                path_buf.clone(),
+                path_buf.join(entry.file_name()),
                 error,
             )
         })?;
+        children.push((entry.file_name(), file_type));
+    }
+    children.sort_unstable_by(|a, b| {
+        cmp_child_delete_order((&a.0, a.1.is_dir()), (&b.0, b.1.is_dir()))
+    });
+    children.reverse();
+
+    for (name, file_type) in children {
+        path_buf.push(&name);
+        relative_buf.push(&name);
         let is_dir = file_type.is_dir();
         if is_dir {
             record_directory_subtree(context, path_buf, relative_buf)?;

@@ -724,6 +724,76 @@ fn max_delete_without_delete_flag_has_no_effect() {
 
 
 #[test]
+fn max_delete_survivor_set_matches_upstream_traversal() {
+    // Regression for the which-entries divergence (#207): with a mix of an
+    // extraneous directory whose name byte-sorts BEFORE the extraneous
+    // sibling files, oc must delete the same entries upstream rsync does
+    // when `--max-delete` caps the pass.
+    //
+    // Layout under the target: `D/{f1..f5}` (directory), plus files `a1`,
+    // `a2`. Upstream sorts each directory with protocol-29 f_name_cmp -
+    // files before directories - and deletes the resulting list in reverse,
+    // so it visits `D` first (recursing into it) and only reaches `a1`/`a2`
+    // afterwards. With `--max-delete=3` it removes `D/f5`, `D/f4`, `D/f3`
+    // (reverse name order inside `D`), hits the cap, and keeps `D/f1`,
+    // `D/f2`, `a1`, `a2`.
+    //
+    // A plain byte sort would order `D` (0x44) ahead of `a1`/`a2` (0x61) and,
+    // reversed, delete `a2` and `a1` first, then a single file inside `D` -
+    // surviving set `D/f1..f4`, which diverges from upstream. This test
+    // fails if the dir-aware ordering regresses to a byte sort.
+    let ctx = test_helpers::setup_copy_test();
+    fs::create_dir_all(&ctx.dest).expect("create dest");
+
+    fs::write(ctx.source.join("keep.txt"), b"keep").expect("write keep");
+
+    let target_root = ctx.dest.join("source");
+    fs::create_dir_all(target_root.join("D")).expect("create D");
+    fs::write(target_root.join("keep.txt"), b"old").expect("write old");
+    for i in 1..=5 {
+        fs::write(target_root.join("D").join(format!("f{i}")), b"x").expect("write f");
+    }
+    fs::write(target_root.join("a1"), b"x").expect("write a1");
+    fs::write(target_root.join("a2"), b"x").expect("write a2");
+
+    let operands = vec![
+        ctx.source.clone().into_os_string(),
+        ctx.dest.clone().into_os_string(),
+    ];
+    let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
+    let options = LocalCopyOptions::default()
+        .delete(true)
+        .max_deletions(Some(3));
+
+    let error = plan
+        .execute_with_options(LocalCopyExecution::Apply, options)
+        .expect_err("should fail when max-delete exceeded");
+
+    assert_eq!(error.exit_code(), MAX_DELETE_EXIT_CODE);
+    match error.kind() {
+        LocalCopyErrorKind::DeleteLimitExceeded { skipped } => {
+            assert_eq!(*skipped, 4, "f2, f1, a2, a1 remain unskipped");
+        }
+        other => panic!("unexpected error kind: {other:?}"),
+    }
+
+    // Upstream-correct survivors.
+    for survivor in ["a1", "a2", "D/f1", "D/f2"] {
+        assert!(
+            target_root.join(survivor).exists(),
+            "{survivor} must survive (upstream keeps it)"
+        );
+    }
+    // Upstream-correct deletions.
+    for deleted in ["D/f3", "D/f4", "D/f5"] {
+        assert!(
+            !target_root.join(deleted).exists(),
+            "{deleted} must be deleted (upstream removes it)"
+        );
+    }
+}
+
+#[test]
 fn max_delete_exit_code_is_25() {
     // Verify the exit code constant matches upstream rsync's RERR_DEL_LIMIT
     assert_eq!(MAX_DELETE_EXIT_CODE, 25);
