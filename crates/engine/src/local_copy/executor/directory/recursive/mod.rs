@@ -801,12 +801,22 @@ mod tests {
         assert_eq!(pairs.len(), 1);
         assert_eq!(pairs[0].source_size, 100);
         assert_eq!(pairs[0].destination_size, 100);
-        // The regular-file destination lstat is cached for copy_file to reuse,
-        // avoiding a second lstat of the same path.
-        let cached = dest_meta
-            .get(&dest_dir.join("file.txt"))
-            .expect("destination metadata cached");
-        assert_eq!(cached.len(), 100);
+        // On unix the single-link regular-file destination lstat is cached for
+        // copy_file to reuse, avoiding a second lstat of the same path. There is
+        // no portable nlink on non-unix, so the reuse cache is never populated
+        // and copy_file fresh-stats instead (matching upstream's per-file lstat
+        // and pre-dedup master behaviour).
+        #[cfg(unix)]
+        {
+            let cached = dest_meta
+                .get(&dest_dir.join("file.txt"))
+                .expect("destination metadata cached");
+            assert_eq!(cached.len(), 100);
+        }
+        #[cfg(not(unix))]
+        {
+            assert!(dest_meta.is_empty());
+        }
     }
 
     // upstream: generator.c:recv_generator() lstats the destination; a symlink
