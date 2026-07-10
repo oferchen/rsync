@@ -812,9 +812,21 @@ impl ReceiverContext {
         let CappedDeleteState {
             combined,
             skipped,
-            io_err_bits,
+            mut io_err_bits,
             ..
         } = state;
+        if skipped > 0 {
+            // upstream: generator.c:2430-2434 - one warning after the pass, then
+            // `io_error |= IOERR_DEL_LIMIT` so the run exits RERR_DEL_LIMIT (25).
+            // Nonreg renders at the default verbosity (info_verbosity[0]), the
+            // same channel the sibling delete notices use.
+            info_log!(
+                Nonreg,
+                1,
+                "Deletions stopped due to --max-delete limit ({skipped} skipped)"
+            );
+            io_err_bits |= crate::generator::io_error_flags::IOERR_DEL_LIMIT;
+        }
         Ok((combined, skipped > 0, io_err_bits))
     }
 }
