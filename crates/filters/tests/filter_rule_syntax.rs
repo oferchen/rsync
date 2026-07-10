@@ -308,9 +308,12 @@ mod exclude_rules {
 
     #[test]
     fn exclude_underscore_separator() {
-        // Underscore can separate modifiers from pattern
+        // Underscore separates modifiers from the pattern. upstream:
+        // exclude.c:1290-1291,1313 consumes exactly one separator (the `_`) and
+        // then takes the rest verbatim (strlen), so the following space stays
+        // part of the pattern.
         let rules = parse_rules("-!_ *.txt", Path::new("test")).unwrap();
-        assert_eq!(rules[0].pattern(), "*.txt");
+        assert_eq!(rules[0].pattern(), " *.txt");
         assert!(rules[0].is_negated());
     }
 }
@@ -1175,9 +1178,21 @@ mod comments_and_whitespace {
     }
 
     #[test]
-    fn whitespace_trimmed() {
-        let rules = parse_rules("  + *.txt  ", Path::new("test")).unwrap();
-        assert_eq!(rules[0].pattern(), "*.txt");
+    fn leading_whitespace_rejected() {
+        // upstream: exclude.c:1211-1213 parse_rule_tok - a leading space is not a
+        // valid rule prefix and raises "Unknown filter rule"; it is never
+        // trimmed away.
+        let result = parse_rules("  + *.txt", Path::new("test"));
+        assert!(result.is_err());
+        assert!(result.unwrap_err().message.contains("Unknown filter rule"));
+    }
+
+    #[test]
+    fn trailing_whitespace_kept_in_pattern() {
+        // upstream: exclude.c:1313 - the pattern length is strlen, so trailing
+        // whitespace stays part of the pattern verbatim.
+        let rules = parse_rules("+ *.txt ", Path::new("test")).unwrap();
+        assert_eq!(rules[0].pattern(), "*.txt ");
     }
 
     #[test]

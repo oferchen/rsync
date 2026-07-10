@@ -437,12 +437,24 @@ fn shorthand_non_matching() {
 }
 
 #[test]
-fn leading_whitespace_trimmed() {
+fn leading_whitespace_is_rejected() {
+    // upstream: exclude.c:1100-1213 parse_rule_tok - a top-level rule never
+    // carries FILTRULE_WORD_SPLIT, so leading whitespace is not skipped; it
+    // reaches the prefix `switch` default and errors. It must not be trimmed.
     let result = parse_filter_directive(OsStr::new("   + *.txt"));
-    assert!(result.is_ok());
+    assert!(result.is_err());
+}
+
+#[test]
+fn trailing_whitespace_is_kept_in_pattern() {
+    // upstream: exclude.c:1313 - trailing whitespace is part of the pattern
+    // (strlen length), so `- *.o ` keeps its trailing space and `x.o` stays
+    // included.
+    let result = parse_filter_directive(OsStr::new("- *.o "));
     match result.unwrap() {
         FilterDirective::Rule(spec) => {
-            assert_eq!(spec.kind(), FilterRuleKind::Include);
+            assert_eq!(spec.kind(), FilterRuleKind::Exclude);
+            assert_eq!(spec.pattern(), "*.o ");
         }
         _ => panic!("expected Rule directive"),
     }

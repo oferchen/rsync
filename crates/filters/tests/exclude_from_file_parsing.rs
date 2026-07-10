@@ -202,16 +202,18 @@ mod comment_handling {
         assert_eq!(rules.len(), 2);
     }
 
-    /// Test: Comment with leading whitespace is still a comment.
+    /// Test: A `#` comment is only recognised at the very start of the line.
+    /// upstream: exclude.c:1514 parse_filter_file - leading whitespace is not
+    /// stripped, so `  # ...` is not a comment; it reaches parse_rule_tok and
+    /// errors with "Unknown filter rule".
     #[test]
-    fn comment_with_leading_whitespace() {
+    fn comment_with_leading_whitespace_is_rejected() {
         let dir = create_tempdir();
         let path = dir.path().join("excludes.txt");
         fs::write(&path, "  # Comment with leading spaces\n- *.tmp\n").expect("write");
 
-        let rules = read_rules(&path).expect("read rules");
-        assert_eq!(rules.len(), 1);
-        assert_eq!(rules[0].pattern(), "*.tmp");
+        let err = read_rules(&path).expect_err("leading whitespace before # errors");
+        assert!(err.message.contains("Unknown filter rule"));
     }
 
     /// Test: File with only comments returns no rules.
@@ -286,26 +288,28 @@ mod blank_line_handling {
         assert_eq!(rules[2].pattern(), "*.log");
     }
 
-    /// Test: Whitespace-only lines are skipped.
+    /// Test: A whitespace-only line is not blank and is not skipped.
+    /// upstream: exclude.c:1514 - only truly-empty lines are skipped; a line of
+    /// spaces reaches parse_rule_tok and errors ("Unknown filter rule").
     #[test]
-    fn skips_whitespace_only_lines() {
+    fn whitespace_only_line_is_rejected() {
         let dir = create_tempdir();
         let path = dir.path().join("excludes.txt");
-        fs::write(&path, "- *.tmp\n   \n- *.bak\n\t\t\n- *.log\n").expect("write");
+        fs::write(&path, "- *.tmp\n   \n- *.bak\n").expect("write");
 
-        let rules = read_rules(&path).expect("read rules");
-        assert_eq!(rules.len(), 3);
+        let err = read_rules(&path).expect_err("whitespace-only line errors");
+        assert!(err.message.contains("Unknown filter rule"));
     }
 
-    /// Test: Lines with only tabs are skipped.
+    /// Test: A tab-only line is likewise not skipped and errors.
     #[test]
-    fn skips_tab_only_lines() {
+    fn tab_only_line_is_rejected() {
         let dir = create_tempdir();
         let path = dir.path().join("excludes.txt");
         fs::write(&path, "- *.tmp\n\t\n- *.bak\n").expect("write");
 
-        let rules = read_rules(&path).expect("read rules");
-        assert_eq!(rules.len(), 2);
+        let err = read_rules(&path).expect_err("tab-only line errors");
+        assert!(err.message.contains("Unknown filter rule"));
     }
 
     /// Test: File with blank lines at start.
@@ -330,23 +334,25 @@ mod blank_line_handling {
         assert_eq!(rules.len(), 2);
     }
 
-    /// Test: File with only blank lines.
+    /// Test: File with only (truly empty) blank lines produces no rules.
+    /// upstream: exclude.c:1514 - empty lines are skipped; whitespace-only lines
+    /// would instead error, so this fixture uses only newlines.
     #[test]
     fn only_blank_lines() {
         let dir = create_tempdir();
         let path = dir.path().join("excludes.txt");
-        fs::write(&path, "\n\n   \n\t\n").expect("write");
+        fs::write(&path, "\n\n\n\n").expect("write");
 
         let rules = read_rules(&path).expect("read rules");
         assert!(rules.is_empty());
     }
 
-    /// Test: Mixed blank lines and comments.
+    /// Test: Mixed empty lines and comments around a rule.
     #[test]
     fn mixed_blank_lines_and_comments() {
         let dir = create_tempdir();
         let path = dir.path().join("excludes.txt");
-        fs::write(&path, "\n# Comment\n\n; Another comment\n   \n- *.tmp\n\n").expect("write");
+        fs::write(&path, "\n# Comment\n\n; Another comment\n- *.tmp\n\n").expect("write");
 
         let rules = read_rules(&path).expect("read rules");
         assert_eq!(rules.len(), 1);
@@ -638,33 +644,33 @@ mod line_ending_handling {
 mod pattern_preservation {
     use super::*;
 
-    /// Test: Leading whitespace in pattern is trimmed.
-    /// Note: Unlike rsync's raw --exclude-from, filter rules parse patterns
-    /// and leading whitespace between the action and pattern is consumed.
+    /// Test: Only one separator is consumed after the action; further leading
+    /// whitespace stays in the pattern. upstream: exclude.c:1290-1291,1313 -
+    /// exactly one space/underscore is consumed, then the rest is taken verbatim
+    /// via strlen. `-   spaced_file.txt` keeps two leading spaces.
     #[test]
-    fn leading_whitespace_trimmed() {
+    fn only_one_separator_consumed_leading_whitespace_kept() {
         let dir = create_tempdir();
         let path = dir.path().join("excludes.txt");
-        // Pattern with leading space (after the action)
         fs::write(&path, "-   spaced_file.txt\n").expect("write");
 
         let rules = read_rules(&path).expect("read rules");
         assert_eq!(rules.len(), 1);
-        // Leading whitespace is trimmed by the parser
-        assert_eq!(rules[0].pattern(), "spaced_file.txt");
+        assert_eq!(rules[0].pattern(), "  spaced_file.txt");
     }
 
-    /// Test: Trailing whitespace in pattern is trimmed.
+    /// Test: Trailing whitespace in the pattern is kept verbatim.
+    /// upstream: exclude.c:1313 - pattern length is strlen, so trailing spaces
+    /// remain part of the pattern.
     #[test]
-    fn trailing_whitespace_trimmed() {
+    fn trailing_whitespace_kept() {
         let dir = create_tempdir();
         let path = dir.path().join("excludes.txt");
         fs::write(&path, "- pattern_with_trailing   \n").expect("write");
 
         let rules = read_rules(&path).expect("read rules");
         assert_eq!(rules.len(), 1);
-        // Trailing whitespace is trimmed
-        assert_eq!(rules[0].pattern(), "pattern_with_trailing");
+        assert_eq!(rules[0].pattern(), "pattern_with_trailing   ");
     }
 
     /// Test: Pattern case is preserved.

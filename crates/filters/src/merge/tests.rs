@@ -214,9 +214,43 @@ fn parse_preserves_pattern_case() {
 }
 
 #[test]
-fn parse_trims_whitespace() {
-    let rules = parse_rules("  + *.txt  ", Path::new("test")).unwrap();
-    assert_eq!(rules[0].pattern(), "*.txt");
+fn parse_leading_whitespace_is_rejected() {
+    // upstream: exclude.c:1211-1213 parse_rule_tok - a leading space is not a
+    // valid rule prefix, so it reaches the `switch` default and raises
+    // "Unknown filter rule" (RERR_SYNTAX). It must not be silently trimmed.
+    let result = parse_rules("  + *.txt", Path::new("test"));
+    assert!(result.is_err());
+    assert!(result.unwrap_err().message.contains("Unknown filter rule"));
+}
+
+#[test]
+fn parse_trailing_whitespace_is_kept_in_pattern() {
+    // upstream: exclude.c:1313 - the pattern length is strlen, so a trailing
+    // space stays part of the pattern verbatim. `x.o` therefore does not match
+    // `*.o ` and stays included (differential-fuzz silent-data regression).
+    let rules = parse_rules("- *.o ", Path::new("test")).unwrap();
+    assert_eq!(rules.len(), 1);
+    assert_eq!(rules[0].pattern(), "*.o ");
+}
+
+#[test]
+fn parse_whitespace_only_line_is_rejected() {
+    // upstream: exclude.c:1514 parse_filter_file - a whitespace-only line is
+    // neither empty nor a comment, so it falls through to parse_rule_tok and
+    // errors rather than being skipped as blank.
+    let result = parse_rules("   \n- *.bak\n", Path::new("test"));
+    assert!(result.is_err());
+    assert!(result.unwrap_err().message.contains("Unknown filter rule"));
+}
+
+#[test]
+fn parse_no_prefixes_keeps_literal_whitespace() {
+    // upstream: exclude.c:1122-1124,1313 - under FILTRULE_NO_PREFIXES the whole
+    // line is taken verbatim as the pattern (no prefix scan, strlen length), so
+    // leading and trailing whitespace are preserved literally.
+    let rules = parse_rules_no_prefixes("  *.o \n", Path::new("test"), false, false, false);
+    assert_eq!(rules.len(), 1);
+    assert_eq!(rules[0].pattern(), "  *.o ");
 }
 
 #[test]
@@ -304,8 +338,11 @@ fn parse_multiple_modifiers_order_independent() {
 
 #[test]
 fn parse_underscore_separator() {
+    // upstream: exclude.c:1290-1291,1313 - exactly one separator (here the `_`)
+    // is consumed after the rule char and modifiers; the remaining ` *.txt` is
+    // taken verbatim by strlen, so the leading space stays part of the pattern.
     let rules = parse_rules("-!_ *.txt", Path::new("test")).unwrap();
-    assert_eq!(rules[0].pattern(), "*.txt");
+    assert_eq!(rules[0].pattern(), " *.txt");
     assert!(rules[0].is_negated());
 }
 

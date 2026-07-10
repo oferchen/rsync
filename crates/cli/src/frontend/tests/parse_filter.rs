@@ -123,9 +123,11 @@ fn parse_filter_directive_accepts_clear_directive() {
     let clear = parse_filter_directive(OsStr::new("!")).expect("clear directive parses");
     assert_eq!(clear, FilterDirective::Clear);
 
-    let clear_with_whitespace =
-        parse_filter_directive(OsStr::new("  !   ")).expect("clear with whitespace parses");
-    assert_eq!(clear_with_whitespace, FilterDirective::Clear);
+    // upstream: exclude.c:1211-1213 - leading whitespace is not skipped for a
+    // top-level rule, so `  !   ` reaches the prefix `switch` default and errors
+    // ("Unknown filter rule") rather than being treated as a clear.
+    let _ =
+        parse_filter_directive(OsStr::new("  !   ")).expect_err("leading whitespace should error");
 }
 
 #[test]
@@ -133,8 +135,14 @@ fn parse_filter_directive_accepts_clear_keyword() {
     let keyword = parse_filter_directive(OsStr::new("clear")).expect("keyword parses");
     assert_eq!(keyword, FilterDirective::Clear);
 
-    let uppercase = parse_filter_directive(OsStr::new("  CLEAR  ")).expect("uppercase parses");
+    let uppercase = parse_filter_directive(OsStr::new("CLEAR")).expect("uppercase parses");
     assert_eq!(uppercase, FilterDirective::Clear);
+
+    // upstream: exclude.c:1211-1213,1318-1320 - a leading space errors before the
+    // keyword is recognised, and trailing text on a clear rule is rejected with
+    // "'!' rule has trailing characters"; neither is trimmed away.
+    let _ = parse_filter_directive(OsStr::new("  CLEAR  "))
+        .expect_err("surrounding whitespace should error");
 }
 
 #[test]
