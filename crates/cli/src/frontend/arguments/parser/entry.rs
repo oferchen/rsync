@@ -130,8 +130,15 @@ where
     };
     let blocking_io = tri_state_flag_positive_first(&matches, "blocking-io", "no-blocking-io");
     let archive = matches.get_flag("archive");
+    // upstream: options.c:631-632 - `--old-dirs`/`--old-d` set xfer_dirs=4, and
+    // options.c:2197-2199 resolves that to `recurse = xfer_dirs = 1`
+    // unconditionally (after the argv scan), so it forces recursion on even over
+    // a `--no-recursive`, and appends the `- /*/*` filter rule (injected below).
+    let old_dirs = matches.get_flag("old-dirs");
     let recursive_override = tri_state_flag_negative_first(&matches, "recursive", "no-recursive");
-    let recursive = if recursive_override == Some(false) {
+    let recursive = if old_dirs {
+        true
+    } else if recursive_override == Some(false) {
         false
     } else if archive {
         true
@@ -670,7 +677,7 @@ where
     // the per-option values below are drained. upstream: options.c dispatches
     // each --include/--exclude/--filter/--include-from/--exclude-from/-C/-F at
     // its argv position, so evaluation is first-match-wins over encounter order.
-    let filter_order = build_filter_order(&matches, &args);
+    let mut filter_order = build_filter_order(&matches, &args);
     let excludes = matches
         .remove_many::<OsString>("exclude")
         .map(Iterator::collect)
@@ -706,6 +713,17 @@ where
             _ => None,
         })
         .collect();
+    // upstream: options.c:2197-2199 - once the argv scan is complete, xfer_dirs>=4
+    // (set by --old-dirs/--old-d) appends `- /*/*` to the TAIL of the filter list
+    // via parse_filter_str(&filter_list, "- /*/*", ...). exclude.c:parse_filter_str
+    // appends each rule at the end, so this rule evaluates AFTER every user
+    // --include/--exclude/--filter, excluding anything two or more levels deep
+    // while still recursing into the immediate children. Injected into the
+    // evaluation stream only (not `filter_args`) so `--filter` echoing is
+    // unaffected.
+    if old_dirs {
+        filter_order.push(FilterOrderToken::Filter(OsString::from("- /*/*")));
+    }
     let cvs_exclude = matches.get_flag("cvs-exclude");
     let apple_double_skip = matches.get_flag("apple-double-skip");
     let files_from = matches

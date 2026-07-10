@@ -2792,9 +2792,12 @@ mod alias_tests {
     }
 
     #[test]
-    fn old_dirs_alias_for_no_mkpath() {
+    fn old_dirs_is_independent_of_mkpath() {
+        // upstream: options.c:2197-2199 - --old-dirs forces recursion and is
+        // unrelated to --mkpath, so an explicit --mkpath is preserved.
         let parsed = parse_test_args(["--mkpath", "--old-dirs", "src/", "dst/"]).expect("parse");
-        assert!(!parsed.mkpath);
+        assert!(parsed.mkpath);
+        assert!(parsed.recursive);
     }
 
     #[test]

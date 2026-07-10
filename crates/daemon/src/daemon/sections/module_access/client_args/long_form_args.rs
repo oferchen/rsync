@@ -136,9 +136,16 @@ fn apply_long_form_args(client_args: &[String], config: &mut ServerConfig) -> Op
             "--mkpath" => {
                 config.flags.mkpath = true;
             }
-            "--no-mkpath" | "--old-dirs" => {
+            "--no-mkpath" => {
                 config.flags.mkpath = false;
             }
+            // upstream: options.c:2197-2199 - `--old-dirs`/`--old-d` set
+            // xfer_dirs=4, resolved to recurse=1 plus an appended `- /*/*`
+            // filter. server_options() never forwards these deprecated flags; a
+            // client encodes them as `-r` in the compact flag string and sends
+            // `- /*/*` over the wire filter list. Consumed here without mkpath
+            // semantics so a stray forward is not mistaken for a positional path.
+            "--old-dirs" | "--old-d" => {}
             // upstream: options.c:2849 - backup
             "--backup" => {
                 config.flags.backup = true;

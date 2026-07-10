@@ -265,11 +265,19 @@ pub(super) fn add_transfer_args(command: ClapCommand) -> ClapCommand {
         .arg(
             Arg::new("no-mkpath")
                 .long("no-mkpath")
-                .visible_alias("old-dirs")
-                .visible_alias("old-d")
                 .help("Disable creation of destination path components (compatibility with older rsync releases).")
                 .action(ArgAction::SetTrue)
                 .overrides_with("mkpath"),
+        )
+        .arg(
+            // upstream: options.c:631-632 - `--old-dirs`/`--old-d` set
+            // xfer_dirs=4, which options.c:2197-2199 resolves to recurse=1 plus
+            // an appended `- /*/*` filter rule. It is unrelated to --mkpath.
+            Arg::new("old-dirs")
+                .long("old-dirs")
+                .visible_alias("old-d")
+                .help("Deprecated rsync 2.x compatibility: transfer only top-level entries (subdirectories come across empty).")
+                .action(ArgAction::SetTrue),
         )
         .arg(
             Arg::new("prune-empty-dirs")
