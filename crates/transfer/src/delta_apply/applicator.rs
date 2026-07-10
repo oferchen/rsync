@@ -778,6 +778,13 @@ impl<'a> DeltaApplicator<'a> {
     ) -> io::Result<(File, DeltaApplyResult)> {
         if let Some(ref mut sparse) = self.sparse_state {
             let final_pos = sparse.finish(&mut self.output)?;
+            // upstream: fileio.c:43 sparse_end() - ftruncate to the logical
+            // length (leaving the trailing region a hole) and punch any
+            // in-basis zero runs, instead of materializing a trailing byte.
+            self.output.set_len(final_pos)?;
+            for (pos, len) in sparse.take_holes() {
+                fast_io::punch_hole(&mut self.output, pos, len)?;
+            }
             self.stats.final_pos = Some(final_pos);
             if let Some(expected) = expected_size {
                 if final_pos != expected {
@@ -931,6 +938,13 @@ impl<'a> DeltaApplicator<'a> {
 
         if let Some(ref mut sparse) = self.sparse_state {
             let final_pos = sparse.finish(&mut self.output)?;
+            // upstream: fileio.c:43 sparse_end() - ftruncate to the logical
+            // length (leaving the trailing region a hole) and punch any
+            // in-basis zero runs, instead of materializing a trailing byte.
+            self.output.set_len(final_pos)?;
+            for (pos, len) in sparse.take_holes() {
+                fast_io::punch_hole(&mut self.output, pos, len)?;
+            }
             self.stats.final_pos = Some(final_pos);
             if let Some(expected) = expected_size {
                 if final_pos != expected {
