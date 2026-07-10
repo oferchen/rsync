@@ -884,7 +884,13 @@ fn includes_size_only_long_arg() {
 
 #[test]
 fn includes_no_implied_dirs_when_disabled() {
-    let config = ClientConfig::builder().implied_dirs(false).build();
+    // upstream: options.c:2976 - `--no-implied-dirs` is forwarded only when
+    // relative paths are active, so the disabled case must also enable
+    // relative paths to reproduce upstream's emission.
+    let config = ClientConfig::builder()
+        .relative_paths(true)
+        .implied_dirs(false)
+        .build();
     let builder = RemoteInvocationBuilder::new(&config, RemoteRole::Sender);
     let args = builder.build("/path");
 
@@ -903,6 +909,24 @@ fn omits_no_implied_dirs_when_default() {
     assert!(
         !args.iter().any(|a| a == "--no-implied-dirs"),
         "unexpected --no-implied-dirs in args: {args:?}"
+    );
+}
+
+#[test]
+fn omits_no_implied_dirs_when_disabled_without_relative_paths() {
+    // upstream: options.c:2207-2208 forces `implied_dirs = 0` when relative
+    // paths are off, and options.c:2976 gates the `--no-implied-dirs`
+    // forwarding on `relative_paths`. A non-relative transfer must therefore
+    // never forward `--no-implied-dirs`; otherwise the remote sender
+    // link_stat()s the flag as a source path and fails with exit 23.
+    let config = ClientConfig::builder().implied_dirs(false).build();
+    assert!(!config.relative_paths());
+    let builder = RemoteInvocationBuilder::new(&config, RemoteRole::Sender);
+    let args = builder.build("/path");
+
+    assert!(
+        !args.iter().any(|a| a == "--no-implied-dirs"),
+        "unexpected --no-implied-dirs in non-relative args: {args:?}"
     );
 }
 
