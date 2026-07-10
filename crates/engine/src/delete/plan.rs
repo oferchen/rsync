@@ -11,8 +11,8 @@
 //! `delete_in_dir`'s loop (`generator.c:320`), which iterates the sorted
 //! destination directory list in reverse. Callers obtain that ordering by
 //! sorting with [`super::super::delete::DeletePlan::sort_by_name`], which
-//! uses upstream's `f_name_cmp` ascending and then reverses the slice in
-//! place.
+//! uses upstream's protocol-29 `f_name_cmp` (files before directories)
+//! ascending and then reverses the slice in place.
 //!
 //! # Hardlink Cohort
 //!
@@ -29,7 +29,7 @@ use std::cmp::Ordering;
 use std::ffi::OsString;
 use std::path::PathBuf;
 
-use protocol::flist::{FileEntry, FileType, f_name_cmp};
+use protocol::flist::{FileEntry, FileType, compare_file_entries};
 
 /// Identifier shared by all destination-side entries that belong to the
 /// same hardlink group (same `(dev, ino)` pair).
@@ -206,15 +206,23 @@ impl DeletePlan {
 
     /// Sorts the entries into upstream `delete_in_dir` emission order.
     ///
-    /// Order is `f_name_cmp` ascending applied to a temporary
-    /// [`FileEntry`] per entry (using the plan's `directory` as the
-    /// parent), then reversed in place. The sort is unstable to match
-    /// upstream's `qsort` choice (upstream:
+    /// Order is upstream's protocol-29 `f_name_cmp` ascending applied to a
+    /// temporary [`FileEntry`] per entry (using the plan's `directory` as
+    /// the parent), then reversed in place. The comparator is
+    /// [`compare_file_entries`], which honours the `t_PATH`/`t_ITEM`
+    /// distinction (upstream: `flist.c:3223`): within a directory,
+    /// non-directories sort before directories, so `get_dirlist`'s sorted
+    /// order places files first and directories last. A plain byte sort
+    /// would instead order dirs and files by name alone, so an
+    /// upper-case directory name like `D` would wrongly sort ahead of a
+    /// file `a` - diverging from upstream's traversal and, under
+    /// `--max-delete`, changing which entries survive when the cap trips.
+    /// The sort is unstable to match upstream's `qsort` choice (upstream:
     /// `flist.c:3217-3343`, `generator.c:320`).
     pub fn sort_by_name(&mut self) {
         let dir = &self.directory;
         self.extras.sort_unstable_by(|a, b| {
-            f_name_cmp(&entry_as_file_entry(dir, a), &entry_as_file_entry(dir, b))
+            compare_file_entries(&entry_as_file_entry(dir, a), &entry_as_file_entry(dir, b))
         });
         // Upstream's `delete_in_dir` iterates the sorted dirlist in
         // reverse (`for (i = dirlist->used; i--; )`), so the emission
@@ -226,20 +234,20 @@ impl DeletePlan {
     /// Convenience: returns the comparator that orders two [`DeleteEntry`]
     /// values in upstream ascending order under the plan's directory.
     /// Useful for callers that want to merge externally sorted candidate
-    /// lists without rebuilding [`FileEntry`] values.
+    /// lists without rebuilding [`FileEntry`] values. Uses the same
+    /// dir-aware [`compare_file_entries`] key as [`Self::sort_by_name`].
     #[must_use]
     pub fn ascending_order(&self, a: &DeleteEntry, b: &DeleteEntry) -> Ordering {
         let dir = &self.directory;
-        f_name_cmp(&entry_as_file_entry(dir, a), &entry_as_file_entry(dir, b))
+        compare_file_entries(&entry_as_file_entry(dir, a), &entry_as_file_entry(dir, b))
     }
 }
 
 /// Builds a transient [`FileEntry`] for one [`DeleteEntry`] so that
-/// [`f_name_cmp`] can score it against another entry in the same
-/// directory. The entry's mode is set from its `kind` so a directory
-/// vs file disambiguation could be layered on later by `sort.rs`'s
-/// protocol-29-aware comparator; the foundational `f_name_cmp` itself
-/// ignores the mode.
+/// [`compare_file_entries`] can score it against another entry in the
+/// same directory. The entry's mode is set from its `kind` so the
+/// protocol-29 comparator applies its directory-vs-file disambiguation
+/// (`is_dir()` is honoured for the `t_PATH`/`t_ITEM` ordering).
 fn entry_as_file_entry(dir: &std::path::Path, e: &DeleteEntry) -> FileEntry {
     let full = dir.join(&e.name);
     match e.kind {
@@ -367,9 +375,13 @@ mod tests {
     }
 
     #[test]
-    fn sort_orders_mixed_kinds_byte_wise() {
-        // f_name_cmp is byte-wise; the kind does not influence the sort
-        // key. Names alone decide.
+    fn sort_orders_files_before_dirs_like_upstream() {
+        // Upstream's protocol-29 f_name_cmp sorts non-directories before
+        // directories within a directory (t_ITEM before t_PATH), then by
+        // name. Ascending: [a(symlink), c(special), b(dir)]; the reverse
+        // that `sort_by_name` applies yields [b, c, a]. A plain byte sort
+        // would instead give [c, b, a] because it ignores the kind - the
+        // bug this ordering fix corrects.
         let mut plan = DeletePlan::new(PathBuf::from("d"));
         plan.push(DeleteEntry::new(OsString::from("b"), DeleteEntryKind::Dir));
         plan.push(DeleteEntry::new(
@@ -386,7 +398,35 @@ mod tests {
             .iter()
             .map(|e| e.name.to_str().unwrap())
             .collect();
-        assert_eq!(names, vec!["c", "b", "a"]);
+        assert_eq!(names, vec!["b", "c", "a"]);
+    }
+
+    #[test]
+    fn sort_emits_dirs_before_files_when_dir_name_sorts_first() {
+        // Regression for the --max-delete survivor divergence: an
+        // upper-case directory name `D` byte-sorts ahead of files `a1`,
+        // `a2`, so a plain byte sort would emit [D, a2, a1] reversed ->
+        // [a2, a1, D], deleting the files first. Upstream's dir-after-file
+        // ordering makes the ascending order [a1, a2, D], reversed to
+        // [D, a2, a1], so the directory is processed first and the cap
+        // trips inside it - matching upstream's traversal.
+        let mut plan = DeletePlan::new(PathBuf::from("dest"));
+        plan.push(DeleteEntry::new(OsString::from("D"), DeleteEntryKind::Dir));
+        plan.push(DeleteEntry::new(
+            OsString::from("a1"),
+            DeleteEntryKind::File,
+        ));
+        plan.push(DeleteEntry::new(
+            OsString::from("a2"),
+            DeleteEntryKind::File,
+        ));
+        plan.sort_by_name();
+        let names: Vec<&str> = plan
+            .extras
+            .iter()
+            .map(|e| e.name.to_str().unwrap())
+            .collect();
+        assert_eq!(names, vec!["D", "a2", "a1"]);
     }
 
     #[test]
