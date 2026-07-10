@@ -39,28 +39,27 @@ pub fn trace_fuzzy_size_mtime_match(candidate: &str) {
 
 /// Emits the level 2 distance line for a scored candidate.
 ///
-/// Upstream encodes `dist` as a 32-bit fixed-point value (high 16 bits =
-/// integer part, low 16 bits = fractional part) and prints it as
-/// `%d.%05d`. Our scoring function returns a single u32 score where higher
-/// is better; we surface it under the upstream format string with the
-/// integer slot occupied by the score and the fractional slot zeroed so
-/// log parsers built for upstream output continue to work.
+/// Upstream encodes `dist` as a 32-bit fixed-point value: the high 16 bits are
+/// the integer part (whole Levenshtein units) and the low 16 bits are the
+/// fractional part (accumulated ASCII weighting), printed as `%d.%05d`. We pass
+/// the same `u32` distance produced by [`super::distance::fuzzy_name_distance`]
+/// and split it identically so `--debug=FUZZY` output matches byte-for-byte.
 ///
 /// Matches upstream rsync format:
 /// ```text
-/// fuzzy distance for path/to/candidate = 42.00000
+/// fuzzy distance for path/to/candidate = 1.00042
 /// ```
 ///
-/// upstream: generator.c:884-887.
+/// upstream: generator.c:896-899.
 #[inline]
-pub fn trace_fuzzy_distance(candidate: &str, score: u32) {
+pub fn trace_fuzzy_distance(candidate: &str, distance: u32) {
     debug_log!(
         Fuzzy,
         2,
         "fuzzy distance for {} = {}.{:05}",
         candidate,
-        score,
-        0
+        distance >> 16,
+        distance & 0xFFFF
     );
 }
 
@@ -116,17 +115,19 @@ mod tests {
         assert!(fuzzy_messages().is_empty());
     }
 
-    /// Pins the level 2 distance emission format.
+    /// Pins the level 2 distance emission format: the u32 distance splits into
+    /// `integer.fraction` on the 16-bit boundary, exactly like upstream.
     ///
-    /// upstream: generator.c:884-887.
+    /// upstream: generator.c:896-899.
     #[test]
     fn fuzzy_distance_matches_upstream_format() {
         setup_fuzzy(2);
-        trace_fuzzy_distance("dir/sibling.txt", 42);
+        // (1 << 16) | 42 -> integer part 1, fractional part 00042.
+        trace_fuzzy_distance("dir/sibling.txt", (1 << 16) | 42);
         let msgs = fuzzy_messages();
         assert!(
             msgs.iter()
-                .any(|m| m == "fuzzy distance for dir/sibling.txt = 42.00000"),
+                .any(|m| m == "fuzzy distance for dir/sibling.txt = 1.00042"),
             "expected upstream-format FUZZY,2 distance line, got {msgs:?}"
         );
     }

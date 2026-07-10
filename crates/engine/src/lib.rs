@@ -46,9 +46,8 @@
 //!
 //! ## Fuzzy matching
 //!
-//! [`FuzzyMatcher`] / [`compute_similarity_score`] locate similar basis files
-//! for the `--fuzzy` option, reducing literal-data transmission when an exact
-//! basis is absent.
+//! [`FuzzyMatcher`] locates similar basis files for the `--fuzzy` option,
+//! reducing literal-data transmission when an exact basis is absent.
 //!
 //! ## Hardlink tracking
 //!
@@ -163,8 +162,8 @@ pub mod batch {
 pub mod fuzzy {
     //! Re-exports from the [`matching`] crate for backward compatibility.
     pub use matching::{
-        FUZZY_LEVEL_1, FUZZY_LEVEL_2, FuzzyMatch, FuzzyMatcher, compute_similarity_score,
-        trace_fuzzy_basis_selected, trace_fuzzy_distance, trace_fuzzy_size_mtime_match,
+        FUZZY_LEVEL_1, FUZZY_LEVEL_2, FuzzyMatch, FuzzyMatcher, trace_fuzzy_basis_selected,
+        trace_fuzzy_distance, trace_fuzzy_size_mtime_match,
     };
 }
 
@@ -200,8 +199,8 @@ pub use error::{EngineError, EngineResult};
 
 /// Fuzzy matching for finding similar basis files.
 pub use fuzzy::{
-    FUZZY_LEVEL_1, FUZZY_LEVEL_2, FuzzyMatch, FuzzyMatcher, compute_similarity_score,
-    trace_fuzzy_basis_selected, trace_fuzzy_distance, trace_fuzzy_size_mtime_match,
+    FUZZY_LEVEL_1, FUZZY_LEVEL_2, FuzzyMatch, FuzzyMatcher, trace_fuzzy_basis_selected,
+    trace_fuzzy_distance, trace_fuzzy_size_mtime_match,
 };
 
 /// Hardlink detection and resolution.

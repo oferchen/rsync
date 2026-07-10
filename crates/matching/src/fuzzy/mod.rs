@@ -1,43 +1,39 @@
 //! Fuzzy basis file matching for delta transfers.
 //!
 //! With `--fuzzy` enabled, the destination directory (and at level 2 the
-//! `--compare-dest`/`--copy-dest`/`--link-dest` directories) is scanned for
-//! similarly-named files that can serve as basis files for delta transfer.
-//! Candidates are scored on extension, prefix, suffix, and size similarity;
-//! the highest-scoring file above the minimum threshold wins.
+//! `--compare-dest`/`--copy-dest`/`--link-dest` directories) is scanned for a
+//! similarly-named file to serve as the delta basis. Candidate selection is a
+//! faithful port of upstream `generator.c:find_fuzzy()`:
 //!
-//! upstream: generator.c:1580-1700 `find_fuzzy_basis()`,
-//! generator.c:1450-1530 `fuzzy_find()`.
+//! 1. An exact size + mtime match returns immediately (the "size/modtime"
+//!    fast-path). upstream: generator.c:842-866.
+//! 2. Otherwise the candidate with the lowest Levenshtein-style
+//!    [`distance::fuzzy_distance`] (name plus 10x-weighted suffix) wins, provided
+//!    it is within [`MAX_FUZZY_DISTANCE`]. upstream: generator.c:868-908.
+//!
+//! Upstream additionally skips candidates whose source-flist entry carries
+//! `FLAG_FILE_SENT` (a file being changed in this same run must not become a
+//! future fuzzy basis; generator.c:855,883,1879). oc scans the live destination
+//! filesystem rather than a persistent per-directory flist and has no
+//! equivalent sent-flag, so that screening is not reproduced here; its only
+//! effect is to avoid reusing an about-to-change sibling, and the whole-file
+//! checksum always verifies the reconstructed result regardless.
+//!
+//! upstream: generator.c:831 `find_fuzzy()`, util1.c:1588 `fuzzy_distance()`.
 
-mod scoring;
+mod distance;
 mod search;
 mod trace;
 
-pub use scoring::compute_similarity_score;
 pub use trace::{trace_fuzzy_basis_selected, trace_fuzzy_distance, trace_fuzzy_size_mtime_match};
 
 use std::path::PathBuf;
 
-/// Minimum score for a candidate to be considered a fuzzy basis match.
-const MIN_FUZZY_SCORE: u32 = 10;
-
-/// Bonus when target and candidate share a file extension.
-const EXTENSION_MATCH_BONUS: u32 = 50;
-
-/// Points awarded per matching prefix character.
+/// Highest accepted fuzzy distance; a candidate above this is ignored.
 ///
-/// Naming conventions typically place distinguishing information at the
-/// tail, so prefix matches are the strongest similarity signal.
-const PREFIX_MATCH_POINTS: u32 = 10;
-
-/// Points awarded per matching suffix character (before extension).
-///
-/// Weighted lower than prefix matches to avoid over-weighting accidental
-/// tail collisions.
-const SUFFIX_MATCH_POINTS: u32 = 8;
-
-/// Bonus when candidate size is within 50% of the target size.
-const SIZE_SIMILARITY_BONUS: u32 = 30;
+/// upstream: generator.c:835 - `lowest_dist = 25 << 16` seeds the scan, so a
+/// candidate qualifies only when its distance is `<= 25` Levenshtein units.
+const MAX_FUZZY_DISTANCE: u32 = 25 << 16;
 
 /// Fuzzy level for a single `--fuzzy` flag; searches the destination directory.
 pub const FUZZY_LEVEL_1: u8 = 1;
@@ -52,35 +48,36 @@ pub const FUZZY_LEVEL_2: u8 = 2;
 
 /// Result of fuzzy matching search.
 ///
-/// Contains the path to the best matching file and its similarity score.
+/// Contains the path to the best matching file and its edit distance.
 #[derive(Debug, Clone)]
 pub struct FuzzyMatch {
     /// Path to the matching basis file.
     pub path: PathBuf,
-    /// Similarity score (higher is better).
-    pub score: u32,
+    /// Levenshtein-style distance to the target name (lower is closer). Zero
+    /// for a size/modtime fast-path hit. upstream: generator.c `lowest_dist`.
+    pub distance: u32,
 }
 
 /// Fuzzy matcher for finding similar basis files.
 ///
-/// upstream: generator.c:1580 `find_fuzzy_basis()`.
+/// upstream: generator.c:831 `find_fuzzy()`.
 #[derive(Debug, Default)]
 pub struct FuzzyMatcher {
     /// Fuzzy matching level (1 or 2).
     fuzzy_level: u8,
-    /// Minimum score required for a match.
-    min_score: u32,
+    /// Highest accepted distance; candidates above it are discarded.
+    max_distance: u32,
     /// Additional directories to search (for level 2 fuzzy matching).
     pub(crate) fuzzy_basis_dirs: Vec<PathBuf>,
 }
 
 impl FuzzyMatcher {
-    /// Creates a new level-1 fuzzy matcher with the default minimum score.
+    /// Creates a new level-1 fuzzy matcher with the default distance cap.
     #[must_use]
     pub const fn new() -> Self {
         Self {
             fuzzy_level: FUZZY_LEVEL_1,
-            min_score: MIN_FUZZY_SCORE,
+            max_distance: MAX_FUZZY_DISTANCE,
             fuzzy_basis_dirs: Vec::new(),
         }
     }
@@ -90,7 +87,7 @@ impl FuzzyMatcher {
     pub const fn with_level(level: u8) -> Self {
         Self {
             fuzzy_level: level,
-            min_score: MIN_FUZZY_SCORE,
+            max_distance: MAX_FUZZY_DISTANCE,
             fuzzy_basis_dirs: Vec::new(),
         }
     }
@@ -104,10 +101,10 @@ impl FuzzyMatcher {
         self
     }
 
-    /// Overrides the minimum score threshold; candidates below the threshold
-    /// are discarded.
-    pub const fn with_min_score(mut self, score: u32) -> Self {
-        self.min_score = score;
+    /// Overrides the maximum accepted distance; candidates above it are
+    /// discarded.
+    pub const fn with_max_distance(mut self, distance: u32) -> Self {
+        self.max_distance = distance;
         self
     }
 
@@ -117,10 +114,10 @@ impl FuzzyMatcher {
         self.fuzzy_level
     }
 
-    /// Returns the current minimum score threshold.
+    /// Returns the current maximum accepted distance.
     #[must_use]
-    pub const fn min_score(&self) -> u32 {
-        self.min_score
+    pub const fn max_distance(&self) -> u32 {
+        self.max_distance
     }
 }
 
@@ -138,14 +135,10 @@ mod tests {
         }
 
         #[test]
-        fn scoring_constants_reasonable() {
-            // Pin the relative weights: extension > prefix > suffix; size
-            // bonus is meaningful but never dominates name similarity.
-            assert_eq!(EXTENSION_MATCH_BONUS, 50);
-            assert_eq!(PREFIX_MATCH_POINTS, 10);
-            assert_eq!(SUFFIX_MATCH_POINTS, 8);
-            assert_eq!(SIZE_SIMILARITY_BONUS, 30);
-            assert_eq!(MIN_FUZZY_SCORE, 10);
+        fn max_distance_matches_upstream_seed() {
+            // upstream: generator.c:835 - lowest_dist starts at 25 << 16.
+            assert_eq!(MAX_FUZZY_DISTANCE, 25 << 16);
+            assert_eq!(FuzzyMatcher::new().max_distance(), 25 << 16);
         }
     }
 }

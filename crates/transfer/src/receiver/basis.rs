@@ -61,6 +61,9 @@ pub struct BasisFileConfig<'a> {
     pub relative_path: &'a std::path::Path,
     /// Expected size of the target file.
     pub target_size: u64,
+    /// Target file modification time in whole seconds since the Unix epoch,
+    /// used for the fuzzy size/modtime fast-path. upstream: generator.c:858.
+    pub target_mtime: i64,
     /// Fuzzy matching level (0=off, 1=dest dir, 2=dest+reference dirs).
     ///
     /// Upstream: `options.c:764` - `fuzzy_basis` controls how many directory
@@ -165,6 +168,7 @@ fn try_fuzzy_match(
     relative_path: &std::path::Path,
     dest_dir: &std::path::Path,
     target_size: u64,
+    target_mtime: i64,
     fuzzy_level: u8,
     reference_directories: &[ReferenceDirectory],
 ) -> Option<(fs::File, u64, PathBuf)> {
@@ -187,7 +191,8 @@ fn try_fuzzy_match(
     };
 
     let fuzzy_matcher = FuzzyMatcher::with_level(fuzzy_level).with_fuzzy_basis_dirs(basis_dirs);
-    let fuzzy_match = fuzzy_matcher.find_fuzzy_basis(target_name, dest_dir, target_size)?;
+    let fuzzy_match =
+        fuzzy_matcher.find_fuzzy_basis(target_name, dest_dir, target_size, Some(target_mtime))?;
     // upstream: generator.c:1775 - announce the selected fuzzy basis at
     // FUZZY,1 the moment the matcher returns a candidate, before we attempt
     // to open it.
@@ -425,6 +430,7 @@ pub fn find_basis_file_with_config(config: &BasisFileConfig<'_>) -> BasisFileRes
                     config.relative_path,
                     config.dest_dir,
                     config.target_size,
+                    config.target_mtime,
                     config.fuzzy_level,
                     config.reference_directories,
                 )
