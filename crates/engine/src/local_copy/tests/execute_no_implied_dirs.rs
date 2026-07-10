@@ -327,6 +327,49 @@ fn no_implied_dirs_dry_run_skips_parent_check() {
     assert!(!destination.exists());
 }
 
+// Regression: a recursive dry-run into a not-yet-existing destination directory
+// must succeed with --no-implied-dirs (the default when relative paths are off).
+// Upstream `do_mkdir` returns 0 under `dry_run` (syscall.c:1012), so the missing
+// destination root and its subdirs never fail a dry run regardless of implied
+// dirs. This mirrors `--only-write-batch` (which forces dry_run) copying into a
+// missing dest dir; previously the missing root was misclassified as a vanished
+// file (exit 24).
+#[test]
+fn no_implied_dirs_recursive_dry_run_into_missing_dest_succeeds() {
+    let temp = tempdir().expect("tempdir");
+    let source_root = temp.path().join("source");
+    let nested = source_root.join("subdir");
+    fs::create_dir_all(&nested).expect("create nested source");
+    fs::write(source_root.join("file.txt"), b"hello").expect("write file");
+    fs::write(nested.join("inner.txt"), b"nested").expect("write nested file");
+
+    // Existing parent, missing final destination directory, trailing slash so
+    // the source contents are copied into `dest/missing/`.
+    let dest_parent = temp.path().join("dest");
+    fs::create_dir_all(&dest_parent).expect("create dest parent");
+    let dest_missing = dest_parent.join("missing");
+
+    let mut source_operand = source_root.into_os_string();
+    source_operand.push(std::path::MAIN_SEPARATOR.to_string());
+    let mut dest_operand = dest_missing.clone().into_os_string();
+    dest_operand.push(std::path::MAIN_SEPARATOR.to_string());
+
+    let operands = vec![source_operand, dest_operand];
+    let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
+    let options = LocalCopyOptions::default().implied_dirs(false);
+
+    let summary = plan
+        .execute_with_options(LocalCopyExecution::DryRun, options)
+        .expect("recursive dry-run into missing dest must succeed");
+
+    assert_eq!(summary.files_copied(), 2);
+    // Dry run must not materialise the destination directory.
+    assert!(
+        !dest_missing.exists(),
+        "dry run must not create the destination directory"
+    );
+}
+
 #[test]
 fn no_implied_dirs_with_trailing_slash_copies_contents() {
     let temp = tempdir().expect("tempdir");

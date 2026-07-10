@@ -174,13 +174,21 @@ impl<'a> CopyContext<'a> {
                         self.replace_parent_entry_dry_run(parent, &existing, allow_creation)
                     }
                 }
-                // upstream: generator.c:1329-1333 - a missing leading parent
-                // is materialized on demand (make_path) when creation is
-                // allowed, or under `relative_paths && !implied_dirs`; in
-                // dry-run mode the real mkdir is elided, so mirror the real
-                // run's acceptance of the missing parent in both cases.
+                // upstream: main.c:810 - `do_mkdir()` returns 0 under `dry_run`
+                // (syscall.c:1012 `if (dry_run) return 0;`), so the destination
+                // directory and every subdir the transfer creates never fail a
+                // dry run, independent of --implied-dirs. In dry-run mode the
+                // physical mkdir is elided, so a missing parent at or below the
+                // destination root mirrors what a real run would have
+                // materialised (the root via ensure_destination_directory, its
+                // subdirs during recursion). A parent strictly above the root is
+                // the destination arg's leading prefix, which still needs
+                // --mkpath (or --relative) exactly as a real run would.
                 Err(error) if error.kind() == io::ErrorKind::NotFound => {
-                    if allow_creation || self.relative_paths_enabled() {
+                    if allow_creation
+                        || parent_within_root
+                        || self.relative_paths_enabled()
+                    {
                         Ok(())
                     } else {
                         Err(LocalCopyError::io(
