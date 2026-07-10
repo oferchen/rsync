@@ -697,6 +697,7 @@ impl ReceiverContext {
         limit: u64,
     ) -> io::Result<(DeleteStats, bool, i32)> {
         let mut state = CappedDeleteState {
+            #[cfg(unix)]
             dest_dir,
             #[cfg(unix)]
             sandbox,
@@ -841,6 +842,9 @@ struct CappedCandidate {
 
 /// Mutable bookkeeping threaded through the recursive capped deletion walk.
 struct CappedDeleteState<'w, W: ?Sized> {
+    // Only read by the Unix sandbox-anchored scan path; the non-Unix scan
+    // walks `target_path` directly, so gate the field like `sandbox` below.
+    #[cfg(unix)]
     dest_dir: &'w Path,
     #[cfg(unix)]
     sandbox: Option<&'w std::sync::Arc<fast_io::DirSandbox>>,
