@@ -225,6 +225,64 @@ pub fn read_filter_list(
     Ok(rules)
 }
 
+/// Async twin of [`read_filter_list`].
+///
+/// Reads the same length-prefixed rule records (`.await`-driven) in the same
+/// order, terminated by the 4-byte little-endian zero, and runs the identical
+/// [`parse_wire_rule`] decode/validation on each record. It therefore yields the
+/// same `Vec<FilterRuleWireFormat>` and consumes the same bytes for the same
+/// wire input; only the I/O mechanism (await vs blocking) differs. Gated on
+/// `tokio-transfer`.
+///
+/// This matches upstream's `recv_filter_list()` in `exclude.c:1658`, which reads
+/// 4-byte `read_int()` length prefixes until a zero terminator.
+///
+/// # Errors
+///
+/// - A negative length prefix yields [`io::ErrorKind::InvalidData`], exactly as
+///   the blocking reader surfaces it.
+/// - Any decode error from [`parse_wire_rule`] propagates unchanged.
+/// - Truncation mid-record surfaces the underlying read error (typically
+///   [`io::ErrorKind::UnexpectedEof`]).
+#[cfg(feature = "tokio-transfer")]
+pub async fn read_filter_list_async<R>(
+    reader: &mut R,
+    protocol: ProtocolVersion,
+) -> io::Result<Vec<FilterRuleWireFormat>>
+where
+    R: tokio::io::AsyncRead + Unpin + ?Sized,
+{
+    use tokio::io::AsyncReadExt;
+
+    let mut rules = Vec::new();
+
+    loop {
+        let mut len_buf = [0u8; 4];
+        reader.read_exact(&mut len_buf).await?;
+        let len = i32::from_le_bytes(len_buf);
+
+        if len == 0 {
+            // Wire-format terminator (zero-length record).
+            break;
+        }
+
+        if len < 0 {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!("invalid filter rule length: {len}"),
+            ));
+        }
+
+        let mut buf = vec![0u8; len as usize];
+        reader.read_exact(&mut buf).await?;
+
+        let rule = parse_wire_rule(&buf, protocol)?;
+        rules.push(rule);
+    }
+
+    Ok(rules)
+}
+
 /// Writes filter list to wire format.
 ///
 /// Writes a sequence of filter rules followed by a 4-byte zero terminator.
@@ -750,5 +808,35 @@ mod tests {
         let mut buf = Vec::new();
         let result = write_filter_list(&mut buf, &[rule], protocol_v28);
         assert!(result.is_err());
+    }
+
+    /// Proves the async twin decodes byte-for-byte identically to the blocking
+    /// [`read_filter_list`] for the same wire bytes: empty list, and a list with
+    /// a couple of rules exercising modifiers. Any divergence would be an
+    /// async-driver bug, since both share the [`parse_wire_rule`] decode.
+    #[cfg(feature = "tokio-transfer")]
+    #[tokio::test(flavor = "current_thread")]
+    async fn read_filter_list_async_matches_sync() {
+        let protocol = ProtocolVersion::from_supported(32).unwrap();
+
+        let cases: [Vec<FilterRuleWireFormat>; 3] = [
+            Vec::new(),
+            vec![FilterRuleWireFormat::exclude("*.log".to_owned())],
+            vec![
+                FilterRuleWireFormat::exclude("drop.txt".to_owned()).with_anchored(true),
+                FilterRuleWireFormat::include("*".to_owned()).with_directory_only(true),
+            ],
+        ];
+
+        for rules in cases {
+            let mut buf = Vec::new();
+            write_filter_list(&mut buf, &rules, protocol).unwrap();
+
+            let sync = read_filter_list(&mut &buf[..], protocol).unwrap();
+            let mut cursor = std::io::Cursor::new(&buf);
+            let asyncd = read_filter_list_async(&mut cursor, protocol).await.unwrap();
+
+            assert_eq!(asyncd, sync, "async filter-list read diverged from sync");
+        }
     }
 }
