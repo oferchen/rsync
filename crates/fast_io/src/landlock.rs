@@ -23,6 +23,19 @@ use landlock::{
     RulesetCreatedAttr, RulesetStatus,
 };
 
+/// System directories granted read-only (read + execute) access under the
+/// Landlock ruleset so that user/group name resolution and the dynamic linker
+/// keep working while every write stays confined to the module tree.
+///
+/// Applying a wire-decoded ACL resolves named-user/named-group entries through
+/// NSS (`getpwnam_r`/`getgrnam_r`), which reads `/etc/passwd`, `/etc/group`,
+/// `/etc/nsswitch.conf`, `/etc/ld.so.cache`, the NSS backend shared objects
+/// under the library directories, and `/proc/self` for the systemd backend.
+/// These mirror the reads upstream's (unsandboxed) daemon performs. Absent
+/// paths are skipped, so the list can name locations that only exist on some
+/// distributions without turning into a hard error.
+const READONLY_SYSTEM_PATHS: &[&str] = &["/etc", "/lib", "/lib64", "/usr", "/proc", "/run", "/var"];
+
 /// Outcome of a [`crate::landlock::restrict_to_module_paths`] call.
 ///
 /// Carries enough detail for the daemon to log the actual enforcement level
@@ -125,6 +138,31 @@ pub fn restrict_to_module_paths(allowed_roots: &[&Path]) -> LandlockOutcome {
             Ok(c) => c,
             Err(err) => return LandlockOutcome::Error(io::Error::other(err.to_string())),
         };
+    }
+
+    // Grant read-only (read + execute) access to the system paths that
+    // user/group name resolution and the dynamic linker need. The receiver
+    // resolves named-user/named-group ACL entries through `getpwnam_r`/
+    // `getgrnam_r` (NSS) when applying a wire-decoded ACL, which opens
+    // /etc/passwd, /etc/group, /etc/nsswitch.conf, the NSS module shared
+    // objects under the library directories, and /proc/self for the systemd
+    // NSS backend. Confining the thread to the module tree alone makes those
+    // opens fail with EACCES, so the ACL apply silently drops every named
+    // entry (the failure is swallowed as "ACLs unsupported"). Upstream's
+    // daemon reads these files freely; granting read-only access here restores
+    // that behaviour while keeping every write confined to the module tree, so
+    // the symlink-race defense is unchanged.
+    let readonly = AccessFs::ReadFile | AccessFs::ReadDir | AccessFs::Execute;
+    for path in READONLY_SYSTEM_PATHS {
+        // Skip paths absent on this host: PathFd::new fails with ENOENT and a
+        // missing NSS/library directory is not an error - the remaining rules
+        // still cover the standard locations. Only existing paths are added.
+        if let Ok(fd) = PathFd::new(path) {
+            created = match created.add_rule(PathBeneath::new(fd, readonly)) {
+                Ok(c) => c,
+                Err(err) => return LandlockOutcome::Error(io::Error::other(err.to_string())),
+            };
+        }
     }
 
     match created.restrict_self() {
@@ -390,5 +428,71 @@ mod tests {
         .expect("second-call scenario");
         drop(allowed);
         drop(outside);
+    }
+
+    #[test]
+    fn allows_reading_nss_files_after_restriction() {
+        // Regression: applying a wire-decoded ACL with a named-user/named-group
+        // entry resolves the id through NSS (`getpwnam_r`/`getgrnam_r`), which
+        // opens /etc/passwd, /etc/group, and the NSS backend libraries. When
+        // the sandbox confined the receiver to the module tree alone those
+        // opens failed with EACCES, exacl reported the ACL as unsupported, and
+        // every named entry plus the mask was silently dropped on the daemon
+        // receiver path. The read-only system-path grant must keep NSS files
+        // readable so the receiver applies the full ACL, matching upstream's
+        // unsandboxed daemon.
+        if !is_supported() {
+            return;
+        }
+        let module = TempDir::new().expect("module tempdir");
+        let module_path = module.path().to_path_buf();
+        run_isolated(move || {
+            let outcome = restrict_to_module_paths(&[module_path.as_path()]);
+            match outcome {
+                LandlockOutcome::Enforced(RulesetStatus::NotEnforced) => return Ok(()),
+                LandlockOutcome::Enforced(_) => {}
+                LandlockOutcome::Unavailable => return Ok(()),
+                LandlockOutcome::Error(err) => return Err(format!("setup: {err}")),
+            }
+            // /etc/passwd is the canonical NSS source the ACL id resolver opens.
+            match fs::read("/etc/passwd") {
+                Ok(bytes) if !bytes.is_empty() => Ok(()),
+                Ok(_) => Err("read /etc/passwd returned no data".to_owned()),
+                Err(err) => Err(format!("read /etc/passwd blocked by sandbox: {err}")),
+            }
+        })
+        .expect("nss-read scenario");
+        drop(module);
+    }
+
+    #[test]
+    fn readonly_system_paths_still_block_writes() {
+        // The NSS grant is read + execute only: it must not let the confined
+        // receiver create or modify files under the system directories, so the
+        // symlink-race write-confinement guarantee is unchanged.
+        if !is_supported() {
+            return;
+        }
+        let module = TempDir::new().expect("module tempdir");
+        let module_path = module.path().to_path_buf();
+        run_isolated(move || {
+            let outcome = restrict_to_module_paths(&[module_path.as_path()]);
+            match outcome {
+                LandlockOutcome::Enforced(RulesetStatus::NotEnforced) => return Ok(()),
+                LandlockOutcome::Enforced(_) => {}
+                LandlockOutcome::Unavailable => return Ok(()),
+                LandlockOutcome::Error(err) => return Err(format!("setup: {err}")),
+            }
+            match fs::write("/etc/oc_rsync_landlock_probe", b"x") {
+                Ok(()) => {
+                    let _ = fs::remove_file("/etc/oc_rsync_landlock_probe");
+                    Err("write under a read-only system path succeeded".to_owned())
+                }
+                Err(err) if err.kind() == ErrorKind::PermissionDenied => Ok(()),
+                Err(err) => Err(format!("unexpected error {:?}: {err}", err.kind())),
+            }
+        })
+        .expect("readonly-system-path scenario");
+        drop(module);
     }
 }
