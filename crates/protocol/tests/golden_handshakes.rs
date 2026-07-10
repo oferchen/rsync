@@ -682,13 +682,16 @@ fn golden_stats_zero_proto30() {
 
 #[test]
 fn golden_stats_zero_proto28() {
-    // Protocol 28 only sends 3 core stats, no flist times
+    // Protocol 28 only sends 3 core stats, no flist times.
+    // upstream: io.h:46 write_varlong30() routes protocol < 30 through
+    // io.c:2222 write_longint(), which writes each small (0..=0x7FFFFFFF)
+    // value as a fixed 4-byte little-endian int. A zero value is 4 zero bytes.
     let stats = TransferStats::new();
     let mut buf = Vec::new();
     stats.write_to(&mut buf, ProtocolVersion::V28).unwrap();
 
-    // 3 core stats * 3 bytes = 9 bytes
-    assert_eq!(buf.len(), 9);
+    // 3 core stats * 4 bytes (legacy longint) = 12 bytes
+    assert_eq!(buf.len(), 12);
     assert!(buf.iter().all(|&b| b == 0));
 
     let mut cursor = Cursor::new(&buf);

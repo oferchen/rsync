@@ -86,38 +86,33 @@ fn golden_v29_stats_zero_flist_times() {
 
 /// Verifies exact wire bytes for protocol 29 transfer stats.
 ///
-/// Each field uses varlong30 encoding with min_bytes=3:
-///   - Leading byte encodes the number of significant bytes
-///   - Followed by min_bytes-1 (=2) bytes of the LE value
-///
-/// For small values that fit in 3 bytes (values < 2^23 with bit 7 of
-/// byte 2 clear), the encoding is: [byte2, byte0, byte1] where
-/// byte0..byte2 are the LE representation.
+/// Protocol 29 is below 30, so upstream io.h:46 write_varlong30() routes each
+/// field through io.c:2222 write_longint(): a small value (0..=0x7FFFFFFF) is
+/// written as a fixed 4-byte little-endian int. A zero field is 4 zero bytes.
 #[test]
 fn golden_v29_stats_exact_wire_bytes() {
-    // Use values where we can predict the exact varlong30 encoding.
-    // varlong30(0, min_bytes=3): leading=0x00, then 2 zero bytes -> [0x00, 0x00, 0x00]
+    // varlong30 defers to write_longint for protocol < 30; longint(0) = [0,0,0,0].
     let stats = TransferStats::with_bytes(0, 0, 0);
 
     let protocol = v29();
     let mut buf = Vec::new();
     stats.write_to(&mut buf, protocol).unwrap();
 
-    // 5 fields, each 3 bytes (all zeros) = 15 bytes total
-    assert_eq!(buf.len(), 15, "5 zero-valued varlong30 fields = 15 bytes");
+    // 5 fields, each 4 bytes (legacy longint, all zeros) = 20 bytes total
+    assert_eq!(buf.len(), 20, "5 zero-valued longint fields = 20 bytes");
 
     #[rustfmt::skip]
     let expected: &[u8] = &[
         // total_read = 0
-        0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x00,
         // total_written = 0
-        0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x00,
         // total_size = 0
-        0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x00,
         // flist_buildtime = 0
-        0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x00,
         // flist_xfertime = 0
-        0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x00,
     ];
 
     assert_eq!(buf, expected, "all-zero stats wire bytes");
