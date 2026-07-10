@@ -17,7 +17,7 @@ pub(super) const SUPPORTED_OPTIONS_LIST: &str = concat!(
     "--tcp-fastopen, --blocking-io, --no-blocking-io, --protocol, --compress/-z, --no-compress, --compress-level, --compress-choice, --compress-threads, ",
     "--skip-compress, --open-noatime, --no-open-noatime, --iconv, --no-iconv, --info, --debug, --verbose/-v, --no-verbose, ",
     "--relative/-R, --no-relative, --one-file-system/-x, --no-one-file-system, --implied-dirs, --no-implied-dirs, ",
-    "--mkpath, --no-mkpath/--old-dirs/--old-d, --prune-empty-dirs/-m, --no-prune-empty-dirs, --progress, --no-progress, --quiet, --no-quiet, ",
+    "--mkpath, --no-mkpath, --old-dirs/--old-d, --prune-empty-dirs/-m, --no-prune-empty-dirs, --progress, --no-progress, --quiet, --no-quiet, ",
     "--force, --no-force, --fuzzy/-y, --no-fuzzy, --msgs2stderr, --no-msgs2stderr, --8-bit-output, --outbuf, ",
     "--itemize-changes/-i, --no-itemize-changes, --out-format, --stats, --partial, --no-partial, --partial-dir, --temp-dir, --log-file, ",
     "--log-file-format, --delay-updates, --no-delay-updates, --whole-file/-W, --no-whole-file, --xxh64-dedup, --remove-source-files, ",

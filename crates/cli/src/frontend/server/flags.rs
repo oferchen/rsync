@@ -278,7 +278,15 @@ pub(super) fn parse_server_long_flags(args: &[OsString]) -> ServerLongFlags {
             // receiver when the client is the sender (push). --no-mkpath is the
             // negation (options.c:834). Gates dest-arg path creation below.
             "--mkpath" => flags.mkpath = true,
-            "--no-mkpath" | "--old-dirs" => flags.mkpath = false,
+            "--no-mkpath" => flags.mkpath = false,
+            // upstream: options.c:2197-2199 - `--old-dirs`/`--old-d` set
+            // xfer_dirs=4, resolved to recurse=1 plus an appended `- /*/*`
+            // filter. server_options() (options.c:2605) never forwards these
+            // deprecated flags; a client encodes them as `-r` in the compact
+            // flag string and sends `- /*/*` over the wire filter list. Recognise
+            // them here only so a stray forward is consumed rather than mistaken
+            // for a positional path; they carry no mkpath semantics.
+            "--old-dirs" | "--old-d" => {}
             _ => {
                 // upstream: options.c::server_options() emits a handful of
                 // path-bearing long flags (`--copy-dest`, `--link-dest`,
@@ -463,6 +471,7 @@ pub(super) fn is_known_server_long_flag(arg: &str) -> bool {
             | "--mkpath"
             | "--no-mkpath"
             | "--old-dirs"
+            | "--old-d"
     ) || arg == "-s"
         || arg == "--new-compress"
         || arg == "--old-compress"

@@ -6,15 +6,19 @@
 use cli::test_utils::parse_args;
 
 #[test]
-fn test_old_dirs_alias_for_no_mkpath() {
+fn test_old_dirs_forces_recursion() {
+    // upstream: options.c:2197-2199 - --old-dirs sets xfer_dirs=4 -> recurse=1.
+    // It is unrelated to --mkpath (which stays at its default of false).
     let args = parse_args(["oc-rsync", "--old-dirs", "src", "dest"]).unwrap();
-    assert!(!args.mkpath, "--old-dirs should behave like --no-mkpath");
+    assert!(args.recursive, "--old-dirs should force recursion on");
+    assert!(!args.mkpath, "--old-dirs must not affect --mkpath");
 }
 
 #[test]
-fn test_old_d_alias_for_no_mkpath() {
+fn test_old_d_forces_recursion() {
     let args = parse_args(["oc-rsync", "--old-d", "src", "dest"]).unwrap();
-    assert!(!args.mkpath, "--old-d should behave like --no-mkpath");
+    assert!(args.recursive, "--old-d should force recursion on");
+    assert!(!args.mkpath, "--old-d must not affect --mkpath");
 }
 
 #[test]
@@ -276,8 +280,9 @@ fn test_no_capital_r_alias_for_no_relative() {
 #[test]
 fn test_old_dirs_works_with_other_options() {
     let args = parse_args(["oc-rsync", "--old-dirs", "-a", "src", "dest"]).unwrap();
-    assert!(!args.mkpath, "--old-dirs should work with -a");
+    assert!(args.recursive, "--old-dirs should work with -a");
     assert!(args.archive);
+    assert!(!args.mkpath, "--old-dirs must not affect --mkpath");
 }
 
 #[test]
