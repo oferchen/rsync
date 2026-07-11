@@ -10,7 +10,9 @@ use std::path::PathBuf;
 
 use compress::algorithm::CompressionAlgorithm;
 
-use crate::frontend::arguments::short_options::expand_short_options;
+use crate::frontend::arguments::short_options::{
+    expand_short_options, hoist_options_before_operands,
+};
 use crate::frontend::command_builder::clap_command;
 use crate::frontend::execution::{parse_checksum_seed_argument, parse_compress_level_argument};
 use crate::frontend::filter_rules::{FilterOrderToken, build_filter_order};
@@ -46,6 +48,7 @@ where
     }
 
     let command = clap_command(program_name.as_str());
+    let args = hoist_options_before_operands(&command, args);
     let args = expand_short_options(&command, args);
     let mut matches = command.try_get_matches_from(args.clone())?;
 

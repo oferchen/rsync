@@ -3,11 +3,188 @@
 //! Expands clusters of short options (e.g. `-avz`) before they reach `clap`,
 //! mirroring upstream rsync's parsing semantics.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::ffi::OsString;
 
 use clap::Command as ClapCommand;
 use clap::builder::ValueRange;
+
+/// Reorders arguments so that recognised options precede positional operands,
+/// mirroring upstream rsync's popt-based parsing which accepts options in any
+/// position relative to the source and destination paths.
+///
+/// The CLI front-end declares the trailing operand list with
+/// `trailing_var_arg(true)` and `allow_hyphen_values(true)` so it can emit
+/// tailored diagnostics for unsupported options (see
+/// `execution::operands::extract_operands`). A side effect is that clap routes
+/// every token following the first operand into the operand list, so a known
+/// option written after the paths (for example `src dst --rsync-path=prog`)
+/// would be rejected. Upstream popt processes options regardless of position,
+/// so this helper hoists each recognised option - together with its
+/// space-separated value - ahead of the operands before clap parses them.
+///
+/// Tokens after a literal `--` are left untouched, matching popt's end-of-option
+/// marker. Unrecognised option-looking tokens are left among the operands so the
+/// downstream `extract_operands` check still reports them as unknown options.
+pub(crate) fn hoist_options_before_operands(
+    command: &ClapCommand,
+    args: Vec<OsString>,
+) -> Vec<OsString> {
+    let mut iter = args.into_iter();
+    let Some(program) = iter.next() else {
+        return Vec::new();
+    };
+    let rest: Vec<OsString> = iter.collect();
+
+    let (flag_shorts, value_shorts) = classify_short_options(command);
+    let long_options = classify_long_options(command);
+
+    let mut options: Vec<OsString> = Vec::with_capacity(rest.len());
+    let mut operands: Vec<OsString> = Vec::with_capacity(rest.len());
+
+    let mut index = 0;
+    while index < rest.len() {
+        let token = &rest[index];
+
+        if token.as_os_str() == "--" {
+            // Preserve the terminator and everything after it verbatim.
+            operands.extend(rest[index..].iter().cloned());
+            break;
+        }
+
+        match classify_token(token, &flag_shorts, &value_shorts, &long_options) {
+            TokenKind::Option { needs_space_value } => {
+                options.push(token.clone());
+                if needs_space_value {
+                    if let Some(value) = rest.get(index + 1) {
+                        options.push(value.clone());
+                        index += 1;
+                    }
+                }
+            }
+            TokenKind::Operand => operands.push(token.clone()),
+        }
+
+        index += 1;
+    }
+
+    let mut result = Vec::with_capacity(options.len() + operands.len() + 1);
+    result.push(program);
+    result.append(&mut options);
+    result.append(&mut operands);
+    result
+}
+
+/// Classification of a single raw argument token for operand hoisting.
+enum TokenKind {
+    /// A recognised option; `needs_space_value` marks a value-taking option
+    /// written in the space-separated form whose value is the following token.
+    Option { needs_space_value: bool },
+    /// A positional operand or an unrecognised option-looking token.
+    Operand,
+}
+
+/// Classifies a raw token as a recognised option or an operand.
+fn classify_token(
+    token: &OsString,
+    flag_shorts: &HashSet<char>,
+    value_shorts: &HashSet<char>,
+    long_options: &HashMap<String, bool>,
+) -> TokenKind {
+    let Some(text) = token.to_str() else {
+        return TokenKind::Operand;
+    };
+
+    if let Some(name) = text.strip_prefix("--") {
+        if name.is_empty() {
+            return TokenKind::Operand;
+        }
+        let key = name.split('=').next().unwrap_or(name);
+        return match long_options.get(key) {
+            Some(true) => TokenKind::Option {
+                needs_space_value: !name.contains('='),
+            },
+            Some(false) => TokenKind::Option {
+                needs_space_value: false,
+            },
+            None => TokenKind::Operand,
+        };
+    }
+
+    let Some(cluster) = text.strip_prefix('-') else {
+        return TokenKind::Operand;
+    };
+
+    if cluster.is_empty() {
+        // A bare `-` denotes stdin/stdout, not an option.
+        return TokenKind::Operand;
+    }
+
+    if cluster.chars().count() == 1 {
+        let short = cluster.chars().next().expect("one character");
+        if value_shorts.contains(&short) {
+            return TokenKind::Option {
+                needs_space_value: true,
+            };
+        }
+        if flag_shorts.contains(&short) {
+            return TokenKind::Option {
+                needs_space_value: false,
+            };
+        }
+        return TokenKind::Operand;
+    }
+
+    match expand_cluster(text, flag_shorts, value_shorts) {
+        Some(fragments) => TokenKind::Option {
+            needs_space_value: fragment_needs_value(fragments.last(), value_shorts),
+        },
+        None => TokenKind::Operand,
+    }
+}
+
+/// Returns true when the trailing cluster fragment is a bare value-taking short
+/// option (for example `-M`), meaning its value is the following argument.
+fn fragment_needs_value(fragment: Option<&String>, value_shorts: &HashSet<char>) -> bool {
+    let Some(fragment) = fragment else {
+        return false;
+    };
+    let mut chars = fragment.chars();
+    if chars.next() != Some('-') {
+        return false;
+    }
+    match (chars.next(), chars.next()) {
+        (Some(short), None) => value_shorts.contains(&short),
+        _ => false,
+    }
+}
+
+/// Builds a map of recognised long option names (including visible aliases) to
+/// whether the option requires a value.
+fn classify_long_options(command: &ClapCommand) -> HashMap<String, bool> {
+    let mut long_options = HashMap::new();
+
+    for argument in command.get_arguments() {
+        let Some(longs) = argument.get_long_and_visible_aliases() else {
+            continue;
+        };
+
+        // Honour an explicit `num_args`; otherwise fall back to whether the
+        // action consumes a value. Options like `--ssh-identity` use
+        // `ArgAction::Append` without an explicit arity, so `get_num_args`
+        // returns `None` and must not be read as a valueless flag.
+        let requires_value = argument
+            .get_num_args()
+            .map(|range| range.min_values() > 0)
+            .unwrap_or_else(|| argument.get_action().takes_values());
+
+        for long in longs {
+            long_options.insert(long.to_owned(), requires_value);
+        }
+    }
+
+    long_options
+}
 
 /// Expands clusters of short options so the [`clap`] command can parse them.
 ///
@@ -341,5 +518,101 @@ mod tests {
                 OsString::from("-C"),
             ]
         );
+    }
+
+    fn hoist_command() -> ClapCommand {
+        ClapCommand::new("rsync")
+            .arg(
+                clap::Arg::new("archive")
+                    .short('a')
+                    .long("archive")
+                    .action(ArgAction::SetTrue),
+            )
+            .arg(
+                clap::Arg::new("rsync-path")
+                    .long("rsync-path")
+                    .num_args(1)
+                    .action(ArgAction::Set),
+            )
+            .arg(
+                clap::Arg::new("rsh")
+                    .short('e')
+                    .long("rsh")
+                    .num_args(1)
+                    .action(ArgAction::Set),
+            )
+            .arg(
+                clap::Arg::new("args")
+                    .action(ArgAction::Append)
+                    .num_args(0..)
+                    .allow_hyphen_values(true)
+                    .trailing_var_arg(true),
+            )
+    }
+
+    fn hoist(args: &[&str]) -> Vec<String> {
+        let command = hoist_command();
+        let input = args.iter().map(OsString::from).collect();
+        hoist_options_before_operands(&command, input)
+            .into_iter()
+            .map(|value| value.to_string_lossy().into_owned())
+            .collect()
+    }
+
+    #[test]
+    fn hoist_long_equals_after_operands() {
+        assert_eq!(
+            hoist(&["rsync", "src/", "dst/", "--rsync-path=/bin/rsync"]),
+            vec!["rsync", "--rsync-path=/bin/rsync", "src/", "dst/"]
+        );
+    }
+
+    #[test]
+    fn hoist_long_space_value_after_operands() {
+        // The value token following the space-form option is hoisted with it.
+        assert_eq!(
+            hoist(&["rsync", "src/", "dst/", "--rsync-path", "/bin/rsync"]),
+            vec!["rsync", "--rsync-path", "/bin/rsync", "src/", "dst/"]
+        );
+    }
+
+    #[test]
+    fn hoist_short_space_value_after_operands() {
+        assert_eq!(
+            hoist(&["rsync", "src/", "dst/", "-e", "ssh"]),
+            vec!["rsync", "-e", "ssh", "src/", "dst/"]
+        );
+    }
+
+    #[test]
+    fn hoist_leaves_operands_and_order_when_options_lead() {
+        assert_eq!(
+            hoist(&["rsync", "--archive", "src/", "dst/"]),
+            vec!["rsync", "--archive", "src/", "dst/"]
+        );
+    }
+
+    #[test]
+    fn hoist_preserves_double_dash_terminator() {
+        // Everything after `--` stays verbatim, even option-looking tokens.
+        assert_eq!(
+            hoist(&["rsync", "src/", "--", "--rsync-path=/bin/rsync"]),
+            vec!["rsync", "src/", "--", "--rsync-path=/bin/rsync"]
+        );
+    }
+
+    #[test]
+    fn hoist_leaves_unknown_option_among_operands() {
+        // Unknown options are not hoisted so the downstream operand check can
+        // still report them as unsupported.
+        assert_eq!(
+            hoist(&["rsync", "src/", "dst/", "--bogus"]),
+            vec!["rsync", "src/", "dst/", "--bogus"]
+        );
+    }
+
+    #[test]
+    fn hoist_leaves_bare_dash_as_operand() {
+        assert_eq!(hoist(&["rsync", "-", "dst/"]), vec!["rsync", "-", "dst/"]);
     }
 }
