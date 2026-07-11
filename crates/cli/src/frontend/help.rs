@@ -159,7 +159,7 @@ pub(super) fn help_text(program_name: ProgramName) -> String {
             "      --reflink=MODE Copy-on-write reflink policy (auto, always, never).\n",
             "      --zero-copy  Allow I/O-level zero-copy (sendfile, splice, copy_file_range; io_uring SEND_ZC only when built with the iouring-send-zc cargo feature, otherwise downgrades to plain io_uring SEND) when supported by the kernel. This is the default (policy=auto/enabled).\n",
             "      --no-zero-copy  Disable I/O-level zero-copy; route through portable userspace read/write loops. Does not affect filesystem-level reflink/CoW cloning.\n",
-            "      --parallel-delta-scan  Opt-in: scan a large file's delta across multiple cores (sender side). Only engages for large, duplicate-free basis files; token boundaries and matched/literal stats may differ for basis files with duplicate-content blocks. Reconstruction is unaffected. Default off.\n",
+            "      --parallel-delta-scan  Opt-in: scan a large file's delta across multiple cores (sender side). Only engages for large, duplicate-free basis files (duplicate-content basis files fall back to the sequential scan). Reconstruction and matched/literal stats are unaffected; the literal-token wire framing may differ by a few bytes at a range boundary. Local-only, never forwarded to a remote peer. Default off.\n",
             "      --inplace    Write updated data directly to destination files.\n",
             "      --no-inplace Use temporary files when updating regular files.\n",
             "  -h, --human-readable  Output numbers in a human-readable format.\n",

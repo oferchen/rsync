@@ -414,8 +414,11 @@ Per in-flight file the worker holds:
   (4 + strong_sum_length)` bytes).
 - The `DeltaSignatureIndex` hash table.
 - The source-file mmap (`map_file`, currently from
-  `generator/delta.rs` callers). Size: file size, but RSS-cheap on
-  Linux because pages fault in on demand.
+  `generator/delta.rs` callers). The mapping spans the whole file, and
+  a full delta scan touches every page, so peak RSS is proportional to
+  the file size (pages fault in lazily rather than up front, but they
+  do fault in). The mmap avoids a second heap copy versus reading into
+  a `Vec`; it does not bound resident memory.
 - The accumulated `DeltaScript` token vector, which can hold up to
   `block_len + CHUNK_SIZE` bytes of pending literals before flushing
   (`match/src/generator.rs:148`). Worst case for a no-match file is
