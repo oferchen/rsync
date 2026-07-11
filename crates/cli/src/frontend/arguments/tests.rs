@@ -1113,6 +1113,36 @@ mod option_values {
     }
 
     #[test]
+    fn rsync_path_equals_after_operands() {
+        // Upstream popt accepts options in any position; a value option written
+        // after the source and destination paths must parse identically.
+        let parsed =
+            parse_test_args(["src/", "dst/", "--rsync-path=/usr/local/bin/rsync"]).expect("parse");
+        assert_eq!(
+            parsed.rsync_path,
+            Some(OsString::from("/usr/local/bin/rsync"))
+        );
+    }
+
+    #[test]
+    fn rsync_path_space_after_operands() {
+        let parsed = parse_test_args(["src/", "dst/", "--rsync-path", "/usr/local/bin/rsync"])
+            .expect("parse");
+        assert_eq!(
+            parsed.rsync_path,
+            Some(OsString::from("/usr/local/bin/rsync"))
+        );
+    }
+
+    #[test]
+    fn out_format_equals_after_operands() {
+        // Audit a second value-taking long option to confirm the fix is central,
+        // not specific to `--rsync-path`.
+        let parsed = parse_test_args(["src/", "dst/", "--out-format=%n"]).expect("parse");
+        assert_eq!(parsed.out_format, Some(OsString::from("%n")));
+    }
+
+    #[test]
     fn backup_dir_with_equals() {
         let parsed = parse_test_args(["--backup-dir=/tmp/backup", "src/", "dst/"]).expect("parse");
         assert_eq!(parsed.backup_dir, Some(OsString::from("/tmp/backup")));
