@@ -633,6 +633,26 @@ fn long_flags_write_devices() {
     assert!(flags.write_devices);
 }
 
+// upstream: options.c:2987 - a PULL client (upstream or oc) forwards
+// `--copy-devices` to the server sender. The flag-string scanner must treat it
+// as a known long flag; otherwise it leaks into the positional list and becomes
+// a stray source/destination path.
+#[test]
+fn copy_devices_is_known_and_not_positional() {
+    assert!(is_known_server_long_flag("--copy-devices"));
+    let args = vec![
+        OsString::from("--server"),
+        OsString::from("--sender"),
+        OsString::from("--copy-devices"),
+        OsString::from("-logDtpr"),
+        OsString::from("."),
+        OsString::from("src/"),
+    ];
+    let (flags, pos_args) = parse_server_flag_string_and_args(&args);
+    assert_eq!(flags, "-logDtpr");
+    assert_eq!(pos_args, vec![OsString::from("src/")]);
+}
+
 #[test]
 fn long_flags_trust_sender() {
     let args = vec![OsString::from("--server"), OsString::from("--trust-sender")];
