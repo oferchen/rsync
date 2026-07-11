@@ -70,7 +70,10 @@ pub fn recv_ida_entries<R: Read + ?Sized>(reader: &mut R) -> io::Result<(IdaEntr
 /// # Upstream Reference
 ///
 /// Mirrors `recv_rsync_acl()` in `acls.c` lines 731-800.
-pub fn recv_rsync_acl<R: Read + ?Sized>(reader: &mut R) -> io::Result<RecvAclResult> {
+pub fn recv_rsync_acl<R: Read + ?Sized>(
+    reader: &mut R,
+    acl_type: AclType,
+) -> io::Result<RecvAclResult> {
     let ndx_plus_one = read_varint(reader)?;
     // upstream: acls.c:736-740 reads `int ndx = read_varint(f)` and rejects
     // out-of-range indices with an error. The wire value is an index + 1, so a
@@ -107,10 +110,24 @@ pub fn recv_rsync_acl<R: Read + ?Sized>(reader: &mut R) -> io::Result<RecvAclRes
         let (entries, computed_mask) = recv_ida_entries(reader)?;
         acl.names = entries;
 
-        // upstream: acls.c recv_rsync_acl() sets mask_obj from computed_mask
-        // when named entries are present but no explicit mask was transmitted
-        if !acl.names.is_empty() && acl.mask_obj == NO_ENTRY {
-            acl.mask_obj = computed_mask;
+        // upstream: acls.c:770-779 recv_rsync_acl(). When named entries are
+        // present but no explicit mask was transmitted, the mask must be
+        // reconstructed - a POSIX ACL with named entries requires one.
+        //
+        // For an ACCESS ACL upstream derives the mask from the file mode group
+        // bits, `(mode >> 3) & 7`: the sender's rsync_acl_strip_perms()
+        // (acls.c:150) drops the mask *only* when it equals those bits, so the
+        // mode is the authoritative source. That reconstruction is deferred to
+        // reconstruct_acl() at apply time, which has the mode, so the ACCESS
+        // mask is left as NO_ENTRY here. Folding the OR of the named-entry
+        // access bits in instead (the previous behaviour) silently narrowed the
+        // mask to the named user's perms whenever the true mask exceeded them.
+        //
+        // For a DEFAULT ACL no mode is available (upstream passes mode 0), so
+        // upstream folds the group object into the OR of the named-entry access
+        // bits: `computed_mask_bits |= group_obj & ~NO_ENTRY`.
+        if acl_type == AclType::Default && !acl.names.is_empty() && acl.mask_obj == NO_ENTRY {
+            acl.mask_obj = computed_mask | (acl.group_obj & !NO_ENTRY);
         }
     }
 
@@ -132,10 +149,10 @@ pub fn recv_acl<R: Read + ?Sized>(
     reader: &mut R,
     is_directory: bool,
 ) -> io::Result<(RecvAclResult, Option<RecvAclResult>)> {
-    let access_result = recv_rsync_acl(reader)?;
+    let access_result = recv_rsync_acl(reader, AclType::Access)?;
 
     let default_result = if is_directory {
-        Some(recv_rsync_acl(reader)?)
+        Some(recv_rsync_acl(reader, AclType::Default)?)
     } else {
         None
     };
@@ -163,7 +180,7 @@ fn recv_rsync_acl_cached<R: Read + ?Sized>(
     acl_type: AclType,
     cache: &mut AclCache,
 ) -> io::Result<u32> {
-    let result = recv_rsync_acl(reader)?;
+    let result = recv_rsync_acl(reader, acl_type)?;
 
     match result {
         RecvAclResult::CacheHit(ndx) => {
@@ -238,6 +255,7 @@ pub fn receive_acl_cached<R: Read + ?Sized>(
 
 #[cfg(test)]
 mod edg_panic_tests {
+    use super::AclType;
     use super::recv_rsync_acl;
     use std::io;
 
@@ -250,7 +268,7 @@ mod edg_panic_tests {
     fn recv_rsync_acl_rejects_underflowing_cache_index() {
         // Varint of i32::MIN: leading tag 0xF0 (4 extra bytes) + LE 0x8000_0000.
         let wire = [0xF0u8, 0x00, 0x00, 0x00, 0x80];
-        let err = recv_rsync_acl(&mut &wire[..]).unwrap_err();
+        let err = recv_rsync_acl(&mut &wire[..], AclType::Access).unwrap_err();
         assert_eq!(err.kind(), io::ErrorKind::InvalidData);
     }
 }
