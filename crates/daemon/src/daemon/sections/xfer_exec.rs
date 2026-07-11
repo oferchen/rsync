@@ -32,12 +32,20 @@ struct XferExecContext<'a> {
     client_args: &'a [String],
 }
 
-/// Builds a shell command with upstream-compatible environment variables.
+/// Builds a shell command with the exec-hook environment variables that
+/// upstream sets for *every* hook phase (early, pre, and post).
 ///
 /// On Unix, runs via `sh -c <command>`. On Windows, runs via `cmd /C <command>`.
-/// Sets the standard rsync daemon environment variables that upstream exposes
-/// to pre/post-xfer exec scripts.
-fn build_xfer_command(command: &str, ctx: &XferExecContext<'_>) -> ProcessCommand {
+/// This is the shared base: the module/connection identity that upstream sets
+/// in the daemon process before forking any hook child. It deliberately omits
+/// `RSYNC_REQUEST` and `RSYNC_ARG<n>`, which upstream sets only in the pre-exec
+/// child (see `build_pre_xfer_command`).
+///
+/// upstream: clientserver.c:712/725/726/767/868/903 - `RSYNC_MODULE_NAME`,
+/// `RSYNC_HOST_NAME`, `RSYNC_HOST_ADDR`, `RSYNC_USER_NAME`, `RSYNC_MODULE_PATH`,
+/// and `RSYNC_PID` are set on the daemon process and thus inherited by both the
+/// pre-exec child and the post-xfer parent.
+fn build_base_xfer_command(command: &str, ctx: &XferExecContext<'_>) -> ProcessCommand {
     #[cfg(unix)]
     let mut cmd = {
         let mut c = ProcessCommand::new("sh");
@@ -57,8 +65,22 @@ fn build_xfer_command(command: &str, ctx: &XferExecContext<'_>) -> ProcessComman
     cmd.env("RSYNC_HOST_ADDR", ctx.host_addr.to_string());
     cmd.env("RSYNC_HOST_NAME", ctx.host_name.unwrap_or_default());
     cmd.env("RSYNC_USER_NAME", ctx.user_name.unwrap_or_default());
-    cmd.env("RSYNC_REQUEST", ctx.request);
     cmd.env("RSYNC_PID", std::process::id().to_string());
+
+    cmd
+}
+
+/// Builds the pre-xfer (and early) exec environment: the shared base plus
+/// `RSYNC_REQUEST` and the numbered `RSYNC_ARG<n>` variables.
+///
+/// upstream: clientserver.c:524/533 - `start_pre_exec()` runs in a forked child
+/// that reads the request and argv from a pipe and sets `RSYNC_REQUEST` +
+/// `RSYNC_ARG<n>` via `set_env_str`/`set_envN_str`. These live only in the
+/// pre-exec child; the post-xfer parent never sees them.
+fn build_pre_xfer_command(command: &str, ctx: &XferExecContext<'_>) -> ProcessCommand {
+    let mut cmd = build_base_xfer_command(command, ctx);
+
+    cmd.env("RSYNC_REQUEST", ctx.request);
 
     // upstream: clientserver.c:write_pre_exec_args() - set numbered RSYNC_ARG<n>
     // env vars from the client's argument list.
@@ -67,6 +89,16 @@ fn build_xfer_command(command: &str, ctx: &XferExecContext<'_>) -> ProcessComman
     }
 
     cmd
+}
+
+/// Builds the post-xfer exec environment: the shared base only.
+///
+/// The caller adds `RSYNC_EXIT_STATUS` (and, on Unix, `RSYNC_RAW_STATUS`).
+/// upstream: clientserver.c:915-930 - the post-xfer parent sets only the shared
+/// env plus the status variables; it never sets `RSYNC_REQUEST` or
+/// `RSYNC_ARG<n>`, so a post-xfer hook must not see them.
+fn build_post_xfer_command(command: &str, ctx: &XferExecContext<'_>) -> ProcessCommand {
+    build_base_xfer_command(command, ctx)
 }
 
 /// Runs the early exec command for a daemon module.
@@ -78,7 +110,7 @@ fn build_xfer_command(command: &str, ctx: &XferExecContext<'_>) -> ProcessComman
 /// Upstream: `clientserver.c` - `early_exec()` runs early in the connection,
 /// before authentication and argument exchange.
 fn run_early_exec(command: &str, ctx: &XferExecContext<'_>) -> io::Result<Result<(), String>> {
-    let mut cmd = build_xfer_command(command, ctx);
+    let mut cmd = build_pre_xfer_command(command, ctx);
     cmd.stdin(Stdio::null());
     cmd.stdout(Stdio::null());
     cmd.stderr(Stdio::piped());
@@ -158,7 +190,7 @@ fn run_pre_xfer_exec(
     ctx: &XferExecContext<'_>,
     early_input: Option<&[u8]>,
 ) -> io::Result<Result<PreXferOutput, PreXferError>> {
-    let mut cmd = build_xfer_command(command, ctx);
+    let mut cmd = build_pre_xfer_command(command, ctx);
 
     if early_input.is_some() {
         cmd.stdin(Stdio::piped());
@@ -235,7 +267,7 @@ fn run_post_xfer_exec(
     exit_status: i32,
     log_sink: Option<&SharedLogSink>,
 ) {
-    let mut cmd = build_xfer_command(command, ctx);
+    let mut cmd = build_post_xfer_command(command, ctx);
     // upstream: clientserver.c:922 - set_env_num("RSYNC_RAW_STATUS", status)
     // is emitted before the cooked RSYNC_EXIT_STATUS; preserve that ordering.
     #[cfg(unix)]
@@ -294,7 +326,7 @@ mod xfer_exec_tests {
     #[test]
     fn build_xfer_command_sets_environment_variables() {
         let ctx = test_context();
-        let cmd = build_xfer_command("echo test", &ctx);
+        let cmd = build_pre_xfer_command("echo test", &ctx);
         let envs: Vec<_> = cmd.get_envs().collect();
 
         let find_env = |key: &str| -> Option<String> {
@@ -339,7 +371,7 @@ mod xfer_exec_tests {
             request: "mod",
             client_args: &TEST_ARGS,
         };
-        let cmd = build_xfer_command("echo test", &ctx);
+        let cmd = build_pre_xfer_command("echo test", &ctx);
         let envs: Vec<_> = cmd.get_envs().collect();
 
         let find_env = |key: &str| -> Option<String> {
@@ -356,7 +388,7 @@ mod xfer_exec_tests {
     #[test]
     fn build_xfer_command_uses_sh_on_unix() {
         let ctx = test_context();
-        let cmd = build_xfer_command("echo hello", &ctx);
+        let cmd = build_pre_xfer_command("echo hello", &ctx);
         assert_eq!(cmd.get_program(), "sh");
         let args: Vec<_> = cmd.get_args().collect();
         assert_eq!(args, vec!["-c", "echo hello"]);
@@ -366,7 +398,7 @@ mod xfer_exec_tests {
     #[test]
     fn build_xfer_command_uses_cmd_on_windows() {
         let ctx = test_context();
-        let cmd = build_xfer_command("echo hello", &ctx);
+        let cmd = build_pre_xfer_command("echo hello", &ctx);
         assert_eq!(cmd.get_program(), "cmd");
         let args: Vec<_> = cmd.get_args().collect();
         assert_eq!(args, vec!["/C", "echo hello"]);
@@ -606,7 +638,7 @@ mod xfer_exec_tests {
             request: "testmod/subdir",
             client_args: &args,
         };
-        let cmd = build_xfer_command("echo test", &ctx);
+        let cmd = build_pre_xfer_command("echo test", &ctx);
         let envs: Vec<_> = cmd.get_envs().collect();
 
         let find_env = |key: &str| -> Option<String> {
@@ -636,7 +668,7 @@ mod xfer_exec_tests {
             request: "testmod/subdir",
             client_args: &args,
         };
-        let cmd = build_xfer_command("echo test", &ctx);
+        let cmd = build_pre_xfer_command("echo test", &ctx);
         let envs: Vec<_> = cmd.get_envs().collect();
 
         let find_env = |key: &str| -> Option<String> {
@@ -712,10 +744,18 @@ mod xfer_exec_tests {
         assert!(result.is_ok(), "RSYNC_ARG env vars should be set correctly");
     }
 
-    #[cfg(unix)]
+    /// Pins the pre- vs post-xfer environment split. upstream sets
+    /// `RSYNC_REQUEST` + `RSYNC_ARG<n>` only in the pre-exec child
+    /// (clientserver.c:524/533); the post-xfer parent (clientserver.c:915-930)
+    /// exports neither. The pre-xfer env must carry them and the post-xfer env
+    /// must not, while both share the module/connection identity base.
     #[test]
-    fn run_post_xfer_exec_rsync_arg_env_vars_available() {
-        let args = vec!["rsync".to_string(), "--sender".to_string()];
+    fn pre_xfer_env_has_argv_request_and_post_xfer_env_does_not() {
+        let args = vec![
+            "rsync".to_string(),
+            "--server".to_string(),
+            "--sender".to_string(),
+        ];
         let ctx = XferExecContext {
             module_name: "testmod",
             module_path: Path::new("/srv/testmod"),
@@ -725,12 +765,44 @@ mod xfer_exec_tests {
             request: "testmod/subdir",
             client_args: &args,
         };
-        // The post-xfer exec should also see RSYNC_ARG env vars.
-        run_post_xfer_exec(
-            "test \"$RSYNC_ARG0\" = \"rsync\" && test \"$RSYNC_ARG1\" = \"--sender\"",
-            &ctx,
-            0,
-            None,
+
+        let collect = |cmd: &ProcessCommand| -> Vec<String> {
+            cmd.get_envs()
+                .map(|(k, _)| k.to_string_lossy().into_owned())
+                .collect()
+        };
+
+        let pre_env = collect(&build_pre_xfer_command("echo test", &ctx));
+        let post_env = collect(&build_post_xfer_command("echo test", &ctx));
+
+        // The shared identity base must appear in both phases.
+        for shared in [
+            "RSYNC_MODULE_NAME",
+            "RSYNC_MODULE_PATH",
+            "RSYNC_HOST_ADDR",
+            "RSYNC_HOST_NAME",
+            "RSYNC_USER_NAME",
+            "RSYNC_PID",
+        ] {
+            assert!(pre_env.iter().any(|k| k == shared), "pre missing {shared}");
+            assert!(
+                post_env.iter().any(|k| k == shared),
+                "post missing {shared}"
+            );
+        }
+
+        // RSYNC_REQUEST and every RSYNC_ARG<n> belong to the pre-xfer child only.
+        assert!(pre_env.iter().any(|k| k == "RSYNC_REQUEST"));
+        assert!(pre_env.iter().any(|k| k == "RSYNC_ARG0"));
+        assert!(pre_env.iter().any(|k| k == "RSYNC_ARG2"));
+
+        assert!(
+            !post_env.iter().any(|k| k == "RSYNC_REQUEST"),
+            "post-xfer env must not leak RSYNC_REQUEST (upstream sets it only in the pre-exec child)",
+        );
+        assert!(
+            !post_env.iter().any(|k| k.starts_with("RSYNC_ARG")),
+            "post-xfer env must not leak any RSYNC_ARG<n> (upstream sets them only in the pre-exec child)",
         );
     }
 }
