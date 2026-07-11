@@ -723,6 +723,24 @@ impl<'a> CopyContext<'a> {
         self.destination_metadata_cache.clear();
     }
 
+    /// Records a finalized directory and its source mtime for the final
+    /// [`touch_up_dirs`](Self::touch_up_dirs) pass.
+    ///
+    /// Called by `apply_final_directory_metadata` right after it applies the
+    /// source mtime during the traversal. Late in-directory mutations (the
+    /// delayed-update rename sweep, deferred deletions, backup file creation)
+    /// bump this mtime again, so the final pass re-applies the recorded value.
+    pub(super) fn record_finalized_directory(
+        &mut self,
+        destination: &Path,
+        metadata: &fs::Metadata,
+    ) {
+        let mtime = filetime::FileTime::from_last_modification_time(metadata);
+        self.deferred_ops
+            .finalized_dirs
+            .push((destination.to_path_buf(), mtime));
+    }
+
     /// Queues a deferred update for `--delay-updates` and records the hard-link
     /// source. The staging directory is tracked for cleanup after commit.
     pub(super) fn register_deferred_update(&mut self, update: DeferredUpdate) {
