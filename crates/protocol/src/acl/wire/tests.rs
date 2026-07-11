@@ -40,7 +40,7 @@ fn send_recv_empty_acl() {
     send_rsync_acl(&mut buf, &acl, AclType::Access, &mut cache, false).unwrap();
 
     let mut cursor = Cursor::new(buf);
-    let result = recv_rsync_acl(&mut cursor).unwrap();
+    let result = recv_rsync_acl(&mut cursor, AclType::Access).unwrap();
 
     match result {
         RecvAclResult::Literal(received) => {
@@ -63,7 +63,7 @@ fn send_recv_acl_with_entries() {
     send_rsync_acl(&mut buf, &acl, AclType::Access, &mut cache, false).unwrap();
 
     let mut cursor = Cursor::new(buf);
-    let result = recv_rsync_acl(&mut cursor).unwrap();
+    let result = recv_rsync_acl(&mut cursor, AclType::Access).unwrap();
 
     match result {
         RecvAclResult::Literal(received) => {
@@ -95,7 +95,7 @@ fn cache_hit_on_second_send() {
     assert!(buf.len() < first_len, "Cache hit should be shorter");
 
     let mut cursor = Cursor::new(buf);
-    let result = recv_rsync_acl(&mut cursor).unwrap();
+    let result = recv_rsync_acl(&mut cursor, AclType::Access).unwrap();
 
     match result {
         RecvAclResult::CacheHit(idx) => {
@@ -269,7 +269,7 @@ fn recv_ida_entries_eof_reading_access() {
 #[test]
 fn recv_rsync_acl_eof_reading_ndx() {
     let mut cursor = Cursor::new(Vec::<u8>::new());
-    let result = recv_rsync_acl(&mut cursor);
+    let result = recv_rsync_acl(&mut cursor, AclType::Access);
     assert!(result.is_err());
 }
 
@@ -278,7 +278,7 @@ fn recv_rsync_acl_eof_reading_flags() {
     // ndx = 0 (literal) but no flags byte
     let data = vec![0x00]; // ndx + 1 = 0, so ndx = -1
     let mut cursor = Cursor::new(data);
-    let result = recv_rsync_acl(&mut cursor);
+    let result = recv_rsync_acl(&mut cursor, AclType::Access);
     assert!(result.is_err());
 }
 
@@ -287,7 +287,7 @@ fn recv_rsync_acl_eof_reading_user_obj() {
     // ndx = 0 (literal), flags indicate user_obj, but no data
     let data = vec![0x00, XMIT_USER_OBJ]; // ndx = -1, flags = XMIT_USER_OBJ
     let mut cursor = Cursor::new(data);
-    let result = recv_rsync_acl(&mut cursor);
+    let result = recv_rsync_acl(&mut cursor, AclType::Access);
     assert!(result.is_err());
 }
 
@@ -296,7 +296,7 @@ fn recv_rsync_acl_eof_reading_group_obj() {
     // flags indicate group_obj, but no data after user_obj
     let data = vec![0x00, XMIT_USER_OBJ | XMIT_GROUP_OBJ, 0x07]; // user_obj = 7
     let mut cursor = Cursor::new(data);
-    let result = recv_rsync_acl(&mut cursor);
+    let result = recv_rsync_acl(&mut cursor, AclType::Access);
     assert!(result.is_err());
 }
 
@@ -410,11 +410,11 @@ fn separate_caches_for_access_and_default() {
 
     // Both should be full literals (not cache hits)
     let mut cursor1 = Cursor::new(buf1);
-    let result1 = recv_rsync_acl(&mut cursor1).unwrap();
+    let result1 = recv_rsync_acl(&mut cursor1, AclType::Access).unwrap();
     assert!(matches!(result1, RecvAclResult::Literal(_)));
 
     let mut cursor2 = Cursor::new(buf2);
-    let result2 = recv_rsync_acl(&mut cursor2).unwrap();
+    let result2 = recv_rsync_acl(&mut cursor2, AclType::Default).unwrap();
     assert!(matches!(result2, RecvAclResult::Literal(_)));
 }
 
@@ -485,7 +485,7 @@ fn send_recv_acl_with_mask_obj() {
     send_rsync_acl(&mut buf, &acl, AclType::Access, &mut cache, false).unwrap();
 
     let mut cursor = Cursor::new(buf);
-    let result = recv_rsync_acl(&mut cursor).unwrap();
+    let result = recv_rsync_acl(&mut cursor, AclType::Access).unwrap();
 
     match result {
         RecvAclResult::Literal(received) => {

@@ -2,7 +2,7 @@ use super::apply::apply_acls_from_cache;
 use super::default_perms::default_perms_for_dir;
 use super::error::is_unsupported_error;
 use super::perms::rsync_perms_to_exacl;
-use super::reconstruct::rsync_acl_to_entries;
+use super::reconstruct::{reconstruct_acl, rsync_acl_to_entries};
 #[cfg(any(target_os = "linux", target_os = "freebsd"))]
 use super::reset::clear_default_acl;
 use super::reset::reset_acl_from_mode;
@@ -188,6 +188,63 @@ fn rsync_acl_to_entries_named_user_and_group() {
     assert_eq!(named[1].kind, AclEntryKind::Group);
     assert_eq!(named[1].name, "100");
     assert_eq!(named[1].perms, Perm::READ | Perm::EXECUTE);
+}
+
+#[test]
+fn reconstruct_access_acl_preserves_full_mask_over_narrower_named_entry() {
+    // Bug #251: the receiver narrowed the ACL mask to a named entry's perms
+    // instead of the transmitted (mode-derived) mask, silently downgrading
+    // group access (exit 0, no error).
+    //
+    // Fixture (mirrors the interop repro): source mode 0o664 with
+    // `user:root:r--`, `group::rw-`, `mask::rw-`. The sender strips the mask and
+    // group_obj because both equal the mode's group bits (rw-), so the received
+    // wire ACL carries only the named user (r--) with mask/base entries unset.
+    // reconstruct_acl() must restore the mask from the mode group bits
+    // ((0o664 >> 3) & 7 = 0o6 = rw-), NOT collapse it to the named user's r--.
+    // upstream: acls.c:770-773 recv_rsync_acl(type=ACCESS).
+    use protocol::acl::{IdAccess, NO_ENTRY};
+
+    let mut wire = RsyncAcl::new();
+    // Named user root with r-- only. Its access bits (0x04) are what the buggy
+    // decode collapsed the mask onto.
+    wire.names.push(IdAccess::user(0, 0x04));
+    // Everything else arrives stripped (inferred from the mode).
+    assert_eq!(wire.mask_obj, NO_ENTRY);
+
+    let reconstructed = reconstruct_acl(&wire, Some(0o664));
+
+    // The mask must equal the transmitted union mask rw- (0x06), pinned by
+    // value - proving it is not narrowed to the named user's r-- (0x04).
+    assert_eq!(
+        reconstructed.mask_obj, 0x06,
+        "mask must be restored from mode group bits (rw-), not the named entry (r--)"
+    );
+    assert_eq!(
+        reconstructed.group_obj, 0x06,
+        "group_obj rw- reconstructed from mode"
+    );
+    assert_eq!(reconstructed.user_obj, 0x06);
+    assert_eq!(reconstructed.other_obj, 0x04);
+}
+
+#[test]
+fn reconstruct_access_acl_keeps_explicit_transmitted_mask_verbatim() {
+    // When the mask is not strippable (it differs from the mode group bits) the
+    // sender transmits it explicitly and reconstruct_acl() must leave it
+    // untouched rather than recomputing from the mode. Mask r-x (0x05), mode
+    // group bits rw- (0x06): the two differ, so a recompute would corrupt it.
+    use protocol::acl::IdAccess;
+
+    let mut wire = RsyncAcl::new();
+    wire.names.push(IdAccess::user(0, 0x04));
+    wire.mask_obj = 0x05; // explicit r-x on the wire
+
+    let reconstructed = reconstruct_acl(&wire, Some(0o664));
+    assert_eq!(
+        reconstructed.mask_obj, 0x05,
+        "an explicitly transmitted mask is preserved verbatim"
+    );
 }
 
 #[test]

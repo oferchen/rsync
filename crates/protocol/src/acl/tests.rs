@@ -300,7 +300,7 @@ mod wire_roundtrip_tests {
         send_rsync_acl(&mut buf, &acl, AclType::Access, &mut cache, false).unwrap();
 
         let mut cursor = Cursor::new(buf);
-        let result = recv_rsync_acl(&mut cursor).unwrap();
+        let result = recv_rsync_acl(&mut cursor, AclType::Access).unwrap();
 
         match result {
             RecvAclResult::Literal(received) => {
@@ -325,7 +325,9 @@ mod wire_roundtrip_tests {
             send_rsync_acl(&mut buf, &acl, AclType::Access, &mut cache, false).unwrap();
 
             let mut cursor = Cursor::new(buf);
-            if let RecvAclResult::Literal(received) = recv_rsync_acl(&mut cursor).unwrap() {
+            if let RecvAclResult::Literal(received) =
+                recv_rsync_acl(&mut cursor, AclType::Access).unwrap()
+            {
                 assert_eq!(received.user_obj, perm, "Permission {perm} not preserved");
             }
         }
@@ -417,7 +419,7 @@ mod wire_roundtrip_tests {
             send_rsync_acl(&mut buf, &acl, AclType::Access, &mut cache, false).unwrap();
 
             let mut cursor = Cursor::new(&buf);
-            match recv_rsync_acl(&mut cursor).unwrap() {
+            match recv_rsync_acl(&mut cursor, AclType::Access).unwrap() {
                 RecvAclResult::CacheHit(idx) => assert_eq!(idx, expected_idx),
                 RecvAclResult::Literal(_) => panic!("Expected cache hit"),
             }
@@ -448,14 +450,16 @@ mod wire_roundtrip_tests {
         buf.clear();
         send_rsync_acl(&mut buf, &acl1, AclType::Access, &mut cache, false).unwrap();
         let mut cursor = Cursor::new(&buf);
-        if let RecvAclResult::CacheHit(idx) = recv_rsync_acl(&mut cursor).unwrap() {
+        if let RecvAclResult::CacheHit(idx) = recv_rsync_acl(&mut cursor, AclType::Access).unwrap()
+        {
             assert_eq!(idx, 0);
         }
 
         buf.clear();
         send_rsync_acl(&mut buf, &acl2, AclType::Access, &mut cache, false).unwrap();
         let mut cursor = Cursor::new(&buf);
-        if let RecvAclResult::CacheHit(idx) = recv_rsync_acl(&mut cursor).unwrap() {
+        if let RecvAclResult::CacheHit(idx) = recv_rsync_acl(&mut cursor, AclType::Access).unwrap()
+        {
             assert_eq!(idx, 1);
         }
     }
@@ -528,7 +532,9 @@ mod edge_cases {
         send_rsync_acl(&mut buf, &acl, AclType::Access, &mut cache, false).unwrap();
 
         let mut cursor = Cursor::new(buf);
-        if let RecvAclResult::Literal(received) = recv_rsync_acl(&mut cursor).unwrap() {
+        if let RecvAclResult::Literal(received) =
+            recv_rsync_acl(&mut cursor, AclType::Access).unwrap()
+        {
             assert_eq!(received.mask_obj, 0x07);
             assert_eq!(received.user_obj, NO_ENTRY);
             assert_eq!(received.group_obj, NO_ENTRY);
@@ -549,7 +555,9 @@ mod edge_cases {
         send_rsync_acl(&mut buf, &acl, AclType::Access, &mut cache, false).unwrap();
 
         let mut cursor = Cursor::new(buf);
-        if let RecvAclResult::Literal(received) = recv_rsync_acl(&mut cursor).unwrap() {
+        if let RecvAclResult::Literal(received) =
+            recv_rsync_acl(&mut cursor, AclType::Access).unwrap()
+        {
             assert_eq!(received.user_obj, 0x07);
             assert_eq!(received.group_obj, 0x07);
             assert_eq!(received.mask_obj, 0x07);
@@ -745,7 +753,9 @@ mod wire_format_compatibility {
 
         // Verify round-trip
         let mut cursor = Cursor::new(buf);
-        if let RecvAclResult::Literal(received) = recv_rsync_acl(&mut cursor).unwrap() {
+        if let RecvAclResult::Literal(received) =
+            recv_rsync_acl(&mut cursor, AclType::Access).unwrap()
+        {
             assert_eq!(received.user_obj, 0x07);
             assert_eq!(received.names.len(), 1);
         } else {
@@ -845,9 +855,16 @@ mod computed_mask_and_names {
     use super::*;
 
     #[test]
-    fn recv_rsync_acl_sets_computed_mask_when_no_explicit_mask() {
-        // ACL with named entries but no explicit mask_obj.
-        // upstream: recv_rsync_acl sets mask_obj from computed_mask.
+    fn recv_access_acl_leaves_mask_unset_for_mode_reconstruction() {
+        // ACCESS ACL with named entries but no explicit mask on the wire.
+        //
+        // upstream: recv_rsync_acl(type=ACCESS) sets mask_obj = (mode>>3)&7,
+        // the authoritative source, because rsync_acl_strip_perms() only drops
+        // the mask when it equals those mode bits (acls.c:150-151, 770-773).
+        // oc defers that mode-based fill to reconstruct_acl() at apply time, so
+        // the wire decode must leave the mask as NO_ENTRY rather than folding in
+        // the OR of the named-entry access bits (which would narrow the mask to
+        // the named user's perms whenever the true mask exceeds them - bug #251).
         let mut acl = RsyncAcl::new();
         acl.user_obj = 0x07;
         acl.names.push(IdAccess::user(1000, 0x05)); // r-x
@@ -859,8 +876,42 @@ mod computed_mask_and_names {
         send_rsync_acl(&mut buf, &acl, AclType::Access, &mut cache, false).unwrap();
 
         let mut cursor = Cursor::new(buf);
-        if let RecvAclResult::Literal(received) = recv_rsync_acl(&mut cursor).unwrap() {
-            // computed_mask = 0x05 | 0x03 = 0x07
+        if let RecvAclResult::Literal(received) =
+            recv_rsync_acl(&mut cursor, AclType::Access).unwrap()
+        {
+            // The OR of the named entries would be 0x05 | 0x03 = 0x07. The old
+            // (buggy) decode stored that here, pre-empting the correct
+            // mode-based mask. The fixed decode leaves it unset for
+            // reconstruct_acl() to fill from the file mode.
+            assert_eq!(received.mask_obj, NO_ENTRY);
+        } else {
+            panic!("Expected literal ACL");
+        }
+    }
+
+    #[test]
+    fn recv_default_acl_computes_mask_from_named_entries_and_group() {
+        // DEFAULT ACL with named entries but no explicit mask. No file mode is
+        // available (upstream passes mode 0), so upstream folds the group object
+        // into the OR of the named-entry access bits:
+        //   computed_mask_bits |= group_obj & ~NO_ENTRY   (acls.c:774-777)
+        let mut acl = RsyncAcl::new();
+        acl.user_obj = 0x07;
+        acl.group_obj = 0x04; // r--
+        acl.other_obj = 0x00;
+        acl.names.push(IdAccess::user(1000, 0x05)); // r-x
+        acl.names.push(IdAccess::group(200, 0x03)); // -wx
+        // mask_obj stays NO_ENTRY (not set)
+
+        let mut cache = AclCache::new();
+        let mut buf = Vec::new();
+        send_rsync_acl(&mut buf, &acl, AclType::Default, &mut cache, false).unwrap();
+
+        let mut cursor = Cursor::new(buf);
+        if let RecvAclResult::Literal(received) =
+            recv_rsync_acl(&mut cursor, AclType::Default).unwrap()
+        {
+            // 0x05 | 0x03 (named OR) | 0x04 (group_obj) = 0x07
             assert_eq!(received.mask_obj, 0x07);
         } else {
             panic!("Expected literal ACL");
@@ -881,7 +932,9 @@ mod computed_mask_and_names {
         send_rsync_acl(&mut buf, &acl, AclType::Access, &mut cache, false).unwrap();
 
         let mut cursor = Cursor::new(buf);
-        if let RecvAclResult::Literal(received) = recv_rsync_acl(&mut cursor).unwrap() {
+        if let RecvAclResult::Literal(received) =
+            recv_rsync_acl(&mut cursor, AclType::Access).unwrap()
+        {
             assert_eq!(received.mask_obj, 0x04);
         } else {
             panic!("Expected literal ACL");
@@ -1741,7 +1794,7 @@ mod strip_perms_for_send_tests {
         send_rsync_acl(&mut buf, &acl, wire::AclType::Access, &mut cache, false).unwrap();
 
         let mut reader = Cursor::new(&buf);
-        let result = recv_rsync_acl(&mut reader).unwrap();
+        let result = recv_rsync_acl(&mut reader, wire::AclType::Access).unwrap();
 
         match result {
             RecvAclResult::Literal(received) => {
@@ -1774,7 +1827,7 @@ mod strip_perms_for_send_tests {
         send_rsync_acl(&mut buf, &acl, wire::AclType::Access, &mut cache, false).unwrap();
 
         let mut reader = Cursor::new(&buf);
-        let result = recv_rsync_acl(&mut reader).unwrap();
+        let result = recv_rsync_acl(&mut reader, wire::AclType::Access).unwrap();
 
         match result {
             RecvAclResult::Literal(received) => {
