@@ -419,6 +419,23 @@ pub(super) fn build_full_daemon_args(
         args.push("--remove-source-files".to_owned());
     }
 
+    // upstream: options.c:2979 - `if (write_devices && am_sender) args[ac++] =
+    // "--write-devices"`. Forwarded only when the local side is the sender
+    // (`we_are_sender`, a push), so the remote receiver writes into existing
+    // device destinations instead of recreating them with mknod.
+    if config.write_devices() && we_are_sender {
+        args.push("--write-devices".to_owned());
+    }
+
+    // upstream: options.c:2987 - `if (copy_devices && !am_sender) args[ac++] =
+    // "--copy-devices"`. Forwarded only when the local side is the receiver
+    // (a pull, where the daemon is the sender: `is_sender`), so the remote
+    // sender reads device contents as regular file data. `is_sender == !am_sender`
+    // here (see the module note above).
+    if config.copy_devices() && is_sender {
+        args.push("--copy-devices".to_owned());
+    }
+
     // upstream: options.c:2996-2997 - `if (mkpath_dest_arg && am_sender)`.
     // The dest-arg path creation is receiver-side, so forward `--mkpath` only
     // on a push (local client is the sender). `!is_sender` mirrors upstream's
@@ -946,6 +963,40 @@ mod server_option_fidelity_tests {
             "expected --specials: {a:?}"
         );
         assert!(!a.iter().any(|x| x == "--no-specials"));
+    }
+
+    // upstream: options.c:2979 - `if (write_devices && am_sender)`. am_sender is
+    // a PUSH (daemon receiver, is_sender=false); never forwarded on a PULL.
+    #[test]
+    fn write_devices_on_push_only() {
+        let config = ClientConfig::builder().write_devices(true).build();
+        let push = args(&config, false);
+        assert!(
+            push.iter().any(|a| a == "--write-devices"),
+            "push must forward --write-devices: {push:?}"
+        );
+        let pull = args(&config, true);
+        assert!(
+            !pull.iter().any(|a| a == "--write-devices"),
+            "pull must not forward --write-devices: {pull:?}"
+        );
+    }
+
+    // upstream: options.c:2987 - `if (copy_devices && !am_sender)`. !am_sender is
+    // a PULL (daemon sender, is_sender=true); never forwarded on a PUSH.
+    #[test]
+    fn copy_devices_on_pull_only() {
+        let config = ClientConfig::builder().copy_devices(true).build();
+        let pull = args(&config, true);
+        assert!(
+            pull.iter().any(|a| a == "--copy-devices"),
+            "pull must forward --copy-devices: {pull:?}"
+        );
+        let push = args(&config, false);
+        assert!(
+            !push.iter().any(|a| a == "--copy-devices"),
+            "push must not forward --copy-devices: {push:?}"
+        );
     }
 }
 

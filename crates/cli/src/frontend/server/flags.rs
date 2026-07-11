@@ -467,6 +467,7 @@ pub(super) fn is_known_server_long_flag(arg: &str) -> bool {
             | "--zero-copy"
             | "--no-zero-copy"
             | "--write-devices"
+            | "--copy-devices"
             | "--trust-sender"
             | "--partial"
             | "--specials"
