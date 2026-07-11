@@ -29,4 +29,6 @@ mod post_decision_name_emission;
 mod support;
 mod symlinks_and_devices;
 #[cfg(windows)]
+mod windows_receiver_symlinks;
+#[cfg(windows)]
 mod windows_special_skip;

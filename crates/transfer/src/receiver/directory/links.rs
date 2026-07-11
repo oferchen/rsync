@@ -9,7 +9,7 @@ use std::fs;
 use std::path::Path;
 
 use logging::{debug_log, info_log};
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 use metadata::{MetadataOptions, apply_symlink_metadata_from_entry};
 use protocol::flist::{trace_leader_is, trace_looking_for_leader, trace_virtual_first};
 
@@ -235,8 +235,185 @@ impl ReceiverContext {
         Ok(())
     }
 
-    /// No-op on non-Unix platforms where symlinks are not supported.
-    #[cfg(not(unix))]
+    /// Materializes symbolic links from the file list on the Windows receiver.
+    ///
+    /// Mirrors the Unix path but routes creation through the safe
+    /// `fast_io::win_symlink` helpers: a link whose target resolves to a
+    /// directory is created as a real directory symbolic link, falling back to
+    /// a junction when the process lacks the create-symlink privilege; a file
+    /// link has no privilege-free equivalent, so a privilege refusal skips the
+    /// entry with a warning and sets the soft-error flag so the transfer still
+    /// finishes but exits `RERR_PARTIAL` (23). This matches the local-copy
+    /// executor's `create_symlink` behaviour so a remote transfer to a Windows
+    /// receiver no longer silently drops symlinks from the flist.
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `generator.c:1544` - `if (preserve_links && ftype == FT_SYMLINK)`
+    /// - `generator.c:1591` - `atomic_create(file, fname, sl, ...)`
+    #[cfg(windows)]
+    pub(in crate::receiver) fn create_symlinks<W: crate::writer::MsgInfoSender + ?Sized>(
+        &mut self,
+        dest_dir: &Path,
+        writer: &mut W,
+    ) -> std::io::Result<()> {
+        if !self.config.flags.links || self.config.flags.skip_dest_writes() {
+            return Ok(());
+        }
+
+        // A file-symlink privilege refusal is skipped per-entry; record it here
+        // and fold it into `flist_io_error` after the loop so the immutable
+        // borrow of `self.file_list` never overlaps the mutable field write.
+        let mut unsupported_skip = false;
+
+        for entry in &self.file_list {
+            if !entry.is_symlink() {
+                continue;
+            }
+
+            let wire_target = match entry.link_target() {
+                Some(t) => t,
+                None => continue,
+            };
+
+            let relative_path = entry.path();
+
+            // upstream: generator.c:1547 - skip unsafe symlinks when --safe-links.
+            if self.config.flags.safe_links
+                && crate::symlink_safety::is_unsafe_symlink(wire_target.as_os_str(), relative_path)
+            {
+                // upstream: generator.c:1554 - log skipped unsafe symlinks
+                info_log!(
+                    Name,
+                    1,
+                    "skipping unsafe symlink \"{}\" -> \"{}\"",
+                    relative_path.display(),
+                    wire_target.display()
+                );
+                continue;
+            }
+
+            // upstream: flist.c:1122-1126 - prepend the `/rsyncd-munged/` prefix
+            // when the daemon enabled `munge symlinks` so the on-disk link
+            // cannot resolve outside the module root when followed.
+            let munged: std::path::PathBuf;
+            let target: &std::path::Path = if self.config.munge_symlinks {
+                munged = std::path::PathBuf::from(::metadata::munge_symlink(
+                    &wire_target.to_string_lossy(),
+                ));
+                munged.as_path()
+            } else {
+                wire_target.as_path()
+            };
+
+            let link_path = dest_dir.join(relative_path);
+
+            // upstream: generator.c:1561 - quick_check_ok(FT_SYMLINK, ...)
+            if let Ok(existing_target) = std::fs::read_link(&link_path) {
+                if existing_target == *target {
+                    // upstream: generator.c:1563 - refresh metadata even when the
+                    // link is already up-to-date so a stale mtime is corrected.
+                    let symlink_options = MetadataOptions::new()
+                        .preserve_owner(self.config.flags.owner)
+                        .preserve_group(self.config.flags.group)
+                        .preserve_times(self.config.flags.times)
+                        .preserve_atimes(self.config.flags.atimes)
+                        .numeric_ids(self.config.flags.numeric_ids.maps_numeric())
+                        .fake_super(self.config.fake_super);
+                    if let Err(error) =
+                        apply_symlink_metadata_from_entry(&link_path, entry, &symlink_options)
+                    {
+                        debug_log!(
+                            Recv,
+                            1,
+                            "failed to refresh symlink metadata for {}: {}",
+                            link_path.display(),
+                            error
+                        );
+                    }
+                    // upstream: generator.c:1565 - symlink up-to-date, metadata only
+                    let iflags = ItemFlags::from_raw(0);
+                    let _ = self.emit_itemize(writer, &iflags, entry);
+                    // upstream: generator.c:1133 - "%s is uptodate" at INFO_GTE(NAME, 2)
+                    info_log!(Name, 2, "{} is uptodate", relative_path.display());
+                    continue;
+                }
+                let _ = fs::remove_file(&link_path);
+            } else if fs::symlink_metadata(&link_path).is_ok() {
+                let _ = fs::remove_file(&link_path);
+            }
+
+            // Ensure parent directory exists for --relative paths.
+            // upstream: generator.c:1317-1326 - make_path() for relative_paths
+            if let Some(parent) = link_path.parent() {
+                let _ = fs::create_dir_all(parent);
+            }
+
+            // upstream: generator.c:1591 - atomic_create() -> do_symlink().
+            if let Err(e) = create_windows_symlink(target, &link_path) {
+                // A Windows file symbolic link cannot be created without
+                // privilege and has no junction fallback (directory links do
+                // fall back inside the helper). Skip it with a warning and a
+                // soft error so the transfer still finishes but exits
+                // RERR_PARTIAL (23), matching upstream's FERROR_XFER handling.
+                if fast_io::is_unprivileged_symlink_error(&e) {
+                    info_log!(
+                        Nonreg,
+                        1,
+                        "skipping symlink \"{}\" -> \"{}\" (symlink creation requires Administrator or Developer Mode)",
+                        relative_path.display(),
+                        target.display()
+                    );
+                    unsupported_skip = true;
+                    continue;
+                }
+                debug_log!(
+                    Recv,
+                    1,
+                    "failed to create symlink {} -> {}: {}",
+                    link_path.display(),
+                    target.display(),
+                    e
+                );
+                return Err(e);
+            }
+
+            // upstream: generator.c:1592 - set_file_attrs() runs immediately
+            // after atomic_create -> do_symlink so the new link's mtime matches
+            // the sender-supplied value.
+            let symlink_options = MetadataOptions::new()
+                .preserve_owner(self.config.flags.owner)
+                .preserve_group(self.config.flags.group)
+                .preserve_times(self.config.flags.times)
+                .preserve_atimes(self.config.flags.atimes)
+                .numeric_ids(self.config.flags.numeric_ids.maps_numeric())
+                .fake_super(self.config.fake_super);
+            if let Err(error) =
+                apply_symlink_metadata_from_entry(&link_path, entry, &symlink_options)
+            {
+                debug_log!(
+                    Recv,
+                    1,
+                    "failed to apply symlink metadata for {}: {}",
+                    link_path.display(),
+                    error
+                );
+            }
+            // upstream: generator.c:1594 - itemize new symlink after creation
+            let iflags = ItemFlags::from_raw(ItemFlags::ITEM_LOCAL_CHANGE | ItemFlags::ITEM_IS_NEW);
+            let _ = self.emit_itemize(writer, &iflags, entry);
+        }
+
+        if unsupported_skip {
+            // upstream: main.c - a skipped do_symlink sets io_error, which maps
+            // to _exit(RERR_PARTIAL).
+            self.flist_io_error |= crate::generator::io_error_flags::IOERR_GENERAL;
+        }
+        Ok(())
+    }
+
+    /// No-op on platforms that are neither Unix nor Windows.
+    #[cfg(not(any(unix, windows)))]
     pub(in crate::receiver) fn create_symlinks<W: crate::writer::MsgInfoSender + ?Sized>(
         &self,
         _dest_dir: &Path,
@@ -531,6 +708,32 @@ pub(in crate::receiver) fn apply_symlink_munge_prefix(target: &Path) -> std::pat
     let mut bytes = ::metadata::SYMLINK_MUNGE_PREFIX.as_bytes().to_vec();
     bytes.extend_from_slice(target.as_os_str().as_bytes());
     std::path::PathBuf::from(OsString::from_vec(bytes))
+}
+
+/// Creates a symbolic link at `link_path` pointing to `target` on Windows.
+///
+/// Resolves `target` against the link's parent directory to decide whether the
+/// link refers to a directory: a directory link goes through
+/// [`fast_io::create_directory_symlink_or_junction`] (real symlink, falling
+/// back to a junction on a privilege refusal), while a file link uses
+/// [`fast_io::create_file_symlink`], which surfaces `ERROR_PRIVILEGE_NOT_HELD`
+/// so the caller can skip the entry. A target that does not resolve to an
+/// existing directory (including a dangling link) is treated as a file link.
+///
+/// Mirrors the local-copy executor's `create_symlink`, which distinguishes
+/// directory from file links via the source's metadata.
+#[cfg(windows)]
+fn create_windows_symlink(target: &Path, link_path: &Path) -> std::io::Result<()> {
+    let resolved = match link_path.parent() {
+        Some(parent) => parent.join(target),
+        None => target.to_path_buf(),
+    };
+    let is_dir = matches!(fs::metadata(&resolved), Ok(meta) if meta.file_type().is_dir());
+    if is_dir {
+        fast_io::create_directory_symlink_or_junction(target, link_path).map(|_| ())
+    } else {
+        fast_io::create_file_symlink(target, link_path)
+    }
 }
 
 #[cfg(test)]
