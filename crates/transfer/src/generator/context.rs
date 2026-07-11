@@ -503,8 +503,9 @@ impl GeneratorContext {
     ///
     /// Files at or above the io_uring read threshold (1 MB) use `reader_from_path`,
     /// which creates an io_uring-backed reader on Linux 5.6+ (respecting the
-    /// `--no-io-uring` flag). Smaller files use a standard `BufReader` to avoid
-    /// the overhead of creating an io_uring ring per file.
+    /// `--no-io-uring` flag) or an IOCP overlapped reader on Windows, each with
+    /// transparent std fallback. Smaller files use a standard `BufReader` to
+    /// avoid the overhead of creating a ring/completion port per file.
     ///
     /// When `--open-noatime` is in effect the io_uring fast path is bypassed
     /// because `IoUringReader::open` does not accept custom open flags;
@@ -537,14 +538,29 @@ impl GeneratorContext {
             && self.config.write.io_uring_policy != fast_io::IoUringPolicy::Disabled
             && !self.source_is_copy_device(path)
         {
-            match fast_io::reader_from_path_with_depth(
-                path,
-                self.config.write.io_uring_policy,
-                self.config.write.io_uring_depth,
-            ) {
-                Ok(r) => return Ok(Box::new(r)),
-                Err(_) => {
-                    // Fall through to standard BufReader on io_uring failure
+            // Windows gets IOCP where Linux gets io_uring, std elsewhere. The
+            // IOCP reader mirrors the disk-commit writer's dispatch: runtime
+            // `is_iocp_available()` detection with transparent std buffered
+            // fallback (see fast_io iocp::file_factory::reader_from_path and
+            // disk_commit/config.rs iocp_policy).
+            #[cfg(target_os = "windows")]
+            {
+                if let Ok(r) = fast_io::iocp_reader_from_path(path, fast_io::IocpPolicy::Auto) {
+                    return Ok(Box::new(r));
+                }
+                // Fall through to standard BufReader on IOCP failure.
+            }
+            #[cfg(not(target_os = "windows"))]
+            {
+                match fast_io::reader_from_path_with_depth(
+                    path,
+                    self.config.write.io_uring_policy,
+                    self.config.write.io_uring_depth,
+                ) {
+                    Ok(r) => return Ok(Box::new(r)),
+                    Err(_) => {
+                        // Fall through to standard BufReader on io_uring failure
+                    }
                 }
             }
         }
@@ -617,14 +633,29 @@ impl GeneratorContext {
             && self.config.write.io_uring_policy != fast_io::IoUringPolicy::Disabled
             && !self.source_is_copy_device(path)
         {
-            match fast_io::reader_from_path_with_depth(
-                path,
-                self.config.write.io_uring_policy,
-                self.config.write.io_uring_depth,
-            ) {
-                Ok(r) => return Ok((Box::new(r), None)),
-                Err(_) => {
-                    // Fall through to raw File on io_uring failure
+            // Windows gets IOCP where Linux gets io_uring, std elsewhere. The
+            // IOCP reader mirrors the disk-commit writer's dispatch: runtime
+            // `is_iocp_available()` detection with transparent std buffered
+            // fallback (see fast_io iocp::file_factory::reader_from_path and
+            // disk_commit/config.rs iocp_policy).
+            #[cfg(target_os = "windows")]
+            {
+                if let Ok(r) = fast_io::iocp_reader_from_path(path, fast_io::IocpPolicy::Auto) {
+                    return Ok((Box::new(r), None));
+                }
+                // Fall through to raw File on IOCP failure.
+            }
+            #[cfg(not(target_os = "windows"))]
+            {
+                match fast_io::reader_from_path_with_depth(
+                    path,
+                    self.config.write.io_uring_policy,
+                    self.config.write.io_uring_depth,
+                ) {
+                    Ok(r) => return Ok((Box::new(r), None)),
+                    Err(_) => {
+                        // Fall through to raw File on io_uring failure
+                    }
                 }
             }
         }
