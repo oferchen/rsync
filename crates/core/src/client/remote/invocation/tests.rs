@@ -487,8 +487,10 @@ const UPSTREAM_SERVER_LONG_ARGS: &[&str] = &[
     "--safe-links",
     "--munge-links",
     "--numeric-ids",
-    "--trust-sender",
     "--checksum-seed",
+    "--partial",
+    "--specials",
+    "--no-specials",
     "--size-only",
     "--ignore-existing",
     "--existing",
@@ -823,6 +825,32 @@ fn includes_link_dest_via_reference_directories() {
         args.iter()
             .any(|a| a.to_string_lossy() == "--link-dest=/prev"),
         "expected --link-dest=/prev in args: {args:?}"
+    );
+}
+
+// upstream: options.c:2911-2934 - basis-dir args (--link-dest/--copy-dest/
+// --compare-dest) live inside the `if (am_sender)` block, so they are forwarded
+// only on a PUSH. On a PULL (RemoteRole::Receiver) the local receiver applies
+// them locally and must NOT forward them, or the remote sender would link_stat()
+// the flag as a source path. oc previously forwarded them unconditionally.
+#[test]
+fn reference_directories_not_forwarded_on_pull() {
+    let config = ClientConfig::builder()
+        .link_destination("/prev")
+        .copy_destination("/cpd")
+        .compare_destination("/cmp")
+        .build();
+    let builder = RemoteInvocationBuilder::new(&config, RemoteRole::Receiver);
+    let args = builder.build("/path");
+
+    assert!(
+        !args.iter().any(|a| {
+            let s = a.to_string_lossy();
+            s.starts_with("--link-dest")
+                || s.starts_with("--copy-dest")
+                || s.starts_with("--compare-dest")
+        }),
+        "pull must not forward basis-dir args: {args:?}"
     );
 }
 
@@ -1196,13 +1224,35 @@ fn includes_devices_flag() {
     assert!(flags.contains('D'), "expected 'D' in flags: {flags}");
 }
 
+// upstream: options.c:2677-2678 - the compact 'D' letter tracks preserve_devices
+// ONLY. specials-only sends NO 'D'; specials ride as the long-form --specials
+// (options.c:2760-2765). oc previously packed 'D' for specials, diverging.
 #[test]
-fn includes_specials_flag() {
+fn specials_only_emits_long_form_specials_not_compact_d() {
     let config = ClientConfig::builder().specials(true).build();
     let flags = sender_flag_string(&config);
     assert!(
-        flags.contains('D'),
-        "expected 'D' for specials in flags: {flags}"
+        !flags.contains('D'),
+        "specials-only must not pack compact 'D': {flags}"
+    );
+    let args = build_sender_args(&config);
+    assert!(
+        args.iter().any(|a| a == "--specials"),
+        "specials-only must emit long-form --specials: {args:?}"
+    );
+}
+
+// upstream: options.c:2677-2678,2760-2765 - devices sets 'D'; when devices are
+// preserved but specials are not, --no-specials is sent (never --devices).
+#[test]
+fn devices_without_specials_emits_d_and_no_specials() {
+    let config = ClientConfig::builder().devices(true).build();
+    let flags = sender_flag_string(&config);
+    assert!(flags.contains('D'), "devices must pack 'D': {flags}");
+    let args = build_sender_args(&config);
+    assert!(
+        args.iter().any(|a| a == "--no-specials"),
+        "devices-without-specials must emit --no-specials: {args:?}"
     );
 }
 
@@ -1214,6 +1264,15 @@ fn devices_and_specials_produce_single_d_flag() {
     assert_eq!(
         d_count, 1,
         "devices+specials should produce single 'D', got {d_count} in {flags}"
+    );
+    let args = build_sender_args(&config);
+    // Both preserved: -D carries devices, specials is implied, so neither
+    // --specials nor --no-specials is sent (upstream sends nothing here).
+    assert!(
+        !args
+            .iter()
+            .any(|a| a == "--specials" || a == "--no-specials"),
+        "devices+specials must not emit any specials long-form: {args:?}"
     );
 }
 
@@ -1248,13 +1307,17 @@ fn numeric_ids_is_long_form_not_in_flag_string() {
     );
 }
 
+// upstream: options.c:2511 - server_options() NEVER forwards --trust-sender. It
+// only sets internal trust_sender/trust_sender_args locals; the server always
+// trusts the client (am_server implies trust). oc previously forwarded it,
+// diverging from every upstream server invocation.
 #[test]
-fn includes_trust_sender_long_arg() {
+fn never_forwards_trust_sender_even_when_set() {
     let config = ClientConfig::builder().trust_sender(true).build();
     let args = build_sender_args(&config);
     assert!(
-        args.iter().any(|a| a == "--trust-sender"),
-        "expected --trust-sender in args: {args:?}"
+        !args.iter().any(|a| a == "--trust-sender"),
+        "--trust-sender must never be forwarded to the server: {args:?}"
     );
 }
 
@@ -1318,11 +1381,37 @@ fn includes_relative_paths_flag() {
     assert!(flags.contains('R'), "expected 'R' in flags: {flags}");
 }
 
+// upstream: options.c has NO compact 'P' letter. keep_partial rides as the
+// long-form --partial, emitted only on a PUSH (am_sender) without --partial-dir
+// (options.c:2884-2893). oc previously packed 'P', diverging from upstream.
 #[test]
-fn includes_partial_flag() {
+fn partial_emits_long_form_not_compact_p_on_push() {
     let config = ClientConfig::builder().partial(true).build();
     let flags = sender_flag_string(&config);
-    assert!(flags.contains('P'), "expected 'P' in flags: {flags}");
+    assert!(
+        !flags.contains('P'),
+        "compact 'P' must never be packed: {flags}"
+    );
+    let args = build_sender_args(&config);
+    assert!(
+        args.iter().any(|a| a == "--partial"),
+        "push with --partial (no partial-dir) must emit long-form --partial: {args:?}"
+    );
+}
+
+// upstream: options.c:2884-2893 - the whole partial block is gated on am_sender,
+// so a PULL (local is receiver, RemoteRole::Receiver) forwards neither 'P' nor
+// --partial; the local receiver keeps partials itself.
+#[test]
+fn partial_not_forwarded_on_pull() {
+    let config = ClientConfig::builder().partial(true).build();
+    let flags = receiver_flag_string(&config);
+    assert!(!flags.contains('P'), "pull must not pack 'P': {flags}");
+    let args = build_receiver_args(&config);
+    assert!(
+        !args.iter().any(|a| a == "--partial"),
+        "pull must not forward --partial: {args:?}"
+    );
 }
 
 #[test]
@@ -1330,6 +1419,29 @@ fn includes_update_flag() {
     let config = ClientConfig::builder().update(true).build();
     let flags = sender_flag_string(&config);
     assert!(flags.contains('u'), "expected 'u' in flags: {flags}");
+}
+
+// upstream: options.c:2634-2635 - the compact 'n' letter tracks `!do_xfers`,
+// which is set by dry_run ONLY (options.c:2366-2367), never by list_only
+// (the "Note: NOT dry_run!" comment). list_only == 1 packs neither 'n' nor
+// --list-only. Guards against regressing 'n' back onto the list-only path.
+#[test]
+fn list_only_does_not_pack_dry_run_n() {
+    let config = ClientConfig::builder().list_only(true).build();
+    let flags = sender_flag_string(&config);
+    assert!(
+        !flags.contains('n'),
+        "list_only must not pack the dry-run 'n' letter: {flags}"
+    );
+}
+
+// upstream: options.c:2366-2367 - dry_run (and only dry_run) sets do_xfers=0,
+// which packs 'n'. The real dry-run path must be preserved.
+#[test]
+fn dry_run_still_packs_n() {
+    let config = ClientConfig::builder().dry_run(true).build();
+    let flags = sender_flag_string(&config);
+    assert!(flags.contains('n'), "dry_run must pack 'n': {flags}");
 }
 
 #[test]
@@ -1998,16 +2110,28 @@ fn compress_with_level_emits_both_flag_and_level() {
     );
 }
 
+// upstream: options.c:2884-2893 - `if (partial_dir && am_sender) { --partial-dir
+// ... } else if (keep_partial && am_sender) --partial`. With --partial-dir set,
+// the else-if is not taken: --partial-dir is emitted and bare --partial is NOT,
+// and there is never a compact 'P'.
 #[test]
-fn partial_dir_also_emits_partial_flag_string() {
+fn partial_dir_emits_partial_dir_not_compact_p_nor_bare_partial() {
     let config = ClientConfig::builder()
         .partial_directory(Some(".rsync-partial"))
         .build();
     let flags = sender_flag_string(&config);
-    // partial_directory sets partial=true, which should emit 'P' flag
     assert!(
-        flags.contains('P'),
-        "partial_directory should also set 'P' flag: {flags}"
+        !flags.contains('P'),
+        "partial-dir must not pack compact 'P': {flags}"
+    );
+    let args = build_sender_args(&config);
+    assert!(
+        args.iter().any(|a| a == "--partial-dir=.rsync-partial"),
+        "expected --partial-dir=.rsync-partial: {args:?}"
+    );
+    assert!(
+        !args.iter().any(|a| a == "--partial"),
+        "bare --partial must not be emitted when --partial-dir is set: {args:?}"
     );
 }
 
@@ -2322,7 +2446,8 @@ fn all_flags_enabled_produces_valid_invocation() {
         ('S', "sparse"),
         ('y', "fuzzy"),
         ('R', "relative_paths"),
-        ('P', "partial"),
+        // upstream: options.c has no compact 'P' letter; --partial rides
+        // long-form (and here --partial-dir is set, so neither is emitted).
         ('b', "backup"),
         ('u', "update"),
         ('N', "crtimes"),
@@ -2350,7 +2475,6 @@ fn all_flags_enabled_produces_valid_invocation() {
         "--delete-excluded",
         "--force",
         "--numeric-ids",
-        "--trust-sender",
         "--checksum-seed=42",
         "--max-delete=50",
         "--max-size=1000000",

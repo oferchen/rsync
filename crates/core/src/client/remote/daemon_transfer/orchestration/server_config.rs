@@ -96,6 +96,13 @@ fn apply_common_daemon_config(
     server_config.flags.numeric_ids = config.numeric_ids();
     server_config.flags.delete = config.delete_mode().is_enabled() || config.delete_excluded();
     server_config.file_selection.size_only = config.size_only();
+    // upstream: build_server_flag_string no longer packs the compact 'P' letter,
+    // and 'D' now tracks devices only, so carry keep_partial and specials onto
+    // the local half here (mirrors --partial / --specials|--no-specials which the
+    // wire generator emits long-form).
+    server_config.flags.partial = config.partial();
+    server_config.flags.devices = config.preserve_devices();
+    server_config.flags.specials = config.preserve_specials();
 
     server_config.write.fsync = config.fsync();
     server_config.write.io_uring_policy = config.io_uring_policy();
