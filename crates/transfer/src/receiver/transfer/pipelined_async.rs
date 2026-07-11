@@ -683,4 +683,136 @@ mod async_pipelined_driver_parity_tests {
         let total_literal: u64 = contents.iter().map(|c| c.len() as u64).sum();
         assert_eq!(async_stats.bytes_received, total_literal);
     }
+
+    /// BENCHMARK-ONLY correctness gate for the async-bench receiver wiring.
+    ///
+    /// Drives the same recorded multi-file protocol-32 wire through BOTH the
+    /// threaded receiver ([`ReceiverContext::run`], into one temp dest) and the
+    /// async-bench receiver ([`ReceiverContext::run_receiver_async_bench`], into
+    /// another) and asserts byte-identical destination trees, identical
+    /// [`TransferStats`], the same Ok outcome, and no hang. Unlike the driver
+    /// parity tests above (in-memory `ChunkedReader`), the async side runs over a
+    /// *real* loopback TCP socket on a multi-thread runtime - exactly the path
+    /// the daemon benchmark takes - so this exercises the socket split (async
+    /// read half via `tokio::net::TcpStream::from_std`, blocking write half via a
+    /// separate sink) and the multi-thread `block_on`. A benchmark of a
+    /// desyncing or deadlocking path would be worthless, so this must pass before
+    /// the bench wiring is trusted.
+    ///
+    /// The peer delivers the whole recorded wire then closes its write side; the
+    /// receiver's request half is absorbed by a separate `CaptureWriter` sink, so
+    /// the socket carries only server->receiver bytes and cannot write-write
+    /// deadlock. If the async read half stranded wire bytes or the runtime
+    /// starved the read, the tree/stats assertions would fail (or the test would
+    /// hang under the harness timeout).
+    #[cfg(feature = "async-bench")]
+    #[test]
+    fn async_bench_receiver_matches_threaded_over_real_socket() {
+        use std::io::Write as _;
+        use std::net::{Shutdown, TcpListener, TcpStream};
+
+        // Four regular files: f0/f1 fresh (no basis), f2/f3 unchanged (basis).
+        let contents: Vec<Vec<u8>> = vec![
+            {
+                let mut v = b"fresh f0 ".to_vec();
+                v.extend(std::iter::repeat_n(0x11u8, 250));
+                v.extend_from_slice(b" end f0");
+                v
+            },
+            {
+                let mut v = b"fresh f1 ".to_vec();
+                v.extend(std::iter::repeat_n(0x22u8, 300));
+                v.extend_from_slice(b" end f1");
+                v
+            },
+            b"unchanged f2 basis contents".to_vec(),
+            b"unchanged f3 basis contents - a bit longer than f2".to_vec(),
+        ];
+
+        let entries = flist_entries(&contents);
+        let flist_wire = encode_flist(&entries);
+
+        let probe_dir = tempdir().unwrap();
+        let ndx_map = probe_ndx(probe_dir.path(), &flist_wire);
+        assert_eq!(ndx_map.len(), 4, "expected four regular-file requests");
+
+        let requests: Vec<(i32, Vec<u8>)> = ndx_map
+            .iter()
+            .map(|&(idx, ndx)| {
+                let content = &contents[idx - 1];
+                (ndx, encode_literal_wire(content))
+            })
+            .collect();
+
+        // Two multiplex frames: the flist, then the per-file + finalize data.
+        let data_wire = build_data_wire(&requests);
+        let mut wire = muxed(&flist_wire);
+        wire.extend_from_slice(&muxed(&data_wire));
+
+        let basis: Vec<(usize, &[u8])> =
+            vec![(2usize, &contents[2][..]), (3usize, &contents[3][..])];
+
+        // --- threaded receiver (production sync dispatch) over the recorded wire ---
+        let sync_dest = tempdir().unwrap();
+        seed_basis(sync_dest.path(), &basis);
+        let sync_stats = {
+            let mut ctx = ReceiverContext::new_for_test(&handshake(), config(sync_dest.path()));
+            let reader = ServerReader::new_plain(Cursor::new(wire.clone()));
+            let mut writer = CaptureWriter(Vec::new());
+            ctx.run(reader, &mut writer, None)
+                .expect("threaded receiver must succeed")
+        };
+        let sync_tree = read_tree(sync_dest.path());
+
+        // --- async-bench receiver over a real loopback socket on a multi-thread rt ---
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        let mut peer = TcpStream::connect(addr).unwrap();
+        let (recv_sock, _peer_addr) = listener.accept().unwrap();
+        // The recorded wire is a couple of KiB - well within the socket buffer -
+        // so writing it up front then closing the write side is deterministic:
+        // the bytes stay in the receiver's kernel buffer and the receiver reads
+        // them then observes EOF after the finalize handshake.
+        peer.write_all(&wire).unwrap();
+        peer.flush().unwrap();
+        peer.shutdown(Shutdown::Write).unwrap();
+
+        let async_dest = tempdir().unwrap();
+        seed_basis(async_dest.path(), &basis);
+        // Multi-thread runtime (>= 2 workers), matching the daemon bench path: a
+        // blocking write parks one worker while another polls the `.await` read.
+        let runtime = tokio::runtime::Builder::new_multi_thread()
+            .worker_threads(2)
+            .enable_all()
+            .build()
+            .unwrap();
+        let async_stats = {
+            let mut ctx = ReceiverContext::new_for_test(&handshake(), config(async_dest.path()));
+            let mut writer = CaptureWriter(Vec::new());
+            runtime
+                .block_on(ctx.run_receiver_async_bench(recv_sock, &mut writer))
+                .expect("async-bench receiver must succeed over a real socket")
+        };
+        let async_tree = read_tree(async_dest.path());
+        drop(peer);
+
+        // (a) byte-identical destination trees
+        assert_eq!(
+            async_tree, sync_tree,
+            "async-bench receiver committed a different destination tree than the threaded receiver"
+        );
+        for (i, content) in contents.iter().enumerate() {
+            assert_eq!(
+                &std::fs::read(async_dest.path().join(format!("d/f{i}"))).unwrap(),
+                content,
+                "async-bench f{i} content mismatch"
+            );
+        }
+
+        // (b) identical TransferStats, (c) no hang (reaching here proves it)
+        assert_stats_eq(&async_stats, &sync_stats);
+        assert_eq!(async_stats.files_transferred, 4);
+        let total_literal: u64 = contents.iter().map(|c| c.len() as u64).sum();
+        assert_eq!(async_stats.bytes_received, total_literal);
+    }
 }

@@ -327,7 +327,42 @@ pub fn run_server_stdio(
     progress: Option<&mut dyn TransferProgressCallback>,
 ) -> ServerResult {
     let handshake = perform_handshake(stdin, stdout)?;
-    run_server_with_handshake(config, handshake, stdin, stdout, progress, None, None)
+    run_server_with_handshake(
+        config,
+        handshake,
+        stdin,
+        stdout,
+        progress,
+        None,
+        None,
+        #[cfg(feature = "async-bench")]
+        None,
+    )
+}
+
+/// BENCHMARK-ONLY receiver handoff for the gated `async-bench` daemon path.
+///
+/// Carries the multi-thread runtime handle the async receiver driver is driven
+/// on plus the pre-split socket clone adopted as the async read half. It is
+/// threaded into [`run_server_with_handshake`] only under the `async-bench`
+/// feature and is never constructed in a default build, so the production
+/// server path is unchanged. Activating the path additionally requires
+/// `OC_RSYNC_ASYNC_BENCH=1` at runtime (checked by the daemon before this is
+/// constructed). This does NOT satisfy the live-wiring rung: the synchronous
+/// write leg still blocks, so it is not production-safe.
+#[cfg(feature = "async-bench")]
+#[derive(Debug)]
+pub struct AsyncBenchReceiver<'a> {
+    /// Multi-thread runtime handle (`>= 2` workers) the driver is
+    /// `block_on`-driven on. A synchronous blocking write parks one worker while
+    /// another polls the `.await` read, so the peer keeps draining and the
+    /// driver does not self-deadlock the way a current-thread runtime would
+    /// (asy-7 Blocker F).
+    pub handle: &'a tokio::runtime::Handle,
+    /// The socket clone (a dup'd fd of the transfer socket) adopted as the async
+    /// read half. It is flipped non-blocking and handed to the tokio reactor
+    /// inside the driver; the blocking write leg uses a separate clone.
+    pub socket: std::net::TcpStream,
 }
 
 /// Executes the native server with a pre-negotiated protocol version.
@@ -358,6 +393,11 @@ pub fn run_server_with_handshake<W: Write>(
     progress: Option<&mut dyn TransferProgressCallback>,
     batch: Option<BatchRecording>,
     itemize: Option<&mut dyn ItemizeCallback>,
+    // BENCHMARK-ONLY (default-off): when `Some`, the receiver dispatch runs the
+    // async driver over `async_bench.socket` instead of the threaded path. The
+    // parameter only exists under the `async-bench` feature, so the default
+    // build's signature and every production call site are unchanged.
+    #[cfg(feature = "async-bench")] async_bench: Option<AsyncBenchReceiver<'_>>,
 ) -> ServerResult {
     // FSM: begin at Handshake (version exchange is already complete when this
     // function is called - either via run_server_stdio or daemon greeting).
@@ -663,6 +703,20 @@ pub fn run_server_with_handshake<W: Write>(
 
     match config.role {
         ServerRole::Receiver => {
+            // BENCHMARK-ONLY: the protocol setup above already ran synchronously
+            // on `stdin`/`writer`. Hand the wire-facing reads to the async
+            // receiver driver over the pre-split socket clone, keeping the
+            // request half on the blocking `writer` (a separate clone). Reachable
+            // only with the `async-bench` feature AND a `Some(async_bench)` from
+            // the daemon (which only supplies it when `OC_RSYNC_ASYNC_BENCH=1`).
+            #[cfg(feature = "async-bench")]
+            if let Some(bench) = async_bench {
+                let mut ctx = ReceiverContext::new(&handshake, config, pipeline);
+                let stats = bench
+                    .handle
+                    .block_on(ctx.run_receiver_async_bench(bench.socket, &mut writer))?;
+                return Ok(ServerStats::Receiver(stats));
+            }
             let mut ctx = ReceiverContext::new(&handshake, config, pipeline);
             // upstream: io.c:859 - stats.total_written tracking
             let mut counting_writer = writer::CountingWriter::new(&mut writer);

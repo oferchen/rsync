@@ -31,6 +31,13 @@ async-daemon = ["dep:tokio"]
 # server body can run on the runtime. Default-off until the ASY-12 gate. See
 # docs/design/asy-2-tokio-runtime-feature.md section 5.
 tokio-transfer = ["async-daemon", "core/tokio-transfer"]
+# BENCHMARK-ONLY (default-off): activates the gated daemon-receiver async path
+# that runs the existing async receiver driver over a real socket on a
+# multi-thread runtime, for a fair async-vs-threaded receiver benchmark. Also
+# requires `OC_RSYNC_ASYNC_BENCH=1` at runtime; both gates must be present.
+# NOT production-safe and NOT wire-fidelity-guaranteed under backpressure.
+# Implies `tokio-transfer` and forwards `core/async-bench`.
+async-bench = ["tokio-transfer", "core/async-bench"]
 # Concurrent session tracking - enables efficient shared state for multi-session daemons
 concurrent-sessions = ["dep:dashmap"]
 # Extended attributes (xattr) preservation during transfers

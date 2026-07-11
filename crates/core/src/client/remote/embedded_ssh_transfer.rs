@@ -372,6 +372,8 @@ fn run_transfer_over_embedded_ssh(
         progress,
         batch_recording,
         None,
+        #[cfg(feature = "async-bench")]
+        None,
     );
 
     // Goodbye phase: drop the writer to signal EOF to the russh bridge

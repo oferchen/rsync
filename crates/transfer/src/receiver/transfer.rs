@@ -79,6 +79,59 @@ impl ReceiverContext {
             self.run_pipelined(reader, writer, crate::pipeline::PipelineConfig::default())
         }
     }
+
+    /// BENCHMARK-ONLY async twin of [`run`](Self::run) over a real socket.
+    ///
+    /// Adopts `socket` (a dup'd clone of the transfer socket) as the async read
+    /// half: it is flipped non-blocking and handed to the tokio reactor, then
+    /// wrapped as a plain [`AsyncServerReader`](crate::reader::AsyncServerReader)
+    /// (multiplex activation happens inside the driver's `setup_transfer_async`,
+    /// exactly as the sync path activates it inside `setup_transfer`). The
+    /// wire-facing reads are driven through the matching async receiver driver;
+    /// the synchronous request half keeps writing through the caller's blocking
+    /// `writer`, which is a separate socket clone. Both fds point at the same
+    /// kernel socket, so the async reads continue from exactly where the
+    /// synchronous protocol setup left off - sound only because that setup reads
+    /// the compat exchange directly (no look-ahead buffer that could strand wire
+    /// bytes in a discarded reader).
+    ///
+    /// This exists purely to measure the async receiver driver against the
+    /// threaded one over a live socket. The synchronous write leg still blocks,
+    /// so it is not production-safe and not wire-fidelity-guaranteed under
+    /// arbitrary backpressure. Reachable only with the `async-bench` feature
+    /// compiled AND `OC_RSYNC_ASYNC_BENCH=1` set at runtime.
+    #[cfg(feature = "async-bench")]
+    pub(crate) async fn run_receiver_async_bench<W>(
+        &mut self,
+        socket: std::net::TcpStream,
+        writer: &mut W,
+    ) -> io::Result<TransferStats>
+    where
+        W: Write + crate::writer::MsgInfoSender + ?Sized,
+    {
+        socket.set_nonblocking(true)?;
+        let async_socket = tokio::net::TcpStream::from_std(socket)?;
+        let reader = crate::reader::AsyncServerReader::new_plain(async_socket);
+
+        // Mirror the sync `run` dispatch exactly so the benchmark compares
+        // like-for-like: incremental directory creation when `incremental-flist`
+        // is compiled, otherwise the decoupled pipeline.
+        #[cfg(feature = "incremental-flist")]
+        {
+            self.run_pipelined_incremental_async(
+                reader,
+                writer,
+                crate::pipeline::PipelineConfig::default(),
+                None,
+            )
+            .await
+        }
+        #[cfg(not(feature = "incremental-flist"))]
+        {
+            self.run_pipelined_async(reader, writer, crate::pipeline::PipelineConfig::default())
+                .await
+        }
+    }
 }
 
 /// Renames all delayed-update files from their `.~tmp~` staging paths to

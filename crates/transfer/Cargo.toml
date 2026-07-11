@@ -154,6 +154,16 @@ async = ["dep:tokio", "dep:tokio-util"]
 # docs/design/asy-3-async-boundary-spec.md.
 tokio-transfer = ["async", "protocol/tokio-transfer"]
 
+# BENCHMARK-ONLY (default-off): compiles the gated daemon-receiver path that
+# runs the existing async receiver driver over a real socket on a multi-thread
+# runtime, for a fair async-vs-threaded receiver benchmark. Also requires the
+# `OC_RSYNC_ASYNC_BENCH=1` env var at runtime; both gates must be present for
+# the path to activate. The synchronous write leg still blocks (no AsyncWrite
+# stack), so this is NOT production-safe and NOT wire-fidelity-guaranteed under
+# arbitrary backpressure - it does not satisfy the live-wiring rung. Implies
+# `tokio-transfer`.
+async-bench = ["tokio-transfer"]
+
 # ============================================================================
 # Debugging Features
 # ============================================================================
