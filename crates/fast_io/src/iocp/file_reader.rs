@@ -410,4 +410,84 @@ mod tests {
         let result = reader.read_all().unwrap();
         assert_eq!(result, data);
     }
+
+    /// Reads `path` through the standard buffered [`StdFileReader`] - the exact
+    /// fallback the IOCP dispatch degrades to - so parity assertions compare
+    /// against the very bytes a non-IOCP build would produce.
+    fn read_all_via_std(path: &std::path::Path) -> Vec<u8> {
+        use crate::traits::{FileReader, StdFileReader};
+        StdFileReader::open(path).unwrap().read_all().unwrap()
+    }
+
+    /// Reads `path` through [`IocpReader`] using the streaming `Read` impl so
+    /// the sequential `read_at` overlapped path is exercised (not just the
+    /// batched `read_all`).
+    fn read_streaming_via_iocp(path: &std::path::Path) -> Vec<u8> {
+        let config = IocpConfig::default();
+        let mut reader = IocpReader::open(path, &config).unwrap();
+        let mut out = Vec::new();
+        reader.read_to_end(&mut out).unwrap();
+        out
+    }
+
+    /// The IOCP reader and the std buffered reader must yield byte-identical
+    /// output across the whole size spectrum. This is the wire-fidelity
+    /// guarantee behind the Windows read-path dispatch: swapping the reader
+    /// implementation must never change the bytes handed to the delta/checksum
+    /// pipeline. A multi-block file crosses several `buffer_size` overlapped
+    /// segments; the short and empty cases pin the boundary conditions.
+    #[test]
+    fn iocp_read_parity_multiblock() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("parity_multiblock.bin");
+        // > IocpConfig::default().buffer_size and > concurrent_ops * buffer_size
+        // so multiple overlapped batches are submitted and drained.
+        let data: Vec<u8> = (0..(1024 * 1024 + 4096))
+            .map(|i| ((i * 31 + 7) % 251) as u8)
+            .collect();
+        std::fs::write(&path, &data).unwrap();
+
+        let config = IocpConfig::default();
+        let mut reader = IocpReader::open(&path, &config).unwrap();
+        let batched = reader.read_all().unwrap();
+
+        assert_eq!(batched, data, "IOCP batched read must match source bytes");
+        assert_eq!(
+            batched,
+            read_all_via_std(&path),
+            "IOCP batched read must be byte-identical to the std fallback"
+        );
+        assert_eq!(
+            read_streaming_via_iocp(&path),
+            data,
+            "IOCP sequential read must match source bytes"
+        );
+    }
+
+    #[test]
+    fn iocp_read_parity_short_file() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("parity_short.bin");
+        let data = b"short-file bytes for iocp parity".to_vec();
+        std::fs::write(&path, &data).unwrap();
+
+        let config = IocpConfig::default();
+        let mut reader = IocpReader::open(&path, &config).unwrap();
+        assert_eq!(reader.read_all().unwrap(), data);
+        assert_eq!(read_all_via_std(&path), data);
+        assert_eq!(read_streaming_via_iocp(&path), data);
+    }
+
+    #[test]
+    fn iocp_read_parity_empty_file() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("parity_empty.bin");
+        std::fs::write(&path, b"").unwrap();
+
+        let config = IocpConfig::default();
+        let mut reader = IocpReader::open(&path, &config).unwrap();
+        assert!(reader.read_all().unwrap().is_empty());
+        assert!(read_all_via_std(&path).is_empty());
+        assert!(read_streaming_via_iocp(&path).is_empty());
+    }
 }
