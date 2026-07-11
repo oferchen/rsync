@@ -186,6 +186,17 @@ where
     config.file_selection.from0 = long_flags.from0;
     config.write.inplace = long_flags.inplace;
     config.file_selection.size_only = long_flags.size_only;
+    // upstream: options.c:2893 - bare --partial (no compact 'P' letter) tells the
+    // receiver to keep interrupted temp files. OR with the compact value so a
+    // legacy client that still packs 'P' is not clobbered.
+    if long_flags.partial {
+        config.flags.partial = true;
+    }
+    // upstream: options.c:2760-2765 - --specials / --no-specials override the
+    // specials bit that the compact 'D' letter set to preserve_devices's value.
+    if let Some(specials) = long_flags.specials {
+        config.flags.specials = specials;
+    }
     config.file_selection.ignore_existing = long_flags.ignore_existing;
     config.file_selection.existing_only = long_flags.existing_only;
     config.flags.numeric_ids = long_flags.numeric_ids;

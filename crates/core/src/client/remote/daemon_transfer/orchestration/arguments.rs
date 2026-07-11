@@ -321,6 +321,19 @@ pub(super) fn build_full_daemon_args(
         args.push("--safe-links".to_owned());
     }
 
+    // upstream: options.c:2760-2765 - the compact 'D' letter now tracks
+    // preserve_devices only (build_server_flag_string). specials ride separately:
+    // `if (preserve_devices) { if (!preserve_specials) --no-specials } else if
+    // (preserve_specials) --specials`. --no-specials (not --devices) keeps
+    // backward compatibility since -D already carries devices.
+    if config.preserve_devices() {
+        if !config.preserve_specials() {
+            args.push("--no-specials".to_owned());
+        }
+    } else if config.preserve_specials() {
+        args.push("--specials".to_owned());
+    }
+
     // upstream: options.c:2887-2888
     if config.numeric_ids() {
         args.push("--numeric-ids".to_owned());
@@ -378,6 +391,14 @@ pub(super) fn build_full_daemon_args(
         }
     } else if config.inplace() {
         args.push("--inplace".to_owned());
+    }
+
+    // upstream: options.c:2884-2893 - `if (partial_dir && am_sender) {
+    // --partial-dir ... } else if (keep_partial && am_sender) --partial`. There
+    // is no compact 'P'. Bare --partial only when the client is the sender
+    // (`we_are_sender`, a push) and no --partial-dir is configured.
+    if we_are_sender && config.partial() && config.partial_directory().is_none() {
+        args.push("--partial".to_owned());
     }
 
     // upstream: options.c:2630-2631 - `make_backups` rides in the compact
@@ -857,6 +878,74 @@ pub(super) mod tests {
         ];
         strip_client_only_batch_flags(&mut args);
         assert_eq!(args, vec!["--server", "--sender", "."]);
+    }
+}
+
+#[cfg(test)]
+mod server_option_fidelity_tests {
+    use super::build_full_daemon_args;
+    use crate::client::ClientConfig;
+    use crate::client::remote::daemon_transfer::connection::DaemonTransferRequest;
+    use protocol::ProtocolVersion;
+
+    fn request() -> DaemonTransferRequest {
+        DaemonTransferRequest::parse_rsync_url("rsync://host/mod/path").expect("valid rsync url")
+    }
+
+    fn args(config: &ClientConfig, is_sender: bool) -> Vec<String> {
+        build_full_daemon_args(config, &request(), ProtocolVersion::V31, is_sender)
+    }
+
+    // upstream: options.c has no compact 'P'; keep_partial rides long-form.
+    #[test]
+    fn never_packs_compact_p() {
+        let config = ClientConfig::builder().partial(true).build();
+        let flag = args(&config, false)
+            .into_iter()
+            .find(|a| a.starts_with('-') && !a.starts_with("--"))
+            .unwrap_or_default();
+        assert!(!flag.contains('P'), "daemon flag string packed 'P': {flag}");
+    }
+
+    // upstream: options.c:2884-2893 - bare --partial on a PUSH (daemon receiver,
+    // is_sender=false) without --partial-dir; never on a PULL.
+    #[test]
+    fn partial_long_form_on_push_only() {
+        let config = ClientConfig::builder().partial(true).build();
+        let push = args(&config, false);
+        assert!(
+            push.iter().any(|a| a == "--partial"),
+            "push must forward --partial: {push:?}"
+        );
+        let pull = args(&config, true);
+        assert!(
+            !pull.iter().any(|a| a == "--partial"),
+            "pull must not forward --partial: {pull:?}"
+        );
+    }
+
+    // upstream: options.c:2760-2765 - devices-without-specials sends --no-specials.
+    #[test]
+    fn devices_without_specials_emits_no_specials() {
+        let config = ClientConfig::builder().devices(true).build();
+        let a = args(&config, false);
+        assert!(
+            a.iter().any(|x| x == "--no-specials"),
+            "expected --no-specials: {a:?}"
+        );
+        assert!(!a.iter().any(|x| x == "--specials"));
+    }
+
+    // upstream: options.c:2760-2765 - specials-only sends --specials.
+    #[test]
+    fn specials_only_emits_specials() {
+        let config = ClientConfig::builder().specials(true).build();
+        let a = args(&config, false);
+        assert!(
+            a.iter().any(|x| x == "--specials"),
+            "expected --specials: {a:?}"
+        );
+        assert!(!a.iter().any(|x| x == "--no-specials"));
     }
 }
 

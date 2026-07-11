@@ -40,7 +40,10 @@ pub(crate) fn build_server_flag_string(config: &ClientConfig) -> String {
     if config.preserve_group() {
         flags.push('g');
     }
-    if config.preserve_devices() || config.preserve_specials() {
+    // upstream: options.c:2677-2678 - `if (preserve_devices) argstr[x++] = 'D';
+    // /* ignore preserve_specials here */`. The compact 'D' tracks devices only;
+    // specials ride as long-form --specials/--no-specials on the wire.
+    if config.preserve_devices() {
         flags.push('D');
     }
     if config.preserve_times() {
@@ -112,9 +115,9 @@ pub(crate) fn build_server_flag_string(config: &ClientConfig) -> String {
     if effective_relative {
         flags.push('R');
     }
-    if config.partial() {
-        flags.push('P');
-    }
+    // upstream: options.c has NO compact 'P' letter. keep_partial rides as the
+    // long-form --partial (daemon: build_full_daemon_args; local ServerConfig:
+    // propagated via server_config.flags.partial in the *_server_config sites).
     // upstream: options.c:2630-2631 - `make_backups` rides in the compact
     // flag string as `b`. Emitting `--backup` as a separate long arg lands
     // as a positional path on upstream server arg parsers that do not
@@ -403,6 +406,35 @@ pub(crate) fn apply_common_server_flags(config: &ClientConfig, server_config: &m
 mod tests {
     use super::*;
     use protocol::filters::RuleType;
+
+    // upstream: options.c has NO compact 'P' letter; keep_partial is conveyed
+    // long-form (--partial) or via propagated ServerConfig.flags.partial.
+    // build_server_flag_string must never pack 'P'.
+    #[test]
+    fn server_flag_string_never_packs_partial_p() {
+        let config = ClientConfig::builder().partial(true).build();
+        let flags = build_server_flag_string(&config);
+        assert!(!flags.contains('P'), "must not pack compact 'P': {flags}");
+    }
+
+    // upstream: options.c:2677-2678 - the compact 'D' tracks preserve_devices
+    // only. specials-only must NOT pack 'D' (it rides as --specials long-form).
+    #[test]
+    fn server_flag_string_specials_only_omits_d() {
+        let config = ClientConfig::builder().specials(true).build();
+        let flags = build_server_flag_string(&config);
+        assert!(
+            !flags.contains('D'),
+            "specials-only must not pack 'D': {flags}"
+        );
+    }
+
+    #[test]
+    fn server_flag_string_devices_packs_d() {
+        let config = ClientConfig::builder().devices(true).build();
+        let flags = build_server_flag_string(&config);
+        assert!(flags.contains('D'), "devices must pack 'D': {flags}");
+    }
 
     #[test]
     fn server_flag_string_includes_recursive() {

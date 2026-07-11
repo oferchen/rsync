@@ -366,6 +366,18 @@ impl<'a> RemoteInvocationBuilder<'a> {
             args.push(arg);
         }
 
+        // upstream: options.c:2884-2893 - `if (partial_dir && am_sender) {
+        // --partial-dir ... } else if (keep_partial && am_sender) --partial`.
+        // Bare --partial is emitted only when the client is the sender (PUSH)
+        // and no --partial-dir is configured; the partial-dir branch above
+        // already conveys keep_partial otherwise. There is no compact 'P'.
+        if self.role == RemoteRole::Sender
+            && self.config.partial()
+            && self.config.partial_directory().is_none()
+        {
+            args.push(OsString::from("--partial"));
+        }
+
         if let Some(dir) = self.config.temp_directory() {
             let mut arg = OsString::from("--temp-dir=");
             arg.push(dir.as_os_str());
@@ -387,6 +399,20 @@ impl<'a> RemoteInvocationBuilder<'a> {
             }
         }
 
+        // upstream: options.c:2760-2765 - the compact 'D' letter tracks
+        // preserve_devices only (see build_flag_string). specials are conveyed
+        // separately: `if (preserve_devices) { if (!preserve_specials)
+        // --no-specials } else if (preserve_specials) --specials`. Note
+        // --no-specials (not --devices) because sending --devices would not be
+        // backward-compatible; -D already carries devices.
+        if self.config.preserve_devices() {
+            if !self.config.preserve_specials() {
+                args.push(OsString::from("--no-specials"));
+            }
+        } else if self.config.preserve_specials() {
+            args.push(OsString::from("--specials"));
+        }
+
         if self.config.copy_unsafe_links() {
             args.push(OsString::from("--copy-unsafe-links"));
         }
@@ -402,10 +428,11 @@ impl<'a> RemoteInvocationBuilder<'a> {
             args.push(OsString::from("--numeric-ids"));
         }
 
-        // upstream: options.c:2889-2890 - --trust-sender forwarded as long-form.
-        if self.config.trust_sender() {
-            args.push(OsString::from("--trust-sender"));
-        }
+        // upstream: options.c:2511 - server_options() NEVER forwards
+        // --trust-sender. `parse_arguments()` only sets the internal
+        // `trust_sender_args`/`trust_sender` locals; the server side always
+        // trusts the client (am_server implies trust), so the flag is not a
+        // wire option. Forwarding it diverged from upstream.
 
         // upstream: options.c:2892-2894 - --checksum-seed=N forwarded so the
         // server uses the same seed for rolling and strong checksum generation.
@@ -502,15 +529,24 @@ impl<'a> RemoteInvocationBuilder<'a> {
             }
         }
 
-        for ref_dir in self.config.reference_directories() {
-            let flag = match ref_dir.kind() {
-                ReferenceDirectoryKind::Compare => "--compare-dest=",
-                ReferenceDirectoryKind::Copy => "--copy-dest=",
-                ReferenceDirectoryKind::Link => "--link-dest=",
-            };
-            let mut arg = OsString::from(flag);
-            arg.push(ref_dir.path().as_os_str());
-            args.push(arg);
+        // upstream: options.c:2911-2934 - the basis-dir args (--compare-dest,
+        // --copy-dest, --link-dest via alt_dest_opt) live entirely inside the
+        // `if (am_sender)` block: "the server only needs this option if it is
+        // not the sender". On a PUSH (local is sender, RemoteRole::Sender) the
+        // remote server is the receiver and needs the basis dirs. On a PULL the
+        // local receiver applies them locally and must NOT forward them, or the
+        // remote sender would link_stat() the flag as a source path.
+        if self.role == RemoteRole::Sender {
+            for ref_dir in self.config.reference_directories() {
+                let flag = match ref_dir.kind() {
+                    ReferenceDirectoryKind::Compare => "--compare-dest=",
+                    ReferenceDirectoryKind::Copy => "--copy-dest=",
+                    ReferenceDirectoryKind::Link => "--link-dest=",
+                };
+                let mut arg = OsString::from(flag);
+                arg.push(ref_dir.path().as_os_str());
+                args.push(arg);
+            }
         }
 
         if self.config.copy_devices() {
@@ -721,9 +757,11 @@ impl<'a> RemoteInvocationBuilder<'a> {
         if self.config.preserve_group() {
             flags.push('g');
         }
-        // upstream: options.c:2677-2678 - preserve_devices (specials handled
-        // via long-form --specials/--no-specials).
-        if self.config.preserve_devices() || self.config.preserve_specials() {
+        // upstream: options.c:2677-2678 - `if (preserve_devices) argstr[x++] =
+        // 'D'; /* ignore preserve_specials here */`. The compact 'D' letter
+        // tracks preserve_devices ONLY; specials ride separately as the
+        // long-form --specials/--no-specials (emitted in append_long_form_args).
+        if self.config.preserve_devices() {
             flags.push('D');
         }
         // upstream: options.c:2679-2680 - preserve_mtimes.
@@ -788,9 +826,10 @@ impl<'a> RemoteInvocationBuilder<'a> {
         if self.config.compress() {
             flags.push('z');
         }
-        if self.config.partial() {
-            flags.push('P');
-        }
+        // upstream: options.c has NO compact 'P' letter for --partial. keep_partial
+        // rides as the long-form --partial (append_long_form_args), gated on
+        // am_sender && !partial_dir (options.c:2884-2893). Packing 'P' here
+        // diverged from every upstream server invocation.
 
         flags
     }
