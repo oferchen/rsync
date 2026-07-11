@@ -229,12 +229,29 @@ pub fn load_fake_super(path: &Path) -> io::Result<Option<FakeSuperStat>> {
     }
 }
 
+/// Returns `true` when `err` reports that the target xattr is already absent.
+///
+/// Removing a non-existent xattr reports `ENODATA` on Linux and `ENOATTR` on
+/// BSD/macOS (on Linux the two are the same errno). Either way the attribute is
+/// already gone, so the removal is a benign no-op. Mirrors the tolerant handling
+/// in `xattr_unix.rs` and upstream, which only removes `%stat` when it exists
+/// (upstream: xattrs.c:1229 `if (xst.st_mode && sys_lremovexattr(...))`).
+#[cfg(all(unix, feature = "xattr"))]
+fn is_absent_xattr(err: &io::Error) -> bool {
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    let absent = libc::ENODATA;
+    #[cfg(not(any(target_os = "linux", target_os = "android")))]
+    let absent = libc::ENOATTR;
+    err.raw_os_error() == Some(absent)
+}
+
 /// Removes fake-super metadata from a file.
 #[cfg(all(unix, feature = "xattr"))]
 pub fn remove_fake_super(path: &Path) -> io::Result<()> {
     match xattr::remove(path, FAKE_SUPER_XATTR) {
         Ok(()) => Ok(()),
         Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(()),
+        Err(e) if is_absent_xattr(&e) => Ok(()),
         Err(e) => Err(e),
     }
 }
@@ -534,6 +551,36 @@ mod tests {
         assert_eq!(effective, FakeSuperStat::from_metadata(&meta));
         assert_eq!(effective.uid, meta.uid());
         assert_eq!(effective.gid, meta.gid());
+    }
+
+    /// Removing fake-super metadata from a file that never had a `%stat` xattr
+    /// must succeed. The removexattr syscall reports `ENODATA` (Linux) or
+    /// `ENOATTR` (BSD/macOS), which must be treated as a benign no-op rather
+    /// than a hard error (upstream: xattrs.c:1229 only removes when present).
+    #[cfg(all(unix, feature = "xattr"))]
+    #[test]
+    fn remove_fake_super_absent_xattr_is_ok() {
+        let temp = tempfile::tempdir().expect("tempdir");
+
+        // Confirm the FS supports user xattrs at all; skip on tmpfs without it,
+        // where every xattr op returns ENOTSUP rather than the ENODATA we test.
+        let probe = temp.path().join("probe");
+        std::fs::write(&probe, b"probe").expect("write");
+        let stat = FakeSuperStat {
+            mode: 0o100644,
+            uid: 0,
+            gid: 0,
+            rdev: None,
+        };
+        if store_fake_super(&probe, &stat).is_err() {
+            return;
+        }
+
+        // A fresh file that never carried user.rsync.%stat: removal reports
+        // ENODATA/ENOATTR internally and must surface as Ok, not an error.
+        let path = temp.path().join("no-stat");
+        std::fs::write(&path, b"body").expect("write");
+        remove_fake_super(&path).expect("remove of absent fake-super xattr must be Ok");
     }
 
     #[cfg(not(all(unix, feature = "xattr")))]
