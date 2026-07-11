@@ -46,11 +46,21 @@ impl ReceiverContext {
     /// Decodes entries via the shared async leaf until the end-of-list marker,
     /// then applies the identical post-processing (leader GNUM assignment,
     /// sort, prune, hardlink matching, pre-30 normalization, reader-cache
-    /// preservation). Returns the number of entries received.
+    /// preservation). Returns the number of entries received plus any wire bytes
+    /// the async leaf read past the end-of-list marker.
+    ///
+    /// The async leaf fills an ~8 KiB look-ahead `carry` from each demux read, so
+    /// when the sender packs the file list and the first per-file response into
+    /// one multiplex frame (rather than flushing the list separately) the surplus
+    /// bytes land in `carry` after the end-of-list marker is decoded. The sync
+    /// path never over-reads (it `read_exact`s exactly what each field needs), so
+    /// to keep the async byte discipline identical those surplus bytes must not
+    /// be dropped: they are returned as the second tuple element for the caller to
+    /// feed into the following wire phase.
     ///
     /// Unlike the sync path, this does not read the trailing UID/GID id-lists or
     /// the protocol < 30 io-error integer (see the module scope note).
-    pub async fn receive_file_list_async<R>(&mut self, src: &mut R) -> io::Result<usize>
+    pub async fn receive_file_list_async<R>(&mut self, src: &mut R) -> io::Result<(usize, Vec<u8>)>
     where
         R: AsyncRead + Unpin + ?Sized,
     {
@@ -111,7 +121,12 @@ impl ReceiverContext {
         // recv_file_list() calls - cache the reader to preserve that state.
         self.flist_reader_cache = Some(flist_reader);
 
-        Ok(count)
+        // Return the look-ahead bytes read past the end-of-list marker so the
+        // caller can hand them to the next wire phase (the INC_RECURSE segment
+        // framing, or the per-file stream when there are no sub-lists). Dropping
+        // `carry` here would desync a transfer whose sender packed the list and
+        // the first per-file response into a single multiplex frame.
+        Ok((count, carry))
     }
 
     /// Async twin of
@@ -123,7 +138,15 @@ impl ReceiverContext {
     /// entries are decoded via the shared async leaf. Post-processing per segment
     /// (leader GNUM, sort, hardlink matching, pre-30 normalization, delete-pipeline
     /// publish) is identical to the sync path. Returns the total number of entries
-    /// received across all sub-lists.
+    /// received across all sub-lists plus any wire bytes read past the terminating
+    /// `NDX_FLIST_EOF`.
+    ///
+    /// `carry` is the look-ahead the initial file-list read
+    /// ([`receive_file_list_async`](Self::receive_file_list_async)) read past its
+    /// end-of-list marker; those bytes are the start of the first segment's NDX
+    /// framing, so they seed the shared carry-over buffer here. When INC_RECURSE
+    /// is not negotiated this is a no-op that returns the `carry` unchanged so no
+    /// wire bytes are lost.
     ///
     // Unwired by design: the atomic receiver fork (ASY-7 redo) is the consuming
     // rung. Exercised only by the `async_parity` tests, so the non-test lib
@@ -132,7 +155,8 @@ impl ReceiverContext {
     pub(in crate::receiver) async fn receive_extra_file_lists_async<R>(
         &mut self,
         src: &mut R,
-    ) -> io::Result<usize>
+        mut carry: Vec<u8>,
+    ) -> io::Result<(usize, Vec<u8>)>
     where
         R: AsyncRead + Unpin + ?Sized,
     {
@@ -140,7 +164,7 @@ impl ReceiverContext {
             .compat_flags
             .is_some_and(|f| f.contains(CompatibilityFlags::INC_RECURSE));
         if !inc_recurse {
-            return Ok(0);
+            return Ok((0, carry));
         }
 
         let mut ndx_codec = create_ndx_codec(self.protocol.as_u8());
@@ -149,7 +173,6 @@ impl ReceiverContext {
             .take()
             .unwrap_or_else(|| self.build_flist_reader());
         let mut total_extra = 0;
-        let mut carry: Vec<u8> = Vec::new();
 
         loop {
             let ndx = ndx_codec.read_ndx_from_carry_async(src, &mut carry).await?;
@@ -235,6 +258,8 @@ impl ReceiverContext {
             "received {} extra entries across all sub-lists",
             total_extra
         );
-        Ok(total_extra)
+        // Any bytes read past NDX_FLIST_EOF belong to the following per-file wire
+        // phase; hand them back so the driver can prepend them and lose nothing.
+        Ok((total_extra, carry))
     }
 }

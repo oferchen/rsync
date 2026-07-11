@@ -506,6 +506,13 @@ impl ReceiverContext {
     /// post-sanitize `file_count`, independent of how the bytes are chunked
     /// across `.await` points.
     ///
+    /// The fourth tuple element is the file-list look-ahead carry: bytes the
+    /// async flist reader pulled past the end of the list (and past
+    /// `NDX_FLIST_EOF`) that belong to the following per-file wire phase. The
+    /// sync path never over-reads, so the driver must prepend these to the
+    /// per-file read stream to preserve the identical byte discipline; see
+    /// [`run_sync_async`](Self::run_sync_async).
+    ///
     /// Additive and unwired: the coupled async receiver driver (the deferred
     /// atomic ASY receiver fork) is the consuming rung. Exercised only by the
     /// `setup_transfer_async_matches_sync` parity test, so the non-test lib build
@@ -521,7 +528,12 @@ impl ReceiverContext {
         &mut self,
         reader: crate::reader::AsyncServerReader<R>,
         writer: &mut W,
-    ) -> io::Result<(crate::reader::AsyncServerReader<R>, usize, PipelineSetup)>
+    ) -> io::Result<(
+        crate::reader::AsyncServerReader<R>,
+        usize,
+        PipelineSetup,
+        Vec<u8>,
+    )>
     where
         R: tokio::io::AsyncRead + Unpin + Send + 'static,
         W: io::Write + ?Sized,
@@ -593,12 +605,21 @@ impl ReceiverContext {
             info_log!(Flist, 1, "receiving incremental file list");
         }
 
-        let file_count = self.receive_file_list_async(&mut reader).await?;
-        let extra_count = self.receive_extra_file_lists_async(&mut reader).await?;
+        // Thread the file-list read's look-ahead carry through the extra-lists
+        // read and back out to the driver: the async flist leaf fills an ~8 KiB
+        // buffer per demux read, so bytes read past the end-of-list marker (and
+        // past NDX_FLIST_EOF) belong to the following per-file wire phase and
+        // must not be dropped. `run_sync_async` prepends the returned `carry` to
+        // the per-file read stream so no wire bytes are lost when the sender
+        // packs the list and the first per-file response into one frame.
+        let (file_count, carry) = self.receive_file_list_async(&mut reader).await?;
+        let (extra_count, carry) = self
+            .receive_extra_file_lists_async(&mut reader, carry)
+            .await?;
         let file_count = file_count + extra_count;
 
         let (file_count, setup) = self.build_pipeline_setup(file_count)?;
-        Ok((reader, file_count, setup))
+        Ok((reader, file_count, setup, carry))
     }
 
     /// Applies upstream's `get_local_name()` single-file rename semantics.
