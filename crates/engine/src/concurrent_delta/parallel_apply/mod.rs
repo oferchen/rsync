@@ -81,3 +81,6 @@ pub(in crate::concurrent_delta::parallel_apply) use file_slot::{FileSlot, Ingest
 
 #[cfg(test)]
 pub(super) mod tests;
+
+#[cfg(test)]
+mod stress;
