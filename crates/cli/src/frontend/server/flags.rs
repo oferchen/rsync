@@ -85,6 +85,23 @@ pub(super) struct ServerLongFlags {
     pub(super) files_from: Option<String>,
     pub(super) from0: bool,
     pub(super) inplace: bool,
+    /// Append data onto shorter destination files (upstream: `--append`).
+    ///
+    /// upstream: options.c:1722-1726 - `OPT_APPEND` increments `append_mode`
+    /// on the server side, so a single `--append` sets `append_mode == 1`.
+    /// server_options() (options.c:2951-2954) always emits the bare `--append`
+    /// long flag (never `--append-verify`); the receiver seeks past the
+    /// existing length and the sender streams only the tail (sender.c:89-95,
+    /// generator.c:786).
+    pub(super) append: bool,
+    /// Re-verify the existing prefix under append (upstream: `--append-verify`,
+    /// wire-encoded as a doubled `--append`, `append_mode == 2`).
+    ///
+    /// upstream: options.c:1724 - a second `--append` on the server bumps
+    /// `append_mode` to 2, folding the on-disk prefix into the whole-file
+    /// checksum (match.c:373, receiver.c:357) so a corrupted prefix fails
+    /// verification and triggers a full re-transmit.
+    pub(super) append_verify: bool,
     pub(super) size_only: bool,
     /// Modification-time window in whole seconds (upstream: `--modify-window=NUM`).
     ///
@@ -237,6 +254,8 @@ pub(super) fn parse_server_long_flags(args: &[OsString]) -> ServerLongFlags {
         files_from: None,
         from0: false,
         inplace: false,
+        append: false,
+        append_verify: false,
         size_only: false,
         modify_window: None,
         numeric_ids: false,
@@ -285,6 +304,19 @@ pub(super) fn parse_server_long_flags(args: &[OsString]) -> ServerLongFlags {
             "--qsort" => flags.qsort = true,
             "--from0" => flags.from0 = true,
             "--inplace" => flags.inplace = true,
+            // upstream: options.c:1722-1726 - OPT_APPEND increments append_mode
+            // on the server side. server_options() (options.c:2951-2954) emits a
+            // single bare `--append` for append_mode == 1 and a doubled
+            // `--append --append` for append_mode == 2 (`--append-verify`); the
+            // client never forwards the long-form `--append-verify`. So the
+            // first `--append` sets append and a second sets append_verify,
+            // mirroring the daemon long-form parser.
+            "--append" => {
+                if flags.append {
+                    flags.append_verify = true;
+                }
+                flags.append = true;
+            }
             "--size-only" => flags.size_only = true,
             // upstream: --numeric-ids is long-form only (options.c:2887-2888)
             "--numeric-ids" => flags.numeric_ids = true,
@@ -521,6 +553,7 @@ pub(super) fn is_known_server_long_flag(arg: &str) -> bool {
             | "--qsort"
             | "--from0"
             | "--inplace"
+            | "--append"
             | "--size-only"
             | "--numeric-ids"
             | "--delete"
