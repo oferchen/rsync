@@ -280,6 +280,21 @@ pub struct ParsedServerFlags {
     /// it, `main.c:736` calls `make_path()` to create the whole chain.
     pub mkpath: bool,
 
+    /// Engage the opt-in parallel sender-side delta scan for large files
+    /// (long-form `--parallel-delta-scan`).
+    ///
+    /// Local sender-side optimization only: it is **not** part of the compact
+    /// flag string and is never forwarded to a remote peer, because it changes
+    /// nothing on the wire when the eligibility gate holds. When set, the
+    /// generator may split a large, duplicate-free basis file's delta scan
+    /// across multiple cores (see
+    /// [`crate::generator::generate_delta_from_signature_chunked`]). Defaults
+    /// to off; the gate additionally requires a duplicate-free basis so the
+    /// emitted token stream stays byte-identical to the sequential scan for the
+    /// eligible inputs. Never advertised as producing byte-identical output on
+    /// arbitrary inputs.
+    pub parallel_delta_scan: bool,
+
     /// Info flags after the first `.` separator.
     pub info_flags: InfoFlags,
 }

@@ -20,6 +20,42 @@ impl<'a> CopyContext<'a> {
         }
     }
 
+    /// Records a skip event for a symbolic link whose creation the platform
+    /// refuses without privilege - a Windows file symlink created by an
+    /// unprivileged user without Developer Mode. Emits a warning, records the
+    /// skip, and sets the soft-error flag so the transfer still finishes but
+    /// exits `RERR_PARTIAL` (23), mirroring upstream's `FERROR_XFER` handling of
+    /// a failed `do_symlink()`.
+    ///
+    /// Only reachable on Windows, where `create_symlink` can hit
+    /// `ERROR_PRIVILEGE_NOT_HELD` on a file link with no junction fallback.
+    #[cfg(windows)]
+    pub(super) fn record_skipped_unsupported_symlink(
+        &mut self,
+        relative: Option<&Path>,
+        target: &Path,
+    ) {
+        if let Some(path) = relative {
+            info_log!(
+                Nonreg,
+                1,
+                "skipping symlink \"{}\" -> \"{}\" (symlink creation requires Administrator or Developer Mode)",
+                path.display(),
+                target.display()
+            );
+            self.record(LocalCopyRecord::new(
+                path.to_path_buf(),
+                LocalCopyAction::SkippedNonRegular,
+                0,
+                None,
+                Duration::default(),
+                None,
+            ));
+        }
+        self.unsupported_operation_skipped = true;
+        self.io_errors_occurred = true;
+    }
+
     /// Records a skip event for a directory (when `-r` is not enabled).
     pub(super) fn record_skipped_directory(&mut self, relative: Option<&Path>) {
         if let Some(path) = relative {

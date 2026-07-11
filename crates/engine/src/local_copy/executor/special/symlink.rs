@@ -652,8 +652,24 @@ pub(crate) fn copy_symlink(
         target.clone()
     };
 
-    create_symlink(&write_target, source, destination)
-        .map_err(|error| LocalCopyError::io("create symbolic link", destination, error))?;
+    if let Err(error) = create_symlink(&write_target, source, destination) {
+        // A Windows file symbolic link cannot be created without privilege and
+        // has no junction fallback (directory links do fall back inside
+        // `create_symlink`). Skip it with a warning and a soft error so the
+        // transfer still finishes but exits RERR_PARTIAL (23), matching
+        // upstream's FERROR_XFER handling of an unsupported operation.
+        #[cfg(windows)]
+        if fast_io::is_unprivileged_symlink_error(&error) {
+            context.record_skipped_unsupported_symlink(record_path.as_deref(), &target);
+            context.register_progress();
+            return Ok(());
+        }
+        return Err(LocalCopyError::io(
+            "create symbolic link",
+            destination,
+            error,
+        ));
+    }
 
     context.register_created_path(
         destination,
@@ -767,15 +783,18 @@ pub(crate) fn create_symlink(target: &Path, _source: &Path, destination: &Path) 
 
 /// Creates a symbolic link at `destination` pointing to `target` (Windows variant).
 ///
-/// Uses `symlink_dir` when the source is a directory, `symlink_file` otherwise.
+/// Directory links go through [`fast_io::create_directory_symlink_or_junction`],
+/// which prefers a real directory symlink and falls back to a junction when the
+/// caller lacks the create-symlink privilege (unprivileged, no Developer Mode).
+/// File links have no junction equivalent, so a privilege refusal surfaces as
+/// `ERROR_PRIVILEGE_NOT_HELD`; the caller skips the entry with a warning.
 #[cfg(windows)]
 pub(crate) fn create_symlink(target: &Path, source: &Path, destination: &Path) -> io::Result<()> {
-    use std::os::windows::fs::{symlink_dir, symlink_file};
-
-    match source.metadata() {
-        Ok(metadata) if metadata.file_type().is_dir() => symlink_dir(target, destination),
-        Ok(_) => symlink_file(target, destination),
-        Err(_) => symlink_file(target, destination),
+    let is_dir = matches!(source.metadata(), Ok(metadata) if metadata.file_type().is_dir());
+    if is_dir {
+        fast_io::create_directory_symlink_or_junction(target, destination).map(|_| ())
+    } else {
+        fast_io::create_file_symlink(target, destination)
     }
 }
 
