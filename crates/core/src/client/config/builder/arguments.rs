@@ -29,6 +29,34 @@ impl ClientConfigBuilder {
         self
     }
 
+    /// Records whether `--list-only` was passed explicitly (upstream
+    /// `list_only > 1`). Only the explicit form is forwarded to the remote.
+    #[must_use]
+    #[doc(alias = "--list-only")]
+    pub const fn list_only_arg(mut self, list_only_arg: bool) -> Self {
+        self.list_only_arg = list_only_arg;
+        self
+    }
+
+    /// Records whether `-q` / `--quiet` was passed (upstream `quiet`).
+    #[must_use]
+    #[doc(alias = "--quiet")]
+    pub const fn quiet(mut self, quiet: bool) -> Self {
+        self.quiet = quiet;
+        self
+    }
+
+    /// Sets the tri-state `--msgs2stderr` / `--no-msgs2stderr` value.
+    ///
+    /// `None` keeps the upstream default (value 2); `Some(true)` is
+    /// `--msgs2stderr` (value 1); `Some(false)` is `--no-msgs2stderr` (value 0).
+    #[must_use]
+    #[doc(alias = "--msgs2stderr")]
+    pub const fn msgs2stderr(mut self, msgs2stderr: Option<bool>) -> Self {
+        self.msgs2stderr = msgs2stderr;
+        self
+    }
+
     /// Configures batch mode for offline/disconnected transfer workflows.
     ///
     /// This method accepts an optional `BatchConfig` which determines how the

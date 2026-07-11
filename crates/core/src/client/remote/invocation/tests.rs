@@ -498,6 +498,9 @@ const UPSTREAM_SERVER_LONG_ARGS: &[&str] = &[
     "--delete-missing-args",
     "--remove-source-files",
     "--no-implied-dirs",
+    "--list-only",
+    "--msgs2stderr",
+    "--no-msgs2stderr",
     "--fake-super",
     "--omit-dir-times",
     "--omit-link-times",
@@ -854,25 +857,10 @@ fn reference_directories_not_forwarded_on_pull() {
     );
 }
 
-#[test]
-fn forwards_fake_super_to_remote_receiver_only() {
-    // upstream: options.c:2825,2852-2853 - the super flag rides inside the
-    // `if (am_sender)` branch, so it is forwarded only to a remote receiver
-    // (local PUSH = RemoteRole::Receiver), never to a remote sender (PULL).
-    let config = ClientConfig::builder().fake_super(true).build();
-
-    let to_receiver = RemoteInvocationBuilder::new(&config, RemoteRole::Receiver).build("/path");
-    assert!(
-        to_receiver.iter().any(|a| a == "--fake-super"),
-        "expected --fake-super forwarded to a remote receiver (push): {to_receiver:?}"
-    );
-
-    let to_sender = RemoteInvocationBuilder::new(&config, RemoteRole::Sender).build("/path");
-    assert!(
-        !to_sender.iter().any(|a| a == "--fake-super"),
-        "did not expect --fake-super forwarded to a remote sender (pull): {to_sender:?}"
-    );
-}
+// upstream: options.c:2852-2853 - only `--super` (am_root > 1) is forwarded,
+// solely on a push. `--fake-super` (am_root == -1) is receiver-local and is
+// never forwarded in either direction. Covered by
+// `fake_super_not_forwarded_on_pull` / `fake_super_not_forwarded_on_push`.
 
 #[test]
 fn forwards_write_devices_to_remote_receiver_only() {
@@ -1482,6 +1470,123 @@ fn dry_run_still_packs_n() {
     let config = ClientConfig::builder().dry_run(true).build();
     let flags = sender_flag_string(&config);
     assert!(flags.contains('n'), "dry_run must pack 'n': {flags}");
+}
+
+// upstream: options.c:2747-2748 - `if (list_only > 1) "--list-only"`. An
+// explicit `--list-only` on a pull forwards the long flag and NEVER packs 'n'
+// (list_only does not set do_xfers=0). Sealed argv:
+// `-logDtpre.iLsfxCIvu --list-only`.
+#[test]
+fn list_only_arg_forwards_long_flag_without_n_on_pull() {
+    let config = ClientConfig::builder()
+        .list_only(true)
+        .list_only_arg(true)
+        .build();
+    let args = build_receiver_args(&config);
+    assert!(
+        args.iter().any(|a| a == "--list-only"),
+        "explicit --list-only must forward the long flag: {args:?}"
+    );
+    let flags = receiver_flag_string(&config);
+    assert!(
+        !flags.contains('n'),
+        "list-only must not pack the dry-run 'n' letter: {flags}"
+    );
+}
+
+// upstream: options.c:2747 - `list_only > 1`. The IMPLICIT single-source
+// listing (list_only == 1, `list_only_arg` false) is never forwarded.
+#[test]
+fn implicit_list_only_does_not_forward_long_flag() {
+    let config = ClientConfig::builder().list_only(true).build();
+    let args = build_receiver_args(&config);
+    assert!(
+        !args.iter().any(|a| a == "--list-only"),
+        "implicit list-only must not forward --list-only: {args:?}"
+    );
+}
+
+// upstream: options.c:2852-2853 - only `--super` (am_root > 1) is forwarded,
+// and only on a push (am_sender). `--fake-super` (am_root == -1) is a
+// receiver-local storage mode and is NEVER forwarded in either direction.
+#[test]
+fn fake_super_not_forwarded_on_pull() {
+    let config = ClientConfig::builder().fake_super(true).build();
+    let args = build_receiver_args(&config);
+    assert!(
+        !args.iter().any(|a| a == "--fake-super"),
+        "--fake-super must never be forwarded to a remote sender (pull): {args:?}"
+    );
+}
+
+#[test]
+fn fake_super_not_forwarded_on_push() {
+    let config = ClientConfig::builder().fake_super(true).build();
+    let args = build_sender_args(&config);
+    assert!(
+        !args.iter().any(|a| a == "--fake-super"),
+        "--fake-super must never be forwarded to a remote receiver (push): {args:?}"
+    );
+}
+
+// upstream: options.c:2628-2629 - `if (quiet && msgs2stderr) 'q'`. Default
+// msgs2stderr is 2 (nonzero), so plain `-q` packs 'q'. Sealed argv:
+// `-qe.LsfxCIvu --msgs2stderr` (with --msgs2stderr) / `-q...` (plain quiet).
+#[test]
+fn quiet_with_default_msgs2stderr_packs_q() {
+    let config = ClientConfig::builder().quiet(true).build();
+    let flags = sender_flag_string(&config);
+    assert!(flags.contains('q'), "quiet must pack 'q': {flags}");
+}
+
+// upstream: options.c:2628 - `--no-msgs2stderr` (msgs2stderr == 0) suppresses
+// the 'q' letter even when quiet is set.
+#[test]
+fn quiet_with_no_msgs2stderr_does_not_pack_q() {
+    let config = ClientConfig::builder()
+        .quiet(true)
+        .msgs2stderr(Some(false))
+        .build();
+    let flags = sender_flag_string(&config);
+    assert!(
+        !flags.contains('q'),
+        "quiet + --no-msgs2stderr must not pack 'q': {flags}"
+    );
+}
+
+// upstream: options.c:2782-2785 - `--msgs2stderr` (== 1) forwarded long-form.
+#[test]
+fn msgs2stderr_forwarded_long_form() {
+    let config = ClientConfig::builder().msgs2stderr(Some(true)).build();
+    let args = build_sender_args(&config);
+    assert!(
+        args.iter().any(|a| a == "--msgs2stderr"),
+        "--msgs2stderr must be forwarded: {args:?}"
+    );
+    assert!(!args.iter().any(|a| a == "--no-msgs2stderr"));
+}
+
+// upstream: options.c:2784-2785 - `--no-msgs2stderr` (== 0) forwarded long-form.
+#[test]
+fn no_msgs2stderr_forwarded_long_form() {
+    let config = ClientConfig::builder().msgs2stderr(Some(false)).build();
+    let args = build_sender_args(&config);
+    assert!(
+        args.iter().any(|a| a == "--no-msgs2stderr"),
+        "--no-msgs2stderr must be forwarded: {args:?}"
+    );
+    assert!(!args.iter().any(|a| a == "--msgs2stderr"));
+}
+
+// upstream: options.c:2628,2782 - the default (no -q, msgs2stderr == 2) packs
+// neither 'q' nor any msgs2stderr long flag. Guards the `-a`-matches seal.
+#[test]
+fn default_config_no_q_no_msgs2stderr() {
+    let config = ClientConfig::builder().build();
+    let args = build_sender_args(&config);
+    assert!(!args.iter().any(|a| a == "--msgs2stderr" || a == "--no-msgs2stderr"));
+    let flags = sender_flag_string(&config);
+    assert!(!flags.contains('q'), "default must not pack 'q': {flags}");
 }
 
 #[test]

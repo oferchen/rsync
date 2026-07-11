@@ -212,6 +212,10 @@ where
     // (`main.c:788` single `do_mkdir`); with it, the whole chain is created
     // (`main.c:736` `make_path`).
     config.flags.mkpath = long_flags.mkpath;
+    // upstream: options.c:2747-2748 / generator.c:1249 - `--list-only` forwarded
+    // by the client tells the server to render the flist without writing to the
+    // destination (`TransferFlags::skip_dest_writes`).
+    config.flags.list_only = long_flags.list_only;
     // upstream: options.c:2046-2048 - do_stats sets info_levels[INFO_STATS] >= 2.
     // The server-side flag must be set so the generator emits NDX_DEL_STATS
     // during the goodbye phase (generator.c:2377,2422).
@@ -287,6 +291,30 @@ where
                     stderr,
                     program_brand,
                     format!("invalid compression algorithm '{name}': {e}"),
+                );
+                return 1;
+            }
+        }
+    }
+
+    // upstream: options.c:2754-2758 - `--compress-level=N` forwarded by the
+    // client sets `do_compression_level` on the server so its codec compresses
+    // at the same level. The value is the numeric 0-9 that the client already
+    // clamped before forwarding.
+    if let Some(value) = &long_flags.compression_level {
+        match value
+            .trim()
+            .parse::<u32>()
+            .map_err(|e| e.to_string())
+            .and_then(|n| {
+                compress::zlib::CompressionLevel::from_numeric(n).map_err(|e| e.to_string())
+            }) {
+            Ok(level) => config.connection.compression_level = Some(level),
+            Err(e) => {
+                write_server_error(
+                    stderr,
+                    program_brand,
+                    format!("invalid compression level '{value}': {e}"),
                 );
                 return 1;
             }

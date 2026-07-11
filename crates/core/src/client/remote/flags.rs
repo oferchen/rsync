@@ -25,6 +25,15 @@ use crate::server::ServerConfig;
 pub(crate) fn build_server_flag_string(config: &ClientConfig) -> String {
     let mut flags = String::from("-");
 
+    // upstream: options.c:2628-2629 - `if (quiet && msgs2stderr) 'q'`. The
+    // default `msgs2stderr` is 2 (nonzero), so plain `-q` packs 'q';
+    // `--no-msgs2stderr` (msgs2stderr == 0) suppresses it. The local-half
+    // ServerConfig parser ignores 'q' (transfer/flags.rs), so packing it here
+    // is inert for the in-process receiver and meaningful only on the wire.
+    if config.quiet() && config.msgs2stderr() != Some(false) {
+        flags.push('q');
+    }
+
     // upstream: options.c:2169-2173 - --files-from disables recursion and
     // enables xfer_dirs. options.c:2188 - --files-from implies --relative.
     let files_from_active = config.files_from().is_active();

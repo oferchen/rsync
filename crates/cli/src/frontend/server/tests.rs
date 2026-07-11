@@ -653,6 +653,65 @@ fn copy_devices_is_known_and_not_positional() {
     assert_eq!(pos_args, vec![OsString::from("src/")]);
 }
 
+// upstream: options.c:2754-2758 - a client that pins `--compress-level=N`
+// forwards it to the server. The flag-string scanner must treat it as a known
+// long flag; otherwise it leaks into the positional list and the receiver
+// fails with `failed to create destination root --compress-level=6` (exit 12).
+#[test]
+fn compress_level_is_known_and_not_positional() {
+    assert!(is_known_server_long_flag("--compress-level=6"));
+    let args = vec![
+        OsString::from("--server"),
+        OsString::from("-logDtprz"),
+        OsString::from("--compress-level=6"),
+        OsString::from("."),
+        OsString::from("dst/"),
+    ];
+    let (flags, pos_args) = parse_server_flag_string_and_args(&args);
+    assert_eq!(flags, "-logDtprz");
+    assert_eq!(pos_args, vec![OsString::from("dst/")]);
+}
+
+// upstream: options.c:2754-2758 - the forwarded level is captured so the
+// server codec compresses at the same level the client requested.
+#[test]
+fn long_flags_capture_compress_level() {
+    let args = vec![
+        OsString::from("--server"),
+        OsString::from("--compress-level=6"),
+    ];
+    let flags = parse_server_long_flags(&args);
+    assert_eq!(flags.compression_level.as_deref(), Some("6"));
+}
+
+// upstream: options.c:2747-2748 - the server recognises the forwarded
+// `--list-only` and records it so the transfer lists without writing.
+#[test]
+fn long_flags_capture_list_only() {
+    let args = vec![OsString::from("--server"), OsString::from("--list-only")];
+    let flags = parse_server_long_flags(&args);
+    assert!(flags.list_only);
+}
+
+// upstream: options.c:2782-2785 - `--msgs2stderr` / `--no-msgs2stderr` are
+// recognised (consumed) so they never leak into the positional path list.
+#[test]
+fn msgs2stderr_flags_are_known_and_not_positional() {
+    assert!(is_known_server_long_flag("--msgs2stderr"));
+    assert!(is_known_server_long_flag("--no-msgs2stderr"));
+    let args = vec![
+        OsString::from("--server"),
+        OsString::from("--sender"),
+        OsString::from("--msgs2stderr"),
+        OsString::from("-logDtpr"),
+        OsString::from("."),
+        OsString::from("src/"),
+    ];
+    let (flags, pos_args) = parse_server_flag_string_and_args(&args);
+    assert_eq!(flags, "-logDtpr");
+    assert_eq!(pos_args, vec![OsString::from("src/")]);
+}
+
 #[test]
 fn long_flags_trust_sender() {
     let args = vec![OsString::from("--server"), OsString::from("--trust-sender")];

@@ -72,7 +72,7 @@ where
     if matches.get_flag("no-human-readable") {
         human_readable = Some(HumanReadableMode::Raw);
     }
-    let mut dry_run = matches.get_flag("dry-run");
+    let dry_run = matches.get_flag("dry-run");
     let list_only = matches.get_flag("list-only");
     let mkpath = tri_state_flag_positive_first(&matches, "mkpath", "no-mkpath").unwrap_or(false);
     let prune_empty_dirs =
@@ -81,9 +81,11 @@ where
         tri_state_flag_negative_first(&matches, "omit-link-times", "no-omit-link-times");
     let atimes = tri_state_flag_negative_first(&matches, "atimes", "no-atimes");
     let crtimes = tri_state_flag_negative_first(&matches, "crtimes", "no-crtimes");
-    if list_only {
-        dry_run = true;
-    }
+    // upstream: options.c:2366-2367 - only `dry_run` sets `do_xfers = 0` (and
+    // thus the compact `n` letter); `list_only` does NOT (options.c:2634 "Note:
+    // NOT dry_run!"). The receiver skips destination writes under `list_only`
+    // independently (see `run_client` mode selection and
+    // `TransferFlags::skip_dest_writes`), so we must not conflate the two here.
     let remote_shell = matches
         .remove_one::<OsString>("rsh")
         .filter(|value| !value.is_empty())
@@ -613,7 +615,8 @@ where
     if matches.get_flag("no-verbose") {
         verbosity = 0;
     }
-    if matches.get_flag("quiet") {
+    let quiet = matches.get_flag("quiet");
+    if quiet {
         verbosity = 0;
     }
     let remainder = matches
@@ -901,6 +904,7 @@ where
         mkpath,
         prune_empty_dirs,
         verbosity,
+        quiet,
         progress: progress_setting,
         name_level,
         name_overridden,
