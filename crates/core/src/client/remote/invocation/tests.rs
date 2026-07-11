@@ -875,6 +875,46 @@ fn forwards_fake_super_to_remote_receiver_only() {
 }
 
 #[test]
+fn forwards_write_devices_to_remote_receiver_only() {
+    // upstream: options.c:2979 - `if (write_devices && am_sender) args[ac++] =
+    // "--write-devices"`. am_sender is a PUSH, so the flag reaches the remote
+    // receiver (RemoteRole::Sender) but never a remote sender (a PULL).
+    let config = ClientConfig::builder().write_devices(true).build();
+
+    let push = RemoteInvocationBuilder::new(&config, RemoteRole::Sender).build("/path");
+    assert!(
+        push.iter().any(|a| a == "--write-devices"),
+        "expected --write-devices forwarded on a push: {push:?}"
+    );
+
+    let pull = RemoteInvocationBuilder::new(&config, RemoteRole::Receiver).build("/path");
+    assert!(
+        !pull.iter().any(|a| a == "--write-devices"),
+        "did not expect --write-devices forwarded on a pull: {pull:?}"
+    );
+}
+
+#[test]
+fn forwards_copy_devices_to_remote_sender_only() {
+    // upstream: options.c:2987 - `if (copy_devices && !am_sender) args[ac++] =
+    // "--copy-devices"`. !am_sender is a PULL, so the flag reaches the remote
+    // sender (RemoteRole::Receiver) but never a remote receiver (a PUSH).
+    let config = ClientConfig::builder().copy_devices(true).build();
+
+    let pull = RemoteInvocationBuilder::new(&config, RemoteRole::Receiver).build("/path");
+    assert!(
+        pull.iter().any(|a| a == "--copy-devices"),
+        "expected --copy-devices forwarded on a pull: {pull:?}"
+    );
+
+    let push = RemoteInvocationBuilder::new(&config, RemoteRole::Sender).build("/path");
+    assert!(
+        !push.iter().any(|a| a == "--copy-devices"),
+        "did not expect --copy-devices forwarded on a push: {push:?}"
+    );
+}
+
+#[test]
 fn includes_delay_updates_long_arg() {
     let config = ClientConfig::builder().delay_updates(true).build();
     let builder = RemoteInvocationBuilder::new(&config, RemoteRole::Sender);
@@ -1899,16 +1939,6 @@ fn includes_copy_dest_long_arg() {
 }
 
 #[test]
-fn includes_copy_devices_long_arg() {
-    let config = ClientConfig::builder().copy_devices(true).build();
-    let args = build_sender_args(&config);
-    assert!(
-        args.iter().any(|a| a == "--copy-devices"),
-        "expected --copy-devices in args: {args:?}"
-    );
-}
-
-#[test]
 fn includes_write_devices_long_arg() {
     let config = ClientConfig::builder().write_devices(true).build();
     let args = build_sender_args(&config);
@@ -2493,7 +2523,6 @@ fn all_flags_enabled_produces_valid_invocation() {
         "--remove-source-files",
         "--no-implied-dirs",
         "--delay-updates",
-        "--copy-devices",
         "--write-devices",
         "--open-noatime",
         "--preallocate",
@@ -2512,6 +2541,14 @@ fn all_flags_enabled_produces_valid_invocation() {
     assert!(
         !args.iter().any(|a| a == "--fake-super"),
         "all-flags test: --fake-super must not be forwarded to a remote sender: {args:?}"
+    );
+
+    // upstream: options.c:2987 - `if (copy_devices && !am_sender)`. This is a
+    // push (client is the sender), so --copy-devices is a pull-only flag and
+    // must not appear even with copy_devices(true).
+    assert!(
+        !args.iter().any(|a| a == "--copy-devices"),
+        "all-flags test: --copy-devices must not be forwarded on a push: {args:?}"
     );
 
     // upstream: options.c:2802 - explicit zlib is sent as --old-compress

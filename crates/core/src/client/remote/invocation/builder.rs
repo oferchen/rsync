@@ -479,6 +479,23 @@ impl<'a> RemoteInvocationBuilder<'a> {
             args.push(OsString::from("--no-implied-dirs"));
         }
 
+        // upstream: options.c:2979 - `if (write_devices && am_sender) args[ac++]
+        // = "--write-devices"`. Forwarded only on a PUSH (local process is the
+        // sender), so the remote receiver writes file data into matching device
+        // destinations instead of recreating them with mknod. `RemoteRole::Sender`
+        // is am_sender (see `am_sender` above).
+        if self.config.write_devices() && self.role == RemoteRole::Sender {
+            args.push(OsString::from("--write-devices"));
+        }
+
+        // upstream: options.c:2987 - `if (copy_devices && !am_sender) args[ac++]
+        // = "--copy-devices"`. Forwarded only on a PULL (local process is the
+        // receiver), so the remote sender reads device contents as regular file
+        // data. `RemoteRole::Receiver` is !am_sender (a pull).
+        if self.config.copy_devices() && self.role == RemoteRole::Receiver {
+            args.push(OsString::from("--copy-devices"));
+        }
+
         // upstream: options.c:2825,2852-2853 server_options() - the super flag
         // is forwarded only inside the `if (am_sender)` block (so to a remote
         // receiver), never to a remote sender. `RemoteRole::Receiver` means the
@@ -547,13 +564,6 @@ impl<'a> RemoteInvocationBuilder<'a> {
                 arg.push(ref_dir.path().as_os_str());
                 args.push(arg);
             }
-        }
-
-        if self.config.copy_devices() {
-            args.push(OsString::from("--copy-devices"));
-        }
-        if self.config.write_devices() {
-            args.push(OsString::from("--write-devices"));
         }
 
         if self.config.open_noatime() {
