@@ -284,10 +284,46 @@ pub(super) fn apply_timestamps_from_entry(
     };
 
     if needs_utime {
-        set_file_times(destination, atime, mtime)
-            .map_err(|error| MetadataError::new("preserve timestamps", destination, error))?;
+        set_entry_times(destination, entry, atime, mtime, "preserve timestamps")?;
     }
 
+    Ok(())
+}
+
+/// Applies mtime/atime to a node materialised from a wire `FileEntry`, choosing
+/// an open-free `utimensat` for special files.
+///
+/// filetime's follow variant (`set_file_times`) opens the target with
+/// `File::open` before calling `File::set_times`, which blocks forever on a
+/// FIFO that has no reader/writer peer - exactly the node the protocol receiver
+/// materialises via `create_specials`. Device, FIFO, and socket nodes are never
+/// symlinks, so the `AT_SYMLINK_NOFOLLOW` variant (`set_symlink_file_times`)
+/// sets their times without opening them, matching upstream `set_file_attrs()`
+/// which applies times through `utimensat` on the path and never opens the
+/// target. Tolerable special-file errnos are swallowed as best-effort, mirroring
+/// [`set_timestamp_like`].
+// upstream: rsync.c:set_file_attrs() - utimensat on the path, never opens the node
+fn set_entry_times(
+    destination: &Path,
+    entry: &protocol::flist::FileEntry,
+    atime: FileTime,
+    mtime: FileTime,
+    context: &'static str,
+) -> Result<(), MetadataError> {
+    let is_special = entry.is_device() || entry.is_special();
+    let result = if is_special {
+        set_symlink_file_times(destination, atime, mtime)
+    } else {
+        set_file_times(destination, atime, mtime)
+    };
+
+    if let Err(error) = result {
+        #[cfg(unix)]
+        if is_special && is_tolerable_special_time_error(&error) {
+            return Ok(());
+        }
+        return Err(MetadataError::new(context, destination, error));
+    }
     Ok(())
 }
 
@@ -377,8 +413,7 @@ pub(super) fn apply_atime_only_from_entry(
                 FileTime::from_last_modification_time(&meta)
             }
         };
-        set_file_times(destination, atime, mtime)
-            .map_err(|error| MetadataError::new("preserve access time", destination, error))?;
+        set_entry_times(destination, entry, atime, mtime, "preserve access time")?;
     }
 
     Ok(())
@@ -585,6 +620,51 @@ fn set_crtime(path: &Path, secs: i64) -> Result<(), MetadataError> {
 #[cfg(not(any(target_os = "macos", windows)))]
 fn set_crtime(_path: &Path, _secs: i64) -> Result<(), MetadataError> {
     Ok(())
+}
+
+#[cfg(all(test, unix))]
+mod fifo_hang_regression {
+    use crate::{MetadataOptions, apply_metadata_from_file_entry, create_fifo_node_from_parts};
+    use protocol::flist::FileEntry;
+    use std::os::unix::fs::MetadataExt;
+    use std::sync::mpsc;
+    use std::time::Duration;
+
+    /// Issue #223: the protocol receiver materialises a FIFO via `create_specials`
+    /// and then applies metadata from the wire `FileEntry`. Timestamp application
+    /// must NOT open the node - `File::open` on a FIFO with no peer blocks
+    /// forever, deadlocking the wire receiver against the sender. The fix routes
+    /// special files through the open-free `utimensat(AT_SYMLINK_NOFOLLOW)`. This
+    /// test runs the apply on a worker thread and fails via timeout if it blocks,
+    /// so a regression surfaces as a fast failure rather than a hung CI job.
+    #[test]
+    fn applying_times_to_fifo_does_not_block_open() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let fifo = tmp.path().join("f");
+        create_fifo_node_from_parts(&fifo, 0o644, false, false).expect("create fifo");
+
+        let mut entry = FileEntry::new_fifo("f".into(), 0o644);
+        entry.set_mtime(1_000_000_000, 0);
+        let options = MetadataOptions::new().preserve_times(true);
+
+        let path = fifo.clone();
+        let (tx, rx) = mpsc::channel();
+        std::thread::spawn(move || {
+            let _ = tx.send(apply_metadata_from_file_entry(&path, &entry, &options));
+        });
+
+        let result = rx.recv_timeout(Duration::from_secs(10)).expect(
+            "apply_metadata_from_file_entry must not block opening a FIFO (issue #223 receiver hang)",
+        );
+        result.expect("metadata application should succeed on a fifo");
+
+        let meta = std::fs::symlink_metadata(&fifo).expect("stat fifo");
+        assert_eq!(
+            meta.mtime(),
+            1_000_000_000,
+            "the open-free utimensat path must still set the FIFO's mtime",
+        );
+    }
 }
 
 #[cfg(all(test, unix))]

@@ -1,13 +1,16 @@
-//! Directory, symlink, and hardlink creation; extraneous file deletion.
+//! Directory, symlink, special-file, and hardlink creation; extraneous file
+//! deletion.
 //!
 //! Handles filesystem mutations driven by the received file list, including
-//! directory creation (batch and incremental), symlink creation, hardlink
-//! creation for both protocol 30+ and pre-30 modes, and `--delete` scanning.
+//! directory creation (batch and incremental), symlink creation, special-file
+//! creation (FIFOs, sockets, and device nodes), hardlink creation for both
+//! protocol 30+ and pre-30 modes, and `--delete` scanning.
 
 mod creation;
 mod deletion;
 mod links;
 mod missing_args;
+mod special;
 
 /// Normalizes a filename for cross-platform comparison.
 ///
