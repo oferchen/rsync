@@ -290,9 +290,11 @@ pub struct ParsedServerFlags {
     /// across multiple cores (see
     /// [`crate::generator::generate_delta_from_signature_chunked`]). Defaults
     /// to off; the gate additionally requires a duplicate-free basis so the
-    /// emitted token stream stays byte-identical to the sequential scan for the
-    /// eligible inputs. Never advertised as producing byte-identical output on
-    /// arbitrary inputs.
+    /// emitted token stream stays identical to the sequential scan for the
+    /// eligible inputs (matched/literal counts and reconstruction are identical
+    /// on every input; the literal-token wire framing can differ by a few bytes
+    /// at a rare range-boundary seam). Never advertised as producing
+    /// byte-identical output on arbitrary inputs.
     pub parallel_delta_scan: bool,
 
     /// Info flags after the first `.` separator.

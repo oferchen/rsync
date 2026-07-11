@@ -154,7 +154,10 @@ pub fn generate_delta_from_signature<R: Read>(
 ///
 /// The caller (`generator::transfer::transfer_loop`) opens the source as a
 /// memory-mapped slice and passes it here only after the size/core gate in
-/// `should_parallel_delta` has fired. This
+/// `should_parallel_delta` has fired. Because the mapping spans the whole
+/// source file (pages fault in lazily during the scan), peak RSS for the
+/// chunked scan is proportional to the file size, not bounded to a fixed
+/// window; the win is CPU parallelism, not a memory reduction. This
 /// function then reconstructs the signature index (sharing
 /// [`build_signature_index`] with the sequential
 /// [`generate_delta_from_signature`], so there is a single reconstruction
@@ -162,9 +165,13 @@ pub fn generate_delta_from_signature<R: Read>(
 ///
 /// - **Duplicate-free basis** ([`DeltaSignatureIndex::has_duplicate_blocks`]
 ///   is `false`): run [`DeltaGenerator::generate_chunked`], which scans the
-///   ranges across rayon workers. For the eligible inputs (matches never
-///   straddle a range boundary) the emitted token stream - and therefore the
-///   wire bytes and matched/literal split - equals the sequential scan.
+///   ranges across rayon workers. Reconstruction and the total/literal byte
+///   counts match the sequential scan on every input. For the eligible inputs
+///   (matches never straddle a range boundary) the emitted token stream also
+///   matches, and the wire bytes match in the common case; a rare literal-run
+///   segmentation seam at a range boundary can still shift the literal-token
+///   length framing by a few bytes (never the counts or the reconstructed
+///   data). See [`DeltaGenerator::generate_chunked`] for the exact contract.
 /// - **Duplicate-content basis**: fall back to the pruned sequential
 ///   [`DeltaGenerator::generate`] over the same slice, because the prune-off
 ///   parallel scan would resolve duplicate siblings differently and diverge
