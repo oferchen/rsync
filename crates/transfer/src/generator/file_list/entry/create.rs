@@ -94,7 +94,39 @@ impl GeneratorContext {
             None
         };
 
-        let mut entry = if file_type.is_file() && {
+        // upstream: flist.c:1419-1428 - `copy_devices && am_sender &&
+        // IS_DEVICE(st.st_mode)` rewrites a block/char device into a regular
+        // file: mode becomes `S_IFREG | ACCESSPERMS`, mtime is forced to "now",
+        // and the size is the device's readable byte length. The device's
+        // contents are then streamed like a plain file. This generator only ever
+        // builds the sender's file list, so `am_sender` is implicit here.
+        #[cfg(unix)]
+        let copy_device_override: Option<(u64, u32)> = {
+            use std::os::unix::fs::FileTypeExt;
+            if self.config.flags.copy_devices
+                && (file_type.is_block_device() || file_type.is_char_device())
+            {
+                let mode = metadata.mode() & 0o7777;
+                // upstream: flist.c:1421-1424 - open the device and size it when
+                // st_size is 0 (block devices report 0). `device_readable_size`
+                // mirrors get_device_size() with a macOS ioctl fallback.
+                let size = if metadata.len() != 0 {
+                    metadata.len()
+                } else {
+                    ::metadata::device_readable_size(full_path).unwrap_or(0)
+                };
+                Some((size, mode))
+            } else {
+                None
+            }
+        };
+        #[cfg(not(unix))]
+        let copy_device_override: Option<(u64, u32)> = None;
+
+        let mut entry = if let Some((dev_size, dev_mode)) = copy_device_override {
+            // upstream: flist.c:1425 - st.st_mode = S_IFREG | (mode & ACCESSPERMS)
+            FileEntry::new_file(relative_path, dev_size, dev_mode)
+        } else if file_type.is_file() && {
             #[cfg(windows)]
             {
                 !is_reparse_point
@@ -222,6 +254,16 @@ impl GeneratorContext {
                     entry.set_mtime(duration.as_secs() as i64, duration.subsec_nanos());
                 }
             }
+        }
+
+        // upstream: flist.c:1427 - the device mtime is not up-to-date, so a
+        // `--copy-devices` entry carries `time(NULL)` instead of the on-disk
+        // stat time. This is a no-op on non-device entries and on non-Unix.
+        if copy_device_override.is_some() {
+            let now = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map_or(0, |d| d.as_secs() as i64);
+            entry.set_mtime(now, 0);
         }
 
         // Set access time if preserving (upstream: flist.c:489-494)
@@ -527,6 +569,96 @@ mod fake_super_round_trip_tests {
         assert_eq!(entry.gid(), Some(6));
         assert_eq!(entry.rdev_major(), Some(8));
         assert_eq!(entry.rdev_minor(), Some(0));
+    }
+
+    /// Builds a sender generator with `--copy-devices` active.
+    fn make_copy_devices_generator() -> GeneratorContext {
+        let handshake = HandshakeResult {
+            protocol: ProtocolVersion::try_from(32u8).unwrap(),
+            buffered: Vec::new(),
+            compat_exchanged: false,
+            client_args: None,
+            io_timeout: None,
+            negotiated_algorithms: None,
+            compat_flags: None,
+            checksum_seed: 0,
+        };
+        let mut config = ServerConfig {
+            role: ServerRole::Generator,
+            protocol: ProtocolVersion::try_from(32u8).unwrap(),
+            flag_string: "-logtpre.".to_owned(),
+            args: vec![OsString::from(".")],
+            ..Default::default()
+        };
+        config.flags.copy_devices = true;
+        config.flags.numeric_ids = crate::NumericIds::Explicit;
+        GeneratorContext::new_for_test(&handshake, config)
+    }
+
+    /// upstream: flist.c:1419-1428 - with `--copy-devices` the sender must emit a
+    /// character/block device as a regular file (its contents are streamed like a
+    /// plain file), not as a device node. Verified against `/dev/zero`, a char
+    /// device present on every supported Unix. Without the conversion the receiver
+    /// would create a device node and then block waiting for file data that never
+    /// arrives (issue #229 deadlock).
+    #[cfg(unix)]
+    #[test]
+    fn copy_devices_encodes_char_device_as_regular_file() {
+        use std::os::unix::fs::FileTypeExt;
+
+        let dev = std::path::Path::new("/dev/zero");
+        let Ok(meta) = std::fs::symlink_metadata(dev) else {
+            eprintln!("skipping: /dev/zero unavailable on this host");
+            return;
+        };
+        if !meta.file_type().is_char_device() {
+            eprintln!("skipping: /dev/zero is not a char device here");
+            return;
+        }
+
+        let ctx = make_copy_devices_generator();
+        let entry = ctx.create_entry(dev, PathBuf::from("zero"), &meta).unwrap();
+
+        // The device is presented as a regular file, not a device node.
+        assert_eq!(
+            entry.file_type(),
+            FileType::Regular,
+            "copy-devices must convert the device to a regular file"
+        );
+        assert_eq!(entry.rdev_major(), None, "regular file carries no rdev");
+        assert_eq!(entry.rdev_minor(), None, "regular file carries no rdev");
+        // upstream: st.st_mtime = time(NULL) - the entry carries a fresh mtime.
+        assert!(
+            entry.mtime() > 0,
+            "copy-devices entry must set mtime to now"
+        );
+    }
+
+    /// Without `--copy-devices`, `create_entry` classifies the same char device
+    /// as a device node - the conversion is strictly gated on the flag.
+    #[cfg(unix)]
+    #[test]
+    fn without_copy_devices_char_device_stays_device_node() {
+        use std::os::unix::fs::FileTypeExt;
+
+        let dev = std::path::Path::new("/dev/zero");
+        let Ok(meta) = std::fs::symlink_metadata(dev) else {
+            eprintln!("skipping: /dev/zero unavailable on this host");
+            return;
+        };
+        if !meta.file_type().is_char_device() {
+            eprintln!("skipping: /dev/zero is not a char device here");
+            return;
+        }
+
+        // make_generator has --devices (D) but not --copy-devices.
+        let ctx = make_generator(false, false, false);
+        let entry = ctx.create_entry(dev, PathBuf::from("zero"), &meta).unwrap();
+        assert_eq!(
+            entry.file_type(),
+            FileType::CharDevice,
+            "without copy-devices the device stays a device node"
+        );
     }
 
     #[test]

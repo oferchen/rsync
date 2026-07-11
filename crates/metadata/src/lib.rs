@@ -131,6 +131,12 @@ use ownership_stub as ownership;
 pub mod stat_cache;
 
 mod special;
+
+/// Portable readable-size probing for `--copy-devices` device streaming.
+pub mod device_size;
+#[cfg(unix)]
+pub use device_size::device_readable_size;
+
 /// Symlink munging helpers for daemon-mode security.
 ///
 /// Provides `munge_symlink` and `unmunge_symlink` which prepend or strip the

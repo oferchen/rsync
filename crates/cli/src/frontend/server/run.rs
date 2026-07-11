@@ -206,6 +206,10 @@ where
     // consumed by the sender's `successful_send()` after each transferred
     // file is acknowledged.
     config.flags.remove_source_files = long_flags.remove_source_files;
+    // upstream: options.c:2987 / flist.c:1419 - `--copy-devices` is forwarded to
+    // the remote sender on a pull. As the server-side sender, this process must
+    // convert each block/char device into a regular file and stream its bytes.
+    config.flags.copy_devices = long_flags.copy_devices;
     // upstream: options.c:2996-2997 - `--mkpath` is forwarded long-form to the
     // server receiver on a push. The receiver gates dest-arg path creation on
     // this flag: without it, a missing ancestor chain is an error
