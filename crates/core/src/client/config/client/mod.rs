@@ -189,6 +189,19 @@ pub struct ClientConfig {
     pub(super) write_devices: bool,
     pub(super) preserve_specials: bool,
     pub(super) list_only: bool,
+    /// Whether the user passed `--list-only` explicitly (upstream `list_only > 1`).
+    ///
+    /// Distinct from `list_only`, which is also set implicitly for a single
+    /// source with no destination. Only the explicit form is forwarded to the
+    /// remote as `--list-only` (upstream `options.c:2747`).
+    pub(super) list_only_arg: bool,
+    /// Whether `-q` / `--quiet` was passed (upstream `quiet`).
+    pub(super) quiet: bool,
+    /// Tri-state for `--msgs2stderr` / `--no-msgs2stderr` (upstream `msgs2stderr`).
+    ///
+    /// `None` is the default (upstream value 2); `Some(true)` is `--msgs2stderr`
+    /// (value 1); `Some(false)` is `--no-msgs2stderr` (value 0).
+    pub(super) msgs2stderr: Option<bool>,
     pub(super) address_mode: AddressMode,
     pub(super) timeout: TransferTimeout,
     pub(super) connect_timeout: TransferTimeout,
@@ -391,6 +404,9 @@ impl Default for ClientConfig {
             write_devices: false,
             preserve_specials: false,
             list_only: false,
+            list_only_arg: false,
+            quiet: false,
+            msgs2stderr: None,
             address_mode: AddressMode::Default,
             timeout: TransferTimeout::Default,
             connect_timeout: TransferTimeout::Default,

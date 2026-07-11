@@ -218,6 +218,21 @@ pub(super) fn build_full_daemon_args(
         args.push(flag_string);
     }
 
+    // upstream: options.c:2747-2748 - `if (list_only > 1) "--list-only"`. Only
+    // the EXPLICIT `--list-only` is forwarded (the implicit single-source
+    // listing is not). The compact 'n' is NOT packed for list-only.
+    if config.list_only_arg() {
+        args.push("--list-only".to_owned());
+    }
+
+    // upstream: options.c:2782-2785 - `--msgs2stderr` (msgs2stderr == 1) or
+    // `--no-msgs2stderr` (== 0); the default (2) forwards nothing.
+    match config.msgs2stderr() {
+        Some(true) => args.push("--msgs2stderr".to_owned()),
+        Some(false) => args.push("--no-msgs2stderr".to_owned()),
+        None => {}
+    }
+
     let we_are_sender = !is_sender;
 
     // upstream: options.c:164-175 server_options - the server needs the
@@ -996,6 +1011,71 @@ mod server_option_fidelity_tests {
         assert!(
             !push.iter().any(|a| a == "--copy-devices"),
             "push must not forward --copy-devices: {push:?}"
+        );
+    }
+
+    // upstream: options.c:2747-2748 - explicit `--list-only` (list_only > 1) is
+    // forwarded; the implicit single-source listing is not.
+    #[test]
+    fn explicit_list_only_forwarded_but_not_implicit() {
+        let explicit = ClientConfig::builder()
+            .list_only(true)
+            .list_only_arg(true)
+            .build();
+        let a = args(&explicit, true);
+        assert!(
+            a.iter().any(|x| x == "--list-only"),
+            "explicit --list-only must be forwarded: {a:?}"
+        );
+
+        let implicit = ClientConfig::builder().list_only(true).build();
+        let a = args(&implicit, true);
+        assert!(
+            !a.iter().any(|x| x == "--list-only"),
+            "implicit list-only must not be forwarded: {a:?}"
+        );
+    }
+
+    // upstream: options.c:2782-2785 - `--msgs2stderr` / `--no-msgs2stderr`
+    // forwarded per the tri-state; the default (None) forwards nothing.
+    #[test]
+    fn msgs2stderr_tri_state_forwarding() {
+        let on = ClientConfig::builder().msgs2stderr(Some(true)).build();
+        assert!(args(&on, false).iter().any(|a| a == "--msgs2stderr"));
+
+        let off = ClientConfig::builder().msgs2stderr(Some(false)).build();
+        assert!(args(&off, false).iter().any(|a| a == "--no-msgs2stderr"));
+
+        let default = ClientConfig::builder().build();
+        assert!(
+            !args(&default, false)
+                .iter()
+                .any(|a| a == "--msgs2stderr" || a == "--no-msgs2stderr")
+        );
+    }
+
+    // upstream: options.c:2628-2629 - `if (quiet && msgs2stderr) 'q'`. The 'q'
+    // letter rides in the compact flag string.
+    #[test]
+    fn quiet_packs_compact_q() {
+        let config = ClientConfig::builder().quiet(true).build();
+        let flag = args(&config, false)
+            .into_iter()
+            .find(|a| a.starts_with('-') && !a.starts_with("--"))
+            .unwrap_or_default();
+        assert!(flag.contains('q'), "quiet must pack 'q': {flag}");
+
+        let suppressed = ClientConfig::builder()
+            .quiet(true)
+            .msgs2stderr(Some(false))
+            .build();
+        let flag = args(&suppressed, false)
+            .into_iter()
+            .find(|a| a.starts_with('-') && !a.starts_with("--"))
+            .unwrap_or_default();
+        assert!(
+            !flag.contains('q'),
+            "quiet + --no-msgs2stderr must not pack 'q': {flag}"
         );
     }
 }

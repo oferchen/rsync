@@ -150,6 +150,15 @@ pub(super) struct ServerLongFlags {
     /// the value here lets the server bypass vstring negotiation and use the
     /// same algorithm as the client.
     pub(super) compress_choice: Option<String>,
+    /// Compression level forwarded by the client (`--compress-level=N`).
+    ///
+    /// upstream: options.c:2754-2758 - `server_options()` emits
+    /// `--compress-level=%d` whenever `do_compression` is active and the level
+    /// differs from the unspecified default. The raw `N` string is captured so
+    /// the server can apply the same level to its codec; without recognising
+    /// the flag the scanner treated `--compress-level=6` as a positional
+    /// destination path (`failed to create destination root --compress-level=6`).
+    pub(super) compression_level: Option<String>,
     /// Log format forwarded by the client (upstream: `--log-format=FMT`).
     ///
     /// upstream: options.c:2750-2762 - the client sends `--log-format=%i`
@@ -183,6 +192,12 @@ pub(super) struct ServerLongFlags {
     /// dest-arg path creation (`main.c:736` `make_path` vs `main.c:788`
     /// single `do_mkdir`).
     pub(super) mkpath: bool,
+    /// Whether the client forwarded `--list-only` (upstream `list_only > 1`).
+    ///
+    /// upstream: options.c:2747-2748 - forwarded so the peer knows the transfer
+    /// is a listing. The receiver renders the flist without writing to the
+    /// destination.
+    pub(super) list_only: bool,
 }
 
 /// Parses all long-form flags from the server argument list.
@@ -228,10 +243,12 @@ pub(super) fn parse_server_long_flags(args: &[OsString]) -> ServerLongFlags {
         reference_directories: Vec::new(),
         info: Vec::new(),
         compress_choice: None,
+        compression_level: None,
         log_format: None,
         partial_dir: None,
         delay_updates: false,
         mkpath: false,
+        list_only: false,
     };
 
     let mut idx = 0;
@@ -301,6 +318,15 @@ pub(super) fn parse_server_long_flags(args: &[OsString]) -> ServerLongFlags {
             // negation (options.c:834). Gates dest-arg path creation below.
             "--mkpath" => flags.mkpath = true,
             "--no-mkpath" => flags.mkpath = false,
+            // upstream: options.c:2747-2748 - `--list-only` forwarded when the
+            // client used the explicit flag (list_only > 1). The receiver lists
+            // the flist without writing to the destination.
+            "--list-only" => flags.list_only = true,
+            // upstream: options.c:2782-2785 - `--msgs2stderr` / `--no-msgs2stderr`
+            // control the peer's own diagnostic routing. Recognised here so the
+            // flag is consumed rather than treated as a positional path; the
+            // server's message routing is handled elsewhere.
+            "--msgs2stderr" | "--no-msgs2stderr" => {}
             // upstream: options.c:2197-2199 - `--old-dirs`/`--old-d` set
             // xfer_dirs=4, resolved to recurse=1 plus an appended `- /*/*`
             // filter. server_options() (options.c:2605) never forwards these
@@ -422,6 +448,10 @@ fn parse_value_bearing_flag(s: &str, flags: &mut ServerLongFlags) {
         .or_else(|| s.strip_prefix("--zc="))
     {
         flags.compress_choice = Some(value.to_owned());
+    // upstream: options.c:2754-2758 - `--compress-level=%d` carries the
+    // explicit compression level so the server codec matches the client.
+    } else if let Some(value) = s.strip_prefix("--compress-level=") {
+        flags.compression_level = Some(value.to_owned());
     // upstream: options.c:2750-2762 - client forwards --log-format=%i (or %o,
     // %i%I, X) so the server knows whether to generate itemize data.
     } else if let Some(value) = s.strip_prefix("--log-format=") {
@@ -472,6 +502,9 @@ pub(super) fn is_known_server_long_flag(arg: &str) -> bool {
             | "--partial"
             | "--specials"
             | "--no-specials"
+            | "--list-only"
+            | "--msgs2stderr"
+            | "--no-msgs2stderr"
             | "--qsort"
             | "--from0"
             | "--inplace"
@@ -504,6 +537,7 @@ pub(super) fn is_known_server_long_flag(arg: &str) -> bool {
         || arg.starts_with("--checksum-seed=")
         || arg.starts_with("--checksum-choice=")
         || arg.starts_with("--compress-choice=")
+        || arg.starts_with("--compress-level=")
         || arg.starts_with("--zc=")
         || arg.starts_with("--compare-dest=")
         || arg.starts_with("--copy-dest=")

@@ -754,7 +754,8 @@ mod long_options {
     fn list_only_long_flag() {
         let parsed = parse_test_args(["--list-only", "src/", "dst/"]).expect("parse");
         assert!(parsed.list_only);
-        assert!(parsed.dry_run); // --list-only implies --dry-run
+        // upstream: options.c:2366-2367 - list_only does NOT set dry_run.
+        assert!(!parsed.dry_run);
     }
 
     #[test]

@@ -169,6 +169,7 @@ where
         mkpath,
         prune_empty_dirs,
         verbosity,
+        quiet,
         progress: initial_progress,
         name_level: initial_name_level,
         name_overridden: initial_name_overridden,
@@ -723,6 +724,11 @@ where
         }
     });
 
+    // upstream: options.c:795 - `--list-only` sets `list_only = 2`, the explicit
+    // form that server_options() forwards as `--list-only` (options.c:2747
+    // `list_only > 1`). The implicit `list_only |= 1` below never reaches 2, so
+    // it is never forwarded. Capture the explicit bit before the OR.
+    let list_only_arg = list_only;
     // upstream: options.c:2194-2195 - `if (argc < 2 && !read_batch && !am_server)
     // list_only |= 1;`. A single remote source with no destination (e.g.
     // `host::module` or `rsync://host/module`) implies list-only mode: list the
@@ -822,6 +828,9 @@ where
         blocking_io,
         dry_run,
         list_only,
+        list_only_arg,
+        quiet,
+        msgs2stderr: msgs_to_stderr_option,
         recursive: recursive_effective,
         dirs,
         delete_mode,

@@ -249,6 +249,24 @@ impl<'a> RemoteInvocationBuilder<'a> {
     /// `--key=value` tokens rather than single-character flags. The order mirrors
     /// upstream for predictable interop testing.
     fn append_long_form_args(&self, args: &mut Vec<OsString>) {
+        // upstream: options.c:2747-2748 - `if (list_only > 1) "--list-only"`.
+        // Only the EXPLICIT `--list-only` (list_only == 2) is forwarded; the
+        // implicit single-source listing (list_only == 1) is not. The compact
+        // 'n' letter is NOT packed for list-only (that tracks dry_run only), so
+        // this is the sole signal the remote receives.
+        if self.config.list_only_arg() {
+            args.push(OsString::from("--list-only"));
+        }
+
+        // upstream: options.c:2782-2785 - `if (msgs2stderr == 1) "--msgs2stderr";
+        // else if (msgs2stderr == 0) "--no-msgs2stderr"`. The default (2) is not
+        // forwarded. Modelled as the tri-state `Option<bool>`.
+        match self.config.msgs2stderr() {
+            Some(true) => args.push(OsString::from("--msgs2stderr")),
+            Some(false) => args.push(OsString::from("--no-msgs2stderr")),
+            None => {}
+        }
+
         // upstream: options.c:2818-2829 - delete timing variants. Explicit
         // --delete-before/during/after/delay are always sent. Bare --delete
         // (DuringDefault) is suppressed when --delete-excluded is active,
@@ -496,16 +514,13 @@ impl<'a> RemoteInvocationBuilder<'a> {
             args.push(OsString::from("--copy-devices"));
         }
 
-        // upstream: options.c:2825,2852-2853 server_options() - the super flag
-        // is forwarded only inside the `if (am_sender)` block (so to a remote
-        // receiver), never to a remote sender. `RemoteRole::Receiver` means the
-        // local process is the sender (PUSH), matching upstream's `am_sender`
-        // branch. Forwarding `--fake-super` to a remote sender (PULL) would make
-        // the remote stat source paths under fake-super semantics, which
-        // upstream never does.
-        if self.config.fake_super() && self.role == RemoteRole::Receiver {
-            args.push(OsString::from("--fake-super"));
-        }
+        // upstream: options.c:2852-2853 server_options() - only `--super`
+        // (am_root > 1) is forwarded, and solely inside the `if (am_sender)`
+        // block. `--fake-super` (am_root == -1) is never forwarded in either
+        // direction: it is a receiver-local storage mode (special-file metadata
+        // goes to user.rsync.%stat xattrs) that the peer must not learn about.
+        // Forwarding it to a remote sender on a PULL made the remote stat source
+        // paths under fake-super semantics, which upstream never does.
 
         // upstream: options.c:2646-2649 - --omit-dir-times ('O') and
         // --omit-link-times ('J') are encoded as sender-only compact letters in
@@ -687,6 +702,13 @@ impl<'a> RemoteInvocationBuilder<'a> {
         // upstream: options.c:2625-2626 - one 'v' per verbosity level, first.
         for _ in 0..self.config.verbosity() {
             flags.push('v');
+        }
+        // upstream: options.c:2628-2629 - `if (quiet && msgs2stderr) 'q'`. The
+        // default `msgs2stderr` is 2 (nonzero), so plain `-q` packs 'q';
+        // `--no-msgs2stderr` (msgs2stderr == 0) suppresses it. Modelled as
+        // `msgs2stderr() != Some(false)`.
+        if self.config.quiet() && self.config.msgs2stderr() != Some(false) {
+            flags.push('q');
         }
         // upstream: options.c:2630-2631 - `make_backups` rides as `b`. Emitting
         // `--backup` as a long arg lands as a positional path on upstream

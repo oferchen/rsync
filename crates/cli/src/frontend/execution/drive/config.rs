@@ -28,6 +28,12 @@ pub(crate) struct ConfigInputs {
     pub(crate) blocking_io: Option<bool>,
     pub(crate) dry_run: bool,
     pub(crate) list_only: bool,
+    /// Whether `--list-only` was passed explicitly (upstream `list_only > 1`).
+    pub(crate) list_only_arg: bool,
+    /// Whether `-q` / `--quiet` was passed (upstream `quiet`).
+    pub(crate) quiet: bool,
+    /// Tri-state `--msgs2stderr` / `--no-msgs2stderr` (upstream `msgs2stderr`).
+    pub(crate) msgs2stderr: Option<bool>,
     pub(crate) recursive: bool,
     pub(crate) dirs: Option<bool>,
     pub(crate) delete_mode: DeleteMode,
@@ -195,6 +201,9 @@ pub(crate) fn build_base_config(mut inputs: ConfigInputs) -> ClientConfigBuilder
         .blocking_io(inputs.blocking_io)
         .dry_run(inputs.dry_run)
         .list_only(inputs.list_only)
+        .list_only_arg(inputs.list_only_arg)
+        .quiet(inputs.quiet)
+        .msgs2stderr(inputs.msgs2stderr)
         .recursive(inputs.recursive)
         // upstream: options.c:2199-2203 - `else if (recurse) xfer_dirs = 1;
         // else if (xfer_dirs < 0) xfer_dirs = list_only ? 1 : 0;`. When neither

@@ -528,6 +528,13 @@ pub struct ParsedArgs {
     /// `--verbose`, `-v` / `--quiet`, `-q` - output verbosity level.
     pub verbosity: u8,
 
+    /// `--quiet`, `-q` - whether quiet mode was requested (upstream `quiet`).
+    ///
+    /// Distinct from `verbosity == 0` (the default): captured separately so the
+    /// server-arg builder can pack the compact `q` letter, which upstream
+    /// (`options.c:2628`) emits only when `quiet && msgs2stderr`.
+    pub quiet: bool,
+
     /// `--progress`, `--info=progress2` / `--no-progress`.
     pub progress: ProgressSetting,
 

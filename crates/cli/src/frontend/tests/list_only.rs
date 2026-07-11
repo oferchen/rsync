@@ -1049,9 +1049,13 @@ fn list_only_multiple_files_have_consistent_column_alignment() {
     }
 }
 
-/// Verifies that `--list-only` implies `--dry-run` and does not actually transfer files.
+/// Verifies that `--list-only` lists entries without transferring any files.
+///
+/// upstream: options.c:2366-2367 - list_only does NOT set dry_run, but the
+/// receiver skips destination writes under list_only independently
+/// (`run_client` mode selection + `TransferFlags::skip_dest_writes`).
 #[test]
-fn list_only_implies_dry_run_no_files_transferred() {
+fn list_only_no_files_transferred() {
     use std::fs;
     use tempfile::tempdir;
 
@@ -1088,7 +1092,7 @@ fn list_only_implies_dry_run_no_files_transferred() {
     assert_eq!(
         dest_entries.len(),
         0,
-        "destination should be empty since --list-only implies --dry-run"
+        "destination should be empty since --list-only skips destination writes"
     );
 }
 
