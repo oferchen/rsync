@@ -110,6 +110,36 @@ pub(crate) struct MultiplexReader<R> {
 /// `got_xfer_error` is set (cleanup.c:217-218, main.c:1608-1609).
 pub(super) const RERR_PARTIAL: i32 = 23;
 
+/// Typed error carrying the exit code a remote peer requested via
+/// `MSG_ERROR_EXIT`.
+///
+/// [`MultiplexReader::check_error_exit`] wraps this in an [`io::Error`] as its
+/// inner error so the code survives `?` propagation up the read stack. Callers
+/// that terminate a transfer can `downcast_ref` the inner error to recover the
+/// peer's exact exit code (e.g. `RERR_SYNTAX = 1` for a read-only module
+/// rejection) instead of collapsing every failure to a generic partial-transfer
+/// (23) code.
+///
+/// The [`Display`](std::fmt::Display) output is byte-identical to the previous
+/// inline string form (`"remote error exit (code N)"`), so any diagnostic that
+/// rendered the wrapping `io::Error` verbatim is unchanged.
+///
+/// upstream: io.c:1663-1701 - on `MSG_ERROR_EXIT` the client calls the NORETURN
+/// `_exit_cleanup(val)`, exiting with the peer-supplied code.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RemoteExitError {
+    /// Exit code the remote peer requested via `MSG_ERROR_EXIT`.
+    pub code: i32,
+}
+
+impl std::fmt::Display for RemoteExitError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "remote error exit (code {})", self.code)
+    }
+}
+
+impl std::error::Error for RemoteExitError {}
+
 /// Default buffer capacity for `MultiplexReader`.
 ///
 /// 64KB matches the `MultiplexWriter` buffer size and upstream rsync's
@@ -217,7 +247,7 @@ impl<R> MultiplexReader<R> {
             }
             Err(io::Error::new(
                 io::ErrorKind::ConnectionAborted,
-                format!("remote error exit (code {code})"),
+                RemoteExitError { code },
             ))
         } else {
             Ok(())
@@ -576,5 +606,46 @@ impl<R: tokio::io::AsyncRead + Unpin> MultiplexReader<R> {
             }
             self.check_error_exit()?;
         }
+    }
+}
+
+#[cfg(test)]
+mod remote_exit_error_tests {
+    use super::*;
+
+    /// The typed error must render byte-identically to the previous inline
+    /// string form so any diagnostic that displayed the wrapping `io::Error`
+    /// verbatim is unchanged.
+    #[test]
+    fn display_matches_legacy_string_form() {
+        for code in [0, 1, 23, 255, -1] {
+            let err = RemoteExitError { code };
+            assert_eq!(err.to_string(), format!("remote error exit (code {code})"));
+        }
+    }
+
+    /// `check_error_exit` must wrap the code as the inner error of a
+    /// `ConnectionAborted` `io::Error` so callers can `downcast_ref` it and
+    /// honour the peer's exit code instead of forcing 23.
+    #[test]
+    fn check_error_exit_wraps_typed_inner_error() {
+        let mut reader = MultiplexReader::new(io::empty());
+        reader.error_exit_code = Some(1);
+        let err = reader.check_error_exit().expect_err("code 1 must abort");
+        assert_eq!(err.kind(), io::ErrorKind::ConnectionAborted);
+        let inner = err
+            .get_ref()
+            .and_then(|e| e.downcast_ref::<RemoteExitError>())
+            .expect("inner RemoteExitError must survive");
+        assert_eq!(inner.code, 1);
+    }
+
+    /// RERR_PARTIAL (23) suppression must remain: the msg2sndr race means a
+    /// bare exit-23 is non-fatal and must not abort the read loop.
+    #[test]
+    fn check_error_exit_suppresses_rerr_partial() {
+        let mut reader = MultiplexReader::new(io::empty());
+        reader.error_exit_code = Some(RERR_PARTIAL);
+        assert!(reader.check_error_exit().is_ok());
     }
 }
