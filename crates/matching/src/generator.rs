@@ -703,6 +703,22 @@ mod tests {
         DeltaSignatureIndex::from_signature(&signature, SignatureAlgorithm::Md4).expect("index")
     }
 
+    /// Builds an index with a caller-chosen fixed block length so a
+    /// byte-aligned source yields an exact, predictable block count.
+    fn build_index_fixed(data: &[u8], block_len: u32) -> DeltaSignatureIndex {
+        use std::num::NonZeroU32;
+        let params = SignatureLayoutParams::new(
+            data.len() as u64,
+            Some(NonZeroU32::new(block_len).unwrap()),
+            ProtocolVersion::NEWEST,
+            NonZeroU8::new(16).unwrap(),
+        );
+        let layout = calculate_signature_layout(params).expect("layout");
+        let signature =
+            generate_file_signature(data, layout, SignatureAlgorithm::Md4).expect("signature");
+        DeltaSignatureIndex::from_signature(&signature, SignatureAlgorithm::Md4).expect("index")
+    }
+
     #[test]
     fn generate_delta_produces_literals_when_no_matches() {
         let basis = vec![0u8; 2048];
@@ -1046,6 +1062,95 @@ mod tests {
             chunked.literal_bytes(),
             data.len()
         );
+    }
+
+    #[test]
+    fn block_skip_matched_path_is_o_blocks_not_o_bytes() {
+        // ZSO-2 regression: after a confirmed block match the generator
+        // advances the scan by a whole block (`offset += block_len` on the
+        // matched path, generator.rs ~:391) instead of sliding one byte at a
+        // time (`offset += 1` on the miss path, ~:253). A byte-for-byte copy
+        // of a duplicate-free, block-aligned basis is therefore resolved with
+        // O(file_len / block_len) block probes, never O(file_len) per-byte
+        // probes.
+        const BLOCK_LEN: u32 = 1024;
+        const N_BLOCKS: usize = 64;
+
+        let data = pseudo_random(N_BLOCKS * BLOCK_LEN as usize, 0x51ce_b100);
+        let index = build_index_fixed(&data, BLOCK_LEN);
+        // A deterministic per-block count requires a duplicate-free basis so
+        // every source window resolves to exactly one basis block.
+        assert!(
+            !index.has_duplicate_blocks(),
+            "random basis must be duplicate-free for a deterministic skip count",
+        );
+        let block_len = index.block_length();
+        assert_eq!(
+            block_len, BLOCK_LEN as usize,
+            "layout must honor the block length"
+        );
+        let n_blocks = data.len() / block_len;
+        assert_eq!(n_blocks, N_BLOCKS);
+        assert_eq!(index.block_count(), N_BLOCKS);
+
+        // The index owns the shared seq-match probe counters. Reset them, then
+        // scan an exact copy of the basis.
+        let counters = index.seq_match_counters();
+        counters.reset();
+
+        let generator = DeltaGenerator::new();
+        let script = generator
+            .generate(Cursor::new(&data[..]), &index)
+            .expect("script");
+
+        // A 100%-match, duplicate-free, block-aligned source coalesces into a
+        // single fat Copy token spanning every basis block, with zero literals.
+        // A matched path that slid by one byte would fall out of block
+        // alignment and spill literals instead.
+        assert_eq!(
+            script.literal_bytes(),
+            0,
+            "a full copy must emit no literals"
+        );
+        assert_eq!(script.total_bytes(), data.len() as u64);
+        assert_eq!(
+            script.tokens().len(),
+            1,
+            "seq-match must coalesce the full run into a single Copy token",
+        );
+        match &script.tokens()[0] {
+            DeltaToken::Copy { index: idx, len } => {
+                assert_eq!(*idx, 0, "the coalesced run must start at basis block 0");
+                assert_eq!(*len, data.len(), "the run must cover every basis block");
+            }
+            other => panic!("expected a single Copy token, got {other:?}"),
+        }
+
+        // Block-skip proof: the matched path takes the adjacency fast-path
+        // exactly once per block transition - N-1 probes for N blocks, every
+        // one a hit. This is the iteration count the spec pins: O(blocks), i.e.
+        // `file_len / block_len - 1`, not O(bytes) = `file_len`. A broken skip
+        // that slid by 1 on the matched path would never enter the bulk-refill
+        // inner loop, recording ZERO seq-match probes (and spilling literals,
+        // asserted above).
+        let probes = counters.probes();
+        let hits = counters.hits();
+        assert_eq!(
+            probes,
+            (n_blocks - 1) as u64,
+            "expected {} block probes (file_len/block_len - 1), got {probes}; \
+             O(file_len)={} probes would mean a per-byte matched path",
+            n_blocks - 1,
+            data.len(),
+        );
+        assert_eq!(
+            hits,
+            (n_blocks - 1) as u64,
+            "every adjacency probe must confirm through the seq-match fast path",
+        );
+
+        // The skipped-ahead script must still rebuild the source byte-for-byte.
+        assert_eq!(reconstruct(&data, &index, &script), data);
     }
 
     #[test]
