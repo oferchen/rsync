@@ -17,6 +17,7 @@ mod tests;
 
 pub(crate) use counting::CountingReader;
 pub(crate) use multiplex::MultiplexReader;
+pub use multiplex::RemoteExitError;
 pub use server::ServerReader;
 
 #[cfg(feature = "tokio-transfer")]
