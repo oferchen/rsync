@@ -302,6 +302,12 @@ impl GeneratorContext {
         .with_preserve_crtimes(self.config.flags.crtimes)
         .with_preserve_acls(self.config.flags.acls)
         .with_acl_send_names(acl_send_names)
+        // upstream: flist.c:481-482,491-492 - inline XMIT_*_NAME_FOLLOWS owner
+        // names are emitted only under incremental recursion. Without it the
+        // names travel solely in the trailing id-list (send_id_lists), so
+        // gating inline emission on inc_recurse keeps the flist bytes identical
+        // to upstream for non-incremental transfers.
+        .with_name_follows(inc_recurse)
         .with_preserve_xattrs(self.config.flags.xattrs)
         .with_checksum_seed(self.checksum_seed);
 

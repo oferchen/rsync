@@ -229,7 +229,8 @@ fn extended_flags_owner_name_flags() {
         let mut buf = Vec::new();
         let mut writer = FileListWriter::new(protocol)
             .with_preserve_uid(true)
-            .with_preserve_gid(true);
+            .with_preserve_gid(true)
+            .with_name_follows(true);
 
         let mut entry = FileEntry::new_file("owned.txt".into(), 100, 0o644);
         entry.set_uid(1000);
@@ -284,6 +285,83 @@ fn extended_flags_owner_name_flags() {
             "protocol 29 should not have group name"
         );
     }
+}
+
+#[test]
+fn name_follows_gated_on_inc_recurse() {
+    // upstream: flist.c:481-482,491-492 - `if (inc_recurse && user_name)` gates
+    // the inline XMIT_*_NAME_FOLLOWS flags. Without inc_recurse the sender must
+    // NOT emit inline owner names (they ride only in the trailing id-list), so
+    // `with_name_follows(false)` (the default) must produce a strictly shorter
+    // entry and a receiver that sees no inline name. With `with_name_follows`
+    // enabled the names appear inline, matching the incremental-recursion wire.
+    use super::super::super::read::FileListReader;
+    use std::io::Cursor;
+
+    let protocol = ProtocolVersion::try_from(30u8).unwrap();
+
+    let make_entry = || {
+        let mut entry = FileEntry::new_file("owned.txt".into(), 100, 0o644);
+        entry.set_uid(1000);
+        entry.set_gid(1000);
+        entry.set_user_name("alice".to_string());
+        entry.set_group_name("developers".to_string());
+        entry
+    };
+
+    // Default (name_follows = false): no inline names on the wire.
+    let mut off_buf = Vec::new();
+    let mut off_writer = FileListWriter::new(protocol)
+        .with_preserve_uid(true)
+        .with_preserve_gid(true);
+    off_writer.write_entry(&mut off_buf, &make_entry()).unwrap();
+    off_writer.write_end(&mut off_buf, None).unwrap();
+
+    // name_follows = true: inline names emitted (incremental-recursion path).
+    let mut on_buf = Vec::new();
+    let mut on_writer = FileListWriter::new(protocol)
+        .with_preserve_uid(true)
+        .with_preserve_gid(true)
+        .with_name_follows(true);
+    on_writer.write_entry(&mut on_buf, &make_entry()).unwrap();
+    on_writer.write_end(&mut on_buf, None).unwrap();
+
+    // The inline name strings appear only when name_follows is enabled; with it
+    // off they are absent from the entry (and, with no other extended-flag bits
+    // set, the XMIT_EXTENDED_FLAGS byte drops as well), so the gated-off stream
+    // is strictly shorter.
+    let contains = |hay: &[u8], needle: &[u8]| hay.windows(needle.len()).any(|w| w == needle);
+    assert!(contains(&on_buf, b"alice") && contains(&on_buf, b"developers"));
+    assert!(
+        !contains(&off_buf, b"alice") && !contains(&off_buf, b"developers"),
+        "inline owner names must be absent when name_follows is off"
+    );
+    assert!(off_buf.len() < on_buf.len());
+
+    // A receiver decoding the gated-off stream sees no inline names but keeps
+    // the numeric uid/gid (names would arrive via the id-list trailer).
+    let mut off_reader = FileListReader::new(protocol)
+        .with_preserve_uid(true)
+        .with_preserve_gid(true);
+    let off_read = off_reader
+        .read_entry(&mut Cursor::new(&off_buf[..]))
+        .unwrap()
+        .unwrap();
+    assert_eq!(off_read.user_name(), None);
+    assert_eq!(off_read.group_name(), None);
+    assert_eq!(off_read.uid(), Some(1000));
+    assert_eq!(off_read.gid(), Some(1000));
+
+    // The name_follows stream round-trips the inline names.
+    let mut on_reader = FileListReader::new(protocol)
+        .with_preserve_uid(true)
+        .with_preserve_gid(true);
+    let on_read = on_reader
+        .read_entry(&mut Cursor::new(&on_buf[..]))
+        .unwrap()
+        .unwrap();
+    assert_eq!(on_read.user_name(), Some("alice"));
+    assert_eq!(on_read.group_name(), Some("developers"));
 }
 
 #[test]

@@ -48,7 +48,8 @@ fn protocol_boundary_29_30_user_names() {
     let mut buf = Vec::new();
     let mut writer = FileListWriter::new(protocol30)
         .with_preserve_uid(true)
-        .with_preserve_gid(true);
+        .with_preserve_gid(true)
+        .with_name_follows(true);
 
     let mut entry = FileEntry::new_file("test.txt".into(), 1024, 0o644);
     entry.set_uid(1000);
