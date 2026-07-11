@@ -381,6 +381,64 @@ fn parse_server_args_skips_joined_partial_dir_flag() {
     assert_eq!(pos_args, vec![OsString::from("dest")]);
 }
 
+/// Regression for network `--append` over SSH: upstream `server_options()`
+/// (options.c:2951-2954) emits a single bare `--append` for `append_mode == 1`.
+/// Without a match arm the flag fell through to `positional_args[0]`
+/// (parse.rs), so the receiver tried to `mkdir` a destination root literally
+/// named `--append` and exited 12 ("failed to create destination root
+/// --append"). The flag string and real positional path must survive intact.
+#[test]
+fn parse_server_args_skips_append_flag() {
+    let args = vec![
+        OsString::from("--server"),
+        OsString::from("-logDtpre.iLsfxCIvu"),
+        OsString::from("--append"),
+        OsString::from("."),
+        OsString::from("dst/"),
+    ];
+    let (flags, pos_args) = parse_server_flag_string_and_args(&args);
+    assert_eq!(flags, "-logDtpre.iLsfxCIvu");
+    assert_eq!(
+        pos_args,
+        vec![OsString::from("dst/")],
+        "--append must not leak into positional args: {pos_args:?}",
+    );
+}
+
+/// `parse_server_long_flags` records a single `--append` as `append_mode == 1`
+/// (plain append, prefix trusted) and never sets `append_verify`.
+#[test]
+fn long_flags_captures_single_append() {
+    let args = vec![OsString::from("--server"), OsString::from("--append")];
+    let flags = parse_server_long_flags(&args);
+    assert!(flags.append);
+    assert!(!flags.append_verify);
+}
+
+/// Upstream wire-encodes `--append-verify` (`append_mode == 2`) as a doubled
+/// bare `--append` (options.c:2952-2954); the client never sends the long-form
+/// `--append-verify`. The second occurrence must set `append_verify`,
+/// mirroring the daemon long-form parser and upstream's `am_server`
+/// `append_mode++` (options.c:1722-1726).
+#[test]
+fn long_flags_captures_doubled_append_as_verify() {
+    let args = vec![
+        OsString::from("--server"),
+        OsString::from("--append"),
+        OsString::from("--append"),
+    ];
+    let flags = parse_server_long_flags(&args);
+    assert!(flags.append);
+    assert!(flags.append_verify);
+}
+
+/// `--append` must be a known server long flag so the compact-flag-string
+/// scanner skips it rather than mistaking it for the flag string or a path.
+#[test]
+fn append_is_known_server_long_flag() {
+    assert!(is_known_server_long_flag("--append"));
+}
+
 /// `parse_server_long_flags` must capture both split and joined
 /// `--partial-dir` forms into `ServerLongFlags::partial_dir`.
 #[test]
