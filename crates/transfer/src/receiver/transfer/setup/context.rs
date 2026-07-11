@@ -32,9 +32,10 @@ use super::wire_filters::parse_wire_filters_for_receiver;
 impl ReceiverContext {
     /// Common setup for all transfer modes.
     ///
-    /// Activates input multiplex, reads filter list if needed, receives the file
-    /// list (including INC_RECURSE extra segments), sanitizes paths, and builds
-    /// the `PipelineSetup` with checksum and metadata configuration.
+    /// Activates input multiplex, reads filter list if needed, receives the
+    /// initial file list, sanitizes paths, and builds the `PipelineSetup` with
+    /// checksum and metadata configuration. INC_RECURSE sub-list segments are
+    /// pulled on demand by the drivers rather than drained here.
     ///
     /// # Upstream Reference
     ///
@@ -121,10 +122,13 @@ impl ReceiverContext {
             info_log!(Flist, 1, "receiving incremental file list");
         }
 
+        // INC_RECURSE sub-list segments are no longer drained here. The whole
+        // list arrives in `receive_file_list` for the non-INC_RECURSE case (it
+        // sets `flist_eof`); under INC_RECURSE the drivers pull segments lazily
+        // via the on-demand primitives (`ensure_flat_idx` /
+        // `ensure_all_segments_loaded`), mirroring upstream's generator which
+        // fetches sub-lists on demand rather than up front (generator.c:2299).
         let file_count = self.receive_file_list(&mut reader)?;
-
-        let extra_count = self.receive_extra_file_lists(&mut reader)?;
-        let file_count = file_count + extra_count;
 
         let (file_count, setup) = self.build_pipeline_setup(file_count)?;
         Ok((reader, file_count, setup))
@@ -493,9 +497,9 @@ impl ReceiverContext {
     /// Runs the identical receiver transfer-setup sequence with `.await` on the
     /// two wire reads: the filter-list read
     /// ([`read_filter_list_async`](protocol::filters::read_filter_list_async))
-    /// and the file-list reception
-    /// ([`receive_file_list_async`](Self::receive_file_list_async) plus
-    /// [`receive_extra_file_lists_async`](Self::receive_extra_file_lists_async)).
+    /// and the initial file-list reception
+    /// ([`receive_file_list_async`](Self::receive_file_list_async)). INC_RECURSE
+    /// sub-list segments are pulled lazily by the drivers, not drained here.
     /// Every other step - multiplex activation, filter-chain compilation
     /// ([`apply_received_filter_rules`](Self::apply_received_filter_rules) /
     /// [`build_client_deletion_filter_chain`](Self::build_client_deletion_filter_chain)),
@@ -612,11 +616,10 @@ impl ReceiverContext {
         // must not be dropped. `run_sync_async` prepends the returned `carry` to
         // the per-file read stream so no wire bytes are lost when the sender
         // packs the list and the first per-file response into one frame.
+        // INC_RECURSE sub-list segments are no longer drained here (see the sync
+        // `setup_transfer`); the async drivers materialize them lazily. `carry`
+        // is threaded straight through so no look-ahead wire bytes are lost.
         let (file_count, carry) = self.receive_file_list_async(&mut reader).await?;
-        let (extra_count, carry) = self
-            .receive_extra_file_lists_async(&mut reader, carry)
-            .await?;
-        let file_count = file_count + extra_count;
 
         let (file_count, setup) = self.build_pipeline_setup(file_count)?;
         Ok((reader, file_count, setup, carry))
