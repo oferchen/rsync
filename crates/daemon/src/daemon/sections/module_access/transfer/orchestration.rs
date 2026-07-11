@@ -55,10 +55,11 @@ fn process_approved_module(
 
     apply_module_timeout(ctx.reader.get_mut(), module)?;
 
-    let auth_user = match handle_authentication(ctx, module, negotiated_protocol)? {
-        Some(user) => user,
-        None => return Ok(()),
-    };
+    let (auth_user, auth_access_level) =
+        match handle_authentication(ctx, module, negotiated_protocol)? {
+            Some(outcome) => outcome,
+            None => return Ok(()),
+        };
 
     // Run early exec after authentication so the authenticated username
     // is available in the RSYNC_USER_NAME environment variable.
@@ -140,8 +141,16 @@ fn process_approved_module(
     // am_sender against lp_read_only(i) and lp_write_only(i).
     // When --sender is absent the client is pushing (server = Receiver).
     // A read-only module must reject pushes; a write-only module must reject pulls.
+    //
+    // upstream: clientserver.c:760 seeds `read_only = lp_read_only(module_id)`;
+    // auth_server() (authenticate.c:340-343) then overrides it from the
+    // authenticated user's `:ro` / `:rw` suffix. Apply that override here so a
+    // `name:rw` user may push to a `read only = yes` module and a `name:ro`
+    // user is refused writes to a `read only = no` module. The `write only`
+    // check is unaffected: upstream's auth override only touches `read_only`.
     let role = determine_server_role(&client_args);
-    if module.read_only && matches!(role, ServerRole::Receiver) {
+    let effective_read_only = access_effective_read_only(module.read_only, auth_access_level);
+    if effective_read_only && matches!(role, ServerRole::Receiver) {
         send_error(
             ctx.reader.get_mut(),
             ctx.limiter,

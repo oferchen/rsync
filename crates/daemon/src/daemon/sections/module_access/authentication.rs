@@ -11,10 +11,40 @@
 /// Result of a module authentication attempt.
 #[derive(Clone, Debug, Eq, PartialEq)]
 enum AuthenticationStatus {
-    /// Authentication was successful, carrying the authenticated username.
-    Granted(String),
+    /// Authentication was successful, carrying the authenticated username and
+    /// the per-user access-level override parsed from the `auth users` entry
+    /// (`name:ro` / `name:rw`; `Default` when the entry has no such suffix).
+    Granted {
+        /// The authenticated username.
+        username: String,
+        /// Per-user access-level override applied to the session's `read only`.
+        access_level: UserAccessLevel,
+    },
     /// Authentication was denied (bad credentials or missing response).
     Denied,
+}
+
+/// Resolves the session's effective `read only` flag after authentication.
+///
+/// A user listed in `auth users` may carry an access-level suffix that
+/// overrides the module's `read only` setting for that session:
+///
+/// - `name:ro` forces read-only (client pushes are refused).
+/// - `name:rw` forces writable (pushes are allowed even on a `read only` module).
+/// - no suffix leaves the module's own `read only` in force.
+///
+/// `name:deny` is handled earlier by refusing authentication outright, so it
+/// never reaches this function.
+///
+/// upstream: authenticate.c:340-343 - `if (opt_ch=='r') read_only=1; else if
+/// (opt_ch=='w') read_only=0;`, applied to the `read_only` global that
+/// `rsync_module()` seeds from `lp_read_only(module_id)` (clientserver.c:760).
+fn access_effective_read_only(module_read_only: bool, access: UserAccessLevel) -> bool {
+    match access {
+        UserAccessLevel::ReadOnly => true,
+        UserAccessLevel::ReadWrite => false,
+        UserAccessLevel::Default | UserAccessLevel::Deny => module_read_only,
+    }
 }
 
 /// Performs challenge-response authentication for a protected module.
@@ -82,13 +112,20 @@ fn perform_module_authentication(
         return Ok(AuthenticationStatus::Denied);
     }
 
-    // Check for explicit deny access level
+    // upstream: authenticate.c:334-335 - `opt_ch == 'd'` ("deny") reports
+    // "denied by rule" and auth_server() returns NULL (auth failure).
     if auth_user.access_level == UserAccessLevel::Deny {
         send_auth_failed(reader.get_mut(), module, limiter)?;
         return Ok(AuthenticationStatus::Denied);
     }
 
-    Ok(AuthenticationStatus::Granted(username.to_owned()))
+    // upstream: authenticate.c:340-343 - the `:ro` / `:rw` suffix travels back
+    // to rsync_module() via the `read_only` global; carry the parsed access
+    // level so the caller can apply it to the session's effective `read only`.
+    Ok(AuthenticationStatus::Granted {
+        username: username.to_owned(),
+        access_level: auth_user.access_level,
+    })
 }
 
 /// Generates a unique authentication challenge string.
