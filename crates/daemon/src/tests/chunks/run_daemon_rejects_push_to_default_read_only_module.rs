@@ -66,18 +66,11 @@ fn run_daemon_rejects_push_to_default_read_only_module() {
         .expect("send client args");
     stream.flush().expect("flush client args");
 
-    // upstream: clientserver.c - daemon rejects with
-    // "@ERROR: module is read only"
-    line.clear();
-    reader.read_line(&mut line).expect("error message");
-    assert_eq!(line.trim_end(), "@ERROR: module is read only");
-
-    // upstream: clientserver.c:381-385 - the client treats @ERROR as fatal and
-    // returns before reading further, so the daemon sends no @RSYNCD: EXIT after
-    // the refusal; the socket just closes (next read is EOF).
-    line.clear();
-    let read = reader.read_line(&mut line).expect("eof after error");
-    assert_eq!(read, 0, "no trailing @RSYNCD: EXIT after @ERROR, got: {line:?}");
+    // #227: the default `read only = true` push rejection is post-`@RSYNCD:
+    // OK`, so it must be framed as MSG_ERROR_XFER + MSG_ERROR_EXIT rather than
+    // written as a raw line. Shared decoder mirrors upstream
+    // `do_server_recv()` (main.c:1166-1169).
+    assert_read_only_multiplexed_rejection(&mut reader);
 
     drop(reader);
     let result = handle.join().expect("daemon thread");

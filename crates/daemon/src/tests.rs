@@ -28,6 +28,7 @@ use crate::daemon::{
     ModuleRuntime,
     // From sections/cli_args.rs
     ProgramName,
+    RERR_SYNTAX_EXIT_CODE,
     // From runtime_options.rs
     RuntimeOptions,
     TestSecretsEnvOverride,

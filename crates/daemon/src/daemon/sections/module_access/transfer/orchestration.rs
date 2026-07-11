@@ -137,10 +137,22 @@ fn process_approved_module(
     }
 
     // Enforce read-only / write-only access restrictions.
-    // upstream: clientserver.c:rsync_module() - after reading args, check
-    // am_sender against lp_read_only(i) and lp_write_only(i).
-    // When --sender is absent the client is pushing (server = Receiver).
-    // A read-only module must reject pushes; a write-only module must reject pulls.
+    // upstream: main.c:1166-1169 `do_server_recv()` rejects a read-only push
+    // and main.c:934-936 `do_server_sender()` rejects a write-only pull, both
+    // via `rprintf(FERROR, "ERROR: module is ...\n")` + `exit_cleanup(
+    // RERR_SYNTAX)`. When --sender is absent the client is pushing (server =
+    // Receiver); a read-only module must reject pushes and a write-only module
+    // must reject pulls.
+    //
+    // Both upstream checks fire after `setup_protocol()` and
+    // `io_start_multiplex_out()`, so the error must be framed as
+    // `MSG_ERROR_XFER` + `MSG_ERROR_EXIT` rather than written as a raw line.
+    // The `@RSYNCD: OK` acknowledgement already flipped the client to
+    // multiplexed input; a raw `ERROR: ...\n` line would be decoded as a
+    // 4-byte frame header and desync the stream (issue #227:
+    // `invalid multi-message 102 (code 12)`).
+    // `handle_access_denied_post_handshake` finishes the post-OK protocol
+    // setup, then emits the framed error and exit code.
     //
     // upstream: clientserver.c:760 seeds `read_only = lp_read_only(module_id)`;
     // auth_server() (authenticate.c:340-343) then overrides it from the
@@ -151,20 +163,20 @@ fn process_approved_module(
     let role = determine_server_role(&client_args);
     let effective_read_only = access_effective_read_only(module.read_only, auth_access_level);
     if effective_read_only && matches!(role, ServerRole::Receiver) {
-        send_error(
-            ctx.reader.get_mut(),
-            ctx.limiter,
+        return handle_access_denied_post_handshake(
+            ctx,
             MODULE_READ_ONLY_PAYLOAD,
-        )?;
-        return Ok(());
+            negotiated_protocol,
+            &client_args,
+        );
     }
     if module.write_only && matches!(role, ServerRole::Generator) {
-        send_error(
-            ctx.reader.get_mut(),
-            ctx.limiter,
+        return handle_access_denied_post_handshake(
+            ctx,
             MODULE_WRITE_ONLY_PAYLOAD,
-        )?;
-        return Ok(());
+            negotiated_protocol,
+            &client_args,
+        );
     }
 
     if !validate_module_path(ctx, module)? {
