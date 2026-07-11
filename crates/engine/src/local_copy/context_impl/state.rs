@@ -145,6 +145,7 @@ impl<'a> CopyContext<'a> {
             io_errors_occurred: false,
             io_error_delete_warning_emitted: false,
             iconv_conversion_error: false,
+            unsupported_operation_skipped: false,
             multi_source: false,
             verified_parents: HashMap::new(),
             batch_flist_writer,
@@ -1143,6 +1144,14 @@ impl<'a> CopyContext<'a> {
     /// transfer can finish with exit code 23 (`RERR_PARTIAL`).
     pub(super) const fn iconv_conversion_error_occurred(&self) -> bool {
         self.iconv_conversion_error
+    }
+
+    /// Reports whether any entry was skipped because its creation is
+    /// unsupported on this platform without privilege (a Windows unprivileged
+    /// file symlink), so the transfer can finish with exit code 23
+    /// (`RERR_PARTIAL`) even though every other entry was copied.
+    pub(super) const fn unsupported_operation_skipped(&self) -> bool {
+        self.unsupported_operation_skipped
     }
 
     /// Reports whether deletions should proceed despite I/O errors.

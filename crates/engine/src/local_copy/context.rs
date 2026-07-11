@@ -157,6 +157,13 @@ pub(crate) struct CopyContext<'a> {
     /// `io_error |= IOERR_GENERAL` on a failed `iconvbufs(ic_send, ...)`.
     // upstream: flist.c:1631 send_file1()
     iconv_conversion_error: bool,
+    /// Set when a file entry could not be materialised because the operation is
+    /// unsupported on this platform without privilege (currently a Windows file
+    /// symbolic link created by an unprivileged user without Developer Mode).
+    /// The entry is skipped with a warning and this flag drives the final
+    /// `RERR_PARTIAL` (exit 23) exit code, mirroring upstream's `FERROR_XFER`
+    /// handling of a failed `do_symlink()`.
+    unsupported_operation_skipped: bool,
     /// `true` when the active plan carries more than one source operand.
     /// Used to switch `--delete-during` to a deferred sweep so the per-source
     /// keep lists can be merged before any extraneous unlink fires; upstream
