@@ -723,10 +723,14 @@ impl DeltaGenerator {
     ///
     /// # Wire transparency
     ///
-    /// The scan runs with the consumed-bitset prune disabled, so the emitted
-    /// token stream (and therefore the wire bytes and the matched/literal
-    /// split) equals the pruned sequential [`Self::generate`] output only when
-    /// **both** hold:
+    /// Reconstruction and the total/literal byte counts are identical to the
+    /// pruned sequential [`Self::generate`] on **every** input: concatenating
+    /// (and coalescing) the per-range token streams only ever joins adjacent
+    /// literal bytes, never moving a byte between the matched and literal
+    /// tallies.
+    ///
+    /// The emitted *token* stream (the Copy/Literal sequence) equals the pruned
+    /// sequential output only when **both** hold:
     ///
     /// 1. the basis is duplicate-free
     ///    ([`DeltaSignatureIndex::has_duplicate_blocks`] is `false`) - with
@@ -740,11 +744,21 @@ impl DeltaGenerator {
     /// stay block-aligned and the boundary either coincides with a block edge
     /// or lands in an edited, non-matching block). It can fail for shifted
     /// content, so callers must treat the result as potentially divergent
-    /// (opt-in only, never advertised as byte-identical) and only engage the
-    /// parallel path behind a default-off flag with the duplicate-free gate.
-    /// The adjacent-literal coalescing in the concatenation loop keeps the
-    /// literal-token framing identical to the sequential scan whenever
-    /// conditions 1 and 2 hold.
+    /// (opt-in only, never advertised as byte-identical on arbitrary inputs)
+    /// and only engage the parallel path behind a default-off flag with the
+    /// duplicate-free gate.
+    ///
+    /// When conditions 1 and 2 hold the scan is token-identical to the
+    /// sequential path, and the adjacent-literal coalescing in the
+    /// concatenation loop makes the wire byte stream identical in the common
+    /// case. One honest residual remains: the sequential scan flushes pending
+    /// literals every `block_length + CHUNK_SIZE` bytes as one continuous run,
+    /// whereas each range restarts that flush cadence at its start, so where a
+    /// range boundary lands inside a long literal run the literal-token framing
+    /// can differ by a few length-prefix bytes at a chunk seam. This rare
+    /// literal-run segmentation seam never changes the reconstructed bytes or
+    /// the total/literal counts - only where the per-token length prefixes fall
+    /// as the wire encoder re-chunks the literal payload.
     ///
     /// # Arguments
     ///
@@ -816,13 +830,17 @@ impl DeltaGenerator {
         // unmatched region: the previous range drains its tail bytes as a
         // literal and the next range emits its head bytes as a second literal,
         // but the sequential [`Self::generate`] scan - which sees the region
-        // as one contiguous run - emits a single literal token there. Merging
-        // the two halves restores that framing, so the wire byte stream
-        // (`write_token_literal` frames each literal token independently)
-        // stays identical to the sequential scan for a duplicate-free basis
-        // whose matched blocks never straddle a range boundary. Merging only
-        // ever concatenates adjacent literal bytes, so reconstruction and the
-        // total/literal byte counts are unaffected on every input.
+        // as one contiguous run - would not split at that exact point. Merging
+        // the two halves removes that boundary double-literal, so for a
+        // duplicate-free basis whose matched blocks never straddle a range
+        // boundary the wire byte stream matches the sequential scan in the
+        // common case. It is not unconditionally byte-identical: the sequential
+        // scan flushes literals every `block_len + CHUNK_SIZE` bytes as one
+        // continuous run while each range restarts that cadence, so inside a
+        // long literal run the length-prefix framing can differ by a few bytes
+        // at a chunk seam. Merging only ever concatenates adjacent literal
+        // bytes, so reconstruction and the total/literal byte counts are
+        // unaffected on every input.
         let mut tokens: Vec<DeltaToken> = Vec::new();
         let mut total_bytes = 0u64;
         let mut literal_bytes = 0u64;

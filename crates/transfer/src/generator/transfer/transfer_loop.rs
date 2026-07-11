@@ -511,10 +511,13 @@ impl GeneratorContext {
             } else if has_basis {
                 // Opt-in parallel sender-side delta scan: only when the flag is
                 // set and the file is large enough to split usefully across
-                // cores. The source is memory-mapped so a 50 GB basis is never
-                // materialised into a Vec; the mapping is lazy-paged. On any
-                // mmap failure (NFS, FUSE, procfs) fall back to the streaming
-                // sequential reader so the wire output is unchanged. The
+                // cores. The source is memory-mapped rather than read into a
+                // Vec, but the mapping spans the whole file and every page is
+                // touched during the scan, so peak RSS is proportional to the
+                // file size (lazily paged in), not bounded - the gain is CPU
+                // parallelism, not memory. On any mmap failure (NFS, FUSE,
+                // procfs) fall back to the streaming sequential reader so the
+                // wire output is unchanged. The
                 // duplicate-free eligibility check lives inside
                 // generate_delta_from_signature_chunked, which reverts to the
                 // pruned sequential scan for a duplicate-content basis.
