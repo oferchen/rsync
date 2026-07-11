@@ -453,6 +453,89 @@ fn refused_client_arg_pure_negation_allowlist_passes_av() {
 }
 
 #[test]
+fn refused_client_arg_copy_and_write_devices_refused_by_default() {
+    // A daemon refuses `--copy-devices` and `--write-devices` even when the
+    // module has no `refuse options` line at all: allowing a client to read or
+    // write device nodes is a security-relevant default-deny.
+    //
+    // upstream: options.c:984-987 - when `am_daemon`, `parse_arguments` seeds
+    // the refuse list with `parse_one_refuse_match(0, "copy-devices", ...)` and
+    // `parse_one_refuse_match(0, "write-devices", ...)` before applying any
+    // module rules.
+    let module = ModuleDefinition {
+        refuse_options: Vec::new(),
+        ..Default::default()
+    };
+    assert_eq!(
+        refused_client_arg(&module, &["--copy-devices".to_owned()]),
+        Some("--copy-devices".to_owned())
+    );
+    assert_eq!(
+        refused_client_arg(&module, &["--write-devices".to_owned()]),
+        Some("--write-devices".to_owned())
+    );
+}
+
+#[test]
+fn refused_client_arg_non_device_option_not_refused_by_default() {
+    // The default device refusal is scoped strictly to `copy-devices` and
+    // `write-devices`; an empty refuse list must not refuse anything else.
+    // upstream: options.c:984-987 - only those two options are seeded.
+    let module = ModuleDefinition {
+        refuse_options: Vec::new(),
+        ..Default::default()
+    };
+    assert_eq!(
+        refused_client_arg(&module, &["--compress".to_owned(), "-avzD".to_owned()]),
+        None
+    );
+}
+
+#[test]
+fn refused_option_copy_and_write_devices_vital_survive_wildcard() {
+    // `copy-devices`/`write-devices` are vital (exact-match only), so a blanket
+    // `refuse options = *` neither un-refuses them nor is even consulted for
+    // them - they remain refused by the daemon default.
+    //
+    // upstream: options.c:971-974 marks both as `descrip = "a="` (exact-match
+    // only, wild-match disabled) and options.c:984-987 refuses them by default.
+    let module = ModuleDefinition {
+        refuse_options: vec!["*".to_owned()],
+        ..Default::default()
+    };
+    assert_eq!(
+        refused_option(&module, &["--copy-devices".to_owned()]),
+        Some("--copy-devices")
+    );
+    assert_eq!(
+        refused_option(&module, &["--write-devices".to_owned()]),
+        Some("--write-devices")
+    );
+}
+
+#[test]
+fn refused_client_arg_device_options_allowed_by_explicit_negation() {
+    // The default device refusal is overridable, but only by an explicit
+    // negated exact match - never by a wildcard.
+    //
+    // upstream: options.c:984 - "Refused by default, but can be accepted via a
+    // negated exact match." A module that trusts its clients can set
+    // `refuse options = !copy-devices !write-devices`.
+    let module = ModuleDefinition {
+        refuse_options: vec!["!copy-devices".to_owned(), "!write-devices".to_owned()],
+        ..Default::default()
+    };
+    assert_eq!(
+        refused_client_arg(&module, &["--copy-devices".to_owned()]),
+        None
+    );
+    assert_eq!(
+        refused_client_arg(&module, &["--write-devices".to_owned()]),
+        None
+    );
+}
+
+#[test]
 fn refused_client_arg_delete_rule_refuses_timing_variant() {
     // Regression for the upstream `daemon-refuse` testsuite: a module with
     // `refuse options = delete` must reject a client `-a --delete` even though

@@ -41,8 +41,20 @@ const VITAL_OPTIONS: &[&str] = &[
     "iconv",
     "no-iconv",
     "checksum-seed",
+    "copy-devices",
     "write-devices",
 ];
+
+/// Options refused by default in daemon mode, overridable only by an explicit
+/// negated exact match (e.g. `refuse options = !copy-devices`).
+///
+/// upstream: options.c:984-987 - when `am_daemon`, `parse_arguments` seeds the
+/// refuse list with `copy-devices` and `write-devices` before applying the
+/// module's `refuse options` rules, so a daemon rejects client device
+/// read/write unless the module explicitly allows it. Both are also vital
+/// (exact-match only, see `VITAL_OPTIONS`) so a `refuse options = *` wildcard
+/// cannot silently re-enable them.
+const DEFAULT_REFUSED_OPTIONS: &[&str] = &["copy-devices", "write-devices"];
 
 /// Checks whether a client-requested option is refused by the module's refuse list.
 ///
@@ -57,10 +69,9 @@ const VITAL_OPTIONS: &[&str] = &[
 ///
 /// upstream: clientserver.c - `check_refuse_options()` with fnmatch semantics.
 fn refused_option<'a>(module: &ModuleDefinition, options: &'a [String]) -> Option<&'a str> {
-    if module.refuse_options.is_empty() {
-        return None;
-    }
-
+    // No early-out on an empty refuse list: a daemon still refuses the default
+    // device options (`copy-devices`/`write-devices`) even with no `refuse
+    // options` line. upstream: options.c:984-987.
     options.iter().find_map(|candidate| {
         let canonical = canonical_option(candidate);
         let short = long_option_short_letter(&canonical);
@@ -209,9 +220,9 @@ fn long_option_short_letter(long_name: &str) -> Option<char> {
 /// post-OK arg list; popt treats each bundled short letter as a separate
 /// option and rejects any that the module's refuse list disabled.
 fn refused_client_arg(module: &ModuleDefinition, client_args: &[String]) -> Option<String> {
-    if module.refuse_options.is_empty() {
-        return None;
-    }
+    // No early-out on an empty refuse list: a daemon still refuses the default
+    // device options (`copy-devices`/`write-devices`) even with no `refuse
+    // options` line. upstream: options.c:984-987.
 
     // upstream: options.c:2215-2241 - a `refuse options = delete` rule matches
     // the single `delete` popt entry, but the enforcement at options.c:2238 is
@@ -317,7 +328,10 @@ fn enables_delete_mode(arg: &str) -> bool {
 /// can refuse or un-refuse vital options when named explicitly.
 fn is_option_refused(refuse_list: &[String], long_name: &str, short_letter: Option<char>) -> bool {
     let vital = is_option_vital(long_name, short_letter);
-    let mut refused = false;
+    // upstream: options.c:984-987 - a daemon seeds `copy-devices`/`write-devices`
+    // as refused before applying the module's rules. Start from that default so
+    // the loop below can only un-refuse them via an explicit negated exact match.
+    let mut refused = DEFAULT_REFUSED_OPTIONS.contains(&long_name);
     let short_lower = short_letter.map(|c| c.to_ascii_lowercase().to_string());
 
     for rule in refuse_list {
