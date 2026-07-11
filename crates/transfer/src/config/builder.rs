@@ -161,6 +161,17 @@ impl ServerConfigBuilder {
         self
     }
 
+    /// Enables or disables the opt-in parallel sender-side delta scan.
+    ///
+    /// Local sender optimization only (see
+    /// [`ParsedServerFlags::parallel_delta_scan`]). Mutates just this flag, so
+    /// it must be called after [`Self::flags`] to survive a wholesale flag
+    /// replacement. Defaults to off.
+    pub fn parallel_delta_scan(&mut self, enabled: bool) -> &mut Self {
+        self.flags.parallel_delta_scan = enabled;
+        self
+    }
+
     /// Sets the positional arguments passed to the server.
     pub fn args(&mut self, args: Vec<OsString>) -> &mut Self {
         self.args = args;

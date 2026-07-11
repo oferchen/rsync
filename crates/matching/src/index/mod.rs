@@ -117,6 +117,20 @@ pub struct DeltaSignatureIndex {
     /// Reset to all-zero by [`Self::rebuild`] so per-segment
     /// INC_RECURSE lifecycles (ZSO-7) start with no stale prune bits.
     consumed: Vec<AtomicU64>,
+    /// `true` when two or more indexed full-length blocks share identical
+    /// content (equal rolling checksum and equal strong checksum).
+    ///
+    /// Computed once at construction ([`Self::from_signature_with_role`] and
+    /// [`Self::rebuild`]) so callers can query it in O(1). The parallel
+    /// delta scan ([`crate::DeltaGenerator::generate_chunked`]) runs with the
+    /// consumed-bitset pruning disabled; on a basis with duplicate-content
+    /// blocks that changes which sibling each source window resolves to (and
+    /// therefore the emitted `Copy{index}` and the matched/literal split)
+    /// relative to the pruned sequential [`crate::DeltaGenerator::generate`].
+    /// A duplicate-free basis makes pruning a no-op, so the wiring layer only
+    /// engages the parallel scan when this returns `false`. See
+    /// `docs/design/zsync-prune.md`.
+    has_duplicate_blocks: bool,
     /// Role used for `--debug=HASH` `[<role>]` prefixes on the create,
     /// grow, and destroy lifecycle emissions. Mirrors upstream
     /// `who_am_i()` (`hashtable.c:51,61,101`).
@@ -167,6 +181,7 @@ impl Clone for DeltaSignatureIndex {
             bithash: self.bithash.clone(),
             next_match: self.next_match.clone(),
             consumed,
+            has_duplicate_blocks: self.has_duplicate_blocks,
             role: self.role,
             last_traced_size: self.last_traced_size,
             #[cfg(any(test, feature = "bench-internal"))]
@@ -266,6 +281,21 @@ impl DeltaSignatureIndex {
     #[must_use]
     pub const fn strong_length(&self) -> usize {
         self.strong_length
+    }
+
+    /// Returns `true` when two or more indexed full-length blocks share
+    /// identical content (equal rolling and strong checksums).
+    ///
+    /// A duplicate-free basis (`false`) is the precondition for engaging the
+    /// prune-off parallel scan in [`crate::DeltaGenerator::generate_chunked`]
+    /// without diverging from the pruned sequential
+    /// [`crate::DeltaGenerator::generate`]: with every content unique there is
+    /// exactly one matching basis block per source window, so disabling the
+    /// consumed-bitset prune cannot change which block a window resolves to.
+    /// See the field docs on [`DeltaSignatureIndex`].
+    #[must_use]
+    pub const fn has_duplicate_blocks(&self) -> bool {
+        self.has_duplicate_blocks
     }
 
     /// Returns the [`SignatureBlock`] for the provided index.

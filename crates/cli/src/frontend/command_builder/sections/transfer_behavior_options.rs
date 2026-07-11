@@ -305,6 +305,20 @@ pub(crate) fn add_transfer_behavior_options(command: ClapCommand) -> ClapCommand
                     .overrides_with("zero-copy"),
             )
             .arg(
+                Arg::new("parallel-delta-scan")
+                    .long("parallel-delta-scan")
+                    .help(
+                        "Opt-in: scan a large file's delta across multiple \
+                         cores (sender side). Only engages for large, \
+                         duplicate-free basis files; token boundaries and \
+                         matched/literal stats may differ for basis files \
+                         with duplicate-content blocks. Reconstruction is \
+                         unaffected. Local-only optimization, never forwarded \
+                         to a remote peer. Default off.",
+                    )
+                    .action(ArgAction::SetTrue),
+            )
+            .arg(
                 Arg::new("inplace")
                     .long("inplace")
                     .help("Write updated data directly to destination files.")

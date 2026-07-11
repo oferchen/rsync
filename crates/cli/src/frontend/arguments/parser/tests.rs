@@ -602,6 +602,18 @@ fn no_zero_copy_flag_sets_disabled() {
 }
 
 #[test]
+fn parallel_delta_scan_default_is_false() {
+    let parsed = parse_test_args(["src/", "dst/"]).expect("parse");
+    assert!(!parsed.parallel_delta_scan);
+}
+
+#[test]
+fn parallel_delta_scan_flag_sets_true() {
+    let parsed = parse_test_args(["--parallel-delta-scan", "src/", "dst/"]).expect("parse");
+    assert!(parsed.parallel_delta_scan);
+}
+
+#[test]
 fn zero_copy_then_no_zero_copy_last_wins() {
     let parsed = parse_test_args(["--zero-copy", "--no-zero-copy", "src/", "dst/"]).expect("parse");
     assert_eq!(parsed.zero_copy_policy, fast_io::ZeroCopyPolicy::Disabled);

@@ -485,6 +485,15 @@ pub struct ParsedArgs {
     /// Orthogonal to `--cow` which controls FS-level reflink cloning.
     pub zero_copy_policy: fast_io::ZeroCopyPolicy,
 
+    /// `--parallel-delta-scan` - opt-in, default-off local sender-side
+    /// optimization that scans a large basis file's delta across multiple
+    /// cores. Local-only: it never changes the wire protocol and is never
+    /// forwarded to a remote peer. Only engages for large, duplicate-free
+    /// basis files; token boundaries and matched/literal stats may differ
+    /// for basis files with duplicate-content blocks. Reconstruction is
+    /// unaffected.
+    pub parallel_delta_scan: bool,
+
     /// `--cow` / `--no-cow` / `--reflink=<MODE>` - copy-on-write reflink
     /// policy for whole-file copies. The binary `--cow`/`--no-cow` flags
     /// map onto `Auto`/`Disabled`; the tri-state `--reflink=<MODE>` adds

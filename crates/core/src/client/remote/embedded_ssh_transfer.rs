@@ -542,6 +542,9 @@ fn build_server_config_for_generator(
     server_config.flags.partial = config.partial();
     server_config.flags.devices = config.preserve_devices();
     server_config.flags.specials = config.preserve_specials();
+    // Local-only sender optimization; never emitted onto the wire, so it is
+    // carried directly onto the in-process generator's ParsedServerFlags.
+    server_config.flags.parallel_delta_scan = config.parallel_delta_scan();
 
     // upstream: options.c:2476-2501 / main.c:1322-1328 - the local sender
     // resolves a single files-from fd: a local file (Stdin/LocalFile, or a

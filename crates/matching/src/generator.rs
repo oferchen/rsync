@@ -525,6 +525,31 @@ impl DeltaGenerator {
     /// reconstruction error. For inputs too small to split usefully this
     /// delegates to the sequential [`Self::generate`], which keeps pruning on.
     ///
+    /// # Wire transparency
+    ///
+    /// The scan runs with the consumed-bitset prune disabled, so the emitted
+    /// token stream (and therefore the wire bytes and the matched/literal
+    /// split) equals the pruned sequential [`Self::generate`] output only when
+    /// **both** hold:
+    ///
+    /// 1. the basis is duplicate-free
+    ///    ([`DeltaSignatureIndex::has_duplicate_blocks`] is `false`) - with
+    ///    every content unique, disabling the prune cannot change which basis
+    ///    block a source window resolves to; and
+    /// 2. no matched basis block straddles a range boundary - a straddling
+    ///    match cannot be completed by either adjoining range and degrades to
+    ///    literals here while the sequential scan copies it.
+    ///
+    /// Condition 2 holds for in-place edits of a same-length basis (matches
+    /// stay block-aligned and the boundary either coincides with a block edge
+    /// or lands in an edited, non-matching block). It can fail for shifted
+    /// content, so callers must treat the result as potentially divergent
+    /// (opt-in only, never advertised as byte-identical) and only engage the
+    /// parallel path behind a default-off flag with the duplicate-free gate.
+    /// The adjacent-literal coalescing in the concatenation loop keeps the
+    /// literal-token framing identical to the sequential scan whenever
+    /// conditions 1 and 2 hold.
+    ///
     /// # Arguments
     ///
     /// * `source` - The full source buffer to delta-encode.
@@ -580,14 +605,36 @@ impl DeltaGenerator {
 
         // Concatenate token streams in source order. Literal payloads are
         // moved (not copied) out of each per-range script.
-        let mut tokens = Vec::new();
+        //
+        // Coalesce a trailing `Literal` of one range with the leading
+        // `Literal` of the next when a range boundary lands inside an
+        // unmatched region: the previous range drains its tail bytes as a
+        // literal and the next range emits its head bytes as a second literal,
+        // but the sequential [`Self::generate`] scan - which sees the region
+        // as one contiguous run - emits a single literal token there. Merging
+        // the two halves restores that framing, so the wire byte stream
+        // (`write_token_literal` frames each literal token independently)
+        // stays identical to the sequential scan for a duplicate-free basis
+        // whose matched blocks never straddle a range boundary. Merging only
+        // ever concatenates adjacent literal bytes, so reconstruction and the
+        // total/literal byte counts are unaffected on every input.
+        let mut tokens: Vec<DeltaToken> = Vec::new();
         let mut total_bytes = 0u64;
         let mut literal_bytes = 0u64;
         for script in scripts {
             let script = script?;
             total_bytes += script.total_bytes();
             literal_bytes += script.literal_bytes();
-            tokens.extend(script.into_tokens());
+            let mut range_tokens = script.into_tokens().into_iter();
+            if let Some(first) = range_tokens.next() {
+                match (tokens.last_mut(), first) {
+                    (Some(DeltaToken::Literal(prev)), DeltaToken::Literal(next)) => {
+                        prev.extend_from_slice(&next);
+                    }
+                    (_, first) => tokens.push(first),
+                }
+                tokens.extend(range_tokens);
+            }
         }
 
         Ok(DeltaScript::new(tokens, total_bytes, literal_bytes))
@@ -998,6 +1045,32 @@ mod tests {
              got literal_bytes={} of {}",
             chunked.literal_bytes(),
             data.len()
+        );
+    }
+
+    #[test]
+    fn has_duplicate_blocks_false_for_unique_content() {
+        // A pseudo-random basis has (with overwhelming probability) no two
+        // blocks with identical content, so the duplicate-free gate must open.
+        let basis = pseudo_random(64 * 1024, 0x00d1_5715);
+        let index = build_index(&basis);
+        assert!(
+            !index.has_duplicate_blocks(),
+            "distinct random blocks must not be flagged as duplicates"
+        );
+    }
+
+    #[test]
+    fn has_duplicate_blocks_true_for_repeated_content() {
+        // A constant-fill basis makes every full block content-identical
+        // regardless of the layout's chosen block length, so the gate must
+        // detect duplicates and force the parallel scan to fall back to the
+        // pruned sequential path.
+        let basis = vec![0x42u8; 64 * 1024];
+        let index = build_index(&basis);
+        assert!(
+            index.has_duplicate_blocks(),
+            "repeated block content must be flagged as duplicate"
         );
     }
 }
