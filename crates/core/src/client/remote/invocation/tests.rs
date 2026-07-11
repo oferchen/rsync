@@ -1584,7 +1584,11 @@ fn no_msgs2stderr_forwarded_long_form() {
 fn default_config_no_q_no_msgs2stderr() {
     let config = ClientConfig::builder().build();
     let args = build_sender_args(&config);
-    assert!(!args.iter().any(|a| a == "--msgs2stderr" || a == "--no-msgs2stderr"));
+    assert!(
+        !args
+            .iter()
+            .any(|a| a == "--msgs2stderr" || a == "--no-msgs2stderr")
+    );
     let flags = sender_flag_string(&config);
     assert!(!flags.contains('q'), "default must not pack 'q': {flags}");
 }
