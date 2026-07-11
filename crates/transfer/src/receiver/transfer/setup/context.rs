@@ -12,7 +12,9 @@ use std::sync::Arc;
 
 use logging::{debug_log, info_log};
 use metadata::MetadataOptions;
-use protocol::filters::read_filter_list;
+#[cfg(feature = "tokio-transfer")]
+use protocol::filters::read_filter_list_async;
+use protocol::filters::{FilterRuleWireFormat, read_filter_list};
 
 use filters::FilterChain;
 
@@ -94,82 +96,11 @@ impl ReceiverContext {
                 )
             })?;
 
-            // upstream: clientserver.c:rsync_module() - daemon_filter_list is applied
-            // on top of client filters. Daemon rules take precedence (prepended).
-            let daemon_rules = &self.config.daemon_filter_rules;
-            let combined = if daemon_rules.is_empty() {
-                wire_rules
-            } else if wire_rules.is_empty() {
-                daemon_rules.clone()
-            } else {
-                let mut combined = daemon_rules.clone();
-                combined.extend(wire_rules);
-                combined
-            };
-
-            // Build a FilterChain from the combined rules for deletion filtering.
-            // upstream: generator.c:delete_in_dir() - is_excluded() before deletion
-            if !combined.is_empty() {
-                let (filter_set, merge_configs) = parse_wire_filters_for_receiver(&combined)
-                    .map_err(|e| {
-                        io::Error::new(
-                            e.kind(),
-                            format!(
-                                "filter error: {e} {}{}",
-                                crate::role_trailer::error_location!(),
-                                crate::role_trailer::receiver()
-                            ),
-                        )
-                    })?;
-                let mut chain = FilterChain::new(filter_set);
-                for config in merge_configs {
-                    chain.add_merge_config(config);
-                }
-                self.filter_chain = chain;
-            }
+            self.apply_received_filter_rules(wire_rules)?;
         } else if self.config.connection.client_mode
             && !self.config.connection.filter_rules.is_empty()
         {
-            // upstream: generator.c:delete_in_dir() -> change_local_filter_dir()
-            // reloads each DESTINATION directory's per-directory merge files
-            // before deciding deletions. On a local-client pull the wire filter
-            // list is never received (should_read_filter_list() is false in
-            // client mode), so the receiver's `--delete` pass would otherwise
-            // run against an empty filter chain and mis-handle dir-merge-governed
-            // trees (over-deleting self-protected `.filt`/`.filt2` merge files,
-            // under-deleting extraneous entries in filter-hidden dirs). Build a
-            // dedicated deletion chain from the same local CLI filter rules the
-            // generator consumes (generator/filters.rs), so the per-directory
-            // merge reload in `delete_extraneous_files` has the dir-merge
-            // configs. Held separately from `filter_chain` so `--prune-empty-dirs`
-            // is unaffected. Only the deletion pass consults this, so it is inert
-            // when `--delete` is not active.
-            let (filter_set, merge_configs) = parse_wire_filters_for_receiver(
-                &self.config.connection.filter_rules,
-            )
-            .map_err(|e| {
-                io::Error::new(
-                    e.kind(),
-                    format!(
-                        "filter error: {e} {}{}",
-                        crate::role_trailer::error_location!(),
-                        crate::role_trailer::receiver()
-                    ),
-                )
-            })?;
-            let mut chain = FilterChain::new(filter_set)
-                .with_delete_excluded(self.config.deletion.delete_excluded);
-            for config in merge_configs {
-                chain.add_merge_config(config);
-            }
-            logging::debug_log!(
-                Del,
-                2,
-                "deletion filter chain built: delete_excluded={} merge_configs_active={}",
-                self.config.deletion.delete_excluded,
-                chain.has_per_dir_merge()
-            );
-            self.deletion_filter_chain = chain;
+            self.build_client_deletion_filter_chain()?;
         }
 
         // FSM: filter list reading is complete. Advance to FileListTransfer.
@@ -195,6 +126,23 @@ impl ReceiverContext {
         let extra_count = self.receive_extra_file_lists(&mut reader)?;
         let file_count = file_count + extra_count;
 
+        let (file_count, setup) = self.build_pipeline_setup(file_count)?;
+        Ok((reader, file_count, setup))
+    }
+
+    /// Builds the [`PipelineSetup`] from the received file list.
+    ///
+    /// This is the reader-free tail of transfer setup: it sanitizes the file
+    /// list, derives the checksum and metadata configuration, applies the
+    /// single-file rename, creates and (on Unix) sandboxes the destination
+    /// root, and advances the FSM into [`TransferPhase::DeltaTransfer`]. Because
+    /// none of these steps touch the wire, both [`setup_transfer`](Self::setup_transfer)
+    /// and its async twin call it verbatim so they produce an identical
+    /// `PipelineSetup` and post-sanitize `file_count` for the same file list.
+    ///
+    /// `file_count` is the raw count returned by the file-list receive path
+    /// (initial plus INC_RECURSE sub-lists) before sanitization.
+    fn build_pipeline_setup(&mut self, file_count: usize) -> io::Result<(usize, PipelineSetup)> {
         let removed = self.sanitize_file_list();
         let file_count = file_count - removed;
 
@@ -430,7 +378,6 @@ impl ReceiverContext {
             .map_err(crate::fsm_error)?;
 
         Ok((
-            reader,
             file_count,
             PipelineSetup {
                 dest_dir,
@@ -443,6 +390,215 @@ impl ReceiverContext {
                 sandbox,
             },
         ))
+    }
+
+    /// Combines the received wire filter rules with any daemon filter rules and
+    /// compiles them into the receiver's per-directory [`FilterChain`].
+    ///
+    /// This is the reader-free tail of the filter-list read: it takes the
+    /// already-decoded `wire_rules` and produces the identical `filter_chain`
+    /// regardless of whether the rules were read by the blocking
+    /// [`read_filter_list`] or the async [`read_filter_list_async`]. Only the
+    /// read that produces `wire_rules` differs between the sync and async setup
+    /// paths; this rule-combination and chain build is shared verbatim.
+    ///
+    /// upstream: clientserver.c:rsync_module() - daemon_filter_list is applied
+    /// on top of client filters. Daemon rules take precedence (prepended).
+    fn apply_received_filter_rules(
+        &mut self,
+        wire_rules: Vec<FilterRuleWireFormat>,
+    ) -> io::Result<()> {
+        let daemon_rules = &self.config.daemon_filter_rules;
+        let combined = if daemon_rules.is_empty() {
+            wire_rules
+        } else if wire_rules.is_empty() {
+            daemon_rules.clone()
+        } else {
+            let mut combined = daemon_rules.clone();
+            combined.extend(wire_rules);
+            combined
+        };
+
+        // Build a FilterChain from the combined rules for deletion filtering.
+        // upstream: generator.c:delete_in_dir() - is_excluded() before deletion
+        if !combined.is_empty() {
+            let (filter_set, merge_configs) =
+                parse_wire_filters_for_receiver(&combined).map_err(|e| {
+                    io::Error::new(
+                        e.kind(),
+                        format!(
+                            "filter error: {e} {}{}",
+                            crate::role_trailer::error_location!(),
+                            crate::role_trailer::receiver()
+                        ),
+                    )
+                })?;
+            let mut chain = FilterChain::new(filter_set);
+            for config in merge_configs {
+                chain.add_merge_config(config);
+            }
+            self.filter_chain = chain;
+        }
+        Ok(())
+    }
+
+    /// Builds the dedicated deletion-pass filter chain from the local CLI filter
+    /// rules on a local-client pull, where the wire filter list is never
+    /// received.
+    ///
+    /// upstream: generator.c:delete_in_dir() -> change_local_filter_dir()
+    /// reloads each DESTINATION directory's per-directory merge files before
+    /// deciding deletions. On a local-client pull the wire filter list is never
+    /// received (`should_read_filter_list()` is false in client mode), so the
+    /// receiver's `--delete` pass would otherwise run against an empty filter
+    /// chain and mis-handle dir-merge-governed trees (over-deleting
+    /// self-protected `.filt`/`.filt2` merge files, under-deleting extraneous
+    /// entries in filter-hidden dirs). Build a dedicated deletion chain from the
+    /// same local CLI filter rules the generator consumes (generator/filters.rs),
+    /// so the per-directory merge reload in `delete_extraneous_files` has the
+    /// dir-merge configs. Held separately from `filter_chain` so
+    /// `--prune-empty-dirs` is unaffected. Only the deletion pass consults this,
+    /// so it is inert when `--delete` is not active.
+    fn build_client_deletion_filter_chain(&mut self) -> io::Result<()> {
+        let (filter_set, merge_configs) =
+            parse_wire_filters_for_receiver(&self.config.connection.filter_rules).map_err(|e| {
+                io::Error::new(
+                    e.kind(),
+                    format!(
+                        "filter error: {e} {}{}",
+                        crate::role_trailer::error_location!(),
+                        crate::role_trailer::receiver()
+                    ),
+                )
+            })?;
+        let mut chain =
+            FilterChain::new(filter_set).with_delete_excluded(self.config.deletion.delete_excluded);
+        for config in merge_configs {
+            chain.add_merge_config(config);
+        }
+        logging::debug_log!(
+            Del,
+            2,
+            "deletion filter chain built: delete_excluded={} merge_configs_active={}",
+            self.config.deletion.delete_excluded,
+            chain.has_per_dir_merge()
+        );
+        self.deletion_filter_chain = chain;
+        Ok(())
+    }
+
+    /// Async twin of [`setup_transfer`](Self::setup_transfer), gated on the
+    /// `tokio-transfer` feature.
+    ///
+    /// Runs the identical receiver transfer-setup sequence with `.await` on the
+    /// two wire reads: the filter-list read
+    /// ([`read_filter_list_async`](protocol::filters::read_filter_list_async))
+    /// and the file-list reception
+    /// ([`receive_file_list_async`](Self::receive_file_list_async) plus
+    /// [`receive_extra_file_lists_async`](Self::receive_extra_file_lists_async)).
+    /// Every other step - multiplex activation, filter-chain compilation
+    /// ([`apply_received_filter_rules`](Self::apply_received_filter_rules) /
+    /// [`build_client_deletion_filter_chain`](Self::build_client_deletion_filter_chain)),
+    /// `--files-from` forwarding, and the reader-free
+    /// [`build_pipeline_setup`](Self::build_pipeline_setup) tail - is the same
+    /// shared logic the blocking path runs, so for the same wire bytes this
+    /// produces a byte-identical [`PipelineSetup`], `file_list`, and
+    /// post-sanitize `file_count`, independent of how the bytes are chunked
+    /// across `.await` points.
+    ///
+    /// Additive and unwired: the coupled async receiver driver (the deferred
+    /// atomic ASY receiver fork) is the consuming rung. Exercised only by the
+    /// `setup_transfer_async_matches_sync` parity test, so the non-test lib build
+    /// sees no caller.
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `main.c:1342-1343` - client receiver activates multiplex at protocol >= 23
+    /// - `main.c:1167-1168` - server receiver activates multiplex at protocol >= 30
+    #[cfg(feature = "tokio-transfer")]
+    #[allow(dead_code)]
+    pub(in crate::receiver) async fn setup_transfer_async<R, W>(
+        &mut self,
+        reader: crate::reader::AsyncServerReader<R>,
+        writer: &mut W,
+    ) -> io::Result<(crate::reader::AsyncServerReader<R>, usize, PipelineSetup)>
+    where
+        R: tokio::io::AsyncRead + Unpin + Send + 'static,
+        W: io::Write + ?Sized,
+    {
+        // upstream: generator.c:2260-2261 - emitted at the top of generate_files.
+        debug_log!(Genr, 1, "generator starting pid={}", std::process::id());
+
+        // upstream: generator.c:2290-2295 - delta-transmission status, DEBUG_GTE(FLIST, 1).
+        debug_log!(
+            Flist,
+            1,
+            "delta-transmission {}",
+            if self.config.flags.whole_file {
+                "disabled for local transfer or --whole-file"
+            } else {
+                "enabled"
+            }
+        );
+
+        // Parallel receive-side delta apply is unconditionally compiled (PFF-7).
+        debug_log!(Recv, 1, "parallel receive-delta path active");
+
+        let mut reader = if self.should_activate_input_multiplex() {
+            reader.activate_multiplex().map_err(|e| {
+                io::Error::new(
+                    e.kind(),
+                    format!(
+                        "failed to activate INPUT multiplex: {e} {}{}",
+                        crate::role_trailer::error_location!(),
+                        crate::role_trailer::receiver()
+                    ),
+                )
+            })?
+        } else {
+            reader
+        };
+
+        if self.should_read_filter_list() {
+            let wire_rules = read_filter_list_async(&mut reader, self.protocol)
+                .await
+                .map_err(|e| {
+                    io::Error::new(
+                        e.kind(),
+                        format!(
+                            "failed to read filter list: {e} {}{}",
+                            crate::role_trailer::error_location!(),
+                            crate::role_trailer::receiver()
+                        ),
+                    )
+                })?;
+
+            self.apply_received_filter_rules(wire_rules)?;
+        } else if self.config.connection.client_mode
+            && !self.config.connection.filter_rules.is_empty()
+        {
+            self.build_client_deletion_filter_chain()?;
+        }
+
+        // FSM: filter list reading is complete. Advance to FileListTransfer.
+        self.pipeline
+            .advance_to(TransferPhase::FileListTransfer)
+            .map_err(crate::fsm_error)?;
+
+        // upstream: main.c:1173-1180 - forward a server-side `--files-from` file
+        // to the sender. Local file read + writer push, unchanged from sync.
+        self.forward_files_from_to_sender(writer)?;
+
+        if self.config.flags.verbose && self.config.connection.client_mode {
+            info_log!(Flist, 1, "receiving incremental file list");
+        }
+
+        let file_count = self.receive_file_list_async(&mut reader).await?;
+        let extra_count = self.receive_extra_file_lists_async(&mut reader).await?;
+        let file_count = file_count + extra_count;
+
+        let (file_count, setup) = self.build_pipeline_setup(file_count)?;
+        Ok((reader, file_count, setup))
     }
 
     /// Applies upstream's `get_local_name()` single-file rename semantics.
