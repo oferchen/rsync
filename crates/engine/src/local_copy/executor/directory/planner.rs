@@ -430,6 +430,7 @@ pub(crate) fn plan_directory_entries<'a>(
 pub(crate) fn reorder_hardlink_group_holders(
     hard_links_enabled: bool,
     has_reference_directories: bool,
+    fake_super_enabled: bool,
     destination: &Path,
     planned: &mut Vec<PlannedEntry<'_>>,
 ) {
@@ -443,13 +444,29 @@ pub(crate) fn reorder_hardlink_group_holders(
 
     // Group regular-file copies with more than one link by (device, inode),
     // preserving the name-sorted index order the planner already produced.
+    //
+    // The LAST-member data-holder rule only applies to regular files: upstream
+    // defers the last name-sorted member at generator.c:1803 gated on
+    // `F_HLINK_NOT_LAST`, while non-regular cohorts (devices/FIFOs/sockets) are
+    // created FIRST-member-concrete via the `F_HLINK_NOT_FIRST` path
+    // (generator.c:1551). Under `--fake-super` a special file is stored as a
+    // regular on-disk placeholder, so its `fs::Metadata` reports a regular
+    // file; resolve the effective type from the `%stat`-encoded mode
+    // (upstream x_lstat -> get_stat_xattr) so a fake-super device cohort keeps
+    // the FIRST-member-concrete rule like a real device instead of being
+    // wrongly reordered to LAST-member-concrete.
     let mut groups: FxHashMap<(u64, u64), Vec<usize>> = FxHashMap::default();
     for (idx, entry) in planned.iter().enumerate() {
         if !matches!(entry.action, EntryAction::CopyFile) {
             continue;
         }
         let meta = entry.metadata();
-        if meta.file_type().is_file() && meta.nlink() > 1 {
+        let effective_regular = if fake_super_enabled {
+            ::metadata::effective_source_stat(&entry.entry.path, meta).is_regular_file()
+        } else {
+            meta.file_type().is_file()
+        };
+        if effective_regular && meta.nlink() > 1 {
             groups
                 .entry((meta.dev(), meta.ino()))
                 .or_default()
@@ -515,6 +532,7 @@ pub(crate) fn reorder_hardlink_group_holders(
 pub(crate) fn reorder_hardlink_group_holders(
     _hard_links_enabled: bool,
     _has_reference_directories: bool,
+    _fake_super_enabled: bool,
     _destination: &Path,
     _planned: &mut Vec<PlannedEntry<'_>>,
 ) {
@@ -920,5 +938,100 @@ mod tests {
             delete_timing: Some(DeleteTiming::During),
         };
         assert_eq!(plan.keep_names.len(), 3);
+    }
+
+    #[cfg(unix)]
+    fn planned_copy_file<'a>(entry: &'a DirectoryEntry) -> PlannedEntry<'a> {
+        PlannedEntry {
+            entry,
+            relative: PathBuf::from(&entry.file_name),
+            action: EntryAction::CopyFile,
+            metadata_override: None,
+        }
+    }
+
+    #[cfg(unix)]
+    fn dir_entry(dir: &Path, name: &str) -> DirectoryEntry {
+        let path = dir.join(name);
+        let metadata = fs::symlink_metadata(&path).unwrap();
+        DirectoryEntry {
+            file_name: OsString::from(name),
+            path,
+            metadata,
+        }
+    }
+
+    /// Regular-file hard-link cohorts must reorder so the *last* name-sorted
+    /// member is the data-holder, mirroring upstream's `F_HLINK_NOT_LAST`
+    /// deferral (generator.c:1803). This is the unchanged control for the
+    /// fake-super fix below.
+    ///
+    /// upstream: hlink.c:match_gnums / generator.c:1803-1806
+    #[cfg(unix)]
+    #[test]
+    fn reorder_regular_hardlink_group_uses_last_member_holder() {
+        let src = tempfile::tempdir().unwrap();
+        let dst = tempfile::tempdir().unwrap();
+        let f1 = src.path().join("f1");
+        let f2 = src.path().join("f2");
+        fs::write(&f1, b"payload").unwrap();
+        fs::hard_link(&f1, &f2).unwrap();
+
+        let e1 = dir_entry(src.path(), "f1");
+        let e2 = dir_entry(src.path(), "f2");
+        let mut planned = vec![planned_copy_file(&e1), planned_copy_file(&e2)];
+
+        // fake_super enabled but no %stat xattr present: the effective type
+        // falls back to the on-disk regular mode, so the LAST-member rule
+        // still applies.
+        reorder_hardlink_group_holders(true, false, true, dst.path(), &mut planned);
+
+        assert_eq!(
+            planned[0].entry.file_name,
+            OsString::from("f2"),
+            "last name-sorted member must become the data-holder"
+        );
+        assert_eq!(planned[1].entry.file_name, OsString::from("f1"));
+    }
+
+    /// A `--fake-super` special-file cohort is stored as regular on-disk
+    /// placeholders carrying a device `%stat` xattr. The reorder must resolve
+    /// the effective type from `%stat` and keep the FIRST name-sorted member
+    /// as the concrete node (like a real device), NOT reorder to last-concrete.
+    ///
+    /// upstream: hlink.c non-regular cohorts are FIRST-member-concrete
+    /// (generator.c:1551 `F_HLINK_NOT_FIRST`); x_lstat layers get_stat_xattr.
+    #[cfg(all(unix, feature = "xattr"))]
+    #[test]
+    fn reorder_fake_super_device_hardlink_group_keeps_first_member_holder() {
+        let src = tempfile::tempdir().unwrap();
+        let dst = tempfile::tempdir().unwrap();
+        let b3 = src.path().join("block3");
+        let b35 = src.path().join("block3.5");
+        fs::write(&b3, b"").unwrap();
+        fs::hard_link(&b3, &b35).unwrap();
+
+        // Encode a block device (S_IFBLK | 0644, rdev 105,73) in the shared
+        // %stat xattr, exactly as `--fake-super` records a special file.
+        let stat = ::metadata::FakeSuperStat {
+            mode: 0o60644,
+            uid: 0,
+            gid: 0,
+            rdev: Some((105, 73)),
+        };
+        ::metadata::store_fake_super(&b3, &stat).unwrap();
+
+        let e1 = dir_entry(src.path(), "block3");
+        let e2 = dir_entry(src.path(), "block3.5");
+        let mut planned = vec![planned_copy_file(&e1), planned_copy_file(&e2)];
+
+        reorder_hardlink_group_holders(true, false, true, dst.path(), &mut planned);
+
+        assert_eq!(
+            planned[0].entry.file_name,
+            OsString::from("block3"),
+            "fake-super device cohort must stay FIRST-member-concrete"
+        );
+        assert_eq!(planned[1].entry.file_name, OsString::from("block3.5"));
     }
 }

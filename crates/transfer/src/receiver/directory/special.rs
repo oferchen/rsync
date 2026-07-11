@@ -185,15 +185,37 @@ impl ReceiverContext {
         Ok(())
     }
 
-    /// No-op on non-Unix platforms where FIFOs, sockets, and device nodes are
-    /// not supported. Mirrors the WIND-2 skip-with-warn contract used elsewhere
-    /// for special files the Windows receiver cannot materialise.
+    /// Skip-with-warning on non-Unix platforms. Native (non-Cygwin) Windows has
+    /// no `mknod`, `mkfifo`, or `AF_UNIX` bind, so a device, FIFO, or socket
+    /// entry in the file list cannot be materialised. Rather than silently
+    /// dropping the entry or aborting the whole transfer, emit one warning per
+    /// skipped entry and leave the destination untouched, per the WIND-2
+    /// contract in `docs/user/windows-support-matrix.md`.
     #[cfg(not(unix))]
     pub(in crate::receiver) fn create_specials<W: crate::writer::MsgInfoSender + ?Sized>(
         &self,
         _dest_dir: &Path,
         _writer: &mut W,
     ) -> std::io::Result<()> {
+        if self.config.flags.skip_dest_writes()
+            || (!self.config.flags.devices && !self.config.flags.specials)
+        {
+            return Ok(());
+        }
+
+        for entry in &self.file_list {
+            let gated = (entry.is_device() && self.config.flags.devices)
+                || (entry.is_special() && self.config.flags.specials);
+            if !gated {
+                continue;
+            }
+            logging::info_log!(
+                Nonreg,
+                1,
+                "skipping special file \"{}\": device and special files are not supported on this platform",
+                entry.path().display()
+            );
+        }
         Ok(())
     }
 }

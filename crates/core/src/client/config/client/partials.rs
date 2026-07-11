@@ -94,6 +94,20 @@ impl ClientConfig {
     pub const fn zero_copy_policy(&self) -> fast_io::ZeroCopyPolicy {
         self.zero_copy_policy
     }
+
+    /// Returns whether the opt-in `--parallel-delta-scan` optimization is on.
+    ///
+    /// Local sender-side only: scans a large basis file's delta across
+    /// multiple cores. Never changes the wire protocol and is never forwarded
+    /// to a remote peer. Only engages for large, duplicate-free basis files;
+    /// token boundaries and matched/literal stats may differ for basis files
+    /// with duplicate-content blocks. Reconstruction is unaffected. Default
+    /// off.
+    #[must_use]
+    #[doc(alias = "--parallel-delta-scan")]
+    pub const fn parallel_delta_scan(&self) -> bool {
+        self.parallel_delta_scan
+    }
 }
 
 #[cfg(test)]

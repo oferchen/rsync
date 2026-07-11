@@ -95,7 +95,7 @@ mod timing;
 mod transfer;
 
 pub use self::context::GeneratorContext;
-pub use self::delta::generate_delta_from_signature;
+pub use self::delta::{generate_delta_from_signature, generate_delta_from_signature_chunked};
 pub use self::diagnostics::{
     flush_rate_totals, ndx_convert_totals, prepare_acl_totals, segment_dispatch_totals,
 };

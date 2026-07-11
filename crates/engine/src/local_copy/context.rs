@@ -157,6 +157,13 @@ pub(crate) struct CopyContext<'a> {
     /// `io_error |= IOERR_GENERAL` on a failed `iconvbufs(ic_send, ...)`.
     // upstream: flist.c:1631 send_file1()
     iconv_conversion_error: bool,
+    /// Set when a file entry could not be materialised because the operation is
+    /// unsupported on this platform without privilege (currently a Windows file
+    /// symbolic link created by an unprivileged user without Developer Mode).
+    /// The entry is skipped with a warning and this flag drives the final
+    /// `RERR_PARTIAL` (exit 23) exit code, mirroring upstream's `FERROR_XFER`
+    /// handling of a failed `do_symlink()`.
+    unsupported_operation_skipped: bool,
     /// `true` when the active plan carries more than one source operand.
     /// Used to switch `--delete-during` to a deferred sweep so the per-source
     /// keep lists can be merged before any extraneous unlink fires; upstream
@@ -370,6 +377,15 @@ pub(crate) struct DeferredOperationQueue {
     pub(crate) delay_staging_dirs: HashSet<PathBuf>,
     /// Newly created paths tracked for rollback on timeout errors.
     pub(crate) created_entries: Vec<CreatedEntry>,
+    /// Transferred directories and their source mtimes, recorded when
+    /// `apply_final_directory_metadata` runs. A single final pass
+    /// (`touch_up_dirs`) re-applies these after all late in-directory mutations
+    /// (delayed-update renames, deletions, backups) so directory timestamps
+    /// survive the wall-clock bump those operations cause.
+    ///
+    /// upstream: generator.c:2093 `touch_up_dirs()` / generator.c:2271
+    /// `need_retouch_dir_times`.
+    pub(crate) finalized_dirs: Vec<(PathBuf, filetime::FileTime)>,
 }
 
 /// A directory deletion deferred until after the transfer phase completes.

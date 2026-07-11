@@ -191,6 +191,8 @@ pub mod vmsplice_writer;
 pub mod win_path;
 /// NTFS sparse-file marking (`FSCTL_SET_SPARSE`) with a non-Windows no-op stub.
 pub mod win_sparse;
+/// Windows directory-symlink creation with an unprivileged junction fallback.
+pub mod win_symlink;
 /// Delete-on-close temporary file creation for Windows via `FileDispositionInfo`.
 pub mod win_tmpfile;
 
@@ -409,6 +411,10 @@ pub use temp_file_strategy::{
 };
 pub use win_path::to_extended_path;
 pub use win_sparse::mark_file_sparse;
+pub use win_symlink::{
+    WindowsDirLink, create_directory_symlink_or_junction, create_file_symlink,
+    is_unprivileged_symlink_error,
+};
 pub use win_tmpfile::{
     WinDeleteOnCloseSupport, WinTempFileResult, WindowsTempFile, clear_delete_on_close,
     commit_delete_on_close, delete_on_close_available, open_delete_on_close_tmpfile,

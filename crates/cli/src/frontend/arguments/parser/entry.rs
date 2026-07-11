@@ -506,6 +506,8 @@ where
     } else {
         fast_io::ZeroCopyPolicy::Auto
     };
+    // Local-only sender optimization; default off, never forwarded to a peer.
+    let parallel_delta_scan = matches.get_flag("parallel-delta-scan");
     // Capture the reflink index before remove_one drains the match data;
     // resolve_cow_policy needs it to break ties against --cow / --no-cow.
     let reflink_index = last_occurrence(&matches, "reflink");
@@ -919,6 +921,7 @@ where
         io_uring_policy,
         io_uring_depth,
         zero_copy_policy,
+        parallel_delta_scan,
         cow_policy,
         simd_override,
         delay_updates,

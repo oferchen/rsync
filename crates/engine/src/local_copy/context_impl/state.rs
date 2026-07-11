@@ -145,6 +145,7 @@ impl<'a> CopyContext<'a> {
             io_errors_occurred: false,
             io_error_delete_warning_emitted: false,
             iconv_conversion_error: false,
+            unsupported_operation_skipped: false,
             multi_source: false,
             verified_parents: HashMap::new(),
             batch_flist_writer,
@@ -723,6 +724,24 @@ impl<'a> CopyContext<'a> {
         self.destination_metadata_cache.clear();
     }
 
+    /// Records a finalized directory and its source mtime for the final
+    /// [`touch_up_dirs`](Self::touch_up_dirs) pass.
+    ///
+    /// Called by `apply_final_directory_metadata` right after it applies the
+    /// source mtime during the traversal. Late in-directory mutations (the
+    /// delayed-update rename sweep, deferred deletions, backup file creation)
+    /// bump this mtime again, so the final pass re-applies the recorded value.
+    pub(super) fn record_finalized_directory(
+        &mut self,
+        destination: &Path,
+        metadata: &fs::Metadata,
+    ) {
+        let mtime = filetime::FileTime::from_last_modification_time(metadata);
+        self.deferred_ops
+            .finalized_dirs
+            .push((destination.to_path_buf(), mtime));
+    }
+
     /// Queues a deferred update for `--delay-updates` and records the hard-link
     /// source. The staging directory is tracked for cleanup after commit.
     pub(super) fn register_deferred_update(&mut self, update: DeferredUpdate) {
@@ -1143,6 +1162,14 @@ impl<'a> CopyContext<'a> {
     /// transfer can finish with exit code 23 (`RERR_PARTIAL`).
     pub(super) const fn iconv_conversion_error_occurred(&self) -> bool {
         self.iconv_conversion_error
+    }
+
+    /// Reports whether any entry was skipped because its creation is
+    /// unsupported on this platform without privilege (a Windows unprivileged
+    /// file symlink), so the transfer can finish with exit code 23
+    /// (`RERR_PARTIAL`) even though every other entry was copied.
+    pub(super) const fn unsupported_operation_skipped(&self) -> bool {
+        self.unsupported_operation_skipped
     }
 
     /// Reports whether deletions should proceed despite I/O errors.

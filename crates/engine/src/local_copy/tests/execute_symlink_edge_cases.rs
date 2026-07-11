@@ -992,6 +992,65 @@ fn hard_link_to_symlink_preserved() {
 }
 
 
+// upstream reference: native Windows has no upstream rsync; the contract is
+// docs/user/windows-support-matrix.md. `CreateSymbolicLinkW` needs privilege
+// (admin or Developer Mode), so an unprivileged directory link must fall back
+// to a junction and a file link must skip gracefully with a soft error.
+
+/// A directory link is created even without the create-symlink privilege: the
+/// engine falls back to a junction. On the stock unprivileged `windows-latest`
+/// CI runner this exercises the junction path; on an admin / Developer-Mode
+/// host it exercises the real symlink path. Either way the link resolves.
+#[cfg(windows)]
+#[test]
+fn windows_directory_symlink_falls_back_to_junction() {
+    let temp = tempdir().expect("tempdir");
+    let target = temp.path().join("real_dir");
+    fs::create_dir(&target).expect("create target dir");
+    fs::write(target.join("inside.txt"), b"hello").expect("write inside");
+
+    let link = temp.path().join("dir_link");
+    crate::local_copy::executor::create_symlink(&target, &target, &link)
+        .expect("directory link must be created via symlink or junction fallback");
+
+    let meta = fs::symlink_metadata(&link).expect("symlink_metadata");
+    assert!(
+        meta.file_type().is_symlink(),
+        "expected a reparse point (junction or symlink) at the link, got {:?}",
+        meta.file_type()
+    );
+    assert_eq!(
+        fs::read_to_string(link.join("inside.txt")).expect("read through link"),
+        "hello",
+        "directory link must resolve to the target contents"
+    );
+}
+
+/// A file link has no junction equivalent: the engine either creates the real
+/// symlink (privileged) or reports the privilege refusal without panicking, so
+/// `copy_symlink` can skip the entry with a warning and a soft error.
+#[cfg(windows)]
+#[test]
+fn windows_file_symlink_reports_privilege_gracefully() {
+    let temp = tempdir().expect("tempdir");
+    let target = temp.path().join("target.txt");
+    fs::write(&target, b"payload").expect("write target");
+
+    let link = temp.path().join("link.txt");
+    match crate::local_copy::executor::create_symlink(&target, &target, &link) {
+        Ok(()) => assert!(
+            fs::symlink_metadata(&link)
+                .expect("symlink_metadata")
+                .file_type()
+                .is_symlink()
+        ),
+        Err(err) => assert!(
+            fast_io::is_unprivileged_symlink_error(&err),
+            "file symlink refusal must be the privilege class, got {err}"
+        ),
+    }
+}
+
 #[cfg(unix)]
 #[test]
 fn symlink_size_is_target_path_length() {
