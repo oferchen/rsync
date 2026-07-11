@@ -73,7 +73,17 @@ impl ReceiverContext {
         W: io::Write + crate::writer::MsgInfoSender + ?Sized,
     {
         let _t = PhaseTimer::new("receiver-transfer-async");
-        let (mut reader, file_count, setup) = self.setup_transfer_async(reader, writer).await?;
+        let (reader, file_count, setup, carry) = self.setup_transfer_async(reader, writer).await?;
+
+        // Prepend the file-list look-ahead carry (demuxed bytes the async flist
+        // reader pulled past the end of the list) ahead of the reader so the
+        // per-file legs consume them first. These are already-demuxed output of
+        // the same reader, so they are chained at the demux-output level (never
+        // re-demultiplexed). When the sender flushes the list separately - the
+        // common case - `carry` is empty and the chain is a zero-copy passthrough.
+        // Without this the async driver would desync on a sender that packs the
+        // list and the first per-file response into one multiplex frame.
+        let mut reader = tokio::io::AsyncReadExt::chain(std::io::Cursor::new(carry), reader);
         let reader = &mut reader;
 
         let PipelineSetup {
@@ -460,12 +470,15 @@ mod async_driver_parity_tests {
     /// `ITEM_TRANSFER` iflags + an empty echoed sum-head + the literal delta,
     /// then the finalize handshake (3 phase NDX_DONE + 1 goodbye-echo NDX_DONE).
     ///
-    /// This is carried in a MSG_DATA frame *separate* from the flist frame, which
-    /// is how upstream frames the two phases (the sender flushes the file list
-    /// before streaming per-file data). Keeping them in distinct frames is also
-    /// required for the async receiver: `read_entry_with_flist_async` fills an
-    /// 8 KiB look-ahead `carry` from a single demux read, so a data byte packed
-    /// into the flist's own frame would be swallowed into that discarded carry.
+    /// `async_receiver_driver_matches_sync_output` carries this in a MSG_DATA
+    /// frame *separate* from the flist frame, which is how upstream frames the two
+    /// phases (the sender flushes the file list before streaming per-file data).
+    /// The async receiver no longer depends on that separation:
+    /// `read_entry_with_flist_async` fills an ~8 KiB look-ahead `carry` from each
+    /// demux read, and the surplus bytes past the end-of-list marker are now
+    /// returned by `receive_file_list_async` and prepended to the per-file read
+    /// stream by `run_sync_async`. `async_flist_carry_no_byte_loss_shared_frame`
+    /// packs the flist and this data into one frame to prove that.
     fn build_data_wire(requests: &[(i32, Vec<u8>)]) -> Vec<u8> {
         let mut data = Vec::new();
 
@@ -620,6 +633,97 @@ mod async_driver_parity_tests {
         assert_eq!(std::fs::read(sync_dest.path().join("d/f2")).unwrap(), f2);
 
         // (b) identical TransferStats
+        assert_stats_eq(&async_stats, &sync_stats);
+        assert_eq!(async_stats.files_transferred, 2);
+        assert_eq!(async_stats.bytes_received, (f1.len() + f2.len()) as u64);
+    }
+
+    /// The async driver loses no wire bytes when the sender packs the file list
+    /// AND the first per-file response into a single multiplex frame (no flush
+    /// between the two phases).
+    ///
+    /// The async flist reader fills an ~8 KiB look-ahead `carry` from each demux
+    /// read, so when the per-file bytes ride in the flist's own frame they land
+    /// in `carry` after the end-of-list marker is decoded. The sync path never
+    /// over-reads. If those surplus bytes were dropped the async per-file read
+    /// would start mid-stream and desync; the carry-return path
+    /// (`receive_file_list_async` -> `setup_transfer_async` -> `run_sync_async`
+    /// prepend) preserves them.
+    ///
+    /// The same recorded wire - here a *single* MSG_DATA frame holding the flist,
+    /// the two per-file echo/delta streams, and the finalize handshake - is fed to
+    /// both [`ReceiverContext::run_sync`] and
+    /// [`ReceiverContext::run_sync_async`] (one byte per poll), and the committed
+    /// trees, [`TransferStats`], and Ok/Err outcome are asserted identical. This
+    /// test fails without the carry-return fix (the async driver desyncs) and
+    /// passes with it.
+    #[tokio::test(flavor = "current_thread")]
+    async fn async_flist_carry_no_byte_loss_shared_frame() {
+        let f1: Vec<u8> = {
+            let mut v = b"hello f1 ".to_vec();
+            v.extend(std::iter::repeat_n(0x5Au8, 200));
+            v.extend_from_slice(b" end f1");
+            v
+        };
+        let f2: Vec<u8> = b"original f2 basis contents - unchanged".to_vec();
+
+        let entries = flist_entries(&f1, &f2);
+        let flist_wire = encode_flist(&entries);
+
+        let probe_dir = tempdir().unwrap();
+        let ndx_map = probe_ndx(probe_dir.path(), &flist_wire);
+        assert_eq!(ndx_map.len(), 2, "expected two regular-file requests");
+
+        let requests: Vec<(i32, Vec<u8>)> = ndx_map
+            .iter()
+            .map(|&(idx, ndx)| {
+                let content = if idx == 1 { &f1 } else { &f2 };
+                (ndx, encode_literal_wire(content))
+            })
+            .collect();
+
+        let data_wire = build_data_wire(&requests);
+
+        // The whole point: flist AND the per-file + finalize data share ONE
+        // multiplex frame - no separator flush between the list and the first
+        // per-file response.
+        let mut inner = flist_wire.clone();
+        inner.extend_from_slice(&data_wire);
+        let wire = muxed(&inner);
+
+        // --- sync driver ---
+        let sync_dest = tempdir().unwrap();
+        seed_basis(sync_dest.path(), &f2);
+        let sync_stats = {
+            let mut ctx = ReceiverContext::new_for_test(&handshake(), config(sync_dest.path()));
+            let reader = ServerReader::new_plain(Cursor::new(wire.clone()));
+            let mut writer = CaptureWriter(Vec::new());
+            ctx.run_sync(reader, &mut writer)
+                .expect("sync driver must succeed")
+        };
+        let sync_tree = read_tree(sync_dest.path());
+
+        // --- async driver, one byte per poll ---
+        let async_dest = tempdir().unwrap();
+        seed_basis(async_dest.path(), &f2);
+        let async_stats = {
+            let mut ctx = ReceiverContext::new_for_test(&handshake(), config(async_dest.path()));
+            let reader = AsyncServerReader::new_plain(ChunkedReader::new(wire.clone(), 1));
+            let mut writer = CaptureWriter(Vec::new());
+            ctx.run_sync_async(reader, &mut writer)
+                .await
+                .expect("async driver must succeed on a shared flist+data frame")
+        };
+        let async_tree = read_tree(async_dest.path());
+
+        assert_eq!(
+            async_tree, sync_tree,
+            "async driver committed a different destination tree than sync \
+             when the flist and first per-file response shared one frame"
+        );
+        assert_eq!(std::fs::read(sync_dest.path().join("d/f1")).unwrap(), f1);
+        assert_eq!(std::fs::read(sync_dest.path().join("d/f2")).unwrap(), f2);
+
         assert_stats_eq(&async_stats, &sync_stats);
         assert_eq!(async_stats.files_transferred, 2);
         assert_eq!(async_stats.bytes_received, (f1.len() + f2.len()) as u64);

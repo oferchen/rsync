@@ -100,7 +100,7 @@ async fn receive_file_list_async_matches_sync() {
     for chunk in [1usize, 2, 3, 7, 13, data.len()] {
         let mut async_ctx = ReceiverContext::new_for_test(&test_handshake(), test_config());
         let mut src = ChunkedReader::new(data.clone(), chunk);
-        let async_count = async_ctx.receive_file_list_async(&mut src).await.unwrap();
+        let (async_count, _leftover) = async_ctx.receive_file_list_async(&mut src).await.unwrap();
 
         assert_eq!(
             async_count, sync_count,
@@ -153,8 +153,8 @@ async fn receive_extra_file_lists_async_matches_sync() {
     for chunk in [1usize, 2, 3, 8, extra.len()] {
         let mut async_ctx = ReceiverContext::new_for_test(&handshake, test_config());
         let mut src = ChunkedReader::new(extra.clone(), chunk);
-        let async_total = async_ctx
-            .receive_extra_file_lists_async(&mut src)
+        let (async_total, _leftover) = async_ctx
+            .receive_extra_file_lists_async(&mut src, Vec::new())
             .await
             .unwrap();
 
