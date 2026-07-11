@@ -370,6 +370,15 @@ pub(crate) struct DeferredOperationQueue {
     pub(crate) delay_staging_dirs: HashSet<PathBuf>,
     /// Newly created paths tracked for rollback on timeout errors.
     pub(crate) created_entries: Vec<CreatedEntry>,
+    /// Transferred directories and their source mtimes, recorded when
+    /// `apply_final_directory_metadata` runs. A single final pass
+    /// (`touch_up_dirs`) re-applies these after all late in-directory mutations
+    /// (delayed-update renames, deletions, backups) so directory timestamps
+    /// survive the wall-clock bump those operations cause.
+    ///
+    /// upstream: generator.c:2093 `touch_up_dirs()` / generator.c:2271
+    /// `need_retouch_dir_times`.
+    pub(crate) finalized_dirs: Vec<(PathBuf, filetime::FileTime)>,
 }
 
 /// A directory deletion deferred until after the transfer phase completes.

@@ -573,6 +573,11 @@ fn flush_deferred_operations(context: &mut CopyContext) -> Result<(), LocalCopyE
     context.flush_deferred_updates()?;
     context.flush_deferred_deletions()?;
     context.flush_deferred_syncs()?;
+    // Final directory-mtime touch-up. Runs once, after every late in-directory
+    // mutation above (delayed-update renames, deletions, backups) has bumped
+    // the destination directory mtimes that apply_final_directory_metadata set.
+    // upstream: generator.c:2449-2451 touch_up_dirs after handle_delayed_updates.
+    context.touch_up_dirs();
     context.enforce_timeout()?;
     Ok(())
 }

@@ -2186,3 +2186,96 @@ fn delay_updates_staging_dirs_cleaned_in_subdirectories() {
     }
     assert_no_staging_dirs(&dest_root);
 }
+
+/// Regression: `--delay-updates` must not leave a stale destination directory
+/// mtime. The deferred rename that moves each `.~tmp~/<file>` into place at the
+/// end of the transfer bumps the parent directory's mtime that
+/// `apply_final_directory_metadata` already set to the source value. Upstream
+/// re-applies directory mtimes only after the delayed-update phase completes
+/// (generator.c:2449-2451 `touch_up_dirs()` after `handle_delayed_updates()`),
+/// so without the final touch-up pass the destination directory would carry the
+/// deferred-commit wall-clock time instead of the source directory's mtime.
+#[test]
+fn delay_updates_restores_root_directory_mtime_after_rename() {
+    let temp = create_tempdir();
+    let source_root = temp.path().join("source");
+    let dest_root = temp.path().join("dest");
+    fs::create_dir_all(&source_root).expect("create source");
+    fs::create_dir_all(&dest_root).expect("create dest");
+
+    // Different sizes force a transfer: the file is staged to `.~tmp~` and
+    // renamed into the destination root at flush, bumping the root mtime.
+    fs::write(source_root.join("file.txt"), b"delayed new content").expect("write source");
+    fs::write(dest_root.join("file.txt"), b"old").expect("write dest");
+
+    // Backdate the SOURCE directory after populating it; the deferred rename
+    // runs at "now", so a correct implementation restores this mtime.
+    let past = FileTime::from_unix_time(1_600_000_000, 0);
+    set_file_mtime(&source_root, past).expect("set source dir mtime");
+
+    let mut source_operand = source_root.clone().into_os_string();
+    source_operand.push(std::path::MAIN_SEPARATOR.to_string());
+    let operands = vec![source_operand, dest_root.clone().into_os_string()];
+    let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
+
+    let summary = plan
+        .execute_with_options(
+            LocalCopyExecution::Apply,
+            LocalCopyOptions::default().delay_updates(true).times(true),
+        )
+        .expect("copy succeeds");
+    assert_eq!(summary.files_copied(), 1);
+
+    let dest_dir_mtime =
+        FileTime::from_last_modification_time(&fs::metadata(&dest_root).expect("dest dir metadata"));
+    assert_eq!(
+        dest_dir_mtime, past,
+        "the delayed-update rename bumps the dir mtime apply_final_directory_metadata \
+         set; the final touch_up_dirs pass must restore the source dir mtime"
+    );
+}
+
+/// Same regression, but for a nested subdirectory. A per-operation restore
+/// could miss subdirs, whereas the single final pass must cover them. A
+/// pre-seeded `.~tmp~` under the subdir mirrors upstream's staging area, so the
+/// rename plus staging-dir removal both bump the subdir mtime that
+/// `apply_final_directory_metadata` set.
+#[test]
+fn delay_updates_restores_nested_directory_mtime_after_rename() {
+    let temp = create_tempdir();
+    let source_root = temp.path().join("source");
+    let dest_root = temp.path().join("dest");
+    let source_sub = source_root.join("sub");
+    fs::create_dir_all(&source_sub).expect("create source sub");
+    fs::write(source_sub.join("foo.txt"), b"nested new content").expect("write source");
+
+    // Pre-existing dest tree with a stale file (forces re-transfer) plus a
+    // pre-seeded `.~tmp~` staging dir under the subdir.
+    let dest_sub = dest_root.join("sub");
+    fs::create_dir_all(dest_sub.join(".~tmp~")).expect("create dest staging");
+    fs::write(dest_sub.join("foo.txt"), b"old").expect("write dest file");
+    fs::write(dest_sub.join(".~tmp~").join("foo.txt"), b"stale").expect("write staging file");
+
+    let past = FileTime::from_unix_time(1_600_000_000, 0);
+    set_file_mtime(&source_root, past).expect("set source root mtime");
+    set_file_mtime(&source_sub, past).expect("set source sub mtime");
+
+    let mut source_operand = source_root.clone().into_os_string();
+    source_operand.push(std::path::MAIN_SEPARATOR.to_string());
+    let operands = vec![source_operand, dest_root.clone().into_os_string()];
+    LocalCopyPlan::from_operands(&operands)
+        .expect("plan")
+        .execute_with_options(
+            LocalCopyExecution::Apply,
+            LocalCopyOptions::default().delay_updates(true).times(true),
+        )
+        .expect("copy succeeds");
+
+    let dest_sub_mtime =
+        FileTime::from_last_modification_time(&fs::metadata(&dest_sub).expect("dest sub metadata"));
+    assert_eq!(
+        dest_sub_mtime, past,
+        "the final touch_up_dirs pass must restore nested directory mtimes too, \
+         not just the transfer root"
+    );
+}

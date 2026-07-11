@@ -28,7 +28,7 @@ use ::metadata::apply_directory_metadata_with_options;
 /// component materialized by `--relative` so they do not carry wall-clock
 /// timestamps from `create_dir_all`.
 pub(super) fn apply_final_directory_metadata(
-    context: &CopyContext,
+    context: &mut CopyContext,
     source: &Path,
     destination: &Path,
     metadata: &fs::Metadata,
@@ -48,6 +48,16 @@ pub(super) fn apply_final_directory_metadata(
     };
     apply_directory_metadata_with_options(destination, metadata, metadata_options.clone())
         .map_err(map_metadata_error)?;
+
+    // Record the directory and its source mtime for the final touch-up pass.
+    // Late in-directory mutations (delayed-update renames, deletions, backups)
+    // bump this directory's mtime after we set it here, so a single final pass
+    // re-applies the recorded source mtime once everything else is done.
+    // upstream: generator.c:2093 touch_up_dirs() re-touches directory mtimes
+    // after the delayed-update phase completes.
+    if metadata_options.times() {
+        context.record_finalized_directory(destination, metadata);
+    }
 
     // upstream: generator.c:1410 - implied parent dirs are finalized via
     // set_file_attrs() when --implied-dirs is active (the default). With
