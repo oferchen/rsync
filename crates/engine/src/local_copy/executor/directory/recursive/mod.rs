@@ -476,6 +476,7 @@ fn copy_directory_recursive_inner(
     reorder_hardlink_group_holders(
         context.options().hard_links_enabled(),
         !context.reference_directories().is_empty(),
+        context.options().fake_super_enabled(),
         destination,
         &mut plan.planned_entries,
     );
