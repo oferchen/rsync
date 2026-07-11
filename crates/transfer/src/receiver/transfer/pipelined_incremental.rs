@@ -9,6 +9,7 @@ use std::io::{self, Read, Write};
 use std::path::PathBuf;
 
 use logging::{PhaseTimer, debug_log};
+use protocol::codec::create_ndx_codec;
 use protocol::flist::FileEntry;
 use protocol::stats::DeleteStats;
 
@@ -37,6 +38,12 @@ impl ReceiverContext {
         let _t = PhaseTimer::new("receiver-transfer-incremental");
         let (mut reader, file_count, mut setup) = self.setup_transfer(reader, writer)?;
         let reader = &mut reader;
+
+        // Materialize any INC_RECURSE sub-list segments the setup no longer
+        // drains. No-op without INC_RECURSE (`flist_eof` already set).
+        // upstream: generator.c:2299-2368 fetches sub-lists on demand.
+        let mut flist_ndx_codec = create_ndx_codec(self.protocol.as_u8());
+        self.ensure_all_segments_loaded(reader, &mut flist_ndx_codec)?;
 
         let mut stats = TransferStats {
             files_listed: file_count,

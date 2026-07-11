@@ -204,6 +204,32 @@ pub struct ReceiverContext {
     /// gate drops. `emit_itemize` reads this to decide whether to force the
     /// created-directory glyph for the root entry.
     pub(in crate::receiver) dest_root_created: bool,
+    /// Whether the sender has finished transmitting the file list.
+    ///
+    /// Set to `true` once `receive_file_list` completes on a non-INC_RECURSE
+    /// transfer (the whole list arrives in one shot), or once the terminating
+    /// `NDX_FLIST_EOF` marker is read during INC_RECURSE sub-list reception.
+    /// The lazy segment-fetch primitives in [`super::file_list`] consult this to
+    /// know when no further segments can arrive, so they never block on a wire
+    /// read past the end of the list.
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `flist.c:101` / `io.c:1750-1786` - `flist_eof` gates the generator's
+    ///   on-demand `recv_file_list()` fetch loop.
+    pub(in crate::receiver) flist_eof: bool,
+    /// Target `file_list` length for the INC_RECURSE hardlink look-ahead.
+    ///
+    /// Before applying hardlinks the receiver pre-reads sub-list segments until
+    /// the list holds at least this many entries (or `flist_eof` is reached), so
+    /// a follower whose leader arrives in a later segment is already resolved.
+    /// Defaults to `MIN_FILECNT_LOOKAHEAD / 2` (500).
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `generator.c:2300-2305` - `preserve_hard_links && inc_recurse` pre-reads
+    ///   until `file_total < MIN_FILECNT_LOOKAHEAD / 2`.
+    pub(in crate::receiver) hardlink_lookahead_target: usize,
 }
 
 impl ReceiverContext {
@@ -262,6 +288,9 @@ impl ReceiverContext {
             pending_del_stats: DeleteStats::new(),
             pipeline,
             dest_root_created: false,
+            flist_eof: false,
+            // upstream: generator.c:2304 - MIN_FILECNT_LOOKAHEAD / 2 (1000 / 2).
+            hardlink_lookahead_target: 500,
         }
     }
 

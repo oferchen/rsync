@@ -64,6 +64,14 @@ impl ReceiverContext {
         let inc_recurse = self
             .compat_flags
             .is_some_and(|f| f.contains(CompatibilityFlags::INC_RECURSE));
+
+        // Without INC_RECURSE the whole list arrives in this single call, so the
+        // file list is complete. With INC_RECURSE the sender streams per-directory
+        // sub-lists afterwards, terminated by NDX_FLIST_EOF, so leave `flist_eof`
+        // clear until that marker is read (in `receive_one_extra_segment`'s caller).
+        // upstream: io.c:1750-1786 - `flist_eof` gates the on-demand fetch loop.
+        self.flist_eof = !inc_recurse;
+
         if !inc_recurse {
             self.receive_id_lists(reader)?;
         }
@@ -154,6 +162,11 @@ impl ReceiverContext {
     ///
     /// - `flist.c:recv_file_list()` - reads entries for each sub-list
     /// - `io.c:read_ndx_and_attrs()` - detects NDX_FLIST_OFFSET framing
+    ///
+    /// Retained as the batched drain for the wire-parity tests and future
+    /// `--files-from` use; the drivers now fetch segments lazily via the
+    /// on-demand primitives, so the non-test lib build has no caller.
+    #[allow(dead_code)]
     pub(in crate::receiver) fn receive_extra_file_lists<R: Read + ?Sized>(
         &mut self,
         reader: &mut R,
@@ -166,12 +179,6 @@ impl ReceiverContext {
         }
 
         let mut ndx_codec = create_ndx_codec(self.protocol.as_u8());
-        // upstream: flist.c:recv_file_entry() - reuse cached reader to preserve
-        // compression state (prev_name, prev_mode, prev_uid, prev_gid).
-        let mut flist_reader = self
-            .flist_reader_cache
-            .take()
-            .unwrap_or_else(|| self.build_flist_reader());
         let mut total_extra = 0;
 
         loop {
@@ -179,90 +186,11 @@ impl ReceiverContext {
 
             if ndx == NDX_FLIST_EOF {
                 debug_log!(Flist, 2, "received NDX_FLIST_EOF, file list complete");
+                self.flist_eof = true;
                 break;
             }
 
-            if ndx > NDX_FLIST_OFFSET {
-                return Err(io::Error::new(
-                    io::ErrorKind::InvalidData,
-                    format!(
-                        "expected NDX_FLIST_OFFSET or NDX_FLIST_EOF, got {ndx} {}{}",
-                        crate::role_trailer::error_location!(),
-                        crate::role_trailer::receiver()
-                    ),
-                ));
-            }
-
-            let dir_ndx = NDX_FLIST_OFFSET - ndx;
-            let flat_start = self.file_list.len();
-
-            // Compute seg_ndx_start BEFORE reading entries so the reader can
-            // distinguish abbreviated vs unabbreviated hardlink followers.
-            // upstream: flist.c:recv_file_entry() uses flist->ndx_start
-            let &(prev_flat_start, prev_ndx_start) =
-                self.ndx_segments.last().expect("initial segment exists");
-            let prev_used = (flat_start - prev_flat_start) as i32;
-            let seg_ndx_start = prev_ndx_start + prev_used + 1;
-            flist_reader.set_ndx_start(seg_ndx_start);
-
-            let mut segment_count = 0;
-
-            // Pass segment entries so abbreviated followers can resolve leaders.
-            while let Some(entry) =
-                flist_reader.read_entry_with_flist(reader, &self.file_list[flat_start..])?
-            {
-                self.file_list.push(entry);
-                segment_count += 1;
-            }
-
-            // upstream: flist.c:1646 - leader GNUM is readdir-order wire NDX,
-            // assigned before sorting.
-            if self.config.flags.hard_links {
-                for (i, entry) in self.file_list[flat_start..].iter_mut().enumerate() {
-                    if entry.hlink_first() {
-                        entry.set_hardlink_idx((seg_ndx_start + i as i32) as u32);
-                    }
-                }
-            }
-
-            // upstream: flist.c:2155,2736 - both sides call flist_sort_and_clean()
-            // independently. Unstable sort (true) is safe - entries have unique paths.
-            // INC_RECURSE requires protocol >= 30, so pre29 is always false here.
-            //
-            // Iconv suppresses the in-place reorder for the same reason as the
-            // initial flist: upstream's `need_unsorted_flist` keeps the
-            // NDX-addressed array in scan order so the receiver can resolve
-            // generator requests against the bytes the sender emitted.
-            if !self.iconv_reorder_suppressed() {
-                sort_file_list(&mut self.file_list[flat_start..], true, false);
-            }
-            match_hard_links(&mut self.file_list[flat_start..], &mut self.prior_hlinks);
-
-            // Normalize pre-30 hardlinks in this segment.
-            if self.protocol.as_u8() < 30 && self.config.flags.hard_links {
-                normalize_pre30_hardlinks(&mut self.file_list[flat_start..]);
-            }
-
-            // upstream: flist.c:2931 - ndx_start = prev->ndx_start + prev->used + 1
-            self.ndx_segments.push((flat_start, seg_ndx_start));
-
-            // DDP-B3 (#2257): if a parallel-deterministic-delete context
-            // is attached, publish a DeletePlan for this segment's
-            // content directory into the shared DeletePlanMap. Failures
-            // are logged + skipped; the legacy batched-sweep path
-            // remains the active delete driver until the emitter wiring
-            // lands (tasks DDP-E1-E5).
-            self.publish_segment_to_delete_pipeline(dir_ndx, flat_start);
-
-            debug_log!(
-                Flist,
-                2,
-                "received sub-list for dir_ndx={}, {} entries (ndx_start={})",
-                dir_ndx,
-                segment_count,
-                seg_ndx_start
-            );
-            total_extra += segment_count;
+            total_extra += self.receive_one_extra_segment(reader, ndx)?;
         }
 
         debug_log!(
@@ -272,6 +200,126 @@ impl ReceiverContext {
             total_extra
         );
         Ok(total_extra)
+    }
+
+    /// Receives one INC_RECURSE sub-list segment framed by a `NDX_FLIST_OFFSET`
+    /// marker whose raw wire value is `ndx`.
+    ///
+    /// This is the body of a single [`receive_extra_file_lists`] loop iteration,
+    /// minus the `read_ndx` and the `NDX_FLIST_EOF` termination check. It is the
+    /// shared segment-append primitive used both by the batched
+    /// [`receive_extra_file_lists`] wrapper (kept for `--files-from` and the
+    /// wire-parity tests) and by the lazy on-demand fetch in
+    /// [`super::super::ReceiverContext::read_next_frame`]. Returns the number of
+    /// entries appended for this segment.
+    ///
+    /// Validates the marker (`ndx <= NDX_FLIST_OFFSET`), decodes the segment
+    /// entries with the cached [`protocol::flist::FileListReader`] (preserving
+    /// compression state across sub-lists), assigns leader GNUM wire NDXes, sorts
+    /// and hardlink-matches the segment slice, pushes the `(flat_start,
+    /// ndx_start)` boundary, and publishes the segment to the delete pipeline.
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `flist.c:recv_file_list()` - per-sub-list entry decode
+    /// - `flist.c:2931` - `ndx_start = prev->ndx_start + prev->used + 1`
+    pub(in crate::receiver) fn receive_one_extra_segment<R: Read + ?Sized>(
+        &mut self,
+        reader: &mut R,
+        ndx: i32,
+    ) -> io::Result<usize> {
+        if ndx > NDX_FLIST_OFFSET {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!(
+                    "expected NDX_FLIST_OFFSET or NDX_FLIST_EOF, got {ndx} {}{}",
+                    crate::role_trailer::error_location!(),
+                    crate::role_trailer::receiver()
+                ),
+            ));
+        }
+
+        // upstream: flist.c:recv_file_entry() - reuse cached reader to preserve
+        // compression state (prev_name, prev_mode, prev_uid, prev_gid).
+        let mut flist_reader = self
+            .flist_reader_cache
+            .take()
+            .unwrap_or_else(|| self.build_flist_reader());
+
+        let dir_ndx = NDX_FLIST_OFFSET - ndx;
+        let flat_start = self.file_list.len();
+
+        // Compute seg_ndx_start BEFORE reading entries so the reader can
+        // distinguish abbreviated vs unabbreviated hardlink followers.
+        // upstream: flist.c:recv_file_entry() uses flist->ndx_start
+        let &(prev_flat_start, prev_ndx_start) =
+            self.ndx_segments.last().expect("initial segment exists");
+        let prev_used = (flat_start - prev_flat_start) as i32;
+        let seg_ndx_start = prev_ndx_start + prev_used + 1;
+        flist_reader.set_ndx_start(seg_ndx_start);
+
+        let mut segment_count = 0;
+
+        // Pass segment entries so abbreviated followers can resolve leaders.
+        while let Some(entry) =
+            flist_reader.read_entry_with_flist(reader, &self.file_list[flat_start..])?
+        {
+            self.file_list.push(entry);
+            segment_count += 1;
+        }
+
+        // upstream: flist.c:1646 - leader GNUM is readdir-order wire NDX,
+        // assigned before sorting.
+        if self.config.flags.hard_links {
+            for (i, entry) in self.file_list[flat_start..].iter_mut().enumerate() {
+                if entry.hlink_first() {
+                    entry.set_hardlink_idx((seg_ndx_start + i as i32) as u32);
+                }
+            }
+        }
+
+        // upstream: flist.c:2155,2736 - both sides call flist_sort_and_clean()
+        // independently. Unstable sort (true) is safe - entries have unique paths.
+        // INC_RECURSE requires protocol >= 30, so pre29 is always false here.
+        //
+        // Iconv suppresses the in-place reorder for the same reason as the
+        // initial flist: upstream's `need_unsorted_flist` keeps the
+        // NDX-addressed array in scan order so the receiver can resolve
+        // generator requests against the bytes the sender emitted.
+        if !self.iconv_reorder_suppressed() {
+            sort_file_list(&mut self.file_list[flat_start..], true, false);
+        }
+        match_hard_links(&mut self.file_list[flat_start..], &mut self.prior_hlinks);
+
+        // Normalize pre-30 hardlinks in this segment.
+        if self.protocol.as_u8() < 30 && self.config.flags.hard_links {
+            normalize_pre30_hardlinks(&mut self.file_list[flat_start..]);
+        }
+
+        // upstream: flist.c:2931 - ndx_start = prev->ndx_start + prev->used + 1
+        self.ndx_segments.push((flat_start, seg_ndx_start));
+
+        // Restore the cached reader so the next segment continues the same
+        // compression state (upstream's static recv_file_entry() variables).
+        self.flist_reader_cache = Some(flist_reader);
+
+        // DDP-B3 (#2257): if a parallel-deterministic-delete context
+        // is attached, publish a DeletePlan for this segment's
+        // content directory into the shared DeletePlanMap. Failures
+        // are logged + skipped; the legacy batched-sweep path
+        // remains the active delete driver until the emitter wiring
+        // lands (tasks DDP-E1-E5).
+        self.publish_segment_to_delete_pipeline(dir_ndx, flat_start);
+
+        debug_log!(
+            Flist,
+            2,
+            "received sub-list for dir_ndx={}, {} entries (ndx_start={})",
+            dir_ndx,
+            segment_count,
+            seg_ndx_start
+        );
+        Ok(segment_count)
     }
 
     /// Publishes one INC_RECURSE segment into the parallel-deterministic-
