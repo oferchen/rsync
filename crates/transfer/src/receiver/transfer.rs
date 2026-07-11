@@ -5,6 +5,8 @@
 //! loops live in their own submodules:
 //!
 //! - `sync` - sequential per-file transfer used by `run_sync`.
+//! - `sync_async` - `.await` twin of `sync` used by `run_sync_async`
+//!   (`tokio-transfer` only).
 //! - `pipelined` - decoupled two-phase pipeline used by `run_pipelined`.
 //! - `pipelined_incremental` - same as `pipelined` plus incremental directory
 //!   creation and failed-dir tracking.
@@ -22,6 +24,8 @@ mod pipelined;
 mod pipelined_incremental;
 mod setup;
 mod sync;
+#[cfg(feature = "tokio-transfer")]
+mod sync_async;
 
 use std::io::{self, Read, Write};
 use std::path::PathBuf;
