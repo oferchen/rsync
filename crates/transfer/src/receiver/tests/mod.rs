@@ -15,6 +15,8 @@
 //!   propagation, legacy goodbye handling, input-multiplex activation,
 //!   daemon filter set, and path-traversal rejection.
 
+#[cfg(unix)]
+mod create_specials;
 mod delta_apply;
 mod errors_and_timeouts;
 mod file_list;
