@@ -344,6 +344,16 @@ fn run_daemon_transfer(
     async_socket: Option<TcpStream>,
 ) -> ServerResult {
     match async_socket {
+        // BENCHMARK-ONLY (default-off): when the `async-bench` feature is
+        // compiled AND `OC_RSYNC_ASYNC_BENCH=1` is set, run the async receiver
+        // driver over the real socket on a multi-thread runtime instead of
+        // hosting the sync body. Both gates must be present; either missing keeps
+        // the byte-identical threaded path below. This is not production-safe and
+        // does not satisfy the live-wiring rung (the write leg still blocks).
+        #[cfg(feature = "async-bench")]
+        Some(socket) if async_bench_enabled() => {
+            run_async_bench_receiver(config, handshake, read_stream, write_stream, socket)
+        }
         // Socket-backed daemon module transfer: route through the tokio driver.
         // The driver hosts the sync server body via `host_sync_on`, so output is
         // byte-identical to the direct call. The socket clone is held for the
@@ -372,6 +382,8 @@ fn run_daemon_transfer(
             None,
             None,
             None,
+            #[cfg(feature = "async-bench")]
+            None,
         ),
     }
 }
@@ -396,6 +408,58 @@ fn with_daemon_transfer_runtime<R>(f: impl FnOnce(&tokio::runtime::Handle) -> R)
             f(runtime.handle())
         }
     }
+}
+
+/// BENCHMARK-ONLY runtime gate: is `OC_RSYNC_ASYNC_BENCH=1` set?
+///
+/// The `async-bench` cargo feature is the compile-time gate; this env var is the
+/// runtime gate. Both must be present for the async-bench receiver path to run,
+/// so a build that compiled the feature still uses the threaded path unless the
+/// operator opts in explicitly. Any value other than `"1"` (including unset)
+/// keeps the default path.
+#[cfg(feature = "async-bench")]
+fn async_bench_enabled() -> bool {
+    std::env::var("OC_RSYNC_ASYNC_BENCH").is_ok_and(|v| v == "1")
+}
+
+/// BENCHMARK-ONLY: runs the async receiver driver over the real socket.
+///
+/// Builds a multi-thread tokio runtime (`>= 2` worker threads) and hands the
+/// pre-split socket clone plus the runtime handle to
+/// [`run_server_with_handshake`]. The multi-thread runtime is load-bearing: the
+/// async receiver driver still writes the request half synchronously, so a
+/// blocking write parks one worker while another polls the `.await` read and the
+/// peer keeps draining. A current-thread runtime would starve the read and
+/// deadlock (asy-7 Blocker F). The synchronous protocol setup runs on
+/// `read_stream`/`write_stream` (blocking clones); the driver then takes over
+/// the wire-facing reads via `socket` (a third clone of the same kernel socket).
+#[cfg(feature = "async-bench")]
+fn run_async_bench_receiver(
+    config: ServerConfig,
+    handshake: HandshakeResult,
+    read_stream: &mut dyn Read,
+    write_stream: &mut dyn Write,
+    socket: TcpStream,
+) -> ServerResult {
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(2)
+        .enable_all()
+        .build()
+        .map_err(|e| io::Error::other(format!("failed to build async-bench runtime: {e}")))?;
+    let bench = AsyncBenchReceiver {
+        handle: runtime.handle(),
+        socket,
+    };
+    run_server_with_handshake(
+        config,
+        handshake,
+        read_stream,
+        write_stream,
+        None,
+        None,
+        None,
+        Some(bench),
+    )
 }
 
 /// Executes the server transfer and logs the result.

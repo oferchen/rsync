@@ -100,6 +100,12 @@ async = ["dep:tokio", "engine/async", "transfer/async"]
 # `core` signature. See docs/design/asy-2-tokio-runtime-feature.md section 5.
 tokio-transfer = ["async", "dep:tokio", "transfer/tokio-transfer"]
 
+# BENCHMARK-ONLY (default-off): forwards `transfer/async-bench` so the daemon
+# receiver can run the async driver over a real socket for benchmarking. Also
+# gated at runtime by `OC_RSYNC_ASYNC_BENCH=1`. NOT production-safe. Implies
+# `tokio-transfer`.
+async-bench = ["tokio-transfer", "transfer/async-bench"]
+
 
 # DEPRECATED (ISI.h): sender INC_RECURSE is now default-on. Marker
 # retained for one release until ISI.i.2 retires the feature flag.
