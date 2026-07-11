@@ -409,6 +409,21 @@ pub(crate) fn apply_common_server_flags(config: &ClientConfig, server_config: &m
     // negotiator's checksum_override; without this the choice is silently
     // dropped at protocol >= 30 (binary negotiation).
     server_config.checksum_choice = config.checksum_protocol_override();
+    // upstream: compat.c:543-544 - `if (do_compression && !compress_choice)`
+    // gates the compression vstring list, so an explicit --compress-choice (also
+    // its --new-compress/--old-compress aliases) sets compress_choice and
+    // suppresses the list. Carry that explicit choice onto the local half here so
+    // the client-sender's TransferConfig has connection.compress_choice = Some(..)
+    // and transfer/src/lib.rs's send_compression gate stays false; without this
+    // the client sent an extra vstring the peer never expected and desynced the
+    // stream. Non-explicit `-z`/`-zz` leaves compress_choice None (vstring
+    // negotiation), matching the daemon-push path in daemon_transfer.
+    if config.explicit_compress_choice()
+        && let Ok(algo) =
+            protocol::CompressionAlgorithm::parse(config.compression_algorithm().name())
+    {
+        server_config.connection.compress_choice = Some(algo);
+    }
 }
 
 #[cfg(test)]
@@ -566,6 +581,38 @@ mod tests {
         let mut server_config = ServerConfig::default();
         apply_common_server_flags(&config, &mut server_config);
         assert_eq!(server_config.connection.compression_threads, None);
+    }
+
+    #[test]
+    fn apply_common_server_flags_wires_explicit_compress_choice() {
+        // upstream: compat.c:543-544 - an explicit --compress-choice sets
+        // compress_choice, which suppresses the compression vstring list. Carry
+        // it onto the local half so the client-sender's send_compression gate
+        // (transfer/src/lib.rs: do_compression && compress_choice.is_none())
+        // stays false and no stray vstring desyncs the stream.
+        let config = ClientConfig::builder()
+            .compress(true)
+            .compression_algorithm(compress::algorithm::CompressionAlgorithm::Zlib)
+            .build();
+        assert!(config.explicit_compress_choice());
+        let mut server_config = ServerConfig::default();
+        apply_common_server_flags(&config, &mut server_config);
+        assert_eq!(
+            server_config.connection.compress_choice,
+            Some(protocol::CompressionAlgorithm::Zlib),
+            "explicit --compress-choice must land on connection.compress_choice"
+        );
+    }
+
+    #[test]
+    fn apply_common_server_flags_default_compress_leaves_choice_none() {
+        // Plain `-z` (no explicit choice) must leave compress_choice None so the
+        // sender still negotiates via the vstring list, matching upstream.
+        let config = ClientConfig::builder().compress(true).build();
+        assert!(!config.explicit_compress_choice());
+        let mut server_config = ServerConfig::default();
+        apply_common_server_flags(&config, &mut server_config);
+        assert_eq!(server_config.connection.compress_choice, None);
     }
 
     #[test]

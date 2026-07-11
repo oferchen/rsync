@@ -86,6 +86,21 @@ impl<T> Sender<T> {
         }
     }
 
+    /// Attempts to send `item` without spin-waiting.
+    ///
+    /// Returns `Err(SendError(item))` immediately if the queue is full or the
+    /// receiver has been dropped, instead of spinning like [`send`](Self::send).
+    /// This is the non-blocking analog used for the buffer-return path, where
+    /// `item` is only a recycling spare (never live data): if the ring is full,
+    /// the returned buffer is simply dropped and the consumer allocates a fresh
+    /// one. Never use this for data-carrying channels.
+    pub fn try_send(&self, item: T) -> Result<(), SendError<T>> {
+        if !self.0.consumer_alive.load(Ordering::Relaxed) {
+            return Err(SendError(item));
+        }
+        self.0.queue.push(item).map_err(SendError)
+    }
+
     /// Returns `true` if the receiver has been dropped.
     #[cfg(test)]
     pub fn is_disconnected(&self) -> bool {
@@ -268,6 +283,31 @@ mod tests {
         tx.send(3).unwrap();
         let received = drain.join().unwrap();
         assert_eq!(received, vec![1, 2, 3]);
+    }
+
+    #[test]
+    fn try_send_full_ring_does_not_block() {
+        // A full ring must reject immediately (returning the item) rather than
+        // spin-wait. This is the property the disk thread's buffer-return path
+        // relies on to avoid deadlocking when the network thread never drains
+        // the return ring (compressed all-literal streams never recycle).
+        let (tx, rx) = channel::<i32>(2);
+        assert!(tx.try_send(1).is_ok());
+        assert!(tx.try_send(2).is_ok());
+        // Ring is full: try_send returns the rejected item instead of blocking.
+        let SendError(rejected) = tx.try_send(3).expect_err("full ring must reject");
+        assert_eq!(rejected, 3);
+        // Draining a slot lets the next try_send succeed.
+        assert_eq!(rx.recv().unwrap(), 1);
+        assert!(tx.try_send(3).is_ok());
+    }
+
+    #[test]
+    fn try_send_disconnected_returns_item() {
+        let (tx, rx) = channel::<i32>(4);
+        drop(rx);
+        let SendError(item) = tx.try_send(7).expect_err("disconnected must reject");
+        assert_eq!(item, 7);
     }
 
     #[test]
