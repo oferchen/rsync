@@ -1,5 +1,59 @@
 // Top-level approved-module request driver: connection acquisition,
 // auth, exec hooks, config build, transfer execution, and TCP drain.
+
+/// Runs the module's `post-xfer exec` hook, if one is configured and exec
+/// hooks are enabled, with the given transfer `exit_status`.
+///
+/// upstream: clientserver.c:906-931 - the daemon forks a child that runs the
+/// whole module session while the parent waits for the child's exit status and
+/// then runs `post-xfer exec` with it. Because the parent waits for *any* child
+/// outcome, the hook fires regardless of transfer success - including a refused
+/// request (a read-only push or write-only pull exits `RERR_SYNTAX`, so the
+/// hook sees `RSYNC_EXIT_STATUS=1`). This finalizer lets the early-return refuse
+/// paths mirror that "post-xfer always runs" flow, matching the inline
+/// post-xfer dispatch on the success path.
+fn run_post_xfer_finalizer(
+    ctx: &ModuleRequestContext<'_>,
+    module: &ModuleRuntime,
+    host_name: Option<&str>,
+    user_name: Option<&str>,
+    client_args: &[String],
+    exit_status: i32,
+) {
+    let Some(command) = module
+        .post_xfer_exec
+        .as_deref()
+        .filter(|_| xfer_exec_enabled())
+    else {
+        return;
+    };
+
+    let addr_str = ctx.peer_ip.to_string();
+    let path_str = module.path.display().to_string();
+    // Mirror the success-path `exec_path_ctx`: %-expansion of the command
+    // string uses an empty username, while RSYNC_USER_NAME carries the
+    // authenticated user via the `XferExecContext` below.
+    let path_ctx = PathExpansionContext {
+        module_path: &path_str,
+        module_name: &module.name,
+        username: "",
+        remote_addr: &addr_str,
+        hostname: host_name.unwrap_or(""),
+        pid: std::process::id(),
+    };
+    let expanded_command = expand_exec_command(command, &path_ctx);
+    let xfer_ctx = XferExecContext {
+        module_name: &module.name,
+        module_path: &module.path,
+        host_addr: ctx.peer_ip,
+        host_name,
+        user_name,
+        request: ctx.request,
+        client_args,
+    };
+    run_post_xfer_exec(&expanded_command, &xfer_ctx, exit_status, ctx.log_sink);
+}
+
 /// Processes an approved module request.
 ///
 /// Handles the full transfer flow: connection acquisition, authentication,
@@ -162,21 +216,47 @@ fn process_approved_module(
     // check is unaffected: upstream's auth override only touches `read_only`.
     let role = determine_server_role(&client_args);
     let effective_read_only = access_effective_read_only(module.read_only, auth_access_level);
+    // upstream: clientserver.c:906-931 - the post-xfer parent waits for the
+    // module child and runs `post-xfer exec` regardless of outcome. A refused
+    // read-only push / write-only pull exits `RERR_SYNTAX` (1) in the child, so
+    // the hook still fires with `RSYNC_EXIT_STATUS=1`. Emit the framed
+    // rejection first (the child's `rprintf(FERROR, ...)` + `exit_cleanup`),
+    // then run the post-xfer finalizer, matching that ordering.
     if effective_read_only && matches!(role, ServerRole::Receiver) {
-        return handle_access_denied_post_handshake(
+        let host_owned = ctx.effective_host().map(str::to_owned);
+        let result = handle_access_denied_post_handshake(
             ctx,
             MODULE_READ_ONLY_PAYLOAD,
             negotiated_protocol,
             &client_args,
         );
+        run_post_xfer_finalizer(
+            ctx,
+            module,
+            host_owned.as_deref(),
+            auth_user.as_deref(),
+            &client_args,
+            RERR_SYNTAX_EXIT_CODE,
+        );
+        return result;
     }
     if module.write_only && matches!(role, ServerRole::Generator) {
-        return handle_access_denied_post_handshake(
+        let host_owned = ctx.effective_host().map(str::to_owned);
+        let result = handle_access_denied_post_handshake(
             ctx,
             MODULE_WRITE_ONLY_PAYLOAD,
             negotiated_protocol,
             &client_args,
         );
+        run_post_xfer_finalizer(
+            ctx,
+            module,
+            host_owned.as_deref(),
+            auth_user.as_deref(),
+            &client_args,
+            RERR_SYNTAX_EXIT_CODE,
+        );
+        return result;
     }
 
     if !validate_module_path(ctx, module)? {
