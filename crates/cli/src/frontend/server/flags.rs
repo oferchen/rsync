@@ -106,6 +106,14 @@ pub(super) struct ServerLongFlags {
     /// `remove_source_files` to decide whether to unlink each file after
     /// the receiver acknowledges a successful transfer.
     pub(super) remove_source_files: bool,
+    /// Stream device contents as regular files (upstream: `--copy-devices`).
+    ///
+    /// upstream: options.c:2987 - `if (copy_devices && !am_sender) args[ac++] =
+    /// "--copy-devices"`. The flag is forwarded only when the remote peer is the
+    /// sender (a pull), so this server-side process is the sender and must
+    /// convert each block/char device into a regular file whose contents are
+    /// streamed (`flist.c:1419`).
+    pub(super) copy_devices: bool,
     /// Whether `--stats` was forwarded by the client.
     ///
     /// upstream: options.c:2838-2839 - `server_options()` emits `--stats` whenever
@@ -234,6 +242,7 @@ pub(super) fn parse_server_long_flags(args: &[OsString]) -> ServerLongFlags {
         numeric_ids: false,
         delete: false,
         remove_source_files: false,
+        copy_devices: false,
         stats: false,
         ignore_existing: false,
         existing_only: false,
@@ -288,6 +297,10 @@ pub(super) fn parse_server_long_flags(args: &[OsString]) -> ServerLongFlags {
             "--remove-source-files" | "--remove-sent-files" => {
                 flags.remove_source_files = true;
             }
+            // upstream: options.c:2987 - `--copy-devices` is forwarded to the
+            // remote sender (pull) so it streams device contents as a regular
+            // file (flist.c:1419). Long-form only.
+            "--copy-devices" => flags.copy_devices = true,
             // upstream: options.c:2838-2839 - --stats forwarded by server_options()
             // when do_stats was set. The server-side flag drives NDX_DEL_STATS
             // emission in the goodbye phase (generator.c:2377,2422).

@@ -370,6 +370,14 @@ pub(crate) fn apply_common_server_flags(config: &ClientConfig, server_config: &m
     // upstream: options.c:2881-2885 - copy_unsafe_links and safe_links are long-form only
     server_config.flags.copy_unsafe_links = config.copy_unsafe_links();
     server_config.flags.safe_links = config.safe_links();
+    // upstream: flist.c:1419 / options.c:2987 - `--copy-devices` converts device
+    // entries into regular files on the SENDER so their contents stream like a
+    // file. The flag is long-form only; on a push the local client IS the sender
+    // and never sends `--copy-devices` over the wire (`if (copy_devices &&
+    // !am_sender)`), so the in-process sender must carry it here. On a pull the
+    // local half is the receiver, where the flag is inert (the remote sender does
+    // the conversion), so setting it unconditionally is safe.
+    server_config.flags.copy_devices = config.copy_devices();
     // upstream: syscall.c do_open / do_open_nofollow propagate O_NOATIME when set.
     server_config.write.open_noatime = config.open_noatime();
     // upstream: options.c:2750-2762 - itemize_changes is forwarded to the remote
