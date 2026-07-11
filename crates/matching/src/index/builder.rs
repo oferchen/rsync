@@ -52,6 +52,34 @@ fn populate_index(
     has_full_blocks
 }
 
+/// Detects whether two or more full-length blocks carry identical content.
+///
+/// Two blocks are content-duplicates when they share both the rolling
+/// checksum and the strong checksum. The strong checksum is truncated to at
+/// most 16 bytes on the wire, so a fixed-width key over `(rolling, strong)`
+/// captures every real duplicate; a chance strong-checksum collision between
+/// two distinct contents can only over-report (a conservative `true`), which
+/// keeps the parallel-scan eligibility gate on the safe side. Runs in one
+/// linear pass over the blocks, so the cost is negligible next to signature
+/// generation.
+fn detect_duplicate_blocks(blocks: &[SignatureBlock], block_length: usize) -> bool {
+    let mut seen: std::collections::HashSet<(u32, [u8; 16])> =
+        std::collections::HashSet::with_capacity(blocks.len());
+    for block in blocks {
+        if block.len() != block_length {
+            continue;
+        }
+        let mut strong = [0u8; 16];
+        let bytes = block.strong();
+        let take = bytes.len().min(strong.len());
+        strong[..take].copy_from_slice(&bytes[..take]);
+        if !seen.insert((block.rolling().value(), strong)) {
+            return true;
+        }
+    }
+    false
+}
+
 impl DeltaSignatureIndex {
     /// Builds a signature index from the provided [`FileSignature`].
     ///
@@ -109,6 +137,7 @@ impl DeltaSignatureIndex {
 
         let size = lookup.capacity();
         let consumed = build_consumed_words(blocks.len());
+        let has_duplicate_blocks = detect_duplicate_blocks(&blocks, block_length);
         let index = Self {
             block_length,
             strong_length,
@@ -119,6 +148,7 @@ impl DeltaSignatureIndex {
             bithash,
             next_match,
             consumed,
+            has_duplicate_blocks,
             role,
             last_traced_size: size,
             #[cfg(any(test, feature = "bench-internal"))]
@@ -177,6 +207,8 @@ impl DeltaSignatureIndex {
             &mut self.lookup,
             &mut self.next_match,
         );
+
+        self.has_duplicate_blocks = detect_duplicate_blocks(&self.blocks, block_length);
 
         if ok {
             let size = self.lookup.capacity();
