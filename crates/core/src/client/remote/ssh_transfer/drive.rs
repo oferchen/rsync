@@ -374,6 +374,8 @@ fn run_server_over_ssh_connection(
         } else {
             None
         },
+        #[cfg(feature = "async-bench")]
+        None,
     );
 
     // Close the writer to signal EOF so the remote process can exit.

@@ -67,7 +67,19 @@ pub fn run_server_with_handshake_on<W: Write>(
     // inline sync call with per-boundary `.await` sites; ASY-3 only establishes
     // the runtime-hosted scaffold.
     host_sync_on(handle, move || {
-        run_server_with_handshake(config, handshake, stdin, stdout, progress, batch, itemize)
+        run_server_with_handshake(
+            config,
+            handshake,
+            stdin,
+            stdout,
+            progress,
+            batch,
+            itemize,
+            // The tokio driver hosts the sync server body; the async-bench path
+            // is driven separately by the daemon, never through here.
+            #[cfg(feature = "async-bench")]
+            None,
+        )
     })
 }
 

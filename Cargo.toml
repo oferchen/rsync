@@ -142,6 +142,17 @@ tokio-transfer = [
     "daemon/tokio-transfer",
 ]
 
+# BENCHMARK-ONLY (default-off): forwards the gated async-receiver daemon path to
+# the workspace binary so it can be enabled from the root package. Reachable only
+# with this feature AND the OC_RSYNC_ASYNC_BENCH=1 runtime env; production/default
+# builds are unaffected. Not wire-fidelity-guaranteed under arbitrary backpressure.
+async-bench = [
+    "tokio-transfer",
+    "core/async-bench",
+    "transfer/async-bench",
+    "daemon/async-bench",
+]
+
 # systemd sd-notify integration for daemon
 sd-notify = ["daemon/sd-notify"]
 

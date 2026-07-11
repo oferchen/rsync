@@ -60,6 +60,9 @@ use core::{
 // `docs/design/asy-2-tokio-runtime-feature.md` section 5.
 #[cfg(feature = "tokio-transfer")]
 use core::server::run_server_with_handshake_on;
+// BENCHMARK-ONLY (default-off): receiver handoff for the gated async-bench path.
+#[cfg(feature = "async-bench")]
+use core::server::AsyncBenchReceiver;
 use logging_sink::MessageSink;
 use protocol::{
     LEGACY_DAEMON_PREFIX_LEN, LegacyDaemonMessage, MessageCode, MessageFrame, ProtocolVersion,

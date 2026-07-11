@@ -89,6 +89,8 @@ pub(crate) fn run_pull_transfer(
         progress,
         batch_recording,
         None,
+        #[cfg(feature = "async-bench")]
+        None,
     )
     .map_err(|e| invalid_argument_error(&format!("transfer failed: {e}"), 23))?;
     let elapsed = start.elapsed();
@@ -171,6 +173,8 @@ pub(crate) fn run_push_transfer(
         } else {
             None
         },
+        #[cfg(feature = "async-bench")]
+        None,
     );
 
     match result {
