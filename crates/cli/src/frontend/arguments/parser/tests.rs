@@ -153,12 +153,16 @@ fn omit_link_times_flag() {
     assert_eq!(parsed.omit_link_times, Some(true));
 }
 
+// upstream: options.c:2366-2367 - `--list-only` does NOT set dry_run (only -n
+// does). The receiver skips destination writes under list_only independently
+// (run_client mode selection + TransferFlags::skip_dest_writes), so the two
+// must stay decoupled or the server args wrongly pack the compact 'n' letter.
 #[test]
-fn list_only_enables_dry_run() {
+fn list_only_does_not_enable_dry_run() {
     let result = parse_test_args(["--list-only", "src/", "dst/"]);
     assert!(result.is_ok());
     let parsed = result.unwrap();
-    assert!(parsed.dry_run);
+    assert!(!parsed.dry_run, "list-only must not force dry_run");
     assert!(parsed.list_only);
 }
 

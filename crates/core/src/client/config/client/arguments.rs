@@ -24,6 +24,34 @@ impl ClientConfig {
         self.list_only
     }
 
+    /// Reports whether the user passed `--list-only` explicitly.
+    ///
+    /// Mirrors upstream `list_only > 1`: only the explicit flag is forwarded to
+    /// the remote as `--list-only` (`options.c:2747`); the implicit single-source
+    /// listing (`list_only == 1`) is not.
+    #[must_use]
+    #[doc(alias = "--list-only")]
+    pub const fn list_only_arg(&self) -> bool {
+        self.list_only_arg
+    }
+
+    /// Reports whether `-q` / `--quiet` was passed (upstream `quiet`).
+    #[must_use]
+    #[doc(alias = "--quiet")]
+    pub const fn quiet(&self) -> bool {
+        self.quiet
+    }
+
+    /// Returns the tri-state `--msgs2stderr` setting (upstream `msgs2stderr`).
+    ///
+    /// `None` is the default (upstream value 2); `Some(true)` is `--msgs2stderr`
+    /// (value 1); `Some(false)` is `--no-msgs2stderr` (value 0).
+    #[must_use]
+    #[doc(alias = "--msgs2stderr")]
+    pub const fn msgs2stderr(&self) -> Option<bool> {
+        self.msgs2stderr
+    }
+
     /// Reports whether a transfer was explicitly requested.
     #[must_use]
     pub const fn has_transfer_request(&self) -> bool {

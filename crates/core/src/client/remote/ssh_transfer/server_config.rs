@@ -46,6 +46,13 @@ pub(in crate::client::remote) fn build_server_config_for_receiver(
     // client IS the receiver and --existing is a long-form-only flag absent from
     // the compact letter string, so carry it onto the local receiver config here.
     server_config.file_selection.existing_only = config.existing_only();
+    // upstream: options.c:2194 / generator.c:1249 - a single source operand with
+    // no destination implies list-only. On a pull the local client IS the
+    // receiver and `list_only` is a long-form-only concern absent from the
+    // compact letter string, so carry it onto the local receiver config here.
+    // Without this the receiver renders the flist AND writes files (the compact
+    // 'n' is no longer packed for list-only after decoupling it from dry_run).
+    server_config.flags.list_only = config.list_only();
 
     flags::apply_common_server_flags(config, &mut server_config);
     Ok(server_config)

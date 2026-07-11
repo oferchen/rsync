@@ -12,5 +12,6 @@ fn parse_args_recognises_list_only_flag() {
     .expect("parse");
 
     assert!(parsed.list_only);
-    assert!(parsed.dry_run);
+    // upstream: options.c:2366-2367 - list_only does NOT set dry_run.
+    assert!(!parsed.dry_run);
 }
