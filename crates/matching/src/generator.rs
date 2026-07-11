@@ -72,6 +72,17 @@ fn flush_seq_match_run(
 #[derive(Clone, Debug)]
 pub struct DeltaGenerator {
     buffer_len: usize,
+    /// Consecutive-match gating threshold (zsync `seq_matches`).
+    ///
+    /// `1` (default) reproduces upstream's accept-on-first-match behaviour and
+    /// leaves the scan byte-for-byte unchanged. `2` engages the oc-only
+    /// consecutive-match extension: a block match is only trusted (emitted as a
+    /// Copy) when it belongs to a run of at least two consecutive matching
+    /// blocks; a lone match is demoted to a Literal of its own source bytes.
+    /// The threshold is set to `2` only when the mutually negotiated
+    /// `CAP_CONSECUTIVE_MATCH` bit is present, which is also the sole condition
+    /// under which the receiver halves the per-block strong-sum length.
+    consecutive_match_needed: u8,
     /// Test-only knob disabling the matched-block pruning bitmap so the
     /// property tests can compare prune-on against prune-off output. The
     /// production path always prunes; see `docs/design/zsync-prune.md`.
@@ -85,6 +96,7 @@ impl DeltaGenerator {
     pub const fn new() -> Self {
         Self {
             buffer_len: DEFAULT_BUFFER_LEN,
+            consecutive_match_needed: 1,
             #[cfg(any(test, feature = "bench-internal"))]
             prune_matched: true,
         }
@@ -94,6 +106,17 @@ impl DeltaGenerator {
     #[must_use]
     pub fn with_buffer_len(mut self, buffer_len: usize) -> Self {
         self.buffer_len = buffer_len.max(1);
+        self
+    }
+
+    /// Sets the consecutive-match gating threshold (zsync `seq_matches`).
+    ///
+    /// Values are clamped to `>= 1`. Only `1` (default, upstream-identical) and
+    /// `2` (oc consecutive-match extension) are meaningful; any value `>= 2`
+    /// engages the gated scan.
+    #[must_use]
+    pub fn with_consecutive_match_needed(mut self, needed: u8) -> Self {
+        self.consecutive_match_needed = needed.max(1);
         self
     }
 
@@ -152,6 +175,9 @@ impl DeltaGenerator {
         reader: R,
         index: &DeltaSignatureIndex,
     ) -> io::Result<DeltaScript> {
+        if self.consecutive_match_needed >= 2 {
+            return self.generate_gated(reader, index);
+        }
         #[cfg(any(test, feature = "bench-internal"))]
         let prune_matched = self.prune_matched;
         #[cfg(not(any(test, feature = "bench-internal")))]
@@ -497,6 +523,176 @@ impl DeltaGenerator {
         Ok(DeltaScript::new(tokens, total_bytes, literal_bytes))
     }
 
+    /// Consecutive-match (zsync `seq_matches=2`) gated delta scan.
+    ///
+    /// This path is engaged only when the mutually negotiated
+    /// `CAP_CONSECUTIVE_MATCH` capability is present (both peers are oc and both
+    /// opted in), which is the same condition under which the receiver halves
+    /// the per-block strong-sum length. Halving the strong sum roughly doubles
+    /// the per-block false-alarm probability; requiring a matching neighbour
+    /// before trusting a block restores the effective collision resistance,
+    /// mirroring zsync's `seq_matches` heuristic (`librcksum/rsum.c`).
+    ///
+    /// A run of consecutive matching source blocks is buffered together with
+    /// each block's source bytes. When the run ends:
+    /// - length >= 2: every block is emitted as a `Copy` (trusted).
+    /// - length == 1: the lone block is demoted to a `Literal` of its own
+    ///   source bytes.
+    ///
+    /// Demoting a lone match to a literal is byte-exact regardless of whether
+    /// the match was a genuine block or a halved-checksum false alarm, so
+    /// reconstruction is always correct. As with upstream's short phase-1
+    /// checksums, the receiver's whole-file checksum and phase-2 full-checksum
+    /// redo remain the ultimate backstop against any residual collision.
+    fn generate_gated<R: Read>(
+        &self,
+        mut reader: R,
+        index: &DeltaSignatureIndex,
+    ) -> io::Result<DeltaScript> {
+        let block_len = index.block_length();
+        let mut window = RingBuffer::with_capacity(block_len);
+        let mut pending_literals = Vec::with_capacity(block_len);
+        let mut rolling = RollingChecksum::new();
+        let mut tokens: Vec<DeltaToken> = Vec::new();
+        let mut total_bytes = 0u64;
+        let mut literal_bytes = 0u64;
+
+        let mut matched_blocks = MatchedBlocks::with_block_count(index.block_count());
+        index.reset_consumed();
+
+        let mut buffer = vec![0u8; self.buffer_len.max(block_len)];
+        let mut buffer_pos = 0usize;
+        let mut buffer_len = 0usize;
+
+        // Flushes accumulated literal bytes as a single token, keeping the
+        // total/literal accounting in step. Returns nothing; mutates in place.
+        macro_rules! flush_pending {
+            () => {
+                if !pending_literals.is_empty() {
+                    literal_bytes += pending_literals.len() as u64;
+                    total_bytes += pending_literals.len() as u64;
+                    let filled =
+                        std::mem::replace(&mut pending_literals, Vec::with_capacity(block_len));
+                    tokens.push(DeltaToken::Literal(filled));
+                }
+            };
+        }
+
+        loop {
+            if buffer_pos == buffer_len {
+                buffer_len = reader.read(&mut buffer)?;
+                buffer_pos = 0;
+                if buffer_len == 0 {
+                    break;
+                }
+            }
+
+            let byte = buffer[buffer_pos];
+            buffer_pos += 1;
+
+            let evicted = window.push_back(byte);
+            if let Some(outgoing_byte) = evicted {
+                rolling
+                    .roll(outgoing_byte, byte)
+                    .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
+                pending_literals.push(outgoing_byte);
+            } else {
+                rolling.update_byte(byte);
+            }
+
+            if !window.is_full() {
+                continue;
+            }
+
+            let digest = rolling.digest();
+            let (first, second) = window.as_slices();
+            let matched =
+                index.find_match_slices_filtered(digest, first, second, Some(&matched_blocks));
+
+            let Some(mut match_idx) = matched else {
+                continue;
+            };
+
+            // A run begins: flush any literals accumulated before it.
+            flush_pending!();
+
+            // Buffer the run of consecutive matching blocks with their source
+            // bytes so a lone match can be demoted to a literal.
+            let mut run: Vec<(u64, Vec<u8>)> = Vec::new();
+
+            loop {
+                let basis_idx = index.block(match_idx).index();
+                let (s1, s2) = window.as_slices();
+                let mut src = Vec::with_capacity(block_len);
+                src.extend_from_slice(s1);
+                src.extend_from_slice(s2);
+                run.push((basis_idx, src));
+
+                matched_blocks.mark_matched(match_idx);
+                index.mark_consumed(match_idx as u32);
+
+                window.clear();
+                rolling.reset();
+
+                let mut filled = 0usize;
+                while filled < block_len {
+                    if buffer_pos == buffer_len {
+                        buffer_len = reader.read(&mut buffer)?;
+                        buffer_pos = 0;
+                        if buffer_len == 0 {
+                            break;
+                        }
+                    }
+                    let take = (buffer_len - buffer_pos).min(block_len - filled);
+                    window.extend_from_slice(&buffer[buffer_pos..buffer_pos + take]);
+                    filled += take;
+                    buffer_pos += take;
+                }
+
+                if filled < block_len {
+                    // EOF before a full next block: the remaining window bytes
+                    // (if any) drain as literals after the run flush.
+                    break;
+                }
+
+                let (f, s) = window.as_slices();
+                rolling.update(f);
+                if !s.is_empty() {
+                    rolling.update(s);
+                }
+                let adj_digest = rolling.digest();
+                match index.find_match_slices_filtered(adj_digest, f, s, Some(&matched_blocks)) {
+                    Some(next_idx) => match_idx = next_idx,
+                    None => break,
+                }
+            }
+
+            // Flush the run: trusted runs (>= 2) become Copy tokens; a lone
+            // match is demoted to a Literal of its own source bytes.
+            if run.len() >= 2 {
+                for (idx, bytes) in run {
+                    total_bytes += bytes.len() as u64;
+                    tokens.push(DeltaToken::Copy {
+                        index: idx,
+                        len: bytes.len(),
+                    });
+                }
+            } else if let Some((_, bytes)) = run.into_iter().next() {
+                literal_bytes += bytes.len() as u64;
+                total_bytes += bytes.len() as u64;
+                tokens.push(DeltaToken::Literal(bytes));
+            }
+        }
+
+        // Drain any residual window bytes as literals.
+        while let Some(byte) = window.pop_front() {
+            pending_literals.push(byte);
+        }
+        flush_pending!();
+
+        Ok(DeltaScript::new(tokens, total_bytes, literal_bytes))
+    }
+
     /// Generates a [`DeltaScript`] by scanning `source` in parallel across up
     /// to `max_chunks` contiguous, non-overlapping ranges.
     ///
@@ -561,6 +757,15 @@ impl DeltaGenerator {
         index: &DeltaSignatureIndex,
         max_chunks: usize,
     ) -> io::Result<DeltaScript> {
+        // The consecutive-match extension needs a single sequential pass to
+        // reason about cross-range block adjacency, so route it through the
+        // gated scan rather than the parallel range split. This path is only
+        // ever taken on the wire sender (never local copy), which already uses
+        // the sequential `generate`, so no parallelism is lost in practice.
+        if self.consecutive_match_needed >= 2 {
+            return self.generate_gated(Cursor::new(source), index);
+        }
+
         let block_len = index.block_length();
         let n = source.len();
 
@@ -1012,6 +1217,116 @@ mod tests {
         assert_eq!(sequential.tokens().len(), single.tokens().len());
         assert_eq!(sequential.total_bytes(), single.total_bytes());
         assert_eq!(sequential.literal_bytes(), single.literal_bytes());
+    }
+
+    #[test]
+    fn gated_two_consecutive_blocks_are_both_copied() {
+        // seq_matches=2: a run of two consecutive matching blocks is trusted,
+        // so both are emitted as Copy tokens.
+        let basis: Vec<u8> = (0..10_000).map(|b| (b % 251) as u8).collect();
+        let index = build_index(&basis);
+        let block_len = index.block_length();
+        let input = basis[..2 * block_len].to_vec();
+
+        let generator = DeltaGenerator::new().with_consecutive_match_needed(2);
+        let script = generator.generate(&input[..], &index).expect("script");
+
+        let copies = script
+            .tokens()
+            .iter()
+            .filter(|t| matches!(t, DeltaToken::Copy { .. }))
+            .count();
+        assert_eq!(copies, 2, "both consecutive blocks must be copied");
+        assert_eq!(reconstruct(&basis, &index, &script), input);
+    }
+
+    #[test]
+    fn gated_lone_match_is_demoted_to_literal() {
+        // seq_matches=2: a single matching block flanked by non-matching data
+        // has no matching neighbour, so it must NOT be emitted as a Copy - it is
+        // demoted to a Literal and reconstruction stays byte-exact.
+        let basis: Vec<u8> = (0..10_000).map(|b| (b % 251) as u8).collect();
+        let index = build_index(&basis);
+        let block_len = index.block_length();
+
+        // 0xAA never appears in the basis (values are b % 251, and 0xAA=170<251
+        // does appear... use a byte guaranteed absent). basis holds 0..=250, so
+        // 251..=255 are absent; use 0xFF.
+        let filler = vec![0xFFu8; block_len];
+        let mut input = Vec::new();
+        input.extend_from_slice(&filler);
+        input.extend_from_slice(&basis[..block_len]); // exactly one basis block
+        input.extend_from_slice(&filler);
+
+        let generator = DeltaGenerator::new().with_consecutive_match_needed(2);
+        let script = generator.generate(&input[..], &index).expect("script");
+
+        let copies = script
+            .tokens()
+            .iter()
+            .filter(|t| matches!(t, DeltaToken::Copy { .. }))
+            .count();
+        assert_eq!(copies, 0, "a lone match must be demoted to a literal");
+        assert_eq!(reconstruct(&basis, &index, &script), input);
+    }
+
+    #[test]
+    fn gated_default_needed_one_matches_ungated_output() {
+        // Threshold 1 (default) must be byte-for-byte identical to the ungated
+        // generate: the gated path is never entered.
+        let basis: Vec<u8> = (0..10_000).map(|b| (b % 251) as u8).collect();
+        let index = build_index(&basis);
+        let block_len = index.block_length();
+        let mut input = basis[..3 * block_len].to_vec();
+        input.extend_from_slice(b"tail");
+
+        let ungated = DeltaGenerator::new().generate(&input[..], &index).unwrap();
+        let needed_one = DeltaGenerator::new()
+            .with_consecutive_match_needed(1)
+            .generate(&input[..], &index)
+            .unwrap();
+
+        assert_eq!(ungated.tokens().len(), needed_one.tokens().len());
+        assert_eq!(ungated.total_bytes(), needed_one.total_bytes());
+        assert_eq!(ungated.literal_bytes(), needed_one.literal_bytes());
+    }
+
+    #[test]
+    fn gated_reconstructs_modified_source_byte_exact() {
+        // Broad byte-exactness check for the gated scan over a mix of copies,
+        // lone matches and literal regions.
+        let basis = pseudo_random(512 * 1024, 0x00c0_ffee);
+        let index = build_index(&basis);
+        let block_len = index.block_length();
+
+        let mut source = basis.clone();
+        for off in [37usize, 5000, 100_000, source.len() - 40] {
+            source[off] ^= 0xff;
+        }
+        // Splice a lone unmatched region and an isolated single basis block.
+        let mut full = vec![0xFFu8; block_len + 13];
+        full.extend_from_slice(&source);
+        full.extend_from_slice(&basis[block_len..2 * block_len]);
+        full.extend_from_slice(&vec![0xFEu8; block_len + 7]);
+
+        let generator = DeltaGenerator::new().with_consecutive_match_needed(2);
+        let script = generator.generate(&full[..], &index).expect("script");
+        assert_eq!(reconstruct(&basis, &index, &script), full);
+        assert_eq!(script.total_bytes(), full.len() as u64);
+    }
+
+    #[test]
+    fn gated_empty_and_short_inputs() {
+        let basis = vec![0u8; 4096];
+        let index = build_index(&basis);
+        let generator = DeltaGenerator::new().with_consecutive_match_needed(2);
+
+        let empty = generator.generate(&[][..], &index).expect("empty");
+        assert!(empty.tokens().is_empty());
+        assert_eq!(empty.total_bytes(), 0);
+
+        let short = generator.generate(&b"hi"[..], &index).expect("short");
+        assert_eq!(reconstruct(&basis, &index, &short), b"hi");
     }
 
     #[test]

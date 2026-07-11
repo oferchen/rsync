@@ -117,6 +117,31 @@ pub(crate) const CAPABILITY_MAPPINGS: &[CapabilityMapping] = &[
     },
 ];
 
+/// Private oc-to-oc capability letter advertised in the `-e.<...>` string when
+/// the consecutive-match extension is opted in.
+///
+/// This letter is NOT an upstream rsync capability. Upstream ignores unknown
+/// capability letters in `client_info` (it only `strchr`s for its own known
+/// set, compat.c:712-732), so advertising it to a stock peer is inert. It is
+/// the wire channel that carries "this oc client opted in": the private
+/// [`CompatibilityFlags::CONSECUTIVE_MATCH`] bit is only ever set when the oc
+/// server sees this letter AND is itself opted in.
+const CONSECUTIVE_MATCH_CHAR: char = 'Z';
+
+/// Returns whether this process opted in to the consecutive-match extension.
+///
+/// The opt-in is a default-off internal switch driven by the
+/// `OC_CONSECUTIVE_MATCH=1` environment variable. It is deliberately NOT a
+/// default-advertised capability: both peers must set it (and both must be oc)
+/// for the negotiation AND to retain
+/// [`CompatibilityFlags::CONSECUTIVE_MATCH`]. Against any upstream rsync, or any
+/// oc peer without the opt-in, the extension stays fully inert and the wire is
+/// byte-identical to upstream.
+#[must_use]
+fn consecutive_match_opt_in() -> bool {
+    std::env::var_os("OC_CONSECUTIVE_MATCH").is_some_and(|value| value == "1" || value == "true")
+}
+
 /// Returns whether the iconv capability ('s' / CF_SYMLINK_ICONV) is
 /// compiled into this build.
 ///
@@ -172,6 +197,13 @@ fn append_capability_chars(buf: &mut String, allow_inc_recurse: bool) {
             continue;
         }
         buf.push(mapping.char);
+    }
+
+    // Private oc extension: advertise the consecutive-match capability letter
+    // only when this process opted in. Upstream peers ignore the unknown
+    // letter, so this is inert against stock rsync.
+    if consecutive_match_opt_in() {
+        buf.push(CONSECUTIVE_MATCH_CHAR);
     }
 }
 
@@ -267,6 +299,16 @@ pub(crate) fn build_compat_flags_from_client_info(
         if client_info.contains(mapping.char) {
             flags |= mapping.flag;
         }
+    }
+
+    // Private oc extension (CAP_CONSECUTIVE_MATCH): set the bit only when BOTH
+    // sides opted in - the client advertised the letter AND this server process
+    // is itself opted in. This is the negotiation AND that guards the halved
+    // strong-sum length. A stock upstream client never sends the letter, and an
+    // un-opted-in oc server never sets the bit, so the extension is inert unless
+    // both peers are oc and both opted in.
+    if consecutive_match_opt_in() && client_info.contains(CONSECUTIVE_MATCH_CHAR) {
+        flags |= CompatibilityFlags::CONSECUTIVE_MATCH;
     }
 
     flags
