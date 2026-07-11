@@ -113,7 +113,22 @@ impl ReceiverContext {
             Vec::new()
         };
 
-        for (file_idx, file_entry) in self.file_list.iter().enumerate() {
+        // upstream: generator.c:2300-2305 - pre-read INC_RECURSE sub-lists so a
+        // hardlink follower's leader (which may live in a later segment) is
+        // resolved before the per-file loop. No-op without INC_RECURSE.
+        let mut flist_ndx_codec = create_ndx_codec(self.protocol.as_u8());
+        if self.config.flags.hard_links {
+            self.prefetch_for_hardlinks(reader, &mut flist_ndx_codec)?;
+        }
+
+        // upstream: generator.c:2299-2368 - walk the flist by a flat cursor,
+        // pulling the next INC_RECURSE segment on demand. Without INC_RECURSE the
+        // list is already complete, so `ensure_flat_idx` never reads the wire and
+        // this is a plain 0..len walk.
+        let mut flat_idx = 0usize;
+        while self.ensure_flat_idx(flat_idx, reader, &mut flist_ndx_codec)? {
+            let file_idx = flat_idx;
+            flat_idx += 1;
             if self.config.flags.list_only {
                 break;
             }
@@ -123,6 +138,7 @@ impl ReceiverContext {
                 }
             }
 
+            let file_entry = &self.file_list[file_idx];
             let relative_path = file_entry.path();
             // upstream: receiver.c:708-709 DEBUG_GTE(RECV, 1)
             debug_log!(Recv, 1, "recv_files({})", relative_path.display());
