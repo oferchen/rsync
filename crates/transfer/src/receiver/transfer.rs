@@ -8,20 +8,32 @@
 //! - `sync_async` - `.await` twin of `sync` used by `run_sync_async`
 //!   (`tokio-transfer` only).
 //! - `pipelined` - decoupled two-phase pipeline used by `run_pipelined`.
+//! - `pipelined_async` - `.await` twin of `pipelined` used by
+//!   `run_pipelined_async` (`tokio-transfer` only).
 //! - `pipelined_incremental` - same as `pipelined` plus incremental directory
 //!   creation and failed-dir tracking.
+//! - `pipelined_incremental_async` - `.await` twin of `pipelined_incremental`
+//!   used by `run_pipelined_incremental_async` (`tokio-transfer` only).
 //! - `setup` - common multiplex/filter/file-list setup.
 //! - `phases` - protocol phase exchange and goodbye handshake.
 //! - `candidates` - candidate-file selection for the pipelined paths.
 //! - `pipeline` - the inner `run_pipeline_loop_decoupled` plus dry-run loop.
+//! - `pipeline_async` - `.await` twin of `pipeline` used by the async pipelined
+//!   drivers (`tokio-transfer` only).
 
 mod candidates;
 #[cfg(feature = "tokio-transfer")]
 mod file_async;
 mod phases;
 mod pipeline;
+#[cfg(feature = "tokio-transfer")]
+mod pipeline_async;
 mod pipelined;
+#[cfg(feature = "tokio-transfer")]
+mod pipelined_async;
 mod pipelined_incremental;
+#[cfg(feature = "tokio-transfer")]
+mod pipelined_incremental_async;
 mod setup;
 mod sync;
 #[cfg(feature = "tokio-transfer")]
