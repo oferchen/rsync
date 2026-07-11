@@ -82,6 +82,71 @@ pub fn create_device_node_with_fake_super(
     }
 }
 
+/// Creates a FIFO or socket node from wire-protocol components, honouring
+/// `--fake-super`.
+///
+/// The protocol receiver holds only a `FileEntry` from the file list, not an
+/// on-disk [`fs::Metadata`], so it cannot use [`create_fifo_with_fake_super`].
+/// This entry point takes the raw permission bits and a socket/FIFO
+/// discriminator directly, mirroring upstream `generator.c:recv_generator`'s
+/// `FT_SPECIAL` branch, which materialises the node from the flist entry's
+/// mode via `do_mknod()` before any data transfer.
+///
+/// `mode_bits` carries the source permission bits (only the low `0o777` are
+/// honoured). `is_socket` selects a Unix-domain socket node over a FIFO.
+///
+/// # Errors
+///
+/// Returns [`MetadataError`] if the node cannot be created.
+// upstream: generator.c recv_generator FT_SPECIAL -> syscall.c:do_mknod()
+pub fn create_fifo_node_from_parts(
+    destination: &Path,
+    mode_bits: u32,
+    is_socket: bool,
+    fake_super: bool,
+) -> Result<(), MetadataError> {
+    if fake_super {
+        let context = if is_socket {
+            "create socket"
+        } else {
+            "create fifo"
+        };
+        create_fake_super_placeholder(destination, context)
+    } else {
+        create_fifo_parts_inner(destination, mode_bits, is_socket)
+    }
+}
+
+/// Creates a character or block device node from wire-protocol components,
+/// honouring `--fake-super`.
+///
+/// The protocol receiver holds only a `FileEntry` from the file list, so it
+/// supplies the device major/minor pair separately rather than a combined
+/// `dev_t`. Mirrors upstream `generator.c:recv_generator`'s `FT_DEVICE`
+/// branch, which calls `do_mknod()` with the flist entry's mode and rdev.
+///
+/// `is_block` selects a block device over a character device. `mode_bits`
+/// carries the source permission bits (only the low `0o777` are honoured).
+///
+/// # Errors
+///
+/// Returns [`MetadataError`] if the node cannot be created.
+// upstream: generator.c recv_generator FT_DEVICE -> syscall.c:do_mknod()
+pub fn create_device_node_from_parts(
+    destination: &Path,
+    mode_bits: u32,
+    is_block: bool,
+    rdev_major: u32,
+    rdev_minor: u32,
+    fake_super: bool,
+) -> Result<(), MetadataError> {
+    if fake_super {
+        create_fake_super_placeholder(destination, "create device")
+    } else {
+        create_device_parts_inner(destination, mode_bits, is_block, rdev_major, rdev_minor)
+    }
+}
+
 /// Creates an empty 0600 regular file used as a fake-super placeholder.
 ///
 /// Upstream `do_mknod()` performs the equivalent substitution by routing the
@@ -131,10 +196,32 @@ fn apply_placeholder_mode(_open_options: &mut fs::OpenOptions) {
     ))
 ))]
 fn create_fifo_inner(destination: &Path, metadata: &fs::Metadata) -> Result<(), MetadataError> {
-    use nix::sys::stat::{Mode, SFlag, makedev, mknod};
     use std::os::unix::fs::{FileTypeExt, PermissionsExt};
 
     let is_socket = metadata.file_type().is_socket();
+    create_fifo_parts_inner(
+        destination,
+        metadata.permissions().mode() & 0o777,
+        is_socket,
+    )
+}
+
+#[cfg(all(
+    unix,
+    not(any(
+        target_os = "ios",
+        target_os = "macos",
+        target_os = "tvos",
+        target_os = "watchos"
+    ))
+))]
+fn create_fifo_parts_inner(
+    destination: &Path,
+    mode_bits: u32,
+    is_socket: bool,
+) -> Result<(), MetadataError> {
+    use nix::sys::stat::{Mode, SFlag, makedev, mknod};
+
     let (kind, context) = if is_socket {
         // Linux defines MKNOD_CREATES_SOCKETS, so upstream materialises socket
         // nodes with mknod(S_IFSOCK) here (the Apple path binds instead).
@@ -143,7 +230,7 @@ fn create_fifo_inner(destination: &Path, metadata: &fs::Metadata) -> Result<(), 
         (SFlag::S_IFIFO, "create fifo")
     };
 
-    let mode_bits = permissions_mode(context, destination, metadata.permissions().mode() & 0o777)?;
+    let mode_bits = permissions_mode(context, destination, mode_bits & 0o777)?;
     let perm = Mode::from_bits_truncate(mode_bits.into());
 
     // `nix::sys::stat::mknod` wraps the libc `mknod` symbol, so an LD_PRELOAD
@@ -165,14 +252,13 @@ fn create_device_node_inner(
     destination: &Path,
     metadata: &fs::Metadata,
 ) -> Result<(), MetadataError> {
-    use nix::sys::stat::{Mode, SFlag, mknod};
     use std::os::unix::fs::{FileTypeExt, MetadataExt, PermissionsExt};
 
     let file_type = metadata.file_type();
-    let kind = if file_type.is_char_device() {
-        SFlag::S_IFCHR
+    let is_block = if file_type.is_char_device() {
+        false
     } else if file_type.is_block_device() {
-        SFlag::S_IFBLK
+        true
     } else {
         return Err(MetadataError::new(
             "create device",
@@ -183,13 +269,6 @@ fn create_device_node_inner(
             ),
         ));
     };
-
-    let mode_bits = permissions_mode(
-        "create device",
-        destination,
-        metadata.permissions().mode() & 0o777,
-    )?;
-    let perm = Mode::from_bits_truncate(mode_bits.into());
 
     // The source rdev already encodes major/minor for this platform, so it can
     // be handed straight to mknod (matching upstream do_mknod, which forwards
@@ -203,6 +282,42 @@ fn create_device_node_inner(
         .try_into()
         .map_err(|_| invalid_device_error(destination))?;
 
+    mknod_device_raw(
+        destination,
+        metadata.permissions().mode() & 0o777,
+        is_block,
+        device,
+    )
+}
+
+/// Issues the `mknod(2)` for a character/block device node from a combined
+/// `dev_t`. Shared by the `fs::Metadata` path (source rdev forwarded verbatim)
+/// and the wire-protocol path (major/minor recombined via `makedev`).
+#[cfg(all(
+    unix,
+    not(any(
+        target_os = "ios",
+        target_os = "macos",
+        target_os = "tvos",
+        target_os = "watchos"
+    ))
+))]
+fn mknod_device_raw(
+    destination: &Path,
+    mode_bits: u32,
+    is_block: bool,
+    device: libc::dev_t,
+) -> Result<(), MetadataError> {
+    use nix::sys::stat::{Mode, SFlag, mknod};
+
+    let kind = if is_block {
+        SFlag::S_IFBLK
+    } else {
+        SFlag::S_IFCHR
+    };
+    let mode_bits = permissions_mode("create device", destination, mode_bits & 0o777)?;
+    let perm = Mode::from_bits_truncate(mode_bits.into());
+
     // `nix::sys::stat::mknod` calls the libc `mknod` symbol rather than issuing
     // the raw `mknod`/`mknodat` syscall that rustix emits. This matters under
     // `fakeroot`/`fakeroot-ng`, which fake privileged operations by
@@ -214,6 +329,76 @@ fn create_device_node_inner(
     // upstream: syscall.c:do_mknod() - libc mknod(), interceptable by fakeroot
     mknod(destination, kind, perm, device)
         .map_err(|error| MetadataError::new("create device", destination, io::Error::from(error)))
+}
+
+/// Materialises a device node from a wire-protocol major/minor pair by
+/// recombining them with `makedev` and delegating to [`mknod_device_raw`].
+///
+/// `makedev(major(x), minor(x)) == x` under the platform's standard `dev_t`
+/// encoding, so this recovers the same device word the sender's `fs::Metadata`
+/// path forwards verbatim.
+#[cfg(unix)]
+fn create_device_parts_inner(
+    destination: &Path,
+    mode_bits: u32,
+    is_block: bool,
+    rdev_major: u32,
+    rdev_minor: u32,
+) -> Result<(), MetadataError> {
+    mknod_device_raw(
+        destination,
+        mode_bits,
+        is_block,
+        combine_dev(rdev_major, rdev_minor),
+    )
+}
+
+/// Recombines a device major/minor pair into the platform `dev_t` word.
+///
+/// `nix::sys::stat::makedev` is Linux-only, so this goes through the
+/// cross-platform `libc::makedev` (a safe `const fn` on every unix target),
+/// keeping `#![deny(unsafe_code)]` intact while supporting Apple/BSD.
+// upstream: syscall.c:do_mknod() forwards `makedev(major, minor)` verbatim.
+#[cfg(all(
+    unix,
+    any(
+        target_os = "ios",
+        target_os = "macos",
+        target_os = "tvos",
+        target_os = "watchos"
+    )
+))]
+#[must_use]
+fn combine_dev(rdev_major: u32, rdev_minor: u32) -> libc::dev_t {
+    libc::makedev(rdev_major as i32, rdev_minor as i32)
+}
+
+/// Recombines a device major/minor pair into the platform `dev_t` word.
+#[cfg(all(
+    unix,
+    not(any(
+        target_os = "ios",
+        target_os = "macos",
+        target_os = "tvos",
+        target_os = "watchos"
+    ))
+))]
+#[must_use]
+fn combine_dev(rdev_major: u32, rdev_minor: u32) -> libc::dev_t {
+    libc::makedev(rdev_major as libc::c_uint, rdev_minor as libc::c_uint)
+}
+
+/// Recombines a device major/minor pair into the platform `dev_t` word,
+/// widened to `u64` for direct comparison against
+/// `std::os::unix::fs::MetadataExt::rdev`.
+///
+/// Lets a caller quick-check whether an existing on-disk device node already
+/// carries the wire entry's rdev without depending on `nix`/`libc` itself,
+/// keeping `#![deny(unsafe_code)]` crates free of raw device-number math.
+#[cfg(unix)]
+#[must_use]
+pub fn device_word(rdev_major: u32, rdev_minor: u32) -> u64 {
+    combine_dev(rdev_major, rdev_minor) as u64
 }
 
 #[cfg(all(
@@ -229,13 +414,34 @@ fn create_fifo_inner(destination: &Path, metadata: &fs::Metadata) -> Result<(), 
     use std::os::unix::fs::{FileTypeExt, PermissionsExt};
 
     let is_socket = metadata.file_type().is_socket();
+    create_fifo_parts_inner(
+        destination,
+        metadata.permissions().mode() & 0o777,
+        is_socket,
+    )
+}
+
+#[cfg(all(
+    unix,
+    any(
+        target_os = "ios",
+        target_os = "macos",
+        target_os = "tvos",
+        target_os = "watchos"
+    )
+))]
+fn create_fifo_parts_inner(
+    destination: &Path,
+    mode_bits: u32,
+    is_socket: bool,
+) -> Result<(), MetadataError> {
     let context = if is_socket {
         "create socket"
     } else {
         "create fifo"
     };
 
-    let mode_bits = permissions_mode(context, destination, metadata.permissions().mode() & 0o777)?;
+    let mode_bits = permissions_mode(context, destination, mode_bits & 0o777)?;
 
     if is_socket {
         create_socket_via_bind(context, destination, mode_bits)
@@ -340,10 +546,10 @@ fn create_device_node_inner(
     use std::os::unix::fs::{FileTypeExt, MetadataExt, PermissionsExt};
 
     let file_type = metadata.file_type();
-    let type_bits: libc::mode_t = if file_type.is_char_device() {
-        libc::S_IFCHR
+    let is_block = if file_type.is_char_device() {
+        false
     } else if file_type.is_block_device() {
-        libc::S_IFBLK
+        true
     } else {
         return Err(MetadataError::new(
             "create device",
@@ -355,14 +561,6 @@ fn create_device_node_inner(
         ));
     };
 
-    let perm_bits = permissions_mode(
-        "create device",
-        destination,
-        metadata.permissions().mode() & 0o777,
-    )?;
-    // As above, `libc::mode_t` is a `u16` alias on Apple targets,
-    // so this is an infallible cast and cannot overflow.
-    let permissions: libc::mode_t = perm_bits as libc::mode_t;
     // try_into guards narrow-dev_t targets; on Linux dev_t is u64 so the
     // conversion is a no-op there, which clippy would otherwise flag.
     #[allow(clippy::useless_conversion)]
@@ -370,6 +568,43 @@ fn create_device_node_inner(
         .rdev()
         .try_into()
         .map_err(|_| invalid_device_error(destination))?;
+
+    mknod_device_raw(
+        destination,
+        metadata.permissions().mode() & 0o777,
+        is_block,
+        device,
+    )
+}
+
+/// Issues the Apple `mknod(2)` for a character/block device node from a
+/// combined `dev_t`. Shared by the `fs::Metadata` path (source rdev forwarded
+/// verbatim) and the wire-protocol path (major/minor recombined via `makedev`).
+#[cfg(all(
+    unix,
+    any(
+        target_os = "ios",
+        target_os = "macos",
+        target_os = "tvos",
+        target_os = "watchos"
+    )
+))]
+fn mknod_device_raw(
+    destination: &Path,
+    mode_bits: u32,
+    is_block: bool,
+    device: libc::dev_t,
+) -> Result<(), MetadataError> {
+    let type_bits: libc::mode_t = if is_block {
+        libc::S_IFBLK
+    } else {
+        libc::S_IFCHR
+    };
+
+    let perm_bits = permissions_mode("create device", destination, mode_bits & 0o777)?;
+    // As above, `libc::mode_t` is a `u16` alias on Apple targets,
+    // so this is an infallible cast and cannot overflow.
+    let permissions: libc::mode_t = perm_bits as libc::mode_t;
     let mode = type_bits | permissions;
 
     apple_fs::mknod(destination, mode, device)
@@ -403,6 +638,28 @@ pub(crate) fn format_skip_special_message(destination: &Path, kind_label: &'stat
 #[cfg(not(unix))]
 fn create_fifo_inner(destination: &Path, _metadata: &fs::Metadata) -> Result<(), MetadataError> {
     warn_skip_special(destination, "fifo entry");
+    Ok(())
+}
+
+#[cfg(not(unix))]
+fn create_fifo_parts_inner(
+    destination: &Path,
+    _mode_bits: u32,
+    _is_socket: bool,
+) -> Result<(), MetadataError> {
+    warn_skip_special(destination, "fifo entry");
+    Ok(())
+}
+
+#[cfg(not(unix))]
+fn create_device_parts_inner(
+    destination: &Path,
+    _mode_bits: u32,
+    _is_block: bool,
+    _rdev_major: u32,
+    _rdev_minor: u32,
+) -> Result<(), MetadataError> {
+    warn_skip_special(destination, "device entry");
     Ok(())
 }
 

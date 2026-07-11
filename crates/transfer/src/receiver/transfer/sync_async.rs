@@ -119,6 +119,10 @@ impl ReceiverContext {
         self.create_symlinks(&dest_dir, sandbox.as_deref(), writer)?;
         #[cfg(not(unix))]
         self.create_symlinks(&dest_dir, writer)?;
+        #[cfg(unix)]
+        self.create_specials(&dest_dir, sandbox.as_deref(), writer)?;
+        #[cfg(not(unix))]
+        self.create_specials(&dest_dir, writer)?;
 
         // upstream: generator.c:1348-1354 - missing_args == 2 && file->mode == 0
         // deletes the destination path and skips any creation for the sentinel.
