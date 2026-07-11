@@ -95,6 +95,59 @@ fn entries_have_names_helper() {
 
 #[cfg(windows)]
 #[test]
+fn resolve_acl_aces_records_unmappable_sids() {
+    use crate::acl_windows::dacl::resolve_acl_aces;
+
+    // Two drop reasons, both reachable on any Windows host without a live
+    // domain: a named principal that resolves to no local account (standing in
+    // for a foreign-domain SID on a cross-domain transfer, where
+    // LookupAccountNameW fails), and an entry that arrived without a name.
+    let bogus = "oc-rsync-nonexistent-principal-\u{2713}-42"
+        .as_bytes()
+        .to_vec();
+    let mut acl = RsyncAcl::default();
+    acl.names.push(IdAccess::user(7000, 0o4));
+    acl.names.push(IdAccess::group_with_name(4242, 0o5, bogus));
+
+    let (sids, masks, dropped) = resolve_acl_aces(&acl);
+
+    // Nothing mappable survived, so no DACL would be written.
+    assert!(sids.is_empty(), "unmappable entries must not yield SIDs");
+    assert!(masks.is_empty());
+
+    // The dropped entries must be surfaced as a structured audit record rather
+    // than silently swallowed, and must identify each lost principal.
+    assert!(
+        !dropped.is_empty(),
+        "dropped SIDs must be recorded, not silently discarded"
+    );
+    assert_eq!(dropped.descriptions.len(), 2, "both entries recorded");
+    assert!(
+        dropped.descriptions.iter().any(|d| d.contains("uid 7000")),
+        "unnamed entry must be identified: {:?}",
+        dropped.descriptions
+    );
+    assert!(
+        dropped.descriptions.iter().any(|d| d.contains("gid 4242")),
+        "unmappable named entry must be identified: {:?}",
+        dropped.descriptions
+    );
+}
+
+#[cfg(windows)]
+#[test]
+fn resolve_acl_aces_no_drops_for_empty_acl() {
+    use crate::acl_windows::dacl::resolve_acl_aces;
+
+    let acl = RsyncAcl::default();
+    let (sids, masks, dropped) = resolve_acl_aces(&acl);
+    assert!(sids.is_empty());
+    assert!(masks.is_empty());
+    assert!(dropped.is_empty(), "no entries means no dropped record");
+}
+
+#[cfg(windows)]
+#[test]
 fn read_dacl_on_temp_file_returns_dacl() {
     use crate::acl_windows::dacl::read_dacl;
 

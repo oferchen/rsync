@@ -24,7 +24,7 @@ use windows::core::{PCWSTR, PWSTR};
 
 use super::common::{
     OwnedSecurityDescriptor, access_mask_to_rsync_perms, is_unsupported,
-    rsync_perms_to_access_mask, to_wide, warn_partial_apply, win32_error,
+    rsync_perms_to_access_mask, to_wide, warn_dropped_aces, win32_error,
 };
 use crate::AclIdMapper;
 use crate::MetadataError;
@@ -328,32 +328,60 @@ pub(super) fn reconstruct_acl(acl: &RsyncAcl, mode: Option<u32>) -> RsyncAcl {
     result
 }
 
-/// Applies the ACEs in `acl.names` to `path` by building a new DACL with
-/// one access-allowed ACE per resolvable named entry.
+/// A per-file audit record of ACL entries whose principal could not be
+/// resolved to a Windows SID during apply.
 ///
-/// Unmappable ACEs are silently dropped; when no entry survives the
-/// mapping, no DACL is written so the destination retains its inherited
-/// permissions, matching upstream's lossy semantics.
-pub(super) fn apply_rsync_acl_to_path(path: &Path, acl: &RsyncAcl) -> Result<(), MetadataError> {
-    if acl.names.is_empty() {
-        return Ok(());
+/// Cross-domain transfers routinely carry principals with no counterpart on
+/// the destination host. Rather than discarding those entries behind a single
+/// rate-limited warning, each dropped entry is captured with enough identity
+/// (account name plus synthetic uid/gid) to give operators a complete
+/// per-file trail of exactly what was lost.
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
+pub(super) struct DroppedAces {
+    /// Human-readable identifiers of the dropped entries, in ACL order.
+    pub(super) descriptions: Vec<String>,
+}
+
+impl DroppedAces {
+    /// Returns `true` when no entry was dropped.
+    pub(super) fn is_empty(&self) -> bool {
+        self.descriptions.is_empty()
     }
 
+    /// Records a dropped entry, capturing enough identity to audit the loss.
+    fn record(&mut self, entry: &IdAccess) {
+        let kind = if entry.is_user() { "uid" } else { "gid" };
+        let desc = match entry.name.as_ref() {
+            Some(name) => format!("{} ({kind} {})", String::from_utf8_lossy(name), entry.id),
+            None => format!("{kind} {}", entry.id),
+        };
+        self.descriptions.push(desc);
+    }
+}
+
+/// Resolves each named ACE in `acl` to a Windows SID and access mask.
+///
+/// Entries whose principal cannot be resolved (missing name, non-UTF-8 name,
+/// or an account-name lookup that fails on this host) are not silently
+/// discarded: they are recorded in the returned [`DroppedAces`] so the caller
+/// can emit a per-file audit trail. Zero-permission entries are skipped
+/// without being reported as dropped, mirroring the read-side perms filter.
+pub(super) fn resolve_acl_aces(acl: &RsyncAcl) -> (Vec<Vec<u8>>, Vec<u32>, DroppedAces) {
     let mut sids: Vec<Vec<u8>> = Vec::with_capacity(acl.names.len());
     let mut masks: Vec<u32> = Vec::with_capacity(acl.names.len());
-    let mut dropped = false;
+    let mut dropped = DroppedAces::default();
 
     for entry in acl.names.iter() {
         let Some(name) = entry.name.as_ref() else {
-            dropped = true;
+            dropped.record(entry);
             continue;
         };
         let Ok(name_str) = std::str::from_utf8(name) else {
-            dropped = true;
+            dropped.record(entry);
             continue;
         };
         let Some(sid_buf) = lookup_sid(name_str) else {
-            dropped = true;
+            dropped.record(entry);
             continue;
         };
         let mask = rsync_perms_to_access_mask(entry.permissions() as u8);
@@ -364,8 +392,25 @@ pub(super) fn apply_rsync_acl_to_path(path: &Path, acl: &RsyncAcl) -> Result<(),
         masks.push(mask);
     }
 
-    if dropped {
-        warn_partial_apply();
+    (sids, masks, dropped)
+}
+
+/// Applies the ACEs in `acl.names` to `path` by building a new DACL with
+/// one access-allowed ACE per resolvable named entry.
+///
+/// Unmappable ACEs are dropped and surfaced through a per-file audit
+/// diagnostic naming each lost principal (see [`resolve_acl_aces`]); when no
+/// entry survives the mapping, no DACL is written so the destination retains
+/// its inherited permissions, matching upstream's lossy semantics.
+pub(super) fn apply_rsync_acl_to_path(path: &Path, acl: &RsyncAcl) -> Result<(), MetadataError> {
+    if acl.names.is_empty() {
+        return Ok(());
+    }
+
+    let (sids, masks, dropped) = resolve_acl_aces(acl);
+
+    if !dropped.is_empty() {
+        warn_dropped_aces(path, &dropped.descriptions);
     }
 
     if sids.is_empty() {

@@ -337,6 +337,28 @@ pub(crate) fn emit_list_only<W: Write + ?Sized>(
     Ok(())
 }
 
+/// Rewrites Windows native backslash separators to POSIX forward slashes.
+///
+/// upstream: flist.c f_name() emits forward-slash separators regardless of
+/// host OS. The escaped relative path carries native backslashes only on
+/// Windows; other platforms already use forward slashes, so the binding is
+/// returned unchanged.
+#[cfg(windows)]
+fn normalize_progress_separators(mut name: Vec<u8>) -> Vec<u8> {
+    for byte in name.iter_mut() {
+        if *byte == b'\\' {
+            *byte = b'/';
+        }
+    }
+    name
+}
+
+/// Non-Windows paths already use forward-slash separators; returned as-is.
+#[cfg(not(windows))]
+fn normalize_progress_separators(name: Vec<u8>) -> Vec<u8> {
+    name
+}
+
 /// Renders progress lines for the provided transfer events.
 pub(crate) fn emit_progress<W: Write + ?Sized>(
     events: &[ClientEvent],
@@ -374,16 +396,8 @@ pub(crate) fn emit_progress<W: Write + ?Sized>(
         xfr_index += 1;
         let remaining = transferred_total - xfr_index;
 
-        // upstream: flist.c f_name() emits POSIX forward-slash separators
-        // regardless of host OS. Normalize Windows native backslashes here.
-        #[cfg_attr(not(windows), allow(unused_mut))]
-        let mut name = escape_path(event.relative_path(), eight_bit_output);
-        #[cfg(windows)]
-        for byte in name.iter_mut() {
-            if *byte == b'\\' {
-                *byte = b'/';
-            }
-        }
+        let name =
+            normalize_progress_separators(escape_path(event.relative_path(), eight_bit_output));
         stdout.write_all(&name)?;
         stdout.write_all(b"\n")?;
 
