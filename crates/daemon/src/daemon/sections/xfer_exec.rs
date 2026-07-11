@@ -210,9 +210,22 @@ fn run_pre_xfer_exec(
 
 /// Runs the post-xfer exec command for a daemon module.
 ///
-/// Same environment variables as `run_pre_xfer_exec` plus `RSYNC_EXIT_STATUS`
-/// set to the transfer's exit code. Failures are logged but do not change the
-/// transfer exit status.
+/// Same environment variables as `run_pre_xfer_exec` plus, on Unix,
+/// `RSYNC_RAW_STATUS` (the raw wait-status encoding) and `RSYNC_EXIT_STATUS`
+/// (the cooked exit code). Failures are logged but do not change the transfer
+/// exit status.
+///
+/// upstream: clientserver.c:922-927 - the parent that forks the daemon waits
+/// for the child, then sets `RSYNC_RAW_STATUS` to the raw `wait_process()`
+/// result (which encodes both the exit code and any terminating signal) before
+/// cooking it via `WIFEXITED`/`WEXITSTATUS` into `RSYNC_EXIT_STATUS` (or -1 when
+/// the child was killed by a signal). oc runs the transfer in-process rather
+/// than forking, so the transfer always completes as a normal exit (a signal
+/// death is never observable at this point) and `exit_status` is already the
+/// cooked code. The raw wait encoding of a normally-exiting process with code
+/// `N` is `N << 8`, which decodes back to `N` via `WEXITSTATUS`; mirroring that
+/// keeps `$RSYNC_RAW_STATUS` consistent with `$RSYNC_EXIT_STATUS` for hooks that
+/// read it. The raw encoding is a POSIX wait-status concept, so it is Unix-only.
 ///
 /// Upstream: `clientserver.c` - `post_exec()` runs the command after the
 /// transfer completes, regardless of success or failure.
@@ -223,6 +236,10 @@ fn run_post_xfer_exec(
     log_sink: Option<&SharedLogSink>,
 ) {
     let mut cmd = build_xfer_command(command, ctx);
+    // upstream: clientserver.c:922 - set_env_num("RSYNC_RAW_STATUS", status)
+    // is emitted before the cooked RSYNC_EXIT_STATUS; preserve that ordering.
+    #[cfg(unix)]
+    cmd.env("RSYNC_RAW_STATUS", (exit_status << 8).to_string());
     cmd.env("RSYNC_EXIT_STATUS", exit_status.to_string());
     cmd.stdin(Stdio::null());
     cmd.stdout(Stdio::null());
@@ -444,6 +461,45 @@ mod xfer_exec_tests {
     fn run_post_xfer_exec_passes_exit_status_env() {
         let ctx = test_context();
         run_post_xfer_exec("test \"$RSYNC_EXIT_STATUS\" = \"42\"", &ctx, 42, None);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn run_post_xfer_exec_sets_raw_status_consistent_with_exit_status() {
+        // upstream: clientserver.c:922-927 - RSYNC_RAW_STATUS holds the raw
+        // wait-status; RSYNC_EXIT_STATUS is the cooked code. For a normal exit
+        // with code N, the raw wait encoding is N<<8 and WEXITSTATUS(raw) == N.
+        // The hook writes both env vars to a file so the assertions can fail;
+        // run_post_xfer_exec deliberately swallows the hook's own exit status,
+        // so an in-shell `test` could not surface a regression.
+        let ctx = test_context();
+        for cooked in [0i32, 23] {
+            let dir = tempfile::tempdir().unwrap();
+            let out_path = dir.path().join("status_env.txt");
+            let cmd = format!(
+                "printf '%s\\n%s\\n' \"$RSYNC_RAW_STATUS\" \"$RSYNC_EXIT_STATUS\" > '{}'",
+                out_path.display()
+            );
+            run_post_xfer_exec(&cmd, &ctx, cooked, None);
+
+            let contents = std::fs::read_to_string(&out_path).expect("env file should exist");
+            let mut lines = contents.lines();
+            let raw: i32 = lines
+                .next()
+                .expect("RSYNC_RAW_STATUS line")
+                .parse()
+                .expect("RSYNC_RAW_STATUS should be numeric");
+            let exit: i32 = lines
+                .next()
+                .expect("RSYNC_EXIT_STATUS line")
+                .parse()
+                .expect("RSYNC_EXIT_STATUS should be numeric");
+
+            assert_eq!(exit, cooked, "cooked exit status should be passed through");
+            assert_eq!(raw, cooked << 8, "raw status should be the wait encoding");
+            // The raw value must decode back to the cooked code via WEXITSTATUS.
+            assert_eq!((raw >> 8) & 0xff, cooked, "WEXITSTATUS(raw) must equal cooked");
+        }
     }
 
     #[cfg(unix)]
