@@ -225,7 +225,9 @@ pub(crate) fn copy_sources(
                 if let Some(error) = first_io_error {
                     return Err(error);
                 }
-                if context.iconv_conversion_error_occurred() {
+                if context.iconv_conversion_error_occurred()
+                    || context.unsupported_operation_skipped()
+                {
                     return Err(LocalCopyError::partial_transfer());
                 }
                 return Ok(());
@@ -235,6 +237,12 @@ pub(crate) fn copy_sources(
 
             if let Some(error) = first_io_error {
                 return Err(error);
+            }
+            // A platform-unsupported entry (a Windows unprivileged file symlink)
+            // was skipped with a warning; finish RERR_PARTIAL (23) like upstream
+            // FERROR_XFER after a failed do_symlink().
+            if context.unsupported_operation_skipped() {
+                return Err(LocalCopyError::partial_transfer());
             }
             // upstream: flist.c:1631 send_file1() sets io_error |= IOERR_GENERAL
             // when a filename cannot be transcoded under --iconv; main.c:1356
