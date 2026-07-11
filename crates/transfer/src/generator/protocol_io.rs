@@ -64,8 +64,12 @@ impl GeneratorContext {
             .compat_flags
             .is_some_and(|f| f.contains(CompatibilityFlags::INC_RECURSE));
 
-        // upstream: flist.c:2513-2514
-        if inc_recurse || self.config.flags.numeric_ids {
+        // upstream: flist.c:2548 - `if (numeric_ids <= 0 && !inc_recurse)
+        // send_id_lists(f);`. The list stays on the wire for `numeric_ids <= 0`
+        // (Off and daemon-forced -1); only an explicit client --numeric-ids
+        // (`> 0`) drops it. Under daemon-forced numeric-ids the list is sent but
+        // empty, since add_uid()/add_gid() are gated on `!numeric_ids`.
+        if inc_recurse || self.config.flags.numeric_ids.is_explicit() {
             return Ok(());
         }
 
@@ -101,7 +105,11 @@ impl GeneratorContext {
     pub(crate) fn collect_acl_id_mappings(&mut self) {
         use metadata::id_lookup::{lookup_group_name_cached, lookup_user_name_cached};
 
-        if self.config.flags.numeric_ids || !self.config.flags.acls {
+        // upstream: acls.c:593,595 - `name = numeric_ids ? NULL : add_uid(...)`;
+        // the named-entry id is added (and later mapped) only when names are in
+        // play, i.e. `numeric_ids == 0`. Both daemon-forced and explicit
+        // numeric-ids suppress it (`numeric_ids != 0`).
+        if self.config.flags.numeric_ids.maps_numeric() || !self.config.flags.acls {
             return;
         }
 

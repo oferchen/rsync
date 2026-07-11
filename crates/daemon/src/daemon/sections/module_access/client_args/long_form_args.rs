@@ -72,9 +72,10 @@ fn apply_long_form_args(client_args: &[String], config: &mut ServerConfig) -> Op
             "--safe-links" => {
                 config.flags.safe_links = true;
             }
-            // upstream: options.c:2887-2888
+            // upstream: options.c:2887-2888 - an explicit client --numeric-ids
+            // sets `numeric_ids = 1` (drops the wire name-list entirely).
             "--numeric-ids" => {
-                config.flags.numeric_ids = true;
+                config.flags.numeric_ids = core::server::NumericIds::Explicit;
             }
             // upstream: options.c:2890-2891
             "--use-qsort" => {

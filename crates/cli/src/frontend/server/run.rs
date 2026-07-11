@@ -199,7 +199,7 @@ where
     }
     config.file_selection.ignore_existing = long_flags.ignore_existing;
     config.file_selection.existing_only = long_flags.existing_only;
-    config.flags.numeric_ids = long_flags.numeric_ids;
+    config.flags.numeric_ids = core::server::NumericIds::from_client(long_flags.numeric_ids);
     config.flags.delete = long_flags.delete;
     // upstream: options.c:2964-2965 - `--remove-source-files` is forwarded
     // long-form when the client requested sender-side removal. The flag is

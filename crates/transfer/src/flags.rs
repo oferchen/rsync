@@ -7,6 +7,75 @@
 
 use thiserror::Error;
 
+/// Tri-state numeric-ids mode, mirroring upstream's `int numeric_ids`
+/// (`options.c:97`) which carries three values: `0`, `-1`, and `1`.
+///
+/// Upstream folds two independent concerns onto that single integer:
+///
+/// - Wire: the uid/gid name-list is sent and received whenever
+///   `numeric_ids <= 0` (`flist.c:2548` send gate, `uidlist.c:465,473` recv
+///   gate). Only an explicit client `--numeric-ids` (`> 0`) drops the list
+///   from the wire.
+/// - Local: name-based id resolution is suppressed whenever
+///   `numeric_ids != 0` (`flist.c:478` gates `add_uid()` on `!numeric_ids`),
+///   so both the daemon-forced and the explicit states preserve numeric
+///   owner/group without a name lookup.
+///
+/// Collapsing these into one bool (as before) made a daemon module's
+/// `numeric ids = yes` skip the name-list wire read, desyncing against a real
+/// upstream client whose own `numeric_ids` is `0` and therefore still sends the
+/// list. `DaemonForced` restores upstream's `-1` semantics: suppress local
+/// mapping, keep the wire list.
+#[derive(Debug, Clone, Copy, Default, Eq, PartialEq)]
+pub enum NumericIds {
+    /// `numeric_ids == 0`: names are resolved locally and the uid/gid name-list
+    /// stays on the wire.
+    #[default]
+    Off,
+    /// `numeric_ids == -1`: a daemon module `numeric ids = yes` forced the
+    /// option after the client argv was parsed (`clientserver.c:1201-1204`).
+    /// Local name resolution is suppressed, but the wire name-list is preserved
+    /// so the protocol is not broken for a peer whose own `numeric_ids` is `0`.
+    DaemonForced,
+    /// `numeric_ids > 0`: the client explicitly requested `--numeric-ids`. Both
+    /// local resolution and the wire name-list are dropped.
+    Explicit,
+}
+
+impl NumericIds {
+    /// True when the uid/gid name-list must be dropped from the wire, i.e.
+    /// upstream `numeric_ids > 0`. [`Off`](Self::Off) and
+    /// [`DaemonForced`](Self::DaemonForced) keep the list (`numeric_ids <= 0`).
+    #[must_use]
+    pub const fn is_explicit(self) -> bool {
+        matches!(self, Self::Explicit)
+    }
+
+    /// True when local name resolution is suppressed, i.e. upstream
+    /// `numeric_ids != 0` (both [`DaemonForced`](Self::DaemonForced) and
+    /// [`Explicit`](Self::Explicit)).
+    #[must_use]
+    pub const fn maps_numeric(self) -> bool {
+        !matches!(self, Self::Off)
+    }
+
+    /// True when upstream `!numeric_ids` (`numeric_ids == 0`): names are
+    /// resolved and per-entry names are emitted on the wire.
+    #[must_use]
+    pub const fn is_off(self) -> bool {
+        matches!(self, Self::Off)
+    }
+
+    /// Builds the client-side state from a parsed `--numeric-ids` flag: an
+    /// explicit request maps to [`Explicit`](Self::Explicit), its absence to
+    /// [`Off`](Self::Off). Clients never produce [`DaemonForced`](Self::DaemonForced),
+    /// which is set only by the daemon after argv parsing.
+    #[must_use]
+    pub const fn from_client(explicit: bool) -> Self {
+        if explicit { Self::Explicit } else { Self::Off }
+    }
+}
+
 /// Parsed server options decoded from the compact flag string.
 #[derive(Debug, Clone, Default, Eq, PartialEq)]
 pub struct ParsedServerFlags {
@@ -52,11 +121,13 @@ pub struct ParsedServerFlags {
     pub acls: bool,
     /// Preserve extended attributes (`X` flag, `--xattrs`).
     pub xattrs: bool,
-    /// Numeric IDs only (long-form `--numeric-ids`).
+    /// Numeric IDs mode (long-form `--numeric-ids`, or daemon `numeric ids`).
     ///
-    /// Not part of the compact flag string; set via long-form args or explicit
-    /// propagation. In upstream, `'n'` means dry-run, not numeric-ids.
-    pub numeric_ids: bool,
+    /// Not part of the compact flag string; set via long-form args, client
+    /// propagation, or a daemon module directive. In upstream, `'n'` means
+    /// dry-run, not numeric-ids. See [`NumericIds`] for the tri-state that
+    /// separates the wire and local-mapping concerns.
+    pub numeric_ids: NumericIds,
     /// Delete extraneous files (long-form `--delete-*` variants).
     ///
     /// Not part of the compact flag string; set via long-form args or explicit

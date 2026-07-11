@@ -3008,19 +3008,52 @@ mod module_access_tests {
     }
 
     // upstream: clientserver.c:1201-1204 - `numeric ids = yes` forces
-    // `--numeric-ids` for the session, except under chroot when a `name
-    // converter` is configured (the converter maps names inside the chroot).
+    // `numeric_ids = -1` for the session (NOT `1`), except under chroot when a
+    // `name converter` is configured (the converter maps names inside the
+    // chroot). The `-1` sentinel is load-bearing: it suppresses local name
+    // resolution but keeps the uid/gid name-list on the wire, so a real
+    // upstream client (whose own `numeric_ids` is `0`) still transmits the
+    // list and the receiver must read it. Collapsing this into the explicit
+    // `1` state (which drops the list) desyncs the receiver: it skips the
+    // name-list read and misreads those bytes as the next NDX. This test pins
+    // the daemon-forced state to `DaemonForced` so a future refactor cannot
+    // silently reintroduce the wire desync.
     #[test]
-    fn module_numeric_ids_forces_config_flag() {
+    fn module_numeric_ids_forces_daemon_forced_state() {
         let module = ModuleDefinition {
             numeric_ids: true,
             use_chroot: false,
             ..Default::default()
         };
         let mut cfg = ServerConfig::default();
-        assert!(!cfg.flags.numeric_ids);
+        assert!(cfg.flags.numeric_ids.is_off());
         apply_module_transfer_directives(&module, &mut cfg);
-        assert!(cfg.flags.numeric_ids);
+        // Daemon-forced, not client-explicit: keeps the wire name-list.
+        assert_eq!(
+            cfg.flags.numeric_ids,
+            core::server::NumericIds::DaemonForced
+        );
+        // Local name resolution is suppressed (numeric owner preserved) ...
+        assert!(cfg.flags.numeric_ids.maps_numeric());
+        // ... but the wire name-list is NOT dropped (upstream `numeric_ids <= 0`).
+        assert!(!cfg.flags.numeric_ids.is_explicit());
+    }
+
+    // A client that explicitly passed --numeric-ids is already in the Explicit
+    // state; the daemon directive must not downgrade it and the wire list stays
+    // dropped (upstream `!numeric_ids` at clientserver.c:1201 is false for `1`).
+    #[test]
+    fn client_explicit_numeric_ids_not_downgraded_by_module() {
+        let module = ModuleDefinition {
+            numeric_ids: true,
+            use_chroot: false,
+            ..Default::default()
+        };
+        let mut cfg = ServerConfig::default();
+        cfg.flags.numeric_ids = core::server::NumericIds::Explicit;
+        apply_module_transfer_directives(&module, &mut cfg);
+        assert_eq!(cfg.flags.numeric_ids, core::server::NumericIds::Explicit);
+        assert!(cfg.flags.numeric_ids.is_explicit());
     }
 
     #[test]
@@ -3035,7 +3068,7 @@ mod module_access_tests {
         };
         let mut cfg = ServerConfig::default();
         apply_module_transfer_directives(&module, &mut cfg);
-        assert!(!cfg.flags.numeric_ids);
+        assert!(cfg.flags.numeric_ids.is_off());
     }
 
     #[test]
@@ -3048,7 +3081,10 @@ mod module_access_tests {
         };
         let mut cfg = ServerConfig::default();
         apply_module_transfer_directives(&module, &mut cfg);
-        assert!(cfg.flags.numeric_ids);
+        assert_eq!(
+            cfg.flags.numeric_ids,
+            core::server::NumericIds::DaemonForced
+        );
     }
 
     #[test]
@@ -3059,7 +3095,7 @@ mod module_access_tests {
         };
         let mut cfg = ServerConfig::default();
         apply_module_transfer_directives(&module, &mut cfg);
-        assert!(!cfg.flags.numeric_ids);
+        assert!(cfg.flags.numeric_ids.is_off());
     }
 }
 
