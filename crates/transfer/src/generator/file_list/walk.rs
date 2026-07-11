@@ -442,6 +442,22 @@ impl GeneratorContext {
             let StatResult { path, metadata } = result;
             match metadata {
                 Ok(mut meta) => {
+                    // upstream: flist.c:1362-1370 link_stat() - with
+                    // --copy-dirlinks (follow_dirlinks), a symlink whose
+                    // target is a directory is transmitted as a real
+                    // directory. Applied before the copy-unsafe-links check
+                    // exactly as upstream applies it inside link_stat() before
+                    // readlink_stat() re-examines S_ISLNK. Only symlinks to
+                    // directories are followed; symlinks to files stay
+                    // symlinks (distinct from --copy-links, which follows all).
+                    if !follow && self.config.flags.copy_dirlinks && meta.file_type().is_symlink() {
+                        if let Ok(followed) = std::fs::metadata(&path) {
+                            if followed.file_type().is_dir() {
+                                meta = followed;
+                            }
+                        }
+                    }
+
                     // upstream: flist.c:215 - follow unsafe symlinks when
                     // --copy-unsafe-links. The batch used lstat, so we need
                     // to re-stat symlinks whose target escapes the tree.
@@ -544,6 +560,21 @@ impl GeneratorContext {
         }
 
         let meta = std::fs::symlink_metadata(path)?;
+
+        // upstream: flist.c:1362-1370 link_stat() - with --copy-dirlinks
+        // (follow_dirlinks), a symlink whose target is a directory is
+        // transmitted as a real directory. Applied before the
+        // copy-unsafe-links check, mirroring upstream's link_stat()
+        // (dirlink follow) running before readlink_stat()'s S_ISLNK
+        // re-examination. Only symlinks to directories are followed;
+        // symlinks to files stay symlinks (distinct from --copy-links).
+        if self.config.flags.copy_dirlinks && meta.file_type().is_symlink() {
+            if let Ok(followed) = std::fs::metadata(path) {
+                if followed.file_type().is_dir() {
+                    return Ok(followed);
+                }
+            }
+        }
 
         // upstream: flist.c:215 - follow unsafe symlinks when --copy-unsafe-links
         if self.config.flags.copy_unsafe_links && meta.file_type().is_symlink() {

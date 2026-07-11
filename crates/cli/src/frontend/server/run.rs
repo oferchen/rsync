@@ -352,6 +352,7 @@ where
             {
                 use fast_io::landlock::{LandlockOutcome, is_supported, restrict_to_module_paths};
                 if is_supported() {
+                    let canonical_root = root.clone();
                     let mut allowed = vec![root];
 
                     // UTS-V3-D: a remote files-from path (upstream
@@ -374,6 +375,20 @@ where
                                 allowed.push(canon);
                             }
                         }
+                    }
+
+                    // upstream: generator.c:1356 - with --keep-dirlinks the
+                    // receiver follows a destination symlink that resolves to a
+                    // directory and writes through it, which upstream permits
+                    // even when the target lives outside the transfer root. The
+                    // Landlock allowlist would otherwise deny those writes
+                    // (EACCES), so extend it with the canonical targets of any
+                    // pre-existing destination symlink-to-directory entries. Only
+                    // symlinks already present before the transfer are added, so
+                    // the escape defense against a mid-transfer symlink swap is
+                    // preserved for paths the user did not pre-establish.
+                    if config.flags.keep_dirlinks {
+                        collect_keep_dirlink_targets(&canonical_root, &mut allowed);
                     }
 
                     let allowed_refs: Vec<&std::path::Path> =
@@ -416,6 +431,60 @@ where
         Err(e) => {
             write_server_error(stderr, program_brand, format!("server error: {e}"));
             1
+        }
+    }
+}
+
+/// Collects the canonical directory targets of pre-existing destination
+/// symlink-to-directory entries so they can be added to the `--keep-dirlinks`
+/// Landlock allowlist.
+///
+/// Walks the real directory structure beneath `root` without descending into
+/// symlinks (avoiding loops); each symlink whose target resolves to a directory
+/// contributes its canonical path. The walk is bounded in depth and total
+/// entries so a hostile or pathological destination tree cannot stall receiver
+/// startup. Mirrors upstream's `--keep-dirlinks` trust model: the destination
+/// symlinks the user pre-established are followed even when their targets sit
+/// outside the transfer root (`generator.c:1356`).
+fn collect_keep_dirlink_targets(root: &std::path::Path, out: &mut Vec<std::path::PathBuf>) {
+    const MAX_DEPTH: usize = 32;
+    const MAX_ENTRIES: usize = 100_000;
+
+    let mut seen: std::collections::HashSet<std::path::PathBuf> = std::collections::HashSet::new();
+    let mut stack: Vec<(std::path::PathBuf, usize)> = vec![(root.to_path_buf(), 0)];
+    let mut visited = 0usize;
+
+    while let Some((dir, depth)) = stack.pop() {
+        if depth > MAX_DEPTH {
+            continue;
+        }
+        let entries = match std::fs::read_dir(&dir) {
+            Ok(entries) => entries,
+            Err(_) => continue,
+        };
+        for entry in entries.flatten() {
+            visited += 1;
+            if visited > MAX_ENTRIES {
+                return;
+            }
+            let path = entry.path();
+            // Classify without following the symlink so loops are impossible.
+            let Ok(lst) = std::fs::symlink_metadata(&path) else {
+                continue;
+            };
+            if lst.file_type().is_symlink() {
+                // A symlink that resolves to a directory is a kept dirlink;
+                // allowlist its canonical target so writes through it succeed.
+                if let Ok(canon) = std::fs::canonicalize(&path) {
+                    if std::fs::metadata(&canon).is_ok_and(|m| m.file_type().is_dir())
+                        && seen.insert(canon.clone())
+                    {
+                        out.push(canon);
+                    }
+                }
+            } else if lst.file_type().is_dir() {
+                stack.push((path, depth + 1));
+            }
         }
     }
 }
@@ -572,5 +641,72 @@ fn write_server_error<Err: Write>(stderr: &mut Err, brand: Brand, text: impl fmt
     message = message.with_role(Role::Server);
     if super::super::write_message(&message, &mut sink).is_err() {
         let _ = writeln!(sink.writer_mut(), "{text}");
+    }
+}
+
+#[cfg(all(test, unix))]
+mod keep_dirlink_target_tests {
+    use std::fs;
+    use std::os::unix::fs::symlink;
+
+    use super::collect_keep_dirlink_targets;
+
+    /// A destination symlink resolving to a directory contributes its canonical
+    /// target so the `--keep-dirlinks` Landlock allowlist permits writes through
+    /// it; a symlink-to-file and a plain directory contribute nothing.
+    #[test]
+    fn collects_only_symlink_to_dir_targets() {
+        let scratch = tempfile::tempdir().expect("tempdir");
+        let root = scratch.path().join("dest");
+        fs::create_dir(&root).unwrap();
+
+        // A symlink-to-directory whose target lives outside the dest root.
+        let outside = scratch.path().join("outside");
+        fs::create_dir(&outside).unwrap();
+        symlink(&outside, root.join("dlink")).unwrap();
+
+        // A symlink-to-file (not a dirlink) and a plain directory: neither is a
+        // kept dirlink target.
+        let file = scratch.path().join("f.txt");
+        fs::write(&file, b"x").unwrap();
+        symlink(&file, root.join("flink")).unwrap();
+        fs::create_dir(root.join("realdir")).unwrap();
+
+        let mut out = Vec::new();
+        collect_keep_dirlink_targets(&root, &mut out);
+
+        let canon_outside = fs::canonicalize(&outside).unwrap();
+        assert!(
+            out.contains(&canon_outside),
+            "the symlink-to-directory target must be allowlisted: {out:?}"
+        );
+        assert_eq!(
+            out.len(),
+            1,
+            "only the symlink-to-directory contributes a target: {out:?}"
+        );
+    }
+
+    /// A nested symlink-to-directory (below the root) is also collected, since
+    /// upstream follows kept dirlinks at any depth.
+    #[test]
+    fn collects_nested_symlink_to_dir_targets() {
+        let scratch = tempfile::tempdir().expect("tempdir");
+        let root = scratch.path().join("dest");
+        let sub = root.join("sub");
+        fs::create_dir_all(&sub).unwrap();
+
+        let outside = scratch.path().join("outside");
+        fs::create_dir(&outside).unwrap();
+        symlink(&outside, sub.join("dlink")).unwrap();
+
+        let mut out = Vec::new();
+        collect_keep_dirlink_targets(&root, &mut out);
+
+        let canon_outside = fs::canonicalize(&outside).unwrap();
+        assert!(
+            out.contains(&canon_outside),
+            "a nested kept-dirlink target must be allowlisted: {out:?}"
+        );
     }
 }

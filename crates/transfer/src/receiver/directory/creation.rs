@@ -19,7 +19,64 @@ use protocol::xattr::XattrList;
 use super::FailedDirectories;
 use crate::receiver::{ReceiverContext, apply_acls_from_receiver_cache};
 
+/// Outcome of classifying a directory destination before creation.
+///
+/// Mirrors upstream's generator dir preparation: `link_stat(fname, &sx.st,
+/// keep_dirlinks && is_dir)` (`generator.c:1356`) classifies the destination,
+/// then a non-directory destination is deleted via `delete_item(...,
+/// del_opts | DEL_FOR_DIR)` before `do_mkdir_at()` (`generator.c:1451-1455`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum DirDestination {
+    /// Destination is absent - create it (and honour `--existing` skipping).
+    Missing,
+    /// Destination already usable as a directory - reuse it. Either a real
+    /// directory, or a symlink-to-directory followed under `--keep-dirlinks`.
+    Existing,
+    /// A conflicting symlink was removed - create a real directory in its
+    /// place. The destination existed, so `--existing` does NOT skip it.
+    ReplacedSymlink,
+}
+
+impl DirDestination {
+    /// Whether a directory must be materialised (mkdir) for this outcome.
+    const fn needs_mkdir(self) -> bool {
+        matches!(self, Self::Missing | Self::ReplacedSymlink)
+    }
+}
+
 impl ReceiverContext {
+    /// Classifies a directory destination, removing a conflicting symlink first
+    /// when required.
+    ///
+    /// A `.exists()`-style probe would be wrong here: it follows symlinks, so a
+    /// destination symlink-to-directory would always be treated as an existing
+    /// directory and never replaced, diverging from upstream when
+    /// `--keep-dirlinks` is off.
+    fn classify_dir_destination(&self, dir_path: &Path) -> io::Result<DirDestination> {
+        match fs::symlink_metadata(dir_path) {
+            Ok(existing) if existing.file_type().is_symlink() => {
+                let resolves_to_dir = fs::metadata(dir_path)
+                    .map(|meta| meta.file_type().is_dir())
+                    .unwrap_or(false);
+                if self.config.flags.keep_dirlinks && resolves_to_dir {
+                    // upstream: generator.c:1356 - keep_dirlinks follows the
+                    // destination symlink-to-directory instead of replacing it.
+                    Ok(DirDestination::Existing)
+                } else {
+                    // upstream: generator.c:1454 - delete_item(fname, ...,
+                    // DEL_FOR_DIR) removes the conflicting symlink before mkdir.
+                    fs::remove_file(dir_path)?;
+                    Ok(DirDestination::ReplacedSymlink)
+                }
+            }
+            // An existing real directory (or any other existing non-symlink
+            // entry, matching the prior `.exists()` semantics) is reused.
+            Ok(_) => Ok(DirDestination::Existing),
+            Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(DirDestination::Missing),
+            Err(error) => Err(error),
+        }
+    }
+
     /// Creates directories from the file list, applying metadata in parallel.
     ///
     /// Two-phase approach: directory creation is sequential (cheap, respects
@@ -125,9 +182,24 @@ impl ReceiverContext {
             // `relative_path` is only read on Unix (mkdirat fast path).
             #[cfg(not(unix))]
             let _ = relative_path;
-            let is_new = !dir_path.exists();
+            // upstream: generator.c:1356 / 1451-1455 - classify the destination
+            // via lstat (not exists()) so a symlink-to-directory is replaced by
+            // a real directory unless --keep-dirlinks is set, in which case it is
+            // followed. A remove failure is non-fatal (matches upstream
+            // skipping_dir_contents): fall back to the exists() probe.
+            let dir_dest = self.classify_dir_destination(dir_path).unwrap_or_else(|_| {
+                if dir_path.exists() {
+                    DirDestination::Existing
+                } else {
+                    DirDestination::Missing
+                }
+            });
+            let is_new = dir_dest.needs_mkdir();
             dir_was_new.push(is_new);
-            if is_new && existing_only {
+            // upstream: generator.c:1401 - --existing (ignore_non_existing) only
+            // skips a genuinely absent destination (statret == -1); a symlink
+            // being replaced existed, so it is not skipped.
+            if dir_dest == DirDestination::Missing && existing_only {
                 // upstream: generator.c:1374-1378 - "not creating new directory".
                 // Record in the skip set (not `failed_dir_paths`) so the
                 // itemize and metadata passes below skip this directory without
@@ -439,13 +511,29 @@ impl ReceiverContext {
         // parent. Multi-component paths fall back to
         // `fs::create_dir_all`, which preserves the parent-walk for
         // `--relative` shapes.
-        let is_new = !dir_path.exists();
+        // upstream: generator.c:1356 / 1451-1455 - lstat-classify the
+        // destination so a symlink-to-directory is replaced by a real directory
+        // unless --keep-dirlinks follows it. Non-fatal on error: fall back to
+        // the exists() probe (matches upstream's skipping_dir_contents path).
+        let dir_dest = self
+            .classify_dir_destination(&dir_path)
+            .unwrap_or_else(|_| {
+                if dir_path.exists() {
+                    DirDestination::Existing
+                } else {
+                    DirDestination::Missing
+                }
+            });
+        let is_new = dir_dest.needs_mkdir();
         // upstream: generator.c:1368-1383 - with --existing (ignore_non_existing),
         // a directory missing at the destination is never created; the dir is
         // marked skipped (FLAG_MISSING_DIR) so its descendants are skipped too.
         // Marking it failed here drives the same descendant skip via the
         // failed-ancestor check above on subsequent entries.
-        if is_new && self.config.file_selection.existing_only {
+        //
+        // upstream: generator.c:1401 - --existing only skips a genuinely absent
+        // destination; a replaced symlink existed and is not skipped.
+        if dir_dest == DirDestination::Missing && self.config.file_selection.existing_only {
             if self.config.flags.verbose && self.config.connection.client_mode {
                 info_log!(
                     Skip,
@@ -909,6 +997,122 @@ mod touch_up_dirs_tests {
         assert_eq!(
             actual, past,
             "touch_up_dirs must not modify non-directory entries"
+        );
+    }
+
+    #[cfg(unix)]
+    fn config_with_keep_dirlinks(keep: bool) -> ServerConfig {
+        ServerConfig {
+            role: ServerRole::Receiver,
+            protocol: ProtocolVersion::try_from(32u8).unwrap(),
+            flag_string: "-r".to_owned(),
+            flags: ParsedServerFlags {
+                keep_dirlinks: keep,
+                recursive: true,
+                ..ParsedServerFlags::default()
+            },
+            args: vec![OsString::from(".")],
+            ..Default::default()
+        }
+    }
+
+    /// Without `--keep-dirlinks`, a destination symlink standing where the
+    /// source has a directory is a type conflict: upstream deletes it and
+    /// creates a real directory (`generator.c:1451-1455`). The classifier must
+    /// remove the symlink and report that a mkdir is needed.
+    #[cfg(unix)]
+    #[test]
+    fn keep_dirlinks_off_replaces_dest_symlink_to_dir() {
+        use std::os::unix::fs::symlink;
+
+        let dir = test_support::create_tempdir();
+        let target = dir.path().join("target");
+        fs::create_dir(&target).unwrap();
+        let link = dir.path().join("d");
+        symlink(&target, &link).unwrap();
+
+        let hs = handshake();
+        let ctx = ReceiverContext::new_for_test(&hs, config_with_keep_dirlinks(false));
+
+        let decision = ctx
+            .classify_dir_destination(&link)
+            .expect("classify succeeds");
+        assert_eq!(
+            decision,
+            super::DirDestination::ReplacedSymlink,
+            "without -K the conflicting dest symlink must be replaced"
+        );
+        assert!(decision.needs_mkdir(), "a real directory must be created");
+        assert!(
+            fs::symlink_metadata(&link).is_err(),
+            "the conflicting symlink must have been removed"
+        );
+    }
+
+    /// With `--keep-dirlinks`, a destination symlink resolving to a directory is
+    /// followed rather than replaced (`generator.c:1356`): the classifier keeps
+    /// the symlink in place and reports no mkdir is needed.
+    #[cfg(unix)]
+    #[test]
+    fn keep_dirlinks_on_follows_dest_symlink_to_dir() {
+        use std::os::unix::fs::symlink;
+
+        let dir = test_support::create_tempdir();
+        let target = dir.path().join("target");
+        fs::create_dir(&target).unwrap();
+        let link = dir.path().join("d");
+        symlink(&target, &link).unwrap();
+
+        let hs = handshake();
+        let ctx = ReceiverContext::new_for_test(&hs, config_with_keep_dirlinks(true));
+
+        let decision = ctx
+            .classify_dir_destination(&link)
+            .expect("classify succeeds");
+        assert_eq!(
+            decision,
+            super::DirDestination::Existing,
+            "with -K a dest symlink-to-directory is followed, not replaced"
+        );
+        assert!(
+            !decision.needs_mkdir(),
+            "no mkdir when following the symlink"
+        );
+        let md = fs::symlink_metadata(&link).unwrap();
+        assert!(
+            md.file_type().is_symlink(),
+            "the dest symlink must be preserved under -K"
+        );
+    }
+
+    /// A destination symlink that resolves to a non-directory (a file) is a
+    /// type conflict even under `--keep-dirlinks`: `keep_dirlinks` follows only
+    /// symlinks-to-directories, so the symlink is replaced.
+    #[cfg(unix)]
+    #[test]
+    fn keep_dirlinks_on_replaces_symlink_to_non_dir() {
+        use std::os::unix::fs::symlink;
+
+        let dir = test_support::create_tempdir();
+        let target = dir.path().join("target.txt");
+        fs::write(&target, b"file").unwrap();
+        let link = dir.path().join("d");
+        symlink(&target, &link).unwrap();
+
+        let hs = handshake();
+        let ctx = ReceiverContext::new_for_test(&hs, config_with_keep_dirlinks(true));
+
+        let decision = ctx
+            .classify_dir_destination(&link)
+            .expect("classify succeeds");
+        assert_eq!(
+            decision,
+            super::DirDestination::ReplacedSymlink,
+            "-K follows only symlinks-to-directories; a symlink-to-file is replaced"
+        );
+        assert!(
+            fs::symlink_metadata(&link).is_err(),
+            "the symlink-to-file conflict must have been removed"
         );
     }
 }
