@@ -162,7 +162,7 @@ impl ReceiverContext {
             .preserve_crtimes(self.config.flags.crtimes)
             .preserve_owner(self.config.flags.owner)
             .preserve_group(self.config.flags.group)
-            .numeric_ids(self.config.flags.numeric_ids)
+            .numeric_ids(self.config.flags.numeric_ids.maps_numeric())
             // upstream: generator.c:1344 - `link_stat(fname, &sx.st,
             // keep_dirlinks && is_dir)` follows a destination symlink-to-dir
             // at stat time instead of rejecting it. The
@@ -728,7 +728,7 @@ impl ReceiverContext {
             self.gid_list.resolved_map(),
             self.config.user_mapping.clone(),
             self.config.group_mapping.clone(),
-            self.config.flags.numeric_ids,
+            self.config.flags.numeric_ids.maps_numeric(),
         )
     }
 
@@ -738,7 +738,7 @@ impl ReceiverContext {
         metadata::AclIdMapper::new(
             self.uid_list.resolved_map(),
             self.gid_list.resolved_map(),
-            self.config.flags.numeric_ids,
+            self.config.flags.numeric_ids.maps_numeric(),
         )
     }
 

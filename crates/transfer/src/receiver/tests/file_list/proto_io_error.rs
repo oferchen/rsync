@@ -12,7 +12,7 @@ use protocol::ProtocolVersion;
 use super::super::super::ReceiverContext;
 use super::super::support::test_handshake_with_protocol;
 use crate::config::ServerConfig;
-use crate::flags::ParsedServerFlags;
+use crate::flags::{NumericIds, ParsedServerFlags};
 use crate::role::ServerRole;
 
 /// Verifies that `receive_file_list` reads the 4-byte LE io_error flag
@@ -25,7 +25,7 @@ fn receive_file_list_reads_io_error_for_proto28() {
         protocol: ProtocolVersion::try_from(28u8).unwrap(),
         flag_string: "-logDtpre.".to_owned(),
         flags: ParsedServerFlags {
-            numeric_ids: true,
+            numeric_ids: NumericIds::Explicit,
             ..Default::default()
         },
         args: vec![OsString::from(".")],
@@ -56,7 +56,7 @@ fn receive_file_list_reads_io_error_for_proto29() {
         protocol: ProtocolVersion::try_from(29u8).unwrap(),
         flag_string: "-logDtpre.".to_owned(),
         flags: ParsedServerFlags {
-            numeric_ids: true,
+            numeric_ids: NumericIds::Explicit,
             ..Default::default()
         },
         args: vec![OsString::from(".")],
@@ -84,7 +84,7 @@ fn receive_file_list_skips_io_error_for_proto30() {
         protocol: ProtocolVersion::try_from(30u8).unwrap(),
         flag_string: "-logDtpre.".to_owned(),
         flags: ParsedServerFlags {
-            numeric_ids: true,
+            numeric_ids: NumericIds::Explicit,
             ..Default::default()
         },
         args: vec![OsString::from(".")],
@@ -110,7 +110,7 @@ fn receive_file_list_ignore_errors_suppresses_io_error() {
         protocol: ProtocolVersion::try_from(28u8).unwrap(),
         flag_string: "-logDtpre.".to_owned(),
         flags: ParsedServerFlags {
-            numeric_ids: true,
+            numeric_ids: NumericIds::Explicit,
             ..Default::default()
         },
         deletion: crate::config::DeletionConfig {
