@@ -30,7 +30,7 @@ mod flags;
 mod iter;
 mod known;
 
-pub use self::flags::CompatibilityFlags;
+pub use self::flags::{CompatibilityFlags, effective_s2length};
 pub use self::iter::KnownCompatibilityFlagsIter;
 pub use self::known::{KnownCompatibilityFlag, ParseKnownCompatibilityFlagError};
 

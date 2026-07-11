@@ -137,9 +137,10 @@ pub fn generate_delta_from_signature<R: Read>(
     source: R,
     config: DeltaGeneratorConfig<'_>,
 ) -> io::Result<DeltaScript> {
+    let needed = consecutive_match_needed(&config);
     let index = build_signature_index(config)?;
 
-    let generator = DeltaGenerator::new();
+    let generator = DeltaGenerator::new().with_consecutive_match_needed(needed);
     generator.generate(source, &index).map_err(|e| {
         io::Error::other(format!(
             "delta generation failed: {e} {}{}",
@@ -183,9 +184,15 @@ pub fn generate_delta_from_signature_chunked(
     config: DeltaGeneratorConfig<'_>,
     max_chunks: usize,
 ) -> io::Result<DeltaScript> {
+    // Carry the negotiated consecutive-match threshold onto the parallel path:
+    // when the mutual CAP_CONSECUTIVE_MATCH bit is set the receiver has halved
+    // the strong-sum length, so the sender must apply seq_matches=2 gating here
+    // too. `generate_chunked` routes needed >= 2 through the sequential gated
+    // scan, so the parallel opt-in stays wire-transparent under the bit.
+    let needed = consecutive_match_needed(&config);
     let index = build_signature_index(config)?;
 
-    let generator = DeltaGenerator::new();
+    let generator = DeltaGenerator::new().with_consecutive_match_needed(needed);
     let result = if index.has_duplicate_blocks() {
         // Duplicate-content basis: the prune-off parallel scan would diverge
         // from the pruned sequential wire bytes, so keep the sequential path.
@@ -289,6 +296,26 @@ fn build_signature_index(config: DeltaGeneratorConfig<'_>) -> io::Result<DeltaSi
             ),
         )
     })
+}
+
+/// Derives the zsync consecutive-match gating threshold (`seq_matches`) from the
+/// mutually negotiated compat flags.
+///
+/// Returns `2` only when the private `CAP_CONSECUTIVE_MATCH` bit is present -
+/// the exact same condition under which the receiver halved the per-block
+/// strong-sum length carried in `config.strong_sum_length`. The gating
+/// compensates for the shorter, weaker checksum; the two are bound to one
+/// negotiated bit so they can never diverge. Absent the bit (any upstream peer,
+/// or no opt-in) the threshold stays at `1` and the scan is upstream-identical.
+fn consecutive_match_needed(config: &DeltaGeneratorConfig<'_>) -> u8 {
+    if config
+        .compat_flags
+        .is_some_and(|f| f.contains(protocol::CompatibilityFlags::CONSECUTIVE_MATCH))
+    {
+        2
+    } else {
+        1
+    }
 }
 
 /// Streams a whole file to the wire in a single pass: read -> hash -> write.

@@ -49,6 +49,24 @@ impl CompatibilityFlags {
     /// File-list entries support id0 names (`CF_ID0_NAMES`).
     pub const ID0_NAMES: Self = Self::new(1 << 8);
 
+    /// Private oc-only extension: consecutive-match gating with a halved
+    /// per-block strong checksum (`CAP_CONSECUTIVE_MATCH`).
+    ///
+    /// This is NOT an upstream rsync flag. It occupies a high private bit
+    /// (`0x0200_0000`) deliberately kept out of [`Self::KNOWN_MASK`], the
+    /// default-advertised set, and [`Self::ALL_KNOWN`]. compat_flags is a
+    /// varint on the wire (upstream `compat.c:741` `read_varint`), and upstream
+    /// tolerates unknown bits by ignoring them, so this private bit transmits
+    /// harmlessly to a stock peer and is masked away by the negotiation AND
+    /// unless BOTH peers are oc AND both opted in.
+    ///
+    /// Data-integrity invariant: this bit is the sole gate for shrinking the
+    /// per-file strong-sum length (see [`effective_s2length`]). When it is
+    /// absent from the mutually negotiated flags the strong sum stays at full
+    /// length, byte-identical to upstream. It must never be added to
+    /// `KNOWN_MASK` or advertised unconditionally.
+    pub const CONSECUTIVE_MATCH: Self = Self::new(0x0200_0000);
+
     /// Bitfield containing every compatibility flag recognised by this crate.
     pub const ALL_KNOWN: Self = Self::new(Self::KNOWN_MASK);
 
@@ -217,6 +235,36 @@ impl CompatibilityFlags {
             }
             Err(err) => Err(err),
         }
+    }
+}
+
+/// Returns the strong-sum length to use for a file signature given the
+/// mutually negotiated compatibility flags.
+///
+/// This is the single data-integrity choke-point for the consecutive-match
+/// extension (`CAP_CONSECUTIVE_MATCH`). It returns `base_len` unchanged unless
+/// `negotiated` contains [`CompatibilityFlags::CONSECUTIVE_MATCH`], in which
+/// case it returns the halved length (floored at 1). Halving the per-block
+/// strong sum is only safe when the sender simultaneously applies
+/// seq_matches=2 gating, and both behaviours are bound to this exact same
+/// mutual bit.
+///
+/// # Iron invariant
+///
+/// `negotiated` is the result of the negotiation AND (`my_advertised &
+/// peer_advertised`). The private [`CompatibilityFlags::CONSECUTIVE_MATCH`] bit
+/// is only ever set by an oc peer that opted in, so the AND can only retain it
+/// when BOTH peers are oc AND both opted in. Against any upstream rsync (which
+/// never advertises the bit) or any oc peer without the opt-in, the AND clears
+/// the bit and this function returns `base_len` verbatim - byte-identical to
+/// upstream. There is deliberately no other code path that shrinks the
+/// strong-sum length.
+#[must_use]
+pub fn effective_s2length(negotiated: CompatibilityFlags, base_len: u8) -> u8 {
+    if negotiated.contains(CompatibilityFlags::CONSECUTIVE_MATCH) {
+        (base_len / 2).max(1)
+    } else {
+        base_len
     }
 }
 
@@ -695,5 +743,64 @@ mod tests {
         let flags = CompatibilityFlags::INC_RECURSE;
         let cloned = flags;
         assert_eq!(flags, cloned);
+    }
+
+    #[test]
+    fn consecutive_match_is_high_private_bit() {
+        assert_eq!(CompatibilityFlags::CONSECUTIVE_MATCH.bits(), 0x0200_0000);
+    }
+
+    #[test]
+    fn consecutive_match_not_in_known_mask_or_all_known() {
+        // The private extension must never be advertised as a standard flag.
+        assert_eq!(CompatibilityFlags::KNOWN_MASK & 0x0200_0000, 0);
+        assert!(!CompatibilityFlags::ALL_KNOWN.contains(CompatibilityFlags::CONSECUTIVE_MATCH));
+        // Being outside KNOWN_MASK, it reads as an "unknown" (future) bit,
+        // which is exactly how upstream tolerates it.
+        assert!(CompatibilityFlags::CONSECUTIVE_MATCH.has_unknown_bits());
+    }
+
+    #[test]
+    fn consecutive_match_survives_varint_roundtrip() {
+        // A high private bit must round-trip through the varint codec so the
+        // negotiated value the sender reads still carries the capability.
+        let flags = CompatibilityFlags::INC_RECURSE | CompatibilityFlags::CONSECUTIVE_MATCH;
+        let mut encoded = Vec::new();
+        flags.write_to(&mut encoded).unwrap();
+        let decoded = CompatibilityFlags::read_from(&mut encoded.as_slice()).unwrap();
+        assert_eq!(decoded, flags);
+        assert!(decoded.contains(CompatibilityFlags::CONSECUTIVE_MATCH));
+    }
+
+    #[test]
+    fn mutual_and_only_retains_cap_when_both_advertise() {
+        let cap = CompatibilityFlags::CONSECUTIVE_MATCH;
+        // Both advertise -> retained.
+        assert!((cap & cap).contains(cap));
+        // Only one side (peer is upstream, advertises nothing) -> cleared.
+        let peer_upstream = CompatibilityFlags::INC_RECURSE;
+        assert!(!(cap & peer_upstream).contains(cap));
+        assert!(!(peer_upstream & cap).contains(cap));
+    }
+
+    #[test]
+    fn effective_s2length_full_without_cap() {
+        // Iron invariant: no CAP bit -> full length verbatim, for every base.
+        let no_cap = CompatibilityFlags::INC_RECURSE | CompatibilityFlags::SAFE_FILE_LIST;
+        for base in 1u8..=20 {
+            assert_eq!(effective_s2length(no_cap, base), base);
+        }
+        assert_eq!(effective_s2length(CompatibilityFlags::EMPTY, 16), 16);
+    }
+
+    #[test]
+    fn effective_s2length_halved_with_cap() {
+        let with_cap = CompatibilityFlags::INC_RECURSE | CompatibilityFlags::CONSECUTIVE_MATCH;
+        assert_eq!(effective_s2length(with_cap, 16), 8);
+        assert_eq!(effective_s2length(with_cap, 4), 2);
+        assert_eq!(effective_s2length(with_cap, 3), 1);
+        // Never drops below 1 (NonZeroU8 downstream).
+        assert_eq!(effective_s2length(with_cap, 1), 1);
+        assert_eq!(effective_s2length(with_cap, 2), 1);
     }
 }

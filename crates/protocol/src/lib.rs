@@ -154,7 +154,7 @@ pub mod xattr;
 
 pub use compatibility::{
     CompatibilityFlags, KnownCompatibilityFlag, KnownCompatibilityFlagsIter,
-    ParseKnownCompatibilityFlagError,
+    ParseKnownCompatibilityFlagError, effective_s2length,
 };
 pub use envelope::{
     EnvelopeError, HEADER_LEN as MESSAGE_HEADER_LEN, LogCode, LogCodeConversionError,
