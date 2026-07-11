@@ -54,6 +54,20 @@ pub(super) struct ServerLongFlags {
     pub(super) zero_copy_policy: fast_io::ZeroCopyPolicy,
     pub(super) write_devices: bool,
     pub(super) trust_sender: bool,
+    /// Keep partially transferred files (upstream: `--partial`, long-form only).
+    ///
+    /// upstream: options.c:2893 - `server_options()` emits bare `--partial`
+    /// (never a compact `P` letter) when the client is the sender and no
+    /// `--partial-dir` is configured. The receiver consults `keep_partial`
+    /// (receiver.c) to leave interrupted temp files in place.
+    pub(super) partial: bool,
+    /// Explicit specials override (upstream: `--specials` / `--no-specials`).
+    ///
+    /// upstream: options.c:2760-2765 - the compact `D` letter carries
+    /// preserve_devices only, so specials arrive separately: `--specials`
+    /// (`Some(true)`) or `--no-specials` (`Some(false)`). `None` leaves the
+    /// value implied by the compact `D` letter untouched.
+    pub(super) specials: Option<bool>,
     pub(super) qsort: bool,
     pub(super) checksum_seed: Option<String>,
     pub(super) checksum_choice: Option<String>,
@@ -187,6 +201,8 @@ pub(super) fn parse_server_long_flags(args: &[OsString]) -> ServerLongFlags {
         zero_copy_policy: fast_io::ZeroCopyPolicy::Auto,
         write_devices: false,
         trust_sender: false,
+        partial: false,
+        specials: None,
         qsort: false,
         checksum_seed: None,
         checksum_choice: None,
@@ -234,6 +250,12 @@ pub(super) fn parse_server_long_flags(args: &[OsString]) -> ServerLongFlags {
             "--no-zero-copy" => flags.zero_copy_policy = fast_io::ZeroCopyPolicy::Disabled,
             "--write-devices" => flags.write_devices = true,
             "--trust-sender" => flags.trust_sender = true,
+            // upstream: options.c:2893 - bare --partial (no compact 'P').
+            "--partial" => flags.partial = true,
+            // upstream: options.c:2760-2765 - --specials / --no-specials convey
+            // preserve_specials separately from the compact 'D' (devices) letter.
+            "--specials" => flags.specials = Some(true),
+            "--no-specials" => flags.specials = Some(false),
             "--qsort" => flags.qsort = true,
             "--from0" => flags.from0 = true,
             "--inplace" => flags.inplace = true,
@@ -446,6 +468,9 @@ pub(super) fn is_known_server_long_flag(arg: &str) -> bool {
             | "--no-zero-copy"
             | "--write-devices"
             | "--trust-sender"
+            | "--partial"
+            | "--specials"
+            | "--no-specials"
             | "--qsort"
             | "--from0"
             | "--inplace"

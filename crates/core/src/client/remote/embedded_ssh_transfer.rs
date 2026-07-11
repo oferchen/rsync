@@ -492,6 +492,13 @@ fn build_server_config_for_receiver(
     server_config.flags.numeric_ids = config.numeric_ids();
     server_config.flags.delete = config.delete_mode().is_enabled() || config.delete_excluded();
     server_config.file_selection.size_only = config.size_only();
+    // upstream: build_server_flag_string no longer packs the compact 'P' letter,
+    // and 'D' now tracks devices only, so carry keep_partial and specials onto
+    // the local half here (mirrors --partial / --specials|--no-specials which the
+    // wire generator emits long-form).
+    server_config.flags.partial = config.partial();
+    server_config.flags.devices = config.preserve_devices();
+    server_config.flags.specials = config.preserve_specials();
     // upstream flist.c:flist_sort_and_clean prunes empty dirs on the receiver
     // (prune_empty_dirs && !am_sender); on a pull the local client IS the receiver,
     // and -m is never sent over the wire (options.c gates it on am_sender), so the
@@ -526,6 +533,13 @@ fn build_server_config_for_generator(
     server_config.flags.numeric_ids = config.numeric_ids();
     server_config.flags.delete = config.delete_mode().is_enabled() || config.delete_excluded();
     server_config.file_selection.size_only = config.size_only();
+    // upstream: build_server_flag_string no longer packs the compact 'P' letter,
+    // and 'D' now tracks devices only, so carry keep_partial and specials onto
+    // the local half here (mirrors --partial / --specials|--no-specials which the
+    // wire generator emits long-form).
+    server_config.flags.partial = config.partial();
+    server_config.flags.devices = config.preserve_devices();
+    server_config.flags.specials = config.preserve_specials();
 
     // upstream: options.c:2476-2501 / main.c:1322-1328 - the local sender
     // resolves a single files-from fd: a local file (Stdin/LocalFile, or a

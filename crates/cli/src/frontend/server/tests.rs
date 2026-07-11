@@ -647,6 +647,43 @@ fn long_flags_qsort() {
     assert!(flags.qsort);
 }
 
+// upstream: options.c:2893 - bare --partial (no compact 'P') tells the receiver
+// to keep interrupted temp files. The server must parse it, or an oc/upstream
+// client's PUSH loses keep_partial on the oc receiver.
+#[test]
+fn long_flags_partial() {
+    let args = vec![OsString::from("--server"), OsString::from("--partial")];
+    let flags = parse_server_long_flags(&args);
+    assert!(flags.partial);
+    assert!(is_known_server_long_flag("--partial"));
+}
+
+#[test]
+fn long_flags_partial_default_none() {
+    let args = vec![OsString::from("--server")];
+    let flags = parse_server_long_flags(&args);
+    assert!(!flags.partial);
+}
+
+// upstream: options.c:2760-2765 - --specials / --no-specials convey
+// preserve_specials separately from the compact 'D' (devices) letter.
+#[test]
+fn long_flags_specials_and_no_specials() {
+    let flags =
+        parse_server_long_flags(&[OsString::from("--server"), OsString::from("--specials")]);
+    assert_eq!(flags.specials, Some(true));
+
+    let flags =
+        parse_server_long_flags(&[OsString::from("--server"), OsString::from("--no-specials")]);
+    assert_eq!(flags.specials, Some(false));
+
+    let flags = parse_server_long_flags(&[OsString::from("--server")]);
+    assert_eq!(flags.specials, None);
+
+    assert!(is_known_server_long_flag("--specials"));
+    assert!(is_known_server_long_flag("--no-specials"));
+}
+
 #[test]
 fn long_flags_checksum_seed() {
     let args = vec![
