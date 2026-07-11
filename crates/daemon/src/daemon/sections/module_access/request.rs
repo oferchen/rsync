@@ -241,6 +241,35 @@ fn handle_refused_option_post_handshake(
     Ok(())
 }
 
+/// Rejects a post-`@RSYNCD: OK` access-mode violation - a push to a
+/// `read only` module or a pull from a `write only` module - through the
+/// multiplexed error path.
+///
+/// upstream: main.c:1166-1169 `do_server_recv()` rejects a read-only push
+/// with `rprintf(FERROR, "ERROR: module is read only\n")` then
+/// `exit_cleanup(RERR_SYNTAX)`; main.c:934-936 `do_server_sender()` rejects a
+/// write-only pull the same way. Both fire after `setup_protocol()` and
+/// `io_start_multiplex_out()`, so the message travels as a `MSG_ERROR_XFER`
+/// frame followed by `MSG_ERROR_EXIT`. Emitting the raw text with
+/// [`send_error`] instead desynchronises the client's multiplex decoder
+/// (issue #227): the client reads the plaintext line as a 4-byte frame
+/// header and aborts with `invalid multi-message 102 (code 12)` rather than
+/// the clean `ERROR: module is read only` + exit 1 upstream produces.
+fn handle_access_denied_post_handshake(
+    ctx: &mut ModuleRequestContext<'_>,
+    payload: &str,
+    protocol_version: Option<ProtocolVersion>,
+    client_args: &[String],
+) -> io::Result<()> {
+    finalize_post_ok_protocol_for_error(ctx, protocol_version, client_args)?;
+    send_multiplexed_error_and_exit(
+        ctx.reader.get_mut(),
+        ctx.limiter,
+        payload,
+        RERR_SYNTAX_EXIT_CODE,
+    )
+}
+
 /// Mirrors the prefix of upstream's `setup_protocol(f_out, f_in)` that the
 /// daemon writes before turning on `io_start_multiplex_out()` for an error
 /// it needs to deliver after `@RSYNCD: OK`.
