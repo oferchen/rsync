@@ -449,6 +449,7 @@ impl ReceiverContext {
             checksum_length,
             checksum_algorithm,
             whole_file: self.config.flags.whole_file,
+            compat_flags: self.compat_flags,
         }
     }
 
