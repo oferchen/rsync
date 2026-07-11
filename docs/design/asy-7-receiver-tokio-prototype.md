@@ -631,4 +631,128 @@ fork of section 10.1 - which stays STOP until it can be CI-verified
 byte-identical per section 10.2 - and (2) ASY-4 (the thread-pool-vs-async
 benchmark, no code). No other async twin is missing.
 
+## 12. Final wiring rung (route `run()` + adopt daemon socket) - STOP
+
+Status: The atomic receiver driver fork of section 10.1 has since landed
+as the `run_sync_async` / `run_pipelined_async` /
+`run_pipelined_incremental_async` family (plus `setup_transfer_async` and
+the flist look-ahead carry), each `#[cfg(feature = "tokio-transfer")]`,
+`#[allow(dead_code)]`, and byte-parity-tested against its sync twin over
+in-memory `Cursor` / `CaptureWriter` fixtures. This rung was chartered to
+make that family *live*: (RUNG 4) route the receiver entry to the matching
+async driver when the feature is on and a real async transport exists, and
+(RUNG 5) thread the daemon's `async_socket` clone down so the async driver
+reads the real tokio socket via `.await` instead of dropping it after the
+`host_sync_on` / `block_on` sync body.
+
+Outcome: **STOP.** The two rungs cannot be shipped as byte-correct,
+deadlock-safe minimal wiring. No code was wired. Default build and the
+ASY-1/3/4 + reader-stack + async-driver foundation are untouched and remain
+byte-identical / default-off. One blocker is load-bearing and decisive; two
+more compound it. Per the charter stop clause we record the exact coupling
+rather than ship a half-wired or `block_on`-shimmed receiver.
+
+### 12.1 Blocker F (decisive) - the async drivers write synchronously, so adopting the socket re-arms the #503 write-write deadlock
+
+The daemon `rsync://` receiver is the only in-process transport with a
+concrete socket to adopt (section 9.2; SSH/stdio are pipe-backed and stay
+sync by design). On that path the full-duplex write-write deadlock is real
+and is prevented today by the `DrainingReader` background thread
+(`daemon/.../transfer/draining_reader.rs`): the receiver delta loop
+"writes a batch of file requests, then blocks reading the sender's
+response - with no interleaved drain of incoming frames. Once both ~128 KB
+kernel socket buffers fill, neither direction can make progress." The drain
+thread continuously reads the read-clone fd into an unbounded queue and the
+receiver loop pulls from that queue instead of the socket, so the peer's
+send buffer is always emptied and the wedge is structurally impossible.
+
+Adopting the `async_socket` clone as the async driver's sole reader is
+incompatible with that mechanism in both directions:
+
+- **Drain left on:** the drain thread and the async reader consume from two
+  `try_clone()`d fds of the *same* open file description, splitting the
+  demuxed byte stream between them - an immediate wire desync.
+- **Drain turned off:** the three async drivers keep the request/response
+  **write** half a plain blocking `writer: &mut W` (`io::Write`) - verified
+  on all three signatures (`run_sync_async` / `run_pipelined_async` /
+  `run_pipelined_incremental_async`) - and there is **no async writer
+  stack** in `transfer` (no `AsyncWrite` twin of
+  `ServerWriter`/`MultiplexWriter`/`CountingWriter`; grep-confirmed). With
+  the drain gone and the write side still blocking, a real transfer that
+  fills the socket send buffer parks the OS thread inside a sync `write`.
+  On the current-thread runtime the reactor cannot poll the `.await` read
+  while the thread is parked, so nothing drains the peer and the transfer
+  deadlocks exactly as pre-#503. The in-memory parity tests never expose
+  this: `Cursor`/`CaptureWriter` have no backpressure, so the drivers have
+  never run against a real socket.
+
+A deadlock-safe async daemon receiver therefore needs the **write** side to
+also go async and be polled concurrently with the read (a `select`/`join`
+over read+write that reproduces the drain thread's "always draining"
+guarantee cooperatively). That is a net-new async writer stack plus a
+read/write concurrency restructure of `run_pipeline_loop_decoupled` - a
+change well beyond "route + adopt socket," and the load-bearing missing
+piece for this rung.
+
+### 12.2 Blocker G - the read-position hand-off from the sync setup phase has no carry seam
+
+`run_server_with_handshake` (`crates/transfer/src/lib.rs`) runs
+`setup::setup_protocol` (compat-flags / checksum-seed / capability
+negotiation) as **synchronous** reads on `stdin: &mut dyn Read` before the
+receiver, chaining any `handshake.buffered` bytes (already pulled off the
+socket into userspace during daemon argument reading) ahead of it via a
+`Cursor(..).chain(stdin)`. The `async_socket` is a separate fd that cannot
+see bytes already consumed into that userspace Cursor. A byte-correct
+hand-off must thread any unconsumed `handshake.buffered` remainder into the
+`AsyncServerReader` as a prepend carry (the same shape the flist look-ahead
+carry already uses one layer down). No such carry seam exists between
+`setup_protocol` and a would-be async reader stack, and getting it wrong is
+a silent wire desync rather than a loud failure.
+
+### 12.3 Blocker H - byte-identity is CI-only; it cannot be proven on this host
+
+The charter's PROOF obligation for a live receiver is a real daemon-PUSH
+async-vs-sync equivalence run (dest tree + `--stats` + exit) plus the
+transfer/daemon/protocol regression and golden-wire gates. That is gated by
+`tools/ci/run_async_equivalence.sh` / `.github/workflows/async-wire-parity.yml`,
+which run only in CI; local `cargo nextest` hangs in the listing phase on
+this host (tests are CI-only by project policy). Landing the write-stack +
+concurrency restructure of 12.1 - the most wire-sensitive receiver code -
+and asserting byte-identity without running its gate would violate
+"byte-identical or nothing" and the fail-loud rule.
+
+### 12.4 Why RUNG 4 cannot be shipped independently either
+
+RUNG 4's routing branch would live in `ReceiverContext::run`
+(`receiver/transfer.rs`), but `run` receives an already-built sync
+`ServerReader<R: Read>` and holds no async transport handle to branch on;
+the real routing seam is one layer up in `run_server_with_handshake[_on]`,
+where the reader stack is constructed (section 10.1, first bullet). Routing
+there still has to build the async reader stack from the `async_socket`,
+which is exactly what blockers F/G forbid doing safely. Shipping the
+routing branch without a transport it can safely fire on would be a
+dead-in-production `#[cfg]` branch - the "half-wired path" the charter
+names as worse than none.
+
+### 12.5 Prerequisite ordering for the next rung
+
+1. **An async writer stack** - `AsyncWrite` twins of
+   `ServerWriter`/`MultiplexWriter`/`CountingWriter` with byte-exact
+   `bytes_sent` accounting, so the async driver's request/response half can
+   `.await` its writes.
+2. **Concurrent read+write in the async driver** - restructure
+   `run_pipeline_loop_decoupled`'s async twin to poll the read and the
+   write together (replacing the `DrainingReader` thread's always-draining
+   guarantee cooperatively), so turning the drain off is deadlock-safe.
+3. **A setup->receiver carry seam** - thread the unconsumed
+   `handshake.buffered` remainder into the `AsyncServerReader` prepend
+   carry (12.2).
+4. **Then** route `run_server_with_handshake_on` to build the async reader
+   stack from `async_socket` and dispatch the mode-matched async driver,
+   with the CI equivalence gate green on a real daemon PUSH.
+
+Until (1)-(3) land as their own reviewable rungs, the live wiring ships
+either a desync (drain on), a deadlock (drain off), or an unverified fork -
+all worse than none. Per the charter stop clause, we stop and report.
+
 <!-- CI skip-path verification probe for required upstream-testsuite check. -->
