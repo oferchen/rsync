@@ -107,7 +107,14 @@ impl GeneratorContext {
                 && (file_type.is_block_device() || file_type.is_char_device())
             {
                 let mode = metadata.mode() & 0o7777;
-                let size = super::device::device_readable_size(full_path, metadata.len());
+                // upstream: flist.c:1421-1424 - open the device and size it when
+                // st_size is 0 (block devices report 0). `device_readable_size`
+                // mirrors get_device_size() with a macOS ioctl fallback.
+                let size = if metadata.len() != 0 {
+                    metadata.len()
+                } else {
+                    ::metadata::device_readable_size(full_path).unwrap_or(0)
+                };
                 Some((size, mode))
             } else {
                 None

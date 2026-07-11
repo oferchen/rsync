@@ -104,7 +104,10 @@ pub(in crate::local_copy) fn execute_transfer(
         preserve_acls,
     } = flags;
 
-    let file_size = metadata.len();
+    // upstream: flist.c:1419-1424 - stream a `--copy-devices` device as a
+    // regular file of its readable byte length instead of the zero stat size.
+    let device_as_file_size = context.copy_device_as_file_size(source, metadata);
+    let file_size = device_as_file_size.unwrap_or(metadata.len());
 
     if let Some(existing) = existing_metadata {
         if try_skip_up_to_date(
@@ -196,7 +199,12 @@ pub(in crate::local_copy) fn execute_transfer(
         }
     }
 
-    if !file_type.is_file() {
+    // A non-regular source that is NOT a `--copy-devices` device (a FIFO,
+    // socket, or a device without `--copy-devices`) is materialised as an empty
+    // placeholder. A `--copy-devices` device (`device_as_file_size.is_some()`)
+    // instead falls through to the generic read/write loop below, which streams
+    // its `file_size` bytes just like a regular file (upstream sender.c:410-418).
+    if !file_type.is_file() && device_as_file_size.is_none() {
         return super::special::copy_special_as_regular_file(
             context,
             source,
@@ -213,27 +221,32 @@ pub(in crate::local_copy) fn execute_transfer(
         );
     }
 
-    // Fast path: macOS clonefile for new whole-file copies.
+    // Fast path: macOS clonefile for new whole-file copies. Skipped for
+    // `--copy-devices` devices, whose contents must be read/streamed (clonefile
+    // clones extents by stat length, which is 0 for a device).
     #[cfg(target_os = "macos")]
-    if clonefile::eligible(
-        context,
-        existing_metadata,
-        flags,
-        copy_source_override.is_some(),
-    ) && clonefile::try_clone(
-        context,
-        source,
-        destination,
-        metadata,
-        metadata_options.clone(),
-        record_path,
-        existing_metadata,
-        destination_previously_existed,
-        file_type,
-        relative,
-        mode,
-        flags,
-    )? {
+    if device_as_file_size.is_none()
+        && clonefile::eligible(
+            context,
+            existing_metadata,
+            flags,
+            copy_source_override.is_some(),
+        )
+        && clonefile::try_clone(
+            context,
+            source,
+            destination,
+            metadata,
+            metadata_options.clone(),
+            record_path,
+            existing_metadata,
+            destination_previously_existed,
+            file_type,
+            relative,
+            mode,
+            flags,
+        )?
+    {
         return Ok(());
     }
 
@@ -243,25 +256,28 @@ pub(in crate::local_copy) fn execute_transfer(
     // copy. The dispatcher hands large files COPY_FILE_NO_BUFFERING and
     // attempts FSCTL_DUPLICATE_EXTENTS_TO_FILE on ReFS volumes first.
     #[cfg(target_os = "windows")]
-    if wincopy::eligible(
-        context,
-        existing_metadata,
-        flags,
-        copy_source_override.is_some(),
-    ) && wincopy::try_copy(
-        context,
-        source,
-        destination,
-        metadata,
-        metadata_options.clone(),
-        record_path,
-        existing_metadata,
-        destination_previously_existed,
-        file_type,
-        relative,
-        mode,
-        flags,
-    )? {
+    if device_as_file_size.is_none()
+        && wincopy::eligible(
+            context,
+            existing_metadata,
+            flags,
+            copy_source_override.is_some(),
+        )
+        && wincopy::try_copy(
+            context,
+            source,
+            destination,
+            metadata,
+            metadata_options.clone(),
+            record_path,
+            existing_metadata,
+            destination_previously_existed,
+            file_type,
+            relative,
+            mode,
+            flags,
+        )?
+    {
         return Ok(());
     }
 
@@ -269,25 +285,28 @@ pub(in crate::local_copy) fn execute_transfer(
     // XFS (reflink enabled), and bcachefs. Cross-filesystem / unsupported-fs
     // failures degrade to the generic read/write loop transparently.
     #[cfg(target_os = "linux")]
-    if ficlone::eligible(
-        context,
-        existing_metadata,
-        flags,
-        copy_source_override.is_some(),
-    ) && ficlone::try_clone(
-        context,
-        source,
-        destination,
-        metadata,
-        metadata_options.clone(),
-        record_path,
-        existing_metadata,
-        destination_previously_existed,
-        file_type,
-        relative,
-        mode,
-        flags,
-    )? {
+    if device_as_file_size.is_none()
+        && ficlone::eligible(
+            context,
+            existing_metadata,
+            flags,
+            copy_source_override.is_some(),
+        )
+        && ficlone::try_clone(
+            context,
+            source,
+            destination,
+            metadata,
+            metadata_options.clone(),
+            record_path,
+            existing_metadata,
+            destination_previously_existed,
+            file_type,
+            relative,
+            mode,
+            flags,
+        )?
+    {
         return Ok(());
     }
 
@@ -669,8 +688,11 @@ pub(in crate::local_copy) fn execute_transfer(
         .record_copy_method(CopyMethodKind::Standard);
     context.summary_mut().record_elapsed(elapsed);
 
-    let metadata_snapshot = LocalCopyMetadata::from_metadata(metadata, None)
+    let mut metadata_snapshot = LocalCopyMetadata::from_metadata(metadata, None)
         .virtualize_fake_super(source, metadata_options.fake_super_enabled());
+    if let Some(size) = device_as_file_size {
+        metadata_snapshot = metadata_snapshot.virtualize_copy_device_as_file(size);
+    }
     let total_bytes = Some(metadata_snapshot.len());
     let wrote_data = outcome.literal_bytes() > 0 || append_offset > 0;
 

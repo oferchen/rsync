@@ -190,6 +190,29 @@ impl LocalCopyMetadata {
         self
     }
 
+    /// Presents a `--copy-devices` block/char device as a regular file for
+    /// reporting, so `--list-only` and itemized output show `-rw-...` with the
+    /// device's readable byte length instead of `brw-...`/`crw-...` and `0`.
+    ///
+    /// Mirrors upstream `flist.c:1419-1428 make_file()`, which rewrites the
+    /// device stat to `S_IFREG | (mode & ACCESSPERMS)` with `get_device_size()`
+    /// before the entry is ever itemized. A no-op for non-device kinds.
+    #[must_use]
+    pub(in crate::local_copy) fn virtualize_copy_device_as_file(mut self, size: u64) -> Self {
+        if matches!(
+            self.kind,
+            LocalCopyFileKind::CharDevice | LocalCopyFileKind::BlockDevice
+        ) {
+            self.kind = LocalCopyFileKind::File;
+            self.len = size;
+            if let Some(mode) = self.mode {
+                // upstream: S_IFREG | (st.st_mode & ACCESSPERMS).
+                self.mode = Some(0o100_000 | (mode & 0o7777));
+            }
+        }
+        self
+    }
+
     /// Returns the entry kind associated with the metadata.
     #[must_use]
     pub const fn kind(&self) -> LocalCopyFileKind {
@@ -417,5 +440,53 @@ mod tests {
             LocalCopyMetadata::from_metadata(&meta, None).virtualize_fake_super(&path, true);
         assert_eq!(snapshot.kind(), LocalCopyFileKind::CharDevice);
         assert_eq!(snapshot.mode(), Some(0o020644));
+    }
+
+    // upstream: flist.c:1419-1428 - `--copy-devices` reports a device as a
+    // regular file. The virtualisation must flip the kind to `File`, adopt the
+    // supplied device size, and rewrite the mode's type bits to `S_IFREG` while
+    // preserving the permission bits, so `--list-only` renders `-rw-...` with
+    // the real byte length instead of `crw-.../brw-...` and `0`.
+    #[cfg(unix)]
+    #[test]
+    fn virtualize_copy_device_as_file_reports_regular_file() {
+        use std::fs;
+        use std::os::unix::fs::FileTypeExt;
+
+        let dev = Path::new("/dev/zero");
+        let Ok(meta) = fs::symlink_metadata(dev) else {
+            eprintln!("skipping: /dev/zero unavailable");
+            return;
+        };
+        if !meta.file_type().is_char_device() {
+            eprintln!("skipping: /dev/zero is not a char device here");
+            return;
+        }
+
+        let snapshot = LocalCopyMetadata::from_metadata(&meta, None);
+        assert_eq!(snapshot.kind(), LocalCopyFileKind::CharDevice);
+
+        let virtualized = snapshot.virtualize_copy_device_as_file(4096);
+        assert_eq!(virtualized.kind(), LocalCopyFileKind::File);
+        assert_eq!(virtualized.len(), 4096);
+        // Type bits are S_IFREG; permission bits are preserved from the device.
+        assert_eq!(virtualized.mode().map(|m| m & 0o170_000), Some(0o100_000));
+    }
+
+    // The virtualisation is a strict no-op for a regular file: kind, length,
+    // and mode are untouched so ordinary transfers are unaffected.
+    #[test]
+    fn virtualize_copy_device_as_file_noop_for_regular_file() {
+        use std::fs;
+        let tmp = tempfile::TempDir::new().unwrap();
+        let path = tmp.path().join("regular");
+        fs::write(&path, b"payload").unwrap();
+        let meta = fs::symlink_metadata(&path).unwrap();
+
+        let snapshot = LocalCopyMetadata::from_metadata(&meta, None);
+        let len_before = snapshot.len();
+        let virtualized = snapshot.virtualize_copy_device_as_file(999);
+        assert_eq!(virtualized.kind(), LocalCopyFileKind::File);
+        assert_eq!(virtualized.len(), len_before);
     }
 }

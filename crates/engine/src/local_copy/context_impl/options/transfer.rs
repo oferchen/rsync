@@ -79,6 +79,36 @@ impl<'a> CopyContext<'a> {
         self.options.copy_devices_as_files_enabled()
     }
 
+    /// Returns the readable byte length to use when `--copy-devices` should
+    /// stream `source` (a block/char device) as a regular file, or `None` when
+    /// `source` is not a copy-devices device and the caller should use the stat
+    /// length as usual.
+    ///
+    /// Mirrors upstream `flist.c:1419-1424 make_file()`, which opens the device
+    /// and records `get_device_size()` in place of the (zero) stat length. See
+    /// [`crate::local_copy::LocalCopyMetadata::virtualize_copy_device_as_file`]
+    /// for the matching reporting override.
+    pub(super) fn copy_device_as_file_size(
+        &self,
+        source: &std::path::Path,
+        metadata: &std::fs::Metadata,
+    ) -> Option<u64> {
+        if !self.copy_devices_as_files_enabled()
+            || !crate::local_copy::is_device(metadata.file_type())
+        {
+            return None;
+        }
+        #[cfg(unix)]
+        {
+            Some(::metadata::device_readable_size(source).unwrap_or(0))
+        }
+        #[cfg(not(unix))]
+        {
+            let _ = source;
+            None
+        }
+    }
+
     pub(super) const fn specials_enabled(&self) -> bool {
         self.options.specials_enabled()
     }
