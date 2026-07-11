@@ -12,7 +12,7 @@ use protocol::flist::FileEntry;
 use protocol::wire::DeltaOp;
 
 use crate::config::ServerConfig;
-use crate::flags::ParsedServerFlags;
+use crate::flags::{NumericIds, ParsedServerFlags};
 use crate::handshake::HandshakeResult;
 use crate::role::ServerRole;
 
@@ -52,7 +52,7 @@ pub(super) fn test_handshake_with_protocol(protocol_version: u8) -> HandshakeRes
 }
 
 /// Builds an id-list test config with the requested owner/group/numeric-ids flags.
-pub(super) fn config_with_flags(owner: bool, group: bool, numeric_ids: bool) -> ServerConfig {
+pub(super) fn config_with_flags(owner: bool, group: bool, numeric_ids: NumericIds) -> ServerConfig {
     ServerConfig {
         role: ServerRole::Receiver,
         protocol: ProtocolVersion::try_from(32u8).unwrap(),

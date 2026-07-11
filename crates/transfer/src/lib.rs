@@ -169,7 +169,7 @@ pub use self::config::{
     ServerConfigBuilder,
 };
 pub use self::delta_config::DeltaGeneratorConfig;
-pub use self::flags::{InfoFlags, ParseFlagError, ParsedServerFlags};
+pub use self::flags::{InfoFlags, NumericIds, ParseFlagError, ParsedServerFlags};
 pub use self::generator::{
     GeneratorContext, GeneratorStats, generate_delta_from_signature, io_error_flags,
 };

@@ -283,7 +283,9 @@ impl GeneratorContext {
         let inc_recurse = self
             .compat_flags
             .is_some_and(|f| f.contains(protocol::CompatibilityFlags::INC_RECURSE));
-        let acl_send_names = inc_recurse && !self.config.flags.numeric_ids;
+        // upstream: acls.c:716 - `if (inc_recurse && !numeric_ids)`; per-entry
+        // ACL names travel only when names are active (`numeric_ids == 0`).
+        let acl_send_names = inc_recurse && self.config.flags.numeric_ids.is_off();
 
         let mut writer = if let Some(flags) = self.compat_flags {
             protocol::flist::FileListWriter::with_compat_flags(self.protocol, flags)

@@ -59,28 +59,33 @@ fn clamped_verbose_level(flag_string: &str) -> u8 {
 /// - `ignore errors = yes` forces error-tolerant deletion regardless of the
 ///   client's flags. upstream: clientserver.c:1111-1112 -
 ///   `if (lp_ignore_errors(module_id)) ignore_errors = 1;`.
-/// - `numeric ids = yes` forces `--numeric-ids` for the session. upstream:
+/// - `numeric ids = yes` forces `numeric_ids = -1` for the session. upstream:
 ///   clientserver.c:1201-1204 -
 ///   `if (!numeric_ids && (use_chroot ? lp_numeric_ids(module_id) != False &&
 ///   !*lp_name_converter(module_id) : lp_numeric_ids(module_id) == True))
 ///   numeric_ids = -1;`. The option is forced on only when the client did not
 ///   already request it and, under chroot, only when no `name converter` is
-///   configured (the converter maps names inside the chroot). oc stores
-///   `numeric ids` as a plain bool with no tri-state True/False/Unset, so the
-///   unset and explicit-off cases both read as `false` and never force the
-///   option on; only an explicit `numeric ids = yes` does.
+///   configured (the converter maps names inside the chroot). Upstream sets the
+///   sentinel `-1` (not `1`) so the uid/gid name-list stays on the wire; oc
+///   mirrors that with `NumericIds::DaemonForced`, distinct from the client's
+///   explicit `NumericIds::Explicit` which also drops the wire list.
 fn apply_module_transfer_directives(module: &ModuleDefinition, cfg: &mut ServerConfig) {
     // upstream: clientserver.c:1111-1112
     if module.ignore_errors {
         cfg.deletion.ignore_errors = true;
     }
 
-    // upstream: clientserver.c:1201-1204
-    if !cfg.flags.numeric_ids
+    // upstream: clientserver.c:1201-1204 - force `numeric_ids = -1` (daemon-
+    // forced) when the client did not already pass --numeric-ids and, under
+    // chroot, only when no `name converter` maps names inside the chroot. The
+    // `-1` state suppresses local name resolution but keeps the uid/gid name-
+    // list on the wire (`numeric_ids <= 0`), so a real upstream client whose
+    // own `numeric_ids` is `0` still has its transmitted list consumed.
+    if cfg.flags.numeric_ids.is_off()
         && module.numeric_ids
         && !(module.use_chroot && module.name_converter.is_some())
     {
-        cfg.flags.numeric_ids = true;
+        cfg.flags.numeric_ids = core::server::NumericIds::DaemonForced;
     }
 }
 

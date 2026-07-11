@@ -260,7 +260,7 @@ impl GeneratorContext {
             // upstream: flist.c:466-470 - add_uid() looks up name for inline
             // sending via XMIT_USER_NAME_FOLLOWS when INC_RECURSE is active.
             // Without names, the receiver can't map uid->name on the remote.
-            if !self.config.flags.numeric_ids {
+            if self.config.flags.numeric_ids.is_off() {
                 if let Ok(Some(name_bytes)) = metadata::id_lookup::lookup_user_name_cached(uid) {
                     if let Ok(name) = String::from_utf8(name_bytes) {
                         entry.set_user_name(name);
@@ -276,7 +276,7 @@ impl GeneratorContext {
             entry.set_gid(gid);
             // upstream: flist.c:476-480 - add_gid() looks up name for inline
             // sending via XMIT_GROUP_NAME_FOLLOWS when INC_RECURSE is active.
-            if !self.config.flags.numeric_ids {
+            if self.config.flags.numeric_ids.is_off() {
                 if let Ok(Some(name_bytes)) = metadata::id_lookup::lookup_group_name_cached(gid) {
                     if let Ok(name) = String::from_utf8(name_bytes) {
                         entry.set_group_name(name);
@@ -444,7 +444,7 @@ mod fake_super_round_trip_tests {
         };
         config.flags.owner = owner;
         config.flags.group = group;
-        config.flags.numeric_ids = true; // skip uid/gid name lookups in tests
+        config.flags.numeric_ids = crate::NumericIds::Explicit; // skip uid/gid name lookups in tests
         GeneratorContext::new_for_test(&handshake, config)
     }
 
@@ -597,7 +597,7 @@ mod daemon_outgoing_chmod_tests {
             daemon_outgoing_chmod: outgoing_chmod,
             ..Default::default()
         };
-        config.flags.numeric_ids = true;
+        config.flags.numeric_ids = crate::NumericIds::Explicit;
         GeneratorContext::new_for_test(&handshake, config)
     }
 
@@ -941,7 +941,7 @@ mod entry_length_tests {
             args: vec![OsString::from(".")],
             ..Default::default()
         };
-        config.flags.numeric_ids = true;
+        config.flags.numeric_ids = crate::NumericIds::Explicit;
         GeneratorContext::new_for_test(&handshake, config)
     }
 

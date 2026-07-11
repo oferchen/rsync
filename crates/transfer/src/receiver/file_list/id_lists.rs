@@ -33,8 +33,12 @@ impl ReceiverContext {
     /// - Condition: `(preserve_uid || preserve_acls) && numeric_ids <= 0`
     #[cfg(unix)]
     pub(crate) fn receive_id_lists<R: Read + ?Sized>(&mut self, reader: &mut R) -> io::Result<()> {
-        // upstream: uidlist.c:460 - skip when numeric_ids is set
-        if self.config.flags.numeric_ids {
+        // upstream: uidlist.c:465,473 - the name-list is read for `numeric_ids
+        // <= 0`. Only an explicit client --numeric-ids (`> 0`) skips the read;
+        // daemon-forced numeric-ids (-1) still consumes the list from the wire
+        // (the sender's own numeric_ids may be 0), so guarding on the bare bool
+        // here would misread the list bytes as the next NDX and desync.
+        if self.config.flags.numeric_ids.is_explicit() {
             return Ok(());
         }
 
@@ -89,7 +93,9 @@ impl ReceiverContext {
     /// - Condition: `(preserve_uid || preserve_acls) && numeric_ids <= 0`
     #[cfg(not(unix))]
     pub(crate) fn receive_id_lists<R: Read + ?Sized>(&mut self, reader: &mut R) -> io::Result<()> {
-        if self.config.flags.numeric_ids {
+        // upstream: uidlist.c:465,473 - read for `numeric_ids <= 0`; only an
+        // explicit client --numeric-ids (`> 0`) skips the wire read.
+        if self.config.flags.numeric_ids.is_explicit() {
             return Ok(());
         }
 

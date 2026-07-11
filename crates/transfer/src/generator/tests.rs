@@ -1,6 +1,6 @@
 //! Tests for the generator module.
 
-use super::super::flags::ParsedServerFlags;
+use super::super::flags::{NumericIds, ParsedServerFlags};
 use super::super::role::ServerRole;
 use super::delta::{
     LARGE_FILE_WARNING_THRESHOLD, script_to_wire_delta, stream_whole_file_transfer,
@@ -1708,7 +1708,7 @@ fn apply_permutation_in_place_single() {
 }
 
 /// Creates test config with specific flags for ID list tests.
-fn config_with_flags(owner: bool, group: bool, numeric_ids: bool) -> ServerConfig {
+fn config_with_flags(owner: bool, group: bool, numeric_ids: NumericIds) -> ServerConfig {
     config_with_role_and_flags(ServerRole::Generator, owner, group, numeric_ids)
 }
 
@@ -1717,7 +1717,7 @@ fn config_with_role_and_flags(
     role: ServerRole,
     owner: bool,
     group: bool,
-    numeric_ids: bool,
+    numeric_ids: NumericIds,
 ) -> ServerConfig {
     ServerConfig {
         role,
@@ -1737,7 +1737,7 @@ fn config_with_role_and_flags(
 #[test]
 fn send_id_lists_skips_when_numeric_ids_true() {
     let handshake = test_handshake();
-    let config = config_with_flags(true, true, true);
+    let config = config_with_flags(true, true, NumericIds::Explicit);
     let ctx = GeneratorContext::new_for_test(&handshake, config);
 
     let mut output = Vec::new();
@@ -1751,7 +1751,7 @@ fn send_id_lists_skips_when_numeric_ids_true() {
 #[test]
 fn send_id_lists_sends_uid_list_when_owner_set() {
     let handshake = test_handshake();
-    let config = config_with_flags(true, false, false);
+    let config = config_with_flags(true, false, NumericIds::Off);
     let ctx = GeneratorContext::new_for_test(&handshake, config);
 
     let mut output = Vec::new();
@@ -1765,7 +1765,7 @@ fn send_id_lists_sends_uid_list_when_owner_set() {
 #[test]
 fn send_id_lists_sends_gid_list_when_group_set() {
     let handshake = test_handshake();
-    let config = config_with_flags(false, true, false);
+    let config = config_with_flags(false, true, NumericIds::Off);
     let ctx = GeneratorContext::new_for_test(&handshake, config);
 
     let mut output = Vec::new();
@@ -1779,7 +1779,7 @@ fn send_id_lists_sends_gid_list_when_group_set() {
 #[test]
 fn send_id_lists_sends_both_when_owner_and_group_set() {
     let handshake = test_handshake();
-    let config = config_with_flags(true, true, false);
+    let config = config_with_flags(true, true, NumericIds::Off);
     let ctx = GeneratorContext::new_for_test(&handshake, config);
 
     let mut output = Vec::new();
@@ -1793,7 +1793,7 @@ fn send_id_lists_sends_both_when_owner_and_group_set() {
 #[test]
 fn send_id_lists_skips_both_when_neither_flag_set() {
     let handshake = test_handshake();
-    let config = config_with_flags(false, false, false);
+    let config = config_with_flags(false, false, NumericIds::Off);
     let ctx = GeneratorContext::new_for_test(&handshake, config);
 
     let mut output = Vec::new();
@@ -1810,7 +1810,7 @@ fn id_lists_round_trip_with_numeric_ids_false() {
     let handshake = test_handshake();
 
     // Generator sends ID lists (numeric_ids=false, owner/group=true)
-    let gen_config = config_with_flags(true, true, false);
+    let gen_config = config_with_flags(true, true, NumericIds::Off);
     let generator = GeneratorContext::new_for_test(&handshake, gen_config);
 
     let mut wire_data = Vec::new();
@@ -1820,7 +1820,7 @@ fn id_lists_round_trip_with_numeric_ids_false() {
     assert_eq!(wire_data, vec![0, 0]);
 
     // Receiver reads ID lists with matching flags
-    let recv_config = config_with_role_and_flags(ServerRole::Receiver, true, true, false);
+    let recv_config = config_with_role_and_flags(ServerRole::Receiver, true, true, NumericIds::Off);
     let mut receiver = ReceiverContext::new_for_test(&handshake, recv_config);
 
     let mut cursor = Cursor::new(&wire_data[..]);
@@ -1837,7 +1837,7 @@ fn id_lists_round_trip_with_numeric_ids_true() {
     let handshake = test_handshake();
 
     // Generator skips ID lists (numeric_ids=true)
-    let gen_config = config_with_flags(true, true, true);
+    let gen_config = config_with_flags(true, true, NumericIds::Explicit);
     let generator = GeneratorContext::new_for_test(&handshake, gen_config);
 
     let mut wire_data = Vec::new();
@@ -1847,7 +1847,8 @@ fn id_lists_round_trip_with_numeric_ids_true() {
     assert!(wire_data.is_empty());
 
     // Receiver also skips reading with matching flags
-    let recv_config = config_with_role_and_flags(ServerRole::Receiver, true, true, true);
+    let recv_config =
+        config_with_role_and_flags(ServerRole::Receiver, true, true, NumericIds::Explicit);
     let mut receiver = ReceiverContext::new_for_test(&handshake, recv_config);
 
     let mut cursor = Cursor::new(&wire_data[..]);
@@ -1855,6 +1856,45 @@ fn id_lists_round_trip_with_numeric_ids_true() {
 
     assert!(result.is_ok());
     assert_eq!(cursor.position(), 0);
+}
+
+/// Daemon-forced numeric-ids (upstream `-1`) keeps the uid/gid name-list on
+/// the wire: the generator still writes the (empty) list terminators and the
+/// receiver still consumes them. This is the sender/receiver mirror of the
+/// `numeric ids = yes` module directive and the exact round-trip that a bool
+/// collapse broke - the sender would send the list while the receiver skipped
+/// it (or vice versa), desyncing the stream.
+///
+/// upstream: flist.c:2548 (send, `numeric_ids <= 0`) and uidlist.c:465,473
+/// (recv, `numeric_ids <= 0`).
+#[test]
+fn id_lists_round_trip_with_daemon_forced_numeric_ids() {
+    use crate::receiver::ReceiverContext;
+
+    let handshake = test_handshake();
+
+    let gen_config = config_with_flags(true, true, NumericIds::DaemonForced);
+    let generator = GeneratorContext::new_for_test(&handshake, gen_config);
+
+    let mut wire_data = Vec::new();
+    generator.send_id_lists(&mut wire_data).unwrap();
+
+    // Daemon-forced still sends both (empty) lists: two varint 0 terminators.
+    assert_eq!(
+        wire_data,
+        vec![0, 0],
+        "daemon-forced numeric-ids must keep the id-list on the wire"
+    );
+
+    let recv_config =
+        config_with_role_and_flags(ServerRole::Receiver, true, true, NumericIds::DaemonForced);
+    let mut receiver = ReceiverContext::new_for_test(&handshake, recv_config);
+
+    let mut cursor = Cursor::new(&wire_data[..]);
+    let result = receiver.receive_id_lists(&mut cursor);
+
+    assert!(result.is_ok());
+    assert_eq!(cursor.position() as usize, wire_data.len());
 }
 
 #[test]

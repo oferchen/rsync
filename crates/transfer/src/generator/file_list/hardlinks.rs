@@ -85,8 +85,10 @@ impl GeneratorContext {
     pub fn collect_id_mappings(&mut self) {
         use metadata::id_lookup::{lookup_group_name_cached, lookup_user_name_cached};
 
-        // Skip if numeric_ids is set - no name mapping needed
-        if self.config.flags.numeric_ids {
+        // upstream: flist.c:478 gates add_uid()/add_gid() on `!numeric_ids`, so
+        // the id-list is populated only when names are active (`numeric_ids ==
+        // 0`). Both daemon-forced and explicit numeric-ids leave it empty.
+        if self.config.flags.numeric_ids.maps_numeric() {
             return;
         }
 

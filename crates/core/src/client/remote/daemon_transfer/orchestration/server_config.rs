@@ -93,7 +93,7 @@ fn apply_common_daemon_config(
     server_config.flags.verbose = config.verbosity() > 0;
 
     // upstream: numeric_ids and delete are --numeric-ids / --delete-* long-form args only.
-    server_config.flags.numeric_ids = config.numeric_ids();
+    server_config.flags.numeric_ids = crate::server::NumericIds::from_client(config.numeric_ids());
     server_config.flags.delete = config.delete_mode().is_enabled() || config.delete_excluded();
     server_config.file_selection.size_only = config.size_only();
     // upstream: build_server_flag_string no longer packs the compact 'P' letter,

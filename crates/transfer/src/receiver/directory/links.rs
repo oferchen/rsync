@@ -100,7 +100,7 @@ impl ReceiverContext {
                         .preserve_group(self.config.flags.group)
                         .preserve_times(self.config.flags.times)
                         .preserve_atimes(self.config.flags.atimes)
-                        .numeric_ids(self.config.flags.numeric_ids)
+                        .numeric_ids(self.config.flags.numeric_ids.maps_numeric())
                         .fake_super(self.config.fake_super);
                     if let Err(error) =
                         apply_symlink_metadata_from_entry(&link_path, entry, &symlink_options)
@@ -215,7 +215,7 @@ impl ReceiverContext {
                 .preserve_group(self.config.flags.group)
                 .preserve_times(self.config.flags.times)
                 .preserve_atimes(self.config.flags.atimes)
-                .numeric_ids(self.config.flags.numeric_ids)
+                .numeric_ids(self.config.flags.numeric_ids.maps_numeric())
                 .fake_super(self.config.fake_super);
             if let Err(error) =
                 apply_symlink_metadata_from_entry(&link_path, entry, &symlink_options)

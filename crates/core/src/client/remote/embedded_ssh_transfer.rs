@@ -489,7 +489,7 @@ fn build_server_config_for_receiver(
         ServerConfig::from_flag_string_and_args(ServerRole::Receiver, flag_string, args)
             .map_err(|e| invalid_argument_error(&format!("invalid server config: {e}"), 1))?;
 
-    server_config.flags.numeric_ids = config.numeric_ids();
+    server_config.flags.numeric_ids = crate::server::NumericIds::from_client(config.numeric_ids());
     server_config.flags.delete = config.delete_mode().is_enabled() || config.delete_excluded();
     server_config.file_selection.size_only = config.size_only();
     // upstream: build_server_flag_string no longer packs the compact 'P' letter,
@@ -530,7 +530,7 @@ fn build_server_config_for_generator(
         ServerConfig::from_flag_string_and_args(ServerRole::Generator, flag_string, args)
             .map_err(|e| invalid_argument_error(&format!("invalid server config: {e}"), 1))?;
 
-    server_config.flags.numeric_ids = config.numeric_ids();
+    server_config.flags.numeric_ids = crate::server::NumericIds::from_client(config.numeric_ids());
     server_config.flags.delete = config.delete_mode().is_enabled() || config.delete_excluded();
     server_config.file_selection.size_only = config.size_only();
     // upstream: build_server_flag_string no longer packs the compact 'P' letter,
