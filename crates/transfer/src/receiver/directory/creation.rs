@@ -288,6 +288,9 @@ impl ReceiverContext {
             .map(|(idx, _, dir_path)| {
                 let entry = &self.file_list[idx];
                 let xattr_list = self.resolve_xattr_list(entry);
+                // `mut` is only exercised by the Unix transient-writable-mode
+                // grant below; on other platforms the clone is never mutated.
+                #[cfg_attr(not(unix), allow(unused_mut))]
                 let mut entry = entry.clone();
                 #[cfg(unix)]
                 if dir_needs_writable_transfer_mode(preserve_perms, fake_super, entry.permissions())
