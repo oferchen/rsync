@@ -617,7 +617,8 @@ mod setup_transfer_async_parity {
         let mut ctx = ReceiverContext::new_for_test(&parity_handshake(), parity_config(dest));
         let reader = AsyncServerReader::new_plain(ChunkedReader::new(muxed_wire.to_vec(), chunk));
         let mut sink = std::io::sink();
-        let (_reader, count, setup) = ctx.setup_transfer_async(reader, &mut sink).await.unwrap();
+        let (_reader, count, setup, _leftover) =
+            ctx.setup_transfer_async(reader, &mut sink).await.unwrap();
         (
             count,
             project_file_list(&ctx),
