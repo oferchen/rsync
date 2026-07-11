@@ -148,6 +148,11 @@ impl GeneratorContext {
             .is_some_and(|f| f.contains(CompatibilityFlags::INC_RECURSE));
         let initial_ndx_start = if inc_recurse { 1 } else { 0 };
 
+        // upstream: compat.c:653-655 - legacy (protocol < 30) peers verify the
+        // append prefix, so promote plain `--append` to `--append-verify`.
+        let mut config = config;
+        config.promote_append_mode_for_protocol(handshake.protocol);
+
         Self {
             protocol: handshake.protocol,
             config,
