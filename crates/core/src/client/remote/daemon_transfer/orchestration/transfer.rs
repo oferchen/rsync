@@ -13,12 +13,14 @@ use protocol::ProtocolVersion;
 use super::server_config::{build_server_config_for_generator, build_server_config_for_receiver};
 use super::stats::convert_server_stats_to_summary;
 use crate::client::config::ClientConfig;
-use crate::client::error::{ClientError, invalid_argument_error};
+use crate::client::error::{ClientError, invalid_argument_error, remote_exit_error};
 use crate::client::module_list::{DaemonStreamGuard, DaemonStreamReader, DaemonStreamWriter};
 use crate::client::progress::ClientProgressObserver;
 use crate::client::remote::batch_support::{BatchContext, build_batch_recording};
 use crate::client::remote::flags;
 use crate::client::summary::ClientSummary;
+use crate::exit_code::ExitCode;
+use crate::message::Role;
 use crate::server::handshake::HandshakeResult;
 use crate::server::{TransferProgressCallback, TransferProgressEvent};
 
@@ -92,7 +94,7 @@ pub(crate) fn run_pull_transfer(
         #[cfg(feature = "async-bench")]
         None,
     )
-    .map_err(|e| invalid_argument_error(&format!("transfer failed: {e}"), 23))?;
+    .map_err(|e| map_server_transfer_error(e, Role::Receiver))?;
     let elapsed = start.elapsed();
 
     let mut summary = convert_server_stats_to_summary(server_stats, elapsed);
@@ -189,8 +191,48 @@ pub(crate) fn run_push_transfer(
             // its socket early after receiving the file list.
             Ok(ClientSummary::default())
         }
-        Err(e) => Err(invalid_argument_error(&format!("transfer failed: {e}"), 23)),
+        Err(e) => Err(map_server_transfer_error(e, Role::Sender)),
     }
+}
+
+/// Maps a `run_server_with_handshake` failure to a [`ClientError`], honouring a
+/// remote peer's explicit `MSG_ERROR_EXIT` code when one is present.
+///
+/// When the remote daemon rejects the transfer (for example a read-only module
+/// on a push), it emits its error text via `MSG_ERROR_XFER` - already printed to
+/// stderr by the multiplex reader - followed by `MSG_ERROR_EXIT` carrying the
+/// exit code. The reader surfaces that code as a [`transfer::RemoteExitError`]
+/// nested inside the returned `io::Error`. Recovering it here lets the client
+/// exit with the daemon's own code (e.g. `RERR_SYNTAX = 1`) instead of forcing a
+/// generic partial-transfer (23). The role-tagged `rsync error:` trailer mirrors
+/// upstream `log_exit()`; the daemon's message is not reprinted because the
+/// reader already delivered it to stderr in wire order.
+///
+/// Failures with no embedded remote code (local I/O, protocol desync) keep the
+/// prior generic `transfer failed: ...` (23) diagnostic.
+///
+/// upstream: io.c:1663-1701 - `MSG_ERROR_EXIT` drives the NORETURN
+/// `_exit_cleanup(val)`, so the client's final exit code is the peer's code.
+fn map_server_transfer_error(error: std::io::Error, role: Role) -> ClientError {
+    if let Some(code) = remote_exit_code(&error) {
+        let exit = ExitCode::from_i32(code).unwrap_or(ExitCode::PartialTransfer);
+        return remote_exit_error(exit, role, "");
+    }
+    invalid_argument_error(&format!("transfer failed: {error}"), 23)
+}
+
+/// Walks the source chain of an `io::Error` looking for a
+/// [`transfer::RemoteExitError`], returning the peer-supplied exit code when the
+/// failure originated from a remote `MSG_ERROR_EXIT` frame.
+fn remote_exit_code(error: &std::io::Error) -> Option<i32> {
+    let mut source: Option<&(dyn std::error::Error + 'static)> = Some(error.get_ref()?);
+    while let Some(err) = source {
+        if let Some(remote) = err.downcast_ref::<crate::server::RemoteExitError>() {
+            return Some(remote.code);
+        }
+        source = err.source();
+    }
+    None
 }
 
 /// Builds a `HandshakeResult` for daemon transfers where the protocol version
@@ -293,3 +335,83 @@ impl TransferProgressCallback for DaemonProgressAdapter<'_> {
 /// - `main.c:1354-1356` - `start_filesfrom_forwarding(filesfrom_fd)`
 #[cfg(test)]
 pub(super) use crate::client::remote::files_from_forwarding::read_local_files_from_for_forwarding as read_files_from_for_forwarding;
+
+#[cfg(test)]
+mod map_server_transfer_error_tests {
+    use super::*;
+    use crate::server::RemoteExitError;
+
+    fn remote_exit_io(code: i32) -> std::io::Error {
+        std::io::Error::new(
+            std::io::ErrorKind::ConnectionAborted,
+            RemoteExitError { code },
+        )
+    }
+
+    /// The production path wraps `RemoteExitError` directly as the inner error,
+    /// so it must be recovered from `get_ref()`.
+    #[test]
+    fn extracts_code_from_direct_inner_error() {
+        assert_eq!(remote_exit_code(&remote_exit_io(1)), Some(1));
+    }
+
+    /// A `RemoteExitError` reached only via a `source()` link must still be
+    /// found, so an intermediate wrapper cannot hide the peer's code.
+    #[test]
+    fn extracts_code_from_nested_source_chain() {
+        #[derive(Debug)]
+        struct Wrap(RemoteExitError);
+        impl std::fmt::Display for Wrap {
+            fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                write!(f, "wrapped: {}", self.0)
+            }
+        }
+        impl std::error::Error for Wrap {
+            fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+                Some(&self.0)
+            }
+        }
+        let nested = std::io::Error::other(Wrap(RemoteExitError { code: 7 }));
+        assert_eq!(remote_exit_code(&nested), Some(7));
+    }
+
+    #[test]
+    fn no_code_for_plain_io_error() {
+        let plain = std::io::Error::new(std::io::ErrorKind::BrokenPipe, "pipe");
+        assert_eq!(remote_exit_code(&plain), None);
+    }
+
+    /// A daemon rejection (e.g. read-only module, RERR_SYNTAX = 1) must exit
+    /// with the daemon's code, tagged with the local role, and must NOT prepend
+    /// the generic `transfer failed:` prefix - the reader already printed the
+    /// daemon's message to stderr in wire order.
+    #[test]
+    fn maps_remote_reject_to_daemon_code_without_transfer_failed_prefix() {
+        let err = map_server_transfer_error(remote_exit_io(1), Role::Sender);
+        assert_eq!(err.exit_code(), 1);
+        assert_eq!(err.code(), ExitCode::Syntax);
+        let rendered = err.to_string();
+        assert!(!rendered.contains("transfer failed"), "{rendered}");
+        assert!(rendered.contains("[sender="), "{rendered}");
+    }
+
+    /// A pull tags the diagnostic with the receiver role.
+    #[test]
+    fn maps_remote_reject_pull_uses_receiver_role() {
+        let err = map_server_transfer_error(remote_exit_io(1), Role::Receiver);
+        assert_eq!(err.exit_code(), 1);
+        assert!(err.to_string().contains("[receiver="), "{err}");
+    }
+
+    /// Failures with no embedded remote code keep the prior generic
+    /// `transfer failed: ...` (23) behaviour.
+    #[test]
+    fn maps_plain_failure_to_generic_partial_transfer() {
+        let err = map_server_transfer_error(
+            std::io::Error::new(std::io::ErrorKind::BrokenPipe, "pipe"),
+            Role::Receiver,
+        );
+        assert_eq!(err.exit_code(), 23);
+        assert!(err.to_string().contains("transfer failed"), "{err}");
+    }
+}
