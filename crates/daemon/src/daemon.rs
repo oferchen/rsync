@@ -101,6 +101,12 @@ use self::help::help_text;
 
 /// Exit code used when daemon functionality is unavailable.
 pub(crate) const FEATURE_UNAVAILABLE_EXIT_CODE: i32 = 1;
+/// Exit code for a usage/syntax error, mirroring upstream `RERR_SYNTAX`.
+///
+/// upstream: errcode.h:25 - `#define RERR_SYNTAX 1`. The daemon's read-only
+/// push and write-only pull rejections call `exit_cleanup(RERR_SYNTAX)`
+/// (main.c:934, main.c:1167).
+pub(crate) const RERR_SYNTAX_EXIT_CODE: i32 = 1;
 /// Exit code returned when socket I/O fails.
 const SOCKET_IO_EXIT_CODE: i32 = 10;
 
@@ -181,12 +187,17 @@ pub(crate) const INVALID_UID_PAYLOAD: &str = "@ERROR: invalid uid {uid}";
 pub(crate) const INVALID_GID_PAYLOAD: &str = "@ERROR: invalid gid {gid}";
 /// Error payload returned when a module is read-only and the client pushes.
 ///
-/// upstream: clientserver.c (implied by lp_read_only check)
-pub(crate) const MODULE_READ_ONLY_PAYLOAD: &str = "@ERROR: module is read only";
+/// upstream: main.c:1167 `do_server_recv()` - `rprintf(FERROR, "ERROR:
+/// module is read only\n")`. This fires after `setup_protocol()` and
+/// `io_start_multiplex_out()`, so the text is a plain `FERROR` message (no
+/// `@ERROR:` greeting prefix) delivered inside a `MSG_ERROR_XFER` frame.
+pub(crate) const MODULE_READ_ONLY_PAYLOAD: &str = "ERROR: module is read only";
 /// Error payload returned when a module is write-only and the client pulls.
 ///
-/// upstream: clientserver.c (implied by lp_write_only check)
-pub(crate) const MODULE_WRITE_ONLY_PAYLOAD: &str = "@ERROR: module is write only";
+/// upstream: main.c:935 `do_server_sender()` - `rprintf(FERROR, "ERROR:
+/// module is write only\n")`, delivered post-multiplex like the read-only
+/// rejection above.
+pub(crate) const MODULE_WRITE_ONLY_PAYLOAD: &str = "ERROR: module is write only";
 mod module_state;
 #[cfg(test)]
 use self::module_state::TEST_CONFIG_CANDIDATES;
