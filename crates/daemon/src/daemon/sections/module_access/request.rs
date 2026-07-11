@@ -380,8 +380,9 @@ fn build_default_post_ok_compat_flags(client_info: &str) -> protocol::Compatibil
 
 /// Handles module authentication flow with FSM transition enforcement.
 ///
-/// Returns `Some(username)` if authentication succeeded, where the username is
-/// the authenticated user (or `None` inside `Some` when auth was not required).
+/// On success returns `Some((username, access_level))` where `username` is the
+/// authenticated user (or `None` when auth was not required) and `access_level`
+/// is the per-user `auth users` override applied to the session's `read only`.
 /// Returns `Ok(None)` if authentication failed or was denied.
 ///
 /// FSM transitions:
@@ -392,10 +393,12 @@ fn handle_authentication(
     ctx: &mut ModuleRequestContext<'_>,
     module: &ModuleDefinition,
     protocol_version: Option<ProtocolVersion>,
-) -> io::Result<Option<Option<String>>> {
+) -> io::Result<Option<(Option<String>, UserAccessLevel)>> {
     if !module.requires_authentication() {
         send_daemon_ok(ctx.reader.get_mut(), ctx.limiter, ctx.messages)?;
-        return Ok(Some(None));
+        // upstream: authenticate.c:238-239 - an empty/absent `auth users` list
+        // lets anyone in with no access-level override, so `read only` stays.
+        return Ok(Some((None, UserAccessLevel::Default)));
     }
 
     // FSM: ModuleSelect -> Authenticating - module requires auth, challenge sent.
@@ -423,12 +426,15 @@ fn handle_authentication(
                 .map_err(transition_error)?;
             Ok(None)
         }
-        AuthenticationStatus::Granted(username) => {
+        AuthenticationStatus::Granted {
+            username,
+            access_level,
+        } => {
             if let Some(log) = ctx.log_sink {
                 log_module_auth_success(log, ctx.effective_host(), ctx.peer_ip, ctx.request);
             }
             send_daemon_ok(ctx.reader.get_mut(), ctx.limiter, ctx.messages)?;
-            Ok(Some(Some(username)))
+            Ok(Some((Some(username), access_level)))
         }
     }
 }

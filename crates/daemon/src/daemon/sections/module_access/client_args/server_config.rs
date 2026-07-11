@@ -52,6 +52,38 @@ fn clamped_verbose_level(flag_string: &str) -> u8 {
     let count = flag_string.chars().filter(|&ch| ch == 'v').count();
     u8::try_from(count).unwrap_or(u8::MAX)
 }
+/// Applies module directives that force transfer-time behavior onto the
+/// per-session [`ServerConfig`], mirroring the daemon-only overrides upstream
+/// applies in `rsync_module()` after the client argv is parsed.
+///
+/// - `ignore errors = yes` forces error-tolerant deletion regardless of the
+///   client's flags. upstream: clientserver.c:1111-1112 -
+///   `if (lp_ignore_errors(module_id)) ignore_errors = 1;`.
+/// - `numeric ids = yes` forces `--numeric-ids` for the session. upstream:
+///   clientserver.c:1201-1204 -
+///   `if (!numeric_ids && (use_chroot ? lp_numeric_ids(module_id) != False &&
+///   !*lp_name_converter(module_id) : lp_numeric_ids(module_id) == True))
+///   numeric_ids = -1;`. The option is forced on only when the client did not
+///   already request it and, under chroot, only when no `name converter` is
+///   configured (the converter maps names inside the chroot). oc stores
+///   `numeric ids` as a plain bool with no tri-state True/False/Unset, so the
+///   unset and explicit-off cases both read as `false` and never force the
+///   option on; only an explicit `numeric ids = yes` does.
+fn apply_module_transfer_directives(module: &ModuleDefinition, cfg: &mut ServerConfig) {
+    // upstream: clientserver.c:1111-1112
+    if module.ignore_errors {
+        cfg.deletion.ignore_errors = true;
+    }
+
+    // upstream: clientserver.c:1201-1204
+    if !cfg.flags.numeric_ids
+        && module.numeric_ids
+        && !(module.use_chroot && module.name_converter.is_some())
+    {
+        cfg.flags.numeric_ids = true;
+    }
+}
+
 /// Builds the server configuration from client arguments.
 ///
 /// Returns the configuration on success, or sends an error and returns `None`.
@@ -263,6 +295,11 @@ fn build_server_config(
             // through the transfer layer so the sender strips `/rsyncd-munged/`
             // on `readlink()` and the receiver prepends it on `symlink()` writes.
             cfg.munge_symlinks = module.effective_munge_symlinks();
+
+            // upstream: clientserver.c:1111-1112 (`ignore errors`) and
+            // clientserver.c:1201-1204 (`numeric ids`) - module directives that
+            // force transfer behavior for the session once client args are known.
+            apply_module_transfer_directives(module, &mut cfg);
 
             Ok(Some(cfg))
         }

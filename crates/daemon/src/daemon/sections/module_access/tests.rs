@@ -2942,6 +2942,125 @@ mod module_access_tests {
             );
         }
     }
+
+    // upstream: authenticate.c:340-343 - an authenticated user's `:ro` suffix
+    // forces read_only=1, `:rw` forces read_only=0. The per-user override must
+    // win over the module's own `read only` for the session; otherwise a
+    // `name:rw` user could never push to a `read only = yes` module and, worse,
+    // a `name:ro` user could write to a `read only = no` module (a privilege
+    // escalation). These tests pin that the override is honoured in both
+    // directions and that an unsuffixed user leaves the module default intact.
+    #[test]
+    fn auth_ro_suffix_forces_read_only_for_session() {
+        // `read only = no` module, but the user is pinned to `:ro`.
+        assert!(access_effective_read_only(
+            false,
+            UserAccessLevel::ReadOnly
+        ));
+    }
+
+    #[test]
+    fn auth_rw_suffix_forces_writable_for_session() {
+        // `read only = yes` module, but the user is pinned to `:rw`.
+        assert!(!access_effective_read_only(
+            true,
+            UserAccessLevel::ReadWrite
+        ));
+    }
+
+    #[test]
+    fn auth_default_access_preserves_module_read_only() {
+        // No suffix: the module's own `read only` setting stands unchanged.
+        assert!(access_effective_read_only(true, UserAccessLevel::Default));
+        assert!(!access_effective_read_only(
+            false,
+            UserAccessLevel::Default
+        ));
+    }
+
+    #[test]
+    fn auth_deny_access_preserves_module_read_only() {
+        // `:deny` is refused before reaching read-only resolution, so it never
+        // relaxes the module default: a denied user must not gain write access.
+        assert!(access_effective_read_only(true, UserAccessLevel::Deny));
+    }
+
+    // upstream: clientserver.c:1111-1112 - `if (lp_ignore_errors(module_id))
+    // ignore_errors = 1;` forces error-tolerant deletion for the session.
+    #[test]
+    fn module_ignore_errors_forces_config_flag() {
+        let module = ModuleDefinition {
+            ignore_errors: true,
+            ..Default::default()
+        };
+        let mut cfg = ServerConfig::default();
+        assert!(!cfg.deletion.ignore_errors);
+        apply_module_transfer_directives(&module, &mut cfg);
+        assert!(cfg.deletion.ignore_errors);
+    }
+
+    #[test]
+    fn module_without_ignore_errors_leaves_config_untouched() {
+        let module = ModuleDefinition::default();
+        let mut cfg = ServerConfig::default();
+        apply_module_transfer_directives(&module, &mut cfg);
+        assert!(!cfg.deletion.ignore_errors);
+    }
+
+    // upstream: clientserver.c:1201-1204 - `numeric ids = yes` forces
+    // `--numeric-ids` for the session, except under chroot when a `name
+    // converter` is configured (the converter maps names inside the chroot).
+    #[test]
+    fn module_numeric_ids_forces_config_flag() {
+        let module = ModuleDefinition {
+            numeric_ids: true,
+            use_chroot: false,
+            ..Default::default()
+        };
+        let mut cfg = ServerConfig::default();
+        assert!(!cfg.flags.numeric_ids);
+        apply_module_transfer_directives(&module, &mut cfg);
+        assert!(cfg.flags.numeric_ids);
+    }
+
+    #[test]
+    fn module_numeric_ids_suppressed_by_chroot_name_converter() {
+        // upstream: under chroot, a configured name converter means names can
+        // still be mapped, so numeric ids is NOT forced on.
+        let module = ModuleDefinition {
+            numeric_ids: true,
+            use_chroot: true,
+            name_converter: Some("/usr/bin/nc".to_owned()),
+            ..Default::default()
+        };
+        let mut cfg = ServerConfig::default();
+        apply_module_transfer_directives(&module, &mut cfg);
+        assert!(!cfg.flags.numeric_ids);
+    }
+
+    #[test]
+    fn module_numeric_ids_forced_under_chroot_without_name_converter() {
+        let module = ModuleDefinition {
+            numeric_ids: true,
+            use_chroot: true,
+            name_converter: None,
+            ..Default::default()
+        };
+        let mut cfg = ServerConfig::default();
+        apply_module_transfer_directives(&module, &mut cfg);
+        assert!(cfg.flags.numeric_ids);
+    }
+
+    #[test]
+    fn module_without_numeric_ids_leaves_config_untouched() {
+        let module = ModuleDefinition {
+            numeric_ids: false,
+            ..Default::default()
+        };
+        let mut cfg = ServerConfig::default();
+        apply_module_transfer_directives(&module, &mut cfg);
+        assert!(!cfg.flags.numeric_ids);
+    }
 }
 
 // ASY sub-rung 2: the tokio-driver routing shim for the socket-backed daemon
