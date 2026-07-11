@@ -122,4 +122,19 @@ impl ClientConfigBuilder {
         self.zero_copy_policy = policy;
         self
     }
+
+    /// Enables the opt-in, default-off `--parallel-delta-scan` optimization.
+    ///
+    /// This is a local sender-side optimization only: it scans a large basis
+    /// file's delta across multiple cores. It never changes the wire protocol
+    /// and is never forwarded to a remote peer. It only engages for large,
+    /// duplicate-free basis files; token boundaries and matched/literal stats
+    /// may differ for basis files with duplicate-content blocks. Delta
+    /// reconstruction on the receiver is unaffected. Default off.
+    #[must_use]
+    #[doc(alias = "--parallel-delta-scan")]
+    pub const fn parallel_delta_scan(mut self, enabled: bool) -> Self {
+        self.parallel_delta_scan = enabled;
+        self
+    }
 }

@@ -20,6 +20,42 @@ impl<'a> CopyContext<'a> {
         }
     }
 
+    /// Records a skip event for a symbolic link whose creation the platform
+    /// refuses without privilege - a Windows file symlink created by an
+    /// unprivileged user without Developer Mode. Emits a warning, records the
+    /// skip, and sets the soft-error flag so the transfer still finishes but
+    /// exits `RERR_PARTIAL` (23), mirroring upstream's `FERROR_XFER` handling of
+    /// a failed `do_symlink()`.
+    ///
+    /// Only reachable on Windows, where `create_symlink` can hit
+    /// `ERROR_PRIVILEGE_NOT_HELD` on a file link with no junction fallback.
+    #[cfg(windows)]
+    pub(super) fn record_skipped_unsupported_symlink(
+        &mut self,
+        relative: Option<&Path>,
+        target: &Path,
+    ) {
+        if let Some(path) = relative {
+            info_log!(
+                Nonreg,
+                1,
+                "skipping symlink \"{}\" -> \"{}\" (symlink creation requires Administrator or Developer Mode)",
+                path.display(),
+                target.display()
+            );
+            self.record(LocalCopyRecord::new(
+                path.to_path_buf(),
+                LocalCopyAction::SkippedNonRegular,
+                0,
+                None,
+                Duration::default(),
+                None,
+            ));
+        }
+        self.unsupported_operation_skipped = true;
+        self.io_errors_occurred = true;
+    }
+
     /// Records a skip event for a directory (when `-r` is not enabled).
     pub(super) fn record_skipped_directory(&mut self, relative: Option<&Path>) {
         if let Some(path) = relative {
@@ -146,6 +182,59 @@ impl<'a> CopyContext<'a> {
         }
     }
 
+    /// Re-applies each transferred directory's source mtime after all late
+    /// in-directory mutations complete - the single final directory touch-up
+    /// pass, run once from the executor finalize after the delayed-update,
+    /// deletion, and sync flushes.
+    ///
+    /// The delayed-update rename sweep, deferred deletions, and backup file
+    /// creation each bump the mtime of the directory they act in, clobbering
+    /// the value `apply_final_directory_metadata` set during the traversal.
+    /// Rather than have every late operation carry its own capture/restore
+    /// guard, this consolidates the "directory mtime survives late in-dir
+    /// mutations" invariant into one pass, mirroring both upstream and the
+    /// receiver driver's `touch_up_dirs`.
+    ///
+    /// Directories are re-touched deepest-first so setting a child's mtime
+    /// cannot re-clobber a parent processed earlier (utimensat on a directory
+    /// does not disturb its own parent, but the ordering keeps the pass robust
+    /// and matches the receiver's reverse iteration).
+    ///
+    /// Gated identically to `apply_final_directory_metadata` and upstream's
+    /// `need_retouch_dir_times`: only when times are preserved and
+    /// `--omit-dir-times` is off. Skipped when `--backup` is active without a
+    /// backup directory, because backup file creation legitimately changes the
+    /// destination directory mtimes.
+    ///
+    /// upstream: generator.c:2449-2451 - touch_up_dirs(dir_flist, -1) runs
+    /// after the receiver's handle_delayed_updates(); generator.c:2093
+    /// touch_up_dirs(); generator.c:2271 need_retouch_dir_times =
+    /// preserve_mtimes && !omit_dir_times.
+    pub(super) fn touch_up_dirs(&mut self) {
+        let dirs = std::mem::take(&mut self.deferred_ops.finalized_dirs);
+        let preserve_times = self.metadata_options().times() && !self.omit_dir_times_enabled();
+        // upstream: generator.c - skip retouching when make_backups && !backup_dir,
+        // since in-place backup file creation changes directory mtimes on purpose.
+        let backup_without_dir =
+            self.options.backup_enabled() && self.options.backup_directory().is_none();
+        if !preserve_times || backup_without_dir {
+            return;
+        }
+        let mut dirs = dirs;
+        dirs.sort_by(|a, b| b.0.components().count().cmp(&a.0.components().count()));
+        for (dir, mtime) in dirs {
+            // upstream: generator.c:2130 - only re-set when mtime_differs(), so
+            // directories untouched by a late mutation are left alone.
+            let needs_update = match fs::metadata(&dir) {
+                Ok(meta) => filetime::FileTime::from_last_modification_time(&meta) != mtime,
+                Err(_) => false,
+            };
+            if needs_update {
+                let _ = filetime::set_file_mtime(&dir, mtime);
+            }
+        }
+    }
+
     /// Executes all queued deferred deletions, unless I/O errors suppress them.
     ///
     /// Deletions modify the parent directory's mtime. When `-t` is active the
@@ -153,6 +242,12 @@ impl<'a> CopyContext<'a> {
     /// Capture each directory's mtime before deletion and restore it afterwards
     /// to match upstream rsync's behaviour where the receiver sets directory
     /// times independently of the generator's delayed-deletion phase.
+    ///
+    /// This per-operation restore is now redundant with the final
+    /// [`touch_up_dirs`](Self::touch_up_dirs) pass (both re-apply the same
+    /// source mtime). It is intentionally retained here to keep this change
+    /// scoped to one concern; folding it into the final pass is a deferred DRY
+    /// cleanup. Both set the identical value, so the overlap is harmless.
     // upstream: generator.c:2419 do_delayed_deletions() runs after generate_files()
     pub(super) fn flush_deferred_deletions(&mut self) -> Result<(), LocalCopyError> {
         // Nothing queued means no delete pass ran, so there is no notice to

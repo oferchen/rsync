@@ -225,7 +225,9 @@ pub(crate) fn copy_sources(
                 if let Some(error) = first_io_error {
                     return Err(error);
                 }
-                if context.iconv_conversion_error_occurred() {
+                if context.iconv_conversion_error_occurred()
+                    || context.unsupported_operation_skipped()
+                {
                     return Err(LocalCopyError::partial_transfer());
                 }
                 return Ok(());
@@ -235,6 +237,12 @@ pub(crate) fn copy_sources(
 
             if let Some(error) = first_io_error {
                 return Err(error);
+            }
+            // A platform-unsupported entry (a Windows unprivileged file symlink)
+            // was skipped with a warning; finish RERR_PARTIAL (23) like upstream
+            // FERROR_XFER after a failed do_symlink().
+            if context.unsupported_operation_skipped() {
+                return Err(LocalCopyError::partial_transfer());
             }
             // upstream: flist.c:1631 send_file1() sets io_error |= IOERR_GENERAL
             // when a filename cannot be transcoded under --iconv; main.c:1356
@@ -573,6 +581,11 @@ fn flush_deferred_operations(context: &mut CopyContext) -> Result<(), LocalCopyE
     context.flush_deferred_updates()?;
     context.flush_deferred_deletions()?;
     context.flush_deferred_syncs()?;
+    // Final directory-mtime touch-up. Runs once, after every late in-directory
+    // mutation above (delayed-update renames, deletions, backups) has bumped
+    // the destination directory mtimes that apply_final_directory_metadata set.
+    // upstream: generator.c:2449-2451 touch_up_dirs after handle_delayed_updates.
+    context.touch_up_dirs();
     context.enforce_timeout()?;
     Ok(())
 }

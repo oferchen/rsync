@@ -29,6 +29,52 @@ use super::super::{
 use crate::delta_config::DeltaGeneratorConfig;
 use crate::receiver::SumHead;
 
+/// Minimum source size before the opt-in parallel delta scan is considered.
+///
+/// Below this a single core already scans the file faster than the rayon
+/// task-spawn and result-concat overhead would allow, so the gate keeps the
+/// sequential streaming path. Matches the "large single file" motivation
+/// (e.g. a 50 GB file with a large block size pinning one core).
+const PARALLEL_DELTA_MIN_FILE_BYTES: u64 = 64 * 1024 * 1024;
+
+/// Minimum bytes per parallel range, mirroring the matching crate's internal
+/// `MIN_PARALLEL_CHUNK_BYTES` floor. The effective floor is the larger of this
+/// and 64 basis blocks; a source must hold at least two such ranges to split.
+const PARALLEL_DELTA_MIN_CHUNK_BYTES: u64 = 1024 * 1024;
+
+/// Upper bound on parallel ranges, matching
+/// `rayon::current_num_threads().min(8)` from the design.
+const PARALLEL_DELTA_MAX_CHUNKS: usize = 8;
+
+/// Decides whether the opt-in parallel delta scan should engage for a file.
+///
+/// Requires more than one worker, a source at least
+/// [`PARALLEL_DELTA_MIN_FILE_BYTES`] large, and room for at least two ranges of
+/// the effective minimum chunk size (the larger of
+/// [`PARALLEL_DELTA_MIN_CHUNK_BYTES`] and 64 basis blocks). The duplicate-free
+/// eligibility check is applied later, once the signature index is built, so
+/// this gate is purely about size and available parallelism.
+fn should_parallel_delta(file_size: u64, block_length: u32, cores: usize) -> bool {
+    if cores <= 1 || file_size < PARALLEL_DELTA_MIN_FILE_BYTES {
+        return false;
+    }
+    let effective_min_chunk = PARALLEL_DELTA_MIN_CHUNK_BYTES
+        .max(u64::from(block_length).saturating_mul(64))
+        .max(1);
+    file_size / effective_min_chunk >= 2
+}
+
+/// Opens the source file (honouring `--open-noatime`) and memory-maps it.
+///
+/// Returns an error when the file cannot be opened or mapped (NFS, FUSE,
+/// procfs, or a zero-length file on some platforms); the caller treats that as
+/// a signal to fall back to the streaming sequential reader, so wire output is
+/// unaffected.
+fn open_source_mmap(path: &std::path::Path, use_noatime: bool) -> io::Result<fast_io::MmapReader> {
+    let file = super::super::open_source::open_source_with_noatime(path, use_noatime)?;
+    fast_io::MmapReader::from_file(file)
+}
+
 impl GeneratorContext {
     /// Runs the main file transfer loop, reading NDX requests from receiver.
     ///
@@ -47,7 +93,9 @@ impl GeneratorContext {
         itemize: &mut Option<&mut dyn super::super::super::ItemizeCallback>,
     ) -> io::Result<TransferLoopResult> {
         use super::super::super::shared::TransferDeadline;
-        use super::super::delta::generate_delta_from_signature;
+        use super::super::delta::{
+            generate_delta_from_signature, generate_delta_from_signature_chunked,
+        };
         use super::super::protocol_io::read_signature_blocks;
 
         // upstream: sender.c:217-218 - rprintf(FINFO, "send_files starting\n")
@@ -461,13 +509,44 @@ impl GeneratorContext {
                 bytes_sent += wire_bytes;
                 literal_data += file_size.saturating_sub(flength);
             } else if has_basis {
-                let source: Box<dyn Read> = match self.open_source_reader(&source_path, file_size) {
-                    Ok(r) => r,
-                    Err(e) => {
-                        self.record_open_failure(&mut *writer, wire_ndx, &e, &source_path_display)?;
-                        continue;
-                    }
+                // Opt-in parallel sender-side delta scan: only when the flag is
+                // set and the file is large enough to split usefully across
+                // cores. The source is memory-mapped so a 50 GB basis is never
+                // materialised into a Vec; the mapping is lazy-paged. On any
+                // mmap failure (NFS, FUSE, procfs) fall back to the streaming
+                // sequential reader so the wire output is unchanged. The
+                // duplicate-free eligibility check lives inside
+                // generate_delta_from_signature_chunked, which reverts to the
+                // pruned sequential scan for a duplicate-content basis.
+                let cores = rayon::current_num_threads();
+                let want_parallel = self.config.flags.parallel_delta_scan
+                    && should_parallel_delta(file_size, block_length, cores);
+                let source_mmap = if want_parallel {
+                    open_source_mmap(&source_path, self.config.write.open_noatime).ok()
+                } else {
+                    None
                 };
+
+                // For the sequential path only, open the streaming reader; this
+                // borrows `self` mutably, so it must happen before `config`
+                // (which borrows `self` immutably) is constructed.
+                let source_reader: Option<Box<dyn Read>> = if source_mmap.is_none() {
+                    match self.open_source_reader(&source_path, file_size) {
+                        Ok(r) => Some(r),
+                        Err(e) => {
+                            self.record_open_failure(
+                                &mut *writer,
+                                wire_ndx,
+                                &e,
+                                &source_path_display,
+                            )?;
+                            continue;
+                        }
+                    }
+                } else {
+                    None
+                };
+
                 let config = DeltaGeneratorConfig {
                     block_length,
                     sig_blocks,
@@ -477,7 +556,17 @@ impl GeneratorContext {
                     compat_flags: self.compat_flags.as_ref(),
                     checksum_seed: self.checksum_seed,
                 };
-                let delta_script = generate_delta_from_signature(source, config)?;
+                let delta_script = match source_mmap.as_ref() {
+                    Some(mmap) => generate_delta_from_signature_chunked(
+                        mmap.as_slice(),
+                        config,
+                        cores.min(PARALLEL_DELTA_MAX_CHUNKS),
+                    )?,
+                    None => generate_delta_from_signature(
+                        source_reader.expect("sequential reader opened when mmap is absent"),
+                        config,
+                    )?,
+                };
 
                 self.write_ndx_and_attrs(
                     &mut *writer,
@@ -776,5 +865,56 @@ impl GeneratorContext {
                 );
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod parallel_delta_gate_tests {
+    use super::{
+        PARALLEL_DELTA_MIN_CHUNK_BYTES, PARALLEL_DELTA_MIN_FILE_BYTES, should_parallel_delta,
+    };
+
+    #[test]
+    fn single_core_never_engages() {
+        assert!(!should_parallel_delta(1 << 30, 4096, 1));
+    }
+
+    #[test]
+    fn small_file_never_engages() {
+        // One byte below the minimum file size stays sequential even with cores.
+        assert!(!should_parallel_delta(
+            PARALLEL_DELTA_MIN_FILE_BYTES - 1,
+            4096,
+            8
+        ));
+    }
+
+    #[test]
+    fn large_file_with_room_for_two_ranges_engages() {
+        // 64 MiB with a 4 KiB block leaves the 1 MiB floor, so 64 ranges fit.
+        assert!(should_parallel_delta(
+            PARALLEL_DELTA_MIN_FILE_BYTES,
+            4096,
+            4
+        ));
+    }
+
+    #[test]
+    fn huge_block_length_raises_the_floor_and_blocks_the_split() {
+        // A block so large that 64 blocks exceed half the file leaves room for
+        // fewer than two ranges, so the gate stays closed even past the size
+        // minimum. effective_min_chunk = block_length * 64.
+        let block_length = (PARALLEL_DELTA_MIN_FILE_BYTES / 64) as u32; // 1 MiB
+        // effective_min_chunk = 64 MiB == file_size, so file_size / chunk == 1.
+        assert!(!should_parallel_delta(
+            PARALLEL_DELTA_MIN_FILE_BYTES,
+            block_length,
+            8
+        ));
+    }
+
+    #[test]
+    fn min_chunk_floor_is_one_mib() {
+        assert_eq!(PARALLEL_DELTA_MIN_CHUNK_BYTES, 1024 * 1024);
     }
 }
