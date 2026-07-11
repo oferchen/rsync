@@ -42,7 +42,11 @@ pub(super) fn handle_dry_run(
         existing_metadata,
     } = request;
     let destination_previously_existed = existing_metadata.is_some();
-    let file_size = metadata.len();
+    // upstream: flist.c:1419-1424 - a `--copy-devices` device is reported and
+    // sized as a regular file. `Some(size)` also signals the snapshot below to
+    // virtualize the kind/mode so `--list-only` shows `-rw-...` not `brw-...`.
+    let device_as_file_size = context.copy_device_as_file_size(source, metadata);
+    let file_size = device_as_file_size.unwrap_or(metadata.len());
     let file_type = metadata.file_type();
     if context.update_enabled()
         && let Some(existing) = existing_metadata
@@ -194,7 +198,10 @@ pub(super) fn handle_dry_run(
         context.checksum_enabled(),
         context.options().modify_window(),
     );
-    let metadata_snapshot = LocalCopyMetadata::from_metadata(metadata, None);
+    let mut metadata_snapshot = LocalCopyMetadata::from_metadata(metadata, None);
+    if let Some(size) = device_as_file_size {
+        metadata_snapshot = metadata_snapshot.virtualize_copy_device_as_file(size);
+    }
     let total_bytes = Some(metadata_snapshot.len());
     context.record(
         LocalCopyRecord::new(

@@ -527,9 +527,15 @@ impl GeneratorContext {
 
         let use_noatime = self.config.write.open_noatime;
 
+        // upstream: sender.c streams a `--copy-devices` device through the plain
+        // read path. Block/char devices report `st_size == 0`, so the io_uring
+        // fast path (which sizes reads from the fd's stat length) yields EOF at 0
+        // bytes and short-reads the stream. Force buffered I/O for devices so the
+        // full `file_size` bytes reach the wire.
         if !use_noatime
             && file_size >= IO_URING_READ_THRESHOLD
             && self.config.write.io_uring_policy != fast_io::IoUringPolicy::Disabled
+            && !self.source_is_copy_device(path)
         {
             match fast_io::reader_from_path_with_depth(
                 path,
@@ -548,6 +554,29 @@ impl GeneratorContext {
             adaptive_buffer_size(file_size),
             f,
         )))
+    }
+
+    /// Returns whether `--copy-devices` is active and `path` is a block/char
+    /// device, i.e. a source that must be read through the plain buffered path
+    /// rather than the size-from-stat io_uring/mmap fast paths.
+    ///
+    /// The `symlink_metadata` probe runs only when `--copy-devices` is set, so
+    /// regular transfers pay no extra stat.
+    #[cfg(unix)]
+    pub(crate) fn source_is_copy_device(&self, path: &std::path::Path) -> bool {
+        use std::os::unix::fs::FileTypeExt;
+        self.config.flags.copy_devices
+            && std::fs::symlink_metadata(path).is_ok_and(|m| {
+                let ft = m.file_type();
+                ft.is_block_device() || ft.is_char_device()
+            })
+    }
+
+    /// Non-Unix stub: devices are not a distinct source kind, so nothing forces
+    /// the buffered path.
+    #[cfg(not(unix))]
+    pub(crate) fn source_is_copy_device(&self, _path: &std::path::Path) -> bool {
+        false
     }
 
     /// Opens a source file without intermediate buffering.
@@ -580,9 +609,13 @@ impl GeneratorContext {
 
         let use_noatime = self.config.write.open_noatime;
 
+        // upstream: `--copy-devices` streams through the plain read path; a
+        // device's stat size is 0, so the io_uring fast path would short-read.
+        // See `source_is_copy_device` / `open_source_reader`.
         if !use_noatime
             && file_size >= IO_URING_READ_THRESHOLD
             && self.config.write.io_uring_policy != fast_io::IoUringPolicy::Disabled
+            && !self.source_is_copy_device(path)
         {
             match fast_io::reader_from_path_with_depth(
                 path,

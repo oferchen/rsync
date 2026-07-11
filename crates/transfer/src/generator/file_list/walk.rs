@@ -225,7 +225,13 @@ impl GeneratorContext {
         {
             use std::os::unix::fs::FileTypeExt;
             let ft = metadata.file_type();
-            if (ft.is_block_device() || ft.is_char_device()) && !self.config.flags.devices {
+            // upstream: flist.c:1419 - `--copy-devices` makes make_file() emit a
+            // block/char device as a regular file, so it is included on the wire
+            // even without `--devices`. Only skip when neither flag is active.
+            if (ft.is_block_device() || ft.is_char_device())
+                && !self.config.flags.devices
+                && !self.config.flags.copy_devices
+            {
                 return Ok(());
             }
             if (ft.is_fifo() || ft.is_socket()) && !self.config.flags.specials {

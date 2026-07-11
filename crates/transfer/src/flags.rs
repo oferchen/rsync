@@ -249,6 +249,27 @@ pub struct ParsedServerFlags {
     /// - `options.c:765` - `remove_source_files` global definition
     pub remove_source_files: bool,
 
+    /// Treat device files as regular files and stream their contents
+    /// (long-form `--copy-devices`).
+    ///
+    /// Sender-side only. Not part of the compact flag string. When set and the
+    /// sender encounters a block/char device, the file-list entry is emitted as
+    /// a regular file (mode `S_IFREG | perms`, mtime "now", size = the device's
+    /// readable byte length) and the device is read as a byte stream, so the
+    /// receiver materialises a plain file holding the device contents rather
+    /// than a device node.
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `flist.c:1419-1428` `make_file()` - `copy_devices && am_sender &&
+    ///   IS_DEVICE(st.st_mode)` converts the entry to `S_IFREG | ACCESSPERMS`,
+    ///   sets `st_mtime = time(NULL)`, and records `get_device_size()`.
+    /// - `sender.c:410-418` - re-opens the device and streams its bytes.
+    /// - `options.c:2987` - `if (copy_devices && !am_sender)` forwards the flag
+    ///   to the remote peer only on a pull, so the local sender must carry it
+    ///   in-process on a push.
+    pub copy_devices: bool,
+
     /// Create missing destination path components (long-form `--mkpath`).
     ///
     /// Not part of the compact flag string; forwarded by the sending client

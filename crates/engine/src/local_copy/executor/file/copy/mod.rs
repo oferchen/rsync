@@ -56,7 +56,11 @@ pub(crate) fn copy_file(
                 .map(PathBuf::from)
                 .unwrap_or_default()
         });
-    let file_size = metadata.len();
+    // upstream: flist.c:1419-1424 - `--copy-devices` streams a device as a
+    // regular file, so its readable length (not the zero stat size) drives the
+    // size checks, stats, and the copy byte count.
+    let device_as_file_size = context.copy_device_as_file_size(source, metadata);
+    let file_size = device_as_file_size.unwrap_or(metadata.len());
     debug_log!(
         Send,
         3,
