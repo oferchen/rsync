@@ -192,7 +192,7 @@ pub(in crate::disk_commit) fn process_file(
                 bytes_written += data.len() as u64;
                 // Return the buffer for reuse. Ignore errors - the network
                 // thread may have moved on (e.g. after an error).
-                let _ = buf_return_tx.send(data);
+                let _ = buf_return_tx.try_send(data);
             }
             FileMessage::Commit => {
                 // upstream: fileio.c:43 sparse_end() - flush the trailing hole
@@ -379,7 +379,7 @@ pub(in crate::disk_commit) fn process_whole_file(
         None
     };
 
-    let _ = buf_return_tx.send(data);
+    let _ = buf_return_tx.try_send(data);
 
     output.flush_and_sync(config.do_fsync, &begin.file_path)?;
     output.finish(config.do_fsync, &begin.file_path)?;
@@ -454,7 +454,7 @@ fn discard_file_on_open_failure(
         match file_rx.recv() {
             Ok(FileMessage::Chunk(data)) => {
                 // Recycle the buffer for the network thread; drop the bytes.
-                let _ = buf_return_tx.send(data);
+                let _ = buf_return_tx.try_send(data);
             }
             Ok(FileMessage::Commit) => {
                 return Err(open_err);
