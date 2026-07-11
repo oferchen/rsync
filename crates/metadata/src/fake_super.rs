@@ -180,6 +180,22 @@ impl FakeSuperStat {
             rdev,
         })
     }
+
+    /// Returns `true` when the encoded mode denotes a regular file.
+    ///
+    /// Under `--fake-super` a device/FIFO/socket is stored as a regular
+    /// on-disk placeholder, so the placeholder's own `fs::Metadata` always
+    /// reports a regular file. The *effective* type - which drives non-regular
+    /// handling such as hard-link cohort leader selection - must come from the
+    /// `%stat`-encoded mode. Mirrors upstream, where `x_lstat()` layers
+    /// `get_stat_xattr()` over `lstat()` so hlink/generator see the recorded
+    /// type rather than the placeholder's regular mode.
+    // upstream: xattrs.c:get_stat_xattr() consumed via x_lstat()
+    pub const fn is_regular_file(&self) -> bool {
+        const S_IFMT: u32 = 0o170000;
+        const S_IFREG: u32 = 0o100000;
+        self.mode & S_IFMT == S_IFREG
+    }
 }
 
 /// Stores metadata as fake-super xattr on a file.

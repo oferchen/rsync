@@ -137,6 +137,84 @@ pub fn generate_delta_from_signature<R: Read>(
     source: R,
     config: DeltaGeneratorConfig<'_>,
 ) -> io::Result<DeltaScript> {
+    let index = build_signature_index(config)?;
+
+    let generator = DeltaGenerator::new();
+    generator.generate(source, &index).map_err(|e| {
+        io::Error::other(format!(
+            "delta generation failed: {e} {}{}",
+            error_location!(),
+            crate::role_trailer::sender()
+        ))
+    })
+}
+
+/// Generates a delta script from a received signature using the opt-in
+/// parallel scan when the basis is duplicate-free.
+///
+/// The caller (`generator::transfer::transfer_loop`) opens the source as a
+/// memory-mapped slice and passes it here only after the size/core gate in
+/// `should_parallel_delta` has fired. This
+/// function then reconstructs the signature index (sharing
+/// [`build_signature_index`] with the sequential
+/// [`generate_delta_from_signature`], so there is a single reconstruction
+/// path) and decides:
+///
+/// - **Duplicate-free basis** ([`DeltaSignatureIndex::has_duplicate_blocks`]
+///   is `false`): run [`DeltaGenerator::generate_chunked`], which scans the
+///   ranges across rayon workers. For the eligible inputs (matches never
+///   straddle a range boundary) the emitted token stream - and therefore the
+///   wire bytes and matched/literal split - equals the sequential scan.
+/// - **Duplicate-content basis**: fall back to the pruned sequential
+///   [`DeltaGenerator::generate`] over the same slice, because the prune-off
+///   parallel scan would resolve duplicate siblings differently and diverge
+///   from the wire bytes the receiver expects.
+///
+/// `max_chunks` bounds the number of parallel ranges (the caller passes
+/// `rayon::current_num_threads().min(8)`).
+///
+/// # Upstream Reference
+///
+/// The sender-side matching contract is unchanged from
+/// [`generate_delta_from_signature`]; this only parallelizes the scan of a
+/// single large file. See `match.c:hash_search()`.
+pub fn generate_delta_from_signature_chunked(
+    source: &[u8],
+    config: DeltaGeneratorConfig<'_>,
+    max_chunks: usize,
+) -> io::Result<DeltaScript> {
+    let index = build_signature_index(config)?;
+
+    let generator = DeltaGenerator::new();
+    let result = if index.has_duplicate_blocks() {
+        // Duplicate-content basis: the prune-off parallel scan would diverge
+        // from the pruned sequential wire bytes, so keep the sequential path.
+        generator.generate(io::Cursor::new(source), &index)
+    } else {
+        generator.generate_chunked(source, &index, max_chunks)
+    };
+
+    result.map_err(|e| {
+        io::Error::other(format!(
+            "delta generation failed: {e} {}{}",
+            error_location!(),
+            crate::role_trailer::sender()
+        ))
+    })
+}
+
+/// Reconstructs the [`DeltaSignatureIndex`] from wire-format signature blocks.
+///
+/// Shared by [`generate_delta_from_signature`] and
+/// [`generate_delta_from_signature_chunked`] so the wire-block -> engine
+/// signature -> index reconstruction lives in exactly one place. Consumes
+/// `config` because `sig_blocks` is moved into the engine signature to avoid
+/// cloning strong-checksum data.
+///
+/// # Upstream Reference
+///
+/// - `sender.c:389-430` - delta generation path after `receive_sums()`
+fn build_signature_index(config: DeltaGeneratorConfig<'_>) -> io::Result<DeltaSignatureIndex> {
     use checksums::RollingDigest;
     use engine::delta::SignatureLayout;
     use engine::signature::{FileSignature, SignatureBlock};
@@ -201,25 +279,15 @@ pub fn generate_delta_from_signature<R: Read>(
     );
     let checksum_algorithm = checksum_factory.signature_algorithm();
 
-    let index =
-        DeltaSignatureIndex::from_signature(&signature, checksum_algorithm).ok_or_else(|| {
-            io::Error::new(
-                io::ErrorKind::InvalidData,
-                format!(
-                    "failed to create signature index {}{}",
-                    error_location!(),
-                    crate::role_trailer::sender()
-                ),
-            )
-        })?;
-
-    let generator = DeltaGenerator::new();
-    generator.generate(source, &index).map_err(|e| {
-        io::Error::other(format!(
-            "delta generation failed: {e} {}{}",
-            error_location!(),
-            crate::role_trailer::sender()
-        ))
+    DeltaSignatureIndex::from_signature(&signature, checksum_algorithm).ok_or_else(|| {
+        io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!(
+                "failed to create signature index {}{}",
+                error_location!(),
+                crate::role_trailer::sender()
+            ),
+        )
     })
 }
 
