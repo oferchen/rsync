@@ -161,7 +161,11 @@ mod tests {
 
     #[test]
     fn parse_modify_window_argument_negative() {
-        assert!(parse_modify_window_argument(&os("-1")).is_err());
+        // upstream: options.c parses `--modify-window` as a signed int; a
+        // negative value (`-1`) is valid and requests nanosecond-exact
+        // comparison (util1.c:1482), so it must NOT be rejected.
+        assert_eq!(parse_modify_window_argument(&os("-1")).unwrap(), -1);
+        assert_eq!(parse_modify_window_argument(&os("-2")).unwrap(), -2);
     }
 
     #[test]

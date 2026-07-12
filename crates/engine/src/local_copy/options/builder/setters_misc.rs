@@ -5,6 +5,7 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime};
 
 use fast_io::PlatformCopy;
+use metadata::ModifyWindow;
 
 use super::LocalCopyOptionsBuilder;
 use crate::batch::BatchWriter;
@@ -123,7 +124,7 @@ impl LocalCopyOptionsBuilder {
 
     /// Sets the modification time window.
     #[must_use]
-    pub fn modify_window(mut self, window: Duration) -> Self {
+    pub fn modify_window(mut self, window: ModifyWindow) -> Self {
         self.modify_window = window;
         self
     }

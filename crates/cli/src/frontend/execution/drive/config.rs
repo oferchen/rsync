@@ -73,7 +73,7 @@ pub(crate) struct ConfigInputs {
     pub(crate) times: bool,
     pub(crate) atimes: bool,
     pub(crate) crtimes: bool,
-    pub(crate) modify_window_setting: Option<u64>,
+    pub(crate) modify_window_setting: Option<i64>,
     pub(crate) omit_dir_times: bool,
     pub(crate) omit_link_times: bool,
     pub(crate) devices: bool,

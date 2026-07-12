@@ -821,7 +821,7 @@ impl<'a> LocalCopyOptionsBuilder<'a> {
             .ignore_missing_args(config.ignore_missing_args())
             .delete_missing_args(config.delete_missing_args())
             .update(config.update())
-            .with_modify_window(config.modify_window_duration())
+            .with_modify_window(config.modify_window_setting())
             .numeric_ids(config.numeric_ids())
             .preallocate(config.preallocate())
             .fsync(config.fsync())

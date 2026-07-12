@@ -13,17 +13,23 @@ impl ClientConfig {
         self.max_file_size
     }
 
-    /// Returns the modification time tolerance, if configured.
+    /// Returns the modification time tolerance in whole seconds, if configured.
+    ///
+    /// A negative value requests upstream's nanosecond-exact comparison
+    /// (`modify_window < 0`, util1.c:1482).
     #[doc(alias = "--modify-window")]
-    pub const fn modify_window(&self) -> Option<u64> {
+    pub const fn modify_window(&self) -> Option<i64> {
         self.modify_window
     }
 
-    /// Returns the modification time tolerance as a [`Duration`].
+    /// Returns the modification time tolerance as a [`ModifyWindow`].
+    ///
+    /// Unset defaults to [`ModifyWindow::ZERO`], mirroring upstream's default
+    /// `modify_window = 0` (options.c:143).
     #[must_use]
-    pub fn modify_window_duration(&self) -> Duration {
+    pub fn modify_window_setting(&self) -> ModifyWindow {
         self.modify_window
-            .map_or(Duration::ZERO, Duration::from_secs)
+            .map_or(ModifyWindow::ZERO, ModifyWindow::from_secs)
     }
 
     /// Returns whether the sender should remove source files after transfer.
@@ -228,9 +234,9 @@ mod tests {
     }
 
     #[test]
-    fn modify_window_duration_default_is_zero() {
+    fn modify_window_setting_default_is_zero() {
         let config = default_config();
-        assert_eq!(config.modify_window_duration(), Duration::ZERO);
+        assert_eq!(config.modify_window_setting(), ModifyWindow::ZERO);
     }
 
     #[test]

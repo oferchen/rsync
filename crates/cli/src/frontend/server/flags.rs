@@ -412,12 +412,20 @@ pub(super) fn parse_server_long_flags(args: &[OsString]) -> ServerLongFlags {
                     idx += 2;
                     continue;
                 }
+                // upstream: options.c:2874 - a negative modify_window is
+                // forwarded via the short `-@%d` spelling (e.g. `-@-1`), emitted
+                // as its own argv slot after the compact flag string. The value
+                // is the joined remainder; run.rs parses it via
+                // parse_modify_window_argument (signed).
+                if let Some(window) = s.strip_prefix("-@") {
+                    flags.modify_window = Some(window.to_owned());
+                }
                 // Accept the joined `--partial-dir=VALUE` form too, even
                 // though upstream's server_options() does not emit it - the
                 // CLI parser accepts both forms for client-side use, and a
                 // forwarder built on a non-upstream client might still send
                 // the joined form.
-                if let Some(value) = s.strip_prefix("--partial-dir=") {
+                else if let Some(value) = s.strip_prefix("--partial-dir=") {
                     flags.partial_dir = Some(OsString::from(value));
                 } else {
                     parse_value_bearing_flag(&s, &mut flags);
@@ -604,6 +612,10 @@ pub(super) fn is_known_server_long_flag(arg: &str) -> bool {
         || arg.starts_with("--copy-dest=")
         || arg.starts_with("--link-dest=")
         || arg.starts_with("--modify-window=")
+        // upstream: options.c:2874 - a negative modify_window arrives as the
+        // short `-@%d` token (e.g. `-@-1`) after the compact flag string, so it
+        // must be recognised here or it leaks into the positional path list.
+        || arg.starts_with("-@")
         || arg.starts_with("--min-size=")
         || arg.starts_with("--max-size=")
         || arg.starts_with("--max-alloc=")

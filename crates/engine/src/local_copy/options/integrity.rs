@@ -3,7 +3,8 @@
 //! existence filters, block-size override, and modify-window tolerance.
 
 use std::num::NonZeroU32;
-use std::time::Duration;
+
+use metadata::ModifyWindow;
 
 use crate::signature::SignatureAlgorithm;
 
@@ -131,7 +132,7 @@ impl LocalCopyOptions {
     /// Applies the modification time tolerance used when comparing files.
     #[must_use]
     #[doc(alias = "--modify-window")]
-    pub const fn with_modify_window(mut self, window: Duration) -> Self {
+    pub const fn with_modify_window(mut self, window: ModifyWindow) -> Self {
         self.modify_window = window;
         self
     }
@@ -217,7 +218,7 @@ impl LocalCopyOptions {
 
     /// Returns the modification time tolerance applied during comparisons.
     #[must_use]
-    pub const fn modify_window(&self) -> Duration {
+    pub const fn modify_window(&self) -> ModifyWindow {
         self.modify_window
     }
 }
@@ -360,7 +361,7 @@ mod tests {
 
     #[test]
     fn with_modify_window_sets_value() {
-        let window = Duration::from_secs(2);
+        let window = ModifyWindow::from_secs(2);
         let opts = LocalCopyOptions::new().with_modify_window(window);
         assert_eq!(opts.modify_window(), window);
     }
@@ -377,6 +378,6 @@ mod tests {
         assert!(!opts.delete_missing_args_enabled());
         assert!(!opts.update_enabled());
         assert!(opts.block_size_override().is_none());
-        assert_eq!(opts.modify_window(), Duration::ZERO);
+        assert_eq!(opts.modify_window(), ModifyWindow::ZERO);
     }
 }
