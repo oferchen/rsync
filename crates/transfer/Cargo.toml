@@ -24,6 +24,7 @@ compress = { path = "../compress" }
 logging = { path = "../logging" }
 fast_io = { path = "../fast_io", default-features = false }
 crossbeam-queue = { workspace = true }
+crossbeam-utils = { workspace = true }
 filetime = { workspace = true }
 getrandom = "0.4"
 thiserror = { workspace = true }
