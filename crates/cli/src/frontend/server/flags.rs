@@ -274,6 +274,29 @@ pub(super) struct ServerLongFlags {
     /// popt table clears `relative_paths` (options.c:693 `{"no-relative", ...,
     /// &relative_paths, 0}`).
     pub(super) no_relative: bool,
+
+    /// Whether the client forwarded `--open-noatime` (upstream `open_noatime`).
+    ///
+    /// upstream: options.c:2993-2994 - `if (open_noatime && preserve_atimes <= 1)
+    /// args[ac++] = "--open-noatime"`. Forwarded to the sender so it opens each
+    /// source file with `O_NOATIME`, avoiding an atime update on read.
+    pub(super) open_noatime: bool,
+
+    /// Whether the client forwarded `--delete-missing-args` (upstream
+    /// `missing_args == 2`).
+    ///
+    /// upstream: options.c:2868-2869 - `if (missing_args == 2) args[ac++] =
+    /// "--delete-missing-args"`. Needs both sides: a vanished top-level source
+    /// arg becomes a mode-0 sentinel the receiver deletes at the destination.
+    pub(super) delete_missing_args: bool,
+
+    /// Whether the client forwarded `--ignore-missing-args` (upstream
+    /// `missing_args == 1`).
+    ///
+    /// upstream: options.c:2870-2871 - `else if (missing_args == 1 && !am_sender)
+    /// args[ac++] = "--ignore-missing-args"`. A vanished top-level source arg is
+    /// silently dropped from the file list rather than raising an error.
+    pub(super) ignore_missing_args: bool,
 }
 
 /// Parses all long-form flags from the server argument list.
@@ -334,6 +357,9 @@ pub(super) fn parse_server_long_flags(args: &[OsString]) -> ServerLongFlags {
         no_recurse: false,
         no_whole_file: false,
         no_relative: false,
+        open_noatime: false,
+        delete_missing_args: false,
+        ignore_missing_args: false,
     };
 
     let mut idx = 0;
@@ -359,6 +385,52 @@ pub(super) fn parse_server_long_flags(args: &[OsString]) -> ServerLongFlags {
             "--specials" => flags.specials = Some(true),
             "--no-specials" => flags.specials = Some(false),
             "--qsort" => flags.qsort = true,
+            // upstream: options.c:2908-2909 - `if (use_qsort) args[ac++] =
+            // "--use-qsort"`. This is the spelling server_options() actually
+            // emits; it selects the C-library qsort over the stable merge sort
+            // (flist.c:2991). Map it onto the same `qsort` sink as oc's own
+            // `--qsort` so both forms drive identical flist-ordering behavior.
+            "--use-qsort" => flags.qsort = true,
+            // upstream: options.c:2993-2994 - `--open-noatime` forwarded to the
+            // sender so it opens source files with O_NOATIME (do_open).
+            "--open-noatime" => flags.open_noatime = true,
+            // upstream: options.c:2868-2869 - `--delete-missing-args`
+            // (missing_args == 2): a vanished top-level source arg becomes a
+            // mode-0 sentinel the receiver deletes at the destination.
+            "--delete-missing-args" => flags.delete_missing_args = true,
+            // upstream: options.c:2870-2871 - `--ignore-missing-args`
+            // (missing_args == 1): a vanished top-level source arg is silently
+            // dropped from the file list rather than raising an error.
+            "--ignore-missing-args" => flags.ignore_missing_args = true,
+            // upstream: options.c:2848-2849 - `if (force_delete) args[ac++] =
+            // "--force"`, emitted in the am_sender block so it reaches a server
+            // acting as the receiver. force_delete only changes behavior when a
+            // non-empty directory must be replaced by a non-directory while
+            // deletions are inactive (delete.c). Under an active --delete pass -
+            // the trigger server_options() ships it alongside - oc already
+            // removes extraneous non-empty directories recursively
+            // (receiver/directory/deletion.rs), matching upstream 2.6.7+
+            // (`--delete` no longer needs `--force`). Recognized here so the arg
+            // does not leak into the positional path list.
+            "--force" => {}
+            // upstream: options.c:2852-2853 - `if (am_root > 1) args[ac++] =
+            // "--super"`, forcing super-user metadata semantics (chown/mknod)
+            // even when the receiver is not literally uid 0. oc gates those
+            // operations on the runtime `metadata::am_root()` check; when the
+            // server runs as root (the condition under which --super has any
+            // effect) that check already reports true, so recognizing the flag
+            // matches upstream. A non-root receiver would only differ by
+            // attempting privileged ops that fail with EPERM, which oc omits.
+            "--super" => {}
+            // upstream: options.c:2990-2991 - `if (preallocate_files && am_sender)
+            // args[ac++] = "--preallocate"`, forwarded to a server receiver so
+            // it fallocate()s each destination file before writing. Preallocation
+            // affects only on-disk block allocation, never file content, so a
+            // receiver that skips it produces byte-identical results. oc
+            // implements preallocation in the local-copy executor only, not the
+            // network receiver, so this is recognized to prevent a positional
+            // leak; the transferred bytes match upstream.
+            "--preallocate" => {}
             // upstream: options.c:696 / 2976-2977 - `--no-implied-dirs` is
             // forwarded to the sender on a pull. The server-side sender must omit
             // implied parent dirs from the flist at protocol < 30.
@@ -648,6 +720,21 @@ pub(super) fn is_known_server_long_flag(arg: &str) -> bool {
             | "--msgs2stderr"
             | "--no-msgs2stderr"
             | "--qsort"
+            // upstream: options.c:2908-2909 - the spelling server_options()
+            // actually emits for use_qsort (oc's own forwarder uses --qsort).
+            | "--use-qsort"
+            // upstream: options.c:2993-2994 - `--open-noatime` (sender O_NOATIME).
+            | "--open-noatime"
+            // upstream: options.c:2848-2849 - `--force` (force_delete), am_sender
+            // block so it reaches a server receiver.
+            | "--force"
+            // upstream: options.c:2852-2853 - `--super` (am_root > 1).
+            | "--super"
+            // upstream: options.c:2990-2991 - `--preallocate` (preallocate_files).
+            | "--preallocate"
+            // upstream: options.c:2868-2871 - missing-args cooperation flags.
+            | "--delete-missing-args"
+            | "--ignore-missing-args"
             | "--no-implied-dirs"
             // upstream: options.c:2753/2959/2973 - server_options() emits these
             // negations; the server-side popt table clears recurse/whole_file/
