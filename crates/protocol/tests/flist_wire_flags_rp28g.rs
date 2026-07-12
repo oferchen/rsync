@@ -108,7 +108,8 @@ use protocol::flist::{FileEntry, FileListWriter};
 fn encode_fixture(protocol: ProtocolVersion) -> (Vec<u8>, [usize; 3]) {
     let mut writer = FileListWriter::new(protocol)
         .with_preserve_uid(true)
-        .with_preserve_links(true);
+        .with_preserve_links(true)
+        .with_name_follows(true);
     let mut buf = Vec::new();
     let mut offsets = [0usize; 3];
 

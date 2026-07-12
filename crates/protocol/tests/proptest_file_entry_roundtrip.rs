@@ -870,7 +870,8 @@ proptest! {
 
         let mut writer = FileListWriter::new(protocol)
             .with_preserve_uid(true)
-            .with_preserve_gid(true);
+            .with_preserve_gid(true)
+            .with_name_follows(true);
         let mut reader = FileListReader::new(protocol)
             .with_preserve_uid(true)
             .with_preserve_gid(true);
@@ -1245,6 +1246,7 @@ proptest! {
         let mut writer = FileListWriter::new(protocol)
             .with_preserve_uid(true)
             .with_preserve_gid(true)
+            .with_name_follows(true)
             .with_preserve_atimes(true)
             .with_preserve_crtimes(true)
             .with_always_checksum(csum_len);
