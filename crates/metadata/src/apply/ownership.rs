@@ -10,7 +10,7 @@ use std::fs;
 use std::path::Path;
 
 #[cfg(unix)]
-use crate::id_lookup::{map_gid, map_uid};
+use crate::id_lookup::{lookup_group_by_name, lookup_user_by_name, map_gid, map_uid};
 #[cfg(unix)]
 use crate::ownership;
 #[cfg(unix)]
@@ -167,6 +167,82 @@ pub(super) fn gate_preserved_group(group: Option<unix_fs::Gid>) -> Option<unix_f
     // See `gate_preserved_owner`: nix (libc `geteuid`) so fakeroot's faked root
     // euid is honoured, matching upstream's `am_root` gate.
     group.filter(|gid| nix::unistd::geteuid().is_root() || process_in_group(*gid))
+}
+
+/// Resolves the preserved owner of `entry` to a local uid.
+///
+/// `--usermap` is consulted first on the raw sender id (its rules match numeric
+/// ids and names alike, mirroring upstream `recv_add_id`'s uidmap scan). When no
+/// rule matches and `--numeric-ids` is off, the sender-transmitted user name
+/// (INC_RECURSE `XMIT_USER_NAME_FOLLOWS`) is resolved against the receiver's user
+/// database so ownership follows the *name* across hosts with differing id
+/// namespaces, rather than re-deriving the name from the receiver's
+/// `getpwuid(raw)` - which is wrong when the raw sender id is absent or bound to
+/// a different name locally. Without an inline name (local copy) the raw id is
+/// round-tripped through the receiver's database exactly as before.
+// upstream: flist.c:914 recv_user_name / uidlist.c:307 match_uid
+#[cfg(unix)]
+fn resolve_owner_uid(
+    entry: &protocol::flist::FileEntry,
+    options: &MetadataOptions,
+) -> Option<unix_fs::Uid> {
+    entry.uid().and_then(|uid| {
+        let numeric = options.numeric_ids_enabled();
+        let mut base = uid as RawUid;
+        let mut mapped = false;
+        if let Some(mapping) = options.user_mapping()
+            && let Ok(Some(target)) = mapping.map_uid(base, numeric)
+        {
+            base = target;
+            mapped = true;
+        }
+        if !mapped
+            && !numeric
+            && let Some(name) = entry.user_name()
+        {
+            let local = lookup_user_by_name(name.as_bytes())
+                .ok()
+                .flatten()
+                .unwrap_or(base);
+            return Some(ownership::uid_from_raw(local));
+        }
+        map_uid(base, numeric)
+    })
+}
+
+/// Resolves the preserved group of `entry` to a local gid.
+///
+/// The group counterpart of [`resolve_owner_uid`]: `--groupmap` first, then the
+/// sender-transmitted group name (INC_RECURSE `XMIT_GROUP_NAME_FOLLOWS`) resolved
+/// against the receiver's group database.
+// upstream: flist.c:926 recv_group_name / uidlist.c:317 match_gid
+#[cfg(unix)]
+fn resolve_group_gid(
+    entry: &protocol::flist::FileEntry,
+    options: &MetadataOptions,
+) -> Option<unix_fs::Gid> {
+    entry.gid().and_then(|gid| {
+        let numeric = options.numeric_ids_enabled();
+        let mut base = gid as RawGid;
+        let mut mapped = false;
+        if let Some(mapping) = options.group_mapping()
+            && let Ok(Some(target)) = mapping.map_gid(base, numeric)
+        {
+            base = target;
+            mapped = true;
+        }
+        if !mapped
+            && !numeric
+            && let Some(name) = entry.group_name()
+        {
+            let local = lookup_group_by_name(name.as_bytes())
+                .ok()
+                .flatten()
+                .unwrap_or(base);
+            return Some(ownership::gid_from_raw(local));
+        }
+        map_gid(base, numeric)
+    })
 }
 
 /// Resolves the target UID and GID after applying overrides, mappings, and
@@ -401,15 +477,7 @@ pub(super) fn apply_ownership_from_entry(
     let owner = if let Some(uid_override) = options.owner_override() {
         Some(ownership::uid_from_raw(uid_override as RawUid))
     } else if options.owner() {
-        gate_preserved_owner(entry.uid().and_then(|uid| {
-            let mut mapped_uid = uid as RawUid;
-            if let Some(mapping) = options.user_mapping()
-                && let Ok(Some(mapped)) = mapping.map_uid(mapped_uid, options.numeric_ids_enabled())
-            {
-                mapped_uid = mapped;
-            }
-            map_uid(mapped_uid, options.numeric_ids_enabled())
-        }))
+        gate_preserved_owner(resolve_owner_uid(entry, options))
     } else {
         None
     };
@@ -417,15 +485,7 @@ pub(super) fn apply_ownership_from_entry(
     let group = if let Some(gid_override) = options.group_override() {
         Some(ownership::gid_from_raw(gid_override as RawGid))
     } else if options.group() {
-        gate_preserved_group(entry.gid().and_then(|gid| {
-            let mut mapped_gid = gid as RawGid;
-            if let Some(mapping) = options.group_mapping()
-                && let Ok(Some(mapped)) = mapping.map_gid(mapped_gid, options.numeric_ids_enabled())
-            {
-                mapped_gid = mapped;
-            }
-            map_gid(mapped_gid, options.numeric_ids_enabled())
-        }))
+        gate_preserved_group(resolve_group_gid(entry, options))
     } else {
         None
     };
@@ -486,15 +546,7 @@ pub(super) fn apply_symlink_ownership_from_entry(
     let owner = if let Some(uid_override) = options.owner_override() {
         Some(ownership::uid_from_raw(uid_override as RawUid))
     } else if options.owner() {
-        gate_preserved_owner(entry.uid().and_then(|uid| {
-            let mut mapped_uid = uid as RawUid;
-            if let Some(mapping) = options.user_mapping()
-                && let Ok(Some(mapped)) = mapping.map_uid(mapped_uid, options.numeric_ids_enabled())
-            {
-                mapped_uid = mapped;
-            }
-            map_uid(mapped_uid, options.numeric_ids_enabled())
-        }))
+        gate_preserved_owner(resolve_owner_uid(entry, options))
     } else {
         None
     };
@@ -502,15 +554,7 @@ pub(super) fn apply_symlink_ownership_from_entry(
     let group = if let Some(gid_override) = options.group_override() {
         Some(ownership::gid_from_raw(gid_override as RawGid))
     } else if options.group() {
-        gate_preserved_group(entry.gid().and_then(|gid| {
-            let mut mapped_gid = gid as RawGid;
-            if let Some(mapping) = options.group_mapping()
-                && let Ok(Some(mapped)) = mapping.map_gid(mapped_gid, options.numeric_ids_enabled())
-            {
-                mapped_gid = mapped;
-            }
-            map_gid(mapped_gid, options.numeric_ids_enabled())
-        }))
+        gate_preserved_group(resolve_group_gid(entry, options))
     } else {
         None
     };
@@ -771,6 +815,39 @@ mod own_debug_tests {
         assert!(
             own_messages().is_empty(),
             "level-0 must suppress all OWN traces"
+        );
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn resolves_inline_owner_name_to_local_id() {
+        // upstream: flist.c:914 recv_user_name - the receiver resolves the
+        // SENDER-transmitted user name to a LOCAL id so ownership follows the
+        // NAME across hosts with differing id namespaces. A raw sender id that
+        // does not exist locally must not leak through as the file owner.
+        use protocol::flist::FileEntry;
+
+        let mut entry = FileEntry::new_file("f".into(), 0, 0o644);
+        entry.set_uid(4_000_123); // no such uid on the receiver
+        entry.set_user_name("root".to_string());
+
+        let opts = MetadataOptions::new()
+            .preserve_owner(true)
+            .numeric_ids(false);
+        assert_eq!(
+            resolve_owner_uid(&entry, &opts).map(|u| u.as_raw()),
+            Some(0),
+            "sent name 'root' must resolve to local uid 0, not the raw sender id"
+        );
+
+        // --numeric-ids keeps the raw sender id (no name resolution).
+        let opts_num = MetadataOptions::new()
+            .preserve_owner(true)
+            .numeric_ids(true);
+        assert_eq!(
+            resolve_owner_uid(&entry, &opts_num).map(|u| u.as_raw()),
+            Some(4_000_123),
+            "--numeric-ids must keep the raw sender id"
         );
     }
 }
