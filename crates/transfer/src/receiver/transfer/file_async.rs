@@ -166,10 +166,9 @@ impl ReceiverContext {
         // --- request half: NDX + iflags (synchronous Write, as in sync.rs) ---
         let ndx = self.flat_to_wire_ndx(file_idx);
         ndx_write_codec.write_ndx(&mut *writer, ndx)?;
-        if self.protocol.supports_iflags() {
-            writer.write_all(&SenderAttrs::ITEM_TRANSFER.to_le_bytes())?;
-        }
 
+        // The basis search precedes the iflags write so a --partial-dir resume
+        // basis can set ITEM_BASIS_TYPE_FOLLOWS (generator.c:1942-1943).
         let basis_config = self.build_basis_file_config(
             &file_path,
             dest_dir,
@@ -182,6 +181,19 @@ impl ReceiverContext {
         let basis_result = find_basis_file_with_config(&basis_config);
         let signature_opt = basis_result.signature;
         let basis_path_opt = basis_result.basis_path;
+        let fnamecmp_type = basis_result.fnamecmp_type;
+
+        if self.protocol.supports_iflags() {
+            let mut iflags = SenderAttrs::ITEM_TRANSFER;
+            let emit_basis_type = fnamecmp_type != protocol::FnameCmpType::Fname;
+            if emit_basis_type {
+                iflags |= SenderAttrs::ITEM_BASIS_TYPE_FOLLOWS;
+            }
+            writer.write_all(&iflags.to_le_bytes())?;
+            if emit_basis_type {
+                writer.write_all(&[u8::from(fnamecmp_type)])?;
+            }
+        }
 
         let sum_head = match signature_opt {
             Some(ref signature) => SumHead::from_signature(signature),
