@@ -357,7 +357,10 @@ pub(crate) fn apply_common_server_flags(config: &ClientConfig, server_config: &m
     // local client IS the receiver, so carry the window onto its config; the
     // server-side receiver (push) picks it up from the forwarded
     // `--modify-window=NUM` arg. `modify_window()` is None when unset (window 0).
-    server_config.file_selection.modify_window = config.modify_window().unwrap_or(0);
+    server_config.file_selection.modify_window = config.modify_window().map_or(
+        ::metadata::ModifyWindow::ZERO,
+        ::metadata::ModifyWindow::from_secs,
+    );
     // upstream: options.c:2046-2048 - do_stats sets INFO_STATS to level 2+
     server_config.do_stats = config.stats();
     // upstream: generator.c:124 - EARLY_DELETE_DONE_MSG = !(delete_during==2 || delete_after)

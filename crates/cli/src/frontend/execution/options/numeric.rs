@@ -156,10 +156,13 @@ pub(crate) fn parse_checksum_seed_argument(value: &OsStr) -> Result<u32, Message
     })
 }
 
-/// Parses the `--modify-window` argument as a non-negative `u64` seconds value.
+/// Parses the `--modify-window` argument as a signed `i64` seconds value.
 ///
-/// A leading `+` prefix is permitted and ignored.
-pub(crate) fn parse_modify_window_argument(value: &OsStr) -> Result<u64, Message> {
+/// A leading `+` prefix is permitted and ignored. A negative value is accepted
+/// and requests upstream's nanosecond-exact mtime comparison
+/// (`modify_window < 0`, util1.c:1482); upstream parses this option as a signed
+/// `int` (options.c:660, `POPT_ARG_INT`).
+pub(crate) fn parse_modify_window_argument(value: &OsStr) -> Result<i64, Message> {
     let text = value.to_string_lossy();
     let trimmed = text.trim_matches(|ch: char| ch.is_ascii_whitespace());
     let display = if trimmed.is_empty() {
@@ -174,24 +177,13 @@ pub(crate) fn parse_modify_window_argument(value: &OsStr) -> Result<u64, Message
         );
     }
 
-    if trimmed.starts_with('-') {
-        return Err(rsync_error!(
-            1,
-            format!(
-                "invalid --modify-window '{}': window must be non-negative",
-                display
-            )
-        )
-        .with_role(Role::Client));
-    }
-
     let normalized = trimmed.strip_prefix('+').unwrap_or(trimmed);
 
-    match normalized.parse::<u64>() {
+    match normalized.parse::<i64>() {
         Ok(value) => Ok(value),
         Err(error) => {
             let detail = match error.kind() {
-                IntErrorKind::InvalidDigit => "window must be an unsigned integer",
+                IntErrorKind::InvalidDigit => "window must be an integer",
                 IntErrorKind::PosOverflow | IntErrorKind::NegOverflow => {
                     "window exceeds the supported range"
                 }

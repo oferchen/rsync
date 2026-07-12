@@ -1,7 +1,7 @@
 use std::fs;
-use std::time::{Duration, SystemTime};
+use std::time::SystemTime;
 
-use ::metadata::MetadataOptions;
+use ::metadata::{MetadataOptions, ModifyWindow};
 
 use crate::local_copy::executor::system_time_within_window;
 
@@ -25,7 +25,7 @@ impl LocalCopyChangeSet {
         wrote_data: bool,
         xattrs_enabled: bool,
         acls_enabled: bool,
-        modify_window: Duration,
+        modify_window: ModifyWindow,
     ) -> Self {
         Self::for_file_with_checksum(
             metadata,
@@ -58,7 +58,7 @@ impl LocalCopyChangeSet {
         xattrs_enabled: bool,
         acls_enabled: bool,
         checksum_enabled: bool,
-        modify_window: Duration,
+        modify_window: ModifyWindow,
     ) -> Self {
         let mut change_set = Self::new();
 
@@ -153,7 +153,7 @@ impl LocalCopyChangeSet {
         omit_dir_times: bool,
         xattrs_enabled: bool,
         acls_enabled: bool,
-        modify_window: Duration,
+        modify_window: ModifyWindow,
     ) -> Self {
         let mut change_set = Self::new();
 
@@ -264,7 +264,7 @@ impl LocalCopyChangeSet {
         source: &fs::Metadata,
         existing: &fs::Metadata,
         metadata_options: &MetadataOptions,
-        modify_window: Duration,
+        modify_window: ModifyWindow,
         content_differs: bool,
         xattrs_enabled: bool,
         acls_enabled: bool,
@@ -341,7 +341,7 @@ fn determine_time_change(
     existing: Option<&fs::Metadata>,
     destination_previously_existed: bool,
     wrote_data: bool,
-    modify_window: Duration,
+    modify_window: ModifyWindow,
 ) -> Option<TimeChange> {
     if metadata_options.times() {
         if !destination_previously_existed {

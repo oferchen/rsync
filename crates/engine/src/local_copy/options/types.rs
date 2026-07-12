@@ -11,7 +11,7 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime};
 
-use ::metadata::{ChmodModifiers, CopyAsIds, GroupMapping, UserMapping};
+use ::metadata::{ChmodModifiers, CopyAsIds, GroupMapping, ModifyWindow, UserMapping};
 use compress::algorithm::CompressionAlgorithm;
 use compress::zlib::CompressionLevel;
 use fast_io::{DefaultPlatformCopy, PlatformCopy};
@@ -190,7 +190,7 @@ pub struct LocalCopyOptions {
     pub(super) existing_only: bool,
     pub(super) ignore_missing_args: bool,
     pub(super) update: bool,
-    pub(super) modify_window: Duration,
+    pub(super) modify_window: ModifyWindow,
     pub(super) partial: bool,
     pub(super) partial_dir: Option<PathBuf>,
     pub(super) temp_dir: Option<PathBuf>,
@@ -334,7 +334,7 @@ impl LocalCopyOptions {
             existing_only: false,
             ignore_missing_args: false,
             update: false,
-            modify_window: Duration::ZERO,
+            modify_window: ModifyWindow::ZERO,
             partial: false,
             partial_dir: None,
             temp_dir: None,

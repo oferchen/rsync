@@ -555,7 +555,9 @@ fn apply_value_flags<Err: Write>(
         match super::super::execution::parse_modify_window_argument(std::ffi::OsStr::new(
             window_str,
         )) {
-            Ok(window) => config.file_selection.modify_window = window,
+            Ok(window) => {
+                config.file_selection.modify_window = ::metadata::ModifyWindow::from_secs(window)
+            }
             Err(msg) => {
                 write_server_error(stderr, brand, msg.text().to_owned());
                 return Err(1);

@@ -1250,21 +1250,22 @@ impl<'a> CopyContext<'a> {
 /// `--modify-window`.
 ///
 /// upstream: util1.c:1478 same_time() - a whole-second delta within
-/// `modify_window` counts as unchanged; with a zero window the sub-second
-/// component must also match.
+/// `modify_window` counts as unchanged. For a zero window (the default) or a
+/// negative window (`--modify-window < 0`, nsec-exact) a hardlink candidate
+/// must match on both the whole-second and nanosecond components.
 #[cfg(unix)]
 fn mtimes_within_window(
     source: &fs::Metadata,
     candidate: &fs::Metadata,
-    modify_window: Duration,
+    modify_window: ModifyWindow,
 ) -> bool {
     use std::os::unix::fs::MetadataExt;
 
     let delta = source.mtime().abs_diff(candidate.mtime());
     let window = modify_window.as_secs();
-    if window == 0 {
+    if window <= 0 {
         delta == 0 && source.mtime_nsec() == candidate.mtime_nsec()
     } else {
-        delta <= window
+        delta <= window as u64
     }
 }

@@ -23,7 +23,7 @@ use std::time::SystemTime;
 
 use compress::zlib::CompressionLevel;
 use engine::SkipCompressList;
-use metadata::{ChmodModifiers, GroupMapping, UserMapping};
+use metadata::{ChmodModifiers, GroupMapping, ModifyWindow, UserMapping};
 use protocol::FilenameConverter;
 use protocol::ProtocolVersion;
 use protocol::filters::FilterRuleWireFormat;
@@ -440,8 +440,11 @@ impl ServerConfigBuilder {
     }
 
     /// Sets the `--modify-window` mtime comparison tolerance in whole seconds.
-    pub fn modify_window(&mut self, seconds: u64) -> &mut Self {
-        self.file_selection.modify_window = seconds;
+    ///
+    /// A negative `seconds` selects upstream's nanosecond-exact comparison
+    /// (`modify_window < 0`, util1.c:1482).
+    pub fn modify_window(&mut self, seconds: i64) -> &mut Self {
+        self.file_selection.modify_window = ModifyWindow::from_secs(seconds);
         self
     }
 

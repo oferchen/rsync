@@ -210,22 +210,15 @@ where
     let modify_window = match matches.remove_one::<OsString>("modify-window") {
         Some(value) => {
             let s = value.to_string_lossy();
+            // upstream: options.c:660 parses `--modify-window`/`-@` as a signed
+            // int (`POPT_ARG_INT`); a negative value is valid and requests
+            // nanosecond-exact comparison (util1.c:1482), so accept any integer.
             match s.parse::<i32>() {
-                Ok(n) if n >= 0 => Some(value),
-                Ok(_) => {
-                    return Err(clap::Error::raw(
-                        clap::error::ErrorKind::ValueValidation,
-                        format!(
-                            "invalid --modify-window value '{s}': must be a non-negative integer\n"
-                        ),
-                    ));
-                }
+                Ok(_) => Some(value),
                 Err(_) => {
                     return Err(clap::Error::raw(
                         clap::error::ErrorKind::ValueValidation,
-                        format!(
-                            "invalid --modify-window value '{s}': must be a non-negative integer\n"
-                        ),
+                        format!("invalid --modify-window value '{s}': must be an integer\n"),
                     ));
                 }
             }

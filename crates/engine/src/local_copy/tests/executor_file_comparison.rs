@@ -25,7 +25,7 @@ mod file_comparison_tests {
             ignore_times: false,
             checksum: false,
             checksum_algorithm: SignatureAlgorithm::Md4,
-            modify_window: Duration::ZERO,
+            modify_window: ModifyWindow::ZERO,
             prefetched_match: None,
         };
 
@@ -58,7 +58,7 @@ mod file_comparison_tests {
             ignore_times: false,
             checksum: false,
             checksum_algorithm: SignatureAlgorithm::Md4,
-            modify_window: Duration::ZERO,
+            modify_window: ModifyWindow::ZERO,
             prefetched_match: None,
         };
 
@@ -87,7 +87,7 @@ mod file_comparison_tests {
             ignore_times: false,
             checksum: false,
             checksum_algorithm: SignatureAlgorithm::Md4,
-            modify_window: Duration::from_secs(3600), // 1 hour window
+            modify_window: ModifyWindow::from_secs(3600), // 1 hour window
             prefetched_match: None,
         };
 
@@ -117,7 +117,7 @@ mod file_comparison_tests {
             ignore_times: false,
             checksum: false,
             checksum_algorithm: SignatureAlgorithm::Md4,
-            modify_window: Duration::ZERO,
+            modify_window: ModifyWindow::ZERO,
             prefetched_match: None,
         };
 
@@ -147,7 +147,7 @@ mod file_comparison_tests {
             ignore_times: true,
             checksum: false,
             checksum_algorithm: SignatureAlgorithm::Md4,
-            modify_window: Duration::ZERO,
+            modify_window: ModifyWindow::ZERO,
             prefetched_match: None,
         };
 
@@ -175,7 +175,7 @@ mod file_comparison_tests {
             ignore_times: false,
             checksum: true,
             checksum_algorithm: SignatureAlgorithm::Md4,
-            modify_window: Duration::ZERO,
+            modify_window: ModifyWindow::ZERO,
             prefetched_match: None,
         };
 
@@ -204,7 +204,7 @@ mod file_comparison_tests {
             ignore_times: false,
             checksum: true,
             checksum_algorithm: SignatureAlgorithm::Md4,
-            modify_window: Duration::ZERO,
+            modify_window: ModifyWindow::ZERO,
             prefetched_match: None,
         };
 
@@ -232,7 +232,7 @@ mod file_comparison_tests {
             ignore_times: false,
             checksum: true,
             checksum_algorithm: SignatureAlgorithm::Md4,
-            modify_window: Duration::ZERO,
+            modify_window: ModifyWindow::ZERO,
             prefetched_match: Some(true), // Prefetched indicates match
         };
 
@@ -260,7 +260,7 @@ mod file_comparison_tests {
             ignore_times: false,
             checksum: true,
             checksum_algorithm: SignatureAlgorithm::Md4,
-            modify_window: Duration::ZERO,
+            modify_window: ModifyWindow::ZERO,
             prefetched_match: Some(false), // Prefetched indicates no match
         };
 
@@ -480,7 +480,7 @@ mod file_comparison_tests {
             checksum_algorithm: SignatureAlgorithm::Md5 {
                 seed_config: checksums::strong::Md5Seed::proper(42),
             },
-            modify_window: Duration::ZERO,
+            modify_window: ModifyWindow::ZERO,
             prefetched_match: None,
         };
 
