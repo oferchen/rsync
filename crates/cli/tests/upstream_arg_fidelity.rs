@@ -293,7 +293,7 @@ fn context_for(opt: &Opt) -> &'static [&'static str] {
 /// rejects for path-like values though upstream popt accepts them. oc's
 /// `expand_short_options` omits these from its value-short set, so a value that
 /// looks like an operand (`-T/tmp`, `-T=/tmp`) leaks into the operand list.
-const KNOWN_SHORT_VALUE_FORM_REJECTED: &[&str] = &["temp-dir"];
+const KNOWN_SHORT_VALUE_FORM_REJECTED: &[&str] = &["temp-dir", "modify-window"];
 
 /// Parses `tokens` with two trailing sentinel operands and confirms the option
 /// (and any value) was consumed by a real argument, leaving only the sentinels
