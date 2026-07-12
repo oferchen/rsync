@@ -115,6 +115,28 @@ pub struct DeletionConfig {
     ///
     /// - `generator.c:124`: `#define EARLY_DELETE_DONE_MSG() (!(delete_during == 2 || delete_after))`
     pub late_delete: bool,
+    /// Whether the delete *pass* (the extraneous-entry decision) is deferred
+    /// until after the per-file transfer completes.
+    ///
+    /// True ONLY for `--delete-after` (`delete_after` in upstream), which runs
+    /// `do_delete_pass()` at the very end (generator.c:2427-2428) once every
+    /// file - including each destination `.rsync-filter` merge file - has landed,
+    /// so per-directory merge protect rules apply at delete time.
+    ///
+    /// NOT set for `--delete-delay` (`delete_during == 2`): upstream makes the
+    /// delete *decision* during the walk (delete_in_dir via remember_delete,
+    /// generator.c:2315-2327) - before that directory's `.rsync-filter` has been
+    /// received - and defers only the physical unlink. Its observable file
+    /// outcome therefore matches `--delete-during` / `--delete-before`, so oc
+    /// runs the delete pass early for delay just like those modes. This is
+    /// distinct from [`late_delete`] (delay || after), which governs only the
+    /// goodbye NDX_DEL_STATS timing.
+    ///
+    /// Verified empirically vs upstream 3.4.4: over SSH (inc-recurse), delay
+    /// DELETES a per-dir-merge-protected entry while after PROTECTS it.
+    ///
+    /// [`late_delete`]: Self::late_delete
+    pub delete_after: bool,
     /// Also delete filter-excluded entries from the destination
     /// (`--delete-excluded`). When set, the receiver's delete pass treats an
     /// excluded (non-protected) entry as deletable rather than protected.

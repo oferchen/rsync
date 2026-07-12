@@ -42,9 +42,17 @@ fn apply_long_form_args(client_args: &[String], config: &mut ServerConfig) -> Op
             "--delete" | "--delete-before" | "--delete-during" => {
                 config.flags.delete = true;
             }
-            "--delete-after" | "--delete-delay" => {
+            "--delete-delay" => {
                 config.flags.delete = true;
                 config.deletion.late_delete = true;
+            }
+            // upstream: generator.c:2427-2428 - only --delete-after defers the
+            // delete *decision* to after the transfer; --delete-delay decides
+            // during the walk (generator.c:2315) and defers only the unlink.
+            "--delete-after" => {
+                config.flags.delete = true;
+                config.deletion.late_delete = true;
+                config.deletion.delete_after = true;
             }
             "--delete-excluded" => {
                 config.flags.delete = true;
