@@ -142,11 +142,40 @@ pub(super) fn commit_file(
         false
     };
     cleanup_guard.keep();
+    // upstream: receiver.c:1035-1037 - once the file is committed, a basis that
+    // came from the partial directory (FNAMECMP_PARTIAL_DIR) is unlinked and the
+    // now-empty partial-dir is rmdir'd via handle_partial_dir(PDIR_DELETE). The
+    // removal is unconditional for --partial-dir successes: when no partial
+    // basis existed the unlink is a harmless no-op.
+    remove_partial_dir_basis(config, &begin.file_path);
     Ok(CommitOutcome {
         was_copy,
         delayed_path: None,
         backup_notice,
     })
+}
+
+/// Removes the `--partial-dir` basis file after a successful commit and
+/// rmdir's the (now-possibly-empty) partial directory for a relative
+/// `--partial-dir`, mirroring upstream `handle_partial_dir(PDIR_DELETE)`.
+///
+/// Best-effort: a missing partial file or a non-empty partial-dir leaves the
+/// filesystem untouched. Absolute `--partial-dir` values are never rmdir'd,
+/// matching upstream `util1.c:1343` (`if (!create && *partial_dir == '/')`).
+fn remove_partial_dir_basis(config: &DiskCommitConfig, dest_path: &Path) {
+    let PartialMode::PartialDir(ref dir) = config.partial_mode else {
+        return;
+    };
+    let Some(partial) = crate::temp_guard::partial_dir_fname(dest_path, dir) else {
+        return;
+    };
+    let _ = fs::remove_file(&partial);
+    // upstream: handle_partial_dir() only rmdir's a relative partial-dir.
+    if !dir.is_absolute() {
+        if let Some(parent) = partial.parent() {
+            let _ = fs::remove_dir(parent);
+        }
+    }
 }
 
 /// Upstream partial dir name for `--delay-updates` staging.
