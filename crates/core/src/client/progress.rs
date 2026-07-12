@@ -210,10 +210,16 @@ pub(crate) struct ClientProgressForwarder<'a> {
     // even when up-to-date entries (e.g. an unchanged parent dir the local
     // executor visits last) trail it in processing order.
     transferred_total: usize,
-    // Running count of entries transferred. Drives `xfr#` and the remaining
-    // figure (transferred_total - transferred); only advances for real
-    // transfers, never for up-to-date matches.
+    // Running count of entries transferred. Drives `xfr#`; only advances for
+    // real regular-file transfers, never for directories, symlinks, devices,
+    // FIFOs, hard links or up-to-date matches.
     transferred: usize,
+    // Running count of file-list entries walked so far, in emission (flist)
+    // order. Mirrors upstream's `current_file_index` (progress.c:147): the
+    // `to-chk` numerator is `total - checked`, so it counts down over *every*
+    // entry the generator checks - directories and symlinks included - not just
+    // the transfers. upstream: progress.c:79-81.
+    checked: usize,
     overall_total_bytes: Option<u64>,
     overall_transferred: u64,
     overall_start: Instant,
@@ -242,12 +248,14 @@ impl<'a> ClientProgressForwarder<'a> {
             .map(|record| ClientEvent::from_record_owned(record, Arc::clone(&destination_root)))
             .filter(|event| event.kind().is_progress())
             .collect();
-        // Denominator counts every checked entry; the numerator base counts only
-        // those that will transfer, so to-chk reaches 0 on the last transfer.
+        // Denominator counts every checked flist entry (upstream num_files:
+        // directories and symlinks included); the numerator counts down over
+        // all of them via `checked`. `transferred_total` counts only the
+        // regular-file transfers that will print a block and advance `xfr#`.
         let total = progress_events.len();
         let transferred_total = progress_events
             .iter()
-            .filter(|event| !event.is_uptodate())
+            .filter(|event| event.kind().is_transfer() && !event.is_uptodate())
             .count();
 
         let total_bytes = summary.total_source_bytes();
@@ -257,6 +265,7 @@ impl<'a> ClientProgressForwarder<'a> {
             total,
             transferred_total,
             transferred: 0,
+            checked: 0,
             overall_total_bytes: (total_bytes > 0).then_some(total_bytes),
             overall_transferred: 0,
             overall_start: Instant::now(),
@@ -277,16 +286,23 @@ impl<'a> LocalCopyRecordHandler for ClientProgressForwarder<'a> {
             return;
         }
 
-        // upstream: an up-to-date entry prints no per-file progress block and
-        // does not advance `xfr#` - it is silent under `--progress`/`-P` (it
-        // surfaces only with `-vv`/`-i`), so a no-change run emits nothing.
-        if event.is_uptodate() {
+        // upstream: progress.c:147 set_current_file_index - every checked flist
+        // entry advances the file index, so `to-chk` counts down over
+        // directories and symlinks too, even though they print nothing.
+        self.checked = self.checked.saturating_add(1);
+
+        // upstream: receiver.c:731-782 - only ITEM_TRANSFER (regular file data)
+        // entries print a per-file block and bump `xfr#`. Directories, symlinks,
+        // devices, FIFOs and hard links are walked (counted above) but return
+        // here. An up-to-date match is likewise silent under `--progress`/`-P`
+        // (it surfaces only with `-vv`/`-i`), so a no-change run emits nothing.
+        if !event.kind().is_transfer() || event.is_uptodate() {
             return;
         }
 
         self.transferred = self.transferred.saturating_add(1);
         let index = self.transferred;
-        let remaining = self.transferred_total.saturating_sub(self.transferred);
+        let remaining = self.total.saturating_sub(self.checked);
 
         let total_bytes = if matches!(event.kind(), ClientEventKind::DataCopied) {
             event.total_bytes()
@@ -324,10 +340,12 @@ impl<'a> LocalCopyRecordHandler for ClientProgressForwarder<'a> {
             return;
         }
 
-        // The in-flight file is the next transfer (`xfr#`); to-chk counts the
-        // transfers still pending after it.
+        // The in-flight file is the next transfer (`xfr#`). Its own flist entry
+        // has not been counted into `checked` yet (that happens in `handle`
+        // when its final record arrives), so subtract one for it: to-chk mirrors
+        // upstream `num_files - current_file_index - 1` for the file now moving.
         let index = (self.transferred + 1).min(self.transferred_total);
-        let remaining = self.transferred_total.saturating_sub(self.transferred + 1);
+        let remaining = self.total.saturating_sub(self.checked + 1);
         let event = ClientEvent::from_progress(
             progress.relative_path(),
             progress.bytes_transferred(),

@@ -75,7 +75,25 @@ impl ClientEventKind {
                 | Self::SymlinkCopied
                 | Self::FifoCopied
                 | Self::DeviceCopied
+                | Self::DirectoryCreated
         )
+    }
+
+    /// Returns whether the event kind is an actual regular-file data transfer -
+    /// the narrower question of whether it prints a per-file `--progress` block
+    /// and advances `xfr#`.
+    ///
+    /// Upstream only counts `ITEM_TRANSFER` entries (regular file data) into
+    /// `stats.xferred_files` and only those emit a progress block
+    /// (receiver.c:782 `stats.xferred_files++` sits *after* the
+    /// `!(iflags & ITEM_TRANSFER)` early-continue that handles directories,
+    /// symlinks, devices and specials). So a symlink, device, FIFO, hard link
+    /// or directory is walked (counted in the `to-chk` denominator via
+    /// [`Self::is_progress`]) but never prints a progress line and never bumps
+    /// `xfr#`. Copy-dest / reference reconstructions write regular file data
+    /// locally, so they transfer.
+    pub const fn is_transfer(&self) -> bool {
+        matches!(self, Self::DataCopied | Self::ReferenceCopied)
     }
 }
 
@@ -476,6 +494,29 @@ mod tests {
     #[test]
     fn client_event_kind_is_progress_returns_true_for_device_copied() {
         assert!(ClientEventKind::DeviceCopied.is_progress());
+    }
+
+    #[test]
+    fn client_event_kind_is_progress_returns_true_for_directory_created() {
+        // upstream: stats.num_files counts directories (flist.c:2561), so they
+        // belong in the `to-chk` denominator even though they never transfer.
+        assert!(ClientEventKind::DirectoryCreated.is_progress());
+    }
+
+    #[test]
+    fn client_event_kind_is_transfer_only_for_regular_data() {
+        assert!(ClientEventKind::DataCopied.is_transfer());
+        assert!(ClientEventKind::ReferenceCopied.is_transfer());
+        // upstream: receiver.c:782 `stats.xferred_files++` sits after the
+        // `!(iflags & ITEM_TRANSFER)` continue, so symlinks, directories,
+        // devices, FIFOs and hard links are walked but never advance `xfr#`
+        // nor print a per-file progress block.
+        assert!(!ClientEventKind::SymlinkCopied.is_transfer());
+        assert!(!ClientEventKind::FifoCopied.is_transfer());
+        assert!(!ClientEventKind::DeviceCopied.is_transfer());
+        assert!(!ClientEventKind::HardLink.is_transfer());
+        assert!(!ClientEventKind::DirectoryCreated.is_transfer());
+        assert!(!ClientEventKind::MetadataReused.is_transfer());
     }
 
     #[test]
