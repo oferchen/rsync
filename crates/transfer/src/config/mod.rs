@@ -562,6 +562,34 @@ impl ServerConfig {
         }
     }
 
+    /// Promotes plain `--append` to `--append-verify` semantics for legacy
+    /// (protocol < 30) peers.
+    ///
+    /// Pre-3.0.0 rsync (protocol 29 and earlier) always folds the existing
+    /// destination prefix into the whole-file transfer checksum in append mode,
+    /// so a modern peer must do the same. Otherwise its tail-only checksum
+    /// mismatches the legacy peer's whole-file checksum, the receiver fails
+    /// verification and triggers a phase-2 redo, and the redo desyncs the
+    /// stream (observed as a garbage sum_head read against rsync 2.6.9). Plain
+    /// `--append` (`append_mode == 1`) therefore behaves like `--append-verify`
+    /// (`append_mode == 2`) once the negotiated protocol is below 30.
+    ///
+    /// This runs after the protocol version is finalized. The server arguments
+    /// are already on the wire by then, so it changes only the local checksum
+    /// range, never the wire arguments (upstream sends `--append` once for both
+    /// modes at this point, promoting the mode internally afterwards).
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `compat.c:653-655` - `if (protocol_version < 30) { if (append_mode == 1) append_mode = 2; }`
+    /// - `receiver.c:154` (rsync 2.6.9) - `if (append_mode)` folds the prefix into the sum,
+    ///   versus `receiver.c:357` (rsync 3.4.4) `if (append_mode == 2)`.
+    pub(crate) fn promote_append_mode_for_protocol(&mut self, protocol: ProtocolVersion) {
+        if protocol.as_u8() < 30 && self.flags.append && !self.flags.append_verify {
+            self.flags.append_verify = true;
+        }
+    }
+
     /// Builds a [`ServerConfig`] from the compact flag string and positional arguments.
     ///
     /// The parser accepts empty flag strings when positional arguments are provided,
@@ -805,5 +833,62 @@ mod tests {
             ..Default::default()
         };
         assert_eq!(config.effective_backup_suffix(), "");
+    }
+
+    /// Builds a `ServerConfig` with the given append flags for promotion tests.
+    fn append_config(append: bool, append_verify: bool) -> ServerConfig {
+        let mut config = ServerConfig::default();
+        config.flags.append = append;
+        config.flags.append_verify = append_verify;
+        config
+    }
+
+    #[test]
+    fn promote_append_legacy_protocol_forces_verify() {
+        // upstream compat.c:653-655 - rsync 2.6.9 (proto 29) folds the existing
+        // prefix into the whole-file checksum for plain --append. Without this
+        // promotion oc sends a tail-only checksum, the legacy receiver fails
+        // verification, and the phase-2 redo desyncs the stream (garbage
+        // sum_head). This test fails if the proto-29 promotion is dropped.
+        let mut config = append_config(true, false);
+        config.promote_append_mode_for_protocol(ProtocolVersion::V29);
+        assert!(config.flags.append, "append must stay set");
+        assert!(
+            config.flags.append_verify,
+            "plain --append must be promoted to --append-verify at protocol < 30"
+        );
+    }
+
+    #[test]
+    fn promote_append_modern_protocol_leaves_plain_append() {
+        // At protocol >= 30 the peer trusts the prefix (tail-only checksum), so
+        // plain --append must NOT be promoted or oc would re-sum the prefix and
+        // diverge from a modern peer.
+        for proto in [ProtocolVersion::V30, ProtocolVersion::V32] {
+            let mut config = append_config(true, false);
+            config.promote_append_mode_for_protocol(proto);
+            assert!(
+                !config.flags.append_verify,
+                "plain --append must stay tail-only at protocol {}",
+                proto.as_u8()
+            );
+        }
+    }
+
+    #[test]
+    fn promote_append_noop_without_append() {
+        // No append flag: the promotion must never invent append-verify.
+        let mut config = append_config(false, false);
+        config.promote_append_mode_for_protocol(ProtocolVersion::V29);
+        assert!(!config.flags.append);
+        assert!(!config.flags.append_verify);
+    }
+
+    #[test]
+    fn promote_append_verify_already_set_is_idempotent() {
+        // Explicit --append-verify already sums the prefix; promotion is a no-op.
+        let mut config = append_config(true, true);
+        config.promote_append_mode_for_protocol(ProtocolVersion::V29);
+        assert!(config.flags.append_verify);
     }
 }
