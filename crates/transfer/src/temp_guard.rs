@@ -414,20 +414,9 @@ impl TempFileGuard {
         dest_path: &Path,
         partial_dir: &Path,
     ) -> io::Result<PathBuf> {
-        let file_name = dest_path.file_name().ok_or_else(|| {
+        let partial_path = partial_dir_fname(dest_path, partial_dir).ok_or_else(|| {
             io::Error::new(io::ErrorKind::InvalidInput, "destination has no filename")
         })?;
-
-        // upstream: cleanup.c constructs partial path as partial_dir/filename
-        // For relative partial dirs, the path is relative to the file's parent.
-        let partial_path = if partial_dir.is_absolute() {
-            partial_dir.join(file_name)
-        } else {
-            // Relative partial-dir: place under the file's parent directory.
-            // upstream: cleanup.c uses the same parent as the destination.
-            let parent = dest_path.parent().unwrap_or(Path::new("."));
-            parent.join(partial_dir).join(file_name)
-        };
 
         // Create the partial directory if it does not exist.
         if let Some(parent) = partial_path.parent() {
@@ -453,6 +442,29 @@ impl TempFileGuard {
             Err(e) => Err(e),
         }
     }
+}
+
+/// Computes the partial-dir basis path `partial_dir / <dest-basename>` for a
+/// destination file, mirroring upstream `util1.c:partial_dir_fname()`.
+///
+/// For an absolute `partial_dir` the result is `partial_dir/<basename>`; for a
+/// relative one it is placed under the destination's own parent directory
+/// (`<dest-parent>/partial_dir/<basename>`), exactly as upstream builds
+/// `partialptr` from `fname`. Returns `None` when `dest_path` has no filename.
+///
+/// # Upstream Reference
+///
+/// - `util1.c:1300` - `partial_dir_fname()` joins `partial_dir` and the basename
+/// - `generator.c:1759` - `partialptr = partial_dir_fname(fname)` basis lookup
+pub fn partial_dir_fname(dest_path: &Path, partial_dir: &Path) -> Option<PathBuf> {
+    let file_name = dest_path.file_name()?;
+    let partial_path = if partial_dir.is_absolute() {
+        partial_dir.join(file_name)
+    } else {
+        let parent = dest_path.parent().unwrap_or(Path::new("."));
+        parent.join(partial_dir).join(file_name)
+    };
+    Some(partial_path)
 }
 
 /// Returns `true` when an I/O error represents a cross-device link (EXDEV).

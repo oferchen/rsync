@@ -223,6 +223,15 @@ pub(super) struct ServerLongFlags {
     /// is a listing. The receiver renders the flist without writing to the
     /// destination.
     pub(super) list_only: bool,
+
+    /// Whether the client forwarded `--no-implied-dirs` (upstream
+    /// `implied_dirs == 0`).
+    ///
+    /// upstream: options.c:2976-2977 - forwarded to the sender on a pull. As the
+    /// server-side sender, this process must omit the implied parent dirs from
+    /// the flist at protocol < 30 (flist.c:2468); protocol >= 30 always sends
+    /// them (flist.c:2257-2258).
+    pub(super) no_implied_dirs: bool,
 }
 
 /// Parses all long-form flags from the server argument list.
@@ -277,6 +286,7 @@ pub(super) fn parse_server_long_flags(args: &[OsString]) -> ServerLongFlags {
         delay_updates: false,
         mkpath: false,
         list_only: false,
+        no_implied_dirs: false,
     };
 
     let mut idx = 0;
@@ -302,6 +312,10 @@ pub(super) fn parse_server_long_flags(args: &[OsString]) -> ServerLongFlags {
             "--specials" => flags.specials = Some(true),
             "--no-specials" => flags.specials = Some(false),
             "--qsort" => flags.qsort = true,
+            // upstream: options.c:696 / 2976-2977 - `--no-implied-dirs` is
+            // forwarded to the sender on a pull. The server-side sender must omit
+            // implied parent dirs from the flist at protocol < 30.
+            "--no-implied-dirs" => flags.no_implied_dirs = true,
             "--from0" => flags.from0 = true,
             "--inplace" => flags.inplace = true,
             // upstream: options.c:1722-1726 - OPT_APPEND increments append_mode
@@ -551,6 +565,7 @@ pub(super) fn is_known_server_long_flag(arg: &str) -> bool {
             | "--msgs2stderr"
             | "--no-msgs2stderr"
             | "--qsort"
+            | "--no-implied-dirs"
             | "--from0"
             | "--inplace"
             | "--append"

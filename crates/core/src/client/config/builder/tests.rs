@@ -946,6 +946,59 @@ fn partial_directory_none_clears_path() {
     assert!(config.partial_directory().is_none());
 }
 
+/// upstream: compat.c:791-797 - a relative `--partial-dir` appends a
+/// directory-only, perishable exclude rule so the partial directory is kept
+/// out of the sender's file list and protected from `--delete` on the
+/// receiver. Encoded here to guard against a regression that would leak the
+/// partial directory into the transfer or delete a pre-existing one.
+#[test]
+fn implicit_partial_dir_filter_excludes_and_protects() {
+    let config = builder().partial_directory(Some(".rsync-partial")).build();
+    let rules = config.filter_rules();
+    let rule = rules
+        .last()
+        .expect("relative partial-dir must inject an implicit rule");
+    assert_eq!(rule.kind(), FilterRuleKind::Exclude);
+    // Trailing slash restricts the match to directories (FILTRULE_DIRECTORY).
+    assert_eq!(rule.pattern(), ".rsync-partial/");
+    assert!(rule.is_perishable());
+    // Applies to the sender (drop from flist) and the receiver (protect from
+    // deletion), matching upstream's rule with no FILTRULES_SIDES bit set.
+    assert!(rule.applies_to_sender());
+    assert!(rule.applies_to_receiver());
+}
+
+/// upstream: compat.c:791 guard `*partial_dir != '/'` - an absolute partial
+/// directory must not inject any implicit rule.
+#[test]
+fn implicit_partial_dir_filter_skips_absolute_dir() {
+    let config = builder().partial_directory(Some("/tmp/partial")).build();
+    assert!(config.filter_rules().is_empty());
+}
+
+/// The implicit rule is appended after every user rule (upstream adds it in
+/// `setup_protocol`, after argument parsing), so it carries the lowest
+/// precedence under first-match evaluation.
+#[test]
+fn implicit_partial_dir_filter_follows_user_rules() {
+    let config = builder()
+        .extend_filter_rules([FilterRuleSpec::include(".rsync-partial/")])
+        .partial_directory(Some(".rsync-partial"))
+        .build();
+    let rules = config.filter_rules();
+    assert_eq!(rules.len(), 2);
+    assert_eq!(rules[0].kind(), FilterRuleKind::Include);
+    assert_eq!(rules[1].kind(), FilterRuleKind::Exclude);
+    assert_eq!(rules[1].pattern(), ".rsync-partial/");
+}
+
+/// Without `--partial-dir` no implicit rule is added.
+#[test]
+fn implicit_partial_dir_filter_absent_without_partial_dir() {
+    let config = builder().build();
+    assert!(config.filter_rules().is_empty());
+}
+
 #[test]
 fn temp_directory_sets_path() {
     let config = builder().temp_directory(Some("/tmp/staging")).build();
