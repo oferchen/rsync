@@ -370,6 +370,92 @@ fn info_name0_suppresses_verbose_output() {
 }
 
 #[test]
+fn info_flist0_suppresses_incremental_banner_at_verbose() {
+    use tempfile::tempdir;
+
+    // upstream: flist.c:2251 gates "sending incremental file list" on
+    // `inc_recurse && INFO_GTE(FLIST, 1) && !am_server`. `-v` raises FLIST to 1
+    // (options.c info_verbosity[1]), so the banner normally prints; a following
+    // `--info=flist0` drops FLIST back to 0 and must suppress the banner even
+    // though `-v` is still in effect. The `created directory` notice and the
+    // name listing stay because they are gated on the NAME category, which `-v`
+    // leaves at 1 - proving the gate is per-category, not a raw verbose level.
+    let tmp = tempdir().expect("tempdir");
+    let src = tmp.path().join("src");
+    std::fs::create_dir_all(src.join("sub")).expect("mkdir");
+    std::fs::write(src.join("sub/f.txt"), b"hi").expect("write source");
+    let dst = tmp.path().join("dst");
+
+    let mut src_arg = src.into_os_string();
+    src_arg.push("/");
+
+    let (code, stdout, stderr) = run_with_args([
+        OsString::from(RSYNC),
+        OsString::from("-a"),
+        OsString::from("-v"),
+        OsString::from("--info=flist0"),
+        src_arg,
+        dst.clone().into_os_string(),
+    ]);
+
+    assert_eq!(code, 0);
+    assert!(stderr.is_empty());
+    let rendered = String::from_utf8(stdout).expect("stdout utf8");
+    assert!(
+        !rendered.contains("sending incremental file list"),
+        "--info=flist0 must suppress the banner even at -v: {rendered:?}"
+    );
+    assert!(
+        rendered.contains("created directory"),
+        "NAME (still 1 at -v) keeps the created-directory notice: {rendered:?}"
+    );
+    assert!(
+        rendered.contains("sub/"),
+        "NAME listing stays under --info=flist0: {rendered:?}"
+    );
+}
+
+#[test]
+fn info_name0_suppresses_created_directory_notice_at_verbose() {
+    use tempfile::tempdir;
+
+    // upstream: main.c:807-808 gates `created directory %s` on
+    // `INFO_GTE(NAME, 1) || stdout_format_has_i`. `-v` raises NAME to 1, so the
+    // notice normally prints; `--info=name0` drops NAME to 0 and must suppress
+    // it even at `-v`. The incremental-file-list banner stays because it is
+    // gated on the FLIST category, which `-v` leaves at 1.
+    let tmp = tempdir().expect("tempdir");
+    let src = tmp.path().join("src");
+    std::fs::create_dir_all(src.join("sub")).expect("mkdir");
+    std::fs::write(src.join("sub/f.txt"), b"hi").expect("write source");
+    let dst = tmp.path().join("dst");
+
+    let mut src_arg = src.into_os_string();
+    src_arg.push("/");
+
+    let (code, stdout, stderr) = run_with_args([
+        OsString::from(RSYNC),
+        OsString::from("-a"),
+        OsString::from("-v"),
+        OsString::from("--info=name0"),
+        src_arg,
+        dst.clone().into_os_string(),
+    ]);
+
+    assert_eq!(code, 0);
+    assert!(stderr.is_empty());
+    let rendered = String::from_utf8(stdout).expect("stdout utf8");
+    assert!(
+        !rendered.contains("created directory"),
+        "--info=name0 must suppress the created-directory notice at -v: {rendered:?}"
+    );
+    assert!(
+        rendered.contains("sending incremental file list"),
+        "FLIST (still 1 at -v) keeps the incremental banner: {rendered:?}"
+    );
+}
+
+#[test]
 fn info_name2_reports_unchanged_entries() {
     use tempfile::tempdir;
 

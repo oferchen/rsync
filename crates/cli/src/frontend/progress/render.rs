@@ -50,6 +50,7 @@ use super::format::{
 };
 use super::mode::{NameOutputLevel, ProgressMode};
 use crate::{OutFormat, OutFormatContext, emit_out_format};
+use logging::{InfoFlag, info_gte};
 
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn emit_transfer_summary(
@@ -137,9 +138,12 @@ pub(crate) fn emit_transfer_summary(
     // reports the directory it would create. Mirror the same gate plus
     // trailing-slash trim here so `-i` and `-v` invocations - including
     // `--dry-run` - emit the notice ahead of the per-entry itemize lines,
-    // matching the upstream `testsuite/itemize.test` golden.
+    // matching the upstream `testsuite/itemize.test` golden. Gate on the NAME
+    // info category (`INFO_GTE(NAME, 1)`) rather than a raw `verbosity > 0`
+    // check so `--info=name0` suppresses the notice, while `-i`/`--out-format`
+    // still forces it via `stdout_format_has_i` (mirrored by `out_format`).
     if summary.destination_root_created()
-        && (out_format.is_some() || verbosity > 0)
+        && (out_format.is_some() || info_gte(InfoFlag::Name, 1))
         && let Some(dest_root) = events.iter().map(ClientEvent::destination_root).next()
     {
         writer.write_all(b"created directory ")?;

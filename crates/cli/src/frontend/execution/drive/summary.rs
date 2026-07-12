@@ -10,6 +10,7 @@ use core::{
     },
     message::Message,
 };
+use logging::{InfoFlag, info_gte};
 use logging_sink::MessageSink;
 
 use crate::frontend::{
@@ -117,9 +118,12 @@ where
     // direction arrow (upstream: log.c:701-704 - `<` for sender, `>` otherwise).
     let is_sender = config.is_local_sender();
     // upstream: flist.c:2251 emits "sending incremental file list" only when
-    // inc_recurse is on, which compat.c:172 disables when `!recurse`. Mirror
-    // that gate so single-file (`-v`) transfers don't get a spurious banner.
-    let recursive = config.recursive();
+    // `inc_recurse && INFO_GTE(FLIST, 1) && !am_server`. compat.c:172 disables
+    // inc_recurse when `!recurse`, so mirror the recursion gate (single-file
+    // `-v` transfers get no banner); additionally require the FLIST info
+    // category so `--info=flist0` suppresses the banner even at `-v`, matching
+    // upstream's per-category gate rather than a raw verbose-level check.
+    let emit_flist_banner = config.recursive() && info_gte(InfoFlag::Flist, 1);
     // Capture the preserve-links state before `config` is consumed so the
     // `--list-only` renderer knows whether to append the ` -> <target>` arrow
     // to symlink rows (upstream: generator.c:1183 gates it on preserve_links).
@@ -172,7 +176,7 @@ where
                     name_overridden,
                     human_readable_mode,
                     suppress_updated_only_totals,
-                    recursive,
+                    emit_flist_banner,
                     show_copy_method,
                     show_atimes,
                     show_crtimes,
