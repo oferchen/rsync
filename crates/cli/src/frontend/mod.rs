@@ -345,11 +345,12 @@ where
         }
         Err(error) => {
             let code = clap_parse_error_exit_code(&error);
-            let mut message = strings::exit_code_message_with_detail(code, error.to_string())
-                .unwrap_or_else(|| rsync_error!(code, "{}", error));
+            let detail = clap_error_detail(&error);
+            let mut message = strings::exit_code_message_with_detail(code, detail.as_str())
+                .unwrap_or_else(|| rsync_error!(code, "{}", detail));
             message = message.with_role(Role::Client);
             if write_message(&message, &mut stderr_sink).is_err() {
-                let _ = writeln!(stderr_sink.writer_mut(), "{error}");
+                let _ = writeln!(stderr_sink.writer_mut(), "{detail}");
             }
             code
         }
@@ -378,6 +379,25 @@ where
 /// validated inside the `clap` value flow (unlike `--compress-choice`, which is
 /// validated later in the pipeline where the message code survives), so its
 /// intended exit code is reconstructed here from the diagnostic text we emit.
+/// Renders a `clap` parse failure into the detail text used to compose an
+/// rsync-style diagnostic, stripping clap's own leading `error: ` header.
+///
+/// `clap::Error`'s `Display` prepends a stock `error: ` prefix to every
+/// message. oc then wraps the detail with the canonical `rerr_names` category
+/// (e.g. `syntax or usage error: `), so leaving clap's prefix in place doubles
+/// the wording into `syntax or usage error: error: ...`. Upstream rsync emits
+/// the category exactly once, so the redundant clap header is removed here at
+/// the single rendering site. The match is intentionally exact and
+/// case-sensitive: clap is built without the `color` feature, so the header is
+/// always the literal `error: ` with no ANSI styling.
+fn clap_error_detail(error: &clap::Error) -> String {
+    let rendered = error.to_string();
+    match rendered.strip_prefix("error: ") {
+        Some(stripped) => stripped.to_owned(),
+        None => rendered,
+    }
+}
+
 fn clap_parse_error_exit_code(error: &clap::Error) -> i32 {
     if error.kind() == clap::error::ErrorKind::ValueValidation
         && error.to_string().contains("--checksum-choice")
