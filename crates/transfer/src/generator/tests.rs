@@ -3536,10 +3536,13 @@ mod files_from {
             .build_file_list_with_base(&src, &files_from_entries(&src, file_paths))
             .unwrap();
 
-        // Dot entry + exists.txt + mode-0 sentinel for missing.txt
-        assert_eq!(count, 3, "dot + exists.txt + sentinel for missing.txt");
+        // exists.txt + mode-0 sentinel for missing.txt. No implied root "."
+        // for a plain files-from list without a leading "./" anchor
+        // (upstream flist.c:2368 emits the root dot only for relative + ./ anchor).
+        assert_eq!(count, 2, "exists.txt + sentinel for missing.txt");
         let names: Vec<&str> = ctx.file_list().iter().map(|e| e.name()).collect();
         assert!(names.contains(&"exists.txt"));
+        assert!(!names.contains(&"."), "no implied root . for a non-anchored list");
 
         // The sentinel entry should have mode == 0.
         let sentinel = ctx
@@ -3581,8 +3584,9 @@ mod files_from {
             .build_file_list_with_base(&src, &files_from_entries(&src, file_paths))
             .unwrap();
 
-        // Dot entry + mode-0 sentinel (delete takes precedence over ignore).
-        assert_eq!(count, 2, "dot + sentinel for missing.txt");
+        // mode-0 sentinel only (delete takes precedence over ignore); no
+        // implied root "." for a non-anchored files-from list.
+        assert_eq!(count, 1, "sentinel for missing.txt");
         let sentinel = ctx
             .file_list()
             .iter()
