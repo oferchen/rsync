@@ -60,10 +60,27 @@ pub fn perform_handshake(
     stdin: &mut dyn Read,
     stdout: &mut dyn Write,
 ) -> io::Result<HandshakeResult> {
+    perform_handshake_with_max(stdin, stdout, ProtocolVersion::NEWEST)
+}
+
+/// Performs the version handshake while advertising at most `max_version`.
+///
+/// `max_version` caps both the version we advertise and the version we accept
+/// as negotiated, mirroring the upstream `--protocol=N` flag. Upstream stores
+/// the requested value in `protocol_version` (options.c:846) - already lowered
+/// from the `PROTOCOL_VERSION` default - and `setup_protocol()` writes it, reads
+/// the peer's version, then clamps with `protocol_version = MIN(protocol_version,
+/// remote_protocol)` (compat.c:604-607). Passing `ProtocolVersion::NEWEST` (the
+/// default) reproduces the uncapped behaviour.
+pub fn perform_handshake_with_max(
+    stdin: &mut dyn Read,
+    stdout: &mut dyn Write,
+    max_version: ProtocolVersion,
+) -> io::Result<HandshakeResult> {
     // upstream: compat.c:602-604 - write our max version first, then read.
     // Both sides do this simultaneously; reversing the order deadlocks when
     // both ends are oc-rsync (each waits for the other to write first).
-    write_server_version(stdout, ProtocolVersion::NEWEST)?;
+    write_server_version(stdout, max_version)?;
     stdout.flush()?;
 
     let remote_version = read_client_version(stdin)?;
@@ -77,6 +94,10 @@ pub fn perform_handshake(
             ),
         )
     })?;
+    // upstream: compat.c:606-607 - protocol_version = MIN(protocol_version,
+    // remote_protocol). Clamp the mutually-supported version to our advertised
+    // ceiling so `--protocol=N` caps the negotiated version.
+    let negotiated = negotiated.min(max_version);
 
     Ok(HandshakeResult {
         protocol: negotiated,
@@ -216,6 +237,55 @@ mod tests {
         // Server should respond with 4-byte version
         assert_eq!(stdout.len(), 4);
         assert_eq!(stdout[0], 32);
+    }
+
+    #[test]
+    fn max_version_caps_negotiated_below_remote() {
+        // Remote advertises 32; we cap to 29 via --protocol=29. The negotiated
+        // version must clamp to 29 and we must advertise 29 on the wire so the
+        // peer's own MIN(remote, ours) converges to 29 too.
+        // upstream: compat.c:604-607
+        let mut stdin = Cursor::new(vec![32, 0, 0, 0]);
+        let mut stdout = Vec::new();
+
+        let result = perform_handshake_with_max(&mut stdin, &mut stdout, ProtocolVersion::V29)
+            .expect("handshake succeeds");
+        assert_eq!(result.protocol, ProtocolVersion::V29);
+        assert_eq!(stdout[0], 29, "must advertise the capped version");
+    }
+
+    #[test]
+    fn max_version_does_not_raise_below_remote() {
+        // We cap to 32 (default) but the remote only offers 30: negotiate 30.
+        let mut stdin = Cursor::new(vec![30, 0, 0, 0]);
+        let mut stdout = Vec::new();
+
+        let result = perform_handshake_with_max(&mut stdin, &mut stdout, ProtocolVersion::V32)
+            .expect("handshake succeeds");
+        assert_eq!(result.protocol, ProtocolVersion::V30);
+        assert_eq!(stdout[0], 32);
+    }
+
+    #[test]
+    fn max_version_30_and_31_are_honored() {
+        for (cap, expected) in [(ProtocolVersion::V30, 30u8), (ProtocolVersion::V31, 31u8)] {
+            let mut stdin = Cursor::new(vec![32, 0, 0, 0]);
+            let mut stdout = Vec::new();
+            let result = perform_handshake_with_max(&mut stdin, &mut stdout, cap)
+                .expect("handshake succeeds");
+            assert_eq!(result.protocol.as_u8(), expected);
+            assert_eq!(stdout[0], expected);
+        }
+    }
+
+    #[test]
+    fn default_handshake_advertises_newest() {
+        // The no-cap path is byte-identical to advertising NEWEST.
+        let mut stdin = Cursor::new(vec![32, 0, 0, 0]);
+        let mut stdout = Vec::new();
+        let result = perform_handshake(&mut stdin, &mut stdout).expect("handshake succeeds");
+        assert_eq!(result.protocol, ProtocolVersion::NEWEST);
+        assert_eq!(stdout[0], ProtocolVersion::NEWEST.as_u8());
     }
 
     #[test]

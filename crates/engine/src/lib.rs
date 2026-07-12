@@ -216,8 +216,8 @@ pub use hardlink::{HardlinkAction, HardlinkGroup, HardlinkKey, HardlinkResolver,
 /// dedicated [`BufferPool`] for isolated subsystems.
 pub use local_copy::{
     BorrowedBufferGuard, BufferAllocator, BufferGuard, BufferPool, BufferPoolStats,
-    DefaultAllocator, GlobalBufferPoolConfig, ThroughputTracker, global_buffer_pool,
-    init_global_buffer_pool,
+    DEFAULT_BUFFER_POOL_BLOCK_SIZE, DefaultAllocator, GlobalBufferPoolConfig,
+    MAX_BUFFER_POOL_BLOCK_SIZE, ThroughputTracker, global_buffer_pool, init_global_buffer_pool,
 };
 
 /// Local filesystem copy operations.

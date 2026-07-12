@@ -258,8 +258,15 @@ fn apply_long_form_args(client_args: &[String], config: &mut ServerConfig) -> Op
                 // The daemon receiver's quick-check honours it via same_time() so
                 // files within the window are not needlessly re-transferred.
                 } else if let Some(val) = arg.strip_prefix("--modify-window=") {
-                    if let Ok(n) = val.trim_start_matches('+').parse::<u64>() {
-                        config.file_selection.modify_window = n;
+                    if let Ok(n) = val.trim_start_matches('+').parse::<i64>() {
+                        config.file_selection.modify_window = ::metadata::ModifyWindow::from_secs(n);
+                    }
+                // upstream: options.c:2874 - a negative modify_window is
+                // forwarded via the short `-@%d` spelling (e.g. `-@-1`) for
+                // nanosecond-exact comparison (util1.c:1482).
+                } else if let Some(val) = arg.strip_prefix("-@") {
+                    if let Ok(n) = val.parse::<i64>() {
+                        config.file_selection.modify_window = ::metadata::ModifyWindow::from_secs(n);
                     }
                 // Fallback: =value format for reference directories and backup options.
                 // Handles both upstream (two-arg) and legacy (=value) formats.

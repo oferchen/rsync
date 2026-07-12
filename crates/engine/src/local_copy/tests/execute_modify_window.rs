@@ -39,7 +39,7 @@ fn modify_window_skips_files_within_one_second_window() {
     let summary = plan
         .execute_with_options(
             LocalCopyExecution::Apply,
-            LocalCopyOptions::default().with_modify_window(Duration::from_secs(1)),
+            LocalCopyOptions::default().with_modify_window(ModifyWindow::from_secs(1)),
         )
         .expect("copy succeeds");
 
@@ -78,7 +78,7 @@ fn modify_window_copies_files_outside_one_second_window() {
     let summary = plan
         .execute_with_options(
             LocalCopyExecution::Apply,
-            LocalCopyOptions::default().with_modify_window(Duration::from_secs(1)),
+            LocalCopyOptions::default().with_modify_window(ModifyWindow::from_secs(1)),
         )
         .expect("copy succeeds");
 
@@ -118,7 +118,7 @@ fn modify_window_two_seconds_for_fat_filesystems() {
     let summary = plan
         .execute_with_options(
             LocalCopyExecution::Apply,
-            LocalCopyOptions::default().with_modify_window(Duration::from_secs(2)),
+            LocalCopyOptions::default().with_modify_window(ModifyWindow::from_secs(2)),
         )
         .expect("copy succeeds");
 
@@ -153,7 +153,7 @@ fn modify_window_sixty_seconds_for_large_tolerance() {
     let summary = plan
         .execute_with_options(
             LocalCopyExecution::Apply,
-            LocalCopyOptions::default().with_modify_window(Duration::from_secs(60)),
+            LocalCopyOptions::default().with_modify_window(ModifyWindow::from_secs(60)),
         )
         .expect("copy succeeds");
 
@@ -187,7 +187,7 @@ fn modify_window_sixty_seconds_copies_when_outside() {
     let summary = plan
         .execute_with_options(
             LocalCopyExecution::Apply,
-            LocalCopyOptions::default().with_modify_window(Duration::from_secs(60)),
+            LocalCopyOptions::default().with_modify_window(ModifyWindow::from_secs(60)),
         )
         .expect("copy succeeds");
 
@@ -285,7 +285,7 @@ fn modify_window_applies_symmetrically_source_older() {
     let summary = plan
         .execute_with_options(
             LocalCopyExecution::Apply,
-            LocalCopyOptions::default().with_modify_window(Duration::from_secs(1)),
+            LocalCopyOptions::default().with_modify_window(ModifyWindow::from_secs(1)),
         )
         .expect("copy succeeds");
 
@@ -318,7 +318,7 @@ fn modify_window_applies_symmetrically_source_newer() {
     let summary = plan
         .execute_with_options(
             LocalCopyExecution::Apply,
-            LocalCopyOptions::default().with_modify_window(Duration::from_secs(1)),
+            LocalCopyOptions::default().with_modify_window(ModifyWindow::from_secs(1)),
         )
         .expect("copy succeeds");
 
@@ -351,7 +351,7 @@ fn modify_window_symmetry_boundary_at_exact_limit() {
     let summary = plan
         .execute_with_options(
             LocalCopyExecution::Apply,
-            LocalCopyOptions::default().with_modify_window(Duration::from_secs(2)),
+            LocalCopyOptions::default().with_modify_window(ModifyWindow::from_secs(2)),
         )
         .expect("copy succeeds");
 
@@ -385,7 +385,7 @@ fn modify_window_with_update_skips_when_dest_newer_outside_window() {
             LocalCopyExecution::Apply,
             LocalCopyOptions::default()
                 .update(true)
-                .with_modify_window(Duration::from_secs(1)),
+                .with_modify_window(ModifyWindow::from_secs(1)),
         )
         .expect("copy succeeds");
 
@@ -428,7 +428,7 @@ fn modify_window_with_update_skips_when_dest_slightly_newer() {
             LocalCopyExecution::Apply,
             LocalCopyOptions::default()
                 .update(true)
-                .with_modify_window(Duration::from_secs(1)),
+                .with_modify_window(ModifyWindow::from_secs(1)),
         )
         .expect("copy succeeds");
 
@@ -467,7 +467,7 @@ fn modify_window_with_update_skips_when_dest_newer_within_window_despite_size_di
             LocalCopyExecution::Apply,
             LocalCopyOptions::default()
                 .update(true)
-                .with_modify_window(Duration::from_secs(1)),
+                .with_modify_window(ModifyWindow::from_secs(1)),
         )
         .expect("copy succeeds");
 
@@ -506,7 +506,7 @@ fn modify_window_with_update_copies_when_source_definitively_newer() {
             LocalCopyExecution::Apply,
             LocalCopyOptions::default()
                 .update(true)
-                .with_modify_window(Duration::from_secs(1)),
+                .with_modify_window(ModifyWindow::from_secs(1)),
         )
         .expect("copy succeeds");
 
@@ -549,7 +549,7 @@ fn modify_window_with_update_skips_when_source_slightly_newer_within_window() {
             LocalCopyExecution::Apply,
             LocalCopyOptions::default()
                 .update(true)
-                .with_modify_window(Duration::from_secs(2)),
+                .with_modify_window(ModifyWindow::from_secs(2)),
         )
         .expect("copy succeeds");
 
@@ -591,7 +591,7 @@ fn modify_window_with_update_copies_when_source_at_exact_window_boundary() {
             LocalCopyExecution::Apply,
             LocalCopyOptions::default()
                 .update(true)
-                .with_modify_window(Duration::from_secs(2)),
+                .with_modify_window(ModifyWindow::from_secs(2)),
         )
         .expect("copy succeeds");
 
@@ -641,7 +641,7 @@ fn modify_window_recursive_mixed_timestamps() {
             LocalCopyExecution::Apply,
             LocalCopyOptions::default()
                 .recursive(true)
-                .with_modify_window(Duration::from_secs(1)),
+                .with_modify_window(ModifyWindow::from_secs(1)),
         )
         .expect("copy succeeds");
 
@@ -695,7 +695,7 @@ fn modify_window_subsecond_same_second_skips() {
     let summary = plan
         .execute_with_options(
             LocalCopyExecution::Apply,
-            LocalCopyOptions::default().with_modify_window(Duration::from_secs(1)),
+            LocalCopyOptions::default().with_modify_window(ModifyWindow::from_secs(1)),
         )
         .expect("copy succeeds");
 
@@ -726,7 +726,7 @@ fn modify_window_with_different_file_sizes_always_copies() {
     let summary = plan
         .execute_with_options(
             LocalCopyExecution::Apply,
-            LocalCopyOptions::default().with_modify_window(Duration::from_secs(1)),
+            LocalCopyOptions::default().with_modify_window(ModifyWindow::from_secs(1)),
         )
         .expect("copy succeeds");
 
@@ -763,7 +763,7 @@ fn modify_window_with_ignore_times_always_copies() {
             LocalCopyExecution::Apply,
             LocalCopyOptions::default()
                 .ignore_times(true)
-                .with_modify_window(Duration::from_secs(1)),
+                .with_modify_window(ModifyWindow::from_secs(1)),
         )
         .expect("copy succeeds");
 
@@ -798,7 +798,7 @@ fn modify_window_with_size_only_ignores_timestamps() {
             LocalCopyExecution::Apply,
             LocalCopyOptions::default()
                 .size_only(true)
-                .with_modify_window(Duration::from_secs(1)),
+                .with_modify_window(ModifyWindow::from_secs(1)),
         )
         .expect("copy succeeds");
 
@@ -830,7 +830,7 @@ fn modify_window_dry_run_reports_correctly() {
     let summary = plan
         .execute_with_options(
             LocalCopyExecution::DryRun,
-            LocalCopyOptions::default().with_modify_window(Duration::from_secs(1)),
+            LocalCopyOptions::default().with_modify_window(ModifyWindow::from_secs(1)),
         )
         .expect("dry run succeeds");
 
@@ -878,7 +878,7 @@ fn modify_window_dry_run_absorbs_within_window_mtime_drift() {
     let summary = plan
         .execute_with_options(
             LocalCopyExecution::DryRun,
-            LocalCopyOptions::default().with_modify_window(Duration::from_secs(2)),
+            LocalCopyOptions::default().with_modify_window(ModifyWindow::from_secs(2)),
         )
         .expect("dry run succeeds");
 
@@ -980,7 +980,7 @@ fn modify_window_matches_upstream_rsync_semantics() {
     let summary = plan
         .execute_with_options(
             LocalCopyExecution::Apply,
-            LocalCopyOptions::default().with_modify_window(Duration::from_secs(2)),
+            LocalCopyOptions::default().with_modify_window(ModifyWindow::from_secs(2)),
         )
         .expect("copy succeeds");
 

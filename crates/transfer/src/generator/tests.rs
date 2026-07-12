@@ -3195,6 +3195,93 @@ mod files_from {
     }
 
     #[test]
+    fn files_from_implied_dirs_gated_to_protocol_30() {
+        // Bug #268 (same class as #266): the --files-from implied-parent loop
+        // in `build_file_list_with_base` emitted purely implied parent dirs
+        // unconditionally, at every protocol. Upstream gates the send on
+        // `implied_dirs` (flist.c:2468), which --no-implied-dirs clears; the
+        // force-on at flist.c:2257-2258 only applies at protocol >= 30. So a
+        // proto-29 `--files-from --relative --no-implied-dirs` transfer must
+        // omit the purely implied parent, while proto >= 30 keeps it.
+        //
+        // Entry `<src>/usr/bin/ar` strips to rel `usr/bin/ar`; its purely
+        // implied parents are `usr` and `usr/bin`. The leaf file `usr/bin/ar`
+        // is always sent; only the implied parents are gated.
+        fn implied_parents_present(protocol: u8, no_implied_dirs: bool) -> (bool, bool) {
+            let temp_dir = TempDir::new().unwrap();
+            let src = temp_dir.path().join("src");
+            let leaf = src.join("usr").join("bin");
+            std::fs::create_dir_all(&leaf).unwrap();
+            std::fs::write(leaf.join("ar"), b"x").unwrap();
+
+            let handshake = test_handshake_with_protocol(protocol);
+            let mut config = test_config();
+            config.flags.relative = true;
+            config.flags.no_implied_dirs = no_implied_dirs;
+            config.args = vec![OsString::from(&src)];
+            let mut ctx = GeneratorContext::new_for_test(&handshake, config);
+
+            let file_paths = vec![leaf.join("ar")];
+            ctx.build_file_list_with_base(&src, &files_from_entries(&src, file_paths))
+                .unwrap();
+
+            // Compare on the wire form (name_bytes, always '/'-separated via
+            // path_bytes_to_wire) rather than name() which returns the local
+            // PathBuf verbatim - on Windows that yields `usr\bin\ar`, so the
+            // multi-component assertions below would spuriously fail. The wire
+            // name is what the proto-gate actually governs.
+            let names: Vec<String> = ctx
+                .file_list()
+                .iter()
+                .map(|e| String::from_utf8_lossy(&e.name_bytes()).into_owned())
+                .collect();
+            assert!(
+                names.iter().any(|n| n == "usr/bin/ar"),
+                "walked leaf must always be sent (proto={protocol}, \
+                 no_implied_dirs={no_implied_dirs}): {names:?}"
+            );
+            (
+                names.iter().any(|n| n == "usr"),
+                names.iter().any(|n| n == "usr/bin"),
+            )
+        }
+
+        // Default (implied dirs on): implied parents sent at every protocol.
+        assert_eq!(
+            implied_parents_present(29, false),
+            (true, true),
+            "proto 29 default must emit implied parents usr + usr/bin"
+        );
+        assert_eq!(
+            implied_parents_present(32, false),
+            (true, true),
+            "proto 32 default must emit implied parents usr + usr/bin"
+        );
+
+        // --no-implied-dirs: omitted at protocol < 30, forced on at protocol >= 30.
+        assert_eq!(
+            implied_parents_present(28, true),
+            (false, false),
+            "proto 28 --no-implied-dirs must omit implied parents"
+        );
+        assert_eq!(
+            implied_parents_present(29, true),
+            (false, false),
+            "proto 29 --no-implied-dirs must omit implied parents"
+        );
+        assert_eq!(
+            implied_parents_present(30, true),
+            (true, true),
+            "proto 30 forces implied parents on despite --no-implied-dirs"
+        );
+        assert_eq!(
+            implied_parents_present(32, true),
+            (true, true),
+            "proto 32 forces implied parents on despite --no-implied-dirs"
+        );
+    }
+
+    #[test]
     fn non_relative_mode_emits_source_basename() {
         // upstream: flist.c:2338-2349 - non-relative mode splits each
         // positional on its last `/`: `dir` becomes the chdir target,

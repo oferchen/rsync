@@ -107,6 +107,10 @@ mod chmod;
 pub mod copy_as;
 mod error;
 
+/// Signed `--modify-window` tolerance and the `same_time()` mtime comparison.
+pub mod modify_window;
+pub use modify_window::ModifyWindow;
+
 /// UID/GID lookup and mapping utilities.
 pub mod id_lookup;
 

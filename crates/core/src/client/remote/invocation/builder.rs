@@ -311,8 +311,20 @@ impl<'a> RemoteInvocationBuilder<'a> {
             args.push(OsString::from(format!("--max-alloc={limit}")));
         }
 
-        if let Some(window) = self.config.modify_window() {
-            args.push(OsString::from(format!("--modify-window={window}")));
+        // upstream: options.c:2873-2875 - server_options() forwards the
+        // modify_window value only when it was explicitly set AND the local
+        // side is the sender (`modify_window_set && am_sender`): the remote
+        // receiver's generator is what performs the mtime quick-check. A
+        // negative window (nanosecond-exact) is sent via the short `-@%d`
+        // spelling (e.g. `-@-1`); a non-negative window uses `--modify-window=%d`.
+        if self.role == RemoteRole::Sender
+            && let Some(window) = self.config.modify_window()
+        {
+            if window < 0 {
+                args.push(OsString::from(format!("-@{window}")));
+            } else {
+                args.push(OsString::from(format!("--modify-window={window}")));
+            }
         }
 
         // upstream: options.c - compress_level sent to server when
