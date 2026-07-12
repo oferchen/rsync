@@ -266,16 +266,37 @@ mod tests {
         assert!(!supported.contains(&"zstd"));
     }
 
+    #[cfg(feature = "lz4")]
+    #[test]
+    fn negotiation_lz4_in_auto_negotiation() {
+        let negotiator = DefaultCompressionNegotiator::new();
+        let supported = negotiator.supported_algorithms();
+        assert!(
+            supported.contains(&"lz4"),
+            "lz4 must appear in auto-negotiation list once its wire format is validated"
+        );
+    }
+
+    #[cfg(not(feature = "lz4"))]
     #[test]
     fn negotiation_lz4_not_in_auto_negotiation() {
         let negotiator = DefaultCompressionNegotiator::new();
         let supported = negotiator.supported_algorithms();
         assert!(
             !supported.contains(&"lz4"),
-            "lz4 must not appear in auto-negotiation list"
+            "lz4 must not appear in auto-negotiation list when the lz4 feature is off"
         );
     }
 
+    #[cfg(feature = "lz4")]
+    #[test]
+    fn negotiation_remote_only_lz4_returns_lz4() {
+        let negotiator = DefaultCompressionNegotiator::new();
+        let selected = negotiator.select_algorithm(&["lz4"], false);
+        assert_eq!(selected, "lz4");
+    }
+
+    #[cfg(not(feature = "lz4"))]
     #[test]
     fn negotiation_remote_only_lz4_returns_none() {
         let negotiator = DefaultCompressionNegotiator::new();
@@ -283,6 +304,15 @@ mod tests {
         assert_eq!(selected, "none");
     }
 
+    #[cfg(feature = "lz4")]
+    #[test]
+    fn negotiation_remote_only_lz4_server_returns_lz4() {
+        let negotiator = DefaultCompressionNegotiator::new();
+        let selected = negotiator.select_algorithm(&["lz4"], true);
+        assert_eq!(selected, "lz4");
+    }
+
+    #[cfg(not(feature = "lz4"))]
     #[test]
     fn negotiation_remote_only_lz4_server_returns_none() {
         let negotiator = DefaultCompressionNegotiator::new();
