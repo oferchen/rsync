@@ -2914,3 +2914,37 @@ fn sparse_writer_inner_access() {
 fn zero_scan_strategy_default_is_simd() {
     assert_eq!(ZeroScanStrategy::default(), ZeroScanStrategy::Simd);
 }
+
+#[test]
+fn sparse_write_size_matches_upstream_1k_window() {
+    // Upstream feeds write_sparse() in SPARSE_WRITE_SIZE (1024) pieces
+    // (fileio.c:156). The scan window must match so interior zero runs are
+    // punched at the same granularity as upstream. upstream: rsync.h SPARSE_WRITE_SIZE.
+    assert_eq!(super::SPARSE_WRITE_SIZE, 1024);
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn sub_window_interior_zero_run_is_punched() {
+    // A 4 KB..8 KB..4 KB layout has an 8 KB interior zero run smaller than the
+    // former 32 KB scan window. With the upstream 1 KB window the interior run
+    // is seeked over and left unallocated; the old 32 KB window wrote it as
+    // literal data, allocating the blocks upstream deallocates (issue #257).
+    use std::os::unix::fs::MetadataExt;
+    let tmp = NamedTempFile::new().expect("tempfile");
+    let mut file = tmp.reopen().expect("reopen");
+    let mut state = SparseWriteState::default();
+    let mut data = vec![0xAAu8; 4096];
+    data.extend(std::iter::repeat_n(0u8, 8192));
+    data.extend(std::iter::repeat_n(0xBBu8, 4096));
+    write_sparse_chunk(&mut file, &mut state, &data, tmp.path()).expect("write");
+    let end = state.finish(&mut file, tmp.path()).expect("finish");
+    file.set_len(end).expect("set_len");
+    let meta = fs::metadata(tmp.path()).expect("metadata");
+    assert_eq!(meta.len(), 16384, "apparent size unchanged");
+    assert!(
+        meta.blocks() * 512 < 16384,
+        "interior 8 KB hole must be unallocated, got {} bytes",
+        meta.blocks() * 512
+    );
+}

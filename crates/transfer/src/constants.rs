@@ -17,6 +17,18 @@
 /// Matches upstream `CHUNK_SIZE` (32 * 1024).
 pub const CHUNK_SIZE: usize = 32 * 1024;
 
+/// Scan window for sparse zero-run detection during file writes.
+///
+/// Upstream `write_file()` feeds `write_sparse()` in pieces of at most this
+/// size (`fileio.c:156`, `int len1 = MIN(len, SPARSE_WRITE_SIZE)`), so only
+/// leading/trailing zeros of each 1 KB window are turned into holes. Matching
+/// this window is required for oc's punched holes to line up with upstream:
+/// a larger window writes sub-window interior zero runs as literal data,
+/// leaving them allocated where upstream would deallocate them.
+///
+/// Matches upstream `SPARSE_WRITE_SIZE` (1024) in `rsync.h`.
+pub const SPARSE_WRITE_SIZE: usize = 1024;
+
 /// Maximum size of the memory-mapped file window.
 ///
 /// When reading basis files for delta application, data is cached in a
@@ -155,6 +167,7 @@ mod tests {
     #[test]
     fn constants_match_upstream() {
         assert_eq!(CHUNK_SIZE, 32 * 1024);
+        assert_eq!(SPARSE_WRITE_SIZE, 1024);
         assert_eq!(MAX_MAP_SIZE, 256 * 1024);
         assert_eq!(IO_BUFFER_SIZE, 32 * 1024);
         assert_eq!(ALIGN_BOUNDARY, 1024);

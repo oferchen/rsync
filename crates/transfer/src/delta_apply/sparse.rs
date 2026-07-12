@@ -4,7 +4,7 @@
 
 use std::io::{self, Seek, SeekFrom, Write};
 
-use crate::constants::{CHUNK_SIZE, leading_zero_count, trailing_zero_count};
+use crate::constants::{SPARSE_WRITE_SIZE, leading_zero_count, trailing_zero_count};
 
 /// Tracks pending runs of zeros so they become holes in the output file rather
 /// than being written as data.
@@ -102,7 +102,9 @@ impl SparseWriteState {
     /// Writes data with sparse optimization.
     ///
     /// Zero runs are tracked and become holes; non-zero data is written normally.
-    /// Uses 32KB chunks matching upstream rsync's CHUNK_SIZE for efficient processing.
+    /// Scans in `SPARSE_WRITE_SIZE` (1 KB) windows matching upstream rsync's
+    /// `write_file()` piece size so interior zero runs are punched exactly as
+    /// upstream does, not written as literal data.
     #[inline]
     pub fn write<W: Write + Seek>(&mut self, writer: &mut W, data: &[u8]) -> io::Result<usize> {
         if data.is_empty() {
@@ -112,7 +114,7 @@ impl SparseWriteState {
         let mut offset = 0;
 
         while offset < data.len() {
-            let end = (offset + CHUNK_SIZE).min(data.len());
+            let end = (offset + SPARSE_WRITE_SIZE).min(data.len());
             let chunk = &data[offset..end];
 
             let leading_zeros = leading_zero_count(chunk);
@@ -158,7 +160,7 @@ impl SparseWriteState {
 
 #[cfg(test)]
 mod tests {
-    use std::io::Cursor;
+    use std::io::{self, Cursor, Seek, SeekFrom, Write};
 
     use super::*;
 
@@ -265,7 +267,7 @@ mod tests {
         // by a following data write) starting inside the preallocated basis
         // extent is recorded for punching, so an --inplace update deallocates
         // stale basis blocks instead of leaving them on disk. The run is fed as
-        // a distinct write, mirroring receive_data streaming CHUNK_SIZE pieces;
+        // a distinct write, mirroring receive_data streaming SPARSE_WRITE_SIZE pieces;
         // interior zeros within one write are written literally (as upstream)
         // and correctly overwrite the basis, so only seeked runs are punched.
         // upstream: fileio.c:90-99 write_sparse().
@@ -277,6 +279,61 @@ mod tests {
         state.write(&mut cursor, &[9u8; 10]).unwrap(); // data forces the flush
         let holes = state.take_holes();
         assert_eq!(holes, vec![(100, 300)], "in-basis run recorded for punch");
+    }
+
+    /// A writer that records how many bytes are written versus seeked over, so a
+    /// test can prove interior zero runs became holes instead of literal data.
+    struct CountingWriter {
+        inner: Cursor<Vec<u8>>,
+        written: u64,
+        seeked: u64,
+    }
+
+    impl Write for CountingWriter {
+        fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+            self.written += buf.len() as u64;
+            self.inner.write(buf)
+        }
+        fn flush(&mut self) -> io::Result<()> {
+            self.inner.flush()
+        }
+    }
+
+    impl Seek for CountingWriter {
+        fn seek(&mut self, pos: SeekFrom) -> io::Result<u64> {
+            if let SeekFrom::Current(delta) = pos {
+                self.seeked += delta.unsigned_abs();
+            }
+            self.inner.seek(pos)
+        }
+    }
+
+    #[test]
+    fn sub_window_interior_zero_run_becomes_hole_not_literal() {
+        // A 4 KB..8 KB..4 KB layout has an 8 KB interior zero run that is smaller
+        // than the old 32 KB scan window. Upstream `write_file()` scans in
+        // SPARSE_WRITE_SIZE (1 KB) pieces, so the interior run is seeked over
+        // (punched) rather than written as literal data. With a 32 KB window the
+        // whole 16 KB fell in one window and the interior zeros were written
+        // literally, leaving them allocated on disk (issue #257). The write pass
+        // must therefore write only the 8 KB of real data and seek the 8 KB hole.
+        // upstream: fileio.c:149 write_file() -> MIN(len, SPARSE_WRITE_SIZE).
+        let mut state = SparseWriteState::new();
+        let mut w = CountingWriter {
+            inner: Cursor::new(Vec::new()),
+            written: 0,
+            seeked: 0,
+        };
+        let mut data = vec![0xAAu8; 4096];
+        data.extend(std::iter::repeat_n(0u8, 8192));
+        data.extend(std::iter::repeat_n(0xBBu8, 4096));
+        state.write(&mut w, &data).unwrap();
+        state.finish(&mut w).unwrap();
+        assert_eq!(w.written, 8192, "only the two 4 KB data blocks are written");
+        assert_eq!(
+            w.seeked, 8192,
+            "the 8 KB interior zero run is seeked (hole)"
+        );
     }
 
     #[test]
