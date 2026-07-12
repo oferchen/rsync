@@ -38,7 +38,8 @@ use super::{
     filter_program_local_error, follow_symlink_metadata, load_dir_merge_rules_recursive,
     map_metadata_error, record_directory_subtree, remove_source_entry_if_requested,
     resolve_dir_merge_path, should_skip_copy, symlink_target_is_safe, trace_make_backup_copy,
-    trace_make_backup_rename, trace_make_backup_symlink, write_sparse_chunk,
+    trace_make_backup_device, trace_make_backup_rename, trace_make_backup_symlink,
+    write_sparse_chunk,
 };
 use crate::delta::DeltaSignatureIndex;
 use crate::signature::SignatureBlock;
@@ -473,14 +474,16 @@ pub(crate) enum CreatedEntryKind {
 /// Strategy used to place an existing destination into the backup
 /// location. Mirrors upstream rsync's `make_backup` success branches
 /// (RENAME / COPY / SYMLINK / DEVICE / HLINK) for `--debug=BACKUP`
-/// reporting; oc-rsync's local-copy executor exercises only RENAME,
-/// COPY (cross-device fallback for regular files), and SYMLINK
-/// (cross-device fallback for symlinks).
+/// reporting; oc-rsync's local-copy executor exercises RENAME, COPY
+/// (cross-device fallback for regular files), SYMLINK (cross-device
+/// fallback for symlinks), and DEVICE (cross-device fallback for
+/// device/FIFO/socket nodes, recreated via mknod).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum BackupStrategy {
     Rename,
     Copy,
     Symlink,
+    Device,
 }
 
 include!("context_impl/state.rs");

@@ -930,17 +930,51 @@ impl<'a> CopyContext<'a> {
                         return Ok(());
                     }
                 }
-                copy_entry_to_backup(destination, &backup_path, file_type)?;
-                if file_type.is_symlink() {
-                    BackupStrategy::Symlink
-                } else {
-                    BackupStrategy::Copy
+                match copy_entry_to_backup(
+                    destination,
+                    &backup_path,
+                    file_type,
+                    self.options.devices_enabled(),
+                    self.options.specials_enabled(),
+                    self.options.fake_super_enabled(),
+                )? {
+                    Some(strategy) => strategy,
+                    // upstream: backup.c:306-317 - a non-regular file that is
+                    // neither backed up as a device/special (gates off) nor a
+                    // symlink is skipped; make_backup returns 3 and leaves no
+                    // backup, so emit no trace and no "backed up" notice.
+                    None => return Ok(()),
                 }
             }
             Err(error) => {
                 return Err(LocalCopyError::io("create backup", backup_path, error));
             }
         };
+
+        // upstream: backup.c:338-341 - set_file_attrs(buf, file, NULL, fname,
+        // ATTRS_ACCURATE_TIME) copies the source node's mode/owner/times onto
+        // the freshly-created backup node (with preserve_xattrs temporarily
+        // cleared), overriding the umask that mknod applied. Only the
+        // cross-device device/special copy fallback needs this: rename carries
+        // the inode's attributes verbatim, and the regular-file copy path
+        // mirrors upstream's own COPY handling.
+        if strategy == BackupStrategy::Device
+            && let Ok(source_meta) = fs::symlink_metadata(destination)
+        {
+            let metadata_options = self.metadata_options();
+            apply_file_metadata_with_options(&backup_path, &source_meta, &metadata_options)
+                .map_err(map_metadata_error)?;
+            // upstream: xattrs.c:set_stat_xattr() re-records the source stat in
+            // `user.rsync.%stat` under --fake-super so the virtualised node's
+            // mode/owner/rdev survive; no-op when fake-super is off.
+            #[cfg(all(unix, feature = "xattr"))]
+            store_effective_fake_super_if_requested(
+                &metadata_options,
+                destination,
+                &backup_path,
+                &source_meta,
+            )?;
+        }
 
         // upstream: backup.c:201-202,216-217,299-300,333-334 - DEBUG_GTE(BACKUP, 1)
         // emits one of HLINK/RENAME/SYMLINK/COPY per success path. oc-rsync's
@@ -951,6 +985,7 @@ impl<'a> CopyContext<'a> {
             BackupStrategy::Rename => trace_make_backup_rename(&destination_display),
             BackupStrategy::Copy => trace_make_backup_copy(&destination_display),
             BackupStrategy::Symlink => trace_make_backup_symlink(&destination_display),
+            BackupStrategy::Device => trace_make_backup_device(&destination_display),
         }
 
         // upstream: backup.c:353 - rprintf(FINFO, "backed up %s to %s\n", fname, buf)

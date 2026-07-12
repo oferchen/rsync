@@ -103,7 +103,7 @@ mod file_operations_tests {
         fs::write(&source, b"original content").expect("write");
 
         let metadata = fs::metadata(&source).expect("metadata");
-        let result = copy_entry_to_backup(&source, &backup, metadata.file_type());
+        let result = copy_entry_to_backup(&source, &backup, metadata.file_type(), true, true, false);
 
         assert!(result.is_ok());
         assert!(backup.exists());
@@ -128,7 +128,7 @@ mod file_operations_tests {
         std::os::windows::fs::symlink_file(&target, &symlink).expect("symlink");
 
         let metadata = fs::symlink_metadata(&symlink).expect("metadata");
-        let result = copy_entry_to_backup(&symlink, &backup, metadata.file_type());
+        let result = copy_entry_to_backup(&symlink, &backup, metadata.file_type(), true, true, false);
 
         assert!(result.is_ok());
         assert!(backup.exists());
@@ -148,10 +148,58 @@ mod file_operations_tests {
         fs::write(source_dir.join("file.txt"), b"content").expect("write");
 
         let metadata = fs::metadata(&source_dir).expect("metadata");
-        let result = copy_entry_to_backup(&source_dir, &backup, metadata.file_type());
+        let result =
+            copy_entry_to_backup(&source_dir, &backup, metadata.file_type(), true, true, false);
 
         // Should succeed but not copy directory
         assert!(result.is_ok());
+        assert!(!backup.exists());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn copy_entry_to_backup_fifo_recreates_node() {
+        use crate::local_copy::context::BackupStrategy;
+        use std::os::unix::fs::FileTypeExt;
+
+        let temp = tempdir().expect("tempdir");
+        let fifo = temp.path().join("pipe");
+        let backup = temp.path().join("pipe.bak");
+        mkfifo_for_tests(&fifo, 0o644).expect("mkfifo");
+
+        let metadata = fs::symlink_metadata(&fifo).expect("metadata");
+        assert!(metadata.file_type().is_fifo());
+
+        // --specials must recreate the node at the backup location rather than
+        // silently dropping it (the cross-device copy fallback previously did
+        // nothing for non-regular files). upstream: backup.c:279-285 do_mknod_at.
+        let result = copy_entry_to_backup(&fifo, &backup, metadata.file_type(), false, true, false)
+            .expect("backup");
+        assert_eq!(result, Some(BackupStrategy::Device));
+
+        let backup_meta = fs::symlink_metadata(&backup).expect("backup metadata");
+        assert!(backup_meta.file_type().is_fifo());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn copy_entry_to_backup_special_skipped_without_specials() {
+        use std::os::unix::fs::FileTypeExt;
+
+        let temp = tempdir().expect("tempdir");
+        let fifo = temp.path().join("pipe");
+        let backup = temp.path().join("pipe.bak");
+        mkfifo_for_tests(&fifo, 0o644).expect("mkfifo");
+
+        let metadata = fs::symlink_metadata(&fifo).expect("metadata");
+        assert!(metadata.file_type().is_fifo());
+
+        // Without --specials upstream make_backup returns 3 and places no
+        // backup (backup.c:306-317); copy_entry_to_backup reports None so the
+        // caller emits neither a trace nor a "backed up" notice.
+        let result = copy_entry_to_backup(&fifo, &backup, metadata.file_type(), true, false, false)
+            .expect("backup");
+        assert_eq!(result, None);
         assert!(!backup.exists());
     }
 
@@ -192,7 +240,7 @@ mod file_operations_tests {
         fs::write(&dummy_file, b"dummy").expect("write");
         let metadata = fs::metadata(&dummy_file).expect("metadata");
 
-        let result = copy_entry_to_backup(&source, &backup, metadata.file_type());
+        let result = copy_entry_to_backup(&source, &backup, metadata.file_type(), true, true, false);
 
         // Should fail because source doesn't exist
         assert!(result.is_err());
@@ -208,7 +256,7 @@ mod file_operations_tests {
         let backup = Path::new("/nonexistent/impossible/backup.txt");
 
         let metadata = fs::metadata(&source).expect("metadata");
-        let result = copy_entry_to_backup(&source, backup, metadata.file_type());
+        let result = copy_entry_to_backup(&source, backup, metadata.file_type(), true, true, false);
 
         // Should fail because backup location is invalid
         assert!(result.is_err());
@@ -296,7 +344,7 @@ mod file_operations_tests {
         fs::write(&backup, b"old backup").expect("write old backup");
 
         let metadata = fs::metadata(&source).expect("metadata");
-        let result = copy_entry_to_backup(&source, &backup, metadata.file_type());
+        let result = copy_entry_to_backup(&source, &backup, metadata.file_type(), true, true, false);
 
         assert!(result.is_ok());
         assert_eq!(
@@ -319,7 +367,7 @@ mod file_operations_tests {
         std::os::windows::fs::symlink_file(&target, &symlink).expect("symlink");
 
         let metadata = fs::symlink_metadata(&symlink).expect("metadata");
-        let result = copy_entry_to_backup(&symlink, &backup, metadata.file_type());
+        let result = copy_entry_to_backup(&symlink, &backup, metadata.file_type(), true, true, false);
 
         assert!(result.is_ok());
 
