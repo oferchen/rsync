@@ -7,7 +7,6 @@ use std::collections::{HashMap, HashSet};
 use std::ffi::OsString;
 
 use clap::Command as ClapCommand;
-use clap::builder::ValueRange;
 
 /// Reorders arguments so that recognised options precede positional operands,
 /// mirroring upstream rsync's popt-based parsing which accepts options in any
@@ -246,17 +245,23 @@ fn classify_short_options(command: &ClapCommand) -> (HashSet<char>, HashSet<char
             continue;
         };
 
-        let num_args = argument.get_num_args().unwrap_or(ValueRange::EMPTY);
-        let min_values = num_args.min_values();
-
         // Arguments that require at least one value (for example `-M` or
         // `-f<rule>`) must only appear at the end of a cluster so the
         // following argument can be treated as their value. Optional
-        // arguments (such as `-h`, which accepts `-h` or `-h=2`) are
-        // treated as simple flags to preserve existing clap behaviour;
-        // packing a value onto an optional-value short flag is not
-        // supported by upstream rsync.
-        let requires_value = min_values > 0;
+        // arguments (such as `-h`, which is an `ArgAction::Count` flag) are
+        // treated as simple flags; packing a value onto an optional-value
+        // short flag is not supported by upstream rsync.
+        //
+        // Honour an explicit `num_args`; otherwise fall back to whether the
+        // action consumes a value, mirroring `classify_long_options`. A
+        // value-bearing short with a defaulted arity (for example `-T`, whose
+        // Arg sets a `value_parser` but no explicit `num_args`, so its action
+        // defaults to `Set`) would otherwise be misclassified as a flag and
+        // the packed/`=`-joined forms (`-T/tmp`, `-T=/tmp`) rejected.
+        let requires_value = argument
+            .get_num_args()
+            .map(|range| range.min_values() > 0)
+            .unwrap_or_else(|| argument.get_action().takes_values());
 
         if requires_value {
             value_options.extend(shorts);
@@ -294,7 +299,13 @@ fn expand_cluster(
             // `-` as additional short options.
             let next_offset = offset + short.len_utf8();
             if next_offset < cluster.len() {
-                fragments.push(cluster[next_offset..].to_owned());
+                let remainder = &cluster[next_offset..];
+                // popt (and clap for the un-expanded `-o=value` form) strip a
+                // single '=' that joins a short option to its packed value, so
+                // `-B=4096` -> `4096` and `-T=/tmp` -> `/tmp`. Mirror that here
+                // for every value-bearing short. upstream: popt short-arg parse.
+                let value = remainder.strip_prefix('=').unwrap_or(remainder);
+                fragments.push(value.to_owned());
             }
             return Some(fragments);
         } else if flag_options.contains(&short) {
@@ -439,6 +450,31 @@ mod tests {
     }
 
     #[test]
+    fn expand_cluster_strips_equals_from_packed_value() {
+        // popt strips one '=' joining a short option to its packed value, so
+        // `-B=4096` -> `-B 4096` and `-T=/tmp` -> `-T /tmp`. Only one '=' goes.
+        let flags = HashSet::new();
+        let values = make_flags("BT");
+        assert_eq!(
+            expand_cluster("-B=4096", &flags, &values),
+            Some(vec!["-B".to_owned(), "4096".to_owned()])
+        );
+        assert_eq!(
+            expand_cluster("-T=/tmp", &flags, &values),
+            Some(vec!["-T".to_owned(), "/tmp".to_owned()])
+        );
+        assert_eq!(
+            expand_cluster("-T==foo", &flags, &values),
+            Some(vec!["-T".to_owned(), "=foo".to_owned()])
+        );
+        // The attached (no '=') form is untouched.
+        assert_eq!(
+            expand_cluster("-B4096", &flags, &values),
+            Some(vec!["-B".to_owned(), "4096".to_owned()])
+        );
+    }
+
+    #[test]
     fn expand_cluster_filter_packed_colon_rule() {
         // upstream rsync `testsuite/exclude.test` uses `-f:C` to inject the
         // `:C` (dir-merge .cvsignore) rule via the packed short-arg form.
@@ -518,6 +554,33 @@ mod tests {
                 OsString::from("-C"),
             ]
         );
+    }
+
+    #[test]
+    fn expand_short_options_value_short_without_explicit_num_args() {
+        // Regression: a value-bearing short whose Arg sets a value_parser but no
+        // explicit num_args (its action defaults to Set) must still be treated
+        // as value-taking, so `-T=/tmp` and `-T/tmp` expand instead of being
+        // rejected as unknown options. Mirrors the real `--temp-dir`/`-T` Arg.
+        let command = ClapCommand::new("rsync").arg(
+            clap::Arg::new("temp-dir")
+                .short('T')
+                .long("temp-dir")
+                .value_parser(clap::builder::OsStringValueParser::new()),
+        );
+        for (input, value) in [("-T=/tmp", "/tmp"), ("-T/tmp", "/tmp")] {
+            let args = vec![OsString::from("rsync"), OsString::from(input)];
+            let expanded = expand_short_options(&command, args);
+            assert_eq!(
+                expanded,
+                vec![
+                    OsString::from("rsync"),
+                    OsString::from("-T"),
+                    OsString::from(value),
+                ],
+                "{input}"
+            );
+        }
     }
 
     fn hoist_command() -> ClapCommand {

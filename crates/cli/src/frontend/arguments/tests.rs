@@ -1287,6 +1287,40 @@ mod option_values {
     }
 
     #[test]
+    fn block_size_short_b_forms_match_long() {
+        // upstream: options.c:752 {"block-size", 'B', ...}. -B/-B<v>/-B=<v> and
+        // --block-size all yield the same value (popt/clap strip the '=').
+        let expected = Some(OsString::from("4096"));
+        for args in [
+            vec!["-B", "4096", "src/", "dst/"],
+            vec!["-B4096", "src/", "dst/"],
+            vec!["-B=4096", "src/", "dst/"],
+            vec!["--block-size", "4096", "src/", "dst/"],
+        ] {
+            let parsed =
+                parse_test_args(args.clone()).unwrap_or_else(|_| panic!("{args:?} should parse"));
+            assert_eq!(parsed.block_size, expected, "{args:?}");
+        }
+    }
+
+    #[test]
+    fn temp_dir_short_t_forms_match_long() {
+        // upstream: options.c:825 {"temp-dir", 'T', ...}. -T/-T<v>/-T=<v> and
+        // --temp-dir all yield the same DIR (the leading '=' is stripped).
+        let expected = Some(std::path::PathBuf::from("/tmp/rsync-temp"));
+        for args in [
+            vec!["-T", "/tmp/rsync-temp", "src/", "dst/"],
+            vec!["-T/tmp/rsync-temp", "src/", "dst/"],
+            vec!["-T=/tmp/rsync-temp", "src/", "dst/"],
+            vec!["--temp-dir=/tmp/rsync-temp", "src/", "dst/"],
+        ] {
+            let parsed =
+                parse_test_args(args.clone()).unwrap_or_else(|_| panic!("{args:?} should parse"));
+            assert_eq!(parsed.temp_dir, expected, "{args:?}");
+        }
+    }
+
+    #[test]
     fn io_uring_depth_accepts_power_of_two() {
         let parsed = parse_test_args(["--io-uring-depth=256", "src/", "dst/"]).expect("parse");
         assert_eq!(parsed.io_uring_depth, Some(256));
@@ -2659,6 +2693,38 @@ mod msgs_stderr_tests {
     fn stderr_mode_option() {
         let parsed = parse_test_args(["--stderr=errors", "src/", "dst/"]).expect("parse");
         assert_eq!(parsed.stderr_mode, Some(OsString::from("errors")));
+    }
+
+    #[test]
+    fn stderr_mode_accepts_upstream_prefixes() {
+        // upstream: options.c:1912 OPT_STDERR accepts any non-empty prefix of
+        // errors/all/client (strncmp), so e/err/al/cli all parse.
+        for value in [
+            "e", "err", "error", "errors", "a", "al", "all", "c", "cli", "client",
+        ] {
+            let arg = format!("--stderr={value}");
+            let parsed = parse_test_args([arg.as_str(), "src/", "dst/"])
+                .unwrap_or_else(|_| panic!("--stderr={value} should be accepted"));
+            assert_eq!(parsed.stderr_mode, Some(OsString::from(value)));
+        }
+    }
+
+    #[test]
+    fn stderr_mode_rejects_invalid_with_upstream_message() {
+        // upstream rejects non-prefixes and (case-sensitively) uppercase forms
+        // with: --stderr mode "X" is not one of errors, all, or client
+        for value in ["bogus", "errorsX", "ERRORS", "ALL", "ax", ""] {
+            let arg = format!("--stderr={value}");
+            let err = parse_test_args([arg.as_str(), "src/", "dst/"])
+                .expect_err(&format!("--stderr={value} should be rejected"));
+            let rendered = err.to_string();
+            assert!(
+                rendered.contains(&format!(
+                    "--stderr mode \"{value}\" is not one of errors, all, or client"
+                )),
+                "unexpected message for --stderr={value}: {rendered}"
+            );
+        }
     }
 }
 
