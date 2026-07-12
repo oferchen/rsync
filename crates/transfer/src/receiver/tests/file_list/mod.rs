@@ -21,6 +21,9 @@
 //!   and round-trip coverage.
 //! - [`delete_pipeline_hook`] - DDP-B3 hook that publishes one delete
 //!   plan per INC_RECURSE segment.
+//! - [`delete_timing`] - early vs late (`--delete-after` / `--delete-delay`)
+//!   delete-pass scheduling and the dest-side `.rsync-filter` protection
+//!   invariant that makes deferral load-bearing.
 //! - [`iconv_wire_order`] - regression coverage for the receiver-side
 //!   `--iconv` ordering invariant (file_list stays in sender wire-emit
 //!   order, never re-sorted on local-charset bytes).
@@ -28,6 +31,7 @@
 #[cfg(feature = "tokio-transfer")]
 mod async_parity;
 mod delete_pipeline_hook;
+mod delete_timing;
 mod filter_chain;
 #[cfg(feature = "iconv")]
 mod iconv_wire_order;
