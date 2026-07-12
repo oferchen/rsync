@@ -298,6 +298,8 @@ proptest = "1.8"
 rand = "0.10"
 # Lock-free MPMC queues - used by engine/transfer for reorder/work pipelines
 crossbeam-queue = "0.3"
+# Concurrency primitives - Backoff for the SPSC pipeline spin-wait escalation
+crossbeam-utils = "0.8"
 # Pure-Rust DEFLATE - codec backbone for protocol/compress and xtask packaging
 flate2 = "1.0"
 # File modification time helpers - metadata, engine async, dev tests

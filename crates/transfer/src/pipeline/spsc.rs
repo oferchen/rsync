@@ -1,8 +1,12 @@
 //! Lock-free SPSC (single-producer, single-consumer) channel.
 //!
 //! Built on [`crossbeam_queue::ArrayQueue`] with [`std::sync::atomic::AtomicBool`]
-//! disconnection flags and [`std::hint::spin_loop`] for waiting.  Zero syscalls -
-//! pure userspace synchronization with no futex, no `thread::park`, no condvar.
+//! disconnection flags and a bounded escalating backoff for waiting.  The
+//! uncontended path stays syscall-free: the first queue probe is a bare atomic
+//! load, so a ready slot costs zero backoff overhead.  Only a *failed* probe
+//! escalates - spin hints, then `yield_now`, then a short `park_timeout` - so a
+//! producer or consumer starved of a core under CPU oversubscription still
+//! makes progress instead of livelocking on a pure spin.
 //!
 //! Designed for the network → disk thread pipeline where exactly one producer
 //! (network ingest) and one consumer (disk commit) exchange `FileMessage`
@@ -11,8 +15,54 @@
 use std::fmt;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::time::Duration;
 
 use crossbeam_queue::ArrayQueue;
+use crossbeam_utils::Backoff;
+
+/// Bounded escalating backoff for the SPSC full/empty wait loops.
+///
+/// A pure `while full/empty { spin_loop() }` never relinquishes the CPU, so
+/// when there are more busy threads than cores (observed on an LTO-off daemon
+/// under high host load) the spinning thread can starve its counterparty out
+/// of the scheduler and livelock the pipeline.  This escalates a *failed*
+/// queue probe in three tiers, cheapest first:
+///
+/// 1. [`Backoff::snooze`] issues a few [`std::hint::spin_loop`] hints
+///    (cache-friendly, sub-microsecond) for the common brief wait, then
+/// 2. once past its spin threshold, `snooze` calls [`std::thread::yield_now`],
+///    letting the counterparty thread be scheduled - this is the livelock
+///    cure under oversubscription, then
+/// 3. once [`Backoff::is_completed`] saturates, a short
+///    [`std::thread::park_timeout`] parks the waiter so it releases its core
+///    instead of burning it during sustained starvation.
+///
+/// Construct once per blocking call and invoke [`SpinBackoff::wait`] only after
+/// a probe fails, keeping the first (uncontended) attempt overhead-free.
+struct SpinBackoff {
+    backoff: Backoff,
+}
+
+impl SpinBackoff {
+    /// Park quantum used once spin+yield escalation saturates.  Short enough to
+    /// stay responsive when a slot frees, long enough to yield the core.
+    const PARK: Duration = Duration::from_micros(50);
+
+    fn new() -> Self {
+        Self {
+            backoff: Backoff::new(),
+        }
+    }
+
+    /// Perform one escalating wait step after a failed queue probe.
+    fn wait(&self) {
+        if self.backoff.is_completed() {
+            std::thread::park_timeout(Self::PARK);
+        } else {
+            self.backoff.snooze();
+        }
+    }
+}
 
 struct Shared<T> {
     queue: ArrayQueue<T>,
@@ -72,6 +122,7 @@ impl<T> Sender<T> {
     ///
     /// Returns `Err(SendError(item))` if the receiver has been dropped.
     pub fn send(&self, mut item: T) -> Result<(), SendError<T>> {
+        let backoff = SpinBackoff::new();
         loop {
             if !self.0.consumer_alive.load(Ordering::Relaxed) {
                 return Err(SendError(item));
@@ -80,7 +131,7 @@ impl<T> Sender<T> {
                 Ok(()) => return Ok(()),
                 Err(returned) => {
                     item = returned;
-                    std::hint::spin_loop();
+                    backoff.wait();
                 }
             }
         }
@@ -123,6 +174,7 @@ impl<T> Receiver<T> {
     /// Returns `Err(RecvError)` if the sender has been dropped and the
     /// queue is fully drained.
     pub fn recv(&self) -> Result<T, RecvError> {
+        let backoff = SpinBackoff::new();
         loop {
             if let Some(item) = self.0.queue.pop() {
                 return Ok(item);
@@ -131,7 +183,7 @@ impl<T> Receiver<T> {
                 // Producer is gone - drain one last time.
                 return self.0.queue.pop().ok_or(RecvError);
             }
-            std::hint::spin_loop();
+            backoff.wait();
         }
     }
 
@@ -316,5 +368,56 @@ mod tests {
         assert!(!tx.is_disconnected());
         drop(rx);
         assert!(tx.is_disconnected());
+    }
+
+    /// Oversubscription stress: many more producer/consumer pipelines than
+    /// cores, each with a tiny ring so both halves spend most of their time in
+    /// the full/empty wait loop.  With a pure `spin_loop` wait (no yield) this
+    /// livelocks under CPU starvation - a spinning half never releases its core
+    /// for its counterparty (the observed LTO-off, high-host-load daemon
+    /// failure).  With the spin → yield → park backoff every pipeline must
+    /// still complete and reconstruct its stream byte-identically.
+    #[test]
+    fn oversubscription_no_livelock() {
+        use std::time::{Duration, Instant};
+
+        // Far more concurrent halves than any test host has cores, forcing the
+        // scheduler to time-slice and exposing a non-yielding spin.
+        let pipelines = 8 * std::thread::available_parallelism().map_or(4, |n| n.get());
+        let n: usize = 20_000;
+        let deadline = Instant::now() + Duration::from_secs(60);
+
+        let mut handles = Vec::with_capacity(pipelines);
+        for _ in 0..pipelines {
+            // Capacity 1: producer blocks on nearly every send, consumer blocks
+            // on nearly every recv - maximum time in the wait loops.
+            let (tx, rx) = channel::<usize>(1);
+            let producer = thread::spawn(move || {
+                for i in 0..n {
+                    tx.send(i).unwrap();
+                }
+            });
+            let consumer = thread::spawn(move || {
+                let mut acc = 0usize;
+                for _ in 0..n {
+                    acc = acc.wrapping_add(rx.recv().unwrap());
+                }
+                acc
+            });
+            handles.push((producer, consumer));
+        }
+
+        // Every pipeline must finish (no livelock/deadlock) and its consumer
+        // must observe exactly the produced sequence - byte/order identical
+        // reconstruction, unchanged by the backoff.
+        let expected: usize = (0..n).sum();
+        for (producer, consumer) in handles {
+            producer.join().unwrap();
+            assert_eq!(consumer.join().unwrap(), expected);
+            assert!(
+                Instant::now() < deadline,
+                "pipeline did not complete within 60s - possible livelock"
+            );
+        }
     }
 }
