@@ -196,6 +196,7 @@ impl ReceiverContext {
                         // capturing &self across rayon worker boundaries.
                         let fuzzy_level = self.config.flags.fuzzy_level;
                         let ref_dirs = &self.config.reference_directories;
+                        let partial_dir = self.config.partial_dir.as_deref();
                         let protocol = self.protocol;
                         let compat_flags = self.compat_flags;
                         let whole_file = self.config.flags.whole_file;
@@ -221,6 +222,7 @@ impl ReceiverContext {
                                         target_mtime: file_entry.mtime(),
                                         fuzzy_level,
                                         reference_directories: ref_dirs,
+                                        partial_dir,
                                         protocol,
                                         checksum_length,
                                         checksum_algorithm,
@@ -242,6 +244,7 @@ impl ReceiverContext {
                                         target_mtime: file_entry.mtime(),
                                         fuzzy_level,
                                         reference_directories: ref_dirs,
+                                        partial_dir,
                                         protocol,
                                         checksum_length,
                                         checksum_algorithm,
@@ -264,6 +267,7 @@ impl ReceiverContext {
                                 file_path.clone(),
                                 basis_result.signature,
                                 basis_result.basis_path,
+                                basis_result.fnamecmp_type,
                                 file_entry.size(),
                                 &request_config,
                             )?;
@@ -286,6 +290,7 @@ impl ReceiverContext {
                                 file_path.clone(),
                                 None,
                                 None,
+                                protocol::FnameCmpType::Fname,
                                 file_entry.size(),
                                 &request_config,
                             )?;

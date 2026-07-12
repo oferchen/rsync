@@ -59,6 +59,7 @@ pub fn send_file_request<W: Write + ?Sized>(
     file_path: PathBuf,
     signature: Option<FileSignature>,
     basis_path: Option<PathBuf>,
+    fnamecmp_type: protocol::FnameCmpType,
     target_size: u64,
     config: &RequestConfig<'_>,
 ) -> io::Result<PendingTransfer> {
@@ -69,6 +70,7 @@ pub fn send_file_request<W: Write + ?Sized>(
         file_path,
         signature,
         basis_path,
+        fnamecmp_type,
         target_size,
         config,
         None,
@@ -93,6 +95,7 @@ pub fn send_file_request_xattr<W: Write + ?Sized>(
     file_path: PathBuf,
     signature: Option<FileSignature>,
     basis_path: Option<PathBuf>,
+    fnamecmp_type: protocol::FnameCmpType,
     target_size: u64,
     config: &RequestConfig<'_>,
     xattr_list: Option<&XattrList>,
@@ -111,7 +114,22 @@ pub fn send_file_request_xattr<W: Write + ?Sized>(
         if has_xattr_request && config.preserve_xattrs {
             iflags |= SenderAttrs::ITEM_REPORT_XATTR;
         }
+        // upstream: generator.c:1942-1943 - a non-FNAME basis sets
+        // ITEM_BASIS_TYPE_FOLLOWS so the sender reads the trailing fnamecmp_type
+        // byte and echoes it back to the receiver (rsync.c:403-405). Only the
+        // --partial-dir resume basis is emitted here (FNAMECMP_PARTIAL_DIR);
+        // FNAME carries no byte, matching the ordinary request encoding.
+        let emit_basis_type = fnamecmp_type != protocol::FnameCmpType::Fname;
+        if emit_basis_type {
+            iflags |= SenderAttrs::ITEM_BASIS_TYPE_FOLLOWS;
+        }
         writer.write_all(&iflags.to_le_bytes())?;
+
+        // upstream: sender.c:186-187 - the basis-type byte precedes the xname
+        // and any xattr-request payload.
+        if emit_basis_type {
+            writer.write_all(&[u8::from(fnamecmp_type)])?;
+        }
 
         // upstream: sender.c:193-196 - write xattr request data after iflags
         if has_xattr_request && config.preserve_xattrs {

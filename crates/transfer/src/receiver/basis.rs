@@ -30,6 +30,13 @@ pub struct BasisFileResult {
     pub signature: Option<FileSignature>,
     /// Path to the basis file used (None if no basis found).
     pub basis_path: Option<PathBuf>,
+    /// Which basis the generator selected, sent to the sender as the
+    /// `fnamecmp_type` byte behind `ITEM_BASIS_TYPE_FOLLOWS`.
+    ///
+    /// [`FnameCmpType::Fname`] for the ordinary destination basis (no wire byte)
+    /// and [`FnameCmpType::PartialDir`] (`0x81`) when the basis was recovered
+    /// from `--partial-dir` on a resume. upstream: generator.c:1759-1765,1853.
+    pub fnamecmp_type: protocol::FnameCmpType,
 }
 
 impl BasisFileResult {
@@ -37,6 +44,7 @@ impl BasisFileResult {
     pub(super) const EMPTY: Self = Self {
         signature: None,
         basis_path: None,
+        fnamecmp_type: protocol::FnameCmpType::Fname,
     };
 
     /// Returns true if no basis file was found.
@@ -73,6 +81,12 @@ pub struct BasisFileConfig<'a> {
     pub fuzzy_level: u8,
     /// List of reference directories to check.
     pub reference_directories: &'a [ReferenceDirectory],
+    /// `--partial-dir` directory, when set. On a resume where the destination
+    /// is absent, the generator falls back to a same-named regular file inside
+    /// this directory as the delta basis (`FNAMECMP_PARTIAL_DIR`).
+    ///
+    /// Upstream: `generator.c:1759-1765` - `partialptr = partial_dir_fname(fname)`.
+    pub partial_dir: Option<&'a std::path::Path>,
     /// Protocol version for signature generation.
     pub protocol: ProtocolVersion,
     /// Checksum truncation length.
@@ -228,6 +242,7 @@ fn generate_basis_signature(
     basis_file: fs::File,
     basis_size: u64,
     basis_path: PathBuf,
+    fnamecmp_type: protocol::FnameCmpType,
     config: SignatureGenerationConfig,
 ) -> BasisFileResult {
     let params =
@@ -323,6 +338,7 @@ fn generate_basis_signature(
         Ok(sig) => BasisFileResult {
             signature: Some(sig),
             basis_path: Some(basis_path),
+            fnamecmp_type,
         },
         Err(_) => BasisFileResult::EMPTY,
     }
@@ -457,7 +473,10 @@ pub fn find_basis_file_with_config(config: &BasisFileConfig<'_>) -> BasisFileRes
         return BasisFileResult::EMPTY;
     }
 
-    // Try sources in priority order: exact match -> reference dirs -> fuzzy
+    // Try sources in priority order: exact match -> reference dirs -> fuzzy.
+    // The ordinary destination / reference-dir / fuzzy basis is reported to the
+    // sender as FNAMECMP_FNAME (no basis-type byte), matching the pre-existing
+    // wire encoding for those cases.
     let basis = try_open_file(config.file_path)
         .or_else(|| try_reference_directories(config.relative_path, config.reference_directories))
         .or_else(|| {
@@ -475,12 +494,27 @@ pub fn find_basis_file_with_config(config: &BasisFileConfig<'_>) -> BasisFileRes
             }
         });
 
+    let (fnamecmp_type, basis) = match basis {
+        Some(found) => (protocol::FnameCmpType::Fname, Some(found)),
+        // upstream: generator.c:1759-1765 - when the destination stat fails and
+        // --partial-dir is set, fall back to the same-named regular file inside
+        // the partial directory as the delta basis and tag it
+        // FNAMECMP_PARTIAL_DIR (prepare_to_open at generator.c:1850-1855).
+        None => match config.partial_dir {
+            Some(dir) => match crate::temp_guard::partial_dir_fname(config.file_path, dir) {
+                Some(partial) => (protocol::FnameCmpType::PartialDir, try_open_file(&partial)),
+                None => (protocol::FnameCmpType::Fname, None),
+            },
+            None => (protocol::FnameCmpType::Fname, None),
+        },
+    };
+
     let Some((file, size, path)) = basis else {
         return BasisFileResult::EMPTY;
     };
 
     let sig_config = SignatureGenerationConfig::from_basis_config(config);
-    generate_basis_signature(file, size, path, sig_config)
+    generate_basis_signature(file, size, path, fnamecmp_type, sig_config)
 }
 
 #[cfg(test)]
@@ -780,6 +814,7 @@ mod tests {
             fast_io::open_basis_nofollow(&path).expect("open basis"),
             size as u64,
             path.clone(),
+            protocol::FnameCmpType::Fname,
             cfg,
         );
 
@@ -808,6 +843,105 @@ mod tests {
         assert_eq!(via_default.basis_path.as_deref(), Some(path.as_path()));
     }
 
+    /// Issue #264 regression: when the destination is absent but an
+    /// interrupted transfer left a same-named file under `--partial-dir`, the
+    /// generator must select that partial file as the delta basis and tag it
+    /// `FNAMECMP_PARTIAL_DIR` (0x81) so a delta - not a whole file - is sent.
+    /// upstream: generator.c:1759-1765 + prepare_to_open (generator.c:1850-1855).
+    #[test]
+    fn partial_dir_basis_selected_when_dest_absent() {
+        use std::io::Write;
+
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let dest_dir = tmp.path();
+        // Destination file does NOT exist; a partial file with prior content
+        // lives under the relative partial-dir next to it.
+        let partial_dir = dest_dir.join(".rsync-partial");
+        std::fs::create_dir(&partial_dir).expect("mkdir partial-dir");
+        let data: Vec<u8> = (0..8192u32).map(|i| (i % 251) as u8).collect();
+        {
+            let mut f = fs::File::create(partial_dir.join("file.bin")).expect("create partial");
+            f.write_all(&data).expect("write partial");
+            f.flush().expect("flush");
+        }
+
+        let dest_file = dest_dir.join("file.bin");
+        let rel = std::path::Path::new("file.bin");
+        let partial_rel = std::path::Path::new(".rsync-partial");
+        let config = BasisFileConfig {
+            file_path: &dest_file,
+            dest_dir,
+            relative_path: rel,
+            target_size: data.len() as u64,
+            target_mtime: 0,
+            fuzzy_level: 0,
+            reference_directories: &[],
+            partial_dir: Some(partial_rel),
+            protocol: ProtocolVersion::NEWEST,
+            checksum_length: NonZeroU8::new(16).unwrap(),
+            checksum_algorithm: SignatureAlgorithm::Md4,
+            whole_file: false,
+            compat_flags: None,
+        };
+
+        let result = find_basis_file_with_config(&config);
+        assert!(
+            result.signature.is_some(),
+            "a partial-dir basis must yield a signature (delta transfer), not EMPTY"
+        );
+        assert_eq!(
+            result.basis_path.as_deref(),
+            Some(partial_dir.join("file.bin").as_path()),
+            "the basis path must point at the partial-dir file"
+        );
+        assert_eq!(
+            result.fnamecmp_type,
+            protocol::FnameCmpType::PartialDir,
+            "the basis must be tagged FNAMECMP_PARTIAL_DIR so 0x81 is sent on the wire"
+        );
+    }
+
+    /// The partial-dir fallback must not fire when the destination file itself
+    /// exists: the ordinary destination basis wins and is tagged FNAMECMP_FNAME
+    /// (no basis-type byte on the wire), preserving the pre-existing encoding.
+    #[test]
+    fn dest_basis_preferred_over_partial_dir() {
+        use std::io::Write;
+
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let dest_dir = tmp.path();
+        let data: Vec<u8> = (0..4096u32).map(|i| (i % 251) as u8).collect();
+        {
+            let mut f = fs::File::create(dest_dir.join("file.bin")).expect("create dest");
+            f.write_all(&data).expect("write dest");
+            f.flush().expect("flush");
+        }
+        let partial_dir = dest_dir.join(".rsync-partial");
+        std::fs::create_dir(&partial_dir).expect("mkdir partial-dir");
+        std::fs::write(partial_dir.join("file.bin"), b"stale").expect("write partial");
+
+        let dest_file = dest_dir.join("file.bin");
+        let config = BasisFileConfig {
+            file_path: &dest_file,
+            dest_dir,
+            relative_path: std::path::Path::new("file.bin"),
+            target_size: data.len() as u64,
+            target_mtime: 0,
+            fuzzy_level: 0,
+            reference_directories: &[],
+            partial_dir: Some(std::path::Path::new(".rsync-partial")),
+            protocol: ProtocolVersion::NEWEST,
+            checksum_length: NonZeroU8::new(16).unwrap(),
+            checksum_algorithm: SignatureAlgorithm::Md4,
+            whole_file: false,
+            compat_flags: None,
+        };
+
+        let result = find_basis_file_with_config(&config);
+        assert_eq!(result.basis_path.as_deref(), Some(dest_file.as_path()));
+        assert_eq!(result.fnamecmp_type, protocol::FnameCmpType::Fname);
+    }
+
     #[test]
     fn consecutive_match_cap_halves_strong_sum_length() {
         use std::io::Write;
@@ -826,6 +960,7 @@ mod tests {
                 fast_io::open_basis_nofollow(&path).expect("open"),
                 data.len() as u64,
                 path.clone(),
+                protocol::FnameCmpType::Fname,
                 cfg,
             )
             .signature

@@ -58,6 +58,7 @@ fn basis_file_result_is_empty_when_no_signature() {
     let result = BasisFileResult {
         signature: None,
         basis_path: None,
+        fnamecmp_type: protocol::FnameCmpType::Fname,
     };
     assert!(result.is_empty());
 }
@@ -77,6 +78,7 @@ fn basis_file_result_is_not_empty_when_has_signature() {
     let result = BasisFileResult {
         signature: Some(signature),
         basis_path: Some(PathBuf::from("/tmp/basis")),
+        fnamecmp_type: protocol::FnameCmpType::Fname,
     };
     assert!(!result.is_empty());
 }
