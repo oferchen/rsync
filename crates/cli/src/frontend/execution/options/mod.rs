@@ -21,7 +21,7 @@ pub(crate) use numeric::{
     parse_checksum_seed_argument, parse_max_delete_argument, parse_modify_window_argument,
     parse_timeout_argument,
 };
-pub(crate) use protocol::parse_protocol_version_arg;
+pub(crate) use protocol::{ProtocolArg, legacy_remote_rejection, parse_protocol_version_arg};
 pub(crate) use size::{
     parse_block_size_argument, parse_max_alloc_argument, parse_size_limit_argument,
 };

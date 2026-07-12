@@ -442,6 +442,25 @@ impl ReceiverContext {
                 chain.add_merge_config(config);
             }
             self.filter_chain = chain;
+
+            // upstream: exclude.c:recv_filter_list() parses every received rule
+            // into the same `filter_list` the generator's delete_in_dir()
+            // consults via change_local_filter_dir()/push_local_filters(). A
+            // server-side receiver must therefore register the client's
+            // transmitted dir-merge directive (a `-F` `.rsync-filter`, sent as a
+            // per-directory merge rule by exclude.c:send_rules()) on the
+            // dedicated deletion chain, not only on `filter_chain`. Without it a
+            // merge file's own protect rule is absent when the --delete pass
+            // decides candidates, so up-client -> oc-receiver + dir-merge deletes
+            // entries upstream -> upstream preserves. Mirror the local-pull
+            // build_client_deletion_filter_chain(): same combined rules, with
+            // --delete-excluded applied. Cloned from `filter_chain` so the global
+            // rules and merge configs stay identical; the delete-pass consults
+            // this chain (deletion.rs) whenever it is non-empty.
+            self.deletion_filter_chain = self
+                .filter_chain
+                .clone()
+                .with_delete_excluded(self.config.deletion.delete_excluded);
         }
         Ok(())
     }

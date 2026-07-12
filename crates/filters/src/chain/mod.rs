@@ -642,10 +642,21 @@ impl FilterChain {
         self.current_depth = self.current_depth.saturating_sub(1);
     }
 
-    /// Returns `true` if the chain has no rules at all (global or per-directory).
+    /// Returns `true` if the chain has no rules at all (global, per-directory
+    /// scopes, or per-directory merge configs).
+    ///
+    /// A chain that carries only a dir-merge directive (e.g. a client's `-F`
+    /// `.rsync-filter` transmitted to a server-side receiver) has an empty
+    /// `global` rule set and no active `scopes` until a directory is entered,
+    /// but it is emphatically not empty: the merge config governs which
+    /// destination entries the `--delete` pass may remove. Omitting
+    /// `merge_configs` here made such a chain read as empty, so the receiver's
+    /// deletion path fell back to the wrong chain and deleted dir-merge-protected
+    /// entries. Account for `merge_configs` so a merge-only chain is recognised
+    /// as populated.
     #[must_use]
     pub fn is_empty(&self) -> bool {
-        self.global.is_empty() && self.scopes.is_empty()
+        self.global.is_empty() && self.scopes.is_empty() && self.merge_configs.is_empty()
     }
 
     /// Number of active per-directory filter scopes on the stack.
