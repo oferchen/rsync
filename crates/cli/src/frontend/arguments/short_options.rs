@@ -294,7 +294,13 @@ fn expand_cluster(
             // `-` as additional short options.
             let next_offset = offset + short.len_utf8();
             if next_offset < cluster.len() {
-                fragments.push(cluster[next_offset..].to_owned());
+                let remainder = &cluster[next_offset..];
+                // popt (and clap for the un-expanded `-o=value` form) strip a
+                // single '=' that joins a short option to its packed value, so
+                // `-B=4096` -> `4096` and `-T=/tmp` -> `/tmp`. Mirror that here
+                // for every value-bearing short. upstream: popt short-arg parse.
+                let value = remainder.strip_prefix('=').unwrap_or(remainder);
+                fragments.push(value.to_owned());
             }
             return Some(fragments);
         } else if flag_options.contains(&short) {
@@ -435,6 +441,31 @@ mod tests {
         assert_eq!(
             result,
             Some(vec!["-z".to_owned(), "-v".to_owned(), "-a".to_owned()])
+        );
+    }
+
+    #[test]
+    fn expand_cluster_strips_equals_from_packed_value() {
+        // popt strips one '=' joining a short option to its packed value, so
+        // `-B=4096` -> `-B 4096` and `-T=/tmp` -> `-T /tmp`. Only one '=' goes.
+        let flags = HashSet::new();
+        let values = make_flags("BT");
+        assert_eq!(
+            expand_cluster("-B=4096", &flags, &values),
+            Some(vec!["-B".to_owned(), "4096".to_owned()])
+        );
+        assert_eq!(
+            expand_cluster("-T=/tmp", &flags, &values),
+            Some(vec!["-T".to_owned(), "/tmp".to_owned()])
+        );
+        assert_eq!(
+            expand_cluster("-T==foo", &flags, &values),
+            Some(vec!["-T".to_owned(), "=foo".to_owned()])
+        );
+        // The attached (no '=') form is untouched.
+        assert_eq!(
+            expand_cluster("-B4096", &flags, &values),
+            Some(vec!["-B".to_owned(), "4096".to_owned()])
         );
     }
 
