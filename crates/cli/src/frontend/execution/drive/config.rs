@@ -20,6 +20,9 @@ use crate::platform::{gid_t, uid_t};
 /// All inputs required to assemble the base [`ClientConfig`] before filters are applied.
 pub(crate) struct ConfigInputs {
     pub(crate) transfer_operands: Vec<OsString>,
+    /// Optional `--protocol=N` ceiling that caps the negotiated protocol version
+    /// for remote (SSH and daemon) transfers. `None` uses the default ceiling.
+    pub(crate) desired_protocol: Option<protocol::ProtocolVersion>,
     pub(crate) address_mode: AddressMode,
     pub(crate) connect_program: Option<OsString>,
     pub(crate) bind_address: Option<core::client::BindAddress>,
@@ -196,6 +199,7 @@ pub(crate) struct ConfigInputs {
 pub(crate) fn build_base_config(mut inputs: ConfigInputs) -> ClientConfigBuilder {
     let mut builder = ClientConfig::builder()
         .transfer_args(std::mem::take(&mut inputs.transfer_operands))
+        .protocol_version(inputs.desired_protocol)
         .address_mode(inputs.address_mode)
         .connect_program(inputs.connect_program.clone())
         .bind_address(inputs.bind_address.clone())

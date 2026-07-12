@@ -355,8 +355,9 @@ fn run_transfer_over_embedded_ssh(
         build_batch_recording(ctx, is_sender)
     });
 
-    let handshake = crate::server::perform_handshake(&mut reader, &mut writer)
-        .map_err(|e| invalid_argument_error(&format!("handshake failed: {e}"), 5))?;
+    let handshake =
+        crate::server::perform_handshake_with_max(&mut reader, &mut writer, server_config.protocol)
+            .map_err(|e| invalid_argument_error(&format!("handshake failed: {e}"), 5))?;
     let negotiated_protocol = handshake.protocol.as_u8();
 
     let mut adapter = observer.map(|obs| ServerProgressAdapter::new(obs, start));

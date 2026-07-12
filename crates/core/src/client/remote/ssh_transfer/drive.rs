@@ -288,7 +288,11 @@ fn run_server_over_ssh_connection(
         build_batch_recording(ctx, is_sender)
     });
 
-    let handshake = match crate::server::perform_handshake(&mut reader, &mut writer) {
+    let handshake = match crate::server::perform_handshake_with_max(
+        &mut reader,
+        &mut writer,
+        config.protocol,
+    ) {
         Ok(h) => h,
         Err(e) => {
             // Close our writer so the remote can finish exiting, then reap the
