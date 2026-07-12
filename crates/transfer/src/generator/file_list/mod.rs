@@ -148,14 +148,15 @@ impl GeneratorContext {
     /// Each entry's wire-side relative name is computed by stripping its own
     /// `base`, matching upstream rsync's `chdir(dir)` + transmit-`fn` split
     /// (`flist.c:2316-2330`). The `base_dir` argument is the source argument
-    /// shared by entries without a `/./` anchor and is used to emit the
-    /// transfer-root `.` entry.
+    /// shared by entries without a `/./` anchor and, in `--relative` mode with
+    /// a leading `./` anchor, roots the implied transfer-root `.` entry.
     ///
     /// # Upstream Reference
     ///
     /// - `flist.c:2240-2264` - `change_dir(argv[0])` then read relative filenames
     /// - `flist.c:2316-2330` - per-entry `/./` anchor split
-    /// - `flist.c:2287` - `send_file_name(".", ...)` for the transfer-root entry
+    /// - `flist.c:2368-2419` - `implied_dot_dir` gates the transfer-root `.`
+    ///   emission via `send_file_name(".", ..., FLAG_IMPLIED_DIR & ~FLAG_CONTENT_DIR, ...)`
     pub fn build_file_list_with_base(
         &mut self,
         base_dir: &Path,
@@ -170,19 +171,39 @@ impl GeneratorContext {
         self.file_list.reserve(FLIST_START);
         self.source_bases.reserve(FLIST_START);
 
-        // upstream: flist.c:2287 - emit "." with XMIT_TOP_DIR for the root
-        // transfer directory so --delete works correctly on the receiver side.
-        // Skip when any entry's effective walk will already emit a `.` (i.e.
-        // an entry whose `/./` anchor produced `path == base`). Otherwise a
-        // duplicate `.` would race the entry's `.` on the wire and could
-        // overwrite the transfer-root permissions with the per-entry root's
-        // permissions when the upstream receiver dedupes by name.
-        let entry_emits_root_dot = entries.iter().any(|e| e.path == e.base);
-        if !entry_emits_root_dot {
+        // upstream: flist.c:2368-2419 - the transfer-root `.` entry is emitted
+        // ONLY in `--relative` mode and ONLY when some `--files-from` entry has
+        // a leading `./` anchor (`implied_dot_dir`). Upstream emits it via
+        // `send_file_name(".", ..., (flags | FLAG_IMPLIED_DIR) & ~FLAG_CONTENT_DIR, ...)`
+        // (flist.c:2419): FLAG_IMPLIED_DIR set, FLAG_TOP_DIR NOT set,
+        // FLAG_CONTENT_DIR cleared. Such an entry does NOT scope `--delete` over
+        // the destination root. A plain list with no `./` anchor emits NO `.`
+        // entry at all.
+        //
+        // Emitting an unconditional `.` here (the old behaviour) produced a
+        // spurious `.d ./` itemize row on the receiver and, worse, with
+        // `--delete` its TOP_DIR + CONTENT_DIR flags scoped deletion over the
+        // destination root, deleting stale root-level files that upstream
+        // preserves (data loss).
+        //
+        // Wire encoding: FLAG_IMPLIED_DIR with FLAG_CONTENT_DIR cleared
+        // serializes as XMIT_TOP_DIR | XMIT_NO_CONTENT_DIR (flist.c:426-427);
+        // the receiver decodes that pair back to FLAG_IMPLIED_DIR
+        // (flist.c:1117-1118), never FLAG_TOP_DIR/FLAG_CONTENT_DIR. In oc's flat
+        // encoding that is `set_top_dir(true)` + `set_content_dir(false)`
+        // (`calculate_basic_flags`/`calculate_directory_flags`).
+        //
+        // A leading-`./` entry never has `path == base` (a bare `.`/`./` DOTDIR
+        // does, but carries `implied_dot == false`), so the two never collide
+        // on a duplicate root `.`.
+        let emit_implied_root_dot =
+            self.config.flags.relative && entries.iter().any(|e| e.implied_dot);
+        if emit_implied_root_dot {
             if let Ok(meta) = std::fs::symlink_metadata(base_dir) {
                 if meta.is_dir() {
                     let mut dot_entry = self.create_entry(base_dir, PathBuf::from("."), &meta)?;
                     dot_entry.set_top_dir(true);
+                    dot_entry.set_content_dir(false);
                     self.push_file_item(dot_entry, base_dir.to_path_buf());
                 }
             }
