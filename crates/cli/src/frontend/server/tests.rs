@@ -1734,3 +1734,95 @@ fn long_flags_captures_split_files_from_value() {
     let flags = parse_server_long_flags(&args);
     assert_eq!(flags.files_from.as_deref(), Some("/tmp/list"));
 }
+
+// -- Task #291: server_options() long-form flags that previously leaked into
+// -- the positional-path list, breaking the transfer. Each flag below is one
+// -- that upstream `server_options()` (options.c) emits but oc did not
+// -- recognise in `is_known_server_long_flag`.
+
+/// upstream: options.c:2908-2909 - `if (use_qsort) args[ac++] = "--use-qsort"`.
+/// This is the exact spelling server_options() emits (oc's own forwarder uses
+/// `--qsort`). It must be recognised so it does not leak, and it maps onto the
+/// same `qsort` sink so flist ordering matches upstream (flist.c:2991).
+#[test]
+fn long_flags_use_qsort_maps_to_qsort() {
+    let args = vec![OsString::from("--server"), OsString::from("--use-qsort")];
+    let flags = parse_server_long_flags(&args);
+    assert!(flags.qsort, "--use-qsort must drive the qsort sink");
+    assert!(is_known_server_long_flag("--use-qsort"));
+}
+
+/// upstream: options.c:2993-2994 - `if (open_noatime && preserve_atimes <= 1)
+/// args[ac++] = "--open-noatime"`, forwarded to the sender.
+#[test]
+fn long_flags_open_noatime() {
+    let args = vec![OsString::from("--server"), OsString::from("--open-noatime")];
+    let flags = parse_server_long_flags(&args);
+    assert!(flags.open_noatime);
+    assert!(is_known_server_long_flag("--open-noatime"));
+}
+
+/// upstream: options.c:2868-2871 - `--delete-missing-args` (missing_args == 2)
+/// and `--ignore-missing-args` (missing_args == 1). Mirrors the daemon
+/// long-form parser (long_form_args.rs).
+#[test]
+fn long_flags_missing_args_variants() {
+    let del = parse_server_long_flags(&[
+        OsString::from("--server"),
+        OsString::from("--delete-missing-args"),
+    ]);
+    assert!(del.delete_missing_args);
+    assert!(!del.ignore_missing_args);
+
+    let ign = parse_server_long_flags(&[
+        OsString::from("--server"),
+        OsString::from("--ignore-missing-args"),
+    ]);
+    assert!(ign.ignore_missing_args);
+    assert!(!ign.delete_missing_args);
+
+    assert!(is_known_server_long_flag("--delete-missing-args"));
+    assert!(is_known_server_long_flag("--ignore-missing-args"));
+}
+
+/// upstream: options.c:2848-2853 / 2990-2991 - `--force` (force_delete),
+/// `--super` (am_root > 1), and `--preallocate` (preallocate_files) are emitted
+/// in the am_sender block and reach a server acting as the receiver. oc has no
+/// content-affecting server sink for these (recursive delete already happens,
+/// root is already privileged, preallocation is content-invisible), but they
+/// MUST be recognised so they never surface as a positional destination path.
+#[test]
+fn force_super_preallocate_recognised_as_known_long_flags() {
+    assert!(is_known_server_long_flag("--force"));
+    assert!(is_known_server_long_flag("--super"));
+    assert!(is_known_server_long_flag("--preallocate"));
+}
+
+/// Regression for the positional leak: with the compact flag string present,
+/// none of the seven newly recognised long flags may fall through into
+/// `positional_args`; only the real destination path (`dst/`) survives. Without
+/// recognition the receiver tried to `mkdir` a root literally named after the
+/// first unrecognised flag and exited 12.
+#[test]
+fn parse_server_args_skips_task291_long_flags() {
+    let args = vec![
+        OsString::from("--server"),
+        OsString::from("-logDtpre.iLsfxCIvu"),
+        OsString::from("--force"),
+        OsString::from("--super"),
+        OsString::from("--preallocate"),
+        OsString::from("--open-noatime"),
+        OsString::from("--use-qsort"),
+        OsString::from("--delete-missing-args"),
+        OsString::from("--ignore-missing-args"),
+        OsString::from("."),
+        OsString::from("dst/"),
+    ];
+    let (flags, pos_args) = parse_server_flag_string_and_args(&args);
+    assert_eq!(flags, "-logDtpre.iLsfxCIvu");
+    assert_eq!(
+        pos_args,
+        vec![OsString::from("dst/")],
+        "task #291 long flags must not leak into positional args: {pos_args:?}",
+    );
+}

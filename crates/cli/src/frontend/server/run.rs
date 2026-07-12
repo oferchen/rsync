@@ -193,6 +193,15 @@ where
     config.flags.append = long_flags.append;
     config.flags.append_verify = long_flags.append_verify;
     config.file_selection.size_only = long_flags.size_only;
+    // upstream: options.c:2993-2994 - `--open-noatime` forwarded to the sender so
+    // it opens source files with O_NOATIME (do_open), leaving atime untouched.
+    config.write.open_noatime = long_flags.open_noatime;
+    // upstream: options.c:2868-2871 - `--delete-missing-args` (missing_args == 2)
+    // and `--ignore-missing-args` (missing_args == 1) govern how a vanished
+    // top-level source arg is handled when building the file list. Mirrors the
+    // daemon long-form parser (long_form_args.rs).
+    config.file_selection.delete_missing_args = long_flags.delete_missing_args;
+    config.file_selection.ignore_missing_args = long_flags.ignore_missing_args;
     // upstream: options.c:2893 - bare --partial (no compact 'P' letter) tells the
     // receiver to keep interrupted temp files. OR with the compact value so a
     // legacy client that still packs 'P' is not clobbered.
