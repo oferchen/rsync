@@ -21,17 +21,6 @@ impl<'a> CopyContext<'a> {
             }
         });
         let filter_program = options.filter_program().cloned();
-        let dir_merge_layers = filter_program
-            .as_ref()
-            .map(|program| vec![Vec::new(); program.dir_merge_rules().len()])
-            .unwrap_or_default();
-        let dir_merge_marker_layers = filter_program
-            .as_ref()
-            .map(|program| vec![Vec::new(); program.dir_merge_rules().len()])
-            .unwrap_or_default();
-        let dir_merge_ephemeral = Vec::new();
-        let dir_merge_marker_ephemeral = Vec::new();
-        let dynamic_dir_merge_stack: Vec<DynamicDirMergeFrame> = Vec::new();
         let timeout = options.timeout();
 
         let buffer_pool = global_buffer_pool();
@@ -128,13 +117,11 @@ impl<'a> CopyContext<'a> {
             } else {
                 None
             },
+            dir_merge: DirectoryFilterHandles::new(filter_program.as_ref()),
+            delete_dir_merge: DirectoryFilterHandles::new(filter_program.as_ref()),
+            delete_filter_chain: RefCell::new(Vec::new()),
             filter_program,
-            dir_merge_layers: Rc::new(RefCell::new(dir_merge_layers)),
-            dir_merge_marker_layers: Rc::new(RefCell::new(dir_merge_marker_layers)),
             observer,
-            dir_merge_ephemeral: Rc::new(RefCell::new(dir_merge_ephemeral)),
-            dir_merge_marker_ephemeral: Rc::new(RefCell::new(dir_merge_marker_ephemeral)),
-            dynamic_dir_merge_stack: Rc::new(RefCell::new(dynamic_dir_merge_stack)),
             deferred_ops: DeferredOperationQueue::default(),
             timeout,
             stop_deadline,

@@ -1,25 +1,24 @@
-// PEX (#333): equivalence + complexity gate for the incremental destination
-// filter stack used by the local-copy delete DECIDE pass.
+// Isolated destination delete-filter chain used by the local-copy delete DECIDE
+// pass (bug #273).
 //
 // The delete pass loads each destination directory's per-dir merge files
-// (`.rsync-filter` / `dir-merge` / per-dir `:s`) onto the SAME shared filter
-// stacks the source-side `allows()` evaluation reads, then must leave those
-// stacks byte-identical when the scan for that directory ends. The former
-// implementation cloned the WHOLE source-visible ancestor stack before every
-// destination load and restored it verbatim (O(depth) per visit, O(depth^2)
-// across the walk). The incremental implementation pushes only this directory's
-// destination merge rules and undoes exactly that delta on drop - restoring the
-// specific inherited layer indices a `clear` directive wiped and relying on the
-// per-index pop for everything else.
+// (`.rsync-filter` / `dir-merge` / per-dir `:s`) onto a SEPARATE chain from the
+// source-side `allows()` evaluation - mirroring upstream, whose receiver builds
+// an isolated `delete_filt` list and never perturbs the sender `filter_list`.
+// Ancestor rules inherit into subdirectories because the delete chain is
+// persistent and depth-keyed: entering `dir` then `dir/sub` for deletion keeps
+// the `dir` frame alive so its rules still match `dir/sub`'s entries.
 //
-// These tests are the data-loss safety gate: if the incremental restore is not
-// byte-identical to the whole-stack snapshot restore, the source-side deletion
-// decisions diverge and the wrong files are deleted (or excluded files are
-// resurrected into a populated destination and survive deletion). Every
-// scenario below therefore asserts the source-visible filter decisions are
-// unchanged across the destination-deletion scan, that the in-scan deletion
-// decisions match upstream, and - on a deep tree - that the filter-load work is
-// O(depth), not O(depth^2).
+// These tests are the data-loss safety gate. Each scenario asserts:
+//  - the isolated delete chain honours BOTH the ancestor and the child merge
+//    rule (so a parent `.rsync-filter` protects a subdirectory's entries), and
+//  - the destination-deletion scan leaves the SOURCE-visible filter decisions
+//    byte-identical (the two chains never cross-contaminate).
+//
+// The chain is built by nesting `enter_destination_for_deletion` guards, exactly
+// as the persistent delete chain (`sync_delete_filter_chain`) does at runtime:
+// an ancestor's guard is held while a descendant's is entered, so the descendant
+// inherits the ancestor's rules.
 //
 // upstream: delete.c:65-115 delete_in_dir pushes the destination per-dir filters
 // onto a separate delete_filt chain (change_local_filter_dir pops filters at
@@ -113,10 +112,15 @@ fn incremental_stack_preserves_source_state_with_nested_rsync_filter() {
     let before = source_decision_fingerprint(&context, probes);
 
     {
-        // Destination-deletion scan for dir/sub. The destination directory
-        // carries its OWN .rsync-filter with the identical rules, loaded onto
-        // the shared stacks and popped on guard drop.
-        let del_guard = context
+        // Build the isolated destination delete chain: enter `dir` for deletion
+        // and HOLD its guard, then enter `dir/sub`. The child inherits the
+        // ancestor `- *.top` from the held `dir` frame (mirroring the persistent
+        // `sync_delete_filter_chain` at runtime). Both directories carry their
+        // own `.rsync-filter`.
+        let _del_dir = context
+            .enter_destination_for_deletion(&root.join("dir"), Some(std::path::Path::new("dir")))
+            .expect("enter destination for deletion (ancestor)");
+        let del_sub = context
             .enter_destination_for_deletion(
                 &root.join("dir/sub"),
                 Some(std::path::Path::new("dir/sub")),
@@ -140,7 +144,7 @@ fn incremental_stack_preserves_source_state_with_nested_rsync_filter() {
 
         // No `clear` directive -> zero cleared-index restore data captured.
         assert_eq!(
-            del_guard.cleared_restore_len(),
+            del_sub.cleared_restore_len(),
             0,
             "no clear directive means no per-index restore capture",
         );
@@ -216,6 +220,12 @@ fn incremental_stack_preserves_source_state_with_dir_merge_and_perdir_s() {
     let before = source_decision_fingerprint(&context, probes);
 
     {
+        // Build the isolated destination delete chain ancestor-first so the
+        // nested `dir-merge` registrations in `m/.filt` and the inherited
+        // `- *.bak` reach `m/inner`.
+        let _del_m = context
+            .enter_destination_for_deletion(&root.join("m"), Some(std::path::Path::new("m")))
+            .expect("enter destination for deletion (ancestor)");
         let _del = context
             .enter_destination_for_deletion(
                 &root.join("m/inner"),
@@ -403,8 +413,12 @@ fn incremental_stack_restores_cleared_inherited_layers() {
     let before = source_decision_fingerprint(&context, probes);
 
     {
-        // Destination-deletion scan for c/child, whose .filt clears inherited
-        // rules. This wipes the inherited `- *.parent` layer index.
+        // Build the isolated delete chain: enter `c` (pushes inherited
+        // `- *.parent`) and HOLD it, then enter `c/child`, whose `.filt` issues
+        // `clear` - wiping the inherited `- *.parent` layer index for this scope.
+        let _del_c = context
+            .enter_destination_for_deletion(&root.join("c"), Some(std::path::Path::new("c")))
+            .expect("enter destination for deletion (ancestor)");
         let del_guard = context
             .enter_destination_for_deletion(
                 &root.join("c/child"),
@@ -423,7 +437,8 @@ fn incremental_stack_restores_cleared_inherited_layers() {
             "child rule `- *.child` protects from deletion",
         );
 
-        // The clear must have captured exactly the wiped index for restore.
+        // The clear must have captured exactly the wiped index for restore, so
+        // the held ancestor `c` frame is left intact when `c/child` pops.
         assert!(
             del_guard.cleared_restore_len() >= 1,
             "a clear directive must capture at least one index to restore",

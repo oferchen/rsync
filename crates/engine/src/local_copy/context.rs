@@ -97,24 +97,43 @@ pub(crate) struct CopyContext<'a> {
     summary: LocalCopySummary,
     events: Option<Vec<LocalCopyRecord>>,
     filter_program: Option<FilterProgram>,
-    dir_merge_layers: Rc<RefCell<FilterSegmentLayers>>,
-    dir_merge_marker_layers: Rc<RefCell<ExcludeIfPresentLayers>>,
-    observer: Option<&'a mut dyn LocalCopyRecordHandler>,
-    dir_merge_ephemeral: Rc<RefCell<FilterSegmentStack>>,
-    dir_merge_marker_ephemeral: Rc<RefCell<ExcludeIfPresentStack>>,
-    /// Per-directory stack of dynamic `dir-merge` rules registered while
-    /// loading parent per-directory merge files.
+    /// Source-side per-directory merge filter stacks, maintained by the
+    /// recursive transfer walk (`enter_directory`) and read by the transfer
+    /// filter decision (`allows`). Each stack frame matches one
+    /// `enter_directory_for_path` call; the frame's `active_rules` is the
+    /// cumulative set inherited from the parent frame plus any rules newly
+    /// registered while processing the current directory's merge files.
     ///
     /// upstream: exclude.c:1419-1428 - `dir-merge .filt2` inside `bar/.filt`
     /// registers `.filt2` for lookup in every subdirectory entered beneath
-    /// `bar/`. Each stack frame matches one `enter_directory_for_path` call:
-    /// the frame's `active_rules` is the cumulative set inherited from the
-    /// parent frame plus any rules newly registered while processing the
-    /// current directory's merge files. `loaded_segments` and
-    /// `loaded_markers` are the segments / markers produced by looking up
-    /// the active rules against the current directory. The
-    /// [`DirectoryFilterGuard`] pops the frame on drop.
-    dynamic_dir_merge_stack: Rc<RefCell<Vec<DynamicDirMergeFrame>>>,
+    /// `bar/`. The [`DirectoryFilterGuard`] pops the frame on drop.
+    dir_merge: DirectoryFilterHandles,
+    /// Destination-side per-directory merge filter stacks, maintained ONLY by
+    /// the delete pass (`enter_destination_for_deletion`) and read ONLY by the
+    /// deletion decision (`allows_deletion`). This is a SEPARATE chain from the
+    /// source-side `dir_merge`, mirroring upstream's isolated `delete_filt`
+    /// list: the receiver's delete pass loads per-dir merge files from the
+    /// DESTINATION tree and never perturbs the sender `filter_list`.
+    ///
+    /// upstream: delete.c:63-115 `delete_in_dir` calls `change_local_filter_dir`
+    /// which pops filters at depth > current and `push_local_filters` loads this
+    /// destination directory's rules, keeping inherited rules in `lp->head` an
+    /// arbitrary number of indices deep (exclude.c:801).
+    delete_dir_merge: DirectoryFilterHandles,
+    /// Persistent depth-keyed stack of held destination delete-filter guards.
+    ///
+    /// Mirrors upstream `change_local_filter_dir`'s static `filt_array` +
+    /// `cur_depth`: as the delete pass visits destination directories in
+    /// depth-first order, ancestor guards stay alive so a parent directory's
+    /// `.rsync-filter` rules inherit into subdirectories at delete time. The
+    /// `usize` is the directory's destination-relative depth; entries are
+    /// pushed at increasing depth and popped (deepest first) when the pass
+    /// revisits an equal-or-shallower depth. During a `--delete-during`/`Before`
+    /// pass the destination merge files are not present yet (they arrive with
+    /// the transfer), so the loaded frames are empty and nothing is protected -
+    /// matching upstream, which is why the manual recommends `--delete-after`.
+    delete_filter_chain: RefCell<Vec<(usize, DirectoryFilterGuard)>>,
+    observer: Option<&'a mut dyn LocalCopyRecordHandler>,
     deferred_ops: DeferredOperationQueue,
     timeout: Option<Duration>,
     stop_deadline: Option<Instant>,
@@ -393,10 +412,20 @@ pub(crate) struct DeferredOperationQueue {
 }
 
 /// A directory deletion deferred until after the transfer phase completes.
+///
+/// Two flavours share this queue:
+/// - `--delete-after` / the multi-source `During`->`After` downgrade leave
+///   `decided` as `None`: the flush re-scans the destination and evaluates the
+///   filter chain THEN (the destination merge files are present by then).
+/// - `--delete-delay` sets `decided` to the plan computed during the walk, when
+///   the destination merge files were still absent; the flush executes that plan
+///   verbatim without re-scanning or re-filtering. upstream: generator.c:345
+///   `remember_delete` vs the `do_delete_pass` rescan.
 pub(crate) struct DeferredDeletion {
     pub(crate) destination: PathBuf,
     pub(crate) relative: Option<PathBuf>,
     pub(crate) keep: Vec<OsString>,
+    pub(crate) decided: Option<crate::delete::DeletePlan>,
 }
 
 /// Owned path and type context for deferred metadata finalization.
@@ -588,12 +617,28 @@ pub(crate) struct DynamicDirMergeFrame {
 /// Shared references to the layered filter stacks, used by
 /// [`DirectoryFilterGuard`] to push and pop per-directory filter rules.
 #[derive(Clone)]
-struct DirectoryFilterHandles {
-    layers: Rc<RefCell<FilterSegmentLayers>>,
-    marker_layers: Rc<RefCell<ExcludeIfPresentLayers>>,
-    ephemeral: Rc<RefCell<FilterSegmentStack>>,
-    marker_ephemeral: Rc<RefCell<ExcludeIfPresentStack>>,
-    dynamic: Rc<RefCell<Vec<DynamicDirMergeFrame>>>,
+pub(crate) struct DirectoryFilterHandles {
+    pub(crate) layers: Rc<RefCell<FilterSegmentLayers>>,
+    pub(crate) marker_layers: Rc<RefCell<ExcludeIfPresentLayers>>,
+    pub(crate) ephemeral: Rc<RefCell<FilterSegmentStack>>,
+    pub(crate) marker_ephemeral: Rc<RefCell<ExcludeIfPresentStack>>,
+    pub(crate) dynamic: Rc<RefCell<Vec<DynamicDirMergeFrame>>>,
+}
+
+impl DirectoryFilterHandles {
+    /// Builds an empty per-directory filter stack bundle sized to the filter
+    /// program's `dir-merge` rule count (one static layer slot per rule). Used
+    /// for both the source-side and the isolated destination delete chains.
+    pub(crate) fn new(program: Option<&FilterProgram>) -> Self {
+        let layer_count = program.map_or(0, |p| p.dir_merge_rules().len());
+        Self {
+            layers: Rc::new(RefCell::new(vec![Vec::new(); layer_count])),
+            marker_layers: Rc::new(RefCell::new(vec![Vec::new(); layer_count])),
+            ephemeral: Rc::new(RefCell::new(Vec::new())),
+            marker_ephemeral: Rc::new(RefCell::new(Vec::new())),
+            dynamic: Rc::new(RefCell::new(Vec::new())),
+        }
+    }
 }
 
 #[cfg(test)]
@@ -997,6 +1042,7 @@ mod tests {
             destination: PathBuf::from("/dest"),
             relative: Some(PathBuf::from("rel")),
             keep: vec![OsString::from("file1"), OsString::from("file2")],
+            decided: None,
         };
         assert_eq!(deletion.destination, PathBuf::from("/dest"));
         assert_eq!(deletion.relative, Some(PathBuf::from("rel")));
@@ -1009,6 +1055,7 @@ mod tests {
             destination: PathBuf::from("/dest"),
             relative: None,
             keep: Vec::new(),
+            decided: None,
         };
         assert!(deletion.relative.is_none());
         assert!(deletion.keep.is_empty());
