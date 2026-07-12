@@ -338,36 +338,32 @@ mod create_directory_incremental_tests {
         assert_eq!(failed.count(), 2); // Parent + child marked as failed
     }
 
-    /// UTS-16.b regression: a non-EACCES error from
-    /// `mkdirat_via_sandbox_or_fallback` must propagate to the caller
-    /// instead of being silently coerced to `Ok(None)`.
+    /// A conflicting symlink at a directory-creation target must be replaced
+    /// by a real directory, mirroring upstream `generator.c`.
     ///
-    /// Before the fix, a symlink-swap attack on a subdir leaf would
-    /// surface as an arbitrary errno (EEXIST for a dangling symlink at
-    /// the leaf, ELOOP/ENOTDIR/EOPNOTSUPP for sandbox refusals). The
-    /// receiver dropped those errors on the floor and returned rc=0
-    /// with the directory missing - exactly the silent-skip pattern
-    /// Rule 12 (fail loud) forbids.
+    /// Upstream lstat-classifies the destination with `link_stat(fname,
+    /// &sx.st, keep_dirlinks && is_dir)` (`generator.c:1356`). With
+    /// `--keep-dirlinks` off, a symlink at the target (even a dangling one)
+    /// lstats as `FT_SYMLINK != FT_DIR`, so upstream removes it via
+    /// `delete_item(fname, ..., del_opts | DEL_FOR_DIR)` and then
+    /// `do_mkdir_at()` (`generator.c:1451-1455`). The receiver's
+    /// `classify_dir_destination` reproduces this: it removes the conflicting
+    /// symlink and reports `ReplacedSymlink`, which drives a fresh `mkdir`.
     ///
-    /// This test shapes a dangling-symlink leaf so the underlying
-    /// `mkdirat`/`fs::create_dir` returns `AlreadyExists` (EEXIST), a
-    /// non-EACCES error class. The fix must surface it as `Err`, not
-    /// `Ok(None)`.
+    /// A dangling symlink is used deliberately: `Path::exists` follows it and
+    /// reports "missing", which the old `.exists()` probe mistook for a plain
+    /// new directory and let `mkdir` fail with `EEXIST` on the symlink. The
+    /// lstat-based classifier must instead replace it and create a real
+    /// directory.
     #[cfg(unix)]
     #[test]
-    fn surfaces_non_permission_error_from_mkdir() {
+    fn replaces_conflicting_symlink_with_real_directory() {
         use std::os::unix::fs::symlink;
 
         let temp = TempDir::new().unwrap();
         let dest = temp.path();
 
-        // Plant a dangling symlink at the leaf the receiver intends to
-        // create. `Path::exists` follows the symlink and reports
-        // false (target missing), so the `is_new` guard inside
-        // `create_directory_incremental` will fall through to the
-        // mkdir attempt. `mkdir`/`mkdirat` on an existing symlink
-        // leaf returns EEXIST regardless of whether the target
-        // exists.
+        // Plant a dangling symlink where the incoming directory will land.
         let leaf = dest.join("victim");
         symlink(dest.join("does-not-exist"), &leaf).expect("plant dangling symlink");
 
@@ -390,20 +386,76 @@ mod create_directory_incremental_tests {
             None,
         );
 
-        // Fail loud: the underlying EEXIST must propagate. The
-        // pre-fix behaviour was `Ok(None)` with `mark_failed`, which
-        // hid the failure from the caller's exit-code path.
-        let err = result.expect_err(
-            "non-EACCES mkdir failure must propagate as Err, not be coerced to Ok(None)",
+        // The conflicting symlink is removed and a real directory is created:
+        // upstream reports `FLAG_DIR_CREATED`, so this is a freshly made dir.
+        assert_eq!(
+            result.expect("classifier replaces the symlink and mkdirs a real directory"),
+            Some(true),
+            "a conflicting symlink at a dir target must be replaced, not skipped"
         );
-        // Accept any non-PermissionDenied class. EEXIST is
-        // `AlreadyExists`; on some kernels with sandbox routing the
-        // error class may differ but must never be `PermissionDenied`
-        // (that path is the upstream-parity non-fatal branch).
+        let meta = std::fs::symlink_metadata(&leaf).expect("target must exist");
+        assert!(
+            meta.file_type().is_dir(),
+            "the destination must be a real directory, not the original symlink"
+        );
+        assert_eq!(failed.count(), 0, "replacement is not a failure");
+    }
+
+    /// Fail-loud invariant (Rule 12): a genuine non-EACCES error from the
+    /// underlying `mkdir` must propagate as `Err`, never be coerced to
+    /// `Ok(None)` / `mark_failed`, which would hide it from the caller's
+    /// exit-code path.
+    ///
+    /// EACCES is the only non-fatal `mkdir` class (upstream
+    /// `receiver.c:693-700` folds it into `io_error` and continues); every
+    /// other errno is a hard failure. This shapes an `ENOTDIR` by placing a
+    /// regular file in the middle of the directory path (`afile/sub`, where
+    /// `afile` is a file), so `mkdir` on `afile/sub` fails because a path
+    /// component is not a directory. That error class is neither `NotFound`
+    /// (which would trigger the `create_dir_all` parent-walk) nor
+    /// `PermissionDenied` (the non-fatal branch), so it must surface as `Err`.
+    #[cfg(unix)]
+    #[test]
+    fn surfaces_non_permission_error_from_mkdir() {
+        let temp = TempDir::new().unwrap();
+        let dest = temp.path();
+
+        // A regular file where a parent directory is expected forces ENOTDIR
+        // when the receiver tries to create `afile/sub` beneath it.
+        std::fs::write(dest.join("afile"), b"not a directory").expect("plant regular file");
+
+        let entry = FileEntry::new_directory("afile/sub".into(), 0o755);
+        let opts = metadata::MetadataOptions::default();
+        let mut failed = FailedDirectories::new();
+
+        let handshake = test_handshake();
+        let config = test_config();
+        let ctx = ReceiverContext::new_for_test(&handshake, config);
+
+        let result = ctx.create_directory_incremental(
+            dest,
+            &entry,
+            &opts,
+            &mut failed,
+            None,
+            None,
+            #[cfg(unix)]
+            None,
+        );
+
+        // Fail loud: the underlying ENOTDIR must propagate. Coercing it to
+        // `Ok(None)` would hide the failure from the caller's exit-code path.
+        let err = result
+            .expect_err("non-EACCES mkdir failure must propagate as Err, not be coerced to Ok");
         assert_ne!(
             err.kind(),
             std::io::ErrorKind::PermissionDenied,
-            "EACCES must take the non-fatal branch; this scenario is shaped to avoid it"
+            "EACCES takes the non-fatal branch; this scenario is shaped to avoid it"
+        );
+        assert_ne!(
+            err.kind(),
+            std::io::ErrorKind::NotFound,
+            "NotFound would trigger the create_dir_all parent-walk, not a hard error"
         );
     }
 
