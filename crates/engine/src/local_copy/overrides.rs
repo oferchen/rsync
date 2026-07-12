@@ -17,6 +17,9 @@ type HardLinkOverrideFn = dyn Fn(&Path, &Path) -> io::Result<()> + 'static;
 type DeviceIdOverrideFn = dyn Fn(&Path, &fs::Metadata) -> Option<u64> + 'static;
 
 #[cfg(test)]
+type BackupRenameOverrideFn = dyn Fn(&Path, &Path) -> Option<io::Result<()>> + 'static;
+
+#[cfg(test)]
 thread_local! {
     static HARD_LINK_OVERRIDE: RefCell<Option<Box<HardLinkOverrideFn>>> =
         const { RefCell::new(None) };
@@ -93,6 +96,54 @@ where
     let result = action();
     drop(guard);
     result
+}
+
+#[cfg(test)]
+thread_local! {
+    static BACKUP_RENAME_OVERRIDE: RefCell<Option<Box<BackupRenameOverrideFn>>> =
+        const { RefCell::new(None) };
+}
+
+#[cfg(test)]
+pub(crate) fn with_backup_rename_override<F, R>(override_fn: F, action: impl FnOnce() -> R) -> R
+where
+    F: Fn(&Path, &Path) -> Option<io::Result<()>> + 'static,
+{
+    struct ResetGuard;
+
+    impl Drop for ResetGuard {
+        fn drop(&mut self) {
+            BACKUP_RENAME_OVERRIDE.with(|cell| {
+                cell.replace(None);
+            });
+        }
+    }
+
+    BACKUP_RENAME_OVERRIDE.with(|cell| {
+        cell.replace(Some(Box::new(override_fn)));
+    });
+    let guard = ResetGuard;
+    let result = action();
+    drop(guard);
+    result
+}
+
+/// Renames a destination entry to its backup location.
+///
+/// In tests a thread-local override can force a specific outcome (e.g. an
+/// `EXDEV` cross-device error) to exercise the copy-tree fallback without a
+/// real second filesystem; production always calls `std::fs::rename`.
+pub(super) fn backup_rename(from: &Path, to: &Path) -> io::Result<()> {
+    #[cfg(test)]
+    if let Some(result) = BACKUP_RENAME_OVERRIDE.with(|cell| {
+        cell.borrow()
+            .as_ref()
+            .and_then(|override_fn| override_fn(from, to))
+    }) {
+        return result;
+    }
+
+    fs::rename(from, to)
 }
 
 pub(super) fn device_identifier(path: &Path, metadata: &fs::Metadata) -> Option<u64> {
