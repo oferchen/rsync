@@ -109,12 +109,16 @@ fn build_receiver_with_perdir_merge(dest: &std::path::Path) -> ReceiverContext {
         .push(FileEntry::new_file(".rsync-filter".into(), 8, 0o644));
 
     // Register the dest-side per-directory `.rsync-filter` merge config on the
-    // dedicated deletion chain (upstream: the receiver's isolated delete filter
-    // list, exclude.c:759 `push_local_filters`). The chain is otherwise empty,
-    // so protection can only come from a `.rsync-filter` read off the disk.
+    // receiver's wire-populated `filter_chain`, exactly as a server receiver does
+    // after parsing a `-F` (`dir-merge /.rsync-filter`) rule off the wire
+    // (setup/wire_filters.rs -> parse_wire_filters_for_receiver). The delete pass
+    // (deletion.rs) consults this chain and reloads each destination directory's
+    // `.rsync-filter` at delete time (upstream exclude.c:759 push_local_filters).
+    // The chain carries no global rules, so protection can only come from a
+    // `.rsync-filter` read off the disk - which is the whole point of deferral.
     let mut chain = ::filters::FilterChain::empty();
     chain.add_merge_config(::filters::DirMergeConfig::new(".rsync-filter"));
-    ctx.set_deletion_filter_chain(chain);
+    ctx.set_filter_chain(chain);
     ctx
 }
 
