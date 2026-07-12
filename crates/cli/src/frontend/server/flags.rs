@@ -267,13 +267,17 @@ pub(super) struct ServerLongFlags {
     /// `whole_file` (options.c:746 `{"no-W", ..., &whole_file, 0}`).
     pub(super) no_whole_file: bool,
 
-    /// Whether the client forwarded `--no-relative` (upstream `relative_paths = 0`).
+    /// Whether the client forwarded `--relative` / `--no-relative`.
     ///
-    /// upstream: options.c:2962-2973 - when `files_from` is active and
-    /// `!relative_paths`, the client emits `--no-relative`. The server-side
-    /// popt table clears `relative_paths` (options.c:693 `{"no-relative", ...,
-    /// &relative_paths, 0}`).
-    pub(super) no_relative: bool,
+    /// upstream: options.c:109-110 - `if (relative_paths) argstr[x++] = 'R';`
+    /// packs the compact `R` letter for relative mode, and options.c:368-369
+    /// emits the long `--no-relative` when relative paths are off (including the
+    /// `--files-from` default, which is otherwise relative). The long form must
+    /// be recognised and consumed here; otherwise it falls through to the
+    /// positional-path branch and the sender treats `--no-relative` as the
+    /// transfer root (`link_stat "--no-relative/..."`). `None` leaves the value
+    /// implied by the compact `R` letter untouched.
+    pub(super) relative: Option<bool>,
 
     /// Whether the client forwarded `--open-noatime` (upstream `open_noatime`).
     ///
@@ -356,7 +360,7 @@ pub(super) fn parse_server_long_flags(args: &[OsString]) -> ServerLongFlags {
         no_implied_dirs: false,
         no_recurse: false,
         no_whole_file: false,
-        no_relative: false,
+        relative: None,
         open_noatime: false,
         delete_missing_args: false,
         ignore_missing_args: false,
@@ -442,9 +446,16 @@ pub(super) fn parse_server_long_flags(args: &[OsString]) -> ServerLongFlags {
             // upstream: options.c:746 / 2955-2959 - `--no-W` clears `whole_file`
             // so `--inplace --sparse` streams a delta instead of the whole file.
             "--no-W" => flags.no_whole_file = true,
-            // upstream: options.c:693 / 2962-2973 - `--no-relative` clears
-            // `relative_paths` when the client used `--files-from` without `-R`.
-            "--no-relative" => flags.no_relative = true,
+            // upstream: options.c:368-369 / 692-694 - the sender packs the
+            // compact `R` letter for relative mode; when relative paths are off
+            // (including the `--files-from` default being explicitly disabled),
+            // server_options() emits the long `--no-relative` instead. Recognise
+            // and record both so the flag is consumed rather than mistaken for a
+            // positional path, and so the server-side sender flattens each
+            // --files-from entry to its basename (flist.c:2338-2349) with no
+            // implied parent directories (options.c:2207-2208).
+            "--no-relative" | "--no-R" => flags.relative = Some(false),
+            "--relative" => flags.relative = Some(true),
             "--from0" => flags.from0 = true,
             "--inplace" => flags.inplace = true,
             // upstream: options.c:1722-1726 - OPT_APPEND increments append_mode
@@ -743,6 +754,8 @@ pub(super) fn is_known_server_long_flag(arg: &str) -> bool {
             | "--no-r"
             | "--no-W"
             | "--no-relative"
+            | "--no-R"
+            | "--relative"
             | "--from0"
             | "--inplace"
             | "--append"
