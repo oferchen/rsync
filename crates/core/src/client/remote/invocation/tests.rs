@@ -3627,6 +3627,60 @@ fn pull_with_local_files_from_sends_files_from_stdin_to_remote() {
     );
 }
 
+/// upstream: options.c:368-369 - a PULL with `--files-from --no-relative`
+/// (relative_paths resolved off) must forward `--no-relative` to the remote
+/// sender AND must NOT pack the compact `R` letter. Without this the remote
+/// defaults relative_paths=1 (options.c:2205-2206) and keeps the leading path
+/// components (`sub/file` instead of the flattened `file`).
+#[test]
+fn pull_with_files_from_no_relative_forwards_no_relative_and_omits_r() {
+    use crate::client::config::FilesFromSource;
+    use std::path::PathBuf;
+
+    let config = ClientConfig::builder()
+        .files_from(FilesFromSource::LocalFile(PathBuf::from("/tmp/list.txt")))
+        .relative_paths(false)
+        .build();
+    let builder = RemoteInvocationBuilder::new(&config, RemoteRole::Receiver);
+    let args = builder.build("/remote/source");
+
+    assert!(
+        args.iter().any(|a| a == "--no-relative"),
+        "files-from + non-relative must forward --no-relative: {args:?}"
+    );
+    let flags = receiver_flag_string(&config);
+    assert!(
+        !flags.contains('R'),
+        "files-from + non-relative must NOT pack compact 'R': {flags}"
+    );
+}
+
+/// upstream: options.c:109-110 - a PULL with `--files-from` defaulting to
+/// relative (relative_paths resolved on) packs the compact `R` letter and does
+/// NOT forward `--no-relative`.
+#[test]
+fn pull_with_files_from_relative_packs_r_and_omits_no_relative() {
+    use crate::client::config::FilesFromSource;
+    use std::path::PathBuf;
+
+    let config = ClientConfig::builder()
+        .files_from(FilesFromSource::LocalFile(PathBuf::from("/tmp/list.txt")))
+        .relative_paths(true)
+        .build();
+    let builder = RemoteInvocationBuilder::new(&config, RemoteRole::Receiver);
+    let args = builder.build("/remote/source");
+
+    assert!(
+        !args.iter().any(|a| a == "--no-relative"),
+        "relative files-from must NOT forward --no-relative: {args:?}"
+    );
+    let flags = receiver_flag_string(&config);
+    assert!(
+        flags.contains('R'),
+        "relative files-from must pack compact 'R': {flags}"
+    );
+}
+
 /// SSH pull with a remote-hosted `--files-from` forwards the absolute path
 /// (matching upstream `options.c:2964 safe_arg("", files_from)`).
 #[test]

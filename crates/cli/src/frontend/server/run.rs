@@ -232,11 +232,13 @@ where
     if long_flags.no_whole_file {
         config.flags.whole_file = false;
     }
-    // upstream: options.c:693 / 2962-2973 - `--no-relative` clears
-    // `relative_paths` when the client used `--files-from` without `-R`.
-    // Overrides the compact `R` letter.
-    if long_flags.no_relative {
-        config.flags.relative = false;
+    // upstream: options.c:109-110 / 368-369 - relative mode arrives as the
+    // compact `R` letter (already parsed into config.flags.relative) or as the
+    // long `--no-relative`. Apply the long form when present so an explicit
+    // `--no-relative` (which the peer sends without the `R` letter) forces
+    // non-relative mode and the sender flattens --files-from entries.
+    if let Some(relative) = long_flags.relative {
+        config.flags.relative = relative;
     }
     config.flags.numeric_ids = core::server::NumericIds::from_client(long_flags.numeric_ids);
     config.flags.delete = long_flags.delete;

@@ -439,6 +439,38 @@ fn append_is_known_server_long_flag() {
     assert!(is_known_server_long_flag("--append"));
 }
 
+/// Task #292: upstream server_options() emits the long `--no-relative` when
+/// relative paths are off (options.c:368-369), and it must be recognised so it
+/// is consumed as a flag - not treated as the transfer-root positional path.
+/// This reproduces the exact argv an upstream client sends for a
+/// `--files-from --no-relative` pull.
+#[test]
+fn no_relative_is_recognised_and_not_a_positional() {
+    assert!(is_known_server_long_flag("--no-relative"));
+    assert!(is_known_server_long_flag("--no-R"));
+    assert!(is_known_server_long_flag("--relative"));
+
+    let args = vec![
+        OsString::from("--server"),
+        OsString::from("--sender"),
+        OsString::from("-logDtpe.LsfxCIvu"),
+        OsString::from("--files-from=-"),
+        OsString::from("--from0"),
+        OsString::from("--no-relative"),
+        OsString::from("."),
+        OsString::from("/src/"),
+    ];
+    let (flags, pos_args) = parse_server_flag_string_and_args(&args);
+    assert_eq!(flags, "-logDtpe.LsfxCIvu");
+    // The real source path must be the sole positional; `--no-relative` must
+    // NOT leak in as the transfer root (which caused `link_stat
+    // "--no-relative/..."` on the sender).
+    assert_eq!(pos_args, vec![OsString::from("/src/")]);
+
+    let long = parse_server_long_flags(&args);
+    assert_eq!(long.relative, Some(false));
+}
+
 /// `parse_server_long_flags` must capture both split and joined
 /// `--partial-dir` forms into `ServerLongFlags::partial_dir`.
 #[test]
@@ -859,10 +891,10 @@ fn long_flags_no_w_recognized_and_parsed() {
 fn long_flags_no_relative_recognized_and_parsed() {
     let flags =
         parse_server_long_flags(&[OsString::from("--server"), OsString::from("--no-relative")]);
-    assert!(flags.no_relative);
+    assert_eq!(flags.relative, Some(false));
 
     let flags = parse_server_long_flags(&[OsString::from("--server")]);
-    assert!(!flags.no_relative);
+    assert_eq!(flags.relative, None);
 
     assert!(is_known_server_long_flag("--no-relative"));
 }
