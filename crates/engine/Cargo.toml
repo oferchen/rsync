@@ -276,6 +276,10 @@ name = "br_3j_f_dashmap_cores_vs_throughput"
 harness = false
 
 [[bench]]
+name = "dmb_a_dashmap_delete_bench"
+harness = false
+
+[[bench]]
 name = "spill_policy_perf"
 harness = false
 required-features = ["spill-compression"]

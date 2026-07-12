@@ -347,6 +347,124 @@ mod tests {
         assert!(ctx.flist_eof);
     }
 
+    /// Protocol-32 INC_RECURSE receiver configured for a `-a` pull: the compat
+    /// flags mirror what an upstream daemon negotiates (all known bits, so
+    /// varint entry flags and inline id names are in force) and owner/group
+    /// preservation is on so the uid/gid + name fields decode.
+    fn archive_inc_recurse_receiver() -> ReceiverContext {
+        use crate::flags::ParsedServerFlags;
+        let mut handshake = test_handshake();
+        handshake.compat_flags = Some(CompatibilityFlags::ALL_KNOWN);
+        let config = ServerConfig {
+            role: ServerRole::Receiver,
+            protocol: ProtocolVersion::try_from(PROTOCOL).unwrap(),
+            flag_string: "-logDtpre.iLsfxCIvu".to_owned(),
+            flags: ParsedServerFlags {
+                owner: true,
+                group: true,
+                links: true,
+                times: true,
+                perms: true,
+                recursive: true,
+                archive: true,
+                ..ParsedServerFlags::default()
+            },
+            args: vec![OsString::from(".")],
+            ..Default::default()
+        };
+        ReceiverContext::new_for_test(&handshake, config)
+    }
+
+    /// A real multi-segment INC_RECURSE sub-list stream captured verbatim from
+    /// an upstream rsync 3.4.4 daemon answering an `i`-advertised `-a` pull of a
+    /// 3-directory / 6-file tree (`{a,b,c}/{f1,f2}.txt`). The daemon packs the
+    /// whole stream into one `MSG_DATA` frame:
+    ///
+    /// - the initial level-1 flist (`.`, `b`, `a`, `c` in readdir order),
+    /// - the end-of-flist marker (varint `0` flag + varint `0` io_error),
+    /// - three per-directory sub-lists, each introduced by
+    ///   `write_ndx(NDX_FLIST_OFFSET - dir_ndx)` (a `0xFF`-led negative NDX),
+    /// - `write_ndx(NDX_FLIST_EOF)` (`0xFF 0xFE 0x80 0x02 …`).
+    ///
+    /// This exercises the ACTUAL carry/framing boundary an upstream peer
+    /// produces. An oc<->oc round-trip hides the bug because both ends share the
+    /// encoder; only genuine upstream bytes catch a receiver that reads the
+    /// `0xFF` `NDX_FLIST_OFFSET` marker as a varint entry-flags byte (which trips
+    /// `overflow in read_varint`, since `int_byte_extra[0xFF >> 2] = 5 > 4`).
+    ///
+    /// upstream: flist.c:2152 `write_ndx(NDX_FLIST_OFFSET - dir_ndx)`,
+    /// io.c:2243 `write_ndx()`, flist.c:2112 `write_end_of_flist()`.
+    #[rustfmt::skip]
+    const UPSTREAM_INC_RECURSE_FRAME: &[u8] = &[
+        0xac, 0x01, 0x01, 0x2e, 0x00, 0x00, 0x10, 0x6a, 0x66, 0x1f, 0x52, 0xf0,
+        0x6f, 0x84, 0x1b, 0x1d, 0xfd, 0x41, 0x00, 0x00, 0x83, 0xe8, 0x04, 0x6f,
+        0x66, 0x65, 0x72, 0x83, 0xe8, 0x04, 0x6f, 0x66, 0x65, 0x72, 0xa0, 0x9a,
+        0x01, 0x62, 0x00, 0x00, 0x10, 0xf0, 0x3d, 0x65, 0xd9, 0x1c, 0xa0, 0x9a,
+        0x01, 0x61, 0x00, 0x00, 0x10, 0xf0, 0xd3, 0x92, 0x93, 0x1c, 0xa0, 0x9a,
+        0x01, 0x63, 0x00, 0x00, 0x10, 0xf0, 0x6f, 0x84, 0x1b, 0x1d, 0x00, 0x00,
+        0xff, 0x65, 0xa0, 0x98, 0x08, 0x61, 0x2f, 0x66, 0x31, 0x2e, 0x74, 0x78,
+        0x74, 0x00, 0x0a, 0x00, 0xf0, 0xd3, 0x92, 0x93, 0x1c, 0xb4, 0x81, 0x00,
+        0x00, 0xa0, 0xba, 0x03, 0x05, 0x32, 0x2e, 0x74, 0x78, 0x74, 0x00, 0x07,
+        0x00, 0xf0, 0xd3, 0x92, 0x93, 0x1c, 0x00, 0x00, 0xff, 0x01, 0xa0, 0x9a,
+        0x08, 0x62, 0x2f, 0x66, 0x31, 0x2e, 0x74, 0x78, 0x74, 0x00, 0x0a, 0x00,
+        0xf0, 0x3d, 0x65, 0xd9, 0x1c, 0xa0, 0xba, 0x03, 0x05, 0x32, 0x2e, 0x74,
+        0x78, 0x74, 0x00, 0x07, 0x00, 0xf0, 0x3d, 0x65, 0xd9, 0x1c, 0x00, 0x00,
+        0xff, 0x01, 0xa0, 0x9a, 0x08, 0x63, 0x2f, 0x66, 0x31, 0x2e, 0x74, 0x78,
+        0x74, 0x00, 0x0a, 0x00, 0xf0, 0x6f, 0x84, 0x1b, 0x1d, 0xa0, 0xba, 0x03,
+        0x05, 0x32, 0x2e, 0x74, 0x78, 0x74, 0x00, 0x07, 0x00, 0xf0, 0x6f, 0x84,
+        0x1b, 0x1d, 0x00, 0x00, 0xff, 0xfe, 0x80, 0x02, 0x00, 0x00,
+    ];
+
+    #[test]
+    fn real_upstream_multisegment_sublist_decodes_as_segments() {
+        let mut ctx = archive_inc_recurse_receiver();
+        let mut reader = Cursor::new(UPSTREAM_INC_RECURSE_FRAME.to_vec());
+
+        // Initial flist: the four level-1 entries decode, the end-of-list marker
+        // is consumed, but INC_RECURSE leaves `flist_eof` clear until the
+        // terminating NDX_FLIST_EOF is seen in the sub-list stream.
+        let initial = ctx
+            .receive_file_list(&mut reader)
+            .expect("initial level-1 flist decodes cleanly");
+        assert_eq!(initial, 4, "level-1 flist has `.` plus dirs a, b, c");
+        assert!(
+            !ctx.flist_eof,
+            "INC_RECURSE keeps flist_eof clear until NDX_FLIST_EOF"
+        );
+
+        // Drain the sub-lists. The regression: the `0xFF`-led NDX_FLIST_OFFSET
+        // markers must be decoded as segment markers by `read_ndx`, NOT read as
+        // varint entry flags. A fresh codec here matches the sender's fresh NDX
+        // state at the first sub-list marker.
+        let mut codec = create_ndx_codec(PROTOCOL);
+        ctx.ensure_all_segments_loaded(&mut reader, &mut codec)
+            .expect("NDX_FLIST_OFFSET sub-list markers decode as segments, not varint flags");
+
+        assert!(
+            ctx.flist_eof,
+            "NDX_FLIST_EOF terminates the sub-list stream"
+        );
+        assert_eq!(
+            ctx.file_list().len(),
+            10,
+            "4 level-1 dirs + 6 files across 3 per-directory sub-lists"
+        );
+
+        let names: std::collections::BTreeSet<String> = ctx
+            .file_list()
+            .iter()
+            .map(|e| e.path().to_string_lossy().into_owned())
+            .collect();
+        for expected in [
+            "a/f1.txt", "a/f2.txt", "b/f1.txt", "b/f2.txt", "c/f1.txt", "c/f2.txt",
+        ] {
+            assert!(
+                names.contains(expected),
+                "sub-list entry {expected} missing from decoded list: {names:?}"
+            );
+        }
+    }
+
     #[test]
     fn ensure_flat_idx_is_noop_without_inc_recurse() {
         // A non-INC_RECURSE receiver is already at flist_eof (set by

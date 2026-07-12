@@ -1114,3 +1114,45 @@ fn recv_xattr_values_exceeds_max_value_len() {
     assert_eq!(err.kind(), std::io::ErrorKind::InvalidData);
     assert!(err.to_string().contains("exceeds maximum"));
 }
+
+/// Pins the literal-xattr wire layout to exact bytes and asserts it is
+/// protocol-version independent.
+///
+/// Upstream `xattrs.c:send_xattr()` has NO `protocol_version` branch: the
+/// literal encoding (ndx+1, count, per-entry name_len/datum_len/name+NUL/value)
+/// is byte-identical for protocol 30, 31, and 32. The `CF_AVOID_XATTR_OPTIM`
+/// capability and `want_xattr_optim` gate (compat.c:747, only active at
+/// protocol >= 31) affect the transfer-phase hardlink optimisation, not this
+/// flist wire format. This test guards against ever re-introducing a
+/// version-conditioned xattr wire encoding, which desynced proto-30 peers with
+/// an "xa index out of range" error.
+#[test]
+fn send_xattr_literal_wire_is_protocol_independent_golden() {
+    let mut list = XattrList::new();
+    list.push(XattrEntry::new(b"user.foo".to_vec(), b"bar1".to_vec()));
+    list.push(XattrEntry::new(b"user.baz".to_vec(), b"qux2".to_vec()));
+
+    let mut buf = Vec::new();
+    send_xattr(&mut buf, &list, None, 0).unwrap();
+
+    // ndx+1=0 (literal), count=2, then per entry: name_len (incl NUL),
+    // datum_len, name bytes, NUL, value bytes. All varints here are < 0x80 so
+    // encode as a single byte, matching upstream write_varint.
+    let expected: Vec<u8> = [
+        &[0x00u8, 0x02][..], // ndx+1 = 0, count = 2
+        &[0x09, 0x04][..],   // name_len = 9, datum_len = 4
+        b"user.foo",
+        &[0x00][..],
+        b"bar1",
+        &[0x09, 0x04][..], // name_len = 9, datum_len = 4
+        b"user.baz",
+        &[0x00][..],
+        b"qux2",
+    ]
+    .concat();
+
+    assert_eq!(
+        buf, expected,
+        "literal xattr wire bytes drifted from golden"
+    );
+}

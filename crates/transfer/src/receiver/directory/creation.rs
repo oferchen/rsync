@@ -44,6 +44,33 @@ impl DirDestination {
     }
 }
 
+/// Reports whether a directory whose final permission bits are `real_mode`
+/// must be granted a temporary `u+rwx` while the receiver writes files into
+/// it, with the real mode restored afterward by [`touch_up_dirs`].
+///
+/// Mirrors upstream `generator.c:1512-1520`: when the receiver is not root,
+/// is not running `--fake-super`, is preserving permissions, and the target
+/// directory mode lacks full user `rwx` (`(mode & S_IRWXU) != S_IRWXU`), the
+/// generator chmods the directory to `mode | S_IRWXU` so `mkstemp()` can
+/// create temp files inside it, then sets `need_retouch_dir_perms` so the
+/// restrictive mode is reinstated at the end of the transfer
+/// (`generator.c:2122-2127`, `fix_dir_perms`). Without this, a source
+/// directory with a read-only mode (for example `0555`) leaves the
+/// destination directory unwritable and every file transfer into it fails
+/// with `mkstemp ... Permission denied`.
+#[cfg(unix)]
+fn dir_needs_writable_transfer_mode(
+    preserve_perms: bool,
+    fake_super: bool,
+    real_mode: u32,
+) -> bool {
+    preserve_perms
+        && !fake_super
+        && !metadata::am_root()
+        // upstream: generator.c:1512 - (file->mode & S_IRWXU) != S_IRWXU
+        && (real_mode & 0o700) != 0o700
+}
+
 impl ReceiverContext {
     /// Classifies a directory destination, removing a conflicting symlink first
     /// when required.
@@ -317,6 +344,14 @@ impl ReceiverContext {
 
         // Build owned data for parallel metadata application, skipping failed dirs.
         let metadata_opts_clone = metadata_opts.clone();
+        // upstream: generator.c:1512-1520 - grant a transient u+rwx to any
+        // directory whose final mode is not writable by us so the receiver can
+        // create temp files inside it; the real mode is restored in
+        // touch_up_dirs. Captured here so the closure below stays Send.
+        #[cfg(unix)]
+        let preserve_perms = metadata_opts.permissions();
+        #[cfg(unix)]
+        let fake_super = metadata_opts.fake_super_enabled();
         let entry_snapshots: Vec<(PathBuf, FileEntry, Option<XattrList>)> = dir_entries
             .into_iter()
             .filter(|(_, _, dir_path)| {
@@ -325,7 +360,16 @@ impl ReceiverContext {
             .map(|(idx, _, dir_path)| {
                 let entry = &self.file_list[idx];
                 let xattr_list = self.resolve_xattr_list(entry);
-                (dir_path, entry.clone(), xattr_list)
+                // `mut` is only exercised by the Unix transient-writable-mode
+                // grant below; on other platforms the clone is never mutated.
+                #[cfg_attr(not(unix), allow(unused_mut))]
+                let mut entry = entry.clone();
+                #[cfg(unix)]
+                if dir_needs_writable_transfer_mode(preserve_perms, fake_super, entry.permissions())
+                {
+                    entry.set_mode(entry.mode() | 0o700);
+                }
+                (dir_path, entry, xattr_list)
             })
             .collect();
         let dir_creation_errors: Vec<(PathBuf, String)> = failed_dir_paths
@@ -594,7 +638,26 @@ impl ReceiverContext {
         // Apply metadata (non-fatal errors)
         // Skip the stat inside apply_metadata_from_file_entry: the
         // directory was just created, so pass None to apply unconditionally.
-        if let Err(e) = apply_metadata_with_cached_stat(&dir_path, entry, metadata_opts, None) {
+        // upstream: generator.c:1512-1520 - grant a transient u+rwx to a
+        // read-only directory so files can be written into it; the real mode
+        // is restored in touch_up_dirs.
+        #[cfg(unix)]
+        let tweaked_entry = dir_needs_writable_transfer_mode(
+            metadata_opts.permissions(),
+            metadata_opts.fake_super_enabled(),
+            entry.permissions(),
+        )
+        .then(|| {
+            let mut e = entry.clone();
+            e.set_mode(e.mode() | 0o700);
+            e
+        });
+        #[cfg(unix)]
+        let apply_entry = tweaked_entry.as_ref().unwrap_or(entry);
+        #[cfg(not(unix))]
+        let apply_entry = entry;
+        if let Err(e) = apply_metadata_with_cached_stat(&dir_path, apply_entry, metadata_opts, None)
+        {
             if self.config.flags.verbose && self.config.connection.client_mode {
                 info_log!(
                     Misc,
@@ -645,40 +708,60 @@ impl ReceiverContext {
         Ok(Some(is_new))
     }
 
-    /// Re-applies directory mtimes after all file transfers complete.
+    /// Restores directory permissions and mtimes after all file transfers
+    /// complete.
     ///
-    /// Writing files into a directory updates the directory's mtime to the
-    /// current time (OS behavior). This method walks all directory entries
-    /// in reverse order (deepest first) and re-sets each mtime from the
-    /// file list entry, so parent directory timestamps are not disturbed
-    /// by child directory mtime updates.
+    /// Two repairs happen here, both undoing side effects of the transfer:
     ///
-    /// Gated on `preserve_times` (`-t` / `--times`). Skipped for dry-run
-    /// and when backups are active (upstream skips directories that need
-    /// backup handling).
+    /// - **Permissions.** A directory whose final mode is not writable by us
+    ///   was granted a transient `u+rwx` during creation (see
+    ///   [`dir_needs_writable_transfer_mode`]) so the receiver could create
+    ///   temp files inside it. The real, restrictive mode is reinstated here.
+    /// - **Mtimes.** Writing files into a directory updates its mtime to the
+    ///   current time (OS behavior). Each directory's mtime is re-set from the
+    ///   file-list entry.
+    ///
+    /// The flist is walked in reverse (deepest first) so a parent's mtime is
+    /// not clobbered when a child directory under it is later re-touched.
+    ///
+    /// The permission repair is gated on `-p` (`--perms`) and skipped for
+    /// root / `--fake-super`; the mtime repair is gated on `-t` (`--times`)
+    /// and skipped when backups without a backup-dir are active. Both are
+    /// skipped for dry-run.
     ///
     /// # Upstream Reference
     ///
-    /// - `generator.c:2080-2133` - `touch_up_dirs(dir_flist, -1)` iterates
-    ///   in reverse order to handle deepest-first ordering.
+    /// - `generator.c:2080-2133` - `touch_up_dirs(dir_flist, -1)` iterates in
+    ///   reverse order and repairs perms then times.
+    /// - `generator.c:2122-2127` - `fix_dir_perms = !am_root && !(mode &
+    ///   S_IWUSR)` restores the real directory mode.
     /// - `generator.c:2398-2399` - `need_retouch_dir_times` gating:
     ///   `preserve_mtimes && !omit_dir_times`.
     pub(in crate::receiver) fn touch_up_dirs(&self, dest_dir: &Path) {
-        // upstream: generator.c:2398 - need_retouch_dir_times =
-        // preserve_mtimes && !omit_dir_times
-        if !self.config.flags.times || self.config.flags.skip_dest_writes() {
+        if self.config.flags.skip_dest_writes() {
             return;
         }
 
-        // upstream: generator.c:2101 - skip when make_backups && !backup_dir
-        // (directory mtimes are changed by backup file creation)
-        if self.config.flags.backup && self.config.backup_dir.is_none() {
+        // upstream: generator.c:2398 - need_retouch_dir_times =
+        // preserve_mtimes && !omit_dir_times. The backup skip (generator.c:2101)
+        // only concerns the mtime repair (backup file creation moves mtimes).
+        let retouch_times = self.config.flags.times
+            && !(self.config.flags.backup && self.config.backup_dir.is_none());
+
+        // upstream: generator.c:2122 - fix_dir_perms = !am_root && !(mode &
+        // S_IWUSR); only meaningful when we preserve perms (otherwise the
+        // directory keeps its umask-derived writable mode).
+        #[cfg(unix)]
+        let retouch_perms =
+            self.config.flags.perms && !self.config.fake_super && !metadata::am_root();
+        #[cfg(not(unix))]
+        let retouch_perms = false;
+
+        if !retouch_times && !retouch_perms {
             return;
         }
 
         // Iterate in reverse so deepest directories are touched first.
-        // This prevents a parent's mtime from being clobbered when we
-        // later utimensat a child directory under it.
         // upstream: generator.c:2083 - for (i = dir_flist->used - 1; i >= 0; i--)
         for entry in self.file_list.iter().rev() {
             if !entry.is_dir() {
@@ -691,6 +774,28 @@ impl ReceiverContext {
             } else {
                 dest_dir.join(relative_path)
             };
+
+            // upstream: generator.c:2124-2125 - restore the real mode before
+            // the mtime repair. Only directories that lack the user write bit
+            // were tweaked, so only those are chmod'd back.
+            #[cfg(unix)]
+            if retouch_perms && (entry.permissions() & 0o200) == 0 {
+                use std::os::unix::fs::PermissionsExt;
+                let perms = fs::Permissions::from_mode(entry.permissions());
+                if let Err(e) = fs::set_permissions(&dir_path, perms) {
+                    debug_log!(
+                        Recv,
+                        1,
+                        "touch_up_dirs: failed to restore perms on {}: {}",
+                        dir_path.display(),
+                        e
+                    );
+                }
+            }
+
+            if !retouch_times {
+                continue;
+            }
 
             let mtime = filetime::FileTime::from_unix_time(entry.mtime(), entry.mtime_nsec());
 
@@ -877,6 +982,83 @@ mod touch_up_dirs_tests {
             actual, expected,
             "directory mtime should be restored to the file list value"
         );
+    }
+
+    /// The writable-transfer helper mirrors upstream's `dir_tweaking` gate
+    /// (`generator.c:1512`): only a non-root receiver preserving perms on a
+    /// directory that lacks full user `rwx` needs the transient `u+rwx`.
+    #[cfg(unix)]
+    #[test]
+    fn writable_transfer_mode_helper_matches_upstream_gate() {
+        let root = metadata::am_root();
+        // A read-only dir needs the tweak only when non-root + preserving perms.
+        assert_eq!(
+            super::dir_needs_writable_transfer_mode(true, false, 0o555),
+            !root
+        );
+        // A dir that already has full user rwx never needs the tweak.
+        assert!(!super::dir_needs_writable_transfer_mode(true, false, 0o755));
+        // Not preserving perms, or --fake-super, disables the tweak.
+        assert!(!super::dir_needs_writable_transfer_mode(
+            false, false, 0o555
+        ));
+        assert!(!super::dir_needs_writable_transfer_mode(true, true, 0o555));
+    }
+
+    /// Regression for the `mkstemp ... Permission denied` (#250) data bug: a
+    /// source directory with a read-only mode (e.g. `0555`) must still be
+    /// writable while the receiver creates files inside it, then be restored
+    /// to its restrictive mode afterward.
+    ///
+    /// upstream: generator.c:1512-1520 (grant `u+rwx`) + generator.c:2122-2127
+    /// (`fix_dir_perms` restore in touch_up_dirs).
+    #[cfg(unix)]
+    #[test]
+    fn readonly_dir_is_writable_during_transfer_then_restored() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let dir = test_support::create_tempdir();
+        let dest = dir.path();
+
+        let mut config = config_with_times(false);
+        config.flags.perms = true;
+
+        let hs = handshake();
+        let mut ctx = ReceiverContext::new_for_test(&hs, config);
+        // Read-only directory mode: r-xr-xr-x, no user write bit.
+        ctx.file_list = vec![FileEntry::new_directory("sub".into(), 0o555)];
+
+        let opts = metadata::MetadataOptions::default();
+        let mut writer = crate::writer::ServerWriter::new_plain(Vec::new());
+        ctx.create_directories(
+            dest,
+            &opts,
+            None,
+            None,
+            &mut writer,
+            #[cfg(unix)]
+            None,
+        )
+        .expect("create_directories succeeds");
+
+        // During the transfer window the directory must be writable so the
+        // receiver can create a temp file inside it. Under a non-root test
+        // runner this only holds because of the u+rwx tweak; under root the
+        // write always succeeds. Either way, creating a file must not fail.
+        let sub = dest.join("sub");
+        fs::write(sub.join("file.txt"), b"payload")
+            .expect("must be able to create files in a read-only-mode dir mid-transfer");
+
+        // After the transfer the restrictive mode must be reinstated (skipped
+        // under root / --fake-super, matching upstream fix_dir_perms).
+        ctx.touch_up_dirs(dest);
+        if !metadata::am_root() {
+            let mode = fs::metadata(&sub).unwrap().permissions().mode() & 0o777;
+            assert_eq!(
+                mode, 0o555,
+                "restrictive directory mode must be restored after transfer"
+            );
+        }
     }
 
     /// When `--times` is not set, `touch_up_dirs` must be a no-op.

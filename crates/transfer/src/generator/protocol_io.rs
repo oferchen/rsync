@@ -202,13 +202,16 @@ impl GeneratorContext {
             return Ok(None);
         }
         // upstream: sender.c:281 also gates on the want_xattr_optim hardlink
-        // optimisation. We mirror want_xattr_optim via the negotiated
-        // CF_AVOID_XATTR_OPTIM capability flag - when the flag is NOT set,
-        // upstream's want_xattr_optim is active and the optimisation skips
-        // xattr exchange for local-change hardlinks.
-        let want_xattr_optim = self
-            .compat_flags
-            .is_none_or(|f| !f.contains(CompatibilityFlags::AVOID_XATTR_OPTIMIZATION));
+        // optimisation. upstream: compat.c:747 -
+        // `want_xattr_optim = protocol_version >= 31 && !(compat_flags & CF_AVOID_XATTR_OPTIM)`.
+        // The optimisation only exists at protocol 31+, so it must stay off for
+        // proto-30 peers (rsync 3.0.x) where CF_AVOID_XATTR_OPTIM is undefined -
+        // otherwise the generator skips a request the sender still expects and
+        // desyncs the stream.
+        let want_xattr_optim = self.protocol.as_u8() >= 31
+            && self
+                .compat_flags
+                .is_none_or(|f| !f.contains(CompatibilityFlags::AVOID_XATTR_OPTIMIZATION));
         if want_xattr_optim
             && (iflags.raw() & ItemFlags::ITEM_XNAME_FOLLOWS != 0)
             && (iflags.raw() & ItemFlags::ITEM_LOCAL_CHANGE != 0)

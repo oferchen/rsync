@@ -161,6 +161,61 @@ fn ssh_server_no_flag_string_uses_defaults() {
 }
 
 #[test]
+fn client_honors_negotiated_inc_recurse_regardless_of_local_allow() {
+    // Regression for the INC_RECURSE-on-pull framing desync: on a daemon/SSH
+    // pull the client (is_server=false) reads the server's negotiated compat
+    // flags. The server only sets CF_INC_RECURSE when the client advertised the
+    // `i` capability (upstream compat.c:713, gated by set_allow_inc_recurse), so
+    // a received CF_INC_RECURSE means this side opted in and MUST drain the
+    // per-directory sub-lists framed by NDX_FLIST_OFFSET.
+    //
+    // The old client path silently cleared INC_RECURSE whenever
+    // `allow_inc_recurse` was false, so the receiver skipped the sub-list stream
+    // and later read the `0xFF` NDX_FLIST_OFFSET marker as a varint entry-flags
+    // byte, tripping `overflow in read_varint`. Upstream never masks the bit:
+    // compat.c:745-746 sets `inc_recurse = compat_flags & CF_INC_RECURSE`
+    // unconditionally on the read side. This test pins that the client honours a
+    // negotiated CF_INC_RECURSE even when the local `allow_inc_recurse` gate is
+    // false.
+    let protocol = ProtocolVersion::try_from(31).unwrap();
+    let mut stdin = &b""[..];
+    let mut stdout = Vec::new();
+
+    let config = ProtocolSetupConfig {
+        protocol,
+        skip_compat_exchange: false,
+        client_args: None,
+        flag_string: None,
+        is_server: false,
+        is_daemon_mode: true,
+        do_compression: false,
+        compress_choice: None,
+        checksum_choice: None,
+        compression_level: protocol::nstr::CLVL_NOT_SPECIFIED,
+        checksum_seed: Some(42),
+        allow_inc_recurse: false,
+    };
+
+    // The server hands back CF_INC_RECURSE among its negotiated flags.
+    let mock = MockNegotiator {
+        flags_to_read: CompatibilityFlags::INC_RECURSE
+            | CompatibilityFlags::CHECKSUM_SEED_FIX
+            | CompatibilityFlags::VARINT_FLIST_FLAGS,
+        ..MockNegotiator::new()
+    };
+
+    let result = setup_protocol_with(&mut stdout, &mut stdin, &config, &mock)
+        .expect("client compat-flags read should succeed");
+    let flags = result
+        .compat_flags
+        .expect("protocol 31 performs the compat-flags exchange");
+    assert!(
+        flags.contains(CompatibilityFlags::INC_RECURSE),
+        "client must honour the server's negotiated CF_INC_RECURSE (no silent strip)"
+    );
+}
+
+#[test]
 #[cfg(unix)]
 fn build_compat_flags_enables_symlink_times_when_client_advertises_l() {
     let flags = build_compat_flags_from_client_info("LfxCIvu", true);
