@@ -3464,11 +3464,18 @@ mod files_from {
             .build_file_list_with_base(&src, &files_from_entries(&src, file_paths))
             .unwrap();
 
-        // Dot entry + exists.txt; missing.txt is skipped with io_error.
-        assert_eq!(count, 2, "dot + exists.txt");
+        // exists.txt only; missing.txt is skipped with io_error. No implied
+        // root "." for a non-anchored files-from list (upstream flist.c:2417
+        // emits the root dot only when a leading "./" anchor sets
+        // implied_dot_dir).
+        assert_eq!(count, 1, "exists.txt only");
         let names: Vec<&str> = ctx.file_list().iter().map(|e| e.name()).collect();
         assert!(names.contains(&"exists.txt"));
         assert!(!names.contains(&"missing.txt"));
+        assert!(
+            !names.contains(&"."),
+            "no implied root . for a non-anchored list"
+        );
 
         // upstream: flist.c:1810 - ENOENT for a --files-from entry that never
         // existed should set IOERR_GENERAL (exit 23), not IOERR_VANISHED (exit 24).
@@ -3503,11 +3510,17 @@ mod files_from {
             .build_file_list_with_base(&src, &files_from_entries(&src, file_paths))
             .unwrap();
 
-        // Dot entry + exists.txt; missing.txt silently skipped.
-        assert_eq!(count, 2, "dot + exists.txt");
+        // exists.txt only; missing.txt silently skipped. No implied root "."
+        // for a non-anchored files-from list (upstream flist.c:2417 emits the
+        // root dot only when a leading "./" anchor sets implied_dot_dir).
+        assert_eq!(count, 1, "exists.txt only");
         let names: Vec<&str> = ctx.file_list().iter().map(|e| e.name()).collect();
         assert!(names.contains(&"exists.txt"));
         assert!(!names.contains(&"missing.txt"));
+        assert!(
+            !names.contains(&"."),
+            "no implied root . for a non-anchored list"
+        );
 
         // No io_error flags should be set - the missing entry is silently ignored.
         assert_eq!(
