@@ -116,12 +116,21 @@ pub fn setup_protocol_with<'a>(
                 stdout.flush()?;
                 final_flags
             } else {
-                let mut flags = negotiator.read_compat_flags(stdin)?;
-                // upstream: compat.c:720 - client clears INC_RECURSE when not allowed.
-                if !config.allow_inc_recurse {
-                    flags &= !CompatibilityFlags::INC_RECURSE;
-                }
-                flags
+                // The compat-flags exchange is unidirectional: the server writes
+                // the negotiated set and the client honours it verbatim.
+                // upstream: compat.c:745-746 recv side -
+                //   `inc_recurse = compat_flags & CF_INC_RECURSE ? 1 : 0;`
+                // The server only sets CF_INC_RECURSE when the client advertised
+                // the 'i' capability (compat.c:713, gated by
+                // set_allow_inc_recurse), so a received CF_INC_RECURSE means this
+                // side opted in and must drain the per-directory sub-lists framed
+                // by NDX_FLIST_OFFSET. Masking the flag here (the old
+                // `!allow_inc_recurse` strip) left the receiver reading that
+                // segment framing as file entries, tripping
+                // `overflow in read_varint`. When 'i' is not advertised the server
+                // never sets the bit, so honouring it is inert for every transfer
+                // that does not opt in.
+                negotiator.read_compat_flags(stdin)?
             };
 
             // Determine whether capability negotiation should happen.
