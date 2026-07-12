@@ -121,15 +121,34 @@ where
         None => return Ok(()),
     };
 
-    // Phase 2: build a single-directory DeleteContext, observe the
-    // segment so the cursor yields the directory, publish the plan
-    // directly into the context's map, and drain via emit_one.
+    execute_delete_plan(context, destination, relative, plan, fs)
+}
+
+/// Runs the per-entry side effects and the emitter unlink for an already-built
+/// [`DeletePlan`]. Shared by the immediate `--delete`/`--delete-before`/
+/// `--delete-after` path (which builds the plan right before executing) and the
+/// `--delete-delay` deferred path (which built the plan at decision time -
+/// during the transfer, while the destination merge files were still absent -
+/// and only executes here).
+fn execute_delete_plan<F>(
+    context: &mut CopyContext,
+    destination: &Path,
+    relative: Option<&Path>,
+    plan: DeletePlan,
+    fs: F,
+) -> Result<(), LocalCopyError>
+where
+    F: DeleteFs + Sync + Send + 'static,
+{
+    // Build a single-directory DeleteContext, observe the segment so the cursor
+    // yields the directory, publish the plan directly into the context's map,
+    // and drain via emit_one.
     //
     // The cursor root must equal the plan's directory key so
-    // `cursor.next_ready()` yields a path that `plans.take()` resolves
-    // to the published plan. `DeleteContext::new` would leave the
-    // cursor at the empty relative path; use `with_cursor_root` to seat
-    // it on the absolute destination the plan is keyed on.
+    // `cursor.next_ready()` yields a path that `plans.take()` resolves to the
+    // published plan. `DeleteContext::new` would leave the cursor at the empty
+    // relative path; use `with_cursor_root` to seat it on the absolute
+    // destination the plan is keyed on.
     let plans_map = Arc::new(DeletePlanMap::new());
     plans_map.insert(plan.clone());
     let ctx = DeleteContext::with_cursor_root(
@@ -157,6 +176,48 @@ where
     }
 
     Ok(())
+}
+
+/// `--delete-delay` decision hook: computes the delete plan for `destination`
+/// during the transfer walk (so the persistent delete-filter chain reflects the
+/// DURING state - the destination's per-dir merge files have not been copied
+/// yet) and defers the concrete plan for execution after the transfer.
+///
+/// upstream: generator.c:345 `delete_during == 2` calls `remember_delete(fp, ...)`
+/// from inside `delete_in_dir` - the decision (including
+/// `change_local_filter_dir`) happens during the walk, only the unlink is
+/// postponed to `do_delayed_deletions()` (generator.c:2419). Deciding at flush
+/// time instead would wrongly consult the by-then-present merge files.
+pub(crate) fn decide_and_defer_delayed_deletions<S: AsRef<OsStr>>(
+    context: &mut CopyContext,
+    destination: &Path,
+    relative: Option<&Path>,
+    source_entries: &[S],
+) -> Result<(), LocalCopyError> {
+    if context.delete_pass_blocked_by_io_error() {
+        return Ok(());
+    }
+    if let Some(plan) = build_plan_for_directory(context, destination, relative, source_entries)? {
+        context.defer_decided_deletion(
+            destination.to_path_buf(),
+            relative.map(Path::to_path_buf),
+            plan,
+        );
+    }
+    Ok(())
+}
+
+/// Executes a `--delete-delay` plan decided during the walk. Mirrors
+/// [`execute_delete_plan`] with the real filesystem dispatcher; the plan already
+/// encodes the during-time filter decision, so no directory rescan or filter
+/// re-evaluation happens here.
+pub(crate) fn execute_decided_deletion(
+    context: &mut CopyContext,
+    destination: &Path,
+    relative: Option<&Path>,
+    plan: DeletePlan,
+) -> Result<(), LocalCopyError> {
+    execute_delete_plan(context, destination, relative, plan, RealDeleteFs)
 }
 
 /// Leaf-granular, serial deletion path used whenever `--max-delete` is
@@ -448,13 +509,18 @@ fn build_plan_for_directory<S: AsRef<OsStr>>(
     relative: Option<&Path>,
     source_entries: &[S],
 ) -> Result<Option<DeletePlan>, LocalCopyError> {
-    // upstream: delete.c:63 - `delete_dir_contents()` calls
-    // `push_local_filters(fname, dlen)` with the destination directory so the
-    // receiver applies any `: filter` rules found in the directory being
-    // scanned. The guard pops the loaded rules at end of scope, mirroring
-    // upstream's matching `pop_local_filters()` on delete.c:115.
-    let _destination_dir_merge_guard =
-        context.enter_destination_for_deletion(destination, relative)?;
+    // upstream: delete.c:63 / generator.c:308 - the delete pass calls
+    // `change_local_filter_dir(fbuf, F_DEPTH(file))` with the destination
+    // directory so the receiver applies any per-dir merge rules found in the
+    // directory being scanned, INHERITING an ancestor directory's rules into
+    // subdirectories (exclude.c:801 keeps them in `lp->head`). Advancing the
+    // persistent, depth-keyed delete-filter chain keeps ancestor frames alive
+    // (rather than popping each directory's rules immediately), which is what
+    // lets a parent `.rsync-filter` protect a subdirectory's entries. During a
+    // `--delete-during`/`--delete-before` sweep the destination merge files are
+    // not present yet, so the loaded frames are empty and protect nothing -
+    // matching upstream, hence the manual's `--delete-after` recommendation.
+    context.sync_delete_filter_chain(destination, relative)?;
 
     let keep: HashSet<OsString> = source_entries
         .iter()
