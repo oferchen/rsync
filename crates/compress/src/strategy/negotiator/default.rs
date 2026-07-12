@@ -451,10 +451,11 @@ mod tests {
     fn negotiation_supported_list_size() {
         let negotiator = DefaultCompressionNegotiator::new();
         let supported = negotiator.supported_algorithms();
-        #[cfg(feature = "zstd")]
-        assert_eq!(supported.len(), 4);
-        #[cfg(not(feature = "zstd"))]
-        assert_eq!(supported.len(), 3);
+        // Base list is zlibx, zlib, none; zstd and lz4 each add one entry when
+        // their feature is enabled (lz4 was added once its wire format was
+        // validated against upstream).
+        let expected = 3 + cfg!(feature = "zstd") as usize + cfg!(feature = "lz4") as usize;
+        assert_eq!(supported.len(), expected);
     }
 
     #[test]
