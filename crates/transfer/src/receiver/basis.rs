@@ -33,8 +33,8 @@ pub struct BasisFileResult {
     /// Which basis the generator selected, sent to the sender as the
     /// `fnamecmp_type` byte behind `ITEM_BASIS_TYPE_FOLLOWS`.
     ///
-    /// [`FnameCmpType::Fname`] for the ordinary destination basis (no wire byte)
-    /// and [`FnameCmpType::PartialDir`] (`0x81`) when the basis was recovered
+    /// [`protocol::FnameCmpType::Fname`] for the ordinary destination basis (no wire byte)
+    /// and [`protocol::FnameCmpType::PartialDir`] (`0x81`) when the basis was recovered
     /// from `--partial-dir` on a resume. upstream: generator.c:1759-1765,1853.
     pub fnamecmp_type: protocol::FnameCmpType,
 }
