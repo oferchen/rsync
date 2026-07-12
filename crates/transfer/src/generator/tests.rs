@@ -173,6 +173,7 @@ fn files_from_entries(base: &Path, paths: Vec<PathBuf>) -> Vec<super::filters::F
             base: base.to_path_buf(),
             path,
             recurse: false,
+            implied_dot: false,
         })
         .collect()
 }
@@ -2888,7 +2889,7 @@ mod files_from {
             .build_file_list_with_base(&src, &files_from_entries(&src, file_paths))
             .unwrap();
 
-        // Dot entry + 2 files + 1 parent dir "subdir"
+        // 2 files + 1 parent dir "subdir"
         assert!(count >= 3, "expected at least 3 entries, got {count}");
 
         // Verify that file entries have correct relative names (not empty).
@@ -2901,8 +2902,93 @@ mod files_from {
             names.iter().any(|n| n.contains("file.txt")),
             "expected file.txt in {names:?}"
         );
-        // The dot entry should be present.
-        assert!(names.contains(&"."), "expected dot entry in {names:?}");
+        // upstream: flist.c:2368-2419 - a plain --files-from list (no leading
+        // `./` anchor) in non-relative mode emits NO transfer-root `.` entry.
+        // The old code emitted one unconditionally, producing a spurious
+        // `.d ./` itemize row and, with --delete, scoping deletion over the
+        // destination root (data loss).
+        assert!(
+            !names.contains(&"."),
+            "plain files-from list must not emit a root `.` entry: {names:?}"
+        );
+    }
+
+    #[test]
+    fn build_file_list_with_base_leading_dot_anchor_emits_implied_root_dot() {
+        // upstream: flist.c:2417-2419 - in --relative mode a leading `./`
+        // anchor (`implied_dot_dir`) emits ONE transfer-root `.` via
+        // `send_file_name(".", ..., (flags | FLAG_IMPLIED_DIR) & ~FLAG_CONTENT_DIR, ...)`:
+        // FLAG_IMPLIED_DIR set, FLAG_TOP_DIR unset, FLAG_CONTENT_DIR cleared.
+        // On the wire that pair serializes as XMIT_TOP_DIR | XMIT_NO_CONTENT_DIR
+        // (flist.c:426-427), which the receiver decodes back to FLAG_IMPLIED_DIR
+        // (flist.c:1117-1118) - it therefore does NOT scope --delete over the
+        // destination root. In oc's flat encoding that is top_dir=true +
+        // content_dir=false.
+        let temp_dir = TempDir::new().unwrap();
+        let src = temp_dir.path().join("src");
+        std::fs::create_dir_all(&src).unwrap();
+        std::fs::write(src.join("foo"), b"x").unwrap();
+
+        let handshake = test_handshake();
+        let mut config = test_config();
+        config.args = vec![OsString::from(&src)];
+        config.flags.relative = true;
+        let mut ctx = GeneratorContext::new_for_test(&handshake, config);
+
+        let entry = super::filters::FilesFromEntry {
+            base: src.clone(),
+            path: src.join("foo"),
+            recurse: false,
+            implied_dot: true,
+        };
+        ctx.build_file_list_with_base(&src, std::slice::from_ref(&entry))
+            .unwrap();
+
+        let dot = ctx
+            .file_list()
+            .iter()
+            .find(|e| e.name() == ".")
+            .expect("expected an implied transfer-root `.` entry");
+        assert!(
+            dot.top_dir(),
+            "implied `.` must set XMIT_TOP_DIR on the wire"
+        );
+        assert!(
+            !dot.content_dir(),
+            "implied `.` must clear FLAG_CONTENT_DIR (XMIT_NO_CONTENT_DIR) so it does not scope --delete"
+        );
+    }
+
+    #[test]
+    fn build_file_list_with_base_leading_dot_without_relative_emits_no_root_dot() {
+        // upstream: flist.c:2350 - the `implied_dot_dir` root `.` lives inside
+        // the `if (relative_paths)` branch. Without --relative, even a leading
+        // `./` files-from entry emits no transfer-root `.`.
+        let temp_dir = TempDir::new().unwrap();
+        let src = temp_dir.path().join("src");
+        std::fs::create_dir_all(&src).unwrap();
+        std::fs::write(src.join("foo"), b"x").unwrap();
+
+        let handshake = test_handshake();
+        let mut config = test_config();
+        config.args = vec![OsString::from(&src)];
+        config.flags.relative = false;
+        let mut ctx = GeneratorContext::new_for_test(&handshake, config);
+
+        let entry = super::filters::FilesFromEntry {
+            base: src.clone(),
+            path: src.join("foo"),
+            recurse: false,
+            implied_dot: true,
+        };
+        ctx.build_file_list_with_base(&src, std::slice::from_ref(&entry))
+            .unwrap();
+
+        let names: Vec<&str> = ctx.file_list().iter().map(|e| e.name()).collect();
+        assert!(
+            !names.contains(&"."),
+            "non-relative mode must not emit a root `.` entry: {names:?}"
+        );
     }
 
     #[test]
@@ -2997,6 +3083,7 @@ mod files_from {
             base: from_dir.clone(),
             path: from_dir.clone(),
             recurse: true,
+            implied_dot: false,
         };
         ctx.build_file_list_with_base(&src, std::slice::from_ref(&dotdir_entry))
             .unwrap();
