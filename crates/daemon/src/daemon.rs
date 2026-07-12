@@ -435,11 +435,12 @@ pub fn run_daemon_stdio(config: DaemonConfig) -> Result<(), DaemonError> {
 /// The configuration is parsed identically to [`run_daemon`], but the accept
 /// loop is hosted on a tokio multi-thread runtime via
 /// [`crate::async_listener::run_hybrid_listener`]. Each accepted connection is
-/// served by the existing synchronous session handler through
-/// `tokio::task::spawn_blocking` (see
-/// [`ConnectionContext::serve_one_connection`]), so the wire protocol, auth,
-/// and transfer pipeline stay byte-identical with the sync daemon; only the
-/// accept + task dispatch is asynchronous.
+/// served by the existing synchronous session handler on a dedicated OS thread
+/// (see [`ConnectionContext::serve_one_connection`]), so the wire protocol,
+/// auth, and transfer pipeline stay byte-identical with the sync daemon; only
+/// the accept + task dispatch is asynchronous. The number of concurrent worker
+/// threads is bounded so it never throttles below the configured
+/// `max connections` (see [`async_max_inflight`]).
 ///
 /// # Selection
 ///
@@ -621,18 +622,25 @@ pub fn run_async_daemon(mut config: DaemonConfig) -> Result<(), DaemonError> {
         context.serve_one_connection(stream, peer)
     });
 
-    crate::async_listener::run_hybrid_listener(bind_addr, worker_threads, shutdown, worker).map_err(
-        |error| {
-            DaemonError::new(
-                FEATURE_UNAVAILABLE_EXIT_CODE,
-                rsync_error!(
-                    FEATURE_UNAVAILABLE_EXIT_CODE,
-                    format!("async-daemon listener failed: {error}")
-                )
-                .with_role(Role::Daemon),
-            )
-        },
+    let max_inflight = async_max_inflight(max_connections);
+
+    crate::async_listener::run_hybrid_listener(
+        bind_addr,
+        worker_threads,
+        max_inflight,
+        shutdown,
+        worker,
     )
+    .map_err(|error| {
+        DaemonError::new(
+            FEATURE_UNAVAILABLE_EXIT_CODE,
+            rsync_error!(
+                FEATURE_UNAVAILABLE_EXIT_CODE,
+                format!("async-daemon listener failed: {error}")
+            )
+            .with_role(Role::Daemon),
+        )
+    })
 }
 
 /// Builds the fail-closed error returned when the async daemon is asked to
@@ -653,6 +661,28 @@ fn async_privileged_module_error() -> DaemonError {
         )
         .with_role(Role::Daemon),
     )
+}
+
+/// Derives the concurrent-worker-thread cap for the async accept loop.
+///
+/// The accept loop bounds in-flight per-connection worker threads with a
+/// semaphore for flood protection. That backstop must never be the binding
+/// constraint below the operator's configured `max connections`: a daemon set
+/// to `max connections = 1000` should serve up to 1000 concurrent sessions,
+/// not the 512-thread flood floor. So the cap is the larger of the configured
+/// limit and [`DEFAULT_MAX_INFLIGHT_WORKERS`]. When `max connections` is unset
+/// (unbounded, matching the sync default) the floor alone applies. Keeping the
+/// cap at or above the configured limit also preserves the per-session refusal
+/// semantics: the `max connections` admission semaphore inside the worker still
+/// fires first, emitting the upstream `@ERROR: max connections` reply rather
+/// than silently parking the excess connection.
+#[cfg(feature = "async-daemon")]
+pub(crate) fn async_max_inflight(max_connections: Option<usize>) -> usize {
+    use crate::async_listener::DEFAULT_MAX_INFLIGHT_WORKERS;
+    match max_connections {
+        Some(limit) => limit.max(DEFAULT_MAX_INFLIGHT_WORKERS),
+        None => DEFAULT_MAX_INFLIGHT_WORKERS,
+    }
 }
 
 /// Writes the upstream-compatible max-connections refusal to an accepted

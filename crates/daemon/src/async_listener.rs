@@ -54,7 +54,7 @@ use tokio::runtime::Builder;
 /// into a later session.
 pub type SyncWorker = Arc<dyn Fn(TcpStream, SocketAddr) -> io::Result<()> + Send + Sync + 'static>;
 
-/// Upper bound on concurrent per-connection worker threads.
+/// Default upper bound on concurrent per-connection worker threads.
 ///
 /// Each connection runs its sync worker on a dedicated OS thread (required for
 /// the seccomp-filter lifetime invariant). Unlike tokio's `spawn_blocking`
@@ -64,7 +64,13 @@ pub type SyncWorker = Arc<dyn Fn(TcpStream, SocketAddr) -> io::Result<()> + Send
 /// threads. This semaphore restores that backpressure: at the cap the accept
 /// task parks until an in-flight worker completes, matching tokio's historical
 /// blocking-pool default.
-const MAX_INFLIGHT_WORKERS: usize = 512;
+///
+/// This is only the flood-protection floor used when the operator does not
+/// configure a higher `max connections`. Callers derive the effective cap so
+/// it never binds below a configured connection limit (see
+/// [`run_hybrid_listener`]); otherwise a daemon with `max connections = 1000`
+/// would be silently throttled to 512 concurrent sessions.
+pub const DEFAULT_MAX_INFLIGHT_WORKERS: usize = 512;
 
 /// Builds and runs the hybrid async listener.
 ///
@@ -78,6 +84,11 @@ const MAX_INFLIGHT_WORKERS: usize = 512;
 /// worker count only governs the accept loop and per-connection async
 /// dispatcher; a small bounded value is sufficient.
 ///
+/// `max_inflight` bounds the number of concurrent per-connection worker
+/// threads. Callers pass a value derived from the operator's `max connections`
+/// so the accept loop never throttles below the configured limit; a value of
+/// `0` is clamped up to `1`. See [`DEFAULT_MAX_INFLIGHT_WORKERS`].
+///
 /// `shutdown` is polled between accepts. Setting it from another thread
 /// drains the loop and returns `Ok(())`. The listener does not install
 /// signal handlers; integration sites wire `SIGTERM`/`Ctrl-C` to this flag.
@@ -90,6 +101,7 @@ const MAX_INFLIGHT_WORKERS: usize = 512;
 pub fn run_hybrid_listener(
     bind_addr: SocketAddr,
     worker_threads: usize,
+    max_inflight: usize,
     shutdown: Arc<AtomicBool>,
     worker: SyncWorker,
 ) -> io::Result<()> {
@@ -101,9 +113,7 @@ pub fn run_hybrid_listener(
         .thread_name("oc-rsyncd-async")
         .build()?;
 
-    runtime.block_on(
-        async move { accept_loop(bind_addr, MAX_INFLIGHT_WORKERS, shutdown, worker).await },
-    )
+    runtime.block_on(async move { accept_loop(bind_addr, max_inflight, shutdown, worker).await })
 }
 
 async fn accept_loop(
@@ -152,8 +162,8 @@ async fn accept_loop(
                 return;
             }
 
-            // Bound the number of concurrent worker threads (see
-            // `MAX_INFLIGHT_WORKERS`). Acquiring here - after the cheap accept
+            // Bound the number of concurrent worker threads to `max_inflight`
+            // (see `DEFAULT_MAX_INFLIGHT_WORKERS`). Acquiring here - after the cheap accept
             // but before the expensive `thread::spawn` - parks this dispatch
             // task when at capacity so a connect flood cannot spawn unbounded
             // blocked-on-read threads. The permit is released when this task
@@ -261,7 +271,7 @@ mod tests {
             runtime.block_on(async move {
                 accept_loop(
                     local_addr,
-                    MAX_INFLIGHT_WORKERS,
+                    DEFAULT_MAX_INFLIGHT_WORKERS,
                     shutdown_for_loop,
                     worker_for_loop,
                 )
@@ -362,7 +372,13 @@ mod tests {
         let shutdown_for_thread = Arc::clone(&shutdown);
         let worker_for_thread = Arc::clone(&worker);
         let handle = thread::spawn(move || {
-            run_hybrid_listener(bind_addr, 1, shutdown_for_thread, worker_for_thread)
+            run_hybrid_listener(
+                bind_addr,
+                1,
+                DEFAULT_MAX_INFLIGHT_WORKERS,
+                shutdown_for_thread,
+                worker_for_thread,
+            )
         });
 
         thread::sleep(Duration::from_millis(150));
