@@ -407,6 +407,13 @@ fn run_client_internal(
 
     let summary = summary.map_err(map_local_copy_error)?;
 
+    // upstream: receiver.c:674-676 - emit the progress2 end-of-transfer summary
+    // line when the transfer moved no file data (a lone special/symlink or a
+    // no-change run), which the per-file path never produces.
+    if let Some(adapter) = handler_adapter.as_mut() {
+        adapter.finalize();
+    }
+
     if let Some(ref writer_arc) = batch_writer
         && let Some(batch_cfg) = config.batch_config()
     {

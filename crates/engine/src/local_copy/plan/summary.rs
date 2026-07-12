@@ -441,6 +441,15 @@ impl LocalCopySummary {
     }
 
     pub(in crate::local_copy) const fn mark_destination_root_created(&mut self) {
+        // upstream: receiver.c:731-746 - the pre-flight mkdir of the
+        // destination root sets ITEM_IS_NEW on the synthesized "." entry, so
+        // `stats.created_files++` and `stats.created_dirs++` count it. Bump the
+        // created-directory tally exactly once (guarded by the flag, which both
+        // call sites also set) so `--stats` "Number of created files" includes
+        // the destination root - dir:2 for a fresh recursive copy, not dir:1.
+        if !self.destination_root_created {
+            self.directories_created = self.directories_created.saturating_add(1);
+        }
         self.destination_root_created = true;
     }
 

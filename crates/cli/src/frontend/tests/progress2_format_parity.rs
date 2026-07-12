@@ -245,10 +245,14 @@ fn progress2_single_file_final_tick_matches_upstream_format() {
 
     validate_final_tick(final_line).unwrap_or_else(|e| panic!("{e}"));
 
-    // Final tick should show to-chk=0/1 (single file, all done)
+    // Final tick should show to-chk=0/2: the trailing-slash copy enumerates the
+    // source root directory plus the single file, so `num_files == 2` (reg: 1,
+    // dir: 1). upstream: flist.c:2561 counts directories into stats.num_files,
+    // so `rsync -r source/ dest` reports `to-chk=0/2` here. Verified against
+    // rsync 3.4.4: `Number of files: 2 (reg: 1, dir: 1)`.
     assert!(
-        final_line.contains("to-chk=0/1"),
-        "single file transfer should end with to-chk=0/1: {final_line:?}"
+        final_line.contains("to-chk=0/2"),
+        "single file + dir transfer should end with to-chk=0/2: {final_line:?}"
     );
 }
 
