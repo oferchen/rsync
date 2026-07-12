@@ -326,11 +326,6 @@ where
         Err(message) => return fail_with_message(message, stderr),
     };
 
-    let desired_protocol = match resolve_desired_protocol(protocol.as_ref(), stderr) {
-        Ok(protocol) => protocol,
-        Err(code) => return code,
-    };
-
     let timeout_setting = match resolve_timeout(timeout.as_ref(), stderr) {
         Ok(setting) => setting,
         Err(code) => return code,
@@ -380,6 +375,17 @@ where
         Ok(operands) => operands,
         Err(unsupported) => return fail_with_message(unsupported.to_message(), stderr),
     };
+
+    // `--protocol` is resolved once operands are known: upstream accepts it on a
+    // local copy (setup_protocol runs there too) but this build only speaks the
+    // wire for a remote transfer, so the value is ignored locally and validated
+    // against the wire range only when an operand is remote.
+    let has_remote_operand = remainder.iter().any(|op| operand_is_remote(op));
+    let desired_protocol =
+        match resolve_desired_protocol(protocol.as_ref(), has_remote_operand, stderr) {
+            Ok(protocol) => protocol,
+            Err(code) => return code,
+        };
 
     // upstream: options.c:2055 `if (do_stats) parse_output_words("stats2", ...)`
     // (or "stats3" with `-vv`). The legacy `--stats` flag maps to level 2; with
@@ -656,7 +662,7 @@ where
 
     // Build transfer operands early so we can check if this is a daemon transfer.
     // upstream: main.c:780-790 - source dir is chdir target, not a transfer source
-    let has_remote_operand = remainder.iter().any(|op| operand_is_remote(op));
+    // `has_remote_operand` was computed above (protocol resolution needs it).
     let mut transfer_operands = Vec::with_capacity(file_list_operands.len() + remainder.len());
     if files_from_active && !file_list_operands.is_empty() {
         if has_remote_operand {
@@ -688,7 +694,6 @@ where
     let is_daemon_transfer = transfer_operands.iter().any(|op| operand_is_remote(op));
     if !is_daemon_transfer {
         if let Some(exit_code) = validation::validate_local_only_options(
-            desired_protocol,
             password_override.is_some(),
             password_file.is_some() || password_command.is_some(),
             connect_program.as_ref(),

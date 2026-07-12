@@ -89,8 +89,10 @@ pub(crate) fn parse_compress_choice(
     let trimmed = original.trim();
 
     if trimmed.is_empty() {
+        // upstream: compat.c:190 - an unparsable compress name returns
+        // RERR_UNSUPPORTED (errcode.h:28), not RERR_SYNTAX.
         return Err(
-            rsync_error!(1, "--compress-choice={} is invalid", original).with_role(Role::Client)
+            rsync_error!(4, "--compress-choice={} is invalid", original).with_role(Role::Client)
         );
     }
 
@@ -124,7 +126,9 @@ fn render_compress_choice_error(err: CompressionAlgorithmParseError, trimmed: &s
     let rendered = format!(
         "invalid compression algorithm '{display}': supported values include {supported_list}"
     );
-    rsync_error!(1, rendered).with_role(Role::Client)
+    // upstream: compat.c:190 - an unknown compress name returns
+    // RERR_UNSUPPORTED (errcode.h:28), not RERR_SYNTAX.
+    rsync_error!(4, rendered).with_role(Role::Client)
 }
 
 pub(crate) fn parse_bandwidth_limit(argument: &OsStr) -> Result<Option<BandwidthLimit>, Message> {

@@ -59,8 +59,9 @@ pub(crate) fn parse_old_prefix_rule(
     );
 
     if line.is_empty() {
-        let message = rsync_error!(1, "filter rule is empty").with_role(Role::Client);
-        return Err(message);
+        // upstream: exclude.c:1107 parse_rule_tok returns NULL for an empty
+        // rule, so a blank `--exclude`/`--include` value adds nothing (exit 0).
+        return Ok(FilterDirective::Noop);
     }
 
     let bytes = line.as_bytes();
@@ -104,12 +105,12 @@ pub(super) fn parse_rule_directive(text: &str) -> Result<FilterDirective, Messag
     let trimmed = text;
 
     if trimmed.is_empty() {
-        let message = rsync_error!(
-            1,
-            "filter rule is empty: supply '+', '-', '!', or 'merge FILE'"
-        )
-        .with_role(Role::Client);
-        return Err(message);
+        // upstream: exclude.c:1107 parse_rule_tok returns NULL for an empty rule
+        // string (`if (!*s) return NULL`), so a blank `--filter` value adds
+        // nothing and exits 0. A `--filter=" "` (whitespace) value is NOT empty
+        // here - a top-level `--filter` never carries FILTRULE_WORD_SPLIT, so the
+        // space reaches the prefix switch and still raises "Unknown filter rule".
+        return Ok(FilterDirective::Noop);
     }
 
     if let Some(remainder) = trimmed.strip_prefix('!') {

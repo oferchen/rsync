@@ -3,16 +3,12 @@ use std::io::Write;
 
 use core::{message::Role, rsync_error};
 use logging_sink::MessageSink;
-use protocol::ProtocolVersion;
 
 use super::messages::fail_with_message;
 
 /// Error message when `--remote-option` is used without a remote connection.
 pub(crate) const REMOTE_OPTION_REMOTE_ONLY_MESSAGE: &str =
     "the --remote-option option may only be used with remote connections";
-/// Error message when `--protocol` is used without a daemon connection.
-pub(crate) const PROTOCOL_DAEMON_ONLY_MESSAGE: &str =
-    "the --protocol option may only be used when accessing an rsync daemon";
 /// Error message when a password option is used without a daemon connection.
 pub(crate) const PASSWORD_DAEMON_ONLY_MESSAGE: &str = "the --password-file and --password-command options may only be used when accessing an rsync daemon";
 /// Error message when `--connect-program` is used without a daemon connection.
@@ -28,7 +24,6 @@ pub(crate) const CONNECT_PROGRAM_DAEMON_ONLY_MESSAGE: &str =
 /// uses it when spawning a remote shell). The upstream testsuite relies on
 /// this behavior (e.g., the exclude test passes `--rsync-path` on local runs).
 pub(super) fn validate_local_only_options<Err>(
-    desired_protocol: Option<ProtocolVersion>,
     has_password_override: bool,
     has_password_option: bool,
     connect_program: Option<&OsString>,
@@ -46,12 +41,10 @@ where
         ));
     }
 
-    if desired_protocol.is_some() {
-        return Some(reject_local_only_option(
-            stderr,
-            PROTOCOL_DAEMON_ONLY_MESSAGE,
-        ));
-    }
+    // upstream imposes no daemon-only restriction on `--protocol`: setup_protocol
+    // (compat.c) runs for local copies too, so `--protocol=N` (20..=32) is
+    // accepted locally and simply ignored (this build never negotiates a
+    // protocol for a local copy). See resolve_desired_protocol.
 
     if has_password_override || has_password_option {
         return Some(reject_local_only_option(
