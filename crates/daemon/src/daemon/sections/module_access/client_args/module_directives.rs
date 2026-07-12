@@ -56,18 +56,16 @@ fn resolve_module_charset_converter(charset: Option<&str>) -> Option<FilenameCon
         return Some(FilenameConverter::identity());
     }
 
-    match FilenameConverter::new(local_part, "UTF-8") {
-        Ok(converter) => Some(converter),
-        Err(_error) => {
+    FilenameConverter::new(local_part, "UTF-8")
+        .inspect_err(|_error| {
             #[cfg(feature = "tracing")]
             tracing::warn!(
                 charset = %local_part,
                 error = %_error,
                 "module 'charset' directive: unsupported encoding; daemon will not transcode filenames",
             );
-            None
-        }
-    }
+        })
+        .ok()
 }
 
 /// Parses the module's `incoming chmod` / `outgoing chmod` directives into the
