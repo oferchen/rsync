@@ -68,6 +68,7 @@ mod error_recovery_integration_tests;
 mod error_recovery_tests;
 #[path = "exclude_lsh_matrix.rs"]
 mod exclude_lsh_matrix_tests;
+mod exit_code_fidelity_tests;
 #[path = "files_from.rs"]
 mod files_from_tests;
 #[path = "filter_behavior_comprehensive.rs"]
