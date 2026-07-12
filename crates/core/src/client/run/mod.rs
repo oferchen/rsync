@@ -531,38 +531,14 @@ fn resolve_nstr_compress_level(
     algorithm: compress::algorithm::CompressionAlgorithm,
     override_level: Option<compress::zlib::CompressionLevel>,
 ) -> i32 {
-    use compress::algorithm::{CompressionAlgorithm, ZLIB_DEFAULT_LEVEL};
-
-    match algorithm {
-        CompressionAlgorithm::Zlib => {
-            // upstream: token.c:62-70 - zlib/zlibx range 1..=9, def_level 6.
-            override_level
-                .map_or(ZLIB_DEFAULT_LEVEL, compression_level_to_nstr)
-                .clamp(1, 9)
-        }
-        #[cfg(feature = "zstd")]
-        CompressionAlgorithm::Zstd => {
-            // upstream: token.c:72-79 - def_level ZSTD_CLEVEL_DEFAULT (3).
-            override_level.map_or(
-                compress::algorithm::ZSTD_DEFAULT_LEVEL,
-                compression_level_to_nstr,
-            )
-        }
-        #[cfg(feature = "lz4")]
-        CompressionAlgorithm::Lz4 => {
-            // upstream: token.c:81-87 - lz4 def_level 0, min/max 0.
-            0
-        }
-        // Feature-unification guard: another crate may enable `compress`'s
-        // zstd/lz4 features (exposing those variants) while `core` is built
-        // without them, removing the cfg-gated arms above. Fall back to the
-        // zlib default so the match stays exhaustive in every feature combo.
-        // Unreachable under the default build where those arms are present.
-        #[allow(unreachable_patterns)]
-        _ => override_level
-            .map_or(ZLIB_DEFAULT_LEVEL, compression_level_to_nstr)
-            .clamp(1, 9),
-    }
+    // Map the CLI level (absent = upstream's CLVL_NOT_SPECIFIED) to the raw
+    // do_compression_level, then defer to the shared init_compression_level
+    // resolver so this path and the wire-negotiation path stay in lockstep.
+    let raw = override_level.map_or(
+        compress::algorithm::CLVL_NOT_SPECIFIED,
+        compression_level_to_nstr,
+    );
+    algorithm.resolve_debug_level(raw)
 }
 
 /// Maps a user-supplied `--compress-level` to the raw i32 upstream renders in
