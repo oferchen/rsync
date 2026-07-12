@@ -67,7 +67,7 @@ jobs:
           shared-key: bench-zsync-matching
 
       - name: Build matching crate benches (release)
-        run: cargo build --locked --release -p matching --benches
+        run: cargo build --locked --release -p matching --benches --features bench-internal
 
       - name: Prepare results directory
         id: prep
@@ -104,6 +104,7 @@ jobs:
             timeout "${BENCH_TIMEOUT_SECONDS}" \
               cargo bench \
                 -p matching \
+                --features bench-internal \
                 --bench "${bench}" \
                 -- \
                 --output-format bencher \
