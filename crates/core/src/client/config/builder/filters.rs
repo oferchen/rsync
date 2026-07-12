@@ -51,11 +51,16 @@ impl ClientConfigBuilder {
         let Some(dir) = self.partial_dir.as_ref() else {
             return;
         };
-        if !dir.is_relative() {
-            return;
-        }
         let mut pattern = dir.to_string_lossy().into_owned();
         if pattern.is_empty() {
+            return;
+        }
+        // upstream: compat.c:791 guard `*partial_dir != '/'` - an absolute
+        // (leading-slash) partial dir injects no implicit rule. Test the
+        // leading slash directly rather than `Path::is_relative()`, which is
+        // platform-dependent: on Windows a leading-slash path has no drive
+        // prefix and is classified as relative, wrongly injecting the rule.
+        if pattern.starts_with('/') {
             return;
         }
         // Trailing slash restricts the rule to directories, mirroring
