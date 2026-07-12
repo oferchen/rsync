@@ -399,7 +399,53 @@ impl GeneratorContext {
             entry.set_mode(rewritten);
         }
 
+        // upstream: flist.c:1444-1447 - `always_checksum && am_sender &&
+        // S_ISREG(st.st_mode)` computes the per-file checksum with
+        // `file_checksum()` (checksum.c:401, unseeded) and stores it in
+        // `F_SUM(file)` so it travels in the flist (send_file_entry writes it
+        // at flist.c:1003). The receiver's quick-check (generator.c:633,
+        // quick_check_ok) compares its own `file_checksum()` of the basis file
+        // against this value to decide whether the file is unchanged. Without
+        // it the sender emits an all-zero checksum, the receiver's `-c`
+        // quick-check never matches, and every content-identical file is
+        // needlessly re-transferred.
+        if self.config.flags.checksum && entry.is_file() {
+            if let Some(sum) = self.compute_flist_checksum(full_path, entry.size()) {
+                entry.set_checksum(sum);
+            }
+        }
+
         Ok(entry)
+    }
+
+    /// Computes the unseeded whole-file checksum stored in the flist under
+    /// `--checksum`, mirroring upstream `file_checksum()` (checksum.c:401).
+    ///
+    /// The algorithm matches the receiver's quick-check hash
+    /// ([`get_checksum_algorithm`](Self::get_checksum_algorithm)); both sides
+    /// use the unseeded negotiated digest so the comparison in
+    /// `quick_check_matches` agrees. Reads exactly `file_size` bytes, matching
+    /// upstream's `map_file()` over `st_size`. Returns `None` on any I/O error
+    /// so the transfer falls back to sending the file (upstream sets an
+    /// all-zero sum on open failure, which likewise never matches).
+    fn compute_flist_checksum(&self, path: &Path, file_size: u64) -> Option<Vec<u8>> {
+        use std::io::Read;
+
+        let mut file = std::fs::File::open(path).ok()?;
+        let mut verifier =
+            crate::delta_apply::ChecksumVerifier::for_algorithm(self.get_checksum_algorithm());
+        // upstream: rsync.h MAX_MAP_SIZE = 256*1024 - the map_file() window.
+        let mut buf = vec![0u8; 256 * 1024];
+        let mut remaining = file_size;
+        while remaining > 0 {
+            let to_read = buf.len().min(remaining as usize);
+            file.read_exact(&mut buf[..to_read]).ok()?;
+            verifier.update(&buf[..to_read]);
+            remaining -= to_read as u64;
+        }
+        let mut digest = [0u8; crate::delta_apply::ChecksumVerifier::MAX_DIGEST_LEN];
+        let len = verifier.finalize_into(&mut digest);
+        Some(digest[..len].to_vec())
     }
 
     /// Reads the source-side `user.rsync.%stat` xattr when fake-super is active.
@@ -1128,6 +1174,129 @@ mod entry_length_tests {
             entry.size(),
             meta.len(),
             "F_LENGTH must mirror lstat st_size"
+        );
+    }
+}
+
+#[cfg(all(test, unix))]
+mod flist_checksum_tests {
+    //! Sender-side `--checksum` (`-c`) per-file flist checksum regression.
+    //!
+    //! upstream: flist.c:1444 - `always_checksum && am_sender && S_ISREG`
+    //! computes `file_checksum()` (checksum.c:401, unseeded) and stores it in
+    //! `F_SUM(file)`; send_file_entry (flist.c:1003) writes it into the flist.
+    //! The receiver's quick-check (generator.c:633 `quick_check_ok`) compares
+    //! its own unseeded `file_checksum()` of the basis against this value to
+    //! decide the file is unchanged and skip the transfer.
+    //!
+    //! WHY this matters: without the sender populating the checksum, the flist
+    //! carries an all-zero sum, the receiver's `-c` quick-check can never match
+    //! a content-identical basis, and every unchanged file is re-transferred
+    //! over the wire (a real over-transfer, not merely a mislabeled itemize
+    //! row). These tests pin that the sender emits the exact unseeded digest
+    //! the receiver recomputes, so the two sides agree.
+
+    use crate::config::ServerConfig;
+    use crate::delta_apply::ChecksumVerifier;
+    use crate::generator::GeneratorContext;
+    use crate::handshake::HandshakeResult;
+    use crate::role::ServerRole;
+    use protocol::ProtocolVersion;
+    use std::ffi::OsString;
+    use std::path::PathBuf;
+    use tempfile::TempDir;
+
+    fn generator(checksum: bool) -> GeneratorContext {
+        let handshake = HandshakeResult {
+            protocol: ProtocolVersion::try_from(32u8).unwrap(),
+            buffered: Vec::new(),
+            compat_exchanged: false,
+            client_args: None,
+            io_timeout: None,
+            negotiated_algorithms: None,
+            compat_flags: None,
+            checksum_seed: 0,
+        };
+        let mut config = ServerConfig {
+            role: ServerRole::Generator,
+            protocol: ProtocolVersion::try_from(32u8).unwrap(),
+            flag_string: "-logDtpre.".to_owned(),
+            args: vec![OsString::from(".")],
+            ..Default::default()
+        };
+        config.flags.checksum = checksum;
+        config.flags.numeric_ids = crate::NumericIds::Explicit;
+        GeneratorContext::new_for_test(&handshake, config)
+    }
+
+    /// Reference digest: the exact unseeded hash the receiver recomputes in
+    /// `quick_check_matches` -> `file_checksum_matches`.
+    fn expected_sum(ctx: &GeneratorContext, data: &[u8]) -> Vec<u8> {
+        let mut verifier = ChecksumVerifier::for_algorithm(ctx.get_checksum_algorithm());
+        verifier.update(data);
+        let mut digest = [0u8; ChecksumVerifier::MAX_DIGEST_LEN];
+        let len = verifier.finalize_into(&mut digest);
+        digest[..len].to_vec()
+    }
+
+    #[test]
+    fn checksum_flag_populates_regular_file_sum() {
+        let tmp = TempDir::new().unwrap();
+        let path = tmp.path().join("payload.bin");
+        let data = b"the quick brown fox jumps over the lazy dog";
+        std::fs::write(&path, data).unwrap();
+        let meta = std::fs::symlink_metadata(&path).unwrap();
+
+        let ctx = generator(true);
+        let entry = ctx
+            .create_entry(&path, PathBuf::from("payload.bin"), &meta)
+            .unwrap();
+
+        assert_eq!(
+            entry.checksum().map(<[u8]>::to_vec),
+            Some(expected_sum(&ctx, data)),
+            "sender must store the unseeded per-file checksum the receiver \
+             recomputes (upstream flist.c:1444); otherwise -c re-transfers \
+             content-identical files",
+        );
+    }
+
+    #[test]
+    fn empty_file_gets_checksum_of_empty_input() {
+        let tmp = TempDir::new().unwrap();
+        let path = tmp.path().join("empty");
+        std::fs::write(&path, b"").unwrap();
+        let meta = std::fs::symlink_metadata(&path).unwrap();
+
+        let ctx = generator(true);
+        let entry = ctx
+            .create_entry(&path, PathBuf::from("empty"), &meta)
+            .unwrap();
+
+        assert_eq!(
+            entry.checksum().map(<[u8]>::to_vec),
+            Some(expected_sum(&ctx, b"")),
+            "a zero-length regular file still carries its (empty-input) sum",
+        );
+    }
+
+    #[test]
+    fn without_checksum_flag_no_sum_is_stored() {
+        let tmp = TempDir::new().unwrap();
+        let path = tmp.path().join("payload.bin");
+        std::fs::write(&path, b"data").unwrap();
+        let meta = std::fs::symlink_metadata(&path).unwrap();
+
+        let ctx = generator(false);
+        let entry = ctx
+            .create_entry(&path, PathBuf::from("payload.bin"), &meta)
+            .unwrap();
+
+        assert_eq!(
+            entry.checksum(),
+            None,
+            "without --checksum the flist carries no per-file sum \
+             (upstream gates on always_checksum)",
         );
     }
 }
