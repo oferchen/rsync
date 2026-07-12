@@ -2910,13 +2910,16 @@ fn supported_compressions_order_matches_upstream() {
 
 #[test]
 fn negotiate_picks_best_validated_algorithm() {
-    // Remote offers full modern list. When zstd feature is enabled, we pick zstd
-    // as the best validated algorithm (PR #3081). Lz4 is still excluded.
+    // Remote offers full modern list; server picks the first entry it also
+    // supports in upstream preference order zstd > lz4 > zlibx. Both zstd and
+    // lz4 wire formats are validated byte-for-byte against upstream 3.4.4.
     let list = "zstd lz4 zlibx zlib none";
     let result = choose_compression_algorithm(list, true).unwrap();
     #[cfg(feature = "zstd")]
     assert_eq!(result, CompressionAlgorithm::Zstd);
-    #[cfg(not(feature = "zstd"))]
+    #[cfg(all(not(feature = "zstd"), feature = "lz4"))]
+    assert_eq!(result, CompressionAlgorithm::LZ4);
+    #[cfg(all(not(feature = "zstd"), not(feature = "lz4")))]
     assert_eq!(result, CompressionAlgorithm::ZlibX);
 }
 
