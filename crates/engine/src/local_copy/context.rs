@@ -43,7 +43,9 @@ use super::{
 };
 use crate::delta::DeltaSignatureIndex;
 use crate::signature::SignatureBlock;
-use ::metadata::{MetadataOptions, apply_file_metadata_with_options};
+use ::metadata::{
+    MetadataOptions, apply_file_metadata_with_options, apply_symlink_metadata_with_options,
+};
 use bandwidth::{BandwidthLimitComponents, BandwidthLimiter};
 use checksums::RollingChecksum;
 use compress::algorithm::CompressionAlgorithm;
@@ -53,6 +55,7 @@ use filters::FilterRule;
 use logging::info_log;
 use protocol::flist::FileListWriter;
 
+use super::overrides::backup_rename;
 #[cfg(target_os = "linux")]
 use super::overrides::{cached_parent_device, same_filesystem};
 
@@ -483,6 +486,9 @@ pub(crate) enum BackupStrategy {
     Rename,
     Copy,
     Symlink,
+    // Constructed only by the `#[cfg(unix)]` device/FIFO/socket mknod backup
+    // path; on non-Unix targets it is matched but never built.
+    #[cfg_attr(not(unix), allow(dead_code))]
     Device,
 }
 
