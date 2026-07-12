@@ -213,11 +213,14 @@ where
     config.flags.no_implied_dirs = long_flags.no_implied_dirs;
     config.flags.numeric_ids = core::server::NumericIds::from_client(long_flags.numeric_ids);
     config.flags.delete = long_flags.delete;
-    // upstream: generator.c:124 / 2425-2428 - --delete-after / --delete-delay
-    // defer the server receiver's delete sweep until after the transfer so the
-    // per-directory `.rsync-filter` merge files it just received protect matching
-    // destination entries at delete time.
+    // upstream: generator.c:124 - --delete-after / --delete-delay both defer the
+    // goodbye del-stats emission.
     config.deletion.late_delete = long_flags.late_delete;
+    // upstream: generator.c:2427-2428 - only --delete-after defers the delete
+    // *decision* to after the transfer, so the per-directory `.rsync-filter`
+    // merge files it just received protect matching destination entries at delete
+    // time. --delete-delay decides during the walk and only defers the unlink.
+    config.deletion.delete_after = long_flags.delete_after;
     // upstream: options.c:2964-2965 - `--remove-source-files` is forwarded
     // long-form when the client requested sender-side removal. The flag is
     // consumed by the sender's `successful_send()` after each transferred

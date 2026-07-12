@@ -135,28 +135,35 @@ impl ReceiverContext {
 
     /// True when the delete pass runs EARLY, before the per-file transfer loop.
     ///
-    /// Covers `--delete-before` and `--delete-during`. Mirrors upstream
-    /// generator.c:2280-2281 (`delete_before` runs `do_delete_pass()` up front)
-    /// and generator.c:2315-2327 (`delete_during` deletes as each directory is
-    /// entered during the loop). oc collapses both into one pre-loop sweep,
-    /// which is byte-equivalent because the destination `.rsync-filter` merge
-    /// files that gate protection are the same at either point for these modes.
+    /// Covers `--delete-before`, `--delete-during`, AND `--delete-delay`. Mirrors
+    /// upstream generator.c:2280-2281 (`delete_before` runs `do_delete_pass()` up
+    /// front) and generator.c:2315-2327 (`delete_during` / `delete_during == 2`
+    /// decide as each directory is entered during the loop). oc collapses these
+    /// into one pre-loop sweep; the observable file outcome matches because none
+    /// of these modes has the destination `.rsync-filter` merge files present
+    /// when the deletion decision is made. `--delete-delay` defers only the
+    /// physical unlink upstream, not the decision, so its kept/deleted set equals
+    /// `--delete-during` - verified vs upstream 3.4.4 over SSH (delay DELETES a
+    /// per-dir-merge-protected entry, exactly as during/before do).
     pub(in crate::receiver) fn delete_pass_is_early(&self) -> bool {
-        self.config.flags.delete && !self.config.deletion.late_delete
+        self.config.flags.delete && !self.config.deletion.delete_after
     }
 
     /// True when the delete pass is DEFERRED to after the per-file transfer loop.
     ///
-    /// Covers `--delete-after` and `--delete-delay`. Mirrors upstream
-    /// generator.c:2425-2428 which runs `do_delayed_deletions()` (delay) or
-    /// `do_delete_pass()` (after) only once every file - including each
-    /// destination `.rsync-filter` merge file - has been transferred. Deferring
-    /// is load-bearing: the delete pass reloads each destination directory's
-    /// per-directory `.rsync-filter` at delete time, so a merge-file protect
-    /// rule (e.g. `- *.bak`) only survives the sweep once that filter file is
-    /// present in the destination, which it is not until the transfer has run.
+    /// Covers `--delete-after` ONLY. Mirrors upstream generator.c:2425-2428 which
+    /// runs `do_delete_pass()` after every file - including each destination
+    /// `.rsync-filter` merge file - has been transferred. Deferring is
+    /// load-bearing: the delete pass reloads each destination directory's
+    /// per-directory `.rsync-filter` at delete time, so a merge-file protect rule
+    /// (e.g. `- *.bak`) only survives the sweep once that filter file is present
+    /// in the destination, which it is not until the transfer has run.
+    ///
+    /// `--delete-delay` is deliberately NOT here: upstream makes its deletion
+    /// decision during the walk (deferring only the unlink), so it deletes such
+    /// an entry - see [`delete_pass_is_early`](Self::delete_pass_is_early).
     pub(in crate::receiver) fn delete_pass_is_late(&self) -> bool {
-        self.config.flags.delete && self.config.deletion.late_delete
+        self.config.flags.delete && self.config.deletion.delete_after
     }
 
     /// Runs the destination delete pass and folds its results into `stats`.

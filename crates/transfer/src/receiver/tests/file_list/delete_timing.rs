@@ -25,49 +25,52 @@ use super::super::super::ReceiverContext;
 use super::super::support::{TestDeletionWriter, test_config, test_handshake};
 
 /// The early/late routing predicates must partition the four delete modes the
-/// way upstream's `EARLY_DELETE_DONE_MSG()` does: `--delete-before` /
-/// `--delete-during` sweep early, `--delete-after` / `--delete-delay` sweep
-/// late, and the sweep runs exactly once (never both, never neither when
-/// `--delete` is set). A regression that mis-routes after/delay to the early
-/// site would silently reintroduce the #280 data loss, so this test guards the
-/// routing decision directly rather than only the on-disk effect.
+/// way upstream does: only `--delete-after` (`delete_after`) defers the delete
+/// *decision* to after the transfer (generator.c:2427-2428); `--delete-before`,
+/// `--delete-during`, AND `--delete-delay` all decide early. `--delete-delay`
+/// belongs with the early group because upstream makes its decision during the
+/// walk (generator.c:2315) and defers only the unlink - verified vs upstream
+/// 3.4.4 over SSH, where delay DELETES a per-dir-merge-protected entry exactly
+/// as during/before do, while after PROTECTS it. A regression that deferred
+/// delay would over-protect (keep files upstream deletes); one that failed to
+/// defer after would reintroduce the #280 data loss. The sweep runs exactly
+/// once when `--delete` is set (never both, never neither).
 #[test]
 fn delete_pass_timing_predicates_partition_the_four_modes() {
     let handshake = test_handshake();
 
-    // --delete-before / --delete-during: delete on, late_delete off.
-    let mut early = test_config();
-    early.flags.delete = true;
-    early.deletion.late_delete = false;
-    let ctx = ReceiverContext::new_for_test(&handshake, early);
-    assert!(ctx.delete_pass_is_early(), "before/during must sweep early");
-    assert!(
-        !ctx.delete_pass_is_late(),
-        "before/during must not sweep late"
-    );
+    // --delete-before / --delete-during / --delete-delay: delete on, but the
+    // decision is NOT deferred (`delete_after` off). late_delete may be set for
+    // delay (it governs only goodbye del-stats), which must not affect routing.
+    for (label, late_delete) in [("before/during", false), ("delay", true)] {
+        let mut early = test_config();
+        early.flags.delete = true;
+        early.deletion.delete_after = false;
+        early.deletion.late_delete = late_delete;
+        let ctx = ReceiverContext::new_for_test(&handshake, early);
+        assert!(ctx.delete_pass_is_early(), "{label} must sweep early");
+        assert!(!ctx.delete_pass_is_late(), "{label} must not sweep late");
+    }
 
-    // --delete-after / --delete-delay: delete on, late_delete on.
+    // --delete-after: delete on, decision deferred.
     let mut late = test_config();
     late.flags.delete = true;
     late.deletion.late_delete = true;
+    late.deletion.delete_after = true;
     let ctx = ReceiverContext::new_for_test(&handshake, late);
-    assert!(
-        !ctx.delete_pass_is_early(),
-        "after/delay must not sweep early"
-    );
-    assert!(ctx.delete_pass_is_late(), "after/delay must sweep late");
+    assert!(!ctx.delete_pass_is_early(), "after must not sweep early");
+    assert!(ctx.delete_pass_is_late(), "after must sweep late");
 
-    // No --delete: neither site fires, regardless of the late_delete bit (which
-    // a stale config could still carry). The sweep must never run without
-    // deletion requested.
-    for late_delete in [false, true] {
+    // No --delete: neither site fires, regardless of the deferral bits (which a
+    // stale config could still carry). The sweep must never run unrequested.
+    for delete_after in [false, true] {
         let mut off = test_config();
         off.flags.delete = false;
-        off.deletion.late_delete = late_delete;
+        off.deletion.delete_after = delete_after;
         let ctx = ReceiverContext::new_for_test(&handshake, off);
         assert!(
             !ctx.delete_pass_is_early() && !ctx.delete_pass_is_late(),
-            "no --delete => no sweep (late_delete={late_delete})"
+            "no --delete => no sweep (delete_after={delete_after})"
         );
     }
 }
@@ -89,7 +92,10 @@ fn build_receiver_with_perdir_merge(dest: &std::path::Path) -> ReceiverContext {
     let handshake = test_handshake();
     let mut config = test_config();
     config.flags.delete = true;
+    // Represents --delete-after: the deferred delete pass runs after the
+    // transfer, when the destination `.rsync-filter` is present.
     config.deletion.late_delete = true;
+    config.deletion.delete_after = true;
     config.args = vec![OsString::from(dest.to_str().unwrap())];
     let mut ctx = ReceiverContext::new_for_test(&handshake, config);
 

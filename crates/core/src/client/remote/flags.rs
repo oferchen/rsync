@@ -355,6 +355,11 @@ pub(crate) fn apply_common_server_flags(config: &ClientConfig, server_config: &m
     // upstream: generator.c:124 - EARLY_DELETE_DONE_MSG = !(delete_during==2 || delete_after)
     server_config.deletion.late_delete =
         matches!(config.delete_mode(), DeleteMode::Delay | DeleteMode::After);
+    // upstream: generator.c:2427-2428 - only --delete-after defers the delete
+    // *decision* to after the transfer (so a per-dir `.rsync-filter` protects at
+    // delete time). --delete-delay decides during the walk (generator.c:2315),
+    // deferring only the unlink, so it is NOT flagged here.
+    server_config.deletion.delete_after = matches!(config.delete_mode(), DeleteMode::After);
     // upstream: options.c `delete_excluded` - the receiver's delete pass must
     // treat filter-excluded (non-protected) entries as deletable. For a
     // remote-shell pull the receiver builds its deletion chain from the local
