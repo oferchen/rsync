@@ -852,7 +852,7 @@ impl<'a> CopyContext<'a> {
         // Track which backup strategy succeeded so we can emit the matching
         // upstream `--debug=BACKUP` trace (RENAME, COPY, or SYMLINK).
         // upstream: backup.c:link_or_rename and the fall-through copy_file path.
-        let strategy = match fs::rename(destination, &backup_path) {
+        let strategy = match backup_rename(destination, &backup_path) {
             Ok(()) => BackupStrategy::Rename,
             Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(()),
             // upstream: backup.c:247-256 - link_or_rename failing with EEXIST or
@@ -954,16 +954,27 @@ impl<'a> CopyContext<'a> {
         // upstream: backup.c:338-341 - set_file_attrs(buf, file, NULL, fname,
         // ATTRS_ACCURATE_TIME) copies the source node's mode/owner/times onto
         // the freshly-created backup node (with preserve_xattrs temporarily
-        // cleared), overriding the umask that mknod applied. Only the
-        // cross-device device/special copy fallback needs this: rename carries
-        // the inode's attributes verbatim, and the regular-file copy path
-        // mirrors upstream's own COPY handling.
-        if strategy == BackupStrategy::Device
-            && let Ok(source_meta) = fs::symlink_metadata(destination)
+        // cleared), overriding the umask/copy defaults. Every cross-device copy
+        // fallback needs this - regular file (COPY), symlink (SYMLINK), and
+        // device/special (DEVICE) - because fs::copy/create_symlink/mknod leave
+        // the backup owned by the caller (root), whereas upstream reapplies the
+        // source uid/gid/mode/mtime. The same-fs rename path carries the inode's
+        // attributes verbatim and is skipped here.
+        if matches!(
+            strategy,
+            BackupStrategy::Copy | BackupStrategy::Symlink | BackupStrategy::Device
+        ) && let Ok(source_meta) = fs::symlink_metadata(destination)
         {
             let metadata_options = self.metadata_options();
-            apply_file_metadata_with_options(&backup_path, &source_meta, &metadata_options)
-                .map_err(map_metadata_error)?;
+            // upstream: rsync.c:set_file_attrs() skips chmod for symlinks and
+            // applies ownership/times with AT_SYMLINK_NOFOLLOW.
+            if strategy == BackupStrategy::Symlink {
+                apply_symlink_metadata_with_options(&backup_path, &source_meta, &metadata_options)
+                    .map_err(map_metadata_error)?;
+            } else {
+                apply_file_metadata_with_options(&backup_path, &source_meta, &metadata_options)
+                    .map_err(map_metadata_error)?;
+            }
             // upstream: xattrs.c:set_stat_xattr() re-records the source stat in
             // `user.rsync.%stat` under --fake-super so the virtualised node's
             // mode/owner/rdev survive; no-op when fake-super is off.

@@ -574,6 +574,134 @@ fn backup_preserves_symlinks_in_directory() {
     );
 }
 
+// upstream: backup.c:338-341 - after copying a regular file to the backup tree,
+// make_backup runs set_file_attrs(buf, file, ...) so the backup carries the
+// source node's mode/owner/mtime rather than the copy defaults. When the
+// backup-dir is on a different filesystem the rename fails with EXDEV and
+// oc-rsync falls back to fs::copy, which leaves the caller's umask/current
+// mtime; the metadata reapply must restore the original attributes. Ownership
+// cannot be exercised without root, so this asserts mode + mtime, both of which
+// fs::copy alone would not preserve (current mtime, no explicit chmod).
+#[cfg(unix)]
+#[test]
+fn cross_device_file_backup_preserves_mode_and_mtime() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let ctx = test_helpers::setup_copy_test();
+    fs::create_dir_all(&ctx.dest).expect("create dest");
+
+    let source_file = ctx.source.join("file.txt");
+    fs::write(&source_file, b"updated").expect("write source");
+
+    let dest_root = ctx.dest.join("source");
+    fs::create_dir_all(&dest_root).expect("create dest root");
+    let existing = dest_root.join("file.txt");
+    fs::write(&existing, b"original").expect("write dest");
+    fs::set_permissions(&existing, PermissionsExt::from_mode(0o604)).expect("chmod dest");
+    let backup_mtime = FileTime::from_unix_time(1_600_000_000, 0);
+    set_file_mtime(&existing, backup_mtime).expect("set dest mtime");
+
+    let backup_dir = ctx.dest.join("backups");
+
+    let operands = vec![
+        ctx.source.clone().into_os_string(),
+        ctx.dest.clone().into_os_string(),
+    ];
+    let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
+    let options = LocalCopyOptions::default()
+        .backup(true)
+        .times(true)
+        .permissions(true)
+        .owner(true)
+        .group(true)
+        .with_backup_directory(Some(backup_dir.clone()));
+
+    with_backup_rename_override(
+        |_, _| Some(Err(io::Error::from_raw_os_error(super::CROSS_DEVICE_ERROR_CODE))),
+        || {
+            plan.execute_with_options(LocalCopyExecution::Apply, options)
+                .expect("copy succeeds")
+        },
+    );
+
+    let backup = backup_dir.join("source/file.txt~");
+    let meta = fs::symlink_metadata(&backup).expect("backup metadata");
+    assert_eq!(fs::read(&backup).expect("read backup"), b"original");
+    assert_eq!(
+        meta.permissions().mode() & 0o777,
+        0o604,
+        "cross-device file backup did not preserve mode"
+    );
+    assert_eq!(
+        FileTime::from_last_modification_time(&meta),
+        backup_mtime,
+        "cross-device file backup did not preserve mtime"
+    );
+}
+
+// upstream: backup.c:338-341 / rsync.c:set_file_attrs() - the same reapply runs
+// for the SYMLINK branch, but chmod is skipped and ownership/times are applied
+// with AT_SYMLINK_NOFOLLOW. Across a filesystem boundary the symlink backup is
+// recreated with do_symlink and must then carry the original link's mtime.
+#[cfg(unix)]
+#[test]
+fn cross_device_symlink_backup_preserves_target_and_mtime() {
+    use std::os::unix::fs::symlink;
+
+    let ctx = test_helpers::setup_copy_test();
+    fs::create_dir_all(&ctx.dest).expect("create dest");
+
+    let source_link = ctx.source.join("link");
+    symlink("new_target", &source_link).expect("create source symlink");
+
+    let dest_root = ctx.dest.join("source");
+    fs::create_dir_all(&dest_root).expect("create dest root");
+    let existing_link = dest_root.join("link");
+    symlink("old_target", &existing_link).expect("create dest symlink");
+    let backup_mtime = FileTime::from_unix_time(1_600_000_000, 0);
+    filetime::set_symlink_file_times(&existing_link, backup_mtime, backup_mtime)
+        .expect("set dest symlink mtime");
+
+    let backup_dir = ctx.dest.join("backups");
+
+    let operands = vec![
+        ctx.source.clone().into_os_string(),
+        ctx.dest.clone().into_os_string(),
+    ];
+    let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
+    let options = LocalCopyOptions::default()
+        .links(true)
+        .times(true)
+        .owner(true)
+        .group(true)
+        .with_backup_directory(Some(backup_dir.clone()));
+
+    with_backup_rename_override(
+        |_, _| Some(Err(io::Error::from_raw_os_error(super::CROSS_DEVICE_ERROR_CODE))),
+        || {
+            plan.execute_with_options(LocalCopyExecution::Apply, options)
+                .expect("copy succeeds")
+        },
+    );
+
+    let backup = backup_dir.join("source/link~");
+    let meta = fs::symlink_metadata(&backup).expect("backup symlink metadata");
+    assert!(
+        meta.file_type().is_symlink(),
+        "backup is not a symlink at {}",
+        backup.display()
+    );
+    assert_eq!(
+        fs::read_link(&backup).expect("read backup link"),
+        PathBuf::from("old_target")
+    );
+    assert_eq!(
+        FileTime::from_last_modification_time(&meta),
+        backup_mtime,
+        "cross-device symlink backup did not preserve mtime"
+    );
+}
+
 #[test]
 fn backup_with_special_characters_in_filename() {
     let ctx = test_helpers::setup_copy_test();
