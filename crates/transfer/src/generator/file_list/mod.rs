@@ -244,6 +244,12 @@ impl GeneratorContext {
         // `try_walk_source_entry_dedup` to suppress the duplicate top-level
         // walk that would re-emit an implied parent.
         let mut emitted_dirs: HashSet<(PathBuf, PathBuf)> = explicit_dirs.clone();
+        // upstream: options.c:2207-2208 - `if (!relative_paths) implied_dirs = 0;`.
+        // Under --no-relative (relative_paths == 0) the sender FLATTENS every
+        // --files-from entry to its transmitted name and emits NO implied parent
+        // directories (flist.c:2468 gates the send on `implied_dirs`, which is
+        // forced off). Without this gate oc emits an intermediate `sub` dir that
+        // an upstream receiver rejects as an unrequested file-list name (exit 4).
         // upstream: flist.c:2257-2258 - `if (relative_paths && protocol_version
         // >= 30) implied_dirs = 1;` forces flagged implied parent dirs at
         // protocol >= 30 regardless of --no-implied-dirs; at protocol < 30 the
@@ -251,11 +257,14 @@ impl GeneratorContext {
         // --no-implied-dirs omits the implied parents from the --files-from
         // flist and the receiver recreates them via make_path (generator.c:1317)
         // without their source metadata. Mirror the same gate as the positional
-        // path (build_file_list): emit when implied dirs are on OR the protocol
-        // forces them. When suppressed, `emitted_dirs` stays equal to
-        // `explicit_dirs`, so `implied_only_dirs` below is empty and the
-        // explicit top-level walk is left untouched (dedup unchanged).
-        if !self.config.flags.no_implied_dirs || self.protocol.as_u8() >= 30 {
+        // path (build_file_list): emit only in relative mode, and then when
+        // implied dirs are on OR the protocol forces them. When suppressed,
+        // `emitted_dirs` stays equal to `explicit_dirs`, so `implied_only_dirs`
+        // below is empty and the explicit top-level walk is left untouched
+        // (dedup unchanged).
+        if self.config.flags.relative
+            && (!self.config.flags.no_implied_dirs || self.protocol.as_u8() >= 30)
+        {
             for entry in entries {
                 if let Ok(rel) = entry.path.strip_prefix(&entry.base) {
                     // Walk each ancestor of the relative path and emit a

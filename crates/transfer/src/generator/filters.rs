@@ -97,11 +97,70 @@ fn has_leading_dot_anchor(name: &str) -> bool {
 /// (`from/./` → `from/.`). Without this, `from/./` would never match the
 /// `/./` substring search and would emit a stray `from/` directory entry
 /// instead of promoting `from` to the per-entry walk base.
+///
+/// `relative_paths` selects the upstream split branch. In relative mode
+/// (`flist.c:2350-2365`) the entry is split on its first `/./` anchor as
+/// above. Under `--no-relative` (`relative_paths == 0`, `flist.c:2338-2349`)
+/// upstream instead splits on the entry's LAST `/`: the parent becomes the
+/// chdir target (walk base) and only the basename is transmitted, so nested
+/// entries FLATTEN (`sub/file` transmits as `file`, no implied `sub` dir).
+/// The `/./` anchor is relative-only and is not honoured under `--no-relative`.
 pub(super) fn split_files_from_entry(
     base_dir: &Path,
     sanitized: &str,
     raw_trailing_slash: bool,
+    relative_paths: bool,
 ) -> FilesFromEntry {
+    // upstream: flist.c:2338-2349 - `if (!relative_paths) { p = strrchr(fbuf,
+    // '/'); ... dir = fbuf; fn = p + 1; }`. Non-relative mode drops every
+    // leading path component: the walk base absorbs the parent directory and
+    // the transmitted name is the trailing basename. No implied parent dirs.
+    if !relative_paths {
+        let trimmed = sanitized.trim_end_matches('/');
+        if raw_trailing_slash {
+            // upstream: flist.c:2312-2322 - a trailing `/` turns `X/` into the
+            // DOTDIR `X/.`; the strrchr split then makes the WHOLE directory the
+            // chdir target (`dir = X`, `fn = "."`) and recurses, so the entry's
+            // contents flatten into the transfer root (`sub/` sends `file`,
+            // `deep`, `deep/x` - not `sub/...`). Recursion is forced regardless
+            // of the global `-r` flag (SLASH_ENDING_NAME / DOTDIR_NAME).
+            let base = if trimmed.is_empty() {
+                base_dir.to_path_buf()
+            } else {
+                base_dir.join(trimmed)
+            };
+            return FilesFromEntry {
+                base: base.clone(),
+                path: base,
+                recurse: true,
+                // upstream: flist.c:2367 - `implied_dot_dir` is set only in the
+                // relative-mode branch; non-relative entries never trip it.
+                implied_dot: false,
+            };
+        }
+        let (head, fname) = match trimmed.rsplit_once('/') {
+            Some((head, fname)) => (head, fname),
+            None => ("", trimmed),
+        };
+        let base = if head.is_empty() {
+            base_dir.to_path_buf()
+        } else {
+            base_dir.join(head)
+        };
+        let path = if fname.is_empty() {
+            base.clone()
+        } else {
+            base.join(fname)
+        };
+        return FilesFromEntry {
+            base,
+            path,
+            recurse: false,
+            // upstream: flist.c:2367 - `implied_dot_dir` is relative-mode only.
+            implied_dot: false,
+        };
+    }
+
     // Anchored form: prefix `/./` suffix.
     if let Some(anchor) = sanitized.find("/./") {
         let (head, tail) = sanitized.split_at(anchor);
@@ -305,6 +364,7 @@ impl GeneratorContext {
                 &base_dir,
                 &sanitized,
                 raw_trailing_slash,
+                self.config.flags.relative,
             ));
         }
 
@@ -745,10 +805,66 @@ mod tests {
     #[test]
     fn split_files_from_entry_without_anchor_inherits_base() {
         let base = PathBuf::from("/src");
-        let split = split_files_from_entry(&base, "dir/file.txt", false);
+        let split = split_files_from_entry(&base, "dir/file.txt", false, true);
         assert_eq!(split.base, PathBuf::from("/src"));
         assert_eq!(split.path, PathBuf::from("/src/dir/file.txt"));
         assert!(!split.recurse);
+    }
+
+    #[test]
+    fn split_files_from_entry_no_relative_flattens_to_basename() {
+        // Task #292: upstream flist.c:2338-2349 - under --no-relative the entry
+        // splits on its LAST `/`, so the walk base absorbs every parent
+        // component and only the basename is transmitted. `sub/file` must
+        // resolve to base `/src/sub`, path `/src/sub/file`, wire name `file` -
+        // no implied `sub` directory. An upstream receiver rejects an
+        // unrequested intermediate `sub` with exit 4.
+        let base = PathBuf::from("/src");
+        let split = split_files_from_entry(&base, "sub/file", false, false);
+        assert_eq!(split.base, PathBuf::from("/src/sub"));
+        assert_eq!(split.path, PathBuf::from("/src/sub/file"));
+        assert_eq!(
+            split.path.strip_prefix(&split.base).unwrap(),
+            Path::new("file")
+        );
+        assert!(!split.recurse);
+
+        // Deeper nesting still flattens to the trailing basename (last `/`).
+        let deep = split_files_from_entry(&base, "a/b/c/file", false, false);
+        assert_eq!(deep.base, PathBuf::from("/src/a/b/c"));
+        assert_eq!(
+            deep.path.strip_prefix(&deep.base).unwrap(),
+            Path::new("file")
+        );
+
+        // A top-level entry keeps the source argument as its base.
+        let top = split_files_from_entry(&base, "file", false, false);
+        assert_eq!(top.base, PathBuf::from("/src"));
+        assert_eq!(top.path, PathBuf::from("/src/file"));
+
+        // The `/./` anchor is relative-only; under --no-relative it is a
+        // literal component and the split still takes the last `/`.
+        let anchored = split_files_from_entry(&base, "from/./dir/file", false, false);
+        assert_eq!(anchored.base, PathBuf::from("/src/from/./dir"));
+        assert_eq!(
+            anchored.path.strip_prefix(&anchored.base).unwrap(),
+            Path::new("file")
+        );
+
+        // A trailing slash names a directory whose contents flatten into the
+        // transfer root: base is the whole dir, path == base (transmit `.`),
+        // and recursion is forced (upstream DOTDIR / SLASH_ENDING_NAME).
+        let dir = split_files_from_entry(&base, "sub", true, false);
+        assert_eq!(dir.base, PathBuf::from("/src/sub"));
+        assert_eq!(dir.path, PathBuf::from("/src/sub"));
+        assert!(dir.recurse);
+
+        // A plain directory entry (no trailing slash) keeps the parent as base,
+        // transmits the basename, and is NOT recursed (files-from clears `-r`).
+        let plain_dir = split_files_from_entry(&base, "sub", false, false);
+        assert_eq!(plain_dir.base, PathBuf::from("/src"));
+        assert_eq!(plain_dir.path, PathBuf::from("/src/sub"));
+        assert!(!plain_dir.recurse);
     }
 
     #[test]
@@ -758,7 +874,7 @@ mod tests {
         // `dir/subdir`. Otherwise upstream's `implied_filter_list` check
         // (flist.c:998) rejects `from/dir/subdir` as "unrequested".
         let base = PathBuf::from("/src");
-        let split = split_files_from_entry(&base, "from/./dir/subdir", false);
+        let split = split_files_from_entry(&base, "from/./dir/subdir", false, true);
         assert_eq!(split.base, PathBuf::from("/src/from"));
         assert_eq!(split.path, PathBuf::from("/src/from/dir/subdir"));
         assert!(!split.recurse);
@@ -772,7 +888,7 @@ mod tests {
         // anchor directory itself, with the relative name collapsing to `.`,
         // and is always recursed into.
         let base = PathBuf::from("/src");
-        let split = split_files_from_entry(&base, "from/./", true);
+        let split = split_files_from_entry(&base, "from/./", true, true);
         assert_eq!(split.base, PathBuf::from("/src/from"));
         assert_eq!(split.path, PathBuf::from("/src/from"));
         assert!(split.recurse);
@@ -788,7 +904,7 @@ mod tests {
         let sanitized = crate::sanitize_path::sanitize_path_keep_dot_dirs("from/./");
         assert_eq!(sanitized, "from/.");
         let base = PathBuf::from("/src");
-        let split = split_files_from_entry(&base, &sanitized, true);
+        let split = split_files_from_entry(&base, &sanitized, true, true);
         assert_eq!(split.base, PathBuf::from("/src/from"));
         assert_eq!(split.path, PathBuf::from("/src/from"));
         assert!(split.recurse);
@@ -801,7 +917,7 @@ mod tests {
         // the named directory even though `--files-from` clears the global
         // `-r` flag.
         let base = PathBuf::from("/src");
-        let split = split_files_from_entry(&base, "from/./dir/subdir/subsubdir2", true);
+        let split = split_files_from_entry(&base, "from/./dir/subdir/subsubdir2", true, true);
         assert_eq!(split.base, PathBuf::from("/src/from"));
         assert_eq!(split.path, PathBuf::from("/src/from/dir/subdir/subsubdir2"));
         assert!(split.recurse);
@@ -811,7 +927,7 @@ mod tests {
     fn split_files_from_entry_collapses_redundant_separator_slashes() {
         // `dir/././sub` should behave like `dir/./sub`: head is `dir`, rest is `sub`.
         let base = PathBuf::from("/src");
-        let split = split_files_from_entry(&base, "dir/././sub", false);
+        let split = split_files_from_entry(&base, "dir/././sub", false, true);
         assert_eq!(split.base, PathBuf::from("/src/dir"));
         // The second `./` is part of `rest` and joins as `./sub`; PathBuf
         // join keeps it as a no-op fs component.
@@ -834,7 +950,7 @@ mod tests {
         // upstream: flist.c:2368 - `implied_dot_dir` only trips on a leading
         // `./`; a plain relative name never emits the transfer-root `.`.
         let base = PathBuf::from("/src");
-        let split = split_files_from_entry(&base, "dir/file.txt", false);
+        let split = split_files_from_entry(&base, "dir/file.txt", false, true);
         assert!(!split.implied_dot);
     }
 
@@ -844,7 +960,7 @@ mod tests {
         // leading `./foo` files-from line (no embedded `/./`) marks the entry
         // so `--relative` mode emits a single FLAG_IMPLIED_DIR root `.`.
         let base = PathBuf::from("/src");
-        let split = split_files_from_entry(&base, "./foo/bar", false);
+        let split = split_files_from_entry(&base, "./foo/bar", false, true);
         assert!(split.implied_dot);
     }
 
@@ -852,8 +968,8 @@ mod tests {
     fn split_files_from_entry_bare_dot_forms_are_not_implied_dot() {
         // A bare `.` or `./` (upstream `fn[2]` is NUL) never sets the flag.
         let base = PathBuf::from("/src");
-        assert!(!split_files_from_entry(&base, ".", false).implied_dot);
-        assert!(!split_files_from_entry(&base, "./", true).implied_dot);
+        assert!(!split_files_from_entry(&base, ".", false, true).implied_dot);
+        assert!(!split_files_from_entry(&base, "./", true, true).implied_dot);
     }
 
     #[test]
@@ -862,7 +978,7 @@ mod tests {
         // suffix; `dir/././sub` leaves `rest == "./sub"`, which still trips
         // `implied_dot_dir`.
         let base = PathBuf::from("/src");
-        let split = split_files_from_entry(&base, "dir/././sub", false);
+        let split = split_files_from_entry(&base, "dir/././sub", false, true);
         assert!(split.implied_dot);
     }
 }
