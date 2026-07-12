@@ -1,0 +1,143 @@
+# ZMB-1 - Nightly CI cell for zsync matching-engine regression detection.
+#
+# Runs a smoke version of the criterion matching benchmark suite (short
+# measurement budget, bencher output) to catch performance regressions in
+# the zsync-inspired optimizations: bithash negative prefilter, compact
+# rsum-key lookup cache, parallel sender-scan delta generator, and
+# duplicate-heavy prune pruning.
+#
+# Template: mirrors bench-checksum-throughput.yml (CBP-6) and
+# bench-drain-throughput.yml (DPC-8) - criterion + bencher output +
+# artifact + step summary, advisory continue-on-error posture.
+#
+# Status: non-required. Advisory only; do not gate PRs on this workflow.
+name: Bench zsync matching
+
+on:
+  workflow_dispatch:
+  schedule:
+    # Nightly at 07:07 UTC. Offset from checksum (06:17), drain (05:47),
+    # daemon-concurrency (04:37), and cold-start (03:17) so the bench
+    # cells do not contend on a single runner pool slot.
+    - cron: '7 7 * * *'
+  pull_request:
+    paths:
+      - 'crates/matching/**'
+      - '.github/workflows/bench-zsync-matching.yml'
+
+concurrency:
+  group: bench-zsync-matching-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+
+jobs:
+  bench-zsync-matching:
+    name: Zsync matching regression
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    # Non-required: advisory bench cell. Do not add to branch protection.
+    continue-on-error: true
+
+    env:
+      # Per-benchmark measurement budget. Criterion allocates samples within
+      # this window. The suite runs eight bench targets; a short window keeps
+      # the whole run under the job-level timeout, which is the hard ceiling.
+      BENCH_MEASUREMENT_TIME: "5"
+      # Soft cap for each individual bench target below.
+      BENCH_TIMEOUT_SECONDS: "600"
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@4be9e76fd7c4901c61fb841f559994984270fce7 # stable
+        with:
+          toolchain: "1.88.0"
+
+      - name: Cache cargo builds
+        uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2
+        with:
+          shared-key: bench-zsync-matching
+
+      - name: Build matching crate benches (release)
+        run: cargo build --locked --release -p matching --benches
+
+      - name: Prepare results directory
+        id: prep
+        run: |
+          set -euo pipefail
+          WORK="${{ github.workspace }}/bench-zsync-matching"
+          mkdir -p "$WORK/results"
+          echo "WORK=$WORK" >> "$GITHUB_OUTPUT"
+
+      - name: Run matching criterion benches
+        env:
+          WORK: ${{ steps.prep.outputs.WORK }}
+        run: |
+          set -euo pipefail
+
+          # The zsync optimizations each have a dedicated criterion harness.
+          # Run every target with the same bencher-format flags so the output
+          # is machine-parseable downstream, one result file per target.
+          BENCHES=(
+            bithash_rejection
+            compact_keys_cache
+            parallel_delta_scan
+            prune_duplicate_heavy
+            zsync_optimizations
+            zsync_medium_dataset
+            delta_matching_benchmark
+            seq_match_redundant
+          )
+
+          for bench in "${BENCHES[@]}"; do
+            OUT="$WORK/results/${bench}.bencher.txt"
+            : > "$OUT"
+            echo "::group::bench ${bench}"
+            timeout "${BENCH_TIMEOUT_SECONDS}" \
+              cargo bench \
+                -p matching \
+                --bench "${bench}" \
+                -- \
+                --output-format bencher \
+                --warm-up-time 1 \
+                --measurement-time "$BENCH_MEASUREMENT_TIME" \
+              | tee "$OUT"
+            echo "::endgroup::"
+          done
+
+      - name: Publish bench summary
+        env:
+          WORK: ${{ steps.prep.outputs.WORK }}
+        run: |
+          set -euo pipefail
+
+          {
+            echo "### Zsync matching bench (ZMB-1)"
+            echo ""
+            for OUT in "$WORK"/results/*.bencher.txt; do
+              [ -f "$OUT" ] || continue
+              name="$(basename "$OUT" .bencher.txt)"
+              echo "#### ${name}"
+              echo '```'
+              head -n 100 "$OUT" || true
+              echo '```'
+              echo ""
+            done
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload bench results
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: bench-zsync-matching
+          retention-days: 90
+          path: |
+            ${{ steps.prep.outputs.WORK }}/results/*.bencher.txt
