@@ -127,6 +127,14 @@ impl ReceiverContext {
         if self.config.flags.list_only {
             stats.list_only_entries = self.collect_list_only_entries();
             writer.flush()?;
+        } else if self.config.flags.only_write_batch {
+            // upstream: main.c:1839 `write_batch < 0` forces dry_run but leaves
+            // do_xfers = 1, so unlike a plain `-n` the generator still sends
+            // real block checksums while the receiver writes nothing to the
+            // destination and reads no delta data (the push sender records it
+            // into its own batch fd, sender.c:217). Checked before `dry_run`
+            // because only-write-batch sets both flags.
+            self.run_only_write_batch_loop(reader, writer, &files_to_transfer, &setup)?;
         } else if self.config.flags.dry_run {
             self.run_dry_run_loop(reader, writer, &files_to_transfer)?;
         } else {

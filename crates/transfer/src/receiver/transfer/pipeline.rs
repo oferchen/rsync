@@ -525,4 +525,126 @@ impl ReceiverContext {
         writer.flush()?;
         Ok(())
     }
+
+    /// Server-receiver loop for `--only-write-batch=X` (upstream `write_batch
+    /// < 0`).
+    ///
+    /// Unlike [`run_dry_run_loop`](Self::run_dry_run_loop), the generator sends
+    /// REAL block checksums (a full sum head + signature per file), because
+    /// upstream forces `dry_run = 1` only after `do_xfers` is computed
+    /// (main.c:1839), so `do_xfers` stays 1 and the sender needs the checksums
+    /// to build its batch. The push sender writes each delta to its own batch
+    /// fd rather than the wire (sender.c:217 `f_xfer = write_batch < 0 ?
+    /// batch_fd : f_out`), so this loop reads only the bare NDX+attrs echo the
+    /// sender emits via `write_ndx_and_attrs(f_out, ...)` (sender.c:442) and
+    /// writes nothing to the destination.
+    ///
+    /// Requests are sent one file at a time, flushing before each echo read, so
+    /// there is no risk of a buffer-fill deadlock against a large signature.
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `main.c:1839` - `if (write_batch < 0) dry_run = 1` (do_xfers stays 1)
+    /// - `sender.c:442-443` - `write_ndx_and_attrs(f_out); write_sum_head(f_xfer)`
+    /// - `receiver.c:811-817` - `write_batch < 0` path: log, no dest write
+    pub(in crate::receiver) fn run_only_write_batch_loop<
+        R: Read,
+        W: Write + crate::writer::MsgInfoSender + ?Sized,
+    >(
+        &self,
+        reader: &mut crate::reader::ServerReader<R>,
+        writer: &mut W,
+        files_to_transfer: &[(usize, &FileEntry, PathBuf, u32)],
+        setup: &PipelineSetup,
+    ) -> io::Result<()> {
+        if files_to_transfer.is_empty() {
+            writer.flush()?;
+            return Ok(());
+        }
+
+        let mut ndx_write_codec = MonotonicNdxWriter::new(self.protocol.as_u8());
+        let mut ndx_read_codec = create_ndx_codec(self.protocol.as_u8());
+
+        let preserve_xattrs = self.config.flags.xattrs;
+        let want_xattr_optim = self.protocol.as_u8() >= 31
+            && self.compat_flags.is_some_and(|f| {
+                !f.contains(protocol::CompatibilityFlags::AVOID_XATTR_OPTIMIZATION)
+            });
+
+        let request_config = RequestConfig {
+            protocol: self.protocol,
+            write_iflags: self.protocol.supports_iflags(),
+            checksum_length: setup.checksum_length,
+            checksum_algorithm: setup.checksum_algorithm,
+            negotiated_algorithms: self.negotiated_algorithms.as_ref(),
+            compat_flags: self.compat_flags.as_ref(),
+            checksum_seed: self.checksum_seed,
+            use_sparse: self.config.flags.sparse,
+            do_fsync: self.config.write.fsync,
+            temp_dir: self.config.temp_dir.as_deref(),
+            write_devices: self.config.write.write_devices,
+            inplace: self.config.write.inplace,
+            inplace_partial: self.config.write.inplace_partial,
+            io_uring_policy: self.config.write.io_uring_policy,
+            io_uring_depth: self.config.write.io_uring_depth,
+            preserve_xattrs,
+            want_xattr_optim,
+            append: self.config.flags.append,
+            append_verify: self.config.flags.append_verify,
+        };
+
+        for &(file_idx, file_entry, ref file_path, _) in files_to_transfer {
+            // upstream: generator.c:1961-1969 - compute the basis signature and
+            // send a real sum head so the sender can diff against the receiver's
+            // basis (empty when no basis exists, driving a whole-file batch).
+            let basis_config = BasisFileConfig {
+                file_path,
+                dest_dir: &setup.dest_dir,
+                relative_path: file_entry.path(),
+                target_size: file_entry.size(),
+                target_mtime: file_entry.mtime(),
+                fuzzy_level: self.config.flags.fuzzy_level,
+                reference_directories: &self.config.reference_directories,
+                partial_dir: self.config.partial_dir.as_deref(),
+                protocol: self.protocol,
+                checksum_length: setup.checksum_length,
+                checksum_algorithm: setup.checksum_algorithm,
+                whole_file: self.config.flags.whole_file,
+                compat_flags: self.compat_flags,
+            };
+            let basis = find_basis_file_with_config(&basis_config);
+
+            // upstream: generator.c:1939 write_ndx + write_sum_head(f_out, s).
+            let _pending = send_file_request(
+                writer,
+                &mut ndx_write_codec,
+                self.flat_to_wire_ndx(file_idx),
+                file_path.clone(),
+                basis.signature,
+                basis.basis_path,
+                basis.fnamecmp_type,
+                file_entry.size(),
+                &request_config,
+            )?;
+
+            // Flush before blocking on the echo so the sender has the full
+            // request. It reads the sum head, writes the delta into its own
+            // batch fd, and echoes only NDX+attrs back to us.
+            writer.flush()?;
+
+            // upstream: sender.c:442 - write_ndx_and_attrs(f_out, ...) echo.
+            // No delta follows (it went to the batch fd), so we stop here and
+            // write nothing to the destination.
+            let (_echoed_ndx, _sender_attrs) =
+                crate::receiver::wire::SenderAttrs::read_with_codec_xattr(
+                    reader,
+                    &mut ndx_read_codec,
+                    preserve_xattrs,
+                    want_xattr_optim,
+                )?;
+        }
+
+        writer.flush()?;
+        Ok(())
+    }
 }
