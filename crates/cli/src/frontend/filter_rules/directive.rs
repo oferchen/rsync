@@ -11,6 +11,13 @@ pub(crate) enum FilterDirective {
     Merge(MergeDirective),
     /// Clears all existing filter rules.
     Clear,
+    /// An empty rule string that contributes no rule.
+    ///
+    /// upstream: exclude.c:1107 parse_rule_tok returns NULL for an empty rule
+    /// (`if (!*s) return NULL`), so parse_filter_str adds nothing and exits 0.
+    /// A blank `--filter`/`--exclude`/`--include` value is therefore a no-op,
+    /// not a syntax error.
+    Noop,
     /// The `-C` cvs-convenience rule: expands to the global CVS default
     /// excludes (built-in list + `$HOME/.cvsignore` + `$CVSIGNORE`).
     ///

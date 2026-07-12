@@ -54,7 +54,8 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 
 use super::super::super::{
-    parse_bind_address_argument, parse_protocol_version_arg, parse_timeout_argument,
+    ProtocolArg, legacy_remote_rejection, parse_bind_address_argument, parse_protocol_version_arg,
+    parse_timeout_argument,
 };
 #[cfg(any(
     not(all(any(unix, windows), feature = "acl")),
@@ -90,20 +91,39 @@ where
     }
 }
 
-/// Parses the `--protocol` argument into a [`ProtocolVersion`].
+/// Parses and resolves the `--protocol` argument into a [`ProtocolVersion`].
+///
+/// upstream: `setup_protocol` (compat.c:629-637) runs for local copies too, so
+/// upstream accepts `--protocol` on a local transfer (protocol `20..=32` all
+/// exit 0; local output is identical regardless). This build never negotiates a
+/// protocol for a local copy, so any accepted value is simply ignored there
+/// (`Ok(None)`). Only a remote transfer carries a concrete version, and it must
+/// fall within this build's wire range (`28..=32`); a legacy value (`20..=27`)
+/// that upstream would negotiate is refused because this build cannot speak it.
 pub(crate) fn resolve_desired_protocol<Err>(
     protocol: Option<&OsString>,
+    has_remote_operand: bool,
     stderr: &mut MessageSink<Err>,
 ) -> Result<Option<ProtocolVersion>, i32>
 where
     Err: Write,
 {
-    match protocol {
-        Some(value) => match parse_protocol_version_arg(value.as_os_str()) {
-            Ok(version) => Ok(Some(version)),
-            Err(message) => Err(fail_with_message(message, stderr)),
-        },
-        None => Ok(None),
+    let Some(value) = protocol else {
+        return Ok(None);
+    };
+    match parse_protocol_version_arg(value.as_os_str()) {
+        Ok(ProtocolArg::Supported(version)) => {
+            // Local copies ignore the protocol entirely (no wire negotiation).
+            Ok(has_remote_operand.then_some(version))
+        }
+        Ok(ProtocolArg::LegacyLocalOnly(raw)) => {
+            if has_remote_operand {
+                Err(fail_with_message(legacy_remote_rejection(raw), stderr))
+            } else {
+                Ok(None)
+            }
+        }
+        Err(message) => Err(fail_with_message(message, stderr)),
     }
 }
 

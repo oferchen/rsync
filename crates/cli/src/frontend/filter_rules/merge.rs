@@ -221,6 +221,8 @@ pub(crate) fn process_merge_directive(
             })?;
         }
         Ok(FilterDirective::Clear) => destination.clear(),
+        // A blank line inside a merge file contributes no rule.
+        Ok(FilterDirective::Noop) => {}
         // upstream: exclude.c:1441-1443 a non-merge FILTRULE_CVS_IGNORE rule
         // (`-C`) inside a merge file expands to the global CVS defaults at this
         // position in the chain.
