@@ -565,8 +565,9 @@ fn run_blocking_server(
         build_batch_recording(ctx, is_sender)
     });
 
-    let handshake = crate::server::perform_handshake(&mut reader, &mut writer)
-        .map_err(|e| invalid_argument_error(&format!("async SSH handshake failed: {e}"), 5))?;
+    let handshake =
+        crate::server::perform_handshake_with_max(&mut reader, &mut writer, config.protocol)
+            .map_err(|e| invalid_argument_error(&format!("async SSH handshake failed: {e}"), 5))?;
     let negotiated_protocol = handshake.protocol.as_u8();
 
     let transfer_result = crate::server::run_server_with_handshake(
