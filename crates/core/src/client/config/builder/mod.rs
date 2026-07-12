@@ -368,6 +368,9 @@ impl ClientConfigBuilder {
         if self.checksum_choice.transfer_is_none() {
             self.whole_file = Some(true);
         }
+        // upstream: compat.c:791-797 - append the implicit `--partial-dir`
+        // exclude at the tail of the filter list, after every CLI rule.
+        self.push_implicit_partial_dir_filter();
         ClientConfig {
             transfer_args: self.transfer_args,
             dry_run: self.dry_run,
