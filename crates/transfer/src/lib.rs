@@ -549,27 +549,15 @@ pub fn run_server_with_handshake<W: Write>(
             config.write.inplace_partial = true;
         }
 
-        // upstream: compat.c:780-785 - when acting as client, detect that the
-        // remote daemon lacks xattr support (no CF_AVOID_XATTR_OPTIM in its compat
-        // flags means it was built without SUPPORT_XATTRS). Gracefully disable
-        // xattr preservation and warn the user instead of failing mid-transfer.
-        if config.connection.client_mode
-            && config.flags.xattrs
-            && !flags.contains(protocol::CompatibilityFlags::AVOID_XATTR_OPTIMIZATION)
-        {
-            eprintln!(
-                "WARNING: remote daemon does not support extended attributes - disabling xattr preservation {}{}",
-                role_trailer::error_location!(),
-                role_trailer::receiver()
-            );
-            config.flags.xattrs = false;
-        }
-
-        // Same pattern for ACLs: upstream sets CF_AVOID_XATTR_OPTIM only when
-        // SUPPORT_XATTRS is compiled in. A daemon without ACL support won't
-        // advertise the corresponding compat flag. Since upstream rsync has no
-        // dedicated ACL compat flag, ACL rejection is handled via the daemon's
-        // "refuse options" mechanism instead of compat-flag detection.
+        // upstream: compat.c:722-723,747 - CF_AVOID_XATTR_OPTIM only signals
+        // "avoid the xattr hardlink optimization" (want_xattr_optim) and is
+        // gated on protocol_version >= 31. Its absence does NOT mean the peer
+        // lacks xattr support: proto-30 peers (rsync 3.0.x) never define the
+        // flag yet fully preserve xattrs, and the 'x' capability that drives it
+        // is emitted unconditionally (options.c:3048). A remote genuinely built
+        // without SUPPORT_XATTRS rejects -X at option-parse time instead. So we
+        // must NOT disable xattr preservation here - doing so half-disabled the
+        // sender and desynced the proto-30 flist ("xa index out of range").
     }
 
     // upstream: options.c:1842-1868 - when compiled without SUPPORT_ACLS or
