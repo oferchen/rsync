@@ -1,6 +1,7 @@
 use super::*;
 use crate::signature::SignatureAlgorithm;
 use ::metadata::ChmodModifiers;
+use ::metadata::ModifyWindow;
 use ::test_support::create_tempdir;
 use bandwidth::BandwidthLimiter;
 use compress::algorithm::CompressionAlgorithm;

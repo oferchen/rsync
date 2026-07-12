@@ -46,6 +46,10 @@ use crate::signature::SignatureBlock;
 use ::metadata::{
     MetadataOptions, apply_file_metadata_with_options, apply_symlink_metadata_with_options,
 };
+// Used only by the `#[cfg(unix)]` hardlink-candidate mtime compare in
+// context_impl/state.rs; on other platforms the name would be unused.
+#[cfg(unix)]
+use ::metadata::ModifyWindow;
 use bandwidth::{BandwidthLimitComponents, BandwidthLimiter};
 use checksums::RollingChecksum;
 use compress::algorithm::CompressionAlgorithm;

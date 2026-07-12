@@ -7,7 +7,9 @@ impl ClientConfigBuilder {
         /// Sets the maximum file size to transfer.
         max_file_size: Option<u64>,
         /// Sets the modification time tolerance used when comparing files.
-        modify_window: Option<u64>,
+        ///
+        /// A negative value selects upstream's nanosecond-exact comparison.
+        modify_window: Option<i64>,
         /// Enables or disables removal of source files after a successful transfer.
         remove_source_files: bool,
         /// Enables or disables size-only change detection.

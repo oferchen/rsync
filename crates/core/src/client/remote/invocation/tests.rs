@@ -1746,6 +1746,42 @@ fn includes_modify_window_long_arg() {
 }
 
 #[test]
+fn negative_modify_window_uses_short_at_spelling() {
+    // WHY: upstream options.c:2874 forwards a negative modify_window via the
+    // short `-@%d` spelling (`-@-1`), NOT `--modify-window=-1`, so a stock
+    // upstream `--server` receiver honours nanosecond-exact comparison. The
+    // long form would be rejected as an invalid unsigned value on the peer.
+    let config = ClientConfig::builder().modify_window(Some(-1)).build();
+    let args = build_sender_args(&config);
+    assert!(
+        args.iter().any(|a| a == "-@-1"),
+        "expected -@-1 in sender args for a negative window: {args:?}"
+    );
+    assert!(
+        !args.iter().any(|a| a.starts_with("--modify-window=")),
+        "negative window must not use the long spelling: {args:?}"
+    );
+}
+
+#[test]
+fn modify_window_not_forwarded_on_pull() {
+    // WHY: upstream options.c:2873 gates the forwarded arg on `am_sender`. On a
+    // pull the local client is the receiver and runs the mtime quick-check
+    // itself, so nothing is sent to the remote sender. Forwarding it would
+    // diverge from upstream's argv byte-for-byte.
+    let config = ClientConfig::builder().modify_window(Some(2)).build();
+    let args = build_receiver_args(&config);
+    assert!(
+        !args.iter().any(|a| a.starts_with("--modify-window=")),
+        "pull must not forward --modify-window: {args:?}"
+    );
+    assert!(
+        !args.iter().any(|a| a.starts_with("-@")),
+        "pull must not forward -@ window: {args:?}"
+    );
+}
+
+#[test]
 fn includes_compress_level_long_arg() {
     let config = ClientConfig::builder()
         .compress(true)

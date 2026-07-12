@@ -1,9 +1,9 @@
 use std::ffi::{OsStr, OsString};
 use std::num::{NonZeroU32, NonZeroUsize};
 use std::path::{Path, PathBuf};
-use std::time::{Duration, SystemTime};
+use std::time::SystemTime;
 
-use ::metadata::{ChmodModifiers, GroupMapping, UserMapping};
+use ::metadata::{ChmodModifiers, GroupMapping, ModifyWindow, UserMapping};
 use compress::algorithm::CompressionAlgorithm;
 use compress::zlib::CompressionLevel;
 use engine::SkipCompressList;
@@ -72,7 +72,7 @@ pub struct ClientConfig {
     pub(super) rayon_threads: Option<NonZeroUsize>,
     pub(super) tokio_threads: Option<NonZeroUsize>,
     pub(super) max_alloc: Option<u64>,
-    pub(super) modify_window: Option<u64>,
+    pub(super) modify_window: Option<i64>,
     pub(super) remove_source_files: bool,
     pub(super) bandwidth_limit: Option<BandwidthLimit>,
     pub(super) preserve_owner: bool,

@@ -69,7 +69,7 @@ pub(crate) struct DerivedSettings {
     pub(crate) max_size_limit: Option<u64>,
     pub(crate) block_size_override: Option<NonZeroU32>,
     pub(crate) max_alloc_limit: Option<u64>,
-    pub(crate) modify_window_setting: Option<u64>,
+    pub(crate) modify_window_setting: Option<i64>,
     pub(crate) compress: bool,
     pub(crate) compression_level_override: Option<CompressionLevel>,
     pub(crate) skip_compress_list: Option<SkipCompressList>,
@@ -264,7 +264,7 @@ struct SizeLimitsResult {
     max_size_limit: Option<u64>,
     block_size_override: Option<NonZeroU32>,
     max_alloc_limit: Option<u64>,
-    modify_window_setting: Option<u64>,
+    modify_window_setting: Option<i64>,
 }
 
 /// Input parameters for size/limit parsing, grouped to reduce argument count.

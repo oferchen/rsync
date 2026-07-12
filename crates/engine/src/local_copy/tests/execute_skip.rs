@@ -1804,7 +1804,7 @@ fn execute_skips_within_modify_window() {
             LocalCopyExecution::Apply,
             LocalCopyOptions::default()
                 .times(true)
-                .with_modify_window(Duration::from_secs(2)),
+                .with_modify_window(ModifyWindow::from_secs(2)),
         )
         .expect("copy succeeds");
 
@@ -1839,7 +1839,7 @@ fn execute_skip_transfers_outside_modify_window() {
             LocalCopyExecution::Apply,
             LocalCopyOptions::default()
                 .times(true)
-                .with_modify_window(Duration::from_secs(2)),
+                .with_modify_window(ModifyWindow::from_secs(2)),
         )
         .expect("copy succeeds");
 
@@ -2233,7 +2233,7 @@ fn execute_skip_update_respects_modify_window() {
             LocalCopyExecution::Apply,
             LocalCopyOptions::default()
                 .update(true)
-                .with_modify_window(Duration::from_secs(2)),
+                .with_modify_window(ModifyWindow::from_secs(2)),
         )
         .expect("copy succeeds");
 

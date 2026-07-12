@@ -183,9 +183,15 @@ pub(super) fn add_transfer_args(command: ClapCommand) -> ClapCommand {
         .arg(
             Arg::new("modify-window")
                 .long("modify-window")
+                // upstream: options.c:660 - `-@` is the short alias, parsed as a
+                // signed int. `allow_hyphen_values` lets a negative window
+                // (e.g. `--modify-window=-1` or `-@-1`) be taken as the value
+                // rather than mistaken for another option.
+                .short('@')
                 .value_name("SECS")
                 .help("Treat mtimes within SECS seconds as equal when comparing files.")
                 .num_args(1)
+                .allow_hyphen_values(true)
                 .action(ArgAction::Set)
                 .value_parser(OsStringValueParser::new()),
         )

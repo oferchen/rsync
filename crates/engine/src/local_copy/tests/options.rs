@@ -29,10 +29,10 @@ fn local_copy_options_fsync_round_trip() {
 
 #[test]
 fn local_copy_options_modify_window_round_trip() {
-    let window = Duration::from_secs(5);
+    let window = ModifyWindow::from_secs(5);
     let options = LocalCopyOptions::default().with_modify_window(window);
     assert_eq!(options.modify_window(), window);
-    assert_eq!(LocalCopyOptions::default().modify_window(), Duration::ZERO);
+    assert_eq!(LocalCopyOptions::default().modify_window(), ModifyWindow::ZERO);
 }
 
 #[test]
@@ -66,7 +66,7 @@ fn should_skip_copy_requires_exact_mtime_when_window_zero() {
         ignore_times: false,
         checksum: false,
         checksum_algorithm: SignatureAlgorithm::Xxh3_128 { seed: 0 },
-        modify_window: Duration::ZERO,
+        modify_window: ModifyWindow::ZERO,
         prefetched_match: None,
     }));
 }
@@ -97,7 +97,7 @@ fn should_skip_copy_allows_difference_within_window() {
         ignore_times: false,
         checksum: false,
         checksum_algorithm: SignatureAlgorithm::Xxh3_128 { seed: 0 },
-        modify_window: Duration::from_secs(5),
+        modify_window: ModifyWindow::from_secs(5),
         prefetched_match: None,
     }));
 
@@ -113,7 +113,7 @@ fn should_skip_copy_allows_difference_within_window() {
         ignore_times: false,
         checksum: false,
         checksum_algorithm: SignatureAlgorithm::Xxh3_128 { seed: 0 },
-        modify_window: Duration::from_secs(5),
+        modify_window: ModifyWindow::from_secs(5),
         prefetched_match: None,
     }));
 }
@@ -142,7 +142,7 @@ fn should_skip_copy_skips_when_size_and_mtime_match_unless_ignored() {
         ignore_times: false,
         checksum: false,
         checksum_algorithm: SignatureAlgorithm::Xxh3_128 { seed: 0 },
-        modify_window: Duration::ZERO,
+        modify_window: ModifyWindow::ZERO,
         prefetched_match: None,
     }));
 
@@ -155,7 +155,7 @@ fn should_skip_copy_skips_when_size_and_mtime_match_unless_ignored() {
         ignore_times: true,
         checksum: false,
         checksum_algorithm: SignatureAlgorithm::Xxh3_128 { seed: 0 },
-        modify_window: Duration::ZERO,
+        modify_window: ModifyWindow::ZERO,
         prefetched_match: None,
     }));
 }

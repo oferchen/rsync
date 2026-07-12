@@ -1176,7 +1176,7 @@ fn dry_run_existing_differing_dest_itemizes_size_and_time_change() {
 /// dry_run; util1.c:same_time() applies the `--modify-window` tolerance.
 #[test]
 fn dry_run_skips_up_to_date_and_window_absorbed_destinations() {
-    let record_for = |mtime_offset: i64, window_secs: u64| {
+    let record_for = |mtime_offset: i64, window_secs: i64| {
         let temp = tempdir().expect("tempdir");
         let source = temp.path().join("src");
         let destination = temp.path().join("dst");
@@ -1195,7 +1195,7 @@ fn dry_run_skips_up_to_date_and_window_absorbed_destinations() {
         let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
         let mut options = LocalCopyOptions::default().times(true).collect_events(true);
         if window_secs > 0 {
-            options = options.with_modify_window(Duration::from_secs(window_secs));
+            options = options.with_modify_window(ModifyWindow::from_secs(window_secs));
         }
         let report = plan
             .execute_with_report(LocalCopyExecution::DryRun, options)

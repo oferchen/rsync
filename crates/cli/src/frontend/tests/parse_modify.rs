@@ -8,13 +8,17 @@ fn parse_modify_window_argument_accepts_positive_values() {
 }
 
 #[test]
-fn parse_modify_window_argument_rejects_negative_values() {
-    let error = parse_modify_window_argument(OsStr::new("-1"))
-        .expect_err("negative modify-window should fail");
-    let rendered = error.to_string();
-    assert!(
-        rendered.contains("window must be non-negative"),
-        "diagnostic missing negativity detail: {rendered}"
+fn parse_modify_window_argument_accepts_negative_values() {
+    // WHY: upstream options.c parses `--modify-window` as a signed int; a
+    // negative value requests nanosecond-exact comparison (util1.c:1482), so it
+    // must be accepted rather than rejected.
+    assert_eq!(
+        parse_modify_window_argument(OsStr::new("-1")).expect("parse -1"),
+        -1
+    );
+    assert_eq!(
+        parse_modify_window_argument(OsStr::new(" -2 ")).expect("parse -2"),
+        -2
     );
 }
 
@@ -24,7 +28,7 @@ fn parse_modify_window_argument_rejects_invalid_values() {
         .expect_err("non-numeric modify-window should fail");
     let rendered = error.to_string();
     assert!(
-        rendered.contains("window must be an unsigned integer"),
+        rendered.contains("window must be an integer"),
         "diagnostic missing numeric detail: {rendered}"
     );
 }

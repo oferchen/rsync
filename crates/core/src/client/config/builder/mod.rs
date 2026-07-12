@@ -148,7 +148,7 @@ pub struct ClientConfigBuilder {
     rayon_threads: Option<NonZeroUsize>,
     tokio_threads: Option<NonZeroUsize>,
     max_alloc: Option<u64>,
-    modify_window: Option<u64>,
+    modify_window: Option<i64>,
     remove_source_files: bool,
     bandwidth_limit: Option<BandwidthLimit>,
     preserve_owner: bool,
