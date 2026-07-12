@@ -105,6 +105,9 @@ thread_local! {
 }
 
 #[cfg(test)]
+// Only the `#[cfg(unix)]` cross-device backup tests install this override; on
+// non-Unix targets it is unreferenced.
+#[cfg_attr(not(unix), allow(dead_code))]
 pub(crate) fn with_backup_rename_override<F, R>(override_fn: F, action: impl FnOnce() -> R) -> R
 where
     F: Fn(&Path, &Path) -> Option<io::Result<()>> + 'static,

@@ -266,6 +266,7 @@ where
 }
 
 #[cfg(test)]
+#[cfg_attr(not(unix), allow(dead_code))]
 pub(crate) fn with_backup_rename_override<F, R>(override_fn: F, action: impl FnOnce() -> R) -> R
 where
     F: Fn(&std::path::Path, &std::path::Path) -> Option<std::io::Result<()>> + 'static,

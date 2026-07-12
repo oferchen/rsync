@@ -486,6 +486,9 @@ pub(crate) enum BackupStrategy {
     Rename,
     Copy,
     Symlink,
+    // Constructed only by the `#[cfg(unix)]` device/FIFO/socket mknod backup
+    // path; on non-Unix targets it is matched but never built.
+    #[cfg_attr(not(unix), allow(dead_code))]
     Device,
 }
 
