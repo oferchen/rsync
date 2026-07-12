@@ -821,6 +821,73 @@ fn long_flags_specials_and_no_specials() {
     assert!(is_known_server_long_flag("--no-specials"));
 }
 
+// upstream: options.c:2750-2753 - `if (xfer_dirs && !recurse && delete_mode &&
+// am_sender) args[ac++] = "--no-r"`. A real upstream client running
+// `--files-from --delete` forwards `--no-r`; the server-side popt table clears
+// `recurse` (options.c:623). Without recognition the token leaks into the
+// positional path list and the receiver tries to create a destination root
+// literally named `--no-r`, failing with "Permission denied" (exit 1).
+#[test]
+fn long_flags_no_r_recognized_and_parsed() {
+    let flags = parse_server_long_flags(&[OsString::from("--server"), OsString::from("--no-r")]);
+    assert!(flags.no_recurse);
+
+    let flags = parse_server_long_flags(&[OsString::from("--server")]);
+    assert!(!flags.no_recurse);
+
+    assert!(is_known_server_long_flag("--no-r"));
+}
+
+// upstream: options.c:2955-2959 - under `--inplace`, `if (sparse_files &&
+// !whole_file && am_sender) args[ac++] = "--no-W"`. Clears `whole_file`
+// server-side (options.c:746) so `--inplace --sparse` streams a delta.
+#[test]
+fn long_flags_no_w_recognized_and_parsed() {
+    let flags = parse_server_long_flags(&[OsString::from("--server"), OsString::from("--no-W")]);
+    assert!(flags.no_whole_file);
+
+    let flags = parse_server_long_flags(&[OsString::from("--server")]);
+    assert!(!flags.no_whole_file);
+
+    assert!(is_known_server_long_flag("--no-W"));
+}
+
+// upstream: options.c:2962-2973 - `--no-relative` is emitted with
+// `--files-from` when `!relative_paths`. Clears `relative_paths` server-side
+// (options.c:693).
+#[test]
+fn long_flags_no_relative_recognized_and_parsed() {
+    let flags =
+        parse_server_long_flags(&[OsString::from("--server"), OsString::from("--no-relative")]);
+    assert!(flags.no_relative);
+
+    let flags = parse_server_long_flags(&[OsString::from("--server")]);
+    assert!(!flags.no_relative);
+
+    assert!(is_known_server_long_flag("--no-relative"));
+}
+
+// Regression: the four `--no-*` negations upstream emits must be split off the
+// compact flag string and never surface as positional destination paths. This
+// reproduces the `--files-from --delete` push where the client sends `--no-r`.
+// upstream: options.c:2753/2959/2973/2977.
+#[test]
+fn no_negations_do_not_leak_as_positional_paths() {
+    let args = [
+        OsString::from("--server"),
+        OsString::from("--no-r"),
+        OsString::from("--no-W"),
+        OsString::from("--no-relative"),
+        OsString::from("--no-implied-dirs"),
+        OsString::from("-logDtpr"),
+        OsString::from("."),
+        OsString::from("dst/"),
+    ];
+    let (flag_string, positional) = parse_server_flag_string_and_args(&args[1..]);
+    assert_eq!(flag_string, "-logDtpr");
+    assert_eq!(positional, vec![OsString::from("dst/")]);
+}
+
 #[test]
 fn long_flags_checksum_seed() {
     let args = vec![
