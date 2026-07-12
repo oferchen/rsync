@@ -293,12 +293,101 @@ fn test_negotiate_nstr_summary_matches_upstream_wording_client() {
             .any(|m| m == "Client negotiated checksum: md5"),
         "missing upstream level-1 checksum summary: {messages:?}"
     );
-    // upstream: compat.c:215-218 - "(level %d)" renders verbatim, even
-    // when --compress-level was not supplied (CLVL_NOT_SPECIFIED = INT_MIN).
-    let expected_compress = format!("Client negotiated compress: zlib (level {})", i32::MIN);
+    // upstream: compat.c:215-218 - "(level %d)" renders the resolved
+    // do_compression_level. parse_compress_choice(1) calls
+    // init_compression_level() (token.c:55) first, which substitutes the zlib
+    // def_level (6) for CLVL_NOT_SPECIFIED, so the raw INT_MIN sentinel is
+    // never printed.
     assert!(
-        messages.iter().any(|m| m == &expected_compress),
+        messages
+            .iter()
+            .any(|m| m == "Client negotiated compress: zlib (level 6)"),
         "missing upstream level-1 compress summary: {messages:?}"
+    );
+}
+
+/// At protocol 30+ without the negotiated 'v' capability
+/// (`do_negotiation == false`), upstream still calls `parse_checksum_choice(1)`
+/// / `parse_compress_choice(1)` (compat.c:819-820). Both emit the per-side
+/// summary with NO " negotiated" qualifier (valid_*.negotiated_nni stays NULL
+/// because no vstring exchange ran), and the compress level is resolved via
+/// `init_compression_level` (token.c:55). The client must therefore show the
+/// zlib fallback the wire actually uses at the resolved def_level (6) - not the
+/// modern negotiated table and never the raw CLVL_NOT_SPECIFIED sentinel.
+#[test]
+fn test_no_negotiation_client_emits_resolved_fallback_summaries() {
+    use logging::{DebugFlag, DiagnosticEvent, VerbosityConfig, drain_events, init};
+
+    let mut cfg = VerbosityConfig::default();
+    cfg.debug.nstr = 2;
+    init(cfg);
+    let _ = drain_events();
+
+    // Protocol 30 uses binary negotiation, but with do_negotiation=false the
+    // vstring exchange is skipped and no wire I/O occurs.
+    let protocol = ProtocolVersion::try_from(30).unwrap();
+    let mut stdin: &[u8] = &[];
+    let mut stdout = Vec::new();
+
+    let result = negotiate_capabilities_with_override(
+        protocol,
+        &mut stdin,
+        &mut stdout,
+        &NegotiationConfig {
+            do_negotiation: false,
+            send_compression: true,
+            is_daemon_mode: false,
+            is_server: false,
+            checksum_override: None,
+            compression_override: None,
+            compression_level: crate::nstr::CLVL_NOT_SPECIFIED,
+        },
+    )
+    .unwrap();
+
+    // Wire falls back to zlib with zero bytes exchanged.
+    assert!(
+        stdout.is_empty(),
+        "do_negotiation=false must not send any negotiation bytes"
+    );
+    assert_eq!(result.compression, CompressionAlgorithm::Zlib);
+
+    let messages: Vec<String> = drain_events()
+        .into_iter()
+        .filter_map(|event| match event {
+            DiagnosticEvent::Debug {
+                flag: DebugFlag::Nstr,
+                message,
+                ..
+            } => Some(message),
+            _ => None,
+        })
+        .collect();
+
+    // Fallback summaries: no " negotiated" qualifier, zlib codec, def_level 6.
+    assert!(
+        messages.iter().any(|m| m == "Client checksum: md5"),
+        "missing fallback checksum summary: {messages:?}"
+    );
+    assert!(
+        messages
+            .iter()
+            .any(|m| m == "Client compress: zlib (level 6)"),
+        "missing fallback compress summary: {messages:?}"
+    );
+    // Must NOT emit the modern negotiated table, the " negotiated" qualifier,
+    // or the raw CLVL_NOT_SPECIFIED sentinel.
+    assert!(
+        !messages.iter().any(|m| m.contains("list (on")),
+        "fallback path must not print the negotiated list table: {messages:?}"
+    );
+    assert!(
+        !messages.iter().any(|m| m.contains("negotiated compress")),
+        "fallback compress summary must omit ' negotiated': {messages:?}"
+    );
+    assert!(
+        !messages.iter().any(|m| m.contains("-2147483648")),
+        "fallback path must not leak the INT_MIN sentinel: {messages:?}"
     );
 }
 
