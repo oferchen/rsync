@@ -331,12 +331,17 @@ impl ReceiverContext {
                     )
                 } else {
                     // upstream: generator.c:1482 - existing dir is itemize()'d
-                    // with statret == 0 and iflags == 0; emit_itemize's
-                    // standard gate then drops the row when nothing is
-                    // significant, while the root-dir compensation in
-                    // emit_itemize still fires `cd+++++++++ ./` when the
-                    // pre-flight mkdir created the destination root.
-                    crate::generator::ItemFlags::from_raw(0)
+                    // with statret == 0. itemize() (generator.c:511-572) still
+                    // compares the pre-apply dest stat against the sender entry
+                    // and sets ITEM_REPORT_{TIME,PERMS,OWNER,GROUP} for any
+                    // attribute that differs; the transfer root `.` therefore
+                    // reports `.d..t......` when its mtime differs. The stat is
+                    // read here, before the parallel metadata pass below applies
+                    // the source values, so it reflects the pre-transfer state.
+                    // emit_itemize's standard gate drops the row when nothing
+                    // differs, and the root-dir compensation still fires
+                    // `cd+++++++++ ./` when the pre-flight mkdir created the root.
+                    crate::generator::ItemFlags::from_raw(self.existing_dir_iflags(entry, dir_path))
                 };
                 let _ = self.emit_itemize(writer, &iflags, entry);
             }
@@ -506,14 +511,21 @@ impl ReceiverContext {
     /// Creates a single directory during incremental processing.
     ///
     /// Returns `Ok(None)` on failure or skip (marks dir as failed).
-    /// Returns `Ok(Some(true))` when a new directory was created.
-    /// Returns `Ok(Some(false))` when an existing directory had metadata applied.
-    /// Only returns `Err` for unrecoverable errors.
+    /// Returns `Ok(Some((true, iflags)))` when a new directory was created.
+    /// Returns `Ok(Some((false, iflags)))` when an existing directory had
+    /// metadata applied. In both cases `iflags` are the raw itemize flags the
+    /// caller should emit: for a new dir, `ITEM_LOCAL_CHANGE | ITEM_IS_NEW`;
+    /// for an existing dir, the attribute-diff flags computed against the
+    /// pre-apply destination stat (`ITEM_REPORT_{TIME,PERMS,OWNER,GROUP}`),
+    /// mirroring upstream's `itemize()` at `generator.c:1481` which runs before
+    /// `set_file_attrs` (`generator.c:1503`). Only returns `Err` for
+    /// unrecoverable errors.
     ///
     /// # Upstream Reference
     ///
     /// - `generator.c:1432` - `recv_generator()` creates directories
     /// - `generator.c:1472-1475` - retry `mkdir` after `make_path()`
+    /// - `generator.c:1480-1483` - `itemize()` before metadata application
     pub(in crate::receiver) fn create_directory_incremental(
         &self,
         dest_dir: &Path,
@@ -523,7 +535,7 @@ impl ReceiverContext {
         acl_cache: Option<&AclCache>,
         acl_id_map: Option<&AclIdMapper>,
         #[cfg(unix)] sandbox: Option<&fast_io::DirSandbox>,
-    ) -> io::Result<Option<bool>> {
+    ) -> io::Result<Option<(bool, u32)>> {
         let relative_path = entry.path();
         let dir_path = if relative_path.as_os_str() == "." {
             dest_dir.to_path_buf()
@@ -589,6 +601,19 @@ impl ReceiverContext {
             failed_dirs.mark_failed(entry.name());
             return Ok(None);
         }
+        // upstream: generator.c:1480-1483 - itemize() runs before set_file_attrs
+        // (generator.c:1503), so compute the itemize flags from the pre-apply
+        // destination stat here. A new dir reports ITEM_LOCAL_CHANGE|ITEM_IS_NEW
+        // (`cd+++++++++`); an existing dir reports the attribute-diff flags
+        // (ITEM_REPORT_{TIME,PERMS,OWNER,GROUP}) so a differing root `.` mtime
+        // emits `.d..t......`. For an existing dir the stat must be read now,
+        // before apply_metadata_with_cached_stat below overwrites the mtime.
+        let iflags: u32 = if is_new {
+            crate::generator::ItemFlags::ITEM_LOCAL_CHANGE
+                | crate::generator::ItemFlags::ITEM_IS_NEW
+        } else {
+            self.existing_dir_iflags(entry, &dir_path)
+        };
         if is_new {
             #[cfg(unix)]
             let create_result = fast_io::mkdirat_via_sandbox_or_fallback(
@@ -705,7 +730,7 @@ impl ReceiverContext {
             }
         }
 
-        Ok(Some(is_new))
+        Ok(Some((is_new, iflags)))
     }
 
     /// Restores directory permissions and mtimes after all file transfers

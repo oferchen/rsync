@@ -93,18 +93,17 @@ impl ReceiverContext {
                     setup.sandbox.as_deref(),
                 )?;
                 match result {
-                    Some(true) => {
-                        stats.directories_created += 1;
-                        // upstream: generator.c:1432 - itemize new directory
-                        let iflags = crate::generator::ItemFlags::from_raw(
-                            crate::generator::ItemFlags::ITEM_LOCAL_CHANGE
-                                | crate::generator::ItemFlags::ITEM_IS_NEW,
-                        );
-                        let _ = self.emit_itemize(writer, &iflags, file_entry);
-                    }
-                    Some(false) => {
-                        // upstream: generator.c:2260 - existing dir, metadata only
-                        let iflags = crate::generator::ItemFlags::from_raw(0);
+                    Some((is_new, iflags_raw)) => {
+                        if is_new {
+                            stats.directories_created += 1;
+                        }
+                        // upstream: generator.c:1480-1483 - itemize each dir with
+                        // the flags computed against its pre-apply stat. A new dir
+                        // carries ITEM_LOCAL_CHANGE|ITEM_IS_NEW; an existing dir
+                        // carries the attribute-diff flags (so a differing root
+                        // `.` mtime emits `.d..t......`). emit_itemize's gate
+                        // drops the row when nothing is significant.
+                        let iflags = crate::generator::ItemFlags::from_raw(iflags_raw);
                         let _ = self.emit_itemize(writer, &iflags, file_entry);
                     }
                     None => {
