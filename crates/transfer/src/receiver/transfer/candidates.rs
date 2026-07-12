@@ -362,9 +362,13 @@ impl ReceiverContext {
     /// up-to-date file (quick-check match). The returned raw flags OR `base`
     /// with `ITEM_REPORT_{SIZE,TIME,PERMS,OWNER,GROUP}` for every attribute that
     /// differs between `entry` (the sender's view) and `dest_meta` (the
-    /// pre-transfer destination stat). Only regular-file candidates reach this
-    /// path, so `keep_time` reduces to the `--times` preservation flag.
-    fn itemize_existing_flags(
+    /// pre-transfer destination stat). Both regular files (quick-check match)
+    /// and existing directories reach this path: the `ITEM_REPORT_SIZE` check
+    /// is gated on `entry.is_file()` so it never fires for a directory, and
+    /// `keep_time` reduces to the `--times` preservation flag in both cases
+    /// (`--omit-dir-times` is not modelled by the server flag set, matching
+    /// [`super::super::directory::creation`]'s `touch_up_dirs`).
+    pub(in crate::receiver) fn itemize_existing_flags(
         &self,
         entry: &FileEntry,
         dest_meta: &fs::Metadata,

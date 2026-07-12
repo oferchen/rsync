@@ -22,6 +22,34 @@ impl ReceiverContext {
         self.config.flags.info_flags.itemize
     }
 
+    /// Computes the itemize flags for an existing (already-present) directory
+    /// by comparing its current on-disk metadata against the sender's file-list
+    /// entry, mirroring upstream `generator.c:1480-1483` -> `itemize()` for the
+    /// `statret == 0` directory branch.
+    ///
+    /// Upstream's `itemize()` sets `ITEM_REPORT_TIME` for a directory whenever
+    /// `mtime_differs(&sxp->st, file)` (`generator.c:526-530`, `keep_time` true
+    /// for a dir under `--times`), independent of `--checksum`: the transfer
+    /// root `.` therefore emits `.d..t......` when the destination directory
+    /// mtime differs from the source. The previous receiver behaviour passed
+    /// `iflags == 0` for every existing directory, so this row was never
+    /// produced on a remote pull.
+    ///
+    /// Must be called BEFORE the directory's metadata is (re)applied so the
+    /// stat reflects the pre-transfer state upstream's `itemize()` compares
+    /// against. Returns raw flags (0 when nothing differs or the stat fails,
+    /// matching upstream's benign "no change" outcome).
+    pub(in crate::receiver) fn existing_dir_iflags(
+        &self,
+        entry: &protocol::flist::FileEntry,
+        dir_path: &std::path::Path,
+    ) -> u32 {
+        match std::fs::metadata(dir_path) {
+            Ok(meta) => self.itemize_existing_flags(entry, &meta, 0),
+            Err(_) => 0,
+        }
+    }
+
     /// Routes an already-formatted info line (itemize, skip notice) to the
     /// correct sink: a server receiver multiplexes it as `MSG_INFO`; a client
     /// receiver (pull) writes it directly to stdout.
@@ -96,11 +124,15 @@ impl ReceiverContext {
         if !is_created_root_dir && !show_unchanged && !iflags.has_significant_flags() {
             return None;
         }
-        let effective_iflags = if is_created_root_dir && !iflags.has_significant_flags() {
-            // upstream: generator.c:1468-1471 + generator.c:566-572 - itemize()
-            // with `statret < 0` ORs `ITEM_LOCAL_CHANGE | ITEM_IS_NEW`. Apply
-            // the same bits here so `format_itemize_line` emits the full
-            // `cd+++++++++` glyph instead of `.d ...`.
+        let effective_iflags = if is_created_root_dir {
+            // upstream: generator.c:1468-1471 + generator.c:566-572 - a root that
+            // the pre-flight mkdir created this run is itemize()'d with
+            // `statret < 0`, which takes the `else` branch and ORs
+            // `ITEM_LOCAL_CHANGE | ITEM_IS_NEW` WITHOUT computing any attribute
+            // diff. Force the same bits here so a created root always renders the
+            // full `cd+++++++++` glyph, even though `existing_dir_iflags` (which
+            // classifies the already-mkdir'd root as "existing") may have
+            // computed a spurious `ITEM_REPORT_TIME` against the fresh dir mtime.
             crate::generator::ItemFlags::from_raw(
                 crate::generator::ItemFlags::ITEM_LOCAL_CHANGE
                     | crate::generator::ItemFlags::ITEM_IS_NEW,

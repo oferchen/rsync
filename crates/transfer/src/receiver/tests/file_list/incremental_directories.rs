@@ -222,7 +222,8 @@ mod create_directory_incremental_tests {
         );
 
         assert!(result.is_ok());
-        assert_eq!(result.unwrap(), Some(true)); // Returns Some(true) for new dir
+        // Returns Some((true, _)) for a newly created dir.
+        assert_eq!(result.unwrap().map(|(is_new, _)| is_new), Some(true));
         assert!(dest.join("subdir").exists());
         assert_eq!(failed.count(), 0);
     }
@@ -301,10 +302,119 @@ mod create_directory_incremental_tests {
         );
 
         assert!(result.is_ok());
-        // Returns Some(false): existing dir, not newly created.
-        assert_eq!(result.unwrap(), Some(false));
+        // Returns Some((false, _)): existing dir, not newly created.
+        assert_eq!(result.unwrap().map(|(is_new, _)| is_new), Some(false));
         assert!(dest.join("present").exists());
         assert_eq!(failed.count(), 0);
+    }
+
+    /// An existing destination directory whose mtime differs from the sender
+    /// entry must report `ITEM_REPORT_TIME`, so the transfer root `.` (and any
+    /// existing directory) emits a `.d..t......` itemize row.
+    ///
+    /// WHY: upstream's `itemize()` (`generator.c:511-572`, reached from
+    /// `generator.c:1480-1483` with `statret == 0`) sets `ITEM_REPORT_TIME`
+    /// whenever `mtime_differs(&sxp->st, file)` for a directory under `--times`
+    /// (`keep_time` true). This is independent of `--checksum`: a quick-check
+    /// hunt surfaced it under `-c` because content-identical files are skipped
+    /// while the root directory's mtime still differs. The prior receiver
+    /// passed `iflags == 0` for every existing directory, so this row was never
+    /// produced on a remote pull, diverging from upstream. The flags are
+    /// computed against the pre-apply stat (before this call re-sets the
+    /// directory mtime), matching upstream's itemize-before-set_file_attrs order.
+    #[test]
+    fn existing_directory_with_differing_mtime_reports_time_change() {
+        use crate::generator::ItemFlags;
+
+        let temp = TempDir::new().unwrap();
+        let dest = temp.path();
+        let present = dest.join("present");
+        std::fs::create_dir(&present).unwrap();
+
+        // Backdate the on-disk directory so its mtime differs from the entry.
+        let old = filetime::FileTime::from_unix_time(1_500_000_000, 0);
+        filetime::set_file_mtime(&present, old).unwrap();
+
+        // Sender entry carries a newer mtime (2021-01-01 vs the 2017 on disk).
+        let mut entry = FileEntry::new_directory("present".into(), 0o755);
+        entry.set_mtime(1_609_459_200, 0);
+
+        let opts = metadata::MetadataOptions::default();
+        let mut failed = FailedDirectories::new();
+
+        let handshake = test_handshake();
+        let mut config = test_config();
+        config.flags.times = true;
+        let ctx = ReceiverContext::new_for_test(&handshake, config);
+
+        let result = ctx
+            .create_directory_incremental(
+                dest,
+                &entry,
+                &opts,
+                &mut failed,
+                None,
+                None,
+                #[cfg(unix)]
+                None,
+            )
+            .expect("create_directory_incremental succeeds");
+
+        let (is_new, iflags) = result.expect("existing dir returns Some");
+        assert!(!is_new, "the directory already existed");
+        assert_ne!(
+            iflags & ItemFlags::ITEM_REPORT_TIME,
+            0,
+            "a differing directory mtime must set ITEM_REPORT_TIME (upstream .d..t......)"
+        );
+    }
+
+    /// The mirror-image gate: an existing directory whose mtime already matches
+    /// the sender entry must NOT set `ITEM_REPORT_TIME`, so the significance
+    /// gate drops the row exactly as upstream does when nothing changed.
+    #[test]
+    fn existing_directory_with_matching_mtime_reports_no_time_change() {
+        use crate::generator::ItemFlags;
+
+        let temp = TempDir::new().unwrap();
+        let dest = temp.path();
+        let present = dest.join("present");
+        std::fs::create_dir(&present).unwrap();
+
+        let when = filetime::FileTime::from_unix_time(1_609_459_200, 0);
+        filetime::set_file_mtime(&present, when).unwrap();
+
+        let mut entry = FileEntry::new_directory("present".into(), 0o755);
+        entry.set_mtime(1_609_459_200, 0);
+
+        let opts = metadata::MetadataOptions::default();
+        let mut failed = FailedDirectories::new();
+
+        let handshake = test_handshake();
+        let mut config = test_config();
+        config.flags.times = true;
+        let ctx = ReceiverContext::new_for_test(&handshake, config);
+
+        let (is_new, iflags) = ctx
+            .create_directory_incremental(
+                dest,
+                &entry,
+                &opts,
+                &mut failed,
+                None,
+                None,
+                #[cfg(unix)]
+                None,
+            )
+            .expect("create_directory_incremental succeeds")
+            .expect("existing dir returns Some");
+
+        assert!(!is_new, "the directory already existed");
+        assert_eq!(
+            iflags & ItemFlags::ITEM_REPORT_TIME,
+            0,
+            "a matching directory mtime must not set ITEM_REPORT_TIME"
+        );
     }
 
     #[test]
@@ -389,7 +499,9 @@ mod create_directory_incremental_tests {
         // The conflicting symlink is removed and a real directory is created:
         // upstream reports `FLAG_DIR_CREATED`, so this is a freshly made dir.
         assert_eq!(
-            result.expect("classifier replaces the symlink and mkdirs a real directory"),
+            result
+                .expect("classifier replaces the symlink and mkdirs a real directory")
+                .map(|(is_new, _)| is_new),
             Some(true),
             "a conflicting symlink at a dir target must be replaced, not skipped"
         );
@@ -510,7 +622,7 @@ mod create_directory_incremental_tests {
         // Root (or a non-DAC-respecting filesystem) bypasses chmod so
         // mkdir succeeds. Only enforce the upstream-parity branch when
         // the kernel actually produced EACCES.
-        let succeeded_under_root = matches!(&result, Ok(Some(true)));
+        let succeeded_under_root = matches!(&result, Ok(Some((true, _))));
         if succeeded_under_root {
             return;
         }
@@ -602,7 +714,7 @@ mod incremental_mode_tests {
         );
 
         assert!(result.is_ok());
-        assert_eq!(result.unwrap(), Some(true));
+        assert_eq!(result.unwrap().map(|(is_new, _)| is_new), Some(true));
         assert!(dest.join("a/b/c").exists());
     }
 
