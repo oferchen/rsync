@@ -240,6 +240,16 @@ pub(super) struct ServerLongFlags {
     /// is a listing. The receiver renders the flist without writing to the
     /// destination.
     pub(super) list_only: bool,
+    /// Whether the client forwarded `--only-write-batch=X` (upstream
+    /// `write_batch = -1`). Emitted only in the `am_sender` block, so it
+    /// reaches this process only when it is the server receiver on a push.
+    ///
+    /// upstream: options.c:2850-2851 - `if (write_batch < 0) args[ac++] =
+    /// "--only-write-batch=X"`. On the receiver, main.c:1839 forces
+    /// `dry_run = 1` (no destination writes) while `do_xfers` stays 1 so the
+    /// generator still sends real block checksums; the push sender records the
+    /// batch locally (sender.c:217) and streams no delta data over the wire.
+    pub(super) only_write_batch: bool,
 
     /// Whether the client forwarded `--no-implied-dirs` (upstream
     /// `implied_dirs == 0`).
@@ -353,6 +363,7 @@ pub(super) fn parse_server_long_flags(args: &[OsString]) -> ServerLongFlags {
         delay_updates: false,
         mkpath: false,
         list_only: false,
+        only_write_batch: false,
         no_implied_dirs: false,
         no_recurse: false,
         no_whole_file: false,
@@ -668,6 +679,14 @@ fn parse_value_bearing_flag(s: &str, flags: &mut ServerLongFlags) {
         flags.compression_level = Some(value.to_owned());
     // upstream: options.c:2750-2762 - client forwards --log-format=%i (or %o,
     // %i%I, X) so the server knows whether to generate itemize data.
+    } else if s.strip_prefix("--only-write-batch=").is_some() {
+        // upstream: options.c:2850-2851 - server_options() always emits the
+        // literal `--only-write-batch=X` placeholder (the real batch path
+        // lives on the client). The value carries no server-side meaning; we
+        // only latch the flag so run_server_mode forces the receiver into
+        // dry-run-with-real-checksums mode instead of leaking the token into
+        // the positional destination list.
+        flags.only_write_batch = true;
     } else if let Some(value) = s.strip_prefix("--log-format=") {
         flags.log_format = Some(value.to_owned());
     // upstream: options.c:2928-2931 - server_options() forwards info levels.
@@ -798,6 +817,10 @@ pub(super) fn is_known_server_long_flag(arg: &str) -> bool {
         || arg.starts_with("--log-format=")
         || arg.starts_with("--info=")
         || arg.starts_with("--partial-dir=")
+        // upstream: options.c:2850-2851 - `--only-write-batch=X` reaches a
+        // server receiver on a push. Recognise it so the placeholder token is
+        // not mistaken for a positional destination path.
+        || arg.starts_with("--only-write-batch=")
 }
 
 /// Returns `true` when the argument is a bare server-mode long flag whose

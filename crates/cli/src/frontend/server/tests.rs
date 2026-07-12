@@ -471,6 +471,43 @@ fn long_flags_captures_joined_partial_dir() {
     assert!(!flags.delay_updates);
 }
 
+/// Regression for the `--only-write-batch=X` server arg (task #296). Upstream
+/// `server_options()` (options.c:2850-2851) emits the literal placeholder
+/// `--only-write-batch=X` to a push receiver. Before recognition it leaked into
+/// the positional list and the receiver tried to create a destination root
+/// literally named `--only-write-batch=X` (exit 12). It must be captured as a
+/// flag instead.
+#[test]
+fn parse_server_args_skips_only_write_batch_flag() {
+    let args = vec![
+        OsString::from("--server"),
+        OsString::from("-logDtpre.iLsfxCIvu"),
+        OsString::from("--only-write-batch=X"),
+        OsString::from("."),
+        OsString::from("dest/"),
+    ];
+    let (flags, pos_args) = parse_server_flag_string_and_args(&args);
+    assert_eq!(flags, "-logDtpre.iLsfxCIvu");
+    assert_eq!(
+        pos_args,
+        vec![OsString::from("dest/")],
+        "--only-write-batch=X must not leak into the positional path list",
+    );
+    assert!(is_known_server_long_flag("--only-write-batch=X"));
+}
+
+/// `parse_server_long_flags` records `--only-write-batch=X` as
+/// `only_write_batch == true`.
+#[test]
+fn long_flags_captures_only_write_batch() {
+    let args = vec![
+        OsString::from("--server"),
+        OsString::from("--only-write-batch=X"),
+    ];
+    let flags = parse_server_long_flags(&args);
+    assert!(flags.only_write_batch);
+}
+
 #[test]
 fn long_flags_defaults() {
     let args: Vec<OsString> = vec![OsString::from("--server")];
@@ -482,6 +519,7 @@ fn long_flags_defaults() {
     assert!(!flags.write_devices);
     assert!(!flags.trust_sender);
     assert!(!flags.qsort);
+    assert!(!flags.only_write_batch);
     assert!(flags.checksum_seed.is_none());
     assert!(flags.checksum_choice.is_none());
     assert!(flags.min_size.is_none());

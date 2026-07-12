@@ -267,6 +267,19 @@ where
     // by the client tells the server to render the flist without writing to the
     // destination (`TransferFlags::skip_dest_writes`).
     config.flags.list_only = long_flags.list_only;
+    // upstream: options.c:2850-2851 / main.c:1839 - a push sender forwards
+    // `--only-write-batch=X`; on the receiver, `write_batch < 0` forces
+    // `dry_run = 1` (no destination writes) while `do_xfers` stays 1 so the
+    // generator still sends real block checksums. The client records the batch
+    // locally and streams no delta data over the wire (sender.c:217), so the
+    // receiver runs the dedicated only-write-batch loop: send sum heads, read
+    // the bare NDX+attrs echo, write nothing to the destination. Only the
+    // receiver role ever sees this flag - server_options() emits it inside the
+    // am_sender block, so a pull sender-server never receives it.
+    if long_flags.only_write_batch && role == ServerRole::Receiver {
+        config.flags.only_write_batch = true;
+        config.flags.dry_run = true;
+    }
     // upstream: options.c:2046-2048 - do_stats sets info_levels[INFO_STATS] >= 2.
     // The server-side flag must be set so the generator emits NDX_DEL_STATS
     // during the goodbye phase (generator.c:2377,2422).
