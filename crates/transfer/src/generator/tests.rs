@@ -3386,6 +3386,54 @@ mod files_from {
     }
 
     #[test]
+    fn files_from_implied_parent_dir_clears_content_dir() {
+        // Task #299 (DATA-LOSS, sender wire): oc's --files-from implied-parent
+        // loop emitted purely implied parent dirs with the default
+        // content_dir=true. Upstream flist.c:1949 sets implied parents to
+        // `(flags | FLAG_IMPLIED_DIR) & ~(FLAG_TOP_DIR | FLAG_CONTENT_DIR)`,
+        // which serializes as XMIT_TOP_DIR | XMIT_NO_CONTENT_DIR (flist.c:426)
+        // and a receiver decodes to FLAG_IMPLIED_DIR (flist.c:1117-1118) - so
+        // the receiver never scans them for --delete. With content_dir=true a
+        // real upstream receiver scans the implied parent and over-deletes
+        // stale files upstream preserves. In oc's flat encoding the correct
+        // wire pair is top_dir=true + content_dir=false.
+        //
+        // Entry `<src>/subdir/file` strips to rel `subdir/file`; `subdir` is a
+        // purely implied parent that must be sent with content_dir cleared.
+        let temp_dir = TempDir::new().unwrap();
+        let src = temp_dir.path().join("src");
+        let subdir = src.join("subdir");
+        std::fs::create_dir_all(&subdir).unwrap();
+        std::fs::write(subdir.join("file"), b"x").unwrap();
+
+        let handshake = test_handshake_with_protocol(32);
+        let mut config = test_config();
+        config.flags.relative = true;
+        config.args = vec![OsString::from(&src)];
+        let mut ctx = GeneratorContext::new_for_test(&handshake, config);
+
+        let file_paths = vec![subdir.join("file")];
+        ctx.build_file_list_with_base(&src, &files_from_entries(&src, file_paths))
+            .unwrap();
+
+        let implied = ctx
+            .file_list()
+            .iter()
+            .find(|e| String::from_utf8_lossy(&e.name_bytes()) == "subdir")
+            .expect("implied parent `subdir` must be sent");
+        assert!(
+            !implied.content_dir(),
+            "implied parent dir must clear content_dir so an upstream receiver \
+             does not scan it for --delete (flist.c:1949)"
+        );
+        assert!(
+            implied.top_dir(),
+            "implied parent dir wire form is XMIT_TOP_DIR | XMIT_NO_CONTENT_DIR \
+             (flist.c:426); oc encodes top_dir=true + content_dir=false"
+        );
+    }
+
+    #[test]
     fn files_from_no_relative_flattens_and_omits_implied_parents() {
         // Task #292: under --no-relative (relative_paths == 0) upstream splits
         // each --files-from entry on its LAST `/` (flist.c:2338-2349) so the
