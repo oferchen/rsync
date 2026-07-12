@@ -203,9 +203,23 @@ impl ReceiverContext {
         // match NFC names from the sender's file list.
         let mut dir_children: HashMap<PathBuf, HashSet<std::ffi::OsString>> = HashMap::new();
 
+        // upstream: generator.c:do_delete_pass() (and the delete-during loop at
+        // generator.c:2317) call delete_in_dir() for a flist directory ONLY when
+        // it carries FLAG_CONTENT_DIR - a directory the sender actually recursed
+        // into. The transfer root "." is a content dir for a recursive transfer
+        // but not for --files-from, where the root is sent as an implied dir
+        // (XMIT_NO_CONTENT_DIR, so the received entry's content_dir() is false).
+        // Register "." as a scan target only when the received root is a content
+        // dir; scanning it unconditionally deletes top-level destination entries
+        // that upstream preserves under --files-from.
+        let mut root_is_content_dir = false;
+
         for entry in &self.file_list {
             let relative = entry.path();
             if relative.as_os_str() == "." {
+                if entry.is_dir() && entry.content_dir() {
+                    root_is_content_dir = true;
+                }
                 continue;
             }
             let parent = relative.parent().map_or_else(
@@ -244,13 +258,17 @@ impl ReceiverContext {
             }
         }
 
-        // upstream: generator.c:delete_in_dir() always runs for the transfer
-        // root. When every source entry is filter-excluded (e.g. `--exclude='*'
-        // --delete-excluded`) the file list contains only "." and the loop
-        // above registers no directories, so the root would never be scanned
-        // and top-level extraneous entries would survive. Register "." with a
-        // (possibly empty) keep-set so the root is always a scan target.
-        dir_children.entry(PathBuf::from(".")).or_default();
+        // upstream: generator.c:do_delete_pass() runs delete_in_dir(".") only
+        // when the received root carries FLAG_CONTENT_DIR. For a recursive
+        // transfer the root is a content dir even when every source entry is
+        // filter-excluded (e.g. `--exclude='*' --delete-excluded`, whose file
+        // list contains only "."), so top-level extraneous entries are still
+        // removed. For --files-from the root is an implied (non-content) dir, so
+        // its stale top-level destination entries are preserved. Register "."
+        // with a (possibly empty) keep-set only in the content-dir case.
+        if root_is_content_dir {
+            dir_children.entry(PathBuf::from(".")).or_default();
+        }
 
         // Sort the scan set so directory processing is deterministic across
         // process runs. `HashMap::keys()` yields hash-randomized order, which

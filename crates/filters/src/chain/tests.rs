@@ -288,6 +288,26 @@ fn filter_chain_nested_directories_with_merge_files() {
 }
 
 #[test]
+fn is_empty_accounts_for_merge_configs() {
+    // A chain carrying only a dir-merge directive (the shape a client's `-F`
+    // `.rsync-filter` takes when it reaches a server-side receiver: an empty
+    // global rule set and no active scopes until a directory is entered) is not
+    // empty - the merge config governs which entries the --delete pass may
+    // remove. The receiver's deletion path selects the deletion chain via
+    // `is_empty()`; if a merge-only chain reads as empty it falls back to the
+    // wrong chain and deletes dir-merge-protected entries. Encode that
+    // merge_configs make the chain non-empty.
+    let mut chain = FilterChain::empty();
+    assert!(chain.is_empty(), "a chain with no rules at all is empty");
+    chain.add_merge_config(DirMergeConfig::new(".rsync-filter"));
+    assert!(
+        !chain.is_empty(),
+        "a merge-only chain must not read as empty: its dir-merge protect \
+         rules decide deletion candidates",
+    );
+}
+
+#[test]
 fn filter_chain_multiple_merge_configs() {
     let dir = TempDir::new().unwrap();
     fs::write(dir.path().join(".rsync-filter"), "- *.log\n").unwrap();
