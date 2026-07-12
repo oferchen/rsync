@@ -407,6 +407,7 @@ mod composite_setters {
             max_delete: Some(50),
             ignore_errors: true,
             late_delete: true,
+            delete_after: false,
             delete_excluded: false,
         };
         let config = ServerConfigBuilder::new()

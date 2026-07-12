@@ -60,15 +60,25 @@ pub enum StderrMode {
 }
 
 impl StderrMode {
-    /// Parses a stderr mode string value.
+    /// Parses a `--stderr` mode value.
     ///
-    /// Returns `None` for unrecognized values.
+    /// Mirrors upstream rsync's `options.c:1912` `OPT_STDERR` handler, which
+    /// accepts any non-empty, case-sensitive prefix of `errors`, `all`, or
+    /// `client` (via `strncmp(word, arg, strlen(arg))`). So `e`/`er`/`err`/
+    /// `error`/`errors` all select `Errors`, but `ERRORS` and `errorsX` are
+    /// rejected. Returns `None` for anything that is not such a prefix.
     pub fn from_str(s: &str) -> Option<Self> {
-        match s.to_ascii_lowercase().as_str() {
-            "errors" | "e" => Some(Self::Errors),
-            "all" | "a" => Some(Self::All),
-            "client" | "c" => Some(Self::Client),
-            _ => None,
+        if s.is_empty() {
+            return None;
+        }
+        if "errors".starts_with(s) {
+            Some(Self::Errors)
+        } else if "all".starts_with(s) {
+            Some(Self::All)
+        } else if "client".starts_with(s) {
+            Some(Self::Client)
+        } else {
+            None
         }
     }
 }
@@ -123,33 +133,52 @@ mod tests {
 
     #[test]
     fn stderr_mode_from_str_errors() {
-        assert_eq!(StderrMode::from_str("errors"), Some(StderrMode::Errors));
-        assert_eq!(StderrMode::from_str("e"), Some(StderrMode::Errors));
-        assert_eq!(StderrMode::from_str("ERRORS"), Some(StderrMode::Errors));
-        assert_eq!(StderrMode::from_str("E"), Some(StderrMode::Errors));
+        // upstream accepts every non-empty prefix of "errors".
+        for value in ["e", "er", "err", "erro", "error", "errors"] {
+            assert_eq!(
+                StderrMode::from_str(value),
+                Some(StderrMode::Errors),
+                "{value}"
+            );
+        }
     }
 
     #[test]
     fn stderr_mode_from_str_all() {
-        assert_eq!(StderrMode::from_str("all"), Some(StderrMode::All));
-        assert_eq!(StderrMode::from_str("a"), Some(StderrMode::All));
-        assert_eq!(StderrMode::from_str("ALL"), Some(StderrMode::All));
-        assert_eq!(StderrMode::from_str("A"), Some(StderrMode::All));
+        for value in ["a", "al", "all"] {
+            assert_eq!(
+                StderrMode::from_str(value),
+                Some(StderrMode::All),
+                "{value}"
+            );
+        }
     }
 
     #[test]
     fn stderr_mode_from_str_client() {
-        assert_eq!(StderrMode::from_str("client"), Some(StderrMode::Client));
-        assert_eq!(StderrMode::from_str("c"), Some(StderrMode::Client));
-        assert_eq!(StderrMode::from_str("CLIENT"), Some(StderrMode::Client));
-        assert_eq!(StderrMode::from_str("C"), Some(StderrMode::Client));
+        for value in ["c", "cl", "cli", "clie", "clien", "client"] {
+            assert_eq!(
+                StderrMode::from_str(value),
+                Some(StderrMode::Client),
+                "{value}"
+            );
+        }
+    }
+
+    #[test]
+    fn stderr_mode_from_str_is_case_sensitive() {
+        // upstream uses strncmp (case-sensitive); uppercase variants are rejected.
+        for value in ["ERRORS", "E", "ALL", "A", "CLIENT", "C", "Errors", "All"] {
+            assert!(StderrMode::from_str(value).is_none(), "{value}");
+        }
     }
 
     #[test]
     fn stderr_mode_from_str_invalid() {
-        assert!(StderrMode::from_str("invalid").is_none());
-        assert!(StderrMode::from_str("").is_none());
-        assert!(StderrMode::from_str("xyz").is_none());
+        // Empty, non-prefixes, and over-long values (longer than the word) all fail.
+        for value in ["", "invalid", "xyz", "errorsX", "allX", "ax", "x"] {
+            assert!(StderrMode::from_str(value).is_none(), "{value}");
+        }
     }
 
     #[test]
