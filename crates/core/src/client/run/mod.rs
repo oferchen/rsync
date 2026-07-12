@@ -67,7 +67,7 @@ use engine::local_copy::{
 };
 
 use super::config::{BandwidthLimit, ClientConfig, DeleteMode};
-use super::error::{ClientError, map_local_copy_error, missing_operands_error};
+use super::error::{ClientError, map_local_copy_error, missing_operands_error, validate_temp_dir};
 use super::progress::{ClientProgressForwarder, ClientProgressObserver};
 use super::remote;
 use super::summary::ClientSummary;
@@ -186,6 +186,21 @@ fn run_client_internal(
     }
 
     apply_max_alloc(&config);
+
+    // upstream: main.c:1031-1046 do_recv() - the receiver validates --temp-dir
+    // exists and is a directory before transferring. tmpdir is a receiver-only
+    // option (options.c:2925 forwards it only when am_sender), so the check
+    // fires only when the local process receives: a local copy or a pull (local
+    // destination), never a push (remote destination).
+    if let Some(temp_dir) = config.temp_directory() {
+        let dest_is_local = config
+            .transfer_args()
+            .last()
+            .is_none_or(|dest| !remote::operand_is_remote(dest));
+        if dest_is_local {
+            validate_temp_dir(temp_dir)?;
+        }
+    }
 
     let batch_writer = if let Some(batch_cfg) = config.batch_config() {
         if let Some(result) = batch::handle_batch_read(batch_cfg, &config) {
