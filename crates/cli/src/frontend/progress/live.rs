@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::io::{self, Write};
 use std::path::PathBuf;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use core::client::{ClientProgressObserver, ClientProgressUpdate, HumanReadableMode};
 
@@ -11,6 +11,32 @@ use super::format::{
 };
 use super::mode::ProgressMode;
 use crate::frontend::outbuf::OutbufMode;
+
+/// Minimum interval between rendered in-flight progress ticks.
+///
+/// upstream: progress.c:224 `show_progress` returns early when less than
+/// 1000ms have elapsed since the last recorded tick, so the overall progress
+/// line refreshes at most once per second. `end_progress` (the xfr-trailer
+/// final tick) bypasses this throttle.
+const TICK_INTERVAL: Duration = Duration::from_millis(1_000);
+
+/// Decides whether an in-flight progress tick should be suppressed.
+///
+/// Mirrors upstream `show_progress`'s throttle: an in-flight tick is dropped
+/// when less than `interval` has elapsed since the previous rendered tick.
+/// The first tick (`last` is `None`) and every final tick (`is_final`, the
+/// xfr-trailer emitted by `end_progress`) always render.
+///
+/// upstream: progress.c:224 - `if (msdiff(&ph_list[newest_hpos].time, &now) < 1000) return;`
+fn tick_throttled(last: Option<Instant>, now: Instant, interval: Duration, is_final: bool) -> bool {
+    if is_final {
+        return false;
+    }
+    match last {
+        Some(prev) => now.saturating_duration_since(prev) < interval,
+        None => false,
+    }
+}
 
 /// Controls how progress output adapts to terminal vs piped destinations
 /// and how buffering interacts with progress ticks.
@@ -57,13 +83,23 @@ pub(crate) struct LiveProgress<'a> {
     /// Per-file estimators keyed by relative path; created on first sighting
     /// of a path and dropped when the path's progress completes.
     per_file_remaining: HashMap<PathBuf, RemainingTimeEstimator>,
-    /// Longest line emitted in progress2 mode. Used to pad shorter lines with
-    /// trailing spaces so stale characters from longer previous ticks are
-    /// erased on overwrite.
+    /// Longest xfr-trailer line emitted in progress2 mode. Only the final
+    /// (trailer) ticks are padded to this width so a shorter trailer erases
+    /// stale characters from a longer previous trailer. In-flight ticks are
+    /// never padded, matching upstream (their `"  "` end-of-line leaves the
+    /// previous trailer's trailing characters on screen).
     ///
     /// upstream: progress.c:84-91 `static int last_len` - tracks the longest
-    /// progress line and pads the current line to match before emitting.
-    max_line_len: usize,
+    /// trailer (the `is_last` eol) and pads it before emitting.
+    max_trailer_len: usize,
+    /// Timestamp of the last rendered in-flight tick, used to throttle the
+    /// overall progress line to one refresh per [`TICK_INTERVAL`].
+    ///
+    /// upstream: progress.c:224 `ph_list[newest_hpos].time`.
+    last_tick: Option<Instant>,
+    /// Minimum interval between rendered in-flight ticks. Defaults to
+    /// [`TICK_INTERVAL`]; overridable in tests for deterministic rendering.
+    tick_interval: Duration,
     /// Terminal and buffering configuration for progress output.
     output_config: ProgressOutputConfig,
 }
@@ -99,7 +135,9 @@ impl<'a> LiveProgress<'a> {
             human_readable,
             overall_remaining: RemainingTimeEstimator::new(),
             per_file_remaining: HashMap::new(),
-            max_line_len: 0,
+            max_trailer_len: 0,
+            last_tick: None,
+            tick_interval: TICK_INTERVAL,
             output_config,
         }
     }
@@ -126,19 +164,25 @@ impl<'a> LiveProgress<'a> {
         Ok(())
     }
 
-    /// Returns the carriage-return prefix used to overwrite the current line.
+    /// Writes the line prefix that returns the cursor to column 0 before a
+    /// progress tick.
     ///
-    /// When the output is a terminal, returns `\r` for in-place overwrite.
-    /// When piped, returns `\n` so each progress tick appears on its own line.
+    /// On a terminal, upstream prefixes *every* progress line with `\r` -
+    /// including the first - so the cursor is always at column 0 before the
+    /// fields are written (progress.c:129 `"\r%15s ..."`). We emit the `\r`
+    /// unconditionally in terminal mode to match that byte stream.
     ///
-    /// upstream: progress.c:129 uses `\r` unconditionally because upstream
-    /// relies on `output_needs_newline` + terminal process group checks in
-    /// `show_progress` to suppress output when backgrounded or piped.
-    fn line_restart(&self) -> &'static str {
+    /// When piped, `\r` would be invisible and successive ticks would smear
+    /// onto one line, so we emit a `\n` *between* lines only (never before the
+    /// first) to keep piped output human-readable. This is an oc-rsync
+    /// readability extension; the terminal path stays byte-faithful.
+    fn write_line_restart(&mut self) -> io::Result<()> {
         if self.output_config.is_terminal {
-            "\r"
+            write!(self.writer, "\r")
+        } else if self.line_active {
+            writeln!(self.writer)
         } else {
-            "\n"
+            Ok(())
         }
     }
 
@@ -155,18 +199,23 @@ impl<'a> LiveProgress<'a> {
         }
     }
 
-    /// Writes a progress line for progress2 (Overall) mode, padding to the
-    /// longest previously emitted line to erase stale characters on `\r`
-    /// overwrite.
+    /// Writes a final (xfr-trailer) progress2 line, padding it with trailing
+    /// spaces to the longest trailer emitted so far so a shorter trailer
+    /// erases stale characters from a longer previous one on `\r` overwrite.
+    ///
+    /// Only trailer lines are padded. Upstream tracks `last_len` for the
+    /// `is_last` eol alone; in-flight ticks (their `"  "` eol) are written
+    /// verbatim and deliberately leave the previous trailer's trailing
+    /// characters on screen.
     ///
     /// upstream: progress.c:84-91 - `last_len` tracking and space-padding.
-    fn write_overall_line(&mut self, line: &str) -> io::Result<()> {
+    fn write_padded_trailer(&mut self, line: &str) -> io::Result<()> {
         let current_len = line.len();
         // Only pad when output goes to a terminal - padding erases stale
-        // characters from longer previous `\r`-overwritten ticks. When piped,
-        // each tick is on its own line so padding is unnecessary.
+        // characters from a longer previous `\r`-overwritten trailer. When
+        // piped, each tick is on its own line so padding is unnecessary.
         if self.output_config.is_terminal {
-            let pad = self.max_line_len.saturating_sub(current_len);
+            let pad = self.max_trailer_len.saturating_sub(current_len);
             if pad > 0 {
                 write!(self.writer, "{line}{:pad$}", "")?;
             } else {
@@ -175,8 +224,8 @@ impl<'a> LiveProgress<'a> {
         } else {
             write!(self.writer, "{line}")?;
         }
-        if current_len > self.max_line_len {
-            self.max_line_len = current_len;
+        if current_len > self.max_trailer_len {
+            self.max_trailer_len = current_len;
         }
         Ok(())
     }
@@ -258,7 +307,11 @@ impl<'a> ClientProgressObserver for LiveProgress<'a> {
                 let xfr_index = update.index();
 
                 if self.line_active {
-                    write!(self.writer, "{}", self.line_restart())?;
+                    if self.output_config.is_terminal {
+                        write!(self.writer, "\r")?;
+                    } else {
+                        writeln!(self.writer)?;
+                    }
                 }
 
                 // upstream: progress.c:80 - chk-prefix is "to" once the file
@@ -284,8 +337,18 @@ impl<'a> ClientProgressObserver for LiveProgress<'a> {
                 Ok(())
             })(),
             ProgressMode::Overall => (|| -> io::Result<()> {
-                let bytes = update.overall_transferred();
                 let now = Instant::now();
+                let is_final = update.is_final();
+                // upstream: progress.c:224 - show_progress() refreshes the
+                // overall line at most once per second; end_progress() (the
+                // xfr-trailer final tick) bypasses the throttle so every file
+                // boundary renders. Without this, a per-chunk event stream
+                // would emit hundreds of ticks per file instead of ~1/sec.
+                if tick_throttled(self.last_tick, now, self.tick_interval, is_final) {
+                    return Ok(());
+                }
+
+                let bytes = update.overall_transferred();
                 self.overall_remaining.observe(now, bytes);
                 let size_field =
                     format!("{:>15}", format_progress_bytes(bytes, self.human_readable));
@@ -305,7 +368,7 @@ impl<'a> ClientProgressObserver for LiveProgress<'a> {
                 );
                 // upstream: progress.c:97-105 - sliding window ETA mid-transfer,
                 // total elapsed for the final tick.
-                let final_tick = update.remaining() == 0 && update.is_final();
+                let final_tick = update.remaining() == 0 && is_final;
                 let time_text = if final_tick {
                     format_progress_elapsed(update.overall_elapsed())
                 } else {
@@ -315,24 +378,24 @@ impl<'a> ClientProgressObserver for LiveProgress<'a> {
                 let time_field = format!("{time_text:>10}");
                 let xfr_index = update.index();
 
-                if self.line_active {
-                    write!(self.writer, "{}", self.line_restart())?;
-                }
+                // upstream: progress.c:129 - `"\r%15s ..."` prefixes every line
+                // (including the first) with a carriage return on a terminal.
+                self.write_line_restart()?;
 
                 // upstream: progress.c:80 - chk-prefix is "to" once the file
                 // list is complete, "ir" while INC_RECURSE sub-lists are still
                 // arriving on the wire.
                 let chk_prefix = if update.flist_eof() { "to" } else { "ir" };
 
-                if update.is_final() {
+                if is_final {
                     // upstream: progress.c:78-82 - final tick per file emits the
                     // xfr trailer. In progress2 mode the trailing newline is
-                    // stripped (progress.c:88) and spaces pad to the longest
-                    // prior line to erase stale characters.
+                    // stripped (progress.c:88) and spaces pad the trailer to the
+                    // longest prior trailer to erase stale characters.
                     let line = format!(
                         "{size_field} {percent_field} {rate_field} {time_field} (xfr#{xfr_index}, {chk_prefix}-chk={remaining}/{total})"
                     );
-                    self.write_overall_line(&line)?;
+                    self.write_padded_trailer(&line)?;
                     if final_tick {
                         // upstream: progress.c:131-134 - the very last file's
                         // final tick emits a newline. For progress2, the newline
@@ -348,11 +411,18 @@ impl<'a> ClientProgressObserver for LiveProgress<'a> {
                         self.flush_if_needed()?;
                     }
                 } else {
-                    // upstream: progress.c:100 - in-flight ticks use trailing
-                    // `"  "` (two spaces) instead of the xfr trailer.
-                    let line = format!("{size_field} {percent_field} {rate_field} {time_field}  ");
-                    self.write_overall_line(&line)?;
+                    // upstream: progress.c:100 - in-flight ticks use a trailing
+                    // `"  "` (two spaces) and are NOT padded, so a shorter tick
+                    // leaves the previous trailer's trailing characters on
+                    // screen exactly as upstream does.
+                    write!(
+                        self.writer,
+                        "{size_field} {percent_field} {rate_field} {time_field}  "
+                    )?;
                     self.line_active = true;
+                    // upstream: progress.c:224 - the throttle baseline is the
+                    // last in-flight tick; final ticks do not advance it.
+                    self.last_tick = Some(now);
                     // upstream: progress.c:133 - rflush(FCLIENT) after
                     // every non-final progress tick.
                     self.flush_if_needed()?;
@@ -489,30 +559,147 @@ mod tests {
         );
     }
 
-    /// upstream: progress.c:84-91 - progress2 pads shorter lines with spaces
-    /// to erase stale characters from longer previous ticks.
+    /// Builds a final (trailer) update with an explicit `xfr#`/`to-chk`
+    /// denominator so a test can vary the trailer length.
+    fn make_final_update(index: usize, total: usize) -> ClientProgressUpdate {
+        let event = ClientEvent::for_test(
+            PathBuf::from("file.bin"),
+            ClientEventKind::DataCopied,
+            true,
+            None,
+            LocalCopyChangeSet::new(),
+        );
+        ClientProgressUpdate::from_transfer_event(
+            event,
+            index,
+            total,
+            Some(0),
+            0,
+            Duration::from_secs(1),
+            true,
+        )
+    }
+
+    /// upstream: progress.c:99-100 - an in-flight progress2 tick uses a `"  "`
+    /// end-of-line and is NOT padded. A shorter in-flight tick following a
+    /// longer xfr trailer must leave the trailer's trailing characters on
+    /// screen exactly as upstream does, so it carries only the 2-space eol.
     #[test]
-    fn overall_pads_shorter_lines_to_max() {
+    fn overall_does_not_pad_in_flight_ticks() {
         let mut buf: Vec<u8> = Vec::new();
         {
             let mut live =
                 LiveProgress::new(&mut buf, ProgressMode::Overall, HumanReadableMode::Grouped);
-            // First tick: final with trailer (longer line)
-            live.on_progress(&make_update(true));
-            // Second tick: mid-transfer without trailer (shorter line, should be padded)
+            // Final trailer first (a long line), then an in-flight tick.
+            live.on_progress(&make_final_update(1, 1_000));
             live.on_progress(&make_mid_transfer_update(true));
         }
         let output = String::from_utf8(buf).expect("utf8");
-        // The second line (after \r) should have trailing spaces
-        let lines: Vec<&str> = output.split('\r').collect();
-        if lines.len() > 1 {
-            let second_line = lines.last().unwrap();
-            // The second (shorter) line should be padded with trailing spaces
-            assert!(
-                second_line.ends_with("  "),
-                "shorter progress2 line should be padded: {second_line:?}"
-            );
+        // Terminal mode: every line is `\r`-prefixed; the last segment is the
+        // in-flight tick. Its width is the fixed 45-column layout
+        // (15 + 1 + 4 + 1 + 11 + 1 + 10 + 2), never padded up to the trailer.
+        let last = output.rsplit('\r').next().unwrap();
+        assert!(
+            last.ends_with("  "),
+            "in-flight eol should be 2 spaces: {last:?}"
+        );
+        assert_eq!(
+            last.len(),
+            45,
+            "in-flight tick must not be padded to the trailer width: {last:?}"
+        );
+    }
+
+    /// upstream: progress.c:84-91 - only the xfr trailer (the `is_last` eol) is
+    /// padded, to the longest trailer seen, so a shorter trailer erases stale
+    /// characters from a longer previous one.
+    #[test]
+    fn overall_pads_trailer_to_longest() {
+        let mut buf: Vec<u8> = Vec::new();
+        {
+            let mut live =
+                LiveProgress::new(&mut buf, ProgressMode::Overall, HumanReadableMode::Grouped);
+            // Long trailer first (to-chk=999/1000), then a short one (to-chk=X/3).
+            live.on_progress(&make_final_update(1, 1_000));
+            live.on_progress(&make_final_update(1, 3));
         }
+        let output = String::from_utf8(buf).expect("utf8");
+        let segments: Vec<&str> = output.split('\r').filter(|s| !s.is_empty()).collect();
+        assert_eq!(segments.len(), 2, "expected two trailer lines: {output:?}");
+        assert_eq!(
+            segments[0].len(),
+            segments[1].len(),
+            "shorter trailer must be padded to the longer one: {segments:?}"
+        );
+        assert!(
+            segments[1].ends_with(' '),
+            "padded trailer should end with spaces: {:?}",
+            segments[1]
+        );
+    }
+
+    /// upstream: progress.c:129 - the progress2 line format begins with `\r`,
+    /// so the very first tick on a terminal is `\r`-prefixed (not bare).
+    #[test]
+    fn overall_first_terminal_line_starts_with_cr() {
+        let mut buf: Vec<u8> = Vec::new();
+        {
+            let mut live = LiveProgress::with_output_config(
+                &mut buf,
+                ProgressMode::Overall,
+                HumanReadableMode::Grouped,
+                terminal_config(),
+            );
+            live.on_progress(&make_mid_transfer_update(true));
+        }
+        let output = String::from_utf8(buf).expect("utf8");
+        assert!(
+            output.starts_with('\r'),
+            "first terminal progress2 line must start with \\r: {output:?}"
+        );
+    }
+
+    /// upstream: progress.c:224 - `show_progress` refreshes the overall line at
+    /// most once per second; end_progress (the final tick) bypasses it.
+    #[test]
+    fn tick_throttle_matches_upstream_one_per_second() {
+        let interval = Duration::from_millis(1_000);
+        let t0 = Instant::now();
+        // First tick (no prior) always renders.
+        assert!(!tick_throttled(None, t0, interval, false));
+        // A second in-flight tick within 1s is suppressed.
+        let t_early = t0 + Duration::from_millis(500);
+        assert!(tick_throttled(Some(t0), t_early, interval, false));
+        // After 1s it renders again.
+        let t_late = t0 + Duration::from_millis(1_000);
+        assert!(!tick_throttled(Some(t0), t_late, interval, false));
+        // A final (xfr-trailer) tick always renders, even within 1s.
+        assert!(!tick_throttled(Some(t0), t_early, interval, true));
+    }
+
+    /// The observer suppresses rapid in-flight ticks: after a rendered tick,
+    /// a second in-flight tick under the throttle interval produces no output.
+    #[test]
+    fn overall_throttles_rapid_in_flight_ticks() {
+        let mut buf: Vec<u8> = Vec::new();
+        {
+            let mut live = LiveProgress::with_output_config(
+                &mut buf,
+                ProgressMode::Overall,
+                HumanReadableMode::Grouped,
+                terminal_config(),
+            );
+            // Two back-to-back in-flight ticks (well under 1s apart in a test).
+            live.on_progress(&make_mid_transfer_update(true));
+            live.on_progress(&make_mid_transfer_update(true));
+        }
+        let output = String::from_utf8(buf).expect("utf8");
+        // Only the first in-flight tick renders; the second is throttled.
+        assert_eq!(
+            output.matches('\r').count(),
+            1,
+            "second rapid in-flight tick should be throttled: {output:?}"
+        );
     }
 
     /// upstream: progress.c:102-116 - progress2 uses the sliding-window rate
@@ -685,26 +872,45 @@ mod tests {
         );
     }
 
-    /// Verify that `line_restart()` returns the correct character for each mode.
+    /// upstream: progress.c:129 - on a terminal every line is `\r`-prefixed,
+    /// including the first (when `line_active` is false).
     #[test]
-    fn line_restart_terminal_vs_piped() {
+    fn write_line_restart_terminal_always_cr() {
         let mut buf: Vec<u8> = Vec::new();
+        {
+            let mut live = LiveProgress::with_output_config(
+                &mut buf,
+                ProgressMode::Overall,
+                HumanReadableMode::Grouped,
+                terminal_config(),
+            );
+            // First line: line_active is false, still emits \r.
+            live.write_line_restart().unwrap();
+            live.line_active = true;
+            live.write_line_restart().unwrap();
+        }
+        assert_eq!(buf, b"\r\r");
+    }
 
-        let live_term = LiveProgress::with_output_config(
-            &mut buf,
-            ProgressMode::PerFile,
-            HumanReadableMode::Grouped,
-            terminal_config(),
-        );
-        assert_eq!(live_term.line_restart(), "\r");
-
-        let live_pipe = LiveProgress::with_output_config(
-            &mut buf,
-            ProgressMode::PerFile,
-            HumanReadableMode::Grouped,
-            piped_config(),
-        );
-        assert_eq!(live_pipe.line_restart(), "\n");
+    /// When piped, a `\n` is emitted only *between* lines, never before the
+    /// first, so piped progress output has no leading blank line.
+    #[test]
+    fn write_line_restart_piped_newline_between_lines_only() {
+        let mut buf: Vec<u8> = Vec::new();
+        {
+            let mut live = LiveProgress::with_output_config(
+                &mut buf,
+                ProgressMode::Overall,
+                HumanReadableMode::Grouped,
+                piped_config(),
+            );
+            // First line: line_active is false, emits nothing.
+            live.write_line_restart().unwrap();
+            live.line_active = true;
+            // Between lines: emits a single newline.
+            live.write_line_restart().unwrap();
+        }
+        assert_eq!(buf, b"\n");
     }
 
     /// Flush is called for unbuffered outbuf mode on non-final ticks.
