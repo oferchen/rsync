@@ -210,11 +210,20 @@ impl FileListWriter {
     ///
     /// Handles XMIT_USER_NAME_FOLLOWS and XMIT_GROUP_NAME_FOLLOWS.
     /// These require the corresponding SAME_UID/SAME_GID flags to NOT be set.
+    ///
+    /// # Upstream Reference
+    ///
+    /// `flist.c:481-482,491-492` gates the inline name flags on `inc_recurse`:
+    /// `if (inc_recurse && user_name) xflags |= XMIT_USER_NAME_FOLLOWS`. Without
+    /// incremental recursion there is no per-file inline name; the names travel
+    /// only in the trailing id-list (`send_id_lists`, uidlist.c). Setting the
+    /// flag when `!inc_recurse` would emit names both inline and in the trailer,
+    /// diverging from upstream's wire encoding.
     #[inline]
     fn calculate_owner_name_flags(&self, entry: &FileEntry, current_flags: u32) -> u32 {
         let mut xflags: u32 = 0;
 
-        if self.protocol.as_u8() < 30 {
+        if self.protocol.as_u8() < 30 || !self.name_follows {
             return xflags;
         }
 

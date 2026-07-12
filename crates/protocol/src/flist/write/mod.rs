@@ -119,6 +119,16 @@ pub struct FileListWriter {
     /// Upstream writes ACL names only when `inc_recurse && !numeric_ids`
     /// (`acls.c:597`); otherwise the receiver remaps ids through the id-list.
     acl_send_names: bool,
+    /// Whether to emit inline `XMIT_USER_NAME_FOLLOWS`/`XMIT_GROUP_NAME_FOLLOWS`
+    /// owner names in each file entry.
+    ///
+    /// Upstream sets these flags only under incremental recursion
+    /// (`flist.c:481-482,491-492`: `if (inc_recurse && user_name)`). Without
+    /// `inc_recurse` the names ride exclusively in the trailing id-list
+    /// (`send_id_lists`/`recv_id_list`, uidlist.c), so emitting them inline as
+    /// well diverges from upstream's wire encoding. Defaults to `false`; the
+    /// generator sets it to the negotiated `inc_recurse` value.
+    name_follows: bool,
     /// Xattr cache for sender-side deduplication across entries.
     /// upstream: xattrs.c - `find_matching_xattr()` + `rsync_xal_store()`
     xattr_cache: XattrCache,
@@ -146,6 +156,7 @@ impl FileListWriter {
             acl_cache: AclCache::new(),
             pending_acl: None,
             acl_send_names: false,
+            name_follows: false,
             xattr_cache: XattrCache::new(),
             checksum_seed: 0,
         }
@@ -170,6 +181,7 @@ impl FileListWriter {
             acl_cache: AclCache::new(),
             pending_acl: None,
             acl_send_names: false,
+            name_follows: false,
             xattr_cache: XattrCache::new(),
             checksum_seed: 0,
         }
@@ -262,6 +274,21 @@ impl FileListWriter {
     #[must_use]
     pub const fn with_acl_send_names(mut self, send_names: bool) -> Self {
         self.acl_send_names = send_names;
+        self
+    }
+
+    /// Sets whether inline owner names (`XMIT_USER_NAME_FOLLOWS`/
+    /// `XMIT_GROUP_NAME_FOLLOWS`) are emitted per file entry.
+    ///
+    /// Upstream sets these flags only under incremental recursion
+    /// (`flist.c:481-482,491-492`: `if (inc_recurse && user_name)`). Callers
+    /// pass the negotiated `inc_recurse` value. When `false`, owner names are
+    /// carried solely by the trailing id-list (`send_id_lists`), matching
+    /// upstream's non-incremental encoding.
+    #[inline]
+    #[must_use]
+    pub const fn with_name_follows(mut self, name_follows: bool) -> Self {
+        self.name_follows = name_follows;
         self
     }
 

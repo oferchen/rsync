@@ -83,6 +83,11 @@ impl<'a> CopyContext<'a> {
                 .with_preserve_hard_links(options.hard_links_enabled())
                 .with_preserve_atimes(options.preserve_atimes())
                 .with_preserve_crtimes(options.preserve_crtimes())
+                // The batch id-list trailer (write_batch_id_lists) emits bare
+                // terminators without names, so owner names must ride inline in
+                // every entry regardless of inc_recurse. Keep XMIT_*_NAME_FOLLOWS
+                // always enabled for the batch flist writer.
+                .with_name_follows(true)
         });
 
         let adaptive_level = if options.compress_enabled() && options.adaptive_compress_enabled() {

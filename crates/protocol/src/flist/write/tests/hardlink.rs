@@ -166,7 +166,8 @@ fn write_hardlink_follower_with_uid_gid_skips_all() {
     let mut writer = FileListWriter::new(protocol)
         .with_preserve_hard_links(true)
         .with_preserve_uid(true)
-        .with_preserve_gid(true);
+        .with_preserve_gid(true)
+        .with_name_follows(true);
 
     let mut entry1 = FileEntry::new_file("leader.txt".into(), 1000, 0o755);
     entry1.set_mtime(1700000000, 0);

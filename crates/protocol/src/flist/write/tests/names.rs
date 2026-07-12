@@ -9,7 +9,8 @@ fn write_user_name_round_trip_protocol_30() {
     let mut buf = Vec::new();
     let mut writer = FileListWriter::new(protocol)
         .with_preserve_uid(true)
-        .with_preserve_gid(true);
+        .with_preserve_gid(true)
+        .with_name_follows(true);
 
     let mut entry = FileEntry::new_file("file.txt".into(), 100, 0o644);
     entry.set_uid(1000);
@@ -37,7 +38,8 @@ fn write_group_name_round_trip_protocol_30() {
     let mut buf = Vec::new();
     let mut writer = FileListWriter::new(protocol)
         .with_preserve_uid(true)
-        .with_preserve_gid(true);
+        .with_preserve_gid(true)
+        .with_name_follows(true);
 
     let mut entry = FileEntry::new_file("file.txt".into(), 100, 0o644);
     entry.set_gid(1000);
@@ -65,7 +67,8 @@ fn write_user_and_group_names_round_trip_protocol_32() {
     let mut buf = Vec::new();
     let mut writer = FileListWriter::new(protocol)
         .with_preserve_uid(true)
-        .with_preserve_gid(true);
+        .with_preserve_gid(true)
+        .with_name_follows(true);
 
     let mut entry = FileEntry::new_file("owned.txt".into(), 500, 0o644);
     entry.set_uid(1001);
@@ -96,7 +99,8 @@ fn write_user_name_omitted_when_same_uid() {
     let mut buf = Vec::new();
     let mut writer = FileListWriter::new(protocol)
         .with_preserve_uid(true)
-        .with_preserve_gid(true);
+        .with_preserve_gid(true)
+        .with_name_follows(true);
 
     let mut entry1 = FileEntry::new_file("file1.txt".into(), 100, 0o644);
     entry1.set_uid(1000);
@@ -141,7 +145,8 @@ fn write_names_omitted_for_protocol_29() {
     let mut buf = Vec::new();
     let mut writer = FileListWriter::new(protocol)
         .with_preserve_uid(true)
-        .with_preserve_gid(true);
+        .with_preserve_gid(true)
+        .with_name_follows(true);
 
     let mut entry = FileEntry::new_file("file.txt".into(), 100, 0o644);
     entry.set_uid(1000);
