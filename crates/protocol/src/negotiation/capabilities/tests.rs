@@ -2474,22 +2474,30 @@ fn capability_fallback_graceful_checksum_degradation() {
 
 /// Tests compression negotiation with modern and legacy peers.
 ///
-/// When the zstd feature is enabled, zstd is preferred over zlibx/zlib.
-/// Lz4 is still excluded from auto-negotiation (wire format unvalidated).
+/// Preference order follows upstream `valid_compressions_items[]`
+/// (compat.c:100-112): zstd > lz4 > zlibx > zlib > none, with each codec
+/// present only when its feature is compiled in. Both zstd and lz4 wire
+/// formats are validated byte-for-byte against upstream 3.4.4.
 #[test]
 fn capability_compression_negotiation_preference() {
-    // Remote offers full modern list - we pick zstd when feature is enabled
-    // (wire format validated in PR #3081), otherwise zlibx.
+    // Remote offers full modern list - server picks the first entry it also
+    // supports, in upstream preference order zstd > lz4 > zlibx.
     let modern_list = "zstd lz4 zlibx zlib none";
     let result = choose_compression_algorithm(modern_list, true).unwrap();
     #[cfg(feature = "zstd")]
     assert_eq!(result, CompressionAlgorithm::Zstd);
-    #[cfg(not(feature = "zstd"))]
+    #[cfg(all(not(feature = "zstd"), feature = "lz4"))]
+    assert_eq!(result, CompressionAlgorithm::LZ4);
+    #[cfg(all(not(feature = "zstd"), not(feature = "lz4")))]
     assert_eq!(result, CompressionAlgorithm::ZlibX);
 
-    // Remote offers lz4 first without zstd - picks zlibx (lz4 not validated).
+    // Remote offers lz4 first without zstd - picks lz4 when compiled in,
+    // otherwise falls through to zlibx.
     let no_zstd_list = "lz4 zlibx zlib none";
     let result = choose_compression_algorithm(no_zstd_list, true).unwrap();
+    #[cfg(feature = "lz4")]
+    assert_eq!(result, CompressionAlgorithm::LZ4);
+    #[cfg(not(feature = "lz4"))]
     assert_eq!(result, CompressionAlgorithm::ZlibX);
 
     // Server with only zlib variants
@@ -2854,17 +2862,20 @@ fn capability_fallback_all_protocol_versions() {
 
 #[test]
 fn supported_compressions_includes_validated_algorithms() {
-    // Zstd wire framing was validated against upstream (PR #3081).
-    // Lz4 wire framing is not yet validated - must remain excluded.
+    // Both zstd and lz4 wire framings are validated byte-for-byte against
+    // upstream 3.4.4, so each is advertised when its feature is compiled in.
     let list = supported_compressions();
     #[cfg(feature = "zstd")]
     assert!(
         list.contains(&"zstd"),
-        "zstd must be advertised - wire format validated (PR #3081)"
+        "zstd must be advertised when enabled"
     );
+    #[cfg(feature = "lz4")]
+    assert!(list.contains(&"lz4"), "lz4 must be advertised when enabled");
+    #[cfg(not(feature = "lz4"))]
     assert!(
         !list.contains(&"lz4"),
-        "lz4 must not be advertised until wire format is validated"
+        "lz4 must be absent when its feature is disabled"
     );
     assert!(list.contains(&"zlibx"));
     assert!(list.contains(&"zlib"));
@@ -2873,17 +2884,25 @@ fn supported_compressions_includes_validated_algorithms() {
 
 #[test]
 fn supported_compressions_order_matches_upstream() {
-    // upstream: compat.c:100-112 - preference order is zstd > zlibx > zlib > none
-    // (lz4 will be re-added after wire format validation)
+    // upstream: compat.c:100-112 - preference order is
+    // zstd > lz4 > zlibx > zlib > none, each present only when compiled in.
     let list = supported_compressions();
     let zlibx_pos = list.iter().position(|&s| s == "zlibx").unwrap();
     let zlib_pos = list.iter().position(|&s| s == "zlib").unwrap();
     let none_pos = list.iter().position(|&s| s == "none").unwrap();
-    // upstream: compat.c:101-102 - zstd precedes zlibx when available
+    // upstream: compat.c:101-108 - zstd, then lz4, precede zlibx when available.
+    #[cfg(feature = "lz4")]
+    let lz4_pos = {
+        let lz4_pos = list.iter().position(|&s| s == "lz4").unwrap();
+        assert!(lz4_pos < zlibx_pos);
+        lz4_pos
+    };
     #[cfg(feature = "zstd")]
     {
         let zstd_pos = list.iter().position(|&s| s == "zstd").unwrap();
         assert!(zstd_pos < zlibx_pos);
+        #[cfg(feature = "lz4")]
+        assert!(zstd_pos < lz4_pos);
     }
     assert!(zlibx_pos < zlib_pos);
     assert!(zlib_pos < none_pos);
