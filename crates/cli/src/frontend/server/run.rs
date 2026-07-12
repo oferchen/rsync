@@ -206,6 +206,11 @@ where
     }
     config.file_selection.ignore_existing = long_flags.ignore_existing;
     config.file_selection.existing_only = long_flags.existing_only;
+    // upstream: options.c:2976-2977 / flist.c:2468 - `--no-implied-dirs` is
+    // forwarded to the sender on a pull. As the server-side sender this process
+    // must omit the implied parent dirs from the flist at protocol < 30; at
+    // protocol >= 30 they are always sent (flist.c:2257-2258).
+    config.flags.no_implied_dirs = long_flags.no_implied_dirs;
     config.flags.numeric_ids = core::server::NumericIds::from_client(long_flags.numeric_ids);
     config.flags.delete = long_flags.delete;
     // upstream: options.c:2964-2965 - `--remove-source-files` is forwarded

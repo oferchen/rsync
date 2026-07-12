@@ -77,6 +77,13 @@ fn apply_long_form_args(client_args: &[String], config: &mut ServerConfig) -> Op
             "--numeric-ids" => {
                 config.flags.numeric_ids = core::server::NumericIds::Explicit;
             }
+            // upstream: options.c:2976-2977 - `--no-implied-dirs` forwarded to
+            // the sender on a pull. The daemon-sender must omit implied parent
+            // dirs from the flist at protocol < 30 (flist.c:2468); protocol >= 30
+            // always sends them (flist.c:2257-2258).
+            "--no-implied-dirs" => {
+                config.flags.no_implied_dirs = true;
+            }
             // upstream: options.c:2890-2891
             "--use-qsort" => {
                 config.qsort = true;

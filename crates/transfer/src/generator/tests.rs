@@ -3113,6 +3113,88 @@ mod files_from {
     }
 
     #[test]
+    fn implied_dirs_force_on_gated_to_protocol_30() {
+        // upstream: flist.c:2257-2258 - `if (relative_paths && protocol_version
+        // >= 30) implied_dirs = 1;` forces the sender to emit flagged implied
+        // parent dirs at protocol >= 30 regardless of --no-implied-dirs. At
+        // protocol < 30 the flag is honoured (flist.c:2468 `else if
+        // (implied_dirs && ...)`), so --no-implied-dirs omits the purely implied
+        // parents from the flist. Bug #266: oc emitted them unconditionally at
+        // every protocol, sending a larger file set than upstream to a proto-29
+        // peer under `--relative --no-implied-dirs`.
+        //
+        // Source `<tmp>/root/./usr/bin` walks `usr/bin` + `usr/bin/ar` (always
+        // present); only the purely implied parent `usr` is gated.
+        fn implied_parent_present(protocol: u8, no_implied_dirs: bool) -> bool {
+            let temp_dir = TempDir::new().unwrap();
+            let anchored = temp_dir.path().join("root");
+            let leaf = anchored.join("usr").join("bin");
+            std::fs::create_dir_all(&leaf).unwrap();
+            std::fs::write(leaf.join("ar"), b"x").unwrap();
+            let src_with_anchor =
+                PathBuf::from(format!("{}/./usr/bin", anchored.to_string_lossy()));
+
+            let handshake = test_handshake_with_protocol(protocol);
+            let mut config = test_config();
+            config.flags.relative = true;
+            config.flags.recursive = true;
+            config.flags.no_implied_dirs = no_implied_dirs;
+            let mut ctx = GeneratorContext::new_for_test(&handshake, config);
+            ctx.build_file_list(&[src_with_anchor]).unwrap();
+
+            // Compare the wire-form name (name_bytes normalises the
+            // platform-native separator to '/') rather than the internal
+            // PathBuf: on Windows a leaf name retains the '\' inserted by
+            // readdir's join (e.g. "usr/bin\\ar"), while the wire is always
+            // '/'-separated (flist.c:send_file_entry). This is what a POSIX
+            // peer receives and keeps the assertions portable.
+            let names: Vec<String> = ctx
+                .file_list()
+                .iter()
+                .map(|e| String::from_utf8_lossy(&e.name_bytes()).into_owned())
+                .collect();
+            assert!(
+                names.iter().any(|n| n == "usr/bin/ar"),
+                "walked leaf must always be sent (proto={protocol}, \
+                 no_implied_dirs={no_implied_dirs}): {names:?}"
+            );
+            names.iter().any(|n| n == "usr")
+        }
+
+        // Default (implied dirs on): implied parents sent at every protocol.
+        assert!(
+            implied_parent_present(29, false),
+            "proto 29 default must emit implied parent 'usr'"
+        );
+        assert!(
+            implied_parent_present(30, false),
+            "proto 30 default must emit implied parent 'usr'"
+        );
+        assert!(
+            implied_parent_present(32, false),
+            "proto 32 default must emit implied parent 'usr'"
+        );
+
+        // --no-implied-dirs: omitted at protocol < 30, forced on at protocol >= 30.
+        assert!(
+            !implied_parent_present(28, true),
+            "proto 28 --no-implied-dirs must omit implied parent 'usr'"
+        );
+        assert!(
+            !implied_parent_present(29, true),
+            "proto 29 --no-implied-dirs must omit implied parent 'usr'"
+        );
+        assert!(
+            implied_parent_present(30, true),
+            "proto 30 forces implied parent 'usr' on despite --no-implied-dirs"
+        );
+        assert!(
+            implied_parent_present(32, true),
+            "proto 32 forces implied parent 'usr' on despite --no-implied-dirs"
+        );
+    }
+
+    #[test]
     fn non_relative_mode_emits_source_basename() {
         // upstream: flist.c:2338-2349 - non-relative mode splits each
         // positional on its last `/`: `dir` becomes the chdir target,
