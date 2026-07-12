@@ -114,6 +114,16 @@ pub(super) struct ServerLongFlags {
     pub(super) numeric_ids: bool,
     /// Delete extraneous files (upstream: `--delete-*` variants, long-form only).
     pub(super) delete: bool,
+    /// Defer the delete pass until after the transfer (upstream: `--delete-after`
+    /// / `--delete-delay`, i.e. `delete_after` or `delete_during == 2`).
+    ///
+    /// When set, the server-side receiver runs its delete sweep only after every
+    /// file (including each destination `.rsync-filter` merge file) has landed,
+    /// so per-directory merge protect rules are honoured at delete time.
+    ///
+    /// upstream: generator.c:124 - `EARLY_DELETE_DONE_MSG = !(delete_during == 2
+    /// || delete_after)`; generator.c:2425-2428 late delete pass.
+    pub(super) late_delete: bool,
     /// Remove source files after a successful transfer.
     ///
     /// upstream: options.c:2964-2965 - `server_options()` emits
@@ -269,6 +279,7 @@ pub(super) fn parse_server_long_flags(args: &[OsString]) -> ServerLongFlags {
         modify_window: None,
         numeric_ids: false,
         delete: false,
+        late_delete: false,
         remove_source_files: false,
         copy_devices: false,
         stats: false,
@@ -335,8 +346,17 @@ pub(super) fn parse_server_long_flags(args: &[OsString]) -> ServerLongFlags {
             // upstream: --numeric-ids is long-form only (options.c:2887-2888)
             "--numeric-ids" => flags.numeric_ids = true,
             // upstream: --delete variants are long-form only (options.c:2818-2827)
-            "--delete" | "--delete-before" | "--delete-during" | "--delete-after"
-            | "--delete-delay" | "--delete-excluded" => flags.delete = true,
+            "--delete" | "--delete-before" | "--delete-during" | "--delete-excluded" => {
+                flags.delete = true;
+            }
+            // upstream: generator.c:124 EARLY_DELETE_DONE_MSG = !(delete_during==2
+            // || delete_after). --delete-after / --delete-delay defer the delete
+            // sweep to after the transfer so the destination `.rsync-filter`
+            // merge files transferred by this run are consulted at delete time.
+            "--delete-after" | "--delete-delay" => {
+                flags.delete = true;
+                flags.late_delete = true;
+            }
             // upstream: options.c:2964-2965 - --remove-source-files is long-form
             // only. --remove-sent-files is the deprecated alias that still names
             // the same option in `parse_arguments()`.

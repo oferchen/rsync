@@ -40,7 +40,7 @@ mod sync;
 mod sync_async;
 
 use std::io::{self, Read, Write};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use logging::{debug_log, info_log};
 
@@ -131,6 +131,77 @@ impl ReceiverContext {
             self.run_pipelined_async(reader, writer, crate::pipeline::PipelineConfig::default())
                 .await
         }
+    }
+
+    /// True when the delete pass runs EARLY, before the per-file transfer loop.
+    ///
+    /// Covers `--delete-before` and `--delete-during`. Mirrors upstream
+    /// generator.c:2280-2281 (`delete_before` runs `do_delete_pass()` up front)
+    /// and generator.c:2315-2327 (`delete_during` deletes as each directory is
+    /// entered during the loop). oc collapses both into one pre-loop sweep,
+    /// which is byte-equivalent because the destination `.rsync-filter` merge
+    /// files that gate protection are the same at either point for these modes.
+    pub(in crate::receiver) fn delete_pass_is_early(&self) -> bool {
+        self.config.flags.delete && !self.config.deletion.late_delete
+    }
+
+    /// True when the delete pass is DEFERRED to after the per-file transfer loop.
+    ///
+    /// Covers `--delete-after` and `--delete-delay`. Mirrors upstream
+    /// generator.c:2425-2428 which runs `do_delayed_deletions()` (delay) or
+    /// `do_delete_pass()` (after) only once every file - including each
+    /// destination `.rsync-filter` merge file - has been transferred. Deferring
+    /// is load-bearing: the delete pass reloads each destination directory's
+    /// per-directory `.rsync-filter` at delete time, so a merge-file protect
+    /// rule (e.g. `- *.bak`) only survives the sweep once that filter file is
+    /// present in the destination, which it is not until the transfer has run.
+    pub(in crate::receiver) fn delete_pass_is_late(&self) -> bool {
+        self.config.flags.delete && self.config.deletion.late_delete
+    }
+
+    /// Runs the destination delete pass and folds its results into `stats`.
+    ///
+    /// Sweeps the destination for entries absent from the sender's file list,
+    /// reloading each directory's per-directory `.rsync-filter` merge files so
+    /// their protect rules apply at delete time. Shared by all four receiver
+    /// pipeline drivers so the defer-and-filter logic lives in exactly one place.
+    ///
+    /// The caller positions the call via [`delete_pass_is_early`] (before the
+    /// per-file loop) or [`delete_pass_is_late`] (after it, before finalize).
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `generator.c:358` - `do_delete_pass()` tree sweep
+    /// - `generator.c:279` - `delete_in_dir()` per-directory candidate check
+    /// - `exclude.c:875` - `change_local_filter_dir()` reloads dest `.rsync-filter`
+    /// - `generator.c:2393-2398` / `2437-2440` - `write_del_stats()` emission
+    ///
+    /// [`delete_pass_is_early`]: Self::delete_pass_is_early
+    /// [`delete_pass_is_late`]: Self::delete_pass_is_late
+    pub(in crate::receiver) fn run_receiver_delete_pass<W>(
+        &mut self,
+        dest_dir: &Path,
+        #[cfg(unix)] sandbox: Option<&std::sync::Arc<fast_io::DirSandbox>>,
+        writer: &mut W,
+        stats: &mut TransferStats,
+    ) -> io::Result<()>
+    where
+        W: Write + crate::writer::MsgInfoSender + ?Sized,
+    {
+        let (delete_stats, limit_exceeded, io_bits) = self.delete_extraneous_files(
+            dest_dir,
+            #[cfg(unix)]
+            sandbox,
+            writer,
+        )?;
+        stats.io_error |= io_bits;
+        stats.delete_stats = delete_stats;
+        stats.delete_limit_exceeded = limit_exceeded;
+        // Carry the per-type counters into the receiver context so the goodbye
+        // handshake can emit NDX_DEL_STATS to the peer sender.
+        // upstream: generator.c:2393-2398 - write_del_stats() emission.
+        self.pending_del_stats = delete_stats;
+        Ok(())
     }
 }
 
