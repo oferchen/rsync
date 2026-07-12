@@ -3142,10 +3142,16 @@ mod files_from {
             let mut ctx = GeneratorContext::new_for_test(&handshake, config);
             ctx.build_file_list(&[src_with_anchor]).unwrap();
 
+            // Compare the wire-form name (name_bytes normalises the
+            // platform-native separator to '/') rather than the internal
+            // PathBuf: on Windows a leaf name retains the '\' inserted by
+            // readdir's join (e.g. "usr/bin\\ar"), while the wire is always
+            // '/'-separated (flist.c:send_file_entry). This is what a POSIX
+            // peer receives and keeps the assertions portable.
             let names: Vec<String> = ctx
                 .file_list()
                 .iter()
-                .map(|e| e.path().to_string_lossy().into_owned())
+                .map(|e| String::from_utf8_lossy(&e.name_bytes()).into_owned())
                 .collect();
             assert!(
                 names.iter().any(|n| n == "usr/bin/ar"),
