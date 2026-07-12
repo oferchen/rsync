@@ -862,28 +862,58 @@ fn test_choose_checksum_empty_list() {
 
 #[test]
 fn test_choose_compression_first_match_wins_zstd_or_zlib() {
-    // Remote offers zstd and lz4 first, then zlib.
-    // When zstd feature is enabled, zstd is in our supported list (validated
-    // in PR #3081) and wins. Lz4 is still excluded.
+    // Remote offers zstd and lz4 first, then zlib. Both zstd and lz4 are now in
+    // our supported list (wire-format validated against upstream 3.4.4), so the
+    // first mutually supported entry wins in preference order zstd > lz4 > zlib.
     let client_list = "zstd lz4 zlib none";
     let result = choose_compression_algorithm(client_list, true).unwrap();
     #[cfg(feature = "zstd")]
     assert_eq!(result, CompressionAlgorithm::Zstd);
-    #[cfg(not(feature = "zstd"))]
+    #[cfg(all(not(feature = "zstd"), feature = "lz4"))]
+    assert_eq!(result, CompressionAlgorithm::LZ4);
+    #[cfg(all(not(feature = "zstd"), not(feature = "lz4")))]
     assert_eq!(result, CompressionAlgorithm::Zlib);
 }
 
 #[test]
 fn test_choose_compression_first_match_wins_zstd_or_zlibx() {
-    // Remote offers zstd, lz4, then zlibx.
-    // When zstd feature is enabled, zstd is in our supported list and wins.
-    // Lz4 is still excluded from auto-negotiation.
+    // Remote offers zstd, lz4, then zlibx. zstd wins when enabled, otherwise lz4
+    // (also validated), otherwise zlibx - preference zstd > lz4 > zlibx.
     let client_list = "zstd lz4 zlibx zlib none";
     let result = choose_compression_algorithm(client_list, true).unwrap();
     #[cfg(feature = "zstd")]
     assert_eq!(result, CompressionAlgorithm::Zstd);
-    #[cfg(not(feature = "zstd"))]
+    #[cfg(all(not(feature = "zstd"), feature = "lz4"))]
+    assert_eq!(result, CompressionAlgorithm::LZ4);
+    #[cfg(all(not(feature = "zstd"), not(feature = "lz4")))]
     assert_eq!(result, CompressionAlgorithm::ZlibX);
+}
+
+#[test]
+#[cfg(feature = "lz4")]
+fn test_lz4_is_advertised_in_preference_order() {
+    // lz4 must appear in the advertised list (wire-format validated vs upstream
+    // 3.4.4) positioned per upstream valid_compressions_items[]: after zstd,
+    // before zlibx/zlib/none. The list is only sent when CF_VARINT_FLIST_FLAGS
+    // (the `v` capability) is negotiated, matching upstream's proto-31+ gating.
+    let list = supported_compressions();
+    let lz4 = list
+        .iter()
+        .position(|&n| n == "lz4")
+        .expect("lz4 advertised");
+    let zlibx = list
+        .iter()
+        .position(|&n| n == "zlibx")
+        .expect("zlibx present");
+    assert!(lz4 < zlibx, "lz4 must precede zlibx: {list:?}");
+    #[cfg(feature = "zstd")]
+    {
+        let zstd = list
+            .iter()
+            .position(|&n| n == "zstd")
+            .expect("zstd present");
+        assert!(zstd < lz4, "zstd must precede lz4: {list:?}");
+    }
 }
 
 #[test]
