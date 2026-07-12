@@ -34,12 +34,12 @@ const DEFAULT_BUFFER_LEN: usize = 128 * 1024;
 /// upstream: rsync.h:158, match.c:339
 const CHUNK_SIZE: usize = 32 * 1024;
 
-/// Minimum bytes per parallel range in [`DeltaGenerator::generate_chunked`].
+/// Minimum bytes per parallel stripe in [`DeltaGenerator::generate_chunked`].
 ///
-/// Ranges below this size are not worth a rayon task: the per-range boundary
-/// loss (a straddling block degrades to literals) and task overhead would
-/// outweigh the scan parallelism. The effective floor is the larger of this
-/// and 64 basis blocks. See `docs/design/zsync-seq-match.md`.
+/// Stripes below this size are not worth a rayon task: the per-stripe task
+/// overhead and the `block_len` scan overlap would outweigh the scan
+/// parallelism. The effective floor is the larger of this and 64 basis blocks.
+/// See `docs/design/intra-file-parallelism.md`.
 const MIN_PARALLEL_CHUNK_BYTES: usize = 1024 * 1024;
 
 /// Emits a coalesced `DeltaToken::Copy` covering an open seq-match run.
@@ -66,6 +66,158 @@ fn flush_seq_match_run(
         }
     }
     *run_len = 0;
+}
+
+/// The single source of truth for the literal-flush cadence.
+///
+/// The sequential scan ([`DeltaGenerator::generate`]) flushes its pending
+/// literal accumulator into one `Literal` token every time it reaches this many
+/// bytes, so a match-free region is framed as a run of fixed-size literal tokens
+/// (the final partial run aside). The parallel merge ([`resegment_literals`])
+/// re-splits its gap literals at exactly this same cadence, so both paths frame
+/// literals identically by construction rather than by coincidence.
+///
+/// upstream: match.c:339-340 (`if (a_bytes >= CHUNK_SIZE + blength)`).
+#[inline]
+const fn literal_flush_cadence(block_len: usize) -> usize {
+    block_len + CHUNK_SIZE
+}
+
+/// Re-frames a token stream so its literal segmentation is byte-identical to the
+/// single-pass sequential scan.
+///
+/// [`DeltaGenerator::generate_chunked`] emits each match-free gap as one
+/// `Literal` token, whereas the sequential scan flushes a fresh
+/// [`literal_flush_cadence`]-sized token every time its pending accumulator
+/// crosses that threshold. This normalizer coalesces every maximal run of
+/// adjacent `Literal` tokens and re-splits it at exact `literal_flush_cadence`
+/// boundaries from the run start - the identical rule the sequential path
+/// applies inline - so the literal framing (and therefore the wire bytes)
+/// matches. `Copy` tokens and their order pass through untouched.
+fn resegment_literals(tokens: Vec<DeltaToken>, block_len: usize) -> Vec<DeltaToken> {
+    let cadence = literal_flush_cadence(block_len);
+    let mut out: Vec<DeltaToken> = Vec::with_capacity(tokens.len());
+    // Accumulates the current maximal run of adjacent literal bytes. A single
+    // literal token is moved in with zero copies; multi-token runs concatenate
+    // before re-splitting.
+    let mut run: Option<Vec<u8>> = None;
+    for token in tokens {
+        match token {
+            DeltaToken::Literal(bytes) => match run.as_mut() {
+                Some(acc) => acc.extend_from_slice(&bytes),
+                None => run = Some(bytes),
+            },
+            copy => {
+                if let Some(acc) = run.take() {
+                    push_split_literal_run(&mut out, acc, cadence);
+                }
+                out.push(copy);
+            }
+        }
+    }
+    if let Some(acc) = run.take() {
+        push_split_literal_run(&mut out, acc, cadence);
+    }
+    out
+}
+
+/// Splits one coalesced literal `run` into `Literal` tokens at exact `cadence`
+/// boundaries from the run start, mirroring the sequential scan's threshold
+/// flush (a full `cadence`-byte token each time the accumulator crosses the
+/// threshold; the trailing remainder flushes at the next match or EOF). A run
+/// at or below one cadence is emitted whole (and moved without copying).
+fn push_split_literal_run(out: &mut Vec<DeltaToken>, run: Vec<u8>, cadence: usize) {
+    if run.is_empty() {
+        return;
+    }
+    if run.len() <= cadence {
+        out.push(DeltaToken::Literal(run));
+        return;
+    }
+    let len = run.len();
+    let mut start = 0usize;
+    while len - start > cadence {
+        out.push(DeltaToken::Literal(run[start..start + cadence].to_vec()));
+        start += cadence;
+    }
+    out.push(DeltaToken::Literal(run[start..].to_vec()));
+}
+
+/// A `Copy` token lifted to an absolute source offset for the parallel merge.
+///
+/// [`DeltaGenerator::generate_chunked`] scans overlapping stripes on separate
+/// workers; each worker's tokens carry only a basis index, so the merge tags
+/// every `Copy` with the source offset it reconstructs to reason about them in
+/// one global order.
+struct CopyRun {
+    /// Source offset of the first byte this copy reconstructs.
+    source_start: u64,
+    /// Basis block index the copy references.
+    basis_index: u64,
+    /// Number of source bytes the copy reconstructs.
+    len: usize,
+}
+
+/// Reassembles the single-pass token stream from the union of every worker's
+/// `Copy` runs.
+///
+/// Sorting by source offset and walking a cursor that accepts the earliest run
+/// at or after the cursor - then jumps past it - reproduces the sequential
+/// scan's "first match wins, then skip its bytes" selection exactly on a
+/// duplicate-free basis: every match the sequential scan would find was scanned
+/// with a full window by the owning worker (so it is present here), and a run
+/// starting before the cursor is one the sequential scan also skips. Gaps are
+/// literal bytes taken verbatim from `source`, then [`resegment_literals`]
+/// frames them at the sequential cadence. The result covers `[0, source.len())`
+/// contiguously, so reconstruction is byte-exact regardless of the basis.
+fn merge_copy_runs(source: &[u8], mut runs: Vec<CopyRun>, block_len: usize) -> DeltaScript {
+    let n = source.len() as u64;
+
+    // Earliest start first; on a tie prefer the longer run so a seam-truncated
+    // duplicate never shadows the owning worker's full run.
+    runs.sort_unstable_by(|a, b| {
+        a.source_start
+            .cmp(&b.source_start)
+            .then_with(|| b.len.cmp(&a.len))
+    });
+
+    let mut tokens: Vec<DeltaToken> = Vec::new();
+    let mut cursor = 0u64;
+    let mut next = 0usize;
+    while cursor < n {
+        // Skip runs the cursor has already passed (covered or overlapped - the
+        // sequential scan skips these too).
+        while next < runs.len() && runs[next].source_start < cursor {
+            next += 1;
+        }
+        match runs.get(next) {
+            Some(run) if run.source_start == cursor => {
+                tokens.push(DeltaToken::Copy {
+                    index: run.basis_index,
+                    len: run.len,
+                });
+                cursor += run.len as u64;
+                next += 1;
+            }
+            other => {
+                // Literal gap from the cursor up to the next accepted match (or
+                // EOF), taken verbatim from `source`.
+                let gap_end = other.map_or(n, |run| run.source_start);
+                tokens.push(DeltaToken::Literal(
+                    source[cursor as usize..gap_end as usize].to_vec(),
+                ));
+                cursor = gap_end;
+            }
+        }
+    }
+
+    let tokens = resegment_literals(tokens, block_len);
+    let literal_bytes = tokens
+        .iter()
+        .filter(|token| token.is_literal())
+        .map(|token| token.byte_len() as u64)
+        .sum();
+    DeltaScript::new(tokens, n, literal_bytes)
 }
 
 /// Produces rsync-style delta tokens by comparing an input stream against a signature index.
@@ -279,7 +431,7 @@ impl DeltaGenerator {
                 offset += 1;
 
                 // upstream: match.c:339-340 - flush early to bound memory growth
-                if pending_literals.len() >= block_len + CHUNK_SIZE {
+                if pending_literals.len() >= literal_flush_cadence(block_len) {
                     literal_bytes += pending_literals.len() as u64;
                     total_bytes += pending_literals.len() as u64;
                     let filled =
@@ -694,77 +846,56 @@ impl DeltaGenerator {
     }
 
     /// Generates a [`DeltaScript`] by scanning `source` in parallel across up
-    /// to `max_chunks` contiguous, non-overlapping ranges.
+    /// to `max_chunks` overlapping stripes, reassembled into the single-pass
+    /// token stream.
     ///
     /// The sender-side rolling scan is inherently sequential per byte, so the
-    /// only way to engage multiple cores is to split the source into disjoint
-    /// ranges and scan each against the shared signature `index`. Each range
-    /// scans with pruning disabled, so no worker ever *writes* the index's
-    /// `consumed` bitset. We clear that bitset once up front (the matcher
-    /// consults it unconditionally, and a prior pruned [`Self::generate`] would
-    /// otherwise leave every block marked consumed, defeating all matching);
-    /// after that single reset it is immutable for the duration of the scan, so
-    /// the shared `&index` is safe to read from every rayon worker with no
-    /// locking. Every worker keeps its own window, rolling checksum, and token
-    /// vector; there is no shared mutable state and therefore no mutex on the
-    /// hot path.
+    /// only way to engage multiple cores is a spatial split
+    /// (`docs/design/intra-file-parallelism.md`, "Approach A"): partition the
+    /// source into contiguous stripes, scan each on its own rayon worker against
+    /// the shared read-only signature `index`, then merge in source order. The
+    /// `consumed` bitset is cleared once up front and never written by a worker
+    /// (pruning is off per stripe), so the shared `&index` is read concurrently
+    /// with no locking and no shared mutable state on the hot path.
     ///
-    /// # Correctness
+    /// # Boundary correctness (overlap + greedy merge)
     ///
-    /// Concatenating the per-range token streams in source order reconstructs
-    /// `source` byte-for-byte: each range's tokens independently reconstruct
-    /// that range's bytes, and `DeltaToken::Copy { index, .. }` carries the
-    /// absolute basis block index, so it is position-independent across the
-    /// concatenation boundary. A basis block straddling a range boundary is
-    /// simply emitted as literal bytes by the adjoining ranges - a small
-    /// compression cost (bounded by `block_length` per boundary), never a
-    /// reconstruction error. For inputs too small to split usefully this
-    /// delegates to the sequential [`Self::generate`], which keeps pruning on.
+    /// Worker `k` owns stripe `[k*S, (k+1)*S)` but *scans* `block_len` bytes
+    /// past its stripe end, so a match starting inside its stripe that crosses
+    /// the boundary is completed here rather than degrading to literals. Every
+    /// match-start offset is therefore scanned with a full window by exactly the
+    /// worker that owns it. [`merge_copy_runs`] takes the union of all workers'
+    /// `Copy` tokens tagged with their absolute source offset and walks a cursor
+    /// that emits the earliest match at or after the cursor, then jumps past it -
+    /// the identical "first match wins, then skip its bytes" rule the sequential
+    /// [`Self::generate`] applies. Gaps are literal bytes taken straight from
+    /// `source`, so a boundary can never drop or duplicate a byte, and
+    /// [`resegment_literals`] frames those gaps at the shared
+    /// [`literal_flush_cadence`].
     ///
     /// # Wire transparency
     ///
-    /// Reconstruction and the total/literal byte counts are identical to the
-    /// pruned sequential [`Self::generate`] on **every** input: concatenating
-    /// (and coalescing) the per-range token streams only ever joins adjacent
-    /// literal bytes, never moving a byte between the matched and literal
-    /// tallies.
+    /// Reconstruction is byte-exact on **every** input (the merged stream covers
+    /// `[0, n)` contiguously from `Copy` tokens and `source` literals). For a
+    /// duplicate-free basis the emitted token stream - and therefore the wire
+    /// bytes - equals the sequential scan, **including shifted content** whose
+    /// matches fall off the block grid: the overlap completes every straddling
+    /// match and the greedy merge reproduces the sequential `Copy` selection.
+    /// (A pathological input with two distinct basis blocks matching overlapping
+    /// source windows can still reframe a seam; the result stays a valid delta
+    /// that reconstructs exactly, only the token boundaries may differ.)
     ///
-    /// The emitted *token* stream (the Copy/Literal sequence) equals the pruned
-    /// sequential output only when **both** hold:
-    ///
-    /// 1. the basis is duplicate-free
-    ///    ([`DeltaSignatureIndex::has_duplicate_blocks`] is `false`) - with
-    ///    every content unique, disabling the prune cannot change which basis
-    ///    block a source window resolves to; and
-    /// 2. no matched basis block straddles a range boundary - a straddling
-    ///    match cannot be completed by either adjoining range and degrades to
-    ///    literals here while the sequential scan copies it.
-    ///
-    /// Condition 2 holds for in-place edits of a same-length basis (matches
-    /// stay block-aligned and the boundary either coincides with a block edge
-    /// or lands in an edited, non-matching block). It can fail for shifted
-    /// content, so callers must treat the result as potentially divergent
-    /// (opt-in only, never advertised as byte-identical on arbitrary inputs)
-    /// and only engage the parallel path behind a default-off flag with the
-    /// duplicate-free gate.
-    ///
-    /// When conditions 1 and 2 hold the scan is token-identical to the
-    /// sequential path, and the adjacent-literal coalescing in the
-    /// concatenation loop makes the wire byte stream identical in the common
-    /// case. One honest residual remains: the sequential scan flushes pending
-    /// literals every `block_length + CHUNK_SIZE` bytes as one continuous run,
-    /// whereas each range restarts that flush cadence at its start, so where a
-    /// range boundary lands inside a long literal run the literal-token framing
-    /// can differ by a few length-prefix bytes at a chunk seam. This rare
-    /// literal-run segmentation seam never changes the reconstructed bytes or
-    /// the total/literal counts - only where the per-token length prefixes fall
-    /// as the wire encoder re-chunks the literal payload.
+    /// On a duplicate-heavy basis the disabled per-stripe prune resolves
+    /// duplicate siblings to different `Copy` indices than the pruned sequential
+    /// scan, so the token stream can diverge; callers gate the parallel path on
+    /// [`DeltaSignatureIndex::has_duplicate_blocks`] being `false` for that
+    /// reason. Reconstruction stays byte-exact regardless.
     ///
     /// # Arguments
     ///
     /// * `source` - The full source buffer to delta-encode.
     /// * `index` - Pre-built signature index from the basis file.
-    /// * `max_chunks` - Upper bound on parallel ranges (clamped to `>= 1`).
+    /// * `max_chunks` - Upper bound on parallel stripes (clamped to `>= 1`).
     pub fn generate_chunked(
         &self,
         source: &[u8],
@@ -783,84 +914,73 @@ impl DeltaGenerator {
         let block_len = index.block_length();
         let n = source.len();
 
-        // Each range must be much larger than one block so the boundary
-        // degradation (a straddling block falls back to literals) stays in the
-        // noise. Require the larger of 1 MiB and 64 blocks per range.
+        // Each stripe must be much larger than one block so per-stripe task
+        // overhead and the `block_len` scan overlap stay in the noise. Require
+        // the larger of 1 MiB and 64 blocks per stripe.
         let min_chunk = MIN_PARALLEL_CHUNK_BYTES
             .max(block_len.saturating_mul(64))
             .max(1);
         let feasible = (n / min_chunk).max(1);
         let chunks = feasible.min(max_chunks.max(1));
 
-        if chunks <= 1 {
+        if chunks <= 1 || block_len == 0 {
             // Too small to split usefully - keep the pruned sequential path.
             return self.generate(Cursor::new(source), index);
         }
 
-        // The matcher consults the shared `consumed` bitset on every probe,
-        // even though these chunks pass no per-chunk prune filter. A prior
-        // pruned generate() leaves blocks marked consumed; clear the bitset
-        // once so every chunk can match. Pruning is off per chunk, so no worker
-        // writes it back - it stays immutable across the concurrent scan.
+        // Pruning is disabled per stripe, so no worker writes the shared
+        // `consumed` bitset. Clear it once (a prior pruned generate() would
+        // otherwise leave every block consumed and defeat all matching); after
+        // this reset it stays immutable across the concurrent scan.
         index.reset_consumed();
 
-        // Partition into `chunks` contiguous, non-overlapping ranges.
-        let base = n / chunks;
-        let mut ranges = Vec::with_capacity(chunks);
-        let mut start = 0usize;
-        for i in 0..chunks {
-            let end = if i + 1 == chunks { n } else { start + base };
-            ranges.push((start, end));
-            start = end;
-        }
+        // Overlapping spatial split: worker k owns stripe [k*S, (k+1)*S) and
+        // scans block_len bytes past its stripe end so a straddling match is
+        // completed here, not lost to literals. The final stripe runs to EOF.
+        let stripe = (n / chunks).max(1);
+        let ranges: Vec<(usize, usize)> = (0..chunks)
+            .map(|k| {
+                let start = k * stripe;
+                let end = if k + 1 == chunks {
+                    n
+                } else {
+                    (start + stripe + block_len).min(n)
+                };
+                (start, end)
+            })
+            .take_while(|&(start, _)| start < n)
+            .collect();
 
-        // Scan every range concurrently against the shared read-only index.
-        // rayon's ordered `collect` preserves source order, so no manual
-        // sequencing or locking is needed to reassemble the stream.
+        // Scan every stripe concurrently against the shared read-only index.
         let scripts: Vec<io::Result<DeltaScript>> = ranges
             .par_iter()
             .map(|&(s, e)| self.generate_with_prune(Cursor::new(&source[s..e]), index, false))
             .collect();
 
-        // Concatenate token streams in source order. Literal payloads are
-        // moved (not copied) out of each per-range script.
-        //
-        // Coalesce a trailing `Literal` of one range with the leading
-        // `Literal` of the next when a range boundary lands inside an
-        // unmatched region: the previous range drains its tail bytes as a
-        // literal and the next range emits its head bytes as a second literal,
-        // but the sequential [`Self::generate`] scan - which sees the region
-        // as one contiguous run - would not split at that exact point. Merging
-        // the two halves removes that boundary double-literal, so for a
-        // duplicate-free basis whose matched blocks never straddle a range
-        // boundary the wire byte stream matches the sequential scan in the
-        // common case. It is not unconditionally byte-identical: the sequential
-        // scan flushes literals every `block_len + CHUNK_SIZE` bytes as one
-        // continuous run while each range restarts that cadence, so inside a
-        // long literal run the length-prefix framing can differ by a few bytes
-        // at a chunk seam. Merging only ever concatenates adjacent literal
-        // bytes, so reconstruction and the total/literal byte counts are
-        // unaffected on every input.
-        let mut tokens: Vec<DeltaToken> = Vec::new();
-        let mut total_bytes = 0u64;
-        let mut literal_bytes = 0u64;
-        for script in scripts {
-            let script = script?;
-            total_bytes += script.total_bytes();
-            literal_bytes += script.literal_bytes();
-            let mut range_tokens = script.into_tokens().into_iter();
-            if let Some(first) = range_tokens.next() {
-                match (tokens.last_mut(), first) {
-                    (Some(DeltaToken::Literal(prev)), DeltaToken::Literal(next)) => {
-                        prev.extend_from_slice(&next);
-                    }
-                    (_, first) => tokens.push(first),
+        // Lift every worker `Copy` to an absolute source offset. Literals are
+        // ignored: [`merge_copy_runs`] regenerates them from `source`, so a
+        // stripe boundary can never drop or duplicate a literal byte.
+        let mut runs: Vec<CopyRun> = Vec::new();
+        for (&(scan_start, _), script) in ranges.iter().zip(scripts) {
+            let mut local_off = 0u64;
+            for token in script?.into_tokens() {
+                let token_len = token.byte_len() as u64;
+                if let DeltaToken::Copy {
+                    index: basis_index,
+                    len,
+                } = token
+                {
+                    runs.push(CopyRun {
+                        source_start: scan_start as u64 + local_off,
+                        basis_index,
+                        len,
+                    });
                 }
-                tokens.extend(range_tokens);
+                local_off += token_len;
             }
         }
 
-        Ok(DeltaScript::new(tokens, total_bytes, literal_bytes))
+        Ok(merge_copy_runs(source, runs, block_len))
     }
 }
 
