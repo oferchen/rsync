@@ -144,6 +144,15 @@ pub(crate) fn build_server_flag_string(config: &ClientConfig) -> String {
     if config.copy_links() {
         flags.push('L');
     }
+    // upstream: options.c:2658-2659 - 'k' = copy_dirlinks. Packed alongside
+    // 'L' so the in-process push sender (build_server_config_for_generator)
+    // sets `flags.copy_dirlinks` and the flist walker transmits a
+    // symlink-to-directory as a real directory; also forwarded to a remote
+    // daemon sender on a pull. Both dereference on the sender exactly like
+    // copy_links.
+    if config.copy_dirlinks() {
+        flags.push('k');
+    }
 
     // upstream: options.c:2750-2762 - itemize-changes is forwarded via
     // --log-format=%i in the long-form args, not as a compact flag.
