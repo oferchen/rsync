@@ -3542,7 +3542,10 @@ mod files_from {
         assert_eq!(count, 2, "exists.txt + sentinel for missing.txt");
         let names: Vec<&str> = ctx.file_list().iter().map(|e| e.name()).collect();
         assert!(names.contains(&"exists.txt"));
-        assert!(!names.contains(&"."), "no implied root . for a non-anchored list");
+        assert!(
+            !names.contains(&"."),
+            "no implied root . for a non-anchored list"
+        );
 
         // The sentinel entry should have mode == 0.
         let sentinel = ctx
