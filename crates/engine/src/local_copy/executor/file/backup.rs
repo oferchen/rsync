@@ -10,7 +10,10 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use crate::local_copy::LocalCopyError;
+use crate::local_copy::context::BackupStrategy;
 use crate::local_copy::create_symlink;
+#[cfg(unix)]
+use crate::local_copy::map_metadata_error;
 
 /// Computes the backup file path for a destination file.
 ///
@@ -74,23 +77,109 @@ pub fn compute_backup_path(
     base
 }
 
-/// Copies a file or recreates a symlink at the backup path.
-// upstream: backup.c:make_backup() - backup creation
+/// Copies a regular file, recreates a symlink, or re-materialises a
+/// device/FIFO/socket node at the backup path.
+///
+/// Returns the [`BackupStrategy`] that placed the backup, or `None` when the
+/// entry is a non-regular file that upstream declines to back up (mirrors
+/// `backup.c:306-317`, where `make_backup` returns 3 and leaves no backup:
+/// a device without `am_root && --devices`, or a special without
+/// `--specials`).
+// upstream: backup.c:make_backup() - copy-tree fallback (COPY / SYMLINK /
+// DEVICE branches). Device and special nodes are recreated via do_mknod_at
+// (backup.c:278-285), gated on am_root+preserve_devices / preserve_specials.
 pub(crate) fn copy_entry_to_backup(
     source: &Path,
     backup_path: &Path,
     file_type: fs::FileType,
-) -> Result<(), LocalCopyError> {
+    devices_enabled: bool,
+    specials_enabled: bool,
+    fake_super: bool,
+) -> Result<Option<BackupStrategy>, LocalCopyError> {
     if file_type.is_file() {
         fs::copy(source, backup_path)
             .map_err(|error| LocalCopyError::io("create backup", backup_path, error))?;
-    } else if file_type.is_symlink() {
+        return Ok(Some(BackupStrategy::Copy));
+    }
+    if file_type.is_symlink() {
         let target = fs::read_link(source)
             .map_err(|error| LocalCopyError::io("read symbolic link", source, error))?;
         create_symlink(&target, source, backup_path)
             .map_err(|error| LocalCopyError::io("create symbolic link", backup_path, error))?;
+        return Ok(Some(BackupStrategy::Symlink));
     }
-    Ok(())
+    #[cfg(unix)]
+    {
+        copy_special_to_backup(
+            source,
+            backup_path,
+            devices_enabled,
+            specials_enabled,
+            fake_super,
+        )
+    }
+    #[cfg(not(unix))]
+    {
+        // Native Windows has no device/FIFO/socket nodes to back up; upstream's
+        // do_mknod path is Unix-only, so there is nothing to recreate here.
+        let _ = (
+            source,
+            backup_path,
+            devices_enabled,
+            specials_enabled,
+            fake_super,
+        );
+        Ok(None)
+    }
+}
+
+/// Re-materialises a device, FIFO, or socket node at `backup_path` from the
+/// existing destination node at `source`, mirroring upstream
+/// `backup.c:278-285`.
+///
+/// Returns `Some(BackupStrategy::Device)` once the node is recreated (upstream
+/// emits `make_backup: DEVICE` for both devices and specials), or `None` when
+/// the preserve gates decline it (upstream `make_backup` returns 3 without
+/// placing a backup). Under `--fake-super` the node is virtualised as a `0600`
+/// placeholder carrying the `%stat` xattr, matching `syscall.c:do_mknod()`'s
+/// `am_root < 0` branch.
+// upstream: backup.c:278 - `(am_root && preserve_devices && IS_DEVICE(mode))
+// || (preserve_specials && IS_SPECIAL(mode))` gates `do_mknod_at`. am_root is
+// non-zero for real root, --super, and --fake-super (options.c:90).
+#[cfg(unix)]
+fn copy_special_to_backup(
+    source: &Path,
+    backup_path: &Path,
+    devices_enabled: bool,
+    specials_enabled: bool,
+    fake_super: bool,
+) -> Result<Option<BackupStrategy>, LocalCopyError> {
+    use std::os::unix::fs::FileTypeExt;
+
+    let source_meta = fs::symlink_metadata(source)
+        .map_err(|error| LocalCopyError::io("stat backup source", source, error))?;
+    let source_type = source_meta.file_type();
+    let is_device = source_type.is_char_device() || source_type.is_block_device();
+
+    let should_backup = if is_device {
+        (::metadata::am_root() || fake_super) && devices_enabled
+    } else if source_type.is_fifo() || source_type.is_socket() {
+        specials_enabled
+    } else {
+        false
+    };
+    if !should_backup {
+        return Ok(None);
+    }
+
+    if is_device {
+        ::metadata::create_device_node_with_fake_super(backup_path, &source_meta, fake_super)
+            .map_err(map_metadata_error)?;
+    } else {
+        ::metadata::create_fifo_with_fake_super(backup_path, &source_meta, fake_super)
+            .map_err(map_metadata_error)?;
+    }
+    Ok(Some(BackupStrategy::Device))
 }
 
 #[cfg(test)]
