@@ -72,9 +72,11 @@ fn parse_exclude_keyword() {
 }
 
 #[test]
-fn parse_empty_returns_error() {
+fn parse_empty_is_noop() {
+    // upstream: exclude.c:1107 parse_rule_tok returns NULL for an empty rule
+    // string, so a blank `--filter` value adds nothing and exits 0.
     let result = parse_filter_directive(OsStr::new(""));
-    assert!(result.is_err());
+    assert!(matches!(result, Ok(FilterDirective::Noop)));
 }
 
 #[test]
@@ -656,8 +658,13 @@ fn old_prefix_minus_without_space_is_raw_pattern() {
 }
 
 #[test]
-fn old_prefix_empty_is_error() {
-    assert!(parse_old_prefix_rule("", FilterRuleKind::Exclude).is_err());
+fn old_prefix_empty_is_noop() {
+    // upstream: exclude.c:1107 - a blank `--exclude`/`--include` value adds
+    // nothing (exit 0), so an empty old-prefix rule is a no-op, not an error.
+    assert!(matches!(
+        parse_old_prefix_rule("", FilterRuleKind::Exclude),
+        Ok(FilterDirective::Noop)
+    ));
 }
 
 #[test]
