@@ -249,6 +249,31 @@ pub(super) struct ServerLongFlags {
     /// the flist at protocol < 30 (flist.c:2468); protocol >= 30 always sends
     /// them (flist.c:2257-2258).
     pub(super) no_implied_dirs: bool,
+
+    /// Whether the client forwarded `--no-r` (upstream `recurse = 0`).
+    ///
+    /// upstream: options.c:2750-2753 - `if (xfer_dirs && !recurse &&
+    /// delete_mode && am_sender) args[ac++] = "--no-r"`. A client running
+    /// `-d --delete` (e.g. `--files-from --delete`) forwards `--no-r` so the
+    /// remote receiver can delete with `-d` sans `-r`; the server-side popt
+    /// table clears `recurse` (options.c:623 `{"no-r", ..., &recurse, 0}`).
+    pub(super) no_recurse: bool,
+
+    /// Whether the client forwarded `--no-W` (upstream `whole_file = 0`).
+    ///
+    /// upstream: options.c:2955-2959 - under `--inplace`, `if (sparse_files &&
+    /// !whole_file && am_sender) args[ac++] = "--no-W"` works around an older
+    /// remote bug for `--inplace --sparse`. The server-side popt table clears
+    /// `whole_file` (options.c:746 `{"no-W", ..., &whole_file, 0}`).
+    pub(super) no_whole_file: bool,
+
+    /// Whether the client forwarded `--no-relative` (upstream `relative_paths = 0`).
+    ///
+    /// upstream: options.c:2962-2973 - when `files_from` is active and
+    /// `!relative_paths`, the client emits `--no-relative`. The server-side
+    /// popt table clears `relative_paths` (options.c:693 `{"no-relative", ...,
+    /// &relative_paths, 0}`).
+    pub(super) no_relative: bool,
 }
 
 /// Parses all long-form flags from the server argument list.
@@ -306,6 +331,9 @@ pub(super) fn parse_server_long_flags(args: &[OsString]) -> ServerLongFlags {
         mkpath: false,
         list_only: false,
         no_implied_dirs: false,
+        no_recurse: false,
+        no_whole_file: false,
+        no_relative: false,
     };
 
     let mut idx = 0;
@@ -335,6 +363,16 @@ pub(super) fn parse_server_long_flags(args: &[OsString]) -> ServerLongFlags {
             // forwarded to the sender on a pull. The server-side sender must omit
             // implied parent dirs from the flist at protocol < 30.
             "--no-implied-dirs" => flags.no_implied_dirs = true,
+            // upstream: options.c:623 / 2750-2753 - `--no-r` clears `recurse`
+            // on the server-side popt table. A client running `-d --delete`
+            // forwards it so the remote can delete with `-d` sans `-r`.
+            "--no-r" => flags.no_recurse = true,
+            // upstream: options.c:746 / 2955-2959 - `--no-W` clears `whole_file`
+            // so `--inplace --sparse` streams a delta instead of the whole file.
+            "--no-W" => flags.no_whole_file = true,
+            // upstream: options.c:693 / 2962-2973 - `--no-relative` clears
+            // `relative_paths` when the client used `--files-from` without `-R`.
+            "--no-relative" => flags.no_relative = true,
             "--from0" => flags.from0 = true,
             "--inplace" => flags.inplace = true,
             // upstream: options.c:1722-1726 - OPT_APPEND increments append_mode
@@ -611,6 +649,13 @@ pub(super) fn is_known_server_long_flag(arg: &str) -> bool {
             | "--no-msgs2stderr"
             | "--qsort"
             | "--no-implied-dirs"
+            // upstream: options.c:2753/2959/2973 - server_options() emits these
+            // negations; the server-side popt table clears recurse/whole_file/
+            // relative_paths (options.c:623/746/693). Recognise them so they are
+            // not mistaken for positional destination paths.
+            | "--no-r"
+            | "--no-W"
+            | "--no-relative"
             | "--from0"
             | "--inplace"
             | "--append"
