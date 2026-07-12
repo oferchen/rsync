@@ -38,6 +38,27 @@ use super::GeneratorContext;
 #[cfg(all(unix, test))]
 pub(super) use self::entry::rdev_to_major_minor;
 
+/// Marks a directory entry as an implied parent directory on the wire.
+///
+/// upstream: flist.c:1949 - `send_implied_dirs()` sets each implied parent's
+/// flags to `(flags | FLAG_IMPLIED_DIR) & ~(FLAG_TOP_DIR | FLAG_CONTENT_DIR)`,
+/// clearing CONTENT_DIR so the receiver does NOT scan the dir for `--delete`.
+/// upstream: flist.c:2419 - the `--files-from`/`--relative` transfer-root `.`
+/// is sent the same way (`& ~FLAG_CONTENT_DIR`). At encode time (flist.c:426)
+/// a dir with FLAG_IMPLIED_DIR and no FLAG_CONTENT_DIR serializes as
+/// `XMIT_TOP_DIR | XMIT_NO_CONTENT_DIR`, which the receiver decodes back to
+/// FLAG_IMPLIED_DIR (flist.c:1117-1118) - never FLAG_CONTENT_DIR. In oc's flat
+/// encoding that wire pair is `top_dir = true` + `content_dir = false`
+/// (write/xflags.rs:93,284). A real content dir keeps `content_dir = true`.
+///
+/// Marking implied parents as content dirs (the old default) makes a real
+/// upstream receiver scan them for `--delete` and over-delete stale files
+/// upstream preserves (data loss).
+fn mark_implied_dir(entry: &mut FileEntry) {
+    entry.set_top_dir(true);
+    entry.set_content_dir(false);
+}
+
 impl GeneratorContext {
     /// Builds the file list from the specified paths.
     ///
@@ -202,8 +223,7 @@ impl GeneratorContext {
             if let Ok(meta) = std::fs::symlink_metadata(base_dir) {
                 if meta.is_dir() {
                     let mut dot_entry = self.create_entry(base_dir, PathBuf::from("."), &meta)?;
-                    dot_entry.set_top_dir(true);
-                    dot_entry.set_content_dir(false);
+                    mark_implied_dir(&mut dot_entry);
                     self.push_file_item(dot_entry, base_dir.to_path_buf());
                 }
             }
@@ -279,9 +299,13 @@ impl GeneratorContext {
                         let full = entry.base.join(&ancestor);
                         if let Ok(meta) = std::fs::symlink_metadata(&full) {
                             if meta.is_dir() {
-                                if let Ok(file_entry) =
+                                if let Ok(mut file_entry) =
                                     self.create_entry(&full, ancestor.clone(), &meta)
                                 {
+                                    // upstream: flist.c:1949 - implied parents clear
+                                    // FLAG_CONTENT_DIR so a real upstream receiver does
+                                    // not scan them for --delete (over-delete data loss).
+                                    mark_implied_dir(&mut file_entry);
                                     self.push_file_item(file_entry, full);
                                 }
                             }
@@ -418,7 +442,10 @@ impl GeneratorContext {
                 Ok(m) if m.is_dir() => m,
                 _ => continue,
             };
-            if let Ok(entry) = self.create_entry(&full, relative_ancestor, &meta) {
+            if let Ok(mut entry) = self.create_entry(&full, relative_ancestor, &meta) {
+                // upstream: flist.c:1949 - implied parents clear FLAG_CONTENT_DIR
+                // so a real upstream receiver does not scan them for --delete.
+                mark_implied_dir(&mut entry);
                 self.push_file_item(entry, full);
             }
         }
