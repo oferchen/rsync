@@ -12,20 +12,24 @@
 //! default-off flag and only when the basis is duplicate-free
 //! ([`DeltaSignatureIndex::has_duplicate_blocks`] is `false`).
 //!
-//! These tests pin the two halves of that contract:
+//! These tests pin the contract:
 //!
-//! 1. **Eligible inputs are byte-identical.** For a duplicate-free basis whose
-//!    source is an in-place edit at every range-boundary offset - the exact
-//!    layout where a naive split would straddle a match - the chunked wire
+//! 1. **Boundary-aligned edits are byte-identical.** For a duplicate-free basis
+//!    whose source is an in-place edit at every range-boundary offset - the
+//!    exact layout where a naive split would straddle a match - the chunked wire
 //!    bytes must equal the sequential wire bytes for chunk counts 2, 4, and 8.
-//!    This is the guarantee the opt-in relies on. If the adjacent-literal
-//!    coalescing or the boundary handling regresses, this equality breaks.
-//! 2. **Ineligible inputs are documented as divergent.** For a
-//!    duplicate-heavy basis the chunked and sequential wire bytes must
-//!    *differ*, pinning the boundary the duplicate-free gate exists to avoid:
-//!    a future change cannot silently make the parallel path look transparent
-//!    on duplicate content and thereby hide the divergence the gate guards
-//!    against.
+//! 2. **Long literal runs straddling a boundary are byte-identical.** A literal
+//!    run longer than one flush cadence that crosses a range seam must be
+//!    re-framed to the sequential scan's cadence, so the wire bytes match for
+//!    chunk counts 2, 4, and 8. This is the case the literal re-segmentation
+//!    exists for.
+//! 3. **Duplicate-heavy inputs are documented as divergent.** For a
+//!    duplicate-heavy basis the chunked and sequential wire bytes must *differ*,
+//!    pinning the boundary the duplicate-free gate exists to avoid.
+//! 4. **Shifted content is documented as divergent.** Even on a duplicate-free
+//!    basis, content shifted off the block grid can leave a match straddling an
+//!    aligned range boundary, so the wire bytes still differ. This residual is
+//!    why the parallel path remains opt-in rather than the default.
 //!
 //! The wire serialization mirrors `transfer::generator::script_to_wire_delta`
 //! feeding `protocol::wire::write_token_stream`, exactly as
@@ -193,6 +197,73 @@ fn parallel_delta_dup_free_is_wire_identical() {
     }
 }
 
+/// A long literal run that straddles a range boundary must be framed
+/// byte-identically to the single-pass sequential scan.
+///
+/// This is the exact case the literal re-segmentation exists for: each parallel
+/// range restarts the `block_len + CHUNK_SIZE` flush cadence at its own start,
+/// so before re-segmentation a literal run longer than one cadence that crosses
+/// a range seam was split into different length-prefix chunks than the
+/// sequential scan (same data, same total/literal counts, different wire
+/// bytes). After coalescing every adjacent-literal run and re-splitting it at
+/// the shared cadence from the run start, the framing - and hence the wire
+/// bytes - must equal the sequential scan for chunk counts 2, 4, and 8.
+#[test]
+fn parallel_delta_dup_free_long_literal_is_wire_identical() {
+    let basis = lcg_bytes(0x51EA_A7E1_0DE1_2026, DUP_FREE_LEN);
+    let index = build_index(&basis, BLOCK_LEN);
+    assert!(
+        !index.has_duplicate_blocks(),
+        "random basis must be duplicate-free so the parallel path is eligible"
+    );
+
+    // 200 KiB and 1 MiB rewrites, both far longer than one flush cadence
+    // (block_len + 32 KiB), so the straddling run spans many cadence tokens.
+    for &run_len in &[200 * 1024usize, 1024 * 1024] {
+        // Overwrite a contiguous region centered on n/2 - a range boundary for
+        // chunks in {2,4,8} - so the whole rewrite forms one literal run that
+        // straddles the seam.
+        let mut source = basis.clone();
+        let start = DUP_FREE_LEN / 2 - run_len / 2;
+        for b in source[start..start + run_len].iter_mut() {
+            *b ^= 0xff;
+        }
+
+        let generator = DeltaGenerator::new();
+        let sequential = generator
+            .generate(Cursor::new(source.clone()), &index)
+            .expect("sequential");
+        let seq_wire = script_to_wire_bytes(&sequential, index.block_length());
+
+        // Sanity: the rewrite must leave the bulk of the file matched.
+        assert!(
+            sequential.copy_bytes() > (DUP_FREE_LEN as u64) * 8 / 10,
+            "run_len={run_len}: rewrite must leave most of the file matched \
+             (copy_bytes={})",
+            sequential.copy_bytes()
+        );
+
+        for &chunks in &[2usize, 4, 8] {
+            let chunked = generator
+                .generate_chunked(&source, &index, chunks)
+                .expect("chunked");
+            let chunked_wire = script_to_wire_bytes(&chunked, index.block_length());
+
+            assert_eq!(
+                chunked_wire, seq_wire,
+                "chunked wire bytes must equal sequential for chunks={chunks}, \
+                 run_len={run_len} (long literal run straddling a range boundary)"
+            );
+            assert_eq!(
+                reconstruct(&basis, &index, &chunked),
+                source,
+                "chunked reconstruction must equal source for chunks={chunks}, \
+                 run_len={run_len}"
+            );
+        }
+    }
+}
+
 /// Source length for the duplicate-heavy fixture: large enough to split into
 /// several ranges (> 2x the 1 MiB per-range floor).
 const DUP_HEAVY_LEN: usize = 4 * 1024 * 1024;
@@ -249,5 +320,63 @@ fn parallel_delta_dup_heavy_diverges() {
         "duplicate-heavy basis must produce divergent chunked vs sequential wire \
          bytes; this is exactly why the wiring gates the parallel path on a \
          duplicate-free basis"
+    );
+}
+
+/// The parallel scan still **diverges** from the sequential scan on *shifted*
+/// duplicate-free content, pinning the residual that keeps the parallel path
+/// opt-in (not the default).
+///
+/// Block-aligned ranges only guarantee no matched block straddles a boundary
+/// when matches are themselves block-aligned in source space (in-place edits,
+/// source == basis, literal rewrites). When content is shifted - here 13 bytes
+/// inserted at the midpoint - the second half's matches land at non-aligned
+/// source offsets, so a match can still straddle an aligned range boundary: the
+/// block starting just before the boundary needs bytes on the far side that its
+/// range cannot see, and the far range starts mid-match, so that one block
+/// degrades to literals while the sequential scan copies it. Reconstruction
+/// stays byte-exact; the wire bytes gain one extra literal block per straddled
+/// boundary. Until a seam-match-repair pass closes this gap the default stays
+/// off and callers opt in explicitly.
+#[test]
+fn parallel_delta_dup_free_shifted_content_diverges() {
+    let basis = lcg_bytes(0x5555_1234_ABCD_0001, DUP_FREE_LEN);
+    let index = build_index(&basis, BLOCK_LEN);
+    assert!(
+        !index.has_duplicate_blocks(),
+        "random basis must be duplicate-free"
+    );
+
+    // Insert 13 bytes at the midpoint so the entire second half is shifted and
+    // its matches fall at non-block-aligned source offsets.
+    let mid = DUP_FREE_LEN / 2;
+    let mut source = Vec::with_capacity(DUP_FREE_LEN + 13);
+    source.extend_from_slice(&basis[..mid]);
+    source.extend_from_slice(&[0x5Au8; 13]);
+    source.extend_from_slice(&basis[mid..]);
+
+    let generator = DeltaGenerator::new();
+    let sequential = generator
+        .generate(Cursor::new(source.clone()), &index)
+        .expect("sequential");
+    let seq_wire = script_to_wire_bytes(&sequential, index.block_length());
+
+    // Four ranges: the shifted second half crosses interior boundaries whose
+    // aligned position no longer coincides with the shifted match grid.
+    let chunked = generator
+        .generate_chunked(&source, &index, 4)
+        .expect("chunked");
+    let chunked_wire = script_to_wire_bytes(&chunked, index.block_length());
+
+    // Both still reconstruct the source: the divergence is token framing, not
+    // correctness.
+    assert_eq!(reconstruct(&basis, &index, &chunked), source);
+    assert_eq!(reconstruct(&basis, &index, &sequential), source);
+
+    assert_ne!(
+        chunked_wire, seq_wire,
+        "shifted duplicate-free content must still diverge (a shifted match \
+         straddles an aligned range boundary); this residual is why the parallel \
+         path stays opt-in rather than the default"
     );
 }

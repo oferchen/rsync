@@ -34,6 +34,22 @@ const DEFAULT_BUFFER_LEN: usize = 128 * 1024;
 /// upstream: rsync.h:158, match.c:339
 const CHUNK_SIZE: usize = 32 * 1024;
 
+/// The single source of truth for the literal-flush cadence.
+///
+/// The sequential scan ([`DeltaGenerator::generate`]) flushes its pending
+/// literal accumulator into one `Literal` token every time it reaches this many
+/// bytes (`pending_literals.len() >= literal_flush_cadence(block_len)`), so a
+/// match-free region is framed as a run of fixed-size literal tokens (the final
+/// partial run aside). The parallel post-pass ([`resegment_literals`]) re-splits
+/// its coalesced literal runs at exactly this same cadence, so both paths frame
+/// literals identically by construction rather than by coincidence.
+///
+/// upstream: match.c:339-340 (`if (a_bytes >= CHUNK_SIZE + blength)`).
+#[inline]
+const fn literal_flush_cadence(block_len: usize) -> usize {
+    block_len + CHUNK_SIZE
+}
+
 /// Minimum bytes per parallel range in [`DeltaGenerator::generate_chunked`].
 ///
 /// Ranges below this size are not worth a rayon task: the per-range boundary
@@ -66,6 +82,77 @@ fn flush_seq_match_run(
         }
     }
     *run_len = 0;
+}
+
+/// Re-frames a concatenated parallel token stream so its literal segmentation
+/// is byte-identical to the single-pass sequential scan.
+///
+/// The parallel scan ([`DeltaGenerator::generate_chunked`]) splits the source
+/// into disjoint ranges scanned independently; each range restarts the
+/// [`literal_flush_cadence`] flush counter at its own start. A literal run that
+/// straddles a range boundary is therefore re-segmented into differently sized
+/// `Literal` tokens than the sequential scan, which sees the run as one
+/// continuous cadence from its start. This normalizer removes that divergence:
+/// it coalesces every maximal run of adjacent `Literal` tokens into one payload
+/// and re-splits it at exact `literal_flush_cadence(block_len)` boundaries from
+/// the run start - the identical rule the sequential path applies via the shared
+/// [`literal_flush_cadence`]. `Copy` tokens (and their order) are preserved
+/// untouched, so the eligible (duplicate-free, no straddling match) case becomes
+/// wire-identical to sequential by construction.
+///
+/// # Invariant
+///
+/// For a duplicate-free basis whose matched blocks never straddle a range
+/// boundary the `Copy` sequence already equals the sequential scan; after this
+/// normalization the full token stream - and hence the wire bytes - equals the
+/// sequential scan exactly.
+fn resegment_literals(tokens: Vec<DeltaToken>, block_len: usize) -> Vec<DeltaToken> {
+    let cadence = literal_flush_cadence(block_len);
+    let mut out: Vec<DeltaToken> = Vec::with_capacity(tokens.len());
+    // Accumulates the current maximal run of adjacent literal bytes. A run of a
+    // single literal token is moved in with zero copies; multi-token runs are
+    // concatenated before re-splitting.
+    let mut run: Option<Vec<u8>> = None;
+    for token in tokens {
+        match token {
+            DeltaToken::Literal(bytes) => match run.as_mut() {
+                Some(acc) => acc.extend_from_slice(&bytes),
+                None => run = Some(bytes),
+            },
+            copy => {
+                if let Some(acc) = run.take() {
+                    push_split_literal_run(&mut out, acc, cadence);
+                }
+                out.push(copy);
+            }
+        }
+    }
+    if let Some(acc) = run.take() {
+        push_split_literal_run(&mut out, acc, cadence);
+    }
+    out
+}
+
+/// Splits one coalesced literal `run` into `Literal` tokens at exact `cadence`
+/// boundaries from the run start, mirroring the sequential scan's threshold
+/// flush (`pending_literals.len() >= cadence` emits a `cadence`-byte token; the
+/// trailing remainder flushes at the next match or EOF). A run at or below one
+/// cadence is emitted whole (and moved without copying).
+fn push_split_literal_run(out: &mut Vec<DeltaToken>, run: Vec<u8>, cadence: usize) {
+    if run.is_empty() {
+        return;
+    }
+    if run.len() <= cadence {
+        out.push(DeltaToken::Literal(run));
+        return;
+    }
+    let len = run.len();
+    let mut start = 0usize;
+    while len - start > cadence {
+        out.push(DeltaToken::Literal(run[start..start + cadence].to_vec()));
+        start += cadence;
+    }
+    out.push(DeltaToken::Literal(run[start..].to_vec()));
 }
 
 /// Produces rsync-style delta tokens by comparing an input stream against a signature index.
@@ -279,7 +366,7 @@ impl DeltaGenerator {
                 offset += 1;
 
                 // upstream: match.c:339-340 - flush early to bound memory growth
-                if pending_literals.len() >= block_len + CHUNK_SIZE {
+                if pending_literals.len() >= literal_flush_cadence(block_len) {
                     literal_bytes += pending_literals.len() as u64;
                     total_bytes += pending_literals.len() as u64;
                     let filled =
@@ -715,50 +802,42 @@ impl DeltaGenerator {
     /// `source` byte-for-byte: each range's tokens independently reconstruct
     /// that range's bytes, and `DeltaToken::Copy { index, .. }` carries the
     /// absolute basis block index, so it is position-independent across the
-    /// concatenation boundary. A basis block straddling a range boundary is
-    /// simply emitted as literal bytes by the adjoining ranges - a small
-    /// compression cost (bounded by `block_length` per boundary), never a
-    /// reconstruction error. For inputs too small to split usefully this
+    /// concatenation boundary. For inputs too small to split usefully this
     /// delegates to the sequential [`Self::generate`], which keeps pruning on.
     ///
     /// # Wire transparency
     ///
     /// Reconstruction and the total/literal byte counts are identical to the
-    /// pruned sequential [`Self::generate`] on **every** input: concatenating
-    /// (and coalescing) the per-range token streams only ever joins adjacent
-    /// literal bytes, never moving a byte between the matched and literal
-    /// tallies.
+    /// pruned sequential [`Self::generate`] on **every** input: joining and
+    /// re-segmenting the per-range token streams only ever moves adjacent
+    /// literal bytes between `Literal` tokens, never a byte between the matched
+    /// and literal tallies.
     ///
-    /// The emitted *token* stream (the Copy/Literal sequence) equals the pruned
-    /// sequential output only when **both** hold:
+    /// The emitted *token* stream (the Copy/Literal sequence) - and therefore
+    /// the wire bytes - equals the pruned sequential output when the basis is
+    /// duplicate-free ([`DeltaSignatureIndex::has_duplicate_blocks`] is
+    /// `false`). Two mechanisms make this hold:
     ///
-    /// 1. the basis is duplicate-free
-    ///    ([`DeltaSignatureIndex::has_duplicate_blocks`] is `false`) - with
-    ///    every content unique, disabling the prune cannot change which basis
-    ///    block a source window resolves to; and
-    /// 2. no matched basis block straddles a range boundary - a straddling
-    ///    match cannot be completed by either adjoining range and degrades to
-    ///    literals here while the sequential scan copies it.
+    /// 1. **Block-aligned ranges.** Every interior range boundary is floored to
+    ///    a basis block edge, so no matched basis block straddles a boundary: a
+    ///    straddling match cannot be completed by either adjoining range and
+    ///    would degrade to literals here while the sequential scan copies it.
+    ///    With alignment every block lies wholly inside one range, and (the
+    ///    basis being duplicate-free) each source window resolves to the same
+    ///    block the pruned sequential scan picks, so the `Copy` set and order
+    ///    are identical.
+    /// 2. **Literal re-segmentation.** [`resegment_literals`] coalesces every
+    ///    maximal run of adjacent `Literal` tokens and re-splits it at the
+    ///    shared [`literal_flush_cadence`] from the run start - the identical
+    ///    rule the sequential scan applies inline - so a literal run that
+    ///    crosses a range boundary is framed exactly as the single-pass scan
+    ///    frames it.
     ///
-    /// Condition 2 holds for in-place edits of a same-length basis (matches
-    /// stay block-aligned and the boundary either coincides with a block edge
-    /// or lands in an edited, non-matching block). It can fail for shifted
-    /// content, so callers must treat the result as potentially divergent
-    /// (opt-in only, never advertised as byte-identical on arbitrary inputs)
-    /// and only engage the parallel path behind a default-off flag with the
-    /// duplicate-free gate.
-    ///
-    /// When conditions 1 and 2 hold the scan is token-identical to the
-    /// sequential path, and the adjacent-literal coalescing in the
-    /// concatenation loop makes the wire byte stream identical in the common
-    /// case. One honest residual remains: the sequential scan flushes pending
-    /// literals every `block_length + CHUNK_SIZE` bytes as one continuous run,
-    /// whereas each range restarts that flush cadence at its start, so where a
-    /// range boundary lands inside a long literal run the literal-token framing
-    /// can differ by a few length-prefix bytes at a chunk seam. This rare
-    /// literal-run segmentation seam never changes the reconstructed bytes or
-    /// the total/literal counts - only where the per-token length prefixes fall
-    /// as the wire encoder re-chunks the literal payload.
+    /// On a duplicate-heavy basis the disabled per-range prune resolves
+    /// duplicate siblings to different `Copy` indices than the pruned sequential
+    /// scan, so the token stream can still diverge; callers gate the parallel
+    /// path on the duplicate-free predicate for that reason. Reconstruction
+    /// stays byte-exact regardless.
     ///
     /// # Arguments
     ///
@@ -804,15 +883,25 @@ impl DeltaGenerator {
         // writes it back - it stays immutable across the concurrent scan.
         index.reset_consumed();
 
-        // Partition into `chunks` contiguous, non-overlapping ranges.
-        let base = n / chunks;
+        // Partition into `chunks` contiguous, non-overlapping ranges with every
+        // interior boundary aligned to a basis block edge. Alignment is what
+        // makes the parallel `Copy` set identical to the sequential scan on a
+        // duplicate-free basis: a boundary landing mid-block would leave that
+        // block unmatchable by either adjoining range (it degrades to literals
+        // while the sequential scan copies it). With block-aligned boundaries
+        // every basis block lies wholly inside one range, so no match straddles.
+        // `base` is the per-range stride floored to a whole block; the final
+        // range absorbs the remainder (including any trailing partial block).
+        // `base * i` never exceeds `n`, so the multiply cannot overflow.
+        let base = (n / chunks / block_len) * block_len;
         let mut ranges = Vec::with_capacity(chunks);
         let mut start = 0usize;
-        for i in 0..chunks {
-            let end = if i + 1 == chunks { n } else { start + base };
+        for i in 1..chunks {
+            let end = i * base;
             ranges.push((start, end));
             start = end;
         }
+        ranges.push((start, n));
 
         // Scan every range concurrently against the shared read-only index.
         // rayon's ordered `collect` preserves source order, so no manual
@@ -824,23 +913,6 @@ impl DeltaGenerator {
 
         // Concatenate token streams in source order. Literal payloads are
         // moved (not copied) out of each per-range script.
-        //
-        // Coalesce a trailing `Literal` of one range with the leading
-        // `Literal` of the next when a range boundary lands inside an
-        // unmatched region: the previous range drains its tail bytes as a
-        // literal and the next range emits its head bytes as a second literal,
-        // but the sequential [`Self::generate`] scan - which sees the region
-        // as one contiguous run - would not split at that exact point. Merging
-        // the two halves removes that boundary double-literal, so for a
-        // duplicate-free basis whose matched blocks never straddle a range
-        // boundary the wire byte stream matches the sequential scan in the
-        // common case. It is not unconditionally byte-identical: the sequential
-        // scan flushes literals every `block_len + CHUNK_SIZE` bytes as one
-        // continuous run while each range restarts that cadence, so inside a
-        // long literal run the length-prefix framing can differ by a few bytes
-        // at a chunk seam. Merging only ever concatenates adjacent literal
-        // bytes, so reconstruction and the total/literal byte counts are
-        // unaffected on every input.
         let mut tokens: Vec<DeltaToken> = Vec::new();
         let mut total_bytes = 0u64;
         let mut literal_bytes = 0u64;
@@ -848,17 +920,21 @@ impl DeltaGenerator {
             let script = script?;
             total_bytes += script.total_bytes();
             literal_bytes += script.literal_bytes();
-            let mut range_tokens = script.into_tokens().into_iter();
-            if let Some(first) = range_tokens.next() {
-                match (tokens.last_mut(), first) {
-                    (Some(DeltaToken::Literal(prev)), DeltaToken::Literal(next)) => {
-                        prev.extend_from_slice(&next);
-                    }
-                    (_, first) => tokens.push(first),
-                }
-                tokens.extend(range_tokens);
-            }
+            tokens.extend(script.into_tokens());
         }
+
+        // Re-frame the joined stream's literal runs to the sequential scan's
+        // cadence. Each range restarts the `literal_flush_cadence` counter at
+        // its own start, so a literal run crossing a range boundary is split at
+        // different offsets than [`Self::generate`] would; the boundary also
+        // leaves adjacent `Literal` tokens where the sequential scan sees one
+        // continuous run. [`resegment_literals`] coalesces every such run and
+        // re-splits it at the shared cadence, making the framing - and hence the
+        // wire bytes - identical to the sequential scan for the eligible
+        // (duplicate-free, no straddling match) case. It only ever joins and
+        // re-splits adjacent literal bytes, so reconstruction and the
+        // total/literal byte counts are unchanged on every input.
+        let tokens = resegment_literals(tokens, block_len);
 
         Ok(DeltaScript::new(tokens, total_bytes, literal_bytes))
     }
@@ -1510,5 +1586,108 @@ mod tests {
             index.has_duplicate_blocks(),
             "repeated block content must be flagged as duplicate"
         );
+    }
+
+    /// Block length used by the resegmenter unit tests; keeps `cadence` a fixed,
+    /// small-ish value while exercising the shared [`literal_flush_cadence`].
+    const RESEG_BLOCK_LEN: usize = 700;
+
+    /// A literal token of `len` bytes tagged with `marker` so concatenation
+    /// order is verifiable.
+    fn lit(marker: u8, len: usize) -> DeltaToken {
+        DeltaToken::Literal(vec![marker; len])
+    }
+
+    /// Concatenates every `Literal` payload in `tokens` in order.
+    fn literal_bytes_of(tokens: &[DeltaToken]) -> Vec<u8> {
+        let mut out = Vec::new();
+        for t in tokens {
+            if let DeltaToken::Literal(b) = t {
+                out.extend_from_slice(b);
+            }
+        }
+        out
+    }
+
+    #[test]
+    fn resegment_coalesces_cross_seam_run_and_resplits_at_cadence() {
+        let cadence = literal_flush_cadence(RESEG_BLOCK_LEN);
+        // Three adjacent literals (as if drained across two range seams) whose
+        // payloads concatenate to 3*cadence + 5 bytes.
+        let total = 3 * cadence + 5;
+        let input = vec![
+            lit(0xAB, 100),
+            lit(0xAB, cadence + 200),
+            lit(0xAB, total - 100 - (cadence + 200)),
+        ];
+        let expected_concat = literal_bytes_of(&input);
+
+        let out = resegment_literals(input, RESEG_BLOCK_LEN);
+
+        let lens: Vec<usize> = out.iter().map(DeltaToken::byte_len).collect();
+        assert_eq!(
+            lens,
+            vec![cadence, cadence, cadence, 5],
+            "a coalesced run must re-split at exact cadence boundaries"
+        );
+        assert_eq!(
+            literal_bytes_of(&out),
+            expected_concat,
+            "re-segmentation must preserve the literal bytes exactly"
+        );
+    }
+
+    #[test]
+    fn resegment_exact_cadence_multiple_has_no_trailing_partial() {
+        let cadence = literal_flush_cadence(RESEG_BLOCK_LEN);
+        // A single literal of exactly 2*cadence must become two full-cadence
+        // tokens, matching the sequential threshold flush (no empty tail).
+        let out = resegment_literals(vec![lit(0x11, 2 * cadence)], RESEG_BLOCK_LEN);
+        let lens: Vec<usize> = out.iter().map(DeltaToken::byte_len).collect();
+        assert_eq!(lens, vec![cadence, cadence]);
+    }
+
+    #[test]
+    fn resegment_sub_cadence_run_is_unchanged() {
+        let out = resegment_literals(vec![lit(0x22, 42)], RESEG_BLOCK_LEN);
+        assert_eq!(out, vec![lit(0x22, 42)]);
+    }
+
+    #[test]
+    fn resegment_preserves_copies_and_splits_runs_between_them() {
+        let cadence = literal_flush_cadence(RESEG_BLOCK_LEN);
+        let input = vec![
+            lit(0x01, cadence + 3),
+            DeltaToken::Copy { index: 7, len: 700 },
+            lit(0x02, 2),
+            DeltaToken::Copy { index: 8, len: 700 },
+        ];
+        let out = resegment_literals(input, RESEG_BLOCK_LEN);
+        assert_eq!(
+            out,
+            vec![
+                lit(0x01, cadence),
+                lit(0x01, 3),
+                DeltaToken::Copy { index: 7, len: 700 },
+                lit(0x02, 2),
+                DeltaToken::Copy { index: 8, len: 700 },
+            ],
+            "copies pass through untouched; each literal run splits independently"
+        );
+    }
+
+    #[test]
+    fn resegment_adjacent_copies_preserved() {
+        let input = vec![
+            DeltaToken::Copy { index: 1, len: 700 },
+            DeltaToken::Copy { index: 2, len: 700 },
+        ];
+        let out = resegment_literals(input.clone(), RESEG_BLOCK_LEN);
+        assert_eq!(out, input);
+    }
+
+    #[test]
+    fn resegment_empty_is_empty() {
+        assert!(resegment_literals(Vec::new(), RESEG_BLOCK_LEN).is_empty());
     }
 }
