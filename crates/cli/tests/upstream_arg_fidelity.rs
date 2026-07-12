@@ -260,9 +260,6 @@ const UPSTREAM_OPTS: &[Opt] = &[
 /// Short forms upstream accepts but oc-rsync currently rejects outright.
 /// Keep in lockstep with the `#[ignore]`d trackers below.
 const KNOWN_SHORT_REJECTED: &[(char, &str)] = &[
-    // upstream options.c:660 `{"modify-window", '@', ...}` - oc wires only the
-    // long form. Fix in flight.
-    ('@', "modify-window short -@ not wired"),
     // upstream options.c:752 `{"block-size", 'B', ...}` - oc declares
     // `--block-size` long-only (no `.short('B')`).
     ('B', "block-size short -B not wired"),
@@ -654,7 +651,6 @@ fn internal_and_daemon_options_are_recognized() {
 
 /// upstream options.c:660 `{"modify-window", '@', POPT_ARG_INT, ...}`.
 #[test]
-#[ignore = "oc divergence: -@ (modify-window short) not wired; use --modify-window"]
 fn modify_window_short_at_is_accepted() {
     recognize(&["-@", "2"]).expect("-@ 2 must be accepted as --modify-window=2");
 }
