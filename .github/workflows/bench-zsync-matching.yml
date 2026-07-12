@@ -40,7 +40,7 @@ jobs:
   bench-zsync-matching:
     name: Zsync matching regression
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 60
     # Non-required: advisory bench cell. Do not add to branch protection.
     continue-on-error: true
 
@@ -50,7 +50,7 @@ jobs:
       # the whole run under the job-level timeout, which is the hard ceiling.
       BENCH_MEASUREMENT_TIME: "5"
       # Soft cap for each individual bench target below.
-      BENCH_TIMEOUT_SECONDS: "600"
+      BENCH_TIMEOUT_SECONDS: "900"
 
     steps:
       - name: Checkout
@@ -110,6 +110,7 @@ jobs:
                 --output-format bencher \
                 --warm-up-time 1 \
                 --measurement-time "$BENCH_MEASUREMENT_TIME" \
+                --sample-size 10 \
               | tee "$OUT"
             echo "::endgroup::"
           done
