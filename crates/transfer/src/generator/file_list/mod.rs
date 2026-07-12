@@ -91,7 +91,17 @@ impl GeneratorContext {
             if !self.try_walk_source_entry(&base, &path)? {
                 continue;
             }
-            if relative_paths {
+            // upstream: flist.c:2257-2258 - `if (relative_paths &&
+            // protocol_version >= 30) implied_dirs = 1;` forces the sender to
+            // emit flagged implied parent dirs at protocol >= 30 regardless of
+            // --no-implied-dirs. At protocol < 30 the flag is honoured
+            // (flist.c:2468 `else if (implied_dirs && ...)`), so
+            // --no-implied-dirs omits the implied parents from the flist and the
+            // receiver recreates them via make_path (generator.c:1317) without
+            // their source metadata. Mirror both: emit when implied dirs are on
+            // OR the protocol forces them.
+            if relative_paths && (!self.config.flags.no_implied_dirs || self.protocol.as_u8() >= 30)
+            {
                 self.emit_implied_parents(&base, &path, &mut implied_ancestors)?;
             }
         }

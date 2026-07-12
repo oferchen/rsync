@@ -163,6 +163,28 @@ pub struct ParsedServerFlags {
     pub one_file_system: u8,
     /// Relative paths (`R` flag, `--relative`).
     pub relative: bool,
+    /// Suppress implied parent directories in `--relative` mode
+    /// (long-form `--no-implied-dirs`, upstream `implied_dirs == 0`).
+    ///
+    /// Stored negated so the `Default` derive leaves it `false` (implied dirs
+    /// on, matching upstream's `int implied_dirs = 1` default, options.c:95).
+    /// Not part of the compact flag string; set via long-form propagation.
+    ///
+    /// The sender's file-list builder emits the implied parent directories of a
+    /// `--relative` source only when this is `false` OR the protocol forces them
+    /// on. Upstream forces `implied_dirs = 1` whenever
+    /// `relative_paths && protocol_version >= 30` (flist.c:2257-2258), so at
+    /// protocol < 30 the flag is honoured and `--no-implied-dirs` omits the
+    /// implied parents from the flist (flist.c:2468 gates the non-incremental
+    /// send on `implied_dirs`). At protocol >= 30 the implied dirs are always
+    /// sent (flagged), regardless of this field.
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `options.c:696` - `{"no-implied-dirs", 0, POPT_ARG_VAL, &implied_dirs, 0, ...}`
+    /// - `flist.c:2257-2258` - protocol >= 30 force-on
+    /// - `flist.c:2468` - `else if (implied_dirs && ...)` send gate
+    pub no_implied_dirs: bool,
     /// Keep partially transferred files (`P` flag, `--partial`).
     pub partial: bool,
     /// Update only newer files (`u` flag, `--update`).

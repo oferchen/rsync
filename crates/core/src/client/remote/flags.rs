@@ -376,6 +376,13 @@ pub(crate) fn apply_common_server_flags(config: &ClientConfig, server_config: &m
         config.delete_mode(),
         config.max_delete()
     );
+    // upstream: flist.c:2257-2258 / options.c:2976 - `--no-implied-dirs` is
+    // forwarded to the remote peer, but the in-process sender half (SSH/daemon
+    // push) builds the wire flist locally and must honour the flag too. Its
+    // generator emits implied parent dirs only when implied_dirs is on OR the
+    // protocol >= 30 forces them. `implied_dirs()` defaults true, so this stays
+    // false (implied dirs on) unless the client passed --no-implied-dirs.
+    server_config.flags.no_implied_dirs = !config.implied_dirs();
     // upstream: options.c:2881-2885 - copy_unsafe_links and safe_links are long-form only
     server_config.flags.copy_unsafe_links = config.copy_unsafe_links();
     server_config.flags.safe_links = config.safe_links();
