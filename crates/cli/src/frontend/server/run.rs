@@ -211,6 +211,24 @@ where
     // must omit the implied parent dirs from the flist at protocol < 30; at
     // protocol >= 30 they are always sent (flist.c:2257-2258).
     config.flags.no_implied_dirs = long_flags.no_implied_dirs;
+    // upstream: options.c:623 / 2750-2753 - `--no-r` clears `recurse` via the
+    // server popt table. The client emits it under `-d --delete` so the remote
+    // can delete with `-d` sans `-r`. It overrides the compact `r` letter that
+    // `ParsedServerFlags::parse` set, so apply it only when forwarded.
+    if long_flags.no_recurse {
+        config.flags.recursive = false;
+    }
+    // upstream: options.c:746 / 2955-2959 - `--no-W` clears `whole_file` so
+    // `--inplace --sparse` streams a delta. Overrides the compact `W` letter.
+    if long_flags.no_whole_file {
+        config.flags.whole_file = false;
+    }
+    // upstream: options.c:693 / 2962-2973 - `--no-relative` clears
+    // `relative_paths` when the client used `--files-from` without `-R`.
+    // Overrides the compact `R` letter.
+    if long_flags.no_relative {
+        config.flags.relative = false;
+    }
     config.flags.numeric_ids = core::server::NumericIds::from_client(long_flags.numeric_ids);
     config.flags.delete = long_flags.delete;
     // upstream: generator.c:124 - --delete-after / --delete-delay both defer the
