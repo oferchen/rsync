@@ -821,6 +821,7 @@ where
 
     let config_inputs = config::ConfigInputs {
         transfer_operands,
+        desired_protocol,
         address_mode,
         connect_program: connect_program.clone(),
         bind_address,

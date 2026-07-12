@@ -331,6 +331,14 @@ fn split_pattern_modifiers(raw: &str) -> (String, bool, bool) {
 /// for both receiver and generator roles: `trust_sender`, `qsort`, `inplace`,
 /// `min_file_size`, `max_file_size`, `do_stats`, `late_delete`, and `itemize`.
 pub(crate) fn apply_common_server_flags(config: &ClientConfig, server_config: &mut ServerConfig) {
+    // upstream: options.c:846 / compat.c:604-607 - `--protocol=N` lowers the
+    // advertised `protocol_version`, capping the negotiated version. Carry the
+    // requested ceiling onto the in-process ServerConfig so the SSH handshake
+    // clamps to it (the daemon path reads config.protocol_version() directly).
+    // Defaults to NEWEST when unset, reproducing the uncapped negotiation.
+    server_config.protocol = config
+        .protocol_version()
+        .unwrap_or(protocol::ProtocolVersion::NEWEST);
     server_config.trust_sender = config.trust_sender();
     server_config.qsort = config.qsort();
     server_config.write.inplace = config.inplace();
