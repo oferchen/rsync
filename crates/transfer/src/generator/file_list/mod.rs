@@ -223,28 +223,41 @@ impl GeneratorContext {
         // `try_walk_source_entry_dedup` to suppress the duplicate top-level
         // walk that would re-emit an implied parent.
         let mut emitted_dirs: HashSet<(PathBuf, PathBuf)> = explicit_dirs.clone();
-        for entry in entries {
-            if let Ok(rel) = entry.path.strip_prefix(&entry.base) {
-                // Walk each ancestor of the relative path and emit a
-                // directory entry when we haven't seen it yet.
-                let mut ancestor = PathBuf::new();
-                for component in rel.parent().into_iter().flat_map(Path::components) {
-                    ancestor.push(component);
-                    let key = (entry.base.clone(), ancestor.clone());
-                    if emitted_dirs.contains(&key) {
-                        continue;
-                    }
-                    let full = entry.base.join(&ancestor);
-                    if let Ok(meta) = std::fs::symlink_metadata(&full) {
-                        if meta.is_dir() {
-                            if let Ok(file_entry) =
-                                self.create_entry(&full, ancestor.clone(), &meta)
-                            {
-                                self.push_file_item(file_entry, full);
+        // upstream: flist.c:2257-2258 - `if (relative_paths && protocol_version
+        // >= 30) implied_dirs = 1;` forces flagged implied parent dirs at
+        // protocol >= 30 regardless of --no-implied-dirs; at protocol < 30 the
+        // flag is honoured (flist.c:2468 `else if (implied_dirs && ...)`), so
+        // --no-implied-dirs omits the implied parents from the --files-from
+        // flist and the receiver recreates them via make_path (generator.c:1317)
+        // without their source metadata. Mirror the same gate as the positional
+        // path (build_file_list): emit when implied dirs are on OR the protocol
+        // forces them. When suppressed, `emitted_dirs` stays equal to
+        // `explicit_dirs`, so `implied_only_dirs` below is empty and the
+        // explicit top-level walk is left untouched (dedup unchanged).
+        if !self.config.flags.no_implied_dirs || self.protocol.as_u8() >= 30 {
+            for entry in entries {
+                if let Ok(rel) = entry.path.strip_prefix(&entry.base) {
+                    // Walk each ancestor of the relative path and emit a
+                    // directory entry when we haven't seen it yet.
+                    let mut ancestor = PathBuf::new();
+                    for component in rel.parent().into_iter().flat_map(Path::components) {
+                        ancestor.push(component);
+                        let key = (entry.base.clone(), ancestor.clone());
+                        if emitted_dirs.contains(&key) {
+                            continue;
+                        }
+                        let full = entry.base.join(&ancestor);
+                        if let Ok(meta) = std::fs::symlink_metadata(&full) {
+                            if meta.is_dir() {
+                                if let Ok(file_entry) =
+                                    self.create_entry(&full, ancestor.clone(), &meta)
+                                {
+                                    self.push_file_item(file_entry, full);
+                                }
                             }
                         }
+                        emitted_dirs.insert(key);
                     }
-                    emitted_dirs.insert(key);
                 }
             }
         }
