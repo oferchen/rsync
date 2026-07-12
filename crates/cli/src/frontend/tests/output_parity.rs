@@ -128,9 +128,9 @@ fn info_name_only_suppresses_stats_footer() {
     let mut rendered = Vec::new();
     emit_transfer_summary(
         &summary,
-        0,     // verbosity (name-only, no -v)
+        0, // verbosity (name-only, no -v)
         None,
-        0,     // stats_level (no --stats / --info=statsN)
+        0, // stats_level (no --stats / --info=statsN)
         false, // progress_already_rendered
         false, // list_only
         false, // dry_run
