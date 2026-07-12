@@ -117,3 +117,72 @@ fn receive_id_lists_skips_both_when_neither_flag_set() {
     assert!(result.is_ok());
     assert_eq!(cursor.position(), 0);
 }
+
+/// Pins the upstream `recv_id_list()` remap: after reading the name list the
+/// receiver rewrites every flist entry's uid from the sender's raw id to the
+/// LOCAL id resolved from the transmitted name. A sender id that does not exist
+/// on the receiver (but whose name does) must end up owned by the local id, not
+/// the raw sender id - the whole point of the non-numeric name list.
+///
+/// upstream: uidlist.c:483-494 `recv_id_list` remap loop via `match_uid`.
+#[test]
+#[cfg(unix)]
+fn remap_rewrites_flist_uid_from_sent_name() {
+    use protocol::flist::FileEntry;
+    use protocol::idlist::IdList;
+
+    let handshake = test_handshake();
+    // owner only (uid list), non-numeric so the name list is read + applied.
+    let config = config_with_flags(true, false, NumericIds::Off);
+    let mut ctx = ReceiverContext::new_for_test(&handshake, config);
+    let proto = ctx.protocol().as_u8();
+
+    // Sender-built uid list: a raw sender uid that does not exist locally,
+    // carrying the well-known name "root" (which resolves to 0 everywhere).
+    let mut sender = IdList::new();
+    sender.add_id(4_000_123, Some(b"root".to_vec()));
+    let mut wire = Vec::new();
+    sender
+        .write(&mut wire, false, proto)
+        .expect("write uid list");
+
+    let mut cursor = Cursor::new(wire);
+    ctx.receive_id_lists(&mut cursor).expect("read uid list");
+
+    // A file owned by the nonexistent sender uid.
+    let mut entry = FileEntry::new_file("f".into(), 0, 0o644);
+    entry.set_uid(4_000_123);
+    ctx.file_list.push(entry);
+
+    ctx.remap_flist_ownership_from_id_lists();
+
+    assert_eq!(
+        ctx.file_list[0].uid(),
+        Some(0),
+        "receiver must resolve sent name 'root' to local uid 0, not keep the raw sender id"
+    );
+}
+
+/// `--numeric-ids` (explicit) must leave file ownership as the raw sender id:
+/// no name list is read and the remap is a no-op.
+#[test]
+#[cfg(unix)]
+fn remap_keeps_raw_uid_under_numeric_ids() {
+    use protocol::flist::FileEntry;
+
+    let handshake = test_handshake();
+    let config = config_with_flags(true, false, NumericIds::Explicit);
+    let mut ctx = ReceiverContext::new_for_test(&handshake, config);
+
+    let mut entry = FileEntry::new_file("f".into(), 0, 0o644);
+    entry.set_uid(4_000_123);
+    ctx.file_list.push(entry);
+
+    ctx.remap_flist_ownership_from_id_lists();
+
+    assert_eq!(
+        ctx.file_list[0].uid(),
+        Some(4_000_123),
+        "--numeric-ids must keep the raw sender id"
+    );
+}

@@ -74,6 +74,9 @@ impl ReceiverContext {
 
         if !inc_recurse {
             self.receive_id_lists(reader)?;
+            // upstream: uidlist.c:483-494 recv_id_list() remaps the whole flist
+            // from sender ids to local ids right after reading the name lists.
+            self.remap_flist_ownership_from_id_lists();
         }
 
         // upstream: flist.c:2738-2742 - read io_error flag for protocol < 30.

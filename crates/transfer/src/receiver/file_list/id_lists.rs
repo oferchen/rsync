@@ -129,4 +129,57 @@ impl ReceiverContext {
 
         Ok(())
     }
+
+    /// Remaps every file-list entry's uid/gid from the sender's raw ids to the
+    /// local ids resolved from the transmitted name lists.
+    ///
+    /// Mirrors upstream `recv_id_list()`, which rewrites `F_OWNER`/`F_GROUP` for
+    /// every flist entry via `match_uid`/`match_gid` after the name lists are
+    /// read. Without this the receiver would chown files to the raw sender id,
+    /// which is wrong when that id is absent locally or bound to a different
+    /// name than on the sender - the very purpose of the non-numeric name list
+    /// is that ownership follows the *name* across hosts with different id
+    /// namespaces. Ids not present in the sent list keep their raw value,
+    /// matching `match_uid`'s `recv_add_id(..., NULL)` fallback (`--usermap`,
+    /// which upstream folds into `match_uid`, is applied later in
+    /// `metadata::apply`).
+    ///
+    /// Only applied for `numeric_ids == 0` (upstream's `!numeric_ids` gate): an
+    /// explicit or daemon-forced numeric transfer keeps the raw ids. Non-root
+    /// uid remaps are harmless because the chown is gated away in
+    /// `metadata::apply`, matching upstream where a non-root receiver cannot
+    /// chown a file to another owner.
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `uidlist.c:483-494` - `recv_id_list()` remap loop
+    pub(crate) fn remap_flist_ownership_from_id_lists(&mut self) {
+        if !self.config.flags.numeric_ids.is_off() {
+            return;
+        }
+        if self.config.flags.owner {
+            let uid_map = self.uid_list.resolved_map();
+            if !uid_map.is_empty() {
+                for entry in self.file_list.iter_mut() {
+                    if let Some(uid) = entry.uid()
+                        && let Some(&local) = uid_map.get(&uid)
+                    {
+                        entry.set_uid(local);
+                    }
+                }
+            }
+        }
+        if self.config.flags.group {
+            let gid_map = self.gid_list.resolved_map();
+            if !gid_map.is_empty() {
+                for entry in self.file_list.iter_mut() {
+                    if let Some(gid) = entry.gid()
+                        && let Some(&local) = gid_map.get(&gid)
+                    {
+                        entry.set_gid(local);
+                    }
+                }
+            }
+        }
+    }
 }
