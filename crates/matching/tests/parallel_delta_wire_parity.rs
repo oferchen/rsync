@@ -193,6 +193,70 @@ fn parallel_delta_dup_free_is_wire_identical() {
     }
 }
 
+/// A LONG literal run - far exceeding the sequential flush cadence of
+/// `block_len + 32 KiB` - straddling a chunk boundary makes the parallel scan
+/// diverge from the sequential scan on the wire even for a DUPLICATE-FREE
+/// basis. This is the residual literal-run segmentation seam the design
+/// blueprint warns about and the reason the parallel scan must stay opt-in:
+/// reconstruction and the matched/literal byte counts are unaffected, but the
+/// literal-token length-prefix framing shifts at each range join, so the wire
+/// bytes are not byte-identical to the single continuous sequential run.
+///
+/// The single-byte-edit case in `parallel_delta_dup_free_is_wire_identical`
+/// only ever leaves a SHORT literal (one straddling block) at each boundary,
+/// which the seam-join coalescing fully restores; it therefore cannot detect
+/// this divergence. This test pins the long-literal case explicitly. If a
+/// future overlapping-range / literal-coalesce fix removes the seam, this test
+/// flips to equality - the signal that a default-on flip could be reconsidered.
+#[test]
+fn parallel_delta_dup_free_long_literal_seam_diverges() {
+    let basis = lcg_bytes(0x9A7A_11E1_0DE1_2025, DUP_FREE_LEN);
+    let index = build_index(&basis, BLOCK_LEN);
+    assert!(
+        !index.has_duplicate_blocks(),
+        "random basis must be duplicate-free so the parallel path is eligible"
+    );
+
+    // Rewrite a 200 KiB region centred on the n/2 chunk boundary (which is
+    // shared by chunk counts 2, 4, and 8 because DUP_FREE_LEN is divisible by
+    // 8) with fresh, duplicate-free bytes, so it becomes one long literal run
+    // that every one of those splits bisects.
+    const LIT: usize = 200 * 1024;
+    let mid = DUP_FREE_LEN / 2;
+    let start = mid - LIT / 2;
+    let fresh = lcg_bytes(0xF00D_BEEF_1234_5678, LIT);
+    let mut source = basis.clone();
+    source[start..start + LIT].copy_from_slice(&fresh);
+
+    let generator = DeltaGenerator::new();
+    let sequential = generator
+        .generate(Cursor::new(source.clone()), &index)
+        .expect("sequential");
+    let seq_wire = script_to_wire_bytes(&sequential, index.block_length());
+
+    let mut any_diverge = false;
+    for &chunks in &[2usize, 4, 8] {
+        let chunked = generator
+            .generate_chunked(&source, &index, chunks)
+            .expect("chunked");
+        let chunked_wire = script_to_wire_bytes(&chunked, index.block_length());
+        assert_eq!(
+            reconstruct(&basis, &index, &chunked),
+            source,
+            "chunked reconstruction must stay correct for chunks={chunks} despite the seam"
+        );
+        if chunked_wire != seq_wire {
+            any_diverge = true;
+        }
+    }
+    assert!(
+        any_diverge,
+        "a long literal run straddling a chunk boundary must diverge on the wire for at \
+         least one chunk count; equality here would mean the seam is fixed and the \
+         duplicate-free opt-in gate could be revisited"
+    );
+}
+
 /// Source length for the duplicate-heavy fixture: large enough to split into
 /// several ranges (> 2x the 1 MiB per-range floor).
 const DUP_HEAVY_LEN: usize = 4 * 1024 * 1024;
