@@ -133,6 +133,13 @@ pub(crate) fn copy_symlink(
         .map(Path::to_path_buf)
         .or_else(|| destination.file_name().map(PathBuf::from));
     context.summary_mut().record_symlink_total();
+    // upstream: flist.c:691/1243 - `if (S_ISREG(mode) || S_ISLNK(mode))
+    // stats.total_size += F_LENGTH(file)`. A symlink's F_LENGTH is its lstat
+    // st_size, i.e. the byte length of its target, so count it into the flist
+    // total_size exactly once per preserved symlink. Without this the
+    // `--stats` "Total file size" line and the "total size is N" trailer are
+    // short by the target length (e.g. 50 vs upstream's 55 for a 5-byte link).
+    context.summary_mut().record_total_bytes(metadata.len());
 
     let raw_target = fs::read_link(source)
         .map_err(|error| LocalCopyError::io("read symbolic link", source, error))?;
@@ -313,7 +320,11 @@ pub(crate) fn copy_symlink(
             false,
             context.options().modify_window(),
         );
-        context.summary_mut().record_symlink();
+        // upstream: generator.c:1140 + receiver.c:734 - a `--compare-dest`
+        // match leaves the destination absent and itemizes `.L` with no
+        // ITEM_IS_NEW, so `stats.created_files`/`created_symlinks` do NOT count
+        // it. It is still tallied into num_symlinks via `record_symlink_total`
+        // above; only the created-count is suppressed here.
         let metadata_snapshot = LocalCopyMetadata::from_metadata(metadata, Some(target));
         context.record(
             LocalCopyRecord::new(
@@ -362,7 +373,12 @@ pub(crate) fn copy_symlink(
             apply_symlink_metadata_with_options(destination, metadata, &symlink_options)
                 .map_err(map_metadata_error)?;
         }
-        context.summary_mut().record_symlink();
+        // upstream: generator.c:1572-1585 + receiver.c:731-746 - an existing
+        // symlink already pointing at the same target quick-checks equal:
+        // `itemize(..., 0, ...)` sets no ITEM_IS_NEW, so `stats.created_files`
+        // does not count it. A no-change re-run therefore reports 0 created
+        // files. The symlink is still counted in num_symlinks via
+        // `record_symlink_total` above; only the created-count is suppressed.
         if let Some(path) = &record_path {
             let metadata_snapshot = LocalCopyMetadata::from_metadata(metadata, Some(target));
             let total_bytes = Some(metadata_snapshot.len());

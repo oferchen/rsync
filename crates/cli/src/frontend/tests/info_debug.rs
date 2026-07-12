@@ -329,7 +329,11 @@ fn info_name_emits_filenames_without_verbose() {
     assert!(stderr.is_empty());
     let rendered = String::from_utf8(stdout).expect("stdout utf8");
     assert!(rendered.contains("name.txt"));
-    assert!(rendered.contains("sent"));
+    // upstream: main.c:459-461 output_summary - the `sent ... total size`
+    // trailer prints only under `--stats` or `-v` (INFO_GTE(STATS, 1)).
+    // `--info=name` sets INFO_NAME alone, so the trailer is absent; verified
+    // against rsync 3.4.4 which emits just the filename line.
+    assert!(!rendered.contains("sent"));
     assert_eq!(
         std::fs::read(destination).expect("read destination"),
         b"name-info"

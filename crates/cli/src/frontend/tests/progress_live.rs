@@ -113,9 +113,13 @@ fn live_progress_per_file_renders_xfr_and_to_chk() {
         output.contains("xfr#1"),
         "per-file output should contain xfr#1: {output:?}"
     );
+    // upstream: flist.c:2561 counts the source root directory into num_files, so
+    // a trailing-slash `source/` copy of one file enumerates dir + file = 2
+    // entries. Verified vs rsync 3.4.4: `--progress -r source/ dest` prints
+    // `to-chk=0/2`.
     assert!(
-        output.contains("to-chk=0/1"),
-        "per-file output should contain to-chk=0/1 for single file: {output:?}"
+        output.contains("to-chk=0/2"),
+        "per-file output should contain to-chk=0/2 for dir + single file: {output:?}"
     );
 }
 
@@ -263,8 +267,12 @@ fn live_progress_overall_renders_xfr_and_to_chk() {
         output.contains("xfr#1"),
         "overall mode should contain xfr#: {output:?}"
     );
+    // upstream: flist.c:2561 counts the source root directory into num_files, so
+    // a trailing-slash `source/` copy of one file enumerates dir + file = 2
+    // entries. Verified vs rsync 3.4.4: `--info=progress2 -r source/ dest`
+    // prints `to-chk=0/2`.
     assert!(
-        output.contains("to-chk=0/1"),
+        output.contains("to-chk=0/2"),
         "overall mode should show to-chk counters: {output:?}"
     );
 }
@@ -646,8 +654,11 @@ fn live_progress_output_matches_upstream_format_pattern() {
     );
 
     // 5. Contains tracking suffix
+    // upstream: flist.c:2561 - the trailing-slash `source/` copy enumerates the
+    // root dir plus the file (num_files == 2), so the final tick reads
+    // `to-chk=0/2`. Verified vs rsync 3.4.4.
     assert!(
-        xfr_line.contains("(xfr#1, to-chk=0/1)"),
+        xfr_line.contains("(xfr#1, to-chk=0/2)"),
         "should contain tracking suffix: {xfr_line:?}"
     );
 }

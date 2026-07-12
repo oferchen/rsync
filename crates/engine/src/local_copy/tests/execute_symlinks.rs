@@ -1431,3 +1431,69 @@ fn copy_unsafe_links_dereferences_symlink_chain() {
     assert_eq!(summary.files_copied(), 1);
     assert_eq!(summary.symlinks_copied(), 0);
 }
+
+#[cfg(unix)]
+#[test]
+fn execute_symlink_tree_stats_match_upstream() {
+    use std::os::unix::fs::symlink;
+
+    // Tree: 3 regular files (10 + 20 + 20 = 50 bytes) + one symlink whose
+    // target `a.txt` is 5 bytes, under a `sub/` subdirectory.
+    let temp = tempdir().expect("tempdir");
+    let src = temp.path().join("src");
+    fs::create_dir_all(src.join("sub")).expect("mkdir sub");
+    fs::write(src.join("a.txt"), [b'X'; 10]).expect("a");
+    fs::write(src.join("b.txt"), [b'Y'; 20]).expect("b");
+    fs::write(src.join("sub/c.txt"), [b'Z'; 20]).expect("c");
+    symlink("a.txt", src.join("link.txt")).expect("symlink");
+
+    // Copy CONTENTS of src into a not-yet-existing destination root.
+    let mut src_operand = src.into_os_string();
+    src_operand.push("/");
+    let dest = temp.path().join("dst");
+    let operands = vec![src_operand, dest.into_os_string()];
+    let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
+
+    let options = LocalCopyOptions::default().recursive(true).links(true);
+    let summary = plan
+        .execute_with_options(LocalCopyExecution::Apply, options.clone())
+        .expect("copy succeeds");
+
+    // upstream flist.c:691/1243 - `stats.total_size` sums the F_LENGTH of
+    // regular files AND symlinks; a symlink's F_LENGTH is its lstat st_size,
+    // i.e. the target byte length (5). Without it the total is 50, not the
+    // upstream 55, and both `--stats` "Total file size" and "total size is N"
+    // come up short.
+    assert_eq!(
+        summary.total_source_bytes(),
+        55,
+        "3 regular files (50 bytes) + symlink target length (5 bytes)"
+    );
+
+    // upstream receiver.c:731-746 - a fresh recursive copy creates the
+    // destination root plus `sub`; both entries set ITEM_IS_NEW, so
+    // `Number of created files` reports dir:2, link:1.
+    assert_eq!(
+        summary.directories_created(),
+        2,
+        "the destination root and `sub` are both newly created"
+    );
+    assert_eq!(summary.symlinks_copied(), 1, "the symlink is newly created");
+
+    // Second pass over an unchanged destination: upstream reports 0 created
+    // files because nothing is ITEM_IS_NEW. In particular the unchanged
+    // symlink (quick-check match) must NOT be recounted as created every run.
+    let summary2 = plan
+        .execute_with_options(LocalCopyExecution::Apply, options)
+        .expect("re-copy succeeds");
+    assert_eq!(
+        summary2.directories_created(),
+        0,
+        "no directories are created on a no-change re-run"
+    );
+    assert_eq!(
+        summary2.symlinks_copied(),
+        0,
+        "an unchanged symlink must not be counted as created (upstream reports 0)"
+    );
+}

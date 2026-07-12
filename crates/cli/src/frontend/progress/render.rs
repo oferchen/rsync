@@ -203,19 +203,15 @@ pub(crate) fn emit_transfer_summary(
         )?;
     }
 
-    let name_enabled = !matches!(name_level, NameOutputLevel::Disabled);
-    // upstream: main.c output_summary() emits the `sent/received/total size`
-    // trailer only for `verbose > 0 || INFO_GTE(STATS, 1)`; itemize alone
-    // (`-i` or `-ii`, no `-v`/`--stats`) never shows it. `suppress_updated_only_totals`
-    // captures that itemize-without-verbose-or-stats condition, so it applies to
-    // both itemize name levels (`UpdatedOnly` for `-i`, `UpdatedAndUnchanged` for `-ii`).
-    let suppress_name_totals = suppress_updated_only_totals
-        && matches!(
-            name_level,
-            NameOutputLevel::UpdatedOnly | NameOutputLevel::UpdatedAndUnchanged
-        );
-    let emit_trailer_totals =
-        !stats_on && (verbosity > 0 || (name_enabled && !suppress_name_totals));
+    // upstream: main.c:459-461 output_summary() emits the
+    // `sent/received/total size` trailer only when
+    // `verbose > 0 || INFO_GTE(STATS, 1)`. `stats_on` already captures the
+    // STATS>=1 arm (it routes to emit_stats below), so the name-only and
+    // itemize cases - `--info=name1`/`--info=name2`, `--progress`, `-i`/`-ii`
+    // (verbose 0, no stats level) - correctly print no trailer. A plain
+    // `-v` sets verbose>0 (upstream also raises STATS to 1) and does show it.
+    let _ = suppress_updated_only_totals;
+    let emit_trailer_totals = !stats_on && verbosity > 0;
 
     // upstream: main.c:461 - `output_summary()` emits a blank
     // `rprintf(FCLIENT, "\n")` before the INFO_GTE(STATS, 1) totals so the
@@ -376,25 +372,30 @@ pub(crate) fn emit_progress<W: Write + ?Sized>(
         .filter(|event| is_progress_event(event.kind()))
         .collect();
 
-    // Denominator counts every checked entry; the numerator counts down only the
-    // transfers, so to-chk reaches 0 on the last transferred file even when an
-    // up-to-date entry (e.g. an unchanged parent dir) trails it in the list.
+    // Denominator counts every checked flist entry (upstream num_files:
+    // directories and symlinks included); the numerator `total - checked`
+    // counts down over all of them, mirroring upstream's
+    // `num_files - current_file_index - 1`. Only regular-file transfers print a
+    // block and advance `xfr#` (upstream receiver.c:782), so a symlink or
+    // directory is counted but silent.
     let total = flist_entries.len();
     let transferred_total = flist_entries
         .iter()
-        .filter(|event| !is_uptodate_event(event))
+        .filter(|event| event.kind().is_transfer() && !is_uptodate_event(event))
         .count();
     if transferred_total == 0 {
         return Ok(false);
     }
 
     let mut xfr_index = 0usize;
+    let mut checked = 0usize;
     for event in flist_entries.into_iter() {
-        if is_uptodate_event(event) {
+        checked += 1;
+        if !event.kind().is_transfer() || is_uptodate_event(event) {
             continue;
         }
         xfr_index += 1;
-        let remaining = transferred_total - xfr_index;
+        let remaining = total.saturating_sub(checked);
 
         let name =
             normalize_progress_separators(escape_path(event.relative_path(), eight_bit_output));
