@@ -88,13 +88,14 @@ pub struct SparseWriter<W> {
     stats: SparseWriteStats,
 }
 
-/// Default chunk size for sparse scanning, matching upstream rsync's CHUNK_SIZE.
+/// Default scan window for sparse detection, matching upstream rsync's
+/// `SPARSE_WRITE_SIZE` (1 KB) so interior zero runs are punched as upstream does.
 const DEFAULT_CHUNK_SIZE: usize = super::SPARSE_WRITE_SIZE;
 
 impl<W: Write + Seek> SparseWriter<W> {
     /// Creates a new sparse writer wrapping the given writer.
     ///
-    /// Uses SIMD-accelerated zero detection and the default chunk size (32 KB).
+    /// Uses SIMD-accelerated zero detection and the default scan window (1 KB).
     #[must_use]
     pub fn new(inner: W) -> Self {
         Self {

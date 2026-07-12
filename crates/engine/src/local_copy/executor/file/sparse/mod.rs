@@ -149,15 +149,17 @@ impl SparseRegion {
     }
 }
 
-/// Threshold for detecting sparse (all-zeros) regions during file writes.
+/// Scan window for sparse zero-run detection during file writes.
 ///
-/// A run of zeros at least this size will be converted to a sparse hole
-/// using fallocate(PUNCH_HOLE) or seek past on supported systems.
+/// Upstream `write_file()` hands `write_sparse()` at most this many bytes per
+/// call (`fileio.c:156`, `int len1 = MIN(len, SPARSE_WRITE_SIZE)`), so only the
+/// leading and trailing zeros of each 1 KB window become holes. Matching the
+/// window is required for allocated-block parity with upstream: a larger window
+/// writes sub-window interior zero runs as literal data, leaving them allocated
+/// where upstream deallocates them.
 ///
-/// Matches upstream rsync's CHUNK_SIZE (32KB) for consistent behavior.
-/// Using a larger threshold reduces syscall overhead for small zero runs
-/// while still efficiently handling large sparse regions.
-const SPARSE_WRITE_SIZE: usize = 32 * 1024;
+/// Matches upstream rsync's `SPARSE_WRITE_SIZE` (1024) in `rsync.h`.
+const SPARSE_WRITE_SIZE: usize = 1024;
 
 /// Buffer size for writing zeros when fallocate is not supported.
 /// Matches upstream rsync's do_punch_hole fallback buffer size.
