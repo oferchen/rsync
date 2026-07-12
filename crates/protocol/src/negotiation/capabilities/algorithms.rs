@@ -14,11 +14,18 @@ pub(super) const SUPPORTED_CHECKSUMS: &[&str] =
 /// negotiation (upstream compat.c:541-544). The order matches upstream's
 /// `valid_compressions_items[]` preference: zstd > lz4 > zlibx > zlib > none.
 ///
-/// Zstd is included when the `zstd` feature is enabled - its per-token wire
-/// framing has been validated against upstream rsync (PR #3081). Lz4 is still
-/// excluded from auto-negotiation until its wire format is interop-validated
-/// (task #1380). Explicit `--compress-choice=lz4` still works (bypasses this
-/// list per upstream compat.c:543).
+/// Both zstd and lz4 are included when their respective features are enabled -
+/// their per-token wire framing has been validated byte-for-byte against
+/// upstream rsync 3.4.4 in both directions (SSH and daemon, sender and
+/// receiver). The lz4 codec emits the same `DEFLATED_DATA` token framing and
+/// raw LZ4 block format that upstream's `send_compressed_token()` produces;
+/// upstream and oc decode each other's streams to identical file content.
+///
+/// The exchange itself only happens when `CF_VARINT_FLIST_FLAGS` (the `v`
+/// capability) is negotiated, which restricts lz4/zstd selection to peers new
+/// enough to send that flag (upstream 3.2.0+, protocol 31), mirroring upstream.
+/// Explicit `--compress-choice=lz4` still works independently of this list
+/// (upstream compat.c:543).
 ///
 /// # Upstream reference
 ///
@@ -31,9 +38,9 @@ pub(super) fn supported_compressions() -> Vec<&'static str> {
     #[cfg(feature = "zstd")]
     list.push("zstd");
 
-    // NOTE: lz4 is intentionally omitted from auto-negotiation.
-    // Its per-token wire framing is not yet interop-validated with upstream.
-    // Explicit --compress-choice=lz4 still works (bypasses this list).
+    // upstream: compat.c:105-107 - lz4 follows zstd when SUPPORT_LZ4 is defined
+    #[cfg(feature = "lz4")]
+    list.push("lz4");
 
     list.extend_from_slice(&["zlibx", "zlib", "none"]);
     list

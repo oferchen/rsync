@@ -140,9 +140,12 @@ impl ProtocolCompressionProfile {
         #[cfg(feature = "zstd")]
         list.push("zstd");
 
-        // NOTE: lz4 is intentionally omitted from auto-negotiation. Its
-        // per-token wire framing is not yet interop-validated with upstream.
-        // Explicit --compress-choice=lz4 still works (bypasses this list).
+        // upstream: compat.c:105-107 - lz4 follows zstd when SUPPORT_LZ4 is
+        // defined. Its per-token wire framing is validated byte-for-byte against
+        // upstream rsync 3.4.4 (DEFLATED_DATA header + raw LZ4 block); explicit
+        // --compress-choice=lz4 also works, bypassing this list.
+        #[cfg(feature = "lz4")]
+        list.push("lz4");
 
         list.extend_from_slice(&["zlibx", "zlib", "none"]);
         list
@@ -230,8 +233,35 @@ mod tests {
         assert!(!advertised.contains(&"zstd"));
     }
 
+    #[cfg(feature = "lz4")]
     #[test]
-    fn modern_never_advertises_lz4() {
+    fn modern_advertises_lz4_after_zstd_before_zlibx() {
+        // lz4 wire framing is validated byte-for-byte against upstream 3.4.4, so
+        // it is advertised in upstream's preference slot: after zstd, before
+        // zlibx (upstream compat.c:101-108 valid_compressions_items[]).
+        let advertised = ProtocolCompressionProfile::MODERN.advertised_algorithms();
+        let lz4 = advertised
+            .iter()
+            .position(|&n| n == "lz4")
+            .expect("lz4 advertised");
+        let zlibx = advertised
+            .iter()
+            .position(|&n| n == "zlibx")
+            .expect("zlibx present");
+        assert!(lz4 < zlibx, "lz4 must precede zlibx: {advertised:?}");
+        #[cfg(feature = "zstd")]
+        {
+            let zstd = advertised
+                .iter()
+                .position(|&n| n == "zstd")
+                .expect("zstd present");
+            assert!(zstd < lz4, "zstd must precede lz4: {advertised:?}");
+        }
+    }
+
+    #[cfg(not(feature = "lz4"))]
+    #[test]
+    fn modern_omits_lz4_without_feature() {
         let advertised = ProtocolCompressionProfile::MODERN.advertised_algorithms();
         assert!(!advertised.contains(&"lz4"));
     }
