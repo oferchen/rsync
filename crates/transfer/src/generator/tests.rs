@@ -3225,10 +3225,15 @@ mod files_from {
             ctx.build_file_list_with_base(&src, &files_from_entries(&src, file_paths))
                 .unwrap();
 
+            // Compare on the wire form (name_bytes, always '/'-separated via
+            // path_bytes_to_wire) rather than name() which returns the local
+            // PathBuf verbatim - on Windows that yields `usr\bin\ar`, so the
+            // multi-component assertions below would spuriously fail. The wire
+            // name is what the proto-gate actually governs.
             let names: Vec<String> = ctx
                 .file_list()
                 .iter()
-                .map(|e| e.name().to_string())
+                .map(|e| String::from_utf8_lossy(&e.name_bytes()).into_owned())
                 .collect();
             assert!(
                 names.iter().any(|n| n == "usr/bin/ar"),
