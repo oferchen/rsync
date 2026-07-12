@@ -78,7 +78,7 @@ impl<'a> CopyContext<'a> {
         source: &Path,
         relative_dir: Option<&Path>,
     ) -> Result<DirectoryFilterGuard, LocalCopyError> {
-        self.enter_directory_for_path(source, relative_dir, true, false)
+        self.enter_directory_for_path(source, relative_dir, true, false, &self.dir_merge)
     }
 
     /// Loads per-dir-merge filter files from the destination directory before a
@@ -122,7 +122,46 @@ impl<'a> CopyContext<'a> {
         destination: &Path,
         relative_dir: Option<&Path>,
     ) -> Result<DirectoryFilterGuard, LocalCopyError> {
-        self.enter_directory_for_path(destination, relative_dir, false, true)
+        self.enter_directory_for_path(destination, relative_dir, false, true, &self.delete_dir_merge)
+    }
+
+    /// Advances the persistent destination delete-filter chain to `destination`.
+    ///
+    /// Mirrors upstream `change_local_filter_dir` (exclude.c:875): pops every
+    /// held guard whose depth is `>= destination`'s depth, then loads this
+    /// destination directory's per-dir merge files onto the isolated
+    /// [`Self::delete_dir_merge`] chain, inheriting the surviving ancestor
+    /// frame's rules. The pushed guard is retained (not dropped at scope exit)
+    /// so a parent's `.rsync-filter` rules keep protecting a subdirectory's
+    /// entries from deletion. Called once per destination directory the delete
+    /// pass visits, in depth-first (parent-before-child) order.
+    ///
+    /// During a `--delete-during`/`--delete-before` sweep the destination merge
+    /// files are not present yet, so the loaded frames are empty and the chain
+    /// protects nothing - matching upstream, where the receiver has not merged
+    /// the directory's rules before the during-delete pass runs.
+    pub(crate) fn sync_delete_filter_chain(
+        &self,
+        destination: &Path,
+        relative_dir: Option<&Path>,
+    ) -> Result<(), LocalCopyError> {
+        let depth = relative_dir.map_or(0, |rel| rel.components().count());
+        loop {
+            let pop = self
+                .delete_filter_chain
+                .borrow()
+                .last()
+                .is_some_and(|(held_depth, _)| *held_depth >= depth);
+            if !pop {
+                break;
+            }
+            // Dropping the guard pops exactly this directory's frame off the
+            // isolated delete chain (deepest-first, LIFO).
+            self.delete_filter_chain.borrow_mut().pop();
+        }
+        let guard = self.enter_destination_for_deletion(destination, relative_dir)?;
+        self.delete_filter_chain.borrow_mut().push((depth, guard));
+        Ok(())
     }
 
     fn enter_directory_for_path(
@@ -131,18 +170,12 @@ impl<'a> CopyContext<'a> {
         relative_dir: Option<&Path>,
         check_directory_excluded: bool,
         capture_cleared_layers: bool,
+        stacks: &DirectoryFilterHandles,
     ) -> Result<DirectoryFilterGuard, LocalCopyError> {
         let source = directory;
         let Some(program) = &self.filter_program else {
-            let handles = DirectoryFilterHandles {
-                layers: Rc::clone(&self.dir_merge_layers),
-                marker_layers: Rc::clone(&self.dir_merge_marker_layers),
-                ephemeral: Rc::clone(&self.dir_merge_ephemeral),
-                marker_ephemeral: Rc::clone(&self.dir_merge_marker_ephemeral),
-                dynamic: Rc::clone(&self.dynamic_dir_merge_stack),
-            };
             return Ok(DirectoryFilterGuard::new(
-                handles,
+                stacks.clone(),
                 Vec::new(),
                 Vec::new(),
                 false,
@@ -160,10 +193,10 @@ impl<'a> CopyContext<'a> {
         // populated) on the source-side path, whose nested guards restore state
         // by unwinding in child-before-parent order.
         let mut cleared_layers: Vec<ClearedLayerRestore> = Vec::new();
-        let mut layers = self.dir_merge_layers.borrow_mut();
-        let mut marker_layers = self.dir_merge_marker_layers.borrow_mut();
-        let mut ephemeral_stack = self.dir_merge_ephemeral.borrow_mut();
-        let mut marker_ephemeral_stack = self.dir_merge_marker_ephemeral.borrow_mut();
+        let mut layers = stacks.layers.borrow_mut();
+        let mut marker_layers = stacks.marker_layers.borrow_mut();
+        let mut ephemeral_stack = stacks.ephemeral.borrow_mut();
+        let mut marker_ephemeral_stack = stacks.marker_ephemeral.borrow_mut();
         ephemeral_stack.push(Vec::new());
         marker_ephemeral_stack.push(Vec::new());
 
@@ -173,7 +206,8 @@ impl<'a> CopyContext<'a> {
         // segments from the parent frame, then look each active rule up in this
         // directory. Non-inheritable (`n`-modifier) segments are dropped.
         let (inherited_active, inherited_segments): (Vec<NestedDirMerge>, Vec<LoadedDynamicSegment>) =
-            self.dynamic_dir_merge_stack
+            stacks
+                .dynamic
                 .borrow()
                 .last()
                 .map(|frame| {
@@ -356,7 +390,7 @@ impl<'a> CopyContext<'a> {
         drop(ephemeral_stack);
         drop(marker_ephemeral_stack);
 
-        self.dynamic_dir_merge_stack.borrow_mut().push(new_frame);
+        stacks.dynamic.borrow_mut().push(new_frame);
 
         let excluded = if check_directory_excluded {
             self.directory_excluded(source, program)?
@@ -364,13 +398,7 @@ impl<'a> CopyContext<'a> {
             false
         };
 
-        let handles = DirectoryFilterHandles {
-            layers: Rc::clone(&self.dir_merge_layers),
-            marker_layers: Rc::clone(&self.dir_merge_marker_layers),
-            ephemeral: Rc::clone(&self.dir_merge_ephemeral),
-            marker_ephemeral: Rc::clone(&self.dir_merge_marker_ephemeral),
-            dynamic: Rc::clone(&self.dynamic_dir_merge_stack),
-        };
+        let handles = stacks.clone();
         Ok(
             DirectoryFilterGuard::new(handles, added_indices, marker_counts, true, true, excluded)
                 .with_cleared_restores(cleared_layers),
@@ -443,7 +471,7 @@ impl<'a> CopyContext<'a> {
         }
 
         {
-            let layers = self.dir_merge_marker_layers.borrow();
+            let layers = self.dir_merge.marker_layers.borrow();
             for rules in layers.iter() {
                 if directory_has_marker(rules, directory)? {
                     return Ok(true);
@@ -452,7 +480,7 @@ impl<'a> CopyContext<'a> {
         }
 
         {
-            let stack = self.dir_merge_marker_ephemeral.borrow();
+            let stack = self.dir_merge.marker_ephemeral.borrow();
             if let Some(entries) = stack.last() {
                 for (_, rules) in entries {
                     if directory_has_marker(rules, directory)? {
@@ -463,7 +491,7 @@ impl<'a> CopyContext<'a> {
         }
 
         {
-            let stack = self.dynamic_dir_merge_stack.borrow();
+            let stack = self.dir_merge.dynamic.borrow();
             if let Some(frame) = stack.last()
                 && directory_has_marker(&frame.loaded_markers, directory)?
             {

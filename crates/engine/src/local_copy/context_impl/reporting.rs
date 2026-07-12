@@ -157,6 +157,29 @@ impl<'a> CopyContext<'a> {
             destination,
             relative,
             keep,
+            decided: None,
+        });
+    }
+
+    /// Queues a `--delete-delay` deletion whose plan was already decided during
+    /// the transfer walk (while the destination per-dir merge files were still
+    /// absent). The flush executes `plan` verbatim, without re-scanning the
+    /// destination or re-evaluating filters.
+    ///
+    /// upstream: generator.c:345 `remember_delete()` records the concrete
+    /// victim during `delete_in_dir`; `do_delayed_deletions()` (generator.c:2419)
+    /// later unlinks it without any further filter check.
+    pub(super) fn defer_decided_deletion(
+        &mut self,
+        destination: PathBuf,
+        relative: Option<PathBuf>,
+        plan: crate::delete::DeletePlan,
+    ) {
+        self.deferred_ops.deletions.push(DeferredDeletion {
+            destination,
+            relative,
+            keep: Vec::new(),
+            decided: Some(plan),
         });
     }
 
@@ -268,7 +291,16 @@ impl<'a> CopyContext<'a> {
         }
         let preserve_times = self.metadata_options().times()
             && !self.omit_dir_times_enabled();
-        let pending = std::mem::take(&mut self.deferred_ops.deletions);
+        let mut pending = std::mem::take(&mut self.deferred_ops.deletions);
+        // Deferred entries are queued in post-order (a directory defers its own
+        // sweep AFTER recursing into and deferring its children). Upstream's
+        // `do_delete_pass` instead walks the flist forward - parent before child
+        // (generator.c:368-389). Restore that pre-order so the persistent
+        // destination delete-filter chain loads each parent's `.rsync-filter`
+        // rules BEFORE a subdirectory's sweep, letting them inherit down the
+        // destination tree (exclude.c:801). A path-ascending sort places every
+        // ancestor directory before its descendants.
+        pending.sort_by(|a, b| a.destination.cmp(&b.destination));
         for entry in pending {
             self.enforce_timeout()?;
             // Capture directory mtime before deletion modifies it.
@@ -280,7 +312,26 @@ impl<'a> CopyContext<'a> {
                 None
             };
             let relative = entry.relative.as_deref();
-            delete_extraneous_entries(self, entry.destination.as_path(), relative, &entry.keep)?;
+            match entry.decided {
+                // --delete-delay: execute the plan decided during the walk.
+                Some(plan) => crate::local_copy::executor::execute_decided_deletion(
+                    self,
+                    entry.destination.as_path(),
+                    relative,
+                    plan,
+                )?,
+                // --delete-after / multi-source downgrade: decide (rescan +
+                // filter) and delete now that the destination merge files are
+                // present. The persistent delete-filter chain (advanced inside
+                // build_plan_for_directory) inherits each parent's rules into
+                // its subdirectories because `pending` was sorted parent-first.
+                None => delete_extraneous_entries(
+                    self,
+                    entry.destination.as_path(),
+                    relative,
+                    &entry.keep,
+                )?,
+            }
             // Restore directory mtime that deletion invalidated.
             if let Some(mtime) = saved_times {
                 let _ = filetime::set_file_mtime(&entry.destination, mtime);

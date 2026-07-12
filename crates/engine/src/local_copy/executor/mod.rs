@@ -10,7 +10,8 @@ mod special;
 mod util;
 
 pub(crate) use cleanup::{
-    delete_extraneous_entries, record_directory_subtree, remove_source_entry_if_requested,
+    decide_and_defer_delayed_deletions, delete_extraneous_entries, execute_decided_deletion,
+    record_directory_subtree, remove_source_entry_if_requested,
 };
 pub(crate) use directory::ChecksumCache;
 pub(crate) use directory::{

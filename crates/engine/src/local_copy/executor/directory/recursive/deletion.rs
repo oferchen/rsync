@@ -10,6 +10,7 @@ use std::ffi::{OsStr, OsString};
 use std::fs;
 use std::path::Path;
 
+use crate::local_copy::executor::decide_and_defer_delayed_deletions;
 use crate::local_copy::{CopyContext, DeleteTiming, LocalCopyError, delete_extraneous_entries};
 
 /// Resolves the effective delete timing for the current directory.
@@ -29,6 +30,21 @@ fn effective_delete_timing(
     } else {
         timing
     }
+}
+
+/// Returns `true` when a `--delete-delay` run should decide its deletions
+/// during the transfer walk (upstream `remember_delete`) instead of falling
+/// back to the deferred rescan path shared with `--delete-after`.
+///
+/// The rescan fallback is kept for two cases the decide-during path cannot yet
+/// serve without losing existing guarantees:
+/// - multi-source runs, where a later source's entries must be able to protect
+///   a file a sibling source would otherwise delete (mirrors the During->After
+///   downgrade in [`effective_delete_timing`]);
+/// - `--max-delete`, whose leaf-granular cap is enforced only by the rescan
+///   executor (`delete_extraneous_entries_capped`).
+fn delay_decides_during(context: &CopyContext) -> bool {
+    !context.multi_source() && context.options().max_deletion_limit().is_none()
 }
 
 /// Deletes extraneous destination entries for `--delete-during` before the
@@ -63,11 +79,19 @@ pub(super) fn apply_during_transfer_deletions(
         return Ok(());
     }
 
-    if matches!(
-        effective_delete_timing(context, delete_timing),
-        DeleteTiming::During
-    ) {
-        delete_extraneous_entries(context, destination, relative, keep_names)?;
+    match effective_delete_timing(context, delete_timing) {
+        DeleteTiming::During => {
+            delete_extraneous_entries(context, destination, relative, keep_names)?;
+        }
+        // upstream: generator.c:345 `delete_during == 2` decides the delete set
+        // during the walk (via `delete_in_dir`/`change_local_filter_dir`, while
+        // the destination merge files are still absent) and only postpones the
+        // unlink. Decide here and defer the concrete plan; the flush executes it
+        // without re-consulting the by-then-present merge files.
+        DeleteTiming::Delay if delay_decides_during(context) => {
+            decide_and_defer_delayed_deletions(context, destination, relative, keep_names)?;
+        }
+        _ => {}
     }
 
     Ok(())
@@ -105,6 +129,10 @@ pub(super) fn handle_post_transfer_deletions(
             // Before: already handled by apply_pre_transfer_deletions.
             // During: already handled by apply_during_transfer_deletions.
         }
+        // A --delete-delay run that decided-and-deferred during the walk has
+        // nothing left to defer here; one that fell back to the rescan path
+        // (multi-source or --max-delete) is handled by the After arm below.
+        DeleteTiming::Delay if delay_decides_during(context) => {}
         DeleteTiming::Delay | DeleteTiming::After => {
             // Clone names for deferred processing (data must outlive the plan)
             let keep_owned: Vec<OsString> =
