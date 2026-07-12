@@ -2764,10 +2764,20 @@ mod files_from {
 
         let result = ctx.resolve_files_from_paths(&paths, &mut reader).unwrap();
         assert_eq!(result.len(), 2);
+        // A top-level entry keeps the source argument as its walk base.
         assert_eq!(result[0].path, PathBuf::from("/src/file1.txt"));
         assert_eq!(result[0].base, PathBuf::from("/src"));
+        // upstream: flist.c:2338-2349 - the default `--files-from` mode is
+        // non-relative (relative_paths == 0), so a nested entry splits on its
+        // LAST `/`: the parent directory becomes the walk base and only the
+        // basename is transmitted (`subdir/file2.txt` -> base `/src/subdir`,
+        // wire name `file2.txt`, no implied `subdir` entry).
         assert_eq!(result[1].path, PathBuf::from("/src/subdir/file2.txt"));
-        assert_eq!(result[1].base, PathBuf::from("/src"));
+        assert_eq!(result[1].base, PathBuf::from("/src/subdir"));
+        assert_eq!(
+            result[1].path.strip_prefix(&result[1].base).unwrap(),
+            Path::new("file2.txt")
+        );
     }
 
     #[test]
@@ -2882,6 +2892,13 @@ mod files_from {
         let handshake = test_handshake();
         let mut config = test_config();
         config.args = vec![OsString::from(&src)];
+        // A nested wire-relative name (`subdir/file.txt`) only implies its
+        // parent directory in relative mode. upstream: options.c:2207-2208 -
+        // `if (!relative_paths) implied_dirs = 0;`, so non-relative --files-from
+        // flattens each entry to its basename (flist.c:2338-2349) and emits no
+        // implied parents. This test exercises the implied-parent path, so it
+        // must run in relative mode.
+        config.flags.relative = true;
         let mut ctx = GeneratorContext::new_for_test(&handshake, config);
 
         let file_paths = vec![src.join("hello.txt"), src.join("subdir/file.txt")];
@@ -3366,6 +3383,60 @@ mod files_from {
             (true, true),
             "proto 32 forces implied parents on despite --no-implied-dirs"
         );
+    }
+
+    #[test]
+    fn files_from_no_relative_flattens_and_omits_implied_parents() {
+        // Task #292: under --no-relative (relative_paths == 0) upstream splits
+        // each --files-from entry on its LAST `/` (flist.c:2338-2349) so the
+        // transmitted name is the basename, and forces `implied_dirs = 0`
+        // (options.c:2207-2208) so NO implied parent directories are sent. For
+        // entry `sub/file` the sender emits only `file`, never `sub` or
+        // `sub/file`. oc previously emitted the intermediate `sub` dir (and the
+        // un-flattened `sub/file`), which an upstream receiver rejects as an
+        // unrequested file-list name (exit 4). This must hold at every protocol,
+        // including proto >= 30 where the flist.c:2257-2258 force-on is itself
+        // gated on relative_paths.
+        fn wire_names(protocol: u8) -> Vec<String> {
+            let temp_dir = TempDir::new().unwrap();
+            let src = temp_dir.path().join("src");
+            let leaf = src.join("sub");
+            std::fs::create_dir_all(&leaf).unwrap();
+            std::fs::write(leaf.join("file"), b"x").unwrap();
+
+            let handshake = test_handshake_with_protocol(protocol);
+            let mut config = test_config();
+            config.flags.relative = false;
+            config.flags.no_implied_dirs = false;
+            config.args = vec![OsString::from(&src)];
+            let mut ctx = GeneratorContext::new_for_test(&handshake, config);
+
+            // Build the entry through the real non-relative split so the walk
+            // base absorbs `sub` and the wire name flattens to `file`.
+            let entry = super::filters::split_files_from_entry(&src, "sub/file", false, false);
+            ctx.build_file_list_with_base(&src, &[entry]).unwrap();
+
+            ctx.file_list()
+                .iter()
+                .map(|e| String::from_utf8_lossy(&e.name_bytes()).into_owned())
+                .collect()
+        }
+
+        for protocol in [28u8, 29, 30, 32] {
+            let names = wire_names(protocol);
+            assert!(
+                names.iter().any(|n| n == "file"),
+                "proto {protocol}: --no-relative must send flattened basename `file`: {names:?}"
+            );
+            assert!(
+                !names.iter().any(|n| n == "sub"),
+                "proto {protocol}: --no-relative must NOT emit implied parent `sub`: {names:?}"
+            );
+            assert!(
+                !names.iter().any(|n| n == "sub/file"),
+                "proto {protocol}: --no-relative must FLATTEN, not send `sub/file`: {names:?}"
+            );
+        }
     }
 
     #[test]
