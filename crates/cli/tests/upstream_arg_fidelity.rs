@@ -259,11 +259,7 @@ const UPSTREAM_OPTS: &[Opt] = &[
 
 /// Short forms upstream accepts but oc-rsync currently rejects outright.
 /// Keep in lockstep with the `#[ignore]`d trackers below.
-const KNOWN_SHORT_REJECTED: &[(char, &str)] = &[
-    // upstream options.c:752 `{"block-size", 'B', ...}` - oc declares
-    // `--block-size` long-only (no `.short('B')`).
-    ('B', "block-size short -B not wired"),
-];
+const KNOWN_SHORT_REJECTED: &[(char, &str)] = &[];
 
 /// Options that upstream (and oc) refuse without `-r`/`-d`: "--delete does not
 /// work without --recursive (-r) or --dirs (-d)." (upstream options.c). Probing
@@ -293,7 +289,7 @@ fn context_for(opt: &Opt) -> &'static [&'static str] {
 /// rejects for path-like values though upstream popt accepts them. oc's
 /// `expand_short_options` omits these from its value-short set, so a value that
 /// looks like an operand (`-T/tmp`, `-T=/tmp`) leaks into the operand list.
-const KNOWN_SHORT_VALUE_FORM_REJECTED: &[&str] = &["temp-dir", "modify-window"];
+const KNOWN_SHORT_VALUE_FORM_REJECTED: &[&str] = &[];
 
 /// Parses `tokens` with two trailing sentinel operands and confirms the option
 /// (and any value) was consumed by a real argument, leaving only the sentinels
@@ -657,7 +653,6 @@ fn modify_window_short_at_is_accepted() {
 
 /// upstream options.c:752 `{"block-size", 'B', POPT_ARG_STRING, ...}`.
 #[test]
-#[ignore = "oc divergence: -B (block-size short) not wired; --block-size is long-only"]
 fn block_size_short_b_is_accepted() {
     recognize(&["-B", "1024"]).expect("-B 1024 must be accepted as --block-size=1024");
 }
@@ -666,7 +661,6 @@ fn block_size_short_b_is_accepted() {
 /// path-like values (`-T/tmp`). oc's `expand_short_options` omits `T` from its
 /// value-short set, so the token leaks into the operand list.
 #[test]
-#[ignore = "oc divergence: -T/PATH attached short-value rejected for path-like values"]
 fn temp_dir_short_attached_value_is_accepted() {
     let parsed = recognize(&["-T/tmp"]).expect("-T/tmp must bind temp-dir");
     assert_eq!(
@@ -678,7 +672,6 @@ fn temp_dir_short_attached_value_is_accepted() {
 /// popt accepts `-S=value` equals form on value-taking short options. oc
 /// rejects `-T=/tmp` (only `-e=`, `-M=`, `-f=` are handled today).
 #[test]
-#[ignore = "oc divergence: -T=VALUE equals short-value form rejected"]
 fn temp_dir_short_equals_value_is_accepted() {
     recognize(&["-T=/tmp"]).expect("-T=/tmp must bind temp-dir");
 }
