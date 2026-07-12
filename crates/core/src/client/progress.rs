@@ -55,6 +55,7 @@ pub struct ClientProgressUpdate {
     overall_total_bytes: Option<u64>,
     overall_elapsed: Duration,
     flist_eof: bool,
+    transfer_complete: bool,
 }
 
 impl ClientProgressUpdate {
@@ -122,6 +123,20 @@ impl ClientProgressUpdate {
     pub const fn flist_eof(&self) -> bool {
         self.flist_eof
     }
+
+    /// Reports whether this update is the synthetic progress2 end-of-transfer
+    /// summary rather than a per-file tick.
+    ///
+    /// Mirrors upstream's `end_progress(0)` call at `NDX_DONE`
+    /// (receiver.c:674-676), which prints one final
+    /// `(xfr#N, to-chk=0/total)` line under `--info=progress2` even when the
+    /// transfer moved no file data (a lone special/symlink, or a no-change
+    /// run). It fires only in overall/progress2 rendering; per-file progress
+    /// mode has no such terminal line and ignores it.
+    #[must_use]
+    pub const fn is_transfer_complete(&self) -> bool {
+        self.transfer_complete
+    }
 }
 
 /// Observer invoked for each progress update generated during client execution.
@@ -155,6 +170,7 @@ impl ClientProgressUpdate {
             overall_total_bytes: None,
             overall_elapsed,
             flist_eof,
+            transfer_complete: false,
         }
     }
 }
@@ -187,6 +203,7 @@ impl ClientProgressUpdate {
             overall_total_bytes,
             overall_elapsed,
             flist_eof,
+            transfer_complete: false,
         }
     }
 }
@@ -277,6 +294,52 @@ impl<'a> ClientProgressForwarder<'a> {
     pub(crate) fn as_handler_mut(&mut self) -> &mut dyn LocalCopyRecordHandler {
         self
     }
+
+    /// Emits the progress2 end-of-transfer summary line when no regular-file
+    /// transfer produced one.
+    ///
+    /// upstream: receiver.c:674-676 - at `NDX_DONE` the receiver calls
+    /// `end_progress(0)` under `--info=progress2`, printing one
+    /// `<bytes> <pct>% <rate> <time> (xfr#<n>, to-chk=0/<total>)` line even
+    /// when the transfer moved no file data (a lone special/symlink, or a
+    /// no-change run). The per-file transfer path already prints this line
+    /// whenever at least one regular file transfers, so synthesize it only
+    /// when none did (`transferred == 0`). The observer marks the update
+    /// `transfer_complete`; per-file progress rendering ignores it because
+    /// upstream has no terminal summary outside progress2.
+    pub(crate) fn finalize(&mut self) {
+        if self.total == 0 || self.transferred > 0 {
+            return;
+        }
+
+        // upstream: progress.c:128 - the final line's percent is
+        // `total_transferred_size / total_size`, so an empty flist (size 0,
+        // e.g. a lone fifo) renders 100% while a no-change run over sized
+        // files renders 0%. Pass `Some(flist_total)` (never `None`) so the
+        // renderer computes the ratio instead of `??%`.
+        let flist_total = self.overall_total_bytes.unwrap_or(0);
+        let elapsed = self.overall_start.elapsed();
+        let update = ClientProgressUpdate {
+            event: ClientEvent::from_progress(
+                Path::new(""),
+                self.overall_transferred,
+                Some(flist_total),
+                elapsed,
+                Arc::clone(&self.destination_root),
+            ),
+            total: self.total,
+            remaining: 0,
+            index: self.transferred,
+            total_bytes: Some(flist_total),
+            final_update: true,
+            overall_transferred: self.overall_transferred,
+            overall_total_bytes: Some(flist_total),
+            overall_elapsed: elapsed,
+            flist_eof: true,
+            transfer_complete: true,
+        };
+        self.observer.on_progress(&update);
+    }
 }
 
 impl<'a> LocalCopyRecordHandler for ClientProgressForwarder<'a> {
@@ -330,6 +393,7 @@ impl<'a> LocalCopyRecordHandler for ClientProgressForwarder<'a> {
             // Local copies enumerate the file list eagerly before transferring,
             // so the list is always complete when progress is emitted.
             flist_eof: true,
+            transfer_complete: false,
         };
 
         self.observer.on_progress(&update);
@@ -377,6 +441,7 @@ impl<'a> LocalCopyRecordHandler for ClientProgressForwarder<'a> {
             // Local copies do not use INC_RECURSE: the file list is enumerated
             // eagerly before any progress event is emitted.
             flist_eof: true,
+            transfer_complete: false,
         };
 
         self.observer.on_progress(&update);
@@ -412,6 +477,7 @@ mod tests {
             overall_total_bytes: Some(10000),
             overall_elapsed: Duration::from_secs(5),
             flist_eof: true,
+            transfer_complete: false,
         }
     }
 

@@ -188,6 +188,13 @@ impl<'a> ClientProgressObserver for LiveProgress<'a> {
             return;
         }
 
+        // upstream: receiver.c:674-676 - the NDX_DONE end_progress(0) summary
+        // is emitted only under --info=progress2. Per-file progress mode has no
+        // terminal summary line, so drop the synthetic transfer-complete tick.
+        if update.is_transfer_complete() && matches!(self.mode, ProgressMode::PerFile) {
+            return;
+        }
+
         let total = update.total().max(update.index());
         // Use the transfer-relative remaining computed by the forwarder rather
         // than `total - index`: `total` counts every checked file-list entry
