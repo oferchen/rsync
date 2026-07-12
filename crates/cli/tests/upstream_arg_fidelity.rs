@@ -260,9 +260,6 @@ const UPSTREAM_OPTS: &[Opt] = &[
 /// Short forms upstream accepts but oc-rsync currently rejects outright.
 /// Keep in lockstep with the `#[ignore]`d trackers below.
 const KNOWN_SHORT_REJECTED: &[(char, &str)] = &[
-    // upstream options.c:660 `{"modify-window", '@', ...}` - oc wires only the
-    // long form. Fix in flight.
-    ('@', "modify-window short -@ not wired"),
     // upstream options.c:752 `{"block-size", 'B', ...}` - oc declares
     // `--block-size` long-only (no `.short('B')`).
     ('B', "block-size short -B not wired"),
@@ -296,7 +293,7 @@ fn context_for(opt: &Opt) -> &'static [&'static str] {
 /// rejects for path-like values though upstream popt accepts them. oc's
 /// `expand_short_options` omits these from its value-short set, so a value that
 /// looks like an operand (`-T/tmp`, `-T=/tmp`) leaks into the operand list.
-const KNOWN_SHORT_VALUE_FORM_REJECTED: &[&str] = &["temp-dir"];
+const KNOWN_SHORT_VALUE_FORM_REJECTED: &[&str] = &["temp-dir", "modify-window"];
 
 /// Parses `tokens` with two trailing sentinel operands and confirms the option
 /// (and any value) was consumed by a real argument, leaving only the sentinels
@@ -654,7 +651,6 @@ fn internal_and_daemon_options_are_recognized() {
 
 /// upstream options.c:660 `{"modify-window", '@', POPT_ARG_INT, ...}`.
 #[test]
-#[ignore = "oc divergence: -@ (modify-window short) not wired; use --modify-window"]
 fn modify_window_short_at_is_accepted() {
     recognize(&["-@", "2"]).expect("-@ 2 must be accepted as --modify-window=2");
 }
