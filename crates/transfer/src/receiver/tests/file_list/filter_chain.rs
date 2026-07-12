@@ -164,6 +164,83 @@ fn single_char_wildcard_exclude_does_not_block_top_level_deletion() {
     assert_eq!(stats.files, 1);
 }
 
+/// #295 DATA-LOSS regression: an implied (non-content) subdirectory under
+/// `--files-from` / `--relative` must NOT be scanned for deletion, so a stale
+/// destination file inside it survives - exactly as upstream preserves it.
+///
+/// Upstream only calls `generator.c:delete_in_dir()` for a file-list directory
+/// that carries `FLAG_CONTENT_DIR` (generator.c:376, 1534, 2317). An implied
+/// parent dir created to hold a `--files-from` entry has that flag cleared
+/// (`flist.c:1949 flags & ~FLAG_CONTENT_DIR`), so it is never a delete-scan
+/// target and its extraneous contents are left in place. Registering every
+/// file-list directory as a scan target (keying it off the parent-of-a-visible
+/// child) deleted `subdir/stale.txt` here, which upstream keeps - a silent
+/// data loss. The content-dir gate on `dirs_to_scan` restores parity.
+///
+/// The sibling content-dir case (`FileEntry::new_directory` defaults
+/// `content_dir() == true`) is covered by
+/// `delete_ordinary_subdir_succeeds_with_no_io_error`, which still deletes the
+/// extraneous child - proving the gate does not over-suppress real recursion
+/// targets.
+#[test]
+fn implied_non_content_subdir_is_not_scanned_for_deletion() {
+    use tempfile::TempDir;
+
+    let temp_dir = TempDir::new().unwrap();
+    let dest = temp_dir.path();
+
+    // The `--files-from` entry `subdir/file` was transferred; `stale.txt` is a
+    // pre-existing destination file inside the implied subdir.
+    let subdir = dest.join("subdir");
+    std::fs::create_dir(&subdir).unwrap();
+    std::fs::write(subdir.join("file"), b"from sender").unwrap();
+    std::fs::write(subdir.join("stale.txt"), b"pre-existing").unwrap();
+
+    let handshake = test_handshake();
+    let mut config = test_config();
+    config.flags.delete = true;
+    config.args = vec![OsString::from(dest.to_str().unwrap())];
+    let mut ctx = ReceiverContext::new_for_test(&handshake, config);
+
+    // Mirror the wire flist for `--files-from subdir/file`: the root `.` and
+    // the parent `subdir` are implied dirs (FLAG_CONTENT_DIR clear); only
+    // `subdir/file` is an actual transferred entry.
+    let mut root = FileEntry::new_directory(".".into(), 0o755);
+    root.set_content_dir(false);
+    ctx.file_list.push(root);
+    let mut implied = FileEntry::new_directory("subdir".into(), 0o755);
+    implied.set_content_dir(false);
+    ctx.file_list.push(implied);
+    ctx.file_list
+        .push(FileEntry::new_file("subdir/file".into(), 11, 0o644));
+
+    let mut writer = TestDeletionWriter;
+    let (stats, _, _) = ctx
+        .delete_extraneous_files(
+            dest,
+            #[cfg(unix)]
+            None,
+            &mut writer,
+        )
+        .unwrap();
+
+    // The stale file in the implied subdir must survive - upstream never scans
+    // a non-content dir for deletion.
+    assert!(
+        subdir.join("stale.txt").exists(),
+        "stale.txt in an implied (non-content) subdir must be preserved"
+    );
+    assert!(
+        subdir.join("file").exists(),
+        "the transferred file must survive"
+    );
+    assert_eq!(
+        stats.total(),
+        0,
+        "no deletions should occur when the only dirs are implied (non-content)"
+    );
+}
+
 #[test]
 fn receiver_set_and_get_filter_chain() {
     let handshake = test_handshake();
