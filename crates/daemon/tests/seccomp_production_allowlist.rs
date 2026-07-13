@@ -7,15 +7,15 @@
 //! 1. Fork a child process so the test harness thread is unaffected.
 //! 2. Build the production allowlist via the daemon crate's
 //!    `worker_seccomp_allowlist()` accessor.
-//! 3. Install the filter with `KillProcess` default action - identical to
-//!    the production wire-in.
+//! 3. Install the filter with the production `Errno(EPERM)` default
+//!    action - identical to the production wire-in.
 //! 4. Exercise a representative slice of file / metadata / process
 //!    syscalls that a daemon transfer touches in steady state. Network
 //!    socket creation is intentionally NOT exercised here: in production
 //!    the worker inherits the accepted socket fd from the parent and
 //!    never calls `socket(2)` / `connect(2)`.
-//! 5. Exit cleanly. Any missing syscall traps SIGSYS and surfaces as a
-//!    failed assertion in the parent.
+//! 5. Exit cleanly. A missing allow-listed syscall would fail with EPERM
+//!    and surface as a non-zero exit code in the parent.
 //!
 //! Gated on `cfg(all(target_os = "linux", feature = "daemon-seccomp"))`.
 
@@ -128,6 +128,55 @@ fn production_allowlist_covers_a_clean_transfer_slice() {
     assert_eq!(
         code, 0,
         "clean-transfer slice failed with exit code {code} - check allowlist",
+    );
+}
+
+#[test]
+fn unlisted_syscall_fails_eperm_without_killing_the_process() {
+    // Intent: upstream rsync has no seccomp, so oc's hardening must never
+    // make a legitimate transfer more fragile than upstream. The default
+    // action is `Errno(EPERM)`, not `KillProcess`: an unanticipated
+    // syscall is denied (never executes) but the worker - and therefore
+    // the whole daemon and every concurrent connection - stays alive. A
+    // regression back to a lethal default would let one rare, benign
+    // syscall RST every in-flight transfer, which is the bug this guards.
+    let status = fork_run(|| {
+        match apply_worker_seccomp_filter() {
+            SeccompOutcome::Installed => {}
+            SeccompOutcome::Unavailable => return 77, // skip
+            SeccompOutcome::Error(_) => return 78,
+        }
+
+        // ptrace is intentionally absent from the production allowlist.
+        // Under an `Errno(EPERM)` default it returns -1/EPERM and execution
+        // continues; under a kill default the process would die here.
+        // SAFETY: raw ptrace syscall; expected to be denied by seccomp.
+        #[allow(unsafe_code)]
+        let rc = unsafe { libc::syscall(libc::SYS_ptrace, libc::PTRACE_TRACEME, 0, 0, 0) };
+        if rc != -1 {
+            return 20; // syscall unexpectedly succeeded - not denied
+        }
+        if std::io::Error::last_os_error().raw_os_error() != Some(libc::EPERM) {
+            return 21; // denied, but with the wrong errno
+        }
+        // Reaching here proves the process survived a denied syscall.
+        0
+    });
+
+    let extracted = std::process::ExitStatus::from_raw(status);
+    if let Some(sig) = extracted.signal() {
+        panic!(
+            "production filter killed the process (signal {sig}) on an unlisted syscall - default action must be non-lethal Errno(EPERM)",
+        );
+    }
+    let code = extracted.code().expect("child must exit");
+    if code == 77 {
+        eprintln!("seccomp filter unavailable in this build/kernel; skipping");
+        return;
+    }
+    assert_eq!(
+        code, 0,
+        "unlisted syscall must fail with EPERM and leave the process alive (exit code {code})",
     );
 }
 
