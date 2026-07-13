@@ -397,7 +397,12 @@ impl ReceiverContext {
                     if !self.config.connection.client_mode {
                         use crate::generator::ItemFlags;
                         let iflags = ItemFlags::from_raw(base_iflags);
-                        let _ = self.emit_itemize(writer, &iflags, file_entry);
+                        // Routed through the deferral seam for consistency with
+                        // the other emit sites. A server-mode receiver never
+                        // produces a client-visible row (record_itemize gates on
+                        // client_mode), so this stays the no-op it already was,
+                        // whether or not deferral is active.
+                        let _ = self.emit_or_record_itemize(writer, file_idx, &iflags, file_entry);
                     }
                 }
 

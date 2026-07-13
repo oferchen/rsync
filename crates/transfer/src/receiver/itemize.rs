@@ -192,4 +192,77 @@ impl ReceiverContext {
             Ok(())
         }
     }
+
+    /// Emits an itemize row immediately, or buffers it for the deferred
+    /// flist-index-order flush when [`Self::defer_itemize`] is set.
+    ///
+    /// Callers on the deferred path (currently only `run_pipelined`) pass the
+    /// entry's flist index so the buffered row can be re-ordered against rows
+    /// recorded by other passes (directory creation, candidate selection). When
+    /// deferral is off every other receive path emits at the call site exactly
+    /// as before.
+    pub(in crate::receiver) fn emit_or_record_itemize<W: crate::writer::MsgInfoSender + ?Sized>(
+        &self,
+        writer: &mut W,
+        flist_idx: usize,
+        iflags: &crate::generator::ItemFlags,
+        entry: &protocol::flist::FileEntry,
+    ) -> std::io::Result<()> {
+        if self.defer_itemize {
+            self.record_itemize(flist_idx, iflags, entry);
+            Ok(())
+        } else {
+            self.emit_itemize(writer, iflags, entry)
+        }
+    }
+
+    /// Buffers one itemize row under its flist index for the deferred
+    /// flist-index-order flush.
+    ///
+    /// The visibility gate mirrors [`Self::emit_itemize`] exactly: only a
+    /// client-mode receiver (a pull) produces a client-visible row. A server
+    /// receiver's row travels as wire iflags and is printed by the client's
+    /// sender (upstream `log.c:822` gates the `FCLIENT` write on `!am_server`),
+    /// so recording one here would double it. Preserving this gate keeps the
+    /// deferred flush byte-identical to the immediate emit - only the ordering
+    /// changes.
+    pub(in crate::receiver) fn record_itemize(
+        &self,
+        flist_idx: usize,
+        iflags: &crate::generator::ItemFlags,
+        entry: &protocol::flist::FileEntry,
+    ) {
+        if !self.should_emit_itemize() || !self.config.connection.client_mode {
+            return;
+        }
+        if let Some(line) = self.render_itemize_line(iflags, entry) {
+            self.itemize_rows
+                .borrow_mut()
+                .entry(flist_idx)
+                .or_default()
+                .push(line);
+        }
+    }
+
+    /// Drains every buffered itemize row in ascending flist-index order,
+    /// routing each through the client sink.
+    ///
+    /// Mirrors upstream's single flist-index-order walk in `generate_files`
+    /// (`generator.c:2329-2344`), where each entry is itemized as it is reached
+    /// so a directory row immediately precedes its children. Because only
+    /// client-mode rows are ever recorded (see [`Self::record_itemize`]),
+    /// [`Self::emit_info_line`] writes them to the client's stdout. Called once
+    /// by the driver just before finalization.
+    pub(in crate::receiver) fn flush_itemize_rows<W: crate::writer::MsgInfoSender + ?Sized>(
+        &self,
+        writer: &mut W,
+    ) -> std::io::Result<()> {
+        let rows = std::mem::take(&mut *self.itemize_rows.borrow_mut());
+        for (_idx, lines) in rows {
+            for line in lines {
+                self.emit_info_line(writer, &line)?;
+            }
+        }
+        Ok(())
+    }
 }

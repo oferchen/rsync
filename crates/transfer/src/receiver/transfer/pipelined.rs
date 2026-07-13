@@ -37,6 +37,11 @@ impl ReceiverContext {
         pipeline_config: PipelineConfig,
     ) -> io::Result<TransferStats> {
         let _t = PhaseTimer::new("receiver-transfer-pipelined");
+        // Buffer itemize rows and flush them once in flist-index order before
+        // finalization, so a directory row immediately precedes its children
+        // (upstream's single flist-index-order walk, generator.c:2329-2344)
+        // rather than oc's two-phase "all dirs, then all files" emission.
+        self.defer_itemize = true;
         let (mut reader, file_count, mut setup) = self.setup_transfer(reader, writer)?;
         let reader = &mut reader;
 
@@ -263,6 +268,10 @@ impl ReceiverContext {
         // upstream: generator.c:2080-2133 - touch_up_dirs() re-applies
         // directory mtimes after file writes clobber them.
         self.touch_up_dirs(&setup.dest_dir);
+
+        // Drain the deferred itemize rows in flist-index order before the
+        // goodbye handshake, matching upstream's single-pass emission ordering.
+        self.flush_itemize_rows(writer)?;
 
         self.finalize_transfer(reader, writer)?;
 
