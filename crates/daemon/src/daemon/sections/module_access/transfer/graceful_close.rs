@@ -61,25 +61,38 @@ impl PeerDrainStream for TcpStream {
 }
 
 /// Drains the connection's read side until the peer sends FIN (a clean `Ok(0)`
-/// EOF), bounded by `timeout`, so the socket's receive buffer is empty when the
-/// connection is finally closed.
+/// EOF), retrying transient conditions the way upstream's `read_timeout` does,
+/// bounded by a total `timeout` budget so a wedged peer can never pin the
+/// connection thread.
 ///
 /// This is the invariant that keeps the daemon from ever performing an abortive
-/// `close()`: with the receive buffer drained to EOF, the final close emits a
-/// clean FIN, so the peer reads a clean EOF rather than a RST. A `close()` with
-/// unread bytes still queued would make the kernel send a RST that the peer
-/// reports as "Connection reset by peer".
+/// `close()`: only a real EOF (`Ok(0)`) or a genuine peer-close error ends the
+/// drain, so the receive buffer is empty when the socket is finally closed and
+/// the final close emits a clean FIN rather than a RST. A `close()` with unread
+/// bytes still queued would make the kernel send a RST that the peer reports as
+/// "Connection reset by peer".
 ///
-/// The loop tolerates every terminal condition equally - EOF, an elapsed read
-/// timeout, or a peer-close error (`ConnectionReset`/`BrokenPipe`) - because all
-/// three mean there is nothing left to drain. Errors are swallowed: this runs on
-/// the teardown path after the transfer result has already been decided, so a
-/// drain hiccup must never change the transfer's outcome.
+/// Transient conditions never end the drain early:
+/// - `Interrupted` (EINTR) always retries - an interrupted syscall is not EOF.
+/// - `WouldBlock`/`TimedOut` (EAGAIN/EWOULDBLOCK, i.e. the per-read SO_RCVTIMEO
+///   firing) retry until the total `timeout` budget is exhausted, then stop.
 ///
-/// upstream: `io.c:943-963 noop_io_until_death()` keeps reading until the peer
-/// dies; `set_io_timeout(60)` bounds it so a wedged peer cannot hang forever.
+/// Breaking on `Interrupted`/`WouldBlock` before a real EOF would close the
+/// socket with the peer's trailing goodbye bytes still queued, turning the clean
+/// FIN into an abortive RST the peer reports as exit 23.
+///
+/// Errors are swallowed: this runs on the teardown path after the transfer
+/// result has already been decided, so a drain hiccup must never change the
+/// transfer's outcome.
+///
+/// upstream: `io.c:797 perform_io()` retries `read()` on
+/// `EINTR`/`EWOULDBLOCK`/`EAGAIN` (treats them as zero progress and loops) and
+/// treats only other errors as fatal; it ends solely on real EOF
+/// (`io.c:790`, `n == 0`). `io.c:943 noop_io_until_death()` loops `read_buf()`
+/// on that contract until the peer FINs, bounded by `set_io_timeout`.
 fn drain_until_peer_eof<S: PeerDrainStream + ?Sized>(stream: &mut S, timeout: Duration) {
     let _ = stream.set_drain_timeout(Some(timeout));
+    let deadline = std::time::Instant::now() + timeout;
     let mut sink = [0u8; 4096];
     loop {
         match stream.read(&mut sink) {
@@ -87,8 +100,19 @@ fn drain_until_peer_eof<S: PeerDrainStream + ?Sized>(stream: &mut S, timeout: Du
             Ok(0) => break,
             // More trailing bytes (peer goodbye / codec trailer); keep draining.
             Ok(_) => continue,
-            // Idle-socket timeout, interrupted syscall, or any peer-close error:
-            // nothing left to drain, stop so the close can proceed.
+            // Interrupted syscall (EINTR): not EOF, always retry - upstream io.c:279/797.
+            Err(ref e) if e.kind() == io::ErrorKind::Interrupted => continue,
+            // Idle-socket per-read timeout / EAGAIN: retry until the total budget
+            // is spent, then stop so the close can proceed - upstream io.c:797.
+            Err(ref e)
+                if matches!(e.kind(), io::ErrorKind::WouldBlock | io::ErrorKind::TimedOut) =>
+            {
+                if std::time::Instant::now() >= deadline {
+                    break;
+                }
+            }
+            // Genuine peer-close error (ConnectionReset/BrokenPipe/...): nothing
+            // left to drain, stop so the close can proceed.
             Err(_) => break,
         }
     }
@@ -104,12 +128,111 @@ mod graceful_close_tests {
     //! final `close()` emits a clean FIN instead of an abortive RST. These tests
     //! pin that invariant without depending on timing luck.
 
-    use super::drain_until_peer_eof;
-    use std::io::Write;
+    use super::{drain_until_peer_eof, PeerDrainStream};
+    use std::collections::VecDeque;
+    use std::io::{self, Read, Write};
     use std::net::{TcpListener, TcpStream};
     use std::sync::mpsc::channel;
     use std::thread;
     use std::time::{Duration, Instant};
+
+    /// A `Read` that replays a fixed script of results, letting the drain-loop
+    /// contract be pinned deterministically without depending on socket timing.
+    /// Each `Ok(bytes)` yields those bytes (an empty vec is a real `Ok(0)` EOF);
+    /// each `Err` yields that error. Reading past the script panics, proving the
+    /// loop stopped exactly when the contract says it must.
+    struct ScriptedReader {
+        steps: VecDeque<io::Result<Vec<u8>>>,
+        total_read: usize,
+    }
+
+    impl Read for ScriptedReader {
+        fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+            match self.steps.pop_front() {
+                Some(Ok(data)) => {
+                    let n = data.len().min(buf.len());
+                    buf[..n].copy_from_slice(&data[..n]);
+                    self.total_read += n;
+                    Ok(n)
+                }
+                Some(Err(e)) => Err(e),
+                None => panic!("drain read past the scripted EOF - it must stop at Ok(0)"),
+            }
+        }
+    }
+
+    impl PeerDrainStream for ScriptedReader {
+        fn set_drain_timeout(&self, _timeout: Option<Duration>) -> io::Result<()> {
+            Ok(())
+        }
+    }
+
+    /// A `Read` that never yields data and never FINs: every read is `WouldBlock`.
+    /// The only way a drain over it can terminate is the total-budget deadline.
+    struct AlwaysWouldBlock;
+
+    impl Read for AlwaysWouldBlock {
+        fn read(&mut self, _buf: &mut [u8]) -> io::Result<usize> {
+            Err(io::Error::from(io::ErrorKind::WouldBlock))
+        }
+    }
+
+    impl PeerDrainStream for AlwaysWouldBlock {
+        fn set_drain_timeout(&self, _timeout: Option<Duration>) -> io::Result<()> {
+            Ok(())
+        }
+    }
+
+    /// The drain must retry transient `Interrupted`/`WouldBlock` errors and
+    /// return only after a real `Ok(0)` EOF, having consumed every trailing byte
+    /// in between. If it bailed early on either transient error (the pre-fix
+    /// behaviour), the peer's goodbye bytes would be left unread and the close
+    /// would abort with a RST. upstream: io.c:322/376 retry EINTR/EAGAIN.
+    #[test]
+    fn retries_transient_errors_and_returns_only_on_eof() {
+        let mut reader = ScriptedReader {
+            steps: VecDeque::from(vec![
+                Err(io::Error::from(io::ErrorKind::Interrupted)),
+                Ok(b"trailing-".to_vec()),
+                Err(io::Error::from(io::ErrorKind::WouldBlock)),
+                Ok(b"goodbye".to_vec()),
+                Ok(Vec::new()), // real EOF (Ok(0))
+            ]),
+            total_read: 0,
+        };
+
+        drain_until_peer_eof(&mut reader, Duration::from_secs(5));
+
+        assert!(
+            reader.steps.is_empty(),
+            "drain must consume every scripted step up to and including EOF"
+        );
+        assert_eq!(
+            reader.total_read,
+            "trailing-goodbye".len(),
+            "drain must read all trailing bytes, never bail early on a transient error"
+        );
+    }
+
+    /// A genuinely idle peer that only ever returns `WouldBlock` and never FINs
+    /// must still terminate: the total-budget deadline stops the loop even though
+    /// no `Ok(0)` ever arrives. This is the anti-hang guard on the retry path -
+    /// retrying transient errors must not become an unbounded spin.
+    #[test]
+    fn idle_socket_terminates_at_deadline() {
+        let mut reader = AlwaysWouldBlock;
+        let start = Instant::now();
+        drain_until_peer_eof(&mut reader, Duration::from_millis(50));
+        let elapsed = start.elapsed();
+        assert!(
+            elapsed >= Duration::from_millis(50),
+            "drain must retry transient WouldBlock until the budget is spent"
+        );
+        assert!(
+            elapsed < Duration::from_secs(2),
+            "drain must stop once the total-budget deadline passes, never hang"
+        );
+    }
 
     /// A peer that writes a trailing goodbye burst then closes must be drained
     /// to EOF: every trailing byte is consumed and the loop returns only once
