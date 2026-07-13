@@ -572,9 +572,27 @@ fn process_approved_module(
     //   2. Drain read until EOF - waits for the peer to finish its own
     //      goodbye and FIN. We do NOT call `shutdown(Write)` first;
     //      sending FIN early would tell the peer "I'm done" before the
-    //      peer has written its trailing goodbye, which is the race.
-    //   3. close() - the linger window guarantees in-flight TX bytes are
+    //      peer has written its trailing goodbye (the oc<->upstream
+    //      download case where the receiver still sends MSG_STATS + a
+    //      final NDX_DONE after our engine's handle_goodbye returns).
+    //   3. shutdown(SHUT_WR) - half-close the write side now the protocol
+    //      is complete, so the peer observes our FIN and stops reading.
+    //   4. Drain read until EOF AGAIN - once we have FINed, wait for the
+    //      peer to observe it and close, draining any last bytes so the
+    //      final close() finds an EMPTY receive buffer. A close() with
+    //      unread bytes queued is an abortive close: the kernel discards
+    //      the data and sends a RST instead of a FIN, which the peer
+    //      reports as "Connection reset by peer (os error 104)" (exit 23)
+    //      even though the transfer completed. Steps 2 and 4 bracket the
+    //      half-close so neither an early FIN (step 2 first) nor a slow
+    //      peer that has not yet FINed by step 2's timeout (step 4 catches
+    //      it after the half-close prompts its close) can leave unread
+    //      bytes at the final close.
+    //   5. close() - the linger window guarantees in-flight TX bytes are
     //      delivered before the close completes.
+    //
+    // Every drain is bounded by a read timeout so a wedged peer can never
+    // pin the connection thread (never an unbounded blocking read).
     //
     // upstream: io.c:943-963 noop_io_until_death() loops on read() until
     // the peer sends FIN; cleanup.c:265 then calls close_all(). Our
@@ -598,35 +616,15 @@ fn process_approved_module(
             let _ = sock.set_linger(Some(Duration::from_secs(5)));
         }
 
-        // Drain the read side until the peer sends FIN (EOF). We do NOT
-        // shutdown(Write) first: that would tell the peer "I'm done"
-        // before it has written its trailing MSG_STATS / NDX_DONE, which
-        // the peer abandons on receipt of FIN. Mirrors upstream's
-        // `noop_io_until_death()` for the sender side: read until peer
-        // FINs (which it does on its own `exit_cleanup`), then close.
-        //
-        // Cap at 5s so a wedged peer cannot pin the daemon thread; the
-        // window is generous enough for any reasonable goodbye exchange.
-        let _ = stream.set_read_timeout(Some(Duration::from_secs(5)));
-        let mut sink = [0u8; 4096];
-        loop {
-            match stream.read(&mut sink) {
-                Ok(0) => break,
-                Ok(_) => continue,
-                Err(err)
-                    if matches!(
-                        err.kind(),
-                        io::ErrorKind::TimedOut
-                            | io::ErrorKind::WouldBlock
-                            | io::ErrorKind::Interrupted
-                    ) =>
-                {
-                    break;
-                }
-                Err(_) => break,
-            }
-        }
-        let _ = stream.set_read_timeout(None);
+        // Pre-shutdown drain: read the peer's trailing bytes until FIN (EOF).
+        // We do NOT shutdown(Write) first: that would tell the peer "I'm done"
+        // before it has written its trailing MSG_STATS / NDX_DONE, which the
+        // peer (an upstream receiver in the oc<->upstream download case)
+        // abandons on receipt of FIN. Mirrors upstream's
+        // `noop_io_until_death()`: read until the peer FINs on its own
+        // `exit_cleanup`. Bounded by a read timeout so a wedged peer cannot pin
+        // the daemon thread; the window is generous for any goodbye exchange.
+        drain_until_peer_eof(stream, GOODBYE_DRAIN_TIMEOUT);
 
         // UTS-V3.A explicit drain barrier (kernel-level half-close).
         // Once the peer has FINed (read-drain returned EOF/timeout) and
@@ -653,6 +651,16 @@ fn process_approved_module(
                 }
             }
         }
+
+        // Post-shutdown drain: now that our FIN is on the wire, wait for the
+        // peer to observe it and close, consuming any last bytes so the final
+        // close() below finds an EMPTY receive buffer and emits a clean FIN
+        // rather than an abortive RST. This catches the slow-peer case where
+        // the pre-shutdown drain timed out before the peer had FINed: the
+        // half-close prompts the peer to finish reading and close, and this
+        // drain reaps its FIN. Bounded by the same read timeout so it can never
+        // hang. See `graceful_close.rs` for the abortive-close rationale.
+        drain_until_peer_eof(stream, GOODBYE_DRAIN_TIMEOUT);
     }
 
     // Drop transfer-engine stream clones after the drain completes.
