@@ -3,29 +3,34 @@
 //!
 //! # Why this file exists
 //!
-//! The parallel scan splits the source into disjoint ranges and scans each on
-//! its own worker with the consumed-bitset prune disabled. That is *not*
-//! wire-transparent in general: a matched basis block that straddles a range
-//! boundary degrades to literals, and a duplicate-content basis resolves each
-//! source window to a different sibling than the pruned sequential scan. The
-//! production wiring therefore engages the parallel path only behind a
-//! default-off flag and only when the basis is duplicate-free
+//! The parallel scan splits the source into overlapping stripes scanned on
+//! separate workers with the consumed-bitset prune disabled, then reassembles
+//! the single-pass token stream (`docs/design/intra-file-parallelism.md`,
+//! "Approach A": per-stripe read-ahead completes straddling matches; a greedy
+//! merge over the union of `Copy` runs reproduces the sequential selection).
+//! For a duplicate-free basis this is wire-transparent; a duplicate-content
+//! basis resolves each source window to a different sibling than the pruned
+//! sequential scan, so the production wiring engages the parallel path only
+//! behind a default-off flag and only when the basis is duplicate-free
 //! ([`DeltaSignatureIndex::has_duplicate_blocks`] is `false`).
 //!
-//! These tests pin the two halves of that contract:
+//! These tests pin the contract:
 //!
-//! 1. **Eligible inputs are byte-identical.** For a duplicate-free basis whose
-//!    source is an in-place edit at every range-boundary offset - the exact
-//!    layout where a naive split would straddle a match - the chunked wire
-//!    bytes must equal the sequential wire bytes for chunk counts 2, 4, and 8.
-//!    This is the guarantee the opt-in relies on. If the adjacent-literal
-//!    coalescing or the boundary handling regresses, this equality breaks.
-//! 2. **Ineligible inputs are documented as divergent.** For a
-//!    duplicate-heavy basis the chunked and sequential wire bytes must
-//!    *differ*, pinning the boundary the duplicate-free gate exists to avoid:
-//!    a future change cannot silently make the parallel path look transparent
-//!    on duplicate content and thereby hide the divergence the gate guards
-//!    against.
+//! 1. **Boundary-aligned edits are byte-identical.** For a duplicate-free basis
+//!    whose source is an in-place edit at every range-boundary offset, the
+//!    chunked wire bytes must equal the sequential wire bytes for chunk counts
+//!    2, 4, and 8.
+//! 2. **Shifted content is byte-identical.** For a duplicate-free basis whose
+//!    source is shifted off the block grid by an insertion - the case a
+//!    block-aligned split cannot handle, because the shifted matches straddle
+//!    arbitrary boundaries - the chunked wire bytes must still equal the
+//!    sequential wire bytes. This is the case Approach A's overlap + greedy
+//!    merge exists for.
+//! 3. **Duplicate-heavy inputs are documented as divergent.** For a
+//!    duplicate-heavy basis the chunked and sequential wire bytes must *differ*,
+//!    pinning the boundary the duplicate-free gate exists to avoid: a future
+//!    change cannot silently make the parallel path look transparent on
+//!    duplicate content and thereby hide the divergence the gate guards against.
 //!
 //! The wire serialization mirrors `transfer::generator::script_to_wire_delta`
 //! feeding `protocol::wire::write_token_stream`, exactly as
@@ -190,6 +195,110 @@ fn parallel_delta_dup_free_is_wire_identical() {
             source,
             "chunked reconstruction must equal the source for chunks={chunks}"
         );
+    }
+}
+
+/// The parallel scan must be byte-identical to the sequential scan for a
+/// duplicate-free basis whose source is *shifted off the block grid* by an
+/// insertion.
+///
+/// This is the case a block-aligned split cannot handle: after the insertion
+/// every subsequent block matches the basis at a non-block-aligned offset, so a
+/// static range boundary lands mid-match. Approach A's per-stripe read-ahead
+/// completes the straddling match and the greedy merge reproduces the
+/// sequential `Copy` selection, so the wire bytes must match for chunk counts
+/// 2, 4, and 8.
+#[test]
+fn parallel_delta_dup_free_shifted_content_is_wire_identical() {
+    let basis = lcg_bytes(0x5111_7ED0_0FF0_2025, DUP_FREE_LEN);
+    let index = build_index(&basis, BLOCK_LEN);
+    assert!(
+        !index.has_duplicate_blocks(),
+        "random basis must be duplicate-free so the parallel path is eligible"
+    );
+
+    // Insert 13 bytes near the front so every block after the insertion matches
+    // the basis at a +13 shift - off the BLOCK_LEN grid, and off the chunk grid.
+    let insert_at = 4096usize;
+    let mut source = Vec::with_capacity(basis.len() + 13);
+    source.extend_from_slice(&basis[..insert_at]);
+    source.extend_from_slice(b"THIRTEEN-BYTE");
+    source.extend_from_slice(&basis[insert_at..]);
+
+    let generator = DeltaGenerator::new();
+    let sequential = generator
+        .generate(Cursor::new(source.clone()), &index)
+        .expect("sequential");
+    let seq_wire = script_to_wire_bytes(&sequential, index.block_length());
+
+    // Sanity: the shifted tail must still match the bulk of the basis, or the
+    // test would be trivially satisfied by an all-literal stream.
+    assert!(
+        sequential.copy_bytes() > (basis.len() as u64) / 2,
+        "shifted content must still match the bulk of the basis (copy_bytes={})",
+        sequential.copy_bytes()
+    );
+
+    for &chunks in &[2usize, 4, 8] {
+        let chunked = generator
+            .generate_chunked(&source, &index, chunks)
+            .expect("chunked");
+        let chunked_wire = script_to_wire_bytes(&chunked, index.block_length());
+
+        assert_eq!(
+            chunked_wire, seq_wire,
+            "chunked wire bytes must equal sequential for chunks={chunks} on \
+             shifted duplicate-free content"
+        );
+        assert_eq!(
+            reconstruct(&basis, &index, &chunked),
+            source,
+            "chunked reconstruction must equal the source for chunks={chunks}"
+        );
+    }
+}
+
+/// The parallel scan must be byte-identical to the sequential scan when the
+/// source equals the basis (every block a copy).
+///
+/// This is the case where each worker chains its whole stripe into one fat
+/// seq-match run that overshoots the stripe boundary via read-ahead. The merge
+/// must reassemble those overlapping fat runs at block granularity - a
+/// wholesale skip of the next worker's overshoot-overlapping run would drain a
+/// whole stripe to literals. The wire bytes must equal the sequential scan for
+/// chunk counts 2, 4, and 8, and the stream must be overwhelmingly copies.
+#[test]
+fn parallel_delta_identical_source_is_wire_identical() {
+    let basis = lcg_bytes(0xC0FF_EE00_1DED_2025, DUP_FREE_LEN);
+    let index = build_index(&basis, BLOCK_LEN);
+    assert!(
+        !index.has_duplicate_blocks(),
+        "random basis must be duplicate-free so the parallel path is eligible"
+    );
+
+    let source = basis.clone();
+    let generator = DeltaGenerator::new();
+    let sequential = generator
+        .generate(Cursor::new(source.clone()), &index)
+        .expect("sequential");
+    let seq_wire = script_to_wire_bytes(&sequential, index.block_length());
+
+    for &chunks in &[2usize, 4, 8] {
+        let chunked = generator
+            .generate_chunked(&source, &index, chunks)
+            .expect("chunked");
+        let chunked_wire = script_to_wire_bytes(&chunked, index.block_length());
+
+        assert_eq!(
+            chunked_wire, seq_wire,
+            "chunked wire bytes must equal sequential for chunks={chunks} on identical source"
+        );
+        assert!(
+            chunked.copy_bytes() > (source.len() as u64) * 9 / 10,
+            "identical source must be overwhelmingly copies for chunks={chunks} (copy_bytes={})",
+            chunked.copy_bytes()
+        );
+        assert_eq!(reconstruct(&basis, &index, &chunked), source);
     }
 }
 
