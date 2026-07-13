@@ -767,11 +767,13 @@ fn parse_socket_options_accepts_all_upstream_options() {
     }
 }
 
-/// `SO_BROADCAST` is the one newly-added option that applies cleanly to a real
-/// socket on every daemon platform, so it exercises the apply path end to end
-/// (the LOWAT/TIMEO entries mirror upstream's best-effort `setsockopt` and can
-/// be rejected by the kernel at runtime, so they are covered at the parse
-/// layer only).
+/// `SO_BROADCAST` exercises the apply path end to end on Unix, where the kernel
+/// accepts the option on any socket type at `setsockopt` time. Windows validates
+/// that `SO_BROADCAST` is only meaningful for datagram sockets and rejects it on
+/// a stream socket with `WSAENOPROTOOPT`, so on Windows it joins the LOWAT/TIMEO
+/// entries that mirror upstream's best-effort `setsockopt` (rejectable by the
+/// platform at runtime) and are covered at the parse layer only.
+#[cfg(unix)]
 #[test]
 fn apply_socket_options_broadcast_sets_flag() {
     let listener = TcpListener::bind("127.0.0.1:0").expect("bind");
