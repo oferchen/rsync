@@ -27,7 +27,7 @@ This document defines the upstream compatibility test scenarios used to validate
 | Daemon transfer (host::module)      | `-av rsync://host/module/ /dest`         | ✅        | Auth + transfers fixed in Phase 3 |
 | Filters (include/exclude/filter)    | Deep ruleset match                        | ✅        | Comprehensive coverage |
 | Compression level                   | `-z --compress-level=9`                  | ✅        | Verified against rsync 3.4.1 |
-| Metadata flags                      | `-aHAX --numeric-ids`                    | ⚠️ ACL    | ACLs partially implemented |
+| Metadata flags                      | `-aHAX --numeric-ids`                    | ✅        | POSIX ACLs (access+default, mask, named user/group) wire-faithful vs upstream on Linux/macOS/FreeBSD; Windows DACL supported (SACL/inheritance deferred) |
 | Delete options                      | `--delete-excluded`, etc.                | ✅        | All variants working |
 | File list diffing                   | Match order, mtime, permission checks     | ✅        | Deterministic ordering |
 | Exit code match                     | Match known upstream codes                | ✅        | All 25 codes verified |
