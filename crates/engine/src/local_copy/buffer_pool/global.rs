@@ -34,6 +34,20 @@
 //! is appropriate because pooled buffers are reused across connections - the
 //! pool size scales with parallelism, not with connection count.
 //!
+//! # Hard Memory Cap
+//!
+//! Separately from the soft byte budget, the pool supports an optional *hard*
+//! cap on outstanding (checked-out) memory. When set, an `acquire` that would
+//! push live memory past the cap blocks until a buffer is returned
+//! (backpressure), bounding peak memory under high concurrency. It is **off by
+//! default** (uncapped, matching the historical behaviour) and is configured
+//! only via the `OC_RSYNC_BUFFER_POOL_MEMORY_CAP` environment variable or
+//! programmatically through [`GlobalBufferPoolConfig`]. The env value is a byte
+//! count, or the literal `auto` to derive the cap from a fraction of detected
+//! physical RAM; `0`, unset, or invalid values leave the pool uncapped.
+//! Enabling it trades never-stalling acquires for a memory ceiling, so use it
+//! only when peak memory matters more than acquire latency.
+//!
 //! # Thread Safety
 //!
 //! The singleton uses [`OnceLock`] for lock-free, one-shot initialization.
@@ -100,6 +114,34 @@ const ENV_BUFFER_POOL_SIZE: &str = "OC_RSYNC_BUFFER_POOL_SIZE";
 /// Useful for memory-constrained environments or high-throughput servers.
 const ENV_BYTE_BUDGET: &str = "OC_RSYNC_BYTE_BUDGET";
 
+/// Environment variable for the pool's hard outstanding-memory cap.
+///
+/// Distinct from [`ENV_BYTE_BUDGET`], which is a *soft* budget on retained
+/// (pooled) bytes that never blocks: this sets a *hard* ceiling on the bytes
+/// of checked-out (outstanding) buffers, so an `acquire` that would exceed it
+/// blocks (backpressure) until another buffer is returned. It bounds live
+/// memory under high concurrency at the cost of throttling acquirers.
+///
+/// Accepted values:
+/// - a positive integer byte count (e.g. `536870912` for 512 MiB),
+/// - the literal `auto` - derive the cap from detected physical RAM
+///   ([`AUTO_MEMORY_CAP_FRACTION`]); leaves the pool uncapped when RAM cannot
+///   be detected,
+/// - `0`, unset, or any invalid value - leave the pool uncapped (the default,
+///   unchanged).
+///
+/// The cap is off by default; enabling it changes acquire semantics from
+/// never-blocking to blocking-at-the-ceiling, so set it only when bounding
+/// peak memory matters more than never stalling an acquirer.
+const ENV_MEMORY_CAP: &str = "OC_RSYNC_BUFFER_POOL_MEMORY_CAP";
+
+/// Divisor applied to detected physical RAM for the `auto` memory cap.
+///
+/// `4` yields a cap of one quarter of installed RAM - generous enough that it
+/// never throttles normal transfers (whose outstanding buffers are a few MiB)
+/// while still bounding pathological growth on massively parallel workloads.
+const AUTO_MEMORY_CAP_FRACTION: u64 = 4;
+
 /// Parses an optional env-var value into a positive buffer count.
 ///
 /// Returns `Some(n)` when the value is a valid integer greater than zero.
@@ -125,6 +167,25 @@ fn parse_byte_budget_override(env_val: Option<String>) -> Option<Option<usize>> 
     }
 }
 
+/// Parses the hard memory-cap env value into an optional cap in bytes.
+///
+/// - unset, `"0"`, or any invalid value -> `None` (uncapped; default unchanged)
+/// - `"auto"` (case-insensitive) -> `total_ram / AUTO_MEMORY_CAP_FRACTION`
+///   when `total_ram` is known, else `None` (graceful fallback)
+/// - a positive integer -> that many bytes
+///
+/// `total_ram` is injected rather than queried here so the parse logic is
+/// unit-testable without depending on the host's real memory.
+fn parse_memory_cap_override(env_val: Option<String>, total_ram: Option<u64>) -> Option<usize> {
+    let val = env_val?;
+    let trimmed = val.trim();
+    if trimmed.eq_ignore_ascii_case("auto") {
+        let cap = total_ram? / AUTO_MEMORY_CAP_FRACTION;
+        return usize::try_from(cap).ok().filter(|&n| n > 0);
+    }
+    trimmed.parse::<usize>().ok().filter(|&n| n > 0)
+}
+
 impl Default for GlobalBufferPoolConfig {
     /// Defaults to one buffer per hardware thread at the standard copy buffer
     /// size, with a 32 MiB byte budget on pool retention.
@@ -146,10 +207,14 @@ impl Default for GlobalBufferPoolConfig {
             Some(override_val) => override_val, // Env var present: use its value (or None for 0).
             None => Some(DEFAULT_BYTE_BUDGET),  // No env var: apply the 32 MiB default.
         };
+        let memory_cap = parse_memory_cap_override(
+            std::env::var(ENV_MEMORY_CAP).ok(),
+            fast_io::physical_memory::total_physical_memory(),
+        );
         Self {
             max_buffers,
             buffer_size: super::super::COPY_BUFFER_SIZE,
-            memory_cap: None,
+            memory_cap,
             byte_budget,
         }
     }
@@ -175,6 +240,12 @@ pub fn global_buffer_pool() -> Arc<BufferPool> {
     Arc::clone(GLOBAL_BUFFER_POOL.get_or_init(|| {
         let config = GlobalBufferPoolConfig::default();
         let mut pool = BufferPool::with_buffer_size(config.max_buffers, config.buffer_size);
+        // Apply the hard cap on the lazy path too, so an env-configured
+        // `OC_RSYNC_BUFFER_POOL_MEMORY_CAP` takes effect even when no caller
+        // invokes `init_global_buffer_pool` first (mirrors that helper).
+        if let Some(cap) = config.memory_cap.filter(|&n| n > 0) {
+            pool = pool.with_memory_cap(cap);
+        }
         if let Some(budget) = config.byte_budget.filter(|&n| n > 0) {
             pool = pool.with_byte_budget(budget);
         }
@@ -460,5 +531,63 @@ mod tests {
     #[test]
     fn parse_byte_budget_negative_ignored() {
         assert_eq!(parse_byte_budget_override(Some("-1".to_string())), None);
+    }
+
+    // Physical RAM used by the `auto` parser tests (8 GiB).
+    const TEST_RAM: u64 = 8 * 1024 * 1024 * 1024;
+
+    #[test]
+    fn parse_memory_cap_missing_is_uncapped() {
+        assert_eq!(parse_memory_cap_override(None, Some(TEST_RAM)), None);
+    }
+
+    #[test]
+    fn parse_memory_cap_zero_is_uncapped() {
+        assert_eq!(
+            parse_memory_cap_override(Some("0".to_string()), Some(TEST_RAM)),
+            None
+        );
+    }
+
+    #[test]
+    fn parse_memory_cap_non_numeric_is_uncapped() {
+        assert_eq!(
+            parse_memory_cap_override(Some("lots".to_string()), Some(TEST_RAM)),
+            None
+        );
+    }
+
+    #[test]
+    fn parse_memory_cap_explicit_byte_count() {
+        assert_eq!(
+            parse_memory_cap_override(Some("536870912".to_string()), Some(TEST_RAM)),
+            Some(536_870_912)
+        );
+    }
+
+    #[test]
+    fn parse_memory_cap_auto_is_fraction_of_ram() {
+        // 8 GiB / 4 = 2 GiB.
+        assert_eq!(
+            parse_memory_cap_override(Some("auto".to_string()), Some(TEST_RAM)),
+            Some(2 * 1024 * 1024 * 1024)
+        );
+    }
+
+    #[test]
+    fn parse_memory_cap_auto_is_case_and_whitespace_insensitive() {
+        assert_eq!(
+            parse_memory_cap_override(Some("  AuTo  ".to_string()), Some(4 * 1024 * 1024 * 1024)),
+            Some(1024 * 1024 * 1024)
+        );
+    }
+
+    #[test]
+    fn parse_memory_cap_auto_without_ram_is_uncapped() {
+        // Detection failed: degrade gracefully to uncapped rather than guess.
+        assert_eq!(
+            parse_memory_cap_override(Some("auto".to_string()), None),
+            None
+        );
     }
 }
