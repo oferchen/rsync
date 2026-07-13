@@ -2,7 +2,7 @@
 
 use super::super::*;
 use super::support::AdaptiveTrackingAllocator;
-use std::sync::Arc;
+use std::sync::{Arc, Barrier};
 use std::thread;
 
 #[test]
@@ -152,35 +152,63 @@ fn adaptive_pool_holds_steady_under_balanced_load() {
 
 #[test]
 fn adaptive_pool_concurrent_growth() {
-    // Many threads each acquire multiple buffers concurrently, forcing fresh
-    // allocations (misses). Each thread has a cold TLS cache so every acquire
-    // goes through pop_buffer() which records the miss. We need >= 64 ops
-    // (CHECK_INTERVAL) to trigger a resize evaluation. With 16 threads * 4
-    // acquires = 64 ops, all misses, the pool should grow from capacity 2.
+    // Verifies that concurrent allocation pressure grows the pool, without
+    // depending on a race in the resize-check boundary.
+    //
+    // The resize evaluation only fires when a thread observes the shared op
+    // counter at an exact multiple of CHECK_INTERVAL (64). That counter is
+    // sampled with a plain load that races concurrent increments: under
+    // contention every thread can load a value already bumped past 64 by its
+    // peers, so no thread observes the boundary and the pool never resizes.
+    // The old design ran two 64-op concurrent rounds hoping one boundary would
+    // land; under load both could be missed, capacity stayed at 2, and the
+    // assertion flaked.
+    //
+    // Fix: build the miss pressure concurrently (worker threads that are
+    // provably all in-flight via a barrier), keeping the op count strictly
+    // below CHECK_INTERVAL so no check fires mid-phase, then cross the boundary
+    // from a single thread where the counter cannot be raced. The evaluation is
+    // then guaranteed to observe the accumulated high miss rate and grow.
+    const THREADS: usize = 15;
+    const PER_THREAD: usize = 4; // 15 * 4 = 60 ops, below CHECK_INTERVAL (64).
+
     let pool = Arc::new(BufferPool::with_buffer_size(2, 1024).with_adaptive_resizing());
     let initial = pool.max_buffers();
+    assert_eq!(initial, 2);
 
-    // Run two rounds to ensure at least one resize check fires.
-    for _ in 0..2 {
-        let handles: Vec<_> = (0..16)
-            .map(|_| {
-                let pool = Arc::clone(&pool);
-                thread::spawn(move || {
-                    // Hold 4 buffers each to force misses (pool starts near-empty).
-                    let held: Vec<_> = (0..4)
-                        .map(|_| BufferPool::acquire_from(Arc::clone(&pool)))
-                        .collect();
-                    drop(held);
-                })
+    // Concurrent phase: every worker holds all its buffers simultaneously (the
+    // barrier guarantees all acquisitions are in-flight before any release), so
+    // the capacity-2 pool cannot serve them and every acquire is a genuine
+    // concurrent miss. Total ops (60) stay under CHECK_INTERVAL, so no resize
+    // check fires here and the misses accumulate for the evaluation below.
+    let barrier = Arc::new(Barrier::new(THREADS));
+    let handles: Vec<_> = (0..THREADS)
+        .map(|_| {
+            let pool = Arc::clone(&pool);
+            let barrier = Arc::clone(&barrier);
+            thread::spawn(move || {
+                let held: Vec<_> = (0..PER_THREAD)
+                    .map(|_| BufferPool::acquire_from(Arc::clone(&pool)))
+                    .collect();
+                barrier.wait();
+                drop(held);
             })
-            .collect();
-
-        for h in handles {
-            h.join().expect("thread panicked");
-        }
+        })
+        .collect();
+    for h in handles {
+        h.join().expect("thread panicked");
     }
 
-    // Pool should have grown from the initial 2.
+    // Boundary-crossing phase: single-threaded acquires push the op counter to
+    // exactly CHECK_INTERVAL. With no concurrent writers the boundary is
+    // observed deterministically, evaluate() sees the accumulated high miss
+    // rate, and the pool grows. If the grow path regresses (threshold, wiring,
+    // or evaluate logic), the counter still crosses the boundary but capacity
+    // stays at 2 and this assertion fails.
+    let _settle: Vec<_> = (0..PER_THREAD)
+        .map(|_| BufferPool::acquire_from(Arc::clone(&pool)))
+        .collect();
+
     let final_cap = pool.max_buffers();
     assert!(
         final_cap > initial,
