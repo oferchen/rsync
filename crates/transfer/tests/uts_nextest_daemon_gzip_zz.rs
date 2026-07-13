@@ -75,7 +75,6 @@
 use std::env;
 use std::fs;
 use std::io::{self, Read, Write};
-use std::net::{Ipv4Addr, SocketAddr, TcpListener, TcpStream};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::thread;
@@ -92,9 +91,6 @@ use tempfile::{TempDir, tempdir};
 /// deterministic PRNG stream. Total source size is ~1 MB.
 const COMPRESSIBLE_BYTES: usize = 512 * 1024;
 const INCOMPRESSIBLE_BYTES: usize = 512 * 1024;
-
-/// Daemon startup deadline. Mirrors `v61d_2_daemon_push_increcurse_perf_regression.rs`.
-const DAEMON_BOOT_TIMEOUT: Duration = Duration::from_secs(10);
 
 /// Locate the workspace `oc-rsync` binary the test runner built.
 ///
@@ -129,34 +125,6 @@ fn locate_oc_rsync() -> Option<PathBuf> {
     None
 }
 
-/// Allocate a free TCP port by binding to ephemeral port 0.
-///
-/// Drops the listener immediately so the daemon can rebind. The residual
-/// window between drop and daemon bind is acceptable for tests since each
-/// test gets a fresh ephemeral port from the OS.
-fn allocate_test_port() -> Option<u16> {
-    let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0u16)).ok()?;
-    let port = listener.local_addr().ok()?.port();
-    drop(listener);
-    Some(port)
-}
-
-/// Poll until the daemon accepts a TCP connection on `port`, or the
-/// deadline elapses.
-fn wait_for_daemon(port: u16) -> bool {
-    let target = SocketAddr::from((Ipv4Addr::LOCALHOST, port));
-    let deadline = Instant::now() + DAEMON_BOOT_TIMEOUT;
-    let mut backoff = Duration::from_millis(20);
-    while Instant::now() < deadline {
-        if TcpStream::connect_timeout(&target, Duration::from_millis(200)).is_ok() {
-            return true;
-        }
-        thread::sleep(backoff);
-        backoff = (backoff * 2).min(Duration::from_millis(200));
-    }
-    false
-}
-
 /// Guard that kills the oc-rsync daemon on drop. Mirrors the pattern from
 /// `v61d_2_daemon_push_increcurse_perf_regression.rs` and keeps a
 /// panicking test from leaving a dangling TCP listener behind.
@@ -171,31 +139,41 @@ impl Drop for DaemonGuard {
     }
 }
 
-/// Spawn `oc-rsync --daemon` on `port` against `config_path` and wait for
-/// it to accept connections. Returns `Err` if the daemon never becomes
-/// ready within `DAEMON_BOOT_TIMEOUT`.
-fn spawn_oc_rsync_daemon(bin: &Path, config_path: &Path, port: u16) -> io::Result<DaemonGuard> {
-    let child = Command::new(bin)
-        .arg("--daemon")
-        .arg("--no-detach")
-        .arg("--port")
-        .arg(port.to_string())
-        .arg("--address=127.0.0.1")
-        .arg("--config")
-        .arg(config_path)
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()?;
-
-    if !wait_for_daemon(port) {
-        let mut guard = DaemonGuard { child };
-        let _ = guard.child.kill();
-        return Err(io::Error::other(format!(
-            "oc-rsync --daemon did not accept connections on port {port} within {DAEMON_BOOT_TIMEOUT:?}",
-        )));
+impl DaemonGuard {
+    /// PID of the running daemon process, for OS-level ownership checks.
+    fn pid(&self) -> u32 {
+        self.child.id()
     }
-    Ok(DaemonGuard { child })
+}
+
+/// Spawn `oc-rsync --daemon` on a race-free free port against `config_path` and
+/// return the guard plus the port it owns, or `Err` if no free port could be
+/// acquired.
+///
+/// Delegates port acquisition to [`test_support::spawn_daemon_on_free_port`]:
+/// it allocates a candidate port, starts the daemon on it, and - because the
+/// default daemon binds with `SO_REUSEADDR` only (upstream `socket.c:447`) - a
+/// port collision is a clean `EADDRINUSE` daemon exit rather than a silent
+/// `SO_REUSEPORT` co-bind, so a losing attempt simply retries with a fresh
+/// port. No two daemons ever share a port, eliminating the cross-talk that
+/// produced the intermittent `Connection reset by peer` / missing-file
+/// failures under concurrent load.
+fn spawn_oc_rsync_daemon(bin: &Path, config_path: &Path) -> io::Result<(DaemonGuard, u16)> {
+    let (child, port) = test_support::spawn_daemon_on_free_port(|port| {
+        Command::new(bin)
+            .arg("--daemon")
+            .arg("--no-detach")
+            .arg("--port")
+            .arg(port.to_string())
+            .arg("--address=127.0.0.1")
+            .arg("--config")
+            .arg(config_path)
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+    })?;
+    Ok((DaemonGuard { child }, port))
 }
 
 /// Write an `rsyncd.conf` exposing a single read-write module rooted at
@@ -311,9 +289,7 @@ impl GzipDaemonFixture {
         let pid_path = workdir.path().join("rsyncd.pid");
         write_daemon_config(&config_path, &log_path, &pid_path, &module_root)?;
 
-        let port = allocate_test_port()
-            .ok_or_else(|| io::Error::other("could not allocate ephemeral port"))?;
-        let daemon = spawn_oc_rsync_daemon(&bin, &config_path, port)?;
+        let (daemon, port) = spawn_oc_rsync_daemon(&bin, &config_path)?;
 
         Ok(Some(Self {
             _workdir: workdir,
@@ -334,6 +310,11 @@ impl GzipDaemonFixture {
     /// upstream invocations.
     fn url(&self) -> String {
         format!("rsync://127.0.0.1:{}/gzipmod", self.port)
+    }
+
+    /// PID of the fixture's daemon process, for OS-level port-ownership checks.
+    fn daemon_pid(&self) -> u32 {
+        self._daemon.pid()
     }
 }
 
@@ -613,4 +594,178 @@ fn daemon_gzip_z_vs_zz_negotiation() {
              {raw_len}); compression did not engage on the daemon pull\nstdout:\n{stdout}"
         );
     }
+}
+
+/// UTS-NEXTEST-EDGE.e.4 - the default daemon must refuse a second bind on an
+/// in-use port (upstream fidelity), which is what makes concurrent daemon tests
+/// safe from cross-talk.
+///
+/// # Why this matters
+///
+/// The intermittent `-zz` reset / missing-file flake under concurrent load was
+/// a shared-port cross-talk: two test daemons ended up on one port and the
+/// kernel load-balanced client connections between them, so a client reached
+/// the wrong daemon (upload landing in a different module root, or a reset when
+/// the sibling was torn down). That was only possible because oc set
+/// `SO_REUSEPORT` on the *default* listener, letting a second daemon co-bind.
+/// Upstream (`socket.c:447`) sets only `SO_REUSEADDR`, so a second daemon on an
+/// in-use port is refused with `EADDRINUSE`.
+///
+/// This test pins that behaviour deterministically: with the fixture daemon
+/// owning a port, a second `oc-rsync --daemon` told to bind the same port must
+/// exit (fail to bind) rather than co-bind, and the original daemon must still
+/// exclusively own the port.
+#[test]
+fn second_daemon_on_the_same_port_is_refused_no_co_bind() {
+    let Some(bin) = locate_oc_rsync() else {
+        eprintln!("skip: oc-rsync binary not located");
+        return;
+    };
+    let fixture = match GzipDaemonFixture::start() {
+        Ok(Some(f)) => f,
+        Ok(None) => {
+            eprintln!("skip: oc-rsync binary not located");
+            return;
+        }
+        Err(e) => {
+            eprintln!("skip: could not start oc-rsync daemon: {e}");
+            return;
+        }
+    };
+
+    // A second daemon (distinct module root) told to bind the SAME port the
+    // fixture already owns.
+    let workdir = tempdir().expect("second-daemon workdir");
+    let module_root = workdir.path().join("module");
+    fs::create_dir_all(&module_root).expect("second module root");
+    let config_path = workdir.path().join("rsyncd.conf");
+    write_daemon_config(
+        &config_path,
+        &workdir.path().join("rsyncd.log"),
+        &workdir.path().join("rsyncd.pid"),
+        &module_root,
+    )
+    .expect("second daemon config");
+
+    let mut second = Command::new(&bin)
+        .arg("--daemon")
+        .arg("--no-detach")
+        .arg("--port")
+        .arg(fixture.port.to_string())
+        .arg("--address=127.0.0.1")
+        .arg("--config")
+        .arg(&config_path)
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("spawn second daemon");
+
+    // Upstream single-listener semantics: the second bind is refused, so the
+    // process must exit (non-zero) within the window rather than co-bind and
+    // keep running.
+    let deadline = Instant::now() + Duration::from_secs(10);
+    let status = loop {
+        if let Some(status) = second.try_wait().expect("try_wait second daemon") {
+            break Some(status);
+        }
+        if Instant::now() >= deadline {
+            break None;
+        }
+        thread::sleep(Duration::from_millis(25));
+    };
+    if status.is_none() {
+        let _ = second.kill();
+        let _ = second.wait();
+    }
+    let status =
+        status.expect("a second oc-rsync --daemon on an in-use port must exit (EADDRINUSE)");
+    assert!(
+        !status.success(),
+        "the second daemon must fail to bind the in-use port (upstream SO_REUSEADDR-only, no co-bind)"
+    );
+
+    // The original daemon still exclusively owns the port.
+    assert_eq!(
+        test_support::daemon_listen_port(fixture.daemon_pid()),
+        Some(fixture.port),
+        "the fixture daemon must still own the port after the refused second bind"
+    );
+}
+
+/// UTS-NEXTEST-EDGE.e.5 - concurrent fixtures must never share a port and must
+/// never cross-talk.
+///
+/// Reproduces the triggering condition of the original flake - several daemon
+/// fixtures alive at once - and asserts the fix's guarantee end to end: every
+/// fixture gets a distinct port and every upload lands in its own module root
+/// with the correct bytes. With the old reuse-window allocation (plus the
+/// removed default `SO_REUSEPORT`) this would intermittently cross-talk (a file
+/// landing in the wrong root, or a reset); with the free-port retry helper it
+/// is deterministic.
+#[test]
+fn concurrent_fixtures_get_distinct_ports_and_do_not_cross_talk() {
+    if locate_oc_rsync().is_none() {
+        eprintln!("skip: oc-rsync binary not located");
+        return;
+    }
+
+    const FIXTURES: usize = 6;
+    let handles: Vec<_> = (0..FIXTURES)
+        .map(|idx| {
+            thread::spawn(move || {
+                let fixture = GzipDaemonFixture::start()
+                    .expect("start fixture")
+                    .expect("oc-rsync binary present");
+
+                // A payload unique to this fixture so a cross-talk landing is
+                // detectable by content, not just presence.
+                let src_dir = tempdir().expect("src tempdir");
+                let src_path = src_dir.path().join("payload.bin");
+                let marker = format!("fixture-{idx}-unique-payload ");
+                let mut content = marker.repeat(4096).into_bytes();
+                content.extend_from_slice(&build_incompressible(64 * 1024));
+                fs::write(&src_path, &content).expect("write source");
+
+                let url = format!("{}/", fixture.url());
+                let url_os = std::ffi::OsString::from(url);
+                let src_arg = src_path.as_os_str().to_owned();
+                let output = run_client(&[
+                    "-a".as_ref(),
+                    "-zz".as_ref(),
+                    "--timeout=30".as_ref(),
+                    src_arg.as_ref(),
+                    url_os.as_ref(),
+                ])
+                .expect("spawn client");
+                assert!(
+                    output.status.success(),
+                    "fixture {idx} upload must exit 0; status={:?}\nstderr:\n{}",
+                    output.status.code(),
+                    String::from_utf8_lossy(&output.stderr),
+                );
+
+                let landed = fixture.module_root().join("payload.bin");
+                let received = read_all(&landed);
+                assert_eq!(
+                    received, content,
+                    "fixture {idx} destination must hold its own payload (no cross-talk)"
+                );
+                fixture.port
+            })
+        })
+        .collect();
+
+    let mut ports: Vec<u16> = handles
+        .into_iter()
+        .map(|h| h.join().expect("join"))
+        .collect();
+    ports.sort_unstable();
+    let unique = ports.len();
+    ports.dedup();
+    assert_eq!(
+        ports.len(),
+        unique,
+        "every concurrent fixture must bind a distinct port (no reuse collision)"
+    );
 }

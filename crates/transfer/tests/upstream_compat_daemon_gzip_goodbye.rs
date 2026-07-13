@@ -50,18 +50,11 @@
 use std::env;
 use std::fs;
 use std::io::{self, Write};
-use std::net::{Ipv4Addr, SocketAddr, TcpListener, TcpStream};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
-use std::thread;
-use std::time::{Duration, Instant};
 
 use tempfile::{TempDir, tempdir};
 use test_support::{UpstreamVersion, require_upstream_rsync, upstream_compat_enabled};
-
-/// Daemon startup deadline. Mirrors the sibling
-/// `uts_nextest_daemon_gzip_zz.rs` so retry budgets stay aligned.
-const DAEMON_BOOT_TIMEOUT: Duration = Duration::from_secs(10);
 
 /// Total payload size. Picked to clear the ~615 KB cutoff observed in
 /// the UTS-9 capture so the goodbye-flush invariant is exercised on the
@@ -98,30 +91,6 @@ fn locate_oc_rsync() -> Option<PathBuf> {
     None
 }
 
-/// Allocate a free TCP port by binding to ephemeral port 0.
-fn allocate_test_port() -> Option<u16> {
-    let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0u16)).ok()?;
-    let port = listener.local_addr().ok()?.port();
-    drop(listener);
-    Some(port)
-}
-
-/// Poll until the daemon accepts a TCP connection on `port`, or the
-/// deadline elapses.
-fn wait_for_daemon(port: u16) -> bool {
-    let target = SocketAddr::from((Ipv4Addr::LOCALHOST, port));
-    let deadline = Instant::now() + DAEMON_BOOT_TIMEOUT;
-    let mut backoff = Duration::from_millis(20);
-    while Instant::now() < deadline {
-        if TcpStream::connect_timeout(&target, Duration::from_millis(200)).is_ok() {
-            return true;
-        }
-        thread::sleep(backoff);
-        backoff = (backoff * 2).min(Duration::from_millis(200));
-    }
-    false
-}
-
 /// RAII guard that kills the oc-rsync daemon on drop so a panicking
 /// assertion does not leave a dangling listener.
 struct DaemonGuard {
@@ -137,28 +106,25 @@ impl Drop for DaemonGuard {
 
 /// Spawn `oc-rsync --daemon` on `port` against `config_path` and wait
 /// for it to accept connections.
-fn spawn_oc_rsync_daemon(bin: &Path, config_path: &Path, port: u16) -> io::Result<DaemonGuard> {
-    let child = Command::new(bin)
-        .arg("--daemon")
-        .arg("--no-detach")
-        .arg("--port")
-        .arg(port.to_string())
-        .arg("--address=127.0.0.1")
-        .arg("--config")
-        .arg(config_path)
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()?;
-
-    if !wait_for_daemon(port) {
-        let mut guard = DaemonGuard { child };
-        let _ = guard.child.kill();
-        return Err(io::Error::other(format!(
-            "oc-rsync --daemon did not accept connections on port {port} within {DAEMON_BOOT_TIMEOUT:?}",
-        )));
-    }
-    Ok(DaemonGuard { child })
+fn spawn_oc_rsync_daemon(bin: &Path, config_path: &Path) -> io::Result<(DaemonGuard, u16)> {
+    // Race-free free port: the default daemon binds SO_REUSEADDR only (upstream
+    // socket.c:447), so a collision is a clean EADDRINUSE exit the helper
+    // retries. See `test_support::daemon_port`.
+    let (child, port) = test_support::spawn_daemon_on_free_port(|port| {
+        Command::new(bin)
+            .arg("--daemon")
+            .arg("--no-detach")
+            .arg("--port")
+            .arg(port.to_string())
+            .arg("--address=127.0.0.1")
+            .arg("--config")
+            .arg(config_path)
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+    })?;
+    Ok((DaemonGuard { child }, port))
 }
 
 /// Write an `rsyncd.conf` exposing a single read-write module rooted at
@@ -236,9 +202,7 @@ impl Fixture {
         let pid_path = workdir.path().join("rsyncd.pid");
         write_daemon_config(&config_path, &log_path, &pid_path, &module_root)?;
 
-        let port = allocate_test_port()
-            .ok_or_else(|| io::Error::other("could not allocate ephemeral port"))?;
-        let daemon = spawn_oc_rsync_daemon(oc_rsync_bin, &config_path, port)?;
+        let (daemon, port) = spawn_oc_rsync_daemon(oc_rsync_bin, &config_path)?;
 
         Ok(Self {
             _workdir: workdir,

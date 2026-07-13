@@ -6,12 +6,14 @@
 //! duplicated retry logic and setup boilerplate across crates.
 
 pub mod cli;
+pub mod daemon_port;
 pub mod dir_diff;
 pub mod lsh;
 pub mod skip;
 pub mod upstream_compat;
 
 pub use cli::{CliOutput, OcRsyncCliRunner, RunnerError};
+pub use daemon_port::{daemon_listen_port, spawn_daemon_on_free_port};
 pub use dir_diff::{DirDiff, DirDiffEntry, DirDiffError, DirDiffMismatch, DirDiffOptions};
 pub use lsh::{LSH_STUB_BIN, LshError, LshRunnerStub};
 pub use skip::{

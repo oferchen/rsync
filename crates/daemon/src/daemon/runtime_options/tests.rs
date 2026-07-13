@@ -96,6 +96,21 @@ mod runtime_options_tests {
     }
 
     #[test]
+    fn parse_port_zero_coerces_to_well_known_rsync_port() {
+        // upstream: clientserver.c:1573-1574 -
+        //   `if (rsync_port == 0 && (rsync_port = lp_rsync_port()) == 0)
+        //        rsync_port = RSYNC_PORT;`
+        // A resolved port of 0 (from `--port 0`) falls back to the well-known
+        // rsync port 873 rather than binding a kernel-assigned ephemeral port.
+        let args = vec![OsString::from("--port"), OsString::from("0")];
+        let options = RuntimeOptions::parse(&args).expect("parse");
+        assert_eq!(
+            options.port, DEFAULT_PORT,
+            "--port 0 must coerce to the well-known rsync port 873, matching upstream"
+        );
+    }
+
+    #[test]
     fn parse_ipv4_option_sets_address_family() {
         let args = vec![OsString::from("--ipv4")];
         let options = RuntimeOptions::parse(&args).expect("parse");

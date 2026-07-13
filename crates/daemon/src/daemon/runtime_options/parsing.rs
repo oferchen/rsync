@@ -41,7 +41,11 @@ impl RuntimeOptions {
         while let Some(argument) = iter.next() {
             if let Some(value) = take_option_value(argument, &mut iter, "--port")? {
                 options.port = parse_port(&value)?;
-                options.port_overridden = true;
+                // upstream: clientserver.c:1573 - `--port 0` is treated as
+                // "unspecified": it does not override a config `port` directive
+                // and falls through to the 873 default below. Only a non-zero
+                // CLI port suppresses the config value.
+                options.port_overridden = options.port != 0;
             } else if let Some(value) = take_option_value(argument, &mut iter, "--bind")? {
                 let addr = parse_bind_address(&value)?;
                 options.set_bind_address(addr)?;
@@ -123,6 +127,18 @@ impl RuntimeOptions {
             } else {
                 return Err(unsupported_option(argument.clone(), brand));
             }
+        }
+
+        // upstream: clientserver.c:1573-1574 -
+        //   `if (rsync_port == 0 && (rsync_port = lp_rsync_port()) == 0)
+        //        rsync_port = RSYNC_PORT;`
+        // After CLI and config resolution, a still-zero port coerces to the
+        // well-known rsync port 873 rather than binding a kernel-assigned
+        // ephemeral port. This is the same 0 -> 873 coercion the config
+        // accessor applies (`rsyncd_config::sections::port`), applied once here
+        // so both the sync and async daemon bind paths share it.
+        if options.port == 0 {
+            options.port = DEFAULT_PORT;
         }
 
         Ok(options)

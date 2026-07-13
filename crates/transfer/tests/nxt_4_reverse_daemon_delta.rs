@@ -58,7 +58,7 @@
 //!
 //! Self-skips (prints `skipping:` and returns) when the workspace `oc-rsync`
 //! binary cannot be located, a loopback port cannot be allocated, or the daemon
-//! does not accept connections within [`DAEMON_BOOT_TIMEOUT`]. Non-zero exit,
+//! does not start within the daemon boot timeout. Non-zero exit,
 //! a diverged destination, or zero `Matched data` are real regressions.
 
 #![cfg(unix)]
@@ -66,16 +66,10 @@
 use std::env;
 use std::fs;
 use std::io;
-use std::net::{Ipv4Addr, SocketAddr, TcpListener};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
-use std::thread;
-use std::time::{Duration, Instant};
 
 use tempfile::{TempDir, tempdir};
-
-/// Maximum time the daemon has to start accepting connections.
-const DAEMON_BOOT_TIMEOUT: Duration = Duration::from_secs(10);
 
 /// Size of the delta-bearing payload. Large enough to span many signature
 /// blocks so the preserved outer thirds yield multiple Copy tokens.
@@ -106,29 +100,6 @@ fn locate_oc_rsync() -> Option<PathBuf> {
         }
     }
     None
-}
-
-/// Allocate a free TCP port by binding to ephemeral port 0.
-fn allocate_test_port() -> Option<u16> {
-    let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0u16)).ok()?;
-    let port = listener.local_addr().ok()?.port();
-    drop(listener);
-    Some(port)
-}
-
-/// Wait until the daemon accepts a TCP connection on `port`.
-fn wait_for_daemon(port: u16) -> bool {
-    let target = SocketAddr::from((Ipv4Addr::LOCALHOST, port));
-    let deadline = Instant::now() + DAEMON_BOOT_TIMEOUT;
-    let mut backoff = Duration::from_millis(20);
-    while Instant::now() < deadline {
-        if std::net::TcpStream::connect_timeout(&target, Duration::from_millis(200)).is_ok() {
-            return true;
-        }
-        thread::sleep(backoff);
-        backoff = (backoff * 2).min(Duration::from_millis(200));
-    }
-    false
 }
 
 /// Write an `rsyncd.conf` exposing one read-only module rooted at
@@ -173,27 +144,26 @@ impl Drop for DaemonGuard {
 }
 
 /// Spawn `oc-rsync --daemon` on `port` and wait until it accepts connections.
-fn spawn_oc_daemon(oc_bin: &Path, config_path: &Path, port: u16) -> io::Result<DaemonGuard> {
-    let child = Command::new(oc_bin)
-        .arg("--daemon")
-        .arg("--no-detach")
-        .arg("--port")
-        .arg(port.to_string())
-        .arg("--config")
-        .arg(config_path)
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()?;
-
-    if !wait_for_daemon(port) {
-        let mut guard = DaemonGuard { child };
-        let _ = guard.child.kill();
-        return Err(io::Error::other(format!(
-            "oc-rsync --daemon did not accept connections on port {port} within {DAEMON_BOOT_TIMEOUT:?}",
-        )));
-    }
-    Ok(DaemonGuard { child })
+fn spawn_oc_daemon(oc_bin: &Path, config_path: &Path) -> io::Result<(DaemonGuard, u16)> {
+    // Acquire a race-free free port and start the daemon on it. Because the
+    // default daemon binds with SO_REUSEADDR only (upstream socket.c:447), a
+    // port collision is a clean EADDRINUSE daemon exit - never a silent
+    // SO_REUSEPORT co-bind - so the helper simply retries with a fresh port.
+    // See `test_support::daemon_port`.
+    let (child, port) = test_support::spawn_daemon_on_free_port(|port| {
+        Command::new(oc_bin)
+            .arg("--daemon")
+            .arg("--no-detach")
+            .arg("--port")
+            .arg(port.to_string())
+            .arg("--config")
+            .arg(config_path)
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+    })?;
+    Ok((DaemonGuard { child }, port))
 }
 
 /// Deterministic authoritative payload bytes.
@@ -315,7 +285,6 @@ struct DaemonScratch {
     config: PathBuf,
     log: PathBuf,
     pid: PathBuf,
-    port: u16,
 }
 
 impl DaemonScratch {
@@ -325,14 +294,12 @@ impl DaemonScratch {
         let config = root.join("rsyncd.conf");
         let log = root.join("rsyncd.log");
         let pid = root.join("rsyncd.pid");
-        let port = allocate_test_port()?;
         Some(Self {
             _tmp: tmp,
             root,
             config,
             log,
             pid,
-            port,
         })
     }
 }
@@ -366,7 +333,7 @@ fn reverse_daemon_delta_reconstructs_via_copy_tokens() {
     )
     .expect("write daemon config");
 
-    let _daemon = match spawn_oc_daemon(&oc_bin, &scratch.config, scratch.port) {
+    let (_daemon, port) = match spawn_oc_daemon(&oc_bin, &scratch.config) {
         Ok(d) => d,
         Err(e) => {
             eprintln!("skipping: could not start oc-rsync --daemon: {e}");
@@ -374,7 +341,7 @@ fn reverse_daemon_delta_reconstructs_via_copy_tokens() {
         }
     };
 
-    let src_url = std::ffi::OsString::from(format!("rsync://127.0.0.1:{}/data/", scratch.port));
+    let src_url = std::ffi::OsString::from(format!("rsync://127.0.0.1:{port}/data/"));
     let mut dest_arg = dest_dir.clone().into_os_string();
     dest_arg.push("/");
 
