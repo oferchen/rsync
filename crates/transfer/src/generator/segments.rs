@@ -162,6 +162,17 @@ pub(crate) struct IncrementalState {
     ///
     /// Without INC_RECURSE, this contains a single entry `(0, 0)`.
     pub(crate) ndx_segments: Vec<(usize, i32)>,
+    /// Wire NDX of each segment's parent directory, aligned 1:1 with
+    /// `ndx_segments`. The initial segment has no parent and stores `-1`.
+    ///
+    /// Under INC_RECURSE the remote generator itemizes a directory by sending
+    /// the "gap NDX" `ndx_start - 1` of that directory's sub-list
+    /// (generator.c:2313 `ndx = cur_flist->ndx_start - 1`). The sender must map
+    /// that gap back to the parent directory entry rather than to a regular
+    /// file, mirroring `dir_flist->files[cur_flist->parent_ndx]`
+    /// (sender.c:269-272). This table records the parent wire NDX for each
+    /// sub-list so `resolve_itemize_ndx` can perform that lookup.
+    pub(crate) segment_parent_ndx: Vec<i32>,
     /// Index into `ndx_segments` of the oldest unreclaimed segment.
     ///
     /// Advances by one each time a completed segment is reclaimed via
@@ -185,6 +196,7 @@ impl IncrementalState {
             flist_writer_cache: None,
             initial_segment_count: None,
             ndx_segments: vec![(0, initial_ndx_start)],
+            segment_parent_ndx: vec![-1],
             first_segment_idx: 0,
         }
     }

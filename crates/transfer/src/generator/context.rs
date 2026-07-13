@@ -209,6 +209,41 @@ impl GeneratorContext {
         flat_start + (wire_ndx - ndx_start) as usize
     }
 
+    /// Resolves a wire NDX read back from the receiver to the flat `file_list`
+    /// index whose entry drives itemize formatting and xattr responses.
+    ///
+    /// This is [`Self::wire_to_flat_ndx`] for every regular entry. Under
+    /// INC_RECURSE, however, the remote generator itemizes a directory by
+    /// sending the "gap NDX" `ndx_start - 1` of that directory's sub-list
+    /// (generator.c:2313 `ndx = cur_flist->ndx_start - 1`) instead of the
+    /// directory's own NDX. Feeding that gap through the plain segment map lands
+    /// on the trailing file of the previous segment, so a directory row would
+    /// print with a file type char and the wrong path. Upstream recovers the
+    /// directory via `file = dir_flist->files[cur_flist->parent_ndx]`
+    /// (sender.c:269-272); we mirror that by mapping the gap to its sub-list's
+    /// recorded parent directory NDX.
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `sender.c:267-272` - gap NDX (`ndx < cur_flist->ndx_start`) resolves to
+    ///   the parent directory entry in `dir_flist`.
+    pub(crate) fn resolve_itemize_ndx(&self, wire_ndx: i32) -> usize {
+        let segments = &self.incremental.ndx_segments;
+        // A gap NDX `g` satisfies `g + 1 == ndx_start` for exactly one sub-list;
+        // no regular entry's NDX can equal a sub-list start minus one (the +1
+        // gap is reserved, flist.c:2931). Binary search is valid because
+        // `ndx_start` values are strictly increasing.
+        if let Ok(seg_idx) =
+            segments.binary_search_by(|&(_, ndx_start)| ndx_start.cmp(&(wire_ndx + 1)))
+        {
+            let parent = self.incremental.segment_parent_ndx[seg_idx];
+            if parent >= 0 {
+                return self.wire_to_flat_ndx(parent);
+            }
+        }
+        self.wire_to_flat_ndx(wire_ndx)
+    }
+
     /// Converts a flat file list array index to a wire NDX value.
     ///
     /// Updates the `NDX_CONVERT_CALLS` / `NDX_CONVERT_CMPS` counters used

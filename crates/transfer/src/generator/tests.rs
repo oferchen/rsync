@@ -376,6 +376,68 @@ fn inc_recurse_gap_ndx_round_trip_preserves_original() {
 }
 
 #[test]
+fn inc_recurse_gap_ndx_itemizes_parent_directory() {
+    // upstream: generator.c:2313 - under INC_RECURSE a directory is itemized by
+    // sending the "gap NDX" `ndx_start - 1` of that directory's sub-list, not
+    // the directory's own NDX. On the client-sender print path the gap must
+    // resolve to the parent directory entry (sender.c:269-272,
+    // `dir_flist->files[cur_flist->parent_ndx]`). Feeding the gap through the
+    // plain segment map instead lands on the trailing child of the previous
+    // segment, so a directory row prints with a file type char and the child's
+    // path (`.f..t...... sub/child.txt` instead of `.d..t...... sub/`) and a
+    // new-dir push emits a spurious child row. This is display-only: the wire
+    // NDX echoed back to the receiver is unchanged.
+    use super::item_flags::ItemFlags;
+    use protocol::flist::FileEntry;
+
+    let (_handshake, mut ctx) = test_generator();
+
+    // Model a push of `sub/child.txt`: flat index 0 is the directory `sub`,
+    // flat index 1 is its child. The child travels in a sub-list whose
+    // ndx_start is 2, so the directory's itemize arrives at gap NDX 1.
+    ctx.file_list
+        .push(FileEntry::new_directory("sub".into(), 0o755));
+    ctx.file_list
+        .push(FileEntry::new_file("sub/child.txt".into(), 10, 0o644));
+    ctx.incremental.ndx_segments = vec![(0, 0), (1, 2)];
+    ctx.incremental.segment_parent_ndx = vec![-1, 0];
+
+    // Gap NDX (2 - 1 = 1) resolves to the directory at flat index 0, never the
+    // child file at flat index 1.
+    assert_eq!(ctx.resolve_itemize_ndx(1), 0);
+    // The child's own NDX (2) still resolves to its flat index (1).
+    assert_eq!(ctx.resolve_itemize_ndx(2), 1);
+    // A directory itemized at its real NDX (0, the non-INC_RECURSE path) also
+    // resolves to itself.
+    assert_eq!(ctx.resolve_itemize_ndx(0), 0);
+
+    // A --times push implies preserve_mtimes, so the time position renders
+    // lowercase `t`; the type char and path are what this test pins.
+    let itemize_ctx = itemize::ItemizeContext::default();
+
+    // A dir-mtime-only push carries ITEM_REPORT_TIME at the gap NDX. The
+    // resolved entry must render a directory row for `sub/`, not a file row for
+    // the child. This is the WHY: the type char and path come from the entry,
+    // so mapping the gap to the wrong entry corrupts both.
+    let dir_mtime = ItemFlags::from_raw(ItemFlags::ITEM_REPORT_TIME);
+    let flat = ctx.resolve_itemize_ndx(1);
+    let line = itemize::format_itemize_line(&dir_mtime, &ctx.file_list[flat], true, &itemize_ctx);
+    assert_eq!(line, ".d..t...... sub/\n");
+
+    // A new-dir push carries ITEM_LOCAL_CHANGE|ITEM_IS_NEW at the gap NDX; the
+    // resolved entry yields `cd+++++++++ sub/`, so no spurious child row is
+    // emitted for the directory.
+    let new_dir = ItemFlags::from_raw(ItemFlags::ITEM_LOCAL_CHANGE | ItemFlags::ITEM_IS_NEW);
+    let new_line = itemize::format_itemize_line(
+        &new_dir,
+        &ctx.file_list[ctx.resolve_itemize_ndx(1)],
+        true,
+        &itemize_ctx,
+    );
+    assert_eq!(new_line, "cd+++++++++ sub/\n");
+}
+
+#[test]
 fn flush_with_count_increments_global_counter() {
     // INC_RECURSE diagnostic I3 (#2198): every flush on the generator
     // transfer hot path must bump the global FLUSH_CALLS counter. The
