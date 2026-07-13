@@ -133,6 +133,28 @@ impl DeletePlanMap {
             .len()
     }
 
+    /// Returns the total number of extras summed across every published
+    /// plan.
+    ///
+    /// Used by the drain to size the delete workload before choosing
+    /// between the sequential fast path and the parallel consumer. The
+    /// lock is held only for the summation, mirroring the other accessors
+    /// in this module.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the internal mutex is poisoned. See [`Self::insert`]
+    /// for why this map treats poisoning as fatal.
+    #[must_use]
+    pub fn total_extras_count(&self) -> usize {
+        self.inner
+            .lock()
+            .expect("DeletePlanMap mutex poisoned")
+            .values()
+            .map(|plan| plan.extras.len())
+            .sum()
+    }
+
     /// Returns `true` when a plan for `dir` is currently published.
     ///
     /// Useful for tests and for the emitter to distinguish "not yet
@@ -211,6 +233,29 @@ mod tests {
         assert!(displaced.is_some(), "duplicate insert displaces previous");
         let current = map.take(Path::new("dup")).expect("plan present");
         assert_eq!(current.extras.len(), 2);
+    }
+
+    #[test]
+    fn total_extras_count_sums_across_plans() {
+        let map = DeletePlanMap::new();
+        assert_eq!(map.total_extras_count(), 0);
+        // `make_plan` publishes one extra per directory.
+        map.insert(make_plan("a"));
+        map.insert(make_plan("b"));
+        assert_eq!(map.total_extras_count(), 2);
+        // A plan with three extras lifts the sum to 5.
+        let mut wide = DeletePlan::new(PathBuf::from("wide"));
+        for name in ["one", "two", "three"] {
+            wide.push(DeleteEntry::new(
+                std::ffi::OsString::from(name),
+                DeleteEntryKind::File,
+            ));
+        }
+        map.insert(wide);
+        assert_eq!(map.total_extras_count(), 5);
+        // Draining a directory removes its extras from the sum.
+        map.take(Path::new("wide"));
+        assert_eq!(map.total_extras_count(), 2);
     }
 
     #[test]
