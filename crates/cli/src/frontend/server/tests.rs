@@ -812,6 +812,185 @@ fn long_flags_capture_compress_level() {
     assert_eq!(flags.compression_level.as_deref(), Some("6"));
 }
 
+// upstream: options.c:2812-2813 - `server_options()` emits
+// `safe_arg("--suffix", backup_suffix)` (joined `--suffix=VALUE`). Without a
+// match arm the token leaked into the positional list and the receiver failed
+// with `failed to create destination root --suffix=.bak` (exit 12).
+#[test]
+fn suffix_is_known_and_not_positional() {
+    assert!(is_known_server_long_flag("--suffix=.bak"));
+    let args = vec![
+        OsString::from("--server"),
+        OsString::from("-logDtpr"),
+        OsString::from("--suffix=.bak"),
+        OsString::from("."),
+        OsString::from("dst/"),
+    ];
+    let (flags, pos_args) = parse_server_flag_string_and_args(&args);
+    assert_eq!(flags, "-logDtpr");
+    assert_eq!(
+        pos_args,
+        vec![OsString::from("dst/")],
+        "--suffix=VALUE must not leak into positional args: {pos_args:?}",
+    );
+}
+
+// upstream: options.c:2812-2813 - the forwarded suffix is captured so the
+// server's backup path uses the same suffix the client requested.
+#[test]
+fn long_flags_capture_suffix() {
+    let args = vec![OsString::from("--server"), OsString::from("--suffix=.bak")];
+    let flags = parse_server_long_flags(&args);
+    assert_eq!(flags.backup_suffix.as_deref(), Some(".bak"));
+}
+
+// upstream: options.c:2912-2913 - `server_options()` emits
+// `safe_arg("--usermap", usermap)` (joined `--usermap=VALUE`) in the am_sender
+// block. It must be recognised so a server receiver maps ownership rather than
+// treating the token as a positional destination path.
+#[test]
+fn usermap_is_known_and_not_positional() {
+    assert!(is_known_server_long_flag("--usermap=0:1000"));
+    let args = vec![
+        OsString::from("--server"),
+        OsString::from("-logDtpr"),
+        OsString::from("--usermap=0:1000"),
+        OsString::from("."),
+        OsString::from("dst/"),
+    ];
+    let (flags, pos_args) = parse_server_flag_string_and_args(&args);
+    assert_eq!(flags, "-logDtpr");
+    assert_eq!(
+        pos_args,
+        vec![OsString::from("dst/")],
+        "--usermap=VALUE must not leak into positional args: {pos_args:?}",
+    );
+}
+
+// upstream: options.c:2912-2913 - the forwarded usermap spec is captured so the
+// server receiver can parse it into a UserMapping and remap ownership.
+#[test]
+fn long_flags_capture_usermap() {
+    let args = vec![
+        OsString::from("--server"),
+        OsString::from("--usermap=0:1000"),
+    ];
+    let flags = parse_server_long_flags(&args);
+    assert_eq!(flags.usermap.as_deref(), Some("0:1000"));
+}
+
+// upstream: options.c:2915-2916 - `server_options()` emits
+// `safe_arg("--groupmap", groupmap)` (joined `--groupmap=VALUE`) alongside
+// `--usermap`. Wildcard specs (`*:GID`) must survive intact into the flag list.
+#[test]
+fn groupmap_is_known_and_not_positional() {
+    assert!(is_known_server_long_flag("--groupmap=*:5678"));
+    let args = vec![
+        OsString::from("--server"),
+        OsString::from("-logDtpr"),
+        OsString::from("--groupmap=*:5678"),
+        OsString::from("."),
+        OsString::from("dst/"),
+    ];
+    let (flags, pos_args) = parse_server_flag_string_and_args(&args);
+    assert_eq!(flags, "-logDtpr");
+    assert_eq!(
+        pos_args,
+        vec![OsString::from("dst/")],
+        "--groupmap=VALUE must not leak into positional args: {pos_args:?}",
+    );
+}
+
+// upstream: options.c:2915-2916 - the forwarded groupmap spec is captured
+// verbatim (wildcard intact) for GroupMapping::parse.
+#[test]
+fn long_flags_capture_groupmap() {
+    let args = vec![
+        OsString::from("--server"),
+        OsString::from("--groupmap=*:5678"),
+    ];
+    let flags = parse_server_long_flags(&args);
+    assert_eq!(flags.groupmap.as_deref(), Some("*:5678"));
+}
+
+// upstream: options.c:2859-2860 - `server_options()` emits
+// `safe_arg("--skip-compress", skip_compress)` (joined `--skip-compress=VALUE`)
+// in the client-receiver branch so a server sender skips compression for the
+// listed suffixes. It must not leak into the positional path list.
+#[test]
+fn skip_compress_is_known_and_not_positional() {
+    assert!(is_known_server_long_flag("--skip-compress=gz/zip/jpg"));
+    let args = vec![
+        OsString::from("--server"),
+        OsString::from("--sender"),
+        OsString::from("-logDtprz"),
+        OsString::from("--skip-compress=gz/zip/jpg"),
+        OsString::from("."),
+        OsString::from("src/"),
+    ];
+    let (flags, pos_args) = parse_server_flag_string_and_args(&args);
+    assert_eq!(flags, "-logDtprz");
+    assert_eq!(
+        pos_args,
+        vec![OsString::from("src/")],
+        "--skip-compress=VALUE must not leak into positional args: {pos_args:?}",
+    );
+}
+
+// upstream: options.c:2859-2860 - the forwarded skip-compress list is captured
+// so the server sender can build a SkipCompressList.
+#[test]
+fn long_flags_capture_skip_compress() {
+    let args = vec![
+        OsString::from("--server"),
+        OsString::from("--skip-compress=gz/zip/jpg"),
+    ];
+    let flags = parse_server_long_flags(&args);
+    assert_eq!(flags.skip_compress.as_deref(), Some("gz/zip/jpg"));
+}
+
+// upstream: options.c:2787-2790 - block_size is forwarded as a standalone
+// `-B%u` token (e.g. `-B131072`) after the compact flag string. Without
+// recognition the token leaked into the positional list and the receiver
+// failed with `failed to create destination root -B131072` (exit 12).
+#[test]
+fn block_size_is_known_and_not_positional() {
+    assert!(is_known_server_long_flag("-B131072"));
+    let args = vec![
+        OsString::from("--server"),
+        OsString::from("-logDtpr"),
+        OsString::from("-B131072"),
+        OsString::from("."),
+        OsString::from("dst/"),
+    ];
+    let (flags, pos_args) = parse_server_flag_string_and_args(&args);
+    assert_eq!(flags, "-logDtpr");
+    assert_eq!(
+        pos_args,
+        vec![OsString::from("dst/")],
+        "-B<digits> must not leak into positional args: {pos_args:?}",
+    );
+}
+
+// upstream: options.c:2787-2790 - the forwarded block-size digits are captured.
+#[test]
+fn long_flags_capture_block_size() {
+    let args = vec![OsString::from("--server"), OsString::from("-B131072")];
+    let flags = parse_server_long_flags(&args);
+    assert_eq!(flags.block_size.as_deref(), Some("131072"));
+}
+
+// The `-B` guard is digit-anchored: a non-block-size `-B...` token (no such
+// token is emitted by upstream, but the guard must not over-match) is neither
+// recognised nor captured as a block size.
+#[test]
+fn block_size_guard_rejects_non_digit_suffix() {
+    assert!(!is_known_server_long_flag("-Bxyz"));
+    assert!(!is_known_server_long_flag("-B"));
+    let flags = parse_server_long_flags(&[OsString::from("--server"), OsString::from("-Bxyz")]);
+    assert_eq!(flags.block_size, None);
+}
+
 // upstream: options.c:2747-2748 - the server recognises the forwarded
 // `--list-only` and records it so the transfer lists without writing.
 #[test]
