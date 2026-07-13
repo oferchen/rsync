@@ -58,10 +58,8 @@
 use std::env;
 use std::fs::{self, File};
 use std::io::{self, Write};
-use std::net::{Ipv4Addr, SocketAddr, TcpListener};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
-use std::thread;
 use std::time::{Duration, Instant};
 
 use tempfile::TempDir;
@@ -83,11 +81,6 @@ const FILE_PAYLOAD_BYTES: usize = 1_024;
 /// regression's flist-construction cost grew with both file count and
 /// directory count.
 const FILES_PER_DIR: usize = 64;
-
-/// Receiver-side timeout for both daemon spawns. Upstream rsync exits on
-/// stdin EOF or when the connection drops; this is a defensive cap so a
-/// hung daemon does not stall the test runner indefinitely.
-const DAEMON_BOOT_TIMEOUT: Duration = Duration::from_secs(10);
 
 /// Maximum slowdown factor over the upstream baseline before the test
 /// fails. The v0.6.1 symptom was 95-201x; 5x catches a regression of
@@ -173,38 +166,6 @@ fn build_fixture(root: &Path) -> io::Result<()> {
     Ok(())
 }
 
-/// Allocate a free TCP port by binding to ephemeral port 0.
-///
-/// Mirrors the pattern in `tests/integration_daemon_server.rs::allocate_test_port`.
-/// The kernel does not immediately recycle ephemeral ports, so the
-/// residual race between drop and daemon bind is small enough that the
-/// test does not need nextest-level retries.
-fn allocate_test_port() -> Option<u16> {
-    let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0u16)).ok()?;
-    let port = listener.local_addr().ok()?.port();
-    drop(listener);
-    Some(port)
-}
-
-/// Wait until the daemon accepts a TCP connection on `port`.
-///
-/// Polls with a short backoff up to `DAEMON_BOOT_TIMEOUT`. Returns
-/// `true` once a connection succeeds, `false` if the timeout elapses
-/// without ever getting through.
-fn wait_for_daemon(port: u16) -> bool {
-    let target = SocketAddr::from((Ipv4Addr::LOCALHOST, port));
-    let deadline = Instant::now() + DAEMON_BOOT_TIMEOUT;
-    let mut backoff = Duration::from_millis(20);
-    while Instant::now() < deadline {
-        if std::net::TcpStream::connect_timeout(&target, Duration::from_millis(200)).is_ok() {
-            return true;
-        }
-        thread::sleep(backoff);
-        backoff = (backoff * 2).min(Duration::from_millis(200));
-    }
-    false
-}
-
 /// Write an `rsyncd.conf` exposing a single read-write module rooted at
 /// `module_root`. `use chroot = false` and `read only = false` are both
 /// required so the unprivileged test process can drive a push transfer
@@ -256,32 +217,25 @@ impl Drop for DaemonGuard {
 
 /// Spawn `rsync --daemon` on `port` against `config_path`. Waits for the
 /// port to accept connections before returning.
-fn spawn_upstream_daemon(
-    rsync_bin: &Path,
-    config_path: &Path,
-    port: u16,
-) -> io::Result<DaemonGuard> {
-    let child = Command::new(rsync_bin)
-        .arg("--daemon")
-        .arg("--no-detach")
-        .arg("--port")
-        .arg(port.to_string())
-        .arg("--address=127.0.0.1")
-        .arg("--config")
-        .arg(config_path)
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()?;
-
-    if !wait_for_daemon(port) {
-        let mut guard = DaemonGuard { child };
-        let _ = guard.child.kill();
-        return Err(io::Error::other(format!(
-            "upstream rsync --daemon did not accept connections on port {port} within {DAEMON_BOOT_TIMEOUT:?}",
-        )));
-    }
-    Ok(DaemonGuard { child })
+fn spawn_upstream_daemon(rsync_bin: &Path, config_path: &Path) -> io::Result<(DaemonGuard, u16)> {
+    // Race-free free port: upstream rsync binds SO_REUSEADDR only (socket.c:447),
+    // so a collision is a clean EADDRINUSE exit the helper retries. See
+    // `test_support::daemon_port`.
+    let (child, port) = test_support::spawn_daemon_on_free_port(|port| {
+        Command::new(rsync_bin)
+            .arg("--daemon")
+            .arg("--no-detach")
+            .arg("--port")
+            .arg(port.to_string())
+            .arg("--address=127.0.0.1")
+            .arg("--config")
+            .arg(config_path)
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+    })?;
+    Ok((DaemonGuard { child }, port))
 }
 
 /// Drive one push transfer against `rsync://127.0.0.1:<port>/push/` and
@@ -344,14 +298,6 @@ fn daemon_push_under_inc_recurse_stays_within_5x_of_upstream_sender_baseline() {
         }
     };
 
-    let port = match allocate_test_port() {
-        Some(p) => p,
-        None => {
-            eprintln!("skip: could not allocate test port");
-            return;
-        }
-    };
-
     let tmp = TempDir::new().expect("tempdir");
     let src = tmp.path().join("src");
     let module_root = tmp.path().join("module");
@@ -364,7 +310,7 @@ fn daemon_push_under_inc_recurse_stays_within_5x_of_upstream_sender_baseline() {
     write_daemon_config(&config_path, &log_path, &pid_path, &module_root)
         .expect("write daemon config");
 
-    let _daemon = match spawn_upstream_daemon(&up_bin, &config_path, port) {
+    let (_daemon, port) = match spawn_upstream_daemon(&up_bin, &config_path) {
         Ok(d) => d,
         Err(e) => {
             eprintln!("skip: could not start upstream rsync daemon: {e}");

@@ -88,23 +88,10 @@
 use std::env;
 use std::fs;
 use std::io;
-use std::net::{Ipv4Addr, SocketAddr, TcpListener};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
-use std::thread;
-use std::time::{Duration, Instant};
 
 use tempfile::{TempDir, tempdir};
-
-/// Maximum time the daemon has to start accepting connections.
-///
-/// 10 seconds matches `v61d_2_daemon_push_increcurse_perf_regression.rs`,
-/// the closest sibling that spawns an `oc-rsync --daemon` process. A
-/// daemon that does not bind in this window is treated as a hard
-/// failure rather than a flake, because the readiness probe polls
-/// every 20-200ms so a healthy daemon always responds well inside the
-/// budget.
-const DAEMON_BOOT_TIMEOUT: Duration = Duration::from_secs(10);
 
 /// Locate the workspace `oc-rsync` binary the test runner built.
 ///
@@ -138,39 +125,6 @@ fn locate_oc_rsync() -> Option<PathBuf> {
         }
     }
     None
-}
-
-/// Allocate a free TCP port by binding to ephemeral port 0.
-///
-/// The kernel does not immediately recycle ephemeral ports, so the
-/// residual race between drop and daemon bind is small enough that the
-/// test does not need nextest-level retries. Mirrors the helper in
-/// `v61d_2_daemon_push_increcurse_perf_regression.rs` and
-/// `crates/core/tests/common/mod.rs::allocate_test_port`.
-fn allocate_test_port() -> Option<u16> {
-    let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0u16)).ok()?;
-    let port = listener.local_addr().ok()?.port();
-    drop(listener);
-    Some(port)
-}
-
-/// Wait until the daemon accepts a TCP connection on `port`.
-///
-/// Polls with a short backoff up to [`DAEMON_BOOT_TIMEOUT`]. Returns
-/// `true` once a connection succeeds, `false` if the timeout elapses
-/// without ever getting through.
-fn wait_for_daemon(port: u16) -> bool {
-    let target = SocketAddr::from((Ipv4Addr::LOCALHOST, port));
-    let deadline = Instant::now() + DAEMON_BOOT_TIMEOUT;
-    let mut backoff = Duration::from_millis(20);
-    while Instant::now() < deadline {
-        if std::net::TcpStream::connect_timeout(&target, Duration::from_millis(200)).is_ok() {
-            return true;
-        }
-        thread::sleep(backoff);
-        backoff = (backoff * 2).min(Duration::from_millis(200));
-    }
-    false
 }
 
 /// Write an `rsyncd.conf` exposing a single read-write module.
@@ -224,27 +178,26 @@ impl Drop for DaemonGuard {
 
 /// Spawn `oc-rsync --daemon` on `port` against `config_path` and wait
 /// until it accepts connections.
-fn spawn_oc_daemon(oc_bin: &Path, config_path: &Path, port: u16) -> io::Result<DaemonGuard> {
-    let child = Command::new(oc_bin)
-        .arg("--daemon")
-        .arg("--no-detach")
-        .arg("--port")
-        .arg(port.to_string())
-        .arg("--config")
-        .arg(config_path)
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()?;
-
-    if !wait_for_daemon(port) {
-        let mut guard = DaemonGuard { child };
-        let _ = guard.child.kill();
-        return Err(io::Error::other(format!(
-            "oc-rsync --daemon did not accept connections on port {port} within {DAEMON_BOOT_TIMEOUT:?}",
-        )));
-    }
-    Ok(DaemonGuard { child })
+fn spawn_oc_daemon(oc_bin: &Path, config_path: &Path) -> io::Result<(DaemonGuard, u16)> {
+    // Acquire a race-free free port and start the daemon on it. Because the
+    // default daemon binds with SO_REUSEADDR only (upstream socket.c:447), a
+    // port collision is a clean EADDRINUSE daemon exit - never a silent
+    // SO_REUSEPORT co-bind - so the helper simply retries with a fresh port.
+    // See `test_support::daemon_port`.
+    let (child, port) = test_support::spawn_daemon_on_free_port(|port| {
+        Command::new(oc_bin)
+            .arg("--daemon")
+            .arg("--no-detach")
+            .arg("--port")
+            .arg(port.to_string())
+            .arg("--config")
+            .arg(config_path)
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+    })?;
+    Ok((DaemonGuard { child }, port))
 }
 
 /// Build the standard two-file source set + the extras the
@@ -344,7 +297,6 @@ struct DaemonScratch {
     config: PathBuf,
     log: PathBuf,
     pid: PathBuf,
-    port: u16,
 }
 
 impl DaemonScratch {
@@ -354,14 +306,12 @@ impl DaemonScratch {
         let config = root.join("rsyncd.conf");
         let log = root.join("rsyncd.log");
         let pid = root.join("rsyncd.pid");
-        let port = allocate_test_port()?;
         Some(Self {
             _tmp: tmp,
             root,
             config,
             log,
             pid,
-            port,
         })
     }
 }
@@ -403,7 +353,7 @@ fn daemon_push_emits_ndx_del_stats_and_reports_count() {
     )
     .expect("write daemon config");
 
-    let _daemon = match spawn_oc_daemon(&oc_bin, &scratch.config, scratch.port) {
+    let (_daemon, port) = match spawn_oc_daemon(&oc_bin, &scratch.config) {
         Ok(d) => d,
         Err(e) => {
             eprintln!("skipping: could not start oc-rsync --daemon: {e}");
@@ -413,7 +363,7 @@ fn daemon_push_emits_ndx_del_stats_and_reports_count() {
 
     let mut source_arg = source_dir.clone().into_os_string();
     source_arg.push("/");
-    let dst_url = std::ffi::OsString::from(format!("rsync://127.0.0.1:{}/pushmod/", scratch.port));
+    let dst_url = std::ffi::OsString::from(format!("rsync://127.0.0.1:{port}/pushmod/"));
 
     let args: &[&std::ffi::OsStr] = &[
         std::ffi::OsStr::new("--delete"),
@@ -477,7 +427,7 @@ fn daemon_pull_emits_ndx_del_stats_and_reports_count() {
     )
     .expect("write daemon config");
 
-    let _daemon = match spawn_oc_daemon(&oc_bin, &scratch.config, scratch.port) {
+    let (_daemon, port) = match spawn_oc_daemon(&oc_bin, &scratch.config) {
         Ok(d) => d,
         Err(e) => {
             eprintln!("skipping: could not start oc-rsync --daemon: {e}");
@@ -485,7 +435,7 @@ fn daemon_pull_emits_ndx_del_stats_and_reports_count() {
         }
     };
 
-    let src_url = std::ffi::OsString::from(format!("rsync://127.0.0.1:{}/pullmod/", scratch.port));
+    let src_url = std::ffi::OsString::from(format!("rsync://127.0.0.1:{port}/pullmod/"));
     let mut dest_arg = dest_dir.clone().into_os_string();
     dest_arg.push("/");
 
