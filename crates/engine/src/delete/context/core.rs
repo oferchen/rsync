@@ -426,7 +426,8 @@ impl DeleteContext {
     /// of entries are being deleted. When the whole transfer plans fewer
     /// than [`SMALL_DIR_FAST_PATH_THRESHOLD`] extras, or the process has no
     /// spare rayon worker to parallelise onto, the drain runs the
-    /// sequential [`DeleteEmitter`] directly. That emitter is the exact
+    /// sequential [`DeleteEmitter`](super::super::emitter::DeleteEmitter)
+    /// directly. That emitter is the exact
     /// code the parallel path dispatches through per cohort, so the delete
     /// events, stats, and exit code are byte-identical either way; only the
     /// scheduling wrapper is skipped.
@@ -528,7 +529,8 @@ impl DeleteContext {
     }
 
     /// DML-4 fast path: drains the owned [`DrainParts`] through the
-    /// sequential [`DeleteEmitter`], bypassing the parallel consumer's
+    /// sequential [`DeleteEmitter`](super::super::emitter::DeleteEmitter),
+    /// bypassing the parallel consumer's
     /// batching and scheduling machinery.
     ///
     /// This is the exact emitter the parallel consumer dispatches through
