@@ -167,6 +167,7 @@ fn bind_with_backlog(
     addr: SocketAddr,
     backlog: i32,
     tcp_fastopen: TcpFastOpenMode,
+    reuse_port: bool,
 ) -> io::Result<TcpListener> {
     let domain = if addr.is_ipv4() {
         socket2::Domain::IPV4
@@ -185,30 +186,40 @@ fn bind_with_backlog(
         })?;
 
     // Allow port reuse so the daemon can restart quickly without waiting for
-    // TIME_WAIT sockets to expire. Mirrors standard TcpListener::bind behaviour.
+    // TIME_WAIT sockets to expire.
+    // upstream: socket.c:447 - open_socket_in() sets SO_REUSEADDR (and only
+    // SO_REUSEADDR) on every listener.
     socket.set_reuse_address(true)?;
 
-    // Enable SO_REUSEPORT where supported (NACC) so multiple listener sockets
-    // can share the bind address and the kernel load-balances accepts across
-    // them. Best-effort: a failure downgrades to the single-listener path
-    // rather than aborting the bind. socket2's setter is Unix-only; Windows
-    // has no equivalent, so the call is skipped there.
+    // SO_REUSEPORT is set ONLY for the opt-in multi-acceptor daemon (more than
+    // one replica socket per address), where several listener sockets must
+    // share the bind address and the kernel load-balances accepts across them.
+    // The default single-listener daemon (`reuse_port == false`) must NOT set
+    // it: upstream (socket.c:447) sets only SO_REUSEADDR, so a second daemon
+    // attempting to bind the same port is refused with EADDRINUSE rather than
+    // silently co-binding. Best-effort when enabled: a failure downgrades to a
+    // debug log. socket2's setter is Unix-only; Windows has no equivalent, so
+    // the flag is consumed but unused there.
+    #[cfg(not(unix))]
+    let _ = reuse_port;
     #[cfg(unix)]
-    if fast_io::reuse_port_supported() {
-        match socket.set_reuse_port(true) {
-            Ok(()) => logging::debug_log!(Sockopt, 1, "SO_REUSEPORT set on listener {addr}"),
-            Err(_) => logging::debug_log!(
+    if reuse_port {
+        if fast_io::reuse_port_supported() {
+            match socket.set_reuse_port(true) {
+                Ok(()) => logging::debug_log!(Sockopt, 1, "SO_REUSEPORT set on listener {addr}"),
+                Err(_) => logging::debug_log!(
+                    Sockopt,
+                    1,
+                    "SO_REUSEPORT apply failed on listener {addr}: single-listener fallback"
+                ),
+            }
+        } else {
+            logging::debug_log!(
                 Sockopt,
                 1,
-                "SO_REUSEPORT apply failed on listener {addr}: single-listener fallback"
-            ),
+                "SO_REUSEPORT unsupported on this platform: skipped for listener {addr}"
+            );
         }
-    } else {
-        logging::debug_log!(
-            Sockopt,
-            1,
-            "SO_REUSEPORT unsupported on this platform: skipped for listener {addr}"
-        );
     }
 
     // For IPv6 sockets, set IPV6_V6ONLY to avoid conflicts with the separate
@@ -374,6 +385,11 @@ fn bind_listeners_per_family(
     log_sink: Option<&SharedLogSink>,
 ) -> Result<(Vec<TcpListener>, Vec<SocketAddr>), io::Error> {
     let replicas = acceptor_threads.max(1) as usize;
+    // SO_REUSEPORT is only needed when more than one replica socket must
+    // co-bind the same address (the opt-in multi-acceptor extension). The
+    // default single-listener daemon binds with SO_REUSEADDR only, matching
+    // upstream socket.c:447 so a duplicate bind is refused with EADDRINUSE.
+    let reuse_port = replicas > 1;
     let mut listeners = Vec::with_capacity(bind_addresses.len() * replicas);
     let mut bound_addresses = Vec::with_capacity(bind_addresses.len() * replicas);
     let dual_stack = bind_addresses.len() > 1;
@@ -389,7 +405,7 @@ fn bind_listeners_per_family(
         let mut family_bound = 0usize;
         let mut family_error: Option<io::Error> = None;
         for _ in 0..replicas {
-            match bind_with_backlog(requested_addr, backlog, tcp_fastopen) {
+            match bind_with_backlog(requested_addr, backlog, tcp_fastopen, reuse_port) {
                 Ok(listener) => {
                     let local_addr = listener.local_addr().unwrap_or(requested_addr);
                     bound_addresses.push(local_addr);
