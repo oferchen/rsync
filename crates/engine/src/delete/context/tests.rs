@@ -477,6 +477,184 @@ fn channel_drain_completes_when_worker_panics_mid_send() {
     );
 }
 
+/// DML-4 fixture: builds a delete context over `root` with `n` sibling
+/// subdirectories, each holding exactly one uniquely named extra file
+/// (`trashNNN`) that the drain must remove. The root keeps every
+/// subdirectory (they appear in its segment), so it plans zero extras and
+/// the total extras count equals `n`. Every cohort carries a single op, so
+/// the parallel consumer's intra-cohort `par_iter` cannot reorder and the
+/// cross-cohort order is the deterministic cursor traversal - making a
+/// leaf-for-leaf comparison of the two drain paths reproducible rather than
+/// racy. `n` is kept below the reorder buffer's 64-cohort cap by callers.
+#[cfg(feature = "parallel-delete-consumer")]
+fn build_multidir_ctx(root: &Path, n: usize) -> DeleteContext {
+    let ctx = DeleteContext::new(root.to_path_buf(), EmitterTiming::Before);
+
+    let mut root_children = Vec::with_capacity(n);
+    let mut root_segment = Vec::with_capacity(n);
+    for i in 0..n {
+        let name = format!("sub{i:03}");
+        let sub = root.join(&name);
+        fs::create_dir(&sub).unwrap();
+        touch(&sub, &format!("trash{i:03}"));
+        root_children.push(dir_child(root.to_str().unwrap(), &name));
+        root_segment.push(flist_dir(&name));
+    }
+
+    ctx.observe_directory(root.to_path_buf(), &root_children);
+    ctx.begin_directory(root_segment);
+    ctx.publish_plan_for(root).expect("publish root plan");
+
+    for i in 0..n {
+        let sub = root.join(format!("sub{i:03}"));
+        ctx.begin_directory(make_segment(&[]));
+        ctx.publish_plan_for(&sub).expect("publish sub plan");
+    }
+
+    ctx
+}
+
+/// Collects a drain outcome's recorded events as `(leaf, kind)` pairs in
+/// emission order. Normalises the dirfd-anchor leaf and the path-based
+/// fallback to the same leaf so the comparison is mechanism-agnostic.
+#[cfg(feature = "parallel-delete-consumer")]
+fn event_sequence(
+    outcome: &super::DrainOutcome<RecordingDeleteFs>,
+) -> Vec<(OsString, DeleteEntryKind)> {
+    outcome
+        .fs
+        .events()
+        .iter()
+        .map(|e| (recorded_leaf(&e.path).to_os_string(), e.kind))
+        .collect()
+}
+
+/// DML-4 (a) parity: the sequential fast path and the parallel consumer
+/// must produce byte-identical delete events, stats, and exit code for the
+/// same input - the correctness contract that lets the drain skip the
+/// pipeline below the threshold. Drives BOTH paths directly on two
+/// identical fixtures so the comparison never depends on the host's rayon
+/// thread count. Each cohort holds a single, uniquely named op, so the
+/// cross-cohort cursor order fully determines the event sequence and the
+/// leaf-for-leaf equality is reproducible.
+#[cfg(feature = "parallel-delete-consumer")]
+#[test]
+fn fast_and_parallel_paths_emit_identical_events() {
+    // 50 single-extra dirs (51 cohorts incl. root) stays under the reorder
+    // buffer's 64-cohort cap while still exercising cross-cohort ordering.
+    const N: usize = 50;
+
+    let tmp_seq = tempfile::tempdir().expect("tempdir");
+    let tmp_par = tempfile::tempdir().expect("tempdir");
+    let ctx_seq = build_multidir_ctx(tmp_seq.path(), N);
+    let ctx_par = build_multidir_ctx(tmp_par.path(), N);
+    assert_eq!(ctx_seq.plans.total_extras_count(), N);
+
+    let parts_seq = ctx_seq.into_drain_parts().expect("seq drain parts");
+    let out_seq = DeleteContext::emit_sequential_from_parts(parts_seq, RecordingDeleteFs::new())
+        .expect("fast-path drain");
+
+    let parts_par = ctx_par.into_drain_parts().expect("par drain parts");
+    let out_par = DeleteContext::emit_parallel_from_parts(parts_par, RecordingDeleteFs::new())
+        .expect("parallel drain");
+
+    assert_eq!(out_seq.stats, out_par.stats, "stats must be identical");
+    assert_eq!(out_seq.stats.files as usize, N, "every extra is deleted");
+    assert_eq!(out_seq.exit_code, out_par.exit_code, "exit code identical");
+    assert_eq!(
+        event_sequence(&out_seq),
+        event_sequence(&out_par),
+        "fast path and parallel path must emit an identical event order",
+    );
+    assert_eq!(out_seq.fs.events().len(), N);
+}
+
+/// DML-4 (a) routing: `emit_one` sends a sub-threshold workload down the
+/// sequential fast path and an at-or-above-threshold workload down the
+/// parallel consumer, and either way deletes exactly the right entries.
+/// Uses a single directory (one cohort, many ops) so the >= 64 case clears
+/// the reorder-buffer cohort cap; intra-cohort `par_iter` may reorder the
+/// parallel run, so the deletion SET is compared, while the routing
+/// decision itself is pinned on the pure predicate.
+#[cfg(feature = "parallel-delete-consumer")]
+#[test]
+fn emit_one_routes_small_and_large_transfers() {
+    use super::core::should_use_fast_path;
+
+    fn drain_single_dir(file_count: usize) -> super::DrainOutcome<RecordingDeleteFs> {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let dir = tmp.path().to_path_buf();
+        for i in 0..file_count {
+            touch(&dir, &format!("f{i:03}"));
+        }
+        let ctx = DeleteContext::new(dir.clone(), EmitterTiming::During);
+        ctx.observe_directory(dir.clone(), &[]);
+        ctx.begin_directory(make_segment(&[]));
+        ctx.publish_plan_for(&dir).expect("publish plan");
+        assert_eq!(ctx.plans.total_extras_count(), file_count);
+        ctx.emit_one(RecordingDeleteFs::new()).expect("drain")
+    }
+
+    // Small transfer: below the threshold -> fast path.
+    assert!(should_use_fast_path(10, 2));
+    let small = drain_single_dir(10);
+    assert_eq!(small.stats.files, 10);
+    assert_eq!(small.exit_code, 0);
+    let mut small_leaves: Vec<OsString> = small
+        .fs
+        .events()
+        .iter()
+        .map(|e| recorded_leaf(&e.path).to_os_string())
+        .collect();
+    small_leaves.sort();
+    let small_expected: Vec<OsString> = (0..10)
+        .map(|i| OsString::from(format!("f{i:03}")))
+        .collect();
+    assert_eq!(small_leaves, small_expected);
+
+    // Large transfer: at the threshold -> parallel consumer.
+    assert!(!should_use_fast_path(64, 2));
+    let large = drain_single_dir(64);
+    assert_eq!(large.stats.files, 64);
+    assert_eq!(large.exit_code, 0);
+    let mut large_leaves: Vec<OsString> = large
+        .fs
+        .events()
+        .iter()
+        .map(|e| recorded_leaf(&e.path).to_os_string())
+        .collect();
+    large_leaves.sort();
+    let large_expected: Vec<OsString> = (0..64)
+        .map(|i| OsString::from(format!("f{i:03}")))
+        .collect();
+    assert_eq!(large_leaves, large_expected);
+}
+
+/// DML-4 (b): boundary parity at the threshold. 63 extras stay on the fast
+/// path, 65 cross to the parallel path, and 64 (the threshold itself) is
+/// the first parallel value. Thread starvation (`< 2` rayon workers) forces
+/// the fast path regardless of size, matching the "no spare worker to
+/// parallelise onto" clause.
+#[cfg(feature = "parallel-delete-consumer")]
+#[test]
+fn should_use_fast_path_at_threshold_boundary() {
+    use super::core::{SMALL_DIR_FAST_PATH_THRESHOLD, should_use_fast_path};
+
+    assert_eq!(SMALL_DIR_FAST_PATH_THRESHOLD, 64);
+    assert!(should_use_fast_path(63, 2), "63 < 64 -> fast path");
+    assert!(!should_use_fast_path(65, 2), "65 >= 64 -> parallel path");
+    assert!(
+        !should_use_fast_path(64, 2),
+        "64 == threshold -> parallel path"
+    );
+    // Single-threaded runtime cannot parallelise: fast path at any size.
+    assert!(should_use_fast_path(65, 1), "one thread -> fast path");
+    assert!(
+        should_use_fast_path(1_000_000, 1),
+        "one thread -> fast path"
+    );
+}
+
 /// #506 (production wiring): the drain built by `DeleteContext` now attaches
 /// a `DirSandbox` opened at the delete root, so the emitter dispatches every
 /// unlink through the SEC-1.q dirfd-anchored `*_at` syscalls rather than the

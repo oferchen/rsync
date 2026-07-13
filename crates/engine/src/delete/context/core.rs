@@ -23,6 +23,35 @@ use super::super::traversal::DirTraversalCursor;
 use super::outcome::DrainOutcome;
 use super::timing::EmitterTiming;
 
+/// DML-4: extras count below which the parallel-delete drain skips the
+/// pipeline and runs the sequential [`DeleteEmitter`](super::super::emitter::DeleteEmitter)
+/// directly.
+///
+/// Standing up the parallel consumer (`CohortBatcher` + `ReorderBuffer` +
+/// a Condvar-driven consumer thread + a rayon dispatch) is a fixed cost
+/// that dominates when only a few entries are being unlinked. Upstream has
+/// no such pipeline: `generator.c::delete_in_dir` deletes inline, one
+/// `delete_item` call per non-matched entry, per directory - which is
+/// optimal at small scale. The fast path restores that inline behaviour
+/// below this threshold while keeping the delete events byte-identical to
+/// the parallel path (both dispatch through the same sequential emitter).
+#[cfg(feature = "parallel-delete-consumer")]
+pub(super) const SMALL_DIR_FAST_PATH_THRESHOLD: usize = 64;
+
+/// Returns `true` when the drain should take the DML-4 sequential fast
+/// path instead of the parallel consumer.
+///
+/// The pipeline only pays off when there is real work to spread across
+/// more than one worker: a total extras count at or above
+/// [`SMALL_DIR_FAST_PATH_THRESHOLD`] and at least two rayon threads to
+/// dispatch onto. Either condition failing routes to the sequential
+/// emitter. Kept as a pure function of the two inputs so the routing
+/// boundary is unit-testable without spinning up a real transfer.
+#[cfg(feature = "parallel-delete-consumer")]
+pub(super) fn should_use_fast_path(total_extras: usize, rayon_threads: usize) -> bool {
+    total_extras < SMALL_DIR_FAST_PATH_THRESHOLD || rayon_threads < 2
+}
+
 /// One cursor observation enqueued by a worker thread for the emitter to
 /// fold into its [`DirTraversalCursor`] at drain time.
 ///
@@ -388,13 +417,34 @@ impl DeleteContext {
     /// [`super::super::parallel_consumer::ParallelDeleteEmitter::run`],
     /// which spawns a dedicated consumer thread and shares the dispatcher
     /// across the rayon pool via [`Arc`].
+    ///
+    /// # DML-4 small-transfer fast path
+    ///
+    /// Standing up the parallel consumer (a `CohortBatcher`, a
+    /// `ReorderBuffer`, a Condvar-driven consumer thread, and a rayon
+    /// dispatch) costs a fixed overhead that dominates when only a handful
+    /// of entries are being deleted. When the whole transfer plans fewer
+    /// than [`SMALL_DIR_FAST_PATH_THRESHOLD`] extras, or the process has no
+    /// spare rayon worker to parallelise onto, the drain runs the
+    /// sequential [`DeleteEmitter`] directly. That emitter is the exact
+    /// code the parallel path dispatches through per cohort, so the delete
+    /// events, stats, and exit code are byte-identical either way; only the
+    /// scheduling wrapper is skipped.
     // DEL-2.d: feature-gated dispatch, parallel-delete-consumer opt-in
     #[cfg(feature = "parallel-delete-consumer")]
     pub fn emit_one<F: DeleteFs + Sync + Send + 'static>(
         self,
         fs: F,
     ) -> io::Result<DrainOutcome<F>> {
-        self.emit_via_parallel_consumer(fs)
+        let parts = self.into_drain_parts().map_err(io::Error::from)?;
+        if should_use_fast_path(
+            parts.plans.total_extras_count(),
+            rayon::current_num_threads(),
+        ) {
+            Self::emit_sequential_from_parts(parts, fs)
+        } else {
+            Self::emit_parallel_from_parts(parts, fs)
+        }
     }
 
     /// Drains every published plan through a freshly-built emitter. Used
@@ -427,15 +477,19 @@ impl DeleteContext {
     /// parallel consumer to completion. Returns a [`DrainOutcome`] with
     /// the same shape the sequential emitter produces so callers stay
     /// unchanged across the feature toggle.
+    ///
+    /// Takes the owned [`DrainParts`] already extracted by [`Self::emit_one`]
+    /// so the DML-4 fast-path routing (which needs
+    /// [`DeletePlanMap::total_extras_count`] before choosing a path) and the
+    /// sequential path share one `into_drain_parts` call.
     #[cfg(feature = "parallel-delete-consumer")]
-    fn emit_via_parallel_consumer<F: DeleteFs + Sync + Send + 'static>(
-        self,
+    pub(super) fn emit_parallel_from_parts<F: DeleteFs + Sync + Send + 'static>(
+        parts: DrainParts,
         fs: F,
     ) -> io::Result<DrainOutcome<F>> {
         use super::super::parallel_consumer::ParallelDeleteEmitter;
         use super::super::reorder_buffer::{DeleteCohortKey, DeleteOperation};
 
-        let parts = self.into_drain_parts().map_err(io::Error::from)?;
         let plans = parts.plans;
         let mut cursor = parts.cursor;
         let emitter = ParallelDeleteEmitter::with_policy(fs, parts.policy);
@@ -470,6 +524,38 @@ impl DeleteContext {
             stats: outcome.stats,
             io_error: outcome.io_error,
             exit_code: outcome.exit_code,
+        })
+    }
+
+    /// DML-4 fast path: drains the owned [`DrainParts`] through the
+    /// sequential [`DeleteEmitter`], bypassing the parallel consumer's
+    /// batching and scheduling machinery.
+    ///
+    /// This is the exact emitter the parallel consumer dispatches through
+    /// per cohort, so the recorded delete events, [`protocol::DeleteStats`],
+    /// `io_error` bitmask, and exit code are identical to
+    /// [`Self::emit_parallel_from_parts`] for the same input. Only the
+    /// pipeline overhead is skipped, which is the point at small scale.
+    #[cfg(feature = "parallel-delete-consumer")]
+    pub(super) fn emit_sequential_from_parts<F: DeleteFs>(
+        parts: DrainParts,
+        fs: F,
+    ) -> io::Result<DrainOutcome<F>> {
+        use super::super::emitter::DeleteEmitter;
+
+        let emitter = DeleteEmitter::with_policy(fs, parts.plans, parts.cursor, parts.policy);
+        #[cfg(unix)]
+        let emitter = match parts.sandbox {
+            Some(sandbox) => emitter.with_sandbox_rooted(sandbox, parts.sandbox_root),
+            None => emitter,
+        };
+        let mut emitter = emitter;
+        emitter.emit_all()?;
+        Ok(DrainOutcome {
+            stats: emitter.stats(),
+            io_error: emitter.io_error(),
+            exit_code: emitter.exit_code(),
+            fs: emitter.into_fs(),
         })
     }
 
@@ -516,7 +602,7 @@ impl DeleteContext {
     /// path under the `parallel-delete-consumer` feature. The
     /// channel-shutdown semantics and `Arc::try_unwrap` invariant are
     /// preserved exactly because both paths consume `self` by value.
-    fn into_drain_parts(self) -> Result<DrainParts, DeleteError> {
+    pub(super) fn into_drain_parts(self) -> Result<DrainParts, DeleteError> {
         let plans = Arc::try_unwrap(self.plans).map_err(|still_shared| {
             DeleteError::PlanMapStillShared {
                 strong_count: Arc::strong_count(&still_shared),
@@ -577,7 +663,7 @@ impl DeleteContext {
 /// [`fast_io::DirSandbox`] anchor (and the absolute root it was opened at)
 /// that lets the production emitter dispatch through the dirfd-anchored
 /// `*_at` syscalls.
-struct DrainParts {
+pub(super) struct DrainParts {
     plans: DeletePlanMap,
     cursor: DirTraversalCursor,
     policy: EmitterErrorPolicy,
