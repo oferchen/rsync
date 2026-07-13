@@ -61,6 +61,7 @@ pub fn send_file_request<W: Write + ?Sized>(
     basis_path: Option<PathBuf>,
     fnamecmp_type: protocol::FnameCmpType,
     target_size: u64,
+    base_iflags: u32,
     config: &RequestConfig<'_>,
 ) -> io::Result<PendingTransfer> {
     send_file_request_xattr(
@@ -72,6 +73,7 @@ pub fn send_file_request<W: Write + ?Sized>(
         basis_path,
         fnamecmp_type,
         target_size,
+        base_iflags,
         config,
         None,
     )
@@ -97,6 +99,7 @@ pub fn send_file_request_xattr<W: Write + ?Sized>(
     basis_path: Option<PathBuf>,
     fnamecmp_type: protocol::FnameCmpType,
     target_size: u64,
+    base_iflags: u32,
     config: &RequestConfig<'_>,
     xattr_list: Option<&XattrList>,
 ) -> io::Result<PendingTransfer> {
@@ -110,7 +113,19 @@ pub fn send_file_request_xattr<W: Write + ?Sized>(
             list.iter()
                 .any(|e| e.state().needs_send() || e.state().needs_request())
         });
-        let mut iflags = SenderAttrs::ITEM_TRANSFER;
+        // upstream: generator.c:1937-1947 - the generator forwards the full
+        // itemize iflags (ITEM_TRANSFER plus the pre-transfer attribute-diff
+        // bits from itemize(), including ITEM_IS_NEW when the destination did
+        // not exist). The sender reads them, echoes them back, and prints the
+        // row via log_item(FCLIENT), so on a push a brand-new file shows
+        // `<f+++++++++` rather than `<f.........`. Keep only the low 16-bit
+        // report/new bits and drop the ones this function manages itself
+        // (XATTR/BASIS/XNAME require trailing wire fields written below);
+        // always force ITEM_TRANSFER so the sender still reads the sum head.
+        const MANAGED: u16 = SenderAttrs::ITEM_REPORT_XATTR
+            | SenderAttrs::ITEM_BASIS_TYPE_FOLLOWS
+            | SenderAttrs::ITEM_XNAME_FOLLOWS;
+        let mut iflags = ((base_iflags & 0xFFFF) as u16 & !MANAGED) | SenderAttrs::ITEM_TRANSFER;
         if has_xattr_request && config.preserve_xattrs {
             iflags |= SenderAttrs::ITEM_REPORT_XATTR;
         }

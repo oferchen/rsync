@@ -294,6 +294,7 @@ impl ReceiverContext {
                                 basis_result.basis_path,
                                 basis_result.fnamecmp_type,
                                 file_entry.size(),
+                                base_iflags,
                                 &request_config,
                             )?;
 
@@ -317,6 +318,7 @@ impl ReceiverContext {
                                 None,
                                 protocol::FnameCmpType::Fname,
                                 file_entry.size(),
+                                base_iflags,
                                 &request_config,
                             )?;
 
