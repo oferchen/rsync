@@ -632,6 +632,7 @@ pub(crate) fn copy_symlink(
                         existing_symlink,
                         metadata_options,
                         context.omit_link_times_enabled(),
+                        context.options().modify_window(),
                     );
                     record = record.with_change_set(change_set);
                 } else if let Some(basis_meta) = copy_dest_basis.as_ref() {
@@ -760,6 +761,7 @@ pub(crate) fn copy_symlink(
                 existing_symlink,
                 metadata_options,
                 context.omit_link_times_enabled(),
+                context.options().modify_window(),
             );
             record = record.with_change_set(change_set);
         } else if let Some(basis_meta) = copy_dest_basis.as_ref() {
