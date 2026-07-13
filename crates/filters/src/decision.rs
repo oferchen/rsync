@@ -76,6 +76,23 @@ impl FilterSetInner {
 
         let for_deletion = matches!(context, DecisionContext::Deletion);
         let transfer_rule = match context {
+            // Single-path Transfer queries (`check_descendants == true`, no
+            // traversal context) keep the per-path predicate but gate the
+            // synthetic `{core}/**` descendant matchers so they honour
+            // first-match-wins at the pruned ancestor. A directory-exclude only
+            // prunes a descendant when the excluded directory is itself the
+            // first match; an *earlier* include that keeps that directory means
+            // upstream descends into it, so the descendant must not fire. The
+            // sender's own traversal (`traversal == true`,
+            // `check_descendants == false`) needs no gating - the walk prunes
+            // excluded subtrees directly.
+            DecisionContext::Transfer if check_descendants => transfer_rule_with_pruning(
+                &self.include_exclude,
+                path,
+                is_dir,
+                |rule| rule.applies_to_sender,
+                true,
+            ),
             DecisionContext::Transfer => first_matching_rule(
                 &self.include_exclude,
                 path,
@@ -297,6 +314,83 @@ where
                 rule.matches(path, is_dir, check_descendants)
             }
     })
+}
+
+/// Resolves the winning include/exclude rule for a single-path Transfer query,
+/// gating the synthetic descendant matchers by upstream's subtree-pruning rule.
+///
+/// Genuine (direct) matches keep first-match-wins semantics, matching upstream
+/// `exclude.c:rule_matches()`. The synthetic `{core}/**` descendant matcher an
+/// exclude carries is only allowed to fire when the excluded directory is
+/// actually pruned under first-match-wins: upstream never descends into an
+/// excluded directory (`flist.c:send_directory`), but an *earlier* include that
+/// keeps that directory means the walk *does* descend, so its contents must not
+/// be pruned. Without this gate a rule pair like `+ foo` / `- foo/` would let
+/// the `foo/**` descendant exclude `foo/bar` even though `foo` itself is kept.
+///
+/// upstream: exclude.c:check_filter() first-match-wins plus the send_directory
+/// subtree pruning that the descendant matchers emulate for single-path queries.
+fn transfer_rule_with_pruning<'a, F>(
+    rules: &'a [CompiledRule],
+    path: &Path,
+    is_dir: bool,
+    mut applies: F,
+    include_perishable: bool,
+) -> Option<&'a CompiledRule>
+where
+    F: FnMut(&CompiledRule) -> bool,
+{
+    for rule in rules {
+        if (!include_perishable && rule.perishable) || !applies(rule) {
+            continue;
+        }
+        // A genuine per-path match wins immediately (upstream rule_matches).
+        if rule.matches(path, is_dir, false) {
+            return Some(rule);
+        }
+        // A descendant-only exclude prunes `path` only when the directory it
+        // excludes is itself the first match under first-match-wins.
+        if matches!(rule.action, FilterAction::Exclude)
+            && rule.matches(path, is_dir, true)
+            && ancestor_pruned_by_exclude(rules, path, &mut applies, include_perishable)
+        {
+            return Some(rule);
+        }
+    }
+    None
+}
+
+/// Returns `true` when a proper ancestor directory of `path` is excluded under
+/// first-match-wins, reproducing upstream's per-directory descent: the walk
+/// stops at the shallowest ancestor whose first matching rule is an exclude and
+/// never reaches `path`; an include keeps the directory and the walk descends.
+fn ancestor_pruned_by_exclude<F>(
+    rules: &[CompiledRule],
+    path: &Path,
+    mut applies: F,
+    include_perishable: bool,
+) -> bool
+where
+    F: FnMut(&CompiledRule) -> bool,
+{
+    let components: Vec<_> = path.components().collect();
+    let mut ancestor = std::path::PathBuf::new();
+    for comp in &components[..components.len().saturating_sub(1)] {
+        ancestor.push(comp);
+        if let Some(rule) = first_matching_rule(
+            rules,
+            &ancestor,
+            true,
+            &mut applies,
+            include_perishable,
+            false,
+            false,
+        ) && matches!(rule.action, FilterAction::Exclude)
+        {
+            return true;
+        }
+    }
+    false
 }
 
 /// Whether a filter evaluation is for the transfer or deletion phase.

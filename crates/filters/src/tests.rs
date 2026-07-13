@@ -36,6 +36,33 @@ fn include_before_exclude_reinstates_path() {
     assert!(set.allows_deletion(Path::new("foo/bar.txt"), false));
 }
 
+/// Regression (filter differential fuzzer, `filter_rules_vs_upstream`): a
+/// directory-only exclude must not prune the descendants of a directory that an
+/// earlier include kept. `+ m` keeps every directory named `m` under
+/// first-match-wins, so the synthetic `m/**` descendant of `- m/` may not fire
+/// on the contents of an `m` directory `+ m` already re-included - upstream
+/// descends into the kept directory instead of pruning it.
+///
+/// Verified against rsync 3.4.4 `--list-only`: `+ m` / `- m/` lists `x/m` and
+/// everything under it, whereas `- m/` alone prunes the whole subtree.
+#[test]
+fn include_dir_prevents_dir_only_exclude_descendant_prune() {
+    let kept = FilterSet::from_rules([FilterRule::include("m"), FilterRule::exclude("m/")])
+        .expect("compiled");
+    // `+ m` wins for the `m` directory (first match), so it is kept...
+    assert!(kept.allows(Path::new("x/m"), true));
+    // ...and its descendants are reachable: no rule matches them, and the
+    // `- m/` descendant must not fire because the parent was re-included.
+    assert!(kept.allows(Path::new("x/m/deep"), true));
+    assert!(kept.allows(Path::new("x/m/deep/file"), false));
+
+    // Without the earlier include, `- m/` prunes the directory and its contents.
+    let pruned = FilterSet::from_rules([FilterRule::exclude("m/")]).expect("compiled");
+    assert!(!pruned.allows(Path::new("x/m"), true));
+    assert!(!pruned.allows(Path::new("x/m/deep"), true));
+    assert!(!pruned.allows(Path::new("x/m/deep/file"), false));
+}
+
 #[test]
 fn clear_rule_removes_previous_rules() {
     let rules = [

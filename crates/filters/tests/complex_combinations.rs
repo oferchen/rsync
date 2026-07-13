@@ -385,9 +385,11 @@ fn directory_file_pattern_interaction() {
     // output file excluded (first rule doesn't match file, second does)
     assert!(!set.allows(Path::new("output"), false));
 
-    // upstream: output contents NOT included by directory-only rule -
-    // they match exclude("output") descendant pattern output/**
-    assert!(!set.allows(Path::new("output/data.bin"), false));
+    // upstream: `+ output/` keeps the `output` directory, so the walk descends
+    // into it and `output/data.bin` (matching no later rule) is included. The
+    // `- output` rule never fires on the contents because first-match-wins kept
+    // the parent directory. Verified against rsync 3.4.4 `--list-only`.
+    assert!(set.allows(Path::new("output/data.bin"), false));
 
     // logs directory included
     assert!(set.allows(Path::new("logs"), true));

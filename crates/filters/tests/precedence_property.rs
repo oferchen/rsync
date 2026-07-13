@@ -36,11 +36,6 @@ fn segment() -> impl Strategy<Value = String> {
     .prop_map(|v| v.into_iter().collect::<String>())
 }
 
-/// A relative path of 1-4 segments joined by `/`.
-fn rel_path() -> impl Strategy<Value = String> {
-    proptest::collection::vec(segment(), 1..5).prop_map(|s| s.join("/"))
-}
-
 /// A simple non-anchored, non-dir-only pattern that may include `*` for
 /// extension-style matching. Kept literal-friendly so we can reason about
 /// matches directly.
@@ -97,11 +92,20 @@ proptest! {
     /// For an arbitrary-length sequence of include/exclude rules with simple
     /// patterns, `FilterSet::allows` must agree with the first-match-wins
     /// oracle (or with the default `true` when no rule matches).
+    ///
+    /// The path is a single segment on purpose. The oracle probes each rule in
+    /// isolation, which cannot model upstream's subtree pruning across rules:
+    /// for a nested path like `c/a` the pair `+ c` / `- c` keeps `c` (the
+    /// include wins at the directory) and so lists `c/a`, whereas probing `- c`
+    /// alone would prune it. Single-segment paths have no ancestors to prune, so
+    /// `allows` reduces to the per-rule first-match the oracle models. Nested
+    /// first-match-wins is covered by the upstream-verified regression tests in
+    /// `crates/filters/src/tests.rs`.
     #[test]
     fn first_match_wins_arbitrary_sequence(
         actions in proptest::collection::vec(any::<bool>(), 1..8),
         patterns in proptest::collection::vec(simple_pattern(), 1..8),
-        path in rel_path(),
+        path in segment(),
         is_dir in any::<bool>(),
     ) {
         // Pair up the two vectors at the shorter length.
@@ -239,14 +243,20 @@ proptest! {
         );
     }
 
-    /// For any rule R and path P, the negated rule's match outcome must be
-    /// the inverse of the non-negated rule's match outcome. We probe match
-    /// outcomes by using exclude rules: a non-match leaves `allows == true`,
-    /// a match flips it to `false`.
+    /// For any rule R and a single-component path P, the negated rule's match
+    /// outcome must be the inverse of the non-negated rule's match outcome. We
+    /// probe match outcomes by using exclude rules: a non-match leaves
+    /// `allows == true`, a match flips it to `false`.
+    ///
+    /// The path is a single segment on purpose. For a nested path the two
+    /// outcomes need not be inverses: upstream excludes the nested file under
+    /// EITHER rule (the plain rule prunes the matching ancestor directory while
+    /// the negated rule excludes the non-matching leaf), so `allows` is `false`
+    /// for both. Verified against rsync 3.4.4 with `- h` vs `-! h` on `h/a`.
     #[test]
     fn negate_inverts_match_outcome(
         pat in simple_pattern(),
-        path in rel_path(),
+        path in segment(),
         is_dir in any::<bool>(),
     ) {
         let plain = FilterSet::from_rules([FilterRule::exclude(&pat)]).unwrap();
