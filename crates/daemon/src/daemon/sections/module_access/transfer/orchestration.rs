@@ -375,9 +375,9 @@ fn process_approved_module(
     // privilege-drop, post-filter-load, pre-client-data. The seccomp
     // helper is a no-op on builds without the `daemon-seccomp` feature so
     // the call is unconditional. Stdio sessions are skipped because the
-    // process IS the worker (no parent to survive KillProcess). Failures
-    // do not abort the connection - Landlock + SEC-1 `*at` remain the
-    // primary defenses.
+    // process IS the worker, so a process-scoped filter would restrict its
+    // post-transfer cleanup. Failures do not abort the connection -
+    // Landlock + SEC-1 `*at` remain the primary defenses.
     engage_seccomp_sandbox(ctx)?;
 
     // #503: arm the background delta-drain thread only for a real transfer. An

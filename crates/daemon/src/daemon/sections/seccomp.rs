@@ -2,10 +2,24 @@
 //
 // Layers a kernel-enforced syscall allowlist above the SEC-1.p Landlock
 // LSM defense. Landlock denies path-based syscalls with EACCES; seccomp
-// denies out-of-scope syscalls with SIGSYS before the kernel ever
-// consults the LSM stack. Default action is `KillProcess` so a regression
-// surfaces as a crash with `si_syscall` populated, never as a silent
-// degradation.
+// denies out-of-scope syscalls before the kernel ever consults the LSM
+// stack.
+//
+// Default action is `Errno(EPERM)`, not `KillProcess`. Upstream rsync
+// ships no seccomp at all, so oc's hardening must never make a legitimate
+// transfer *more* fragile than upstream: a `KillProcess` default turns
+// any allowlist gap into a fatal SIGSYS that - because `KILL_PROCESS`
+// targets the whole thread group - tears down the entire daemon and RSTs
+// every concurrent connection, the exact residual observed under full-CI
+// concurrency (a rare, load-triggered `restart_syscall` from a signal-
+// interrupted blocking call killed the worker mid-transfer). `Errno`
+// preserves the hardening intent - a disallowed syscall still does NOT
+// execute, so an attacker who hijacks the worker still cannot `execve`/
+// `ptrace`/`mount`/etc. - while a benign, unanticipated syscall from a
+// valid transfer degrades to a syscall error surfaced through normal I/O
+// error handling instead of crashing the daemon. This matches the
+// industry-standard container seccomp posture (Docker, Podman, and
+// containerd all default to `SCMP_ACT_ERRNO(EPERM)`).
 //
 // See `docs/design/lsm-seccomp-allowlist.md` for the per-syscall
 // justification. Enabled by default when the `daemon-seccomp` feature
@@ -23,8 +37,8 @@
 /// Outcome of [`apply_worker_seccomp_filter`].
 #[derive(Debug)]
 pub enum SeccompOutcome {
-    /// Filter installed; the calling thread now traps unlisted syscalls
-    /// with `SIGSYS` (default action `KILL_PROCESS`).
+    /// Filter installed; the calling thread now fails unlisted syscalls
+    /// with `EPERM` (default action `SECCOMP_RET_ERRNO`).
     #[cfg(all(target_os = "linux", feature = "daemon-seccomp"))]
     Installed,
     /// Build target is not one of the supported architectures, or the
@@ -60,8 +74,9 @@ pub enum SeccompOutcome {
 pub fn apply_worker_seccomp_filter() -> SeccompOutcome {
     // Default ON when the daemon-seccomp feature is compiled in.
     // Operators can opt out with `OC_RSYNC_NO_SECCOMP=1` if a workload
-    // triggers a missing syscall (diagnosed via the SIGSYS crash with
-    // `si_syscall` populated in the kernel log).
+    // trips a missing syscall (which now surfaces as an `EPERM` I/O error
+    // in the transfer, not a crash - see the module header on the
+    // non-lethal default).
     if seccomp_runtime_disabled() {
         return SeccompOutcome::Unavailable;
     }
@@ -85,10 +100,14 @@ pub fn apply_worker_seccomp_filter() -> SeccompOutcome {
 
     let filter = match SeccompFilter::new(
         rules,
-        // Mismatched syscall: kill the process. SIGSYS surfaces with
-        // siginfo_t::si_syscall populated, so a regression produces a
-        // diagnosable crash, not a silent failure.
-        SeccompAction::KillProcess,
+        // Mismatched syscall: fail it with EPERM instead of killing the
+        // process. The syscall never executes (attack surface identical to
+        // a kill default), but a benign, unanticipated syscall from a valid
+        // transfer degrades to an errno the daemon can surface through its
+        // normal error path rather than a whole-daemon SIGSYS that RSTs
+        // every concurrent connection. See the module header for the
+        // upstream-fidelity rationale.
+        SeccompAction::Errno(libc::EPERM as u32),
         // Matched syscall: allow it through unconditionally. Argument-
         // level conditions are out of scope for the first cut; tightening
         // is deferred until the allowlist itself bakes.
@@ -258,6 +277,16 @@ pub fn worker_seccomp_allowlist() -> Vec<i64> {
         libc::SYS_rt_sigaction,
         libc::SYS_rt_sigprocmask,
         libc::SYS_rt_sigreturn,
+        // The kernel injects `restart_syscall` (not the program) when a
+        // signal interrupts a restartable blocking call - `nanosleep`,
+        // `clock_nanosleep`, `futex` with a timeout, `ppoll`, all of which
+        // the transfer worker issues (bandwidth limiter, Condvar timeouts,
+        // I/O readiness waits). Under load, signal delivery to the worker
+        // makes this fire rarely; omitting it from a lethal-default filter
+        // is a latent whole-daemon kill mid-transfer. Not attacker-
+        // controllable (it carries no arguments and only resumes an
+        // already-permitted syscall), so allowing it costs no surface.
+        libc::SYS_restart_syscall,
         libc::SYS_brk,
         libc::SYS_mmap,
         libc::SYS_munmap,
@@ -424,6 +453,12 @@ mod seccomp_tests {
             // on aarch64 when fcntl was missing. Sender file open and
             // socket non-blocking toggling both require it.
             libc::SYS_fcntl,
+            // SYS_restart_syscall is kernel-injected when a signal
+            // interrupts a restartable blocking call the worker issues
+            // (nanosleep, clock_nanosleep, futex-with-timeout, ppoll).
+            // Its omission was the residual whole-daemon SIGSYS kill under
+            // full-CI concurrency; pin it so it can never regress out.
+            libc::SYS_restart_syscall,
         ] {
             assert!(
                 list.binary_search(&required).is_ok(),
@@ -452,7 +487,7 @@ mod seccomp_tests {
         }
         let filter = SeccompFilter::new(
             rules,
-            SeccompAction::KillProcess,
+            SeccompAction::Errno(libc::EPERM as u32),
             SeccompAction::Allow,
             arch,
         )
