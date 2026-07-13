@@ -27,7 +27,7 @@
 //! - A dedicated thread - rather than tokio's reused `spawn_blocking` pool -
 //!   is required because the worker arms a per-thread seccomp filter that must
 //!   die with the connection; a reused thread would leak the filter into the
-//!   next session and SIGSYS-kill its setup syscalls.
+//!   next session and fail its pre-seccomp setup syscalls with EPERM.
 //! - The worker is the caller-supplied sync closure; this module does not
 //!   embed any knowledge of the daemon session state machine.
 //!
@@ -178,11 +178,11 @@ async fn accept_loop(
             // Run the synchronous worker on a dedicated OS thread rather than
             // tokio's shared `spawn_blocking` pool. The worker installs a
             // per-thread seccomp filter (LSM-SECCOMP) that is a one-way latch:
-            // once armed, the thread traps every unlisted syscall for the rest
+            // once armed, the thread denies every unlisted syscall for the rest
             // of its life. tokio's blocking pool reuses threads across tasks,
-            // so a filter armed by one session would SIGSYS-kill the *next*
-            // session's pre-seccomp setup syscalls (capability drop `capget`,
-            // socket `FIONBIO` ioctl) - a flaky whole-process kill. A fresh
+            // so a filter armed by one session would fail the *next* session's
+            // pre-seccomp setup syscalls (capability drop `capget`, socket
+            // `FIONBIO` ioctl) with EPERM - a flaky broken session. A fresh
             // thread per connection keeps the design invariant documented in
             // `engage_seccomp_sandbox`: the filter dies with the disposable
             // worker thread and never leaks into another session.

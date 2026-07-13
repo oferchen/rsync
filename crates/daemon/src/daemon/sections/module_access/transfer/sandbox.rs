@@ -357,8 +357,9 @@ fn engage_landlock_sandbox(
 ///
 /// Layers above the Landlock LSM defense engaged immediately prior:
 /// Landlock denies path-based syscalls with `EACCES`; seccomp denies
-/// out-of-scope syscalls with `SIGSYS` before the kernel ever consults
-/// the LSM stack.
+/// out-of-scope syscalls with `EPERM` (default action `SECCOMP_RET_ERRNO`)
+/// before the kernel ever consults the LSM stack. A non-lethal default
+/// keeps a rare, benign syscall from killing a legitimate transfer.
 ///
 /// On builds without the `daemon-seccomp` feature the helper is a no-op
 /// that returns `Unavailable`; the wire-in is unconditional so the call
@@ -368,10 +369,10 @@ fn engage_landlock_sandbox(
 ///
 /// **Stdio sessions are skipped.** When the daemon runs as `--server
 /// --daemon` over stdin/stdout (remote-shell daemon mode via `lsh.sh` /
-/// SSH), the process IS the worker - there is no parent accept loop to
-/// survive a `KillProcess`. The seccomp filter would also restrict
-/// post-transfer cleanup, process exit, and any syscalls the Python test
-/// harness or shell wrapper needs after the transfer completes. TCP
+/// SSH), the process IS the worker. A process-scoped filter would
+/// restrict post-transfer cleanup, process exit, and any syscalls the
+/// Python test harness or shell wrapper needs after the transfer
+/// completes (an `EPERM` there would fail cleanup just as surely). TCP
 /// daemon workers are disposable threads inside a long-lived process, so
 /// the filter dies with the thread and does not affect the daemon or any
 /// other connection.
@@ -397,7 +398,7 @@ fn engage_seccomp_sandbox(ctx: &mut ModuleRequestContext<'_>) -> io::Result<()> 
         SeccompOutcome::Installed => {
             if let Some(log) = ctx.log_sink {
                 let text = format!(
-                    "module '{}': seccomp BPF filter engaged (KillProcess on unlisted syscalls)",
+                    "module '{}': seccomp BPF filter engaged (EPERM on unlisted syscalls)",
                     ctx.request,
                 );
                 let message = rsync_info!(text).with_role(Role::Daemon);

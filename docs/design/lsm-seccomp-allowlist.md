@@ -7,7 +7,7 @@ Companion to `sec-1-p-landlock-defense-in-depth-2026-05-22.md`. Landlock
 restricts what the daemon may *touch on the filesystem*; seccomp restricts
 which *syscalls* it may issue at all. The two layers compose: Landlock
 denies a path-based syscall with `EACCES`, seccomp denies an out-of-scope
-syscall with `SIGSYS` before the kernel ever consults the LSM stack.
+syscall with `EPERM` before the kernel ever consults the LSM stack.
 
 ## Goals
 
@@ -15,9 +15,15 @@ syscall with `SIGSYS` before the kernel ever consults the LSM stack.
   (`engage_landlock_sandbox`): after `chroot`, after privilege drop, after
   daemon-filter rules are loaded into memory, before any client-controlled
   data is parsed.
-- Default action `KILL_PROCESS` (delivers `SIGSYS`) so a regression that
-  reaches an out-of-allowlist syscall fails loudly instead of mis-behaving
-  silently. The worker dies; the parent `accept(2)` loop survives.
+- Default action `Errno(EPERM)`. An out-of-allowlist syscall is denied
+  (it never executes, so the attack surface is identical to a kill
+  default) but the daemon stays alive: a `KILL_PROCESS` default delivers
+  `SIGSYS` to the whole thread group and tears down the *entire* daemon,
+  RSTing every concurrent connection, so a single rare, benign syscall
+  from a legitimate transfer becomes a fatal outage. Upstream rsync has
+  no seccomp at all; the hardening must never make a valid transfer more
+  fragile than upstream. This matches the container-runtime posture
+  (Docker/Podman/containerd default to `SCMP_ACT_ERRNO(EPERM)`).
 - Per-architecture (`x86_64`, `aarch64`) syscall number resolution via
   `libc::SYS_*` and `seccompiler::TargetArch::native()`.
 - Enabled by default when `--features daemon-seccomp` is compiled in.
@@ -82,6 +88,7 @@ clean run.
 |---------|--------|-----------|
 | `futex` | `std::sync::Mutex`, `Condvar`, `crossbeam` | Rust synchronisation primitives |
 | `rseq` | glibc 2.35+ initialises per-thread restartable sequences | required by every threaded glibc program |
+| `restart_syscall` | kernel-injected when a signal interrupts a restartable blocking call (`nanosleep`, `clock_nanosleep`, `futex` timeout, `ppoll`) | the worker's bandwidth limiter, Condvar timeouts, and I/O readiness waits are all restartable; under load, signal delivery makes the kernel resume them via `restart_syscall`. Omitting it was the residual whole-daemon kill under full-CI concurrency. Not attacker-controllable (no arguments; only resumes an already-permitted call). |
 | `clock_gettime` / `clock_nanosleep` | progress reporting, bandwidth limiter sleeps | `Instant::now()`, throttle waits |
 | `nanosleep` | bandwidth limiter | sub-millisecond throttle |
 | `gettid` | `tracing` instrumentation, thread-local debugging | identifying worker threads |
@@ -117,8 +124,8 @@ accepting connections. The filter only constrains the per-connection
 worker thread.
 
 Stdio daemon sessions (`--server --daemon` via remote shell) are exempt
-from seccomp entirely because the process IS the worker - applying
-`KillProcess` would leave no supervisor to recover from a filter miss.
+from seccomp entirely because the process IS the worker - a process-
+scoped filter would restrict post-transfer cleanup and the exit path.
 
 For reference, the parent uses: `socket`, `bind`, `listen`, `accept4`,
 `setsockopt`, `setuid`, `setgid`, `setgroups`, `chroot`, `chdir`,
@@ -126,23 +133,34 @@ For reference, the parent uses: `socket`, `bind`, `listen`, `accept4`,
 
 ## Default action
 
-`SeccompAction::KillProcess` - the kernel delivers `SIGSYS` synchronously
-to the offending thread, which terminates the entire worker process. The
-core-dump captures the violating syscall number in
-`siginfo_t::si_syscall`, so a regression surfaces as a crash with a clear
-artifact. The daemon supervisor sees an abnormal exit and the next
-client gets a fresh worker.
+`SeccompAction::Errno(EPERM)` - a mismatched syscall returns `-EPERM`
+without executing. The kernel never runs the call, so an attacker who
+hijacks the worker still cannot `execve`/`ptrace`/`mount`/etc.; the
+attack surface is identical to a kill default. The difference is failure
+mode: a benign, unanticipated syscall from a *legitimate* transfer
+degrades to an errno the daemon surfaces through its normal I/O error
+path instead of dying.
+
+Why not `KillProcess` (the original choice): `SECCOMP_RET_KILL_PROCESS`
+delivers `SIGSYS` to the whole thread group and terminates the *entire*
+daemon, not just the offending worker thread - RSTing every concurrent
+connection. Under full-CI concurrency a rare, load-triggered
+`restart_syscall` (kernel-injected on a signal-interrupted blocking call)
+was absent from the allowlist and killed the daemon mid-transfer, so
+every in-flight client saw `Connection reset by peer` / exit 23. Upstream
+rsync has no seccomp; making a valid transfer more fragile than upstream
+is the wrong trade. The concrete gap (`restart_syscall`) is now in the
+allowlist, and the non-lethal default ensures any *future* gap degrades
+gracefully rather than taking the daemon down.
 
 Alternatives considered and rejected:
 
-- `Errno(EPERM)` - silently returning `-EPERM` would let the daemon
-  continue with the syscall having mysteriously failed. Defense-in-depth
-  is meaningless if it doesn't fail loud.
+- `KillProcess` / `KillThread` - lethal on the first miss; a single rare
+  benign syscall aborts live transfers (see above).
 - `Trap` - delivering `SIGSYS` but allowing a custom handler would let an
   attacker who controls the syscall stream catch and ignore violations.
-- `Log` - useful during bake; we expose it via an env var
-  (`OC_RSYNC_SECCOMP_LOG_ONLY=1`) for the 14-day bake window but the
-  default once flipped is kill-process.
+- `Log` - allows the syscall through, so it provides no enforcement; only
+  useful for a diagnostic bake, not as a steady-state default.
 
 ## Bake plan
 
@@ -152,16 +170,17 @@ Alternatives considered and rejected:
    Operators opt out with `OC_RSYNC_NO_SECCOMP=1` or
    `OC_RSYNC_DAEMON_SECCOMP=0`.
 4. Stdio daemon sessions (remote-shell mode via `lsh.sh` / SSH) are
-   excluded - the filter only applies to TCP worker threads where the
-   parent accept loop survives a `KillProcess`.
+   excluded - the filter only applies to TCP worker threads, never to a
+   whole stdio process where it would restrict post-transfer cleanup.
 5. The companion `landlock-feature-guidance.md` documents the layered
    defense story for distro packagers.
 
 ## Allowlist completeness criterion
 
 The filter is correct iff *every clean daemon transfer* completes without
-a `SIGSYS`. The integration test in Phase 4 runs a non-trivial transfer
-through the seccomp-filtered worker and asserts a zero exit code; any
-missing syscall fails that test. The negative test asserts that an
-intentionally-blocked syscall (e.g. `ptrace`) does deliver `SIGSYS`,
-proving the filter is actually installed and enforcing.
+a denied syscall. The integration test runs a transfer slice through the
+seccomp-filtered worker and asserts a zero exit code; a missing syscall
+would fail with `EPERM` and surface as a non-zero exit. The negative test
+asserts that an intentionally-blocked syscall (e.g. `ptrace`) returns
+`EPERM` *and leaves the process alive*, proving both that the filter is
+installed and enforcing and that the default action is non-lethal.
