@@ -328,8 +328,12 @@ impl GeneratorContext {
             // converting through wire_to_flat_ndx and back via flat_to_wire_ndx
             // corrupts these gap values (the subtraction wraps to usize::MAX).
             let wire_ndx = ndx;
-            // upstream: rsync.c:424 - i = ndx - cur_flist->ndx_start
-            let ndx = self.wire_to_flat_ndx(wire_ndx);
+            // upstream: rsync.c:424 - i = ndx - cur_flist->ndx_start.
+            // resolve_itemize_ndx also handles the INC_RECURSE directory gap
+            // NDX (`ndx_start - 1`), mapping it to the parent directory entry so
+            // a dir itemize prints `.d.. sub/` rather than a file row for the
+            // trailing child of the previous segment (sender.c:267-272).
+            let ndx = self.resolve_itemize_ndx(wire_ndx);
 
             // upstream: rsync.c:227 - read_ndx_and_attrs() reads iflags
             let iflags = ItemFlags::read(&mut *reader, self.protocol.as_u8())?;
