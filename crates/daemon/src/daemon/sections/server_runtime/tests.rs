@@ -694,6 +694,94 @@ fn apply_stream_socket_options_empty_is_noop() {
     apply_socket_options_to_stream(&stream, &[]).expect("empty options should succeed");
 }
 
+/// A daemon `socket options =` config written for upstream rsync must parse
+/// every entry in upstream's `socket_options[]` table (socket.c) - silently
+/// dropping an option would make a config that is portable under upstream
+/// behave differently here. This locks in the five entries previously missing
+/// from the daemon table (`SO_BROADCAST`, `SO_SNDLOWAT`, `SO_RCVLOWAT`,
+/// `SO_SNDTIMEO`, `SO_RCVTIMEO`) plus the `IPTOS_*` `OPT_ON` symbolic presets,
+/// each resolving to the correct level/optname/value semantics.
+#[test]
+fn parse_socket_options_accepts_all_upstream_options() {
+    use SocketOption::{SoBroadcast, SoKeepAlive, SoRcvBuf, SoSndBuf, TcpNoDelay};
+
+    // Available across every daemon target platform.
+    assert_eq!(
+        parse_socket_options("SO_KEEPALIVE").expect("parse"),
+        vec![SoKeepAlive(true)]
+    );
+    assert_eq!(
+        parse_socket_options("TCP_NODELAY").expect("parse"),
+        vec![TcpNoDelay(true)]
+    );
+    assert_eq!(
+        parse_socket_options("SO_BROADCAST").expect("parse"),
+        vec![SoBroadcast(true)]
+    );
+    assert_eq!(
+        parse_socket_options("SO_SNDBUF=65536, SO_RCVBUF=32768").expect("parse"),
+        vec![SoSndBuf(65536), SoRcvBuf(32768)]
+    );
+
+    // upstream: IPTOS_LOWDELAY / IPTOS_THROUGHPUT are OPT_ON presets that map
+    // to a fixed IP_TOS byte and must reject an `=value` suffix.
+    #[cfg(not(target_family = "windows"))]
+    {
+        assert_eq!(
+            parse_socket_options("IPTOS_LOWDELAY").expect("parse"),
+            vec![SocketOption::IpTos(0x10)]
+        );
+        assert_eq!(
+            parse_socket_options("IPTOS_THROUGHPUT").expect("parse"),
+            vec![SocketOption::IpTos(0x08)]
+        );
+        let err =
+            parse_socket_options("IPTOS_LOWDELAY=5").expect_err("preset must reject a value");
+        assert!(err.contains("does not take a value"), "{err}");
+    }
+
+    // SO_SNDTIMEO / SO_RCVTIMEO are written as a plain int on all Unix targets.
+    #[cfg(unix)]
+    {
+        assert_eq!(
+            parse_socket_options("SO_SNDTIMEO=30").expect("parse"),
+            vec![SocketOption::SoSndTimeo(30)]
+        );
+        assert_eq!(
+            parse_socket_options("SO_RCVTIMEO=30").expect("parse"),
+            vec![SocketOption::SoRcvTimeo(30)]
+        );
+    }
+
+    // SO_SNDLOWAT / SO_RCVLOWAT exist only where libc defines them (not Linux).
+    #[cfg(all(unix, not(any(target_os = "linux", target_os = "android"))))]
+    {
+        assert_eq!(
+            parse_socket_options("SO_SNDLOWAT=1").expect("parse"),
+            vec![SocketOption::SoSndLoWat(1)]
+        );
+        assert_eq!(
+            parse_socket_options("SO_RCVLOWAT=1").expect("parse"),
+            vec![SocketOption::SoRcvLoWat(1)]
+        );
+    }
+}
+
+/// `SO_BROADCAST` is the one newly-added option that applies cleanly to a real
+/// socket on every daemon platform, so it exercises the apply path end to end
+/// (the LOWAT/TIMEO entries mirror upstream's best-effort `setsockopt` and can
+/// be rejected by the kernel at runtime, so they are covered at the parse
+/// layer only).
+#[test]
+fn apply_socket_options_broadcast_sets_flag() {
+    let listener = TcpListener::bind("127.0.0.1:0").expect("bind");
+    apply_socket_options_to_listener(&listener, &[SocketOption::SoBroadcast(true)])
+        .expect("apply succeeds");
+
+    let sock = socket2::SockRef::from(&listener);
+    assert!(sock.broadcast().expect("query broadcast"));
+}
+
 /// Builds an [`AcceptLoopState`] suitable for unit tests that exercise
 /// admission control without spinning up a full daemon.
 ///

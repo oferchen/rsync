@@ -16,8 +16,37 @@ enum SocketOption {
     /// `IP_TOS=<value>` - set the IP Type of Service field.
     ///
     /// upstream: socket.c - `IP_TOS` sets the TOS byte in the IP header.
-    /// Common values: `0x10` (IPTOS_LOWDELAY), `0x08` (IPTOS_THROUGHPUT).
+    /// The `IPTOS_LOWDELAY` / `IPTOS_THROUGHPUT` symbolic option names are
+    /// upstream `OPT_ON` presets that resolve to this variant with values
+    /// `0x10` and `0x08` respectively.
     IpTos(u32),
+    /// `SO_BROADCAST` - allow sending broadcast datagrams.
+    ///
+    /// upstream: socket.c:socket_options[] `SO_BROADCAST` (OPT_BOOL).
+    SoBroadcast(bool),
+    /// `SO_SNDLOWAT=<n>` - send low-water mark.
+    ///
+    /// upstream: socket.c:socket_options[] `SO_SNDLOWAT` (OPT_INT). Guarded by
+    /// `#ifdef SO_SNDLOWAT`; unavailable on Linux, so gated to the platforms
+    /// whose `libc` defines it, mirroring the client-side applier.
+    #[cfg(all(unix, not(any(target_os = "linux", target_os = "android"))))]
+    SoSndLoWat(i32),
+    /// `SO_RCVLOWAT=<n>` - receive low-water mark.
+    ///
+    /// upstream: socket.c:socket_options[] `SO_RCVLOWAT` (OPT_INT).
+    #[cfg(all(unix, not(any(target_os = "linux", target_os = "android"))))]
+    SoRcvLoWat(i32),
+    /// `SO_SNDTIMEO=<n>` - send timeout, written as a plain `int` exactly as
+    /// upstream does (`setsockopt(..., &value, sizeof(int))`).
+    ///
+    /// upstream: socket.c:socket_options[] `SO_SNDTIMEO` (OPT_INT).
+    #[cfg(unix)]
+    SoSndTimeo(i32),
+    /// `SO_RCVTIMEO=<n>` - receive timeout, written as a plain `int`.
+    ///
+    /// upstream: socket.c:socket_options[] `SO_RCVTIMEO` (OPT_INT).
+    #[cfg(unix)]
+    SoRcvTimeo(i32),
 }
 
 /// Parses a comma-separated socket options string into typed option values.
@@ -67,6 +96,43 @@ fn parse_socket_options(options: &str) -> Result<Vec<SocketOption>, String> {
                 let tos = parse_tos_option_value(value)?;
                 result.push(SocketOption::IpTos(tos));
             }
+            // upstream: socket.c:socket_options[] - `IPTOS_LOWDELAY` and
+            // `IPTOS_THROUGHPUT` are OPT_ON presets that must not take a value
+            // and resolve to fixed IP_TOS bytes (0x10 / 0x08).
+            #[cfg(not(target_family = "windows"))]
+            "IPTOS_LOWDELAY" => {
+                reject_value_for_preset(value, "IPTOS_LOWDELAY")?;
+                result.push(SocketOption::IpTos(0x10));
+            }
+            #[cfg(not(target_family = "windows"))]
+            "IPTOS_THROUGHPUT" => {
+                reject_value_for_preset(value, "IPTOS_THROUGHPUT")?;
+                result.push(SocketOption::IpTos(0x08));
+            }
+            "SO_BROADCAST" => {
+                let enabled = parse_bool_option_value(value, "SO_BROADCAST")?;
+                result.push(SocketOption::SoBroadcast(enabled));
+            }
+            #[cfg(all(unix, not(any(target_os = "linux", target_os = "android"))))]
+            "SO_SNDLOWAT" => {
+                let n = parse_int_option_value(value, "SO_SNDLOWAT")?;
+                result.push(SocketOption::SoSndLoWat(n));
+            }
+            #[cfg(all(unix, not(any(target_os = "linux", target_os = "android"))))]
+            "SO_RCVLOWAT" => {
+                let n = parse_int_option_value(value, "SO_RCVLOWAT")?;
+                result.push(SocketOption::SoRcvLoWat(n));
+            }
+            #[cfg(unix)]
+            "SO_SNDTIMEO" => {
+                let n = parse_int_option_value(value, "SO_SNDTIMEO")?;
+                result.push(SocketOption::SoSndTimeo(n));
+            }
+            #[cfg(unix)]
+            "SO_RCVTIMEO" => {
+                let n = parse_int_option_value(value, "SO_RCVTIMEO")?;
+                result.push(SocketOption::SoRcvTimeo(n));
+            }
             _ => {
                 return Err(format!("unknown socket option '{name}'"));
             }
@@ -98,6 +164,33 @@ fn parse_size_option_value(value: Option<&str>, name: &str) -> Result<usize, Str
         Some(s) => s
             .parse::<usize>()
             .map_err(|_| format!("invalid numeric value '{s}' for {name}")),
+    }
+}
+
+/// Parses a required signed integer value for an `OPT_INT` socket option.
+///
+/// upstream: socket.c:set_socket_options() applies `atoi()` and passes the
+/// result as a plain `int`. `SO_SNDLOWAT`/`SO_RCVLOWAT` and the
+/// `SO_SNDTIMEO`/`SO_RCVTIMEO` quirk are written this way.
+#[cfg(unix)]
+fn parse_int_option_value(value: Option<&str>, name: &str) -> Result<i32, String> {
+    match value {
+        None => Err(format!("{name} requires a numeric value (e.g., {name}=1)")),
+        Some(s) => s
+            .parse::<i32>()
+            .map_err(|_| format!("invalid numeric value '{s}' for {name}")),
+    }
+}
+
+/// Rejects an `=value` suffix on an `OPT_ON` preset option.
+///
+/// upstream: socket.c:set_socket_options() prints "syntax error -- %s does not
+/// take a value" for `OPT_ON` entries such as `IPTOS_LOWDELAY`.
+#[cfg(not(target_family = "windows"))]
+fn reject_value_for_preset(value: Option<&str>, name: &str) -> Result<(), String> {
+    match value {
+        None => Ok(()),
+        Some(_) => Err(format!("{name} does not take a value")),
     }
 }
 
@@ -153,12 +246,48 @@ fn apply_socket_options_impl(
         match opt {
             SocketOption::TcpNoDelay(enabled) => sock.set_tcp_nodelay(*enabled)?,
             SocketOption::SoKeepAlive(enabled) => sock.set_keepalive(*enabled)?,
+            SocketOption::SoBroadcast(enabled) => sock.set_broadcast(*enabled)?,
             SocketOption::SoSndBuf(size) => sock.set_send_buffer_size(*size)?,
             SocketOption::SoRcvBuf(size) => sock.set_recv_buffer_size(*size)?,
             SocketOption::IpTos(tos) => apply_ip_tos(&sock, *tos)?,
+            #[cfg(all(unix, not(any(target_os = "linux", target_os = "android"))))]
+            SocketOption::SoSndLoWat(n) => {
+                apply_raw_int(&sock, libc::SOL_SOCKET, libc::SO_SNDLOWAT, *n)?;
+            }
+            #[cfg(all(unix, not(any(target_os = "linux", target_os = "android"))))]
+            SocketOption::SoRcvLoWat(n) => {
+                apply_raw_int(&sock, libc::SOL_SOCKET, libc::SO_RCVLOWAT, *n)?;
+            }
+            #[cfg(unix)]
+            SocketOption::SoSndTimeo(n) => {
+                apply_raw_int(&sock, libc::SOL_SOCKET, libc::SO_SNDTIMEO, *n)?;
+            }
+            #[cfg(unix)]
+            SocketOption::SoRcvTimeo(n) => {
+                apply_raw_int(&sock, libc::SOL_SOCKET, libc::SO_RCVTIMEO, *n)?;
+            }
         }
     }
     Ok(())
+}
+
+/// Applies an integer socket option that has no typed `socket2` setter.
+///
+/// `socket2::SockRef` unifies the listener and stream apply paths, so the raw
+/// `setsockopt(2)` call is routed through `fast_io` (the only crate permitted
+/// to hold the unsafe FFI) using the socket's borrowed file descriptor.
+///
+/// upstream: socket.c:set_socket_options() writes these OPT_INT entries via
+/// `setsockopt(fd, level, option, &value, sizeof(int))`.
+#[cfg(unix)]
+fn apply_raw_int(
+    sock: &socket2::SockRef<'_>,
+    level: libc::c_int,
+    option: libc::c_int,
+    value: i32,
+) -> io::Result<()> {
+    use std::os::fd::AsRawFd;
+    fast_io::set_socket_int_option_raw(sock.as_raw_fd(), level, option, value)
 }
 
 /// Sets IP_TOS / IPV6_TCLASS depending on the socket's address family.

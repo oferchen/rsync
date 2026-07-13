@@ -78,6 +78,27 @@ pub fn set_listener_int_option(
     set_listener_int_option_impl(listener, level, option, value)
 }
 
+/// Sets an integer-valued socket option on a borrowed raw file descriptor.
+///
+/// Same `setsockopt(fd, level, option, &value, sizeof(int))` semantics as
+/// [`set_socket_int_option`], but accepts a `RawFd` so a caller holding a
+/// `socket2::SockRef` (which unifies the listener and stream apply paths) can
+/// set the handful of options that have no typed `socket2` equivalent
+/// (`SO_SNDLOWAT`, `SO_RCVLOWAT`, and the `SO_SNDTIMEO`/`SO_RCVTIMEO` quirk).
+///
+/// # Errors
+///
+/// Returns the OS error reported by `setsockopt(2)` if the call fails.
+#[cfg(unix)]
+pub fn set_socket_int_option_raw(
+    fd: std::os::fd::RawFd,
+    level: i32,
+    option: i32,
+    value: i32,
+) -> io::Result<()> {
+    setsockopt_int_raw(fd, level, option, value)
+}
+
 /// Enables the server-side `TCP_FASTOPEN` option on a raw socket file
 /// descriptor or handle.
 ///
