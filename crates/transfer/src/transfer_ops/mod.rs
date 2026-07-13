@@ -411,4 +411,97 @@ mod tests {
         let debug_str = format!("{config:?}");
         assert!(debug_str.contains("RequestConfig"));
     }
+
+    /// Builds a minimal protocol-31 `RequestConfig` with iflags enabled.
+    fn iflags_request_config() -> RequestConfig<'static> {
+        RequestConfig {
+            protocol: ProtocolVersion::from_supported(31).expect("31 is supported"),
+            write_iflags: true,
+            checksum_length: NonZeroU8::new(16).unwrap(),
+            checksum_algorithm: engine::signature::SignatureAlgorithm::Md4,
+            negotiated_algorithms: None,
+            compat_flags: None,
+            checksum_seed: 0,
+            use_sparse: false,
+            do_fsync: false,
+            temp_dir: None,
+            write_devices: false,
+            inplace: false,
+            inplace_partial: false,
+            io_uring_policy: fast_io::IoUringPolicy::Auto,
+            io_uring_depth: None,
+            preserve_xattrs: false,
+            want_xattr_optim: false,
+            append: false,
+            append_verify: false,
+        }
+    }
+
+    fn request_bytes(base_iflags: u32) -> Vec<u8> {
+        use protocol::codec::MonotonicNdxWriter;
+        let config = iflags_request_config();
+        let mut ndx_codec = MonotonicNdxWriter::new(config.protocol.as_u8());
+        let mut buf: Vec<u8> = Vec::new();
+        send_file_request(
+            &mut buf,
+            &mut ndx_codec,
+            0,
+            std::path::PathBuf::from("data.txt"),
+            None,
+            None,
+            protocol::FnameCmpType::Fname,
+            0,
+            base_iflags,
+            &config,
+        )
+        .expect("request encodes");
+        buf
+    }
+
+    /// upstream: generator.c:1937-1947 - the generator writes the full itemize
+    /// iflags to the sender, so a new-file request carries ITEM_IS_NEW (0x2000)
+    /// alongside ITEM_TRANSFER (0x8000) → wire shortint 0xA000 (LE 00 A0). The
+    /// sender echoes these back and prints `<f+++++++++` (#301). A bare transfer
+    /// request (no diff bits) writes only 0x8000 (LE 00 80).
+    #[test]
+    fn new_file_request_forwards_item_is_new() {
+        let new_bytes = request_bytes(
+            u32::from(SenderAttrs::ITEM_TRANSFER) | crate::generator::ItemFlags::ITEM_IS_NEW,
+        );
+        assert!(
+            new_bytes.windows(2).any(|w| w == [0x00, 0xA0]),
+            "new-file request must carry ITEM_TRANSFER|ITEM_IS_NEW (0xA000): {new_bytes:02x?}"
+        );
+
+        let bare_bytes = request_bytes(u32::from(SenderAttrs::ITEM_TRANSFER));
+        assert!(
+            bare_bytes.windows(2).any(|w| w == [0x00, 0x80]),
+            "bare request carries ITEM_TRANSFER (0x8000): {bare_bytes:02x?}"
+        );
+        assert!(
+            !bare_bytes.windows(2).any(|w| w == [0x00, 0xA0]),
+            "bare request must NOT set ITEM_IS_NEW: {bare_bytes:02x?}"
+        );
+    }
+
+    /// The managed trailing-field bits (XATTR/BASIS/XNAME) must never leak from
+    /// `base_iflags` into the wire shortint, since they demand trailing bytes
+    /// this call site does not write for a plain FNAME request.
+    #[test]
+    fn base_iflags_managed_bits_are_masked_off() {
+        // Deliberately pollute base_iflags with the managed bits.
+        let polluted = u32::from(
+            SenderAttrs::ITEM_TRANSFER
+                | SenderAttrs::ITEM_REPORT_XATTR
+                | SenderAttrs::ITEM_BASIS_TYPE_FOLLOWS
+                | SenderAttrs::ITEM_XNAME_FOLLOWS,
+        );
+        let bytes = request_bytes(polluted);
+        // Only ITEM_TRANSFER (0x8000, LE 00 80) survives; none of the managed
+        // bits (which would each demand a trailing wire field) appear.
+        assert!(
+            bytes.windows(2).any(|w| w == [0x00, 0x80]),
+            "masked request keeps ITEM_TRANSFER only: {bytes:02x?}"
+        );
+    }
 }
