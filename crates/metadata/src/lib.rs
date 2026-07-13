@@ -234,10 +234,9 @@ pub use acl_windows::{
 pub use acl_noop::{apply_acls_from_cache, default_perms_for_dir, get_rsync_acl, sync_acls};
 
 #[cfg(unix)]
-pub use apply::transfer_root_chmod_self_lock;
 pub use apply::{
     apply_dest_mode_pre_transfer, apply_file_metadata_with_fd,
-    apply_file_metadata_with_fd_if_changed,
+    apply_file_metadata_with_fd_if_changed, transfer_root_chmod_self_lock,
 };
 pub use apply::{
     apply_directory_metadata, apply_directory_metadata_with_options, apply_file_metadata,
