@@ -258,6 +258,50 @@ fn parallel_delta_dup_free_shifted_content_is_wire_identical() {
     }
 }
 
+/// The parallel scan must be byte-identical to the sequential scan when the
+/// source equals the basis (every block a copy).
+///
+/// This is the case where each worker chains its whole stripe into one fat
+/// seq-match run that overshoots the stripe boundary via read-ahead. The merge
+/// must reassemble those overlapping fat runs at block granularity - a
+/// wholesale skip of the next worker's overshoot-overlapping run would drain a
+/// whole stripe to literals. The wire bytes must equal the sequential scan for
+/// chunk counts 2, 4, and 8, and the stream must be overwhelmingly copies.
+#[test]
+fn parallel_delta_identical_source_is_wire_identical() {
+    let basis = lcg_bytes(0xC0FF_EE00_1DED_2025, DUP_FREE_LEN);
+    let index = build_index(&basis, BLOCK_LEN);
+    assert!(
+        !index.has_duplicate_blocks(),
+        "random basis must be duplicate-free so the parallel path is eligible"
+    );
+
+    let source = basis.clone();
+    let generator = DeltaGenerator::new();
+    let sequential = generator
+        .generate(Cursor::new(source.clone()), &index)
+        .expect("sequential");
+    let seq_wire = script_to_wire_bytes(&sequential, index.block_length());
+
+    for &chunks in &[2usize, 4, 8] {
+        let chunked = generator
+            .generate_chunked(&source, &index, chunks)
+            .expect("chunked");
+        let chunked_wire = script_to_wire_bytes(&chunked, index.block_length());
+
+        assert_eq!(
+            chunked_wire, seq_wire,
+            "chunked wire bytes must equal sequential for chunks={chunks} on identical source"
+        );
+        assert!(
+            chunked.copy_bytes() > (source.len() as u64) * 9 / 10,
+            "identical source must be overwhelmingly copies for chunks={chunks} (copy_bytes={})",
+            chunked.copy_bytes()
+        );
+        assert_eq!(reconstruct(&basis, &index, &chunked), source);
+    }
+}
+
 /// Source length for the duplicate-heavy fixture: large enough to split into
 /// several ranges (> 2x the 1 MiB per-range floor).
 const DUP_HEAVY_LEN: usize = 4 * 1024 * 1024;

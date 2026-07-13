@@ -970,11 +970,29 @@ impl DeltaGenerator {
                     len,
                 } = token
                 {
-                    runs.push(CopyRun {
-                        source_start: scan_start as u64 + local_off,
-                        basis_index,
-                        len,
-                    });
+                    // Split a fat seq-match run into per-block runs so the merge
+                    // operates at block granularity. A run that overshoots a
+                    // stripe boundary (forward read-ahead) overlaps the next
+                    // worker's run; at block granularity the greedy cursor dedups
+                    // the shared boundary block and tiles the remainder, whereas
+                    // a fat run whose start falls inside the cursor would be
+                    // skipped wholesale and its bytes drained as literals. The
+                    // wire layer expands fat Copies to one op per block anyway, so
+                    // this is byte-transparent. `block_len` divides `len` for
+                    // every matched run; the `min` guards the rare partial tail.
+                    let start = scan_start as u64 + local_off;
+                    let mut covered = 0usize;
+                    let mut block = 0u64;
+                    while covered < len {
+                        let this = block_len.min(len - covered);
+                        runs.push(CopyRun {
+                            source_start: start + covered as u64,
+                            basis_index: basis_index + block,
+                            len: this,
+                        });
+                        covered += this;
+                        block += 1;
+                    }
                 }
                 local_off += token_len;
             }
