@@ -377,64 +377,115 @@ fn inc_recurse_gap_ndx_round_trip_preserves_original() {
 
 #[test]
 fn inc_recurse_gap_ndx_itemizes_parent_directory() {
-    // upstream: generator.c:2313 - under INC_RECURSE a directory is itemized by
-    // sending the "gap NDX" `ndx_start - 1` of that directory's sub-list, not
-    // the directory's own NDX. On the client-sender print path the gap must
-    // resolve to the parent directory entry (sender.c:269-272,
-    // `dir_flist->files[cur_flist->parent_ndx]`). Feeding the gap through the
-    // plain segment map instead lands on the trailing child of the previous
-    // segment, so a directory row prints with a file type char and the child's
-    // path (`.f..t...... sub/child.txt` instead of `.d..t...... sub/`) and a
-    // new-dir push emits a spurious child row. This is display-only: the wire
-    // NDX echoed back to the receiver is unchanged.
+    // upstream: generator.c:2306-2313 - under INC_RECURSE every directory is
+    // itemized exactly once, via the "gap NDX" `ndx_start - 1` of ITS OWN
+    // sub-list, not its own NDX. A push of `src/` containing `sub/child.txt`
+    // has TWO sub-lists: the initial list (contents of the transfer root `.`)
+    // and sub/'s sub-list (contents of `sub`). Each gap resolves to the OWNING
+    // directory (sender.c:269-272, `dir_flist->files[cur_flist->parent_ndx]`),
+    // so upstream prints one row per directory:
+    //     .d          ./
+    //     cd+++++++++ sub/
+    //     <f+++++++++ sub/child.txt
+    //
+    // The WHY this pins: the itemize type char and path both come from the
+    // resolved entry, so each gap MUST map to its own owning directory's flat
+    // entry. Mapping sub/'s gap through the wire `dir_ndx` (a `dir_flist` index,
+    // not a flist NDX) resolves it to `./` (flat 0), and the initial list's gap
+    // has no owning-directory record so the root row is dropped - the exact two
+    // defects this test guards. Display-only: the echoed wire NDX and all
+    // transferred data are unchanged.
     use super::item_flags::ItemFlags;
+    use protocol::CompatibilityFlags;
     use protocol::flist::FileEntry;
 
-    let (_handshake, mut ctx) = test_generator();
+    let mut handshake = test_handshake_with_protocol(32);
+    handshake.compat_flags = Some(CompatibilityFlags::INC_RECURSE);
+    let mut ctx = GeneratorContext::new_for_test(&handshake, test_config());
+    assert!(ctx.inc_recurse());
 
-    // Model a push of `sub/child.txt`: flat index 0 is the directory `sub`,
-    // flat index 1 is its child. The child travels in a sub-list whose
-    // ndx_start is 2, so the directory's itemize arrives at gap NDX 1.
-    ctx.file_list
-        .push(FileEntry::new_directory("sub".into(), 0o755));
-    ctx.file_list
-        .push(FileEntry::new_file("sub/child.txt".into(), 10, 0o644));
-    ctx.incremental.ndx_segments = vec![(0, 0), (1, 2)];
-    ctx.incremental.segment_parent_ndx = vec![-1, 0];
+    // Flat, sorted flist for `rsync -r src/ dst`: `.` root (flat 0), the `sub`
+    // dir (flat 1), then its child (flat 2). source_bases stays 1:1 with
+    // file_list so the real partitioner can move entries into sub-lists.
+    let empty_base: std::sync::Arc<Path> = std::sync::Arc::from(Path::new(""));
+    for entry in [
+        FileEntry::new_directory(".".into(), 0o755),
+        FileEntry::new_directory("sub".into(), 0o755),
+        FileEntry::new_file("sub/child.txt".into(), 10, 0o644),
+    ] {
+        ctx.file_list.push(entry);
+        ctx.source_bases.push(std::sync::Arc::clone(&empty_base));
+    }
 
-    // Gap NDX (2 - 1 = 1) resolves to the directory at flat index 0, never the
-    // child file at flat index 1.
-    assert_eq!(ctx.resolve_itemize_ndx(1), 0);
-    // The child's own NDX (2) still resolves to its flat index (1).
-    assert_eq!(ctx.resolve_itemize_ndx(2), 1);
-    // A directory itemized at its real NDX (0, the non-INC_RECURSE path) also
-    // resolves to itself.
-    assert_eq!(ctx.resolve_itemize_ndx(0), 0);
+    // Build the sub-lists exactly as a real INC_RECURSE push does.
+    ctx.partition_file_list_for_inc_recurse();
 
-    // A --times push implies preserve_mtimes, so the time position renders
-    // lowercase `t`; the type char and path are what this test pins.
+    // The builder records each sub-list's owning-directory FLAT index. The
+    // initial list owns `.` at flat 0 (flist.c:2572 keeps parent_ndx when the
+    // first entry is "."); sub/'s pending sub-list owns `sub` at flat 1. These
+    // are flat file_list indices, NOT wire dir_ndx values (`sub` has wire
+    // dir_ndx 1 but that alone would misresolve to flat 0 == `.`).
+    assert_eq!(ctx.incremental.segment_parent_flat, vec![0]);
+    assert_eq!(ctx.incremental.pending_segments.len(), 1);
+    assert_eq!(ctx.incremental.pending_segments[0].parent_flat_idx, 1);
+    assert_eq!(ctx.incremental.pending_segments[0].flist_start, 2);
+
+    // Dispatching sub/'s sub-list appends its (flat_start, ndx_start) and
+    // owning-flat rows, exactly as encode_and_send_segment does in the transfer
+    // loop. upstream flist.c:2931: ndx_start = prev(1) + prev_used(2) + 1 = 4,
+    // so sub/'s gap NDX is 3. The initial list keeps ndx_start 1, gap NDX 0.
+    ctx.incremental.ndx_segments = vec![(0, 1), (2, 4)];
+    ctx.incremental.segment_parent_flat = vec![0, 1];
+
+    // Each gap resolves to its OWN owning directory; the child resolves to
+    // itself. The `!= 0` anti-regression: sub/'s gap 3 must be flat 1 (`sub`),
+    // never flat 0 (`./`), and the root gap 0 must map to the live flat 0 so the
+    // root row is emitted rather than guarded out as an out-of-range index.
+    assert_eq!(ctx.resolve_itemize_ndx(0), 0, "root gap -> `.`");
+    assert_eq!(ctx.resolve_itemize_ndx(3), 1, "sub/ gap -> `sub`, not `./`");
+    assert_eq!(ctx.resolve_itemize_ndx(4), 2, "child -> itself");
+
     let itemize_ctx = itemize::ItemizeContext::default();
 
-    // A dir-mtime-only push carries ITEM_REPORT_TIME at the gap NDX. The
-    // resolved entry must render a directory row for `sub/`, not a file row for
-    // the child. This is the WHY: the type char and path come from the entry,
-    // so mapping the gap to the wrong entry corrupts both.
-    let dir_mtime = ItemFlags::from_raw(ItemFlags::ITEM_REPORT_TIME);
-    let flat = ctx.resolve_itemize_ndx(1);
-    let line = itemize::format_itemize_line(&dir_mtime, &ctx.file_list[flat], true, &itemize_ctx);
-    assert_eq!(line, ".d..t...... sub/\n");
-
-    // A new-dir push carries ITEM_LOCAL_CHANGE|ITEM_IS_NEW at the gap NDX; the
-    // resolved entry yields `cd+++++++++ sub/`, so no spurious child row is
-    // emitted for the directory.
-    let new_dir = ItemFlags::from_raw(ItemFlags::ITEM_LOCAL_CHANGE | ItemFlags::ITEM_IS_NEW);
-    let new_line = itemize::format_itemize_line(
-        &new_dir,
-        &ctx.file_list[ctx.resolve_itemize_ndx(1)],
-        true,
-        &itemize_ctx,
+    // New-dir push: the root `.` already exists (`.d`, unchanged -> dots
+    // collapse to spaces), sub/ is created (`cd+++`), the child is transferred
+    // (`<f+++`). All three rows must appear with their own path and type char.
+    let unchanged = ItemFlags::from_raw(0);
+    let new_local = ItemFlags::from_raw(ItemFlags::ITEM_LOCAL_CHANGE | ItemFlags::ITEM_IS_NEW);
+    let new_xfer = ItemFlags::from_raw(ItemFlags::ITEM_TRANSFER | ItemFlags::ITEM_IS_NEW);
+    let root = &ctx.file_list[ctx.resolve_itemize_ndx(0)];
+    let sub = &ctx.file_list[ctx.resolve_itemize_ndx(3)];
+    let child = &ctx.file_list[ctx.resolve_itemize_ndx(4)];
+    assert_eq!(
+        itemize::format_itemize_line(&unchanged, root, true, &itemize_ctx),
+        ".d          ./\n"
     );
-    assert_eq!(new_line, "cd+++++++++ sub/\n");
+    assert_eq!(
+        itemize::format_itemize_line(&new_local, sub, true, &itemize_ctx),
+        "cd+++++++++ sub/\n"
+    );
+    assert_eq!(
+        itemize::format_itemize_line(&new_xfer, child, true, &itemize_ctx),
+        "<f+++++++++ sub/child.txt\n"
+    );
+
+    // Dir-mtime push (dest exists, both dir mtimes stale): every directory row
+    // carries ITEM_REPORT_TIME at its gap NDX and must render against its own
+    // path, never the previous segment's trailing child.
+    let dir_mtime = ItemFlags::from_raw(ItemFlags::ITEM_REPORT_TIME);
+    let file_mtime = ItemFlags::from_raw(ItemFlags::ITEM_TRANSFER | ItemFlags::ITEM_REPORT_TIME);
+    assert_eq!(
+        itemize::format_itemize_line(&dir_mtime, root, true, &itemize_ctx),
+        ".d..t...... ./\n"
+    );
+    assert_eq!(
+        itemize::format_itemize_line(&dir_mtime, sub, true, &itemize_ctx),
+        ".d..t...... sub/\n"
+    );
+    assert_eq!(
+        itemize::format_itemize_line(&file_mtime, child, true, &itemize_ctx),
+        "<f..t...... sub/child.txt\n"
+    );
 }
 
 #[test]
@@ -4253,6 +4304,7 @@ fn segment_scheduler_dispatches_when_remaining_below_threshold() {
 
     let seg = PendingSegment {
         parent_dir_ndx: 0,
+        parent_flat_idx: 0,
         flist_start: 10,
         count: 500,
     };
@@ -4277,6 +4329,7 @@ fn segment_scheduler_blocks_when_remaining_at_threshold() {
 
     let seg = PendingSegment {
         parent_dir_ndx: 0,
+        parent_flat_idx: 0,
         flist_start: 10,
         count: 500,
     };
@@ -4296,6 +4349,7 @@ fn segment_scheduler_blocks_when_remaining_above_threshold() {
 
     let seg = PendingSegment {
         parent_dir_ndx: 0,
+        parent_flat_idx: 0,
         flist_start: 10,
         count: 500,
     };
@@ -4315,6 +4369,7 @@ fn segment_scheduler_boundary_dispatches_at_999() {
 
     let seg = PendingSegment {
         parent_dir_ndx: 0,
+        parent_flat_idx: 0,
         flist_start: 10,
         count: 500,
     };
@@ -4338,6 +4393,7 @@ fn segment_scheduler_many_files_deadlock_scenario() {
 
     let seg = PendingSegment {
         parent_dir_ndx: 1,
+        parent_flat_idx: 0,
         flist_start: 13,
         count: 1000,
     };
@@ -4356,6 +4412,7 @@ fn segment_scheduler_many_files_deadlock_scenario() {
     // Reset scheduler for the corrected test.
     let seg = PendingSegment {
         parent_dir_ndx: 1,
+        parent_flat_idx: 0,
         flist_start: 13,
         count: 1000,
     };
@@ -4390,6 +4447,7 @@ fn empty_segment_sends_wire_bytes() {
 
     let seg = super::PendingSegment {
         parent_dir_ndx: 0,
+        parent_flat_idx: 0,
         flist_start: 1, // past the single entry, so count=0 segment is empty
         count: 0,
     };
@@ -4427,6 +4485,7 @@ fn nonempty_segment_also_sends_wire_bytes() {
 
     let seg = super::PendingSegment {
         parent_dir_ndx: 0,
+        parent_flat_idx: 0,
         flist_start: 0,
         count: 1,
     };

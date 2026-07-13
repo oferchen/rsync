@@ -220,13 +220,18 @@ impl GeneratorContext {
     /// on the trailing file of the previous segment, so a directory row would
     /// print with a file type char and the wrong path. Upstream recovers the
     /// directory via `file = dir_flist->files[cur_flist->parent_ndx]`
-    /// (sender.c:269-272); we mirror that by mapping the gap to its sub-list's
-    /// recorded parent directory NDX.
+    /// (sender.c:269-272); oc mirrors that by mapping the gap to its sub-list's
+    /// recorded owning-directory flat index. Each sub-list resolves to its own
+    /// owning directory - the initial list's gap to the `.` root, a
+    /// subdirectory's gap to that subdirectory - so every directory is itemized
+    /// once, exactly as upstream emits one row per directory.
     ///
     /// # Upstream Reference
     ///
     /// - `sender.c:267-272` - gap NDX (`ndx < cur_flist->ndx_start`) resolves to
-    ///   the parent directory entry in `dir_flist`.
+    ///   the owning directory entry in `dir_flist`.
+    /// - `generator.c:2306-2313` - each sub-list (including the initial list
+    ///   whose `parent_ndx >= 0`) itemizes its owning directory at `ndx_start - 1`.
     pub(crate) fn resolve_itemize_ndx(&self, wire_ndx: i32) -> usize {
         let segments = &self.incremental.ndx_segments;
         // A gap NDX `g` satisfies `g + 1 == ndx_start` for exactly one sub-list;
@@ -236,9 +241,9 @@ impl GeneratorContext {
         if let Ok(seg_idx) =
             segments.binary_search_by(|&(_, ndx_start)| ndx_start.cmp(&(wire_ndx + 1)))
         {
-            let parent = self.incremental.segment_parent_ndx[seg_idx];
-            if parent >= 0 {
-                return self.wire_to_flat_ndx(parent);
+            let parent_flat = self.incremental.segment_parent_flat[seg_idx];
+            if parent_flat >= 0 {
+                return parent_flat as usize;
             }
         }
         self.wire_to_flat_ndx(wire_ndx)
