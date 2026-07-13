@@ -1,6 +1,9 @@
 use super::common::*;
 use super::*;
 
+// upstream: options.c:1762-1766 - a rejected --chmod arg prints
+// `Invalid argument passed to --chmod (%s)` (verbatim raw arg) and exits
+// RERR_SYNTAX (1). We assert the message and exit code byte-for-byte.
 #[test]
 fn run_reports_invalid_chmod_specification() {
     use tempfile::tempdir;
@@ -10,17 +13,25 @@ fn run_reports_invalid_chmod_specification() {
     let destination = tmp.path().join("dest.txt");
     std::fs::write(&source, b"data").expect("write source");
 
-    let (code, stdout, stderr) = run_with_args([
-        OsString::from(RSYNC),
-        OsString::from("--chmod=a+q"),
-        source.into_os_string(),
-        destination.into_os_string(),
-    ]);
+    // A category letter (u/g/o) in the permission half is rejected exactly as
+    // upstream chmod.c STATE_2ND_HALF does; rsync has no chmod(1)-style copy
+    // form. Also exercise a plainly bogus letter.
+    for spec in ["a+q", "g=u", "o=g", "u+g"] {
+        let (code, stdout, stderr) = run_with_args([
+            OsString::from(RSYNC),
+            OsString::from(format!("--chmod={spec}")),
+            source.clone().into_os_string(),
+            destination.clone().into_os_string(),
+        ]);
 
-    assert_eq!(code, 1);
-    assert!(stdout.is_empty());
-    let rendered = String::from_utf8(stderr).expect("diagnostic utf8");
-    assert!(rendered.contains("failed to parse --chmod specification"));
+        assert_eq!(code, 1, "`--chmod={spec}` must exit RERR_SYNTAX");
+        assert!(stdout.is_empty());
+        let rendered = String::from_utf8(stderr).expect("diagnostic utf8");
+        assert!(
+            rendered.contains(&format!("Invalid argument passed to --chmod ({spec})")),
+            "diagnostic for `{spec}` was: {rendered}"
+        );
+    }
 }
 
 #[test]

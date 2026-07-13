@@ -182,14 +182,14 @@ mod basic_symbolic_syntax {
         assert!(!modifiers.is_empty());
     }
 
-    // upstream: chmod.c:parse_chmod() STATE_2ND_HALF accepts a single who-letter
-    // on the RHS as a copy-from-category source. Mixing a copy letter with a
-    // literal permission letter in the same clause still routes to STATE_ERROR.
+    // upstream: chmod.c:159-185 STATE_2ND_HALF has no `u`/`g`/`o` case, so a
+    // category letter in the permission half routes to STATE_ERROR. rsync's
+    // `--chmod` grammar has no chmod(1)-style copy-from-category form.
     #[test]
-    fn who_letter_copy_source_in_rhs_accepted() {
-        assert!(ChmodModifiers::parse("g=u").is_ok());
-        assert!(ChmodModifiers::parse("o=g").is_ok());
-        assert!(ChmodModifiers::parse("o=u").is_ok());
+    fn who_letter_copy_source_in_rhs_rejected() {
+        assert!(ChmodModifiers::parse("g=u").is_err());
+        assert!(ChmodModifiers::parse("o=g").is_err());
+        assert!(ChmodModifiers::parse("o=u").is_err());
         assert!(ChmodModifiers::parse("g=ur").is_err());
     }
 
