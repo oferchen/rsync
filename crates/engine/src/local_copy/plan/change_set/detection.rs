@@ -216,11 +216,23 @@ impl LocalCopyChangeSet {
     /// that the link target itself changed. `itemize()` then adds
     /// `ITEM_REPORT_TIME` when the symlink's mtime differs from the existing
     /// link's mtime (gated by `!omit_link_times`).
+    ///
+    /// The mtime comparison uses `same_time()` semantics via
+    /// `system_time_within_window`, not exact equality: upstream `itemize()` at
+    /// `generator.c:526-527` calls `mtime_differs()` ->
+    /// `same_time(stp->st_mtime, ..., file->modtime, ...)` (util1.c:1478), which
+    /// with the default `modify_window == 0` compares WHOLE SECONDS only
+    /// (`f1_sec == f2_sec`) and ignores the fractional part. Two links whose
+    /// mtimes fall in the same wall-clock second but differ in nanoseconds
+    /// therefore do NOT light the `t` glyph upstream; an exact `SystemTime`
+    /// comparison would spuriously report `ITEM_REPORT_TIME` (rendering
+    /// `cLc.t......` instead of `cLc........`).
     pub fn for_recreated_symlink(
         source: &fs::Metadata,
         existing: &fs::Metadata,
         metadata_options: &MetadataOptions,
         omit_link_times: bool,
+        modify_window: ModifyWindow,
     ) -> Self {
         let mut change_set = Self::new().with_checksum_changed(true);
 
@@ -229,7 +241,8 @@ impl LocalCopyChangeSet {
             let new_mtime = metadata_modified_time(source);
             let old_mtime = metadata_modified_time(existing);
             match (new_mtime, old_mtime) {
-                (Some(new_value), Some(old_value)) if new_value == old_value => {}
+                (Some(new_value), Some(old_value))
+                    if system_time_within_window(new_value, old_value, modify_window) => {}
                 _ => {
                     change_set = change_set.with_time_change(Some(TimeChange::Modified));
                 }

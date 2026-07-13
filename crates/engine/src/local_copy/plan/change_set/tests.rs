@@ -831,11 +831,61 @@ fn for_recreated_symlink_sets_checksum_and_time_when_mtimes_differ() {
     let dst_meta = fs::symlink_metadata(&dst_link).expect("dst meta");
 
     let options = MetadataOptions::new().preserve_times(true);
-    let change_set =
-        LocalCopyChangeSet::for_recreated_symlink(&src_meta, &dst_meta, &options, false);
+    let change_set = LocalCopyChangeSet::for_recreated_symlink(
+        &src_meta,
+        &dst_meta,
+        &options,
+        false,
+        ModifyWindow::ZERO,
+    );
 
     assert!(change_set.checksum_changed());
     assert_eq!(change_set.time_change(), Some(TimeChange::Modified));
+}
+
+#[cfg(unix)]
+#[test]
+fn for_recreated_symlink_ignores_sub_second_mtime_drift() {
+    use filetime::{FileTime, set_symlink_file_times};
+    use std::os::unix::fs::symlink;
+
+    let temp = tempfile::tempdir().expect("tempdir");
+    let src_link = temp.path().join("src-link");
+    let dst_link = temp.path().join("dst-link");
+    symlink("target-a", &src_link).expect("create src");
+    symlink("target-b", &dst_link).expect("create dst");
+
+    // Same whole second, different nanoseconds. Upstream same_time()
+    // (util1.c:1478) with the default modify_window == 0 compares whole seconds
+    // only, so this must NOT light the `t` glyph (itemize `cLc........`, not
+    // `cLc.t......`).
+    set_symlink_file_times(
+        &src_link,
+        FileTime::from_unix_time(1_000_000, 500_000_000),
+        FileTime::from_unix_time(1_000_000, 500_000_000),
+    )
+    .expect("set src times");
+    set_symlink_file_times(
+        &dst_link,
+        FileTime::from_unix_time(1_000_000, 100_000_000),
+        FileTime::from_unix_time(1_000_000, 100_000_000),
+    )
+    .expect("set dst times");
+
+    let src_meta = fs::symlink_metadata(&src_link).expect("src meta");
+    let dst_meta = fs::symlink_metadata(&dst_link).expect("dst meta");
+
+    let options = MetadataOptions::new().preserve_times(true);
+    let change_set = LocalCopyChangeSet::for_recreated_symlink(
+        &src_meta,
+        &dst_meta,
+        &options,
+        false,
+        ModifyWindow::ZERO,
+    );
+
+    assert!(change_set.checksum_changed());
+    assert_eq!(change_set.time_change(), None);
 }
 
 #[cfg(unix)]
@@ -867,8 +917,13 @@ fn for_recreated_symlink_omit_link_times_suppresses_time_flag() {
     let dst_meta = fs::symlink_metadata(&dst_link).expect("dst meta");
 
     let options = MetadataOptions::new().preserve_times(true);
-    let change_set =
-        LocalCopyChangeSet::for_recreated_symlink(&src_meta, &dst_meta, &options, true);
+    let change_set = LocalCopyChangeSet::for_recreated_symlink(
+        &src_meta,
+        &dst_meta,
+        &options,
+        true,
+        ModifyWindow::ZERO,
+    );
 
     assert!(change_set.checksum_changed());
     assert_eq!(change_set.time_change(), None);
