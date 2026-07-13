@@ -115,6 +115,8 @@ pub mod nofollow_open;
 pub mod page_aligned;
 /// Parallel file I/O operations using rayon.
 pub mod parallel;
+/// Total physical memory detection (for the buffer pool's RAM-derived cap).
+pub mod physical_memory;
 /// Same-filesystem (device) detection for reflink / copy-on-write gating.
 pub mod same_fs;
 /// Strict-resolution directory open for the SEC-1 dirfd sandbox.
