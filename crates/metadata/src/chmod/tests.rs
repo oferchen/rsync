@@ -1,4 +1,53 @@
 use super::ChmodModifiers;
+use super::{directory_transfer_mode, transfer_root_self_locks};
+
+// The following encode upstream's generator dir-permission-during-transfer +
+// write-gated restore (generator.c:1512-1520 / 2107-2145). They pin the exact
+// final mode a directory carries after the dance, verified against upstream
+// rsync 3.4.4: `ug=rw` on a dir yields 0o765 (owner-write kept the transient
+// owner-rwx), `u=rx` yields 0o555 (owner lacked write, strict mode restored),
+// and an owner-non-executable transfer root self-locks.
+
+#[test]
+fn directory_transfer_mode_keeps_owner_rwx_when_owner_writable() {
+    // ug=rw -> 0o665: owner writable but not executable; upstream leaves 0o765.
+    assert_eq!(directory_transfer_mode(0o665, false), 0o765);
+    // Setgid bit survives: 2665 -> 2765.
+    assert_eq!(directory_transfer_mode(0o2665, false), 0o2765);
+}
+
+#[test]
+fn directory_transfer_mode_restores_strict_when_owner_not_writable() {
+    // u=rx -> 0o555: owner not writable; touch_up_dirs restores 0o555.
+    assert_eq!(directory_transfer_mode(0o555, false), 0o555);
+    // u=r -> 0o455: neither write nor execute; strict mode kept.
+    assert_eq!(directory_transfer_mode(0o455, false), 0o455);
+}
+
+#[test]
+fn directory_transfer_mode_noop_when_owner_already_rwx() {
+    assert_eq!(directory_transfer_mode(0o775, false), 0o775);
+    assert_eq!(directory_transfer_mode(0o755, false), 0o755);
+}
+
+#[test]
+fn directory_transfer_mode_root_skips_dance() {
+    // am_root: no fixup, no restore - the strict tweaked mode passes through.
+    assert_eq!(directory_transfer_mode(0o665, true), 0o665);
+    assert_eq!(directory_transfer_mode(0o555, true), 0o555);
+}
+
+#[test]
+fn transfer_root_self_locks_only_without_owner_execute() {
+    assert!(transfer_root_self_locks(0o665, false));
+    assert!(transfer_root_self_locks(0o424, false));
+    assert!(transfer_root_self_locks(0o455, false));
+    // Owner keeps execute -> the "." fixup resolves, no self-lock.
+    assert!(!transfer_root_self_locks(0o555, false));
+    assert!(!transfer_root_self_locks(0o775, false));
+    // Root traverses regardless of mode.
+    assert!(!transfer_root_self_locks(0o665, true));
+}
 
 #[test]
 fn parse_symbolic_and_numeric_specifications() {
