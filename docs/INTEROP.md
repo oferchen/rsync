@@ -27,7 +27,7 @@ This document defines the upstream compatibility test scenarios used to validate
 | Daemon transfer (host::module)      | `-av rsync://host/module/ /dest`         | ✅        | Auth + transfers fixed in Phase 3 |
 | Filters (include/exclude/filter)    | Deep ruleset match                        | ✅        | Comprehensive coverage |
 | Compression level                   | `-z --compress-level=9`                  | ✅        | Verified against rsync 3.4.1 |
-| Metadata flags                      | `-aHAX --numeric-ids`                    | ⚠️ ACL    | ACLs partially implemented |
+| Metadata flags                      | `-aHAX --numeric-ids`                    | ✅        | POSIX ACLs (access+default, mask, named user/group) wire-faithful vs upstream on Linux/macOS/FreeBSD; Windows DACL supported (SACL/inheritance deferred) |
 | Delete options                      | `--delete-excluded`, etc.                | ✅        | All variants working |
 | File list diffing                   | Match order, mtime, permission checks     | ✅        | Deterministic ordering |
 | Exit code match                     | Match known upstream codes                | ✅        | All 25 codes verified |
@@ -103,7 +103,7 @@ For each test scenario, we validate:
   - Block allocation (for sparse files)
   - Permissions, ownership (if `--perms`/`--owner`)
   - Extended attributes (if `--xattrs`)
-  - ACLs (if `--acls`, partial support)
+  - ACLs (if `--acls`)
   - Hard links (if `--hard-links`)
 
 ### Normalization Rules
@@ -135,7 +135,7 @@ Upstream binaries are obtained via multi-tier fallback:
 - ~~Daemon transfers timeout after auth~~ → Fixed in Phase 3 (run_server_with_handshake)
 
 ### ⚠️ ONGOING
-- **ACLs**: Partially implemented, not all platforms supported
+- **ACLs**: POSIX access + default ACLs (mask, named user/group) wire-faithful vs upstream on Linux/macOS/FreeBSD; Windows DACL supported with SACL/inheritance deferred (Tier-1C)
 - **Native SSH transport**: Fully integrated (`crates/core/src/client/remote/ssh_transfer.rs`)
 - **Filter merge edge cases**: Complex merge directives pending deeper validation
 

@@ -30,6 +30,14 @@ pub const ZSTD_BEST_LEVEL: i32 = 19;
 /// Default lz4 acceleration factor. Higher values trade compression ratio for speed.
 pub const LZ4_DEFAULT_ACCELERATION: i32 = 1;
 
+/// Raw `do_compression_level` value upstream uses when the user did not pass
+/// `--compress-level`. upstream: rsync.h:1151 `#define CLVL_NOT_SPECIFIED INT_MIN`.
+///
+/// [`CompressionAlgorithm::resolve_debug_level`] treats this sentinel as
+/// "unspecified" and substitutes the codec's default level, mirroring
+/// `token.c:init_compression_level()`.
+pub const CLVL_NOT_SPECIFIED: i32 = i32::MIN;
+
 /// Compression algorithms recognised by the workspace.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
 pub enum CompressionAlgorithm {
@@ -128,6 +136,45 @@ impl CompressionAlgorithm {
             CompressionAlgorithm::Lz4 => Some(clamped(1)),
             #[cfg(feature = "zstd")]
             CompressionAlgorithm::Zstd => Some(clamp_zstd_level(level)),
+        }
+    }
+
+    /// Resolves the effective compression level upstream renders in the
+    /// `--debug=NSTR` compress summary, mirroring `token.c:55`
+    /// `init_compression_level()`.
+    ///
+    /// `raw_level` is the wire `do_compression_level`: [`CLVL_NOT_SPECIFIED`]
+    /// when `--compress-level` was not supplied, otherwise the user value.
+    /// Upstream substitutes the codec `def_level` for the sentinel (and, for
+    /// zstd, for a literal `0`) and saturates a user value into the codec's
+    /// `[min_level, max_level]` range *before* the debug print, so it never
+    /// emits the raw sentinel. This is the single source of truth for that
+    /// resolution, shared by the wire-negotiation and local-copy print paths.
+    #[must_use]
+    pub fn resolve_debug_level(self, raw_level: i32) -> i32 {
+        match self {
+            // upstream: token.c:62-70 - zlib/zlibx min 1, max 9 (Z_BEST_COMPRESSION),
+            // def 6. CLVL_NOT_SPECIFIED resolves to def; other values saturate.
+            CompressionAlgorithm::Zlib => {
+                if raw_level == CLVL_NOT_SPECIFIED {
+                    ZLIB_DEFAULT_LEVEL
+                } else {
+                    raw_level.clamp(1, 9)
+                }
+            }
+            // upstream: token.c:72-79 - def ZSTD_CLEVEL_DEFAULT (3); a literal 0
+            // also maps to def; values saturate into [minCLevel, maxCLevel].
+            #[cfg(feature = "zstd")]
+            CompressionAlgorithm::Zstd => {
+                if raw_level == CLVL_NOT_SPECIFIED || raw_level == 0 {
+                    ZSTD_DEFAULT_LEVEL
+                } else {
+                    raw_level.clamp(1, ZSTD_MAX_LEVEL)
+                }
+            }
+            // upstream: token.c:81-87 - lz4 forces min/max/def to 0.
+            #[cfg(feature = "lz4")]
+            CompressionAlgorithm::Lz4 => 0,
         }
     }
 }
@@ -423,6 +470,48 @@ mod tests {
     #[test]
     fn lz4_default_acceleration_is_standard() {
         assert_eq!(LZ4_DEFAULT_ACCELERATION, 1);
+    }
+
+    #[test]
+    fn resolve_debug_level_substitutes_zlib_default_for_sentinel() {
+        // upstream: token.c:66-69,93-94 - CLVL_NOT_SPECIFIED resolves to the
+        // zlib def_level (6), never the raw INT_MIN sentinel.
+        assert_eq!(
+            CompressionAlgorithm::Zlib.resolve_debug_level(CLVL_NOT_SPECIFIED),
+            6
+        );
+    }
+
+    #[test]
+    fn resolve_debug_level_saturates_zlib_into_range() {
+        // upstream: token.c:101-104 - values saturate into [1, 9].
+        assert_eq!(CompressionAlgorithm::Zlib.resolve_debug_level(9), 9);
+        assert_eq!(CompressionAlgorithm::Zlib.resolve_debug_level(42), 9);
+        assert_eq!(CompressionAlgorithm::Zlib.resolve_debug_level(-5), 1);
+    }
+
+    #[cfg(feature = "zstd")]
+    #[test]
+    fn resolve_debug_level_substitutes_zstd_default() {
+        // upstream: token.c:75-78,93-94 - both CLVL_NOT_SPECIFIED and a literal
+        // 0 resolve to ZSTD_CLEVEL_DEFAULT (3).
+        assert_eq!(
+            CompressionAlgorithm::Zstd.resolve_debug_level(CLVL_NOT_SPECIFIED),
+            3
+        );
+        assert_eq!(CompressionAlgorithm::Zstd.resolve_debug_level(0), 3);
+        assert_eq!(CompressionAlgorithm::Zstd.resolve_debug_level(19), 19);
+    }
+
+    #[cfg(feature = "lz4")]
+    #[test]
+    fn resolve_debug_level_lz4_is_zero() {
+        // upstream: token.c:83-86 - lz4 min/max/def are all 0.
+        assert_eq!(
+            CompressionAlgorithm::Lz4.resolve_debug_level(CLVL_NOT_SPECIFIED),
+            0
+        );
+        assert_eq!(CompressionAlgorithm::Lz4.resolve_debug_level(5), 0);
     }
 
     #[test]

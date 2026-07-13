@@ -305,11 +305,26 @@ fn builder_records_modify_window() {
         .build();
 
     assert_eq!(config.modify_window(), Some(5));
-    assert_eq!(config.modify_window_duration(), Duration::from_secs(5));
+    assert_eq!(config.modify_window_setting(), ::metadata::ModifyWindow::from_secs(5));
     assert_eq!(
-        ClientConfig::default().modify_window_duration(),
-        Duration::ZERO
+        ClientConfig::default().modify_window_setting(),
+        ::metadata::ModifyWindow::ZERO
     );
+}
+
+#[test]
+fn builder_records_negative_modify_window() {
+    // WHY: `--modify-window=-1` is a valid upstream request for nanosecond-exact
+    // comparison (options.c uses a signed int); the builder must retain the
+    // negative value rather than clamp or reject it.
+    let config = ClientConfig::builder()
+        .transfer_args([OsString::from("src"), OsString::from("dst")])
+        .modify_window(Some(-1))
+        .build();
+
+    assert_eq!(config.modify_window(), Some(-1));
+    assert_eq!(config.modify_window_setting(), ::metadata::ModifyWindow::from_secs(-1));
+    assert!(config.modify_window_setting().is_nsec_exact());
 }
 
 #[test]
@@ -349,14 +364,14 @@ fn local_copy_options_apply_modify_window() {
         .build();
 
     let options = build_local_copy_options(&config, None);
-    assert_eq!(options.modify_window(), Duration::from_secs(3));
+    assert_eq!(options.modify_window(), ::metadata::ModifyWindow::from_secs(3));
 
     let default_config = ClientConfig::builder()
         .transfer_args([OsString::from("src"), OsString::from("dst")])
         .build();
     assert_eq!(
         build_local_copy_options(&default_config, None).modify_window(),
-        Duration::ZERO
+        ::metadata::ModifyWindow::ZERO
     );
 }
 

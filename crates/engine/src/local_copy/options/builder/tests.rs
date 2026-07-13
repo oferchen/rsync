@@ -1,6 +1,7 @@
 //! Unit tests for [`super::LocalCopyOptionsBuilder`] covering presets,
 //! per-concern setters, validation rules, and error display.
 
+use ::metadata::ModifyWindow;
 use std::num::NonZeroU64;
 use std::time::{Duration, SystemTime};
 
@@ -344,7 +345,7 @@ mod integrity_options {
 
     #[test]
     fn modify_window_sets_value() {
-        let window = Duration::from_secs(5);
+        let window = ModifyWindow::from_secs(5);
         let options = LocalCopyOptionsBuilder::new()
             .modify_window(window)
             .build()

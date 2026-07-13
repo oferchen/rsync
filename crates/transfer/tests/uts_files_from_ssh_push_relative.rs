@@ -156,7 +156,16 @@ fn ssh_push_files_from_emits_relative_wire_names() {
     let mut saw_foobar = false;
 
     for entry in file_list {
-        let name = entry.name();
+        // Compare against the wire-format name, not the `name()` accessor: the
+        // latter returns the raw `PathBuf` string, which carries the native `\`
+        // separator on Windows (the implied-parent loop builds names via
+        // `PathBuf::push`). The wire bytes are always `/`-separated
+        // (`FileEntry::name_bytes()` -> `wire_path::path_bytes_to_wire`,
+        // upstream flist.c:534-570 emits `/` verbatim), so the assertions must
+        // use that platform-independent representation.
+        let name_bytes = entry.name_bytes();
+        let name = String::from_utf8_lossy(&name_bytes);
+        let name: &str = &name;
         assert!(
             !name.starts_with('/'),
             "wire-side name must be relative, got absolute path: {name:?}"

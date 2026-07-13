@@ -23,7 +23,7 @@ use std::time::SystemTime;
 
 use compress::zlib::CompressionLevel;
 use engine::SkipCompressList;
-use metadata::{ChmodModifiers, GroupMapping, UserMapping};
+use metadata::{ChmodModifiers, GroupMapping, ModifyWindow, UserMapping};
 use protocol::FilenameConverter;
 use protocol::ProtocolVersion;
 use protocol::filters::FilterRuleWireFormat;
@@ -440,8 +440,11 @@ impl ServerConfigBuilder {
     }
 
     /// Sets the `--modify-window` mtime comparison tolerance in whole seconds.
-    pub fn modify_window(&mut self, seconds: u64) -> &mut Self {
-        self.file_selection.modify_window = seconds;
+    ///
+    /// A negative `seconds` selects upstream's nanosecond-exact comparison
+    /// (`modify_window < 0`, util1.c:1482).
+    pub fn modify_window(&mut self, seconds: i64) -> &mut Self {
+        self.file_selection.modify_window = ModifyWindow::from_secs(seconds);
         self
     }
 
@@ -573,6 +576,17 @@ impl ServerConfigBuilder {
             });
         }
 
+        // upstream: options.c:2423-2431 - `if (inplace) { if (partial_dir) {
+        // "--inplace cannot be used with --partial-dir" }}`. --inplace writes
+        // straight into the destination, so a partial-dir staging basis is
+        // meaningless; upstream refuses the combination outright.
+        if self.write.inplace && self.has_partial_dir {
+            return Err(BuilderError::ConflictingOptions {
+                option1: "--inplace",
+                option2: "--partial-dir",
+            });
+        }
+
         if let (Some(min), Some(max)) = (
             self.file_selection.min_file_size,
             self.file_selection.max_file_size,
@@ -594,6 +608,7 @@ impl ServerConfigBuilder {
     /// Returns a [`BuilderError`] if:
     /// - `--inplace` and `--delay-updates` are both enabled
     /// - `--append` and `--partial-dir` are both enabled
+    /// - `--inplace` and `--partial-dir` are both enabled
     /// - `min_file_size` exceeds `max_file_size`
     pub fn build(&self) -> Result<ServerConfig, BuilderError> {
         self.validate()?;

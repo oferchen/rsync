@@ -118,6 +118,58 @@ fn render_itemize(event: &ClientEvent) -> String {
 }
 
 #[test]
+fn info_name_only_suppresses_stats_footer() {
+    // upstream: main.c:459-461 output_summary() gates the
+    // `sent %s bytes  received %s bytes` / `total size is %s` trailer on
+    // `verbose > 0 || INFO_GTE(STATS, 1)`. `--info=name2` raises only the NAME
+    // level, so the trailer must NOT print - previously oc emitted it whenever
+    // any name output was enabled, diverging from upstream.
+    let (summary, _temp) = create_known_summary(&[("file.txt", b"hello world")]);
+    let mut rendered = Vec::new();
+    emit_transfer_summary(
+        &summary,
+        0, // verbosity (name-only, no -v)
+        None,
+        0,     // stats_level (no --stats / --info=statsN)
+        false, // progress_already_rendered
+        false, // list_only
+        false, // dry_run
+        None,
+        &OutFormatContext::default(),
+        NameOutputLevel::UpdatedAndUnchanged, // --info=name2-style name output
+        false,
+        HumanReadableMode::Grouped,
+        false,
+        false, // emit_flist_banner
+        false, // show_copy_method
+        false, // show_atimes
+        false, // show_crtimes
+        false, // eight_bit_output
+        &mut rendered,
+    )
+    .expect("render");
+    let out = String::from_utf8(rendered).expect("utf8");
+    assert!(
+        !out.contains("sent ") && !out.contains("total size is"),
+        "name-only output (verbose 0, stats 0) must not print the summary \
+         trailer, matching upstream main.c:459-461:\n{out}"
+    );
+}
+
+#[test]
+fn verbose_still_emits_stats_footer() {
+    // upstream: the verbose level-1 word list raises INFO_STATS to 1
+    // (options.c:251), so plain `-v` still prints the trailer. Guards against
+    // over-suppressing the footer when tightening the name-only gate.
+    let (summary, _temp) = create_known_summary(&[("file.txt", b"hello world")]);
+    let out = render_verbose(&summary, 1);
+    assert!(
+        out.contains("total size is"),
+        "`-v` must still print the summary trailer:\n{out}"
+    );
+}
+
+#[test]
 fn parity_stats_output_contains_all_upstream_field_labels() {
     let (summary, _temp) = create_known_summary(&[("file.txt", b"hello world")]);
     let output = render_stats(&summary, HumanReadableMode::Grouped);

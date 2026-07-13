@@ -293,12 +293,101 @@ fn test_negotiate_nstr_summary_matches_upstream_wording_client() {
             .any(|m| m == "Client negotiated checksum: md5"),
         "missing upstream level-1 checksum summary: {messages:?}"
     );
-    // upstream: compat.c:215-218 - "(level %d)" renders verbatim, even
-    // when --compress-level was not supplied (CLVL_NOT_SPECIFIED = INT_MIN).
-    let expected_compress = format!("Client negotiated compress: zlib (level {})", i32::MIN);
+    // upstream: compat.c:215-218 - "(level %d)" renders the resolved
+    // do_compression_level. parse_compress_choice(1) calls
+    // init_compression_level() (token.c:55) first, which substitutes the zlib
+    // def_level (6) for CLVL_NOT_SPECIFIED, so the raw INT_MIN sentinel is
+    // never printed.
     assert!(
-        messages.iter().any(|m| m == &expected_compress),
+        messages
+            .iter()
+            .any(|m| m == "Client negotiated compress: zlib (level 6)"),
         "missing upstream level-1 compress summary: {messages:?}"
+    );
+}
+
+/// At protocol 30+ without the negotiated 'v' capability
+/// (`do_negotiation == false`), upstream still calls `parse_checksum_choice(1)`
+/// / `parse_compress_choice(1)` (compat.c:819-820). Both emit the per-side
+/// summary with NO " negotiated" qualifier (valid_*.negotiated_nni stays NULL
+/// because no vstring exchange ran), and the compress level is resolved via
+/// `init_compression_level` (token.c:55). The client must therefore show the
+/// zlib fallback the wire actually uses at the resolved def_level (6) - not the
+/// modern negotiated table and never the raw CLVL_NOT_SPECIFIED sentinel.
+#[test]
+fn test_no_negotiation_client_emits_resolved_fallback_summaries() {
+    use logging::{DebugFlag, DiagnosticEvent, VerbosityConfig, drain_events, init};
+
+    let mut cfg = VerbosityConfig::default();
+    cfg.debug.nstr = 2;
+    init(cfg);
+    let _ = drain_events();
+
+    // Protocol 30 uses binary negotiation, but with do_negotiation=false the
+    // vstring exchange is skipped and no wire I/O occurs.
+    let protocol = ProtocolVersion::try_from(30).unwrap();
+    let mut stdin: &[u8] = &[];
+    let mut stdout = Vec::new();
+
+    let result = negotiate_capabilities_with_override(
+        protocol,
+        &mut stdin,
+        &mut stdout,
+        &NegotiationConfig {
+            do_negotiation: false,
+            send_compression: true,
+            is_daemon_mode: false,
+            is_server: false,
+            checksum_override: None,
+            compression_override: None,
+            compression_level: crate::nstr::CLVL_NOT_SPECIFIED,
+        },
+    )
+    .unwrap();
+
+    // Wire falls back to zlib with zero bytes exchanged.
+    assert!(
+        stdout.is_empty(),
+        "do_negotiation=false must not send any negotiation bytes"
+    );
+    assert_eq!(result.compression, CompressionAlgorithm::Zlib);
+
+    let messages: Vec<String> = drain_events()
+        .into_iter()
+        .filter_map(|event| match event {
+            DiagnosticEvent::Debug {
+                flag: DebugFlag::Nstr,
+                message,
+                ..
+            } => Some(message),
+            _ => None,
+        })
+        .collect();
+
+    // Fallback summaries: no " negotiated" qualifier, zlib codec, def_level 6.
+    assert!(
+        messages.iter().any(|m| m == "Client checksum: md5"),
+        "missing fallback checksum summary: {messages:?}"
+    );
+    assert!(
+        messages
+            .iter()
+            .any(|m| m == "Client compress: zlib (level 6)"),
+        "missing fallback compress summary: {messages:?}"
+    );
+    // Must NOT emit the modern negotiated table, the " negotiated" qualifier,
+    // or the raw CLVL_NOT_SPECIFIED sentinel.
+    assert!(
+        !messages.iter().any(|m| m.contains("list (on")),
+        "fallback path must not print the negotiated list table: {messages:?}"
+    );
+    assert!(
+        !messages.iter().any(|m| m.contains("negotiated compress")),
+        "fallback compress summary must omit ' negotiated': {messages:?}"
+    );
+    assert!(
+        !messages.iter().any(|m| m.contains("-2147483648")),
+        "fallback path must not leak the INT_MIN sentinel: {messages:?}"
     );
 }
 
@@ -862,28 +951,58 @@ fn test_choose_checksum_empty_list() {
 
 #[test]
 fn test_choose_compression_first_match_wins_zstd_or_zlib() {
-    // Remote offers zstd and lz4 first, then zlib.
-    // When zstd feature is enabled, zstd is in our supported list (validated
-    // in PR #3081) and wins. Lz4 is still excluded.
+    // Remote offers zstd and lz4 first, then zlib. Both zstd and lz4 are now in
+    // our supported list (wire-format validated against upstream 3.4.4), so the
+    // first mutually supported entry wins in preference order zstd > lz4 > zlib.
     let client_list = "zstd lz4 zlib none";
     let result = choose_compression_algorithm(client_list, true).unwrap();
     #[cfg(feature = "zstd")]
     assert_eq!(result, CompressionAlgorithm::Zstd);
-    #[cfg(not(feature = "zstd"))]
+    #[cfg(all(not(feature = "zstd"), feature = "lz4"))]
+    assert_eq!(result, CompressionAlgorithm::LZ4);
+    #[cfg(all(not(feature = "zstd"), not(feature = "lz4")))]
     assert_eq!(result, CompressionAlgorithm::Zlib);
 }
 
 #[test]
 fn test_choose_compression_first_match_wins_zstd_or_zlibx() {
-    // Remote offers zstd, lz4, then zlibx.
-    // When zstd feature is enabled, zstd is in our supported list and wins.
-    // Lz4 is still excluded from auto-negotiation.
+    // Remote offers zstd, lz4, then zlibx. zstd wins when enabled, otherwise lz4
+    // (also validated), otherwise zlibx - preference zstd > lz4 > zlibx.
     let client_list = "zstd lz4 zlibx zlib none";
     let result = choose_compression_algorithm(client_list, true).unwrap();
     #[cfg(feature = "zstd")]
     assert_eq!(result, CompressionAlgorithm::Zstd);
-    #[cfg(not(feature = "zstd"))]
+    #[cfg(all(not(feature = "zstd"), feature = "lz4"))]
+    assert_eq!(result, CompressionAlgorithm::LZ4);
+    #[cfg(all(not(feature = "zstd"), not(feature = "lz4")))]
     assert_eq!(result, CompressionAlgorithm::ZlibX);
+}
+
+#[test]
+#[cfg(feature = "lz4")]
+fn test_lz4_is_advertised_in_preference_order() {
+    // lz4 must appear in the advertised list (wire-format validated vs upstream
+    // 3.4.4) positioned per upstream valid_compressions_items[]: after zstd,
+    // before zlibx/zlib/none. The list is only sent when CF_VARINT_FLIST_FLAGS
+    // (the `v` capability) is negotiated, matching upstream's proto-31+ gating.
+    let list = supported_compressions();
+    let lz4 = list
+        .iter()
+        .position(|&n| n == "lz4")
+        .expect("lz4 advertised");
+    let zlibx = list
+        .iter()
+        .position(|&n| n == "zlibx")
+        .expect("zlibx present");
+    assert!(lz4 < zlibx, "lz4 must precede zlibx: {list:?}");
+    #[cfg(feature = "zstd")]
+    {
+        let zstd = list
+            .iter()
+            .position(|&n| n == "zstd")
+            .expect("zstd present");
+        assert!(zstd < lz4, "zstd must precede lz4: {list:?}");
+    }
 }
 
 #[test]
@@ -2444,22 +2563,30 @@ fn capability_fallback_graceful_checksum_degradation() {
 
 /// Tests compression negotiation with modern and legacy peers.
 ///
-/// When the zstd feature is enabled, zstd is preferred over zlibx/zlib.
-/// Lz4 is still excluded from auto-negotiation (wire format unvalidated).
+/// Preference order follows upstream `valid_compressions_items[]`
+/// (compat.c:100-112): zstd > lz4 > zlibx > zlib > none, with each codec
+/// present only when its feature is compiled in. Both zstd and lz4 wire
+/// formats are validated byte-for-byte against upstream 3.4.4.
 #[test]
 fn capability_compression_negotiation_preference() {
-    // Remote offers full modern list - we pick zstd when feature is enabled
-    // (wire format validated in PR #3081), otherwise zlibx.
+    // Remote offers full modern list - server picks the first entry it also
+    // supports, in upstream preference order zstd > lz4 > zlibx.
     let modern_list = "zstd lz4 zlibx zlib none";
     let result = choose_compression_algorithm(modern_list, true).unwrap();
     #[cfg(feature = "zstd")]
     assert_eq!(result, CompressionAlgorithm::Zstd);
-    #[cfg(not(feature = "zstd"))]
+    #[cfg(all(not(feature = "zstd"), feature = "lz4"))]
+    assert_eq!(result, CompressionAlgorithm::LZ4);
+    #[cfg(all(not(feature = "zstd"), not(feature = "lz4")))]
     assert_eq!(result, CompressionAlgorithm::ZlibX);
 
-    // Remote offers lz4 first without zstd - picks zlibx (lz4 not validated).
+    // Remote offers lz4 first without zstd - picks lz4 when compiled in,
+    // otherwise falls through to zlibx.
     let no_zstd_list = "lz4 zlibx zlib none";
     let result = choose_compression_algorithm(no_zstd_list, true).unwrap();
+    #[cfg(feature = "lz4")]
+    assert_eq!(result, CompressionAlgorithm::LZ4);
+    #[cfg(not(feature = "lz4"))]
     assert_eq!(result, CompressionAlgorithm::ZlibX);
 
     // Server with only zlib variants
@@ -2824,17 +2951,20 @@ fn capability_fallback_all_protocol_versions() {
 
 #[test]
 fn supported_compressions_includes_validated_algorithms() {
-    // Zstd wire framing was validated against upstream (PR #3081).
-    // Lz4 wire framing is not yet validated - must remain excluded.
+    // Both zstd and lz4 wire framings are validated byte-for-byte against
+    // upstream 3.4.4, so each is advertised when its feature is compiled in.
     let list = supported_compressions();
     #[cfg(feature = "zstd")]
     assert!(
         list.contains(&"zstd"),
-        "zstd must be advertised - wire format validated (PR #3081)"
+        "zstd must be advertised when enabled"
     );
+    #[cfg(feature = "lz4")]
+    assert!(list.contains(&"lz4"), "lz4 must be advertised when enabled");
+    #[cfg(not(feature = "lz4"))]
     assert!(
         !list.contains(&"lz4"),
-        "lz4 must not be advertised until wire format is validated"
+        "lz4 must be absent when its feature is disabled"
     );
     assert!(list.contains(&"zlibx"));
     assert!(list.contains(&"zlib"));
@@ -2843,17 +2973,25 @@ fn supported_compressions_includes_validated_algorithms() {
 
 #[test]
 fn supported_compressions_order_matches_upstream() {
-    // upstream: compat.c:100-112 - preference order is zstd > zlibx > zlib > none
-    // (lz4 will be re-added after wire format validation)
+    // upstream: compat.c:100-112 - preference order is
+    // zstd > lz4 > zlibx > zlib > none, each present only when compiled in.
     let list = supported_compressions();
     let zlibx_pos = list.iter().position(|&s| s == "zlibx").unwrap();
     let zlib_pos = list.iter().position(|&s| s == "zlib").unwrap();
     let none_pos = list.iter().position(|&s| s == "none").unwrap();
-    // upstream: compat.c:101-102 - zstd precedes zlibx when available
+    // upstream: compat.c:101-108 - zstd, then lz4, precede zlibx when available.
+    #[cfg(feature = "lz4")]
+    let lz4_pos = {
+        let lz4_pos = list.iter().position(|&s| s == "lz4").unwrap();
+        assert!(lz4_pos < zlibx_pos);
+        lz4_pos
+    };
     #[cfg(feature = "zstd")]
     {
         let zstd_pos = list.iter().position(|&s| s == "zstd").unwrap();
         assert!(zstd_pos < zlibx_pos);
+        #[cfg(feature = "lz4")]
+        assert!(zstd_pos < lz4_pos);
     }
     assert!(zlibx_pos < zlib_pos);
     assert!(zlib_pos < none_pos);
@@ -2861,13 +2999,16 @@ fn supported_compressions_order_matches_upstream() {
 
 #[test]
 fn negotiate_picks_best_validated_algorithm() {
-    // Remote offers full modern list. When zstd feature is enabled, we pick zstd
-    // as the best validated algorithm (PR #3081). Lz4 is still excluded.
+    // Remote offers full modern list; server picks the first entry it also
+    // supports in upstream preference order zstd > lz4 > zlibx. Both zstd and
+    // lz4 wire formats are validated byte-for-byte against upstream 3.4.4.
     let list = "zstd lz4 zlibx zlib none";
     let result = choose_compression_algorithm(list, true).unwrap();
     #[cfg(feature = "zstd")]
     assert_eq!(result, CompressionAlgorithm::Zstd);
-    #[cfg(not(feature = "zstd"))]
+    #[cfg(all(not(feature = "zstd"), feature = "lz4"))]
+    assert_eq!(result, CompressionAlgorithm::LZ4);
+    #[cfg(all(not(feature = "zstd"), not(feature = "lz4")))]
     assert_eq!(result, CompressionAlgorithm::ZlibX);
 }
 

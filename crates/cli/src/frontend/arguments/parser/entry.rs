@@ -16,7 +16,7 @@ use crate::frontend::arguments::short_options::{
 use crate::frontend::command_builder::clap_command;
 use crate::frontend::execution::{parse_checksum_seed_argument, parse_compress_level_argument};
 use crate::frontend::filter_rules::{FilterOrderToken, build_filter_order};
-use crate::frontend::progress::{NameOutputLevel, ProgressSetting};
+use crate::frontend::progress::{NameOutputLevel, ProgressSetting, StderrMode};
 use core::client::{
     AddressMode, DeleteMode, HumanReadableMode, StrongChecksumChoice, TcpFastOpenMode,
 };
@@ -210,22 +210,15 @@ where
     let modify_window = match matches.remove_one::<OsString>("modify-window") {
         Some(value) => {
             let s = value.to_string_lossy();
+            // upstream: options.c:660 parses `--modify-window`/`-@` as a signed
+            // int (`POPT_ARG_INT`); a negative value is valid and requests
+            // nanosecond-exact comparison (util1.c:1482), so accept any integer.
             match s.parse::<i32>() {
-                Ok(n) if n >= 0 => Some(value),
-                Ok(_) => {
-                    return Err(clap::Error::raw(
-                        clap::error::ErrorKind::ValueValidation,
-                        format!(
-                            "invalid --modify-window value '{s}': must be a non-negative integer\n"
-                        ),
-                    ));
-                }
+                Ok(_) => Some(value),
                 Err(_) => {
                     return Err(clap::Error::raw(
                         clap::error::ErrorKind::ValueValidation,
-                        format!(
-                            "invalid --modify-window value '{s}': must be a non-negative integer\n"
-                        ),
+                        format!("invalid --modify-window value '{s}': must be an integer\n"),
                     ));
                 }
             }
@@ -454,6 +447,22 @@ where
     let implied_dirs = tri_state_flag_positive_first(&matches, "implied-dirs", "no-implied-dirs");
     let msgs_to_stderr = tri_state_flag_positive_first(&matches, "msgs2stderr", "no-msgs2stderr");
     let stderr_mode = matches.remove_one::<OsString>("stderr");
+    // upstream: options.c:1912 OPT_STDERR rejects any value that is not a
+    // non-empty prefix of "errors", "all", or "client" with this exact message.
+    if let Some(value) = stderr_mode.as_ref() {
+        let valid = value
+            .to_str()
+            .is_some_and(|text| StderrMode::from_str(text).is_some());
+        if !valid {
+            return Err(clap::Error::raw(
+                clap::error::ErrorKind::ValueValidation,
+                format!(
+                    "--stderr mode \"{}\" is not one of errors, all, or client\n",
+                    value.to_string_lossy()
+                ),
+            ));
+        }
+    }
     let outbuf = matches.remove_one::<OsString>("outbuf");
     let max_alloc = matches.remove_one::<OsString>("max-alloc");
     let stats = matches.get_flag("stats");

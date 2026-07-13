@@ -14,7 +14,7 @@ use protocol::flist::FileEntry;
 use crate::config::{ReferenceDirectory, ReferenceDirectoryKind};
 use crate::delta_apply::ChecksumVerifier;
 
-use metadata::{AclIdMapper, MetadataOptions, apply_metadata_with_cached_stat};
+use metadata::{AclIdMapper, MetadataOptions, ModifyWindow, apply_metadata_with_cached_stat};
 use protocol::acl::AclCache;
 
 use super::apply_acls_from_receiver_cache;
@@ -31,26 +31,6 @@ use super::apply_acls_from_receiver_cache;
 /// - `hlink.c:284` - `hard_link_check()` called for non-first entries
 pub(super) fn is_hardlink_follower(entry: &FileEntry) -> bool {
     entry.hlinked() && !entry.hlink_first()
-}
-
-/// Returns `true` when two whole-second mtimes are the "same" under
-/// `--modify-window`, a direct port of upstream `util1.c:1478 same_time()`.
-///
-/// The receiver compares `time_t` seconds (`st_mtime` vs the file-list entry's
-/// `modtime`), so nanoseconds never enter this predicate - upstream likewise
-/// ignores them for the window check ("time windows don't care about that").
-///
-/// - `window == 0`: the seconds must be exactly equal (`f1_sec == f2_sec`).
-/// - `window > 0`: a SYMMETRIC whole-second tolerance applies, matching upstream
-///   `f2_sec > f1_sec ? f2_sec - f1_sec <= modify_window : f1_sec - f2_sec <=
-///   modify_window`, i.e. `|a_sec - b_sec| <= window`.
-///
-/// upstream: util1.c:1478 same_time() (via generator.c:quick_check_ok()).
-fn same_time(a_sec: i64, b_sec: i64, window: u64) -> bool {
-    if window == 0 {
-        return a_sec == b_sec;
-    }
-    a_sec.abs_diff(b_sec) <= window
 }
 
 /// Pure-function quick-check: compares destination stat against source entry.
@@ -70,7 +50,7 @@ pub(super) fn quick_check_matches(
     preserve_times: bool,
     size_only: bool,
     always_checksum: Option<protocol::ChecksumAlgorithm>,
-    modify_window: u64,
+    modify_window: ModifyWindow,
 ) -> bool {
     // upstream: generator.c:621 - size check first
     if dest_meta.len() != entry.size() {
@@ -95,11 +75,17 @@ pub(super) fn quick_check_matches(
         return false;
     }
     // upstream: generator.c:645 - `mtime_differs()` -> `same_time()` applies the
-    // `--modify-window` tolerance symmetrically on whole seconds.
+    // `--modify-window` tolerance. A negative window compares nanoseconds too
+    // (util1.c:1482), so pass the sub-second component from both sides.
     #[cfg(unix)]
     {
         use std::os::unix::fs::MetadataExt;
-        same_time(dest_meta.mtime(), entry.mtime(), modify_window)
+        modify_window.same_time(
+            dest_meta.mtime(),
+            dest_meta.mtime_nsec() as u32,
+            entry.mtime(),
+            entry.mtime_nsec(),
+        )
     }
     #[cfg(not(unix))]
     {
@@ -108,7 +94,12 @@ pub(super) fn quick_check_matches(
             .ok()
             .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
             .map_or(false, |d| {
-                same_time(d.as_secs() as i64, entry.mtime(), modify_window)
+                modify_window.same_time(
+                    d.as_secs() as i64,
+                    d.subsec_nanos(),
+                    entry.mtime(),
+                    entry.mtime_nsec(),
+                )
             })
     }
 }
@@ -243,7 +234,7 @@ pub(super) fn try_reference_dest(
     preserve_times: bool,
     size_only: bool,
     always_checksum: Option<protocol::ChecksumAlgorithm>,
-    modify_window: u64,
+    modify_window: ModifyWindow,
     copy_links: bool,
     metadata_opts: &MetadataOptions,
     metadata_errors: &mut Vec<(PathBuf, String)>,
@@ -481,7 +472,7 @@ mod info_copy_emission_tests {
     use metadata::MetadataOptions;
     use protocol::flist::FileEntry;
 
-    use super::try_reference_dest;
+    use super::{ModifyWindow, try_reference_dest};
     use crate::config::{ReferenceDirectory, ReferenceDirectoryKind};
 
     fn copy_messages() -> Vec<String> {
@@ -543,7 +534,7 @@ mod info_copy_emission_tests {
             false,
             true,
             None,
-            0,
+            ModifyWindow::from_secs(0),
             false,
             &metadata_opts,
             &mut metadata_errors,
@@ -604,7 +595,7 @@ mod info_copy_emission_tests {
             false,
             true,
             None,
-            0,
+            ModifyWindow::from_secs(0),
             false,
             &metadata_opts,
             &mut metadata_errors,
@@ -647,7 +638,7 @@ mod symlink_basis_tests {
     use metadata::MetadataOptions;
     use protocol::flist::FileEntry;
 
-    use super::try_reference_dest;
+    use super::{ModifyWindow, try_reference_dest};
     use crate::config::{ReferenceDirectory, ReferenceDirectoryKind};
 
     fn setup_symlink_basis() -> (tempfile::TempDir, PathBuf, PathBuf) {
@@ -696,7 +687,7 @@ mod symlink_basis_tests {
             false,
             true,
             None,
-            0,
+            ModifyWindow::from_secs(0),
             copy_links,
             &metadata_opts,
             &mut metadata_errors,
@@ -900,17 +891,30 @@ mod modify_window_tests {
     use filetime::{FileTime, set_file_mtime};
     use protocol::flist::FileEntry;
 
-    use super::quick_check_matches;
+    use super::{ModifyWindow, quick_check_matches};
 
     /// Builds a dest file at `dest_secs` and a source entry claiming `src_secs`,
     /// both the same size, then runs the quick-check with `preserve_times=true`,
     /// `size_only=false`, no checksum, at the given `window`.
-    fn run_window(src_secs: i64, dest_secs: i64, window: u64) -> bool {
+    fn run_window(src_secs: i64, dest_secs: i64, window: ModifyWindow) -> bool {
+        run_window_nsec(src_secs, 0, dest_secs, 0, window)
+    }
+
+    /// Like [`run_window`] but with explicit nanosecond components, so the
+    /// negative-window (nanosecond-exact) path can be exercised.
+    fn run_window_nsec(
+        src_secs: i64,
+        src_nsec: u32,
+        dest_secs: i64,
+        dest_nsec: u32,
+        window: ModifyWindow,
+    ) -> bool {
         let dir = tempfile::tempdir().expect("tempdir");
         let dest_path = dir.path().join("payload.bin");
         let payload = b"identical content";
         fs::write(&dest_path, payload).expect("write dest");
-        set_file_mtime(&dest_path, FileTime::from_unix_time(dest_secs, 0)).expect("set dest mtime");
+        set_file_mtime(&dest_path, FileTime::from_unix_time(dest_secs, dest_nsec))
+            .expect("set dest mtime");
 
         // Read back the on-disk mtime so the assertion reflects what the
         // filesystem actually stored (the quick-check reads dest_meta.mtime()).
@@ -922,7 +926,7 @@ mod modify_window_tests {
         );
 
         let mut entry = FileEntry::new_file("payload.bin".into(), payload.len() as u64, 0o644);
-        entry.set_mtime(src_secs, 0);
+        entry.set_mtime(src_secs, src_nsec);
 
         quick_check_matches(&entry, &dest_path, &dest_meta, true, false, None, window)
     }
@@ -936,15 +940,15 @@ mod modify_window_tests {
         let base = 1_700_000_000;
         // Both directions of drift must skip (same_time is symmetric).
         assert!(
-            run_window(base, base + 2, 2),
+            run_window(base, base + 2, ModifyWindow::from_secs(2)),
             "dest +2s within window must skip"
         );
         assert!(
-            run_window(base, base - 2, 2),
+            run_window(base, base - 2, ModifyWindow::from_secs(2)),
             "dest -2s within window must skip"
         );
         assert!(
-            run_window(base, base + 1, 2),
+            run_window(base, base + 1, ModifyWindow::from_secs(2)),
             "dest +1s within window must skip"
         );
     }
@@ -955,11 +959,11 @@ mod modify_window_tests {
     fn beyond_window_two_is_transferred() {
         let base = 1_700_000_000;
         assert!(
-            !run_window(base, base + 3, 2),
+            !run_window(base, base + 3, ModifyWindow::from_secs(2)),
             "dest +3s beyond window must transfer"
         );
         assert!(
-            !run_window(base, base - 3, 2),
+            !run_window(base, base - 3, ModifyWindow::from_secs(2)),
             "dest -3s beyond window must transfer"
         );
     }
@@ -971,12 +975,38 @@ mod modify_window_tests {
     fn zero_window_requires_exact_seconds() {
         let base = 1_700_000_000;
         assert!(
-            run_window(base, base, 0),
+            run_window(base, base, ModifyWindow::from_secs(0)),
             "equal mtimes at window 0 must skip"
         );
         assert!(
-            !run_window(base, base + 1, 0),
+            !run_window(base, base + 1, ModifyWindow::from_secs(0)),
             "1s delta at window 0 must transfer"
+        );
+    }
+
+    /// With `--modify-window=-1` the quick-check requires nanosecond-exact
+    /// equality (upstream `modify_window < 0`, util1.c:1482): two files sharing
+    /// a whole second but differing in the sub-second component are DIFFERENT
+    /// and must be transferred, whereas any non-negative window skips them.
+    #[test]
+    fn negative_window_requires_nanosecond_exactness() {
+        let base = 1_700_000_000;
+        let exact = ModifyWindow::from_secs(-1);
+        // Same second, differing nanoseconds -> transfer under nsec-exact mode.
+        assert!(
+            !run_window_nsec(base, 500_000_000, base, 0, exact),
+            "sub-second mtime drift must transfer at window -1"
+        );
+        // Identical seconds and nanoseconds -> still skipped.
+        assert!(
+            run_window_nsec(base, 0, base, 0, exact),
+            "identical mtimes must skip even at window -1"
+        );
+        // A zero window ignores the same sub-second drift and skips, proving the
+        // negative window is what makes the difference observable.
+        assert!(
+            run_window_nsec(base, 500_000_000, base, 0, ModifyWindow::from_secs(0)),
+            "sub-second drift is ignored at window 0"
         );
     }
 }

@@ -173,6 +173,7 @@ fn files_from_entries(base: &Path, paths: Vec<PathBuf>) -> Vec<super::filters::F
             base: base.to_path_buf(),
             path,
             recurse: false,
+            implied_dot: false,
         })
         .collect()
 }
@@ -2763,10 +2764,20 @@ mod files_from {
 
         let result = ctx.resolve_files_from_paths(&paths, &mut reader).unwrap();
         assert_eq!(result.len(), 2);
+        // A top-level entry keeps the source argument as its walk base.
         assert_eq!(result[0].path, PathBuf::from("/src/file1.txt"));
         assert_eq!(result[0].base, PathBuf::from("/src"));
+        // upstream: flist.c:2338-2349 - the default `--files-from` mode is
+        // non-relative (relative_paths == 0), so a nested entry splits on its
+        // LAST `/`: the parent directory becomes the walk base and only the
+        // basename is transmitted (`subdir/file2.txt` -> base `/src/subdir`,
+        // wire name `file2.txt`, no implied `subdir` entry).
         assert_eq!(result[1].path, PathBuf::from("/src/subdir/file2.txt"));
-        assert_eq!(result[1].base, PathBuf::from("/src"));
+        assert_eq!(result[1].base, PathBuf::from("/src/subdir"));
+        assert_eq!(
+            result[1].path.strip_prefix(&result[1].base).unwrap(),
+            Path::new("file2.txt")
+        );
     }
 
     #[test]
@@ -2881,6 +2892,13 @@ mod files_from {
         let handshake = test_handshake();
         let mut config = test_config();
         config.args = vec![OsString::from(&src)];
+        // A nested wire-relative name (`subdir/file.txt`) only implies its
+        // parent directory in relative mode. upstream: options.c:2207-2208 -
+        // `if (!relative_paths) implied_dirs = 0;`, so non-relative --files-from
+        // flattens each entry to its basename (flist.c:2338-2349) and emits no
+        // implied parents. This test exercises the implied-parent path, so it
+        // must run in relative mode.
+        config.flags.relative = true;
         let mut ctx = GeneratorContext::new_for_test(&handshake, config);
 
         let file_paths = vec![src.join("hello.txt"), src.join("subdir/file.txt")];
@@ -2888,7 +2906,7 @@ mod files_from {
             .build_file_list_with_base(&src, &files_from_entries(&src, file_paths))
             .unwrap();
 
-        // Dot entry + 2 files + 1 parent dir "subdir"
+        // 2 files + 1 parent dir "subdir"
         assert!(count >= 3, "expected at least 3 entries, got {count}");
 
         // Verify that file entries have correct relative names (not empty).
@@ -2901,8 +2919,93 @@ mod files_from {
             names.iter().any(|n| n.contains("file.txt")),
             "expected file.txt in {names:?}"
         );
-        // The dot entry should be present.
-        assert!(names.contains(&"."), "expected dot entry in {names:?}");
+        // upstream: flist.c:2368-2419 - a plain --files-from list (no leading
+        // `./` anchor) in non-relative mode emits NO transfer-root `.` entry.
+        // The old code emitted one unconditionally, producing a spurious
+        // `.d ./` itemize row and, with --delete, scoping deletion over the
+        // destination root (data loss).
+        assert!(
+            !names.contains(&"."),
+            "plain files-from list must not emit a root `.` entry: {names:?}"
+        );
+    }
+
+    #[test]
+    fn build_file_list_with_base_leading_dot_anchor_emits_implied_root_dot() {
+        // upstream: flist.c:2417-2419 - in --relative mode a leading `./`
+        // anchor (`implied_dot_dir`) emits ONE transfer-root `.` via
+        // `send_file_name(".", ..., (flags | FLAG_IMPLIED_DIR) & ~FLAG_CONTENT_DIR, ...)`:
+        // FLAG_IMPLIED_DIR set, FLAG_TOP_DIR unset, FLAG_CONTENT_DIR cleared.
+        // On the wire that pair serializes as XMIT_TOP_DIR | XMIT_NO_CONTENT_DIR
+        // (flist.c:426-427), which the receiver decodes back to FLAG_IMPLIED_DIR
+        // (flist.c:1117-1118) - it therefore does NOT scope --delete over the
+        // destination root. In oc's flat encoding that is top_dir=true +
+        // content_dir=false.
+        let temp_dir = TempDir::new().unwrap();
+        let src = temp_dir.path().join("src");
+        std::fs::create_dir_all(&src).unwrap();
+        std::fs::write(src.join("foo"), b"x").unwrap();
+
+        let handshake = test_handshake();
+        let mut config = test_config();
+        config.args = vec![OsString::from(&src)];
+        config.flags.relative = true;
+        let mut ctx = GeneratorContext::new_for_test(&handshake, config);
+
+        let entry = super::filters::FilesFromEntry {
+            base: src.clone(),
+            path: src.join("foo"),
+            recurse: false,
+            implied_dot: true,
+        };
+        ctx.build_file_list_with_base(&src, std::slice::from_ref(&entry))
+            .unwrap();
+
+        let dot = ctx
+            .file_list()
+            .iter()
+            .find(|e| e.name() == ".")
+            .expect("expected an implied transfer-root `.` entry");
+        assert!(
+            dot.top_dir(),
+            "implied `.` must set XMIT_TOP_DIR on the wire"
+        );
+        assert!(
+            !dot.content_dir(),
+            "implied `.` must clear FLAG_CONTENT_DIR (XMIT_NO_CONTENT_DIR) so it does not scope --delete"
+        );
+    }
+
+    #[test]
+    fn build_file_list_with_base_leading_dot_without_relative_emits_no_root_dot() {
+        // upstream: flist.c:2350 - the `implied_dot_dir` root `.` lives inside
+        // the `if (relative_paths)` branch. Without --relative, even a leading
+        // `./` files-from entry emits no transfer-root `.`.
+        let temp_dir = TempDir::new().unwrap();
+        let src = temp_dir.path().join("src");
+        std::fs::create_dir_all(&src).unwrap();
+        std::fs::write(src.join("foo"), b"x").unwrap();
+
+        let handshake = test_handshake();
+        let mut config = test_config();
+        config.args = vec![OsString::from(&src)];
+        config.flags.relative = false;
+        let mut ctx = GeneratorContext::new_for_test(&handshake, config);
+
+        let entry = super::filters::FilesFromEntry {
+            base: src.clone(),
+            path: src.join("foo"),
+            recurse: false,
+            implied_dot: true,
+        };
+        ctx.build_file_list_with_base(&src, std::slice::from_ref(&entry))
+            .unwrap();
+
+        let names: Vec<&str> = ctx.file_list().iter().map(|e| e.name()).collect();
+        assert!(
+            !names.contains(&"."),
+            "non-relative mode must not emit a root `.` entry: {names:?}"
+        );
     }
 
     #[test]
@@ -2997,6 +3100,7 @@ mod files_from {
             base: from_dir.clone(),
             path: from_dir.clone(),
             recurse: true,
+            implied_dot: false,
         };
         ctx.build_file_list_with_base(&src, std::slice::from_ref(&dotdir_entry))
             .unwrap();
@@ -3113,6 +3217,277 @@ mod files_from {
     }
 
     #[test]
+    fn implied_dirs_force_on_gated_to_protocol_30() {
+        // upstream: flist.c:2257-2258 - `if (relative_paths && protocol_version
+        // >= 30) implied_dirs = 1;` forces the sender to emit flagged implied
+        // parent dirs at protocol >= 30 regardless of --no-implied-dirs. At
+        // protocol < 30 the flag is honoured (flist.c:2468 `else if
+        // (implied_dirs && ...)`), so --no-implied-dirs omits the purely implied
+        // parents from the flist. Bug #266: oc emitted them unconditionally at
+        // every protocol, sending a larger file set than upstream to a proto-29
+        // peer under `--relative --no-implied-dirs`.
+        //
+        // Source `<tmp>/root/./usr/bin` walks `usr/bin` + `usr/bin/ar` (always
+        // present); only the purely implied parent `usr` is gated.
+        fn implied_parent_present(protocol: u8, no_implied_dirs: bool) -> bool {
+            let temp_dir = TempDir::new().unwrap();
+            let anchored = temp_dir.path().join("root");
+            let leaf = anchored.join("usr").join("bin");
+            std::fs::create_dir_all(&leaf).unwrap();
+            std::fs::write(leaf.join("ar"), b"x").unwrap();
+            let src_with_anchor =
+                PathBuf::from(format!("{}/./usr/bin", anchored.to_string_lossy()));
+
+            let handshake = test_handshake_with_protocol(protocol);
+            let mut config = test_config();
+            config.flags.relative = true;
+            config.flags.recursive = true;
+            config.flags.no_implied_dirs = no_implied_dirs;
+            let mut ctx = GeneratorContext::new_for_test(&handshake, config);
+            ctx.build_file_list(&[src_with_anchor]).unwrap();
+
+            // Compare the wire-form name (name_bytes normalises the
+            // platform-native separator to '/') rather than the internal
+            // PathBuf: on Windows a leaf name retains the '\' inserted by
+            // readdir's join (e.g. "usr/bin\\ar"), while the wire is always
+            // '/'-separated (flist.c:send_file_entry). This is what a POSIX
+            // peer receives and keeps the assertions portable.
+            let names: Vec<String> = ctx
+                .file_list()
+                .iter()
+                .map(|e| String::from_utf8_lossy(&e.name_bytes()).into_owned())
+                .collect();
+            assert!(
+                names.iter().any(|n| n == "usr/bin/ar"),
+                "walked leaf must always be sent (proto={protocol}, \
+                 no_implied_dirs={no_implied_dirs}): {names:?}"
+            );
+            names.iter().any(|n| n == "usr")
+        }
+
+        // Default (implied dirs on): implied parents sent at every protocol.
+        assert!(
+            implied_parent_present(29, false),
+            "proto 29 default must emit implied parent 'usr'"
+        );
+        assert!(
+            implied_parent_present(30, false),
+            "proto 30 default must emit implied parent 'usr'"
+        );
+        assert!(
+            implied_parent_present(32, false),
+            "proto 32 default must emit implied parent 'usr'"
+        );
+
+        // --no-implied-dirs: omitted at protocol < 30, forced on at protocol >= 30.
+        assert!(
+            !implied_parent_present(28, true),
+            "proto 28 --no-implied-dirs must omit implied parent 'usr'"
+        );
+        assert!(
+            !implied_parent_present(29, true),
+            "proto 29 --no-implied-dirs must omit implied parent 'usr'"
+        );
+        assert!(
+            implied_parent_present(30, true),
+            "proto 30 forces implied parent 'usr' on despite --no-implied-dirs"
+        );
+        assert!(
+            implied_parent_present(32, true),
+            "proto 32 forces implied parent 'usr' on despite --no-implied-dirs"
+        );
+    }
+
+    #[test]
+    fn files_from_implied_dirs_gated_to_protocol_30() {
+        // Bug #268 (same class as #266): the --files-from implied-parent loop
+        // in `build_file_list_with_base` emitted purely implied parent dirs
+        // unconditionally, at every protocol. Upstream gates the send on
+        // `implied_dirs` (flist.c:2468), which --no-implied-dirs clears; the
+        // force-on at flist.c:2257-2258 only applies at protocol >= 30. So a
+        // proto-29 `--files-from --relative --no-implied-dirs` transfer must
+        // omit the purely implied parent, while proto >= 30 keeps it.
+        //
+        // Entry `<src>/usr/bin/ar` strips to rel `usr/bin/ar`; its purely
+        // implied parents are `usr` and `usr/bin`. The leaf file `usr/bin/ar`
+        // is always sent; only the implied parents are gated.
+        fn implied_parents_present(protocol: u8, no_implied_dirs: bool) -> (bool, bool) {
+            let temp_dir = TempDir::new().unwrap();
+            let src = temp_dir.path().join("src");
+            let leaf = src.join("usr").join("bin");
+            std::fs::create_dir_all(&leaf).unwrap();
+            std::fs::write(leaf.join("ar"), b"x").unwrap();
+
+            let handshake = test_handshake_with_protocol(protocol);
+            let mut config = test_config();
+            config.flags.relative = true;
+            config.flags.no_implied_dirs = no_implied_dirs;
+            config.args = vec![OsString::from(&src)];
+            let mut ctx = GeneratorContext::new_for_test(&handshake, config);
+
+            let file_paths = vec![leaf.join("ar")];
+            ctx.build_file_list_with_base(&src, &files_from_entries(&src, file_paths))
+                .unwrap();
+
+            // Compare on the wire form (name_bytes, always '/'-separated via
+            // path_bytes_to_wire) rather than name() which returns the local
+            // PathBuf verbatim - on Windows that yields `usr\bin\ar`, so the
+            // multi-component assertions below would spuriously fail. The wire
+            // name is what the proto-gate actually governs.
+            let names: Vec<String> = ctx
+                .file_list()
+                .iter()
+                .map(|e| String::from_utf8_lossy(&e.name_bytes()).into_owned())
+                .collect();
+            assert!(
+                names.iter().any(|n| n == "usr/bin/ar"),
+                "walked leaf must always be sent (proto={protocol}, \
+                 no_implied_dirs={no_implied_dirs}): {names:?}"
+            );
+            (
+                names.iter().any(|n| n == "usr"),
+                names.iter().any(|n| n == "usr/bin"),
+            )
+        }
+
+        // Default (implied dirs on): implied parents sent at every protocol.
+        assert_eq!(
+            implied_parents_present(29, false),
+            (true, true),
+            "proto 29 default must emit implied parents usr + usr/bin"
+        );
+        assert_eq!(
+            implied_parents_present(32, false),
+            (true, true),
+            "proto 32 default must emit implied parents usr + usr/bin"
+        );
+
+        // --no-implied-dirs: omitted at protocol < 30, forced on at protocol >= 30.
+        assert_eq!(
+            implied_parents_present(28, true),
+            (false, false),
+            "proto 28 --no-implied-dirs must omit implied parents"
+        );
+        assert_eq!(
+            implied_parents_present(29, true),
+            (false, false),
+            "proto 29 --no-implied-dirs must omit implied parents"
+        );
+        assert_eq!(
+            implied_parents_present(30, true),
+            (true, true),
+            "proto 30 forces implied parents on despite --no-implied-dirs"
+        );
+        assert_eq!(
+            implied_parents_present(32, true),
+            (true, true),
+            "proto 32 forces implied parents on despite --no-implied-dirs"
+        );
+    }
+
+    #[test]
+    fn files_from_implied_parent_dir_clears_content_dir() {
+        // Task #299 (DATA-LOSS, sender wire): oc's --files-from implied-parent
+        // loop emitted purely implied parent dirs with the default
+        // content_dir=true. Upstream flist.c:1949 sets implied parents to
+        // `(flags | FLAG_IMPLIED_DIR) & ~(FLAG_TOP_DIR | FLAG_CONTENT_DIR)`,
+        // which serializes as XMIT_TOP_DIR | XMIT_NO_CONTENT_DIR (flist.c:426)
+        // and a receiver decodes to FLAG_IMPLIED_DIR (flist.c:1117-1118) - so
+        // the receiver never scans them for --delete. With content_dir=true a
+        // real upstream receiver scans the implied parent and over-deletes
+        // stale files upstream preserves. In oc's flat encoding the correct
+        // wire pair is top_dir=true + content_dir=false.
+        //
+        // Entry `<src>/subdir/file` strips to rel `subdir/file`; `subdir` is a
+        // purely implied parent that must be sent with content_dir cleared.
+        let temp_dir = TempDir::new().unwrap();
+        let src = temp_dir.path().join("src");
+        let subdir = src.join("subdir");
+        std::fs::create_dir_all(&subdir).unwrap();
+        std::fs::write(subdir.join("file"), b"x").unwrap();
+
+        let handshake = test_handshake_with_protocol(32);
+        let mut config = test_config();
+        config.flags.relative = true;
+        config.args = vec![OsString::from(&src)];
+        let mut ctx = GeneratorContext::new_for_test(&handshake, config);
+
+        let file_paths = vec![subdir.join("file")];
+        ctx.build_file_list_with_base(&src, &files_from_entries(&src, file_paths))
+            .unwrap();
+
+        let implied = ctx
+            .file_list()
+            .iter()
+            .find(|e| String::from_utf8_lossy(&e.name_bytes()) == "subdir")
+            .expect("implied parent `subdir` must be sent");
+        assert!(
+            !implied.content_dir(),
+            "implied parent dir must clear content_dir so an upstream receiver \
+             does not scan it for --delete (flist.c:1949)"
+        );
+        assert!(
+            implied.top_dir(),
+            "implied parent dir wire form is XMIT_TOP_DIR | XMIT_NO_CONTENT_DIR \
+             (flist.c:426); oc encodes top_dir=true + content_dir=false"
+        );
+    }
+
+    #[test]
+    fn files_from_no_relative_flattens_and_omits_implied_parents() {
+        // Task #292: under --no-relative (relative_paths == 0) upstream splits
+        // each --files-from entry on its LAST `/` (flist.c:2338-2349) so the
+        // transmitted name is the basename, and forces `implied_dirs = 0`
+        // (options.c:2207-2208) so NO implied parent directories are sent. For
+        // entry `sub/file` the sender emits only `file`, never `sub` or
+        // `sub/file`. oc previously emitted the intermediate `sub` dir (and the
+        // un-flattened `sub/file`), which an upstream receiver rejects as an
+        // unrequested file-list name (exit 4). This must hold at every protocol,
+        // including proto >= 30 where the flist.c:2257-2258 force-on is itself
+        // gated on relative_paths.
+        fn wire_names(protocol: u8) -> Vec<String> {
+            let temp_dir = TempDir::new().unwrap();
+            let src = temp_dir.path().join("src");
+            let leaf = src.join("sub");
+            std::fs::create_dir_all(&leaf).unwrap();
+            std::fs::write(leaf.join("file"), b"x").unwrap();
+
+            let handshake = test_handshake_with_protocol(protocol);
+            let mut config = test_config();
+            config.flags.relative = false;
+            config.flags.no_implied_dirs = false;
+            config.args = vec![OsString::from(&src)];
+            let mut ctx = GeneratorContext::new_for_test(&handshake, config);
+
+            // Build the entry through the real non-relative split so the walk
+            // base absorbs `sub` and the wire name flattens to `file`.
+            let entry = super::filters::split_files_from_entry(&src, "sub/file", false, false);
+            ctx.build_file_list_with_base(&src, &[entry]).unwrap();
+
+            ctx.file_list()
+                .iter()
+                .map(|e| String::from_utf8_lossy(&e.name_bytes()).into_owned())
+                .collect()
+        }
+
+        for protocol in [28u8, 29, 30, 32] {
+            let names = wire_names(protocol);
+            assert!(
+                names.iter().any(|n| n == "file"),
+                "proto {protocol}: --no-relative must send flattened basename `file`: {names:?}"
+            );
+            assert!(
+                !names.iter().any(|n| n == "sub"),
+                "proto {protocol}: --no-relative must NOT emit implied parent `sub`: {names:?}"
+            );
+            assert!(
+                !names.iter().any(|n| n == "sub/file"),
+                "proto {protocol}: --no-relative must FLATTEN, not send `sub/file`: {names:?}"
+            );
+        }
+    }
+
+    #[test]
     fn non_relative_mode_emits_source_basename() {
         // upstream: flist.c:2338-2349 - non-relative mode splits each
         // positional on its last `/`: `dir` becomes the chdir target,
@@ -3208,11 +3583,18 @@ mod files_from {
             .build_file_list_with_base(&src, &files_from_entries(&src, file_paths))
             .unwrap();
 
-        // Dot entry + exists.txt; missing.txt is skipped with io_error.
-        assert_eq!(count, 2, "dot + exists.txt");
+        // exists.txt only; missing.txt is skipped with io_error. No implied
+        // root "." for a non-anchored files-from list (upstream flist.c:2417
+        // emits the root dot only when a leading "./" anchor sets
+        // implied_dot_dir).
+        assert_eq!(count, 1, "exists.txt only");
         let names: Vec<&str> = ctx.file_list().iter().map(|e| e.name()).collect();
         assert!(names.contains(&"exists.txt"));
         assert!(!names.contains(&"missing.txt"));
+        assert!(
+            !names.contains(&"."),
+            "no implied root . for a non-anchored list"
+        );
 
         // upstream: flist.c:1810 - ENOENT for a --files-from entry that never
         // existed should set IOERR_GENERAL (exit 23), not IOERR_VANISHED (exit 24).
@@ -3247,11 +3629,17 @@ mod files_from {
             .build_file_list_with_base(&src, &files_from_entries(&src, file_paths))
             .unwrap();
 
-        // Dot entry + exists.txt; missing.txt silently skipped.
-        assert_eq!(count, 2, "dot + exists.txt");
+        // exists.txt only; missing.txt silently skipped. No implied root "."
+        // for a non-anchored files-from list (upstream flist.c:2417 emits the
+        // root dot only when a leading "./" anchor sets implied_dot_dir).
+        assert_eq!(count, 1, "exists.txt only");
         let names: Vec<&str> = ctx.file_list().iter().map(|e| e.name()).collect();
         assert!(names.contains(&"exists.txt"));
         assert!(!names.contains(&"missing.txt"));
+        assert!(
+            !names.contains(&"."),
+            "no implied root . for a non-anchored list"
+        );
 
         // No io_error flags should be set - the missing entry is silently ignored.
         assert_eq!(
@@ -3280,10 +3668,16 @@ mod files_from {
             .build_file_list_with_base(&src, &files_from_entries(&src, file_paths))
             .unwrap();
 
-        // Dot entry + exists.txt + mode-0 sentinel for missing.txt
-        assert_eq!(count, 3, "dot + exists.txt + sentinel for missing.txt");
+        // exists.txt + mode-0 sentinel for missing.txt. No implied root "."
+        // for a plain files-from list without a leading "./" anchor
+        // (upstream flist.c:2368 emits the root dot only for relative + ./ anchor).
+        assert_eq!(count, 2, "exists.txt + sentinel for missing.txt");
         let names: Vec<&str> = ctx.file_list().iter().map(|e| e.name()).collect();
         assert!(names.contains(&"exists.txt"));
+        assert!(
+            !names.contains(&"."),
+            "no implied root . for a non-anchored list"
+        );
 
         // The sentinel entry should have mode == 0.
         let sentinel = ctx
@@ -3325,8 +3719,9 @@ mod files_from {
             .build_file_list_with_base(&src, &files_from_entries(&src, file_paths))
             .unwrap();
 
-        // Dot entry + mode-0 sentinel (delete takes precedence over ignore).
-        assert_eq!(count, 2, "dot + sentinel for missing.txt");
+        // mode-0 sentinel only (delete takes precedence over ignore); no
+        // implied root "." for a non-anchored files-from list.
+        assert_eq!(count, 1, "sentinel for missing.txt");
         let sentinel = ctx
             .file_list()
             .iter()

@@ -82,8 +82,9 @@ pub mod win_copy;
 
 pub use buffer_pool::{
     BorrowedBufferGuard, BufferAllocator, BufferGuard, BufferPool, BufferPoolStats,
-    DEFAULT_BYTE_BUDGET, DefaultAllocator, GlobalBufferPoolConfig, PageAlignedBufferGuard,
-    PageAlignedBufferPool, ThroughputTracker, global_buffer_pool, init_global_buffer_pool,
+    DEFAULT_BUFFER_POOL_BLOCK_SIZE, DEFAULT_BYTE_BUDGET, DefaultAllocator, GlobalBufferPoolConfig,
+    MAX_BUFFER_POOL_BLOCK_SIZE, PageAlignedBufferGuard, PageAlignedBufferPool, ThroughputTracker,
+    global_buffer_pool, init_global_buffer_pool,
 };
 pub use deferred_sync::{DeferredSync, SyncStrategy};
 
@@ -263,6 +264,15 @@ where
     F: Fn(&std::path::Path, &std::fs::Metadata) -> Option<u64> + 'static,
 {
     overrides::with_device_id_override(override_fn, action)
+}
+
+#[cfg(test)]
+#[cfg_attr(not(unix), allow(dead_code))]
+pub(crate) fn with_backup_rename_override<F, R>(override_fn: F, action: impl FnOnce() -> R) -> R
+where
+    F: Fn(&std::path::Path, &std::path::Path) -> Option<std::io::Result<()>> + 'static,
+{
+    overrides::with_backup_rename_override(override_fn, action)
 }
 
 #[cfg(test)]

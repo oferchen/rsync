@@ -432,6 +432,8 @@ pub(crate) fn add_transfer_behavior_options(command: ClapCommand) -> ClapCommand
             .arg(
                 Arg::new("block-size")
                     .long("block-size")
+                    // upstream: options.c:752 {"block-size", 'B', ...} - short alias.
+                    .short('B')
                     .value_name("SIZE")
                     .help("Force the delta-transfer block size to SIZE bytes.")
                     .num_args(1)

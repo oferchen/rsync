@@ -24,7 +24,6 @@ use std::path::PathBuf;
 
 use logging::{PhaseTimer, debug_log};
 use protocol::flist::FileEntry;
-use protocol::stats::DeleteStats;
 
 use crate::pipeline::PipelineConfig;
 use crate::receiver::stats::TransferStats;
@@ -93,18 +92,17 @@ impl ReceiverContext {
                     setup.sandbox.as_deref(),
                 )?;
                 match result {
-                    Some(true) => {
-                        stats.directories_created += 1;
-                        // upstream: generator.c:1432 - itemize new directory
-                        let iflags = crate::generator::ItemFlags::from_raw(
-                            crate::generator::ItemFlags::ITEM_LOCAL_CHANGE
-                                | crate::generator::ItemFlags::ITEM_IS_NEW,
-                        );
-                        let _ = self.emit_itemize(writer, &iflags, file_entry);
-                    }
-                    Some(false) => {
-                        // upstream: generator.c:2260 - existing dir, metadata only
-                        let iflags = crate::generator::ItemFlags::from_raw(0);
+                    Some((is_new, iflags_raw)) => {
+                        if is_new {
+                            stats.directories_created += 1;
+                        }
+                        // upstream: generator.c:1480-1483 - itemize each dir with
+                        // the flags computed against its pre-apply stat. A new dir
+                        // carries ITEM_LOCAL_CHANGE|ITEM_IS_NEW; an existing dir
+                        // carries the attribute-diff flags (so a differing root
+                        // `.` mtime emits `.d..t......`). emit_itemize's gate
+                        // drops the row when nothing is significant.
+                        let iflags = crate::generator::ItemFlags::from_raw(iflags_raw);
                         let _ = self.emit_itemize(writer, &iflags, file_entry);
                     }
                     None => {
@@ -133,23 +131,19 @@ impl ReceiverContext {
 
         // Mirror `run_pipelined`: when `--delete` is in effect, sweep the
         // destination for extraneous entries and capture per-type counters.
-        // upstream: generator.c:do_delete_pass()
-        let mut delete_stats = DeleteStats::new();
-        let mut delete_limit_exceeded = false;
-        if self.config.flags.delete {
-            let (ds, exceeded, io_bits) = self.delete_extraneous_files(
+        // upstream: generator.c:2280-2281 - --delete-before / --delete-during
+        // sweep before the per-file loop. --delete-after / --delete-delay defer
+        // the sweep until after the transfer (see the late call below) so the
+        // destination `.rsync-filter` merge files transferred by this run are
+        // present and consulted at delete time.
+        if self.delete_pass_is_early() {
+            self.run_receiver_delete_pass(
                 &setup.dest_dir,
                 #[cfg(unix)]
                 setup.sandbox.as_ref(),
                 writer,
+                &mut stats,
             )?;
-            delete_stats = ds;
-            delete_limit_exceeded = exceeded;
-            stats.io_error |= io_bits;
-            // Carry the counters into the receiver context so the goodbye
-            // handshake can emit NDX_DEL_STATS to the peer sender.
-            // upstream: generator.c:2393-2398 - early write_del_stats() emission.
-            self.pending_del_stats = delete_stats;
         }
 
         let files_to_transfer = self.build_files_to_transfer(
@@ -274,6 +268,23 @@ impl ReceiverContext {
             super::handle_delayed_updates(&all_delayed_updates, backup_cfg);
         }
 
+        // upstream: generator.c:2425-2428 - --delete-after / --delete-delay run
+        // the sweep only after every file (including each destination
+        // `.rsync-filter` and any --delay-updates staged file committed just
+        // above) has landed, so per-directory merge protect rules are honoured
+        // at delete time. Runs before touch_up_dirs so deletion-induced parent
+        // mtime changes are re-tidied (upstream touch_up_dirs at generator.c:2449
+        // follows the late delete pass).
+        if self.delete_pass_is_late() {
+            self.run_receiver_delete_pass(
+                &setup.dest_dir,
+                #[cfg(unix)]
+                setup.sandbox.as_ref(),
+                writer,
+                &mut stats,
+            )?;
+        }
+
         // upstream: generator.c:2080-2133 - touch_up_dirs() re-applies
         // directory mtimes after file writes clobber them.
         self.touch_up_dirs(&setup.dest_dir);
@@ -287,8 +298,6 @@ impl ReceiverContext {
             stats.io_error |= crate::generator::io_error_flags::IOERR_GENERAL;
         }
         stats.metadata_errors = metadata_errors;
-        stats.delete_stats = delete_stats;
-        stats.delete_limit_exceeded = delete_limit_exceeded;
         stats.redo_count = redo_count;
 
         self.finalize_transfer_async(reader, writer).await?;

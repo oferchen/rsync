@@ -11,7 +11,7 @@ use std::time::SystemTime;
 
 use compress::zlib::CompressionLevel;
 use engine::SkipCompressList;
-use metadata::{ChmodModifiers, GroupMapping, UserMapping};
+use metadata::{ChmodModifiers, GroupMapping, ModifyWindow, UserMapping};
 use protocol::FilenameConverter;
 use protocol::ProtocolVersion;
 use protocol::filters::FilterRuleWireFormat;
@@ -115,6 +115,28 @@ pub struct DeletionConfig {
     ///
     /// - `generator.c:124`: `#define EARLY_DELETE_DONE_MSG() (!(delete_during == 2 || delete_after))`
     pub late_delete: bool,
+    /// Whether the delete *pass* (the extraneous-entry decision) is deferred
+    /// until after the per-file transfer completes.
+    ///
+    /// True ONLY for `--delete-after` (`delete_after` in upstream), which runs
+    /// `do_delete_pass()` at the very end (generator.c:2427-2428) once every
+    /// file - including each destination `.rsync-filter` merge file - has landed,
+    /// so per-directory merge protect rules apply at delete time.
+    ///
+    /// NOT set for `--delete-delay` (`delete_during == 2`): upstream makes the
+    /// delete *decision* during the walk (delete_in_dir via remember_delete,
+    /// generator.c:2315-2327) - before that directory's `.rsync-filter` has been
+    /// received - and defers only the physical unlink. Its observable file
+    /// outcome therefore matches `--delete-during` / `--delete-before`, so oc
+    /// runs the delete pass early for delay just like those modes. This is
+    /// distinct from [`late_delete`] (delay || after), which governs only the
+    /// goodbye NDX_DEL_STATS timing.
+    ///
+    /// Verified empirically vs upstream 3.4.4: over SSH (inc-recurse), delay
+    /// DELETES a per-dir-merge-protected entry while after PROTECTS it.
+    ///
+    /// [`late_delete`]: Self::late_delete
+    pub delete_after: bool,
     /// Also delete filter-excluded entries from the destination
     /// (`--delete-excluded`). When set, the receiver's delete pass treats an
     /// excluded (non-protected) entry as deletable rather than protected.
@@ -190,13 +212,15 @@ pub struct FileSelectionConfig {
     pub existing_only: bool,
     /// Compare only file sizes, ignoring modification times (`--size-only`).
     pub size_only: bool,
-    /// Modification-time comparison tolerance in whole seconds (`--modify-window`).
+    /// Modification-time comparison tolerance (`--modify-window`).
     ///
     /// When zero (the default) the quick-check requires exact whole-second
     /// mtime equality. When positive, two mtimes are treated as equal if their
-    /// whole-second delta does not exceed this value, matching upstream
-    /// `util1.c:same_time()` consulted via `generator.c:quick_check_ok()`.
-    pub modify_window: u64,
+    /// whole-second delta does not exceed this value. When negative, a
+    /// nanosecond-exact comparison is required, matching upstream
+    /// `util1.c:same_time()` (the signed `int modify_window`) consulted via
+    /// `generator.c:quick_check_ok()`.
+    pub modify_window: ModifyWindow,
     /// Path for `--files-from` when the server reads the file list directly.
     pub files_from_path: Option<String>,
     /// Use NUL bytes as delimiters for `--files-from` input (`--from0`).

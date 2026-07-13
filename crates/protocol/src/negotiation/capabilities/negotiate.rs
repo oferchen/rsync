@@ -233,6 +233,30 @@ pub fn negotiate_capabilities_with_override(
             checksum.as_str(),
             compression.as_str()
         );
+
+        // upstream: compat.c:819-820 - setup_protocol() still calls
+        // parse_checksum_choice(1)/parse_compress_choice(1) after
+        // negotiate_the_strings() even when do_negotiated_strings == 0. Both
+        // emit their NSTR summary with no " negotiated" qualifier
+        // (valid_*.negotiated_nni stays NULL because no vstring exchange ran),
+        // so --debug=NSTR shows the fallback algorithms the wire actually uses
+        // rather than nothing. The level is resolved via init_compression_level
+        // (token.c:55), so the raw CLVL_NOT_SPECIFIED sentinel is never printed.
+        let side = if is_server {
+            NstrSide::Server
+        } else {
+            NstrSide::Client
+        };
+        trace_checksum_summary(side, false, checksum.as_str());
+        if compression != CompressionAlgorithm::None {
+            trace_compress_summary(
+                side,
+                false,
+                compression.as_str(),
+                resolved_compress_level(compression, compression_level),
+            );
+        }
+
         return Ok(NegotiationResult {
             checksum,
             compression,
@@ -347,13 +371,13 @@ pub fn negotiate_capabilities_with_override(
 
     // upstream: compat.c:213-219 parse_compress_choice -
     //   "%s%s compress: %s (level %d)\n" at DEBUG_GTE(NSTR, am_server?3:1).
-    // The (level <N>) clause always renders; upstream prints
-    // do_compression_level verbatim, which is CLVL_NOT_SPECIFIED
-    // (INT_MIN) when the user did not pass --compress-level. The whole
+    // The (level <N>) clause always renders. Upstream calls
+    // init_compression_level() (token.c:55) inside parse_compress_choice(1)
+    // BEFORE this print, which resolves do_compression_level from
+    // CLVL_NOT_SPECIFIED (INT_MIN) to the codec's def_level, so the raw
+    // sentinel is never printed. Mirror that resolution here. The whole
     // emission is gated on `do_compression != CPRES_NONE || level !=
-    // CLVL_NOT_SPECIFIED`; here compression is active so we render the
-    // user-supplied `compression_level` (CLVL_NOT_SPECIFIED when the flag
-    // was absent) exactly as upstream does.
+    // CLVL_NOT_SPECIFIED`; here compression is active so it always renders.
     if compression != CompressionAlgorithm::None {
         let compression_negotiated =
             compression_override.is_none() && remote_compression_list.is_some();
@@ -361,13 +385,28 @@ pub fn negotiate_capabilities_with_override(
             side,
             compression_negotiated,
             compression.as_str(),
-            compression_level,
+            resolved_compress_level(compression, compression_level),
         );
     }
     Ok(NegotiationResult {
         checksum,
         compression,
     })
+}
+
+/// Resolves the compression level upstream renders in the NSTR compress
+/// summary, mirroring `token.c:55 init_compression_level()`.
+///
+/// Maps the wire algorithm to the compress crate's enum and delegates to
+/// `CompressionAlgorithm::resolve_debug_level` - the single source of truth for
+/// the CLVL_NOT_SPECIFIED-to-def_level substitution and per-codec clamp shared
+/// with the local-copy print path. Falls back to the raw value if the codec
+/// cannot be mapped, which never happens for an active, build-supported codec.
+fn resolved_compress_level(compression: CompressionAlgorithm, raw_level: i32) -> i32 {
+    match compression.to_compress_algorithm() {
+        Ok(Some(algorithm)) => algorithm.resolve_debug_level(raw_level),
+        _ => raw_level,
+    }
 }
 
 /// Chooses a checksum algorithm using upstream rsync's precedence rules.

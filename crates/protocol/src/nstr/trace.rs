@@ -126,9 +126,13 @@ impl NstrCategory {
 /// pass `--compress-level=N`.
 ///
 /// upstream: `rsync.h:1151` `#define CLVL_NOT_SPECIFIED INT_MIN`.
-/// The compress-summary emission renders this value verbatim, so callers
-/// without a user-chosen level pass [`CLVL_NOT_SPECIFIED`] to preserve
-/// byte-for-byte parity with upstream's `"(level <INT_MIN>)"` output.
+/// This is the raw wire value before resolution; it is NOT what upstream
+/// prints. `parse_compress_choice(1)` calls `init_compression_level()`
+/// (`token.c:55`) first, which substitutes the codec `def_level` for this
+/// sentinel, so the `(level %d)` clause always shows a resolved level.
+/// Callers must resolve the level (see
+/// [`compress::algorithm::CompressionAlgorithm::resolve_debug_level`]) before
+/// handing it to [`trace_compress_summary`], which prints it verbatim.
 pub const CLVL_NOT_SPECIFIED: i32 = i32::MIN;
 
 /// Traces a `send_negotiate_str` list emission.
@@ -196,11 +200,14 @@ pub fn trace_checksum_summary(side: NstrSide, negotiated: bool, name: &str) {
 /// Traces the `parse_compress_choice` summary emission.
 ///
 /// upstream: `compat.c:213-219` - `"%s%s compress: %s (level %d)\n"`.
-/// The `(level %d)` clause always renders, even when the user did not
-/// pass `--compress-level=N` - upstream prints the raw
-/// `do_compression_level` value, which is `CLVL_NOT_SPECIFIED = INT_MIN`
-/// in that case. Callers should pass [`CLVL_NOT_SPECIFIED`] to mirror
-/// that wire-visible behaviour.
+/// The `(level %d)` clause always renders. Upstream calls
+/// `init_compression_level()` (`token.c:55`) inside `parse_compress_choice(1)`
+/// before this print, resolving `do_compression_level` from
+/// `CLVL_NOT_SPECIFIED` to the codec `def_level` (6 for zlib, 3 for zstd, 0
+/// for lz4). This renderer prints `compress_level` verbatim, so callers must
+/// resolve it first (see
+/// [`compress::algorithm::CompressionAlgorithm::resolve_debug_level`]); passing
+/// the raw sentinel would emit `(level -2147483648)`, which upstream never does.
 ///
 /// Upstream gates the emission on
 /// `do_compression != CPRES_NONE || level != CLVL_NOT_SPECIFIED`; the
@@ -428,17 +435,18 @@ mod tests {
     }
 
     #[test]
-    fn compress_summary_renders_clvl_not_specified() {
-        // upstream: compat.c:218 prints `do_compression_level` verbatim,
-        // which is CLVL_NOT_SPECIFIED (INT_MIN) when --compress-level
-        // was not used.
+    fn compress_summary_renders_level_verbatim() {
+        // This renderer is level-transparent: it prints whatever `compress_level`
+        // it is handed. Callers resolve CLVL_NOT_SPECIFIED to the codec def_level
+        // via init_compression_level (token.c:55) before calling, so a resolved
+        // zlib level of 6 renders as-is. upstream: compat.c:216-219.
         init_at(1);
-        trace_compress_summary(NstrSide::Client, true, "zlib", CLVL_NOT_SPECIFIED);
+        trace_compress_summary(NstrSide::Client, true, "zlib", 6);
         let m = nstr_messages();
-        let expected = format!("Client negotiated compress: zlib (level {})", i32::MIN);
         assert!(
-            m.iter().any(|s| s == &expected),
-            "missing CLVL_NOT_SPECIFIED summary: {m:?}"
+            m.iter()
+                .any(|s| s == "Client negotiated compress: zlib (level 6)"),
+            "renderer must print the resolved level verbatim: {m:?}"
         );
     }
 

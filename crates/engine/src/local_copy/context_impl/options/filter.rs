@@ -18,8 +18,8 @@ impl<'a> CopyContext<'a> {
                 return outcome.allows_transfer();
             }
 
-            let layers = self.dir_merge_layers.borrow();
-            let ephemeral = self.dir_merge_ephemeral.borrow();
+            let layers = self.dir_merge.layers.borrow();
+            let ephemeral = self.dir_merge.ephemeral.borrow();
             let temp_layers = ephemeral.last().map(|entries| entries.as_slice());
             program
                 .evaluate(
@@ -49,8 +49,8 @@ impl<'a> CopyContext<'a> {
             if let Some(result) = self.dynamic_excluded_dir_by_non_dir_rule(relative) {
                 return result;
             }
-            let layers = self.dir_merge_layers.borrow();
-            let ephemeral = self.dir_merge_ephemeral.borrow();
+            let layers = self.dir_merge.layers.borrow();
+            let ephemeral = self.dir_merge.ephemeral.borrow();
             let temp_layers = ephemeral.last().map(|entries| entries.as_slice());
             program.excluded_dir_by_non_dir_rule(relative, layers.as_slice(), temp_layers)
         } else if let Some(filters) = self.options.filter_set() {
@@ -75,8 +75,8 @@ impl<'a> CopyContext<'a> {
                     outcome.allows_deletion()
                 };
             }
-            let layers = self.dir_merge_layers.borrow();
-            let ephemeral = self.dir_merge_ephemeral.borrow();
+            let layers = self.delete_dir_merge.layers.borrow();
+            let ephemeral = self.delete_dir_merge.ephemeral.borrow();
             let temp_layers = ephemeral.last().map(|entries| entries.as_slice());
             let outcome = program.evaluate(
                 relative,
@@ -116,15 +116,16 @@ impl<'a> CopyContext<'a> {
     /// chain the serial path would evaluate against.
     pub(crate) fn deletion_filter_snapshot(&self) -> DeletionFilterSnapshot {
         let dynamic_loaded_segments = self
-            .dynamic_dir_merge_stack
+            .delete_dir_merge
+            .dynamic
             .borrow()
             .last()
             .map(|frame| frame.loaded_segments.clone())
             .unwrap_or_default();
         DeletionFilterSnapshot {
             program: self.filter_program.clone(),
-            layers: self.dir_merge_layers.borrow().clone(),
-            ephemeral_last: self.dir_merge_ephemeral.borrow().last().cloned(),
+            layers: self.delete_dir_merge.layers.borrow().clone(),
+            ephemeral_last: self.delete_dir_merge.ephemeral.borrow().last().cloned(),
             dynamic_loaded_segments,
             filter_set: self.options.filter_set().cloned(),
             delete_excluded: self.options.delete_excluded_enabled(),
@@ -145,7 +146,14 @@ impl<'a> CopyContext<'a> {
         is_dir: bool,
         context: FilterContext,
     ) -> Option<FilterOutcome> {
-        let stack = self.dynamic_dir_merge_stack.borrow();
+        // Deletion decisions read the isolated destination delete chain; the
+        // transfer decision reads the source-side chain. upstream keeps the
+        // sender filter_list and the receiver delete_filt list separate.
+        let handles = match context {
+            FilterContext::Deletion => &self.delete_dir_merge,
+            _ => &self.dir_merge,
+        };
+        let stack = handles.dynamic.borrow();
         let frame = stack.last()?;
         if frame.loaded_segments.is_empty() {
             return None;
@@ -163,7 +171,7 @@ impl<'a> CopyContext<'a> {
     }
 
     fn dynamic_excluded_dir_by_non_dir_rule(&self, relative: &Path) -> Option<bool> {
-        let stack = self.dynamic_dir_merge_stack.borrow();
+        let stack = self.dir_merge.dynamic.borrow();
         let frame = stack.last()?;
         for loaded in frame.loaded_segments.iter().rev() {
             if let Some(result) = loaded.segment.excluded_dir_by_non_dir_rule(relative) {

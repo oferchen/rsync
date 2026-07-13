@@ -67,7 +67,7 @@ use engine::local_copy::{
 };
 
 use super::config::{BandwidthLimit, ClientConfig, DeleteMode};
-use super::error::{ClientError, map_local_copy_error, missing_operands_error};
+use super::error::{ClientError, map_local_copy_error, missing_operands_error, validate_temp_dir};
 use super::progress::{ClientProgressForwarder, ClientProgressObserver};
 use super::remote;
 use super::summary::ClientSummary;
@@ -186,6 +186,21 @@ fn run_client_internal(
     }
 
     apply_max_alloc(&config);
+
+    // upstream: main.c:1031-1046 do_recv() - the receiver validates --temp-dir
+    // exists and is a directory before transferring. tmpdir is a receiver-only
+    // option (options.c:2925 forwards it only when am_sender), so the check
+    // fires only when the local process receives: a local copy or a pull (local
+    // destination), never a push (remote destination).
+    if let Some(temp_dir) = config.temp_directory() {
+        let dest_is_local = config
+            .transfer_args()
+            .last()
+            .is_none_or(|dest| !remote::operand_is_remote(dest));
+        if dest_is_local {
+            validate_temp_dir(temp_dir)?;
+        }
+    }
 
     let batch_writer = if let Some(batch_cfg) = config.batch_config() {
         if let Some(result) = batch::handle_batch_read(batch_cfg, &config) {
@@ -392,6 +407,13 @@ fn run_client_internal(
 
     let summary = summary.map_err(map_local_copy_error)?;
 
+    // upstream: receiver.c:674-676 - emit the progress2 end-of-transfer summary
+    // line when the transfer moved no file data (a lone special/symlink or a
+    // no-change run), which the per-file path never produces.
+    if let Some(adapter) = handler_adapter.as_mut() {
+        adapter.finalize();
+    }
+
     if let Some(ref writer_arc) = batch_writer
         && let Some(batch_cfg) = config.batch_config()
     {
@@ -531,38 +553,14 @@ fn resolve_nstr_compress_level(
     algorithm: compress::algorithm::CompressionAlgorithm,
     override_level: Option<compress::zlib::CompressionLevel>,
 ) -> i32 {
-    use compress::algorithm::{CompressionAlgorithm, ZLIB_DEFAULT_LEVEL};
-
-    match algorithm {
-        CompressionAlgorithm::Zlib => {
-            // upstream: token.c:62-70 - zlib/zlibx range 1..=9, def_level 6.
-            override_level
-                .map_or(ZLIB_DEFAULT_LEVEL, compression_level_to_nstr)
-                .clamp(1, 9)
-        }
-        #[cfg(feature = "zstd")]
-        CompressionAlgorithm::Zstd => {
-            // upstream: token.c:72-79 - def_level ZSTD_CLEVEL_DEFAULT (3).
-            override_level.map_or(
-                compress::algorithm::ZSTD_DEFAULT_LEVEL,
-                compression_level_to_nstr,
-            )
-        }
-        #[cfg(feature = "lz4")]
-        CompressionAlgorithm::Lz4 => {
-            // upstream: token.c:81-87 - lz4 def_level 0, min/max 0.
-            0
-        }
-        // Feature-unification guard: another crate may enable `compress`'s
-        // zstd/lz4 features (exposing those variants) while `core` is built
-        // without them, removing the cfg-gated arms above. Fall back to the
-        // zlib default so the match stays exhaustive in every feature combo.
-        // Unreachable under the default build where those arms are present.
-        #[allow(unreachable_patterns)]
-        _ => override_level
-            .map_or(ZLIB_DEFAULT_LEVEL, compression_level_to_nstr)
-            .clamp(1, 9),
-    }
+    // Map the CLI level (absent = upstream's CLVL_NOT_SPECIFIED) to the raw
+    // do_compression_level, then defer to the shared init_compression_level
+    // resolver so this path and the wire-negotiation path stay in lockstep.
+    let raw = override_level.map_or(
+        compress::algorithm::CLVL_NOT_SPECIFIED,
+        compression_level_to_nstr,
+    );
+    algorithm.resolve_debug_level(raw)
 }
 
 /// Maps a user-supplied `--compress-level` to the raw i32 upstream renders in
@@ -821,7 +819,7 @@ impl<'a> LocalCopyOptionsBuilder<'a> {
             .ignore_missing_args(config.ignore_missing_args())
             .delete_missing_args(config.delete_missing_args())
             .update(config.update())
-            .with_modify_window(config.modify_window_duration())
+            .with_modify_window(config.modify_window_setting())
             .numeric_ids(config.numeric_ids())
             .preallocate(config.preallocate())
             .fsync(config.fsync())

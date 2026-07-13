@@ -193,6 +193,15 @@ where
     config.flags.append = long_flags.append;
     config.flags.append_verify = long_flags.append_verify;
     config.file_selection.size_only = long_flags.size_only;
+    // upstream: options.c:2993-2994 - `--open-noatime` forwarded to the sender so
+    // it opens source files with O_NOATIME (do_open), leaving atime untouched.
+    config.write.open_noatime = long_flags.open_noatime;
+    // upstream: options.c:2868-2871 - `--delete-missing-args` (missing_args == 2)
+    // and `--ignore-missing-args` (missing_args == 1) govern how a vanished
+    // top-level source arg is handled when building the file list. Mirrors the
+    // daemon long-form parser (long_form_args.rs).
+    config.file_selection.delete_missing_args = long_flags.delete_missing_args;
+    config.file_selection.ignore_missing_args = long_flags.ignore_missing_args;
     // upstream: options.c:2893 - bare --partial (no compact 'P' letter) tells the
     // receiver to keep interrupted temp files. OR with the compact value so a
     // legacy client that still packs 'P' is not clobbered.
@@ -206,8 +215,41 @@ where
     }
     config.file_selection.ignore_existing = long_flags.ignore_existing;
     config.file_selection.existing_only = long_flags.existing_only;
+    // upstream: options.c:2976-2977 / flist.c:2468 - `--no-implied-dirs` is
+    // forwarded to the sender on a pull. As the server-side sender this process
+    // must omit the implied parent dirs from the flist at protocol < 30; at
+    // protocol >= 30 they are always sent (flist.c:2257-2258).
+    config.flags.no_implied_dirs = long_flags.no_implied_dirs;
+    // upstream: options.c:623 / 2750-2753 - `--no-r` clears `recurse` via the
+    // server popt table. The client emits it under `-d --delete` so the remote
+    // can delete with `-d` sans `-r`. It overrides the compact `r` letter that
+    // `ParsedServerFlags::parse` set, so apply it only when forwarded.
+    if long_flags.no_recurse {
+        config.flags.recursive = false;
+    }
+    // upstream: options.c:746 / 2955-2959 - `--no-W` clears `whole_file` so
+    // `--inplace --sparse` streams a delta. Overrides the compact `W` letter.
+    if long_flags.no_whole_file {
+        config.flags.whole_file = false;
+    }
+    // upstream: options.c:109-110 / 368-369 - relative mode arrives as the
+    // compact `R` letter (already parsed into config.flags.relative) or as the
+    // long `--no-relative`. Apply the long form when present so an explicit
+    // `--no-relative` (which the peer sends without the `R` letter) forces
+    // non-relative mode and the sender flattens --files-from entries.
+    if let Some(relative) = long_flags.relative {
+        config.flags.relative = relative;
+    }
     config.flags.numeric_ids = core::server::NumericIds::from_client(long_flags.numeric_ids);
     config.flags.delete = long_flags.delete;
+    // upstream: generator.c:124 - --delete-after / --delete-delay both defer the
+    // goodbye del-stats emission.
+    config.deletion.late_delete = long_flags.late_delete;
+    // upstream: generator.c:2427-2428 - only --delete-after defers the delete
+    // *decision* to after the transfer, so the per-directory `.rsync-filter`
+    // merge files it just received protect matching destination entries at delete
+    // time. --delete-delay decides during the walk and only defers the unlink.
+    config.deletion.delete_after = long_flags.delete_after;
     // upstream: options.c:2964-2965 - `--remove-source-files` is forwarded
     // long-form when the client requested sender-side removal. The flag is
     // consumed by the sender's `successful_send()` after each transferred
@@ -227,6 +269,19 @@ where
     // by the client tells the server to render the flist without writing to the
     // destination (`TransferFlags::skip_dest_writes`).
     config.flags.list_only = long_flags.list_only;
+    // upstream: options.c:2850-2851 / main.c:1839 - a push sender forwards
+    // `--only-write-batch=X`; on the receiver, `write_batch < 0` forces
+    // `dry_run = 1` (no destination writes) while `do_xfers` stays 1 so the
+    // generator still sends real block checksums. The client records the batch
+    // locally and streams no delta data over the wire (sender.c:217), so the
+    // receiver runs the dedicated only-write-batch loop: send sum heads, read
+    // the bare NDX+attrs echo, write nothing to the destination. Only the
+    // receiver role ever sees this flag - server_options() emits it inside the
+    // am_sender block, so a pull sender-server never receives it.
+    if long_flags.only_write_batch && role == ServerRole::Receiver {
+        config.flags.only_write_batch = true;
+        config.flags.dry_run = true;
+    }
     // upstream: options.c:2046-2048 - do_stats sets info_levels[INFO_STATS] >= 2.
     // The server-side flag must be set so the generator emits NDX_DEL_STATS
     // during the goodbye phase (generator.c:2377,2422).
@@ -550,7 +605,9 @@ fn apply_value_flags<Err: Write>(
         match super::super::execution::parse_modify_window_argument(std::ffi::OsStr::new(
             window_str,
         )) {
-            Ok(window) => config.file_selection.modify_window = window,
+            Ok(window) => {
+                config.file_selection.modify_window = ::metadata::ModifyWindow::from_secs(window)
+            }
             Err(msg) => {
                 write_server_error(stderr, brand, msg.text().to_owned());
                 return Err(1);

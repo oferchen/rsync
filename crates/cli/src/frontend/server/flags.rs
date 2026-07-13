@@ -114,6 +114,23 @@ pub(super) struct ServerLongFlags {
     pub(super) numeric_ids: bool,
     /// Delete extraneous files (upstream: `--delete-*` variants, long-form only).
     pub(super) delete: bool,
+    /// Defer the delete pass until after the transfer (upstream: `--delete-after`
+    /// / `--delete-delay`, i.e. `delete_after` or `delete_during == 2`).
+    ///
+    /// When set, the server-side receiver runs its delete sweep only after every
+    /// file (including each destination `.rsync-filter` merge file) has landed,
+    /// so per-directory merge protect rules are honoured at delete time.
+    ///
+    /// upstream: generator.c:124 - `EARLY_DELETE_DONE_MSG = !(delete_during == 2
+    /// || delete_after)`; generator.c:2425-2428 late delete pass.
+    pub(super) late_delete: bool,
+    /// Defer the delete *decision* until after the transfer (upstream:
+    /// `--delete-after` / `delete_after` only). Set apart from [`late_delete`]
+    /// because `--delete-delay` decides during the walk (generator.c:2315) and
+    /// defers only the unlink, so its delete pass runs early like `--delete-during`.
+    ///
+    /// [`late_delete`]: Self::late_delete
+    pub(super) delete_after: bool,
     /// Remove source files after a successful transfer.
     ///
     /// upstream: options.c:2964-2965 - `server_options()` emits
@@ -223,6 +240,77 @@ pub(super) struct ServerLongFlags {
     /// is a listing. The receiver renders the flist without writing to the
     /// destination.
     pub(super) list_only: bool,
+    /// Whether the client forwarded `--only-write-batch=X` (upstream
+    /// `write_batch = -1`). Emitted only in the `am_sender` block, so it
+    /// reaches this process only when it is the server receiver on a push.
+    ///
+    /// upstream: options.c:2850-2851 - `if (write_batch < 0) args[ac++] =
+    /// "--only-write-batch=X"`. On the receiver, main.c:1839 forces
+    /// `dry_run = 1` (no destination writes) while `do_xfers` stays 1 so the
+    /// generator still sends real block checksums; the push sender records the
+    /// batch locally (sender.c:217) and streams no delta data over the wire.
+    pub(super) only_write_batch: bool,
+
+    /// Whether the client forwarded `--no-implied-dirs` (upstream
+    /// `implied_dirs == 0`).
+    ///
+    /// upstream: options.c:2976-2977 - forwarded to the sender on a pull. As the
+    /// server-side sender, this process must omit the implied parent dirs from
+    /// the flist at protocol < 30 (flist.c:2468); protocol >= 30 always sends
+    /// them (flist.c:2257-2258).
+    pub(super) no_implied_dirs: bool,
+
+    /// Whether the client forwarded `--no-r` (upstream `recurse = 0`).
+    ///
+    /// upstream: options.c:2750-2753 - `if (xfer_dirs && !recurse &&
+    /// delete_mode && am_sender) args[ac++] = "--no-r"`. A client running
+    /// `-d --delete` (e.g. `--files-from --delete`) forwards `--no-r` so the
+    /// remote receiver can delete with `-d` sans `-r`; the server-side popt
+    /// table clears `recurse` (options.c:623 `{"no-r", ..., &recurse, 0}`).
+    pub(super) no_recurse: bool,
+
+    /// Whether the client forwarded `--no-W` (upstream `whole_file = 0`).
+    ///
+    /// upstream: options.c:2955-2959 - under `--inplace`, `if (sparse_files &&
+    /// !whole_file && am_sender) args[ac++] = "--no-W"` works around an older
+    /// remote bug for `--inplace --sparse`. The server-side popt table clears
+    /// `whole_file` (options.c:746 `{"no-W", ..., &whole_file, 0}`).
+    pub(super) no_whole_file: bool,
+
+    /// Whether the client forwarded `--relative` / `--no-relative`.
+    ///
+    /// upstream: options.c:109-110 - `if (relative_paths) argstr[x++] = 'R';`
+    /// packs the compact `R` letter for relative mode, and options.c:368-369
+    /// emits the long `--no-relative` when relative paths are off (including the
+    /// `--files-from` default, which is otherwise relative). The long form must
+    /// be recognised and consumed here; otherwise it falls through to the
+    /// positional-path branch and the sender treats `--no-relative` as the
+    /// transfer root (`link_stat "--no-relative/..."`). `None` leaves the value
+    /// implied by the compact `R` letter untouched.
+    pub(super) relative: Option<bool>,
+
+    /// Whether the client forwarded `--open-noatime` (upstream `open_noatime`).
+    ///
+    /// upstream: options.c:2993-2994 - `if (open_noatime && preserve_atimes <= 1)
+    /// args[ac++] = "--open-noatime"`. Forwarded to the sender so it opens each
+    /// source file with `O_NOATIME`, avoiding an atime update on read.
+    pub(super) open_noatime: bool,
+
+    /// Whether the client forwarded `--delete-missing-args` (upstream
+    /// `missing_args == 2`).
+    ///
+    /// upstream: options.c:2868-2869 - `if (missing_args == 2) args[ac++] =
+    /// "--delete-missing-args"`. Needs both sides: a vanished top-level source
+    /// arg becomes a mode-0 sentinel the receiver deletes at the destination.
+    pub(super) delete_missing_args: bool,
+
+    /// Whether the client forwarded `--ignore-missing-args` (upstream
+    /// `missing_args == 1`).
+    ///
+    /// upstream: options.c:2870-2871 - `else if (missing_args == 1 && !am_sender)
+    /// args[ac++] = "--ignore-missing-args"`. A vanished top-level source arg is
+    /// silently dropped from the file list rather than raising an error.
+    pub(super) ignore_missing_args: bool,
 }
 
 /// Parses all long-form flags from the server argument list.
@@ -260,6 +348,8 @@ pub(super) fn parse_server_long_flags(args: &[OsString]) -> ServerLongFlags {
         modify_window: None,
         numeric_ids: false,
         delete: false,
+        late_delete: false,
+        delete_after: false,
         remove_source_files: false,
         copy_devices: false,
         stats: false,
@@ -277,6 +367,14 @@ pub(super) fn parse_server_long_flags(args: &[OsString]) -> ServerLongFlags {
         delay_updates: false,
         mkpath: false,
         list_only: false,
+        only_write_batch: false,
+        no_implied_dirs: false,
+        no_recurse: false,
+        no_whole_file: false,
+        relative: None,
+        open_noatime: false,
+        delete_missing_args: false,
+        ignore_missing_args: false,
     };
 
     let mut idx = 0;
@@ -302,6 +400,73 @@ pub(super) fn parse_server_long_flags(args: &[OsString]) -> ServerLongFlags {
             "--specials" => flags.specials = Some(true),
             "--no-specials" => flags.specials = Some(false),
             "--qsort" => flags.qsort = true,
+            // upstream: options.c:2908-2909 - `if (use_qsort) args[ac++] =
+            // "--use-qsort"`. This is the spelling server_options() actually
+            // emits; it selects the C-library qsort over the stable merge sort
+            // (flist.c:2991). Map it onto the same `qsort` sink as oc's own
+            // `--qsort` so both forms drive identical flist-ordering behavior.
+            "--use-qsort" => flags.qsort = true,
+            // upstream: options.c:2993-2994 - `--open-noatime` forwarded to the
+            // sender so it opens source files with O_NOATIME (do_open).
+            "--open-noatime" => flags.open_noatime = true,
+            // upstream: options.c:2868-2869 - `--delete-missing-args`
+            // (missing_args == 2): a vanished top-level source arg becomes a
+            // mode-0 sentinel the receiver deletes at the destination.
+            "--delete-missing-args" => flags.delete_missing_args = true,
+            // upstream: options.c:2870-2871 - `--ignore-missing-args`
+            // (missing_args == 1): a vanished top-level source arg is silently
+            // dropped from the file list rather than raising an error.
+            "--ignore-missing-args" => flags.ignore_missing_args = true,
+            // upstream: options.c:2848-2849 - `if (force_delete) args[ac++] =
+            // "--force"`, emitted in the am_sender block so it reaches a server
+            // acting as the receiver. force_delete only changes behavior when a
+            // non-empty directory must be replaced by a non-directory while
+            // deletions are inactive (delete.c). Under an active --delete pass -
+            // the trigger server_options() ships it alongside - oc already
+            // removes extraneous non-empty directories recursively
+            // (receiver/directory/deletion.rs), matching upstream 2.6.7+
+            // (`--delete` no longer needs `--force`). Recognized here so the arg
+            // does not leak into the positional path list.
+            "--force" => {}
+            // upstream: options.c:2852-2853 - `if (am_root > 1) args[ac++] =
+            // "--super"`, forcing super-user metadata semantics (chown/mknod)
+            // even when the receiver is not literally uid 0. oc gates those
+            // operations on the runtime `metadata::am_root()` check; when the
+            // server runs as root (the condition under which --super has any
+            // effect) that check already reports true, so recognizing the flag
+            // matches upstream. A non-root receiver would only differ by
+            // attempting privileged ops that fail with EPERM, which oc omits.
+            "--super" => {}
+            // upstream: options.c:2990-2991 - `if (preallocate_files && am_sender)
+            // args[ac++] = "--preallocate"`, forwarded to a server receiver so
+            // it fallocate()s each destination file before writing. Preallocation
+            // affects only on-disk block allocation, never file content, so a
+            // receiver that skips it produces byte-identical results. oc
+            // implements preallocation in the local-copy executor only, not the
+            // network receiver, so this is recognized to prevent a positional
+            // leak; the transferred bytes match upstream.
+            "--preallocate" => {}
+            // upstream: options.c:696 / 2976-2977 - `--no-implied-dirs` is
+            // forwarded to the sender on a pull. The server-side sender must omit
+            // implied parent dirs from the flist at protocol < 30.
+            "--no-implied-dirs" => flags.no_implied_dirs = true,
+            // upstream: options.c:623 / 2750-2753 - `--no-r` clears `recurse`
+            // on the server-side popt table. A client running `-d --delete`
+            // forwards it so the remote can delete with `-d` sans `-r`.
+            "--no-r" => flags.no_recurse = true,
+            // upstream: options.c:746 / 2955-2959 - `--no-W` clears `whole_file`
+            // so `--inplace --sparse` streams a delta instead of the whole file.
+            "--no-W" => flags.no_whole_file = true,
+            // upstream: options.c:368-369 / 692-694 - the sender packs the
+            // compact `R` letter for relative mode; when relative paths are off
+            // (including the `--files-from` default being explicitly disabled),
+            // server_options() emits the long `--no-relative` instead. Recognise
+            // and record both so the flag is consumed rather than mistaken for a
+            // positional path, and so the server-side sender flattens each
+            // --files-from entry to its basename (flist.c:2338-2349) with no
+            // implied parent directories (options.c:2207-2208).
+            "--no-relative" | "--no-R" => flags.relative = Some(false),
+            "--relative" => flags.relative = Some(true),
             "--from0" => flags.from0 = true,
             "--inplace" => flags.inplace = true,
             // upstream: options.c:1722-1726 - OPT_APPEND increments append_mode
@@ -321,8 +486,26 @@ pub(super) fn parse_server_long_flags(args: &[OsString]) -> ServerLongFlags {
             // upstream: --numeric-ids is long-form only (options.c:2887-2888)
             "--numeric-ids" => flags.numeric_ids = true,
             // upstream: --delete variants are long-form only (options.c:2818-2827)
-            "--delete" | "--delete-before" | "--delete-during" | "--delete-after"
-            | "--delete-delay" | "--delete-excluded" => flags.delete = true,
+            "--delete" | "--delete-before" | "--delete-during" | "--delete-excluded" => {
+                flags.delete = true;
+            }
+            // upstream: generator.c:124 EARLY_DELETE_DONE_MSG = !(delete_during==2
+            // || delete_after). --delete-delay defers only the goodbye del-stats
+            // and the physical unlink; its delete *decision* still runs during the
+            // walk (generator.c:2315), so the delete pass stays early.
+            "--delete-delay" => {
+                flags.delete = true;
+                flags.late_delete = true;
+            }
+            // upstream: generator.c:2427-2428 - only --delete-after defers the
+            // delete *decision* to after the transfer, so a destination
+            // `.rsync-filter` merge file transferred by this run protects matching
+            // entries at delete time.
+            "--delete-after" => {
+                flags.delete = true;
+                flags.late_delete = true;
+                flags.delete_after = true;
+            }
             // upstream: options.c:2964-2965 - --remove-source-files is long-form
             // only. --remove-sent-files is the deprecated alias that still names
             // the same option in `parse_arguments()`.
@@ -398,12 +581,20 @@ pub(super) fn parse_server_long_flags(args: &[OsString]) -> ServerLongFlags {
                     idx += 2;
                     continue;
                 }
+                // upstream: options.c:2874 - a negative modify_window is
+                // forwarded via the short `-@%d` spelling (e.g. `-@-1`), emitted
+                // as its own argv slot after the compact flag string. The value
+                // is the joined remainder; run.rs parses it via
+                // parse_modify_window_argument (signed).
+                if let Some(window) = s.strip_prefix("-@") {
+                    flags.modify_window = Some(window.to_owned());
+                }
                 // Accept the joined `--partial-dir=VALUE` form too, even
                 // though upstream's server_options() does not emit it - the
                 // CLI parser accepts both forms for client-side use, and a
                 // forwarder built on a non-upstream client might still send
                 // the joined form.
-                if let Some(value) = s.strip_prefix("--partial-dir=") {
+                else if let Some(value) = s.strip_prefix("--partial-dir=") {
                     flags.partial_dir = Some(OsString::from(value));
                 } else {
                     parse_value_bearing_flag(&s, &mut flags);
@@ -499,6 +690,14 @@ fn parse_value_bearing_flag(s: &str, flags: &mut ServerLongFlags) {
         flags.compression_level = Some(value.to_owned());
     // upstream: options.c:2750-2762 - client forwards --log-format=%i (or %o,
     // %i%I, X) so the server knows whether to generate itemize data.
+    } else if s.strip_prefix("--only-write-batch=").is_some() {
+        // upstream: options.c:2850-2851 - server_options() always emits the
+        // literal `--only-write-batch=X` placeholder (the real batch path
+        // lives on the client). The value carries no server-side meaning; we
+        // only latch the flag so run_server_mode forces the receiver into
+        // dry-run-with-real-checksums mode instead of leaking the token into
+        // the positional destination list.
+        flags.only_write_batch = true;
     } else if let Some(value) = s.strip_prefix("--log-format=") {
         flags.log_format = Some(value.to_owned());
     // upstream: options.c:2928-2931 - server_options() forwards info levels.
@@ -551,6 +750,31 @@ pub(super) fn is_known_server_long_flag(arg: &str) -> bool {
             | "--msgs2stderr"
             | "--no-msgs2stderr"
             | "--qsort"
+            // upstream: options.c:2908-2909 - the spelling server_options()
+            // actually emits for use_qsort (oc's own forwarder uses --qsort).
+            | "--use-qsort"
+            // upstream: options.c:2993-2994 - `--open-noatime` (sender O_NOATIME).
+            | "--open-noatime"
+            // upstream: options.c:2848-2849 - `--force` (force_delete), am_sender
+            // block so it reaches a server receiver.
+            | "--force"
+            // upstream: options.c:2852-2853 - `--super` (am_root > 1).
+            | "--super"
+            // upstream: options.c:2990-2991 - `--preallocate` (preallocate_files).
+            | "--preallocate"
+            // upstream: options.c:2868-2871 - missing-args cooperation flags.
+            | "--delete-missing-args"
+            | "--ignore-missing-args"
+            | "--no-implied-dirs"
+            // upstream: options.c:2753/2959/2973 - server_options() emits these
+            // negations; the server-side popt table clears recurse/whole_file/
+            // relative_paths (options.c:623/746/693). Recognise them so they are
+            // not mistaken for positional destination paths.
+            | "--no-r"
+            | "--no-W"
+            | "--no-relative"
+            | "--no-R"
+            | "--relative"
             | "--from0"
             | "--inplace"
             | "--append"
@@ -589,6 +813,10 @@ pub(super) fn is_known_server_long_flag(arg: &str) -> bool {
         || arg.starts_with("--copy-dest=")
         || arg.starts_with("--link-dest=")
         || arg.starts_with("--modify-window=")
+        // upstream: options.c:2874 - a negative modify_window arrives as the
+        // short `-@%d` token (e.g. `-@-1`) after the compact flag string, so it
+        // must be recognised here or it leaks into the positional path list.
+        || arg.starts_with("-@")
         || arg.starts_with("--min-size=")
         || arg.starts_with("--max-size=")
         || arg.starts_with("--max-alloc=")
@@ -602,6 +830,10 @@ pub(super) fn is_known_server_long_flag(arg: &str) -> bool {
         || arg.starts_with("--log-format=")
         || arg.starts_with("--info=")
         || arg.starts_with("--partial-dir=")
+        // upstream: options.c:2850-2851 - `--only-write-batch=X` reaches a
+        // server receiver on a push. Recognise it so the placeholder token is
+        // not mistaken for a positional destination path.
+        || arg.starts_with("--only-write-batch=")
 }
 
 /// Returns `true` when the argument is a bare server-mode long flag whose

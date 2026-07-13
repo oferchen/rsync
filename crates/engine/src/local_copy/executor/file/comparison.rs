@@ -4,9 +4,10 @@ use std::fs;
 use std::io::{self, Read};
 use std::num::{NonZeroU8, NonZeroU32};
 use std::path::Path;
-use std::time::{Duration, SystemTime};
+use std::time::SystemTime;
 
 use checksums::strong::Xxh64;
+use metadata::ModifyWindow;
 
 use crate::delta::{DeltaSignatureIndex, SignatureLayoutParams, calculate_signature_layout};
 use crate::local_copy::{COPY_BUFFER_SIZE, LocalCopyError};
@@ -94,7 +95,7 @@ fn same_file_type(source: &fs::Metadata, destination: &fs::Metadata) -> bool {
 pub(crate) fn destination_is_newer(
     source: &fs::Metadata,
     destination: &fs::Metadata,
-    modify_window: Duration,
+    modify_window: ModifyWindow,
 ) -> bool {
     // upstream: generator.c:1721 - the `stype == ftype` guard means a
     // type-mismatched destination is never skipped by `--update`.
@@ -105,14 +106,15 @@ pub(crate) fn destination_is_newer(
         (Ok(src), Ok(dst)) => {
             // upstream: generator.c:1721
             //   file->modtime - sx.st.st_mtime < modify_window
-            // Both operands are whole-second `time_t` values and the
-            // subtraction is signed, so the destination counts as "newer"
-            // (and the copy is skipped) only when the source second is less
-            // than the destination second by more than `modify_window`. A
+            // Both operands are whole-second `time_t` values and the signed
+            // `int modify_window` is used directly, so the destination counts as
+            // "newer" (skip the copy) only when the source second is smaller
+            // than the destination second by more than the window. A negative
+            // window (nsec-exact mode) simply makes the threshold negative; a
             // sub-second-only difference collapses to zero and is never a skip.
             let src_sec = unix_seconds(src);
             let dst_sec = unix_seconds(dst);
-            let window_secs = modify_window.as_secs() as i64;
+            let window_secs = modify_window.as_secs();
             src_sec - dst_sec < window_secs
         }
         _ => false,
@@ -196,7 +198,7 @@ pub(crate) struct CopyComparison<'a> {
     pub(crate) ignore_times: bool,
     pub(crate) checksum: bool,
     pub(crate) checksum_algorithm: SignatureAlgorithm,
-    pub(crate) modify_window: Duration,
+    pub(crate) modify_window: ModifyWindow,
     /// Prefetched checksum match result from parallel computation.
     ///
     /// When `Some(true)`, checksums were pre-computed and match (skip copy).
@@ -292,16 +294,29 @@ pub(crate) fn should_skip_copy(params: CopyComparison<'_>) -> bool {
 /// second regardless of their fractional part, mirroring the `time_t`
 /// truncation upstream applies before comparing modification times.
 fn unix_seconds(time: SystemTime) -> i64 {
+    unix_sec_nsec(time).0
+}
+
+/// Returns the whole-second UNIX timestamp and its non-negative nanosecond
+/// remainder, both floored toward negative infinity.
+///
+/// The nanosecond component matches the POSIX `st_mtim.tv_nsec` convention
+/// (always in `[0, 1_000_000_000)` and measured up from the floored second),
+/// so a negative-window (`--modify-window < 0`) comparison sees the same
+/// nanosecond values upstream's `same_time()` compares.
+fn unix_sec_nsec(time: SystemTime) -> (i64, u32) {
     match time.duration_since(SystemTime::UNIX_EPOCH) {
-        Ok(diff) => diff.as_secs() as i64,
+        Ok(diff) => (diff.as_secs() as i64, diff.subsec_nanos()),
         Err(error) => {
             let diff = error.duration();
-            // A non-zero sub-second remainder means the instant lands strictly
-            // before the flooring boundary, so subtract one to floor.
-            if diff.subsec_nanos() == 0 {
-                -(diff.as_secs() as i64)
+            let nsec = diff.subsec_nanos();
+            if nsec == 0 {
+                (-(diff.as_secs() as i64), 0)
             } else {
-                -(diff.as_secs() as i64) - 1
+                // A non-zero sub-second remainder means the instant lands
+                // strictly before the flooring boundary, so subtract one to
+                // floor and re-express the nanoseconds up from that second.
+                (-(diff.as_secs() as i64) - 1, 1_000_000_000 - nsec)
             }
         }
     }
@@ -320,21 +335,22 @@ fn unix_seconds(time: SystemTime) -> i64 {
 ///   `f2_sec > f1_sec ? f2_sec - f1_sec <= modify_window : f1_sec - f2_sec <=
 ///   modify_window` -- i.e. `|a_sec - b_sec| <= window_secs`. Nanoseconds do not
 ///   figure into the window check ("time windows don't care about that").
+/// - `window < 0`: a nanosecond-exact comparison applies - the seconds AND the
+///   nanoseconds must match (upstream `modify_window < 0`, util1.c:1482).
 ///
 /// upstream: util1.c:1478 same_time() (via generator.c unchanged_file()).
-pub(crate) fn system_time_within_window(a: SystemTime, b: SystemTime, window: Duration) -> bool {
-    // Truncate to whole seconds, exactly as upstream compares `time_t` values.
-    let a_sec = unix_seconds(a);
-    let b_sec = unix_seconds(b);
-
-    if window.is_zero() {
-        // upstream: same_time() returns `f1_sec == f2_sec` when modify_window == 0.
-        return a_sec == b_sec;
-    }
-
-    // upstream: same_time() applies a symmetric window on whole seconds --
-    // nanoseconds are deliberately ignored (util1.c:1484).
-    a_sec.abs_diff(b_sec) <= window.as_secs()
+pub(crate) fn system_time_within_window(
+    a: SystemTime,
+    b: SystemTime,
+    window: ModifyWindow,
+) -> bool {
+    // Extract whole seconds and the POSIX nanosecond remainder, exactly as
+    // upstream compares `st_mtim` (`time_t` seconds plus `tv_nsec`). The
+    // nanoseconds only matter for a negative window; same_time() ignores them
+    // for the zero/positive cases.
+    let (a_sec, a_nsec) = unix_sec_nsec(a);
+    let (b_sec, b_nsec) = unix_sec_nsec(b);
+    window.same_time(a_sec, a_nsec, b_sec, b_nsec)
 }
 
 enum LockstepCheck {
@@ -468,6 +484,7 @@ mod tests {
     use super::*;
     use std::io::Write;
     use std::path::PathBuf;
+    use std::time::Duration;
 
     use filetime::{FileTime, set_file_mtime};
     use tempfile::TempDir;
@@ -550,7 +567,7 @@ mod tests {
             ignore_times: false,
             checksum: true,
             checksum_algorithm: default_checksum_algorithm(),
-            modify_window: Duration::ZERO,
+            modify_window: ModifyWindow::ZERO,
             prefetched_match: None,
         };
 
@@ -571,7 +588,7 @@ mod tests {
             ignore_times: false,
             checksum: false,
             checksum_algorithm: default_checksum_algorithm(),
-            modify_window: Duration::ZERO,
+            modify_window: ModifyWindow::ZERO,
             prefetched_match: None,
         };
 
@@ -589,7 +606,11 @@ mod tests {
         // already-hardlinked alias under `-vvH`.
         let base = SystemTime::UNIX_EPOCH + Duration::new(1_700_000_000, 100_000_000);
         let same_second = SystemTime::UNIX_EPOCH + Duration::new(1_700_000_000, 900_000_000);
-        assert!(system_time_within_window(base, same_second, Duration::ZERO));
+        assert!(system_time_within_window(
+            base,
+            same_second,
+            ModifyWindow::ZERO
+        ));
     }
 
     #[test]
@@ -601,7 +622,7 @@ mod tests {
         assert!(!system_time_within_window(
             earlier,
             next_second,
-            Duration::ZERO
+            ModifyWindow::ZERO
         ));
     }
 
@@ -616,7 +637,7 @@ mod tests {
         // implementation compared full-resolution durations, so a source at .0s and
         // a destination at +2.9s (whole-second delta 2, within window) was wrongly
         // seen as 2.9s apart and re-transferred.
-        let window = Duration::from_secs(2);
+        let window = ModifyWindow::from_secs(2);
         let base = SystemTime::UNIX_EPOCH + Duration::from_secs(1_700_000_000);
         let plus_two = base + Duration::from_secs(2);
         let minus_two = base - Duration::from_secs(2);
@@ -640,7 +661,7 @@ mod tests {
         // tolerance, so upstream same_time() returns 0 (different) and the file
         // must be re-transferred. Guards against an off-by-one that would swallow
         // a genuinely stale destination.
-        let window = Duration::from_secs(2);
+        let window = ModifyWindow::from_secs(2);
         let base = SystemTime::UNIX_EPOCH + Duration::from_secs(1_700_000_000);
         let plus_three = base + Duration::from_secs(3);
 
@@ -656,8 +677,39 @@ mod tests {
         let base = SystemTime::UNIX_EPOCH + Duration::from_secs(1_700_000_000);
         let plus_one = base + Duration::from_secs(1);
 
-        assert!(!system_time_within_window(base, plus_one, Duration::ZERO));
-        assert!(!system_time_within_window(plus_one, base, Duration::ZERO));
+        assert!(!system_time_within_window(
+            base,
+            plus_one,
+            ModifyWindow::ZERO
+        ));
+        assert!(!system_time_within_window(
+            plus_one,
+            base,
+            ModifyWindow::ZERO
+        ));
+    }
+
+    #[test]
+    fn system_time_negative_window_requires_nanosecond_exactness() {
+        // WHY: upstream util1.c:1482 - a negative `modify_window` compares the
+        // nanosecond component too (`f1_sec == f2_sec && f1_nsec == f2_nsec`).
+        // Two mtimes in the same second but a different fraction are therefore
+        // DIFFERENT and the local copy must proceed, whereas any non-negative
+        // window ignores the sub-second drift and treats them as equal.
+        let exact = ModifyWindow::from_secs(-1);
+        let base = SystemTime::UNIX_EPOCH + Duration::new(1_700_000_000, 100_000_000);
+        let same_second = SystemTime::UNIX_EPOCH + Duration::new(1_700_000_000, 900_000_000);
+
+        assert!(!system_time_within_window(base, same_second, exact));
+        assert!(!system_time_within_window(same_second, base, exact));
+        // Identical instants still match under the nsec-exact window.
+        assert!(system_time_within_window(base, base, exact));
+        // A zero window ignores the same sub-second drift and treats them equal.
+        assert!(system_time_within_window(
+            base,
+            same_second,
+            ModifyWindow::ZERO
+        ));
     }
 
     #[test]
@@ -676,7 +728,7 @@ mod tests {
             ignore_times: true,
             checksum: false,
             checksum_algorithm: default_checksum_algorithm(),
-            modify_window: Duration::ZERO,
+            modify_window: ModifyWindow::ZERO,
             prefetched_match: None,
         };
 
@@ -709,7 +761,11 @@ mod tests {
         assert!(dst_meta.file_type().is_symlink());
 
         // Even though the symlink is newer, the type mismatch forces an update.
-        assert!(!destination_is_newer(&src_meta, &dst_meta, Duration::ZERO));
+        assert!(!destination_is_newer(
+            &src_meta,
+            &dst_meta,
+            ModifyWindow::ZERO
+        ));
     }
 
     #[test]
@@ -730,7 +786,11 @@ mod tests {
         let dst_newer = FileTime::from_unix_time(1_700_000_000, 900_000_000);
         let (_temp, src_meta, dst_meta) = setup_timed_files(src, dst_newer);
 
-        assert!(!destination_is_newer(&src_meta, &dst_meta, Duration::ZERO));
+        assert!(!destination_is_newer(
+            &src_meta,
+            &dst_meta,
+            ModifyWindow::ZERO
+        ));
     }
 
     #[test]
@@ -739,7 +799,11 @@ mod tests {
         let newer = FileTime::from_unix_time(1_700_000_005, 0);
         let (_temp, src_meta, dst_meta) = setup_timed_files(older, newer);
 
-        assert!(destination_is_newer(&src_meta, &dst_meta, Duration::ZERO));
+        assert!(destination_is_newer(
+            &src_meta,
+            &dst_meta,
+            ModifyWindow::ZERO
+        ));
     }
 
     #[test]
@@ -748,7 +812,11 @@ mod tests {
         let newer = FileTime::from_unix_time(1_700_000_005, 0);
         let (_temp, src_meta, dst_meta) = setup_timed_files(newer, older);
 
-        assert!(!destination_is_newer(&src_meta, &dst_meta, Duration::ZERO));
+        assert!(!destination_is_newer(
+            &src_meta,
+            &dst_meta,
+            ModifyWindow::ZERO
+        ));
     }
 
     #[test]
@@ -756,7 +824,11 @@ mod tests {
         let same = FileTime::from_unix_time(1_700_000_000, 0);
         let (_temp, src_meta, dst_meta) = setup_timed_files(same, same);
 
-        assert!(!destination_is_newer(&src_meta, &dst_meta, Duration::ZERO));
+        assert!(!destination_is_newer(
+            &src_meta,
+            &dst_meta,
+            ModifyWindow::ZERO
+        ));
     }
 
     #[test]
@@ -770,7 +842,7 @@ mod tests {
         assert!(destination_is_newer(
             &src_meta,
             &dst_meta,
-            Duration::from_secs(1)
+            ModifyWindow::from_secs(1)
         ));
     }
 
@@ -784,7 +856,7 @@ mod tests {
         assert!(destination_is_newer(
             &src_meta,
             &dst_meta,
-            Duration::from_secs(1)
+            ModifyWindow::from_secs(1)
         ));
     }
 
@@ -798,7 +870,7 @@ mod tests {
         assert!(destination_is_newer(
             &src_meta,
             &dst_meta,
-            Duration::from_secs(2)
+            ModifyWindow::from_secs(2)
         ));
     }
 
@@ -811,7 +883,7 @@ mod tests {
         assert!(destination_is_newer(
             &src_meta,
             &dst_meta,
-            Duration::from_secs(2)
+            ModifyWindow::from_secs(2)
         ));
     }
 
@@ -825,7 +897,7 @@ mod tests {
         assert!(destination_is_newer(
             &src_meta,
             &dst_meta,
-            Duration::from_secs(2)
+            ModifyWindow::from_secs(2)
         ));
     }
 
@@ -839,7 +911,7 @@ mod tests {
         assert!(!destination_is_newer(
             &src_meta,
             &dst_meta,
-            Duration::from_secs(2)
+            ModifyWindow::from_secs(2)
         ));
     }
 
@@ -853,7 +925,7 @@ mod tests {
         assert!(!destination_is_newer(
             &src_meta,
             &dst_meta,
-            Duration::from_secs(2)
+            ModifyWindow::from_secs(2)
         ));
     }
 

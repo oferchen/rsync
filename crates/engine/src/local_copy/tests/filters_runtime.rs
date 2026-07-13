@@ -356,3 +356,108 @@ fn nested_dir_merge_registers_per_directory_rule() {
         "nested dir-merge from bar/.filt should register .filt2 lookup in subdirectories and exclude bar/baz/file5.deep"
     );
 }
+
+/// Builds the bug #273 repro tree under `root` and returns the trailing-slash
+/// source operand plus the destination directory. The root `.rsync-filter`
+/// (protecting `*.bak`, descending all dirs) is transferred to the destination;
+/// the destination is pre-seeded with an extraneous `normal.bak` at the root and
+/// `sub/x.bak` one level down, neither of which appears in the source flist.
+fn seed_perdir_delete_repro(root: &Path) -> (OsString, PathBuf) {
+    let source = root.join("source");
+    let dest = root.join("dest");
+    fs::create_dir_all(source.join("sub")).expect("create source/sub");
+    fs::create_dir_all(dest.join("sub")).expect("create dest/sub");
+    fs::write(source.join("keep.txt"), b"keep").expect("write keep");
+    fs::write(source.join("sub/keep2.txt"), b"keep2").expect("write keep2");
+    // A per-dir merge rule that protects *.bak and descends every directory.
+    fs::write(source.join(".rsync-filter"), b"- *.bak\n+ */\n").expect("write .rsync-filter");
+    fs::write(dest.join("normal.bak"), b"bak").expect("seed dest/normal.bak");
+    fs::write(dest.join("sub/x.bak"), b"bak").expect("seed dest/sub/x.bak");
+
+    let mut source_operand = source.into_os_string();
+    source_operand.push(std::path::MAIN_SEPARATOR.to_string());
+    (source_operand, dest)
+}
+
+fn perdir_delete_program() -> FilterProgram {
+    FilterProgram::new([FilterProgramEntry::DirMerge(DirMergeRule::new(
+        PathBuf::from(".rsync-filter"),
+        DirMergeOptions::default(),
+    ))])
+    .expect("compile filter program")
+}
+
+/// bug #273: with `--delete-after`, a per-dir-merge `.rsync-filter` rule
+/// protects matching destination files from deletion, and the ROOT directory's
+/// rule INHERITS into subdirectories - so `sub/x.bak` survives even though only
+/// the root carries a `.rsync-filter`. The destination merge files are present
+/// by the time the delete pass runs, so the ancestor rule is loaded and the
+/// isolated delete chain carries it down the tree. Deleting `sub/x.bak` here
+/// would be silent data loss.
+///
+/// upstream: `rsync -avF --delete-after` keeps both `normal.bak` and
+/// `sub/x.bak` (delete.c:63 push_local_filters + exclude.c:801 inherited head).
+#[test]
+fn perdir_merge_delete_after_inherits_into_subdirs() {
+    let temp = tempdir().expect("tempdir");
+    let (source_operand, dest) = seed_perdir_delete_repro(temp.path());
+    let operands = vec![source_operand, dest.clone().into_os_string()];
+    let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
+
+    let options = LocalCopyOptions::default()
+        .recursive(true)
+        .delete(true)
+        .delete_after(true)
+        .with_filter_program(Some(perdir_delete_program()));
+
+    plan.execute_with_options(LocalCopyExecution::Apply, options)
+        .expect("copy succeeds");
+
+    assert!(
+        dest.join("normal.bak").exists(),
+        "--delete-after: root .rsync-filter `- *.bak` must protect normal.bak",
+    );
+    assert!(
+        dest.join("sub/x.bak").exists(),
+        "--delete-after: ancestor .rsync-filter rule must inherit and protect sub/x.bak (bug #273 data loss)",
+    );
+    assert!(dest.join("keep.txt").exists());
+    assert!(dest.join("sub/keep2.txt").exists());
+}
+
+/// bug #273: with `--delete` (delete-DURING), the destination `.rsync-filter`
+/// has not been written yet when the per-directory delete sweep runs (it arrives
+/// with the transfer), so the isolated delete chain is empty and BOTH `.bak`
+/// files are removed - matching upstream, which is why the manual recommends
+/// `--delete-after` for per-dir-merge protection. Protecting them here (the old
+/// behaviour, which leaked source-side rules into the during sweep) would
+/// diverge from upstream.
+///
+/// upstream: `rsync -avF --delete` deletes both `normal.bak` and `sub/x.bak`
+/// (rsync.1.md:4419 - the receiver has not merged the dir's rules yet).
+#[test]
+fn perdir_merge_delete_during_matches_upstream_no_protection() {
+    let temp = tempdir().expect("tempdir");
+    let (source_operand, dest) = seed_perdir_delete_repro(temp.path());
+    let operands = vec![source_operand, dest.clone().into_os_string()];
+    let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
+
+    let options = LocalCopyOptions::default()
+        .recursive(true)
+        .delete(true)
+        .with_filter_program(Some(perdir_delete_program()));
+
+    plan.execute_with_options(LocalCopyExecution::Apply, options)
+        .expect("copy succeeds");
+
+    assert!(
+        !dest.join("normal.bak").exists(),
+        "--delete (during): normal.bak must be deleted (dest .rsync-filter not present yet)",
+    );
+    assert!(
+        !dest.join("sub/x.bak").exists(),
+        "--delete (during): sub/x.bak must be deleted (no source-side rule leak into the during sweep)",
+    );
+    assert!(dest.join("keep.txt").exists());
+    assert!(dest.join("sub/keep2.txt").exists());
+}

@@ -203,9 +203,33 @@ impl ReceiverContext {
         // match NFC names from the sender's file list.
         let mut dir_children: HashMap<PathBuf, HashSet<std::ffi::OsString>> = HashMap::new();
 
+        // upstream: generator.c:do_delete_pass() (376), recv_generator (1534),
+        // and the inc-recurse delete-during loop (2317) all call delete_in_dir()
+        // for a flist directory ONLY when it carries FLAG_CONTENT_DIR - a
+        // directory the sender actually recursed into. A non-content dir gets
+        // change_local_filter_dir() instead and is never scanned for deletion.
+        // The transfer root "." is a content dir for a recursive transfer but
+        // not for --files-from, where the root is sent as an implied dir
+        // (flist.c:2419 send_file_name(".", ... & ~FLAG_CONTENT_DIR), decoded as
+        // content_dir() == false). Likewise every implied parent dir created
+        // under --files-from / --relative clears FLAG_CONTENT_DIR
+        // (flist.c:1949). Only content dirs are scan targets; scanning an
+        // implied dir would delete a stale destination file inside it that
+        // upstream preserves (DATA-LOSS).
+        //
+        // `content_dirs` records exactly which file-list directories carry the
+        // flag, so `dirs_to_scan` can be filtered to them below. The keep-set
+        // map (`dir_children`) is still built for every parent - it only decides
+        // which children survive a scan, not whether the parent is scanned.
+        let mut root_is_content_dir = false;
+        let mut content_dirs: HashSet<PathBuf> = HashSet::new();
+
         for entry in &self.file_list {
             let relative = entry.path();
             if relative.as_os_str() == "." {
+                if entry.is_dir() && entry.content_dir() {
+                    root_is_content_dir = true;
+                }
                 continue;
             }
             let parent = relative.parent().map_or_else(
@@ -227,30 +251,39 @@ impl ReceiverContext {
 
             // upstream: generator.c:delete_in_dir() runs for EVERY content
             // directory in the file list, regardless of whether any of that
-            // directory's source children are visible in the flist. A
+            // directory's source children are visible in the flist. A content
             // directory whose source children are all filter-hidden (e.g.
             // `--filter='hide,! */'`) must still be scanned so its extraneous
             // destination entries are removed; keying the scan set solely off
             // parents-with-a-visible-child leaves those entries undeleted.
-            // Register every directory in the file list as its own scan target
-            // with a (possibly empty) keep-set. Protection of entries that must
-            // survive is the responsibility of the per-candidate
+            // Register every content directory as its own scan target with a
+            // (possibly empty) keep-set. An implied (non-content) directory is
+            // NOT a scan target - upstream skips its delete_in_dir() entirely -
+            // so it is deliberately excluded here and filtered out of
+            // `dirs_to_scan` below. Protection of entries that must survive a
+            // scanned dir is the responsibility of the per-candidate
             // `allows_deletion` check below - which consults the per-directory
             // merge chain when one is reloaded for the directory, and otherwise
             // the flat global chain (complete when no per-dir merges exist) -
             // not of pruning the scan set.
-            if entry.is_dir() {
+            if entry.is_dir() && entry.content_dir() {
                 dir_children.entry(relative.to_path_buf()).or_default();
+                content_dirs.insert(relative.to_path_buf());
             }
         }
 
-        // upstream: generator.c:delete_in_dir() always runs for the transfer
-        // root. When every source entry is filter-excluded (e.g. `--exclude='*'
-        // --delete-excluded`) the file list contains only "." and the loop
-        // above registers no directories, so the root would never be scanned
-        // and top-level extraneous entries would survive. Register "." with a
-        // (possibly empty) keep-set so the root is always a scan target.
-        dir_children.entry(PathBuf::from(".")).or_default();
+        // upstream: generator.c:do_delete_pass() runs delete_in_dir(".") only
+        // when the received root carries FLAG_CONTENT_DIR. For a recursive
+        // transfer the root is a content dir even when every source entry is
+        // filter-excluded (e.g. `--exclude='*' --delete-excluded`, whose file
+        // list contains only "."), so top-level extraneous entries are still
+        // removed. For --files-from the root is an implied (non-content) dir, so
+        // its stale top-level destination entries are preserved. Register "."
+        // with a (possibly empty) keep-set only in the content-dir case.
+        if root_is_content_dir {
+            dir_children.entry(PathBuf::from(".")).or_default();
+            content_dirs.insert(PathBuf::from("."));
+        }
 
         // Sort the scan set so directory processing is deterministic across
         // process runs. `HashMap::keys()` yields hash-randomized order, which
@@ -258,7 +291,19 @@ impl ReceiverContext {
         // The final emission order is re-derived from the deleted set in
         // `order_deletions_upstream`; sorting here keeps the scan/unlink work
         // itself reproducible without serializing it.
-        let mut dirs_to_scan: Vec<PathBuf> = dir_children.keys().cloned().collect();
+        // Restrict the scan set to content directories. The keep-set map keys
+        // also include implied parent directories inferred from a visible
+        // child (e.g. `subdir` for a `--files-from` entry `subdir/file`), which
+        // upstream never scans for deletion (FLAG_CONTENT_DIR is clear). Scanning
+        // one would delete a stale destination file inside the implied dir that
+        // upstream preserves (DATA-LOSS). Filtering by `content_dirs` keeps the
+        // scan targets exactly the directories whose received entry carries
+        // FLAG_CONTENT_DIR, matching the generator.c:376/1534/2317 gate.
+        let mut dirs_to_scan: Vec<PathBuf> = dir_children
+            .keys()
+            .filter(|dir| content_dirs.contains(*dir))
+            .cloned()
+            .collect();
         dirs_to_scan.sort_unstable();
         logging::debug_log!(
             Del,

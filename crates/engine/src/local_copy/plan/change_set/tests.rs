@@ -1,5 +1,5 @@
+use ::metadata::ModifyWindow;
 use std::fs;
-use std::time::Duration;
 
 use ::metadata::MetadataOptions;
 
@@ -260,7 +260,7 @@ fn for_file_new_destination_sets_size_changed() {
         false,
         false,
         false,
-        Duration::ZERO,
+        ModifyWindow::ZERO,
     );
 
     assert!(change_set.size_changed());
@@ -283,7 +283,7 @@ fn for_file_wrote_data_sets_checksum_changed() {
         false,
         false,
         true, // checksum mode active (gates position-2 `c` glyph per upstream generator.c:1942)
-        Duration::ZERO,
+        ModifyWindow::ZERO,
     );
 
     assert!(change_set.checksum_changed());
@@ -305,7 +305,7 @@ fn for_file_xattrs_enabled_sets_xattr_changed() {
         false,
         true, // xattrs enabled
         false,
-        Duration::ZERO,
+        ModifyWindow::ZERO,
     );
 
     assert!(change_set.xattr_changed());
@@ -327,7 +327,7 @@ fn for_file_acls_enabled_sets_acl_changed() {
         false,
         false,
         true, // acls enabled
-        Duration::ZERO,
+        ModifyWindow::ZERO,
     );
 
     assert!(change_set.acl_changed());
@@ -349,7 +349,7 @@ fn for_file_no_changes_same_metadata() {
         false, // no data written
         false,
         false,
-        Duration::ZERO,
+        ModifyWindow::ZERO,
     );
 
     assert!(!change_set.checksum_changed());
@@ -375,7 +375,7 @@ fn for_file_size_difference_detected() {
         false,
         false,
         false,
-        Duration::ZERO,
+        ModifyWindow::ZERO,
     );
 
     assert!(change_set.size_changed());
@@ -397,7 +397,7 @@ fn for_file_times_preserved_new_destination() {
         false,
         false,
         false,
-        Duration::ZERO,
+        ModifyWindow::ZERO,
     );
 
     assert_eq!(change_set.time_change(), Some(TimeChange::Modified));
@@ -419,7 +419,7 @@ fn for_file_times_not_preserved_wrote_data() {
         true, // wrote data
         false,
         false,
-        Duration::ZERO,
+        ModifyWindow::ZERO,
     );
 
     assert_eq!(change_set.time_change(), Some(TimeChange::TransferTime));
@@ -441,7 +441,7 @@ fn for_file_times_not_preserved_new_destination() {
         false,
         false,
         false,
-        Duration::ZERO,
+        ModifyWindow::ZERO,
     );
 
     assert_eq!(change_set.time_change(), Some(TimeChange::TransferTime));
@@ -463,7 +463,7 @@ fn for_file_times_not_changed_existing_no_write() {
         false, // no write
         false,
         false,
-        Duration::ZERO,
+        ModifyWindow::ZERO,
     );
 
     assert!(change_set.time_change().is_none());
@@ -500,7 +500,7 @@ fn for_file_within_window_mtime_drift_reports_no_time_change() {
         false,
         false,
         false,
-        Duration::from_secs(2),
+        ModifyWindow::from_secs(2),
     );
     assert!(within.time_change().is_none());
     assert!(!within.has_any_change());
@@ -514,7 +514,7 @@ fn for_file_within_window_mtime_drift_reports_no_time_change() {
         false,
         false,
         false,
-        Duration::ZERO,
+        ModifyWindow::ZERO,
     );
     assert_eq!(exact.time_change(), Some(TimeChange::Modified));
 }
@@ -544,7 +544,7 @@ fn change_set_detects_size_and_time_changes() {
         true,
         false,
         false,
-        Duration::ZERO,
+        ModifyWindow::ZERO,
     );
 
     assert!(change_set.size_changed());
@@ -590,7 +590,7 @@ fn change_set_detects_permission_changes_for_existing_destination() {
         false,
         false,
         false,
-        Duration::ZERO,
+        ModifyWindow::ZERO,
     );
 
     assert!(change_set.permissions_changed());
@@ -626,7 +626,7 @@ fn change_set_detects_owner_override_mismatch() {
         false,
         false,
         false,
-        Duration::ZERO,
+        ModifyWindow::ZERO,
     );
 
     assert!(change_set.owner_changed());
@@ -660,7 +660,7 @@ fn change_set_detects_group_override_mismatch() {
         false,
         false,
         false,
-        Duration::ZERO,
+        ModifyWindow::ZERO,
     );
 
     assert!(change_set.group_changed());
@@ -691,7 +691,7 @@ fn for_existing_directory_flags_time_change_when_mtimes_differ() {
         false,
         false,
         false,
-        Duration::ZERO,
+        ModifyWindow::ZERO,
     );
 
     assert_eq!(change_set.time_change(), Some(TimeChange::Modified));
@@ -731,7 +731,7 @@ fn for_existing_directory_ignores_sub_second_mtime_drift() {
         false,
         false,
         false,
-        Duration::ZERO,
+        ModifyWindow::ZERO,
     );
 
     assert_eq!(change_set.time_change(), None);
@@ -764,7 +764,7 @@ fn for_existing_directory_no_change_when_mtimes_match() {
         false,
         false,
         false,
-        Duration::ZERO,
+        ModifyWindow::ZERO,
     );
 
     assert_eq!(change_set.time_change(), None);
@@ -796,7 +796,7 @@ fn for_existing_directory_omit_dir_times_suppresses_time_flag() {
         true,
         false,
         false,
-        Duration::ZERO,
+        ModifyWindow::ZERO,
     );
 
     assert_eq!(change_set.time_change(), None);
@@ -895,7 +895,7 @@ fn for_recreated_device_sets_checksum_and_time_when_content_differs() {
         &src_meta,
         &dst_meta,
         &options,
-        Duration::ZERO,
+        ModifyWindow::ZERO,
         true,
         false,
         false,
@@ -929,7 +929,7 @@ fn for_recreated_device_reports_transfer_time_when_times_not_preserved() {
         &src_meta,
         &dst_meta,
         &options,
-        Duration::ZERO,
+        ModifyWindow::ZERO,
         true,
         false,
         false,
@@ -965,7 +965,7 @@ fn for_recreated_device_no_change_when_content_and_time_match() {
         &src_meta,
         &dst_meta,
         &options,
-        Duration::ZERO,
+        ModifyWindow::ZERO,
         false,
         false,
         false,

@@ -41,6 +41,40 @@ fn clap_error_uses_canonical_exit_code_text() {
 }
 
 #[test]
+fn clap_value_error_does_not_double_error_prefix() {
+    // A clap value-validation failure (here `--block-size`) surfaces through
+    // `clap::Error::to_string()`, which prepends a stock `error: ` header. oc
+    // wraps the detail with the canonical `syntax or usage error: ` category
+    // (upstream `rerr_names`), so an unstripped clap header would render the
+    // wording twice as `syntax or usage error: error: ...`. Upstream rsync
+    // prints the category exactly once; this guards that parity.
+    let (code, _stdout, stderr) = run_with_args([
+        OsString::from(OC_RSYNC),
+        OsString::from("--block-size=abc"),
+        OsString::from("src"),
+        OsString::from("dst"),
+    ]);
+
+    // RERR_SYNTAX (1) must be preserved; only the wording changes.
+    assert_eq!(code, 1);
+
+    let rendered = String::from_utf8(stderr).expect("diagnostic utf8");
+    assert!(
+        rendered.contains("syntax or usage error"),
+        "diagnostic should keep the canonical rerr_names category"
+    );
+    assert!(
+        rendered.contains("invalid --block-size value 'abc'"),
+        "diagnostic should include the clap-provided detail"
+    );
+    assert!(
+        !rendered.contains("syntax or usage error: error:"),
+        "clap's stock `error: ` header must not double the category prefix"
+    );
+    assert_contains_client_trailer(&rendered);
+}
+
+#[test]
 fn run_without_operands_emits_usage_for_oc_rsync() {
     let (code, stdout, stderr) = run_with_args([OsString::from(OC_RSYNC)]);
 

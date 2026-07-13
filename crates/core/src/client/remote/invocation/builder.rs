@@ -311,8 +311,20 @@ impl<'a> RemoteInvocationBuilder<'a> {
             args.push(OsString::from(format!("--max-alloc={limit}")));
         }
 
-        if let Some(window) = self.config.modify_window() {
-            args.push(OsString::from(format!("--modify-window={window}")));
+        // upstream: options.c:2873-2875 - server_options() forwards the
+        // modify_window value only when it was explicitly set AND the local
+        // side is the sender (`modify_window_set && am_sender`): the remote
+        // receiver's generator is what performs the mtime quick-check. A
+        // negative window (nanosecond-exact) is sent via the short `-@%d`
+        // spelling (e.g. `-@-1`); a non-negative window uses `--modify-window=%d`.
+        if self.role == RemoteRole::Sender
+            && let Some(window) = self.config.modify_window()
+        {
+            if window < 0 {
+                args.push(OsString::from(format!("-@{window}")));
+            } else {
+                args.push(OsString::from(format!("--modify-window={window}")));
+            }
         }
 
         // upstream: options.c - compress_level sent to server when
@@ -633,6 +645,15 @@ impl<'a> RemoteInvocationBuilder<'a> {
             if plan.remote_from0 {
                 args.push(OsString::from("--from0"));
             }
+            // upstream: options.c:368-369 - a peer that reads the --files-from
+            // list defaults relative_paths=1 (options.c:2205-2206). When the
+            // client resolved relative paths off (explicit --no-relative), emit
+            // --no-relative so the remote sender overrides that default and
+            // flattens each entry to its basename (flist.c:2338-2349) with no
+            // implied parent dirs.
+            if !self.config.relative_paths() {
+                args.push(OsString::from("--no-relative"));
+            }
         }
 
         // upstream: options.c:2894-2898 - --usermap / --groupmap are
@@ -687,7 +708,15 @@ impl<'a> RemoteInvocationBuilder<'a> {
         // 'R' to match this behaviour.
         let files_from_active = self.config.files_from().is_active();
         let effective_recursive = self.config.recursive() && !files_from_active;
-        let effective_relative = self.config.relative_paths() || files_from_active;
+        // upstream: options.c:109-110 - server_options() packs the compact `R`
+        // letter for the RESOLVED relative_paths. `relative_paths()` already
+        // folds in the --files-from default (options.c:2205-2206: relative
+        // defaults to 1 under --files-from) at the CLI layer, so it must NOT be
+        // re-forced with `|| files_from_active` - that wrongly packs `R` even
+        // when the user passed --no-relative, defeating the --no-relative arg
+        // emitted below and making the remote sender keep the leading path
+        // components (`sub/file` instead of `file`).
+        let effective_relative = self.config.relative_paths();
         let effective_dirs = self.config.dirs() || files_from_active;
         // upstream: options.c:2641 / :2655 - several compact letters live in a
         // direction-specific branch. `am_sender` is true when the local process

@@ -176,3 +176,29 @@ fn daemon_async_rejects_privileged_module() {
         "expected privileged-module refusal, got: {rendered}"
     );
 }
+
+/// The async accept loop's worker-thread cap must never throttle below the
+/// operator's configured `max connections`, while still applying the
+/// flood-protection floor when the limit is unset or lower than the floor.
+#[cfg(feature = "async-daemon")]
+#[test]
+fn async_max_inflight_honors_configured_limit() {
+    use crate::async_listener::DEFAULT_MAX_INFLIGHT_WORKERS;
+    use crate::daemon::async_max_inflight;
+
+    // Unbounded (sync default): the flood floor alone applies.
+    assert_eq!(async_max_inflight(None), DEFAULT_MAX_INFLIGHT_WORKERS);
+
+    // A limit below the floor keeps the floor: the per-session admission
+    // semaphore refuses excess connections before the floor ever binds.
+    assert_eq!(async_max_inflight(Some(10)), DEFAULT_MAX_INFLIGHT_WORKERS);
+    assert_eq!(
+        async_max_inflight(Some(DEFAULT_MAX_INFLIGHT_WORKERS)),
+        DEFAULT_MAX_INFLIGHT_WORKERS
+    );
+
+    // A limit above the floor raises the cap so all configured sessions run
+    // concurrently instead of being silently capped at the floor.
+    assert_eq!(async_max_inflight(Some(1000)), 1000);
+    assert_eq!(async_max_inflight(Some(5000)), 5000);
+}

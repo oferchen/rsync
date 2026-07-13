@@ -571,7 +571,7 @@ fn modify_window_tolerates_small_differences() {
             LocalCopyExecution::Apply,
             LocalCopyOptions::default()
                 .times(true)
-                .with_modify_window(Duration::from_secs(1)),  // 1 second tolerance
+                .with_modify_window(ModifyWindow::from_secs(1)),  // 1 second tolerance
         )
         .expect("copy succeeds");
 

@@ -222,9 +222,16 @@ fn progress_reports_unknown_totals_with_placeholder() {
     assert_eq!(code, 0);
     assert!(stderr.is_empty());
     let rendered = String::from_utf8(stdout).expect("progress output is UTF-8");
+    // upstream: receiver.c:731-782 - a lone special (fifo) is not ITEM_TRANSFER,
+    // so per-file `--progress` prints no per-file progress block for it. The
+    // terminal `end_progress(0)` summary at NDX_DONE fires only under
+    // `--info=progress2` (receiver.c:674-676), not plain `--progress`. The
+    // fifo's name still prints via the name-output path. Verified against rsync
+    // 3.4.4: `--progress --specials <fifo>` emits just `<fifo>\n` - no `??%`
+    // placeholder, no `to-chk` line.
     assert!(rendered.contains("fifo.in"));
-    assert!(rendered.contains("??%"));
-    assert!(rendered.contains("to-chk=0/1"));
+    assert!(!rendered.contains("??%"));
+    assert!(!rendered.contains("to-chk"));
 
     let metadata = std::fs::symlink_metadata(&destination).expect("stat destination");
     assert!(metadata.file_type().is_fifo());

@@ -439,6 +439,38 @@ fn append_is_known_server_long_flag() {
     assert!(is_known_server_long_flag("--append"));
 }
 
+/// Task #292: upstream server_options() emits the long `--no-relative` when
+/// relative paths are off (options.c:368-369), and it must be recognised so it
+/// is consumed as a flag - not treated as the transfer-root positional path.
+/// This reproduces the exact argv an upstream client sends for a
+/// `--files-from --no-relative` pull.
+#[test]
+fn no_relative_is_recognised_and_not_a_positional() {
+    assert!(is_known_server_long_flag("--no-relative"));
+    assert!(is_known_server_long_flag("--no-R"));
+    assert!(is_known_server_long_flag("--relative"));
+
+    let args = vec![
+        OsString::from("--server"),
+        OsString::from("--sender"),
+        OsString::from("-logDtpe.LsfxCIvu"),
+        OsString::from("--files-from=-"),
+        OsString::from("--from0"),
+        OsString::from("--no-relative"),
+        OsString::from("."),
+        OsString::from("/src/"),
+    ];
+    let (flags, pos_args) = parse_server_flag_string_and_args(&args);
+    assert_eq!(flags, "-logDtpe.LsfxCIvu");
+    // The real source path must be the sole positional; `--no-relative` must
+    // NOT leak in as the transfer root (which caused `link_stat
+    // "--no-relative/..."` on the sender).
+    assert_eq!(pos_args, vec![OsString::from("/src/")]);
+
+    let long = parse_server_long_flags(&args);
+    assert_eq!(long.relative, Some(false));
+}
+
 /// `parse_server_long_flags` must capture both split and joined
 /// `--partial-dir` forms into `ServerLongFlags::partial_dir`.
 #[test]
@@ -471,6 +503,43 @@ fn long_flags_captures_joined_partial_dir() {
     assert!(!flags.delay_updates);
 }
 
+/// Regression for the `--only-write-batch=X` server arg (task #296). Upstream
+/// `server_options()` (options.c:2850-2851) emits the literal placeholder
+/// `--only-write-batch=X` to a push receiver. Before recognition it leaked into
+/// the positional list and the receiver tried to create a destination root
+/// literally named `--only-write-batch=X` (exit 12). It must be captured as a
+/// flag instead.
+#[test]
+fn parse_server_args_skips_only_write_batch_flag() {
+    let args = vec![
+        OsString::from("--server"),
+        OsString::from("-logDtpre.iLsfxCIvu"),
+        OsString::from("--only-write-batch=X"),
+        OsString::from("."),
+        OsString::from("dest/"),
+    ];
+    let (flags, pos_args) = parse_server_flag_string_and_args(&args);
+    assert_eq!(flags, "-logDtpre.iLsfxCIvu");
+    assert_eq!(
+        pos_args,
+        vec![OsString::from("dest/")],
+        "--only-write-batch=X must not leak into the positional path list",
+    );
+    assert!(is_known_server_long_flag("--only-write-batch=X"));
+}
+
+/// `parse_server_long_flags` records `--only-write-batch=X` as
+/// `only_write_batch == true`.
+#[test]
+fn long_flags_captures_only_write_batch() {
+    let args = vec![
+        OsString::from("--server"),
+        OsString::from("--only-write-batch=X"),
+    ];
+    let flags = parse_server_long_flags(&args);
+    assert!(flags.only_write_batch);
+}
+
 #[test]
 fn long_flags_defaults() {
     let args: Vec<OsString> = vec![OsString::from("--server")];
@@ -482,6 +551,7 @@ fn long_flags_defaults() {
     assert!(!flags.write_devices);
     assert!(!flags.trust_sender);
     assert!(!flags.qsort);
+    assert!(!flags.only_write_batch);
     assert!(flags.checksum_seed.is_none());
     assert!(flags.checksum_choice.is_none());
     assert!(flags.min_size.is_none());
@@ -819,6 +889,73 @@ fn long_flags_specials_and_no_specials() {
 
     assert!(is_known_server_long_flag("--specials"));
     assert!(is_known_server_long_flag("--no-specials"));
+}
+
+// upstream: options.c:2750-2753 - `if (xfer_dirs && !recurse && delete_mode &&
+// am_sender) args[ac++] = "--no-r"`. A real upstream client running
+// `--files-from --delete` forwards `--no-r`; the server-side popt table clears
+// `recurse` (options.c:623). Without recognition the token leaks into the
+// positional path list and the receiver tries to create a destination root
+// literally named `--no-r`, failing with "Permission denied" (exit 1).
+#[test]
+fn long_flags_no_r_recognized_and_parsed() {
+    let flags = parse_server_long_flags(&[OsString::from("--server"), OsString::from("--no-r")]);
+    assert!(flags.no_recurse);
+
+    let flags = parse_server_long_flags(&[OsString::from("--server")]);
+    assert!(!flags.no_recurse);
+
+    assert!(is_known_server_long_flag("--no-r"));
+}
+
+// upstream: options.c:2955-2959 - under `--inplace`, `if (sparse_files &&
+// !whole_file && am_sender) args[ac++] = "--no-W"`. Clears `whole_file`
+// server-side (options.c:746) so `--inplace --sparse` streams a delta.
+#[test]
+fn long_flags_no_w_recognized_and_parsed() {
+    let flags = parse_server_long_flags(&[OsString::from("--server"), OsString::from("--no-W")]);
+    assert!(flags.no_whole_file);
+
+    let flags = parse_server_long_flags(&[OsString::from("--server")]);
+    assert!(!flags.no_whole_file);
+
+    assert!(is_known_server_long_flag("--no-W"));
+}
+
+// upstream: options.c:2962-2973 - `--no-relative` is emitted with
+// `--files-from` when `!relative_paths`. Clears `relative_paths` server-side
+// (options.c:693).
+#[test]
+fn long_flags_no_relative_recognized_and_parsed() {
+    let flags =
+        parse_server_long_flags(&[OsString::from("--server"), OsString::from("--no-relative")]);
+    assert_eq!(flags.relative, Some(false));
+
+    let flags = parse_server_long_flags(&[OsString::from("--server")]);
+    assert_eq!(flags.relative, None);
+
+    assert!(is_known_server_long_flag("--no-relative"));
+}
+
+// Regression: the four `--no-*` negations upstream emits must be split off the
+// compact flag string and never surface as positional destination paths. This
+// reproduces the `--files-from --delete` push where the client sends `--no-r`.
+// upstream: options.c:2753/2959/2973/2977.
+#[test]
+fn no_negations_do_not_leak_as_positional_paths() {
+    let args = [
+        OsString::from("--server"),
+        OsString::from("--no-r"),
+        OsString::from("--no-W"),
+        OsString::from("--no-relative"),
+        OsString::from("--no-implied-dirs"),
+        OsString::from("-logDtpr"),
+        OsString::from("."),
+        OsString::from("dst/"),
+    ];
+    let (flag_string, positional) = parse_server_flag_string_and_args(&args[1..]);
+    assert_eq!(flag_string, "-logDtpr");
+    assert_eq!(positional, vec![OsString::from("dst/")]);
 }
 
 #[test]
@@ -1666,4 +1803,96 @@ fn long_flags_captures_split_files_from_value() {
     ];
     let flags = parse_server_long_flags(&args);
     assert_eq!(flags.files_from.as_deref(), Some("/tmp/list"));
+}
+
+// -- Task #291: server_options() long-form flags that previously leaked into
+// -- the positional-path list, breaking the transfer. Each flag below is one
+// -- that upstream `server_options()` (options.c) emits but oc did not
+// -- recognise in `is_known_server_long_flag`.
+
+/// upstream: options.c:2908-2909 - `if (use_qsort) args[ac++] = "--use-qsort"`.
+/// This is the exact spelling server_options() emits (oc's own forwarder uses
+/// `--qsort`). It must be recognised so it does not leak, and it maps onto the
+/// same `qsort` sink so flist ordering matches upstream (flist.c:2991).
+#[test]
+fn long_flags_use_qsort_maps_to_qsort() {
+    let args = vec![OsString::from("--server"), OsString::from("--use-qsort")];
+    let flags = parse_server_long_flags(&args);
+    assert!(flags.qsort, "--use-qsort must drive the qsort sink");
+    assert!(is_known_server_long_flag("--use-qsort"));
+}
+
+/// upstream: options.c:2993-2994 - `if (open_noatime && preserve_atimes <= 1)
+/// args[ac++] = "--open-noatime"`, forwarded to the sender.
+#[test]
+fn long_flags_open_noatime() {
+    let args = vec![OsString::from("--server"), OsString::from("--open-noatime")];
+    let flags = parse_server_long_flags(&args);
+    assert!(flags.open_noatime);
+    assert!(is_known_server_long_flag("--open-noatime"));
+}
+
+/// upstream: options.c:2868-2871 - `--delete-missing-args` (missing_args == 2)
+/// and `--ignore-missing-args` (missing_args == 1). Mirrors the daemon
+/// long-form parser (long_form_args.rs).
+#[test]
+fn long_flags_missing_args_variants() {
+    let del = parse_server_long_flags(&[
+        OsString::from("--server"),
+        OsString::from("--delete-missing-args"),
+    ]);
+    assert!(del.delete_missing_args);
+    assert!(!del.ignore_missing_args);
+
+    let ign = parse_server_long_flags(&[
+        OsString::from("--server"),
+        OsString::from("--ignore-missing-args"),
+    ]);
+    assert!(ign.ignore_missing_args);
+    assert!(!ign.delete_missing_args);
+
+    assert!(is_known_server_long_flag("--delete-missing-args"));
+    assert!(is_known_server_long_flag("--ignore-missing-args"));
+}
+
+/// upstream: options.c:2848-2853 / 2990-2991 - `--force` (force_delete),
+/// `--super` (am_root > 1), and `--preallocate` (preallocate_files) are emitted
+/// in the am_sender block and reach a server acting as the receiver. oc has no
+/// content-affecting server sink for these (recursive delete already happens,
+/// root is already privileged, preallocation is content-invisible), but they
+/// MUST be recognised so they never surface as a positional destination path.
+#[test]
+fn force_super_preallocate_recognised_as_known_long_flags() {
+    assert!(is_known_server_long_flag("--force"));
+    assert!(is_known_server_long_flag("--super"));
+    assert!(is_known_server_long_flag("--preallocate"));
+}
+
+/// Regression for the positional leak: with the compact flag string present,
+/// none of the seven newly recognised long flags may fall through into
+/// `positional_args`; only the real destination path (`dst/`) survives. Without
+/// recognition the receiver tried to `mkdir` a root literally named after the
+/// first unrecognised flag and exited 12.
+#[test]
+fn parse_server_args_skips_task291_long_flags() {
+    let args = vec![
+        OsString::from("--server"),
+        OsString::from("-logDtpre.iLsfxCIvu"),
+        OsString::from("--force"),
+        OsString::from("--super"),
+        OsString::from("--preallocate"),
+        OsString::from("--open-noatime"),
+        OsString::from("--use-qsort"),
+        OsString::from("--delete-missing-args"),
+        OsString::from("--ignore-missing-args"),
+        OsString::from("."),
+        OsString::from("dst/"),
+    ];
+    let (flags, pos_args) = parse_server_flag_string_and_args(&args);
+    assert_eq!(flags, "-logDtpre.iLsfxCIvu");
+    assert_eq!(
+        pos_args,
+        vec![OsString::from("dst/")],
+        "task #291 long flags must not leak into positional args: {pos_args:?}",
+    );
 }

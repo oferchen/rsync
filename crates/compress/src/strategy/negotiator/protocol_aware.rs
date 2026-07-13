@@ -363,13 +363,33 @@ mod tests {
         assert_eq!(neg30.select_algorithm(&["none"], false), "none");
     }
 
+    #[cfg(feature = "lz4")]
     #[test]
-    fn protocol_aware_proto_30_lz4_not_auto_negotiated() {
+    fn protocol_aware_proto_30_lz4_auto_negotiated() {
+        // upstream: compat.c:100-112 valid_compressions_items[] is NOT gated by
+        // protocol version - lz4 is advertised at every negotiated protocol
+        // (30, 31, 32) whenever SUPPORT_LZ4 is compiled in. Wire safety against
+        // genuine proto-30 peers (e.g. rsync 3.0.9) comes from the `v`
+        // capability / CF_VARINT_FLIST_FLAGS handshake (do_negotiated_strings),
+        // not from pruning the list by version: a peer that lacks `v` never
+        // receives this list at all. lz4's wire framing is validated
+        // byte-for-byte against upstream 3.4.4.
+        let neg = ProtocolAwareCompressionNegotiator::new(30);
+        let supported = neg.supported_algorithms();
+        assert!(
+            supported.contains(&"lz4"),
+            "lz4 must appear in the version-independent advertisement list"
+        );
+    }
+
+    #[cfg(not(feature = "lz4"))]
+    #[test]
+    fn protocol_aware_proto_30_lz4_absent_without_feature() {
         let neg = ProtocolAwareCompressionNegotiator::new(30);
         let supported = neg.supported_algorithms();
         assert!(
             !supported.contains(&"lz4"),
-            "lz4 must not appear in auto-negotiation list"
+            "lz4 must not appear when the lz4 feature is disabled"
         );
     }
 

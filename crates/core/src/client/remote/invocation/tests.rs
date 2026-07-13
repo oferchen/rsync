@@ -1746,6 +1746,42 @@ fn includes_modify_window_long_arg() {
 }
 
 #[test]
+fn negative_modify_window_uses_short_at_spelling() {
+    // WHY: upstream options.c:2874 forwards a negative modify_window via the
+    // short `-@%d` spelling (`-@-1`), NOT `--modify-window=-1`, so a stock
+    // upstream `--server` receiver honours nanosecond-exact comparison. The
+    // long form would be rejected as an invalid unsigned value on the peer.
+    let config = ClientConfig::builder().modify_window(Some(-1)).build();
+    let args = build_sender_args(&config);
+    assert!(
+        args.iter().any(|a| a == "-@-1"),
+        "expected -@-1 in sender args for a negative window: {args:?}"
+    );
+    assert!(
+        !args.iter().any(|a| a.starts_with("--modify-window=")),
+        "negative window must not use the long spelling: {args:?}"
+    );
+}
+
+#[test]
+fn modify_window_not_forwarded_on_pull() {
+    // WHY: upstream options.c:2873 gates the forwarded arg on `am_sender`. On a
+    // pull the local client is the receiver and runs the mtime quick-check
+    // itself, so nothing is sent to the remote sender. Forwarding it would
+    // diverge from upstream's argv byte-for-byte.
+    let config = ClientConfig::builder().modify_window(Some(2)).build();
+    let args = build_receiver_args(&config);
+    assert!(
+        !args.iter().any(|a| a.starts_with("--modify-window=")),
+        "pull must not forward --modify-window: {args:?}"
+    );
+    assert!(
+        !args.iter().any(|a| a.starts_with("-@")),
+        "pull must not forward -@ window: {args:?}"
+    );
+}
+
+#[test]
 fn includes_compress_level_long_arg() {
     let config = ClientConfig::builder()
         .compress(true)
@@ -3588,6 +3624,60 @@ fn pull_with_local_files_from_sends_files_from_stdin_to_remote() {
     assert!(
         args.iter().any(|a| a == "--from0"),
         "PULL with local files-from must forward --from0 to the remote: {args:?}"
+    );
+}
+
+/// upstream: options.c:368-369 - a PULL with `--files-from --no-relative`
+/// (relative_paths resolved off) must forward `--no-relative` to the remote
+/// sender AND must NOT pack the compact `R` letter. Without this the remote
+/// defaults relative_paths=1 (options.c:2205-2206) and keeps the leading path
+/// components (`sub/file` instead of the flattened `file`).
+#[test]
+fn pull_with_files_from_no_relative_forwards_no_relative_and_omits_r() {
+    use crate::client::config::FilesFromSource;
+    use std::path::PathBuf;
+
+    let config = ClientConfig::builder()
+        .files_from(FilesFromSource::LocalFile(PathBuf::from("/tmp/list.txt")))
+        .relative_paths(false)
+        .build();
+    let builder = RemoteInvocationBuilder::new(&config, RemoteRole::Receiver);
+    let args = builder.build("/remote/source");
+
+    assert!(
+        args.iter().any(|a| a == "--no-relative"),
+        "files-from + non-relative must forward --no-relative: {args:?}"
+    );
+    let flags = receiver_flag_string(&config);
+    assert!(
+        !flags.contains('R'),
+        "files-from + non-relative must NOT pack compact 'R': {flags}"
+    );
+}
+
+/// upstream: options.c:109-110 - a PULL with `--files-from` defaulting to
+/// relative (relative_paths resolved on) packs the compact `R` letter and does
+/// NOT forward `--no-relative`.
+#[test]
+fn pull_with_files_from_relative_packs_r_and_omits_no_relative() {
+    use crate::client::config::FilesFromSource;
+    use std::path::PathBuf;
+
+    let config = ClientConfig::builder()
+        .files_from(FilesFromSource::LocalFile(PathBuf::from("/tmp/list.txt")))
+        .relative_paths(true)
+        .build();
+    let builder = RemoteInvocationBuilder::new(&config, RemoteRole::Receiver);
+    let args = builder.build("/remote/source");
+
+    assert!(
+        !args.iter().any(|a| a == "--no-relative"),
+        "relative files-from must NOT forward --no-relative: {args:?}"
+    );
+    let flags = receiver_flag_string(&config);
+    assert!(
+        flags.contains('R'),
+        "relative files-from must pack compact 'R': {flags}"
     );
 }
 

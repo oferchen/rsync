@@ -450,6 +450,7 @@ impl ReceiverContext {
             target_mtime,
             fuzzy_level: self.config.flags.fuzzy_level,
             reference_directories: &self.config.reference_directories,
+            partial_dir: self.config.partial_dir.as_deref(),
             protocol: self.protocol,
             checksum_length,
             checksum_algorithm,

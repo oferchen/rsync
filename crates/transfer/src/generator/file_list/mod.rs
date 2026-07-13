@@ -38,6 +38,27 @@ use super::GeneratorContext;
 #[cfg(all(unix, test))]
 pub(super) use self::entry::rdev_to_major_minor;
 
+/// Marks a directory entry as an implied parent directory on the wire.
+///
+/// upstream: flist.c:1949 - `send_implied_dirs()` sets each implied parent's
+/// flags to `(flags | FLAG_IMPLIED_DIR) & ~(FLAG_TOP_DIR | FLAG_CONTENT_DIR)`,
+/// clearing CONTENT_DIR so the receiver does NOT scan the dir for `--delete`.
+/// upstream: flist.c:2419 - the `--files-from`/`--relative` transfer-root `.`
+/// is sent the same way (`& ~FLAG_CONTENT_DIR`). At encode time (flist.c:426)
+/// a dir with FLAG_IMPLIED_DIR and no FLAG_CONTENT_DIR serializes as
+/// `XMIT_TOP_DIR | XMIT_NO_CONTENT_DIR`, which the receiver decodes back to
+/// FLAG_IMPLIED_DIR (flist.c:1117-1118) - never FLAG_CONTENT_DIR. In oc's flat
+/// encoding that wire pair is `top_dir = true` + `content_dir = false`
+/// (write/xflags.rs:93,284). A real content dir keeps `content_dir = true`.
+///
+/// Marking implied parents as content dirs (the old default) makes a real
+/// upstream receiver scan them for `--delete` and over-delete stale files
+/// upstream preserves (data loss).
+fn mark_implied_dir(entry: &mut FileEntry) {
+    entry.set_top_dir(true);
+    entry.set_content_dir(false);
+}
+
 impl GeneratorContext {
     /// Builds the file list from the specified paths.
     ///
@@ -91,7 +112,17 @@ impl GeneratorContext {
             if !self.try_walk_source_entry(&base, &path)? {
                 continue;
             }
-            if relative_paths {
+            // upstream: flist.c:2257-2258 - `if (relative_paths &&
+            // protocol_version >= 30) implied_dirs = 1;` forces the sender to
+            // emit flagged implied parent dirs at protocol >= 30 regardless of
+            // --no-implied-dirs. At protocol < 30 the flag is honoured
+            // (flist.c:2468 `else if (implied_dirs && ...)`), so
+            // --no-implied-dirs omits the implied parents from the flist and the
+            // receiver recreates them via make_path (generator.c:1317) without
+            // their source metadata. Mirror both: emit when implied dirs are on
+            // OR the protocol forces them.
+            if relative_paths && (!self.config.flags.no_implied_dirs || self.protocol.as_u8() >= 30)
+            {
                 self.emit_implied_parents(&base, &path, &mut implied_ancestors)?;
             }
         }
@@ -138,14 +169,15 @@ impl GeneratorContext {
     /// Each entry's wire-side relative name is computed by stripping its own
     /// `base`, matching upstream rsync's `chdir(dir)` + transmit-`fn` split
     /// (`flist.c:2316-2330`). The `base_dir` argument is the source argument
-    /// shared by entries without a `/./` anchor and is used to emit the
-    /// transfer-root `.` entry.
+    /// shared by entries without a `/./` anchor and, in `--relative` mode with
+    /// a leading `./` anchor, roots the implied transfer-root `.` entry.
     ///
     /// # Upstream Reference
     ///
     /// - `flist.c:2240-2264` - `change_dir(argv[0])` then read relative filenames
     /// - `flist.c:2316-2330` - per-entry `/./` anchor split
-    /// - `flist.c:2287` - `send_file_name(".", ...)` for the transfer-root entry
+    /// - `flist.c:2368-2419` - `implied_dot_dir` gates the transfer-root `.`
+    ///   emission via `send_file_name(".", ..., FLAG_IMPLIED_DIR & ~FLAG_CONTENT_DIR, ...)`
     pub fn build_file_list_with_base(
         &mut self,
         base_dir: &Path,
@@ -160,19 +192,38 @@ impl GeneratorContext {
         self.file_list.reserve(FLIST_START);
         self.source_bases.reserve(FLIST_START);
 
-        // upstream: flist.c:2287 - emit "." with XMIT_TOP_DIR for the root
-        // transfer directory so --delete works correctly on the receiver side.
-        // Skip when any entry's effective walk will already emit a `.` (i.e.
-        // an entry whose `/./` anchor produced `path == base`). Otherwise a
-        // duplicate `.` would race the entry's `.` on the wire and could
-        // overwrite the transfer-root permissions with the per-entry root's
-        // permissions when the upstream receiver dedupes by name.
-        let entry_emits_root_dot = entries.iter().any(|e| e.path == e.base);
-        if !entry_emits_root_dot {
+        // upstream: flist.c:2368-2419 - the transfer-root `.` entry is emitted
+        // ONLY in `--relative` mode and ONLY when some `--files-from` entry has
+        // a leading `./` anchor (`implied_dot_dir`). Upstream emits it via
+        // `send_file_name(".", ..., (flags | FLAG_IMPLIED_DIR) & ~FLAG_CONTENT_DIR, ...)`
+        // (flist.c:2419): FLAG_IMPLIED_DIR set, FLAG_TOP_DIR NOT set,
+        // FLAG_CONTENT_DIR cleared. Such an entry does NOT scope `--delete` over
+        // the destination root. A plain list with no `./` anchor emits NO `.`
+        // entry at all.
+        //
+        // Emitting an unconditional `.` here (the old behaviour) produced a
+        // spurious `.d ./` itemize row on the receiver and, worse, with
+        // `--delete` its TOP_DIR + CONTENT_DIR flags scoped deletion over the
+        // destination root, deleting stale root-level files that upstream
+        // preserves (data loss).
+        //
+        // Wire encoding: FLAG_IMPLIED_DIR with FLAG_CONTENT_DIR cleared
+        // serializes as XMIT_TOP_DIR | XMIT_NO_CONTENT_DIR (flist.c:426-427);
+        // the receiver decodes that pair back to FLAG_IMPLIED_DIR
+        // (flist.c:1117-1118), never FLAG_TOP_DIR/FLAG_CONTENT_DIR. In oc's flat
+        // encoding that is `set_top_dir(true)` + `set_content_dir(false)`
+        // (`calculate_basic_flags`/`calculate_directory_flags`).
+        //
+        // A leading-`./` entry never has `path == base` (a bare `.`/`./` DOTDIR
+        // does, but carries `implied_dot == false`), so the two never collide
+        // on a duplicate root `.`.
+        let emit_implied_root_dot =
+            self.config.flags.relative && entries.iter().any(|e| e.implied_dot);
+        if emit_implied_root_dot {
             if let Ok(meta) = std::fs::symlink_metadata(base_dir) {
                 if meta.is_dir() {
                     let mut dot_entry = self.create_entry(base_dir, PathBuf::from("."), &meta)?;
-                    dot_entry.set_top_dir(true);
+                    mark_implied_dir(&mut dot_entry);
                     self.push_file_item(dot_entry, base_dir.to_path_buf());
                 }
             }
@@ -213,28 +264,54 @@ impl GeneratorContext {
         // `try_walk_source_entry_dedup` to suppress the duplicate top-level
         // walk that would re-emit an implied parent.
         let mut emitted_dirs: HashSet<(PathBuf, PathBuf)> = explicit_dirs.clone();
-        for entry in entries {
-            if let Ok(rel) = entry.path.strip_prefix(&entry.base) {
-                // Walk each ancestor of the relative path and emit a
-                // directory entry when we haven't seen it yet.
-                let mut ancestor = PathBuf::new();
-                for component in rel.parent().into_iter().flat_map(Path::components) {
-                    ancestor.push(component);
-                    let key = (entry.base.clone(), ancestor.clone());
-                    if emitted_dirs.contains(&key) {
-                        continue;
-                    }
-                    let full = entry.base.join(&ancestor);
-                    if let Ok(meta) = std::fs::symlink_metadata(&full) {
-                        if meta.is_dir() {
-                            if let Ok(file_entry) =
-                                self.create_entry(&full, ancestor.clone(), &meta)
-                            {
-                                self.push_file_item(file_entry, full);
+        // upstream: options.c:2207-2208 - `if (!relative_paths) implied_dirs = 0;`.
+        // Under --no-relative (relative_paths == 0) the sender FLATTENS every
+        // --files-from entry to its transmitted name and emits NO implied parent
+        // directories (flist.c:2468 gates the send on `implied_dirs`, which is
+        // forced off). Without this gate oc emits an intermediate `sub` dir that
+        // an upstream receiver rejects as an unrequested file-list name (exit 4).
+        // upstream: flist.c:2257-2258 - `if (relative_paths && protocol_version
+        // >= 30) implied_dirs = 1;` forces flagged implied parent dirs at
+        // protocol >= 30 regardless of --no-implied-dirs; at protocol < 30 the
+        // flag is honoured (flist.c:2468 `else if (implied_dirs && ...)`), so
+        // --no-implied-dirs omits the implied parents from the --files-from
+        // flist and the receiver recreates them via make_path (generator.c:1317)
+        // without their source metadata. Mirror the same gate as the positional
+        // path (build_file_list): emit only in relative mode, and then when
+        // implied dirs are on OR the protocol forces them. When suppressed,
+        // `emitted_dirs` stays equal to `explicit_dirs`, so `implied_only_dirs`
+        // below is empty and the explicit top-level walk is left untouched
+        // (dedup unchanged).
+        if self.config.flags.relative
+            && (!self.config.flags.no_implied_dirs || self.protocol.as_u8() >= 30)
+        {
+            for entry in entries {
+                if let Ok(rel) = entry.path.strip_prefix(&entry.base) {
+                    // Walk each ancestor of the relative path and emit a
+                    // directory entry when we haven't seen it yet.
+                    let mut ancestor = PathBuf::new();
+                    for component in rel.parent().into_iter().flat_map(Path::components) {
+                        ancestor.push(component);
+                        let key = (entry.base.clone(), ancestor.clone());
+                        if emitted_dirs.contains(&key) {
+                            continue;
+                        }
+                        let full = entry.base.join(&ancestor);
+                        if let Ok(meta) = std::fs::symlink_metadata(&full) {
+                            if meta.is_dir() {
+                                if let Ok(mut file_entry) =
+                                    self.create_entry(&full, ancestor.clone(), &meta)
+                                {
+                                    // upstream: flist.c:1949 - implied parents clear
+                                    // FLAG_CONTENT_DIR so a real upstream receiver does
+                                    // not scan them for --delete (over-delete data loss).
+                                    mark_implied_dir(&mut file_entry);
+                                    self.push_file_item(file_entry, full);
+                                }
                             }
                         }
+                        emitted_dirs.insert(key);
                     }
-                    emitted_dirs.insert(key);
                 }
             }
         }
@@ -365,7 +442,10 @@ impl GeneratorContext {
                 Ok(m) if m.is_dir() => m,
                 _ => continue,
             };
-            if let Ok(entry) = self.create_entry(&full, relative_ancestor, &meta) {
+            if let Ok(mut entry) = self.create_entry(&full, relative_ancestor, &meta) {
+                // upstream: flist.c:1949 - implied parents clear FLAG_CONTENT_DIR
+                // so a real upstream receiver does not scan them for --delete.
+                mark_implied_dir(&mut entry);
                 self.push_file_item(entry, full);
             }
         }

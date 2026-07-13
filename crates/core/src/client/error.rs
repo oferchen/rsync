@@ -360,6 +360,51 @@ pub(crate) fn destination_access_error(path: &Path, error: io::Error) -> ClientE
     ClientError::with_code(code, message)
 }
 
+/// Validates a `--temp-dir` argument before transferring, mirroring upstream's
+/// receiver-side check.
+///
+/// upstream: main.c:1031-1046 `do_recv()` stats `tmpdir` and, on failure,
+/// `exit_cleanup()`s before any file is transferred:
+/// - stat succeeds but the path is not a directory -> `The temp-dir is not a
+///   directory: <path>` with `RERR_SYNTAX` (1).
+/// - stat fails with `ENOENT` -> `The temp-dir does not exist: <path>` with
+///   `RERR_SYNTAX` (1).
+/// - any other stat failure -> `Failed to stat temp-dir <path>: <errno>` with
+///   `RERR_FILEIO` (11).
+///
+/// `tmpdir` is a receiver-only option (options.c:2925 forwards `--temp-dir` to
+/// the remote only when `am_sender`), so callers invoke this only when the
+/// local process receives - a local copy or a pull, never a push. The receiver
+/// role tags the diagnostic to match upstream's `who_am_i()` in `do_recv()`.
+#[cold]
+pub(crate) fn validate_temp_dir(temp_dir: &Path) -> Result<(), ClientError> {
+    match std::fs::metadata(temp_dir) {
+        Ok(metadata) if metadata.is_dir() => Ok(()),
+        Ok(_) => Err(temp_dir_error(
+            format!("The temp-dir is not a directory: {}", temp_dir.display()),
+            ExitCode::Syntax,
+        )),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Err(temp_dir_error(
+            format!("The temp-dir does not exist: {}", temp_dir.display()),
+            ExitCode::Syntax,
+        )),
+        Err(error) => Err(temp_dir_error(
+            format!(
+                "Failed to stat temp-dir {}: {}",
+                temp_dir.display(),
+                upstream_io_error(&error)
+            ),
+            ExitCode::FileIo,
+        )),
+    }
+}
+
+#[cold]
+fn temp_dir_error(text: String, code: ExitCode) -> ClientError {
+    let message = rsync_error!(code.as_i32(), text).with_role(Role::Receiver);
+    ClientError::with_code(code, message)
+}
+
 #[cold]
 pub(crate) fn socket_error(
     action: &str,
@@ -641,6 +686,46 @@ mod tests {
             let error = invalid_argument_error_typed("typed error", ExitCode::FileSelect);
             assert_eq!(error.code(), ExitCode::FileSelect);
             assert!(error.to_string().contains("typed error"));
+        }
+
+        /// upstream: main.c:1039-1041 do_recv() - a missing --temp-dir prints
+        /// "The temp-dir does not exist: <path>" and exit_cleanup(RERR_SYNTAX=1).
+        #[test]
+        fn validate_temp_dir_missing_is_syntax_error() {
+            let dir = tempfile::tempdir().expect("tempdir");
+            let missing = dir.path().join("does-not-exist");
+            let error = validate_temp_dir(&missing).expect_err("missing temp-dir must error");
+            assert_eq!(error.exit_code(), 1);
+            assert_eq!(error.code(), ExitCode::Syntax);
+            let msg = error.to_string();
+            assert!(msg.contains("The temp-dir does not exist:"), "{msg}");
+            assert!(msg.contains(&missing.display().to_string()), "{msg}");
+        }
+
+        /// upstream: main.c:1036-1037 do_recv() - an existing non-directory
+        /// prints "The temp-dir is not a directory: <path>" and RERR_SYNTAX.
+        #[test]
+        fn validate_temp_dir_non_directory_is_syntax_error() {
+            let dir = tempfile::tempdir().expect("tempdir");
+            let file = dir.path().join("a-file");
+            std::fs::write(&file, b"x").expect("write");
+            let error = validate_temp_dir(&file).expect_err("file temp-dir must error");
+            assert_eq!(error.exit_code(), 1);
+            assert_eq!(error.code(), ExitCode::Syntax);
+            assert!(
+                error
+                    .to_string()
+                    .contains("The temp-dir is not a directory:"),
+                "{error}"
+            );
+        }
+
+        /// upstream: main.c:1031-1034 do_recv() - an existing directory passes
+        /// the check without error.
+        #[test]
+        fn validate_temp_dir_existing_directory_is_ok() {
+            let dir = tempfile::tempdir().expect("tempdir");
+            assert!(validate_temp_dir(dir.path()).is_ok());
         }
 
         #[test]

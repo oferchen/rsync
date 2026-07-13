@@ -42,9 +42,17 @@ fn apply_long_form_args(client_args: &[String], config: &mut ServerConfig) -> Op
             "--delete" | "--delete-before" | "--delete-during" => {
                 config.flags.delete = true;
             }
-            "--delete-after" | "--delete-delay" => {
+            "--delete-delay" => {
                 config.flags.delete = true;
                 config.deletion.late_delete = true;
+            }
+            // upstream: generator.c:2427-2428 - only --delete-after defers the
+            // delete *decision* to after the transfer; --delete-delay decides
+            // during the walk (generator.c:2315) and defers only the unlink.
+            "--delete-after" => {
+                config.flags.delete = true;
+                config.deletion.late_delete = true;
+                config.deletion.delete_after = true;
             }
             "--delete-excluded" => {
                 config.flags.delete = true;
@@ -76,6 +84,13 @@ fn apply_long_form_args(client_args: &[String], config: &mut ServerConfig) -> Op
             // sets `numeric_ids = 1` (drops the wire name-list entirely).
             "--numeric-ids" => {
                 config.flags.numeric_ids = core::server::NumericIds::Explicit;
+            }
+            // upstream: options.c:2976-2977 - `--no-implied-dirs` forwarded to
+            // the sender on a pull. The daemon-sender must omit implied parent
+            // dirs from the flist at protocol < 30 (flist.c:2468); protocol >= 30
+            // always sends them (flist.c:2257-2258).
+            "--no-implied-dirs" => {
+                config.flags.no_implied_dirs = true;
             }
             // upstream: options.c:2890-2891
             "--use-qsort" => {
@@ -251,8 +266,15 @@ fn apply_long_form_args(client_args: &[String], config: &mut ServerConfig) -> Op
                 // The daemon receiver's quick-check honours it via same_time() so
                 // files within the window are not needlessly re-transferred.
                 } else if let Some(val) = arg.strip_prefix("--modify-window=") {
-                    if let Ok(n) = val.trim_start_matches('+').parse::<u64>() {
-                        config.file_selection.modify_window = n;
+                    if let Ok(n) = val.trim_start_matches('+').parse::<i64>() {
+                        config.file_selection.modify_window = ::metadata::ModifyWindow::from_secs(n);
+                    }
+                // upstream: options.c:2874 - a negative modify_window is
+                // forwarded via the short `-@%d` spelling (e.g. `-@-1`) for
+                // nanosecond-exact comparison (util1.c:1482).
+                } else if let Some(val) = arg.strip_prefix("-@") {
+                    if let Ok(n) = val.parse::<i64>() {
+                        config.file_selection.modify_window = ::metadata::ModifyWindow::from_secs(n);
                     }
                 // Fallback: =value format for reference directories and backup options.
                 // Handles both upstream (two-arg) and legacy (=value) formats.

@@ -29,6 +29,15 @@
 //! variable or programmatically through [`GlobalBufferPoolConfig`]. Setting
 //! the env var to `0` disables the byte budget entirely.
 //!
+//! # Per-Buffer Block Size
+//!
+//! Each pooled buffer holds [`DEFAULT_BUFFER_POOL_BLOCK_SIZE`] bytes by
+//! default. This purely local I/O knob is runtime-tunable via the
+//! `OC_BUFFER_POOL_BLOCK_SIZE` env var (a size spec such as `4M`) or an
+//! explicit [`GlobalBufferPoolConfig::buffer_size`], which takes precedence
+//! over the env var. It has no effect on the wire protocol or delta block
+//! size.
+//!
 //! For daemon deployments serving many concurrent connections, the 32 MiB
 //! default is shared across all connections (single process-wide pool). This
 //! is appropriate because pooled buffers are reused across connections - the
@@ -56,6 +65,8 @@
 
 use std::sync::{Arc, OnceLock};
 
+use bandwidth::parse_size_arg;
+
 use super::BufferPool;
 
 /// Process-wide buffer pool singleton.
@@ -69,7 +80,12 @@ static GLOBAL_BUFFER_POOL: OnceLock<Arc<BufferPool>> = OnceLock::new();
 pub struct GlobalBufferPoolConfig {
     /// Maximum number of buffers the pool retains.
     pub max_buffers: usize,
-    /// Size of each buffer in bytes.
+    /// Size of each buffer in bytes (the per-buffer block size).
+    ///
+    /// Defaults to [`DEFAULT_BUFFER_POOL_BLOCK_SIZE`], overridable via the
+    /// `OC_BUFFER_POOL_BLOCK_SIZE` env var; an explicit value set here wins
+    /// over the env var. This is a local I/O performance knob only - it never
+    /// affects the wire protocol or the delta block size.
     pub buffer_size: usize,
     /// Optional hard memory cap in bytes for outstanding (checked-out) buffers.
     ///
@@ -99,6 +115,25 @@ pub struct GlobalBufferPoolConfig {
 /// Overridden by `--max-alloc`, `OC_RSYNC_BYTE_BUDGET`, or programmatic
 /// configuration via [`GlobalBufferPoolConfig`].
 pub const DEFAULT_BYTE_BUDGET: usize = 32 * 1024 * 1024;
+
+/// Default per-buffer block size for pooled I/O buffers (128 KiB).
+///
+/// Matches [`COPY_BUFFER_SIZE`](super::super::COPY_BUFFER_SIZE), the size the
+/// pool has always used. This is a purely local performance knob: it governs
+/// how much data each reusable I/O buffer holds during file copy and has no
+/// effect on the wire protocol, delta block size, or on-disk contents.
+///
+/// Overridden by the `OC_BUFFER_POOL_BLOCK_SIZE` environment variable or
+/// programmatically through [`GlobalBufferPoolConfig::buffer_size`].
+pub const DEFAULT_BUFFER_POOL_BLOCK_SIZE: usize = super::super::COPY_BUFFER_SIZE;
+
+/// Upper bound accepted for a runtime-configured buffer-pool block size (1 GiB).
+///
+/// Requests above this are clamped with a one-shot warning: an absurdly large
+/// per-buffer block size wastes memory (one allocation per pooled slot and per
+/// checked-out buffer) without improving throughput past the point of
+/// diminishing returns.
+pub const MAX_BUFFER_POOL_BLOCK_SIZE: usize = 1024 * 1024 * 1024;
 
 /// Environment variable for overriding the buffer pool size (number of buffers).
 ///
@@ -141,6 +176,15 @@ const ENV_MEMORY_CAP: &str = "OC_RSYNC_BUFFER_POOL_MEMORY_CAP";
 /// never throttles normal transfers (whose outstanding buffers are a few MiB)
 /// while still bounding pathological growth on massively parallel workloads.
 const AUTO_MEMORY_CAP_FRACTION: u64 = 4;
+
+/// Environment variable for overriding the per-buffer block size.
+///
+/// Accepts a size spec with the usual suffixes (`128K`, `4M`, `8388608`),
+/// parsed by the shared [`bandwidth::parse_size_arg`] (upstream's single
+/// `options.c:parse_size_arg()`) so it matches every other size option. A
+/// zero, negative, or unparseable value is ignored (the default applies); a
+/// value above [`MAX_BUFFER_POOL_BLOCK_SIZE`] is clamped with a warning.
+const ENV_BUFFER_POOL_BLOCK_SIZE: &str = "OC_BUFFER_POOL_BLOCK_SIZE";
 
 /// Parses an optional env-var value into a positive buffer count.
 ///
@@ -186,6 +230,46 @@ fn parse_memory_cap_override(env_val: Option<String>, total_ram: Option<u64>) ->
     trimmed.parse::<usize>().ok().filter(|&n| n > 0)
 }
 
+/// Parses an optional env-var value into a per-buffer block size in bytes.
+///
+/// Returns `Some(n)` for a valid positive size spec, clamped to
+/// [`MAX_BUFFER_POOL_BLOCK_SIZE`] (with a one-shot warning on stderr when the
+/// request is clamped). Returns `None` for a missing, empty, zero, negative,
+/// or malformed value so the caller falls back to
+/// [`DEFAULT_BUFFER_POOL_BLOCK_SIZE`]. Mirrors the `OC_RSYNC_REORDER_RING_CAP`
+/// convention: bad input is warned about, never silently accepted.
+fn parse_block_size_override(env_val: Option<String>) -> Option<usize> {
+    let raw = env_val?;
+    let trimmed = raw.trim();
+    // upstream `parse_size_arg` never strips a leading sign; a negative block
+    // size is nonsensical, so reject it before parsing rather than erroring.
+    if trimmed.is_empty() || trimmed.starts_with('-') {
+        return None;
+    }
+    let bytes = match parse_size_arg(trimmed, b'b') {
+        Ok(parsed) => usize::try_from(parsed.bytes).ok()?,
+        Err(_) => {
+            eprintln!(
+                "oc-rsync: {ENV_BUFFER_POOL_BLOCK_SIZE}={raw:?} could not be parsed as a size; falling back to default"
+            );
+            return None;
+        }
+    };
+    if bytes == 0 {
+        eprintln!(
+            "oc-rsync: {ENV_BUFFER_POOL_BLOCK_SIZE}={raw:?} is invalid (block size must be positive); falling back to default"
+        );
+        return None;
+    }
+    if bytes > MAX_BUFFER_POOL_BLOCK_SIZE {
+        eprintln!(
+            "oc-rsync: {ENV_BUFFER_POOL_BLOCK_SIZE}={raw:?} exceeds the {MAX_BUFFER_POOL_BLOCK_SIZE}-byte maximum; clamping"
+        );
+        return Some(MAX_BUFFER_POOL_BLOCK_SIZE);
+    }
+    Some(bytes)
+}
+
 impl Default for GlobalBufferPoolConfig {
     /// Defaults to one buffer per hardware thread at the standard copy buffer
     /// size, with a 32 MiB byte budget on pool retention.
@@ -197,6 +281,13 @@ impl Default for GlobalBufferPoolConfig {
     /// The `OC_RSYNC_BYTE_BUDGET` environment variable overrides the default
     /// byte budget. Set to `0` to disable the byte budget (unbounded
     /// retention). Invalid or non-numeric values are silently ignored.
+    ///
+    /// The `OC_BUFFER_POOL_BLOCK_SIZE` environment variable overrides the
+    /// per-buffer block size ([`DEFAULT_BUFFER_POOL_BLOCK_SIZE`]) with a size
+    /// spec (`4M`, `8388608`). Values above [`MAX_BUFFER_POOL_BLOCK_SIZE`] are
+    /// clamped; zero, negative, or malformed values fall back to the default.
+    /// An explicit [`buffer_size`](Self::buffer_size) set by a caller takes
+    /// precedence over this env var.
     fn default() -> Self {
         let auto_detected = std::thread::available_parallelism()
             .map(std::num::NonZero::get)
@@ -211,9 +302,11 @@ impl Default for GlobalBufferPoolConfig {
             std::env::var(ENV_MEMORY_CAP).ok(),
             fast_io::physical_memory::total_physical_memory(),
         );
+        let buffer_size = parse_block_size_override(std::env::var(ENV_BUFFER_POOL_BLOCK_SIZE).ok())
+            .unwrap_or(DEFAULT_BUFFER_POOL_BLOCK_SIZE);
         Self {
             max_buffers,
-            buffer_size: super::super::COPY_BUFFER_SIZE,
+            buffer_size,
             memory_cap,
             byte_budget,
         }
@@ -589,5 +682,84 @@ mod tests {
             parse_memory_cap_override(Some("auto".to_string()), None),
             None
         );
+    }
+
+    #[test]
+    fn default_buffer_pool_block_size_matches_copy_buffer_size() {
+        // The default must equal the historical compile-time constant so that
+        // an unset env var is byte-for-byte behaviour-preserving.
+        assert_eq!(
+            DEFAULT_BUFFER_POOL_BLOCK_SIZE,
+            super::super::super::COPY_BUFFER_SIZE
+        );
+    }
+
+    #[test]
+    fn parse_block_size_missing_returns_none() {
+        // No env var: caller falls back to DEFAULT_BUFFER_POOL_BLOCK_SIZE.
+        assert_eq!(parse_block_size_override(None), None);
+    }
+
+    #[test]
+    fn parse_block_size_plain_bytes() {
+        assert_eq!(
+            parse_block_size_override(Some("8388608".to_string())),
+            Some(8_388_608)
+        );
+    }
+
+    #[test]
+    fn parse_block_size_suffix_spec() {
+        // Size spec reuses the shared parser: 4M == 4 MiB.
+        assert_eq!(
+            parse_block_size_override(Some("4M".to_string())),
+            Some(4 * 1024 * 1024)
+        );
+        assert_eq!(
+            parse_block_size_override(Some("128K".to_string())),
+            Some(128 * 1024)
+        );
+    }
+
+    #[test]
+    fn parse_block_size_zero_rejected() {
+        assert_eq!(parse_block_size_override(Some("0".to_string())), None);
+    }
+
+    #[test]
+    fn parse_block_size_negative_rejected() {
+        assert_eq!(parse_block_size_override(Some("-1".to_string())), None);
+    }
+
+    #[test]
+    fn parse_block_size_empty_rejected() {
+        assert_eq!(parse_block_size_override(Some("   ".to_string())), None);
+    }
+
+    #[test]
+    fn parse_block_size_malformed_rejected() {
+        assert_eq!(parse_block_size_override(Some("bogus".to_string())), None);
+        assert_eq!(parse_block_size_override(Some("4X".to_string())), None);
+    }
+
+    #[test]
+    fn parse_block_size_above_max_is_clamped() {
+        // 2 GiB requested; clamped to the 1 GiB ceiling rather than honoured.
+        let requested = 2 * MAX_BUFFER_POOL_BLOCK_SIZE;
+        assert_eq!(
+            parse_block_size_override(Some(requested.to_string())),
+            Some(MAX_BUFFER_POOL_BLOCK_SIZE)
+        );
+    }
+
+    #[test]
+    fn explicit_buffer_size_overrides_default() {
+        // Struct-update precedence: an explicit buffer_size wins over whatever
+        // the env-aware default() produced, giving "explicit config > env var".
+        let cfg = GlobalBufferPoolConfig {
+            buffer_size: 2 * 1024 * 1024,
+            ..GlobalBufferPoolConfig::default()
+        };
+        assert_eq!(cfg.buffer_size, 2 * 1024 * 1024);
     }
 }

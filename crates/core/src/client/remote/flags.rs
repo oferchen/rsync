@@ -35,10 +35,19 @@ pub(crate) fn build_server_flag_string(config: &ClientConfig) -> String {
     }
 
     // upstream: options.c:2169-2173 - --files-from disables recursion and
-    // enables xfer_dirs. options.c:2188 - --files-from implies --relative.
+    // enables xfer_dirs. options.c:2205-2206 - --files-from defaults
+    // relative_paths=1.
     let files_from_active = config.files_from().is_active();
     let effective_recursive = config.recursive() && !files_from_active;
-    let effective_relative = config.relative_paths() || files_from_active;
+    // upstream: options.c:2713-2714 - `if (relative_paths) argstr[x++] = 'R';`
+    // packs the compact `R` for the RESOLVED relative_paths. `relative_paths()`
+    // already folds in the --files-from default (options.c:2205-2206: relative
+    // defaults to 1 under --files-from) at the CLI layer, so it must NOT be
+    // re-forced with `|| files_from_active` - that wrongly packs `R` even when
+    // the user passed --no-relative, telling the remote peer relative is on and
+    // making the client-sender flatten (flist.c:2338-2349) diverge from the
+    // wire signal (`sub/file` implied dir instead of the flattened `file`).
+    let effective_relative = config.relative_paths();
 
     if config.links() {
         flags.push('l');
@@ -331,6 +340,14 @@ fn split_pattern_modifiers(raw: &str) -> (String, bool, bool) {
 /// for both receiver and generator roles: `trust_sender`, `qsort`, `inplace`,
 /// `min_file_size`, `max_file_size`, `do_stats`, `late_delete`, and `itemize`.
 pub(crate) fn apply_common_server_flags(config: &ClientConfig, server_config: &mut ServerConfig) {
+    // upstream: options.c:846 / compat.c:604-607 - `--protocol=N` lowers the
+    // advertised `protocol_version`, capping the negotiated version. Carry the
+    // requested ceiling onto the in-process ServerConfig so the SSH handshake
+    // clamps to it (the daemon path reads config.protocol_version() directly).
+    // Defaults to NEWEST when unset, reproducing the uncapped negotiation.
+    server_config.protocol = config
+        .protocol_version()
+        .unwrap_or(protocol::ProtocolVersion::NEWEST);
     server_config.trust_sender = config.trust_sender();
     server_config.qsort = config.qsort();
     server_config.write.inplace = config.inplace();
@@ -349,12 +366,20 @@ pub(crate) fn apply_common_server_flags(config: &ClientConfig, server_config: &m
     // local client IS the receiver, so carry the window onto its config; the
     // server-side receiver (push) picks it up from the forwarded
     // `--modify-window=NUM` arg. `modify_window()` is None when unset (window 0).
-    server_config.file_selection.modify_window = config.modify_window().unwrap_or(0);
+    server_config.file_selection.modify_window = config.modify_window().map_or(
+        ::metadata::ModifyWindow::ZERO,
+        ::metadata::ModifyWindow::from_secs,
+    );
     // upstream: options.c:2046-2048 - do_stats sets INFO_STATS to level 2+
     server_config.do_stats = config.stats();
     // upstream: generator.c:124 - EARLY_DELETE_DONE_MSG = !(delete_during==2 || delete_after)
     server_config.deletion.late_delete =
         matches!(config.delete_mode(), DeleteMode::Delay | DeleteMode::After);
+    // upstream: generator.c:2427-2428 - only --delete-after defers the delete
+    // *decision* to after the transfer (so a per-dir `.rsync-filter` protects at
+    // delete time). --delete-delay decides during the walk (generator.c:2315),
+    // deferring only the unlink, so it is NOT flagged here.
+    server_config.deletion.delete_after = matches!(config.delete_mode(), DeleteMode::After);
     // upstream: options.c `delete_excluded` - the receiver's delete pass must
     // treat filter-excluded (non-protected) entries as deletable. For a
     // remote-shell pull the receiver builds its deletion chain from the local
@@ -376,6 +401,13 @@ pub(crate) fn apply_common_server_flags(config: &ClientConfig, server_config: &m
         config.delete_mode(),
         config.max_delete()
     );
+    // upstream: flist.c:2257-2258 / options.c:2976 - `--no-implied-dirs` is
+    // forwarded to the remote peer, but the in-process sender half (SSH/daemon
+    // push) builds the wire flist locally and must honour the flag too. Its
+    // generator emits implied parent dirs only when implied_dirs is on OR the
+    // protocol >= 30 forces them. `implied_dirs()` defaults true, so this stays
+    // false (implied dirs on) unless the client passed --no-implied-dirs.
+    server_config.flags.no_implied_dirs = !config.implied_dirs();
     // upstream: options.c:2881-2885 - copy_unsafe_links and safe_links are long-form only
     server_config.flags.copy_unsafe_links = config.copy_unsafe_links();
     server_config.flags.safe_links = config.safe_links();
@@ -1015,13 +1047,16 @@ mod tests {
 
     #[test]
     fn server_flag_string_files_from_suppresses_r_adds_d_and_r_upper() {
-        // upstream: options.c:2169-2188 - --files-from sets recurse=0,
-        // xfer_dirs=1, relative_paths=1.
+        // upstream: options.c:2169-2173, 2205-2206 - --files-from sets
+        // recurse=0, xfer_dirs=1, and defaults relative_paths=1. The CLI layer
+        // (workflow/run.rs) folds that default into the resolved relative_paths
+        // passed here, so relative is explicit at this stage.
         use crate::client::config::FilesFromSource;
 
         let config = ClientConfig::builder()
             .recursive(true)
             .times(true)
+            .relative_paths(true)
             .files_from(FilesFromSource::LocalFile("/tmp/list.txt".into()))
             .build();
         let flags = build_server_flag_string(&config);
@@ -1036,6 +1071,43 @@ mod tests {
         assert!(
             flags.contains('R'),
             "should add 'R' (relative) with --files-from: {flags}"
+        );
+    }
+
+    #[test]
+    fn server_flag_string_files_from_no_relative_omits_r_keeps_d() {
+        // upstream: options.c:2713-2714 - `if (relative_paths) argstr[x++] =
+        // 'R';` packs the compact `R` only for the RESOLVED relative_paths.
+        // Under --no-relative --files-from the CLI resolves relative_paths=0
+        // (options.c:368-369, 693), so no `R` is packed even though files-from
+        // is active. This is the PUSH client-sender wire signal: without `R`
+        // the peer knows relative is off and no implied `sub` parent dir is
+        // expected, matching the client-sender flatten (flist.c:2338-2349) that
+        // splits each entry on its last `/` down to the basename.
+        use crate::client::config::FilesFromSource;
+
+        let config = ClientConfig::builder()
+            .recursive(true)
+            .times(true)
+            .relative_paths(false)
+            .files_from(FilesFromSource::LocalFile("/tmp/list.txt".into()))
+            .build();
+        assert!(
+            !config.relative_paths(),
+            "--no-relative must resolve relative_paths=false"
+        );
+        let flags = build_server_flag_string(&config);
+        assert!(
+            !flags.contains('R'),
+            "should omit 'R' under --no-relative --files-from: {flags}"
+        );
+        assert!(
+            flags.contains('d'),
+            "should still add 'd' (xfer_dirs) with --files-from: {flags}"
+        );
+        assert!(
+            !flags.contains('r'),
+            "should still suppress 'r' with --files-from: {flags}"
         );
     }
 

@@ -21,17 +21,6 @@ impl<'a> CopyContext<'a> {
             }
         });
         let filter_program = options.filter_program().cloned();
-        let dir_merge_layers = filter_program
-            .as_ref()
-            .map(|program| vec![Vec::new(); program.dir_merge_rules().len()])
-            .unwrap_or_default();
-        let dir_merge_marker_layers = filter_program
-            .as_ref()
-            .map(|program| vec![Vec::new(); program.dir_merge_rules().len()])
-            .unwrap_or_default();
-        let dir_merge_ephemeral = Vec::new();
-        let dir_merge_marker_ephemeral = Vec::new();
-        let dynamic_dir_merge_stack: Vec<DynamicDirMergeFrame> = Vec::new();
         let timeout = options.timeout();
 
         let buffer_pool = global_buffer_pool();
@@ -128,13 +117,11 @@ impl<'a> CopyContext<'a> {
             } else {
                 None
             },
+            dir_merge: DirectoryFilterHandles::new(filter_program.as_ref()),
+            delete_dir_merge: DirectoryFilterHandles::new(filter_program.as_ref()),
+            delete_filter_chain: RefCell::new(Vec::new()),
             filter_program,
-            dir_merge_layers: Rc::new(RefCell::new(dir_merge_layers)),
-            dir_merge_marker_layers: Rc::new(RefCell::new(dir_merge_marker_layers)),
             observer,
-            dir_merge_ephemeral: Rc::new(RefCell::new(dir_merge_ephemeral)),
-            dir_merge_marker_ephemeral: Rc::new(RefCell::new(dir_merge_marker_ephemeral)),
-            dynamic_dir_merge_stack: Rc::new(RefCell::new(dynamic_dir_merge_stack)),
             deferred_ops: DeferredOperationQueue::default(),
             timeout,
             stop_deadline,
@@ -852,7 +839,7 @@ impl<'a> CopyContext<'a> {
         // Track which backup strategy succeeded so we can emit the matching
         // upstream `--debug=BACKUP` trace (RENAME, COPY, or SYMLINK).
         // upstream: backup.c:link_or_rename and the fall-through copy_file path.
-        let strategy = match fs::rename(destination, &backup_path) {
+        let strategy = match backup_rename(destination, &backup_path) {
             Ok(()) => BackupStrategy::Rename,
             Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(()),
             // upstream: backup.c:247-256 - link_or_rename failing with EEXIST or
@@ -954,16 +941,27 @@ impl<'a> CopyContext<'a> {
         // upstream: backup.c:338-341 - set_file_attrs(buf, file, NULL, fname,
         // ATTRS_ACCURATE_TIME) copies the source node's mode/owner/times onto
         // the freshly-created backup node (with preserve_xattrs temporarily
-        // cleared), overriding the umask that mknod applied. Only the
-        // cross-device device/special copy fallback needs this: rename carries
-        // the inode's attributes verbatim, and the regular-file copy path
-        // mirrors upstream's own COPY handling.
-        if strategy == BackupStrategy::Device
-            && let Ok(source_meta) = fs::symlink_metadata(destination)
+        // cleared), overriding the umask/copy defaults. Every cross-device copy
+        // fallback needs this - regular file (COPY), symlink (SYMLINK), and
+        // device/special (DEVICE) - because fs::copy/create_symlink/mknod leave
+        // the backup owned by the caller (root), whereas upstream reapplies the
+        // source uid/gid/mode/mtime. The same-fs rename path carries the inode's
+        // attributes verbatim and is skipped here.
+        if matches!(
+            strategy,
+            BackupStrategy::Copy | BackupStrategy::Symlink | BackupStrategy::Device
+        ) && let Ok(source_meta) = fs::symlink_metadata(destination)
         {
             let metadata_options = self.metadata_options();
-            apply_file_metadata_with_options(&backup_path, &source_meta, &metadata_options)
-                .map_err(map_metadata_error)?;
+            // upstream: rsync.c:set_file_attrs() skips chmod for symlinks and
+            // applies ownership/times with AT_SYMLINK_NOFOLLOW.
+            if strategy == BackupStrategy::Symlink {
+                apply_symlink_metadata_with_options(&backup_path, &source_meta, &metadata_options)
+                    .map_err(map_metadata_error)?;
+            } else {
+                apply_file_metadata_with_options(&backup_path, &source_meta, &metadata_options)
+                    .map_err(map_metadata_error)?;
+            }
             // upstream: xattrs.c:set_stat_xattr() re-records the source stat in
             // `user.rsync.%stat` under --fake-super so the virtualised node's
             // mode/owner/rdev survive; no-op when fake-super is off.
@@ -1252,21 +1250,22 @@ impl<'a> CopyContext<'a> {
 /// `--modify-window`.
 ///
 /// upstream: util1.c:1478 same_time() - a whole-second delta within
-/// `modify_window` counts as unchanged; with a zero window the sub-second
-/// component must also match.
+/// `modify_window` counts as unchanged. For a zero window (the default) or a
+/// negative window (`--modify-window < 0`, nsec-exact) a hardlink candidate
+/// must match on both the whole-second and nanosecond components.
 #[cfg(unix)]
 fn mtimes_within_window(
     source: &fs::Metadata,
     candidate: &fs::Metadata,
-    modify_window: Duration,
+    modify_window: ModifyWindow,
 ) -> bool {
     use std::os::unix::fs::MetadataExt;
 
     let delta = source.mtime().abs_diff(candidate.mtime());
     let window = modify_window.as_secs();
-    if window == 0 {
+    if window <= 0 {
         delta == 0 && source.mtime_nsec() == candidate.mtime_nsec()
     } else {
-        delta <= window
+        delta <= window as u64
     }
 }

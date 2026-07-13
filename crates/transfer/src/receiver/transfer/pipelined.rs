@@ -11,7 +11,6 @@ use std::path::PathBuf;
 use logging::{PhaseTimer, debug_log, info_log};
 use protocol::codec::create_ndx_codec;
 use protocol::flist::FileEntry;
-use protocol::stats::DeleteStats;
 
 use crate::pipeline::PipelineConfig;
 use crate::receiver::stats::TransferStats;
@@ -79,33 +78,29 @@ impl ReceiverContext {
         // upstream: receiver.c:653-654 DEBUG_GTE(RECV, 1)
         debug_log!(Recv, 1, "recv_files({}) starting", file_count);
 
-        let mut delete_stats = DeleteStats::new();
-        let mut delete_limit_exceeded = false;
-        let mut delete_io_error: i32 = 0;
-        if self.config.flags.delete {
-            let (ds, exceeded, io_bits) = self.delete_extraneous_files(
-                &setup.dest_dir,
-                #[cfg(unix)]
-                setup.sandbox.as_ref(),
-                writer,
-            )?;
-            delete_stats = ds;
-            delete_limit_exceeded = exceeded;
-            delete_io_error = io_bits;
-            // Carry the per-type counters into the receiver context so the
-            // goodbye handshake can emit NDX_DEL_STATS to the peer sender.
-            // upstream: generator.c:2393-2398 - early write_del_stats() emission.
-            self.pending_del_stats = delete_stats;
-        }
-
         let mut stats = TransferStats {
             files_listed: file_count,
             entries_received: file_count as u64,
             io_error: self.flist_reader_cache.as_ref().map_or(0, |r| r.io_error())
-                | self.flist_io_error
-                | delete_io_error,
+                | self.flist_io_error,
             ..Default::default()
         };
+
+        // upstream: generator.c:2280-2281 - --delete-before / --delete-during
+        // sweep before the per-file loop. --delete-after / --delete-delay defer
+        // the sweep until after the transfer (see the late call below) so the
+        // destination `.rsync-filter` merge files transferred by this run are
+        // present and consulted at delete time.
+        if self.delete_pass_is_early() {
+            self.run_receiver_delete_pass(
+                &setup.dest_dir,
+                #[cfg(unix)]
+                setup.sandbox.as_ref(),
+                writer,
+                &mut stats,
+            )?;
+        }
+
         let files_to_transfer = self.build_files_to_transfer(
             writer,
             &setup.dest_dir,
@@ -132,6 +127,14 @@ impl ReceiverContext {
         if self.config.flags.list_only {
             stats.list_only_entries = self.collect_list_only_entries();
             writer.flush()?;
+        } else if self.config.flags.only_write_batch {
+            // upstream: main.c:1839 `write_batch < 0` forces dry_run but leaves
+            // do_xfers = 1, so unlike a plain `-n` the generator still sends
+            // real block checksums while the receiver writes nothing to the
+            // destination and reads no delta data (the push sender records it
+            // into its own batch fd, sender.c:217). Checked before `dry_run`
+            // because only-write-batch sets both flags.
+            self.run_only_write_batch_loop(reader, writer, &files_to_transfer, &setup)?;
         } else if self.config.flags.dry_run {
             self.run_dry_run_loop(reader, writer, &files_to_transfer)?;
         } else {
@@ -240,6 +243,23 @@ impl ReceiverContext {
             super::handle_delayed_updates(&all_delayed_updates, backup_cfg);
         }
 
+        // upstream: generator.c:2425-2428 - --delete-after / --delete-delay run
+        // the sweep only after every file (including each destination
+        // `.rsync-filter` and any --delay-updates staged file committed just
+        // above) has landed, so per-directory merge protect rules are honoured
+        // at delete time. Runs before touch_up_dirs so deletion-induced parent
+        // mtime changes are re-tidied (upstream touch_up_dirs at generator.c:2449
+        // follows the late delete pass).
+        if self.delete_pass_is_late() {
+            self.run_receiver_delete_pass(
+                &setup.dest_dir,
+                #[cfg(unix)]
+                setup.sandbox.as_ref(),
+                writer,
+                &mut stats,
+            )?;
+        }
+
         // upstream: generator.c:2080-2133 - touch_up_dirs() re-applies
         // directory mtimes after file writes clobber them.
         self.touch_up_dirs(&setup.dest_dir);
@@ -257,8 +277,6 @@ impl ReceiverContext {
             stats.io_error |= crate::generator::io_error_flags::IOERR_GENERAL;
         }
         stats.metadata_errors = metadata_errors;
-        stats.delete_stats = delete_stats;
-        stats.delete_limit_exceeded = delete_limit_exceeded;
         stats.redo_count = redo_count;
 
         Ok(stats)

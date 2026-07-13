@@ -109,7 +109,8 @@ pub mod throughput;
 pub use allocator::{BufferAllocator, DefaultAllocator};
 pub use buffer_controller::{AdaptiveBufferController, ControllerConfig};
 pub use global::{
-    DEFAULT_BYTE_BUDGET, GlobalBufferPoolConfig, global_buffer_pool, init_global_buffer_pool,
+    DEFAULT_BUFFER_POOL_BLOCK_SIZE, DEFAULT_BYTE_BUDGET, GlobalBufferPoolConfig,
+    MAX_BUFFER_POOL_BLOCK_SIZE, global_buffer_pool, init_global_buffer_pool,
 };
 pub use guard::{BorrowedBufferGuard, BufferGuard};
 pub use page_aligned::{PageAlignedBufferGuard, PageAlignedBufferPool};

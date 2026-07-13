@@ -318,6 +318,25 @@ mod validation {
         ));
     }
 
+    /// upstream: options.c:2423-2431 - `--inplace` cannot be used with
+    /// `--partial-dir`; the pair is refused at config-build time.
+    #[test]
+    fn inplace_and_partial_dir_conflict() {
+        let mut builder = ServerConfigBuilder::new();
+        builder.inplace(true);
+        builder.has_partial_dir(true);
+
+        let result = builder.build();
+
+        assert!(matches!(
+            result,
+            Err(BuilderError::ConflictingOptions {
+                option1: "--inplace",
+                option2: "--partial-dir",
+            })
+        ));
+    }
+
     #[test]
     fn min_greater_than_max_file_size_fails() {
         let result = ServerConfigBuilder::new()
@@ -388,6 +407,7 @@ mod composite_setters {
             max_delete: Some(50),
             ignore_errors: true,
             late_delete: true,
+            delete_after: false,
             delete_excluded: false,
         };
         let config = ServerConfigBuilder::new()

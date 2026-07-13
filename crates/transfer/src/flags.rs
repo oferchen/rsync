@@ -152,6 +152,27 @@ pub struct ParsedServerFlags {
     /// - `options.c:2194` - `list_only` global / implied-list-only derivation
     /// - `generator.c:1249` - `list_file_entry()` render gate
     pub list_only: bool,
+    /// Only-write-batch mode on a server receiver (`--only-write-batch=X`).
+    ///
+    /// The push client records the batch locally and writes each file's delta
+    /// to its own batch fd, not the wire (upstream sender.c:217 `f_xfer =
+    /// write_batch < 0 ? batch_fd : f_out`), so the server receiver reads no
+    /// delta data off the wire. It must still send REAL block checksums,
+    /// because upstream forces `dry_run = 1` only AFTER `do_xfers` is computed
+    /// (main.c:1839), leaving `do_xfers = 1` so the generator emits sum heads
+    /// the sender needs to build a correct batch. Implies [`dry_run`] (no
+    /// destination writes) but diverges from it by sending sum heads instead
+    /// of the bare NDX echo.
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `options.c:1673` - `OPT_ONLY_WRITE_BATCH` sets `write_batch = -1`
+    /// - `main.c:1839` - `if (write_batch < 0) dry_run = 1`
+    /// - `receiver.c:811-817` - `write_batch < 0` path logs the item, sends
+    ///   `send_msg_success` under inc_recurse, and writes nothing to the dest
+    ///
+    /// [`dry_run`]: Self::dry_run
+    pub only_write_batch: bool,
     /// Transfer directories without recursion (`d` flag, `--dirs`).
     pub dirs: bool,
     /// Whole file transfer, no delta (`W` flag, `--whole-file`).
@@ -163,6 +184,28 @@ pub struct ParsedServerFlags {
     pub one_file_system: u8,
     /// Relative paths (`R` flag, `--relative`).
     pub relative: bool,
+    /// Suppress implied parent directories in `--relative` mode
+    /// (long-form `--no-implied-dirs`, upstream `implied_dirs == 0`).
+    ///
+    /// Stored negated so the `Default` derive leaves it `false` (implied dirs
+    /// on, matching upstream's `int implied_dirs = 1` default, options.c:95).
+    /// Not part of the compact flag string; set via long-form propagation.
+    ///
+    /// The sender's file-list builder emits the implied parent directories of a
+    /// `--relative` source only when this is `false` OR the protocol forces them
+    /// on. Upstream forces `implied_dirs = 1` whenever
+    /// `relative_paths && protocol_version >= 30` (flist.c:2257-2258), so at
+    /// protocol < 30 the flag is honoured and `--no-implied-dirs` omits the
+    /// implied parents from the flist (flist.c:2468 gates the non-incremental
+    /// send on `implied_dirs`). At protocol >= 30 the implied dirs are always
+    /// sent (flagged), regardless of this field.
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `options.c:696` - `{"no-implied-dirs", 0, POPT_ARG_VAL, &implied_dirs, 0, ...}`
+    /// - `flist.c:2257-2258` - protocol >= 30 force-on
+    /// - `flist.c:2468` - `else if (implied_dirs && ...)` send gate
+    pub no_implied_dirs: bool,
     /// Keep partially transferred files (`P` flag, `--partial`).
     pub partial: bool,
     /// Update only newer files (`u` flag, `--update`).

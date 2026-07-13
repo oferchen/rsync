@@ -11,6 +11,19 @@ use super::super::{SpillCodec, SpillCompression, SpillError, SpillGranularity, r
 use super::SPILL_TAG_ZSTD;
 use super::{HOT_ZONE, SPILL_TAG_RAW, SpillableReorderBuffer};
 
+/// Minimum encoded-payload size (in bytes) below which the zstd spill codec is
+/// skipped and the record is stored raw.
+///
+/// zstd frames carry a fixed floor of overhead (4-byte magic plus frame and
+/// block headers, roughly 13 bytes) before any payload byte is emitted, so a
+/// record smaller than this can never come out smaller than its raw form. The
+/// reorder buffer's dominant payload is a fixed 37-byte `DeltaResult` success
+/// record, so gating at 64 bytes keeps the common case raw (no wasted
+/// compress+decompress round-trip) while still compressing the rare, genuinely
+/// compressible large records (multi-hundred-byte redo/error reason strings).
+#[cfg(feature = "spill-compression")]
+const SPILL_MIN_COMPRESS_BYTES: usize = 64;
+
 /// Emits the one-shot spill-activation warning the first time the reorder
 /// buffer spills to disk. Subsequent calls with `already_warned = true` are
 /// no-ops so the operator sees the diagnostic exactly once per transfer.
@@ -344,15 +357,32 @@ impl<T: SpillCodec> SpillableReorderBuffer<T> {
     /// Applies the configured compression codec to the freshly encoded payload.
     ///
     /// Returns `(tag, bytes_to_write)`. [`SpillCompression::None`] is a
-    /// pass-through that emits [`SPILL_TAG_RAW`]; [`SpillCompression::Zstd`]
-    /// emits [`SPILL_TAG_ZSTD`] and the zstd-encoded bytes.
+    /// pass-through that emits [`SPILL_TAG_RAW`].
+    ///
+    /// [`SpillCompression::Zstd`] is compressibility-gated: the reorder buffer
+    /// spills small fixed-size result records (a `DeltaResult` success record
+    /// is 37 bytes), and the zstd frame overhead alone (magic + frame/block
+    /// headers, ~13 bytes) means such records never shrink - the
+    /// compress+decompress round-trip would cost CPU for zero or negative I/O
+    /// saving. So records below [`SPILL_MIN_COMPRESS_BYTES`] skip the codec
+    /// entirely, and any record whose compressed form is not strictly smaller
+    /// than the raw encoding is stored raw. Every record still carries its own
+    /// tag ([`SPILL_TAG_RAW`] / [`SPILL_TAG_ZSTD`]) so the reader restores it
+    /// byte-identically regardless of which branch a given record took.
     fn compress_payload(&self, encoded: Vec<u8>) -> io::Result<(u8, Vec<u8>)> {
         match self.compression {
             SpillCompression::None => Ok((SPILL_TAG_RAW, encoded)),
             #[cfg(feature = "spill-compression")]
             SpillCompression::Zstd { level } => {
+                if encoded.len() < SPILL_MIN_COMPRESS_BYTES {
+                    return Ok((SPILL_TAG_RAW, encoded));
+                }
                 let compressed = zstd::stream::encode_all(encoded.as_slice(), level)?;
-                Ok((SPILL_TAG_ZSTD, compressed))
+                if compressed.len() < encoded.len() {
+                    Ok((SPILL_TAG_ZSTD, compressed))
+                } else {
+                    Ok((SPILL_TAG_RAW, encoded))
+                }
             }
         }
     }

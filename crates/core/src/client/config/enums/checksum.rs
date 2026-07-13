@@ -110,8 +110,10 @@ impl StrongChecksumChoice {
     pub fn parse(text: &str) -> Result<Self, Message> {
         let trimmed = text.trim();
         if trimmed.is_empty() {
+            // upstream: checksum.c:139 parse_checksum_choice returns
+            // RERR_UNSUPPORTED (errcode.h:28) for an unusable name, not RERR_SYNTAX.
             return Err(rsync_error!(
-                1,
+                4,
                 "invalid --checksum-choice value '': value must name a checksum algorithm"
             )
             .with_role(Role::Client));
@@ -143,8 +145,10 @@ impl StrongChecksumChoice {
             "xxh64" | "xxhash" => Ok(StrongChecksumAlgorithm::Xxh64),
             "xxh3" | "xxh3-64" => Ok(StrongChecksumAlgorithm::Xxh3),
             "xxh128" | "xxh3-128" => Ok(StrongChecksumAlgorithm::Xxh128),
+            // upstream: checksum.c:139 parse_checksum_choice returns
+            // RERR_UNSUPPORTED (errcode.h:28) for an unknown name, not RERR_SYNTAX.
             _ => Err(rsync_error!(
-                1,
+                4,
                 format!("invalid --checksum-choice value '{normalized}': unsupported checksum")
             )
             .with_role(Role::Client)),
