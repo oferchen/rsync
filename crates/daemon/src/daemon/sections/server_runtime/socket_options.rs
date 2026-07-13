@@ -49,6 +49,32 @@ enum SocketOption {
     SoRcvTimeo(i32),
 }
 
+impl SocketOption {
+    /// Returns the upstream option name used in warning messages.
+    ///
+    /// upstream: socket.c:730-733 - `set_socket_options()` reports a failed
+    /// `setsockopt(2)` as "failed to set socket option %s" using the option's
+    /// `socket_options[].name`.
+    fn name(&self) -> &'static str {
+        match self {
+            SocketOption::TcpNoDelay(_) => "TCP_NODELAY",
+            SocketOption::SoKeepAlive(_) => "SO_KEEPALIVE",
+            SocketOption::SoSndBuf(_) => "SO_SNDBUF",
+            SocketOption::SoRcvBuf(_) => "SO_RCVBUF",
+            SocketOption::IpTos(_) => "IP_TOS",
+            SocketOption::SoBroadcast(_) => "SO_BROADCAST",
+            #[cfg(all(unix, not(any(target_os = "linux", target_os = "android"))))]
+            SocketOption::SoSndLoWat(_) => "SO_SNDLOWAT",
+            #[cfg(all(unix, not(any(target_os = "linux", target_os = "android"))))]
+            SocketOption::SoRcvLoWat(_) => "SO_RCVLOWAT",
+            #[cfg(unix)]
+            SocketOption::SoSndTimeo(_) => "SO_SNDTIMEO",
+            #[cfg(unix)]
+            SocketOption::SoRcvTimeo(_) => "SO_RCVTIMEO",
+        }
+    }
+}
+
 /// Parses a comma-separated socket options string into typed option values.
 ///
 /// Accepts the upstream `rsyncd.conf` format: comma-separated option names with
@@ -222,8 +248,9 @@ fn parse_tos_option_value(value: Option<&str>) -> Result<u32, String> {
 fn apply_socket_options_to_listener(
     listener: &TcpListener,
     options: &[SocketOption],
-) -> io::Result<()> {
-    apply_socket_options_impl(socket2::SockRef::from(listener), options)
+    log_sink: Option<&SharedLogSink>,
+) {
+    apply_socket_options_impl(socket2::SockRef::from(listener), options, log_sink);
 }
 
 /// Applies parsed socket options to an accepted client `TcpStream` via `socket2`.
@@ -233,42 +260,58 @@ fn apply_socket_options_to_listener(
 fn apply_socket_options_to_stream(
     stream: &TcpStream,
     options: &[SocketOption],
-) -> io::Result<()> {
-    apply_socket_options_impl(socket2::SockRef::from(stream), options)
+    log_sink: Option<&SharedLogSink>,
+) {
+    apply_socket_options_impl(socket2::SockRef::from(stream), options, log_sink);
 }
 
 /// Shared implementation for applying socket options to any socket reference.
+///
+/// upstream: socket.c:730-733 - `set_socket_options()` applies each option
+/// independently; on a failed `setsockopt(2)` it emits a warning
+/// (`rsyserr(FERROR, errno, "failed to set socket option %s", tok)`) and
+/// `continue`s to the next option. A single failed option never aborts the
+/// connection, so we warn-and-continue rather than propagate an error.
 fn apply_socket_options_impl(
     sock: socket2::SockRef<'_>,
     options: &[SocketOption],
-) -> io::Result<()> {
+    log_sink: Option<&SharedLogSink>,
+) {
     for opt in options {
-        match opt {
-            SocketOption::TcpNoDelay(enabled) => sock.set_tcp_nodelay(*enabled)?,
-            SocketOption::SoKeepAlive(enabled) => sock.set_keepalive(*enabled)?,
-            SocketOption::SoBroadcast(enabled) => sock.set_broadcast(*enabled)?,
-            SocketOption::SoSndBuf(size) => sock.set_send_buffer_size(*size)?,
-            SocketOption::SoRcvBuf(size) => sock.set_recv_buffer_size(*size)?,
-            SocketOption::IpTos(tos) => apply_ip_tos(&sock, *tos)?,
+        let result: io::Result<()> = match opt {
+            SocketOption::TcpNoDelay(enabled) => sock.set_tcp_nodelay(*enabled),
+            SocketOption::SoKeepAlive(enabled) => sock.set_keepalive(*enabled),
+            SocketOption::SoBroadcast(enabled) => sock.set_broadcast(*enabled),
+            SocketOption::SoSndBuf(size) => sock.set_send_buffer_size(*size),
+            SocketOption::SoRcvBuf(size) => sock.set_recv_buffer_size(*size),
+            SocketOption::IpTos(tos) => apply_ip_tos(&sock, *tos),
             #[cfg(all(unix, not(any(target_os = "linux", target_os = "android"))))]
             SocketOption::SoSndLoWat(n) => {
-                apply_raw_int(&sock, libc::SOL_SOCKET, libc::SO_SNDLOWAT, *n)?;
+                apply_raw_int(&sock, libc::SOL_SOCKET, libc::SO_SNDLOWAT, *n)
             }
             #[cfg(all(unix, not(any(target_os = "linux", target_os = "android"))))]
             SocketOption::SoRcvLoWat(n) => {
-                apply_raw_int(&sock, libc::SOL_SOCKET, libc::SO_RCVLOWAT, *n)?;
+                apply_raw_int(&sock, libc::SOL_SOCKET, libc::SO_RCVLOWAT, *n)
             }
             #[cfg(unix)]
             SocketOption::SoSndTimeo(n) => {
-                apply_raw_int(&sock, libc::SOL_SOCKET, libc::SO_SNDTIMEO, *n)?;
+                apply_raw_int(&sock, libc::SOL_SOCKET, libc::SO_SNDTIMEO, *n)
             }
             #[cfg(unix)]
             SocketOption::SoRcvTimeo(n) => {
-                apply_raw_int(&sock, libc::SOL_SOCKET, libc::SO_RCVTIMEO, *n)?;
+                apply_raw_int(&sock, libc::SOL_SOCKET, libc::SO_RCVTIMEO, *n)
+            }
+        };
+
+        if let Err(error) = result {
+            // upstream: socket.c:730-733 - warn and keep applying the rest.
+            if let Some(log) = log_sink {
+                let text = format!("failed to set socket option {}: {error}", opt.name());
+                let message = rsync_warning!(text).with_role(Role::Daemon);
+                log_message(log, &message);
             }
         }
     }
-    Ok(())
 }
 
 /// Applies an integer socket option that has no typed `socket2` setter.

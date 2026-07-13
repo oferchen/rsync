@@ -249,17 +249,11 @@ fn serve_connections(
                 .with_role(Role::Daemon),
             )
         })?;
+        // upstream: socket.c:730-733 - a failed setsockopt warns and continues;
+        // it never aborts binding. apply_socket_options_to_listener applies each
+        // option independently and logs any per-option failure.
         for listener in &listeners {
-            apply_socket_options_to_listener(listener, &parsed).map_err(|error| {
-                DaemonError::new(
-                    FEATURE_UNAVAILABLE_EXIT_CODE,
-                    rsync_error!(
-                        FEATURE_UNAVAILABLE_EXIT_CODE,
-                        format!("failed to set socket options: {error}")
-                    )
-                    .with_role(Role::Daemon),
-                )
-            })?;
+            apply_socket_options_to_listener(listener, &parsed, log_sink.as_ref());
         }
         Arc::new(parsed)
     } else {
