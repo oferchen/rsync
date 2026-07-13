@@ -63,6 +63,13 @@ fn slash(p: &Path) -> std::ffi::OsString {
     s
 }
 
+/// The self-lock and write-gated-restore legs only manifest for a non-root
+/// transfer: root traverses any directory regardless of its mode, so upstream's
+/// `!am_root` fixup gate is skipped and no self-lock occurs.
+fn running_as_root() -> bool {
+    rustix::process::geteuid().is_root()
+}
+
 /// Leg 1: `--chmod ug-s,a+rX,D+w`.
 ///
 /// Source modes: `name1` = 04700 (setuid, rwx------), `name2` = 0644,
@@ -165,4 +172,121 @@ fn chmod_file_only_clears_world_execute() {
         0o755,
         "foo: directory left untouched by the F-only chmod (0755)",
     );
+}
+
+/// Deliverable #1: a `--chmod` that strips the transfer-root directory's own
+/// owner-execute bit self-locks it.
+///
+/// upstream: generator.c:1503-1520 - the generator chmods the transfer root
+/// ("dst/.") to its tweaked mode and then tries to re-add owner-`rwx` so it can
+/// write the root's contents. Resolving `.` inside the now owner-non-executable
+/// root fails with `EACCES` ("failed to modify permissions on dst/."), the
+/// generator can no longer stat or create the contents, so nothing transfers
+/// and rsync exits 23 with the root left at the strict tweaked mode.
+///
+/// Verified against upstream rsync 3.4.4: `--chmod=ug=rw` leaves `dst` at 0o665,
+/// `--chmod=a=r,g=w` at 0o424, `--chmod=u=r` at 0o455 - each exit 23 with an
+/// empty destination. This encodes WHY the exit code matters: the spec makes the
+/// destination root unreadable to its own owner, a partial-transfer failure a
+/// script must observe, not silently succeed.
+#[test]
+fn chmod_transfer_root_self_locks_without_owner_execute() {
+    if !require_binary("oc-rsync") || running_as_root() {
+        return;
+    }
+    for (spec, expected_mode) in [("ug=rw", 0o665u32), ("a=r,g=w", 0o424), ("u=r", 0o455)] {
+        let root = tempfile::tempdir().expect("tempdir");
+        let from = root.path().join("from");
+        let to = root.path().join("to");
+        fs::create_dir_all(&from).expect("mkdir from");
+        fs::write(from.join("f"), b"hello\n").expect("write f");
+        fs::set_permissions(&from, fs::Permissions::from_mode(0o755)).expect("chmod from");
+        fs::set_permissions(from.join("f"), fs::Permissions::from_mode(0o644)).expect("chmod f");
+
+        let out = OcRsyncCliRunner::new()
+            .args(["-a", "--chmod"])
+            .arg(spec)
+            .arg(slash(&from))
+            .arg(slash(&to))
+            .run()
+            .expect("run oc-rsync");
+
+        out.assert_exit(23);
+        assert!(
+            out.stderr_contains("modify permissions"),
+            "spec {spec}: expected a self-lock permission error, got:\n{}",
+            out.stderr_str(),
+        );
+        assert_eq!(
+            mode_bits(&to),
+            expected_mode,
+            "spec {spec}: transfer root must be left at the strict tweaked mode",
+        );
+
+        // Restore owner-execute so TempDir can traverse and clean up.
+        fs::set_permissions(&to, fs::Permissions::from_mode(0o755)).expect("restore to");
+        let contents: Vec<_> = fs::read_dir(&to)
+            .expect("read to")
+            .map(|e| e.expect("dirent").file_name())
+            .collect();
+        assert!(
+            contents.is_empty(),
+            "spec {spec}: a self-locked root transfers no contents, found {contents:?}",
+        );
+    }
+}
+
+/// Deliverable #2: a subdirectory made owner-non-executable but owner-writable
+/// by `--chmod` regains owner-execute; owner-non-writable ones keep the strict
+/// mode.
+///
+/// upstream: generator.c:1512-1520 raises a directory to owner-`rwx` while its
+/// contents are written, and generator.c:2107-2145 `touch_up_dirs()` restores
+/// the tweaked mode ONLY when the owner would otherwise lack write. A subdir is
+/// addressed by name (not "./"), so the re-add chmod always succeeds; the net
+/// on-disk mode therefore keeps the transient owner bits when the owner is
+/// writable.
+///
+/// Verified against upstream rsync 3.4.4 for `src -> dst/src`: `--chmod=ug=rw`
+/// leaves `dst/src` at 0o765 (owner-write kept 0o700), while `--chmod=u=r`
+/// leaves it at 0o455 (owner not writable, strict mode restored).
+#[test]
+fn chmod_subdir_owner_writable_regains_execute() {
+    if !require_binary("oc-rsync") || running_as_root() {
+        return;
+    }
+    for (spec, expected_mode) in [("ug=rw", 0o765u32), ("u=r", 0o455)] {
+        let root = tempfile::tempdir().expect("tempdir");
+        let src = root.path().join("src");
+        let dst = root.path().join("dst");
+        fs::create_dir_all(&src).expect("mkdir src");
+        fs::write(src.join("f"), b"hello\n").expect("write f");
+        fs::set_permissions(&src, fs::Permissions::from_mode(0o755)).expect("chmod src");
+        fs::set_permissions(src.join("f"), fs::Permissions::from_mode(0o644)).expect("chmod f");
+        fs::create_dir(&dst).expect("mkdir dst");
+
+        // No trailing slash on src: the transfer root is dst/src, a named
+        // subdirectory that never self-locks.
+        let out = OcRsyncCliRunner::new()
+            .args(["-a", "--chmod"])
+            .arg(spec)
+            .arg(&src)
+            .arg(slash(&dst))
+            .run()
+            .expect("run oc-rsync");
+
+        out.assert_success();
+        assert_eq!(
+            mode_bits(&dst.join("src")),
+            expected_mode,
+            "spec {spec}: dst/src final mode must match upstream's during-transfer dance",
+        );
+        // Restore owner-execute before probing contents: a 0o455 result is not
+        // traversable by its owner, so `exists()` would spuriously fail.
+        fs::set_permissions(dst.join("src"), fs::Permissions::from_mode(0o755)).expect("restore");
+        assert!(
+            dst.join("src/f").exists(),
+            "spec {spec}: subdir contents must transfer (the dir was owner-rwx while writing)",
+        );
+    }
 }

@@ -14,6 +14,24 @@ use std::io;
 #[cfg(unix)]
 use std::os::fd::BorrowedFd;
 
+/// Reproduces upstream's during-transfer owner-`rwx` fixup for directories.
+///
+/// Directories written by a non-root transfer are raised to owner-`rwx` while
+/// their contents land, then restored to the strict tweaked mode only when the
+/// owner would otherwise lack write. Files pass through unchanged. Reuses the
+/// shared [`crate::directory_transfer_mode`] so the local-copy, receiver, and
+/// daemon chmod paths all compute one identical result (DRY). `am_root` is
+/// sampled through the same libc `geteuid` the ownership gate uses so
+/// `fakeroot`'s faked identity is honoured.
+// upstream: generator.c:1512-1520 fixup + generator.c:2107-2145 touch_up_dirs.
+#[cfg(unix)]
+fn tweak_directory_transfer_mode(mode: u32, file_type: fs::FileType) -> u32 {
+    if !file_type.is_dir() {
+        return mode;
+    }
+    (mode & !0o7777) | crate::directory_transfer_mode(mode, nix::unistd::geteuid().is_root())
+}
+
 /// Applies an fd-based `fchmod` through the `nix` crate (libc `fchmod(2)`).
 ///
 /// Like ownership's chown helper, the mode change must go through the libc
@@ -436,6 +454,7 @@ pub(super) fn apply_permissions_with_chmod(
         if let Some(modifiers) = options.chmod() {
             let mut mode = base_mode_for_permissions(destination, metadata, options, existing)?;
             mode = modifiers.apply(mode, metadata.file_type());
+            mode = tweak_directory_transfer_mode(mode, metadata.file_type());
 
             if let Some(existing) = existing {
                 if permissions_match(mode, existing) {
@@ -512,6 +531,7 @@ pub(super) fn apply_permissions_with_chmod_fd(
     if let Some(modifiers) = options.chmod() {
         let mut mode = base_mode_for_permissions(destination, metadata, options, existing)?;
         mode = modifiers.apply(mode, metadata.file_type());
+        mode = tweak_directory_transfer_mode(mode, metadata.file_type());
 
         if let Some(existing) = existing {
             if permissions_match(mode, existing) {
@@ -649,6 +669,28 @@ fn intended_fake_super_mode(
         None => base,
     };
     Ok(mode)
+}
+
+/// Computes the `--chmod`-tweaked permission bits (`0o7777`) a directory would
+/// receive, BEFORE upstream's during-transfer owner-`rwx` fixup.
+///
+/// Returns `None` when no `--chmod` modifiers are configured. The local-copy
+/// executor uses this to detect a transfer-root directory whose tweaked mode
+/// strips owner execute and therefore self-locks (see
+/// [`crate::transfer_root_self_locks`]).
+// upstream: rsync.c:set_file_attrs() new_mode, pre generator.c:1512 fixup.
+#[cfg(unix)]
+pub(super) fn chmod_directory_target_mode(
+    destination: &Path,
+    metadata: &fs::Metadata,
+    options: &MetadataOptions,
+    existing: Option<&fs::Metadata>,
+) -> Result<Option<u32>, MetadataError> {
+    let Some(modifiers) = options.chmod() else {
+        return Ok(None);
+    };
+    let base = base_mode_for_permissions(destination, metadata, options, existing)?;
+    Ok(Some(modifiers.apply(base, metadata.file_type()) & 0o7777))
 }
 
 /// Determines the base mode before chmod modifiers are applied.

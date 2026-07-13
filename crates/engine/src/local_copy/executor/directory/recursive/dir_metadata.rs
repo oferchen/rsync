@@ -6,6 +6,8 @@
 // upstream: receiver.c - directory metadata finalization after recv_files()
 
 use std::fs;
+#[cfg(unix)]
+use std::io;
 use std::path::{Path, PathBuf};
 
 #[cfg(any(
@@ -85,6 +87,84 @@ pub(super) fn apply_final_directory_metadata(
     let _ = source;
 
     Ok(())
+}
+
+/// Reproduces upstream's transfer-root self-lock when a `--chmod` strips the
+/// root directory's owner-execute bit.
+///
+/// upstream: generator.c:1503-1520 - the generator chmods a directory to its
+/// tweaked mode and then re-adds owner-`rwx` (`do_chmod_at(fname, mode | S_IRWXU)`)
+/// so it can write the directory's contents. The transfer root is addressed as
+/// `dst/.`, so that re-add chmod must resolve `.` *inside* `dst`; a tweak that
+/// removed owner-execute makes it fail with `EACCES` (generator.c:1514 "failed
+/// to modify permissions on %s") and the generator can no longer stat or create
+/// the root's contents. Nothing under it transfers and rsync exits 23.
+/// Non-root directories are addressed by name and never take this path, so the
+/// caller scopes the check to the transfer root (`relative == None`).
+///
+/// Returns `Ok(Some(error))` when the root self-locks - after leaving it at the
+/// strict tweaked mode and recording an I/O error (exit 23) - so the caller
+/// skips the root's contents and its metadata finalization. Returns `Ok(None)`
+/// when no `--chmod` is active, the tweak keeps owner execute, or the root has
+/// not been materialised yet.
+#[cfg(unix)]
+pub(super) fn enforce_transfer_root_self_lock(
+    context: &mut CopyContext,
+    destination: &Path,
+    metadata: &fs::Metadata,
+) -> Result<Option<LocalCopyError>, LocalCopyError> {
+    use std::os::unix::fs::PermissionsExt;
+
+    let existing = fs::symlink_metadata(destination).ok();
+    let Some(existing_meta) = existing.as_ref().filter(|meta| meta.is_dir()) else {
+        return Ok(None);
+    };
+
+    let options = context.metadata_options();
+    let Some((tweaked, self_locks)) = ::metadata::transfer_root_chmod_self_lock(
+        destination,
+        metadata,
+        &options,
+        Some(existing_meta),
+    )
+    .map_err(map_metadata_error)?
+    else {
+        return Ok(None);
+    };
+    if !self_locks {
+        return Ok(None);
+    }
+
+    // Apply the strict tweaked mode to the root, self-locking it exactly as
+    // upstream's set_file_attrs() does before it fails to re-add owner-rwx.
+    fs::set_permissions(destination, fs::Permissions::from_mode(tweaked))
+        .map_err(|error| LocalCopyError::io("modify permissions on", destination, error))?;
+
+    // upstream: generator.c:1514 do_chmod_at("dst/.", mode | S_IRWXU) - fails
+    // with EACCES because `.` can no longer be resolved inside the now
+    // owner-non-executable root. Trigger the identical OS error to report it.
+    let dot = destination.join(".");
+    let io_error = match fs::set_permissions(&dot, fs::Permissions::from_mode(tweaked | 0o700)) {
+        Err(error) => error,
+        Ok(()) => io::Error::new(io::ErrorKind::PermissionDenied, "Permission denied"),
+    };
+    context.record_io_error();
+    Ok(Some(LocalCopyError::io(
+        "modify permissions on",
+        dot,
+        io_error,
+    )))
+}
+
+/// Non-Unix stub: permission-driven self-lock does not apply without POSIX
+/// directory-execute traversal semantics.
+#[cfg(not(unix))]
+pub(super) fn enforce_transfer_root_self_lock(
+    _context: &mut CopyContext,
+    _destination: &Path,
+    _metadata: &fs::Metadata,
+) -> Result<Option<LocalCopyError>, LocalCopyError> {
+    Ok(None)
 }
 
 /// Records directory completion statistics and pending records.

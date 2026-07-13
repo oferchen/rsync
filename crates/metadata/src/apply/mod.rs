@@ -110,6 +110,33 @@ pub fn apply_dest_mode_pre_transfer(
     )
 }
 
+/// Reports whether a transfer-root directory self-locks under the configured
+/// `--chmod` modifiers, returning the tweaked permission bits alongside the
+/// verdict, or `None` when no `--chmod` is configured.
+///
+/// `am_root` is sampled through the same libc `geteuid` the chmod apply path
+/// uses, so the self-lock decision and the on-disk fixup agree under
+/// `fakeroot`. See [`crate::transfer_root_self_locks`] for the mechanism.
+// upstream: rsync.c:set_file_attrs() new_mode + generator.c:1512 fixup.
+#[cfg(unix)]
+pub fn transfer_root_chmod_self_lock(
+    destination: &Path,
+    metadata: &fs::Metadata,
+    options: &MetadataOptions,
+    existing: Option<&fs::Metadata>,
+) -> Result<Option<(u32, bool)>, MetadataError> {
+    let Some(tweaked) =
+        permissions::chmod_directory_target_mode(destination, metadata, options, existing)?
+    else {
+        return Ok(None);
+    };
+    let running_as_root = nix::unistd::geteuid().is_root();
+    Ok(Some((
+        tweaked,
+        crate::transfer_root_self_locks(tweaked, running_as_root),
+    )))
+}
+
 /// Applies file metadata using an open file descriptor for efficiency.
 ///
 /// When an fd is available (e.g. after writing a file), this avoids redundant

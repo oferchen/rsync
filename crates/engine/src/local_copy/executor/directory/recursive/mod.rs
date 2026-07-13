@@ -31,7 +31,9 @@ use deletion::{
     apply_during_transfer_deletions, handle_empty_directory_pruning, handle_post_transfer_deletions,
 };
 use destination::{check_destination_state, record_skipped_missing_destination};
-use dir_metadata::{apply_final_directory_metadata, record_directory_completion};
+use dir_metadata::{
+    apply_final_directory_metadata, enforce_transfer_root_self_lock, record_directory_completion,
+};
 use entry::process_planned_entry;
 
 use super::planner::{
@@ -466,6 +468,20 @@ fn copy_directory_recursive_inner(
 
     if !directory_ready.get() && !prune_enabled {
         ensure_directory(context)?;
+    }
+
+    // upstream: generator.c:1503-1520 - the generator applies a directory's
+    // tweaked mode and re-adds owner-rwx BEFORE writing its contents. For the
+    // transfer root ("dst/.") a --chmod that strips owner-execute makes that
+    // re-add chmod fail (EACCES) and the root can no longer be entered, so none
+    // of its contents transfer and rsync exits 23. Reproduce that self-lock
+    // here, before planning or touching the root's contents; other directories
+    // are addressed by name and never take this path.
+    if relative.is_none()
+        && !context.mode().is_dry_run()
+        && let Some(error) = enforce_transfer_root_self_lock(context, destination, metadata)?
+    {
+        return Err(error);
     }
 
     let mut plan = plan_directory_entries(context, &entries, relative, root_device)?;
