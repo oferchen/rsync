@@ -157,9 +157,11 @@ fn parse_chmod_specs(
                     modifiers = Some(parsed);
                 }
             }
-            Err(error) => {
-                let formatted =
-                    format!("failed to parse --chmod specification '{spec_text}': {error}");
+            Err(_error) => {
+                // upstream: options.c:1762-1766 - a rejected spec yields
+                // `Invalid argument passed to --chmod (%s)` (raw arg) then
+                // exit_cleanup(RERR_SYNTAX).
+                let formatted = format!("Invalid argument passed to --chmod ({spec_text})");
                 return Err(core::rsync_error!(1, formatted).with_role(core::message::Role::Client));
             }
         }

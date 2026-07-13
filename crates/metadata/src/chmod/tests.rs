@@ -61,48 +61,24 @@ fn conditional_execute_bit_behaviour_matches_rsync() {
     assert_eq!(dir_mode & 0o777, 0o711);
 }
 
-/// upstream: chmod.c:parse_chmod() STATE_2ND_HALF accepts a single who-letter
-/// (`u`/`g`/`o`) on the right-hand side as a copy-from-category source, and an
-/// empty right-hand side clears that class. This is the reported `--chmod`
-/// grammar that oc previously rejected.
+/// upstream: chmod.c:159-185 STATE_2ND_HALF has no `u`/`g`/`o` case, so a
+/// category letter in the permission half falls to `default:` -> STATE_ERROR
+/// and parse_chmod returns NULL. rsync's `--chmod` grammar has no chmod(1)-style
+/// copy-from-category form; upstream 3.4.4 prints
+/// `Invalid argument passed to --chmod (g=u)` and exits RERR_SYNTAX. An empty
+/// permission half (e.g. `o=`) is a distinct, legitimate clause and still
+/// parses (the operator was seen, so it is not an empty clause).
 #[test]
-fn who_letter_copy_forms_are_accepted() {
-    assert!(ChmodModifiers::parse("g=u").is_ok());
-    assert!(ChmodModifiers::parse("g=o,o=").is_ok());
-    assert!(ChmodModifiers::parse("g-o").is_ok());
-    assert!(ChmodModifiers::parse("u+g").is_ok());
-    // A copy letter mixed with a literal permission letter is still an error.
+fn who_letter_copy_forms_are_rejected() {
+    assert!(ChmodModifiers::parse("g=u").is_err());
+    assert!(ChmodModifiers::parse("o=g").is_err());
+    assert!(ChmodModifiers::parse("u+g").is_err());
+    assert!(ChmodModifiers::parse("g-o").is_err());
     assert!(ChmodModifiers::parse("g=ur").is_err());
-}
-
-/// upstream: chmod.c copy-from-category apply. Resulting mode bits are verified
-/// byte-for-byte against `rsync 3.4.3-149` on Linux (umask 022):
-/// `g=u` 700->770, `g=o` 707->777, `u=g` 755->555, `g-o` 777->707, `o=` 755->750.
-#[cfg(unix)]
-#[test]
-fn copy_from_category_apply_matches_rsync() {
-    use std::os::unix::fs::PermissionsExt;
-
-    let temp = tempfile::tempdir().expect("tempdir");
-    let file_path = temp.path().join("f");
-    std::fs::write(&file_path, b"payload").expect("write file");
-    std::fs::set_permissions(&file_path, PermissionsExt::from_mode(0o644)).expect("set perms");
-    let file_type = std::fs::metadata(&file_path).expect("metadata").file_type();
-
-    let apply = |spec: &str, mode: u32| {
-        ChmodModifiers::parse(spec)
-            .expect("parse")
-            .apply(mode, file_type)
-            & 0o7777
-    };
-
-    assert_eq!(apply("g=u", 0o700), 0o770);
-    assert_eq!(apply("g=u", 0o4755), 0o4775);
-    assert_eq!(apply("g=o", 0o707), 0o777);
-    assert_eq!(apply("u=g", 0o755), 0o555);
-    assert_eq!(apply("g-o", 0o777), 0o707);
-    assert_eq!(apply("o=", 0o755), 0o750);
-    assert_eq!(apply("a=u", 0o700), 0o777);
+    // An empty permission half clears the class and remains valid.
+    assert!(ChmodModifiers::parse("g=o,o=").is_err());
+    assert!(ChmodModifiers::parse("o=").is_ok());
+    assert!(ChmodModifiers::parse("Dg=").is_ok());
 }
 
 /// Verifies that `D+w` (no explicit who) applies umask masking.
