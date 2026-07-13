@@ -33,8 +33,19 @@ pub const MIN_FILECNT_LOOKAHEAD: usize = 1000;
 /// - `flist.c:2931` - `ndx_start = prev->ndx_start + prev->used + 1`
 #[derive(Debug)]
 pub(crate) struct PendingSegment {
-    /// Global NDX of the parent directory.
+    /// Wire `dir_ndx` of the owning directory in the receiver's `dir_flist`.
+    ///
+    /// Written to the wire as `NDX_FLIST_OFFSET - parent_dir_ndx`
+    /// (flist.c:2117) to identify which directory this sub-list belongs to.
     pub(crate) parent_dir_ndx: i32,
+    /// Flat `GeneratorContext::file_list` index of the owning directory entry.
+    ///
+    /// Distinct from `parent_dir_ndx`: the wire `dir_ndx` counts only
+    /// directories in `dir_flist` growth order, whereas this indexes the flat
+    /// entry list that drives itemize formatting. A directory itemized via its
+    /// sub-list's gap NDX (`ndx_start - 1`) resolves to this flat index so the
+    /// printed row carries the directory's own path and type char.
+    pub(crate) parent_flat_idx: usize,
     /// Start index into `GeneratorContext::file_list`.
     pub(crate) flist_start: usize,
     /// Number of entries in this segment.
@@ -162,6 +173,25 @@ pub(crate) struct IncrementalState {
     ///
     /// Without INC_RECURSE, this contains a single entry `(0, 0)`.
     pub(crate) ndx_segments: Vec<(usize, i32)>,
+    /// Flat `file_list` index of each sub-list's owning directory, aligned 1:1
+    /// with `ndx_segments`. Stores `-1` when a sub-list has no owning directory
+    /// entry to itemize (the initial list whose first entry is not `.`).
+    ///
+    /// Under INC_RECURSE the remote generator itemizes a directory by sending
+    /// the "gap NDX" `ndx_start - 1` of that directory's sub-list
+    /// (generator.c:2313 `ndx = cur_flist->ndx_start - 1`). The sender must map
+    /// that gap back to the owning directory entry rather than to a regular
+    /// file, mirroring `dir_flist->files[cur_flist->parent_ndx]`
+    /// (sender.c:269-272). oc keeps a single flat entry list rather than a
+    /// separate `dir_flist`, so this table records the flat index of each
+    /// sub-list's owning directory directly, letting `resolve_itemize_ndx`
+    /// return it without a second wire-NDX translation.
+    ///
+    /// The initial list's slot is the flat index of the `.` root when the
+    /// transfer root is `.` (upstream flist.c:2572 keeps `parent_ndx` when the
+    /// first sorted entry is `.`), so the root directory row is itemized rather
+    /// than dropped; otherwise it is `-1`.
+    pub(crate) segment_parent_flat: Vec<i32>,
     /// Index into `ndx_segments` of the oldest unreclaimed segment.
     ///
     /// Advances by one each time a completed segment is reclaimed via
@@ -185,6 +215,7 @@ impl IncrementalState {
             flist_writer_cache: None,
             initial_segment_count: None,
             ndx_segments: vec![(0, initial_ndx_start)],
+            segment_parent_flat: vec![-1],
             first_segment_idx: 0,
         }
     }

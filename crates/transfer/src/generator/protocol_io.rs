@@ -615,6 +615,13 @@ impl GeneratorContext {
         self.incremental
             .ndx_segments
             .push((segment.flist_start, seg_ndx_start));
+        // Record the owning directory's flat index so a directory itemize read
+        // back at the gap NDX `seg_ndx_start - 1` resolves to the directory
+        // entry rather than to the trailing file of the previous segment.
+        // upstream: sender.c:269-272 - `dir_flist->files[cur_flist->parent_ndx]`.
+        self.incremental
+            .segment_parent_flat
+            .push(segment.parent_flat_idx as i32);
 
         // Signal new sub-list to receiver.
         // upstream: flist.c:2117 - write_ndx(f, NDX_FLIST_OFFSET - dir_ndx)

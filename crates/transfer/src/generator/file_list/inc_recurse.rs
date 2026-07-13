@@ -176,12 +176,17 @@ impl GeneratorContext {
         // Phase 1: Assign wire dir_ndx to initial list directories.
         // Dense Vec indexed by node_id - O(1) lookup.
         let mut node_to_wire: Vec<i32> = vec![-1; num_dirs];
+        // Flat file_list index of each directory node, so a sub-list's gap NDX
+        // itemize resolves to its owning directory's own path/type char.
+        // upstream: sender.c:269-272 - `dir_flist->files[cur_flist->parent_ndx]`.
+        let mut node_to_flat: Vec<usize> = vec![usize::MAX; num_dirs];
         let mut wire_dir_ndx: i32 = 0;
 
         for (i, tagged) in initial_entries.iter().enumerate() {
             if self.file_list[i].is_dir() {
                 if let Some(nid) = tagged.node_id {
                     node_to_wire[nid] = wire_dir_ndx;
+                    node_to_flat[nid] = i;
                 }
                 // Count ALL dirs including "." for correct dir_flist alignment.
                 wire_dir_ndx += 1;
@@ -208,6 +213,7 @@ impl GeneratorContext {
             let flist_start = self.file_list.len();
 
             for child in &seg.children {
+                let child_flat = self.file_list.len();
                 self.file_list
                     .push(file_entries[child.file_idx].take().unwrap());
                 self.source_bases
@@ -215,6 +221,7 @@ impl GeneratorContext {
 
                 if let Some(child_nid) = child.node_id {
                     node_to_wire[child_nid] = wire_dir_ndx;
+                    node_to_flat[child_nid] = child_flat;
                     wire_dir_ndx += 1;
                 }
             }
@@ -222,12 +229,26 @@ impl GeneratorContext {
             let parent_wire_ndx = node_to_wire[node_id];
             pending.push(PendingSegment {
                 parent_dir_ndx: parent_wire_ndx,
+                parent_flat_idx: node_to_flat[node_id],
                 flist_start,
                 count: seg.children.len(),
             });
         }
 
         self.incremental.pending_segments = pending;
+
+        // The initial list itemizes the transfer root `.` via its own gap NDX
+        // (`ndx_start - 1`) when the first entry is `.`. upstream flist.c:2572
+        // keeps `flist->parent_ndx` (pointing at dir_flist[0] == `.`) unless the
+        // first sorted entry's basename differs from ".", in which case the root
+        // has no directory row. `.` is always the first initial entry (flat 0)
+        // when present, so resolve its slot to flat 0; otherwise leave it -1.
+        self.incremental.segment_parent_flat[0] =
+            if self.file_list.get(0).is_some_and(|e| e.name() == ".") {
+                0
+            } else {
+                -1
+            };
     }
 }
 
