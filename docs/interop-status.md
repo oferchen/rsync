@@ -117,7 +117,7 @@ the codec.
 | Permissions | `-rlpv` | Pass | Pass | Pass |
 | Numeric IDs | `-av --numeric-ids` | Pass | Pass | Pass |
 | Devices | `-avD` | - | - | Pass |
-| ACLs | `-avA` | Skipped (proto < 30) | Sender verified; receiver gap | Sender verified; receiver gap |
+| ACLs | `-avA` | Skipped (proto < 30) | Sender + receiver verified | Sender + receiver verified |
 | Extended attrs | `-avX` | - | - | Verified when supported |
 | Itemize changes | `-avi` | Pass | Pass | Pass |
 
@@ -341,7 +341,7 @@ schedule. It validates:
 
 | Feature | Description |
 |---------|-------------|
-| ACLs | `-avA` sender interop is verified against upstream when the upstream binary advertises ACL support and the host filesystem supports POSIX ACLs (oc client -> upstream daemon round-trips the named-user ACL + mask exactly); skipped when unsupported. Receiver gap: the oc daemon/wire receiver (upstream client -> oc daemon) drops named-user ACL entries and the mask, keeping only the base user/group/other - the oc local copy path preserves them, so the gap is specific to applying a wire-decoded ACL |
+| ACLs | `-avA` interop is verified against upstream in both directions when the upstream binary advertises ACL support and the host filesystem supports POSIX ACLs: the oc client and the oc wire receiver both round-trip named-user/group entries and the mask exactly (the earlier receiver drop of named entries + mask was fixed; wire-decode round-trip is unit-tested), and it is skipped (not failed) when unsupported. POSIX access + default ACLs are covered on Linux/macOS/FreeBSD (macOS APFS has no default-ACL concept, matching upstream). Residual limitation: Windows DACL is supported but SACL/inheritance/protected bits are deferred (Tier-1C), and cross-model POSIX<->NFSv4<->DACL transfer is lossy exactly as it is in upstream (no cross-model translation) |
 | Extended attrs | `-avX` round-trip is verified against upstream in both directions when the upstream binary advertises xattr support and the host filesystem supports user xattrs; skipped (not failed) otherwise |
 | `--info=progress2` | Output format not fully implemented |
 | `--iconv` | Charset conversion not implemented |
