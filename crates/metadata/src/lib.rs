@@ -234,6 +234,8 @@ pub use acl_windows::{
 pub use acl_noop::{apply_acls_from_cache, default_perms_for_dir, get_rsync_acl, sync_acls};
 
 #[cfg(unix)]
+#[cfg(unix)]
+pub use apply::transfer_root_chmod_self_lock;
 pub use apply::{
     apply_dest_mode_pre_transfer, apply_file_metadata_with_fd,
     apply_file_metadata_with_fd_if_changed,
@@ -247,7 +249,7 @@ pub use apply::{
     apply_symlink_metadata_from_entry, apply_symlink_metadata_with_options, metadata_unchanged,
 };
 
-pub use chmod::{ChmodError, ChmodModifiers};
+pub use chmod::{ChmodError, ChmodModifiers, directory_transfer_mode, transfer_root_self_locks};
 
 pub use error::MetadataError;
 
