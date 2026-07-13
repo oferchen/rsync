@@ -368,6 +368,8 @@ pub use secure_dir::secure_open_dir;
 // See WIN-S.LAND.1.a audit (#5552) confirming zero external callers.
 #[cfg(unix)]
 pub use sendfile::send_file_to_fd_with_policy;
+#[cfg(unix)]
+pub use socket_options::set_socket_int_option_raw;
 pub use socket_options::{
     DEFAULT_TCP_FASTOPEN_QLEN, DEFAULT_TCP_NOTSENT_LOWAT, MAX_SOCKET_BUFFER_SIZE,
     connectx_fastopen_raw, connectx_fastopen_supported, enable_tcp_fastopen_connect_raw,
