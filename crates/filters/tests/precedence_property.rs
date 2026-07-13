@@ -36,11 +36,6 @@ fn segment() -> impl Strategy<Value = String> {
     .prop_map(|v| v.into_iter().collect::<String>())
 }
 
-/// A relative path of 1-4 segments joined by `/`.
-fn rel_path() -> impl Strategy<Value = String> {
-    proptest::collection::vec(segment(), 1..5).prop_map(|s| s.join("/"))
-}
-
 /// A simple non-anchored, non-dir-only pattern that may include `*` for
 /// extension-style matching. Kept literal-friendly so we can reason about
 /// matches directly.
