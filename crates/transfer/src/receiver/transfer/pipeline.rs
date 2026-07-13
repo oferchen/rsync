@@ -269,6 +269,7 @@ impl ReceiverContext {
                                 basis_result.basis_path,
                                 basis_result.fnamecmp_type,
                                 file_entry.size(),
+                                base_iflags,
                                 &request_config,
                             )?;
 
@@ -292,6 +293,7 @@ impl ReceiverContext {
                                 None,
                                 protocol::FnameCmpType::Fname,
                                 file_entry.size(),
+                                base_iflags,
                                 &request_config,
                             )?;
 
@@ -486,15 +488,19 @@ impl ReceiverContext {
         // upstream: io.c perform_io() flushes output via select() while waiting
         // for input. We flush once before blocking on each response read, but
         // only when needed (the multiplex dirty-flag skips redundant syscalls).
-        for &(file_idx, file_entry, _, _) in files_to_transfer {
+        for &(file_idx, file_entry, _, base_iflags) in files_to_transfer {
             // upstream: generator.c:1925 - write_ndx(f_out, ndx)
             let wire_ndx = self.flat_to_wire_ndx(file_idx);
             ndx_write_codec.write_ndx(&mut *writer, wire_ndx)?;
 
-            // upstream: generator.c:1926 - iflags with ITEM_TRANSFER
+            // upstream: generator.c:1937-1947 - iflags carry the full itemize
+            // bits (ITEM_TRANSFER plus the pre-transfer attribute diff, incl.
+            // ITEM_IS_NEW for a new dest) so the sender prints the right glyph
+            // (e.g. `<f+++++++++` for a new file) even in a dry run.
             if write_iflags {
                 use crate::receiver::wire::SenderAttrs;
-                writer.write_all(&SenderAttrs::ITEM_TRANSFER.to_le_bytes())?;
+                let iflags = ((base_iflags & 0xFFFF) as u16) | SenderAttrs::ITEM_TRANSFER;
+                writer.write_all(&iflags.to_le_bytes())?;
             }
 
             // Flush before blocking on the sender's echo. The multiplex
@@ -593,7 +599,7 @@ impl ReceiverContext {
             append_verify: self.config.flags.append_verify,
         };
 
-        for &(file_idx, file_entry, ref file_path, _) in files_to_transfer {
+        for &(file_idx, file_entry, ref file_path, base_iflags) in files_to_transfer {
             // upstream: generator.c:1961-1969 - compute the basis signature and
             // send a real sum head so the sender can diff against the receiver's
             // basis (empty when no basis exists, driving a whole-file batch).
@@ -624,6 +630,7 @@ impl ReceiverContext {
                 basis.basis_path,
                 basis.fnamecmp_type,
                 file_entry.size(),
+                base_iflags,
                 &request_config,
             )?;
 
