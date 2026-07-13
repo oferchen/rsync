@@ -103,6 +103,40 @@ Three signals matter for the release decision:
    (see `project_bufferpool_count_cap.md`) or a signature-index
    leak.
 
+## Companion microbenchmark results (lxhost, 2026-07-13)
+
+Authoritative re-bench on the aarch64 Linux validation host (16 cores) of
+the Criterion cells wired into `bench-zsync-matching.yml`. These are the
+in-process matching microbenchmarks, run alongside the large-dataset
+scenario above.
+
+### Parallel delta scan (`parallel_delta_scan`)
+
+256 MiB duplicate-free basis, opt-in parallel sender-delta scan across a
+rising worker count. Every configuration is wire-byte-identical to the
+sequential (1-chunk) scan for a duplicate-free basis.
+
+| Workers | Wall clock | Throughput | Speedup vs sequential |
+|---------|-----------|-----------|-----------------------|
+| 1 (sequential) | 1.858 s | 137.8 MiB/s | 1.00x |
+| 2 | 0.931 s | 275.1 MiB/s | 2.00x |
+| 4 | 0.582 s | 439.5 MiB/s | 3.19x |
+| 8 | 0.556 s | 460.1 MiB/s | 3.34x |
+| 16 | 0.549 s | 466.6 MiB/s | 3.39x |
+
+Scaling is near-linear to 4 workers, then flattens as the scan becomes
+memory-bandwidth bound. The knee is around 8 workers (~3.3x); beyond that
+extra workers add little. Default remains off - the path only engages
+behind its opt-in flag on a duplicate-free basis.
+
+### Other matching cells
+
+| Cell | Peak throughput |
+|------|-----------------|
+| `zsync_optimizations` (medium corpus) | ~677 MiB/s |
+| `bithash_rejection` (micro) | ~5.19 GiB/s |
+| `compact_keys_cache` (micro) | ~418 Melem/s |
+
 ## Integration with release qualification
 
 The release pipeline should run:
