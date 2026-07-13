@@ -5,7 +5,8 @@
 //! loop. The itemize/info-line emission methods live in the sibling
 //! [`super::itemize`] module.
 
-use std::collections::HashMap;
+use std::cell::RefCell;
+use std::collections::{BTreeMap, HashMap};
 use std::num::NonZeroU8;
 use std::sync::Arc;
 use std::sync::atomic::Ordering;
@@ -230,6 +231,24 @@ pub struct ReceiverContext {
     /// - `generator.c:2300-2305` - `preserve_hard_links && inc_recurse` pre-reads
     ///   until `file_total < MIN_FILECNT_LOOKAHEAD / 2`.
     pub(in crate::receiver) hardlink_lookahead_target: usize,
+    /// When set, itemize rows are buffered (keyed by flist index) instead of
+    /// written to the client sink at their emit site, then drained once in
+    /// flist-index order by [`Self::flush_itemize_rows`] just before
+    /// finalization. This reproduces upstream's single flist-index-order walk
+    /// (`generator.c:2329-2344` -> `recv_generator` -> `itemize`), where a
+    /// directory row immediately precedes its children, rather than oc's
+    /// two-phase "all dirs, then all files" emission order.
+    ///
+    /// Defaults to `false`: every non-deferred caller emits immediately, exactly
+    /// as before. Only [`Self::run_pipelined`] opts in; the sync, incremental,
+    /// and async receive paths are converted separately.
+    pub(in crate::receiver) defer_itemize: bool,
+    /// Buffer of rendered itemize rows keyed by flist index, drained in ascending
+    /// key order by [`Self::flush_itemize_rows`]. Populated only while
+    /// [`Self::defer_itemize`] is set. A `Vec` per index tolerates the phase-2
+    /// redo re-itemizing an entry. `RefCell` suffices: every emit site runs on
+    /// the main driver thread (rayon workers never touch this).
+    pub(in crate::receiver) itemize_rows: RefCell<BTreeMap<usize, Vec<String>>>,
 }
 
 impl ReceiverContext {
@@ -296,6 +315,8 @@ impl ReceiverContext {
             flist_eof: false,
             // upstream: generator.c:2304 - MIN_FILECNT_LOOKAHEAD / 2 (1000 / 2).
             hardlink_lookahead_target: 500,
+            defer_itemize: false,
+            itemize_rows: RefCell::new(BTreeMap::new()),
         }
     }
 

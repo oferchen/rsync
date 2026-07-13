@@ -343,7 +343,10 @@ impl ReceiverContext {
                     // `cd+++++++++ ./` when the pre-flight mkdir created the root.
                     crate::generator::ItemFlags::from_raw(self.existing_dir_iflags(entry, dir_path))
                 };
-                let _ = self.emit_itemize(writer, &iflags, entry);
+                // Deferred on the run_pipelined path so the dir row lands in
+                // flist-index order (immediately before its children) at flush
+                // time; emitted immediately on every other path.
+                let _ = self.emit_or_record_itemize(writer, *idx, &iflags, entry);
             }
         }
 

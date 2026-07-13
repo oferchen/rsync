@@ -285,6 +285,7 @@ impl ReceiverContext {
                     let unchanged_iflags = self.itemize_existing_flags(entry, meta, 0);
                     self.apply_no_change_metadata(
                         writer,
+                        idx,
                         &file_path,
                         entry,
                         meta,
@@ -348,7 +349,10 @@ impl ReceiverContext {
             // (after the transfer completes) to match `log_before_transfer == 0`.
             if emit_itemize && self.config.connection.client_mode {
                 let iflags = crate::generator::ItemFlags::from_raw(base_iflags);
-                let _ = self.emit_itemize(writer, &iflags, entry);
+                // Deferred on the run_pipelined path so this transfer row
+                // interleaves with directory rows in flist-index order at flush
+                // time; emitted immediately on every other path.
+                let _ = self.emit_or_record_itemize(writer, idx, &iflags, entry);
             }
             files_to_transfer.push((idx, entry, file_path, base_iflags));
         }
@@ -446,6 +450,7 @@ impl ReceiverContext {
     fn apply_no_change_metadata<W: Write + crate::writer::MsgInfoSender + ?Sized>(
         &self,
         writer: &mut W,
+        flist_idx: usize,
         file_path: &Path,
         entry: &FileEntry,
         stat_meta: &fs::Metadata,
@@ -465,7 +470,10 @@ impl ReceiverContext {
         // unless the itemize level requests unchanged rows (generator.c:574-576).
         if emit_itemize {
             let iflags = crate::generator::ItemFlags::from_raw(unchanged_iflags);
-            let _ = self.emit_itemize(writer, &iflags, entry);
+            // Deferred on the run_pipelined path so an up-to-date file's
+            // metadata-only row interleaves with directory and transfer rows in
+            // flist-index order at flush time; emitted immediately otherwise.
+            let _ = self.emit_or_record_itemize(writer, flist_idx, &iflags, entry);
         }
 
         // upstream: generator.c:461 unchanged_attrs() - fast-path check avoids
@@ -506,5 +514,155 @@ impl ReceiverContext {
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod itemize_order_tests {
+    use std::ffi::OsString;
+
+    use protocol::ProtocolVersion;
+    use protocol::flist::FileEntry;
+
+    use crate::config::ServerConfig;
+    use crate::flags::{InfoFlags, ParsedServerFlags};
+    use crate::handshake::HandshakeResult;
+    use crate::receiver::ReceiverContext;
+    use crate::receiver::stats::TransferStats;
+    use crate::role::ServerRole;
+
+    fn handshake() -> HandshakeResult {
+        HandshakeResult {
+            protocol: ProtocolVersion::try_from(32u8).unwrap(),
+            buffered: Vec::new(),
+            compat_exchanged: false,
+            client_args: None,
+            io_timeout: None,
+            negotiated_algorithms: None,
+            compat_flags: None,
+            checksum_seed: 0,
+        }
+    }
+
+    /// A client-mode pull receiver with `-i` (itemize) requested.
+    fn itemize_client_config() -> ServerConfig {
+        let mut config = ServerConfig {
+            role: ServerRole::Receiver,
+            protocol: ProtocolVersion::try_from(32u8).unwrap(),
+            flag_string: "-ri".to_owned(),
+            flags: ParsedServerFlags {
+                recursive: true,
+                info_flags: InfoFlags {
+                    itemize: true,
+                    ..InfoFlags::default()
+                },
+                ..ParsedServerFlags::default()
+            },
+            args: vec![OsString::from(".")],
+            ..Default::default()
+        };
+        config.connection.client_mode = true;
+        config
+    }
+
+    /// The deferred flush must interleave directory and file itemize rows in
+    /// flist-index order (a dir row immediately precedes its children), not
+    /// batch every directory ahead of every file.
+    ///
+    /// Upstream itemizes in a single flist-index-order walk: `generate_files`
+    /// (generator.c:2329-2344) calls `recv_generator` per `cur_flist->sorted[i]`
+    /// in index order, and `recv_generator` (generator.c:1480-1483) itemizes
+    /// each directory at its own flist position. For the flist
+    /// `a/ a/f1 b/ b/f2` upstream prints `.d a/`, `>f a/f1`, `.d b/`, `>f b/f2`.
+    /// oc's two-phase receiver recorded every `.d` row in the directory-creation
+    /// pass before any `>f` row from the candidate pass, so a raw emission would
+    /// yield `.d a/`, `.d b/`, `>f a/f1`, `>f b/f2`. Keying each row by its flist
+    /// index and draining the BTreeMap in key order restores the interleave.
+    ///
+    /// This test drives the real `run_pipelined` record sites
+    /// (`create_directories` + `build_files_to_transfer`) with deferral on and
+    /// asserts the buffered rows land in index order. It fails if the batch
+    /// emission returns: reverting to an immediate emit leaves the buffer empty
+    /// (0 rows), and recording without the per-index key would order the two
+    /// directory rows ahead of the two file rows.
+    #[test]
+    fn deferred_itemize_rows_interleave_in_flist_index_order() {
+        let dir = test_support::create_tempdir();
+        let dest = dir.path();
+
+        let hs = handshake();
+        let mut ctx = ReceiverContext::new_for_test(&hs, itemize_client_config());
+        ctx.defer_itemize = true;
+        ctx.file_list = vec![
+            FileEntry::new_directory("a".into(), 0o755),  // idx 0
+            FileEntry::new_file("a/f1".into(), 5, 0o644), // idx 1
+            FileEntry::new_directory("b".into(), 0o755),  // idx 2
+            FileEntry::new_file("b/f2".into(), 5, 0o644), // idx 3
+        ];
+
+        let opts = metadata::MetadataOptions::default();
+        let mut writer = crate::writer::ServerWriter::new_plain(Vec::new());
+
+        // Directory-creation pass records the `.d` rows (flist indices 0 and 2).
+        ctx.create_directories(
+            dest,
+            &opts,
+            None,
+            None,
+            &mut writer,
+            #[cfg(unix)]
+            None,
+        )
+        .expect("create_directories succeeds");
+
+        // Candidate pass records the new-file transfer rows (indices 1 and 3).
+        let mut metadata_errors = Vec::new();
+        let mut stats = TransferStats::default();
+        let _ = ctx.build_files_to_transfer(
+            &mut writer,
+            dest,
+            &opts,
+            None,
+            &mut metadata_errors,
+            &mut stats,
+            None,
+            None,
+        );
+
+        let rows: Vec<(usize, String)> = ctx
+            .itemize_rows
+            .borrow()
+            .iter()
+            .map(|(idx, lines)| (*idx, lines[0].clone()))
+            .collect();
+
+        let keys: Vec<usize> = rows.iter().map(|(idx, _)| *idx).collect();
+        assert_eq!(
+            keys,
+            vec![0, 1, 2, 3],
+            "itemize rows must be keyed by flist index and drain in index order"
+        );
+
+        // Interleaved dir/file/dir/file, not batched dir/dir/file/file.
+        assert!(
+            rows[0].1.starts_with("cd") && rows[0].1.contains('a'),
+            "row 0 must be the created directory a/: {:?}",
+            rows[0].1
+        );
+        assert!(
+            rows[1].1.starts_with(">f") && rows[1].1.contains("a/f1"),
+            "row 1 must be the new file a/f1 (before b/), not the b/ directory: {:?}",
+            rows[1].1
+        );
+        assert!(
+            rows[2].1.starts_with("cd") && rows[2].1.contains('b'),
+            "row 2 must be the created directory b/ AFTER a/f1: {:?}",
+            rows[2].1
+        );
+        assert!(
+            rows[3].1.starts_with(">f") && rows[3].1.contains("b/f2"),
+            "row 3 must be the new file b/f2: {:?}",
+            rows[3].1
+        );
     }
 }
