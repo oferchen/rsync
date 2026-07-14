@@ -44,6 +44,74 @@ fn normalize_filename_for_compare(name: &OsStr) -> OsString {
     name.to_os_string()
 }
 
+/// Whether a destination directory sits on a different filesystem than the
+/// transfer root - a mount point the `--one-file-system` delete pass must
+/// preserve. Pure device-id comparison, dependency-inverted from the stat call
+/// site so the decision is unit-testable with synthetic device ids (mounting a
+/// real filesystem in a test is impractical).
+///
+/// # Upstream Reference
+///
+/// - `flist.c:1344` - `one_file_system && st.st_dev != filesystem_dev` sets
+///   `FLAG_MOUNT_DIR` on the dest dirlist entry.
+/// - `generator.c:331` - `delete_in_dir()` skips a `FLAG_MOUNT_DIR` directory.
+#[cfg(unix)]
+fn crosses_mount_boundary(boundary_dev: u64, entry_dev: u64) -> bool {
+    entry_dev != boundary_dev
+}
+
+/// The transfer-root device that bounds a `--one-file-system` delete pass, or
+/// `None` when `-x` is off (or the boundary cannot be stat'd). The copy walk
+/// never recurses across a mount, so every scanned destination directory sits
+/// on this device and a child whose device differs is a mount point.
+#[cfg(unix)]
+fn delete_boundary_device(context: &CopyContext, destination: &Path) -> Option<u64> {
+    if !context.one_file_system_enabled() {
+        return None;
+    }
+    let metadata = fs::symlink_metadata(destination).ok()?;
+    crate::local_copy::overrides::device_identifier(destination, &metadata)
+}
+
+/// Non-unix platforms lack POSIX device ids; `--one-file-system` mount-point
+/// protection is a unix concept, so the boundary is always absent.
+#[cfg(not(unix))]
+fn delete_boundary_device(_context: &CopyContext, _destination: &Path) -> Option<u64> {
+    None
+}
+
+/// Whether `path` (a destination entry of type `file_type`) is a mount point the
+/// delete pass must preserve under `--one-file-system`.
+///
+/// Only directories can be mount points (upstream restricts `FLAG_MOUNT_DIR` to
+/// `S_ISDIR`). A `None` boundary (no `-x`) short-circuits to `false` so the
+/// common delete pass is unchanged and pays no extra `stat`.
+#[cfg(unix)]
+fn is_delete_mount_point(boundary_dev: Option<u64>, path: &Path, file_type: fs::FileType) -> bool {
+    let Some(boundary) = boundary_dev else {
+        return false;
+    };
+    if !file_type.is_dir() {
+        return false;
+    }
+    match fs::symlink_metadata(path) {
+        Ok(metadata) => crate::local_copy::overrides::device_identifier(path, &metadata)
+            .is_some_and(|dev| crosses_mount_boundary(boundary, dev)),
+        Err(_) => false,
+    }
+}
+
+/// Non-unix no-op: without POSIX device ids there is no mount-point boundary to
+/// enforce, so no destination entry is ever treated as a mount point.
+#[cfg(not(unix))]
+fn is_delete_mount_point(
+    _boundary_dev: Option<u64>,
+    _path: &Path,
+    _file_type: fs::FileType,
+) -> bool {
+    false
+}
+
 /// Deletes entries in `destination` that are not in `source_entries`.
 ///
 /// The `source_entries` parameter accepts any slice of types convertible to `&OsStr`,
@@ -99,15 +167,24 @@ fn delete_extraneous_entries_via_emitter<S: AsRef<OsStr>, F>(
 where
     F: DeleteFs + Sync + Send + 'static,
 {
-    // When --max-delete is active the cap must count every filesystem entry
-    // that is actually removed, including the leaves inside an extraneous
-    // directory, and stop mid-traversal once the limit is reached. The
-    // emitter path below removes an extraneous directory wholesale
-    // (`remove_dir_all`) and counts it as a single deletion, silently
-    // exceeding the cap for directory subtrees. Route capped runs through
-    // the leaf-granular serial executor instead so the count matches
-    // upstream delete.c:156/181 (guard-before-delete, increment-on-success).
-    if context.options().max_deletion_limit().is_some() {
+    // Route through the leaf-granular serial executor when either condition
+    // holds; the wholesale `remove_dir_all` emitter below cannot serve them:
+    //
+    // 1. `--max-delete`: the cap must count every filesystem entry actually
+    //    removed, including the leaves inside an extraneous directory, and stop
+    //    mid-traversal once the limit is reached. The emitter removes an
+    //    extraneous directory wholesale and counts it as a single deletion,
+    //    silently exceeding the cap for directory subtrees. The leaf executor
+    //    matches upstream delete.c:156/181 (guard-before-delete,
+    //    increment-on-success).
+    // 2. `--one-file-system`: a mount point nested inside an otherwise-doomed
+    //    subtree must be preserved, but `remove_dir_all` recurses across the
+    //    mount boundary and destroys it (data loss). The leaf executor checks
+    //    the device boundary at every recursion level (see `remove_entry_capped`
+    //    / `is_delete_mount_point`), so it never removes across a mount. With no
+    //    `--max-delete` the cap is absent, so `cap_reached` is always false and
+    //    the pass never reports a limit hit.
+    if context.options().max_deletion_limit().is_some() || context.one_file_system_enabled() {
         return delete_extraneous_entries_capped(context, destination, relative, source_entries);
     }
 
@@ -140,6 +217,36 @@ fn execute_delete_plan<F>(
 where
     F: DeleteFs + Sync + Send + 'static,
 {
+    // Under --one-file-system the wholesale `remove_dir_all` emitter must not
+    // run at all: it would recurse across a mount boundary nested inside a
+    // doomed subtree and destroy the mounted filesystem. Route the already-built
+    // plan through the boundary-aware leaf executor, which preserves such a
+    // mount and pins its parent. The immediate `--delete*` modes reach the leaf
+    // executor via the dispatch in `delete_extraneous_entries_via_emitter`; this
+    // guard covers the deferred `--delete-delay` plan, whose decided extras are
+    // consumed here rather than rescanned.
+    if context.one_file_system_enabled() {
+        let boundary_dev = delete_boundary_device(context, destination);
+        let mut skipped = 0u64;
+        for entry in &plan.extras {
+            let name_path = PathBuf::from(entry.name.as_os_str());
+            let path = destination.join(&name_path);
+            let entry_relative = match relative {
+                Some(base) => base.join(&name_path),
+                None => name_path.clone(),
+            };
+            remove_entry_capped(
+                context,
+                &path,
+                &entry_relative,
+                &mut skipped,
+                false,
+                boundary_dev,
+            )?;
+        }
+        return Ok(());
+    }
+
     // Build a single-directory DeleteContext, observe the segment so the cursor
     // yields the directory, publish the plan directly into the context's map,
     // and drain via emit_one.
@@ -220,19 +327,24 @@ pub(crate) fn execute_decided_deletion(
     execute_delete_plan(context, destination, relative, plan, RealDeleteFs)
 }
 
-/// Leaf-granular, serial deletion path used whenever `--max-delete` is
-/// active.
+/// Leaf-granular, serial deletion path used whenever `--max-delete` or
+/// `--one-file-system` is active.
 ///
 /// The emitter path counts an extraneous directory as a single deletion and
 /// removes its subtree with `remove_dir_all`, so a directory holding N files
 /// costs one unit against the cap even though N+1 filesystem entries vanish.
 /// That undercount lets a small `--max-delete` value silently remove an
-/// unbounded number of files. This path instead walks every candidate
-/// depth-first and checks the cap before each individual unlink, counting
-/// only successful deletions, exactly mirroring upstream
-/// `delete.c:delete_item`/`delete_dir_contents` where `stats.deleted_files`
-/// is compared against `max_delete` before every entry and incremented only
-/// on a successful removal (`delete.c:156` guard, `delete.c:181` increment).
+/// unbounded number of files, and the wholesale removal also recurses across a
+/// mount boundary that `--one-file-system` must not cross. This path instead
+/// walks every candidate depth-first, checks the cap before each individual
+/// unlink, and checks the device boundary before recursing into any directory
+/// (see `remove_entry_capped`), counting only successful deletions - exactly
+/// mirroring upstream `delete.c:delete_item`/`delete_dir_contents` where
+/// `stats.deleted_files` is compared against `max_delete` before every entry
+/// and incremented only on a successful removal (`delete.c:156` guard,
+/// `delete.c:181` increment), and a mount point pins its parent
+/// (`delete.c:89-97`). With no `--max-delete` the cap is absent, so
+/// `cap_reached` is always false and the pass never reports a limit hit.
 ///
 /// The global running count is `context.summary().items_deleted()`, which the
 /// per-entry side effects already maintain across directories, so the cap is
@@ -248,6 +360,12 @@ fn delete_extraneous_entries_capped<S: AsRef<OsStr>>(
         None => return Ok(()),
     };
 
+    // --one-file-system boundary device threaded through the recursion so a
+    // mount point nested inside a doomed subtree is preserved and pins its
+    // parent, matching upstream delete.c:89-97. `build_plan_for_directory`
+    // already excluded direct-child mounts, so this guards the deeper levels.
+    let boundary_dev = delete_boundary_device(context, destination);
+
     // Entries are visited in upstream `delete_in_dir` emission order (the
     // reverse-sorted order `sort_by_name` locks in) so the prefix that
     // survives when the cap trips matches upstream's traversal.
@@ -262,7 +380,14 @@ fn delete_extraneous_entries_capped<S: AsRef<OsStr>>(
         // `nested = false`: these are the top-level extraneous entries, reached
         // by upstream's `delete_item` WITHOUT `DEL_DIR_IS_EMPTY`, so a survived
         // top-level directory is not counted against the skipped total.
-        remove_entry_capped(context, &path, &entry_relative, &mut skipped, false)?;
+        remove_entry_capped(
+            context,
+            &path,
+            &entry_relative,
+            &mut skipped,
+            false,
+            boundary_dev,
+        )?;
     }
 
     if skipped > 0 {
@@ -314,6 +439,7 @@ fn remove_entry_capped(
     entry_relative: &Path,
     skipped: &mut u64,
     nested: bool,
+    boundary_dev: Option<u64>,
 ) -> Result<bool, LocalCopyError> {
     context.enforce_timeout()?;
 
@@ -330,6 +456,22 @@ fn remove_entry_capped(
             ));
         }
     };
+
+    // upstream: generator.c:331 / delete.c:89-97 - a mount point is never
+    // deleted and pins its enclosing directory as non-empty. Under
+    // --one-file-system a directory on a different device than the transfer
+    // root is that mount point: preserve it and return `false` so the caller
+    // leaves the parent in place. The check runs at every recursion level, so a
+    // mount nested inside a doomed subtree pins the whole ancestor chain.
+    if is_delete_mount_point(boundary_dev, path, file_type) {
+        info_log!(
+            Mount,
+            1,
+            "cannot delete mount point: {}",
+            entry_relative.display()
+        );
+        return Ok(false);
+    }
 
     if file_type.is_dir() {
         // Peel the directory's contents depth-first in upstream reverse-sorted
@@ -370,7 +512,14 @@ fn remove_entry_capped(
             // Children are reached via the recursion, mirroring upstream's
             // `delete_item(..., DEL_DIR_IS_EMPTY)` at delete.c:107; mark them
             // `nested` so a cap-saturated non-empty subdir is counted.
-            if !remove_entry_capped(context, &child_path, &child_relative, skipped, true)? {
+            if !remove_entry_capped(
+                context,
+                &child_path,
+                &child_relative,
+                skipped,
+                true,
+                boundary_dev,
+            )? {
                 all_children_removed = false;
             }
         }
@@ -394,7 +543,15 @@ fn remove_entry_capped(
             // so its survived contents take the `goto check_ret` path
             // (delete.c:151-152) and it is never counted. Count the nested case
             // to match upstream's skipped total exactly (issue #212).
-            if nested {
+            //
+            // Only count it when the cap is the reason the contents survived. A
+            // directory that survived solely because it pins a `--one-file-system`
+            // mount point is upstream's DR_NOT_EMPTY (delete.c:95-96), which does
+            // not touch `skipped_deletes`; counting it would falsely trip
+            // RERR_DEL_LIMIT. `cap_reached` is true exactly when a cap skip
+            // occurred, so it distinguishes the two without changing the
+            // no-mount behaviour verified by issue #212.
+            if nested && cap_reached(context) {
                 *skipped = skipped.saturating_add(1);
             }
             return Ok(false);
@@ -545,6 +702,10 @@ fn build_plan_for_directory<S: AsRef<OsStr>>(
         .and_then(|p| p.file_name())
         .map(OsStr::to_os_string);
 
+    // --one-file-system boundary device (see `delete_boundary_device`). `None`
+    // unless `-x` is active, so the common delete pass is unaffected.
+    let boundary_dev = delete_boundary_device(context, destination);
+
     // Phase A (serial): scan the destination in readdir order and collect the
     // candidates that survive the cheap keep / partial-dir filters. The filter
     // decision (`allows_deletion`) is deferred to Phase B so it can be batched.
@@ -579,6 +740,23 @@ fn build_plan_for_directory<S: AsRef<OsStr>>(
                 error,
             )
         })?;
+
+        // upstream: generator.c:331-336 delete_in_dir() skips a dest directory
+        // flagged FLAG_MOUNT_DIR ("cannot delete mount point"). Under
+        // --one-file-system a destination directory on a different device than
+        // the transfer root is that mount point: exclude it from the plan so it
+        // is neither unlinked nor `remove_dir_all`'d. Its parent is the
+        // source-present scanned directory, which is never a deletion candidate,
+        // so the parent is left in place (delete.c:89-97 parent pinning).
+        if is_delete_mount_point(boundary_dev, &destination.join(&name_path), file_type) {
+            info_log!(
+                Mount,
+                1,
+                "cannot delete mount point: {}",
+                entry_relative.display()
+            );
+            continue;
+        }
 
         let is_dir = file_type.is_dir();
         candidates.push(DeletionCandidate {
@@ -889,5 +1067,98 @@ pub(crate) fn remove_source_entry_if_requested(
             source.to_path_buf(),
             error,
         )),
+    }
+}
+
+#[cfg(all(test, unix))]
+mod mount_boundary_tests {
+    use super::*;
+    use crate::local_copy::overrides::with_device_id_override;
+
+    /// Mount-point data-loss protection: under `--one-file-system` the delete
+    /// pass must never remove a destination directory on a different filesystem
+    /// than the transfer root. Deleting one would recurse across the mount
+    /// boundary and destroy a mounted filesystem absent from the source - the
+    /// exact `rsync -ax --delete src/ dst/` data loss upstream guards against
+    /// ("cannot delete mount point").
+    ///
+    /// The boundary decision is a pure `st_dev` comparison, so it is verified
+    /// here with synthetic device ids: an entry on the transfer-root device is
+    /// an ordinary deletion candidate; an entry on any other device is a mount
+    /// point that must be preserved.
+    ///
+    /// upstream: flist.c:1344 (`st.st_dev != filesystem_dev` -> FLAG_MOUNT_DIR),
+    /// generator.c:331 (delete_in_dir skips it).
+    #[test]
+    fn mount_boundary_predicate_distinguishes_devices() {
+        const ROOT_DEV: u64 = 0x10;
+        assert!(
+            !crosses_mount_boundary(ROOT_DEV, ROOT_DEV),
+            "an entry on the transfer-root device must remain deletable",
+        );
+        assert!(
+            crosses_mount_boundary(ROOT_DEV, 0x20),
+            "an entry on a foreign device is a mount point and must be preserved",
+        );
+        assert!(
+            crosses_mount_boundary(ROOT_DEV, 0),
+            "device 0 still differs from the boundary and must be preserved",
+        );
+    }
+
+    /// The planner-level decision function `is_delete_mount_point` - the exact
+    /// gate `build_plan_for_directory` and `remove_entry_capped` consult -
+    /// exercised with injected device ids via `with_device_id_override` so no
+    /// real mount is needed. A foreign-device directory is a mount point (kept);
+    /// a same-device directory is an ordinary extraneous entry (deletable); a
+    /// non-directory is never a mount point even on a foreign device; and with
+    /// no boundary (`-x` off) nothing is treated as a mount point.
+    #[test]
+    fn is_delete_mount_point_excludes_only_foreign_device_dirs() {
+        const ROOT_DEV: u64 = 0x1;
+        const FOREIGN_DEV: u64 = 0x2;
+
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let same_dir = tmp.path().join("same_dir");
+        let mnt_dir = tmp.path().join("mnt");
+        let foreign_file = tmp.path().join("file");
+        fs::create_dir(&same_dir).expect("same_dir");
+        fs::create_dir(&mnt_dir).expect("mnt_dir");
+        fs::write(&foreign_file, b"x").expect("file");
+
+        // Report `mnt` and `file` on a foreign device, everything else on root.
+        with_device_id_override(
+            |path, _meta| {
+                let foreign = path.file_name().is_some_and(|n| n == "mnt" || n == "file");
+                Some(if foreign { FOREIGN_DEV } else { ROOT_DEV })
+            },
+            || {
+                let same_ft = fs::symlink_metadata(&same_dir).unwrap().file_type();
+                let mnt_ft = fs::symlink_metadata(&mnt_dir).unwrap().file_type();
+                let file_ft = fs::symlink_metadata(&foreign_file).unwrap().file_type();
+
+                // `-x` off (no boundary): never a mount point, deletion proceeds.
+                assert!(
+                    !is_delete_mount_point(None, &mnt_dir, mnt_ft),
+                    "with no boundary nothing is a mount point",
+                );
+                // Foreign-device directory: a mount point, preserved.
+                assert!(
+                    is_delete_mount_point(Some(ROOT_DEV), &mnt_dir, mnt_ft),
+                    "a foreign-device directory must be treated as a mount point",
+                );
+                // Same-device directory: ordinary extraneous entry, deletable.
+                assert!(
+                    !is_delete_mount_point(Some(ROOT_DEV), &same_dir, same_ft),
+                    "a same-device directory must remain deletable",
+                );
+                // A non-directory on a foreign device is not a mount point:
+                // upstream restricts FLAG_MOUNT_DIR to S_ISDIR (flist.c:1341).
+                assert!(
+                    !is_delete_mount_point(Some(ROOT_DEV), &foreign_file, file_ft),
+                    "only directories can be mount points",
+                );
+            },
+        );
     }
 }
