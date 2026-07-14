@@ -287,6 +287,35 @@ where
     // during the goodbye phase (generator.c:2377,2422).
     config.do_stats = long_flags.stats;
     config.reference_directories = long_flags.reference_directories;
+    // upstream: options.c:2812-2813 - server_options() emits `--suffix=SUFFIX`
+    // (safe_arg) when the backup suffix differs from the default. The server's
+    // backup path honours it via effective_backup_suffix().
+    if let Some(suffix) = &long_flags.backup_suffix {
+        config.backup_suffix = Some(suffix.clone());
+    }
+    // upstream: options.c:2912-2913 / 2915-2916 - `--usermap=SPEC` / `--groupmap=SPEC`
+    // are emitted in the am_sender block so the server receiver maps ownership.
+    // A malformed spec leaves the field unset (mirroring the daemon path,
+    // module_access/client_args/long_form_args.rs, and upstream's fall-through
+    // to default id-mapping) rather than aborting the session.
+    if let Some(spec) = &long_flags.usermap
+        && let Ok(mapping) = ::metadata::UserMapping::parse(spec)
+    {
+        config.user_mapping = Some(mapping);
+    }
+    if let Some(spec) = &long_flags.groupmap
+        && let Ok(mapping) = ::metadata::GroupMapping::parse(spec)
+    {
+        config.group_mapping = Some(mapping);
+    }
+    // upstream: options.c:2859-2860 - `--skip-compress=LIST` is emitted when the
+    // client is the receiver (this process is the server sender); the sender
+    // skips compression for matching suffixes.
+    if let Some(spec) = &long_flags.skip_compress
+        && let Ok(list) = engine::SkipCompressList::parse(spec)
+    {
+        config.skip_compress = Some(list);
+    }
     // upstream: options.c:2886-2890 - `--partial-dir DIR` forwarded by the
     // sender. The server-side receiver moves interrupted temp files into this
     // directory and looks for resume basis files there. Without applying this
