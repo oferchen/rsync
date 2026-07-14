@@ -3,10 +3,139 @@
 use std::io::{Cursor, Read};
 
 use super::super::{
-    CompressedToken, DEFLATED_DATA, END_FLAG, MAX_DATA_COUNT, TOKEN_LONG, TOKEN_REL,
+    CHUNK_SIZE, CompressedToken, DEFLATED_DATA, END_FLAG, MAX_DATA_COUNT, TOKEN_LONG, TOKEN_REL,
     read_deflated_data_length,
 };
 use super::{ZstdTokenDecoder, ZstdTokenEncoder};
+
+/// Generates `n` pseudo-random, poorly-compressible bytes (xorshift64) so the
+/// compressed stream spans many `CHUNK_SIZE`/`MAX_DATA_COUNT` boundaries.
+fn xorshift_bytes(n: usize, seed: u64) -> Vec<u8> {
+    let mut v = Vec::with_capacity(n);
+    let mut s = seed;
+    for _ in 0..n {
+        s ^= s << 13;
+        s ^= s >> 7;
+        s ^= s << 17;
+        v.push((s & 0xFF) as u8);
+    }
+    v
+}
+
+/// Decodes a zstd token stream preserving literal/block ordering, merging
+/// consecutive literal fragments into one event.
+#[derive(Debug, PartialEq)]
+enum Event {
+    Literal(Vec<u8>),
+    Block(u32),
+}
+
+fn decode_events(wire: &[u8]) -> Vec<Event> {
+    let mut decoder = ZstdTokenDecoder::new().unwrap();
+    let mut cursor = Cursor::new(wire);
+    let mut events: Vec<Event> = Vec::new();
+    loop {
+        match decoder.recv_token(&mut cursor).unwrap() {
+            CompressedToken::Literal(d) => match events.last_mut() {
+                Some(Event::Literal(buf)) => buf.extend_from_slice(&d),
+                _ => events.push(Event::Literal(d)),
+            },
+            CompressedToken::BlockMatch(idx) => events.push(Event::Block(idx)),
+            CompressedToken::End => break,
+        }
+    }
+    events
+}
+
+/// A large literal run must produce byte-identical wire output regardless of
+/// how it is split across `send_literal` calls. This is the load-bearing
+/// guarantee behind per-`CHUNK_SIZE` streaming: `ZSTD_e_continue` is
+/// chunking-invariant and the terminating flush stays at the token boundary, so
+/// the bounded staging buffer cannot perturb the compressed stream. If this
+/// fails, the streaming refactor changed the wire format.
+#[test]
+fn zstd_streaming_is_chunk_boundary_invariant() {
+    let data = xorshift_bytes(200_000, 0x1234_5678_9abc_def0);
+
+    let mut enc_one = ZstdTokenEncoder::new(3, None).unwrap();
+    let mut wire_one = Vec::new();
+    enc_one.send_literal(&mut wire_one, &data).unwrap();
+    enc_one.finish(&mut wire_one).unwrap();
+
+    // Feed the same bytes in odd-sized pieces that straddle CHUNK_SIZE and
+    // MAX_DATA_COUNT boundaries.
+    for piece in [1, 1000, 7000, 16383, 32768] {
+        let mut enc_many = ZstdTokenEncoder::new(3, None).unwrap();
+        let mut wire_many = Vec::new();
+        for chunk in data.chunks(piece) {
+            enc_many.send_literal(&mut wire_many, chunk).unwrap();
+        }
+        enc_many.finish(&mut wire_many).unwrap();
+        assert_eq!(
+            wire_one, wire_many,
+            "wire bytes diverged when literal split into {piece}-byte pieces"
+        );
+    }
+
+    // The invariant output still round-trips to the original bytes.
+    let events = decode_events(&wire_one);
+    assert_eq!(events, vec![Event::Literal(data)]);
+}
+
+/// A literal run longer than `CHUNK_SIZE` that follows a block match must keep
+/// the `[token run][literal data]` wire order. Eager streaming writes DEFLATED
+/// blocks as literals arrive, so the pending run has to be emitted first; this
+/// guards against reordering the run behind the streamed literal blocks.
+#[test]
+fn zstd_large_literal_between_matches_preserves_order() {
+    let big = xorshift_bytes(80_000, 0x0fed_cba9_8765_4321);
+
+    let mut encoder = ZstdTokenEncoder::new(3, None).unwrap();
+    let mut wire = Vec::new();
+    encoder.send_block_match(&mut wire, 0).unwrap();
+    encoder.send_literal(&mut wire, &big).unwrap();
+    encoder.send_block_match(&mut wire, 5).unwrap();
+    encoder.finish(&mut wire).unwrap();
+
+    // The first wire byte must be a token (block 0), never a DEFLATED_DATA
+    // block: the literal data may not precede its preceding match.
+    assert_ne!(
+        wire[0] & 0xC0,
+        DEFLATED_DATA,
+        "block 0 must be emitted before the streamed literal data"
+    );
+
+    assert_eq!(
+        decode_events(&wire),
+        vec![Event::Block(0), Event::Literal(big), Event::Block(5)]
+    );
+}
+
+/// The staging buffer must never retain more than `CHUNK_SIZE` bytes between
+/// calls, no matter how much total literal data streams through it. This proves
+/// memory is bounded: the pre-change encoder accumulated the entire literal run.
+#[test]
+fn zstd_staging_buffer_stays_bounded() {
+    let mut encoder = ZstdTokenEncoder::new(3, None).unwrap();
+    let mut wire = Vec::new();
+    let piece = vec![0xABu8; 5000];
+
+    // Stream ~2 MiB in 5000-byte pieces with no intervening block match, the
+    // worst case for unbounded accumulation.
+    let mut expected = Vec::new();
+    for _ in 0..400 {
+        encoder.send_literal(&mut wire, &piece).unwrap();
+        expected.extend_from_slice(&piece);
+        assert!(
+            encoder.staging_len() <= CHUNK_SIZE,
+            "staging buffer {} exceeded CHUNK_SIZE {CHUNK_SIZE}",
+            encoder.staging_len()
+        );
+    }
+    encoder.finish(&mut wire).unwrap();
+
+    assert_eq!(decode_events(&wire), vec![Event::Literal(expected)]);
+}
 
 #[test]
 fn zstd_roundtrip_literal_only() {
