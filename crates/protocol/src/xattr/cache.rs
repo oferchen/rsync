@@ -148,10 +148,11 @@ impl XattrCache {
 
         let mut list = XattrList::new();
         // upstream: xattrs.c:863 - need_sort is set whenever name
-        // translation mutates a name. Linux keeps user.* verbatim and
-        // only disguises non-user names; non-Linux receivers always
-        // strip the user. prefix so wire ordering can diverge from
-        // local ordering after translation.
+        // translation mutates a name. Linux keeps user.* verbatim and drops
+        // (non-root) or keeps verbatim (root) a non-user name, so a name is
+        // never rewritten in place; non-Linux receivers always strip the
+        // user. prefix, so wire ordering can diverge from local ordering
+        // after translation.
         let mut need_sort = false;
 
         for num in 1..=count {
