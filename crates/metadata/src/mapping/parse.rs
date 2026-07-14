@@ -6,8 +6,6 @@
 //! including numeric IDs, numeric ranges, exact names, and wildcard patterns.
 //! Mirrors upstream rsync's `uidlist.c` parsing.
 
-use std::cmp::Ordering;
-
 use super::types::{MappingKind, MappingMatcher, MappingParseError, MappingTarget};
 
 /// Parses the source (left-hand) side of a mapping entry.
@@ -25,16 +23,25 @@ use super::types::{MappingKind, MappingMatcher, MappingParseError, MappingTarget
 /// `noiu.name = ""`, matching the nameless id (recv_add_id normalizes a missing
 /// name to "" before the strcmp).
 pub(crate) fn parse_matcher(
-    _kind: MappingKind,
+    kind: MappingKind,
     source: &str,
-    _entry: &str,
+    entry: &str,
 ) -> Result<MappingMatcher, MappingParseError> {
     if source == "*" {
         return Ok(MappingMatcher::Any);
     }
 
-    if let Some((start, end)) = parse_numeric_range(source) {
-        return Ok(MappingMatcher::IdRange { start, end });
+    // upstream: uidlist.c:parse_name_map - isDigit(cp) tests only the first
+    // character. Once a source begins with a digit it must be a valid number or
+    // numeric range; any other content is a fatal syntax error, never a name.
+    if source.starts_with(|ch: char| ch.is_ascii_digit()) {
+        return match parse_numeric_range(source) {
+            Some((start, end)) => Ok(MappingMatcher::IdRange { start, end }),
+            None => Err(MappingParseError::new(
+                kind,
+                format!("Invalid number in {}: {}", kind.flag(), entry),
+            )),
+        };
     }
 
     if source.chars().any(|ch| matches!(ch, '*' | '?' | '[')) {
@@ -47,8 +54,12 @@ pub(crate) fn parse_matcher(
 /// Parses a numeric value or range from a source string.
 ///
 /// Returns `Some((start, end))` for single values (where `start == end`) and
-/// `start-end` ranges. Reversed ranges (`end-start`) are normalized so
-/// `start <= end`. Returns `None` for any non-numeric or malformed input.
+/// `start-end` ranges. Returns `None` for any non-numeric or malformed input.
+///
+/// A reversed range (`end-start`) is preserved verbatim as `(start, end)` with
+/// `start > end`, so it matches no identifier. upstream: uidlist.c:parse_name_map
+/// stores `id1`/`max_id` unswapped, and the match test (`id < node->id || id >
+/// node->u.max_id`) then rejects every id when `from > to`.
 pub(super) fn parse_numeric_range(source: &str) -> Option<(u32, u32)> {
     let mut parts = source.split('-');
     let start = parts.next()?;
@@ -63,11 +74,7 @@ pub(super) fn parse_numeric_range(source: &str) -> Option<(u32, u32)> {
         }
         let start_value = start.parse::<u32>().ok()?;
         let end_value = rest.parse::<u32>().ok()?;
-        let (start, end) = match start_value.cmp(&end_value) {
-            Ordering::Greater => (end_value, start_value),
-            _ => (start_value, end_value),
-        };
-        Some((start, end))
+        Some((start_value, end_value))
     } else {
         start.parse::<u32>().ok().map(|value| (value, value))
     }
