@@ -63,6 +63,9 @@ pub(crate) struct DerivedSettings {
     /// `--info=copy`: opt-in to the oc-rsync `Copy method` stats line.
     pub(crate) show_copy_method: bool,
     pub(crate) debug_flags_list: Vec<OsString>,
+    /// Explicitly-set `--info` categories as normalized `name{level}` tokens,
+    /// forwarded to a remote peer (upstream `make_output_option`).
+    pub(crate) info_flags_list: Vec<OsString>,
     pub(crate) bandwidth_limit: Option<BandwidthLimit>,
     pub(crate) max_delete_limit: Option<u64>,
     pub(crate) min_size_limit: Option<u64>,
@@ -99,6 +102,9 @@ struct InfoFlagsResult {
     name_overridden: bool,
     /// `--info=copy`: opt-in to the oc-rsync `Copy method` stats line.
     show_copy_method: bool,
+    /// Explicitly-set `--info` categories as normalized `name{level}` tokens,
+    /// forwarded to a remote peer (upstream `make_output_option`).
+    info_flags_list: Vec<OsString>,
 }
 
 /// Applies upstream's `--progress` ⇒ `--info=name` implication.
@@ -157,6 +163,7 @@ where
             name_level,
             name_overridden,
             show_copy_method: false,
+            info_flags_list: Vec::new(),
         });
     }
 
@@ -196,6 +203,16 @@ where
             // upstream: options.c set_output_verbosity / parse_output_words
             settings.apply_to_thread_local();
 
+            // upstream: options.c:2947 make_output_option() - forward the
+            // explicitly-set info categories to the peer. Normalize to
+            // `name{level}` tokens; the remote builders apply the role `where`
+            // filter.
+            let info_flags_list = settings
+                .iter_enabled_flags()
+                .into_iter()
+                .map(|(name, level)| OsString::from(format!("{name}{level}")))
+                .collect();
+
             let name_level =
                 imply_name_from_progress(initial_progress, name_level, name_overridden);
             Ok(InfoFlagsResult {
@@ -204,6 +221,7 @@ where
                 name_level,
                 name_overridden,
                 show_copy_method: settings.copy.is_some_and(|level| level > 0),
+                info_flags_list,
             })
         }
         Err(message) => Err(fail_with_message(message, stderr)),
@@ -628,6 +646,7 @@ where
         name_overridden: info_result.name_overridden,
         show_copy_method: info_result.show_copy_method,
         debug_flags_list,
+        info_flags_list: info_result.info_flags_list,
         bandwidth_limit: limits.bandwidth_limit,
         max_delete_limit: limits.max_delete_limit,
         min_size_limit: limits.min_size_limit,

@@ -15,6 +15,7 @@ use crate::client::config::{
 use crate::client::error::{ClientError, socket_error};
 use crate::client::remote::daemon_transfer::connection::DaemonTransferRequest;
 use crate::client::remote::flags;
+use crate::client::remote::output_option::{OutputWordKind, make_output_option};
 
 /// Sends daemon-mode arguments to the server.
 ///
@@ -492,6 +493,20 @@ pub(super) fn build_full_daemon_args(
             };
             args.push(format!("{flag}{}", ref_dir.path().display()));
         }
+    }
+
+    // upstream: options.c:2945-2949 server_options() - make_output_option()
+    // forwards the explicitly-set --info / --debug levels so the daemon peer's
+    // diagnostic output matches the client's request. `we_are_sender` (a push)
+    // selects the receiving half of the role `where` filter.
+    if let Some(arg) = make_output_option(OutputWordKind::Info, config.info_flags(), we_are_sender)
+    {
+        args.push(arg);
+    }
+    if let Some(arg) =
+        make_output_option(OutputWordKind::Debug, config.debug_flags(), we_are_sender)
+    {
+        args.push(arg);
     }
 
     // upstream: options.c:2866-2871 - --delete-missing-args needs the
@@ -1088,6 +1103,41 @@ mod server_option_fidelity_tests {
 
     fn args(config: &ClientConfig, is_sender: bool) -> Vec<String> {
         build_full_daemon_args(config, &request(), ProtocolVersion::V31, is_sender)
+    }
+
+    // WHY: explicitly-set --info / --debug levels must reach the daemon peer so
+    // its diagnostic output matches the client's request (upstream
+    // make_output_option, options.c:2947). `del` is receiver-side, so it
+    // forwards on a push (`is_sender = false`, the daemon is the receiver);
+    // `send` is sender-side, so it forwards on a pull (`is_sender = true`).
+    #[test]
+    fn daemon_forwards_info_and_debug_when_set() {
+        use std::ffi::OsString;
+        let config = ClientConfig::builder()
+            .info_flags([OsString::from("del1")])
+            .debug_flags([OsString::from("send1")])
+            .build();
+
+        let push = args(&config, false);
+        assert!(
+            push.iter().any(|a| a == "--info=del"),
+            "push must forward receiver-side --info=del: {push:?}"
+        );
+
+        let pull = args(&config, true);
+        assert!(
+            pull.iter().any(|a| a == "--debug=send"),
+            "pull must forward sender-side --debug=send: {pull:?}"
+        );
+
+        // Nothing set: no --info / --debug argument at all.
+        let off = ClientConfig::builder().build();
+        let a = args(&off, false);
+        assert!(
+            !a.iter()
+                .any(|x| x.starts_with("--info=") || x.starts_with("--debug=")),
+            "no info/debug flags must yield no --info/--debug arg: {a:?}"
+        );
     }
 
     // upstream: options.c has no compact 'P'; keep_partial rides long-form.

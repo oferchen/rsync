@@ -73,6 +73,8 @@ pub(crate) struct ConfigInputs {
     pub(crate) executability: bool,
     pub(crate) permissions: bool,
     pub(crate) fake_super: bool,
+    /// Explicit `--super` request (upstream `am_root > 1`), forwarded on push.
+    pub(crate) super_user: bool,
     pub(crate) times: bool,
     pub(crate) atimes: bool,
     pub(crate) crtimes: bool,
@@ -122,6 +124,8 @@ pub(crate) struct ConfigInputs {
     pub(crate) progress_mode: Option<ProgressMode>,
     pub(crate) stats: bool,
     pub(crate) debug_flags_list: Vec<OsString>,
+    /// Explicit `--info` categories forwarded to a remote peer.
+    pub(crate) info_flags_list: Vec<OsString>,
     pub(crate) partial: bool,
     pub(crate) preallocate: bool,
     pub(crate) fsync: bool,
@@ -256,6 +260,7 @@ pub(crate) fn build_base_config(mut inputs: ConfigInputs) -> ClientConfigBuilder
         .executability(inputs.executability)
         .permissions(inputs.permissions)
         .fake_super(inputs.fake_super)
+        .super_user(inputs.super_user)
         .times(inputs.times)
         .atimes(inputs.atimes)
         .crtimes(inputs.crtimes)
@@ -306,6 +311,7 @@ pub(crate) fn build_base_config(mut inputs: ConfigInputs) -> ClientConfigBuilder
         .progress(inputs.progress_mode.is_some())
         .stats(inputs.stats)
         .debug_flags(inputs.debug_flags_list.clone())
+        .info_flags(inputs.info_flags_list.clone())
         .partial(inputs.partial)
         .preallocate(inputs.preallocate)
         .fsync(inputs.fsync)
