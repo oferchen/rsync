@@ -101,6 +101,12 @@ impl GeneratorContext {
         // upstream: sender.c:217-218 - rprintf(FINFO, "send_files starting\n")
         debug_log!(Send, 1, "send_files starting");
 
+        // upstream: sender.c:218 - int save_io_error = io_error;
+        // Baseline io_error already conveyed with the file list. Any bits set
+        // beyond this during the send loop (vanished/unreadable source files)
+        // must be reported to the receiver so its exit code reflects them.
+        let save_io_error = self.io_error;
+
         // Phase handling: upstream sender.c line 210: max_phase = protocol_version >= 29 ? 2 : 1
         let mut phase: i32 = 0;
         let max_phase: i32 = if self.protocol.supports_iflags() {
@@ -795,6 +801,20 @@ impl GeneratorContext {
         // upstream: sender.c:457-458
         // rprintf(FINFO, "send files finished\n")
         debug_log!(Send, 1, "send files finished");
+
+        // upstream: sender.c:485-486 - if (io_error != save_io_error &&
+        // protocol_version >= 30) send_msg_int(MSG_IO_ERROR, io_error);
+        // Emitted immediately before NDX_DONE so a remote receiver learns of
+        // vanished/unreadable source files and reports exit 24/23. MSG_NO_SEND
+        // only skips the file; it does not carry the exit-code bits.
+        if self.io_error != save_io_error && self.protocol.supports_generator_messages() {
+            let io_error = self.io_error;
+            if let Err(e) = writer.send_io_error(io_error) {
+                if !(tolerant && is_early_close_error(&e)) {
+                    return Err(e);
+                }
+            }
+        }
 
         // upstream: sender.c:454-462 - after the transfer loop exits, the sender
         // sends io_error (if changed) and a final NDX_DONE. This NDX_DONE is the

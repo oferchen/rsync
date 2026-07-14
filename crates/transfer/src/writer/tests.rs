@@ -479,6 +479,41 @@ fn server_writer_send_redo_plain_mode_fails() {
     assert_eq!(result.unwrap_err().kind(), io::ErrorKind::InvalidInput);
 }
 
+/// A remote receiver only learns of vanished/unreadable source files - and thus
+/// reports exit 24/23 - if the sender emits `MSG_IO_ERROR` with the io_error
+/// bits as a 4-byte LE payload (upstream sender.c:485-486, io.c:1542-1549).
+/// `MSG_NO_SEND` alone carries no exit-code bits. This pins the wire encoding a
+/// real upstream receiver folds via `io_error |= val`.
+#[test]
+fn server_writer_send_io_error_frame_encoding() {
+    let mut buf = Vec::new();
+    {
+        let mut writer = ServerWriter::new_plain(&mut buf)
+            .activate_multiplex()
+            .unwrap();
+        // IOERR_VANISHED (1) | IOERR_GENERAL (2) = 3.
+        writer.send_io_error(3).unwrap();
+    }
+    assert_eq!(buf.len(), 8, "one 4-byte header + 4-byte payload frame");
+    let header = protocol::MessageHeader::decode(&buf[0..4]).unwrap();
+    assert_eq!(
+        header.code(),
+        MessageCode::IoError,
+        "frame tag must be MSG_IO_ERROR"
+    );
+    assert_eq!(header.payload_len(), 4);
+    assert_eq!(&buf[4..8], &3_i32.to_le_bytes(), "io_error as 4-byte LE");
+}
+
+#[test]
+fn server_writer_send_io_error_plain_mode_fails() {
+    let mut buf = Vec::new();
+    let mut writer = ServerWriter::new_plain(&mut buf);
+    let result = writer.send_io_error(3);
+    assert!(result.is_err());
+    assert_eq!(result.unwrap_err().kind(), io::ErrorKind::InvalidInput);
+}
+
 #[test]
 fn msg_info_sender_plain_mode_noop() {
     let mut buf = Vec::new();
