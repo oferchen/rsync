@@ -972,6 +972,95 @@ mod tests {
         assert_eq!(result.fnamecmp_type, protocol::FnameCmpType::Fname);
     }
 
+    /// Phase-2 redo must still send a checksum-based delta against the basis,
+    /// not a whole-file literal resend. When a file fails its whole-file
+    /// verification in phase 1, upstream re-queues it and regenerates the block
+    /// signature with the FULL strong-checksum length rather than discarding the
+    /// basis: `check_for_finished_files()` sets `csum_length = SUM_LENGTH` (16)
+    /// around the redo `recv_generator()` call, and `sum_sizes_sqroot()` then
+    /// takes the `csum_length == SUM_LENGTH` branch to emit a full-strength
+    /// `s2length` instead of the phase-1 sqrt-reduced length.
+    /// upstream: generator.c:2178 (`csum_length = SUM_LENGTH`),
+    /// generator.c:739-740 (`s2length = max_s2length`), generator.c:2205
+    /// (restore `SHORT_SUM_LENGTH`).
+    ///
+    /// The invariant this locks in: for an existing basis, the redo checksum
+    /// length yields a non-EMPTY signature (a delta) whose strong sum is the
+    /// full 16 bytes - never an EMPTY (whole-file) result and never the
+    /// phase-1 short sum.
+    #[test]
+    fn phase2_redo_sends_full_checksum_delta_not_whole_file() {
+        use std::io::Write;
+
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let dest_dir = tmp.path();
+        // The basis is the file present at the destination when the redo pass
+        // runs (the receiver kept/committed it after phase 1). Size is chosen so
+        // the phase-1 sqrt heuristic would pick a strong sum shorter than 16,
+        // making the phase-2 upgrade to the full length observable.
+        let data: Vec<u8> = (0..8192u32).map(|i| (i % 251) as u8).collect();
+        {
+            let mut f = fs::File::create(dest_dir.join("file.bin")).expect("create dest");
+            f.write_all(&data).expect("write dest");
+            f.flush().expect("flush");
+        }
+
+        let dest_file = dest_dir.join("file.bin");
+        let make_config = |checksum_length: NonZeroU8| BasisFileConfig {
+            file_path: &dest_file,
+            dest_dir,
+            relative_path: std::path::Path::new("file.bin"),
+            target_size: data.len() as u64,
+            target_mtime: 0,
+            fuzzy_level: 0,
+            reference_directories: &[],
+            partial_dir: None,
+            protocol: ProtocolVersion::NEWEST,
+            checksum_length,
+            checksum_algorithm: SignatureAlgorithm::Md4,
+            // Not --whole-file: the redo path must still search for a basis.
+            whole_file: false,
+            compat_flags: None,
+        };
+
+        let strong_len = |result: &BasisFileResult| -> u8 {
+            result
+                .signature
+                .as_ref()
+                .expect("redo must produce a delta signature, not a whole-file resend")
+                .layout()
+                .strong_sum_length()
+                .get()
+        };
+
+        let phase1 =
+            find_basis_file_with_config(&make_config(crate::receiver::PHASE1_CHECKSUM_LENGTH));
+        let redo = find_basis_file_with_config(&make_config(crate::receiver::REDO_CHECKSUM_LENGTH));
+
+        // Redo yields a real block signature (delta), never EMPTY (whole file).
+        assert!(
+            redo.signature.is_some(),
+            "phase-2 redo must send a checksum-based delta, not a whole-file literal transfer"
+        );
+        assert_eq!(
+            redo.fnamecmp_type,
+            protocol::FnameCmpType::Fname,
+            "the redo basis is the ordinary destination file (no wire basis-type byte)"
+        );
+        // The redo strong sum is the full 16 bytes, and never shorter than the
+        // phase-1 sqrt-reduced length: this is the phase-2 collision-resistance
+        // upgrade that lets the corrected delta pass verification.
+        assert_eq!(
+            strong_len(&redo),
+            signature::block_size::MAX_SUM_LENGTH,
+            "phase-2 redo must use the full strong-checksum length"
+        );
+        assert!(
+            strong_len(&redo) >= strong_len(&phase1),
+            "redo strong sum must not be shorter than the phase-1 signature"
+        );
+    }
+
     #[test]
     fn consecutive_match_cap_halves_strong_sum_length() {
         use std::io::Write;
