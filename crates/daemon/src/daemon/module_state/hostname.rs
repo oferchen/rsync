@@ -1,6 +1,8 @@
 use std::net::IpAddr;
 
-use dns_lookup::{lookup_addr, lookup_host};
+use dns_lookup::lookup_addr;
+#[cfg(not(test))]
+use dns_lookup::lookup_host;
 
 use super::ModuleDefinition;
 
@@ -85,14 +87,47 @@ fn reverse_lookup_name(peer_ip: IpAddr) -> Option<String> {
 /// matching upstream `check_name`'s fail-closed behaviour on `getaddrinfo`
 /// error (clientname.c:437-441).
 fn forward_confirms(name: &str, peer_ip: IpAddr) -> bool {
-    #[cfg(test)]
-    if let Some(addrs) = TEST_FORWARD_OVERRIDES.with(|map| map.borrow().get(name).cloned()) {
-        return addrs.contains(&peer_ip);
-    }
+    forward_resolve(name)
+        .into_iter()
+        .any(|addr| addr == peer_ip)
+}
 
-    lookup_host(name)
-        .map(|addrs| addrs.into_iter().any(|addr| addr == peer_ip))
-        .unwrap_or(false)
+/// Forward-resolves `name` to its A/AAAA records.
+///
+/// This is the single forward-DNS seam shared by two callers: reverse-name
+/// forward-confirmation (`forward_confirms`) and the forward resolution of
+/// config-specified `hosts allow`/`hosts deny` hostname tokens
+/// (`HostPattern::forward_resolve_matches`). The lookup key is normalized so
+/// both callers agree on casing and trailing dots.
+///
+/// A name that does not resolve yields an empty vector, so callers fail
+/// closed - mirroring upstream `access.c:57-58`, where a NULL `gethostbyname`
+/// result produces no match.
+///
+/// Tests inject deterministic results via `TEST_FORWARD_OVERRIDES`, keeping
+/// the daemon's access-control logic hermetic and free of real DNS traffic.
+pub(in crate::daemon) fn forward_resolve(name: &str) -> Vec<IpAddr> {
+    let key = normalize_hostname_owned(name.to_owned());
+    resolve_forward_key(&key)
+}
+
+/// Test-build forward resolver: consults the injected override table and
+/// returns an empty set for unknown names, keeping access-control tests
+/// hermetic and free of real DNS traffic.
+#[cfg(test)]
+fn resolve_forward_key(key: &str) -> Vec<IpAddr> {
+    TEST_FORWARD_OVERRIDES
+        .with(|map| map.borrow().get(key).cloned())
+        .unwrap_or_default()
+}
+
+/// Production forward resolver: queries the system resolver, returning an
+/// empty set on error so callers fail closed.
+#[cfg(not(test))]
+fn resolve_forward_key(key: &str) -> Vec<IpAddr> {
+    lookup_host(key)
+        .map(|addrs| addrs.collect())
+        .unwrap_or_default()
 }
 
 /// Normalizes a hostname by removing trailing dots and lowercasing.

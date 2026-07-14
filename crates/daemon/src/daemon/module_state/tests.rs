@@ -126,6 +126,7 @@ fn module_definition_allow_short_circuit_skips_dns_fail_closed_guard() {
         }],
         hosts_deny: vec![HostPattern::Hostname(HostnamePattern {
             kind: HostnamePatternKind::Suffix("bad.example".to_owned()),
+            original: ".bad.example".to_owned(),
         })],
         ..Default::default()
     };
@@ -188,6 +189,7 @@ fn module_definition_requires_hostname_lookup_when_hostname_pattern() {
     let def = ModuleDefinition {
         hosts_allow: vec![HostPattern::Hostname(HostnamePattern {
             kind: HostnamePatternKind::Suffix("example.com".to_owned()),
+            original: ".example.com".to_owned(),
         })],
         ..Default::default()
     };
@@ -439,6 +441,7 @@ fn module_peer_hostname_returns_none_when_lookup_disabled() {
     let def = ModuleDefinition {
         hosts_allow: vec![HostPattern::Hostname(HostnamePattern {
             kind: HostnamePatternKind::Suffix("example.com".to_owned()),
+            original: ".example.com".to_owned(),
         })],
         ..Default::default()
     };
@@ -465,6 +468,7 @@ fn module_peer_hostname_uses_cache() {
     let def = ModuleDefinition {
         hosts_allow: vec![HostPattern::Hostname(HostnamePattern {
             kind: HostnamePatternKind::Suffix("example.com".to_owned()),
+            original: ".example.com".to_owned(),
         })],
         ..Default::default()
     };
