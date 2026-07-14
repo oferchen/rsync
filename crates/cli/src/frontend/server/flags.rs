@@ -311,6 +311,43 @@ pub(super) struct ServerLongFlags {
     /// args[ac++] = "--ignore-missing-args"`. A vanished top-level source arg is
     /// silently dropped from the file list rather than raising an error.
     pub(super) ignore_missing_args: bool,
+
+    /// Backup suffix forwarded by the client (upstream: `--suffix=SUFFIX`).
+    ///
+    /// upstream: options.c:2812-2813 - `server_options()` emits
+    /// `safe_arg("--suffix", backup_suffix)` (joined `--suffix=VALUE`) whenever
+    /// the suffix differs from the default. The server receiver's backup path
+    /// honours it; without recognising the flag the value leaked into the
+    /// positional list and became a stray destination path.
+    pub(super) backup_suffix: Option<String>,
+
+    /// User id/name map spec forwarded by the client (upstream: `--usermap=SPEC`).
+    ///
+    /// upstream: options.c:2912-2913 - `safe_arg("--usermap", usermap)` (joined
+    /// `--usermap=VALUE`) is emitted inside the `am_sender` block so a server
+    /// receiver maps ownership on the destination.
+    pub(super) usermap: Option<String>,
+
+    /// Group id/name map spec forwarded by the client (upstream: `--groupmap=SPEC`).
+    ///
+    /// upstream: options.c:2915-2916 - `safe_arg("--groupmap", groupmap)` (joined
+    /// `--groupmap=VALUE`), emitted alongside `--usermap` in the `am_sender` block.
+    pub(super) groupmap: Option<String>,
+
+    /// Skip-compress suffix list forwarded by the client (upstream:
+    /// `--skip-compress=LIST`).
+    ///
+    /// upstream: options.c:2859-2860 - `safe_arg("--skip-compress", skip_compress)`
+    /// (joined `--skip-compress=VALUE`), emitted in the `else` (client-receiver)
+    /// branch so a server sender skips compression for the listed suffixes.
+    pub(super) skip_compress: Option<String>,
+
+    /// Block size forwarded by the client (upstream: `-B%u`).
+    ///
+    /// upstream: options.c:2787-2790 - `asprintf(&arg, "-B%u", block_size)`
+    /// emits a standalone `-B<digits>` token after the compact flag string.
+    /// Recognised here so it is not mistaken for a positional destination path.
+    pub(super) block_size: Option<String>,
 }
 
 /// Parses all long-form flags from the server argument list.
@@ -375,6 +412,11 @@ pub(super) fn parse_server_long_flags(args: &[OsString]) -> ServerLongFlags {
         open_noatime: false,
         delete_missing_args: false,
         ignore_missing_args: false,
+        backup_suffix: None,
+        usermap: None,
+        groupmap: None,
+        skip_compress: None,
+        block_size: None,
     };
 
     let mut idx = 0;
@@ -589,6 +631,16 @@ pub(super) fn parse_server_long_flags(args: &[OsString]) -> ServerLongFlags {
                 if let Some(window) = s.strip_prefix("-@") {
                     flags.modify_window = Some(window.to_owned());
                 }
+                // upstream: options.c:2787-2790 - block_size arrives as a
+                // standalone `-B%u` token (e.g. `-B131072`) after the compact
+                // flag string. Guard on trailing digits so only the block-size
+                // spelling is consumed here, never some other `-B...` token.
+                else if let Some(size) = s
+                    .strip_prefix("-B")
+                    .filter(|r| !r.is_empty() && r.bytes().all(|b| b.is_ascii_digit()))
+                {
+                    flags.block_size = Some(size.to_owned());
+                }
                 // Accept the joined `--partial-dir=VALUE` form too, even
                 // though upstream's server_options() does not emit it - the
                 // CLI parser accepts both forms for client-side use, and a
@@ -669,6 +721,18 @@ fn parse_value_bearing_flag(s: &str, flags: &mut ServerLongFlags) {
         flags.files_from = Some(value.to_owned());
     } else if let Some(value) = s.strip_prefix("--max-delete=") {
         flags.max_delete = Some(value.to_owned());
+    } else if let Some(value) = s.strip_prefix("--suffix=") {
+        // upstream: options.c:2812-2813 - safe_arg("--suffix", backup_suffix).
+        flags.backup_suffix = Some(value.to_owned());
+    } else if let Some(value) = s.strip_prefix("--usermap=") {
+        // upstream: options.c:2912-2913 - safe_arg("--usermap", usermap).
+        flags.usermap = Some(value.to_owned());
+    } else if let Some(value) = s.strip_prefix("--groupmap=") {
+        // upstream: options.c:2915-2916 - safe_arg("--groupmap", groupmap).
+        flags.groupmap = Some(value.to_owned());
+    } else if let Some(value) = s.strip_prefix("--skip-compress=") {
+        // upstream: options.c:2859-2860 - safe_arg("--skip-compress", skip_compress).
+        flags.skip_compress = Some(value.to_owned());
     } else if let Some(value) = s.strip_prefix("--iconv=") {
         // upstream: options.c:2716-2723 - server-side iconv forwarded by client
         flags.iconv = Some(value.to_owned());
@@ -824,6 +888,19 @@ pub(super) fn is_known_server_long_flag(arg: &str) -> bool {
         || arg.starts_with("--stop-after=")
         || arg.starts_with("--files-from=")
         || arg.starts_with("--max-delete=")
+        // upstream: options.c:2812-2813 / 2912-2913 / 2915-2916 / 2859-2860 -
+        // server_options() emits these as joined `--flag=value` via safe_arg().
+        // Recognise them so they are not mistaken for positional destination
+        // paths (same positional-dest leak class as --partial-dir / alt-dest).
+        || arg.starts_with("--suffix=")
+        || arg.starts_with("--usermap=")
+        || arg.starts_with("--groupmap=")
+        || arg.starts_with("--skip-compress=")
+        // upstream: options.c:2787-2790 - block_size arrives as a standalone
+        // `-B%u` token. Guard on trailing digits so only that spelling matches.
+        || (arg.starts_with("-B")
+            && arg.len() > 2
+            && arg.as_bytes()[2..].iter().all(u8::is_ascii_digit))
         || arg.starts_with("--iconv=")
         || arg.starts_with("--timeout=")
         || arg.starts_with("--io-uring-depth=")
