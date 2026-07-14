@@ -29,6 +29,8 @@
 //! - `compat.c:506-533 send_negotiate_str()` - advertises the parsed list,
 //!   falling back to `get_default_nno_list()` when the value is empty.
 
+use std::io;
+
 use super::algorithms::{
     ChecksumAlgorithm, CompressionAlgorithm, SUPPORTED_CHECKSUMS, supported_compressions,
 };
@@ -64,6 +66,89 @@ pub(super) fn checksum_candidates(is_server: bool) -> Option<EnvOverride> {
 /// `None` when the variable is unset or holds only whitespace.
 pub(super) fn compression_candidates(is_server: bool) -> Option<EnvOverride> {
     parse_env(COMPRESS_LIST_ENV, is_server, resolve_compression)
+}
+
+/// Refuses a client-forced `--checksum-choice` whose algorithm is absent from
+/// the server's `RSYNC_CHECKSUM_LIST`.
+///
+/// Only the server validates, and only when the client explicitly forced the
+/// choice - the caller gates on `is_server` and `checksum_override.is_some()`,
+/// mirroring `checksum.c:185-186 parse_checksum_choice`
+/// (`if (am_server && checksum_choice) validate_choice_vs_env(...)`). When the
+/// variable is unset or holds only whitespace this is a no-op and any choice is
+/// accepted, so the default (unset-env) path is unchanged.
+///
+/// # MD4 family
+///
+/// Upstream keeps four distinct MD4 name-num slots (`CSUM_MD4`,
+/// `CSUM_MD4_OLD`, `CSUM_MD4_BUSTED`, `CSUM_MD4_ARCHAIC`) and, when `md4` is in
+/// the env list, marks all four as seen (`compat.c:443-444`). oc-rsync collapses
+/// the whole MD4 family into a single [`ChecksumAlgorithm::MD4`] whose wire name
+/// is `md4`, so a forced MD4 choice matches iff `md4` is a candidate - the
+/// special case is subsumed by the collapsed representation.
+///
+/// # Upstream reference
+///
+/// - `compat.c:426-449 validate_choice_vs_env()` - the refusal check itself.
+/// - `checksum.c:185-186` - the server-only call site.
+pub(super) fn validate_checksum_choice(choice: &str) -> io::Result<()> {
+    validate_choice(CHECKSUM_LIST_ENV, "checksum", choice, resolve_checksum)
+}
+
+/// Refuses a client-forced `--compress-choice` whose algorithm is absent from
+/// the server's `RSYNC_COMPRESS_LIST`.
+///
+/// The compression counterpart of [`validate_checksum_choice`], mirroring
+/// `compat.c:193-194 parse_compress_choice`
+/// (`if (am_server) validate_choice_vs_env(NSTR_COMPRESS, do_compression, -1)`).
+///
+/// # Upstream reference
+///
+/// - `compat.c:426-449 validate_choice_vs_env()`.
+/// - `compat.c:193-194` - the server-only call site.
+pub(super) fn validate_compress_choice(choice: &str) -> io::Result<()> {
+    validate_choice(COMPRESS_LIST_ENV, "compress", choice, resolve_compression)
+}
+
+/// Shared refusal check for both choice kinds.
+///
+/// Reuses [`parse_env`] with `is_server = true` (only the server validates) so
+/// the env list is parsed exactly once, with the same `&` split, tokenising,
+/// alias canonicalisation and de-duplication used to build the advertised list -
+/// no separate parse. When the variable is unset or empty, [`parse_env`] returns
+/// `None` and the choice is accepted. Otherwise the forced canonical name must
+/// appear in the parsed candidate set (an empty set - the `INVALID` sentinel -
+/// never contains it, so a value whose names were all unrecognised refuses every
+/// choice, matching upstream).
+///
+/// On refusal, emits the byte-exact upstream message and fails with an
+/// [`io::ErrorKind::Unsupported`] error, which the core exit-code mapper turns
+/// into `RERR_UNSUPPORTED` (exit 4) - the code `validate_choice_vs_env` passes to
+/// `exit_cleanup` (`compat.c:449`).
+fn validate_choice(
+    key: &str,
+    kind: &str,
+    choice: &str,
+    resolve: impl Fn(&str) -> Option<&'static str>,
+) -> io::Result<()> {
+    // upstream: compat.c:432-433 - an unset or all-whitespace list_str returns
+    // early, leaving the choice unvalidated (accepted).
+    let Some(env) = parse_env(key, true, resolve) else {
+        return Ok(());
+    };
+
+    // upstream: compat.c:445 - saw[num] must be set for the forced choice(s).
+    if env.candidates.contains(&choice) {
+        return Ok(());
+    }
+
+    // upstream: compat.c:446-448 rprintf(FERROR, "Your --%s-choice value (%s)
+    // was refused by the server.\n", ...). The trailing newline is added by the
+    // diagnostic layer, not embedded in the message, matching oc convention.
+    Err(io::Error::new(
+        io::ErrorKind::Unsupported,
+        format!("Your --{kind}-choice value ({choice}) was refused by the server."),
+    ))
 }
 
 /// Resolves a checksum name to its canonical wire spelling, or `None` when the

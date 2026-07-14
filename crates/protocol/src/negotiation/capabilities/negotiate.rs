@@ -187,6 +187,10 @@ pub fn negotiate_capabilities_with_override(
     } = *config;
     // Protocol < 30 doesn't support negotiation, use defaults
     if protocol.uses_fixed_encoding() {
+        // upstream: setup_protocol calls parse_*_choice regardless of protocol
+        // version, so the server still validates a forced choice against the env
+        // list. No vstring exchange runs here, so ordering is irrelevant.
+        validate_forced_choices(is_server, checksum_override, compression_override)?;
         // When user forced a checksum on a legacy protocol, honour it directly
         // since there is no wire negotiation to perform.
         let checksum = checksum_override.unwrap_or(ChecksumAlgorithm::MD4);
@@ -216,6 +220,10 @@ pub fn negotiate_capabilities_with_override(
     // negotiate_the_strings is ONLY CALLED when do_negotiated_strings is TRUE.
     // When FALSE, upstream uses pre-filled defaults without any wire protocol exchange.
     if !do_negotiation {
+        // upstream: setup_protocol still calls parse_*_choice when
+        // do_negotiated_strings == 0, so the server validates a forced choice
+        // against the env list. No vstring exchange runs, so ordering is moot.
+        validate_forced_choices(is_server, checksum_override, compression_override)?;
         // Use protocol 30+ defaults without sending or reading anything.
         // upstream: compat.c:194 - when -z is active but no vstring negotiation,
         // parse_compress_choice() defaults to CPRES_ZLIB.
@@ -354,6 +362,14 @@ pub fn negotiate_capabilities_with_override(
         None
     };
 
+    // upstream: setup_protocol runs parse_checksum_choice/parse_compress_choice
+    // AFTER negotiate_the_strings completes, so the server validates a forced
+    // choice against the env list only once the full vstring exchange (any
+    // non-forced category) has been sent and received. Validating here - after
+    // the recv above - preserves that wire ordering: a refusal does not truncate
+    // the exchange the peer expects.
+    validate_forced_choices(is_server, checksum_override, compression_override)?;
+
     // upstream: compat.c:528-529 - "Each side sends their list of valid names
     // to the other side and then both sides pick the first name in the client's
     // list that is also in the server's list."
@@ -426,6 +442,33 @@ pub fn negotiate_capabilities_with_override(
         checksum,
         compression,
     })
+}
+
+/// Refuses client-forced `--checksum-choice`/`--compress-choice` values that
+/// the server's `RSYNC_CHECKSUM_LIST`/`RSYNC_COMPRESS_LIST` excludes.
+///
+/// upstream: `checksum.c:185-186` and `compat.c:193-194` - `parse_*_choice`
+/// call `validate_choice_vs_env()` (`compat.c:426-449`) only on the server and
+/// only for an explicitly forced choice. When neither env variable is set this
+/// is a no-op, so the default path is unchanged. Called at every point where a
+/// forced choice is finalised (legacy, no-negotiation and the main negotiated
+/// path) so the check is version- and path-independent, exactly as upstream
+/// validates inside `setup_protocol` regardless of `do_negotiated_strings`.
+fn validate_forced_choices(
+    is_server: bool,
+    checksum_override: Option<ChecksumAlgorithm>,
+    compression_override: Option<CompressionAlgorithm>,
+) -> io::Result<()> {
+    if !is_server {
+        return Ok(());
+    }
+    if let Some(forced) = checksum_override {
+        env_list::validate_checksum_choice(forced.as_str())?;
+    }
+    if let Some(forced) = compression_override {
+        env_list::validate_compress_choice(forced.as_str())?;
+    }
+    Ok(())
 }
 
 /// Resolves the compression level upstream renders in the NSTR compress
