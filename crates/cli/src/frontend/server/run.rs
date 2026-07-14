@@ -173,6 +173,22 @@ where
         }
     }
 
+    // upstream: options.c:1777 / 475 - the client forwards explicitly-set debug
+    // levels (`--debug=hlink4`) the same way it forwards `--info`. Apply each
+    // forwarded token to the thread-local debug config so debug_log! callsites on
+    // the server side honour the client's request. Unknown tokens are silently
+    // ignored because `am_server` (options.c:475), so a newer client can forward
+    // categories this build has not learned yet without aborting the transfer.
+    for value in &long_flags.debug {
+        let text = value.to_string_lossy();
+        for token in text.split(',') {
+            let token = token.trim();
+            if !token.is_empty() {
+                let _ = logging::apply_debug_flag(token);
+            }
+        }
+    }
+
     // Boolean and move-only flags applied after value parsing releases its borrow.
     config.deletion.ignore_errors = long_flags.ignore_errors;
     config.write.fsync = long_flags.fsync;
