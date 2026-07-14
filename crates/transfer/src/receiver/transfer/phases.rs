@@ -119,14 +119,15 @@ impl ReceiverContext {
     ) -> io::Result<()> {
         let ndx = ndx_read_codec.read_ndx(reader)?;
         if ndx != -1 {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidData,
-                format!(
-                    "expected NDX_DONE (-1) from sender during {context}, got {ndx} {}{}",
-                    crate::role_trailer::error_location!(),
-                    crate::role_trailer::receiver()
-                ),
-            ));
+            // upstream: io.c read_ndx / rsync.c:818 - a wire index that is not
+            // the expected NDX_DONE (-1) is "File-list index N not in ..." and
+            // aborts with exit_cleanup(RERR_PROTOCOL) (exit 2). Tag the error so
+            // the core exit-code mapper yields RERR_PROTOCOL, not RERR_STREAMIO.
+            return Err(protocol::protocol_violation(format!(
+                "expected NDX_DONE (-1) from sender during {context}, got {ndx} {}{}",
+                crate::role_trailer::error_location!(),
+                crate::role_trailer::receiver()
+            )));
         }
         Ok(())
     }
@@ -150,14 +151,13 @@ impl ReceiverContext {
     {
         let ndx = ndx_read_codec.read_ndx_async(reader).await?;
         if ndx != -1 {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidData,
-                format!(
-                    "expected NDX_DONE (-1) from sender during {context}, got {ndx} {}{}",
-                    crate::role_trailer::error_location!(),
-                    crate::role_trailer::receiver()
-                ),
-            ));
+            // upstream: io.c read_ndx / rsync.c:818 exit_cleanup(RERR_PROTOCOL)
+            // (exit 2); see the sync twin `read_expected_ndx_done`.
+            return Err(protocol::protocol_violation(format!(
+                "expected NDX_DONE (-1) from sender during {context}, got {ndx} {}{}",
+                crate::role_trailer::error_location!(),
+                crate::role_trailer::receiver()
+            )));
         }
         Ok(())
     }
@@ -315,14 +315,14 @@ impl ReceiverContext {
                     let _stats = protocol::stats::DeleteStats::read_from(reader)?;
                     continue;
                 }
-                return Err(io::Error::new(
-                    io::ErrorKind::InvalidData,
-                    format!(
-                        "expected goodbye NDX_DONE echo (-1) from sender, got {ndx} {}{}",
-                        crate::role_trailer::error_location!(),
-                        crate::role_trailer::receiver()
-                    ),
-                ));
+                // upstream: main.c:922 exit_cleanup(RERR_PROTOCOL) (exit 2) - a
+                // non-NDX_DONE goodbye echo is a protocol violation, tagged so
+                // the core exit-code mapper yields 2 rather than RERR_STREAMIO(12).
+                return Err(protocol::protocol_violation(format!(
+                    "expected goodbye NDX_DONE echo (-1) from sender, got {ndx} {}{}",
+                    crate::role_trailer::error_location!(),
+                    crate::role_trailer::receiver()
+                )));
             }
 
             ndx_write_codec.write_ndx_done(&mut *writer)?;
@@ -382,14 +382,14 @@ impl ReceiverContext {
                     let _stats = protocol::stats::DeleteStats::read_from_async(reader).await?;
                     continue;
                 }
-                return Err(io::Error::new(
-                    io::ErrorKind::InvalidData,
-                    format!(
-                        "expected goodbye NDX_DONE echo (-1) from sender, got {ndx} {}{}",
-                        crate::role_trailer::error_location!(),
-                        crate::role_trailer::receiver()
-                    ),
-                ));
+                // upstream: main.c:922 exit_cleanup(RERR_PROTOCOL) (exit 2) - a
+                // non-NDX_DONE goodbye echo is a protocol violation, tagged so
+                // the core exit-code mapper yields 2 rather than RERR_STREAMIO(12).
+                return Err(protocol::protocol_violation(format!(
+                    "expected goodbye NDX_DONE echo (-1) from sender, got {ndx} {}{}",
+                    crate::role_trailer::error_location!(),
+                    crate::role_trailer::receiver()
+                )));
             }
 
             ndx_write_codec.write_ndx_done(&mut *writer)?;

@@ -265,15 +265,17 @@ impl SumHead {
     const MAX_STRONG_SUM_LEN: usize = 20;
 
     /// Builds a `RERR_PROTOCOL`-mapped error for a malformed sum_head field.
+    ///
+    /// upstream: io.c:2032-2065 `read_sum_head()` validates every field and
+    /// calls `exit_cleanup(RERR_PROTOCOL)` (exit 2) on any out-of-range value.
+    /// The error is tagged so the core exit-code mapper yields RERR_PROTOCOL(2)
+    /// rather than RERR_STREAMIO(12).
     fn malformed(detail: String) -> io::Error {
-        io::Error::new(
-            io::ErrorKind::InvalidData,
-            format!(
-                "malformed sum_head: {detail} {}{}",
-                crate::role_trailer::error_location!(),
-                crate::role_trailer::receiver()
-            ),
-        )
+        protocol::protocol_violation(format!(
+            "malformed sum_head: {detail} {}{}",
+            crate::role_trailer::error_location!(),
+            crate::role_trailer::receiver()
+        ))
     }
 
     /// Reads a sum_head from the wire in rsync format.
@@ -896,6 +898,26 @@ mod xattr_abbrev_guard_tests {
         let err = read_xattr_abbreviation_data(&mut reader).expect_err("must error");
         assert_eq!(err.kind(), ErrorKind::InvalidData);
         assert!(err.to_string().contains("accumulation overflow"));
+    }
+
+    #[test]
+    fn malformed_sum_head_is_tagged_protocol_violation() {
+        // WHY: upstream io.c:2032 read_sum_head() aborts a negative checksum
+        // count with exit_cleanup(RERR_PROTOCOL) (exit 2), not RERR_STREAMIO.
+        // The InvalidData error must carry the ProtocolViolation marker so the
+        // core exit-code mapper yields 2; otherwise a hostile sum_head collapses
+        // into the streamio(12) bucket.
+        let mut buf = [0u8; 16];
+        buf[0..4].copy_from_slice(&(-1i32).to_le_bytes());
+        let mut reader = Cursor::new(buf.to_vec());
+        let err = super::SumHead::read(&mut reader).expect_err("negative count must abort");
+        assert_eq!(err.kind(), ErrorKind::InvalidData);
+        assert!(
+            err.get_ref()
+                .is_some_and(|e| e.is::<protocol::ProtocolViolation>()),
+            "malformed sum_head must be tagged RERR_PROTOCOL"
+        );
+        assert!(err.to_string().contains("malformed sum_head"));
     }
 
     #[test]

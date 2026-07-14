@@ -136,6 +136,8 @@ mod multiplex;
 mod negotiation;
 /// `--debug=NSTR` producer emissions for algorithm-negotiation strings.
 pub mod nstr;
+/// Marker error type for genuine protocol violations (RERR_PROTOCOL).
+pub mod protocol_violation;
 /// Secluded-args (protect-args) stdin argument transmission protocol.
 ///
 /// When `--protect-args` is active, arguments are sent over stdin as
@@ -200,6 +202,7 @@ pub use negotiation::{
     read_and_parse_legacy_daemon_greeting, read_and_parse_legacy_daemon_greeting_details,
     read_legacy_daemon_line,
 };
+pub use protocol_violation::{ProtocolViolation, protocol_violation};
 pub use stats::{DeleteStats, TransferStats};
 pub use varint::{
     decode_varint, encode_varint_to_vec, read_int, read_longint, read_varint, read_varint_bounded,

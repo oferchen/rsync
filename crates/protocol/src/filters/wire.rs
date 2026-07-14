@@ -510,8 +510,10 @@ fn parse_wire_rule_modern(
 /// `exclude.c:1623-1627` - sender exits with RERR_PROTOCOL when prefix is NULL
 fn serialize_rule(rule: &FilterRuleWireFormat, protocol: ProtocolVersion) -> io::Result<Vec<u8>> {
     let prefix = super::prefix::build_rule_prefix(rule, protocol).ok_or_else(|| {
-        io::Error::new(
-            io::ErrorKind::InvalidData,
+        // upstream: exclude.c:1627 exit_cleanup(RERR_PROTOCOL) (exit 2). Tag the
+        // error so the core exit-code mapper yields RERR_PROTOCOL, not
+        // RERR_STREAMIO(12).
+        crate::protocol_violation::protocol_violation(
             "filter rules are too modern for remote rsync",
         )
     })?;

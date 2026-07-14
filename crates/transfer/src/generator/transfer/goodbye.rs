@@ -110,14 +110,13 @@ impl GeneratorContext {
             Err(e) => return Err(e),
         };
         if ndx != NDX_DONE {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidData,
-                format!(
-                    "expected goodbye NDX_DONE (-1) from receiver, got {ndx} {}{}",
-                    error_location!(),
-                    crate::role_trailer::sender()
-                ),
-            ));
+            // upstream: main.c:1097 exit_cleanup(RERR_PROTOCOL) (exit 2). Tag the
+            // error so the core exit-code mapper yields 2, not RERR_STREAMIO(12).
+            return Err(protocol::protocol_violation(format!(
+                "expected goodbye NDX_DONE (-1) from receiver, got {ndx} {}{}",
+                error_location!(),
+                crate::role_trailer::sender()
+            )));
         }
 
         // For protocol 31+: conditionally send del_stats, echo NDX_DONE, read final NDX_DONE.
@@ -176,14 +175,13 @@ impl GeneratorContext {
             match self.read_ndx_skipping_del_stats(reader, ndx_read_codec) {
                 Ok(final_ndx) => {
                     if final_ndx != NDX_DONE {
-                        return Err(io::Error::new(
-                            io::ErrorKind::InvalidData,
-                            format!(
-                                "expected final goodbye NDX_DONE (-1) from receiver, got {final_ndx} {}{}",
-                                error_location!(),
-                                crate::role_trailer::sender()
-                            ),
-                        ));
+                        // upstream: main.c:1097 exit_cleanup(RERR_PROTOCOL)
+                        // (exit 2); tagged so the mapper yields 2 not streamio.
+                        return Err(protocol::protocol_violation(format!(
+                            "expected final goodbye NDX_DONE (-1) from receiver, got {final_ndx} {}{}",
+                            error_location!(),
+                            crate::role_trailer::sender()
+                        )));
                     }
                 }
                 Err(e) if is_early_close_error(&e) => {

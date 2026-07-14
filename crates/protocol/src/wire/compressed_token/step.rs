@@ -292,8 +292,11 @@ impl TokenDecodeCore {
                 let token = i32::from_le_bytes([input[0], input[1], input[2], input[3]]);
                 if token < 0 {
                     self.phase = Phase::Idle;
-                    return Err(io::Error::new(
-                        io::ErrorKind::InvalidData,
+                    // upstream: token.c:528 invalid_compressed_token() ->
+                    // exit_cleanup(RERR_PROTOCOL) (exit 2). Tag the error so the
+                    // core exit-code mapper yields RERR_PROTOCOL, not
+                    // RERR_STREAMIO(12).
+                    return Err(crate::protocol_violation::protocol_violation(
                         "invalid token number in compressed stream",
                     ));
                 }
