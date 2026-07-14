@@ -107,6 +107,32 @@ fn parse_clear_long() {
 }
 
 #[test]
+fn long_form_keywords_are_case_sensitive() {
+    // WHY: upstream filter-file compatibility. exclude.c:1069 rule_strcmp uses a
+    // case-sensitive strncmp, so only the exact lowercase keyword is a directive.
+    // A rsync filter file that relies on uppercase keywords must fail identically
+    // under oc, otherwise the two implementations disagree on which rules apply.
+    let excl = parse_rules("exclude foo", Path::new("test")).unwrap();
+    assert_eq!(excl[0].action(), FilterAction::Exclude);
+    assert_eq!(excl[0].pattern(), "foo");
+    let dm = parse_rules("dir-merge .f", Path::new("test")).unwrap();
+    assert_eq!(dm[0].action(), FilterAction::DirMerge);
+    let clr = parse_rules("clear", Path::new("test")).unwrap();
+    assert_eq!(clr[0].action(), FilterAction::Clear);
+
+    // Uppercase / mixed-case keywords are not directives. `EXCLUDE`/`Dir-Merge`/
+    // `CLEAR` start with a non-prefix byte, so upstream reports "Unknown filter
+    // rule" and exits RERR_SYNTAX (exclude.c:1210).
+    for line in ["EXCLUDE foo", "Dir-Merge .f", "CLEAR", "Clear"] {
+        let err = parse_rules(line, Path::new("test")).unwrap_err();
+        assert!(
+            err.to_string().contains("Unknown filter rule"),
+            "expected `{line}` to be rejected, got: {err}"
+        );
+    }
+}
+
+#[test]
 fn parse_comments_and_empty_lines() {
     let content = "# Comment\n\n; Another comment\n+ *.txt\n";
     let rules = parse_rules(content, Path::new("test")).unwrap();
