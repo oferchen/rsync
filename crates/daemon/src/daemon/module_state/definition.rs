@@ -189,7 +189,7 @@ impl ModuleDefinition {
             if self
                 .hosts_allow
                 .iter()
-                .any(|pattern| pattern.matches(addr, hostname))
+                .any(|pattern| self.host_matches(pattern, addr, hostname))
             {
                 return true;
             }
@@ -217,12 +217,31 @@ impl ModuleDefinition {
         if self
             .hosts_deny
             .iter()
-            .any(|pattern| pattern.matches(addr, hostname))
+            .any(|pattern| self.host_matches(pattern, addr, hostname))
         {
             return false;
         }
 
         true
+    }
+
+    /// Returns whether `pattern` matches the connecting peer, combining the
+    /// reverse-DNS name-pattern match with forward-DNS resolution of the
+    /// rule's hostname token.
+    ///
+    /// upstream: access.c:254 `match_hostname(host_ptr, addr, tok) ||
+    /// match_address(addr, tok)` - a peer matches a `hosts allow`/`hosts deny`
+    /// token when its reverse-DNS name matches the token pattern OR the token
+    /// forward-resolves to the peer's address. Forward resolution is gated on
+    /// the module's `forward lookup` parameter (access.c:49 `allow_forward_dns`).
+    fn host_matches(
+        &self,
+        pattern: &HostPattern,
+        addr: std::net::IpAddr,
+        hostname: Option<&str>,
+    ) -> bool {
+        pattern.matches(addr, hostname)
+            || pattern.forward_resolve_matches(addr, self.forward_lookup)
     }
 
     /// Returns whether any host pattern requires DNS hostname resolution.
