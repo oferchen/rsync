@@ -554,6 +554,58 @@ fn remove_source_files_summary_tracks_count() {
     assert_eq!(summary.files_copied(), 3);
 }
 
+#[cfg(unix)]
+#[test]
+fn remove_source_files_unlink_failure_exits_partial() {
+    use std::os::unix::fs::PermissionsExt;
+
+    // Data safety: a source we cannot unlink must be left in place and the run
+    // must finish RERR_PARTIAL (23) without aborting, mirroring upstream
+    // successful_send() where a failed do_unlink() sets got_xfer_error.
+    if rustix::process::geteuid().as_raw() == 0 {
+        return; // root bypasses the directory write bit, so the unlink succeeds
+    }
+
+    let ctx = test_helpers::setup_copy_test();
+    let locked = ctx.source.join("locked");
+    fs::create_dir_all(&locked).expect("create locked dir");
+    let src_file = locked.join("file.txt");
+    fs::write(&src_file, b"content").expect("write source");
+    fs::create_dir_all(&ctx.dest).expect("create dest");
+
+    let operands = vec![
+        src_file.clone().into_os_string(),
+        ctx.dest.join("file.txt").into_os_string(),
+    ];
+    let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
+
+    // Deny write on the source's parent directory so its unlink fails (EACCES).
+    fs::set_permissions(&locked, PermissionsExt::from_mode(0o555)).expect("lock dir");
+
+    let result = plan.execute_with_options(
+        LocalCopyExecution::Apply,
+        LocalCopyOptions::default().remove_source_files(true),
+    );
+
+    // Restore permissions so the tempdir can be cleaned up regardless of outcome.
+    let _ = fs::set_permissions(&locked, PermissionsExt::from_mode(0o755));
+
+    let error = result.expect_err("a failed source unlink must surface an error");
+    assert_eq!(
+        error.exit_code(),
+        23,
+        "a failed source unlink must exit RERR_PARTIAL (23)"
+    );
+    assert!(
+        src_file.exists(),
+        "the source must remain when its unlink failed"
+    );
+    assert!(
+        ctx.dest.join("file.txt").exists(),
+        "the destination copy must still be written"
+    );
+}
+
 #[test]
 fn remove_source_files_with_relative_paths() {
     let ctx = test_helpers::setup_copy_test();

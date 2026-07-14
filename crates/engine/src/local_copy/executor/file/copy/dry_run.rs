@@ -215,7 +215,14 @@ pub(super) fn handle_dry_run(
         .with_change_set(change_set)
         .with_creation(!destination_previously_existed),
     );
-    remove_source_entry_if_requested(context, source, Some(record_path), file_type)?;
+    remove_source_entry_if_requested(
+        context,
+        source,
+        destination,
+        metadata,
+        Some(record_path),
+        file_type,
+    )?;
     Ok(())
 }
 
