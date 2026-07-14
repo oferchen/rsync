@@ -135,12 +135,15 @@ fn parse_filter_directive_accepts_clear_keyword() {
     let keyword = parse_filter_directive(OsStr::new("clear")).expect("keyword parses");
     assert_eq!(keyword, FilterDirective::Clear);
 
-    let uppercase = parse_filter_directive(OsStr::new("CLEAR")).expect("uppercase parses");
-    assert_eq!(uppercase, FilterDirective::Clear);
+    // upstream: exclude.c:1139 RULE_STRCMP(s, "clear") is a case-sensitive
+    // strncmp reached only via `case 'c'`, so `CLEAR` misses it, reaches the
+    // inner switch default, and errors with "Unknown filter rule". It is not a
+    // clear directive.
+    let _ = parse_filter_directive(OsStr::new("CLEAR")).expect_err("uppercase should error");
 
-    // upstream: exclude.c:1211-1213,1318-1320 - a leading space errors before the
-    // keyword is recognised, and trailing text on a clear rule is rejected with
-    // "'!' rule has trailing characters"; neither is trimmed away.
+    // upstream: exclude.c:1211-1213 - a leading space errors before any keyword
+    // is recognised, and the keyword is case-sensitive besides; neither the
+    // whitespace nor the case is normalised away.
     let _ = parse_filter_directive(OsStr::new("  CLEAR  "))
         .expect_err("surrounding whitespace should error");
 }

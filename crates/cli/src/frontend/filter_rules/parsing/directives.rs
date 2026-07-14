@@ -61,7 +61,13 @@ pub(super) fn parse_dir_merge_alias(trimmed: &str) -> Option<Result<FilterDirect
 
     let mut matched_prefix = None;
     for alias in DIR_MERGE_ALIASES {
-        if trimmed.len() >= alias.len() && trimmed[..alias.len()].eq_ignore_ascii_case(alias) {
+        // upstream: exclude.c:1143 RULE_STRCMP(s, "dir-merge") is a case-sensitive
+        // strncmp reached via `case 'd'`, so `DIR-MERGE`/`Dir-Merge` never match
+        // the keyword. Compare bytes exactly (the `per-dir` alias is an oc-rsync
+        // extension held to the same case-sensitivity for consistency). Every
+        // alias is ASCII, so an equal prefix guarantees `alias.len()` is a char
+        // boundary, keeping the slices below panic-safe.
+        if trimmed.as_bytes().starts_with(alias.as_bytes()) {
             matched_prefix = Some((&trimmed[..alias.len()], &trimmed[alias.len()..]));
             break;
         }
