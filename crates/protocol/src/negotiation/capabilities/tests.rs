@@ -3149,3 +3149,233 @@ fn compression_override_none_falls_through_to_normal_negotiation() {
         "without override, legacy protocol defaults to Zlib"
     );
 }
+
+/// Tests for the `RSYNC_CHECKSUM_LIST` / `RSYNC_COMPRESS_LIST` env overrides
+/// (upstream compat.c:409-533).
+///
+/// The environment is process-global, so every test here serialises on
+/// [`ENV_LOCK`] and mutates via [`EnvGuard`], which restores the previous value
+/// on drop.
+mod env_list_overrides {
+    use std::ffi::OsStr;
+    use std::sync::Mutex;
+
+    use platform::env::EnvGuard;
+
+    use super::super::env_list;
+    use super::super::negotiate::{choose_checksum_algorithm_in, read_vstring};
+    use super::*;
+
+    /// Serialises env-mutating tests since the process environment is global.
+    static ENV_LOCK: Mutex<()> = Mutex::new(());
+
+    const CHECKSUM_ENV: &str = "RSYNC_CHECKSUM_LIST";
+    const COMPRESS_ENV: &str = "RSYNC_COMPRESS_LIST";
+
+    /// Reads the first vstring from a captured `negotiate` output buffer.
+    fn first_vstring(bytes: &[u8]) -> String {
+        let mut cursor = bytes;
+        read_vstring(&mut cursor).unwrap()
+    }
+
+    // (a) Unset env - the default candidate order is untouched. This is the
+    // regression guard that the default wire bytes never change.
+    #[test]
+    fn unset_env_keeps_default_order() {
+        let _lock = ENV_LOCK.lock().unwrap();
+        let _cs = EnvGuard::remove(CHECKSUM_ENV);
+        let _cp = EnvGuard::remove(COMPRESS_ENV);
+
+        assert!(env_list::checksum_candidates(false).is_none());
+        assert!(env_list::checksum_candidates(true).is_none());
+        assert!(env_list::compression_candidates(false).is_none());
+        assert!(env_list::compression_candidates(true).is_none());
+    }
+
+    // (a') Unset env - a full negotiation advertises the built-in default list
+    // byte-for-byte (client drops "none").
+    #[test]
+    fn unset_env_advertises_default_checksum_list() {
+        let _lock = ENV_LOCK.lock().unwrap();
+        let _cs = EnvGuard::remove(CHECKSUM_ENV);
+        let _cp = EnvGuard::remove(COMPRESS_ENV);
+
+        let protocol = ProtocolVersion::try_from(31).unwrap();
+        let peer = test_peer_data(false);
+        let mut stdin = &peer[..];
+        let mut stdout = Vec::new();
+
+        negotiate_capabilities(protocol, &mut stdin, &mut stdout, true, false, false, false)
+            .unwrap();
+
+        // Client omits the num == 0 ("none") entry, matching get_default_nno_list.
+        assert_eq!(first_vstring(&stdout), "xxh128 xxh3 xxh64 md5 md4 sha1");
+    }
+
+    // (b) A checksum list restricts and reorders the candidate set.
+    #[test]
+    fn checksum_env_restricts_and_reorders() {
+        let _lock = ENV_LOCK.lock().unwrap();
+        let _cs = EnvGuard::set(CHECKSUM_ENV, OsStr::new("md5 xxh3"));
+
+        let client = env_list::checksum_candidates(false).unwrap();
+        assert_eq!(client.candidates, vec!["md5", "xxh3"]);
+        assert_eq!(client.advertised, "md5 xxh3");
+
+        let server = env_list::checksum_candidates(true).unwrap();
+        assert_eq!(server.candidates, vec!["md5", "xxh3"]);
+        assert_eq!(server.advertised, "md5 xxh3");
+    }
+
+    // (b') The restricted list flows onto the wire and drives selection: the
+    // client picks its own first candidate that the server also offers.
+    #[test]
+    fn checksum_env_drives_client_selection() {
+        let _lock = ENV_LOCK.lock().unwrap();
+        let _cs = EnvGuard::set(CHECKSUM_ENV, OsStr::new("md5 xxh3"));
+        let _cp = EnvGuard::remove(COMPRESS_ENV);
+
+        let protocol = ProtocolVersion::try_from(31).unwrap();
+        // Server advertises the full default checksum list.
+        let peer = test_peer_data(false);
+        let mut stdin = &peer[..];
+        let mut stdout = Vec::new();
+
+        let result =
+            negotiate_capabilities(protocol, &mut stdin, &mut stdout, true, false, false, false)
+                .unwrap();
+
+        // Advertised list is the env order, not the built-in default.
+        assert_eq!(first_vstring(&stdout), "md5 xxh3");
+        // Client preference order (env order) wins: md5 before xxh3.
+        assert_eq!(result.checksum, ChecksumAlgorithm::MD5);
+    }
+
+    // (c) A compression list likewise restricts and reorders candidates.
+    #[test]
+    fn compress_env_restricts_and_reorders() {
+        let _lock = ENV_LOCK.lock().unwrap();
+        let _cp = EnvGuard::set(COMPRESS_ENV, OsStr::new("zlib zlibx"));
+
+        let client = env_list::compression_candidates(false).unwrap();
+        assert_eq!(client.candidates, vec!["zlib", "zlibx"]);
+        assert_eq!(client.advertised, "zlib zlibx");
+    }
+
+    // (c') The compression override flows onto the wire and drives selection.
+    #[test]
+    fn compress_env_drives_client_selection() {
+        let _lock = ENV_LOCK.lock().unwrap();
+        let _cs = EnvGuard::remove(CHECKSUM_ENV);
+        let _cp = EnvGuard::set(COMPRESS_ENV, OsStr::new("zlib zlibx"));
+
+        let protocol = ProtocolVersion::try_from(31).unwrap();
+        // Server offers both zlib and zlibx (plus none).
+        let server_lists = b"\x0Exxh128 md5 md4\x0Fzlibx zlib none";
+        let mut stdin = &server_lists[..];
+        let mut stdout = Vec::new();
+
+        let result =
+            negotiate_capabilities(protocol, &mut stdin, &mut stdout, true, true, false, false)
+                .unwrap();
+
+        // Second vstring is the compression list.
+        let mut cursor = &stdout[..];
+        let _checksum = read_vstring(&mut cursor).unwrap();
+        let compress = read_vstring(&mut cursor).unwrap();
+        assert_eq!(compress, "zlib zlibx");
+        // Env order puts zlib first, so zlib wins over the server's zlibx-first list.
+        assert_eq!(result.compression, CompressionAlgorithm::Zlib);
+    }
+
+    // (d) Unknown names are dropped; a value with a mix keeps only valid names.
+    #[test]
+    fn unknown_names_are_dropped() {
+        let _lock = ENV_LOCK.lock().unwrap();
+        let _cs = EnvGuard::set(CHECKSUM_ENV, OsStr::new("bogus md5 alsobad xxh3"));
+
+        let over = env_list::checksum_candidates(false).unwrap();
+        assert_eq!(over.candidates, vec!["md5", "xxh3"]);
+        assert_eq!(over.advertised, "md5 xxh3");
+    }
+
+    // (d') A value whose names are all unknown collapses to the INVALID
+    // sentinel (upstream compat.c:327-328), which then fails negotiation.
+    #[test]
+    fn all_unknown_names_yield_invalid_sentinel() {
+        let _lock = ENV_LOCK.lock().unwrap();
+        let _cs = EnvGuard::set(CHECKSUM_ENV, OsStr::new("bogus notreal"));
+
+        let over = env_list::checksum_candidates(false).unwrap();
+        assert!(over.candidates.is_empty());
+        assert_eq!(over.advertised, "INVALID");
+
+        // An INVALID list cannot match any remote offer, so selection errors -
+        // upstream exits with RERR_UNSUPPORTED here.
+        let err =
+            choose_checksum_algorithm_in("xxh128 md5 md4", false, &over.candidates).unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::InvalidData);
+    }
+
+    // Empty / whitespace-only values are treated as unset (default order).
+    #[test]
+    fn whitespace_only_env_is_treated_as_unset() {
+        let _lock = ENV_LOCK.lock().unwrap();
+        let _cs = EnvGuard::set(CHECKSUM_ENV, OsStr::new("   \t "));
+        assert!(env_list::checksum_candidates(false).is_none());
+    }
+
+    // Duplicate names are removed, keeping first occurrence (upstream dedup).
+    #[test]
+    fn duplicate_names_are_deduped() {
+        let _lock = ENV_LOCK.lock().unwrap();
+        let _cs = EnvGuard::set(CHECKSUM_ENV, OsStr::new("md5 xxh3 md5 xxh3"));
+        let over = env_list::checksum_candidates(false).unwrap();
+        assert_eq!(over.candidates, vec!["md5", "xxh3"]);
+    }
+
+    // The "xxhash" alias is canonicalised to "xxh64" on the wire, matching
+    // upstream's main_nni rewrite.
+    #[test]
+    fn xxhash_alias_is_canonicalised() {
+        let _lock = ENV_LOCK.lock().unwrap();
+        let _cs = EnvGuard::set(CHECKSUM_ENV, OsStr::new("xxhash md5"));
+        let over = env_list::checksum_candidates(false).unwrap();
+        assert_eq!(over.candidates, vec!["xxh64", "md5"]);
+        assert_eq!(over.advertised, "xxh64 md5");
+    }
+
+    // A mixed-case non-alias name keeps its original bytes on the wire while
+    // still resolving case-insensitively for selection - upstream parse_nni_str
+    // only rewrites recognised aliases, so "MD5" stays "MD5" (not "md5").
+    #[test]
+    fn mixed_case_non_alias_preserves_original_bytes() {
+        let _lock = ENV_LOCK.lock().unwrap();
+        let _cs = EnvGuard::set(CHECKSUM_ENV, OsStr::new("MD5 XXH3"));
+        let over = env_list::checksum_candidates(false).unwrap();
+        // Advertised bytes preserve the operator's casing.
+        assert_eq!(over.advertised, "MD5 XXH3");
+        // Candidates are canonical for case-insensitive selection.
+        assert_eq!(over.candidates, vec!["md5", "xxh3"]);
+
+        // A mixed-case alias still canonicalises (case-insensitive match).
+        let _cs2 = EnvGuard::set(CHECKSUM_ENV, OsStr::new("XxHaSh"));
+        let alias = env_list::checksum_candidates(false).unwrap();
+        assert_eq!(alias.advertised, "xxh64");
+        assert_eq!(alias.candidates, vec!["xxh64"]);
+    }
+
+    // The '&' separator scopes the value: client uses names before it, server
+    // uses names after it (upstream getenv_nstr + parse_nni_str terminator).
+    #[test]
+    fn ampersand_scopes_client_and_server() {
+        let _lock = ENV_LOCK.lock().unwrap();
+        let _cs = EnvGuard::set(CHECKSUM_ENV, OsStr::new("md5 & xxh3 xxh128"));
+
+        let client = env_list::checksum_candidates(false).unwrap();
+        assert_eq!(client.candidates, vec!["md5"]);
+
+        let server = env_list::checksum_candidates(true).unwrap();
+        assert_eq!(server.candidates, vec!["xxh3", "xxh128"]);
+    }
+}
