@@ -49,10 +49,16 @@ mod include_rules {
     }
 
     #[test]
-    fn long_form_include_case_insensitive() {
-        let rules = parse_rules("INCLUDE *.txt", Path::new("test")).unwrap();
-        assert_eq!(rules.len(), 1);
-        assert_eq!(rules[0].action(), FilterAction::Include);
+    fn long_form_include_uppercase_errors() {
+        // upstream: exclude.c:1069 rule_strcmp uses a case-sensitive strncmp, so
+        // `INCLUDE` never matches the `include` keyword. The leading `I` is not a
+        // short-form prefix either, so upstream reports "Unknown filter rule" and
+        // exits RERR_SYNTAX (exclude.c:1210).
+        let err = parse_rules("INCLUDE *.txt", Path::new("test")).unwrap_err();
+        assert!(
+            err.to_string().contains("Unknown filter rule"),
+            "unexpected error: {err}"
+        );
     }
 
     #[test]
@@ -192,10 +198,15 @@ mod exclude_rules {
     }
 
     #[test]
-    fn long_form_exclude_case_insensitive() {
-        let rules = parse_rules("EXCLUDE *.bak", Path::new("test")).unwrap();
-        assert_eq!(rules.len(), 1);
-        assert_eq!(rules[0].action(), FilterAction::Exclude);
+    fn long_form_exclude_uppercase_errors() {
+        // upstream: rule_strcmp is case-sensitive, so `EXCLUDE` is not the
+        // `exclude` keyword, and `E` is not a short-form prefix. rsync 3.4.4
+        // reports "Unknown filter rule" and exits RERR_SYNTAX.
+        let err = parse_rules("EXCLUDE *.bak", Path::new("test")).unwrap_err();
+        assert!(
+            err.to_string().contains("Unknown filter rule"),
+            "unexpected error: {err}"
+        );
     }
 
     #[test]
@@ -337,10 +348,16 @@ mod clear_rules {
     }
 
     #[test]
-    fn long_form_clear_case_insensitive() {
-        let rules = parse_rules("CLEAR", Path::new("test")).unwrap();
-        assert_eq!(rules.len(), 1);
-        assert_eq!(rules[0].action(), FilterAction::Clear);
+    fn long_form_clear_uppercase_errors() {
+        // upstream: exclude.c:1139 RULE_STRCMP(s, "clear") is a case-sensitive
+        // strncmp, so `CLEAR` is not the clear directive. `C` is not a short-form
+        // prefix either, so rsync 3.4.4 reports "Unknown filter rule" and exits
+        // RERR_SYNTAX.
+        let err = parse_rules("CLEAR", Path::new("test")).unwrap_err();
+        assert!(
+            err.to_string().contains("Unknown filter rule"),
+            "unexpected error: {err}"
+        );
     }
 
     #[test]
@@ -453,10 +470,15 @@ mod dir_merge_rules {
     }
 
     #[test]
-    fn long_form_dir_merge_case_insensitive() {
-        let rules = parse_rules("DIR-MERGE .rsync-filter", Path::new("test")).unwrap();
-        assert_eq!(rules.len(), 1);
-        assert_eq!(rules[0].action(), FilterAction::DirMerge);
+    fn long_form_dir_merge_uppercase_errors() {
+        // upstream: rule_strcmp is case-sensitive, so `DIR-MERGE` is not the
+        // `dir-merge` keyword, and `D` is not a short-form prefix. rsync 3.4.4
+        // reports "Unknown filter rule" and exits RERR_SYNTAX.
+        let err = parse_rules("DIR-MERGE .rsync-filter", Path::new("test")).unwrap_err();
+        assert!(
+            err.to_string().contains("Unknown filter rule"),
+            "unexpected error: {err}"
+        );
     }
 
     #[test]

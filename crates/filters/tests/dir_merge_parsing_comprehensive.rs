@@ -246,29 +246,29 @@ fn dir_merge_with_trailing_whitespace_kept() {
 }
 
 #[test]
-fn dir_merge_mixed_case_long_form() {
+fn dir_merge_mixed_case_long_form_rejected() {
     let dir = TempDir::new().unwrap();
     let rules_path = dir.path().join("rules.txt");
 
-    // Mixed case in long form (should be case-insensitive)
+    // upstream: exclude.c:1069 rule_strcmp is a case-sensitive strncmp, so
+    // `Dir-Merge` never matches the `dir-merge` keyword. The leading `D` is not
+    // a valid short-form prefix either, so upstream errors with RERR_SYNTAX
+    // (exclude.c:1210 "Unknown filter rule"). oc must reject it the same way.
     fs::write(&rules_path, "Dir-Merge .rsync-filter\n").unwrap();
 
-    let rules = filters::merge::read_rules(&rules_path).unwrap();
-    assert_eq!(rules.len(), 1);
-    assert_eq!(rules[0].action(), FilterAction::DirMerge);
+    assert!(filters::merge::read_rules(&rules_path).is_err());
 }
 
 #[test]
-fn dir_merge_upper_case_long_form() {
+fn dir_merge_upper_case_long_form_rejected() {
     let dir = TempDir::new().unwrap();
     let rules_path = dir.path().join("rules.txt");
 
-    // All uppercase long form
+    // upstream rejects `DIR-MERGE` for the same reason as the mixed-case form:
+    // a case-sensitive keyword compare plus an invalid short-form prefix `D`.
     fs::write(&rules_path, "DIR-MERGE .rsync-filter\n").unwrap();
 
-    let rules = filters::merge::read_rules(&rules_path).unwrap();
-    assert_eq!(rules.len(), 1);
-    assert_eq!(rules[0].action(), FilterAction::DirMerge);
+    assert!(filters::merge::read_rules(&rules_path).is_err());
 }
 
 #[test]

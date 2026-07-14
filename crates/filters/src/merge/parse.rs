@@ -508,7 +508,9 @@ fn try_parse_long_form(
     let bytes = line.as_bytes();
     for &(keyword, action) in KEYWORDS {
         let klen = keyword.len();
-        if bytes.len() < klen || !bytes[..klen].eq_ignore_ascii_case(keyword.as_bytes()) {
+        // upstream: rule_strcmp uses strncmp, a case-sensitive byte compare, so
+        // only the exact lowercase keyword matches (`EXCLUDE`/`Merge` do not).
+        if bytes.len() < klen || &bytes[..klen] != keyword.as_bytes() {
             continue;
         }
         // The matched prefix is all ASCII, so `klen` is a valid char boundary.
@@ -569,7 +571,9 @@ fn parse_rule_line(
     source_path: &Path,
     line_num: usize,
 ) -> Result<FilterRule, MergeFileError> {
-    if line == "!" || line.eq_ignore_ascii_case("clear") {
+    // upstream: exclude.c:1139 RULE_STRCMP(s, "clear") is a case-sensitive
+    // strncmp, so `CLEAR`/`Clear` are not the clear directive.
+    if line == "!" || line == "clear" {
         return Ok(FilterRule::clear());
     }
 
