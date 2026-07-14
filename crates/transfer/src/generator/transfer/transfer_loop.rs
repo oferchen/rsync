@@ -131,8 +131,16 @@ impl GeneratorContext {
         // (one continuous stream). Create once here, reuse across all files.
         let negotiated_compression = self.negotiated_algorithms.map(|n| n.compression);
         let compression_threads = self.config.connection.compression_threads;
+        // upstream: token.c inits the compressor with do_compression_level (the
+        // negotiated --compress-level). Absent an explicit level, each codec
+        // substitutes its own default via CompressionLevel::Default.
+        let compression_level = self
+            .config
+            .connection
+            .compression_level
+            .unwrap_or(compress::zlib::CompressionLevel::Default);
         let mut token_encoder = negotiated_compression
-            .map(|algo| create_token_encoder(algo, compression_threads))
+            .map(|algo| create_token_encoder(algo, compression_level, compression_threads))
             .transpose()?
             .flatten();
 

@@ -14,6 +14,7 @@
 use std::io::{self, Read, Seek, SeekFrom, Write};
 use std::path::Path;
 
+use compress::zlib::CompressionLevel;
 use logging::debug_log;
 #[cfg(test)]
 use protocol::wire::write_token_stream;
@@ -44,29 +45,44 @@ use crate::role_trailer::error_location;
 /// upstream: token.c:701 - `ZSTD_CCtx_setParameter(.., ZSTD_c_nbWorkers, ..)`
 pub(super) fn create_token_encoder(
     algo: CompressionAlgorithm,
+    level: CompressionLevel,
     workers: Option<std::num::NonZeroU8>,
 ) -> io::Result<Option<CompressedTokenEncoder>> {
     match algo {
         CompressionAlgorithm::Zlib | CompressionAlgorithm::ZlibX => {
-            let mut enc = CompressedTokenEncoder::default();
+            // upstream: token.c:378 - deflateInit2() uses per_file_default_level
+            // (= the negotiated do_compression_level). Protocol version 31 mirrors
+            // the historical default; only the level varies per --compress-level.
+            let mut enc = CompressedTokenEncoder::new(level, ZLIB_TOKEN_PROTOCOL_VERSION);
             if algo == CompressionAlgorithm::ZlibX {
                 enc.set_zlibx(true);
             }
             Ok(Some(enc))
         }
         #[cfg(feature = "zstd")]
-        CompressionAlgorithm::Zstd => Ok(Some(CompressedTokenEncoder::new_zstd(3, workers)?)),
+        // upstream: token.c:748 - ZSTD_CCtx_setParameter(.., ZSTD_c_compressionLevel,
+        // do_compression_level). Negative "fast" levels pass through unchanged.
+        CompressionAlgorithm::Zstd => Ok(Some(CompressedTokenEncoder::new_zstd(
+            compress::zstd::level_to_i32(level),
+            workers,
+        )?)),
         #[cfg(feature = "lz4")]
         CompressionAlgorithm::LZ4 => {
-            let _ = workers;
+            let _ = (workers, level);
             Ok(Some(CompressedTokenEncoder::new_lz4()))
         }
         _ => {
-            let _ = workers;
+            let _ = (workers, level);
             Ok(None)
         }
     }
 }
+
+/// Protocol version historically used to initialise the zlib token encoder.
+///
+/// Matches the previous `CompressedTokenEncoder::default()` behaviour so this
+/// change alters only the compression level, never the zlib token framing.
+const ZLIB_TOKEN_PROTOCOL_VERSION: u32 = 31;
 
 /// Soft warning threshold for whole-file transfers (8 GB).
 ///
@@ -794,8 +810,9 @@ mod tests {
     #[cfg(feature = "zstd")]
     #[test]
     fn create_token_encoder_zstd_no_workers() {
-        let encoder = create_token_encoder(CompressionAlgorithm::Zstd, None)
-            .expect("zstd encoder creation should succeed");
+        let encoder =
+            create_token_encoder(CompressionAlgorithm::Zstd, CompressionLevel::Default, None)
+                .expect("zstd encoder creation should succeed");
         assert!(encoder.is_some(), "zstd should produce an encoder");
     }
 
@@ -803,24 +820,36 @@ mod tests {
     #[test]
     fn create_token_encoder_zstd_with_workers() {
         let workers = std::num::NonZeroU8::new(1);
-        let encoder = create_token_encoder(CompressionAlgorithm::Zstd, workers)
-            .expect("zstd encoder with workers=1 should succeed");
+        let encoder = create_token_encoder(
+            CompressionAlgorithm::Zstd,
+            CompressionLevel::Default,
+            workers,
+        )
+        .expect("zstd encoder with workers=1 should succeed");
         assert!(encoder.is_some(), "zstd should produce an encoder");
     }
 
     #[test]
     fn create_token_encoder_zlib_ignores_workers() {
         let workers = std::num::NonZeroU8::new(4);
-        let encoder = create_token_encoder(CompressionAlgorithm::Zlib, workers)
-            .expect("zlib encoder should succeed even with workers");
+        let encoder = create_token_encoder(
+            CompressionAlgorithm::Zlib,
+            CompressionLevel::Default,
+            workers,
+        )
+        .expect("zlib encoder should succeed even with workers");
         assert!(encoder.is_some(), "zlib should produce an encoder");
     }
 
     #[test]
     fn create_token_encoder_zlibx_ignores_workers() {
         let workers = std::num::NonZeroU8::new(4);
-        let encoder = create_token_encoder(CompressionAlgorithm::ZlibX, workers)
-            .expect("zlibx encoder should succeed even with workers");
+        let encoder = create_token_encoder(
+            CompressionAlgorithm::ZlibX,
+            CompressionLevel::Default,
+            workers,
+        )
+        .expect("zlibx encoder should succeed even with workers");
         assert!(encoder.is_some(), "zlibx should produce an encoder");
     }
 
@@ -828,9 +857,44 @@ mod tests {
     #[test]
     fn create_token_encoder_lz4_ignores_workers() {
         let workers = std::num::NonZeroU8::new(4);
-        let encoder = create_token_encoder(CompressionAlgorithm::LZ4, workers)
-            .expect("lz4 encoder should succeed even with workers");
+        let encoder = create_token_encoder(
+            CompressionAlgorithm::LZ4,
+            CompressionLevel::Default,
+            workers,
+        )
+        .expect("lz4 encoder should succeed even with workers");
         assert!(encoder.is_some(), "lz4 should produce an encoder");
+    }
+
+    /// The negotiated `--compress-level` must reach the wire token encoder:
+    /// upstream `token.c` inits both the zlib (`deflateInit2`) and zstd
+    /// (`ZSTD_c_compressionLevel`) contexts with `do_compression_level`, so a
+    /// higher level must produce a materially smaller compressed token stream
+    /// for the same compressible literal. A regression that hardcodes the
+    /// default level would make these two streams identical.
+    #[cfg(feature = "zstd")]
+    #[test]
+    fn create_token_encoder_zstd_honors_negotiated_level() {
+        use std::num::NonZeroU8;
+
+        fn emit(level: CompressionLevel) -> Vec<u8> {
+            let mut enc = create_token_encoder(CompressionAlgorithm::Zstd, level, None)
+                .expect("zstd encoder")
+                .expect("zstd produces an encoder");
+            // A repetitive-but-structured payload so a higher zstd level wins.
+            let payload: Vec<u8> = (0..4096u32).map(|i| (i % 251) as u8).collect();
+            let mut out = Vec::new();
+            enc.send_literal(&mut out, &payload).expect("send literal");
+            enc.finish(&mut out).expect("finish");
+            out
+        }
+
+        let fast = emit(CompressionLevel::Precise(NonZeroU8::new(1).unwrap()));
+        let best = emit(CompressionLevel::Precise(NonZeroU8::new(19).unwrap()));
+        assert_ne!(
+            fast, best,
+            "distinct zstd levels must yield distinct compressed token streams"
+        );
     }
 
     /// Reverse-daemon-delta regression: with a delta script that interleaves

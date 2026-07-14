@@ -100,7 +100,8 @@ where
         workers: Option<NonZeroU8>,
     ) -> io::Result<Self> {
         let writer = CountingWriter::new(sink);
-        let mut encoder = ZstdEncoder::new(writer, zstd_level(level)).map_err(io::Error::other)?;
+        let mut encoder =
+            ZstdEncoder::new(writer, level_to_i32(level)).map_err(io::Error::other)?;
         configure_workers(&mut encoder, workers)?;
         Ok(Self { inner: encoder })
     }
@@ -228,7 +229,8 @@ where
 
 /// Compresses `input` into a new [`Vec`].
 pub fn compress_to_vec(input: &[u8], level: CompressionLevel) -> io::Result<Vec<u8>> {
-    let mut encoder = ZstdEncoder::new(Vec::new(), zstd_level(level)).map_err(io::Error::other)?;
+    let mut encoder =
+        ZstdEncoder::new(Vec::new(), level_to_i32(level)).map_err(io::Error::other)?;
     encoder.write_all(input)?;
     encoder.finish().map_err(io::Error::other)
 }
@@ -277,9 +279,20 @@ fn configure_workers<W: Write>(
     }
 }
 
-// upstream: token.c:init_compression_level() - ZSTD_CLEVEL_DEFAULT is 3,
-// ZSTD_minCLevel() is the minimum, ZSTD_maxCLevel() is the maximum.
-fn zstd_level(level: CompressionLevel) -> i32 {
+/// Maps a [`CompressionLevel`] to the raw signed level zstd's C API expects
+/// (`ZSTD_c_compressionLevel`).
+///
+/// This is the single source of truth for the zstd level mapping, shared by the
+/// streaming encoders in this module and by the wire token encoder in the
+/// `transfer` crate so the negotiated `--compress-level` reaches every zstd
+/// compression context. `Default` resolves to `ZSTD_CLEVEL_DEFAULT` (3), not the
+/// zlib default (6): each codec substitutes its own default level.
+///
+/// upstream: token.c:send_zstd_token() passes `do_compression_level` to
+/// `ZSTD_CCtx_setParameter(.., ZSTD_c_compressionLevel, ..)`; token.c:75
+/// `def_level = ZSTD_CLEVEL_DEFAULT`.
+#[must_use]
+pub fn level_to_i32(level: CompressionLevel) -> i32 {
     use crate::algorithm::{ZSTD_BEST_LEVEL, ZSTD_DEFAULT_LEVEL, ZSTD_FAST_LEVEL};
     match level {
         CompressionLevel::None => 0,
