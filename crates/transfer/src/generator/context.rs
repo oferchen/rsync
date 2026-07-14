@@ -742,18 +742,20 @@ impl GeneratorContext {
     }
 
     /// Validates that a file index is within bounds of the file list.
+    ///
+    /// upstream: sender.c:144 `flist_for_ndx()` / rsync.c:352 - an out-of-range
+    /// wire file index aborts with `exit_cleanup(RERR_PROTOCOL)` (exit 2). The
+    /// error is tagged so the core exit-code mapper yields RERR_PROTOCOL(2)
+    /// rather than RERR_STREAMIO(12).
     pub(crate) fn validate_file_index(&self, ndx: usize) -> std::io::Result<()> {
         if ndx >= self.file_list.len() {
-            return Err(std::io::Error::new(
-                std::io::ErrorKind::InvalidData,
-                format!(
-                    "invalid file index {}, file list has {} entries {}{}",
-                    ndx,
-                    self.file_list.len(),
-                    error_location!(),
-                    crate::role_trailer::sender()
-                ),
-            ));
+            return Err(protocol::protocol_violation(format!(
+                "invalid file index {}, file list has {} entries {}{}",
+                ndx,
+                self.file_list.len(),
+                error_location!(),
+                crate::role_trailer::sender()
+            )));
         }
         Ok(())
     }

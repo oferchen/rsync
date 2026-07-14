@@ -117,10 +117,12 @@ impl FileListReader {
         if !(mode == 0 && self.delete_missing_args)
             && crate::flist::FileType::from_mode(mode).is_none()
         {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidData,
-                format!("invalid file mode 0{mode:o}"),
-            ));
+            // upstream: flist.c:890 exit_cleanup(RERR_PROTOCOL) (exit 2). Tag the
+            // error so the core exit-code mapper yields RERR_PROTOCOL, not
+            // RERR_STREAMIO(12).
+            return Err(crate::protocol_violation::protocol_violation(format!(
+                "invalid file mode 0{mode:o}"
+            )));
         }
 
         // Determine if this is a directory (needed for atime and content_dir)

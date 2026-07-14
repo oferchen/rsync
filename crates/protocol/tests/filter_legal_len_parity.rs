@@ -64,6 +64,11 @@ fn serialize_rule_errors_with_too_modern_for_dir_merge_at_protocol_28() {
 
     assert_eq!(err.kind(), std::io::ErrorKind::InvalidData);
     assert!(
+        err.get_ref()
+            .is_some_and(|e| e.is::<protocol::ProtocolViolation>()),
+        "too-modern filter must be tagged RERR_PROTOCOL (exclude.c:1627, exit 2)",
+    );
+    assert!(
         err.to_string()
             .contains("filter rules are too modern for remote rsync"),
         "error message must match upstream send_rules:1623-1627 wording; got {err}",
