@@ -473,6 +473,19 @@ impl GeneratorContext {
 
             let file_size = file_entry.size();
 
+            // upstream: sender.c:421-429 - in append mode, refuse to send a
+            // source that has shrunk below the length recorded when the file
+            // list was built (`st.st_size < F_LENGTH(file)`). Appending only
+            // ever extends a file, so a now-shorter source would corrupt the
+            // destination's preserved prefix. Skip it with the "skipped
+            // diminished file" warning and MSG_NO_SEND (no io_error bit). A
+            // stat failure (e.g. the source vanished) is left to the per-branch
+            // open, which routes it through record_open_failure.
+            if is_append && source_diminished_below_flist(&source_path, file_size) {
+                self.record_diminished_skip(&mut *writer, wire_ndx, &source_path_display)?;
+                continue;
+            }
+
             if is_append && has_basis {
                 // upstream: match.c:371-390 - append mode streams only the tail
                 // past the existing prefix; the sum_head's count/blength encode
@@ -1005,6 +1018,24 @@ const fn source_changed_since_flist(
         || (recorded.mtime_nsec != 0 && recorded.mtime_nsec != current_mtime_nsec)
 }
 
+/// Returns true when an append-mode source has shrunk below the length recorded
+/// when the file list was built, so the sender must skip it instead of
+/// appending. Appending only ever extends a file: a source now shorter than its
+/// recorded `F_LENGTH` would leave the destination's preserved prefix
+/// referencing bytes the source can no longer supply, corrupting the result.
+///
+/// The current on-disk length is read with a fresh `stat` (following symlinks,
+/// matching the sender's `do_open_checklinks`). A `stat` failure - most
+/// commonly a source that vanished since enumeration - returns false so the
+/// per-branch open reports it through `record_open_failure` with the correct
+/// vanished/general distinction, exactly as upstream reaches `map_file` only
+/// after a successful `fstat`.
+///
+/// upstream: sender.c:421 - `if (append_mode > 0 && st.st_size < F_LENGTH(file))`
+fn source_diminished_below_flist(source_path: &Path, flist_len: u64) -> bool {
+    std::fs::metadata(source_path).is_ok_and(|meta| meta.len() < flist_len)
+}
+
 /// Extracts `(size, mtime_seconds, mtime_nanoseconds)` from a re-stat result in
 /// the same representation the file list records, so the changed-file guard can
 /// compare like-for-like across platforms.
@@ -1144,5 +1175,55 @@ mod sender_remove_guard_tests {
         assert_eq!(size, 11);
         let r = recorded(size, mtime, mtime_nsec);
         assert!(!source_changed_since_flist(r, size, mtime, mtime_nsec));
+    }
+}
+
+#[cfg(test)]
+mod sender_diminished_guard_tests {
+    use super::source_diminished_below_flist;
+
+    /// A source that shrank below the length recorded in the file list must be
+    /// skipped: appending only extends a file, so re-sending a now-shorter
+    /// source would corrupt the destination's preserved prefix
+    /// (sender.c:421 `st.st_size < F_LENGTH(file)`).
+    #[test]
+    fn shrunk_source_is_skipped() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("src.bin");
+        // File list recorded 1024 bytes; the source is now only 512 on disk.
+        std::fs::write(&path, vec![0u8; 512]).expect("write");
+        assert!(source_diminished_below_flist(&path, 1024));
+    }
+
+    /// An unchanged source (on-disk length equals its recorded length) is a
+    /// normal append and must proceed - the guard fires strictly below, so
+    /// equality never skips (upstream uses `<`, not `<=`).
+    #[test]
+    fn equal_length_source_proceeds() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("src.bin");
+        std::fs::write(&path, vec![0u8; 1024]).expect("write");
+        assert!(!source_diminished_below_flist(&path, 1024));
+    }
+
+    /// A source that grew after enumeration still appends normally: it can
+    /// supply every recorded byte plus more, so there is nothing to skip.
+    #[test]
+    fn grown_source_proceeds() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("src.bin");
+        std::fs::write(&path, vec![0u8; 4096]).expect("write");
+        assert!(!source_diminished_below_flist(&path, 1024));
+    }
+
+    /// A stat failure (here, a vanished source) must NOT skip via the diminished
+    /// path: returning false defers to the per-branch open, which reports the
+    /// vanished/general distinction through `record_open_failure`, mirroring
+    /// upstream reaching the diminished check only after a successful `fstat`.
+    #[test]
+    fn missing_source_defers_to_open_failure() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("does-not-exist.bin");
+        assert!(!source_diminished_below_flist(&path, 1024));
     }
 }

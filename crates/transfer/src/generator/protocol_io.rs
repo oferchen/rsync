@@ -373,6 +373,35 @@ impl GeneratorContext {
         Ok(())
     }
 
+    /// Skips a source that has shrunk below its file-list length in append
+    /// mode, warning and sending MSG_NO_SEND for protocol >= 30.
+    ///
+    /// Appending only ever extends a file, so a source now shorter than the
+    /// length recorded when the file list was built would corrupt the
+    /// destination. Upstream refuses to send it, warns with "skipped diminished
+    /// file", and (protocol >= 30) sends MSG_NO_SEND so the receiver drops the
+    /// pending entry. Unlike an open failure, a diminished skip sets no
+    /// `io_error` bit and does not affect the exit code.
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `sender.c:421-429`: `if (append_mode > 0 && st.st_size < F_LENGTH(file))`
+    ///   -> `rprintf(FWARNING, "skipped diminished file: %s\n", ...)` then
+    ///   `send_msg_int(MSG_NO_SEND, ndx)`.
+    pub(super) fn record_diminished_skip<W: Write>(
+        &mut self,
+        writer: &mut super::super::writer::ServerWriter<W>,
+        ndx: i32,
+        path_display: &str,
+    ) -> io::Result<()> {
+        // upstream: sender.c:422 - rprintf(FWARNING, "skipped diminished file: %s\n", ...)
+        eprintln!("skipped diminished file: \"{path_display}\"");
+        if self.protocol.supports_generator_messages() {
+            writer.send_no_send(ndx)?;
+        }
+        Ok(())
+    }
+
     /// Emits itemize output when conditions are met.
     ///
     /// In server mode (daemon/SSH), sends the formatted itemize string
