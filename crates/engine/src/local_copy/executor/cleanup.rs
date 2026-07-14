@@ -1021,13 +1021,36 @@ pub(crate) fn record_directory_subtree(
     Ok(())
 }
 
-/// Removes the source entry after a successful copy when `--remove-source-files` is active.
+/// Removes the source entry after a successful copy when `--remove-source-files`
+/// is active, applying upstream's `successful_send` safety guards first.
 ///
-/// Directories are never removed (upstream rsync only removes files).
-/// No-ops in dry-run mode.
+/// Mirrors upstream `successful_send()` (sender.c:131-182). Before unlinking the
+/// source the guards run in order:
+///
+/// 1. **Re-stat** the source (`do_lstat`). A vanished source (`ENOENT`) is the
+///    benign "already removed" no-op; any other stat failure is a soft
+///    `RERR_PARTIAL` (exit 23) error that leaves the source in place.
+/// 2. **Destination inode** (Unix): refuse to remove the source when it is the
+///    very inode just written to the destination (a local same-file transfer),
+///    which would otherwise delete the freshly written destination.
+/// 3. **Changed file**: refuse to remove a source whose size or modification
+///    time changed since it was copied (`recorded`), so a file the user
+///    modified mid-transfer is never removed.
+///
+/// Directories are never removed (upstream only removes files). A guard refusal
+/// or an unlink failure records a soft error so the run finishes `RERR_PARTIAL`
+/// (exit 23) without aborting, mirroring upstream's `FERROR_XFER` ->
+/// `got_xfer_error`. No-ops in dry-run mode.
+///
+/// # Upstream Reference
+///
+/// - `sender.c:131-182` `successful_send()`
+/// - `log.c:311` / `main.c:1630` `got_xfer_error` -> `RERR_PARTIAL`
 pub(crate) fn remove_source_entry_if_requested(
     context: &mut CopyContext,
     source: &Path,
+    destination: &Path,
+    recorded: &fs::Metadata,
     record_path: Option<&Path>,
     file_type: fs::FileType,
 ) -> Result<(), LocalCopyError> {
@@ -1035,15 +1058,61 @@ pub(crate) fn remove_source_entry_if_requested(
         return Ok(());
     }
 
-    let source_type = match fs::symlink_metadata(source) {
-        Ok(metadata) => metadata.file_type(),
-        Err(_) => file_type,
+    // upstream: sender.c:150 - re-stat the source before removing it.
+    let current = match fs::symlink_metadata(source) {
+        Ok(metadata) => metadata,
+        // upstream: sender.c:174-175 - ENOENT is the benign "already removed" case.
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(()),
+        // upstream: sender.c:151-153,176-177 - any other re-lstat failure is an
+        // FERROR_XFER: leave the source in place and finish RERR_PARTIAL (23).
+        Err(error) => {
+            eprintln!(
+                "rsync: [sender] sender failed to re-lstat \"{}\": {}",
+                source.display(),
+                crate::local_copy::upstream_io_error(&error),
+            );
+            context.record_sender_remove_error();
+            return Ok(());
+        }
     };
 
-    if source_type.is_dir() {
+    // upstream: sender.c:145 - directories are never removed. Prefer the
+    // freshly-stat'd type; fall back to the copy-time type only if it is a dir.
+    let _ = file_type;
+    if current.file_type().is_dir() {
         return Ok(());
     }
 
+    // upstream: sender.c:155-160 - refuse removal when the source is the very
+    // inode just written to the destination (local_server num_dev_ino_buf).
+    #[cfg(unix)]
+    {
+        if let Ok(destination_meta) = fs::symlink_metadata(destination) {
+            if is_destination_inode(&current, &destination_meta) {
+                eprintln!(
+                    "ERROR: Skipping sender remove of destination file: {}",
+                    source.display()
+                );
+                context.record_sender_remove_error();
+                return Ok(());
+            }
+        }
+    }
+    #[cfg(not(unix))]
+    let _ = destination;
+
+    // upstream: sender.c:162-169 - refuse to remove a source that changed size
+    // or modification time since it was copied.
+    if source_identity_changed(recorded, &current) {
+        eprintln!(
+            "ERROR: Skipping sender remove for changed file: {}",
+            source.display()
+        );
+        context.record_sender_remove_error();
+        return Ok(());
+    }
+
+    // upstream: sender.c:171 - do_unlink(fname) once every guard passed.
     match fs::remove_file(source) {
         Ok(()) => {
             info_log!(Remove, 1, "removing source {}", source.display());
@@ -1061,12 +1130,136 @@ pub(crate) fn remove_source_entry_if_requested(
             context.register_progress();
             Ok(())
         }
+        // upstream: sender.c:174-175 - ENOENT after the guards is still benign.
         Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(()),
-        Err(error) => Err(LocalCopyError::io(
-            "remove source entry",
-            source.to_path_buf(),
-            error,
-        )),
+        // upstream: sender.c:172-173,176-177 - a failed unlink is an FERROR_XFER:
+        // record the soft error so the run finishes RERR_PARTIAL (23).
+        Err(error) => {
+            eprintln!(
+                "rsync: [sender] sender failed to remove \"{}\": {}",
+                source.display(),
+                crate::local_copy::upstream_io_error(&error),
+            );
+            context.record_sender_remove_error();
+            Ok(())
+        }
+    }
+}
+
+/// Returns true when a freshly re-stat'd source no longer matches the identity
+/// recorded when it was copied, mirroring the changed-file guard in upstream
+/// `successful_send`: size, whole-second mtime, and sub-second mtime compared
+/// only when the recorded timestamp carried nanoseconds (upstream gates the
+/// nsec compare on `NSEC_BUMP`, i.e. a transmitted `FLAG_MOD_NSEC`).
+///
+/// upstream: sender.c:162-169
+#[cfg(unix)]
+fn source_identity_changed(recorded: &fs::Metadata, current: &fs::Metadata) -> bool {
+    use std::os::unix::fs::MetadataExt;
+    recorded.len() != current.len()
+        || recorded.mtime() != current.mtime()
+        || (recorded.mtime_nsec() != 0 && recorded.mtime_nsec() != current.mtime_nsec())
+}
+
+/// Returns true when the re-stat'd source shares the destination's device and
+/// inode - i.e. the source *is* the file just written to the destination, so
+/// removing it would delete the destination.
+///
+/// upstream: sender.c:155-160 `(int64)st.st_dev == IVAL64(num_dev_ino_buf, 4)`
+#[cfg(unix)]
+fn is_destination_inode(source: &fs::Metadata, destination: &fs::Metadata) -> bool {
+    use std::os::unix::fs::MetadataExt;
+    source.dev() == destination.dev() && source.ino() == destination.ino()
+}
+
+/// Non-Unix changed-file guard: compares size and the full-precision
+/// modification time. `recorded` and `current` are both the untouched source at
+/// different instants, so an equality compare never spuriously fires.
+///
+/// upstream: sender.c:162-169
+#[cfg(not(unix))]
+fn source_identity_changed(recorded: &fs::Metadata, current: &fs::Metadata) -> bool {
+    if recorded.len() != current.len() {
+        return true;
+    }
+    match (recorded.modified(), current.modified()) {
+        (Ok(recorded_mtime), Ok(current_mtime)) => recorded_mtime != current_mtime,
+        _ => false,
+    }
+}
+
+#[cfg(all(test, unix))]
+mod sender_remove_guard_tests {
+    use super::{is_destination_inode, source_identity_changed};
+    use filetime::{FileTime, set_file_mtime};
+    use std::fs;
+
+    #[test]
+    fn unchanged_source_is_removable() {
+        // Data safety: a source that still matches its copy-time identity is the
+        // one we transferred, so upstream successful_send unlinks it.
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("f");
+        fs::write(&path, b"data").expect("write");
+        let recorded = fs::symlink_metadata(&path).expect("stat");
+        let current = fs::symlink_metadata(&path).expect("stat");
+        assert!(!source_identity_changed(&recorded, &current));
+    }
+
+    #[test]
+    fn grown_source_is_not_removed() {
+        // Data safety: the file grew after it was copied; removing it now would
+        // destroy bytes we never sent (sender.c:162 st_size compare).
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("f");
+        fs::write(&path, b"data").expect("write");
+        let recorded = fs::symlink_metadata(&path).expect("stat");
+        fs::write(&path, b"data-and-more").expect("grow");
+        let current = fs::symlink_metadata(&path).expect("stat");
+        assert!(source_identity_changed(&recorded, &current));
+    }
+
+    #[test]
+    fn retouched_source_is_not_removed() {
+        // Data safety: same size but a newer mtime means the file was rewritten
+        // in place; upstream refuses the remove (sender.c:162 st_mtime compare).
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("f");
+        fs::write(&path, b"data").expect("write");
+        set_file_mtime(&path, FileTime::from_unix_time(1_600_000_000, 0)).expect("set mtime");
+        let recorded = fs::symlink_metadata(&path).expect("stat");
+        set_file_mtime(&path, FileTime::from_unix_time(1_700_000_000, 0)).expect("set mtime");
+        let current = fs::symlink_metadata(&path).expect("stat");
+        assert!(source_identity_changed(&recorded, &current));
+    }
+
+    #[test]
+    fn hardlinked_source_and_destination_share_inode() {
+        // Data safety: when the destination is a hard link to the source they
+        // share dev/ino, so upstream refuses the sender remove that would
+        // otherwise delete the destination (sender.c:155-160).
+        let dir = tempfile::tempdir().expect("tempdir");
+        let source = dir.path().join("src");
+        let destination = dir.path().join("dst");
+        fs::write(&source, b"data").expect("write");
+        fs::hard_link(&source, &destination).expect("hardlink");
+        let source_meta = fs::symlink_metadata(&source).expect("stat src");
+        let dest_meta = fs::symlink_metadata(&destination).expect("stat dst");
+        assert!(is_destination_inode(&source_meta, &dest_meta));
+    }
+
+    #[test]
+    fn distinct_files_do_not_share_inode() {
+        // A normal transfer writes a separate destination inode, so the guard
+        // must not fire and the source removal proceeds.
+        let dir = tempfile::tempdir().expect("tempdir");
+        let source = dir.path().join("src");
+        let destination = dir.path().join("dst");
+        fs::write(&source, b"data").expect("write src");
+        fs::write(&destination, b"data").expect("write dst");
+        let source_meta = fs::symlink_metadata(&source).expect("stat src");
+        let dest_meta = fs::symlink_metadata(&destination).expect("stat dst");
+        assert!(!is_destination_inode(&source_meta, &dest_meta));
     }
 }
 

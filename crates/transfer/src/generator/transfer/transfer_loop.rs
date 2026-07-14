@@ -726,13 +726,23 @@ impl GeneratorContext {
             }
             files_transferred += 1;
 
-            // upstream: sender.c:129-178 successful_send() - unlink the source
+            // upstream: sender.c:131-182 successful_send() - unlink the source
             // when --remove-source-files is active and the transfer succeeded.
             // Upstream defers the unlink to the MSG_SUCCESS handshake so the
             // receiver's commit is confirmed; we run inline here at the
             // file-transfer boundary because the generator does not exchange
-            // an MSG_SUCCESS round-trip with the receiver.
-            self.remove_source_file_if_requested(&source_path);
+            // an MSG_SUCCESS round-trip with the receiver. The re-stat and
+            // changed-file guards still run, so a source that vanished or was
+            // modified since it entered the file list is never removed, and a
+            // guard refusal or unlink failure sets io_error -> exit 23.
+            let recorded_identity = RecordedSourceIdentity {
+                size: file_entry.size(),
+                mtime: file_entry.mtime(),
+                mtime_nsec: file_entry.mtime_nsec(),
+            };
+            let remove_io_error =
+                self.remove_source_file_if_requested(&source_path, recorded_identity);
+            self.io_error |= remove_io_error;
 
             // upstream: sender.c:445-446
             // rprintf(FINFO, "sender finished %s%s%s\n", path,slash,fname)
@@ -847,37 +857,61 @@ impl GeneratorContext {
         })
     }
 
-    /// Unlinks the sender-side source file when `--remove-source-files` is active.
+    /// Unlinks the sender-side source file when `--remove-source-files` is
+    /// active, applying upstream's `successful_send` safety guards first and
+    /// returning the `io_error` bits the caller must OR into the transfer's
+    /// accumulated error state.
     ///
-    /// Mirrors upstream `successful_send()` in sender.c:129-178: dry-run and
-    /// directory entries are skipped, vanished sources are tolerated as a
-    /// successful no-op, and any other unlink failure is logged but does not
-    /// fail the transfer. Upstream emits `FERROR_XFER` for failed unlinks and
-    /// `FINFO` for the success notice; we mirror that by routing the success
-    /// notice through the `info_log!(Remove, ...)` channel (gated by
-    /// `--info=remove` / `-vv`) and the failure path through `debug_log!`.
+    /// Mirrors upstream `successful_send()` (sender.c:131-182): the source is
+    /// re-stat'd (`do_stat` under `--copy-links`, else `do_lstat`) and is only
+    /// unlinked when it still matches the size and modification time recorded in
+    /// the file list. A vanished source (`ENOENT`) is the benign "already
+    /// removed" notice (`FINFO`); a re-stat failure, a source that changed since
+    /// it entered the file list, or an unlink failure is an `FERROR_XFER`, which
+    /// upstream turns into `got_xfer_error` -> exit 23 (`RERR_PARTIAL`) without
+    /// aborting the run. We mirror the exit code by returning
+    /// [`IOERR_GENERAL`](super::super::io_error_flags::IOERR_GENERAL); the send
+    /// loop reports it via `MSG_IO_ERROR` after the final file.
+    ///
+    /// The dev/ino "destination file" guard (sender.c:155-160) is gated on
+    /// `local_server` upstream. The network generator is never `local_server`
+    /// (local transfers use the engine copy path), so that guard lives only on
+    /// the local-copy side.
     ///
     /// # Upstream Reference
     ///
-    /// - `sender.c:129-178` `successful_send()`
+    /// - `sender.c:131-182` `successful_send()`
     /// - `options.c:765` `remove_source_files` global
-    fn remove_source_file_if_requested(&self, source_path: &Path) {
-        // upstream: sender.c:137-138 - bail before any FS calls when the flag is off.
+    #[must_use]
+    fn remove_source_file_if_requested(
+        &self,
+        source_path: &Path,
+        recorded: RecordedSourceIdentity,
+    ) -> i32 {
+        use super::super::io_error_flags::IOERR_GENERAL;
+
+        // upstream: sender.c:139-140 - bail before any FS calls when the flag is off.
         if !self.config.flags.remove_source_files {
-            return;
+            return 0;
         }
         // upstream: sender.c:131-138 - successful_send() is a no-op when
         // do_xfers is false (dry-run). Mirror that early return so --dry-run
         // never touches the filesystem.
         if self.config.flags.dry_run {
-            return;
+            return 0;
         }
-        match std::fs::remove_file(source_path) {
-            Ok(()) => {
-                // upstream: sender.c:175-176 - rprintf(FINFO, "sender removed %s\n", fname)
-                info_log!(Remove, 1, "removing source {}", source_path.display());
-            }
-            // upstream: sender.c:170-171 - ENOENT is the "already removed" notice.
+
+        // upstream: sender.c:150 - re-stat the source (do_stat under
+        // --copy-links, else do_lstat) before removing it, so a source that
+        // vanished or changed since it entered the file list is never unlinked.
+        let restat = if self.config.flags.copy_links {
+            std::fs::metadata(source_path)
+        } else {
+            std::fs::symlink_metadata(source_path)
+        };
+        let current = match restat {
+            Ok(meta) => meta,
+            // upstream: sender.c:174-175 - ENOENT is the benign FINFO notice.
             Err(error) if error.kind() == io::ErrorKind::NotFound => {
                 info_log!(
                     Remove,
@@ -885,21 +919,113 @@ impl GeneratorContext {
                     "sender file already removed: {}",
                     source_path.display()
                 );
+                return 0;
             }
+            // upstream: sender.c:151-153,176-177 - any other re-lstat failure is
+            // rsyserr(FERROR_XFER, ...), setting got_xfer_error -> exit 23.
             Err(error) => {
-                // upstream: sender.c:172-173 - rsyserr(FERROR_XFER, ...) on
-                // unlink failure. We route to the debug channel instead of
-                // failing the transfer so a single permission error does not
-                // abort the rest of the run.
-                debug_log!(
-                    Send,
-                    1,
-                    "sender failed to remove {}: {}",
+                eprintln!(
+                    "rsync: [sender] sender failed to re-lstat \"{}\": {}",
                     source_path.display(),
-                    error
+                    engine::local_copy::upstream_io_error(&error),
                 );
+                return IOERR_GENERAL;
+            }
+        };
+
+        // upstream: sender.c:162-169 - refuse to remove a source that changed
+        // size or modification time since it entered the file list.
+        let (size, mtime, mtime_nsec) = stat_identity(&current);
+        if source_changed_since_flist(recorded, size, mtime, mtime_nsec) {
+            eprintln!(
+                "ERROR: Skipping sender remove for changed file: {}",
+                source_path.display()
+            );
+            return IOERR_GENERAL;
+        }
+
+        // upstream: sender.c:171 - do_unlink(fname) once every guard passed.
+        match std::fs::remove_file(source_path) {
+            Ok(()) => {
+                // upstream: sender.c:179-180 - INFO_GTE(REMOVE,1) success notice.
+                info_log!(Remove, 1, "removing source {}", source_path.display());
+                0
+            }
+            // upstream: sender.c:174-175 - ENOENT after the guards is still benign.
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {
+                info_log!(
+                    Remove,
+                    1,
+                    "sender file already removed: {}",
+                    source_path.display()
+                );
+                0
+            }
+            // upstream: sender.c:172-173,176-177 - rsyserr(FERROR_XFER, ...) on
+            // unlink failure sets got_xfer_error -> exit 23.
+            Err(error) => {
+                eprintln!(
+                    "rsync: [sender] sender failed to remove \"{}\": {}",
+                    source_path.display(),
+                    engine::local_copy::upstream_io_error(&error),
+                );
+                IOERR_GENERAL
             }
         }
+    }
+}
+
+/// Source-file identity recorded in the file list, compared against a fresh
+/// re-stat before `--remove-source-files` unlinks the source.
+///
+/// upstream: `sender.c:162` compares `st.st_size` / `st.st_mtime` /
+/// `ST_MTIME_NSEC` against the file-list `F_LENGTH` / `modtime` / `F_MOD_NSEC`.
+#[derive(Clone, Copy)]
+struct RecordedSourceIdentity {
+    size: u64,
+    mtime: i64,
+    mtime_nsec: u32,
+}
+
+/// Returns true when a freshly re-stat'd source no longer matches its recorded
+/// file-list identity, mirroring the changed-file guard in upstream
+/// `successful_send`: size, whole-second mtime, and sub-second mtime compared
+/// only when the recorded timestamp carried nanoseconds (upstream gates the
+/// nsec compare on `NSEC_BUMP`, i.e. a transmitted `FLAG_MOD_NSEC`).
+///
+/// upstream: sender.c:162-169
+const fn source_changed_since_flist(
+    recorded: RecordedSourceIdentity,
+    current_size: u64,
+    current_mtime: i64,
+    current_mtime_nsec: u32,
+) -> bool {
+    recorded.size != current_size
+        || recorded.mtime != current_mtime
+        || (recorded.mtime_nsec != 0 && recorded.mtime_nsec != current_mtime_nsec)
+}
+
+/// Extracts `(size, mtime_seconds, mtime_nanoseconds)` from a re-stat result in
+/// the same representation the file list records, so the changed-file guard can
+/// compare like-for-like across platforms.
+fn stat_identity(metadata: &std::fs::Metadata) -> (u64, i64, u32) {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        (
+            metadata.len(),
+            metadata.mtime(),
+            metadata.mtime_nsec() as u32,
+        )
+    }
+    #[cfg(not(unix))]
+    {
+        let (secs, nsec) = metadata
+            .modified()
+            .ok()
+            .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+            .map_or((0, 0), |d| (d.as_secs() as i64, d.subsec_nanos()));
+        (metadata.len(), secs, nsec)
     }
 }
 
@@ -951,5 +1077,72 @@ mod parallel_delta_gate_tests {
     #[test]
     fn min_chunk_floor_is_one_mib() {
         assert_eq!(PARALLEL_DELTA_MIN_CHUNK_BYTES, 1024 * 1024);
+    }
+}
+
+#[cfg(test)]
+mod sender_remove_guard_tests {
+    use super::{RecordedSourceIdentity, source_changed_since_flist, stat_identity};
+
+    fn recorded(size: u64, mtime: i64, mtime_nsec: u32) -> RecordedSourceIdentity {
+        RecordedSourceIdentity {
+            size,
+            mtime,
+            mtime_nsec,
+        }
+    }
+
+    #[test]
+    fn unchanged_source_is_removable() {
+        // Data safety: a source that still matches its file-list identity is the
+        // one we transferred, so upstream successful_send unlinks it.
+        let r = recorded(1024, 1_700_000_000, 500);
+        assert!(!source_changed_since_flist(r, 1024, 1_700_000_000, 500));
+    }
+
+    #[test]
+    fn grown_source_is_not_removed() {
+        // Data safety: the user appended to the file after it entered the flist;
+        // removing it now would destroy data we never sent (sender.c:162).
+        let r = recorded(1024, 1_700_000_000, 0);
+        assert!(source_changed_since_flist(r, 2048, 1_700_000_000, 0));
+    }
+
+    #[test]
+    fn retouched_source_is_not_removed() {
+        // Data safety: same size but a newer mtime means the file was rewritten
+        // in place; upstream refuses the remove (sender.c:162 st_mtime compare).
+        let r = recorded(1024, 1_700_000_000, 0);
+        assert!(source_changed_since_flist(r, 1024, 1_700_000_500, 0));
+    }
+
+    #[test]
+    fn subsecond_change_is_detected_when_flist_carried_nsec() {
+        // Upstream compares nanoseconds only when the flist entry carried them
+        // (NSEC_BUMP); a nonzero recorded nsec makes the compare active.
+        let r = recorded(1024, 1_700_000_000, 500);
+        assert!(source_changed_since_flist(r, 1024, 1_700_000_000, 999));
+    }
+
+    #[test]
+    fn subsecond_change_is_ignored_when_flist_lacked_nsec() {
+        // With no recorded sub-second component the nsec compare must not fire,
+        // or every second-granularity source would be spuriously kept.
+        let r = recorded(1024, 1_700_000_000, 0);
+        assert!(!source_changed_since_flist(r, 1024, 1_700_000_000, 999));
+    }
+
+    #[test]
+    fn stat_identity_reads_size_and_mtime() {
+        // The guard must read back the very identity it wrote, so a freshly
+        // created file compares equal to its own recorded attributes.
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("src.bin");
+        std::fs::write(&path, b"hello world").expect("write");
+        let meta = std::fs::symlink_metadata(&path).expect("stat");
+        let (size, mtime, mtime_nsec) = stat_identity(&meta);
+        assert_eq!(size, 11);
+        let r = recorded(size, mtime, mtime_nsec);
+        assert!(!source_changed_since_flist(r, size, mtime, mtime_nsec));
     }
 }

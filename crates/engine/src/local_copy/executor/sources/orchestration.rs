@@ -251,6 +251,14 @@ pub(crate) fn copy_sources(
             if context.iconv_conversion_error_occurred() {
                 return Err(LocalCopyError::partial_transfer());
             }
+            // upstream: sender.c:successful_send() - a source refused by a
+            // --remove-source-files safety guard (changed file / destination
+            // inode) or a failed unlink sets got_xfer_error; main.c:1630 then
+            // exits RERR_PARTIAL (23). The per-entry diagnostic was already
+            // printed at the guard site, so surface only the summary error here.
+            if context.sender_remove_error_occurred() {
+                return Err(LocalCopyError::partial_transfer());
+            }
             Ok(())
         })()
     };

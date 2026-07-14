@@ -138,6 +138,7 @@ impl<'a> CopyContext<'a> {
             io_error_delete_warning_emitted: false,
             iconv_conversion_error: false,
             unsupported_operation_skipped: false,
+            sender_remove_error: false,
             multi_source: false,
             verified_parents: HashMap::new(),
             batch_flist_writer,
@@ -395,7 +396,7 @@ impl<'a> CopyContext<'a> {
         store_effective_fake_super_if_requested(&metadata_options, source, destination, metadata)?;
 
         self.record_hard_link(metadata, destination);
-        remove_source_entry_if_requested(self, source, relative, file_type)?;
+        remove_source_entry_if_requested(self, source, destination, metadata, relative, file_type)?;
 
         // Register file for deferred sync (runtime-selected via fsync_enabled)
         self.deferred_sync
@@ -1208,6 +1209,25 @@ impl<'a> CopyContext<'a> {
     /// (`RERR_PARTIAL`) even though every other entry was copied.
     pub(super) const fn unsupported_operation_skipped(&self) -> bool {
         self.unsupported_operation_skipped
+    }
+
+    /// Records that a `--remove-source-files` source could not be removed - it
+    /// was refused by a safety guard (changed since it was copied, or it is the
+    /// same inode as the destination) or its unlink failed. The run continues
+    /// but finishes `RERR_PARTIAL` (exit 23).
+    ///
+    /// upstream: `sender.c:successful_send()` sets `got_xfer_error` via
+    /// `FERROR_XFER` and returns without aborting; `main.c:1630` then exits
+    /// `RERR_PARTIAL`.
+    pub(super) fn record_sender_remove_error(&mut self) {
+        self.sender_remove_error = true;
+    }
+
+    /// Reports whether any `--remove-source-files` removal was refused or
+    /// failed, so the transfer can finish with exit code 23 (`RERR_PARTIAL`)
+    /// even though every other entry was copied.
+    pub(super) const fn sender_remove_error_occurred(&self) -> bool {
+        self.sender_remove_error
     }
 
     /// Reports whether deletions should proceed despite I/O errors.
