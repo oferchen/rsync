@@ -253,6 +253,36 @@ fn generate_basis_signature(
         Err(_) => return BasisFileResult::EMPTY,
     };
 
+    // Cap the per-file strong-sum length by the negotiated transfer checksum's
+    // digest width. `sum_sizes_sqroot()` clamps s2length to
+    // `max_s2length = MIN(SUM_LENGTH, xfer_sum_len)`, so it never exceeds the
+    // negotiated digest length; `calculate_signature_layout` only enforces the
+    // `SUM_LENGTH` (16) half, so the `xfer_sum_len` half is applied here using
+    // the negotiated algorithm's digest width. For the default 16-byte digests
+    // (MD5, MD4, XXH3-128) this is a no-op and the SumHead stays byte-identical
+    // to upstream; a short digest (XXH64 / XXH3-64 = 8 bytes) bounds s2length so
+    // we never write a zero-padded strong sum wider than the checksum the sender
+    // expects. This runs before the private CAP_CONSECUTIVE_MATCH halving below,
+    // mirroring upstream's order (cap in sum_sizes_sqroot, then any extension).
+    // upstream: generator.c:705 sum_sizes_sqroot() `max_s2length`,
+    // checksum.c:214 csum_len_for_type().
+    let layout = {
+        let base_len = layout.strong_sum_length().get() as usize;
+        let digest_cap = config.checksum_algorithm.digest_len();
+        if base_len > digest_cap {
+            let capped = NonZeroU8::new(digest_cap as u8)
+                .expect("negotiated digest length is at least one byte");
+            SignatureLayout::from_raw_parts(
+                layout.block_length(),
+                layout.remainder(),
+                layout.block_count(),
+                capped,
+            )
+        } else {
+            layout
+        }
+    };
+
     // Iron invariant choke-point: the per-block strong-sum length is shrunk
     // here, and ONLY here, and ONLY when the mutually negotiated compat flags
     // carry the private CAP_CONSECUTIVE_MATCH bit. That bit can only survive the
@@ -1006,5 +1036,116 @@ mod tests {
             8,
             "CAP_CONSECUTIVE_MATCH must halve the strong-sum length"
         );
+    }
+
+    #[test]
+    fn s2length_capped_by_negotiated_digest_length() {
+        use std::io::Write;
+        use std::num::NonZeroU32;
+
+        // WHY: `sum_head.s2length` and every per-block strong sum go on the wire.
+        // Upstream caps s2length to `max_s2length = MIN(SUM_LENGTH, xfer_sum_len)`
+        // (generator.c:705), so a short negotiated digest bounds the strong-sum
+        // width. A larger s2length would make oc write a zero-padded sum wider
+        // than the sender's checksum, desyncing the block-checksum stream.
+        //
+        // `phase_len` is the phase indicator: SHORT_SUM_LENGTH (2) for phase 1,
+        // MAX_SUM_LENGTH (16) for the phase-2 redo.
+        let sig = |file_size: u64,
+                   block: Option<NonZeroU32>,
+                   phase_len: u8,
+                   algo: SignatureAlgorithm|
+         -> u8 {
+            let data: Vec<u8> = (0..file_size).map(|i| (i % 251) as u8).collect();
+            let tmp = tempfile::tempdir().expect("tempdir");
+            let path = tmp.path().join("basis.bin");
+            {
+                let mut f = fs::File::create(&path).expect("create");
+                f.write_all(&data).expect("write");
+                f.flush().expect("flush");
+            }
+            let cfg = SignatureGenerationConfig {
+                protocol: ProtocolVersion::NEWEST,
+                checksum_length: NonZeroU8::new(phase_len).unwrap(),
+                checksum_algorithm: algo,
+                compat_flags: None,
+            };
+            let params = SignatureLayoutParams::new(
+                file_size,
+                block,
+                ProtocolVersion::NEWEST,
+                cfg.checksum_length,
+            );
+            let uncapped = calculate_signature_layout(params)
+                .expect("layout")
+                .strong_sum_length()
+                .get();
+            let capped = generate_basis_signature(
+                fast_io::open_basis_nofollow(&path).expect("open"),
+                file_size,
+                path.clone(),
+                protocol::FnameCmpType::Fname,
+                cfg,
+            )
+            .signature
+            .as_ref()
+            .expect("signature")
+            .layout()
+            .strong_sum_length()
+            .get();
+            let digest_cap = algo.digest_len() as u8;
+            assert!(
+                capped <= digest_cap,
+                "s2length {capped} exceeds negotiated digest {digest_cap} \
+                 (file={file_size}, phase_len={phase_len}, uncapped={uncapped})"
+            );
+            // Wide digests (>= MAX_SUM_LENGTH): the cap must be a strict no-op so
+            // the SumHead stays byte-identical to upstream. Any short digest can
+            // only shrink, never grow, the length.
+            if digest_cap >= 16 {
+                assert_eq!(
+                    capped, uncapped,
+                    "16-byte digest must leave s2length unchanged \
+                     (file={file_size}, phase_len={phase_len})"
+                );
+            }
+            capped
+        };
+
+        // Default 16-byte digests: byte-identical to upstream. Phase-2 pins 16;
+        // phase-1 tracks the heuristic. The helper asserts capped == uncapped.
+        assert_eq!(sig(4096, None, 16, SignatureAlgorithm::Md4), 16);
+        sig(64 * 1024 * 1024, None, 2, SignatureAlgorithm::Md4);
+        assert_eq!(
+            sig(4096, None, 16, SignatureAlgorithm::Xxh3_128 { seed: 0 }),
+            16
+        );
+
+        // Short 8-byte digest (XXH64 / XXH3-64): the cap actually reduces
+        // s2length. The phase-2 redo computes MAX_SUM_LENGTH (16) uncapped, so
+        // the negotiated digest bounds it to 8 - the case that would otherwise
+        // put a zero-padded 16-byte strong sum on the wire.
+        let xxh64 = SignatureAlgorithm::Xxh64 { seed: 0 };
+        let xxh3_64 = SignatureAlgorithm::Xxh3 { seed: 0 };
+        assert_eq!(
+            sig(4096, None, 16, xxh64),
+            8,
+            "phase-2 redo must cap s2length at the 8-byte XXH64 digest"
+        );
+        assert_eq!(
+            sig(256 * 1024 * 1024, None, 16, xxh3_64),
+            8,
+            "phase-2 redo on a large file must cap at the 8-byte XXH3-64 digest"
+        );
+
+        // Sweep file and block sizes: the wire s2length never exceeds the
+        // negotiated digest for a short checksum, at any layout (asserted inside
+        // the `sig` helper).
+        for size in [512u64, 4096, 1 << 20, 1 << 24, 1 << 28] {
+            for block in [None, NonZeroU32::new(700), NonZeroU32::new(8192)] {
+                sig(size, block, 2, xxh64);
+                sig(size, block, 16, xxh3_64);
+            }
+        }
     }
 }
