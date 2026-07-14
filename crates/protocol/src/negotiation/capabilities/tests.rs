@@ -3378,4 +3378,191 @@ mod env_list_overrides {
         let server = env_list::checksum_candidates(true).unwrap();
         assert_eq!(server.candidates, vec!["xxh3", "xxh128"]);
     }
+
+    // -- validate_choice_vs_env (upstream compat.c:426-449) --
+    //
+    // The server refuses a client-forced --checksum-choice/--compress-choice
+    // whose algorithm is absent from RSYNC_CHECKSUM_LIST/RSYNC_COMPRESS_LIST.
+
+    // (a) Unset env - any forced choice is accepted. Regression guard that the
+    // default path performs no validation. upstream: compat.c:432-433 returns
+    // early when list_str is NULL.
+    #[test]
+    fn validate_checksum_choice_accepts_when_env_unset() {
+        let _lock = ENV_LOCK.lock().unwrap();
+        let _cs = EnvGuard::remove(CHECKSUM_ENV);
+        env_list::validate_checksum_choice("md5").expect("unset env accepts any choice");
+        env_list::validate_checksum_choice("xxh128").expect("unset env accepts any choice");
+    }
+
+    // Whitespace-only env is treated as unset (upstream compat.c:435-436).
+    #[test]
+    fn validate_checksum_choice_accepts_when_env_blank() {
+        let _lock = ENV_LOCK.lock().unwrap();
+        let _cs = EnvGuard::set(CHECKSUM_ENV, OsStr::new("   "));
+        env_list::validate_checksum_choice("md5").expect("blank env accepts any choice");
+    }
+
+    // (b) Env list set and the forced choice is a member - accepted.
+    #[test]
+    fn validate_checksum_choice_accepts_when_in_list() {
+        let _lock = ENV_LOCK.lock().unwrap();
+        let _cs = EnvGuard::set(CHECKSUM_ENV, OsStr::new("md5 xxh3"));
+        env_list::validate_checksum_choice("md5").expect("md5 is in the list");
+        env_list::validate_checksum_choice("xxh3").expect("xxh3 is in the list");
+    }
+
+    // (c) Env list set and the forced choice is NOT a member - refused with the
+    // byte-exact upstream message and ErrorKind::Unsupported. The core exit-code
+    // mapper turns Unsupported into RERR_UNSUPPORTED (exit 4), matching upstream
+    // exit_cleanup(RERR_UNSUPPORTED) at compat.c:449. WHY exact text: it is
+    // observable stderr forwarded to the client, so a drop-in must match it.
+    #[test]
+    fn validate_checksum_choice_refuses_when_not_in_list() {
+        let _lock = ENV_LOCK.lock().unwrap();
+        let _cs = EnvGuard::set(CHECKSUM_ENV, OsStr::new("xxh3 xxh128"));
+        let err = env_list::validate_checksum_choice("md5").unwrap_err();
+        assert_eq!(err.kind(), std::io::ErrorKind::Unsupported);
+        assert_eq!(
+            err.to_string(),
+            "Your --checksum-choice value (md5) was refused by the server."
+        );
+    }
+
+    // A value whose names are all unrecognised collapses to the INVALID
+    // sentinel (empty candidate set), so every choice is refused - upstream
+    // parse_nni_str yields "INVALID" and saw[num] is never set.
+    #[test]
+    fn validate_checksum_choice_refuses_when_list_all_invalid() {
+        let _lock = ENV_LOCK.lock().unwrap();
+        let _cs = EnvGuard::set(CHECKSUM_ENV, OsStr::new("bogus nope"));
+        let err = env_list::validate_checksum_choice("md5").unwrap_err();
+        assert_eq!(err.kind(), std::io::ErrorKind::Unsupported);
+    }
+
+    // (d) The compress counterpart: refusal message says "compress".
+    #[test]
+    fn validate_compress_choice_refuses_when_not_in_list() {
+        let _lock = ENV_LOCK.lock().unwrap();
+        let _cp = EnvGuard::set(COMPRESS_ENV, OsStr::new("zstd"));
+        let err = env_list::validate_compress_choice("zlib").unwrap_err();
+        assert_eq!(err.kind(), std::io::ErrorKind::Unsupported);
+        assert_eq!(
+            err.to_string(),
+            "Your --compress-choice value (zlib) was refused by the server."
+        );
+    }
+
+    #[test]
+    fn validate_compress_choice_accepts_when_in_list() {
+        let _lock = ENV_LOCK.lock().unwrap();
+        let _cp = EnvGuard::set(COMPRESS_ENV, OsStr::new("zlib zlibx"));
+        env_list::validate_compress_choice("zlib").expect("zlib is in the list");
+        env_list::validate_compress_choice("zlibx").expect("zlibx is in the list");
+    }
+
+    // (e) MD4 special case. upstream compat.c:443-444 marks the archaic/busted/
+    // old MD4 slots as seen when "md4" is in the list; oc-rsync collapses the
+    // whole MD4 family into a single "md4", so a forced md4 choice is accepted
+    // iff "md4" is present and refused otherwise.
+    #[test]
+    fn validate_checksum_choice_md4_in_list_accepts_md4() {
+        let _lock = ENV_LOCK.lock().unwrap();
+        let _cs = EnvGuard::set(CHECKSUM_ENV, OsStr::new("md4 md5"));
+        env_list::validate_checksum_choice("md4").expect("md4 is in the list");
+    }
+
+    #[test]
+    fn validate_checksum_choice_md4_absent_refuses_md4() {
+        let _lock = ENV_LOCK.lock().unwrap();
+        let _cs = EnvGuard::set(CHECKSUM_ENV, OsStr::new("md5 xxh3"));
+        let err = env_list::validate_checksum_choice("md4").unwrap_err();
+        assert_eq!(err.kind(), std::io::ErrorKind::Unsupported);
+        assert_eq!(
+            err.to_string(),
+            "Your --checksum-choice value (md4) was refused by the server."
+        );
+    }
+
+    // The '&' split applies during validation too: the server checks against the
+    // portion after '&' (upstream getenv_nstr, compat.c:417-421). Here the
+    // client half ("md5") would accept md5, but the server half ("xxh3") refuses.
+    #[test]
+    fn validate_uses_server_half_of_ampersand_scope() {
+        let _lock = ENV_LOCK.lock().unwrap();
+        let _cs = EnvGuard::set(CHECKSUM_ENV, OsStr::new("md5 & xxh3"));
+        env_list::validate_checksum_choice("xxh3").expect("server half contains xxh3");
+        let err = env_list::validate_checksum_choice("md5").unwrap_err();
+        assert_eq!(err.kind(), std::io::ErrorKind::Unsupported);
+    }
+
+    // End-to-end: a server negotiating a client-forced --checksum-choice that
+    // its RSYNC_CHECKSUM_LIST excludes aborts negotiation with the exact
+    // refusal and ErrorKind::Unsupported (exit 4 in core).
+    #[test]
+    fn server_negotiation_refuses_forced_checksum_not_in_env() {
+        let _lock = ENV_LOCK.lock().unwrap();
+        let _cs = EnvGuard::set(CHECKSUM_ENV, OsStr::new("xxh3"));
+        let _cp = EnvGuard::remove(COMPRESS_ENV);
+
+        let protocol = ProtocolVersion::try_from(32).unwrap();
+        // Forced checksum skips the checksum vstring; compression off means
+        // nothing is exchanged, so stdin is empty.
+        let mut stdin = &b""[..];
+        let mut stdout = Vec::new();
+
+        let err = negotiate_capabilities_with_override(
+            protocol,
+            &mut stdin,
+            &mut stdout,
+            &NegotiationConfig {
+                do_negotiation: true,
+                send_compression: false,
+                is_daemon_mode: false,
+                is_server: true,
+                checksum_override: Some(ChecksumAlgorithm::MD5),
+                compression_override: None,
+                compression_level: crate::nstr::CLVL_NOT_SPECIFIED,
+            },
+        )
+        .unwrap_err();
+
+        assert_eq!(err.kind(), std::io::ErrorKind::Unsupported);
+        assert_eq!(
+            err.to_string(),
+            "Your --checksum-choice value (md5) was refused by the server."
+        );
+    }
+
+    // The client never validates - only the server refuses (upstream am_server
+    // guard). A client with the env set and a forced choice not in the list
+    // still completes negotiation with the forced algorithm.
+    #[test]
+    fn client_does_not_validate_forced_checksum() {
+        let _lock = ENV_LOCK.lock().unwrap();
+        let _cs = EnvGuard::set(CHECKSUM_ENV, OsStr::new("xxh3"));
+        let _cp = EnvGuard::remove(COMPRESS_ENV);
+
+        let protocol = ProtocolVersion::try_from(32).unwrap();
+        let mut stdin = &b""[..];
+        let mut stdout = Vec::new();
+
+        let result = negotiate_capabilities_with_override(
+            protocol,
+            &mut stdin,
+            &mut stdout,
+            &NegotiationConfig {
+                do_negotiation: true,
+                send_compression: false,
+                is_daemon_mode: false,
+                is_server: false,
+                checksum_override: Some(ChecksumAlgorithm::MD5),
+                compression_override: None,
+                compression_level: crate::nstr::CLVL_NOT_SPECIFIED,
+            },
+        )
+        .expect("client does not validate the choice against the env list");
+
+        assert_eq!(result.checksum, ChecksumAlgorithm::MD5);
+    }
 }
