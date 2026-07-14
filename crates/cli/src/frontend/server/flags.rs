@@ -183,6 +183,18 @@ pub(super) struct ServerLongFlags {
     /// `make_output_option(info_words, info_levels, ...)`, so the server
     /// receives `--info=...` whenever the client has non-default info levels.
     pub(super) info: Vec<OsString>,
+    /// Raw `--debug=FLAGS` values forwarded by the client.
+    ///
+    /// The client forwards explicitly-set debug levels via
+    /// `make_output_option(debug_words, ...)` so an oc peer raises its debug
+    /// output to match (`client/remote/output_option.rs`). The receiving side
+    /// parses `--debug=...` the same way upstream parses a user `--debug` arg
+    /// (options.c:1777 `parse_output_words(debug_words, ...)`), silently
+    /// ignoring unknown tokens because `am_server` (options.c:475). Without
+    /// capturing it here the token falls through to
+    /// `parse_server_flag_string_and_args` and is mistaken for a positional
+    /// destination path (`failed to create destination root --debug=hlink4`).
+    pub(super) debug: Vec<OsString>,
     /// Explicit compression algorithm forwarded by the client.
     ///
     /// upstream: options.c:2800-2805 - `server_options()` emits long-form
@@ -397,6 +409,7 @@ pub(super) fn parse_server_long_flags(args: &[OsString]) -> ServerLongFlags {
         timeout: None,
         reference_directories: Vec::new(),
         info: Vec::new(),
+        debug: Vec::new(),
         compress_choice: None,
         compression_level: None,
         log_format: None,
@@ -769,6 +782,11 @@ fn parse_value_bearing_flag(s: &str, flags: &mut ServerLongFlags) {
     // parse_info_flags_server (mirroring `am_server` in parse_output_words).
     } else if let Some(value) = s.strip_prefix("--info=") {
         flags.info.push(OsString::from(value));
+    // The client forwards explicitly-set debug levels the same way it forwards
+    // --info; capture the raw value so run_server_mode applies it tolerantly
+    // (unknown tokens ignored, mirroring `am_server` in parse_output_words).
+    } else if let Some(value) = s.strip_prefix("--debug=") {
+        flags.debug.push(OsString::from(value));
     // upstream: options.c:2915-2923 - reference directory args
     } else if let Some(value) = s.strip_prefix("--compare-dest=") {
         flags.reference_directories.push(ReferenceDirectory::new(
@@ -906,6 +924,11 @@ pub(super) fn is_known_server_long_flag(arg: &str) -> bool {
         || arg.starts_with("--io-uring-depth=")
         || arg.starts_with("--log-format=")
         || arg.starts_with("--info=")
+        // upstream: options.c:1777 - `--debug=FLAGS` parsed via
+        // parse_output_words(debug_words, ...). The client forwards it like
+        // --info; recognise it so the value is consumed, not mistaken for a
+        // positional destination path.
+        || arg.starts_with("--debug=")
         || arg.starts_with("--partial-dir=")
         // upstream: options.c:2850-2851 - `--only-write-batch=X` reaches a
         // server receiver on a push. Recognise it so the placeholder token is

@@ -528,6 +528,64 @@ fn parse_server_args_skips_only_write_batch_flag() {
     assert!(is_known_server_long_flag("--only-write-batch=X"));
 }
 
+/// Regression for the forwarded `--debug=FLAGS` server arg. The client forwards
+/// explicitly-set debug levels (`--debug=hlink4`, level baked into the token)
+/// to the peer via `make_output_option`. Before recognition the token fell
+/// through to the positional list and the receiver tried to create a
+/// destination root literally named `--debug=hlink4` (exit 12,
+/// `failed to create destination root --debug=hlink4`). It must be captured as
+/// a flag so the real paths `.` and `to/` remain the sole positionals.
+#[test]
+fn parse_server_args_skips_debug_flag() {
+    let args = vec![
+        OsString::from("--server"),
+        OsString::from("--sender"),
+        OsString::from("-vvlHogDtpre.iLsfxCIvu"),
+        OsString::from("--debug=hlink4"),
+        OsString::from("--log-format=%i%I"),
+        OsString::from("."),
+        OsString::from("to/"),
+    ];
+    let (flags, pos_args) = parse_server_flag_string_and_args(&args);
+    assert_eq!(flags, "-vvlHogDtpre.iLsfxCIvu");
+    // The `.` flags/paths separator is dropped (parse.rs:68), so the sole
+    // positional is the real destination root; `--debug=hlink4` must not appear.
+    assert_eq!(
+        pos_args,
+        vec![OsString::from("to/")],
+        "--debug=hlink4 must not leak into the positional path list",
+    );
+    assert!(is_known_server_long_flag("--debug=hlink4"));
+
+    let long = parse_server_long_flags(&args);
+    assert_eq!(long.debug, vec![OsString::from("hlink4")]);
+}
+
+/// The forwarded `--info=FLAGS` arg (already recognised) must likewise be
+/// captured rather than leaking into the positional path list, including the
+/// concatenated `name{level}` spelling the client emits.
+#[test]
+fn parse_server_args_skips_info_flag() {
+    let args = vec![
+        OsString::from("--server"),
+        OsString::from("-logDtpre.iLsfxCIvu"),
+        OsString::from("--info=name2"),
+        OsString::from("."),
+        OsString::from("to/"),
+    ];
+    let (flags, pos_args) = parse_server_flag_string_and_args(&args);
+    assert_eq!(flags, "-logDtpre.iLsfxCIvu");
+    assert_eq!(
+        pos_args,
+        vec![OsString::from("to/")],
+        "--info=name2 must not leak into the positional path list",
+    );
+    assert!(is_known_server_long_flag("--info=name2"));
+
+    let long = parse_server_long_flags(&args);
+    assert_eq!(long.info, vec![OsString::from("name2")]);
+}
+
 /// `parse_server_long_flags` records `--only-write-batch=X` as
 /// `only_write_batch == true`.
 #[test]
