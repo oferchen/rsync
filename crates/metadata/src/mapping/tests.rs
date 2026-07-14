@@ -244,8 +244,41 @@ fn numeric_range_two_values() {
 }
 
 #[test]
-fn numeric_range_reversed_values() {
-    assert_eq!(parse_numeric_range("200-100"), Some((100, 200)));
+fn numeric_range_reversed_values_preserved() {
+    // upstream: uidlist.c:parse_name_map stores id1/max_id unswapped, so a
+    // reversed range keeps start > end and consequently matches no id.
+    assert_eq!(parse_numeric_range("200-100"), Some((200, 100)));
+}
+
+#[test]
+fn reversed_range_matches_nothing() {
+    // A reversed numeric range (`from > to`) must match no identifier, mirroring
+    // upstream's `id < node->id || id > node->u.max_id` test which rejects every
+    // id when from > to. Without this, silently swapping would over-map ids.
+    let matcher = parse_matcher(MappingKind::User, "500-400", "500-400:0").unwrap();
+    assert_eq!(
+        matcher,
+        MappingMatcher::IdRange {
+            start: 500,
+            end: 400
+        }
+    );
+    for id in [399, 400, 450, 500, 501] {
+        assert!(!matcher.matches(id, || Ok(None)).unwrap());
+    }
+}
+
+#[test]
+fn malformed_numeric_source_is_fatal() {
+    // upstream: uidlist.c:parse_name_map - once a source begins with a digit it
+    // must be a valid number/range; junk digits are a fatal syntax error, not a
+    // name to be looked up. `12x` and `1*` must both fail to parse.
+    for source in ["12x", "1*", "100-abc", "100-", "1-2-3"] {
+        let entry = format!("{source}:0");
+        let error = parse_matcher(MappingKind::User, source, &entry)
+            .expect_err("malformed numeric source must be a hard error");
+        assert!(error.to_string().contains("Invalid number"));
+    }
 }
 
 #[test]
