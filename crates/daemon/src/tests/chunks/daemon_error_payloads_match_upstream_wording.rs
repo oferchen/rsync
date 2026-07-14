@@ -15,6 +15,12 @@ fn daemon_error_payloads_match_upstream_wording() {
         "@ERROR: Unknown module '{module}'",
     );
 
+    // upstream: clientserver.c:1429 - `@ERROR: Unknown command '%s'\n`
+    assert_eq!(
+        crate::daemon::UNKNOWN_COMMAND_PAYLOAD,
+        "@ERROR: Unknown command '{command}'",
+    );
+
     // upstream: clientserver.c:733-734 - `@ERROR: access denied to %s from %s (%s)\n`
     assert_eq!(
         crate::daemon::ACCESS_DENIED_PAYLOAD,

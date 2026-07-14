@@ -146,6 +146,15 @@ pub(crate) const AUTH_FAILED_PAYLOAD: &str = "@ERROR: auth failed on module {mod
 ///
 /// upstream: clientserver.c:730 - `@ERROR: Unknown module '%s'\n`
 pub(crate) const UNKNOWN_MODULE_PAYLOAD: &str = "@ERROR: Unknown module '{module}'";
+/// Error payload returned when a `#`-prefixed request is not a recognized command.
+///
+/// A `#`-prefixed line (e.g. `#bogus`) that is neither `#list` nor the
+/// already-consumed `#early_input=` command is a command the daemon does not
+/// understand. Upstream rejects it with a message distinct from the
+/// unknown-module response, keeping the raw line (leading `#` included).
+///
+/// upstream: clientserver.c:1429 - `@ERROR: Unknown command '%s'\n`
+pub(crate) const UNKNOWN_COMMAND_PAYLOAD: &str = "@ERROR: Unknown command '{command}'";
 /// Error payload returned when a module reaches its connection cap.
 ///
 /// upstream: clientserver.c:752 - `@ERROR: max connections (%d) reached -- try again later\n`
