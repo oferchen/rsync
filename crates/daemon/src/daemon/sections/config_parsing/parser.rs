@@ -43,9 +43,8 @@ fn parse_config_modules_inner(
     let mut current: Option<ModuleDefinitionBuilder> = None;
 
     let result = (|| -> Result<ParsedConfigModules, DaemonError> {
-        for (index, raw_line) in contents.lines().enumerate() {
-            let line_number = index + 1;
-            let line = raw_line.trim();
+        for (line_number, logical_line) in logical_config_lines(&contents) {
+            let line = logical_line.trim();
 
             if line.is_empty() || line.starts_with('#') || line.starts_with(';') {
                 continue;
@@ -192,6 +191,60 @@ fn finish_module_builder(
         default_use_chroot,
         &state.module_defaults,
     )
+}
+
+/// Splits `contents` into logical config lines, joining backslash-continued
+/// physical lines into one.
+///
+/// upstream: params.c:Continuation() - a physical line whose last
+/// non-whitespace character is a backslash continues onto the following line;
+/// the backslash and the newline are removed and the two lines are joined into
+/// a single logical line. Comment (`#`/`;`) and blank lines are emitted
+/// verbatim because upstream consumes them with EatComment/EatWhitespace,
+/// neither of which scans for the continuation character. Each logical line is
+/// paired with the 1-based number of its first physical line so diagnostics
+/// keep pointing at the directive's start.
+fn logical_config_lines(contents: &str) -> Vec<(usize, String)> {
+    let physical: Vec<&str> = contents.lines().collect();
+    let mut logical = Vec::with_capacity(physical.len());
+    let mut index = 0;
+
+    while index < physical.len() {
+        let start_line = index + 1;
+        let first = physical[index];
+        index += 1;
+
+        let leading = first.trim_start();
+        if leading.is_empty() || leading.starts_with('#') || leading.starts_with(';') {
+            logical.push((start_line, first.to_owned()));
+            continue;
+        }
+
+        let mut joined = first.to_owned();
+        while let Some(offset) = continuation_offset(&joined) {
+            // Drop the trailing backslash (and any whitespace after it),
+            // matching upstream which resumes writing over the '\\' position.
+            joined.truncate(offset);
+            if index >= physical.len() {
+                break;
+            }
+            joined.push_str(physical[index]);
+            index += 1;
+        }
+        logical.push((start_line, joined));
+    }
+
+    logical
+}
+
+/// Returns the byte offset of a trailing line-continuation backslash when the
+/// last non-whitespace character of `line` is a `\\`.
+///
+/// upstream: params.c:Continuation() - scans backwards past trailing
+/// whitespace and reports the offset of the `\\` (or -1 when it is absent).
+fn continuation_offset(line: &str) -> Option<usize> {
+    let trimmed = line.trim_end();
+    trimmed.ends_with('\\').then(|| trimmed.len() - 1)
 }
 
 fn resolve_config_relative_path(config_path: &Path, value: &str) -> PathBuf {
