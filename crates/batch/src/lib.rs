@@ -206,6 +206,12 @@ pub use error::BatchResult;
 /// when replaying the batch.
 pub use format::BatchFlags;
 
+/// Reconcile active options against a batch file's recorded stream flags.
+///
+/// Emits upstream's `--info=misc` reconcile notices and treats an `--iconv`
+/// mismatch as fatal, mirroring `batch.c:check_batch_flags()`.
+pub use format::check_batch_flags;
+
 /// Binary header structure at the start of every batch file.
 ///
 /// Contains protocol version, compatibility flags, checksum seed, and
@@ -409,6 +415,22 @@ pub struct BatchConfig {
     /// (`batch.c:269-275`). The destination is re-supplied through the
     /// `${1:-<dest>}` placeholder instead.
     pub operands: Vec<String>,
+
+    /// Data-stream-affecting options active during the current `--read-batch`
+    /// invocation.
+    ///
+    /// Reconciled against the batch header's recorded stream flags by
+    /// [`check_batch_flags`] when replaying, mirroring upstream
+    /// `batch.c:check_batch_flags()`. Only consulted in read mode.
+    pub active_flags: BatchFlags,
+
+    /// Whether filter-rule terminators use NUL bytes instead of newlines.
+    ///
+    /// Set from `--from0` / `-0`. Controls how the `.sh` replay wrapper writes
+    /// the filter heredoc: NUL-separated rules followed by a trailing `;\n`
+    /// when true, matching upstream `batch.c:write_filter_rules()` under
+    /// `eol_nulls`.
+    pub eol_nulls: bool,
 }
 
 impl BatchConfig {
@@ -461,6 +483,8 @@ impl BatchConfig {
             invoker: String::from("oc-rsync"),
             replay_args: Vec::new(),
             operands: Vec::new(),
+            active_flags: BatchFlags::default(),
+            eol_nulls: false,
         }
     }
 
@@ -584,6 +608,52 @@ impl BatchConfig {
         S: Into<String>,
     {
         self.operands = operands.into_iter().map(Into::into).collect();
+        self
+    }
+
+    /// Set the data-stream-affecting options active during `--read-batch`.
+    ///
+    /// These are reconciled against the batch header's recorded stream flags
+    /// by [`check_batch_flags`] during replay. Mirrors upstream
+    /// `batch.c:check_batch_flags()`.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use batch::{BatchConfig, BatchFlags, BatchMode};
+    ///
+    /// let flags = BatchFlags {
+    ///     recurse: true,
+    ///     ..BatchFlags::default()
+    /// };
+    /// let config = BatchConfig::new(BatchMode::Read, "/tmp/batch".to_string(), 31)
+    ///     .with_active_flags(flags);
+    ///
+    /// assert!(config.active_flags.recurse);
+    /// ```
+    pub const fn with_active_flags(mut self, flags: BatchFlags) -> Self {
+        self.active_flags = flags;
+        self
+    }
+
+    /// Set whether filter-rule terminators use NUL bytes (`--from0` / `-0`).
+    ///
+    /// When `true`, the `.sh` replay wrapper writes NUL-separated filter rules
+    /// followed by a trailing `;\n`, matching upstream
+    /// `batch.c:write_filter_rules()` under `eol_nulls`.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use batch::{BatchConfig, BatchMode};
+    ///
+    /// let config = BatchConfig::new(BatchMode::Write, "/tmp/batch".to_string(), 31)
+    ///     .with_eol_nulls(true);
+    ///
+    /// assert!(config.eol_nulls);
+    /// ```
+    pub const fn with_eol_nulls(mut self, eol_nulls: bool) -> Self {
+        self.eol_nulls = eol_nulls;
         self
     }
 

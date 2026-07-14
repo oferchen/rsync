@@ -70,11 +70,13 @@ pub(crate) fn create_batch_writer(
     }
 }
 
-/// Writes the batch header containing stream flags before the transfer begins.
-pub(crate) fn write_batch_header(
-    writer: &Arc<Mutex<BatchWriter>>,
-    config: &ClientConfig,
-) -> Result<(), ClientError> {
+/// Builds the data-stream-affecting [`engine::batch::BatchFlags`] from the
+/// active config.
+///
+/// The same flag set is recorded on `--write-batch` and reconciled on
+/// `--read-batch`, so both paths derive it identically from the current
+/// options. Mirrors upstream `batch.c:97-113 write_stream_flags()`.
+fn config_batch_flags(config: &ClientConfig) -> engine::batch::BatchFlags {
     #[cfg(all(unix, feature = "xattr"))]
     let preserve_xattrs = config.preserve_xattrs();
     #[cfg(not(all(unix, feature = "xattr")))]
@@ -85,7 +87,7 @@ pub(crate) fn write_batch_header(
     #[cfg(not(all(any(unix, windows), feature = "acl")))]
     let preserve_acls = false;
 
-    let batch_flags = engine::batch::BatchFlags {
+    engine::batch::BatchFlags {
         recurse: config.recursive(),
         preserve_uid: config.preserve_owner(),
         preserve_gid: config.preserve_group(),
@@ -105,13 +107,24 @@ pub(crate) fn write_batch_header(
         // oc-rsync and upstream rsync replay the file without trying to
         // decompress already-uncompressed tokens.
         do_compression: false,
+        // upstream: batch.c:69,101-103 - bit 9 records tweaked_iconv
+        // (iconv_opt != NULL). --no-iconv and an unset --iconv both leave
+        // iconv_opt NULL, so only an explicit charset request sets the bit.
+        iconv: !config.iconv().is_unspecified() && !config.iconv().is_disabled(),
         preserve_acls,
         preserve_xattrs,
         inplace: config.inplace(),
         append: config.append(),
         append_verify: config.append_verify(),
-        ..Default::default()
-    };
+    }
+}
+
+/// Writes the batch header containing stream flags before the transfer begins.
+pub(crate) fn write_batch_header(
+    writer: &Arc<Mutex<BatchWriter>>,
+    config: &ClientConfig,
+) -> Result<(), ClientError> {
+    let batch_flags = config_batch_flags(config);
 
     let mut w = writer.lock().map_err(|_| {
         ClientError::new(
@@ -220,8 +233,11 @@ pub(crate) fn finalize_batch(
         .last()
         .map(|s| s.to_string_lossy().into_owned());
 
+    // upstream: batch.c:217,219-220 - the filter heredoc honors eol_nulls
+    // (--from0), NUL-terminating rules and appending ";\n".
+    let script_cfg = batch_cfg.clone().with_eol_nulls(config.from0());
     if let Err(e) = engine::batch::script::generate_script_with_filters(
-        batch_cfg,
+        &script_cfg,
         filter_opt,
         dest_operand.as_deref(),
     ) {
@@ -327,10 +343,24 @@ fn replay_batch(
         .map(PathBuf::from)
         .unwrap_or_else(|| PathBuf::from("."));
 
-    let result = engine::batch::replay::replay(batch_cfg, &dest_root, config.verbosity().into())
-        .map_err(|e| {
-            let msg = format!("batch replay failed: {e}");
-            ClientError::new(1, rsync_error!(1, "{}", msg).with_role(Role::Client))
+    // upstream: batch.c:120 check_batch_flags() reconciles the active options
+    // against the batch header during replay, so carry the current flag state
+    // into the reader.
+    let replay_cfg = batch_cfg
+        .clone()
+        .with_active_flags(config_batch_flags(config));
+
+    let result = engine::batch::replay::replay(&replay_cfg, &dest_root, config.verbosity().into())
+        .map_err(|e| match e {
+            // upstream: batch.c:137-142 - an --iconv mismatch aborts with
+            // RERR_SYNTAX (exit 1) printing the bare reconcile message.
+            engine::batch::BatchError::FlagMismatch(msg) => {
+                ClientError::new(1, rsync_error!(1, "{}", msg).with_role(Role::Client))
+            }
+            other => {
+                let msg = format!("batch replay failed: {other}");
+                ClientError::new(1, rsync_error!(1, "{}", msg).with_role(Role::Client))
+            }
         })?;
 
     #[cfg(feature = "tracing")]

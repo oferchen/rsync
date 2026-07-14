@@ -117,6 +117,20 @@ pub fn replay(
 
     let flags = reader.read_header()?;
 
+    // upstream: batch.c:120 check_batch_flags() - reconcile the active options
+    // against the batch's recorded stream flags. Non-iconv mismatches are
+    // forced to match the batch and mentioned at --info=misc (verbose >= 1);
+    // an --iconv mismatch is fatal.
+    for message in crate::format::check_batch_flags(
+        flags,
+        batch_cfg.active_flags,
+        reader.config().protocol_version,
+    )? {
+        if verbosity >= 1 {
+            println!("{message}");
+        }
+    }
+
     let mut entries = reader.read_protocol_flist()?;
 
     // upstream: flist.c:2736 - flist_sort_and_clean() after recv_file_list().
