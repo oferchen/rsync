@@ -224,21 +224,13 @@ fn apply_client_options(
     // upstream: clientserver.c - set_socket_options() is called
     // on the accepted client fd before the session handler runs.
     // Skipped for stdio streams which have no underlying TCP socket.
+    // upstream: socket.c:730-733 - each option that fails to apply warns and
+    // the loop continues; a single failure never rejects the connection.
     if !client_socket_options.is_empty() {
         let Some(tcp) = stream.tcp_stream() else {
             return;
         };
-        if let Err(error) =
-            apply_socket_options_to_stream(tcp, client_socket_options)
-        {
-            if let Some(log) = log_sink {
-                let text = format!(
-                    "failed to apply socket options to client connection: {error}"
-                );
-                let message = rsync_warning!(text).with_role(Role::Daemon);
-                log_message(log, &message);
-            }
-        }
+        apply_socket_options_to_stream(tcp, client_socket_options, log_sink);
     }
 }
 
