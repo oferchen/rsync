@@ -9,7 +9,9 @@ use std::io::Write;
 use protocol::ProtocolVersion;
 use transfer::setup::build_capability_string_suffix;
 
-use crate::client::config::{ClientConfig, DeleteMode, IconvSetting, ReferenceDirectoryKind};
+use crate::client::config::{
+    ClientConfig, DeleteMode, IconvSetting, ReferenceDirectoryKind, TransferTimeout,
+};
 use crate::client::error::{ClientError, socket_error};
 use crate::client::remote::daemon_transfer::connection::DaemonTransferRequest;
 use crate::client::remote::flags;
@@ -187,6 +189,11 @@ pub(super) fn build_full_daemon_args(
         args.push("--sender".to_owned());
     }
 
+    // upstream: options.c server_options() `am_sender` is true when the CLIENT
+    // is the sender (a PUSH). Here `is_sender` means the DAEMON is the sender
+    // (a PULL), so upstream's `am_sender` corresponds to `!is_sender`.
+    let we_are_sender = !is_sender;
+
     // upstream: options.c:2797-2798
     let checksum_choice = config.checksum_choice();
     if let Some(override_algo) = checksum_choice.transfer_protocol_override() {
@@ -198,6 +205,49 @@ pub(super) fn build_full_daemon_args(
     // string directly onto the compact flag string, producing a single argument
     // like `-logDtpre.iLsfxCIvu`. We follow the same format for interop.
     let mut flag_string = flags::build_server_flag_string(config);
+
+    // upstream: options.c:2641-2654 - the `am_sender` branch of server_options()
+    // packs several sender-only compact letters. `build_server_flag_string` is
+    // role-agnostic and also feeds the local in-process ServerConfig parser
+    // (server_config.rs), where the L/k letters must stay unconditional for the
+    // local push sender's copy_links/copy_dirlinks (flags.rs:152-164). So the
+    // sender-only letters are appended here, on the daemon wire path only. On a
+    // daemon PUSH the local client is the sender (`we_are_sender`), so these ride
+    // to the remote receiver; on a PULL they are omitted (the local receiver
+    // applies omit-dir/link-times, prune-empty-dirs, and fuzzy matching itself).
+    if we_are_sender {
+        // upstream: options.c:2642-2643 - keep_dirlinks 'K'.
+        if config.keep_dirlinks() {
+            flag_string.push('K');
+        }
+        // upstream: options.c:2644-2645 - prune_empty_dirs 'm'.
+        if config.prune_empty_dirs() {
+            flag_string.push('m');
+        }
+        // upstream: options.c:2646-2647 - omit_dir_times 'O'.
+        if config.omit_dir_times() {
+            flag_string.push('O');
+        }
+        // upstream: options.c:2648-2649 - omit_link_times 'J'.
+        if config.omit_link_times() {
+            flag_string.push('J');
+        }
+        // upstream: options.c:2650-2654 - fuzzy_basis 'y', with a second 'y'
+        // for level 2 (--fuzzy --fuzzy).
+        for _ in 0..config.fuzzy_level() {
+            flag_string.push('y');
+        }
+        // upstream: options.c:2690-2693 - `if (preserve_perms) 'p'; else if
+        // (preserve_executability && am_sender) 'E'`. build_server_flag_string
+        // already packed 'p' when perms are on; 'E' is its mutually-exclusive
+        // sender-only alternative. The local ServerConfig parser ignores 'E'
+        // (transfer/flags.rs), so this is a pure wire signal for the remote
+        // receiver's generator to keep the executable bit.
+        if !config.preserve_permissions() && config.preserve_executability() {
+            flag_string.push('E');
+        }
+    }
+
     if protocol.as_u8() >= 30 {
         // upstream: compat.c:162-181 set_allow_inc_recurse() and
         // options.c:3036 maybe_add_e_option() - 'i' is only advertised when
@@ -233,8 +283,6 @@ pub(super) fn build_full_daemon_args(
         None => {}
     }
 
-    let we_are_sender = !is_sender;
-
     // upstream: options.c:164-175 server_options - the server needs the
     // log-format to generate itemize output. Only sent when the client is the
     // sender (push), matching upstream's `stdout_format && am_sender` guard.
@@ -266,6 +314,29 @@ pub(super) fn build_full_daemon_args(
         args.push(format!(
             "--compress-level={}",
             compression_level_numeric(level)
+        ));
+    }
+
+    // upstream: options.c:2787-2791 - `-B%u` (block_size). oc mirrors the SSH
+    // builder's `--block-size=` spelling; both are accepted by the daemon's
+    // option parser and carry the identical value, so the remote receiver's
+    // generator sizes delta blocks exactly like the client requested.
+    if let Some(bs) = config.block_size_override() {
+        args.push(format!("--block-size={}", bs.get()));
+    }
+
+    // upstream: options.c:2793-2797 - --timeout=N so both peers enforce the
+    // same idle deadline.
+    if let TransferTimeout::Seconds(secs) = config.timeout() {
+        args.push(format!("--timeout={}", secs.get()));
+    }
+
+    // upstream: options.c:2799-2803 - --bwlimit=BYTES so the remote peer
+    // throttles to the same rate the client requested.
+    if let Some(bwlimit) = config.bandwidth_limit() {
+        args.push(format!(
+            "--bwlimit={}",
+            bwlimit.fallback_argument().to_string_lossy()
         ));
     }
 
@@ -305,6 +376,43 @@ pub(super) fn build_full_daemon_args(
         if config.size_only() {
             args.push("--size-only".to_owned());
         }
+
+        // upstream: options.c:2832-2835 - --min-size / --max-size are emitted
+        // only in the `am_sender` branch; the remote receiver's generator then
+        // skips files outside the range exactly as the client would.
+        if let Some(min) = config.min_file_size() {
+            args.push(format!("--min-size={min}"));
+        }
+        if let Some(max) = config.max_file_size() {
+            args.push(format!("--max-size={max}"));
+        }
+    }
+
+    // upstream: options.c:2863-2864 - `if (max_alloc_arg && max_alloc !=
+    // DEFAULT_MAX_ALLOC) --max-alloc`. Not `am_sender` gated: each side owns
+    // its own cap, so forwarding lets the remote enforce the same budget.
+    // `max_alloc()` is None unless the user supplied a non-default value.
+    if let Some(limit) = config.max_alloc() {
+        args.push(format!("--max-alloc={limit}"));
+    }
+
+    // upstream: options.c:2873-2878 - modify_window forwarded only when set AND
+    // `am_sender` (the remote receiver's generator runs the mtime quick-check).
+    // A negative window (nanosecond-exact) uses the short `-@%d` spelling; a
+    // non-negative window uses `--modify-window=%d`.
+    if we_are_sender && let Some(window) = config.modify_window() {
+        if window < 0 {
+            args.push(format!("-@{window}"));
+        } else {
+            args.push(format!("--modify-window={window}"));
+        }
+    }
+
+    // upstream: options.c:2880-2884 - --checksum-seed=N so the remote uses the
+    // same seed for rolling and strong checksum generation. Not `am_sender`
+    // gated.
+    if let Some(seed) = config.checksum_seed() {
+        args.push(format!("--checksum-seed={seed}"));
     }
 
     // oc-specific: forward `--zero-copy`/`--no-zero-copy` to the daemon-sender
@@ -408,12 +516,30 @@ pub(super) fn build_full_daemon_args(
         args.push("--inplace".to_owned());
     }
 
-    // upstream: options.c:2884-2893 - `if (partial_dir && am_sender) {
-    // --partial-dir ... } else if (keep_partial && am_sender) --partial`. There
-    // is no compact 'P'. Bare --partial only when the client is the sender
-    // (`we_are_sender`, a push) and no --partial-dir is configured.
-    if we_are_sender && config.partial() && config.partial_directory().is_none() {
-        args.push("--partial".to_owned());
+    // upstream: options.c:2886-2894 - `if (partial_dir && am_sender) {
+    // --partial-dir ...; if (delay_updates) --delay-updates } else if
+    // (keep_partial && am_sender) --partial`. There is no compact 'P'. All are
+    // `am_sender` (a daemon PUSH: `we_are_sender`). --delay-updates implies an
+    // implicit tmp partial_dir upstream, so it is emitted (suppressing the bare
+    // --partial else-branch) even when no explicit --partial-dir was given.
+    if we_are_sender {
+        if let Some(dir) = config.partial_directory() {
+            args.push(format!("--partial-dir={}", dir.display()));
+            if config.delay_updates() {
+                args.push("--delay-updates".to_owned());
+            }
+        } else if config.delay_updates() {
+            args.push("--delay-updates".to_owned());
+        } else if config.partial() {
+            args.push("--partial".to_owned());
+        }
+    }
+
+    // upstream: options.c:2925-2928 - `if (tmpdir) { --temp-dir; safe_arg("",
+    // tmpdir); }` inside the `am_sender` block, so the remote receiver writes
+    // temp files under the requested directory.
+    if we_are_sender && let Some(dir) = config.temp_directory() {
+        args.push(format!("--temp-dir={}", dir.display()));
     }
 
     // upstream: options.c:2630-2631 - `make_backups` rides in the compact
@@ -459,6 +585,33 @@ pub(super) fn build_full_daemon_args(
         args.push("--mkpath".to_owned());
     }
 
+    // upstream: options.c:2976-2977 - `if (relative_paths && !implied_dirs &&
+    // (!am_sender || protocol_version >= 30)) --no-implied-dirs`. The flag is
+    // forwarded only for relative transfers (implied dirs exist solely for
+    // relative-rooted paths). The `(!am_sender || protocol_version >= 30)` guard
+    // is always satisfied on the daemon path (proto >= 30 for rsync:// modules),
+    // so gating on relative_paths alone matches upstream. Without the
+    // relative_paths gate a non-relative transfer with implied_dirs=0
+    // (options.c:2207) would wrongly forward the flag, which the remote sender
+    // then stats as a source path.
+    if config.relative_paths() && !config.implied_dirs() {
+        args.push("--no-implied-dirs".to_owned());
+    }
+
+    // upstream: options.c:2990-2991 - `if (preallocate_files && am_sender)
+    // --preallocate`. Forwarded only on a PUSH (`we_are_sender`) so the remote
+    // receiver preallocates the destination file extents.
+    if we_are_sender && config.preallocate() {
+        args.push("--preallocate".to_owned());
+    }
+
+    // upstream: options.c:2993-2994 - `if (open_noatime && preserve_atimes <= 1)
+    // --open-noatime`. Not `am_sender` gated; the side that opens source files
+    // for reading suppresses atime updates.
+    if config.open_noatime() {
+        args.push("--open-noatime".to_owned());
+    }
+
     // upstream: options.c:2944-2962 - server_options() forwards the
     // files-from arg only when the remote peer reads the list. `is_sender`
     // here means the daemon is the sender (PULL), so the local side pushes
@@ -473,6 +626,15 @@ pub(super) fn build_full_daemon_args(
             args.push(format!("--files-from={arg}"));
             if plan.remote_from0 {
                 args.push("--from0".to_owned());
+            }
+            // upstream: options.c:2972-2973 - `if (!relative_paths)
+            // --no-relative` inside the files-from block. A peer that reads the
+            // --files-from list defaults relative_paths=1 (options.c:2205-2206);
+            // when the client resolved relative off (explicit --no-relative),
+            // emit --no-relative so the remote peer overrides that default and
+            // flattens each entry to its basename with no implied parent dirs.
+            if !config.relative_paths() {
+                args.push("--no-relative".to_owned());
             }
         }
     }
@@ -1077,6 +1239,292 @@ mod server_option_fidelity_tests {
             !flag.contains('q'),
             "quiet + --no-msgs2stderr must not pack 'q': {flag}"
         );
+    }
+
+    /// Extracts the compact transfer-flag argument (`-logDtpr...`) so tests can
+    /// assert on the sender-only compact letters packed for a daemon push.
+    fn compact_flag(config: &ClientConfig, is_sender: bool) -> String {
+        args(config, is_sender)
+            .into_iter()
+            .find(|a| a.starts_with('-') && !a.starts_with("--"))
+            .unwrap_or_default()
+    }
+
+    // upstream: options.c:2642-2643 - keep_dirlinks packs the sender-only 'K'.
+    // The remote receiver must honor -K or every per-file op under a dest
+    // dir-symlink is refused by the dirfd sandbox (transfer/flags.rs:508-516),
+    // so the letter has to reach the daemon receiver on a push.
+    #[test]
+    fn keep_dirlinks_packs_k_on_push_only() {
+        let config = ClientConfig::builder().keep_dirlinks(true).build();
+        assert!(
+            compact_flag(&config, false).contains('K'),
+            "push must pack 'K': {}",
+            compact_flag(&config, false)
+        );
+        assert!(
+            !compact_flag(&config, true).contains('K'),
+            "pull must not pack 'K' (local receiver applies it): {}",
+            compact_flag(&config, true)
+        );
+    }
+
+    // upstream: options.c:2644-2645 - prune_empty_dirs packs sender-only 'm'.
+    #[test]
+    fn prune_empty_dirs_packs_m_on_push_only() {
+        let config = ClientConfig::builder().prune_empty_dirs(true).build();
+        assert!(compact_flag(&config, false).contains('m'));
+        assert!(!compact_flag(&config, true).contains('m'));
+    }
+
+    // upstream: options.c:2646-2649 - omit_dir_times 'O' and omit_link_times 'J'
+    // are sender-only. The remote receiver's generator must see them to skip
+    // stamping dir/symlink mtimes, so they ride the compact string on a push.
+    #[test]
+    fn omit_times_pack_o_and_j_on_push_only() {
+        let config = ClientConfig::builder()
+            .omit_dir_times(true)
+            .omit_link_times(true)
+            .build();
+        let push = compact_flag(&config, false);
+        assert!(push.contains('O'), "push must pack 'O': {push}");
+        assert!(push.contains('J'), "push must pack 'J': {push}");
+        let pull = compact_flag(&config, true);
+        assert!(
+            !pull.contains('O') && !pull.contains('J'),
+            "pull omits O/J: {pull}"
+        );
+    }
+
+    // upstream: options.c:2650-2654 - one 'y' per fuzzy level; 'yy' for level 2.
+    // The receiver needs the fuzzy count to enable basis-file guessing.
+    #[test]
+    fn fuzzy_level_two_packs_yy_on_push_only() {
+        let config = ClientConfig::builder().fuzzy_level(2).build();
+        let push = compact_flag(&config, false);
+        assert_eq!(
+            push.matches('y').count(),
+            2,
+            "level 2 must pack exactly 'yy': {push}"
+        );
+        assert_eq!(compact_flag(&config, true).matches('y').count(), 0);
+    }
+
+    // upstream: options.c:2690-2693 - 'E' (preserve_executability) is packed
+    // only when preserve_perms is off AND am_sender. It is the receiver's sole
+    // signal to keep the executable bit when perms are not preserved.
+    #[test]
+    fn executability_packs_e_only_without_perms_on_push() {
+        let config = ClientConfig::builder().executability(true).build();
+        assert!(
+            compact_flag(&config, false).contains('E'),
+            "push without perms must pack 'E'"
+        );
+        assert!(
+            !compact_flag(&config, true).contains('E'),
+            "pull must not pack 'E'"
+        );
+
+        // With perms preserved, upstream packs 'p' and never 'E'.
+        let with_perms = ClientConfig::builder()
+            .executability(true)
+            .permissions(true)
+            .build();
+        let flag = compact_flag(&with_perms, false);
+        assert!(!flag.contains('E'), "perms on must suppress 'E': {flag}");
+        assert!(flag.contains('p'), "perms on must pack 'p': {flag}");
+    }
+
+    // upstream: options.c:2787-2791 - -B/block_size must reach the remote so its
+    // generator sizes delta blocks identically. Role-agnostic (both directions).
+    #[test]
+    fn block_size_forwarded_both_directions() {
+        let size = std::num::NonZeroU32::new(4096).unwrap();
+        let config = ClientConfig::builder()
+            .block_size_override(Some(size))
+            .build();
+        for is_sender in [true, false] {
+            assert!(
+                args(&config, is_sender)
+                    .iter()
+                    .any(|a| a == "--block-size=4096"),
+                "block-size must forward (is_sender={is_sender})"
+            );
+        }
+        let off = ClientConfig::builder().build();
+        assert!(
+            !args(&off, false)
+                .iter()
+                .any(|a| a.starts_with("--block-size")),
+            "no block-size when unset"
+        );
+    }
+
+    // upstream: options.c:2793-2797 - --timeout so both peers share the idle
+    // deadline.
+    #[test]
+    fn timeout_forwarded() {
+        let secs = std::num::NonZeroU64::new(60).unwrap();
+        let config = ClientConfig::builder()
+            .timeout(crate::client::config::TransferTimeout::Seconds(secs))
+            .build();
+        assert!(args(&config, false).iter().any(|a| a == "--timeout=60"));
+    }
+
+    // upstream: options.c:2799-2803 - --bwlimit in bytes/sec so the remote
+    // throttles identically.
+    #[test]
+    fn bwlimit_forwarded() {
+        let limit = crate::client::config::BandwidthLimit::from_bytes_per_second(
+            std::num::NonZeroU64::new(1024).unwrap(),
+        );
+        let config = ClientConfig::builder().bandwidth_limit(Some(limit)).build();
+        assert!(
+            args(&config, false).iter().any(|a| a == "--bwlimit=1024"),
+            "bwlimit must forward as bytes/sec: {:?}",
+            args(&config, false)
+        );
+    }
+
+    // upstream: options.c:2832-2835 - --min-size/--max-size are am_sender only;
+    // the remote receiver's generator skips out-of-range files.
+    #[test]
+    fn min_max_size_forwarded_on_push_only() {
+        let config = ClientConfig::builder()
+            .min_file_size(Some(1024))
+            .max_file_size(Some(1_048_576))
+            .build();
+        let push = args(&config, false);
+        assert!(push.iter().any(|a| a == "--min-size=1024"));
+        assert!(push.iter().any(|a| a == "--max-size=1048576"));
+        let pull = args(&config, true);
+        assert!(!pull.iter().any(|a| a.starts_with("--min-size")));
+        assert!(!pull.iter().any(|a| a.starts_with("--max-size")));
+    }
+
+    // upstream: options.c:2863-2864 - --max-alloc forwarded (role-agnostic) so
+    // the remote enforces the same allocation cap.
+    #[test]
+    fn max_alloc_forwarded() {
+        let config = ClientConfig::builder()
+            .max_alloc(Some(1_073_741_824))
+            .build();
+        assert!(
+            args(&config, false)
+                .iter()
+                .any(|a| a == "--max-alloc=1073741824")
+        );
+    }
+
+    // upstream: options.c:2873-2878 - modify_window is am_sender only; a
+    // negative (nanosecond-exact) window uses the short `-@%d` spelling.
+    #[test]
+    fn modify_window_forwarded_on_push_only() {
+        let positive = ClientConfig::builder().modify_window(Some(2)).build();
+        assert!(
+            args(&positive, false)
+                .iter()
+                .any(|a| a == "--modify-window=2")
+        );
+        assert!(
+            !args(&positive, true)
+                .iter()
+                .any(|a| a.starts_with("--modify-window") || a.starts_with("-@"))
+        );
+
+        let negative = ClientConfig::builder().modify_window(Some(-1)).build();
+        assert!(
+            args(&negative, false).iter().any(|a| a == "-@-1"),
+            "negative window uses -@N: {:?}",
+            args(&negative, false)
+        );
+    }
+
+    // upstream: options.c:2880-2884 - --checksum-seed shared so both sides
+    // derive identical rolling/strong checksums.
+    #[test]
+    fn checksum_seed_forwarded() {
+        let config = ClientConfig::builder().checksum_seed(Some(12345)).build();
+        assert!(
+            args(&config, false)
+                .iter()
+                .any(|a| a == "--checksum-seed=12345")
+        );
+    }
+
+    // upstream: options.c:2886-2894 - --partial-dir and --delay-updates are
+    // am_sender only; the remote receiver stages partial/updated files there.
+    #[test]
+    fn partial_dir_and_delay_updates_forwarded_on_push_only() {
+        let config = ClientConfig::builder()
+            .partial_directory(Some(".rsync-partial"))
+            .delay_updates(true)
+            .build();
+        let push = args(&config, false);
+        assert!(
+            push.iter().any(|a| a == "--partial-dir=.rsync-partial"),
+            "push must forward --partial-dir: {push:?}"
+        );
+        assert!(push.iter().any(|a| a == "--delay-updates"));
+        let pull = args(&config, true);
+        assert!(!pull.iter().any(|a| a.starts_with("--partial-dir")));
+        assert!(!pull.iter().any(|a| a == "--delay-updates"));
+    }
+
+    // upstream: options.c:2925-2928 - --temp-dir is am_sender only; the remote
+    // receiver writes temp files under the requested directory.
+    #[test]
+    fn temp_dir_forwarded_on_push_only() {
+        let config = ClientConfig::builder()
+            .temp_directory(Some("/var/tmp/rsync"))
+            .build();
+        assert!(
+            args(&config, false)
+                .iter()
+                .any(|a| a == "--temp-dir=/var/tmp/rsync")
+        );
+        assert!(
+            !args(&config, true)
+                .iter()
+                .any(|a| a.starts_with("--temp-dir"))
+        );
+    }
+
+    // upstream: options.c:2976-2977 - --no-implied-dirs forwarded only for a
+    // relative transfer with implied dirs disabled.
+    #[test]
+    fn no_implied_dirs_forwarded_when_relative_and_disabled() {
+        let config = ClientConfig::builder()
+            .relative_paths(true)
+            .implied_dirs(false)
+            .build();
+        assert!(
+            args(&config, false)
+                .iter()
+                .any(|a| a == "--no-implied-dirs")
+        );
+        // Not relative: never forwarded even with implied dirs off.
+        let non_relative = ClientConfig::builder().implied_dirs(false).build();
+        assert!(
+            !args(&non_relative, false)
+                .iter()
+                .any(|a| a == "--no-implied-dirs")
+        );
+    }
+
+    // upstream: options.c:2990-2991 - --preallocate is am_sender only.
+    #[test]
+    fn preallocate_forwarded_on_push_only() {
+        let config = ClientConfig::builder().preallocate(true).build();
+        assert!(args(&config, false).iter().any(|a| a == "--preallocate"));
+        assert!(!args(&config, true).iter().any(|a| a == "--preallocate"));
+    }
+
+    // upstream: options.c:2993-2994 - --open-noatime forwarded (role-agnostic).
+    #[test]
+    fn open_noatime_forwarded() {
+        let config = ClientConfig::builder().open_noatime(true).build();
+        assert!(args(&config, false).iter().any(|a| a == "--open-noatime"));
     }
 }
 
