@@ -81,6 +81,12 @@ pub struct FileListReader {
     preserve_atimes: bool,
     /// Whether to preserve (and thus read) creation times from the wire.
     preserve_crtimes: bool,
+    /// Whether `--delete-missing-args` is active (upstream `missing_args == 2`).
+    ///
+    /// When true, a mode-0 sentinel entry is legitimate and bypasses the
+    /// file-mode type-bit validation performed while reading each entry.
+    /// upstream: flist.c:recv_file_entry() line 884 `missing_args != 2`.
+    delete_missing_args: bool,
     /// Whether sender is in checksum mode (--checksum / -c).
     always_checksum: bool,
     /// Whether to preserve (and thus read) ACLs from the wire.
@@ -163,6 +169,7 @@ impl FileListReader {
             preserve_hard_links: false,
             preserve_atimes: false,
             preserve_crtimes: false,
+            delete_missing_args: false,
             always_checksum: false,
             preserve_acls: false,
             preserve_xattrs: false,
@@ -198,6 +205,7 @@ impl FileListReader {
             preserve_hard_links: false,
             preserve_atimes: false,
             preserve_crtimes: false,
+            delete_missing_args: false,
             always_checksum: false,
             preserve_acls: false,
             preserve_xattrs: false,
@@ -278,6 +286,17 @@ impl FileListReader {
     #[must_use]
     pub const fn with_preserve_crtimes(mut self, preserve: bool) -> Self {
         self.preserve_crtimes = preserve;
+        self
+    }
+
+    /// Sets whether `--delete-missing-args` is active.
+    ///
+    /// When enabled, a mode-0 sentinel entry (upstream `missing_args == 2`) is
+    /// accepted instead of being rejected by the file-mode type-bit validation.
+    #[inline]
+    #[must_use]
+    pub const fn with_delete_missing_args(mut self, enabled: bool) -> Self {
+        self.delete_missing_args = enabled;
         self
     }
 

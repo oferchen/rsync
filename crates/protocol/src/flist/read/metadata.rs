@@ -107,6 +107,21 @@ impl FileListReader {
             self.state.update_mode(mode);
             mode
         };
+        // upstream: flist.c:876-892 recv_file_entry() - reject any mode whose
+        // S_IFMT type bits are not one of the standard file types, so a garbage
+        // or malicious mode cannot propagate into the downstream S_ISxxx checks.
+        // Upstream validates the FINAL resolved mode, whether freshly read or
+        // inherited via XMIT_SAME_MODE, so the check lives outside the branch.
+        // mode 0 is the sole exception, and only under --delete-missing-args
+        // (missing_args == 2), the mode-0 sentinel for a vanished arg (flist.c:2257).
+        if !(mode == 0 && self.delete_missing_args)
+            && crate::flist::FileType::from_mode(mode).is_none()
+        {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!("invalid file mode 0{mode:o}"),
+            ));
+        }
 
         // Determine if this is a directory (needed for atime and content_dir)
         let is_dir = (mode & 0o170000) == 0o040000;
