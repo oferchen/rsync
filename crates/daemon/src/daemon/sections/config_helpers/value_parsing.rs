@@ -142,17 +142,114 @@ pub(crate) fn parse_refuse_option_list(value: &str) -> Result<Vec<String>, Strin
     )
 }
 
-/// Parses a boolean value from a config directive.
+/// Classification of a boolean directive value, mirroring the branches of
+/// upstream `loadparm.c:set_boolean()`.
+enum BooleanDirective {
+    /// A concrete `true`/`false` value.
+    Value(bool),
+    /// The P_BOOL3 `unset`/`-1` tri-state (only recognized when unset is
+    /// allowed).
+    Unset,
+    /// A value that `set_boolean()` rejects as badly formed.
+    Malformed,
+}
+
+/// Classifies a boolean directive value the way upstream `set_boolean()` does.
 ///
-/// Accepts common boolean representations: 1/0, true/false, yes/no, on/off.
-/// Returns `None` for unrecognized values.
-pub(crate) fn parse_boolean_directive(value: &str) -> Option<bool> {
-    let normalized = value.trim().to_ascii_lowercase();
-    match normalized.as_str() {
-        "1" | "true" | "yes" | "on" => Some(true),
-        "0" | "false" | "no" | "off" => Some(false),
-        _ => None,
+/// upstream: loadparm.c:363-376. Accepts only `yes`/`true`/`1` and
+/// `no`/`false`/`0` (case-insensitive); when `allow_unset` is set (P_BOOL3
+/// params) also accepts `unset`/`-1` as a tri-state. Upstream does NOT accept
+/// `on`/`off`.
+fn classify_boolean_directive(value: &str, allow_unset: bool) -> BooleanDirective {
+    match value.trim().to_ascii_lowercase().as_str() {
+        "yes" | "true" | "1" => BooleanDirective::Value(true),
+        "no" | "false" | "0" => BooleanDirective::Value(false),
+        "unset" | "-1" if allow_unset => BooleanDirective::Unset,
+        _ => BooleanDirective::Malformed,
     }
+}
+
+/// Parses a strict (non-tri-state) boolean directive value.
+///
+/// Mirrors the P_BOOL branch of upstream `loadparm.c:set_boolean()`: accepts
+/// `yes`/`true`/`1` and `no`/`false`/`0` (case-insensitive) and nothing else.
+/// Notably upstream does NOT accept `on`/`off`, so neither do we. Returns
+/// `None` for any unrecognized value.
+pub(crate) fn parse_boolean_directive(value: &str) -> Option<bool> {
+    match classify_boolean_directive(value, false) {
+        BooleanDirective::Value(flag) => Some(flag),
+        BooleanDirective::Unset | BooleanDirective::Malformed => None,
+    }
+}
+
+/// Applies upstream `set_boolean()`/`do_parameter()` semantics to a boolean
+/// directive, reporting malformed values without aborting the config load.
+///
+/// `allow_unset` selects the P_BOOL3 tri-state (`unset`/`-1`). Returns
+/// `Some(flag)` for a concrete value. Returns `None` when the value is the
+/// BOOL3 `unset` tri-state (leave the setting unconfigured) or is malformed.
+///
+/// upstream: loadparm.c:418-423 - `do_parameter()` calls `set_boolean()` and
+/// ignores its failure return, so a badly formed boolean only warns
+/// (loadparm.c:372) and the directive's previous default is retained rather
+/// than aborting the load.
+pub(crate) fn apply_boolean_directive(
+    value: &str,
+    allow_unset: bool,
+    directive: &str,
+    path: &Path,
+    line_number: usize,
+) -> Option<bool> {
+    match classify_boolean_directive(value, allow_unset) {
+        BooleanDirective::Value(flag) => Some(flag),
+        BooleanDirective::Unset => None,
+        BooleanDirective::Malformed => {
+            eprintln!(
+                "warning: badly formed boolean in configuration file: '{value}' for '{directive}' in '{}' line {} [daemon={}]",
+                path.display(),
+                line_number,
+                env!("CARGO_PKG_VERSION"),
+            );
+            None
+        }
+    }
+}
+
+/// Parses the leading integer of a config value the way C `atoi()` does.
+///
+/// upstream: loadparm.c:431-433 stores `atoi(parmvalue)` for P_INTEGER
+/// directives. `atoi` skips leading whitespace, reads an optional sign followed
+/// by the leading run of decimal digits, and stops at the first non-digit (so
+/// `"5x"` yields `5`). It yields `0` when no digits are present. Overflow
+/// saturates to the `i32` range rather than invoking C's undefined behaviour.
+pub(crate) fn parse_atoi(value: &str) -> i32 {
+    let bytes = value.trim_start().as_bytes();
+    let mut index = 0;
+    let negative = match bytes.first() {
+        Some(b'+') => {
+            index = 1;
+            false
+        }
+        Some(b'-') => {
+            index = 1;
+            true
+        }
+        _ => false,
+    };
+
+    let mut magnitude: i64 = 0;
+    while let Some(&byte) = bytes.get(index) {
+        if !byte.is_ascii_digit() {
+            break;
+        }
+        magnitude = magnitude
+            .saturating_mul(10)
+            .saturating_add(i64::from(byte - b'0'));
+        index += 1;
+    }
+
+    let signed = if negative { -magnitude } else { magnitude };
+    signed.clamp(i64::from(i32::MIN), i64::from(i32::MAX)) as i32
 }
 
 /// Parses a numeric identifier (uid/gid) from a config value.
@@ -165,17 +262,16 @@ pub(crate) fn parse_numeric_identifier(value: &str) -> Option<u32> {
     trimmed.parse().ok()
 }
 
-/// Parses a timeout value in seconds.
+/// Parses a timeout directive value in seconds.
 ///
-/// Returns `Some(None)` for "0" (disabled), `Some(Some(n))` for valid timeouts,
-/// or `None` for empty or invalid input.
+/// upstream: `timeout` is a P_INTEGER directive (daemon-parm.h:294), so the
+/// value is read with `atoi()` leniency: a leading integer is parsed and
+/// trailing non-digits are tolerated. A non-positive result (including an
+/// empty or non-numeric value, which `atoi` maps to `0`) disables the timeout,
+/// yielding `Some(None)`; a positive value yields `Some(Some(n))`. Never
+/// returns `None`.
 pub(crate) fn parse_timeout_seconds(value: &str) -> Option<Option<NonZeroU64>> {
-    let trimmed = value.trim();
-    if trimmed.is_empty() {
-        return None;
-    }
-
-    let seconds: u64 = trimmed.parse().ok()?;
+    let seconds = parse_atoi(value).max(0) as u64;
     if seconds == 0 {
         Some(None)
     } else {
@@ -185,17 +281,12 @@ pub(crate) fn parse_timeout_seconds(value: &str) -> Option<Option<NonZeroU64>> {
 
 /// Parses a max-connections directive value.
 ///
-/// Returns `Some(None)` for "0" (unlimited), `Some(Some(n))` for a limit,
-/// or `None` for empty or invalid input.
+/// upstream: `max connections` is a P_INTEGER directive (daemon-parm.h:292),
+/// so the value is read with `atoi()` leniency: a leading integer is parsed and
+/// trailing non-digits are tolerated. A non-positive result (including an empty
+/// or non-numeric value, which `atoi` maps to `0`) means unlimited, yielding
+/// `Some(None)`; a positive value yields `Some(Some(n))`. Never returns `None`.
 pub(crate) fn parse_max_connections_directive(value: &str) -> Option<Option<NonZeroU32>> {
-    let trimmed = value.trim();
-    if trimmed.is_empty() {
-        return None;
-    }
-
-    if trimmed == "0" {
-        return Some(None);
-    }
-
-    trimmed.parse::<NonZeroU32>().ok().map(Some)
+    let limit = parse_atoi(value).max(0) as u32;
+    Some(NonZeroU32::new(limit))
 }

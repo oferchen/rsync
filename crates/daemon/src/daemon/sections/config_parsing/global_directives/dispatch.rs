@@ -123,13 +123,11 @@ fn apply_global_directive(
             }
         }
         "reverse lookup" => {
-            let parsed = parse_boolean_directive(value).ok_or_else(|| {
-                config_parse_error(
-                    path,
-                    line_number,
-                    format!("invalid boolean value '{value}' for 'reverse lookup'"),
-                )
-            })?;
+            let Some(parsed) =
+                apply_boolean_directive(value, false, "reverse lookup", path, line_number)
+            else {
+                return Ok(());
+            };
 
             let origin = ConfigDirectiveOrigin {
                 path: canonical.to_path_buf(),
@@ -309,13 +307,11 @@ fn apply_global_directive(
         // upstream: loadparm.c - use chroot is valid in the global section as a
         // default that applies to all modules which do not override it explicitly.
         "use chroot" => {
-            let parsed = parse_boolean_directive(value).ok_or_else(|| {
-                config_parse_error(
-                    path,
-                    line_number,
-                    format!("invalid boolean value '{value}' for 'use chroot'"),
-                )
-            })?;
+            let Some(parsed) =
+                apply_boolean_directive(value, true, "use chroot", path, line_number)
+            else {
+                return Ok(());
+            };
 
             let origin = ConfigDirectiveOrigin {
                 path: canonical.to_path_buf(),
@@ -511,13 +507,7 @@ fn apply_global_directive(
         // upstream: daemon-parm.txt - listen_backlog INTEGER, default 5.
         // Controls the backlog argument passed to listen(2).
         "listen backlog" => {
-            let parsed: u32 = value.parse().map_err(|_| {
-                config_parse_error(
-                    path,
-                    line_number,
-                    format!("invalid integer value '{value}' for 'listen backlog'"),
-                )
-            })?;
+            let parsed = parse_atoi(value).max(0) as u32;
 
             let origin = ConfigDirectiveOrigin {
                 path: canonical.to_path_buf(),
@@ -581,13 +571,7 @@ fn apply_global_directive(
         // upstream: daemon-parm.txt - port INTEGER, P_GLOBAL, default 0.
         // Controls the TCP port the daemon listens on.
         "port" | "rsync port" => {
-            let parsed: u16 = value.parse().map_err(|_| {
-                config_parse_error(
-                    path,
-                    line_number,
-                    format!("invalid port number '{value}' for 'port'"),
-                )
-            })?;
+            let parsed = parse_atoi(value).clamp(0, i32::from(u16::MAX)) as u16;
 
             let origin = ConfigDirectiveOrigin {
                 path: canonical.to_path_buf(),
@@ -642,13 +626,11 @@ fn apply_global_directive(
             }
         }
         "proxy protocol" => {
-            let parsed = parse_boolean_directive(value).ok_or_else(|| {
-                config_parse_error(
-                    path,
-                    line_number,
-                    format!("invalid boolean value '{value}' for 'proxy protocol'"),
-                )
-            })?;
+            let Some(parsed) =
+                apply_boolean_directive(value, false, "proxy protocol", path, line_number)
+            else {
+                return Ok(());
+            };
 
             let origin = ConfigDirectiveOrigin {
                 path: canonical.to_path_buf(),
@@ -719,24 +701,14 @@ fn apply_global_directive(
             }
         }
         "max verbosity" => {
-            let parsed: i32 = value.parse().map_err(|_| {
-                config_parse_error(
-                    path,
-                    line_number,
-                    format!("invalid integer value '{value}' for 'max verbosity'"),
-                )
-            })?;
-            state.module_defaults.max_verbosity = Some(parsed);
+            state.module_defaults.max_verbosity = Some(parse_atoi(value));
         }
         "transfer logging" => {
-            let parsed = parse_boolean_directive(value).ok_or_else(|| {
-                config_parse_error(
-                    path,
-                    line_number,
-                    format!("invalid boolean value '{value}' for 'transfer logging'"),
-                )
-            })?;
-            state.module_defaults.transfer_logging = Some(parsed);
+            if let Some(parsed) =
+                apply_boolean_directive(value, false, "transfer logging", path, line_number)
+            {
+                state.module_defaults.transfer_logging = Some(parsed);
+            }
         }
         "log format" => {
             if !value.is_empty() {
@@ -773,64 +745,44 @@ fn apply_global_directive(
             }
         }
         "read only" => {
-            let parsed = parse_boolean_directive(value).ok_or_else(|| {
-                config_parse_error(
-                    path,
-                    line_number,
-                    format!("invalid boolean value '{value}' for 'read only'"),
-                )
-            })?;
-            state.module_defaults.read_only = Some(parsed);
+            if let Some(parsed) =
+                apply_boolean_directive(value, false, "read only", path, line_number)
+            {
+                state.module_defaults.read_only = Some(parsed);
+            }
         }
         "write only" => {
-            let parsed = parse_boolean_directive(value).ok_or_else(|| {
-                config_parse_error(
-                    path,
-                    line_number,
-                    format!("invalid boolean value '{value}' for 'write only'"),
-                )
-            })?;
-            state.module_defaults.write_only = Some(parsed);
+            if let Some(parsed) =
+                apply_boolean_directive(value, false, "write only", path, line_number)
+            {
+                state.module_defaults.write_only = Some(parsed);
+            }
         }
         "list" => {
-            let parsed = parse_boolean_directive(value).ok_or_else(|| {
-                config_parse_error(
-                    path,
-                    line_number,
-                    format!("invalid boolean value '{value}' for 'list'"),
-                )
-            })?;
-            state.module_defaults.listable = Some(parsed);
+            if let Some(parsed) = apply_boolean_directive(value, false, "list", path, line_number) {
+                state.module_defaults.listable = Some(parsed);
+            }
         }
         "munge symlinks" => {
-            let parsed = parse_boolean_directive(value).ok_or_else(|| {
-                config_parse_error(
-                    path,
-                    line_number,
-                    format!("invalid boolean value '{value}' for 'munge symlinks'"),
-                )
-            })?;
-            state.module_defaults.munge_symlinks = Some(Some(parsed));
+            if let Some(parsed) =
+                apply_boolean_directive(value, true, "munge symlinks", path, line_number)
+            {
+                state.module_defaults.munge_symlinks = Some(Some(parsed));
+            }
         }
         "numeric ids" => {
-            let parsed = parse_boolean_directive(value).ok_or_else(|| {
-                config_parse_error(
-                    path,
-                    line_number,
-                    format!("invalid boolean value '{value}' for 'numeric ids'"),
-                )
-            })?;
-            state.module_defaults.numeric_ids = Some(parsed);
+            if let Some(parsed) =
+                apply_boolean_directive(value, true, "numeric ids", path, line_number)
+            {
+                state.module_defaults.numeric_ids = Some(parsed);
+            }
         }
         "fake super" => {
-            let parsed = parse_boolean_directive(value).ok_or_else(|| {
-                config_parse_error(
-                    path,
-                    line_number,
-                    format!("invalid boolean value '{value}' for 'fake super'"),
-                )
-            })?;
-            state.module_defaults.fake_super = Some(parsed);
+            if let Some(parsed) =
+                apply_boolean_directive(value, false, "fake super", path, line_number)
+            {
+                state.module_defaults.fake_super = Some(parsed);
+            }
         }
         "max connections" => {
             let max = parse_max_connections_directive(value).ok_or_else(|| {
@@ -843,56 +795,41 @@ fn apply_global_directive(
             state.module_defaults.max_connections = Some(max);
         }
         "ignore errors" => {
-            let parsed = parse_boolean_directive(value).ok_or_else(|| {
-                config_parse_error(
-                    path,
-                    line_number,
-                    format!("invalid boolean value '{value}' for 'ignore errors'"),
-                )
-            })?;
-            state.module_defaults.ignore_errors = Some(parsed);
+            if let Some(parsed) =
+                apply_boolean_directive(value, false, "ignore errors", path, line_number)
+            {
+                state.module_defaults.ignore_errors = Some(parsed);
+            }
         }
         "ignore nonreadable" => {
-            let parsed = parse_boolean_directive(value).ok_or_else(|| {
-                config_parse_error(
-                    path,
-                    line_number,
-                    format!("invalid boolean value '{value}' for 'ignore nonreadable'"),
-                )
-            })?;
-            state.module_defaults.ignore_nonreadable = Some(parsed);
+            if let Some(parsed) =
+                apply_boolean_directive(value, false, "ignore nonreadable", path, line_number)
+            {
+                state.module_defaults.ignore_nonreadable = Some(parsed);
+            }
         }
         "strict modes" => {
-            let parsed = parse_boolean_directive(value).ok_or_else(|| {
-                config_parse_error(
-                    path,
-                    line_number,
-                    format!("invalid boolean value '{value}' for 'strict modes'"),
-                )
-            })?;
-            state.module_defaults.strict_modes = Some(parsed);
+            if let Some(parsed) =
+                apply_boolean_directive(value, false, "strict modes", path, line_number)
+            {
+                state.module_defaults.strict_modes = Some(parsed);
+            }
         }
         "forward lookup" => {
             // forward lookup is both P_LOCAL and has a global handler above
             // for reverse_lookup. This arm handles the module-default case.
-            let parsed = parse_boolean_directive(value).ok_or_else(|| {
-                config_parse_error(
-                    path,
-                    line_number,
-                    format!("invalid boolean value '{value}' for 'forward lookup'"),
-                )
-            })?;
-            state.module_defaults.forward_lookup = Some(parsed);
+            if let Some(parsed) =
+                apply_boolean_directive(value, false, "forward lookup", path, line_number)
+            {
+                state.module_defaults.forward_lookup = Some(parsed);
+            }
         }
         "open noatime" => {
-            let parsed = parse_boolean_directive(value).ok_or_else(|| {
-                config_parse_error(
-                    path,
-                    line_number,
-                    format!("invalid boolean value '{value}' for 'open noatime'"),
-                )
-            })?;
-            state.module_defaults.open_noatime = Some(parsed);
+            if let Some(parsed) =
+                apply_boolean_directive(value, true, "open noatime", path, line_number)
+            {
+                state.module_defaults.open_noatime = Some(parsed);
+            }
         }
         "exclude from" => {
             if !value.is_empty() {

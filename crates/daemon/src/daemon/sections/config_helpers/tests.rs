@@ -107,8 +107,6 @@ mod config_helpers_tests {
         assert_eq!(parse_boolean_directive("TRUE"), Some(true));
         assert_eq!(parse_boolean_directive("yes"), Some(true));
         assert_eq!(parse_boolean_directive("YES"), Some(true));
-        assert_eq!(parse_boolean_directive("on"), Some(true));
-        assert_eq!(parse_boolean_directive("ON"), Some(true));
     }
 
     #[test]
@@ -118,8 +116,17 @@ mod config_helpers_tests {
         assert_eq!(parse_boolean_directive("FALSE"), Some(false));
         assert_eq!(parse_boolean_directive("no"), Some(false));
         assert_eq!(parse_boolean_directive("NO"), Some(false));
-        assert_eq!(parse_boolean_directive("off"), Some(false));
-        assert_eq!(parse_boolean_directive("OFF"), Some(false));
+    }
+
+    #[test]
+    fn parse_boolean_directive_rejects_on_off() {
+        // upstream: loadparm.c:365-370 set_boolean() accepts only
+        // yes/true/1 and no/false/0 - it never recognizes on/off. Accepting
+        // them would let a config parse a value upstream rsync rejects.
+        assert_eq!(parse_boolean_directive("on"), None);
+        assert_eq!(parse_boolean_directive("ON"), None);
+        assert_eq!(parse_boolean_directive("off"), None);
+        assert_eq!(parse_boolean_directive("OFF"), None);
     }
 
     #[test]
@@ -127,6 +134,65 @@ mod config_helpers_tests {
         assert_eq!(parse_boolean_directive("maybe"), None);
         assert_eq!(parse_boolean_directive("2"), None);
         assert_eq!(parse_boolean_directive(""), None);
+    }
+
+    #[test]
+    fn classify_boolean_directive_bool3_unset_is_valid() {
+        // upstream: loadparm.c:369 - a P_BOOL3 directive (use chroot, numeric
+        // ids, munge symlinks, open noatime) treats `unset`/`-1` as a valid
+        // tri-state, distinct from a badly formed value.
+        assert!(matches!(
+            classify_boolean_directive("unset", true),
+            BooleanDirective::Unset
+        ));
+        assert!(matches!(
+            classify_boolean_directive("-1", true),
+            BooleanDirective::Unset
+        ));
+        // A plain P_BOOL directive does not accept the tri-state.
+        assert!(matches!(
+            classify_boolean_directive("unset", false),
+            BooleanDirective::Malformed
+        ));
+        // Concrete values are unaffected by allow_unset.
+        assert!(matches!(
+            classify_boolean_directive("yes", true),
+            BooleanDirective::Value(true)
+        ));
+    }
+
+    #[test]
+    fn apply_boolean_directive_malformed_keeps_default() {
+        // upstream: loadparm.c:418-423 do_parameter() ignores set_boolean()'s
+        // failure, so a badly formed boolean warns and retains the default
+        // rather than aborting. Here that surfaces as `None` (no value to set).
+        let path = std::path::Path::new("rsyncd.conf");
+        assert_eq!(
+            apply_boolean_directive("maybe", false, "read only", path, 1),
+            None
+        );
+        // A BOOL3 `unset` also yields None (leave the setting at its default).
+        assert_eq!(
+            apply_boolean_directive("unset", true, "use chroot", path, 1),
+            None
+        );
+        // Concrete values are returned for the caller to apply.
+        assert_eq!(
+            apply_boolean_directive("yes", false, "read only", path, 1),
+            Some(true)
+        );
+    }
+
+    #[test]
+    fn parse_atoi_matches_c_leniency() {
+        // upstream: loadparm.c:431-433 stores atoi(parmvalue) for P_INTEGER
+        // directives, so a trailing non-digit suffix is tolerated.
+        assert_eq!(parse_atoi("5x"), 5);
+        assert_eq!(parse_atoi("30 seconds"), 30);
+        assert_eq!(parse_atoi("  42"), 42);
+        assert_eq!(parse_atoi("-7"), -7);
+        assert_eq!(parse_atoi("abc"), 0);
+        assert_eq!(parse_atoi(""), 0);
     }
 
     #[test]
@@ -172,13 +238,16 @@ mod config_helpers_tests {
     }
 
     #[test]
-    fn parse_timeout_seconds_empty() {
-        assert_eq!(parse_timeout_seconds(""), None);
+    fn parse_timeout_seconds_empty_disables() {
+        // upstream: `timeout` is P_INTEGER, so atoi("") == 0 disables it.
+        assert_eq!(parse_timeout_seconds(""), Some(None));
     }
 
     #[test]
-    fn parse_timeout_seconds_invalid() {
-        assert_eq!(parse_timeout_seconds("abc"), None);
+    fn parse_timeout_seconds_atoi_leniency() {
+        // upstream: atoi("abc") == 0 (disabled); atoi("30x") == 30.
+        assert_eq!(parse_timeout_seconds("abc"), Some(None));
+        assert_eq!(parse_timeout_seconds("30x").unwrap().unwrap().get(), 30);
     }
 
     #[test]
@@ -194,13 +263,19 @@ mod config_helpers_tests {
     }
 
     #[test]
-    fn parse_max_connections_directive_empty() {
-        assert_eq!(parse_max_connections_directive(""), None);
+    fn parse_max_connections_directive_empty_is_unlimited() {
+        // upstream: `max connections` is P_INTEGER, so atoi("") == 0 (unlimited).
+        assert_eq!(parse_max_connections_directive(""), Some(None));
     }
 
     #[test]
-    fn parse_max_connections_directive_invalid() {
-        assert_eq!(parse_max_connections_directive("abc"), None);
+    fn parse_max_connections_directive_atoi_leniency() {
+        // upstream: atoi("abc") == 0 (unlimited); atoi("10x") == 10.
+        assert_eq!(parse_max_connections_directive("abc"), Some(None));
+        assert_eq!(
+            parse_max_connections_directive("10x").unwrap().unwrap().get(),
+            10
+        );
     }
 
     #[test]
