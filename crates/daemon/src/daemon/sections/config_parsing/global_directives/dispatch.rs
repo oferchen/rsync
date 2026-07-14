@@ -18,7 +18,7 @@ fn apply_global_directive(
     stack: &mut Vec<PathBuf>,
 ) -> Result<(), DaemonError> {
     match key {
-        "refuse options" => {
+        "refuseoptions" => {
             if value.is_empty() {
                 return Err(config_parse_error(
                     path,
@@ -63,7 +63,7 @@ fn apply_global_directive(
             // and globs `*.inc`. `apply_include_directive` implements both.
             apply_include_directive(state, key, value, path, line_number, canonical, stack)?;
         }
-        "motd file" => {
+        "motdfile" => {
             let trimmed = value.trim();
             if trimmed.is_empty() {
                 return Err(config_parse_error(
@@ -90,7 +90,7 @@ fn apply_global_directive(
         "motd" => {
             state.motd_lines.push(value.trim_end_matches(['\r', '\n']).to_owned());
         }
-        "pid file" => {
+        "pidfile" => {
             let trimmed = value.trim();
             if trimmed.is_empty() {
                 return Err(config_parse_error(
@@ -122,7 +122,7 @@ fn apply_global_directive(
                 ));
             }
         }
-        "reverse lookup" => {
+        "reverselookup" => {
             let Some(parsed) =
                 apply_boolean_directive(value, false, "reverse lookup", path, line_number)
             else {
@@ -179,7 +179,7 @@ fn apply_global_directive(
                 state.global_bwlimit = Some((components, origin));
             }
         }
-        "secrets file" => {
+        "secretsfile" => {
             let trimmed = value.trim();
             if trimmed.is_empty() {
                 return Err(config_parse_error(
@@ -211,7 +211,7 @@ fn apply_global_directive(
                 state.global_secrets_file = Some((validated, origin));
             }
         }
-        "incoming chmod" | "incoming-chmod" => {
+        "incomingchmod" | "incoming-chmod" => {
             if value.is_empty() {
                 return Err(config_parse_error(
                     path,
@@ -242,7 +242,7 @@ fn apply_global_directive(
                 state.global_incoming_chmod = Some((owned, origin));
             }
         }
-        "outgoing chmod" | "outgoing-chmod" => {
+        "outgoingchmod" | "outgoing-chmod" => {
             if value.is_empty() {
                 return Err(config_parse_error(
                     path,
@@ -273,7 +273,7 @@ fn apply_global_directive(
                 state.global_outgoing_chmod = Some((owned, origin));
             }
         }
-        "lock file" => {
+        "lockfile" => {
             let trimmed = value.trim();
             if trimmed.is_empty() {
                 return Err(config_parse_error(
@@ -306,7 +306,7 @@ fn apply_global_directive(
         }
         // upstream: loadparm.c - use chroot is valid in the global section as a
         // default that applies to all modules which do not override it explicitly.
-        "use chroot" => {
+        "usechroot" => {
             let Some(parsed) =
                 apply_boolean_directive(value, true, "use chroot", path, line_number)
             else {
@@ -335,7 +335,7 @@ fn apply_global_directive(
         }
         // upstream: loadparm.c - syslog facility sets the syslog facility
         // for daemon log messages (e.g., "daemon", "local0"-"local7").
-        "syslog facility" => {
+        "syslogfacility" => {
             if value.is_empty() {
                 return Err(config_parse_error(
                     path,
@@ -367,7 +367,7 @@ fn apply_global_directive(
             }
         }
         // upstream: loadparm.c - syslog tag sets the syslog ident prefix.
-        "syslog tag" => {
+        "syslogtag" => {
             if value.is_empty() {
                 return Err(config_parse_error(
                     path,
@@ -506,7 +506,7 @@ fn apply_global_directive(
         }
         // upstream: daemon-parm.txt - listen_backlog INTEGER, default 5.
         // Controls the backlog argument passed to listen(2).
-        "listen backlog" => {
+        "listenbacklog" => {
             let parsed = parse_atoi(value).max(0) as u32;
 
             let origin = ConfigDirectiveOrigin {
@@ -532,7 +532,7 @@ fn apply_global_directive(
         // oc-rsync extension - number of SO_REUSEPORT listener replicas to bind
         // per address family (default 1). Has no upstream equivalent; changes
         // only kernel socket behaviour, never the wire.
-        "acceptor threads" => {
+        "acceptorthreads" => {
             let parsed: u32 = value.parse().map_err(|_| {
                 config_parse_error(
                     path,
@@ -570,7 +570,7 @@ fn apply_global_directive(
         }
         // upstream: daemon-parm.txt - port INTEGER, P_GLOBAL, default 0.
         // Controls the TCP port the daemon listens on.
-        "port" | "rsync port" => {
+        "port" | "rsyncport" => {
             let parsed = parse_atoi(value).clamp(0, i32::from(u16::MAX)) as u16;
 
             let origin = ConfigDirectiveOrigin {
@@ -595,7 +595,7 @@ fn apply_global_directive(
         }
         // upstream: daemon-parm.txt - socket options STRING.
         // Comma-separated TCP/IP socket options for the listener.
-        "socket options" => {
+        "socketoptions" => {
             let trimmed = value.trim();
             if trimmed.is_empty() {
                 return Err(config_parse_error(
@@ -625,7 +625,7 @@ fn apply_global_directive(
                 state.socket_options = Some((trimmed.to_string(), origin));
             }
         }
-        "proxy protocol" => {
+        "proxyprotocol" => {
             let Some(parsed) =
                 apply_boolean_directive(value, false, "proxy protocol", path, line_number)
             else {
@@ -652,7 +652,7 @@ fn apply_global_directive(
                 state.proxy_protocol = Some((parsed, origin));
             }
         }
-        "daemon chroot" => {
+        "daemonchroot" => {
             let trimmed = value.trim();
             if trimmed.is_empty() {
                 return Err(config_parse_error(
@@ -700,32 +700,32 @@ fn apply_global_directive(
                 state.module_defaults.filter.push(value.to_owned());
             }
         }
-        "max verbosity" => {
+        "maxverbosity" => {
             state.module_defaults.max_verbosity = Some(parse_atoi(value));
         }
-        "transfer logging" => {
+        "transferlogging" => {
             if let Some(parsed) =
                 apply_boolean_directive(value, false, "transfer logging", path, line_number)
             {
                 state.module_defaults.transfer_logging = Some(parsed);
             }
         }
-        "log format" => {
+        "logformat" => {
             if !value.is_empty() {
                 state.module_defaults.log_format = Some(value.to_owned());
             }
         }
-        "log file" => {
+        "logfile" => {
             if !value.is_empty() {
                 let resolved = resolve_config_relative_path(canonical, value);
                 state.module_defaults.log_file = Some(resolved);
             }
         }
-        "hosts allow" => {
+        "hostsallow" => {
             let patterns = parse_host_list(value, path, line_number, "hosts allow")?;
             state.module_defaults.hosts_allow = Some(patterns);
         }
-        "hosts deny" => {
+        "hostsdeny" => {
             let patterns = parse_host_list(value, path, line_number, "hosts deny")?;
             state.module_defaults.hosts_deny = Some(patterns);
         }
@@ -739,19 +739,19 @@ fn apply_global_directive(
             })?;
             state.module_defaults.timeout = Some(timeout);
         }
-        "dont compress" => {
+        "dontcompress" => {
             if !value.is_empty() {
                 state.module_defaults.dont_compress = Some(value.to_owned());
             }
         }
-        "read only" => {
+        "readonly" => {
             if let Some(parsed) =
                 apply_boolean_directive(value, false, "read only", path, line_number)
             {
                 state.module_defaults.read_only = Some(parsed);
             }
         }
-        "write only" => {
+        "writeonly" => {
             if let Some(parsed) =
                 apply_boolean_directive(value, false, "write only", path, line_number)
             {
@@ -763,28 +763,28 @@ fn apply_global_directive(
                 state.module_defaults.listable = Some(parsed);
             }
         }
-        "munge symlinks" => {
+        "mungesymlinks" => {
             if let Some(parsed) =
                 apply_boolean_directive(value, true, "munge symlinks", path, line_number)
             {
                 state.module_defaults.munge_symlinks = Some(Some(parsed));
             }
         }
-        "numeric ids" => {
+        "numericids" => {
             if let Some(parsed) =
                 apply_boolean_directive(value, true, "numeric ids", path, line_number)
             {
                 state.module_defaults.numeric_ids = Some(parsed);
             }
         }
-        "fake super" => {
+        "fakesuper" => {
             if let Some(parsed) =
                 apply_boolean_directive(value, false, "fake super", path, line_number)
             {
                 state.module_defaults.fake_super = Some(parsed);
             }
         }
-        "max connections" => {
+        "maxconnections" => {
             let max = parse_max_connections_directive(value).ok_or_else(|| {
                 config_parse_error(
                     path,
@@ -794,28 +794,28 @@ fn apply_global_directive(
             })?;
             state.module_defaults.max_connections = Some(max);
         }
-        "ignore errors" => {
+        "ignoreerrors" => {
             if let Some(parsed) =
                 apply_boolean_directive(value, false, "ignore errors", path, line_number)
             {
                 state.module_defaults.ignore_errors = Some(parsed);
             }
         }
-        "ignore nonreadable" => {
+        "ignorenonreadable" => {
             if let Some(parsed) =
                 apply_boolean_directive(value, false, "ignore nonreadable", path, line_number)
             {
                 state.module_defaults.ignore_nonreadable = Some(parsed);
             }
         }
-        "strict modes" => {
+        "strictmodes" => {
             if let Some(parsed) =
                 apply_boolean_directive(value, false, "strict modes", path, line_number)
             {
                 state.module_defaults.strict_modes = Some(parsed);
             }
         }
-        "forward lookup" => {
+        "forwardlookup" => {
             // forward lookup is both P_LOCAL and has a global handler above
             // for reverse_lookup. This arm handles the module-default case.
             if let Some(parsed) =
@@ -824,20 +824,20 @@ fn apply_global_directive(
                 state.module_defaults.forward_lookup = Some(parsed);
             }
         }
-        "open noatime" => {
+        "opennoatime" => {
             if let Some(parsed) =
                 apply_boolean_directive(value, true, "open noatime", path, line_number)
             {
                 state.module_defaults.open_noatime = Some(parsed);
             }
         }
-        "exclude from" => {
+        "excludefrom" => {
             if !value.is_empty() {
                 let resolved = resolve_config_relative_path(canonical, value);
                 state.module_defaults.exclude_from = Some(resolved);
             }
         }
-        "include from" => {
+        "includefrom" => {
             if !value.is_empty() {
                 let resolved = resolve_config_relative_path(canonical, value);
                 state.module_defaults.include_from = Some(resolved);
@@ -848,22 +848,22 @@ fn apply_global_directive(
                 state.module_defaults.comment = Some(value.to_owned());
             }
         }
-        "early exec" => {
+        "earlyexec" => {
             if !value.is_empty() {
                 state.module_defaults.early_exec = Some(value.to_owned());
             }
         }
-        "pre-xfer exec" => {
+        "pre-xferexec" => {
             if !value.is_empty() {
                 state.module_defaults.pre_xfer_exec = Some(value.to_owned());
             }
         }
-        "post-xfer exec" => {
+        "post-xferexec" => {
             if !value.is_empty() {
                 state.module_defaults.post_xfer_exec = Some(value.to_owned());
             }
         }
-        "name converter" => {
+        "nameconverter" => {
             if !value.is_empty() {
                 state.module_defaults.name_converter = Some(value.to_owned());
             }
@@ -875,7 +875,7 @@ fn apply_global_directive(
         }
         // P_LOCAL directives that only make sense per-module - silently accepted
         // but not stored as inheritable defaults.
-        "path" | "auth users" => {}
+        "path" | "authusers" => {}
         _ => {
             eprintln!(
                 "warning: unknown global directive '{}' in '{}' line {} [daemon={}]",

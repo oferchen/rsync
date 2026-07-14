@@ -4,6 +4,33 @@
 // line-by-line dispatch to module or global directive handlers, and
 // final assembly of the parsed result.
 
+/// Folds a directive name into the canonical form used to match it against a
+/// known parameter, mirroring upstream's whitespace- and case-insensitive
+/// comparison.
+///
+/// Upstream compares a configuration parameter name against the `parm_table`
+/// labels with `strwiEQ` (loadparm.c:282), which walks both strings skipping
+/// every `isSpace()` character (itypes.h:37) and comparing the remaining
+/// characters case-insensitively via `toUpper()` (itypes.h:67). Two names are
+/// therefore equal exactly when they are equal after removing all whitespace
+/// and lowercasing, so `read only`, `readonly`, `Read Only`, and `read<TAB>only`
+/// all resolve to the same parameter (loadparm.c:344 map_parameter).
+///
+/// Note that the labels themselves are generated with underscores rewritten to
+/// spaces (daemon-parm.awk `gsub(/_/, " ", pubname)`), while `strwiEQ` skips
+/// only whitespace - never underscores. An underscore is thus significant:
+/// `read_only` does NOT match the `read only` parameter upstream, and this
+/// helper preserves that by folding only whitespace.
+fn normalize_param_name(name: &str) -> String {
+    // upstream: itypes.h:37 isSpace() == C isspace(), which also matches the
+    // vertical tab that Rust's char::is_ascii_whitespace omits. toUpper()
+    // (itypes.h:67) is ASCII-only, so fold case with to_ascii_lowercase.
+    name.chars()
+        .filter(|c| !matches!(c, ' ' | '\t' | '\n' | '\x0B' | '\x0C' | '\r'))
+        .collect::<String>()
+        .to_ascii_lowercase()
+}
+
 /// Parses the `rsyncd.conf` at `path` into module definitions and global settings.
 pub(crate) fn parse_config_modules(path: &Path) -> Result<ParsedConfigModules, DaemonError> {
     let mut stack = Vec::new();
@@ -105,14 +132,14 @@ fn parse_config_modules_inner(
                     .strip_prefix('=')
                     .unwrap_or(raw_value);
                 (
-                    format!("&{}", name.trim().to_ascii_lowercase()),
+                    format!("&{}", normalize_param_name(name)),
                     trimmed_value.trim(),
                 )
             } else {
                 let (raw_key, raw_value) = line.split_once('=').ok_or_else(|| {
                     config_parse_error(path, line_number, "expected 'key = value' directive")
                 })?;
-                (raw_key.trim().to_ascii_lowercase(), raw_value.trim())
+                (normalize_param_name(raw_key), raw_value.trim())
             };
 
             // upstream: params.c:Parse() - the `&include`/`&merge` directives

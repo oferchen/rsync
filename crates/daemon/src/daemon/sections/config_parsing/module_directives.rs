@@ -35,15 +35,15 @@ fn apply_module_directive(
             };
             builder.set_comment(comment, path, line_number)?;
         }
-        "hosts allow" => {
+        "hostsallow" => {
             let patterns = parse_host_list(value, path, line_number, "hosts allow")?;
             builder.set_hosts_allow(patterns, path, line_number)?;
         }
-        "hosts deny" => {
+        "hostsdeny" => {
             let patterns = parse_host_list(value, path, line_number, "hosts deny")?;
             builder.set_hosts_deny(patterns, path, line_number)?;
         }
-        "auth users" => {
+        "authusers" => {
             let users = parse_auth_user_list(value).map_err(|error| {
                 config_parse_error(
                     path,
@@ -53,7 +53,7 @@ fn apply_module_directive(
             })?;
             builder.set_auth_users(users, path, line_number)?;
         }
-        "secrets file" => {
+        "secretsfile" => {
             if value.is_empty() {
                 return Err(config_parse_error(
                     path,
@@ -80,7 +80,7 @@ fn apply_module_directive(
                 line_number,
             )?;
         }
-        "refuse options" => {
+        "refuseoptions" => {
             let options = parse_refuse_option_list(value).map_err(|error| {
                 config_parse_error(
                     path,
@@ -90,28 +90,28 @@ fn apply_module_directive(
             })?;
             builder.set_refuse_options(options, path, line_number)?;
         }
-        "read only" => {
+        "readonly" => {
             if let Some(parsed) =
                 apply_boolean_directive(value, false, "read only", path, line_number)
             {
                 builder.set_read_only(parsed, path, line_number)?;
             }
         }
-        "write only" => {
+        "writeonly" => {
             if let Some(parsed) =
                 apply_boolean_directive(value, false, "write only", path, line_number)
             {
                 builder.set_write_only(parsed, path, line_number)?;
             }
         }
-        "use chroot" => {
+        "usechroot" => {
             if let Some(parsed) =
                 apply_boolean_directive(value, true, "use chroot", path, line_number)
             {
                 builder.set_use_chroot(parsed, path, line_number)?;
             }
         }
-        "numeric ids" => {
+        "numericids" => {
             if let Some(parsed) =
                 apply_boolean_directive(value, true, "numeric ids", path, line_number)
             {
@@ -123,14 +123,14 @@ fn apply_module_directive(
                 builder.set_listable(parsed, path, line_number)?;
             }
         }
-        "fake super" => {
+        "fakesuper" => {
             if let Some(parsed) =
                 apply_boolean_directive(value, false, "fake super", path, line_number)
             {
                 builder.set_fake_super(parsed, path, line_number)?;
             }
         }
-        "munge symlinks" => {
+        "mungesymlinks" => {
             if let Some(parsed) =
                 apply_boolean_directive(value, true, "munge symlinks", path, line_number)
             {
@@ -159,7 +159,7 @@ fn apply_module_directive(
             })?;
             builder.set_timeout(timeout, path, line_number)?;
         }
-        "max connections" => {
+        "maxconnections" => {
             let max = parse_max_connections_directive(value).ok_or_else(|| {
                 config_parse_error(
                     path,
@@ -169,7 +169,7 @@ fn apply_module_directive(
             })?;
             builder.set_max_connections(max, path, line_number)?;
         }
-        "incoming chmod" | "incoming-chmod" => {
+        "incomingchmod" | "incoming-chmod" => {
             if value.is_empty() {
                 return Err(config_parse_error(
                     path,
@@ -183,7 +183,7 @@ fn apply_module_directive(
                 line_number,
             )?;
         }
-        "outgoing chmod" | "outgoing-chmod" => {
+        "outgoingchmod" | "outgoing-chmod" => {
             if value.is_empty() {
                 return Err(config_parse_error(
                     path,
@@ -197,32 +197,32 @@ fn apply_module_directive(
                 line_number,
             )?;
         }
-        "max verbosity" => {
+        "maxverbosity" => {
             let parsed = parse_atoi(value);
             builder.set_max_verbosity(parsed, path, line_number)?;
         }
-        "ignore errors" => {
+        "ignoreerrors" => {
             if let Some(parsed) =
                 apply_boolean_directive(value, false, "ignore errors", path, line_number)
             {
                 builder.set_ignore_errors(parsed, path, line_number)?;
             }
         }
-        "ignore nonreadable" => {
+        "ignorenonreadable" => {
             if let Some(parsed) =
                 apply_boolean_directive(value, false, "ignore nonreadable", path, line_number)
             {
                 builder.set_ignore_nonreadable(parsed, path, line_number)?;
             }
         }
-        "transfer logging" => {
+        "transferlogging" => {
             if let Some(parsed) =
                 apply_boolean_directive(value, false, "transfer logging", path, line_number)
             {
                 builder.set_transfer_logging(parsed, path, line_number)?;
             }
         }
-        "log format" => {
+        "logformat" => {
             let format = if value.is_empty() {
                 None
             } else {
@@ -230,7 +230,7 @@ fn apply_module_directive(
             };
             builder.set_log_format(format, path, line_number)?;
         }
-        "log file" => {
+        "logfile" => {
             if value.is_empty() {
                 return Err(config_parse_error(
                     path,
@@ -241,7 +241,7 @@ fn apply_module_directive(
             let resolved = resolve_config_relative_path(canonical, value);
             builder.set_log_file(resolved, path, line_number)?;
         }
-        "dont compress" => {
+        "dontcompress" => {
             let patterns = if value.is_empty() {
                 None
             } else {
@@ -249,7 +249,7 @@ fn apply_module_directive(
             };
             builder.set_dont_compress(patterns, path, line_number)?;
         }
-        "early exec" => {
+        "earlyexec" => {
             let cmd = if value.is_empty() {
                 None
             } else {
@@ -257,7 +257,7 @@ fn apply_module_directive(
             };
             builder.set_early_exec(cmd, path, line_number)?;
         }
-        "pre-xfer exec" => {
+        "pre-xferexec" => {
             let cmd = if value.is_empty() {
                 None
             } else {
@@ -265,7 +265,7 @@ fn apply_module_directive(
             };
             builder.set_pre_xfer_exec(cmd, path, line_number)?;
         }
-        "post-xfer exec" => {
+        "post-xferexec" => {
             let cmd = if value.is_empty() {
                 None
             } else {
@@ -273,7 +273,7 @@ fn apply_module_directive(
             };
             builder.set_post_xfer_exec(cmd, path, line_number)?;
         }
-        "name converter" => {
+        "nameconverter" => {
             let cmd = if value.is_empty() {
                 None
             } else {
@@ -281,7 +281,7 @@ fn apply_module_directive(
             };
             builder.set_name_converter(cmd, path, line_number)?;
         }
-        "temp dir" => {
+        "tempdir" => {
             let dir = if value.is_empty() {
                 None
             } else {
@@ -297,21 +297,21 @@ fn apply_module_directive(
             };
             builder.set_charset(cs, path, line_number)?;
         }
-        "forward lookup" => {
+        "forwardlookup" => {
             if let Some(parsed) =
                 apply_boolean_directive(value, false, "forward lookup", path, line_number)
             {
                 builder.set_forward_lookup(parsed, path, line_number)?;
             }
         }
-        "strict modes" => {
+        "strictmodes" => {
             if let Some(parsed) =
                 apply_boolean_directive(value, false, "strict modes", path, line_number)
             {
                 builder.set_strict_modes(parsed, path, line_number)?;
             }
         }
-        "open noatime" => {
+        "opennoatime" => {
             if let Some(parsed) =
                 apply_boolean_directive(value, true, "open noatime", path, line_number)
             {
@@ -320,7 +320,7 @@ fn apply_module_directive(
         }
         // upstream: daemon-parm.txt - `exclude_from` STRING, default NULL.
         // Loaded via parse_filter_file() in clientserver.c.
-        "exclude from" => {
+        "excludefrom" => {
             if value.is_empty() {
                 return Err(config_parse_error(
                     path,
@@ -333,7 +333,7 @@ fn apply_module_directive(
         }
         // upstream: daemon-parm.txt - `include_from` STRING, default NULL.
         // Loaded via parse_filter_file() in clientserver.c.
-        "include from" => {
+        "includefrom" => {
             if value.is_empty() {
                 return Err(config_parse_error(
                     path,
