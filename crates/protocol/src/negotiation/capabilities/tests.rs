@@ -3345,6 +3345,26 @@ mod env_list_overrides {
         assert_eq!(over.advertised, "xxh64 md5");
     }
 
+    // A mixed-case non-alias name keeps its original bytes on the wire while
+    // still resolving case-insensitively for selection - upstream parse_nni_str
+    // only rewrites recognised aliases, so "MD5" stays "MD5" (not "md5").
+    #[test]
+    fn mixed_case_non_alias_preserves_original_bytes() {
+        let _lock = ENV_LOCK.lock().unwrap();
+        let _cs = EnvGuard::set(CHECKSUM_ENV, OsStr::new("MD5 XXH3"));
+        let over = env_list::checksum_candidates(false).unwrap();
+        // Advertised bytes preserve the operator's casing.
+        assert_eq!(over.advertised, "MD5 XXH3");
+        // Candidates are canonical for case-insensitive selection.
+        assert_eq!(over.candidates, vec!["md5", "xxh3"]);
+
+        // A mixed-case alias still canonicalises (case-insensitive match).
+        let _cs2 = EnvGuard::set(CHECKSUM_ENV, OsStr::new("XxHaSh"));
+        let alias = env_list::checksum_candidates(false).unwrap();
+        assert_eq!(alias.advertised, "xxh64");
+        assert_eq!(alias.candidates, vec!["xxh64"]);
+    }
+
     // The '&' separator scopes the value: client uses names before it, server
     // uses names after it (upstream getenv_nstr + parse_nni_str terminator).
     #[test]

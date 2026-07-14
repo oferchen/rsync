@@ -9,8 +9,11 @@
 //! leaves the built-in default order untouched, so the default wire bytes are
 //! unchanged.
 //!
-//! Names are canonicalised to their wire spelling (e.g. the `xxhash` alias
-//! becomes `xxh64`, matching upstream's `main_nni` rewrite), de-duplicated, and
+//! A recognised alias is rewritten to its canonical wire spelling (e.g. the
+//! `xxhash` alias becomes `xxh64`, matching upstream's `main_nni` rewrite);
+//! every other name keeps the operator's original bytes verbatim, including its
+//! casing, so the advertised vstring is byte-for-byte what upstream emits.
+//! Lookup and selection remain case-insensitive. Names are de-duplicated and
 //! kept in the order the variable lists them. Unrecognised or build-unsupported
 //! names are dropped; when a value holds names but none survive, the parsed list
 //! collapses to the literal `INVALID`, which fails negotiation just as upstream
@@ -121,12 +124,23 @@ fn parse_env(
     scoped.split_whitespace().next()?;
 
     let mut candidates: Vec<&'static str> = Vec::new();
+    let mut advertised: Vec<String> = Vec::new();
     for token in scoped.split_whitespace() {
         // upstream: compat.c:295-306 - unrecognised names are dropped and the
         // first occurrence of each algorithm wins (duplicates removed).
-        if let Some(name) = resolve(token) {
-            if !candidates.contains(&name) {
-                candidates.push(name);
+        if let Some(canonical) = resolve(token) {
+            if !candidates.contains(&canonical) {
+                candidates.push(canonical);
+                // upstream: compat.c:298-304 - only a recognised alias (an entry
+                // whose main_nni points elsewhere) is rewritten to its canonical
+                // spelling; every other name keeps the operator's original bytes
+                // verbatim on the wire, including casing. A token that differs
+                // from its canonical name only in ASCII case is not an alias.
+                if token.eq_ignore_ascii_case(canonical) {
+                    advertised.push(token.to_string());
+                } else {
+                    advertised.push(canonical.to_string());
+                }
             }
         }
     }
@@ -142,7 +156,7 @@ fn parse_env(
     }
 
     Some(EnvOverride {
-        advertised: candidates.join(" "),
+        advertised: advertised.join(" "),
         candidates,
     })
 }
