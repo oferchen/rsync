@@ -59,6 +59,7 @@ tracing = { workspace = true, optional = true }
 
 [dev-dependencies]
 criterion = { workspace = true }
+platform = { path = "../platform" }
 proptest = { workspace = true }
 serde_json = { workspace = true }
 tempfile = { workspace = true }

@@ -28,6 +28,7 @@
 //! - Upstream: `compat.c:332-391` (parse_negotiate_str, recv_negotiate_str)
 
 mod algorithms;
+mod env_list;
 mod negotiate;
 
 pub use algorithms::{ChecksumAlgorithm, CompressionAlgorithm};

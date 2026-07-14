@@ -11,6 +11,7 @@ use crate::nstr::{
 use super::algorithms::{
     ChecksumAlgorithm, CompressionAlgorithm, SUPPORTED_CHECKSUMS, supported_compressions,
 };
+use super::env_list;
 
 /// Configuration for capability negotiation.
 ///
@@ -297,14 +298,36 @@ pub fn negotiate_capabilities_with_override(
     // symmetrically. Sending a single-entry list here would desync against an
     // upstream peer that sends nothing.
     let send_checksum = checksum_override.is_none();
+
+    // upstream: compat.c:506-533 send_negotiate_str - RSYNC_CHECKSUM_LIST /
+    // RSYNC_COMPRESS_LIST, when set, replace the advertised default order and the
+    // local candidate list used for selection; an empty value falls through to
+    // get_default_nno_list() so the default wire bytes are unchanged.
+    let checksum_env = if send_checksum {
+        env_list::checksum_candidates(is_server)
+    } else {
+        None
+    };
+    let compression_env = if send_compression {
+        env_list::compression_candidates(is_server)
+    } else {
+        None
+    };
+
     if send_checksum {
-        let checksum_list = advertised_list(SUPPORTED_CHECKSUMS.iter().copied(), is_server);
+        let checksum_list = match &checksum_env {
+            Some(env) => env.advertised.clone(),
+            None => advertised_list(SUPPORTED_CHECKSUMS.iter().copied(), is_server),
+        };
         trace_send_list(side, NstrCategory::Checksum, &checksum_list);
         write_vstring(stdout, &checksum_list)?;
     }
 
     if send_compression {
-        let compression_list = advertised_list(supported_compressions(), is_server);
+        let compression_list = match &compression_env {
+            Some(env) => env.advertised.clone(),
+            None => advertised_list(supported_compressions(), is_server),
+        };
         trace_send_list(side, NstrCategory::Compress, &compression_list);
         write_vstring(stdout, &compression_list)?;
     }
@@ -346,7 +369,13 @@ pub fn negotiate_capabilities_with_override(
         Some(forced) => forced,
         None => {
             let list = remote_checksum_list.as_deref().unwrap_or("");
-            choose_checksum_algorithm(list, is_server)?
+            // upstream: compat.c:350 - selection matches remote names against our
+            // local `saw` list, which the env override reorders/restricts.
+            let candidates: &[&str] = match &checksum_env {
+                Some(env) => &env.candidates,
+                None => SUPPORTED_CHECKSUMS,
+            };
+            choose_checksum_algorithm_in(list, is_server, candidates)?
         }
     };
 
@@ -356,7 +385,12 @@ pub fn negotiate_capabilities_with_override(
     let compression = if let Some(forced) = compression_override {
         forced
     } else if let Some(ref list) = remote_compression_list {
-        choose_compression_algorithm(list, is_server)?
+        let supported = supported_compressions();
+        let candidates: &[&str] = match &compression_env {
+            Some(env) => &env.candidates,
+            None => &supported,
+        };
+        choose_compression_algorithm_in(list, is_server, candidates)?
     } else {
         CompressionAlgorithm::None
     };
@@ -423,9 +457,28 @@ fn resolved_compress_level(compression: CompressionAlgorithm, raw_level: i32) ->
 ///
 /// Returns an error if no common algorithm is found - upstream rsync treats
 /// this as a hard failure (compat.c:383-406 `recv_negotiate_str`).
+///
+/// This is the default-list convenience wrapper exercised by the test suite;
+/// production callers use [`choose_checksum_algorithm_in`] so the
+/// `RSYNC_CHECKSUM_LIST` env override can substitute the candidate list.
+#[cfg(test)]
 pub(super) fn choose_checksum_algorithm(
     remote_list: &str,
     is_server: bool,
+) -> io::Result<ChecksumAlgorithm> {
+    choose_checksum_algorithm_in(remote_list, is_server, SUPPORTED_CHECKSUMS)
+}
+
+/// Chooses a checksum algorithm from an explicit local candidate list.
+///
+/// Behaves like [`choose_checksum_algorithm`] but takes the ordered local
+/// candidate names as a parameter so the caller can substitute the
+/// `RSYNC_CHECKSUM_LIST` env override (upstream `nno->saw`, compat.c:350). With
+/// the default [`SUPPORTED_CHECKSUMS`] list the behaviour is unchanged.
+pub(super) fn choose_checksum_algorithm_in(
+    remote_list: &str,
+    is_server: bool,
+    local: &[&str],
 ) -> io::Result<ChecksumAlgorithm> {
     let remote_items: Vec<&str> = remote_list.split_whitespace().collect();
 
@@ -434,7 +487,7 @@ pub(super) fn choose_checksum_algorithm(
         // upstream: compat.c:353 `if (best == 1 || am_server) break;`
         for algo in &remote_items {
             if let Ok(checksum) = ChecksumAlgorithm::parse(algo) {
-                if SUPPORTED_CHECKSUMS.contains(&checksum.as_str()) {
+                if local.contains(&checksum.as_str()) {
                     return Ok(checksum);
                 }
             }
@@ -444,9 +497,9 @@ pub(super) fn choose_checksum_algorithm(
         // list wins. This gives client preference order priority.
         // upstream: compat.c:349-354 - client continues iterating to find the
         // local item with the best (lowest) position in our own list.
-        for &local in SUPPORTED_CHECKSUMS {
-            if remote_items.contains(&local) {
-                return ChecksumAlgorithm::parse(local)
+        for &name in local {
+            if remote_items.contains(&name) {
+                return ChecksumAlgorithm::parse(name)
                     .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e.to_string()));
             }
         }
@@ -465,18 +518,37 @@ pub(super) fn choose_checksum_algorithm(
 /// on the first entry in the client's list that also appears in the server's list.
 ///
 /// upstream: compat.c:332-363 `parse_negotiate_str()`
+///
+/// This is the default-list convenience wrapper exercised by the test suite;
+/// production callers use [`choose_compression_algorithm_in`] so the
+/// `RSYNC_COMPRESS_LIST` env override can substitute the candidate list.
+#[cfg(test)]
 pub(super) fn choose_compression_algorithm(
     remote_list: &str,
     is_server: bool,
 ) -> io::Result<CompressionAlgorithm> {
     let supported = supported_compressions();
+    choose_compression_algorithm_in(remote_list, is_server, &supported)
+}
+
+/// Chooses a compression algorithm from an explicit local candidate list.
+///
+/// Behaves like [`choose_compression_algorithm`] but takes the ordered local
+/// candidate names as a parameter so the caller can substitute the
+/// `RSYNC_COMPRESS_LIST` env override. With the default
+/// [`supported_compressions`] list the behaviour is unchanged.
+pub(super) fn choose_compression_algorithm_in(
+    remote_list: &str,
+    is_server: bool,
+    local: &[&str],
+) -> io::Result<CompressionAlgorithm> {
     let remote_items: Vec<&str> = remote_list.split_whitespace().collect();
 
     if is_server {
         // Server: iterate client's (remote) list, first match in our list wins.
         for algo in &remote_items {
             if let Ok(compression) = CompressionAlgorithm::parse(algo) {
-                if supported.contains(algo) {
+                if local.contains(algo) {
                     return Ok(compression);
                 }
             }
@@ -484,9 +556,9 @@ pub(super) fn choose_compression_algorithm(
     } else {
         // Client: iterate our local list, first item also in server's (remote)
         // list wins.
-        for &local in &supported {
-            if remote_items.contains(&local) {
-                return CompressionAlgorithm::parse(local)
+        for &name in local {
+            if remote_items.contains(&name) {
+                return CompressionAlgorithm::parse(name)
                     .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e.to_string()));
             }
         }
