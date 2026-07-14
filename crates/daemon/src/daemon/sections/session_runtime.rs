@@ -338,6 +338,22 @@ fn handle_legacy_session(
         _ = conn_state
             .transition(ConnectionState::Closing)
             .map_err(transition_error)?;
+    } else if request.starts_with('#') {
+        // upstream: clientserver.c:1427-1431 - `if (*line == '#') { io_printf(
+        // f_out, "@ERROR: Unknown command '%s'\n", line); return -1; }`. A
+        // `#`-prefixed request that is neither `#list` (handled above) nor the
+        // already-consumed `#early_input=` command is a command the daemon does
+        // not recognize. It is rejected with the unknown-command error - keeping
+        // the raw line including the leading `#` - which is distinct from the
+        // unknown-module response reserved for a bad module name. The client
+        // treats `@ERROR` as fatal and closes without reading further.
+        let command_display = sanitize_module_identifier(&request);
+        let payload = UNKNOWN_COMMAND_PAYLOAD.replace("{command}", command_display.as_ref());
+        send_error(reader.get_mut(), &mut limiter, &payload)?;
+        // FSM: -> Closing after rejecting the unknown command.
+        _ = conn_state
+            .transition(ConnectionState::Closing)
+            .map_err(transition_error)?;
     } else {
         respond_with_module_request(
             &mut reader,
