@@ -1615,6 +1615,13 @@ fn read_entry_rejects_invalid_mode_type() {
     let mut reader = FileListReader::new(protocol);
     let err = reader.read_entry(&mut cursor).unwrap_err();
     assert_eq!(err.kind(), io::ErrorKind::InvalidData);
+    // upstream flist.c:890 exit_cleanup(RERR_PROTOCOL) (exit 2), not
+    // RERR_STREAMIO(12); the error must carry the ProtocolViolation marker.
+    assert!(
+        err.get_ref()
+            .is_some_and(|e| e.is::<crate::ProtocolViolation>()),
+        "invalid file mode must be tagged RERR_PROTOCOL",
+    );
 }
 
 /// Every standard S_IFMT type (reg/dir/lnk/chr/blk/fifo/sock) stays acceptable,

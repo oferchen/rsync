@@ -187,6 +187,13 @@ fn handle_goodbye_proto32_rejects_garbage_in_place_of_ndx_done() {
         io::ErrorKind::InvalidData,
         "non-NDX_DONE garbage must surface InvalidData, got {err:?}",
     );
+    // upstream main.c:922 exit_cleanup(RERR_PROTOCOL) (exit 2): the error must
+    // carry the ProtocolViolation marker so the mapper yields 2 not streamio(12).
+    assert!(
+        err.get_ref()
+            .is_some_and(|e| e.is::<protocol::ProtocolViolation>()),
+        "goodbye garbage must be tagged RERR_PROTOCOL",
+    );
     // The error message must be informative and reference the role
     // trailer so upstream-style log scraping keeps working.
     let msg = err.to_string();
@@ -215,6 +222,12 @@ fn read_expected_ndx_done_proto29_rejects_garbage() {
         err.kind(),
         io::ErrorKind::InvalidData,
         "non-NDX_DONE garbage on legacy path must surface InvalidData, got {err:?}",
+    );
+    // upstream: RERR_PROTOCOL (exit 2) - the guard must tag the marker.
+    assert!(
+        err.get_ref()
+            .is_some_and(|e| e.is::<protocol::ProtocolViolation>()),
+        "read_expected_ndx_done garbage must be tagged RERR_PROTOCOL",
     );
     let msg = err.to_string();
     assert!(

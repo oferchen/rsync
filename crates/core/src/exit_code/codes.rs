@@ -324,13 +324,31 @@ impl ExitCode {
     /// - `ConnectionRefused`, `ConnectionReset`, `ConnectionAborted`,
     ///   `BrokenPipe`, `AddrInUse`, `AddrNotAvailable`, `NotConnected` - `SocketIo`
     /// - `TimedOut` - `Timeout`
-    /// - `UnexpectedEof`, `InvalidData` - `StreamIo`
+    /// - `InvalidData` tagged [`protocol::ProtocolViolation`] - `Protocol`
+    /// - `UnexpectedEof`, other `InvalidData` - `StreamIo`
     /// - `Unsupported` - `Unsupported`
     /// - `Interrupted` by signal - `Signal`
     /// - All other I/O errors - `FileIo`
+    ///
+    /// A wire-protocol violation that upstream rsync exits with
+    /// `RERR_PROTOCOL` (2) is encoded as an `InvalidData` error whose inner
+    /// error is a [`protocol::ProtocolViolation`] (see
+    /// [`protocol::protocol_violation`]). Such errors map to
+    /// [`ExitCode::Protocol`]; every other `InvalidData`/`UnexpectedEof`
+    /// (truncated stream, corrupt frame, unexpected EOF) stays
+    /// [`ExitCode::StreamIo`] (12), matching upstream's `RERR_STREAMIO`.
     #[must_use]
     pub fn from_io_error(error: &std::io::Error) -> Self {
         use std::io::ErrorKind;
+
+        // upstream: errcode.h RERR_PROTOCOL=2 - a tagged protocol violation
+        // outranks the generic InvalidData=>StreamIo(12) mapping below.
+        if error
+            .get_ref()
+            .is_some_and(|inner| inner.is::<protocol::ProtocolViolation>())
+        {
+            return Self::Protocol;
+        }
 
         match error.kind() {
             ErrorKind::NotFound | ErrorKind::PermissionDenied | ErrorKind::AlreadyExists => {

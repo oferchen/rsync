@@ -249,6 +249,29 @@ fn from_io_error_maps_stream_errors() {
 
     let err = Error::from(ErrorKind::InvalidData);
     assert_eq!(ExitCode::from_io_error(&err), ExitCode::StreamIo);
+
+    // An InvalidData error carrying an unrelated inner error stays StreamIo:
+    // only the ProtocolViolation marker opts into RERR_PROTOCOL.
+    let err = Error::new(ErrorKind::InvalidData, "corrupt multiplex frame");
+    assert_eq!(ExitCode::from_io_error(&err), ExitCode::StreamIo);
+}
+
+#[test]
+fn from_io_error_maps_tagged_protocol_violation_to_protocol() {
+    // WHY: upstream distinguishes RERR_PROTOCOL(2) from RERR_STREAMIO(12) at
+    // the call site (errcode.h). A ProtocolViolation-tagged InvalidData error
+    // is oc's carrier for the RERR_PROTOCOL sites (e.g. sender.c:316 phase-2
+    // transfer request, io.c:2032-2065 malformed sum_head); it must map to
+    // ExitCode::Protocol, while a plain InvalidData/UnexpectedEof stays
+    // StreamIo. Regressing this collapses exit 2 back into exit 12.
+    let err = protocol::protocol_violation("got transfer request in phase 2 [sender]");
+    assert_eq!(err.kind(), std::io::ErrorKind::InvalidData);
+    assert_eq!(ExitCode::from_io_error(&err), ExitCode::Protocol);
+    assert_eq!(ExitCode::from_io_error(&err).as_i32(), 2);
+
+    // The text is unchanged relative to a plain InvalidData error, so wrapping
+    // is observationally transparent apart from the exit-code mapping.
+    assert_eq!(err.to_string(), "got transfer request in phase 2 [sender]");
 }
 
 #[test]

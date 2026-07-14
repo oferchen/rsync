@@ -1513,6 +1513,13 @@ fn assert_rejects_negative_token(mut decoder: CompressedTokenDecoder) {
         .recv_token(&mut cursor)
         .expect_err("decoder must reject negative token");
     assert_eq!(err.kind(), io::ErrorKind::InvalidData);
+    // upstream token.c:528 invalid_compressed_token() exits RERR_PROTOCOL (2),
+    // not RERR_STREAMIO(12); the error must carry the ProtocolViolation marker.
+    assert!(
+        err.get_ref()
+            .is_some_and(|e| e.is::<crate::ProtocolViolation>()),
+        "negative token must be tagged RERR_PROTOCOL",
+    );
     assert_eq!(err.to_string(), "invalid token number in compressed stream");
 }
 

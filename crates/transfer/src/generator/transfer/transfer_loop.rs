@@ -410,19 +410,16 @@ impl GeneratorContext {
             // phase where the sender has already emitted its own "phase done" and
             // is only draining the receiver's end-of-phase NDX_DONE acknowledgements.
             // Upstream prints `got transfer request in phase 2 [who_am_i]` to FERROR
-            // and aborts with exit_cleanup(RERR_PROTOCOL). oc mirrors that abort by
-            // returning the RERR_PROTOCOL-class `InvalidData` error (the same wire
-            // representation used by the receiver's goodbye NDX_DONE guard), so the
-            // loop fails loud instead of hanging or silently servicing the request.
+            // and aborts with exit_cleanup(RERR_PROTOCOL) (exit 2). oc mirrors that
+            // abort by returning a `ProtocolViolation`-tagged `InvalidData` error so
+            // the loop fails loud with the same exit code instead of hanging or
+            // silently servicing the request. The wire text is unchanged.
             if phase == 2 {
-                return Err(io::Error::new(
-                    io::ErrorKind::InvalidData,
-                    format!(
-                        "got transfer request in phase 2 [sender] {}{}",
-                        crate::role_trailer::error_location!(),
-                        crate::role_trailer::sender()
-                    ),
-                ));
+                return Err(protocol::protocol_violation(format!(
+                    "got transfer request in phase 2 [sender] {}{}",
+                    crate::role_trailer::error_location!(),
+                    crate::role_trailer::sender()
+                )));
             }
 
             // upstream: sender.c:341-344 - dry_run (!do_xfers) logs the item and
@@ -1338,9 +1335,16 @@ mod phase2_guard_tests {
         wire.extend_from_slice(&ITEM_TRANSFER_LE);
 
         let err = drive(&mut ctx, wire).expect_err("phase-2 request must abort");
-        // upstream RERR_PROTOCOL maps to InvalidData in this crate (mirrors the
-        // receiver's goodbye NDX_DONE guard, receiver/transfer/phases.rs).
+        // upstream sender.c:316 exit_cleanup(RERR_PROTOCOL) (exit 2). oc tags the
+        // InvalidData error as a ProtocolViolation so the core exit-code mapper
+        // yields RERR_PROTOCOL(2), not RERR_STREAMIO(12). The wire kind and text
+        // stay identical to the receiver's goodbye NDX_DONE guard.
         assert_eq!(err.kind(), io::ErrorKind::InvalidData);
+        assert!(
+            err.get_ref()
+                .is_some_and(|e| e.is::<protocol::ProtocolViolation>()),
+            "phase-2 abort must be tagged RERR_PROTOCOL"
+        );
         assert!(
             err.to_string().contains("got transfer request in phase 2"),
             "unexpected message: {err}"
