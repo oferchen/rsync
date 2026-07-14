@@ -16,6 +16,7 @@ use super::super::super::config::{
     ClientConfig, DeleteMode, IconvSetting, ReferenceDirectoryKind, StrongChecksumAlgorithm,
     TransferTimeout,
 };
+use super::super::output_option::{OutputWordKind, make_output_option};
 use super::{RemoteRole, SecludedInvocation};
 use transfer::setup::build_capability_string_suffix;
 
@@ -458,6 +459,13 @@ impl<'a> RemoteInvocationBuilder<'a> {
             args.push(OsString::from("--numeric-ids"));
         }
 
+        // upstream: options.c:2908-2909 - `if (use_qsort) "--use-qsort"`.
+        // Unconditional (not direction-gated): the peer sorts its file list
+        // with the same comparator so both sides agree on ordering.
+        if self.config.qsort() {
+            args.push(OsString::from("--use-qsort"));
+        }
+
         // upstream: options.c:2511 - server_options() NEVER forwards
         // --trust-sender. `parse_arguments()` only sets the internal
         // `trust_sender_args`/`trust_sender` locals; the server side always
@@ -526,13 +534,25 @@ impl<'a> RemoteInvocationBuilder<'a> {
             args.push(OsString::from("--copy-devices"));
         }
 
-        // upstream: options.c:2852-2853 server_options() - only `--super`
-        // (am_root > 1) is forwarded, and solely inside the `if (am_sender)`
-        // block. `--fake-super` (am_root == -1) is never forwarded in either
-        // direction: it is a receiver-local storage mode (special-file metadata
-        // goes to user.rsync.%stat xattrs) that the peer must not learn about.
-        // Forwarding it to a remote sender on a PULL made the remote stat source
-        // paths under fake-super semantics, which upstream never does.
+        // upstream: options.c:2852-2857 server_options() - inside the
+        // `if (am_sender)` block: `--super` when `am_root > 1` (an explicit
+        // --super, never mere root), then `--stats` when `do_stats`. Both are
+        // forwarded only on a push (RemoteRole::Sender is am_sender), where the
+        // remote receiver/generator performs the privileged operations and
+        // computes the transfer statistics. `--fake-super` (am_root == -1) is
+        // never forwarded in either direction: it is a receiver-local storage
+        // mode (special-file metadata goes to user.rsync.%stat xattrs) that the
+        // peer must not learn about; forwarding it to a remote sender on a PULL
+        // made the remote stat source paths under fake-super semantics, which
+        // upstream never does.
+        if self.role == RemoteRole::Sender {
+            if self.config.super_user() {
+                args.push(OsString::from("--super"));
+            }
+            if self.config.stats() {
+                args.push(OsString::from("--stats"));
+            }
+        }
 
         // upstream: options.c:2646-2649 - --omit-dir-times ('O') and
         // --omit-link-times ('J') are encoded as sender-only compact letters in
@@ -591,6 +611,22 @@ impl<'a> RemoteInvocationBuilder<'a> {
                 arg.push(ref_dir.path().as_os_str());
                 args.push(arg);
             }
+        }
+
+        // upstream: options.c:2945-2949 server_options() - make_output_option()
+        // forwards the explicitly-set --info / --debug levels to the peer so
+        // its diagnostic output matches. `am_sender` (a push) selects the
+        // receiving half of the role `where` filter.
+        let am_sender = self.role == RemoteRole::Sender;
+        if let Some(arg) =
+            make_output_option(OutputWordKind::Info, self.config.info_flags(), am_sender)
+        {
+            args.push(OsString::from(arg));
+        }
+        if let Some(arg) =
+            make_output_option(OutputWordKind::Debug, self.config.debug_flags(), am_sender)
+        {
+            args.push(OsString::from(arg));
         }
 
         if self.config.open_noatime() {

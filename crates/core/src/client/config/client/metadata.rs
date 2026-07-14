@@ -80,6 +80,18 @@ impl ClientConfig {
         self.fake_super
     }
 
+    /// Reports whether the user explicitly requested `--super`.
+    ///
+    /// Mirrors upstream's `am_root > 1` state (`options.c:90`), set only by an
+    /// explicit `--super` (not by merely running as root). The remote-invocation
+    /// builder forwards `--super` on a push under this condition, matching
+    /// `options.c:2852`.
+    #[must_use]
+    #[doc(alias = "--super")]
+    pub const fn super_user(&self) -> bool {
+        self.super_user
+    }
+
     /// Reports whether timestamps should be preserved.
     #[must_use]
     #[doc(alias = "--times")]

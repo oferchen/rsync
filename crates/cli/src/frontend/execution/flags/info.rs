@@ -187,6 +187,48 @@ impl InfoFlagSettings {
         INFO_FLAG_SPECS.iter().find(|spec| spec.name == name)
     }
 
+    /// Returns the explicitly-set `(name, level)` info categories in upstream
+    /// `info_words[]` order, for forwarding to a remote peer.
+    ///
+    /// `stats` is intentionally omitted: oc conflates `--stats` and
+    /// `--info=stats` into a single stats level and forwards it via the
+    /// standalone `--stats` flag (upstream `if (do_stats) --stats`,
+    /// options.c:2856), so re-emitting `--info=stats` here would double-send.
+    /// The remote builders apply upstream's role `where` filter to this list.
+    pub(crate) fn iter_enabled_flags(&self) -> Vec<(&'static str, u8)> {
+        let mut out: Vec<(&'static str, u8)> = Vec::new();
+        let mut push = |name: &'static str, level: Option<u8>| {
+            if let Some(level) = level {
+                out.push((name, level));
+            }
+        };
+        // upstream: options.c:280-294 info_words[] order.
+        push("backup", self.backup);
+        push("copy", self.copy);
+        push("del", self.del);
+        push("flist", self.flist);
+        push("misc", self.misc);
+        push("mount", self.mount);
+        let name_level = self.name.as_ref().map(|level| match level {
+            NameOutputLevel::Disabled => 0,
+            NameOutputLevel::UpdatedOnly => 1,
+            NameOutputLevel::UpdatedAndUnchanged => 2,
+        });
+        push("name", name_level);
+        push("nonreg", self.nonreg);
+        let progress_level = match self.progress {
+            ProgressSetting::Unspecified => None,
+            ProgressSetting::Disabled => Some(0),
+            ProgressSetting::PerFile => Some(1),
+            ProgressSetting::Overall => Some(2),
+        };
+        push("progress", progress_level);
+        push("remove", self.remove);
+        push("skip", self.skip);
+        push("symsafe", self.symsafe);
+        out
+    }
+
     #[cfg(test)]
     pub(super) fn apply(&mut self, token: &str, display: &str) -> Result<(), Message> {
         self.apply_with_mode(token, display, false)
