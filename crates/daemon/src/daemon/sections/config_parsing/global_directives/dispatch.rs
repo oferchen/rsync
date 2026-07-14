@@ -57,10 +57,10 @@ fn apply_global_directive(
             // upstream: params.c:parse_directives - `&include` and `&merge` both
             // pull configuration from another file. The historical `include =`
             // form is retained as a synonym so existing oc-rsync configs keep
-            // working. `&merge` differs from `&include` in upstream only in
-            // global-defaults handling for directory inclusion; we apply file
-            // contents uniformly because oc-rsync does not yet track Vars push/
-            // pop semantics for directory globbing.
+            // working. `&include` runs under a private global scope (`]push`/
+            // `]pop`) so the included file's globals do not leak back, and a
+            // directory target globs `*.conf`; `&merge` shares the current scope
+            // and globs `*.inc`. `apply_include_directive` implements both.
             apply_include_directive(state, key, value, path, line_number, canonical, stack)?;
         }
         "motd file" => {
