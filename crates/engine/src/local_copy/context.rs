@@ -191,6 +191,14 @@ pub(crate) struct CopyContext<'a> {
     /// `RERR_PARTIAL` (exit 23) exit code, mirroring upstream's `FERROR_XFER`
     /// handling of a failed `do_symlink()`.
     unsupported_operation_skipped: bool,
+    /// Set when a `--remove-source-files` source was refused (it changed since
+    /// it was copied, or it is the very inode just written to the destination)
+    /// or its unlink failed. The entry is left in place and the run continues,
+    /// but this flag drives the final `RERR_PARTIAL` (exit 23) exit code,
+    /// mirroring upstream `successful_send()` where every such `FERROR_XFER`
+    /// sets `got_xfer_error` without aborting the transfer.
+    // upstream: sender.c:131-182 successful_send(); log.c:311 got_xfer_error
+    sender_remove_error: bool,
     /// `true` when the active plan carries more than one source operand.
     /// Used to switch `--delete-during` to a deferred sweep so the per-source
     /// keep lists can be merged before any extraneous unlink fires; upstream

@@ -99,6 +99,13 @@ pub(super) fn link_special_from_link_dest(
         destination_previously_existed,
     );
     context.register_progress();
-    remove_source_entry_if_requested(context, source, record_path, file_type)?;
+    remove_source_entry_if_requested(
+        context,
+        source,
+        destination,
+        metadata,
+        record_path,
+        file_type,
+    )?;
     Ok(())
 }

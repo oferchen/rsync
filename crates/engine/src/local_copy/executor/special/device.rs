@@ -188,7 +188,14 @@ pub(crate) fn copy_device(
         }
 
         context.register_progress();
-        remove_source_entry_if_requested(context, source, record_path.as_deref(), file_type)?;
+        remove_source_entry_if_requested(
+            context,
+            source,
+            destination,
+            metadata,
+            record_path.as_deref(),
+            file_type,
+        )?;
         return Ok(());
     }
 
@@ -303,7 +310,14 @@ pub(crate) fn copy_device(
                 destination_previously_existed,
             );
             context.register_progress();
-            remove_source_entry_if_requested(context, source, record_path.as_deref(), file_type)?;
+            remove_source_entry_if_requested(
+                context,
+                source,
+                destination,
+                metadata,
+                record_path.as_deref(),
+                file_type,
+            )?;
             return Ok(());
         }
     }
@@ -414,7 +428,14 @@ pub(crate) fn copy_device(
         }
 
         context.register_progress();
-        remove_source_entry_if_requested(context, source, record_path.as_deref(), file_type)?;
+        remove_source_entry_if_requested(
+            context,
+            source,
+            destination,
+            metadata,
+            record_path.as_deref(),
+            file_type,
+        )?;
     }
     Ok(())
 }

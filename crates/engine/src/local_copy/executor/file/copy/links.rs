@@ -239,7 +239,14 @@ pub(super) fn process_links(
             CreatedEntryKind::HardLink,
             destination_previously_existed,
         );
-        remove_source_entry_if_requested(context, source, Some(record_path), file_type)?;
+        remove_source_entry_if_requested(
+            context,
+            source,
+            destination,
+            metadata,
+            Some(record_path),
+            file_type,
+        )?;
         // upstream: generator.c:1006-1007 try_dests_reg() - at match_level 3 the
         // file is only hard-linked; set_file_attrs runs *only* under --atimes.
         // Rewriting metadata unconditionally would, under --fake-super, write a
@@ -373,7 +380,14 @@ pub(super) fn process_links(
                 // instead of the bare path.
                 .with_hardlink_uptodate(true),
             );
-            remove_source_entry_if_requested(context, source, Some(record_path), file_type)?;
+            remove_source_entry_if_requested(
+                context,
+                source,
+                destination,
+                metadata,
+                Some(record_path),
+                file_type,
+            )?;
             return Ok(LinkOutcome {
                 copy_source_override: None,
                 reference_basis: None,
@@ -563,7 +577,14 @@ pub(super) fn process_links(
             CreatedEntryKind::HardLink,
             destination_previously_existed,
         );
-        remove_source_entry_if_requested(context, source, Some(record_path), file_type)?;
+        remove_source_entry_if_requested(
+            context,
+            source,
+            destination,
+            metadata,
+            Some(record_path),
+            file_type,
+        )?;
         return Ok(LinkOutcome {
             copy_source_override: None,
             reference_basis: None,
@@ -652,7 +673,14 @@ pub(super) fn process_links(
                     .with_change_set(change_set),
                 );
                 context.register_progress();
-                remove_source_entry_if_requested(context, source, Some(record_path), file_type)?;
+                remove_source_entry_if_requested(
+                    context,
+                    source,
+                    destination,
+                    metadata,
+                    Some(record_path),
+                    file_type,
+                )?;
                 return Ok(LinkOutcome {
                     copy_source_override: None,
                     reference_basis: None,
@@ -761,6 +789,8 @@ pub(super) fn process_links(
                     remove_source_entry_if_requested(
                         context,
                         source,
+                        destination,
+                        metadata,
                         Some(record_path),
                         file_type,
                     )?;

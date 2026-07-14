@@ -338,7 +338,14 @@ pub(crate) fn copy_symlink(
             .with_change_set(change_set),
         );
         context.register_progress();
-        remove_source_entry_if_requested(context, source, record_path.as_deref(), file_type)?;
+        remove_source_entry_if_requested(
+            context,
+            source,
+            destination,
+            metadata,
+            record_path.as_deref(),
+            file_type,
+        )?;
         return Ok(());
     }
 
@@ -411,7 +418,14 @@ pub(crate) fn copy_symlink(
             );
         }
         context.register_progress();
-        remove_source_entry_if_requested(context, source, record_path.as_deref(), file_type)?;
+        remove_source_entry_if_requested(
+            context,
+            source,
+            destination,
+            metadata,
+            record_path.as_deref(),
+            file_type,
+        )?;
         return Ok(());
     }
 
@@ -500,7 +514,14 @@ pub(crate) fn copy_symlink(
                 destination_previously_existed,
             );
             context.register_progress();
-            remove_source_entry_if_requested(context, source, record_path.as_deref(), file_type)?;
+            remove_source_entry_if_requested(
+                context,
+                source,
+                destination,
+                metadata,
+                record_path.as_deref(),
+                file_type,
+            )?;
             return Ok(());
         }
     }
@@ -522,7 +543,14 @@ pub(crate) fn copy_symlink(
                 ));
             }
             context.register_progress();
-            remove_source_entry_if_requested(context, source, record_path.as_deref(), file_type)?;
+            remove_source_entry_if_requested(
+                context,
+                source,
+                destination,
+                metadata,
+                record_path.as_deref(),
+                file_type,
+            )?;
             return Ok(());
         }
 
@@ -581,7 +609,14 @@ pub(crate) fn copy_symlink(
             destination_previously_existed,
         );
         context.register_progress();
-        remove_source_entry_if_requested(context, source, record_path.as_deref(), file_type)?;
+        remove_source_entry_if_requested(
+            context,
+            source,
+            destination,
+            metadata,
+            record_path.as_deref(),
+            file_type,
+        )?;
         return Ok(());
     }
 
@@ -657,7 +692,14 @@ pub(crate) fn copy_symlink(
             }
         }
         context.register_progress();
-        remove_source_entry_if_requested(context, source, record_path.as_deref(), file_type)?;
+        remove_source_entry_if_requested(
+            context,
+            source,
+            destination,
+            metadata,
+            record_path.as_deref(),
+            file_type,
+        )?;
         return Ok(());
     }
 
@@ -788,7 +830,14 @@ pub(crate) fn copy_symlink(
         context.record(record);
     }
     context.register_progress();
-    remove_source_entry_if_requested(context, source, record_path.as_deref(), file_type)?;
+    remove_source_entry_if_requested(
+        context,
+        source,
+        destination,
+        metadata,
+        record_path.as_deref(),
+        file_type,
+    )?;
     Ok(())
 }
 
