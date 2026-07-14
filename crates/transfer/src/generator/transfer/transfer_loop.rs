@@ -405,6 +405,26 @@ impl GeneratorContext {
                 continue;
             }
 
+            // upstream: sender.c:312-317 - a valid in-range transfer request must
+            // never arrive once the sender has advanced into phase 2, the terminal
+            // phase where the sender has already emitted its own "phase done" and
+            // is only draining the receiver's end-of-phase NDX_DONE acknowledgements.
+            // Upstream prints `got transfer request in phase 2 [who_am_i]` to FERROR
+            // and aborts with exit_cleanup(RERR_PROTOCOL). oc mirrors that abort by
+            // returning the RERR_PROTOCOL-class `InvalidData` error (the same wire
+            // representation used by the receiver's goodbye NDX_DONE guard), so the
+            // loop fails loud instead of hanging or silently servicing the request.
+            if phase == 2 {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    format!(
+                        "got transfer request in phase 2 [sender] {}{}",
+                        crate::role_trailer::error_location!(),
+                        crate::role_trailer::sender()
+                    ),
+                ));
+            }
+
             // upstream: sender.c:341-344 - dry_run (!do_xfers) logs the item and
             // echoes write_ndx_and_attrs() without calling receive_sums(). The
             // echo still carries the xattr response when ITEM_REPORT_XATTR is
@@ -1225,5 +1245,121 @@ mod sender_diminished_guard_tests {
         let dir = tempfile::tempdir().expect("tempdir");
         let path = dir.path().join("does-not-exist.bin");
         assert!(!source_diminished_below_flist(&path, 1024));
+    }
+}
+
+#[cfg(test)]
+mod phase2_guard_tests {
+    //! Terminal-phase abort guard for the sender loop.
+    //!
+    //! upstream: sender.c:312-317 - once `send_files()` has advanced into phase
+    //! 2 (the final phase, where the sender has already emitted its own phase
+    //! done and only drains the receiver's end-of-phase `NDX_DONE`
+    //! acknowledgements), a valid in-range transfer request is a protocol
+    //! violation. Upstream prints `got transfer request in phase 2 [who_am_i]`
+    //! and `exit_cleanup(RERR_PROTOCOL)`. These tests pin that the loop aborts
+    //! loud (a typed error, not a hang or silent service) while the normal
+    //! phase-completion `NDX_DONE` sequence still returns `Ok`.
+
+    use std::ffi::OsString;
+    use std::io::{self, Cursor};
+    use std::path::PathBuf;
+
+    use protocol::ProtocolVersion;
+    use protocol::codec::{MonotonicNdxWriter, NdxCodec};
+
+    use crate::config::ServerConfig;
+    use crate::generator::GeneratorContext;
+    use crate::handshake::HandshakeResult;
+    use crate::role::ServerRole;
+    use crate::writer::ServerWriter;
+
+    /// `ITEM_TRANSFER` (0x8000) as its 2-byte little-endian wire encoding, the
+    /// shortint iflags the receiver sends for a real file transfer request
+    /// (proto >= 29, `item_flags.rs::read`).
+    const ITEM_TRANSFER_LE: [u8; 2] = [0x00, 0x80];
+
+    fn test_handshake() -> HandshakeResult {
+        HandshakeResult {
+            protocol: ProtocolVersion::try_from(32u8).unwrap(),
+            buffered: Vec::new(),
+            compat_exchanged: false,
+            client_args: None,
+            io_timeout: None,
+            negotiated_algorithms: None,
+            compat_flags: None,
+            checksum_seed: 0,
+        }
+    }
+
+    /// Builds a generator over a single source file so wire NDX 0 is a valid,
+    /// in-range transfer request.
+    fn generator_with_one_file() -> (tempfile::TempDir, GeneratorContext) {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let file = dir.path().join("only.txt");
+        std::fs::write(&file, b"payload").expect("write source");
+
+        let handshake = test_handshake();
+        let config = ServerConfig {
+            role: ServerRole::Generator,
+            protocol: ProtocolVersion::try_from(32u8).unwrap(),
+            flag_string: "-logDtpre.".to_owned(),
+            args: vec![OsString::from(&file)],
+            ..Default::default()
+        };
+        let mut ctx = GeneratorContext::new_for_test(&handshake, config);
+        ctx.build_file_list(&[PathBuf::from(&file)])
+            .expect("build file list");
+        (dir, ctx)
+    }
+
+    /// Drives the sender loop to completion over a crafted receiver wire stream,
+    /// returning the loop result and the bytes the sender wrote back.
+    fn drive(ctx: &mut GeneratorContext, incoming: Vec<u8>) -> io::Result<()> {
+        let mut reader = Cursor::new(incoming);
+        let mut writer = ServerWriter::new_plain(Vec::new());
+        let mut progress: Option<&mut dyn crate::TransferProgressCallback> = None;
+        let mut itemize: Option<&mut dyn crate::ItemizeCallback> = None;
+        ctx.run_transfer_loop(&mut reader, &mut writer, &mut progress, &mut itemize)
+            .map(|_| ())
+    }
+
+    #[test]
+    fn transfer_request_in_phase_2_aborts_with_protocol_error() {
+        let (_dir, mut ctx) = generator_with_one_file();
+
+        // Two NDX_DONEs advance the sender 0 -> 1 -> 2; the following in-range
+        // request (NDX 0 + ITEM_TRANSFER iflags) must never arrive in phase 2.
+        let mut ndx = MonotonicNdxWriter::new(32);
+        let mut wire = Vec::new();
+        ndx.write_ndx_done(&mut wire).unwrap();
+        ndx.write_ndx_done(&mut wire).unwrap();
+        ndx.write_ndx(&mut wire, 0).unwrap();
+        wire.extend_from_slice(&ITEM_TRANSFER_LE);
+
+        let err = drive(&mut ctx, wire).expect_err("phase-2 request must abort");
+        // upstream RERR_PROTOCOL maps to InvalidData in this crate (mirrors the
+        // receiver's goodbye NDX_DONE guard, receiver/transfer/phases.rs).
+        assert_eq!(err.kind(), io::ErrorKind::InvalidData);
+        assert!(
+            err.to_string().contains("got transfer request in phase 2"),
+            "unexpected message: {err}"
+        );
+    }
+
+    #[test]
+    fn phase_completion_ndx_done_sequence_succeeds() {
+        let (_dir, mut ctx) = generator_with_one_file();
+
+        // The normal end-of-transfer sequence: one NDX_DONE per phase boundary
+        // (0 -> 1, 1 -> 2, 2 -> break past max_phase). No transfer request ever
+        // arrives, so the loop completes without tripping the phase-2 guard.
+        let mut ndx = MonotonicNdxWriter::new(32);
+        let mut wire = Vec::new();
+        ndx.write_ndx_done(&mut wire).unwrap();
+        ndx.write_ndx_done(&mut wire).unwrap();
+        ndx.write_ndx_done(&mut wire).unwrap();
+
+        drive(&mut ctx, wire).expect("clean phase completion");
     }
 }
