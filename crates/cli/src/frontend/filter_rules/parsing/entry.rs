@@ -123,7 +123,12 @@ pub(super) fn parse_rule_directive(text: &str) -> Result<FilterDirective, Messag
         return Err(message);
     }
 
-    if trimmed.eq_ignore_ascii_case("clear") {
+    // upstream: exclude.c:1139 RULE_STRCMP(s, "clear") is a case-sensitive
+    // strncmp reached only via `case 'c'`, so `CLEAR`/`Clear` are not the clear
+    // directive - they fall through to the inner switch default and raise
+    // "Unknown filter rule". Match the exact lowercase keyword, matching the
+    // merge-file path (merge/parse.rs parse_rule_line).
+    if trimmed == "clear" {
         return Ok(FilterDirective::Clear);
     }
 

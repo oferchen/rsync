@@ -41,10 +41,19 @@ fn parse_clear_keyword() {
 }
 
 #[test]
-fn parse_clear_keyword_uppercase() {
+fn parse_clear_keyword_uppercase_is_error() {
+    // upstream: exclude.c:1139 RULE_STRCMP(s, "clear") is a case-sensitive
+    // strncmp reached only via `case 'c'`. `CLEAR` misses it, reaches the inner
+    // switch default, and raises "Unknown filter rule" (RERR_SYNTAX). A drop-in
+    // must reject it, not silently coerce the case into a clear directive.
     let result = parse_filter_directive(OsStr::new("CLEAR"));
-    assert!(result.is_ok());
-    assert!(matches!(result.unwrap(), FilterDirective::Clear));
+    assert!(result.is_err());
+}
+
+#[test]
+fn parse_clear_keyword_mixed_case_is_error() {
+    let result = parse_filter_directive(OsStr::new("Clear"));
+    assert!(result.is_err());
 }
 
 #[test]
@@ -267,10 +276,17 @@ fn dir_merge_per_dir_alias() {
 }
 
 #[test]
-fn dir_merge_case_insensitive() {
-    let result = parse_dir_merge_alias("DIR-MERGE .filter");
-    assert!(result.is_some());
-    assert!(result.unwrap().is_ok());
+fn dir_merge_uppercase_is_not_keyword() {
+    // upstream: exclude.c:1143 RULE_STRCMP(s, "dir-merge") is a case-sensitive
+    // strncmp reached via `case 'd'`. `DIR-MERGE` never matches, so this parser
+    // must decline it (returns None) and let the caller error, rather than
+    // treating a mixed-case spelling as the dir-merge directive.
+    assert!(parse_dir_merge_alias("DIR-MERGE .filter").is_none());
+    assert!(parse_dir_merge_alias("Dir-Merge .filter").is_none());
+    // The lowercase keyword still parses as the dir-merge directive.
+    let ok = parse_dir_merge_alias("dir-merge .filter");
+    assert!(ok.is_some());
+    assert!(ok.unwrap().is_ok());
 }
 
 #[test]
@@ -366,9 +382,19 @@ fn keyword_risk() {
 }
 
 #[test]
-fn keyword_case_insensitive() {
-    let result = parse_keyword_rule("INCLUDE *.rs");
-    assert!(result.is_ok());
+fn keyword_mixed_case_is_error() {
+    // upstream: exclude.c:1069-1078 rule_strcmp - long-form keywords are matched
+    // with a case-sensitive strncmp dispatched from a switch on the lowercase
+    // first byte (exclude.c:1147/1155). `INCLUDE`/`Exclude` never match; they
+    // reach the inner switch default and raise "Unknown filter rule". A drop-in
+    // must error rather than coerce the case into the include/exclude rule.
+    assert!(parse_keyword_rule("INCLUDE *.rs").is_err());
+    assert!(parse_keyword_rule("Include *.rs").is_err());
+    assert!(parse_keyword_rule("EXCLUDE *.bak").is_err());
+    assert!(parse_keyword_rule("Merge foo").is_err());
+    // Lowercase keywords still parse as their rule.
+    assert!(parse_keyword_rule("include *.rs").is_ok());
+    assert!(parse_keyword_rule("exclude *.bak").is_ok());
 }
 
 #[test]
@@ -402,6 +428,39 @@ fn long_merge_missing_path() {
 fn long_merge_non_matching() {
     let result = parse_long_merge_directive("include pattern");
     assert!(result.is_none());
+}
+
+#[test]
+fn long_merge_mixed_case_is_not_keyword() {
+    // upstream: exclude.c:1159 RULE_STRCMP(s, "merge") is a case-sensitive
+    // strncmp reached via `case 'm'`. `Merge`/`MERGE` never match the merge
+    // directive, so this parser declines them (returns None); the lowercase
+    // keyword still parses as a merge directive.
+    assert!(parse_long_merge_directive("Merge filter.rules").is_none());
+    assert!(parse_long_merge_directive("MERGE filter.rules").is_none());
+    assert!(parse_long_merge_directive("merge filter.rules").is_some());
+}
+
+#[test]
+fn filter_directive_mixed_case_keywords_are_errors() {
+    // End-to-end through the top-level dispatcher: mixed-case long-form keywords
+    // must be rejected exactly as upstream rsync rejects them (RERR_SYNTAX),
+    // while the lowercase spelling parses. upstream: exclude.c:1137-1173.
+    for rule in [
+        "Merge foo",
+        "INCLUDE bar",
+        "Exclude baz",
+        "Dir-Merge .f",
+        "CLEAR",
+    ] {
+        assert!(
+            parse_filter_directive(OsStr::new(rule)).is_err(),
+            "mixed-case keyword `{rule}` must be rejected"
+        );
+    }
+    assert!(parse_filter_directive(OsStr::new("merge foo")).is_ok());
+    assert!(parse_filter_directive(OsStr::new("include bar")).is_ok());
+    assert!(parse_filter_directive(OsStr::new("clear")).is_ok());
 }
 
 #[test]

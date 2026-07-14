@@ -122,27 +122,33 @@ pub(super) fn parse_keyword_rule(trimmed: &str) -> Result<FilterDirective, Messa
         Ok(FilterDirective::Rule(rule))
     };
 
-    if keyword.eq_ignore_ascii_case("include") {
+    // upstream: exclude.c:1069-1078 rule_strcmp - the long-form keywords are
+    // matched with a case-sensitive strncmp dispatched from a switch on the
+    // lowercase first byte (exclude.c:1137-1173). A mixed-case keyword such as
+    // `EXCLUDE`/`Include` therefore never matches; it reaches the inner switch
+    // default and raises "Unknown filter rule" (RERR_SYNTAX). Compare exactly so
+    // this parser mirrors that behaviour rather than silently coercing the case.
+    if keyword == "include" {
         return build_rule(FilterRuleSpec::include, true, true);
     }
 
-    if keyword.eq_ignore_ascii_case("exclude") {
+    if keyword == "exclude" {
         return build_rule(FilterRuleSpec::exclude, true, true);
     }
 
-    if keyword.eq_ignore_ascii_case("show") {
+    if keyword == "show" {
         return build_rule(FilterRuleSpec::show, false, false);
     }
 
-    if keyword.eq_ignore_ascii_case("hide") {
+    if keyword == "hide" {
         return build_rule(FilterRuleSpec::hide, false, false);
     }
 
-    if keyword.eq_ignore_ascii_case("protect") {
+    if keyword == "protect" {
         return build_rule(FilterRuleSpec::protect, false, false);
     }
 
-    if keyword.eq_ignore_ascii_case("risk") {
+    if keyword == "risk" {
         return build_rule(FilterRuleSpec::risk, false, false);
     }
 
