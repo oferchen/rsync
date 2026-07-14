@@ -133,6 +133,15 @@ pub fn setup_protocol_with<'a>(
                 negotiator.read_compat_flags(stdin)?
             };
 
+            // upstream: compat.c:751-753 - create-times ride the extended varint
+            // file-list flags (crtimes_ndx, compat.c:582-583). A peer that never
+            // advertised CF_VARINT_FLIST_FLAGS (rsync older than 3.2.0) cannot
+            // parse that field, so upstream aborts with RERR_PROTOCOL here -
+            // after the compat-flags exchange but before negotiate_the_strings()
+            // (compat.c:809). Abort at the same point so no negotiation strings
+            // are exchanged on failure.
+            require_crtimes_capability(config.preserve_crtimes, compat_flags)?;
+
             // Determine whether capability negotiation should happen.
             // upstream compat.c:740-742 - do_negotiated_strings requires CF_VARINT_FLIST_FLAGS.
             let do_negotiation = should_negotiate(
@@ -199,6 +208,37 @@ pub fn setup_protocol_with<'a>(
         compat_flags,
         checksum_seed,
     })
+}
+
+/// Aborts when `--crtimes` is requested but the negotiated peer did not
+/// advertise `CF_VARINT_FLIST_FLAGS`.
+///
+/// Create-times are transmitted through the extended varint file-list flags, so
+/// a peer that lacks that capability (rsync older than 3.2.0) cannot parse the
+/// extra flist field. Upstream prints the message below and calls
+/// `exit_cleanup(RERR_PROTOCOL)`; the returned error is tagged as a
+/// [`protocol::ProtocolViolation`] so the core exit-code mapper yields
+/// `RERR_PROTOCOL` (2) rather than `RERR_STREAMIO` (12).
+///
+/// # Upstream Reference
+///
+/// `compat.c:751-753`:
+/// ```c
+/// if (!xfer_flags_as_varint && preserve_crtimes) {
+///     fprintf(stderr, "Both rsync versions must be at least 3.2.0 for --crtimes.\n");
+///     exit_cleanup(RERR_PROTOCOL);
+/// }
+/// ```
+fn require_crtimes_capability(
+    preserve_crtimes: bool,
+    compat_flags: CompatibilityFlags,
+) -> io::Result<()> {
+    if preserve_crtimes && !compat_flags.contains(CompatibilityFlags::VARINT_FLIST_FLAGS) {
+        return Err(protocol::protocol_violation(
+            "Both rsync versions must be at least 3.2.0 for --crtimes.",
+        ));
+    }
+    Ok(())
 }
 
 /// Builds compatibility flags for our side of the connection.

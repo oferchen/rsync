@@ -134,6 +134,18 @@ pub struct ProtocolSetupConfig<'a> {
     /// Disabled when: `!recurse`, `use_qsort`, or receiver with
     /// `delete_before`/`delete_after`/`delay_updates`/`prune_empty_dirs`.
     pub allow_inc_recurse: bool,
+
+    /// Whether `--crtimes` / `-N` create-time preservation is requested.
+    ///
+    /// Create-times ride the extended varint file-list flags, so a peer that
+    /// did not advertise `CF_VARINT_FLIST_FLAGS` (rsync older than 3.2.0) cannot
+    /// carry them. When this is `true` and the negotiated compat flags lack that
+    /// capability, setup aborts before the string negotiation.
+    ///
+    /// # Upstream Reference
+    ///
+    /// Mirrors `preserve_crtimes` in upstream `compat.c:751-753`.
+    pub preserve_crtimes: bool,
 }
 
 impl<'a> ProtocolSetupConfig<'a> {
@@ -166,6 +178,7 @@ impl<'a> ProtocolSetupConfig<'a> {
             checksum_choice: None,
             checksum_seed: None,
             allow_inc_recurse: false,
+            preserve_crtimes: false,
         }
     }
 
@@ -236,6 +249,13 @@ impl<'a> ProtocolSetupConfig<'a> {
     #[must_use]
     pub const fn with_inc_recurse(mut self, allow: bool) -> Self {
         self.allow_inc_recurse = allow;
+        self
+    }
+
+    /// Sets [`Self::preserve_crtimes`].
+    #[must_use]
+    pub const fn with_crtimes(mut self, preserve: bool) -> Self {
+        self.preserve_crtimes = preserve;
         self
     }
 }

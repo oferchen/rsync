@@ -527,6 +527,9 @@ pub fn run_server_with_handshake<W: Write>(
         checksum_choice: config.checksum_choice,
         checksum_seed: config.checksum_seed,
         allow_inc_recurse,
+        // upstream: compat.c:751-753 - abort when --crtimes is requested but the
+        // negotiated peer lacks CF_VARINT_FLIST_FLAGS (rsync < 3.2.0).
+        preserve_crtimes: config.flags.crtimes,
     };
     let setup_result = setup::setup_protocol(&mut stdout, &mut chained_stdin, &setup_config)?;
 
