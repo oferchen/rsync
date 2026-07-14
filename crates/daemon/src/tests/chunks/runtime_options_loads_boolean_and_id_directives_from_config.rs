@@ -4,7 +4,7 @@ fn runtime_options_loads_boolean_and_id_directives_from_config() {
     let mut file = NamedTempFile::new().expect("config file");
     writeln!(
         file,
-        "[docs]\npath = /srv/docs\nread only = yes\nwrite only = yes\nnumeric ids = on\nuid = 1234\ngid = 4321\nlist = no\n",
+        "[docs]\npath = /srv/docs\nread only = yes\nwrite only = yes\nnumeric ids = yes\nuid = 1234\ngid = 4321\nlist = no\n",
     )
     .expect("write config");
 
