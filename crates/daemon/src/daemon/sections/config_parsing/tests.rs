@@ -2621,4 +2621,92 @@ mod config_parsing_tests {
             "error must name the &include directive: {message}"
         );
     }
+
+    /// Parameter-name matching must fold whitespace and case exactly like
+    /// upstream `strwiEQ` (loadparm.c:282), so every spacing/case variant of a
+    /// label collapses to the same canonical form. This is why `read only`,
+    /// `readonly`, and `Read Only` all address the same parameter.
+    #[test]
+    fn normalize_param_name_folds_whitespace_and_case() {
+        assert_eq!(normalize_param_name("read only"), "readonly");
+        assert_eq!(normalize_param_name("readonly"), "readonly");
+        assert_eq!(normalize_param_name("Read Only"), "readonly");
+        assert_eq!(normalize_param_name("READONLY"), "readonly");
+        assert_eq!(normalize_param_name("  read   only  "), "readonly");
+        assert_eq!(normalize_param_name("read\tonly"), "readonly");
+        // upstream isSpace()==C isspace() also folds the vertical tab.
+        assert_eq!(normalize_param_name("read\u{0B}only"), "readonly");
+    }
+
+    /// `strwiEQ` skips only whitespace - never underscores or hyphens - and the
+    /// generated labels already have underscores rewritten to spaces
+    /// (daemon-parm.awk). An underscore is therefore significant: `read_only`
+    /// stays distinct from the `read only` parameter and must NOT be folded away.
+    #[test]
+    fn normalize_param_name_preserves_underscore_and_hyphen() {
+        assert_eq!(normalize_param_name("read_only"), "read_only");
+        assert_eq!(normalize_param_name("Read_Only"), "read_only");
+        assert_eq!(normalize_param_name("post-xfer exec"), "post-xferexec");
+    }
+
+    /// Whitespace- and case-variant spellings of a parameter name resolve to
+    /// the same directive, matching upstream 3.4.4 which accepts `readonly`,
+    /// `Read   Only`, and `read<TAB>only` as synonyms for `read only`.
+    #[test]
+    fn parse_module_read_only_whitespace_insensitive() {
+        for spelling in ["readonly", "Read   Only", "read\tonly", "READ ONLY"] {
+            let dir = TempDir::new().expect("create temp dir");
+            let path = dir.path().join("data");
+            fs::create_dir(&path).expect("create dir");
+
+            let config = format!("[mod]\npath = {}\n{spelling} = no\n", path.display());
+            let file = write_config(&config);
+            let result = parse_config_modules(file.path()).expect("parse succeeds");
+            assert!(
+                !result.modules[0].read_only,
+                "'{spelling}' must resolve to the read only parameter",
+            );
+        }
+    }
+
+    /// An underscore in a parameter name is significant. Upstream 3.4.4 logs
+    /// `Unknown Parameter encountered: "read_only"` and ignores the line
+    /// (loadparm.c:356), so `read_only` must NOT set the read only parameter,
+    /// which retains its default of true.
+    #[test]
+    fn parse_module_read_only_underscore_is_not_a_synonym() {
+        let dir = TempDir::new().expect("create temp dir");
+        let path = dir.path().join("data");
+        fs::create_dir(&path).expect("create dir");
+
+        let config = format!("[mod]\npath = {}\nread_only = no\n", path.display());
+        let file = write_config(&config);
+        let result = parse_config_modules(file.path()).expect("parse succeeds");
+        assert!(
+            result.modules[0].read_only,
+            "underscore name must be ignored, leaving read only at its default",
+        );
+    }
+
+    /// The whitespace-insensitive match is shared by every parameter, not just
+    /// booleans: a multi-word string directive spelled without its space still
+    /// resolves. `hostsallow` must populate the same list as `hosts allow`.
+    #[test]
+    fn parse_module_hosts_allow_whitespace_insensitive() {
+        let dir = TempDir::new().expect("create temp dir");
+        let path = dir.path().join("data");
+        fs::create_dir(&path).expect("create dir");
+
+        let config = format!(
+            "[mod]\npath = {}\nHOSTS  ALLOW = 10.0.0.0/8 192.168.0.0/16\n",
+            path.display()
+        );
+        let file = write_config(&config);
+        let result = parse_config_modules(file.path()).expect("parse succeeds");
+        assert_eq!(
+            result.modules[0].hosts_allow.len(),
+            2,
+            "'HOSTS  ALLOW' must resolve to the hosts allow parameter",
+        );
+    }
 }
