@@ -900,3 +900,106 @@ fn one_file_system_default_verbosity_suppresses_info_mount_notice() {
         "default verbosity should suppress MOUNT notices; got {mount_msgs:?}"
     );
 }
+
+/// Mount-point data-loss protection on the delete pass: under
+/// `--one-file-system --delete`, a mount point nested inside an otherwise
+/// fully-extraneous destination directory must be preserved, and the doomed
+/// directory must be pinned (not removed) because it still contains the mount.
+///
+/// This is the residual the plan-level exclusion alone could not reach: the
+/// doomed directory is absent from the source, so the copy walk never recurses
+/// into it and never sees the nested mount as a direct child. The wholesale
+/// `remove_dir_all` emitter would recurse across the mount boundary and destroy
+/// the mounted filesystem. Routing every `--one-file-system` run through the
+/// boundary-aware leaf executor closes it: the executor checks the device
+/// boundary at each recursion level, so the mount (and its contents) survive
+/// while same-device extraneous entries are still removed.
+///
+/// upstream: generator.c:delete_in_dir() (FLAG_MOUNT_DIR skip) and
+/// delete.c:89-97 delete_dir_contents() (a mount point pins the parent).
+///
+/// Unix-only: the device-boundary skip is gated on `st_dev`, which has no
+/// Windows equivalent, so on Windows the boundary check is a no-op and the
+/// nested foreign-device entry would not be preserved.
+#[cfg(unix)]
+#[test]
+fn one_file_system_delete_preserves_mount_nested_in_doomed_dir() {
+    let temp = tempdir().expect("tempdir");
+    let source_root = temp.path().join("source");
+    fs::create_dir_all(&source_root).expect("create source");
+    fs::write(source_root.join("keep.txt"), b"keep").expect("write keep");
+
+    // Pre-seed the destination tree (dest_root/source) with entries absent from
+    // the source so the delete pass treats them as extraneous.
+    let dest_root = temp.path().join("dest");
+    let dest_tree = dest_root.join("source");
+    let doomed = dest_tree.join("doomed");
+    let mnt = doomed.join("mnt");
+    let purge = dest_tree.join("purge");
+    fs::create_dir_all(&mnt).expect("create doomed/mnt");
+    fs::create_dir_all(&purge).expect("create purge");
+    fs::write(doomed.join("regular.txt"), b"same-device").expect("write regular");
+    fs::write(mnt.join("data.txt"), b"mounted data").expect("write mounted data");
+    fs::write(purge.join("gone.txt"), b"same-device").expect("write gone");
+
+    let operands = vec![
+        source_root.into_os_string(),
+        dest_root.clone().into_os_string(),
+    ];
+    let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
+
+    // Report the nested mount (any path component named "mnt") on a foreign
+    // device; everything else is on the transfer-root device.
+    let summary = with_device_id_override(
+        |path, _metadata| {
+            if path
+                .components()
+                .any(|c| c.as_os_str() == std::ffi::OsStr::new("mnt"))
+            {
+                Some(2)
+            } else {
+                Some(1)
+            }
+        },
+        || {
+            plan.execute_with_options(
+                LocalCopyExecution::Apply,
+                LocalCopyOptions::default()
+                    .one_file_system(true)
+                    .delete(true),
+            )
+        },
+    )
+    .expect("copy succeeds");
+
+    // The source file was copied and kept.
+    assert!(dest_tree.join("keep.txt").exists(), "kept source file survives");
+
+    // The nested mount and its contents are preserved: had `remove_dir_all` run
+    // across the boundary, `mnt/data.txt` would be gone.
+    assert!(mnt.exists(), "nested mount point must be preserved");
+    assert!(
+        mnt.join("data.txt").exists(),
+        "mounted filesystem contents must be intact (no cross-boundary removal)",
+    );
+
+    // The doomed directory is pinned by the mount it still contains.
+    assert!(
+        doomed.exists(),
+        "a directory holding a preserved mount must not be removed",
+    );
+
+    // Same-device extraneous entries are still removed normally.
+    assert!(
+        !doomed.join("regular.txt").exists(),
+        "a same-device leaf inside the doomed dir must still be deleted",
+    );
+    assert!(
+        !purge.exists(),
+        "a fully same-device extraneous directory must be removed",
+    );
+
+    // Deletions were counted (regular.txt, purge/gone.txt, purge/); the mount
+    // and its contents were not.
+    assert!(summary.items_deleted() >= 2, "same-device extras were deleted");
+}
