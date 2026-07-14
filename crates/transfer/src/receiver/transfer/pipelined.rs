@@ -275,6 +275,13 @@ impl ReceiverContext {
 
         self.finalize_transfer(reader, writer)?;
 
+        // upstream: io.c:1547 - io_error |= val on MSG_IO_ERROR from the sender.
+        // The sender emits MSG_IO_ERROR (sender.c:485-486) for source files that
+        // vanished or could not be opened during its send loop. Fold those bits
+        // into the exit-code io_error so the receiver reports 24/23; MSG_NO_SEND
+        // alone only skips the file and carries no exit-code bits.
+        stats.io_error |= reader.take_io_error();
+
         let total_source_bytes: u64 = self.file_list.iter().map(|e| e.size()).sum();
 
         stats.files_transferred = files_transferred;

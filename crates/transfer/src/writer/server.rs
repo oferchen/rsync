@@ -219,6 +219,29 @@ impl<W: Write> ServerWriter<W> {
         self.send_message(MessageCode::Redo, &ndx.to_le_bytes())
     }
 
+    /// Sends a `MSG_IO_ERROR` message carrying the accumulated io_error bits.
+    ///
+    /// After the transfer loop, the sender reports any io_error accumulated
+    /// beyond the baseline already conveyed with the file list (vanished or
+    /// unreadable source files discovered mid-transfer). The receiver ORs this
+    /// value into its own io_error, which drives the final exit code (24 for
+    /// `IOERR_VANISHED`, 23 for `IOERR_GENERAL`). `MSG_NO_SEND` alone only tells
+    /// the receiver to skip the file; it does not carry the exit-code bits.
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `sender.c:485-486`: `if (io_error != save_io_error && protocol_version >= 30)
+    ///   send_msg_int(MSG_IO_ERROR, io_error);` immediately before `write_ndx(NDX_DONE)`.
+    /// - `io.c:1542-1549`: receiver handler ORs the value into `io_error`.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the writer is not in multiplex mode or the underlying
+    /// I/O operation fails.
+    pub fn send_io_error(&mut self, io_error: i32) -> io::Result<()> {
+        self.send_message(MessageCode::IoError, &io_error.to_le_bytes())
+    }
+
     /// Attaches a batch recorder for capturing compressed protocol data.
     ///
     /// The recorder is always attached to the `MultiplexWriter` so it captures

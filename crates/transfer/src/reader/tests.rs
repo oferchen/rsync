@@ -244,6 +244,37 @@ fn server_reader_take_io_error_plain_returns_zero() {
     assert_eq!(reader.take_io_error(), 0);
 }
 
+/// The receiver folds a sender's MSG_IO_ERROR into its exit-code io_error so a
+/// remote pull that loses a source file mid-transfer reports the right code:
+/// IOERR_VANISHED -> 24, IOERR_GENERAL -> 23. This is the value the receiver
+/// transfer path ORs via `stats.io_error |= reader.take_io_error()`.
+/// upstream: io.c:1547 `io_error |= val`; log.c `log_exit` maps to RERR_*.
+#[test]
+fn server_reader_io_error_drives_receiver_exit_code() {
+    use crate::generator::io_error_flags::{IOERR_GENERAL, IOERR_VANISHED, to_exit_code};
+
+    for (bits, expected) in [(IOERR_VANISHED, 24), (IOERR_GENERAL, 23)] {
+        let mut stream = Vec::new();
+        protocol::send_msg(
+            &mut stream,
+            protocol::MessageCode::IoError,
+            &bits.to_le_bytes(),
+        )
+        .unwrap();
+        protocol::send_msg(&mut stream, protocol::MessageCode::Data, b"x").unwrap();
+
+        let mut reader = ServerReader::new_plain(Cursor::new(stream))
+            .activate_multiplex()
+            .unwrap();
+        let mut buf = [0u8; 1];
+        let n = reader.read(&mut buf).unwrap();
+        assert_eq!(n, 1);
+        assert_eq!(&buf, b"x");
+
+        assert_eq!(to_exit_code(reader.take_io_error()), expected);
+    }
+}
+
 #[test]
 fn server_reader_take_io_error_multiplex_accumulates() {
     let mut stream = Vec::new();
