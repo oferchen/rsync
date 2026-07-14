@@ -109,6 +109,82 @@ fn trace_chown_change(
     }
 }
 
+/// `(uid_t)-1` / `(gid_t)-1` widened to `u32`. `chown(2)` reads this value as
+/// "leave unchanged", so it can never be set as an actual owner.
+#[cfg(unix)]
+const IMPOSSIBLE_ID: u32 = u32::MAX;
+
+/// Builds upstream's `set_file_attrs()` "impossible to set" warning body.
+///
+/// Kept pure so the exact wording can be pinned in a unit test. The path is
+/// quoted like upstream `full_fname`, and `kind` is `"uid"` or `"gid"`.
+// upstream: rsync.c:558-561 - "uid 4294967295 (-1) is impossible to set on %s".
+#[cfg(unix)]
+fn impossible_id_message(kind: &str, destination: &Path) -> String {
+    format!(
+        "{kind} 4294967295 (-1) is impossible to set on \"{}\"",
+        destination.display()
+    )
+}
+
+/// Emits the "impossible to set" warning to stderr, mirroring the crate's other
+/// stderr warning helpers (`special::warn_skip_special`,
+/// `xattr_stub::warn_xattr_unsupported`) which print the message verbatim.
+#[cfg(unix)]
+fn warn_impossible_id(kind: &str, destination: &Path) {
+    eprintln!("{}", impossible_id_message(kind, destination));
+}
+
+/// Returns `true` when a resolved id of `(uid_t)-1` cannot be applied because
+/// the destination is not already owned by `-1`.
+// upstream: rsync.c:558-560 - `uid == (uid_t)-1 && sxp->st.st_uid != (uid_t)-1`.
+#[cfg(unix)]
+fn id_is_impossible(resolved: Option<u32>, pre_chown_id: Option<u32>) -> bool {
+    matches!(resolved, Some(IMPOSSIBLE_ID)) && pre_chown_id.unwrap_or(0) != IMPOSSIBLE_ID
+}
+
+/// Returns `true` when the pre-chown mode carried setuid/setgid, so the caller
+/// must re-stat: `chown` clears those bits on many systems and the later mode
+/// compare must observe the post-chown state to restore them.
+// upstream: rsync.c:564-567 - `if (sxp->st.st_mode & (S_ISUID | S_ISGID)) link_stat(...)`.
+#[cfg(unix)]
+fn suid_sgid_needs_restat(pre_chown_mode: Option<u32>) -> bool {
+    pre_chown_mode
+        .map(|mode| mode & (0o4000 | 0o2000) != 0)
+        .unwrap_or(false)
+}
+
+/// Performs upstream's post-`do_lchown` bookkeeping from `set_file_attrs()`.
+///
+/// After the chown succeeds upstream does two things (rsync.c:558-568): warns
+/// when a resolved uid/gid is `(uid_t)-1`, and re-stats the destination when it
+/// carried setuid/setgid bits. `pre_chown` is the destination's stat captured
+/// before the chown. Returns `true` when the caller should refresh its cached
+/// destination stat before the permission comparison so the dropped
+/// setuid/setgid bits get re-applied.
+// upstream: rsync.c:558-568 set_file_attrs() - impossible-id warning + suid/sgid re-stat.
+#[cfg(unix)]
+fn post_chown_bookkeeping(
+    destination: &Path,
+    owner: Option<unix_fs::Uid>,
+    group: Option<unix_fs::Gid>,
+    pre_chown: Option<&fs::Metadata>,
+) -> bool {
+    if id_is_impossible(
+        owner.map(|uid| uid.as_raw()),
+        pre_chown.map(|meta| meta.uid()),
+    ) {
+        warn_impossible_id("uid", destination);
+    }
+    if id_is_impossible(
+        group.map(|gid| gid.as_raw()),
+        pre_chown.map(|meta| meta.gid()),
+    ) {
+        warn_impossible_id("gid", destination);
+    }
+    suid_sgid_needs_restat(pre_chown.map(|meta| meta.mode()))
+}
+
 /// Returns `true` when the current process may set a file's group to `gid`
 /// without privilege: it is the effective gid or one of the supplementary
 /// groups. Mirrors upstream `is_in_group()` (uidlist.c:195-239), the test that
@@ -332,6 +408,10 @@ pub(super) fn ownership_matches(
 /// and directories), ownership/mode/rdev are encoded into the
 /// `user.rsync.%stat` xattr instead of being applied via `chown`. This mirrors
 /// upstream rsync's `set_file_attrs()` behaviour when `am_root < 0`.
+///
+/// Returns `true` when the destination carried setuid/setgid bits that the
+/// chown may have cleared, so the caller must re-stat before the permission
+/// comparison (upstream rsync.c:564-567). Returns `false` when no chown ran.
 // upstream: rsync.c:set_file_attrs() - chownat with conditional AT_SYMLINK_NOFOLLOW
 pub(super) fn set_owner_like(
     metadata: &fs::Metadata,
@@ -339,7 +419,7 @@ pub(super) fn set_owner_like(
     follow_symlinks: bool,
     options: &MetadataOptions,
     existing: Option<&fs::Metadata>,
-) -> Result<(), MetadataError> {
+) -> Result<bool, MetadataError> {
     #[cfg(unix)]
     {
         // upstream: xattrs.c:set_stat_xattr() encodes mode/uid/gid/rdev under
@@ -354,18 +434,19 @@ pub(super) fn set_owner_like(
                 || options.owner_override().is_some()
                 || options.group_override().is_some())
         {
-            return store_fake_super_from_local_metadata(destination, metadata);
+            store_fake_super_from_local_metadata(destination, metadata)?;
+            return Ok(false);
         }
 
         let (owner, group) = resolve_ownership(metadata, options, destination)?;
 
         if owner.is_none() && group.is_none() {
-            return Ok(());
+            return Ok(false);
         }
 
         if let Some(existing) = existing {
             if ownership_matches(&owner, &group, existing) {
-                return Ok(());
+                return Ok(false);
             }
         }
 
@@ -373,6 +454,9 @@ pub(super) fn set_owner_like(
         trace_chown_change(destination, owner, group, existing);
 
         chown_path(destination, owner, group, follow_symlinks)?;
+
+        // upstream: rsync.c:558-568 - impossible-id warning + suid/sgid re-stat.
+        Ok(post_chown_bookkeeping(destination, owner, group, existing))
     }
 
     #[cfg(not(unix))]
@@ -382,15 +466,17 @@ pub(super) fn set_owner_like(
         let _ = follow_symlinks;
         let _ = options;
         let _ = existing;
+        Ok(false)
     }
-
-    Ok(())
 }
 
 /// fd-based variant of [`set_owner_like`] that uses `fchown` instead of `chownat`.
 ///
 /// Under `--fake-super` the open file descriptor is unused; ownership is
 /// captured into the `user.rsync.%stat` xattr instead of issuing `fchown`.
+///
+/// Returns `true` when a re-stat is required after the chown (see
+/// [`set_owner_like`]).
 #[cfg(unix)]
 pub(super) fn set_owner_like_with_fd(
     metadata: &fs::Metadata,
@@ -398,7 +484,7 @@ pub(super) fn set_owner_like_with_fd(
     options: &MetadataOptions,
     fd: BorrowedFd<'_>,
     existing: Option<&fs::Metadata>,
-) -> Result<(), MetadataError> {
+) -> Result<bool, MetadataError> {
     // upstream: xattrs.c:set_stat_xattr() under am_root < 0 - skip fchown.
     if options.fake_super_enabled()
         && (options.owner()
@@ -407,18 +493,19 @@ pub(super) fn set_owner_like_with_fd(
             || options.group_override().is_some())
     {
         let _ = fd;
-        return store_fake_super_from_local_metadata(destination, metadata);
+        store_fake_super_from_local_metadata(destination, metadata)?;
+        return Ok(false);
     }
 
     let (owner, group) = resolve_ownership(metadata, options, destination)?;
 
     if owner.is_none() && group.is_none() {
-        return Ok(());
+        return Ok(false);
     }
 
     if let Some(existing) = existing {
         if ownership_matches(&owner, &group, existing) {
-            return Ok(());
+            return Ok(false);
         }
     }
 
@@ -427,7 +514,8 @@ pub(super) fn set_owner_like_with_fd(
 
     chown_fd(fd, destination, owner, group)?;
 
-    Ok(())
+    // upstream: rsync.c:558-568 - impossible-id warning + suid/sgid re-stat.
+    Ok(post_chown_bookkeeping(destination, owner, group, existing))
 }
 
 /// Applies ownership from a protocol `FileEntry` on Unix.
@@ -435,6 +523,10 @@ pub(super) fn set_owner_like_with_fd(
 /// Resolves UID/GID from the entry using overrides, mappings, and numeric-id
 /// rules. Delegates to fake-super xattr storage when `--fake-super` is active.
 /// Skips the chown syscall when the resolved values already match `cached_meta`.
+///
+/// Returns `true` when the destination carried setuid/setgid bits that the
+/// chown may have cleared, so the caller must re-stat before applying
+/// permissions (upstream rsync.c:564-567). Returns `false` when no chown ran.
 // upstream: rsync.c:set_file_attrs() - chown path for receiver-side file entries
 #[cfg(unix)]
 pub(super) fn apply_ownership_from_entry(
@@ -442,7 +534,7 @@ pub(super) fn apply_ownership_from_entry(
     entry: &protocol::flist::FileEntry,
     options: &MetadataOptions,
     cached_meta: Option<&fs::Metadata>,
-) -> Result<(), MetadataError> {
+) -> Result<bool, MetadataError> {
     use rustix::process::{RawGid, RawUid};
 
     if !options.owner()
@@ -450,7 +542,7 @@ pub(super) fn apply_ownership_from_entry(
         && options.owner_override().is_none()
         && options.group_override().is_none()
     {
-        return Ok(());
+        return Ok(false);
     }
 
     let raw_uid = if let Some(uid_override) = options.owner_override() {
@@ -471,7 +563,8 @@ pub(super) fn apply_ownership_from_entry(
 
     // upstream: rsync.c:set_file_attrs() - fake-super stores ownership in xattr
     if options.fake_super_enabled() {
-        return apply_ownership_via_fake_super(destination, entry, raw_uid, raw_gid);
+        apply_ownership_via_fake_super(destination, entry, raw_uid, raw_gid)?;
+        return Ok(false);
     }
 
     let owner = if let Some(uid_override) = options.owner_override() {
@@ -508,10 +601,18 @@ pub(super) fn apply_ownership_from_entry(
             trace_chown_change(destination, owner, group, cached_meta);
 
             chown_path(destination, owner, group, true)?;
+
+            // upstream: rsync.c:558-568 - impossible-id warning + suid/sgid re-stat.
+            return Ok(post_chown_bookkeeping(
+                destination,
+                owner,
+                group,
+                cached_meta,
+            ));
         }
     }
 
-    Ok(())
+    Ok(false)
 }
 
 /// Applies ownership from a protocol `FileEntry` to a symbolic link on Unix
@@ -579,6 +680,11 @@ pub(super) fn apply_symlink_ownership_from_entry(
         trace_chown_change(destination, owner, group, cached_meta);
 
         chown_path(destination, owner, group, false)?;
+
+        // upstream: rsync.c:558-561 - impossible-id warning also fires for
+        // symlink chowns. The suid/sgid re-stat is irrelevant here because
+        // symlinks are never chmod'd, so the returned signal is discarded.
+        let _ = post_chown_bookkeeping(destination, owner, group, cached_meta);
     }
 
     Ok(())
@@ -683,8 +789,8 @@ pub(super) fn apply_ownership_from_entry(
     _entry: &protocol::flist::FileEntry,
     _options: &MetadataOptions,
     _cached_meta: Option<&fs::Metadata>,
-) -> Result<(), MetadataError> {
-    Ok(())
+) -> Result<bool, MetadataError> {
+    Ok(false)
 }
 
 #[cfg(all(test, unix))]
@@ -848,6 +954,114 @@ mod own_debug_tests {
             resolve_owner_uid(&entry, &opts_num).map(|u| u.as_raw()),
             Some(4_000_123),
             "--numeric-ids must keep the raw sender id"
+        );
+    }
+}
+
+#[cfg(all(test, unix))]
+mod post_chown_tests {
+    //! Decision-path pins for the post-`do_lchown` bookkeeping upstream runs in
+    //! `set_file_attrs()` (rsync.c:558-568). These exercise the pure predicates
+    //! without needing root so the setuid re-stat and impossible-id warning
+    //! logic is covered on CI as well as under a privileged run.
+
+    use super::*;
+    use std::os::unix::fs::PermissionsExt;
+    use tempfile::tempdir;
+
+    #[test]
+    fn setuid_or_setgid_mode_forces_restat() {
+        // upstream: rsync.c:564-567 - a destination carrying setuid/setgid must
+        // be re-stat'd after chown because the chown clears those bits; the mode
+        // apply then restores them. Without the re-stat a `-p` transfer of a
+        // setuid binary whose owner changes would silently drop the setuid bit,
+        // because the chmod compare would still see the stale (pre-chown) mode
+        // and skip the syscall.
+        assert!(suid_sgid_needs_restat(Some(0o4755)), "setuid must re-stat");
+        assert!(suid_sgid_needs_restat(Some(0o2755)), "setgid must re-stat");
+        assert!(
+            suid_sgid_needs_restat(Some(0o6755)),
+            "setuid+setgid must re-stat"
+        );
+    }
+
+    #[test]
+    fn plain_mode_skips_restat() {
+        // upstream: rsync.c:564 - the re-stat is gated on `S_ISUID | S_ISGID`
+        // only; ordinary and sticky-only modes take the cheap path.
+        assert!(
+            !suid_sgid_needs_restat(Some(0o0755)),
+            "plain mode: no re-stat"
+        );
+        assert!(
+            !suid_sgid_needs_restat(Some(0o1755)),
+            "sticky-only: no re-stat"
+        );
+        assert!(!suid_sgid_needs_restat(None), "absent stat: no re-stat");
+    }
+
+    #[test]
+    fn resolved_minus_one_is_impossible_unless_dest_already_minus_one() {
+        // upstream: rsync.c:558-560 - chown treats (uid_t)-1 as "no change", so
+        // an owner that resolves to -1 can never be applied and upstream warns,
+        // but only when the destination is not already owned by -1.
+        assert!(id_is_impossible(Some(u32::MAX), Some(1000)));
+        assert!(
+            id_is_impossible(Some(u32::MAX), None),
+            "a freshly created dest is never owned by -1"
+        );
+        assert!(
+            !id_is_impossible(Some(u32::MAX), Some(u32::MAX)),
+            "dest already -1: upstream's `st_uid != -1` guard is false"
+        );
+        assert!(
+            !id_is_impossible(Some(1000), Some(1000)),
+            "a real id can be set"
+        );
+        assert!(!id_is_impossible(None, Some(1000)), "no change requested");
+    }
+
+    #[test]
+    fn warning_wording_matches_upstream_verbatim() {
+        // upstream: rsync.c:558-561 - "uid 4294967295 (-1) is impossible to set
+        // on %s\n" with the path quoted by full_fname.
+        assert_eq!(
+            impossible_id_message("uid", Path::new("/tmp/x")),
+            "uid 4294967295 (-1) is impossible to set on \"/tmp/x\""
+        );
+        assert_eq!(
+            impossible_id_message("gid", Path::new("/tmp/x")),
+            "gid 4294967295 (-1) is impossible to set on \"/tmp/x\""
+        );
+    }
+
+    #[test]
+    fn bookkeeping_reports_restat_from_a_real_setuid_stat() {
+        // End-to-end over a real stat: a setuid file signals the re-stat, a
+        // plain file does not. Exercised without root because the owning user
+        // may set the setuid bit on a file it owns.
+        let dir = tempdir().expect("tempdir");
+
+        let plain = dir.path().join("plain");
+        fs::write(&plain, b"x").expect("write plain");
+        let plain_meta = fs::metadata(&plain).expect("stat plain");
+        assert!(
+            !post_chown_bookkeeping(&plain, None, None, Some(&plain_meta)),
+            "a plain file must not force a re-stat"
+        );
+
+        let suid = dir.path().join("suid");
+        fs::write(&suid, b"x").expect("write suid");
+        fs::set_permissions(&suid, fs::Permissions::from_mode(0o4755)).expect("chmod suid");
+        let suid_meta = fs::metadata(&suid).expect("stat suid");
+        if suid_meta.mode() & 0o4000 == 0 {
+            // The filesystem refused to retain the setuid bit for this user;
+            // the pure predicate is still covered by the tests above.
+            return;
+        }
+        assert!(
+            post_chown_bookkeeping(&suid, None, None, Some(&suid_meta)),
+            "a setuid file must force a re-stat so the chown-dropped bit is restored"
         );
     }
 }

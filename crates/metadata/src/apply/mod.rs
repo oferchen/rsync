@@ -177,7 +177,19 @@ pub fn apply_file_metadata_if_changed(
     existing: &fs::Metadata,
     options: &MetadataOptions,
 ) -> Result<(), MetadataError> {
-    ownership::set_owner_like(metadata, destination, true, options, Some(existing))?;
+    let restat_after_chown =
+        ownership::set_owner_like(metadata, destination, true, options, Some(existing))?;
+    // upstream: rsync.c:564-567 - the chown may have cleared setuid/setgid bits,
+    // so re-stat before the chmod compare so they get re-applied.
+    let refreshed;
+    let existing = if restat_after_chown {
+        refreshed = fs::metadata(destination).map_err(|error| {
+            MetadataError::new("inspect destination permissions", destination, error)
+        })?;
+        &refreshed
+    } else {
+        existing
+    };
     permissions::apply_permissions_with_chmod(destination, metadata, options, Some(existing))?;
     // upstream: rsync.c:587-612 - mtime and atime are handled independently
     if options.times() {
@@ -204,7 +216,19 @@ pub fn apply_file_metadata_with_fd_if_changed(
     options: &MetadataOptions,
     fd: BorrowedFd<'_>,
 ) -> Result<(), MetadataError> {
-    ownership::set_owner_like_with_fd(metadata, destination, options, fd, Some(existing))?;
+    let restat_after_chown =
+        ownership::set_owner_like_with_fd(metadata, destination, options, fd, Some(existing))?;
+    // upstream: rsync.c:564-567 - the chown may have cleared setuid/setgid bits,
+    // so re-stat before the chmod compare so they get re-applied.
+    let refreshed;
+    let existing = if restat_after_chown {
+        refreshed = fs::metadata(destination).map_err(|error| {
+            MetadataError::new("inspect destination permissions", destination, error)
+        })?;
+        &refreshed
+    } else {
+        existing
+    };
     permissions::apply_permissions_with_chmod_fd(
         destination,
         metadata,
@@ -570,7 +594,16 @@ pub fn apply_metadata_with_attrs_flags_and_pre_transfer(
     attrs_flags: AttrsFlags,
     pre_transfer_meta: Option<fs::Metadata>,
 ) -> Result<(), MetadataError> {
-    ownership::apply_ownership_from_entry(destination, entry, options, cached_meta.as_ref())?;
+    let restat_after_chown =
+        ownership::apply_ownership_from_entry(destination, entry, options, cached_meta.as_ref())?;
+
+    // upstream: rsync.c:564-567 - the chown may have cleared setuid/setgid bits,
+    // so refresh the cached stat before the chmod compare re-applies them.
+    let cached_meta = if restat_after_chown {
+        fs::metadata(destination).ok().or(cached_meta)
+    } else {
+        cached_meta
+    };
 
     permissions::apply_permissions_from_entry(
         destination,
