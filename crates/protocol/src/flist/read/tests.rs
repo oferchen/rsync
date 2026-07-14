@@ -1097,17 +1097,24 @@ fn truncated_user_name_length() {
 #[test]
 fn truncated_user_name_data() {
     use crate::flist::flags::XMIT_USER_NAME_FOLLOWS;
-    use crate::varint::encode_varint_to_vec;
+    use crate::varint::{encode_varint_to_vec, write_varlong};
 
-    let flags_value = (0x01) | ((XMIT_USER_NAME_FOLLOWS as i32) << 8);
+    // The size and mtime fields are variable-length (varlong30 / varlong) on
+    // protocol >= 30, so they must be written with the real encoders for the
+    // rest of the entry to stay byte-aligned. A prior hand-rolled layout used
+    // single bytes for size/mtime, which left the mode field mis-aligned and
+    // read a garbage type - now caught by the entry mode-type validation. Here
+    // the mode is a valid regular file, so the decode reaches the truncated
+    // user-name blob and surfaces UnexpectedEof, the behaviour under test.
+    let flags_value = 0x01 | ((XMIT_USER_NAME_FOLLOWS as i32) << 8);
     let mut data = Vec::new();
     encode_varint_to_vec(flags_value, &mut data);
     data.push(4u8);
     data.extend_from_slice(b"file");
-    data.push(100u8);
-    data.push(0u8);
-    data.extend_from_slice(&0o100644u32.to_le_bytes());
-    data.push(100u8); // UID
+    write_varlong(&mut data, 100, 3).unwrap(); // size
+    write_varlong(&mut data, 0, 4).unwrap(); // mtime
+    data.extend_from_slice(&0o100644u32.to_le_bytes()); // mode: regular file
+    encode_varint_to_vec(100, &mut data); // UID (varint on protocol >= 30)
     data.push(10u8); // User name length: 10
     data.extend_from_slice(b"user"); // Only 4 of 10 bytes
 
@@ -1575,6 +1582,92 @@ fn read_write_end_of_list_nonvarint_round_trip_exact_bytes() {
         buf.len(),
         "must consume all written bytes"
     );
+}
+
+/// Serializes a single entry whose file type nibble has been forced to `mode`.
+///
+/// The entry is built as a regular file, then `set_mode` overrides the mode
+/// field so the writer emits an arbitrary (possibly bogus) type on the wire.
+/// This lets the reader-side type validation be exercised in isolation.
+fn entry_bytes_with_mode(protocol: ProtocolVersion, mode: u32) -> Vec<u8> {
+    use crate::flist::write::FileListWriter;
+
+    let mut data = Vec::new();
+    let mut writer = FileListWriter::new(protocol);
+    let mut entry = FileEntry::new_file("x".into(), 0, 0o100644);
+    entry.set_mtime(1700000000, 0);
+    entry.set_mode(mode);
+    writer.write_entry(&mut data, &entry).unwrap();
+    data
+}
+
+/// upstream: flist.c:876-892 recv_file_entry() rejects any file mode whose
+/// S_IFMT type bits are not a standard file type. Without this a malicious or
+/// buggy sender could smuggle a garbage mode past the downstream S_ISxxx
+/// checks; oc previously coerced unknown types to Regular. `0o070000` is an
+/// unused S_IFMT nibble, so the entry must be refused as protocol garbage.
+#[test]
+fn read_entry_rejects_invalid_mode_type() {
+    let protocol = test_protocol();
+    let data = entry_bytes_with_mode(protocol, 0o070644);
+
+    let mut cursor = Cursor::new(&data[..]);
+    let mut reader = FileListReader::new(protocol);
+    let err = reader.read_entry(&mut cursor).unwrap_err();
+    assert_eq!(err.kind(), io::ErrorKind::InvalidData);
+}
+
+/// Every standard S_IFMT type (reg/dir/lnk/chr/blk/fifo/sock) stays acceptable,
+/// so the hardening in `read_entry_rejects_invalid_mode_type` never rejects a
+/// legitimate entry. upstream: flist.c:885-887 S_ISREG/DIR/LNK/CHR/BLK/FIFO/SOCK.
+#[test]
+fn read_entry_accepts_all_standard_mode_types() {
+    let protocol = test_protocol();
+    // S_IFREG, S_IFDIR, S_IFLNK, S_IFCHR, S_IFBLK, S_IFIFO, S_IFSOCK with perms.
+    let modes = [
+        0o100644, 0o040755, 0o120777, 0o020660, 0o060660, 0o010644, 0o140755,
+    ];
+    for mode in modes {
+        let data = entry_bytes_with_mode(protocol, mode);
+        let mut cursor = Cursor::new(&data[..]);
+        let mut reader = FileListReader::new(protocol);
+        let entry = reader
+            .read_entry(&mut cursor)
+            .unwrap_or_else(|e| panic!("mode {mode:o} must be accepted: {e}"))
+            .expect("entry present");
+        assert_eq!(entry.mode(), mode, "mode {mode:o} must round-trip");
+    }
+}
+
+/// upstream: flist.c:884 - the mode-0 sentinel (a vanished source arg) is only
+/// legitimate under `--delete-missing-args` (missing_args == 2). With the flag
+/// set, the sentinel is accepted rather than rejected as an invalid type.
+#[test]
+fn read_entry_accepts_mode_zero_sentinel_with_delete_missing_args() {
+    let protocol = test_protocol();
+    let data = entry_bytes_with_mode(protocol, 0);
+
+    let mut cursor = Cursor::new(&data[..]);
+    let mut reader = FileListReader::new(protocol).with_delete_missing_args(true);
+    let entry = reader
+        .read_entry(&mut cursor)
+        .expect("mode-0 sentinel accepted")
+        .expect("entry present");
+    assert_eq!(entry.mode(), 0);
+}
+
+/// Without `--delete-missing-args` a mode-0 entry is not a sentinel and its
+/// (empty) type bits are invalid, so upstream rejects it - as must oc.
+/// upstream: flist.c:884 `mode != 0 || missing_args != 2`.
+#[test]
+fn read_entry_rejects_mode_zero_without_delete_missing_args() {
+    let protocol = test_protocol();
+    let data = entry_bytes_with_mode(protocol, 0);
+
+    let mut cursor = Cursor::new(&data[..]);
+    let mut reader = FileListReader::new(protocol);
+    let err = reader.read_entry(&mut cursor).unwrap_err();
+    assert_eq!(err.kind(), io::ErrorKind::InvalidData);
 }
 
 /// Tests for ACL integration in the flist read path.

@@ -511,6 +511,7 @@ impl ReceiverContext {
         .with_preserve_acls(self.config.flags.acls)
         .with_preserve_xattrs(self.config.flags.xattrs)
         .with_preserve_atimes(self.config.flags.atimes)
+        .with_delete_missing_args(self.config.file_selection.delete_missing_args)
         .with_relative_paths(self.config.flags.relative);
 
         // upstream: flist.c - always_checksum includes per-file checksums in the file list
