@@ -1012,3 +1012,96 @@ fn parse_rules_no_prefixes_line_mode_keeps_whole_line() {
     assert_eq!(rules.len(), 1);
     assert_eq!(rules[0].pattern(), "*.log *.tmp *.bak");
 }
+
+// upstream: exclude.c:1069-1078 rule_strcmp accepts `_` as a keyword separator
+// exactly like a space, so `exclude_*.bak` must parse identically to
+// `exclude *.bak`. Long-form filter files written with `_` separators are a
+// documented rsync convenience and must interoperate.
+#[test]
+fn long_form_keyword_underscore_separator_matches_space_form() {
+    let under = parse_rules("exclude_*.bak", Path::new("test")).unwrap();
+    let space = parse_rules("exclude *.bak", Path::new("test")).unwrap();
+    assert_eq!(under.len(), 1);
+    assert_eq!(under[0].action(), FilterAction::Exclude);
+    assert_eq!(under[0].pattern(), space[0].pattern());
+    assert_eq!(under[0].pattern(), "*.bak");
+}
+
+// upstream: rule_strcmp uses isspace(), which accepts a tab as a separator, so
+// `include<TAB>*.txt` is the same rule as `include *.txt`.
+#[test]
+fn long_form_keyword_tab_separator() {
+    let rules = parse_rules("include\t*.txt", Path::new("test")).unwrap();
+    assert_eq!(rules.len(), 1);
+    assert_eq!(rules[0].action(), FilterAction::Include);
+    assert_eq!(rules[0].pattern(), "*.txt");
+}
+
+// upstream: rule_strcmp accepts end-of-string (`!str[rule_len]`), so a bare
+// keyword with no pattern is a valid rule whose pattern is empty.
+#[test]
+fn long_form_keyword_alone_is_empty_pattern() {
+    let rules = parse_rules("hide", Path::new("test")).unwrap();
+    assert_eq!(rules.len(), 1);
+    assert_eq!(rules[0].action(), FilterAction::Exclude);
+    assert!(rules[0].applies_to_sender());
+    assert!(!rules[0].applies_to_receiver());
+    assert_eq!(rules[0].pattern(), "");
+}
+
+// upstream: rule_strcmp returns `str + rule_len` for a comma, so the modifier
+// loop runs after it. `dir-merge,n .filt` must therefore carry the same
+// no-inherit modifier as the short-form `:n .filt`.
+#[test]
+fn long_form_comma_modifier_matches_short_form() {
+    let long = parse_rules("dir-merge,n .filt", Path::new("test")).unwrap();
+    let short = parse_rules(":n .filt", Path::new("test")).unwrap();
+    assert_eq!(long.len(), 1);
+    assert_eq!(long[0].action(), FilterAction::DirMerge);
+    assert_eq!(long[0].pattern(), ".filt");
+    assert!(long[0].is_no_inherit());
+    assert_eq!(long[0].pattern(), short[0].pattern());
+    assert_eq!(long[0].is_no_inherit(), short[0].is_no_inherit());
+}
+
+// upstream: a comma after a long-form keyword introduces side modifiers just as
+// on a short-form prefix, so `exclude,s foo` is a sender-only exclude of `foo`.
+#[test]
+fn long_form_comma_sender_side_exclude() {
+    let rules = parse_rules("exclude,s foo", Path::new("test")).unwrap();
+    assert_eq!(rules.len(), 1);
+    assert_eq!(rules[0].action(), FilterAction::Exclude);
+    assert_eq!(rules[0].pattern(), "foo");
+    assert!(rules[0].applies_to_sender());
+    assert!(!rules[0].applies_to_receiver());
+}
+
+// upstream: exclude.c:1176-1179 consumes a comma immediately after a
+// single-character prefix, so `+,p foo` is the same perishable include as the
+// directly-adjacent `+p foo`.
+#[test]
+fn short_form_prefix_comma_separator_matches_plain() {
+    let comma = parse_rules("+,p foo", Path::new("test")).unwrap();
+    let plain = parse_rules("+p foo", Path::new("test")).unwrap();
+    assert_eq!(comma.len(), 1);
+    assert_eq!(comma[0].action(), FilterAction::Include);
+    assert_eq!(comma[0].pattern(), "foo");
+    assert!(comma[0].is_perishable());
+    assert_eq!(comma[0].is_perishable(), plain[0].is_perishable());
+}
+
+// upstream: only the comma directly after the prefix is a separator; a comma
+// later in the modifier run is an invalid modifier and must be rejected, so the
+// `,` in `-p,x foo` is a syntax error just like in upstream rsync.
+#[test]
+fn short_form_comma_not_after_prefix_is_invalid() {
+    assert!(parse_rules("-p,x foo", Path::new("test")).is_err());
+}
+
+// upstream: a keyword followed by a non-separator byte is not that keyword, so
+// `excludes foo` is not an exclude rule and falls through to "Unknown filter
+// rule" rather than silently matching `exclude`.
+#[test]
+fn long_form_keyword_without_separator_is_unknown() {
+    assert!(parse_rules("excludes foo", Path::new("test")).is_err());
+}

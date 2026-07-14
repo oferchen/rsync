@@ -430,6 +430,14 @@ fn try_parse_short_form(
         return Ok(None);
     };
 
+    // upstream: exclude.c:1176-1179 - in the default (single-character prefix)
+    // case, a comma immediately after the prefix is consumed as a separator
+    // (`if (s[1] == ',') s++;`) so the modifier loop begins after it. This lets
+    // `+,x pattern` be written as an equivalent of `+x pattern`. Only the comma
+    // directly after the prefix is a separator; a later comma remains an
+    // invalid modifier, exactly as upstream reports.
+    let rest = rest.strip_prefix(',').unwrap_or(rest);
+
     // upstream: exclude.c:1136 - `prefix_specifies_side` is set for the H/S
     // (sender) and P/R (receiver) prefixes, gating the `s`/`r` modifiers.
     let prefix_specifies_side = matches!(prefix_char, 'H' | 'S' | 'P' | 'R');
@@ -461,38 +469,94 @@ fn try_parse_short_form(
     }))
 }
 
+/// Returns true for the characters upstream `isspace()` treats as whitespace in
+/// the C locale (space, tab, newline, vertical tab, form feed, carriage return).
+///
+/// Rust's [`char::is_ascii_whitespace`] omits the vertical tab, so this mirrors
+/// the C set exactly for `rule_strcmp` separator detection.
+fn is_c_isspace(ch: char) -> bool {
+    matches!(ch, ' ' | '\t' | '\n' | '\x0b' | '\x0c' | '\r')
+}
+
 /// Tries to parse a long-form rule (keyword prefix like `include`, `exclude`).
 ///
-/// Returns `Some(rule)` if the line matches a long-form pattern, `None` otherwise.
+/// Returns `Ok(Some(rule))` if the line matches a long-form keyword, `Ok(None)`
+/// if no keyword matched, or `Err` if a keyword was followed by a comma and an
+/// invalid modifier.
 ///
-/// upstream: exclude.c:parse_filter_str() - long-form keyword handling
-fn try_parse_long_form(line: &str) -> Option<FilterRule> {
-    let lower = line.to_ascii_lowercase();
-
-    let keywords: &[(&str, usize, ShortFormAction)] = &[
-        ("include ", 8, ShortFormAction::Include),
-        ("exclude ", 8, ShortFormAction::Exclude),
-        ("protect ", 8, ShortFormAction::Protect),
-        ("risk ", 5, ShortFormAction::Risk),
-        ("merge ", 6, ShortFormAction::Merge),
-        ("dir-merge ", 10, ShortFormAction::DirMerge),
-        ("hide ", 5, ShortFormAction::Hide),
-        ("show ", 5, ShortFormAction::Show),
+/// upstream: exclude.c:1069-1078 rule_strcmp - a keyword matches only when it is
+/// followed by one of the accepted separators: whitespace, `_`, `,`, or the end
+/// of the string. Whitespace/`_`/end terminate the keyword and the remaining
+/// text is the pattern verbatim; a `,` instead introduces modifiers, which are
+/// parsed by the same modifier loop as short-form prefixes (exclude.c:1138-1289).
+fn try_parse_long_form(
+    line: &str,
+    source_path: &Path,
+    line_num: usize,
+) -> Result<Option<FilterRule>, MergeFileError> {
+    const KEYWORDS: &[(&str, ShortFormAction)] = &[
+        ("include", ShortFormAction::Include),
+        ("exclude", ShortFormAction::Exclude),
+        ("protect", ShortFormAction::Protect),
+        ("risk", ShortFormAction::Risk),
+        ("merge", ShortFormAction::Merge),
+        ("dir-merge", ShortFormAction::DirMerge),
+        ("hide", ShortFormAction::Hide),
+        ("show", ShortFormAction::Show),
     ];
 
-    for &(keyword, len, action) in keywords {
-        if lower.starts_with(keyword) {
-            // upstream: exclude.c:1290-1313 - RULE_STRCMP matches the keyword and
-            // its single trailing separator, then strlen takes the rest of the
-            // line verbatim. The keyword table already includes that one
-            // separator, so the remainder must not be trimmed: trailing (and
-            // any embedded) whitespace stays part of the pattern.
-            let pattern = &line[len..];
-            return Some(action.to_rule(pattern));
+    let bytes = line.as_bytes();
+    for &(keyword, action) in KEYWORDS {
+        let klen = keyword.len();
+        if bytes.len() < klen || !bytes[..klen].eq_ignore_ascii_case(keyword.as_bytes()) {
+            continue;
+        }
+        // The matched prefix is all ASCII, so `klen` is a valid char boundary.
+        let after = &line[klen..];
+        match after.chars().next() {
+            // upstream: rule_strcmp returns `str + rule_len` for `,`, so the
+            // modifier loop begins after the comma (e.g. `dir-merge,n .filt`).
+            Some(',') => {
+                let prefix_specifies_side = matches!(
+                    action,
+                    ShortFormAction::Hide
+                        | ShortFormAction::Show
+                        | ShortFormAction::Protect
+                        | ShortFormAction::Risk
+                );
+                let (mods, pattern) = parse_modifiers(
+                    &after[','.len_utf8()..],
+                    action.is_merge(),
+                    prefix_specifies_side,
+                    line,
+                    source_path,
+                    line_num,
+                )?;
+                let rule = action.to_rule(pattern);
+                return Ok(Some(if action.supports_mods() {
+                    mods.apply(rule)
+                } else {
+                    rule
+                }));
+            }
+            // upstream: rule_strcmp accepts isspace/`_` as terminating
+            // separators; exactly one is consumed and the remainder is the
+            // pattern verbatim (strlen, no trimming), so trailing and embedded
+            // whitespace stays part of the pattern.
+            Some(ch) if ch == '_' || is_c_isspace(ch) => {
+                let pattern = &after[ch.len_utf8()..];
+                return Ok(Some(action.to_rule(pattern)));
+            }
+            // upstream: rule_strcmp accepts end-of-string (`!str[rule_len]`); the
+            // keyword stands alone and the pattern is empty.
+            None => return Ok(Some(action.to_rule(""))),
+            // Any other trailing byte means this is not the keyword (e.g.
+            // `excludes`); fall through to the next candidate.
+            Some(_) => continue,
         }
     }
 
-    None
+    Ok(None)
 }
 
 /// Parses a single filter rule line.
@@ -513,7 +577,7 @@ fn parse_rule_line(
         return Ok(rule);
     }
 
-    if let Some(rule) = try_parse_long_form(line) {
+    if let Some(rule) = try_parse_long_form(line, source_path, line_num)? {
         return Ok(rule);
     }
 
