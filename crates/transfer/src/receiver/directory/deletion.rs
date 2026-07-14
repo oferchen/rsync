@@ -172,6 +172,27 @@ impl ReceiverContext {
 
         let max_delete = self.config.deletion.max_delete;
 
+        // --one-file-system boundary device. When `-x` is active the transfer
+        // root's device id pins the filesystem the delete pass may touch: a
+        // destination directory whose device differs is a mount point (or a
+        // foreign filesystem) that upstream refuses to delete and that pins its
+        // parent as non-empty. Captured once here from the top-level
+        // destination directory, then compared against each directory entry in
+        // the serial executor below.
+        //
+        // upstream: generator.c:310-321 delete_in_dir() tracks `filesystem_dev`
+        // and flist.c:1344-1356 sets FLAG_MOUNT_DIR on a dest dirlist entry
+        // whose `st_dev` differs from that boundary; delete_in_dir() then skips
+        // it ("cannot delete mount point") and delete.c:89-97
+        // delete_dir_contents() pins the parent directory as non-empty.
+        #[cfg(unix)]
+        let boundary_dev: Option<u64> = if self.config.flags.one_file_system >= 1 {
+            use std::os::unix::fs::MetadataExt;
+            std::fs::metadata(dest_dir).ok().map(|m| m.dev())
+        } else {
+            None
+        };
+
         // The deletion decision must consult the chain that actually carries
         // the filter rules for this role. A server-side receiver reads the
         // client's rules off the wire into `filter_chain` (setup/context.rs
@@ -320,7 +341,23 @@ impl ReceiverContext {
         // directory subtrees. Route capped runs through a serial,
         // leaf-granular executor that mirrors upstream delete.c:156/181
         // (guard-before-delete, increment-on-success).
-        if let Some(limit) = max_delete {
+        // Route to the serial, leaf-granular executor when either `--max-delete`
+        // is set (cap enforcement) or `--one-file-system` is active (mount-point
+        // boundary enforcement). Both need the depth-first, per-entry decision
+        // the parallel wholesale-remove fast path cannot express: the cap must
+        // count individual leaves, and the mount check must preserve a foreign
+        // filesystem nested anywhere inside a doomed subtree while pinning its
+        // parent. When neither is set the parallel fast path runs unchanged, so
+        // the common (no `-x`, no cap) delete pass pays zero extra cost.
+        #[cfg(unix)]
+        let use_serial_executor = max_delete.is_some() || boundary_dev.is_some();
+        #[cfg(not(unix))]
+        let use_serial_executor = max_delete.is_some();
+        if use_serial_executor {
+            // A one-file-system run without `--max-delete` has no cap, so an
+            // unreachable u64::MAX sentinel keeps the executor's guard-before-
+            // delete logic intact without ever tripping the limit warning.
+            let limit = max_delete.unwrap_or(u64::MAX);
             return self.delete_extraneous_files_capped(
                 dest_dir,
                 &dir_children,
@@ -331,6 +368,8 @@ impl ReceiverContext {
                 sandbox,
                 writer,
                 limit,
+                #[cfg(unix)]
+                boundary_dev,
             );
         }
 
@@ -740,12 +779,15 @@ impl ReceiverContext {
         #[cfg(unix)] sandbox: Option<&std::sync::Arc<fast_io::DirSandbox>>,
         writer: &mut W,
         limit: u64,
+        #[cfg(unix)] boundary_dev: Option<u64>,
     ) -> io::Result<(DeleteStats, bool, i32)> {
         let mut state = CappedDeleteState {
             #[cfg(unix)]
             dest_dir,
             #[cfg(unix)]
             sandbox,
+            #[cfg(unix)]
+            boundary_dev,
             limit,
             deleted: 0,
             skipped: 0,
@@ -893,6 +935,12 @@ struct CappedDeleteState<'w, W: ?Sized> {
     dest_dir: &'w Path,
     #[cfg(unix)]
     sandbox: Option<&'w std::sync::Arc<fast_io::DirSandbox>>,
+    /// `--one-file-system` boundary device (the transfer root's `st_dev`).
+    /// `Some` only when `-x` is active; a directory entry whose device differs
+    /// is a mount point that must be preserved and pins its parent as
+    /// non-empty. See [`crosses_mount_boundary`].
+    #[cfg(unix)]
+    boundary_dev: Option<u64>,
     limit: u64,
     /// Successful deletions so far - the global cap counter
     /// (upstream `stats.deleted_files`).
@@ -969,6 +1017,25 @@ impl<W: crate::writer::MsgInfoSender + ?Sized> CappedDeleteState<'_, W> {
         is_symlink: bool,
     ) -> io::Result<bool> {
         if is_dir && !is_symlink {
+            // upstream: generator.c:331-336 delete_in_dir() skips a dest dir
+            // flagged FLAG_MOUNT_DIR ("cannot delete mount point"), and
+            // delete.c:89-97 delete_dir_contents() treats such a nested entry
+            // as pinning its parent non-empty. Under `--one-file-system` a
+            // directory whose device differs from the transfer-root boundary is
+            // that mount point: never delete it, and return `false` so the
+            // caller leaves the parent directory in place. The check runs at
+            // every recursion level, so a mount nested inside a doomed subtree
+            // is preserved and pins the whole chain of ancestors.
+            #[cfg(unix)]
+            if let Some(boundary) = self.boundary_dev {
+                use std::os::unix::fs::MetadataExt;
+                if let Ok(meta) = std::fs::symlink_metadata(path)
+                    && crosses_mount_boundary(boundary, meta.dev())
+                {
+                    info_log!(Mount, 1, "cannot delete mount point: {}", rel.display());
+                    return Ok(false);
+                }
+            }
             // Peel the directory's contents depth-first before considering the
             // directory itself (upstream delete_dir_contents, reverse order).
             let mut children = match self.scan_dir(rel, path) {
@@ -1142,6 +1209,25 @@ fn fail_loud_unlink_error(e: io::Error) -> Option<io::Error> {
     }
 }
 
+/// Whether a destination directory sits on a different filesystem than the
+/// transfer root, i.e. is a mount point that `--one-file-system` must protect.
+///
+/// Pure device-id comparison, dependency-inverted from the `lstat` call site so
+/// the mount-boundary decision is unit-testable with synthetic `st_dev` values
+/// (mounting a real filesystem in a test is impractical). A `true` result means
+/// the entry crosses the boundary and must be preserved; a `false` result means
+/// it is on the same filesystem and is an ordinary deletion candidate.
+///
+/// # Upstream Reference
+///
+/// - `flist.c:1344` - `one_file_system && st.st_dev != filesystem_dev` sets
+///   `FLAG_MOUNT_DIR` on the dest dirlist entry.
+/// - `generator.c:331` - `delete_in_dir()` skips a `FLAG_MOUNT_DIR` directory.
+#[cfg(unix)]
+fn crosses_mount_boundary(boundary_dev: u64, entry_dev: u64) -> bool {
+    entry_dev != boundary_dev
+}
+
 #[cfg(all(test, unix))]
 mod tests {
     use super::*;
@@ -1223,6 +1309,41 @@ mod tests {
         assert!(
             worker_err.is_none(),
             "EACCES on scan must take the upstream-parity non-fatal branch",
+        );
+    }
+
+    /// Mount-point data-loss protection: under `--one-file-system` the delete
+    /// pass must never remove a destination directory that lives on a different
+    /// filesystem than the transfer root. Deleting such an entry would recurse
+    /// across the mount boundary and destroy a mounted filesystem that is absent
+    /// from the source flist - the exact `rsync -ax --delete` data-loss upstream
+    /// guards against ("cannot delete mount point").
+    ///
+    /// The boundary decision is a pure `st_dev` comparison so it can be verified
+    /// with synthetic device ids without mounting a real filesystem: an entry on
+    /// the boundary device is an ordinary deletion candidate; an entry on any
+    /// other device is a mount point that must be preserved.
+    ///
+    /// upstream: flist.c:1344 (`st.st_dev != filesystem_dev` -> FLAG_MOUNT_DIR),
+    /// generator.c:331 (delete_in_dir skips it).
+    #[test]
+    fn mount_boundary_predicate_preserves_foreign_device_entries() {
+        const ROOT_DEV: u64 = 0x10;
+
+        // Same device as the transfer root: on-filesystem, safe to delete.
+        assert!(
+            !crosses_mount_boundary(ROOT_DEV, ROOT_DEV),
+            "an entry on the transfer-root device must remain deletable",
+        );
+
+        // Different device: a mounted filesystem the delete pass must preserve.
+        assert!(
+            crosses_mount_boundary(ROOT_DEV, 0x20),
+            "an entry on a foreign device is a mount point and must be preserved",
+        );
+        assert!(
+            crosses_mount_boundary(ROOT_DEV, 0),
+            "device 0 still differs from the boundary and must be preserved",
         );
     }
 
