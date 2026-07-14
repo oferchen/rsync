@@ -431,6 +431,7 @@ where
         name_overridden,
         show_copy_method,
         debug_flags_list,
+        info_flags_list,
         bandwidth_limit,
         max_delete_limit,
         min_size_limit,
@@ -873,6 +874,9 @@ where
         executability: preserve_executability,
         permissions: preserve_permissions,
         fake_super: fake_super.unwrap_or(false),
+        // upstream: options.c:90 - `am_root > 1` is set only by an explicit
+        // --super (not by running as root). Forwarded on a push (options.c:2852).
+        super_user: super_mode == Some(true),
         times: preserve_times,
         atimes: preserve_atimes,
         crtimes: preserve_crtimes,
@@ -917,6 +921,7 @@ where
         progress_mode,
         stats: stats_level > 0,
         debug_flags_list,
+        info_flags_list,
         partial,
         preallocate,
         fsync: fsync_flag,

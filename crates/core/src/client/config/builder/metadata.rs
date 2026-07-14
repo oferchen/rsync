@@ -110,6 +110,17 @@ impl ClientConfigBuilder {
         fake_super: bool,
     }
 
+    builder_setter! {
+        /// Records an explicit `--super` request.
+        ///
+        /// Mirrors upstream's `am_root > 1` state (`options.c:90`): set only by
+        /// an explicit `--super`, never by merely running as root. Used by the
+        /// remote-invocation builder to forward `--super` on a push
+        /// (`options.c:2852`).
+        #[doc(alias = "--super")]
+        super_user: bool,
+    }
+
     /// Requests that timestamps be preserved when applying metadata.
     #[must_use]
     #[doc(alias = "--times")]

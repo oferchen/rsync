@@ -13,6 +13,23 @@ impl ClientConfigBuilder {
         self
     }
 
+    /// Replaces the collected explicit `--info` categories with the provided
+    /// list.
+    ///
+    /// Each item is a normalized `name{level}` token; the remote builders
+    /// forward these to the peer as `--info=`, mirroring upstream
+    /// `make_output_option()` (`options.c:354`).
+    #[must_use]
+    #[doc(alias = "--info")]
+    pub fn info_flags<I, S>(mut self, flags: I) -> Self
+    where
+        I: IntoIterator<Item = S>,
+        S: Into<OsString>,
+    {
+        self.info_flags = flags.into_iter().map(Into::into).collect();
+        self
+    }
+
     /// Appends a filter rule to the configuration being constructed.
     #[must_use]
     pub fn add_filter_rule(mut self, rule: FilterRuleSpec) -> Self {

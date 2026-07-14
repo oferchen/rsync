@@ -32,6 +32,8 @@ pub(crate) mod files_from_forwarding;
 pub(crate) mod flags;
 /// Remote rsync `--server` invocation argument builder.
 pub mod invocation;
+/// `--info=`/`--debug=` server-argument construction (make_output_option).
+pub(crate) mod output_option;
 /// Remote-to-remote transfer via local proxy relay.
 pub mod remote_to_remote;
 /// SSH transfer orchestration for `ssh://` and `host:path` targets.

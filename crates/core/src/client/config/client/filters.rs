@@ -13,6 +13,17 @@ impl ClientConfig {
     pub fn debug_flags(&self) -> &[OsString] {
         &self.debug_flags
     }
+
+    /// Returns the explicitly-set info categories requested via `--info`.
+    ///
+    /// Each entry is a normalized `name{level}` token (e.g. `name2`, `del1`).
+    /// The remote-invocation builders forward these to the peer as `--info=`,
+    /// mirroring upstream `make_output_option()` (`options.c:354`).
+    #[must_use]
+    #[doc(alias = "--info")]
+    pub fn info_flags(&self) -> &[OsString] {
+        &self.info_flags
+    }
 }
 
 #[cfg(test)]

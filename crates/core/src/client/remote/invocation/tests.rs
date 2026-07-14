@@ -3699,3 +3699,98 @@ fn pull_with_remote_files_from_forwards_path() {
         "PULL with remote files-from must forward the path to the remote: {args:?}"
     );
 }
+
+// WHY: `--use-qsort` must reach the peer so both sides sort file lists with
+// the same comparator; upstream forwards it unconditionally (options.c:2908).
+#[test]
+fn ssh_forwards_use_qsort_when_set() {
+    let config = ClientConfig::builder().qsort(true).build();
+    for role in [RemoteRole::Sender, RemoteRole::Receiver] {
+        let builder = RemoteInvocationBuilder::new(&config, role);
+        let args = builder.build("/remote/path");
+        assert!(
+            args.iter().any(|a| a == "--use-qsort"),
+            "qsort must forward --use-qsort ({role:?}): {args:?}"
+        );
+    }
+    let off = ClientConfig::builder().build();
+    let args = RemoteInvocationBuilder::new(&off, RemoteRole::Sender).build("/remote/path");
+    assert!(!args.iter().any(|a| a == "--use-qsort"));
+}
+
+// WHY: `--super` (explicit, upstream am_root > 1) is forwarded only on a push,
+// where the remote receiver performs the privileged operations
+// (options.c:2852, inside the am_sender block).
+#[test]
+fn ssh_forwards_super_on_push_only() {
+    let config = ClientConfig::builder().super_user(true).build();
+    let push = RemoteInvocationBuilder::new(&config, RemoteRole::Sender).build("/remote/path");
+    assert!(
+        push.iter().any(|a| a == "--super"),
+        "push must forward --super: {push:?}"
+    );
+    let pull = RemoteInvocationBuilder::new(&config, RemoteRole::Receiver).build("/remote/path");
+    assert!(
+        !pull.iter().any(|a| a == "--super"),
+        "pull must not forward --super: {pull:?}"
+    );
+    // Not requested: never forwarded.
+    let off = ClientConfig::builder().build();
+    let args = RemoteInvocationBuilder::new(&off, RemoteRole::Sender).build("/remote/path");
+    assert!(!args.iter().any(|a| a == "--super"));
+}
+
+// WHY: `--stats` is forwarded only on a push, where the remote
+// receiver/generator computes the transfer statistics (options.c:2856, inside
+// the am_sender block).
+#[test]
+fn ssh_forwards_stats_on_push_only() {
+    let config = ClientConfig::builder().stats(true).build();
+    let push = RemoteInvocationBuilder::new(&config, RemoteRole::Sender).build("/remote/path");
+    assert!(
+        push.iter().any(|a| a == "--stats"),
+        "push must forward --stats: {push:?}"
+    );
+    let pull = RemoteInvocationBuilder::new(&config, RemoteRole::Receiver).build("/remote/path");
+    assert!(
+        !pull.iter().any(|a| a == "--stats"),
+        "pull must not forward --stats: {pull:?}"
+    );
+    let off = ClientConfig::builder().build();
+    let args = RemoteInvocationBuilder::new(&off, RemoteRole::Sender).build("/remote/path");
+    assert!(!args.iter().any(|a| a == "--stats"));
+}
+
+// WHY: explicitly-set --info / --debug levels must reach the peer so its
+// diagnostic output matches the user's request (upstream make_output_option,
+// options.c:2947). `del` is receiver-side, so on a push it forwards as
+// `--info=del`; `send` is sender-side, so on a pull it forwards as
+// `--debug=send`.
+#[test]
+fn ssh_forwards_info_and_debug_when_set() {
+    let config = ClientConfig::builder()
+        .info_flags([OsString::from("del1")])
+        .debug_flags([OsString::from("send1")])
+        .build();
+    let push = RemoteInvocationBuilder::new(&config, RemoteRole::Sender).build("/remote/path");
+    assert!(
+        push.iter().any(|a| a == "--info=del"),
+        "push must forward receiver-side --info=del: {push:?}"
+    );
+    let pull = RemoteInvocationBuilder::new(&config, RemoteRole::Receiver).build("/remote/path");
+    assert!(
+        pull.iter().any(|a| a == "--debug=send"),
+        "pull must forward sender-side --debug=send: {pull:?}"
+    );
+
+    // Nothing set: no --info / --debug argument at all.
+    let off = ClientConfig::builder().build();
+    let args = RemoteInvocationBuilder::new(&off, RemoteRole::Sender).build("/remote/path");
+    assert!(
+        !args
+            .iter()
+            .any(|a| a.to_string_lossy().starts_with("--info=")
+                || a.to_string_lossy().starts_with("--debug=")),
+        "no info/debug flags must yield no --info/--debug arg: {args:?}"
+    );
+}
