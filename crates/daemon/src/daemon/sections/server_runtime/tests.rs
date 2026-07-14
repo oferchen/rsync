@@ -609,7 +609,7 @@ fn apply_listener_socket_options_nodelay_keepalive() {
         SocketOption::TcpNoDelay(true),
         SocketOption::SoKeepAlive(true),
     ];
-    apply_socket_options_to_listener(&listener, &opts).expect("apply succeeds");
+    apply_socket_options_to_listener(&listener, &opts, None);
 
     let sock = socket2::SockRef::from(&listener);
     assert!(sock.tcp_nodelay().expect("query nodelay"));
@@ -620,7 +620,7 @@ fn apply_listener_socket_options_nodelay_keepalive() {
 fn apply_listener_socket_options_buffer_sizes() {
     let listener = TcpListener::bind("127.0.0.1:0").expect("bind");
     let opts = vec![SocketOption::SoSndBuf(32768), SocketOption::SoRcvBuf(32768)];
-    apply_socket_options_to_listener(&listener, &opts).expect("apply succeeds");
+    apply_socket_options_to_listener(&listener, &opts, None);
 
     let sock = socket2::SockRef::from(&listener);
     assert!(sock.send_buffer_size().expect("query sndbuf") >= 32768);
@@ -636,7 +636,7 @@ fn apply_stream_socket_options_nodelay_keepalive() {
         SocketOption::TcpNoDelay(true),
         SocketOption::SoKeepAlive(true),
     ];
-    apply_socket_options_to_stream(&stream, &opts).expect("apply succeeds");
+    apply_socket_options_to_stream(&stream, &opts, None);
 
     let sock = socket2::SockRef::from(&stream);
     assert!(sock.tcp_nodelay().expect("query nodelay"));
@@ -649,7 +649,7 @@ fn apply_stream_socket_options_buffer_sizes() {
     let addr = listener.local_addr().expect("local addr");
     let stream = TcpStream::connect(addr).expect("connect");
     let opts = vec![SocketOption::SoSndBuf(32768), SocketOption::SoRcvBuf(32768)];
-    apply_socket_options_to_stream(&stream, &opts).expect("apply succeeds");
+    apply_socket_options_to_stream(&stream, &opts, None);
 
     let sock = socket2::SockRef::from(&stream);
     assert!(sock.send_buffer_size().expect("query sndbuf") >= 32768);
@@ -691,7 +691,55 @@ fn apply_stream_socket_options_empty_is_noop() {
     let listener = TcpListener::bind("127.0.0.1:0").expect("bind");
     let addr = listener.local_addr().expect("local addr");
     let stream = TcpStream::connect(addr).expect("connect");
-    apply_socket_options_to_stream(&stream, &[]).expect("empty options should succeed");
+    apply_socket_options_to_stream(&stream, &[], None);
+}
+
+/// upstream: socket.c:730-733 - `set_socket_options()` responds to a failed
+/// `setsockopt(2)` with `rsyserr(FERROR, errno, "failed to set socket option
+/// %s")` and then `continue`s the loop; one failed option must never abort the
+/// connection or skip the remaining options. Applying `IP_TOS` to an AF_UNIX
+/// socket has no IP address family and is guaranteed to fail, so it stands in
+/// for any unsettable option. We feed it ahead of a settable `SO_RCVBUF` and
+/// assert: (1) exactly one per-option warning is logged, naming the failed
+/// `IP_TOS`; (2) the later `SO_RCVBUF` produced no warning, proving the loop
+/// continued and applied it; and (3) apply returns normally (no abort).
+#[cfg(unix)]
+#[test]
+fn apply_socket_options_warns_and_continues_on_per_option_failure() {
+    use std::os::unix::net::UnixStream;
+
+    let (sock_a, _sock_b) = UnixStream::pair().expect("unix socketpair");
+
+    let log_dir = tempfile::tempdir().expect("log dir");
+    let log_path = log_dir.path().join("daemon.log");
+    let log_sink: Option<SharedLogSink> =
+        Some(open_log_sink(&log_path, Brand::Oc).expect("open log"));
+
+    // IP_TOS fails on AF_UNIX; SO_RCVBUF that follows must still be applied.
+    let opts = vec![SocketOption::IpTos(0x10), SocketOption::SoRcvBuf(8192)];
+    apply_socket_options_impl(socket2::SockRef::from(&sock_a), &opts, log_sink.as_ref());
+
+    drop(log_sink);
+    let contents = std::fs::read_to_string(&log_path).expect("read log");
+    assert!(
+        contents.starts_with("oc-rsync warning:"),
+        "expected warning level, got: {contents}"
+    );
+    assert!(
+        contents.contains("failed to set socket option IP_TOS"),
+        "missing per-option failure warning for IP_TOS: {contents}"
+    );
+    // SO_RCVBUF was reached and succeeded, so it emits no warning: the loop
+    // continued past the failed option instead of aborting.
+    assert!(
+        !contents.contains("failed to set socket option SO_RCVBUF"),
+        "SO_RCVBUF should have applied without a warning: {contents}"
+    );
+    assert_eq!(
+        contents.matches("failed to set socket option").count(),
+        1,
+        "expected exactly one per-option failure warning: {contents}"
+    );
 }
 
 /// A daemon `socket options =` config written for upstream rsync must parse
@@ -777,8 +825,7 @@ fn parse_socket_options_accepts_all_upstream_options() {
 #[test]
 fn apply_socket_options_broadcast_sets_flag() {
     let listener = TcpListener::bind("127.0.0.1:0").expect("bind");
-    apply_socket_options_to_listener(&listener, &[SocketOption::SoBroadcast(true)])
-        .expect("apply succeeds");
+    apply_socket_options_to_listener(&listener, &[SocketOption::SoBroadcast(true)], None);
 
     let sock = socket2::SockRef::from(&listener);
     assert!(sock.broadcast().expect("query broadcast"));
