@@ -10,9 +10,10 @@
 //! Upstream rsync transmits xattr names **byte-for-byte** as they appear in
 //! the platform's `listxattr(2)` output (on Linux that includes the
 //! `user.` namespace prefix). The receiver consults `am_root` to decide
-//! whether unprefixed wire names should be folded into the disguised
-//! `user.rsync.*` hierarchy or dropped. Non-Linux peers use the `rsync.`
-//! prefix as the disguise namespace.
+//! what to do with a non-user-namespace name: a root receiver keeps it
+//! verbatim, while a plain non-root receiver drops it (it has no namespace
+//! it could store it in). The `user.rsync.*` / `rsync.*` disguise is a
+//! fake-super / active-filter mechanism, not the plain non-root path.
 //!
 //! Reserved internal attributes (`user.rsync.%suffix` on Linux,
 //! `rsync.%suffix` elsewhere) are never sent on the wire by the sender:
@@ -24,13 +25,19 @@
 //! - `xattrs.c` lines 494-542: `send_xattr()` writes names verbatim except
 //!   in fake-super (`am_root < 0`), where the `user.rsync.` prefix is
 //!   stripped from disguised entries
-//! - `xattrs.c` lines 820-847: `receive_xattr()` name handling - Linux
-//!   keeps `user.*` verbatim and disguises everything else under
-//!   `user.rsync.`; non-Linux strips `user.` and disguises the rest
+//! - `xattrs.c` lines 824-855: `receive_xattr()` name handling - Linux
+//!   keeps `user.*` verbatim, and for a non-user name a root receiver keeps
+//!   it verbatim while a plain non-root receiver drops it; non-Linux strips
+//!   `user.`, a root receiver disguises the rest under `rsync.`, and a plain
+//!   non-root receiver drops it
 
 #[cfg(target_os = "linux")]
 use super::USER_PREFIX;
-use super::{RSYNC_PREFIX, SYSTEM_PREFIX};
+// RSYNC_PREFIX is the `rsync.` disguise namespace used only by the non-Linux
+// root receiver path; on Linux a non-user name is dropped, not disguised.
+#[cfg(not(target_os = "linux"))]
+use super::RSYNC_PREFIX;
+use super::SYSTEM_PREFIX;
 
 /// Translates an xattr name from local format to wire format.
 ///
@@ -116,8 +123,11 @@ const USER_PREFIX_NON_LINUX: &str = "user.";
 /// - `user.rsync.%stat` -> `user.rsync.%stat` (rsync internal, keep verbatim)
 /// - `system.foo` (root) -> `system.foo` (root can write the original
 ///   namespace verbatim)
-/// - `system.foo` (non-root) -> `user.rsync.system.foo` (disguised so the
-///   non-user namespace survives under the user hierarchy)
+/// - `system.foo` (non-root) -> dropped (`None`) - a plain non-root
+///   receiver cannot store a non-user namespace, so upstream discards the
+///   entry rather than disguising it. The `user.rsync.*` disguise is a
+///   fake-super (`am_root < 0`) / active-xattr-filter mechanism, neither of
+///   which is modelled at this layer.
 ///
 /// # Non-Linux Behavior
 ///
@@ -140,24 +150,23 @@ const USER_PREFIX_NON_LINUX: &str = "user.";
 pub fn wire_to_local(wire_name: &[u8], am_root: bool) -> Option<Vec<u8>> {
     #[cfg(target_os = "linux")]
     {
-        // upstream: xattrs.c:820-831 - keep user.* verbatim; non-user
-        // names are disguised under user.rsync. for non-root receivers.
-        // Root receivers store names verbatim into their original
-        // namespace (system., security., trusted., etc.).
+        // upstream: xattrs.c:824-834 - keep user.* verbatim; a root
+        // receiver stores non-user names verbatim into their original
+        // namespace (system., security., trusted., ...).
         if wire_name.starts_with(USER_PREFIX.as_bytes()) {
             return Some(wire_name.to_vec());
         }
         if am_root {
             return Some(wire_name.to_vec());
         }
-        // Non-root receiver: disguise the non-user-namespace name under
-        // user.rsync.<wire_name>. Upstream additionally honours
-        // saw_xattr_filter to drop the entry entirely; we always keep it
-        // because the filter state is not plumbed through here yet.
-        let mut local = Vec::with_capacity(RSYNC_PREFIX.len() + wire_name.len());
-        local.extend_from_slice(RSYNC_PREFIX.as_bytes());
-        local.extend_from_slice(wire_name);
-        Some(local)
+        // upstream: xattrs.c:828-834 - a plain non-root receiver cannot
+        // save any namespace but user.*, so it DROPS the entry
+        // (`if (!am_root && !saw_xattr_filter) { free(ptr); continue; }`).
+        // Only fake-super (am_root < 0) or an active xattr filter disguises
+        // the name under user.rsync.<name>; oc models neither at this layer
+        // (am_root is a plain bool, saw_xattr_filter is not plumbed), so the
+        // faithful behaviour for the modelled non-root state is to drop.
+        None
     }
 
     #[cfg(not(target_os = "linux"))]
@@ -218,6 +227,24 @@ mod tests {
         assert!(!is_rsync_internal("user.rsync.normal"));
         assert!(!is_rsync_internal("rsync.normal"));
         assert!(!is_rsync_internal("user.foo"));
+    }
+
+    #[test]
+    fn wire_to_local_drops_non_user_for_non_root_on_every_platform() {
+        // A plain non-root receiver has no namespace it could store a
+        // non-user-namespace xattr in, so upstream DROPS the entry on every
+        // platform rather than materializing a disguised copy:
+        //   - Linux: xattrs.c:828-834 `if (!am_root && !saw_xattr_filter) {
+        //     free(ptr); continue; }`.
+        //   - non-Linux: xattrs.c:850-854 falls through to `free(ptr);
+        //     continue;` when the name is neither user.* nor (root) disguised.
+        // The `user.rsync.*` / `rsync.*` disguise is reserved for fake-super
+        // or an active xattr filter, neither of which oc models here.
+        // Disguising instead of dropping surfaced bogus `user.rsync.system.*`
+        // xattrs upstream never keeps (audit recv-xattr-nonroot-nonuser-drop).
+        assert_eq!(wire_to_local(b"security.selinux", false), None);
+        assert_eq!(wire_to_local(b"system.posix_acl_access", false), None);
+        assert_eq!(wire_to_local(b"trusted.foo", false), None);
     }
 
     #[cfg(target_os = "linux")]
@@ -287,12 +314,19 @@ mod tests {
         }
 
         #[test]
-        fn wire_to_local_disguises_non_user_for_non_root() {
-            // upstream: xattrs.c:827-829 - non-root receivers prepend
-            // RSYNC_PREFIX (`user.rsync.`) to non-user-namespace wire
-            // names so the entry survives in the user hierarchy.
-            let result = wire_to_local(b"system.foo", false);
-            assert_eq!(result, Some(b"user.rsync.system.foo".to_vec()));
+        fn wire_to_local_drops_non_user_for_non_root() {
+            // upstream: xattrs.c:828-834 - a plain non-root receiver cannot
+            // store a non-user namespace, so `receive_xattr` does
+            // `if (!am_root && !saw_xattr_filter) { free(ptr); continue; }`
+            // and DROPS the entry. It must NOT be disguised under
+            // `user.rsync.<name>`: that path is reserved for fake-super
+            // (am_root < 0) or an active xattr filter, neither of which oc
+            // models here. Disguising instead of dropping materialised
+            // bogus `user.rsync.system.*` xattrs upstream never keeps
+            // (audit recv-xattr-nonroot-nonuser-drop).
+            assert_eq!(wire_to_local(b"system.foo", false), None);
+            assert_eq!(wire_to_local(b"security.selinux", false), None);
+            assert_eq!(wire_to_local(b"trusted.foo", false), None);
         }
 
         #[test]
