@@ -23,6 +23,13 @@ pub enum BatchError {
     /// Operation not supported.
     #[error("Unsupported operation: {0}")]
     Unsupported(String),
+    /// A data-stream-affecting flag in the batch file cannot be reconciled
+    /// with the active options and upstream treats the mismatch as fatal.
+    ///
+    /// upstream: batch.c:137-142 - an `--iconv` mismatch aborts with
+    /// `RERR_SYNTAX`.
+    #[error("{0}")]
+    FlagMismatch(String),
 }
 
 #[cfg(test)]

@@ -100,14 +100,7 @@ pub fn generate_script_with_filters(
 
     // upstream: batch.c:305-306 - append filter rules as heredoc
     if let Some(rules) = filter_rules {
-        // upstream: batch.c:209 write_sbuf(fd, " <<'#E#'\n")
-        writeln!(file, " <<'#E#'")?;
-        write!(file, "{rules}")?;
-        if !rules.ends_with('\n') {
-            writeln!(file)?;
-        }
-        // upstream: batch.c:221 write_sbuf(fd, "#E#")
-        write!(file, "#E#")?;
+        write_filter_heredoc(&mut file, rules, config.eol_nulls)?;
     }
 
     writeln!(file)?;
@@ -117,6 +110,42 @@ pub fn generate_script_with_filters(
     // upstream: batch_sh_fd opened with S_IRUSR | S_IWUSR | S_IXUSR (0o700)
     set_script_permissions(&script_path)?;
 
+    Ok(())
+}
+
+/// Write the trailing filter-rule heredoc into the replay script.
+///
+/// Mirrors upstream `batch.c:205-222 write_filter_rules()`. Rules arrive
+/// newline-terminated; when `eol_nulls` is set (`--from0` / `-0`) each rule is
+/// instead terminated by a NUL byte and the whole block is followed by a
+/// trailing `;\n`, matching upstream's `eol_nulls` branch byte-for-byte so the
+/// replayed `--read-batch` parses the rules the same way the original run did.
+///
+/// # Upstream Reference
+///
+/// - `batch.c:209`: `write_sbuf(fd, " <<'#E#'\n")`.
+/// - `batch.c:212-217`: per-rule terminator (`0` when `eol_nulls`, else `\n`).
+/// - `batch.c:219-220`: trailing `";\n"` after NUL-terminated rules.
+/// - `batch.c:221`: closing `#E#` delimiter.
+fn write_filter_heredoc(file: &mut File, rules: &str, eol_nulls: bool) -> io::Result<()> {
+    // upstream: batch.c:209 write_sbuf(fd, " <<'#E#'\n")
+    writeln!(file, " <<'#E#'")?;
+    if eol_nulls {
+        // upstream: batch.c:212-217 - NUL terminates each rule under eol_nulls.
+        for rule in rules.strip_suffix('\n').unwrap_or(rules).split('\n') {
+            file.write_all(rule.as_bytes())?;
+            file.write_all(&[0])?;
+        }
+        // upstream: batch.c:219-220 write_sbuf(fd, ";\n")
+        file.write_all(b";\n")?;
+    } else {
+        write!(file, "{rules}")?;
+        if !rules.ends_with('\n') {
+            writeln!(file)?;
+        }
+    }
+    // upstream: batch.c:221 write_sbuf(fd, "#E#")
+    write!(file, "#E#")?;
     Ok(())
 }
 
@@ -210,14 +239,7 @@ pub fn generate_script_with_args(
 
     // upstream: batch.c:305-306 write_filter_rules() uses heredoc with #E# delimiter
     if let Some(rules) = filter_rules {
-        // upstream: batch.c:209 write_sbuf(fd, " <<'#E#'\n")
-        writeln!(file, " <<'#E#'")?;
-        write!(file, "{rules}")?;
-        if !rules.ends_with('\n') {
-            writeln!(file)?;
-        }
-        // upstream: batch.c:221 write_sbuf(fd, "#E#")
-        write!(file, "#E#")?;
+        write_filter_heredoc(&mut file, rules, config.eol_nulls)?;
     }
 
     writeln!(file)?;
@@ -976,6 +998,77 @@ mod tests {
             permissions.mode() & 0o777,
             0o700,
             "Script permissions should be exactly 0o700"
+        );
+    }
+
+    /// Verify the filter heredoc NUL-terminates each rule and appends a
+    /// trailing `;\n` when `eol_nulls` (`--from0`) is set.
+    ///
+    /// WHY: upstream `batch.c:212-220` swaps the per-rule `\n` terminator for a
+    /// NUL and writes `";\n"` after the last rule under `eol_nulls`. The
+    /// replayed `--read-batch` reads its rules with the same NUL separator, so
+    /// a newline-terminated heredoc would mis-parse a `--from0` batch.
+    #[test]
+    fn test_filter_heredoc_honors_eol_nulls() {
+        let temp_dir = TempDir::new().unwrap();
+        let batch_path = temp_dir.path().join("test.batch");
+
+        let config = BatchConfig::new(
+            BatchMode::Write,
+            batch_path.to_string_lossy().to_string(),
+            31,
+        )
+        .with_eol_nulls(true);
+
+        let filter_rules = "- *.tmp\n+ *.txt\n";
+        generate_script_with_filters(&config, Some(filter_rules), None).unwrap();
+
+        let content = fs::read(config.script_file_path()).unwrap();
+
+        // Each rule is NUL-terminated, then a trailing ";\n", then "#E#".
+        let expected = b"- *.tmp\0+ *.txt\0;\n#E#";
+        let window = content.windows(expected.len()).any(|w| w == expected);
+        assert!(
+            window,
+            "heredoc must NUL-terminate rules and append ;\\n: {:?}",
+            String::from_utf8_lossy(&content)
+        );
+        // The newline-terminated form must not appear when eol_nulls is set.
+        assert!(
+            !content.windows(b"*.tmp\n".len()).any(|w| w == b"*.tmp\n"),
+            "eol_nulls must not leave newline terminators: {:?}",
+            String::from_utf8_lossy(&content)
+        );
+    }
+
+    /// Verify that without `eol_nulls` the heredoc keeps newline terminators
+    /// and never emits the `;\n` terminator or NUL bytes.
+    ///
+    /// WHY: the `;\n` trailer and NUL separators are exclusive to upstream's
+    /// `eol_nulls` branch (`batch.c:219`); a default (`--from0`-less) batch
+    /// must reproduce the newline-terminated form exactly.
+    #[test]
+    fn test_filter_heredoc_default_uses_newlines() {
+        let temp_dir = TempDir::new().unwrap();
+        let batch_path = temp_dir.path().join("test.batch");
+
+        let config = BatchConfig::new(
+            BatchMode::Write,
+            batch_path.to_string_lossy().to_string(),
+            31,
+        );
+
+        let filter_rules = "- *.tmp\n+ *.txt\n";
+        generate_script_with_filters(&config, Some(filter_rules), None).unwrap();
+
+        let content = fs::read(config.script_file_path()).unwrap();
+        assert!(!content.contains(&0u8), "no NUL bytes without eol_nulls");
+
+        let text = String::from_utf8(content).unwrap();
+        assert!(text.contains("- *.tmp\n+ *.txt\n#E#"));
+        assert!(
+            !text.contains(";\n#E#"),
+            "no trailing ;\\n without eol_nulls: {text}"
         );
     }
 }
