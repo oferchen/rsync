@@ -79,6 +79,7 @@ fn ssh_server_flag_string_limits_compat_flags() {
         compression_level: protocol::nstr::CLVL_NOT_SPECIFIED,
         checksum_seed: Some(42),
         allow_inc_recurse: true,
+        preserve_crtimes: false,
     };
 
     let mock = MockNegotiator::new();
@@ -116,6 +117,7 @@ fn ssh_server_flag_string_enables_advertised_caps() {
         compression_level: protocol::nstr::CLVL_NOT_SPECIFIED,
         checksum_seed: Some(42),
         allow_inc_recurse: true,
+        preserve_crtimes: false,
     };
 
     let mock = MockNegotiator::new();
@@ -150,6 +152,7 @@ fn ssh_server_no_flag_string_uses_defaults() {
         compression_level: protocol::nstr::CLVL_NOT_SPECIFIED,
         checksum_seed: Some(42),
         allow_inc_recurse: false,
+        preserve_crtimes: false,
     };
 
     let result = setup_protocol(&mut stdout, &mut stdin, &config)
@@ -194,6 +197,7 @@ fn client_honors_negotiated_inc_recurse_regardless_of_local_allow() {
         compression_level: protocol::nstr::CLVL_NOT_SPECIFIED,
         checksum_seed: Some(42),
         allow_inc_recurse: false,
+        preserve_crtimes: false,
     };
 
     // The server hands back CF_INC_RECURSE among its negotiated flags.
@@ -341,6 +345,7 @@ fn setup_protocol_below_30_returns_none_for_algorithms_and_compat() {
         compression_level: protocol::nstr::CLVL_NOT_SPECIFIED,
         checksum_seed: None,
         allow_inc_recurse: false,
+        preserve_crtimes: false,
     };
 
     let result =
@@ -382,6 +387,7 @@ fn setup_protocol_skip_compat_exchange_skips_flags() {
         compression_level: protocol::nstr::CLVL_NOT_SPECIFIED,
         checksum_seed: None,
         allow_inc_recurse: false,
+        preserve_crtimes: false,
     };
 
     let result = setup_protocol(&mut stdout, &mut stdin, &config)
@@ -426,6 +432,7 @@ fn setup_protocol_server_writes_compat_flags_and_seed() {
         compression_level: protocol::nstr::CLVL_NOT_SPECIFIED,
         checksum_seed: None,
         allow_inc_recurse: false,
+        preserve_crtimes: false,
     };
 
     let result =
@@ -483,6 +490,7 @@ fn setup_protocol_client_reads_compat_flags_from_server() {
         compression_level: protocol::nstr::CLVL_NOT_SPECIFIED,
         checksum_seed: None,
         allow_inc_recurse: false,
+        preserve_crtimes: false,
     };
 
     let result =
@@ -528,6 +536,7 @@ fn setup_protocol_server_generates_deterministic_seeds() {
         compression_level: protocol::nstr::CLVL_NOT_SPECIFIED,
         checksum_seed: None,
         allow_inc_recurse: false,
+        preserve_crtimes: false,
     };
 
     let mut stdout1 = Vec::new();
@@ -579,6 +588,7 @@ fn setup_protocol_ssh_mode_bidirectional_exchange() {
         compression_level: protocol::nstr::CLVL_NOT_SPECIFIED,
         checksum_seed: None,
         allow_inc_recurse: false,
+        preserve_crtimes: false,
     };
 
     let result = setup_protocol(&mut stdout, &mut stdin, &config)
@@ -624,6 +634,7 @@ fn setup_protocol_client_args_affects_compat_flags() {
         compression_level: protocol::nstr::CLVL_NOT_SPECIFIED,
         checksum_seed: None,
         allow_inc_recurse: false,
+        preserve_crtimes: false,
     };
 
     let result_minimal = setup_protocol(&mut stdout, &mut stdin, &config_minimal)
@@ -657,6 +668,7 @@ fn setup_protocol_client_args_affects_compat_flags() {
         compression_level: protocol::nstr::CLVL_NOT_SPECIFIED,
         checksum_seed: None,
         allow_inc_recurse: false,
+        preserve_crtimes: false,
     };
 
     let result_full = setup_protocol(&mut stdout, &mut stdin, &config_full)
@@ -702,6 +714,7 @@ fn setup_protocol_protocol_30_minimum_for_compat_exchange() {
         compression_level: protocol::nstr::CLVL_NOT_SPECIFIED,
         checksum_seed: None,
         allow_inc_recurse: false,
+        preserve_crtimes: false,
     };
 
     let result =
@@ -1091,6 +1104,7 @@ fn setup_protocol_server_v_flag_uses_single_byte_encoding() {
         compression_level: protocol::nstr::CLVL_NOT_SPECIFIED,
         checksum_seed: None,
         allow_inc_recurse: false,
+        preserve_crtimes: false,
     };
 
     let result =
@@ -1139,6 +1153,7 @@ fn setup_protocol_server_v_flag_enables_negotiation() {
         compression_level: protocol::nstr::CLVL_NOT_SPECIFIED,
         checksum_seed: None,
         allow_inc_recurse: false,
+        preserve_crtimes: false,
     };
 
     let result =
@@ -1173,6 +1188,7 @@ fn setup_protocol_server_v_flag_with_both_v_and_uppercase_v() {
         compression_level: protocol::nstr::CLVL_NOT_SPECIFIED,
         checksum_seed: Some(42),
         allow_inc_recurse: false,
+        preserve_crtimes: false,
     };
 
     let result_v =
@@ -1194,6 +1210,7 @@ fn setup_protocol_server_v_flag_with_both_v_and_uppercase_v() {
         compression_level: protocol::nstr::CLVL_NOT_SPECIFIED,
         checksum_seed: Some(42),
         allow_inc_recurse: false,
+        preserve_crtimes: false,
     };
 
     let result_both = setup_protocol(&mut stdout_both, &mut stdin, &config_both)
@@ -1392,6 +1409,7 @@ fn setup_protocol_with_mock_negotiator_server_mode() {
         compression_level: protocol::nstr::CLVL_NOT_SPECIFIED,
         checksum_seed: None,
         allow_inc_recurse: false,
+        preserve_crtimes: false,
     };
 
     let mock = MockNegotiator::new();
@@ -1439,6 +1457,7 @@ fn setup_protocol_with_mock_negotiator_client_mode() {
         compression_level: protocol::nstr::CLVL_NOT_SPECIFIED,
         checksum_seed: None,
         allow_inc_recurse: false,
+        preserve_crtimes: false,
     };
 
     let mock = MockNegotiator::new();
@@ -1735,6 +1754,7 @@ fn compress_choice_override_skips_vstring_and_uses_algorithm() {
         compression_level: protocol::nstr::CLVL_NOT_SPECIFIED,
         checksum_seed: Some(42),
         allow_inc_recurse: false,
+        preserve_crtimes: false,
     };
 
     let mock = MockNegotiator::new();
@@ -1771,6 +1791,7 @@ fn compress_choice_none_allows_normal_negotiation() {
         compression_level: protocol::nstr::CLVL_NOT_SPECIFIED,
         checksum_seed: Some(42),
         allow_inc_recurse: false,
+        preserve_crtimes: false,
     };
 
     let mock = MockNegotiator::new();
@@ -1807,6 +1828,7 @@ fn compress_choice_zlib_override_on_legacy_protocol() {
         compression_level: protocol::nstr::CLVL_NOT_SPECIFIED,
         checksum_seed: Some(42),
         allow_inc_recurse: false,
+        preserve_crtimes: false,
     };
 
     let result = setup_protocol(&mut stdout, &mut stdin, &config)
@@ -1848,6 +1870,7 @@ fn checksum_choice_override_threads_into_negotiation() {
         compression_level: protocol::nstr::CLVL_NOT_SPECIFIED,
         checksum_seed: Some(42),
         allow_inc_recurse: false,
+        preserve_crtimes: false,
     };
 
     let mock = MockNegotiator::new();
@@ -1884,6 +1907,7 @@ fn checksum_choice_none_allows_normal_negotiation() {
         compression_level: protocol::nstr::CLVL_NOT_SPECIFIED,
         checksum_seed: Some(42),
         allow_inc_recurse: false,
+        preserve_crtimes: false,
     };
 
     let mock = MockNegotiator::new();
@@ -1952,4 +1976,53 @@ fn with_compress_choice_none_clears_override() {
         config.compress_choice.is_none(),
         "second with_compress_choice(None) should clear the override"
     );
+}
+
+// upstream: compat.c:751-753 - create-times (crtimes_ndx) ride the extended
+// varint file-list flags. When the negotiated peer never advertised
+// CF_VARINT_FLIST_FLAGS (rsync older than 3.2.0) it cannot parse that flist
+// field, so upstream aborts with RERR_PROTOCOL instead of desyncing the
+// stream. These tests pin that trigger, the byte-exact message, and the
+// RERR_PROTOCOL(2) exit-code tagging.
+#[test]
+fn crtimes_without_varint_flist_flags_aborts_protocol() {
+    // WHY: --crtimes to a peer lacking CF_VARINT_FLIST_FLAGS would transmit an
+    // flist field the peer cannot decode. Upstream refuses rather than corrupt
+    // the transfer, so the guard must fire whenever crtimes is requested and
+    // the negotiated flags omit VARINT_FLIST_FLAGS.
+    let peer_flags = CompatibilityFlags::CHECKSUM_SEED_FIX | CompatibilityFlags::SAFE_FILE_LIST;
+    let err = require_crtimes_capability(true, peer_flags)
+        .expect_err("crtimes without VARINT_FLIST_FLAGS must abort");
+
+    // Byte-exact upstream text (compat.c:752), sans the trailing newline the
+    // caller adds when rendering the diagnostic line.
+    assert_eq!(
+        err.to_string(),
+        "Both rsync versions must be at least 3.2.0 for --crtimes."
+    );
+    // upstream: errcode.h RERR_PROTOCOL=2 - tagged as a ProtocolViolation so the
+    // core exit-code mapper yields exit 2, not RERR_STREAMIO(12).
+    assert_eq!(err.kind(), std::io::ErrorKind::InvalidData);
+    assert!(
+        err.get_ref()
+            .is_some_and(|inner| inner.is::<protocol::ProtocolViolation>()),
+        "crtimes abort must be tagged RERR_PROTOCOL"
+    );
+}
+
+#[test]
+fn crtimes_with_varint_flist_flags_proceeds() {
+    // WHY: a peer that advertised CF_VARINT_FLIST_FLAGS (rsync >= 3.2.0) can
+    // carry create-times, so the default path must stay unchanged - no abort.
+    let peer_flags = CompatibilityFlags::VARINT_FLIST_FLAGS | CompatibilityFlags::CHECKSUM_SEED_FIX;
+    assert!(require_crtimes_capability(true, peer_flags).is_ok());
+}
+
+#[test]
+fn no_crtimes_never_aborts_even_without_varint_flist_flags() {
+    // WHY: the guard is scoped strictly to --crtimes. A transfer that did not
+    // request create-times must never be blocked by a peer lacking
+    // VARINT_FLIST_FLAGS.
+    let peer_flags = CompatibilityFlags::from_bits(0);
+    assert!(require_crtimes_capability(false, peer_flags).is_ok());
 }
