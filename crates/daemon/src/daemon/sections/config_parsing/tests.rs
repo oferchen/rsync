@@ -499,6 +499,130 @@ mod config_parsing_tests {
     }
 
     #[test]
+    fn backslash_continuation_joins_directive_value() {
+        // upstream: params.c:Continuation() - a line ending in a backslash is
+        // joined with the next physical line into one logical directive. Split
+        // across two lines, the `World` fragment on its own is not a valid
+        // `key = value` line, so a config that failed to join would error;
+        // proving the join is what makes this parse succeed as one directive.
+        let file = write_config("motd = Hello \\\nWorld\n");
+        let result = parse_config_modules(file.path()).expect("parse succeeds");
+        assert_eq!(result.motd_lines, vec!["Hello World"]);
+    }
+
+    #[test]
+    fn backslash_continuation_not_applied_to_comment_line() {
+        // upstream: params.c:Parse() - comment lines are consumed by
+        // EatComment(), which never scans for the continuation character, so a
+        // trailing backslash on a comment must not swallow the following
+        // directive. Were it wrongly continued, the `motd` line would be eaten
+        // and `motd_lines` would be empty.
+        let file = write_config("# a trailing backslash comment \\\nmotd = Real\n");
+        let result = parse_config_modules(file.path()).expect("parse succeeds");
+        assert_eq!(result.motd_lines, vec!["Real"]);
+    }
+
+    #[test]
+    fn amp_include_directory_globs_conf_files_sorted() {
+        // upstream: params.c:include_config() - an `&include` of a directory
+        // pulls in every `*.conf` entry (never `*.inc`), processed in sorted
+        // order.
+        let dir = TempDir::new().expect("create temp dir");
+        let data = dir.path().join("data");
+        fs::create_dir(&data).expect("create data dir");
+
+        let conf_dir = dir.path().join("conf.d");
+        fs::create_dir(&conf_dir).expect("create conf dir");
+        fs::write(
+            conf_dir.join("b.conf"),
+            format!("[mod_b]\npath = {}\n", data.display()),
+        )
+        .expect("write b.conf");
+        fs::write(
+            conf_dir.join("a.conf"),
+            format!("[mod_a]\npath = {}\n", data.display()),
+        )
+        .expect("write a.conf");
+        // A `*.inc` file and an unrelated file must both be ignored by
+        // `&include`.
+        fs::write(
+            conf_dir.join("z.inc"),
+            format!("[mod_z]\npath = {}\n", data.display()),
+        )
+        .expect("write z.inc");
+        fs::write(conf_dir.join("notes.txt"), "ignored\n").expect("write notes.txt");
+
+        let main_config = format!("&include {}\n", conf_dir.display());
+        let main_file = write_config(&main_config);
+
+        let result = parse_config_modules(main_file.path()).expect("parse succeeds");
+        let names: Vec<&str> = result.modules.iter().map(|m| m.name.as_str()).collect();
+        assert_eq!(names, vec!["mod_a", "mod_b"]);
+    }
+
+    #[test]
+    fn amp_merge_directory_globs_inc_files() {
+        // upstream: params.c:include_config() - an `&merge` of a directory
+        // pulls in every `*.inc` entry (never `*.conf`).
+        let dir = TempDir::new().expect("create temp dir");
+        let data = dir.path().join("data");
+        fs::create_dir(&data).expect("create data dir");
+
+        let inc_dir = dir.path().join("inc.d");
+        fs::create_dir(&inc_dir).expect("create inc dir");
+        fs::write(
+            inc_dir.join("first.inc"),
+            format!("[mod_inc]\npath = {}\n", data.display()),
+        )
+        .expect("write first.inc");
+        fs::write(
+            inc_dir.join("other.conf"),
+            format!("[mod_conf]\npath = {}\n", data.display()),
+        )
+        .expect("write other.conf");
+
+        let main_config = format!("&merge {}\n", inc_dir.display());
+        let main_file = write_config(&main_config);
+
+        let result = parse_config_modules(main_file.path()).expect("parse succeeds");
+        let names: Vec<&str> = result.modules.iter().map(|m| m.name.as_str()).collect();
+        assert_eq!(names, vec!["mod_inc"]);
+    }
+
+    #[test]
+    fn amp_include_global_directives_do_not_leak_to_parent() {
+        // upstream: params.c:include_config() - `&include` wraps the parse in
+        // `]push`/`]pop`, restoring the parent's global `Vars` afterwards, so a
+        // global directive set only inside the included file must not surface in
+        // the parent configuration.
+        let included = write_config("bwlimit = 2000\n");
+        let main_config = format!("&include {}\n", included.path().display());
+        let main_file = write_config(&main_config);
+
+        let result = parse_config_modules(main_file.path()).expect("parse succeeds");
+        assert!(
+            result.global_bandwidth_limit.is_none(),
+            "&include must not leak the included file's globals into the parent",
+        );
+    }
+
+    #[test]
+    fn amp_merge_global_directives_leak_to_parent() {
+        // upstream: params.c:include_config() - `&merge` shares the current
+        // scope (no `]push`/`]pop`), so a global directive set inside the merged
+        // file does take effect in the parent configuration.
+        let included = write_config("bwlimit = 2000\n");
+        let main_config = format!("&merge {}\n", included.path().display());
+        let main_file = write_config(&main_config);
+
+        let result = parse_config_modules(main_file.path()).expect("parse succeeds");
+        assert!(
+            result.global_bandwidth_limit.is_some(),
+            "&merge must merge the included file's globals into the parent",
+        );
+    }
+
+    #[test]
     fn parse_recursive_include_detected() {
         let dir = TempDir::new().expect("create temp dir");
         let config_path = dir.path().join("config.conf");
