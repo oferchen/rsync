@@ -557,10 +557,13 @@ mod config_parsing_tests {
 
 
     #[test]
-    fn parse_invalid_boolean_errors() {
+    fn parse_invalid_boolean_keeps_default() {
+        // upstream: loadparm.c:418-423 - a badly formed boolean warns and
+        // retains the directive's default rather than aborting the load, so
+        // `read only = maybe` leaves read_only at its default (true).
         let file = write_config("[mod]\npath = /tmp\nread only = maybe\n");
-        let err = parse_config_modules(file.path()).expect_err("should fail");
-        assert!(err.to_string().contains("invalid boolean"));
+        let result = parse_config_modules(file.path()).expect("parse succeeds");
+        assert!(result.modules[0].read_only);
     }
 
 
@@ -615,10 +618,21 @@ mod config_parsing_tests {
     }
 
     #[test]
-    fn parse_module_munge_symlinks_invalid_boolean() {
+    fn parse_module_munge_symlinks_invalid_boolean_keeps_default() {
+        // upstream: loadparm.c:418-423 - a badly formed boolean warns and keeps
+        // the default; munge symlinks is unset (None) unless explicitly set.
         let file = write_config("[mod]\npath = /tmp\nmunge symlinks = maybe\n");
-        let err = parse_config_modules(file.path()).expect_err("should fail");
-        assert!(err.to_string().contains("invalid boolean"));
+        let result = parse_config_modules(file.path()).expect("parse succeeds");
+        assert!(result.modules[0].munge_symlinks.is_none());
+    }
+
+    #[test]
+    fn parse_module_munge_symlinks_unset_tristate() {
+        // upstream: loadparm.c:369 - munge symlinks is a P_BOOL3 param, so the
+        // `unset` tri-state is accepted and leaves the setting at its default.
+        let file = write_config("[mod]\npath = /tmp\nmunge symlinks = unset\n");
+        let result = parse_config_modules(file.path()).expect("parse succeeds");
+        assert!(result.modules[0].munge_symlinks.is_none());
     }
 
     #[test]
@@ -656,10 +670,16 @@ mod config_parsing_tests {
     }
 
     #[test]
-    fn parse_module_max_verbosity_invalid() {
+    fn parse_module_max_verbosity_atoi_leniency() {
+        // upstream: loadparm.c:431-433 - P_INTEGER uses atoi(), so "abc" yields
+        // 0 and a trailing suffix like "5x" yields 5, never an error.
         let file = write_config("[mod]\npath = /tmp\nmax verbosity = abc\n");
-        let err = parse_config_modules(file.path()).expect_err("should fail");
-        assert!(err.to_string().contains("invalid integer"));
+        let result = parse_config_modules(file.path()).expect("parse succeeds");
+        assert_eq!(result.modules[0].max_verbosity, 0);
+
+        let file = write_config("[mod]\npath = /tmp\nmax verbosity = 5x\n");
+        let result = parse_config_modules(file.path()).expect("parse succeeds");
+        assert_eq!(result.modules[0].max_verbosity, 5);
     }
 
     #[test]
@@ -925,10 +945,13 @@ mod config_parsing_tests {
     }
 
     #[test]
-    fn parse_module_strict_modes_invalid_boolean() {
+    fn parse_module_strict_modes_invalid_boolean_keeps_default() {
+        // upstream: loadparm.c:418-423 - a badly formed boolean warns and keeps
+        // the default. `strict modes` defaults to True (daemon-parm.h:203), so
+        // the malformed value must leave it enabled, not clear it.
         let file = write_config("[mod]\npath = /tmp\nstrict modes = maybe\n");
-        let err = parse_config_modules(file.path()).expect_err("should fail");
-        assert!(err.to_string().contains("invalid boolean"));
+        let result = parse_config_modules(file.path()).expect("parse succeeds");
+        assert!(result.modules[0].strict_modes);
     }
 
     #[test]
@@ -984,10 +1007,12 @@ mod config_parsing_tests {
     }
 
     #[test]
-    fn parse_module_open_noatime_invalid_boolean() {
+    fn parse_module_open_noatime_invalid_boolean_keeps_default() {
+        // upstream: loadparm.c:418-423 - a badly formed boolean warns and keeps
+        // the default (open noatime defaults to false).
         let file = write_config("[mod]\npath = /tmp\nopen noatime = maybe\n");
-        let err = parse_config_modules(file.path()).expect_err("should fail");
-        assert!(err.to_string().contains("invalid boolean"));
+        let result = parse_config_modules(file.path()).expect("parse succeeds");
+        assert!(!result.modules[0].open_noatime);
     }
 
     #[test]
@@ -2152,15 +2177,17 @@ mod config_parsing_tests {
     }
 
     #[test]
-    fn parse_global_rsync_port_invalid() {
+    fn parse_global_rsync_port_atoi_leniency() {
+        // upstream: loadparm.c:431-433 - `port` is P_INTEGER, parsed with
+        // atoi(), so "abc" yields 0 (the default port) rather than an error.
         let dir = TempDir::new().expect("create temp dir");
         let path = dir.path().join("data");
         fs::create_dir(&path).expect("create dir");
 
         let config = format!("port = abc\n[mod]\npath = {}\n", path.display());
         let file = write_config(&config);
-        let result = parse_config_modules(file.path());
-        assert!(result.is_err());
+        let result = parse_config_modules(file.path()).expect("parse succeeds");
+        assert_eq!(result.rsync_port.map(|(port, _)| port), Some(0));
     }
 
     #[test]
