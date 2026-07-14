@@ -24,7 +24,7 @@ pub(crate) use auth::{AuthUser, SystemGroupMembership, UserAccessLevel, authoriz
 pub(crate) use connection_limiter::{ConnectionLimiter, ConnectionLockGuard};
 pub(crate) use definition::ModuleDefinition;
 pub(crate) use hostname::module_peer_hostname;
-pub(in crate::daemon) use hostname::resolve_peer_hostname;
+pub(in crate::daemon) use hostname::{forward_resolve, resolve_peer_hostname};
 pub(crate) use runtime::{ModuleConnectionError, ModuleRuntime};
 
 #[cfg(test)]
