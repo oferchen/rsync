@@ -597,11 +597,105 @@ mod tests {
         let wire = encode_segment_with_dir_ndx(0, &[("dir0/a.txt", 3u64), ("dir0/b.txt", 4)]);
         let mut ctx = inc_recurse_receiver();
         ctx.dir_flist_used = 1;
+        ctx.dir_flist_names = vec![PathBuf::from("dir0")];
         let n = ctx
             .receive_extra_file_lists(&mut Cursor::new(wire))
             .expect("in-range dir_ndx must be accepted");
         assert_eq!(n, 2);
         assert_eq!(ctx.file_list().len(), 2);
         assert!(ctx.flist_eof);
+    }
+
+    /// A sub-list that repeats a normalized name must collapse to a single entry.
+    ///
+    /// WHY: upstream runs `flist_sort_and_clean()` on EACH INC_RECURSE sub-list
+    /// (send `flist.c:2190`, recv `flist.c:2771`), whose clean pass
+    /// (`flist.c:3031`, active for the receiver) removes duplicate names. Before
+    /// this fix `receive_one_extra_segment` sorted the sub-list but skipped the
+    /// dedup, so a redundant or hostile duplicate survived and the generator
+    /// requested the same path twice - an NDX divergence driven by untrusted
+    /// bytes, exactly the class of bug the initial-list dedup (#6631) closed. The
+    /// legitimate sender ships deduped sub-lists (partitions of an already-cleaned
+    /// list), so this pass is a no-op there and only collapses a duplicate,
+    /// keeping both sides' NDX numbering identical.
+    #[test]
+    fn sublist_duplicate_name_is_deduped() {
+        let wire = encode_segment_with_dir_ndx(
+            0,
+            &[("x/dup.txt", 10u64), ("x/dup.txt", 10), ("x/z.txt", 20)],
+        );
+        let mut ctx = inc_recurse_receiver();
+        ctx.dir_flist_used = 1;
+        ctx.dir_flist_names = vec![PathBuf::from("x")];
+        let n = ctx
+            .receive_extra_file_lists(&mut Cursor::new(wire))
+            .expect("legitimate sub-list must be accepted");
+        // Three entries arrive on the wire; the duplicate "x/dup.txt" collapses.
+        assert_eq!(n, 3, "the wire carried three entries");
+        let names: Vec<String> = ctx
+            .file_list()
+            .iter()
+            .map(|e| e.name().to_owned())
+            .collect();
+        assert_eq!(
+            names,
+            vec!["x/dup.txt".to_owned(), "x/z.txt".to_owned()],
+            "the repeated name must be deduped, leaving two entries"
+        );
+    }
+
+    /// A sub-list entry whose dirname escapes its declared parent must be rejected.
+    ///
+    /// WHY: upstream `flist.c:2684-2695` compares every sub-list entry's dirname
+    /// against `f_name(dir_flist->files[dir_ndx])` and, on a mismatch, aborts with
+    /// `exit_cleanup(RERR_UNSUPPORTED)` ("ABORTING due to invalid path from
+    /// sender"). Without this check a hostile sender could frame a sub-list for a
+    /// legitimate parent (`dir_ndx` 0 = "x") but fill it with an entry that lands
+    /// outside that tree ("y/evil.txt"), escaping the intended directory. The
+    /// range/duplicate guards (#28) do not catch this because `dir_ndx` itself is
+    /// valid; only the path-belongs check does.
+    #[test]
+    fn sublist_entry_escaping_parent_is_rejected() {
+        let wire = encode_segment_with_dir_ndx(0, &[("y/evil.txt", 9u64)]);
+        let mut ctx = inc_recurse_receiver();
+        ctx.dir_flist_used = 1;
+        // dir_ndx 0 is the legitimate parent "x"; the entry claims "y".
+        ctx.dir_flist_names = vec![PathBuf::from("x")];
+        let err = ctx
+            .receive_extra_file_lists(&mut Cursor::new(wire))
+            .expect_err("an entry escaping its parent must be rejected");
+        assert_eq!(
+            err.kind(),
+            std::io::ErrorKind::Unsupported,
+            "path-belongs rejection must map to RERR_UNSUPPORTED (4), got {err:?}"
+        );
+        assert!(
+            err.to_string()
+                .contains("ABORTING due to invalid path from sender"),
+            "unexpected message: {err}"
+        );
+        assert_eq!(
+            ctx.file_list().len(),
+            0,
+            "the escaping segment's entries must be dropped"
+        );
+    }
+
+    /// A legitimate entry that lives directly under its declared parent passes.
+    ///
+    /// WHY: the path-belongs guard must accept the normal case (entry dirname ==
+    /// parent) or it would break every deep INC_RECURSE transfer. Guards this
+    /// against a false-positive regression.
+    #[test]
+    fn sublist_entry_under_parent_is_accepted() {
+        let wire = encode_segment_with_dir_ndx(0, &[("x/a.txt", 1u64), ("x/b.txt", 2)]);
+        let mut ctx = inc_recurse_receiver();
+        ctx.dir_flist_used = 1;
+        ctx.dir_flist_names = vec![PathBuf::from("x")];
+        let n = ctx
+            .receive_extra_file_lists(&mut Cursor::new(wire))
+            .expect("entries under their parent must be accepted");
+        assert_eq!(n, 2);
+        assert_eq!(ctx.file_list().len(), 2);
     }
 }

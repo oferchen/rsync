@@ -8,6 +8,7 @@
 use std::cell::RefCell;
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::num::NonZeroU8;
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::Ordering;
 
@@ -103,6 +104,19 @@ pub struct ReceiverContext {
     ///   "refusing malicious duplicate flist for dir %d" ...
     ///   exit_cleanup(RERR_PROTOCOL)`.
     pub(in crate::receiver) served_dir_flists: HashSet<i32>,
+    /// Full relative path of each directory in wire `dir_ndx` order, mirroring
+    /// upstream's `dir_flist->files[]` array. Built from the sorted (and, under
+    /// non-iconv, deduped) file list of the initial flist and each INC_RECURSE
+    /// sub-list, in the exact order the sender assigns `dir_ndx`: initial-list
+    /// directories (including `.`) first, then each sub-list's directories in
+    /// depth-first reception order. Indexed by the wire `dir_ndx` so a received
+    /// sub-list entry can be validated against its declared parent directory.
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `flist.c:2685` - `f_name(dir_flist->files[dir_ndx], NULL)` names the
+    ///   parent that every entry in the sub-list must live under.
+    pub(in crate::receiver) dir_flist_names: Vec<PathBuf>,
     /// Cached file list reader for compression state continuity across sub-lists.
     ///
     /// Upstream rsync uses `static` variables in `recv_file_entry()` that persist
@@ -344,6 +358,7 @@ impl ReceiverContext {
             first_segment_idx: 0,
             dir_flist_used: 0,
             served_dir_flists: HashSet::new(),
+            dir_flist_names: Vec::new(),
             flist_reader_cache: None,
             uid_list: IdList::new(),
             gid_list: IdList::new(),
