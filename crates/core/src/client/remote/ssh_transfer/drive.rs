@@ -331,13 +331,16 @@ fn run_server_over_ssh_connection(
             };
 
             // upstream: io.c:232 whine_about_eof() maps an unexpected EOF
-            // during setup to RERR_STREAMIO (12); other handshake failures keep
-            // the client/server-startup code (5). exit_cleanup() then takes the
-            // worst of that base and the child's raw exit status
-            // (cleanup.c:150), so an arbitrary remote exit code propagates
-            // verbatim.
+            // during setup to RERR_STREAMIO (12); an out-of-range peer protocol
+            // version is RERR_PROTOCOL (2) per compat.c:619-623 setup_protocol;
+            // other handshake failures keep the client/server-startup code (5).
+            // exit_cleanup() then takes the worst of that base and the child's
+            // raw exit status (cleanup.c:150), so an arbitrary remote exit code
+            // propagates verbatim.
             let base = if e.kind() == std::io::ErrorKind::UnexpectedEof {
                 ExitCode::StreamIo
+            } else if ExitCode::from_io_error(&e) == ExitCode::Protocol {
+                ExitCode::Protocol
             } else {
                 ExitCode::StartClient
             };

@@ -5,7 +5,8 @@ use crate::client::module_list::parsing::strip_prefix_ignore_ascii_case;
 use protocol::{NegotiationError, parse_legacy_error_message};
 
 use super::super::{
-    ClientError, PARTIAL_TRANSFER_EXIT_CODE, daemon_error, daemon_protocol_error, socket_error,
+    ClientError, PARTIAL_TRANSFER_EXIT_CODE, PROTOCOL_INCOMPATIBLE_EXIT_CODE, daemon_error,
+    daemon_protocol_error, socket_error,
 };
 use super::DaemonAddress;
 
@@ -89,6 +90,21 @@ fn handshake_error_to_client_error(error: &io::Error) -> Option<ClientError> {
         }
 
         return Some(daemon_protocol_error(input));
+    }
+
+    // upstream: compat.c:619-623 setup_protocol - a daemon that advertises a
+    // protocol version outside [MIN_PROTOCOL_VERSION, MAX_PROTOCOL_VERSION]
+    // makes the client exit_cleanup(RERR_PROTOCOL) (exit 2). Both the
+    // out-of-range (UnsupportedVersion) and no-mutual-version cases carry that
+    // negotiation failure, so map them to RERR_PROTOCOL rather than falling
+    // through to the RERR_SOCKETIO (10) socket-error path.
+    if negotiation_error.unsupported_version().is_some()
+        || negotiation_error.peer_versions().is_some()
+    {
+        return Some(daemon_error(
+            negotiation_error.to_string(),
+            PROTOCOL_INCOMPATIBLE_EXIT_CODE,
+        ));
     }
 
     None
@@ -315,5 +331,42 @@ mod tests {
         let mut reader = ErrorReader::new(io::ErrorKind::BrokenPipe);
         let result = read_trimmed_line(&mut reader).expect("broken pipe as eof");
         assert!(result.is_none());
+    }
+
+    // WHY: upstream compat.c:619-623 setup_protocol exits RERR_PROTOCOL (2) when
+    // the daemon advertises a protocol version outside
+    // [MIN_PROTOCOL_VERSION, MAX_PROTOCOL_VERSION]. oc rejects the out-of-range
+    // greeting during negotiation, so the daemon handshake mapper must report
+    // exit 2 - not the RERR_SOCKETIO (10) socket-error fallback - so a drop-in
+    // tool distinguishes a protocol mismatch from a transport failure.
+    #[test]
+    fn out_of_range_daemon_version_maps_to_rerr_protocol() {
+        let error: io::Error = NegotiationError::UnsupportedVersion(999).into();
+        let mapped =
+            handshake_error_to_client_error(&error).expect("out-of-range version is classified");
+        assert_eq!(mapped.exit_code(), PROTOCOL_INCOMPATIBLE_EXIT_CODE);
+        assert_eq!(mapped.exit_code(), 2);
+    }
+
+    // WHY: a daemon whose advertised versions do not overlap our supported set
+    // is the same protocol-incompatibility class and must also exit 2.
+    #[test]
+    fn no_mutual_daemon_version_maps_to_rerr_protocol() {
+        let error: io::Error = NegotiationError::NoMutualProtocol {
+            peer_versions: vec![20, 21],
+        }
+        .into();
+        let mapped =
+            handshake_error_to_client_error(&error).expect("no-mutual version is classified");
+        assert_eq!(mapped.exit_code(), PROTOCOL_INCOMPATIBLE_EXIT_CODE);
+    }
+
+    // Regression guard: a genuine transport failure (not a NegotiationError)
+    // must NOT be reclassified as a protocol error; it stays on the socket-error
+    // path (RERR_SOCKETIO, 10) handled by the caller.
+    #[test]
+    fn non_negotiation_error_is_not_classified_as_protocol() {
+        let error = io::Error::new(io::ErrorKind::ConnectionReset, "reset");
+        assert!(handshake_error_to_client_error(&error).is_none());
     }
 }
