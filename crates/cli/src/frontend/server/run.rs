@@ -208,6 +208,9 @@ where
     // (receiver.c:357, match.c:373). Mirrors the daemon long-form parser.
     config.flags.append = long_flags.append;
     config.flags.append_verify = long_flags.append_verify;
+    // upstream: receiver.c:320 - a server receiver that was passed --preallocate
+    // fallocate()s each destination file to its eventual length before writing.
+    config.flags.preallocate = long_flags.preallocate;
     config.file_selection.size_only = long_flags.size_only;
     // upstream: options.c:2993-2994 - `--open-noatime` forwarded to the sender so
     // it opens source files with O_NOATIME (do_open), leaving atime untouched.

@@ -2105,6 +2105,22 @@ fn force_super_preallocate_recognised_as_known_long_flags() {
     assert!(is_known_server_long_flag("--preallocate"));
 }
 
+/// upstream: options.c:2990-2991 / receiver.c:320 - a server receiver invoked
+/// with `--preallocate` must fallocate() each destination file. The flag has no
+/// compact letter, so it arrives only as the long-form arg; parsing must set
+/// `preallocate` so `run.rs` can carry it onto `config.flags.preallocate` and
+/// the receiver reserves extents. Regression guard: the flag was previously
+/// recognised-but-dropped (`"--preallocate" => {}`), silently no-op'ing.
+#[test]
+fn parse_server_long_flags_sets_preallocate() {
+    let without = parse_server_long_flags(&[OsString::from("--server")]);
+    assert!(!without.preallocate, "default must be false");
+
+    let with =
+        parse_server_long_flags(&[OsString::from("--server"), OsString::from("--preallocate")]);
+    assert!(with.preallocate, "--preallocate must set the flag");
+}
+
 /// Regression for the positional leak: with the compact flag string present,
 /// none of the seven newly recognised long flags may fall through into
 /// `positional_args`; only the real destination path (`dst/`) survives. Without

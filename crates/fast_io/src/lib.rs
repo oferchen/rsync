@@ -162,6 +162,9 @@ pub mod platform_copy;
 /// Cross-platform abstraction seam for zero-copy file-to-socket transfer
 /// (`sendfile(2)` / `TransmitFile()`).
 pub mod platform_sendfile;
+/// Destination file preallocation via `fallocate(FALLOC_FL_KEEP_SIZE)`, reserving
+/// blocks for a file's eventual length before writing (upstream `--preallocate`).
+pub mod preallocate;
 /// Sparse-file hole punching via `fallocate(PUNCH_HOLE)` with a zero-write
 /// fallback, for reclaiming/zeroing basis blocks during in-place sparse writes.
 pub mod punch_hole;
@@ -333,6 +336,7 @@ pub use platform_sendfile::{
     LinuxSendFile, MacOsSendFile, PlatformSendFile, SocketHandle, UnsupportedSendFile,
     WindowsTransmitFile, platform_default,
 };
+pub use preallocate::preallocate;
 pub use punch_hole::punch_hole;
 pub use traits::{FileReader, FileWriter};
 

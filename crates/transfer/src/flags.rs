@@ -179,6 +179,10 @@ pub struct ParsedServerFlags {
     pub whole_file: bool,
     /// Sparse file handling (`S` flag, `--sparse`).
     pub sparse: bool,
+    /// Preallocate destination file extents before writing (`--preallocate`).
+    /// Long-form only (no compact letter); the receiver calls `fallocate()` on
+    /// each destination temp file. upstream: options.c:715 / receiver.c:320.
+    pub preallocate: bool,
     /// One file system level (`x` flag count, `--one-file-system`).
     /// 0 = off, 1 = single -x, 2 = double -xx.
     pub one_file_system: u8,

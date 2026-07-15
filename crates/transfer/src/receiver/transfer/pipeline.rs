@@ -144,6 +144,7 @@ impl ReceiverContext {
         let disk_config = DiskCommitConfig {
             do_fsync: self.config.write.fsync,
             use_sparse: self.config.flags.sparse,
+            preallocate: self.config.flags.preallocate,
             dest_dir: Some(setup.dest_dir.clone()),
             #[cfg(unix)]
             sandbox: setup.sandbox.clone(),
