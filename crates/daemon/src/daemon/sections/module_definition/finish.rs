@@ -165,6 +165,12 @@ impl ModuleDefinitionBuilder {
             exclude_from: self.exclude_from.or_else(|| defaults.exclude_from.clone()),
             include_from: self.include_from.or_else(|| defaults.include_from.clone()),
             open_noatime: self.open_noatime.or(defaults.open_noatime).unwrap_or(false),
+            // upstream: daemon-parm.h:78 default True; module value overrides the
+            // global-section default (defaults.reverse_lookup), else built-in True.
+            reverse_lookup: self.reverse_lookup.or(defaults.reverse_lookup).unwrap_or(true),
+            // upstream: daemon-parm.h:46 - a module `lock file` overrides the
+            // daemon-wide lock file; `None` inherits it at connection setup.
+            lock_file: self.lock_file,
             filter,
             exclude,
             include,

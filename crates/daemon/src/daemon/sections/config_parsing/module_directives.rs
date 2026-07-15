@@ -392,6 +392,28 @@ fn apply_module_directive(
                 builder.include.push(value.to_owned());
             }
         }
+        // upstream: daemon-parm.h:78 `reverse_lookup` BOOL, P_LOCAL. Consumed
+        // per-module at clientserver.c:723 `lp_reverse_lookup(i)`.
+        "reverselookup" => {
+            if let Some(parsed) =
+                apply_boolean_directive(value, false, "reverse lookup", path, line_number)
+            {
+                builder.set_reverse_lookup(parsed, path, line_number)?;
+            }
+        }
+        // upstream: daemon-parm.h:46 `lock_file` STRING, P_LOCAL. Consumed
+        // per-module at clientserver.c:746 `claim_connection(lp_lock_file(i), ...)`.
+        "lockfile" => {
+            if value.is_empty() {
+                return Err(config_parse_error(
+                    path,
+                    line_number,
+                    "'lock file' directive must not be empty",
+                ));
+            }
+            let resolved = resolve_config_relative_path(canonical, value);
+            builder.set_lock_file(resolved, path, line_number)?;
+        }
         _ if is_global_only_directive(key) => {
             // upstream: loadparm.c:do_parameter - a known P_GLOBAL parameter
             // that appears inside a module section is reported and ignored,

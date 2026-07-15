@@ -33,6 +33,7 @@ struct GlobalModuleDefaults {
     ignore_nonreadable: Option<bool>,
     strict_modes: Option<bool>,
     forward_lookup: Option<bool>,
+    reverse_lookup: Option<bool>,
     open_noatime: Option<bool>,
     exclude_from: Option<PathBuf>,
     include_from: Option<PathBuf>,

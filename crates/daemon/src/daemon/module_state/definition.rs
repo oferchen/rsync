@@ -147,6 +147,18 @@ pub(crate) struct ModuleDefinition {
     /// is accepted but has no effect (no-op).
     /// Upstream: `loadparm.c` - `open noatime` parameter, default false.
     pub(crate) open_noatime: bool,
+    /// Whether reverse DNS lookups are enabled for this module (default: true).
+    ///
+    /// Inherits the global-section value when the module does not override it.
+    /// upstream: daemon-parm.h:78 `reverse_lookup` BOOL, P_LOCAL, default True;
+    /// consumed per-module at clientserver.c:723 `lp_reverse_lookup(i)`.
+    pub(crate) reverse_lookup: bool,
+    /// Per-module lock file override for cross-process max-connections counting.
+    ///
+    /// `None` inherits the daemon-wide lock file. upstream: daemon-parm.h:46
+    /// `lock_file` STRING, P_LOCAL; consumed per-module at clientserver.c:746
+    /// `claim_connection(lp_lock_file(i), lp_max_connections(i))`.
+    pub(crate) lock_file: Option<PathBuf>,
 }
 
 impl ModuleDefinition {

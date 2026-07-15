@@ -148,6 +148,11 @@ fn apply_global_directive(
             } else {
                 state.reverse_lookup = Some((parsed, origin));
             }
+            // upstream: loadparm.c - `reverse lookup` is P_LOCAL, so a value in
+            // the global section becomes the default every later module inherits
+            // (init_section copies Vars.l). state.reverse_lookup above is the
+            // daemon template read as `lp_reverse_lookup(-1)`.
+            state.module_defaults.reverse_lookup = Some(parsed);
         }
         "bwlimit" => {
             if value.is_empty() {

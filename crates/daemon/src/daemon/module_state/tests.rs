@@ -477,3 +477,110 @@ fn module_peer_hostname_uses_cache() {
     let result = module_peer_hostname(&def, &mut cache, addr, true);
     assert_eq!(result, Some("cached.example.com"));
 }
+
+// upstream: clientserver.c:746 `claim_connection(lp_lock_file(i), ...)` - the
+// lock file is P_LOCAL, so a module that sets its own `lock file` claims slots
+// in that file while modules without an override share the daemon-wide file.
+#[test]
+fn build_module_runtimes_honours_per_module_lock_file() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let global = std::sync::Arc::new(
+        ConnectionLimiter::open(dir.path().join("global.lock")).expect("global lock"),
+    );
+    let own = dir.path().join("own.lock");
+
+    let shared_def = ModuleDefinition {
+        name: "shared".to_owned(),
+        ..Default::default()
+    };
+    let own_def = ModuleDefinition {
+        name: "own".to_owned(),
+        lock_file: Some(own.clone()),
+        ..Default::default()
+    };
+    let own_twin = ModuleDefinition {
+        name: "twin".to_owned(),
+        lock_file: Some(own.clone()),
+        ..Default::default()
+    };
+
+    let runtimes = build_module_runtimes(
+        vec![shared_def, own_def, own_twin],
+        &Some(std::sync::Arc::clone(&global)),
+    )
+    .expect("build runtimes");
+
+    // A module without an override shares the daemon-wide limiter.
+    assert!(std::sync::Arc::ptr_eq(
+        runtimes[0]
+            .connection_limiter
+            .as_ref()
+            .expect("shared limiter"),
+        &global,
+    ));
+    // A module with its own lock file gets a distinct limiter.
+    assert!(!std::sync::Arc::ptr_eq(
+        runtimes[1]
+            .connection_limiter
+            .as_ref()
+            .expect("own limiter"),
+        &global,
+    ));
+    // Two modules naming the same lock file share one handle.
+    assert!(std::sync::Arc::ptr_eq(
+        runtimes[1]
+            .connection_limiter
+            .as_ref()
+            .expect("own limiter"),
+        runtimes[2]
+            .connection_limiter
+            .as_ref()
+            .expect("twin limiter"),
+    ));
+}
+
+// upstream: clientserver.c:723 - when the global default disables reverse
+// lookup (host stays undetermined), a module that enables it resolves the peer
+// via `lp_reverse_lookup(i)`. The call site computes the effective value as
+// `global || module.reverse_lookup`; this proves the module override reaches
+// the resolver while an unset/disabled module inherits the disabled global.
+#[test]
+fn per_module_reverse_lookup_gates_resolution_when_global_disabled() {
+    let addr = IpAddr::V4(Ipv4Addr::new(203, 0, 113, 7));
+    set_test_hostname_override(addr, Some("host.example.com"));
+    set_test_forward_override("host.example.com", &[addr]);
+
+    let hosts_allow = vec![HostPattern::Hostname(HostnamePattern {
+        kind: HostnamePatternKind::Suffix("example.com".to_owned()),
+        original: ".example.com".to_owned(),
+    })];
+    let global_reverse_lookup = false;
+
+    let enabled = ModuleDefinition {
+        hosts_allow: hosts_allow.clone(),
+        reverse_lookup: true,
+        forward_lookup: true,
+        ..Default::default()
+    };
+    let mut cache = None;
+    let effective = global_reverse_lookup || enabled.reverse_lookup;
+    assert_eq!(
+        module_peer_hostname(&enabled, &mut cache, addr, effective),
+        Some("host.example.com"),
+    );
+
+    let disabled = ModuleDefinition {
+        hosts_allow,
+        reverse_lookup: false,
+        forward_lookup: true,
+        ..Default::default()
+    };
+    let mut cache = None;
+    let effective = global_reverse_lookup || disabled.reverse_lookup;
+    assert_eq!(
+        module_peer_hostname(&disabled, &mut cache, addr, effective),
+        None
+    );
+
+    clear_test_hostname_overrides();
+}

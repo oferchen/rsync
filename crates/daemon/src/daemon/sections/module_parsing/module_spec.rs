@@ -153,6 +153,8 @@ fn parse_module_definition(
         exclude_from: None,
         include_from: None,
         open_noatime: false,
+        reverse_lookup: true,
+        lock_file: None,
         filter: Vec::new(),
         exclude: Vec::new(),
         include: Vec::new(),
