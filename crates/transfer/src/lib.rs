@@ -175,7 +175,7 @@ pub use self::generator::{
 };
 pub use self::handshake::{
     HandshakeResult, IoTimeoutReapply, perform_handshake, perform_handshake_with_max,
-    perform_legacy_handshake,
+    perform_legacy_handshake, perform_server_handshake,
 };
 pub use self::reader::RemoteExitError;
 pub use self::receiver::{ListOnlyEntry, ReceiverContext, SumHead, TransferStats};
@@ -330,7 +330,11 @@ pub fn run_server_stdio(
     stdout: &mut dyn Write,
     progress: Option<&mut dyn TransferProgressCallback>,
 ) -> ServerResult {
-    let handshake = perform_handshake(stdin, stdout)?;
+    // upstream: compat.c:600-602 - the non-local server reconciles the client's
+    // pre-release subprotocol (carried in its `-e` capability string) before it
+    // writes its protocol version. For a stock release peer this is a no-op and
+    // the version exchange is byte-identical to a plain `perform_handshake`.
+    let handshake = perform_server_handshake(stdin, stdout, &config.flag_string)?;
     run_server_with_handshake(
         config,
         handshake,
