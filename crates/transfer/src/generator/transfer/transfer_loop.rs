@@ -19,7 +19,7 @@ use protocol::stats::DeleteStats;
 
 use super::super::delta::{
     create_token_encoder, script_to_wire_delta, stream_append_transfer, stream_whole_file_transfer,
-    write_delta_with_inline_checksum,
+    whole_stream_compression_level, write_delta_with_inline_checksum,
 };
 use super::super::item_flags::ItemFlags;
 use super::super::protocol_io::NdxAttrs;
@@ -134,13 +134,20 @@ impl GeneratorContext {
         // upstream: token.c inits the compressor with do_compression_level (the
         // negotiated --compress-level). Absent an explicit level, each codec
         // substitutes its own default via CompressionLevel::Default.
-        let compression_level = self
+        let configured_level = self
             .config
             .connection
             .compression_level
             .unwrap_or(compress::zlib::CompressionLevel::Default);
+        // upstream: token.c:206-211 - a daemon module's `dont compress = *`
+        // stores the whole zlib stream (level 0); zstd/lz4 are unaffected.
+        let dont_compress_match_all = self.config.connection.dont_compress_match_all;
         let mut token_encoder = negotiated_compression
-            .map(|algo| create_token_encoder(algo, compression_level, compression_threads))
+            .map(|algo| {
+                let level =
+                    whole_stream_compression_level(dont_compress_match_all, algo, configured_level);
+                create_token_encoder(algo, level, compression_threads)
+            })
             .transpose()?
             .flatten();
 

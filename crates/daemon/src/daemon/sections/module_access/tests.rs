@@ -1342,6 +1342,19 @@ mod module_access_tests {
         assert!(list.matches_path(Path::new("archive.bz2")));
     }
 
+    // WHY: upstream token.c:206-211 treats a bare `*` in the dont-compress match
+    // list as the whole-stream store signal (not a per-file suffix). A normal
+    // suffix list must not be mistaken for it, or ordinary transfers would lose
+    // compression.
+    #[test]
+    fn dont_compress_bare_star_is_match_all() {
+        assert!(dont_compress_is_match_all("*"));
+        assert!(dont_compress_is_match_all("*.gz *"));
+        assert!(!dont_compress_is_match_all("*.gz *.zip"));
+        assert!(!dont_compress_is_match_all("gz"));
+        assert!(!dont_compress_is_match_all(""));
+    }
+
 
     fn test_module_with_defaults() -> ModuleRuntime {
         ModuleRuntime::from(ModuleDefinition::default())
