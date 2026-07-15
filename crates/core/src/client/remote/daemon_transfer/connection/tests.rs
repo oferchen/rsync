@@ -521,9 +521,12 @@ mod handle_at_error_tests {
             username: None,
         };
 
-        // Valid greeting, then EOF: the daemon accepted the greeting but closed
+        // Valid greeting (subprotocol + digest list, as a real protocol-32
+        // daemon sends), then EOF: the daemon accepted the greeting but closed
         // the control socket before replying to the module request.
-        let mut reader = BufReader::new(Cursor::new(b"@RSYNCD: 32.0\n".to_vec()));
+        let mut reader = BufReader::new(Cursor::new(
+            b"@RSYNCD: 32.0 sha512 sha256 sha1 md5 md4\n".to_vec(),
+        ));
         let mut writer: Vec<u8> = Vec::new();
 
         let result = perform_daemon_handshake(
@@ -542,6 +545,80 @@ mod handle_at_error_tests {
             err.exit_code(),
             CLIENT_SERVER_PROTOCOL_EXIT_CODE,
             "daemon EOF must map to the client-server protocol exit code"
+        );
+    }
+
+    fn handshake_over_greeting(greeting: &[u8]) -> Result<ProtocolVersion, ClientError> {
+        use std::io::{BufReader, Cursor};
+
+        let request = DaemonTransferRequest {
+            address: DaemonAddress::new("127.0.0.1".to_owned(), 873).unwrap(),
+            module: "mod".to_owned(),
+            path: String::new(),
+            username: None,
+        };
+        let mut reader = BufReader::new(Cursor::new(greeting.to_vec()));
+        let mut writer: Vec<u8> = Vec::new();
+        perform_daemon_handshake(
+            &mut reader,
+            &mut writer,
+            &request,
+            true,
+            &[],
+            None,
+            None,
+            None,
+        )
+    }
+
+    // upstream: clientserver.c:189-194 (am_client == 1) - a server greeting at
+    // protocol >= 30 that omits the ".subprotocol" suffix is fatal:
+    // `rsync: the server omitted the subprotocol value: <buf>` + RERR_STARTCLIENT.
+    // The gate fires at protocol 30, one below the shared parser's own leniency
+    // boundary, so this is exactly the divergence the client must now reject.
+    #[test]
+    fn client_rejects_server_greeting_missing_subprotocol() {
+        let err = handshake_over_greeting(b"@RSYNCD: 30\n")
+            .expect_err("missing subprotocol at protocol >= 30 must abort");
+        assert_eq!(err.exit_code(), CLIENT_SERVER_PROTOCOL_EXIT_CODE);
+        assert!(
+            err.message()
+                .to_string()
+                .contains("the server omitted the subprotocol value: @RSYNCD: 30"),
+            "unexpected message: {}",
+            err.message()
+        );
+    }
+
+    // upstream: clientserver.c:205-210 (am_client == 1) - a protocol > 31 greeting
+    // that omits the digest name list is fatal:
+    // `rsync: the server omitted the digest name list: <buf>` + RERR_STARTCLIENT.
+    #[test]
+    fn client_rejects_server_greeting_missing_digest_list() {
+        let err = handshake_over_greeting(b"@RSYNCD: 32.0\n")
+            .expect_err("missing digest list at protocol > 31 must abort");
+        assert_eq!(err.exit_code(), CLIENT_SERVER_PROTOCOL_EXIT_CODE);
+        assert!(
+            err.message()
+                .to_string()
+                .contains("the server omitted the digest name list: @RSYNCD: 32.0"),
+            "unexpected message: {}",
+            err.message()
+        );
+    }
+
+    // upstream: clientserver.c:196 - protocol < 30 defaults remote_sub to 0 and
+    // needs no digest list, so the greeting is accepted and the handshake
+    // proceeds (here it reaches the module-response phase and hits EOF). The
+    // failure must NOT be the greeting-omission refusal.
+    #[test]
+    fn client_accepts_legacy_server_greeting_without_tokens() {
+        let err = handshake_over_greeting(b"@RSYNCD: 29\n")
+            .expect_err("EOF after a valid legacy greeting still errors");
+        assert!(
+            !err.message().to_string().contains("the server omitted"),
+            "legacy greeting must not be refused for omitted tokens: {}",
+            err.message()
         );
     }
 
