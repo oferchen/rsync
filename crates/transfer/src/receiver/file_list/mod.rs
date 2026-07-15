@@ -13,10 +13,14 @@
 //!   `ensure_flat_idx`, `ensure_all_segments_loaded`, `prefetch_for_hardlinks`).
 //! - `id_lists` - UID/GID name-to-ID mapping reception.
 //! - `sanitize` - file-list sanity validation against directory traversal.
+//! - `filter_recheck` - receiver-side re-filtering of received names against
+//!   the receiver's own filter chain (upstream `recv_file_entry()`
+//!   `check_server_filter`).
 //! - `hardlinks` - post-sort hardlink leader/follower assignment for
 //!   protocol 30+ and pre-30 normalization from (dev, ino) pairs.
 //! - `incremental` - the streaming [`IncrementalFileListReceiver`] type.
 
+mod filter_recheck;
 mod hardlinks;
 mod id_lists;
 mod incremental;

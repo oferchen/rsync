@@ -9,6 +9,8 @@
 mod context;
 mod wire_filters;
 
+pub(in crate::receiver) use wire_filters::parse_wire_filters_for_receiver;
+
 #[cfg(unix)]
 mod sandbox;
 
