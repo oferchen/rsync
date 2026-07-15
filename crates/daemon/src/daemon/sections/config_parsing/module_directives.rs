@@ -4,6 +4,35 @@
 // rsyncd.conf. Each recognized key is dispatched to the corresponding setter
 // on `ModuleDefinitionBuilder`.
 
+/// Public config keys of the daemon parameters upstream classifies `P_GLOBAL`.
+///
+/// These are only valid in the global section (before the first `[module]`
+/// header). The list mirrors the `Globals:` block of upstream
+/// `daemon-parm.txt`; each entry is the `parm_table` label (the parameter's
+/// public name with underscores rendered as spaces).
+///
+/// upstream: daemon-parm.txt `Globals:` - `parm_table[]` marks each of these
+/// `P_GLOBAL` (loadparm.c `parm_class`). Everything else is `P_LOCAL` and may
+/// be set per-module.
+const GLOBAL_ONLY_DIRECTIVES: &[&str] = &[
+    "address",
+    "daemon chroot",
+    "daemon gid",
+    "daemon uid",
+    "motd file",
+    "pid file",
+    "socket options",
+    "listen backlog",
+    "port",
+    "proxy protocol",
+];
+
+/// Returns `true` when `key` names an upstream `P_GLOBAL` parameter that is
+/// valid only in the global section (see [`GLOBAL_ONLY_DIRECTIVES`]).
+fn is_global_only_directive(key: &str) -> bool {
+    GLOBAL_ONLY_DIRECTIVES.contains(&key)
+}
+
 /// Applies a single per-module directive to the builder.
 ///
 /// Returns `Ok(true)` if the key was recognized (even if unknown and warned),
@@ -362,6 +391,13 @@ fn apply_module_directive(
             if !value.is_empty() {
                 builder.include.push(value.to_owned());
             }
+        }
+        _ if is_global_only_directive(key) => {
+            // upstream: loadparm.c:do_parameter - a known P_GLOBAL parameter
+            // that appears inside a module section is reported and ignored,
+            // never applied to the module (loadparm.c: "Global parameter %s
+            // found in module section!").
+            eprintln!("Global parameter {key} found in module section!");
         }
         _ => {
             eprintln!(

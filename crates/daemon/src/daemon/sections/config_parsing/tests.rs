@@ -1353,8 +1353,9 @@ mod config_parsing_tests {
 
     #[test]
     fn global_only_directive_inside_module_is_unknown() {
-        // "pid file" is a global-only directive. Inside a module section,
-        // it becomes an unknown per-module directive (warned and ignored).
+        // "pid file" is a P_GLOBAL directive. Inside a module section, upstream
+        // reports it ("Global parameter ... found in module section!") and
+        // ignores it, so it never becomes a daemon-wide or per-module setting.
         let dir = TempDir::new().expect("create temp dir");
         let path = dir.path().join("data");
         fs::create_dir(&path).expect("create dir");
@@ -2707,6 +2708,87 @@ mod config_parsing_tests {
             result.modules[0].hosts_allow.len(),
             2,
             "'HOSTS  ALLOW' must resolve to the hosts allow parameter",
+        );
+    }
+
+    // upstream: daemon-parm.txt classifies each parameter P_GLOBAL or P_LOCAL.
+    // The `Globals:` block is valid only before the first module; everything in
+    // the `Locals:` block may be set per-module. This test pins that boundary so
+    // a parameter cannot silently drift across it: the daemon-wide params stay
+    // global-only, while representative P_LOCAL params - including the ones oc
+    // currently accepts only in the global section (reverse lookup, lock file,
+    // syslog tag, syslog facility) - are never treated as global-only.
+    #[test]
+    fn global_only_classification_matches_upstream_parm_table() {
+        for global in [
+            "address",
+            "daemon chroot",
+            "daemon gid",
+            "daemon uid",
+            "motd file",
+            "pid file",
+            "socket options",
+            "listen backlog",
+            "port",
+            "proxy protocol",
+        ] {
+            assert!(
+                is_global_only_directive(global),
+                "'{global}' is P_GLOBAL in upstream daemon-parm.txt and must be global-only",
+            );
+        }
+
+        for local in [
+            "path",
+            "read only",
+            "uid",
+            "gid",
+            "hosts allow",
+            "reverse lookup",
+            "lock file",
+            "syslog tag",
+            "syslog facility",
+        ] {
+            assert!(
+                !is_global_only_directive(local),
+                "'{local}' is P_LOCAL in upstream daemon-parm.txt and is valid per-module",
+            );
+        }
+    }
+
+    // upstream: loadparm.c:do_parameter - a P_LOCAL parameter set inside a module
+    // overrides the global default for that module only. This is the semantic the
+    // P_GLOBAL/P_LOCAL split protects: the value must reach the module, not be
+    // rejected as a global-only directive.
+    #[test]
+    fn local_param_in_module_overrides_global_default() {
+        let dir = TempDir::new().expect("create temp dir");
+        let inherited = dir.path().join("inherited");
+        let overridden = dir.path().join("overridden");
+        fs::create_dir(&inherited).expect("create inherited dir");
+        fs::create_dir(&overridden).expect("create overridden dir");
+
+        let config = format!(
+            "read only = yes\n\
+             [inherited]\n\
+             path = {}\n\
+             [overridden]\n\
+             path = {}\n\
+             read only = no\n",
+            inherited.display(),
+            overridden.display(),
+        );
+        let file = write_config(&config);
+        let result = parse_config_modules(file.path()).expect("parse succeeds");
+
+        assert_eq!(result.modules.len(), 2);
+        assert!(
+            result.modules[0].read_only,
+            "module without an override inherits the global P_LOCAL default",
+        );
+        assert!(
+            !result.modules[1].read_only,
+            "module-level P_LOCAL directive overrides the global default",
         );
     }
 }
