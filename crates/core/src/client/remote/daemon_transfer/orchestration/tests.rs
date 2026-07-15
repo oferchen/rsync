@@ -195,6 +195,82 @@ mod protect_args_daemon_tests {
         );
     }
 
+    // upstream: options.c:2655-2660 - `if (am_sender) { ... } else { if
+    // (copy_links) 'L'; if (copy_dirlinks) 'k'; }`. On a PULL the daemon is the
+    // sender (is_sender=true, we_are_sender=false), so L/k ride the wire to it -
+    // copy_links/copy_dirlinks dereference symlinks on the SENDER. A builder that
+    // sent them on a push (to the remote receiver) diverged from upstream.
+    #[test]
+    fn build_full_args_pull_packs_copy_links_and_dirlinks() {
+        let config = ClientConfig::builder()
+            .copy_links(true)
+            .copy_dirlinks(true)
+            .build();
+        let request = test_daemon_request();
+        let protocol = ProtocolVersion::try_from(32u8).unwrap();
+        let args = build_full_daemon_args(&config, &request, protocol, true);
+
+        let flags = find_flag_string(&args);
+        // Isolate the transfer letters from the `e.` capability suffix, which
+        // itself carries an 'L' (log_format) that would false-positive.
+        let transfer = flags.split("e.").next().expect("transfer letters");
+        assert!(
+            transfer.contains('L'),
+            "pull (daemon-is-sender) must pack 'L' (copy-links): {flags}"
+        );
+        assert!(
+            transfer.contains('k'),
+            "pull (daemon-is-sender) must pack 'k' (copy-dirlinks): {flags}"
+        );
+    }
+
+    // upstream: options.c:2641-2654 - on a PUSH the local client is the sender
+    // (is_sender=false, we_are_sender=true), so server_options() takes the
+    // `am_sender` branch and never packs L/k. The local sender dereferences
+    // symlinks itself; the remote receiver must not receive copy-links.
+    #[test]
+    fn build_full_args_push_omits_copy_links_and_dirlinks() {
+        let config = ClientConfig::builder()
+            .copy_links(true)
+            .copy_dirlinks(true)
+            .build();
+        let request = test_daemon_request();
+        let protocol = ProtocolVersion::try_from(32u8).unwrap();
+        let args = build_full_daemon_args(&config, &request, protocol, false);
+
+        let flags = find_flag_string(&args);
+        let transfer = flags.split("e.").next().expect("transfer letters");
+        assert!(
+            !transfer.contains('L'),
+            "push must omit 'L' (copy-links rides only to a remote sender): {flags}"
+        );
+        assert!(
+            !transfer.contains('k'),
+            "push must omit 'k' (copy-dirlinks rides only to a remote sender): {flags}"
+        );
+    }
+
+    // upstream: options.c:2625-2626 - `for (i = 0; i < verbose; i++)
+    // argstr[x++] = 'v';`. The daemon wire must carry one 'v' per verbosity
+    // level so the remote half emits matching verbose diagnostics. The `e.`
+    // capability suffix also contains a 'v', so the count is checked against
+    // the transfer-letter portion only.
+    #[test]
+    fn build_full_args_packs_verbose_v_per_level() {
+        let config = ClientConfig::builder().verbosity(2).build();
+        let request = test_daemon_request();
+        let protocol = ProtocolVersion::try_from(32u8).unwrap();
+        let args = build_full_daemon_args(&config, &request, protocol, false);
+
+        let flags = find_flag_string(&args);
+        let transfer = flags.split("e.").next().expect("transfer letters");
+        assert_eq!(
+            transfer.matches('v').count(),
+            2,
+            "verbosity 2 must pack exactly two 'v' in the transfer letters: {flags}"
+        );
+    }
+
     #[test]
     fn build_full_args_includes_compare_dest() {
         let config = ClientConfig::builder()
