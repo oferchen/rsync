@@ -185,9 +185,12 @@ pub fn generate_delta_from_signature<R: Read>(
     config: DeltaGeneratorConfig<'_>,
 ) -> io::Result<DeltaScript> {
     let needed = consecutive_match_needed(&config);
+    let updating_basis_file = config.updating_basis_file;
     let index = build_signature_index(config)?;
 
-    let generator = DeltaGenerator::new().with_consecutive_match_needed(needed);
+    let generator = DeltaGenerator::new()
+        .with_consecutive_match_needed(needed)
+        .with_updating_basis_file(updating_basis_file);
     generator.generate(source, &index).map_err(|e| {
         io::Error::other(format!(
             "delta generation failed: {e} {}{}",
@@ -244,9 +247,12 @@ pub fn generate_delta_from_signature_chunked(
     // too. `generate_chunked` routes needed >= 2 through the sequential gated
     // scan, so the parallel opt-in stays wire-transparent under the bit.
     let needed = consecutive_match_needed(&config);
+    let updating_basis_file = config.updating_basis_file;
     let index = build_signature_index(config)?;
 
-    let generator = DeltaGenerator::new().with_consecutive_match_needed(needed);
+    let generator = DeltaGenerator::new()
+        .with_consecutive_match_needed(needed)
+        .with_updating_basis_file(updating_basis_file);
     let result = if index.has_duplicate_blocks() {
         // Duplicate-content basis: the prune-off parallel scan would diverge
         // from the pruned sequential wire bytes, so keep the sequential path.
@@ -370,6 +376,49 @@ fn consecutive_match_needed(config: &DeltaGeneratorConfig<'_>) -> u8 {
     } else {
         1
     }
+}
+
+/// Computes upstream's per-file `updating_basis_file` flag (`sender.c:337`).
+///
+/// This gates the delta generator's backward-`Copy` suppression
+/// ([`DeltaGenerator::with_updating_basis_file`], `match.c:211`): when the
+/// receiver rewrites the basis in place, the basis being matched is the
+/// destination itself, so a `Copy` whose basis offset precedes the source
+/// cursor would read a region the receiver has already overwritten. The bytes
+/// are still transferred (demoted to a literal), so reconstruction is
+/// byte-identical.
+///
+/// Mirrors upstream exactly:
+///
+/// ```text
+/// updating_basis_file = (inplace_partial && fnamecmp_type == FNAMECMP_PARTIAL_DIR)
+///     || (inplace && (protocol_version >= 29 ? fnamecmp_type == FNAMECMP_FNAME
+///                                            : make_backups <= 0));
+/// ```
+///
+/// A missing basis-type byte defaults to `FNAMECMP_FNAME` (`rsync.c:326`). Note
+/// that at protocol >= 29 `--inplace --backup` still qualifies: the generator
+/// makes a side backup copy but keeps `fnamecmp_type == FNAMECMP_FNAME` and
+/// rewrites the destination in place (`generator.c:1862,1898`); the
+/// `make_backups <= 0` clause only applies to the legacy protocol < 29 path.
+///
+/// upstream: sender.c:337 `updating_basis_file`.
+pub(crate) fn updating_basis_file(
+    inplace: bool,
+    inplace_partial: bool,
+    make_backups: bool,
+    proto: protocol::ProtocolVersion,
+    fnamecmp_type: Option<protocol::FnameCmpType>,
+) -> bool {
+    let is_fname = matches!(fnamecmp_type, None | Some(protocol::FnameCmpType::Fname));
+    let is_partial_dir = matches!(fnamecmp_type, Some(protocol::FnameCmpType::PartialDir));
+    (inplace_partial && is_partial_dir)
+        || (inplace
+            && if proto.as_u8() >= 29 {
+                is_fname
+            } else {
+                !make_backups
+            })
 }
 
 /// Streams a whole file to the wire in a single pass: read -> hash -> write.
@@ -1138,6 +1187,249 @@ mod tests {
             wire_trust.len() as u64,
             4 + tail_len + 4,
             "wire is [len][tail][end], no prefix bytes",
+        );
+    }
+
+    use protocol::{FnameCmpType, ProtocolVersion};
+
+    fn proto(v: u8) -> ProtocolVersion {
+        ProtocolVersion::try_from(v).expect("protocol version")
+    }
+
+    // WHY: the sender must activate the in-place guard exactly when the receiver
+    // rewrites the basis (the destination) in place, i.e. it is matching against
+    // FNAMECMP_FNAME under --inplace. This is the core of upstream sender.c:337
+    // at protocol >= 29 (proto 32 here): a missing basis-type byte and an
+    // explicit FNAMECMP_FNAME both mean "the destination itself", so the guard
+    // must engage. Without it a backward Copy would tell the receiver to read a
+    // region it has already overwritten.
+    #[test]
+    fn updating_basis_file_active_for_inplace_against_destination() {
+        for fnamecmp in [None, Some(FnameCmpType::Fname)] {
+            assert!(
+                updating_basis_file(true, false, false, proto(32), fnamecmp),
+                "inplace against FNAMECMP_FNAME must activate the guard",
+            );
+        }
+    }
+
+    // WHY: without --inplace the receiver writes to a temp file and renames, so
+    // the basis is never overwritten during the transfer. A backward Copy is
+    // safe; the guard must stay off so ordinary transfers remain byte-for-byte
+    // identical to upstream (updating_basis_file = 0 in that case).
+    #[test]
+    fn updating_basis_file_inactive_without_inplace() {
+        for fnamecmp in [None, Some(FnameCmpType::Fname)] {
+            assert!(
+                !updating_basis_file(false, false, false, proto(32), fnamecmp),
+                "no --inplace means no in-place guard",
+            );
+        }
+    }
+
+    // WHY: upstream keeps fnamecmp_type == FNAMECMP_FNAME under --inplace
+    // --backup at protocol >= 29 - the generator copies the destination aside as
+    // a backup but still reads the basis from, and rewrites, the destination in
+    // place (generator.c:1862,1898). So the guard MUST stay active with
+    // --backup. The legacy `make_backups <= 0` clause only governs protocol < 29,
+    // where a backup instead turns the guard off. Both directions are pinned so a
+    // future refactor cannot collapse the protocol split.
+    #[test]
+    fn updating_basis_file_backup_split_on_protocol_version() {
+        // protocol >= 29: --inplace --backup still guards (fnamecmp is FNAME).
+        assert!(
+            updating_basis_file(true, false, true, proto(32), Some(FnameCmpType::Fname)),
+            "proto >= 29 --inplace --backup keeps FNAMECMP_FNAME and must guard",
+        );
+        // protocol < 29: a backup turns the guard off (make_backups <= 0 is false).
+        assert!(
+            !updating_basis_file(true, false, true, proto(28), Some(FnameCmpType::Fname)),
+            "proto < 29 --inplace --backup must not guard (make_backups > 0)",
+        );
+        // protocol < 29 without a backup keeps the guard on (make_backups <= 0).
+        assert!(
+            updating_basis_file(true, false, false, proto(28), Some(FnameCmpType::Fname)),
+            "proto < 29 --inplace without --backup must guard",
+        );
+    }
+
+    // WHY: when the receiver reads from an alternate basis (a --compare/copy/
+    // link-dest directory, tagged FNAMECMP_BASIS_DIR) the in-place write to the
+    // destination cannot clobber that separate basis, so upstream does not set
+    // updating_basis_file. The guard must stay off to avoid needlessly demoting
+    // safe backward Copies to literals.
+    #[test]
+    fn updating_basis_file_inactive_for_alternate_basis() {
+        assert!(
+            !updating_basis_file(
+                true,
+                false,
+                false,
+                proto(32),
+                Some(FnameCmpType::BasisDir(0))
+            ),
+            "an alternate basis dir is not overwritten in place; no guard",
+        );
+    }
+
+    // WHY: the partial-dir branch of sender.c:337 is independent of --inplace: it
+    // fires only when the CF_INPLACE_PARTIAL_DIR capability was negotiated
+    // (inplace_partial) AND the basis is the partial file (FNAMECMP_PARTIAL_DIR),
+    // which the receiver resumes into in place. Without the negotiated capability
+    // the partial file is a plain basis and the guard stays off.
+    #[test]
+    fn updating_basis_file_partial_dir_requires_capability() {
+        assert!(
+            updating_basis_file(
+                false,
+                true,
+                false,
+                proto(32),
+                Some(FnameCmpType::PartialDir)
+            ),
+            "inplace_partial + FNAMECMP_PARTIAL_DIR must guard",
+        );
+        assert!(
+            !updating_basis_file(
+                false,
+                false,
+                false,
+                proto(32),
+                Some(FnameCmpType::PartialDir)
+            ),
+            "FNAMECMP_PARTIAL_DIR without the capability must not guard",
+        );
+    }
+
+    /// True when every `Copy` references a basis offset at or ahead of the
+    /// running source cursor - the invariant an in-place receiver depends on, as
+    /// a backward `Copy` would read a destination region already overwritten.
+    fn copies_are_monotonic(script: &DeltaScript, block_len: usize) -> bool {
+        let mut cursor = 0u64;
+        for token in script.tokens() {
+            match token {
+                DeltaToken::Copy { index, len } => {
+                    if *index * (block_len as u64) < cursor {
+                        return false;
+                    }
+                    cursor += *len as u64;
+                }
+                DeltaToken::Literal(bytes) => cursor += bytes.len() as u64,
+            }
+        }
+        true
+    }
+
+    /// Builds the wire signature blocks for `basis` using the exact algorithm
+    /// [`generate_delta_from_signature`] reconstructs internally, so the sender's
+    /// source blocks match them byte-for-byte.
+    fn wire_signature(
+        basis: &[u8],
+        block_len: u32,
+        strong_len: u8,
+    ) -> Vec<protocol::wire::signature::SignatureBlock> {
+        use signature::{
+            SignatureLayoutParams, calculate_signature_layout, generate_file_signature,
+        };
+        use std::num::{NonZeroU8, NonZeroU32};
+
+        let algorithm = ChecksumFactory::from_negotiation(None, ProtocolVersion::NEWEST, 0, None)
+            .signature_algorithm();
+        let layout = calculate_signature_layout(SignatureLayoutParams::new(
+            basis.len() as u64,
+            NonZeroU32::new(block_len),
+            ProtocolVersion::NEWEST,
+            NonZeroU8::new(strong_len).expect("strong length"),
+        ))
+        .expect("layout");
+        let sig = generate_file_signature(io::Cursor::new(basis.to_vec()), layout, algorithm)
+            .expect("signature");
+        sig.blocks()
+            .iter()
+            .map(|b| protocol::wire::signature::SignatureBlock {
+                index: b.index() as u32,
+                rolling_sum: b.rolling().value(),
+                strong_sum: b.strong().to_vec(),
+            })
+            .collect()
+    }
+
+    fn delta_config(
+        sig_blocks: Vec<protocol::wire::signature::SignatureBlock>,
+        block_len: u32,
+        strong_len: u8,
+        guard: bool,
+    ) -> DeltaGeneratorConfig<'static> {
+        DeltaGeneratorConfig {
+            block_length: block_len,
+            sig_blocks,
+            strong_sum_length: strong_len,
+            protocol: ProtocolVersion::NEWEST,
+            negotiated_algorithms: None,
+            compat_flags: None,
+            checksum_seed: 0,
+            updating_basis_file: guard,
+        }
+    }
+
+    // WHY: this pins the activation end-to-end - the config field must reach the
+    // DeltaGenerator and change its output. The source swaps two basis blocks so
+    // the second half references basis offset 0, behind the write cursor. With
+    // the guard active (as --inplace against the destination sets it) that
+    // backward Copy must be demoted to a literal so an in-place receiver never
+    // reads clobbered data; with the guard inactive the backward Copy survives.
+    // If the wiring dropped the flag, both runs would be identical and this fails.
+    #[test]
+    fn generate_delta_honors_updating_basis_file_flag() {
+        let block_len = 64u32;
+        let bl = block_len as usize;
+        let strong_len = 16u8;
+
+        let block0: Vec<u8> = (0..bl).map(|i| (i % 256) as u8).collect();
+        let block1: Vec<u8> = (0..bl).map(|i| ((i + 100) % 256) as u8).collect();
+        let mut basis = block0.clone();
+        basis.extend_from_slice(&block1);
+        // Swap the halves: the trailing source block matches basis block 0, whose
+        // offset (0) precedes the write cursor once block 1 has been written.
+        let mut source = block1.clone();
+        source.extend_from_slice(&block0);
+
+        // Guard inactive: the backward match survives as a Copy (non-monotonic).
+        let off = generate_delta_from_signature(
+            io::Cursor::new(source.clone()),
+            delta_config(
+                wire_signature(&basis, block_len, strong_len),
+                block_len,
+                strong_len,
+                false,
+            ),
+        )
+        .expect("delta (guard off)");
+        assert!(
+            !copies_are_monotonic(&off, bl),
+            "without the guard the backward Copy must survive",
+        );
+
+        // Guard active: the backward Copy is demoted to a literal (monotonic).
+        let on = generate_delta_from_signature(
+            io::Cursor::new(source.clone()),
+            delta_config(
+                wire_signature(&basis, block_len, strong_len),
+                block_len,
+                strong_len,
+                true,
+            ),
+        )
+        .expect("delta (guard on)");
+        assert!(
+            copies_are_monotonic(&on, bl),
+            "with the guard active no Copy may point behind the write cursor",
+        );
+        assert!(
+            on.tokens()
+                .iter()
+                .any(|t| matches!(t, DeltaToken::Literal(_))),
+            "the suppressed backward block must reappear as a literal",
         );
     }
 }

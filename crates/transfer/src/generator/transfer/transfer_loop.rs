@@ -95,6 +95,7 @@ impl GeneratorContext {
         use super::super::super::shared::TransferDeadline;
         use super::super::delta::{
             generate_delta_from_signature, generate_delta_from_signature_chunked,
+            updating_basis_file,
         };
         use super::super::protocol_io::{read_signature_blocks_keepalive, signature_read_lull_mod};
 
@@ -620,6 +621,16 @@ impl GeneratorContext {
                     None
                 };
 
+                // upstream: sender.c:337 - the per-file updating_basis_file flag
+                // gates match.c:211's backward-Copy suppression.
+                let updating_basis_file = updating_basis_file(
+                    self.config.write.inplace,
+                    self.config.write.inplace_partial,
+                    self.config.flags.backup,
+                    self.protocol,
+                    fnamecmp_type,
+                );
+
                 let config = DeltaGeneratorConfig {
                     block_length,
                     sig_blocks,
@@ -628,6 +639,7 @@ impl GeneratorContext {
                     negotiated_algorithms: self.negotiated_algorithms.as_ref(),
                     compat_flags: self.compat_flags.as_ref(),
                     checksum_seed: self.checksum_seed,
+                    updating_basis_file,
                 };
                 let delta_script = match source_mmap.as_ref() {
                     Some(mmap) => generate_delta_from_signature_chunked(

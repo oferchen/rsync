@@ -8,10 +8,11 @@ use protocol::{CompatibilityFlags, NegotiationResult, ProtocolVersion};
 
 /// Configuration for delta generation from a received signature.
 ///
-/// Parameter object that groups the seven inputs required by
+/// Parameter object that groups the inputs required by
 /// [`crate::generate_delta_from_signature`]: block layout, signature blocks,
 /// strong checksum length, protocol version, negotiated algorithms,
-/// compatibility flags, and checksum seed. Takes ownership of `sig_blocks`
+/// compatibility flags, checksum seed, and the in-place basis-update flag.
+/// Takes ownership of `sig_blocks`
 /// to avoid cloning strong-checksum data; references the optional
 /// negotiation/compat state.
 ///
@@ -59,6 +60,20 @@ pub struct DeltaGeneratorConfig<'a> {
     /// hashes match and a fixed seed cannot be exploited for hash-collision
     /// attacks.
     pub checksum_seed: i32,
+
+    /// Whether the receiver is updating the basis file in place, activating
+    /// the delta generator's backward-`Copy` suppression guard.
+    ///
+    /// Set per file by the sender loop from upstream's `updating_basis_file`
+    /// condition (`sender.c:337`): the basis being matched is the destination
+    /// itself, which the receiver overwrites as it applies the delta, so any
+    /// `Copy` whose basis offset precedes the source cursor would read a region
+    /// already clobbered. When `true` the generator demotes such a candidate to
+    /// a literal; the reconstructed file stays byte-identical.
+    ///
+    /// upstream: match.c:211 (`updating_basis_file && s->sums[i].offset <
+    /// offset`), sender.c:337 (the per-file assignment).
+    pub updating_basis_file: bool,
 }
 
 impl<'a> DeltaGeneratorConfig<'a> {
@@ -79,6 +94,7 @@ impl<'a> DeltaGeneratorConfig<'a> {
             negotiated_algorithms: None,
             compat_flags: None,
             checksum_seed: 0,
+            updating_basis_file: false,
         }
     }
 
@@ -100,6 +116,16 @@ impl<'a> DeltaGeneratorConfig<'a> {
     #[must_use]
     pub fn with_checksum_seed(mut self, seed: i32) -> Self {
         self.checksum_seed = seed;
+        self
+    }
+
+    /// Marks the transfer as an in-place basis update so the delta generator
+    /// activates upstream's backward-`Copy` suppression guard.
+    ///
+    /// upstream: sender.c:337 `updating_basis_file`.
+    #[must_use]
+    pub fn with_updating_basis_file(mut self, updating: bool) -> Self {
+        self.updating_basis_file = updating;
         self
     }
 }
