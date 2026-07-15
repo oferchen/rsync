@@ -28,13 +28,18 @@ use crate::receiver::ReceiverContext;
 /// workers so its `deleting`/`*deleting` line can be emitted in upstream's
 /// deterministic per-directory sorted order rather than the hash-random
 /// order the `HashMap`-keyed scan set would otherwise produce.
-struct DeletedEntry {
+#[derive(Debug)]
+pub(in crate::receiver) struct DeletedEntry {
     /// Path relative to the deletion root, as printed by upstream
     /// `log_delete()` (top-level entries are bare names, not `./name`).
     rel: PathBuf,
     /// Whether the entry is a directory. Directories sort after files at a
     /// given level (upstream `t_PATH`) and print with a trailing slash.
     is_dir: bool,
+    /// Whether the entry is a symlink. Carried so the deferred `--delete-delay`
+    /// executor can classify the removal into `DeleteStats.symlinks`, matching
+    /// the inline per-type counting the immediate pass performs from `read_dir`.
+    is_symlink: bool,
 }
 
 /// Orders deleted entries to match upstream's observable delete stream.
@@ -132,7 +137,164 @@ fn make_entry(path: &Path, is_dir: bool) -> FileEntry {
 }
 
 impl ReceiverContext {
-    /// Deletes extraneous files at the destination that are not in the received file list.
+    /// Deletes extraneous destination entries immediately: scan, unlink, and emit
+    /// the `deleting`/`*deleting` lines in one pass. Used by `--delete-before`,
+    /// `--delete-during`, and `--delete-after` (and a capped/`--one-file-system`
+    /// `--delete-delay`, which cannot defer through the serial executor).
+    ///
+    /// Returns `(stats, limit_exceeded, io_error_bits)`.
+    pub(in crate::receiver) fn delete_extraneous_files<W: crate::writer::MsgInfoSender + ?Sized>(
+        &self,
+        dest_dir: &Path,
+        #[cfg(unix)] sandbox: Option<&std::sync::Arc<fast_io::DirSandbox>>,
+        writer: &mut W,
+    ) -> io::Result<(DeleteStats, bool, i32)> {
+        let (stats, limit_exceeded, io_bits, _victims) = self.run_delete_scan(
+            dest_dir,
+            #[cfg(unix)]
+            sandbox,
+            writer,
+            false,
+        )?;
+        Ok((stats, limit_exceeded, io_bits))
+    }
+
+    /// Decides the `--delete-delay` victim set during the transfer walk WITHOUT
+    /// unlinking or emitting anything, returning the entries in upstream's
+    /// deterministic emission order for a later [`execute_delayed_deletions`].
+    ///
+    /// upstream: generator.c:157 `remember_delete()` records each doomed entry
+    /// into the delete-delay buffer from inside `delete_in_dir()` while the
+    /// destination `.rsync-filter` merge files are in their DURING-time state;
+    /// only the physical unlink is postponed to `do_delayed_deletions()`
+    /// (generator.c:2419). Deciding here - not at flush time - keeps the victim
+    /// set identical to `--delete-during` even though the unlink runs late.
+    ///
+    /// [`execute_delayed_deletions`]: Self::execute_delayed_deletions
+    pub(in crate::receiver) fn collect_delayed_deletions<
+        W: crate::writer::MsgInfoSender + ?Sized,
+    >(
+        &self,
+        dest_dir: &Path,
+        #[cfg(unix)] sandbox: Option<&std::sync::Arc<fast_io::DirSandbox>>,
+        writer: &mut W,
+    ) -> io::Result<(Vec<DeletedEntry>, i32)> {
+        let (_stats, _limit, io_bits, victims) = self.run_delete_scan(
+            dest_dir,
+            #[cfg(unix)]
+            sandbox,
+            writer,
+            true,
+        )?;
+        Ok((victims, io_bits))
+    }
+
+    /// Executes a previously [collected](Self::collect_delayed_deletions)
+    /// `--delete-delay` victim set: unlinks each entry and emits its
+    /// `deleting`/`*deleting` line, in the order the collector fixed.
+    ///
+    /// upstream: generator.c:2419 `do_delayed_deletions()` runs after the whole
+    /// transfer completes and calls `delete_item()` (which logs and unlinks) for
+    /// each remembered victim. Counting happens here, at unlink time, matching
+    /// upstream's `stats.deleted_*` increments inside `delete_item`.
+    pub(in crate::receiver) fn execute_delayed_deletions<
+        W: crate::writer::MsgInfoSender + ?Sized,
+    >(
+        &self,
+        dest_dir: &Path,
+        #[cfg(unix)] sandbox: Option<&std::sync::Arc<fast_io::DirSandbox>>,
+        victims: &[DeletedEntry],
+        writer: &mut W,
+    ) -> io::Result<(DeleteStats, i32)> {
+        #[cfg(unix)]
+        let sandbox_ref = sandbox.map(|arc| arc.as_ref());
+        let mut stats = DeleteStats::new();
+        let mut io_bits: i32 = 0;
+        let emit_itemize = self.should_emit_itemize();
+        for entry in victims {
+            let path = dest_dir.join(&entry.rel);
+            let result = if entry.is_dir {
+                // upstream: delete.c:delete_item() -> delete_dir_contents() for a
+                // directory victim; recursive removal mirrors the immediate pass.
+                #[cfg(unix)]
+                {
+                    fast_io::recursive_unlinkat_via_sandbox_or_fallback(
+                        sandbox_ref,
+                        dest_dir,
+                        &entry.rel,
+                        &path,
+                    )
+                }
+                #[cfg(not(unix))]
+                {
+                    std::fs::remove_dir_all(&path)
+                }
+            } else {
+                #[cfg(unix)]
+                {
+                    fast_io::unlink_via_sandbox_or_fallback(
+                        sandbox_ref,
+                        dest_dir,
+                        &entry.rel,
+                        &path,
+                        fast_io::UnlinkFlags::File,
+                    )
+                }
+                #[cfg(not(unix))]
+                {
+                    std::fs::remove_file(&path)
+                }
+            };
+            match result {
+                Ok(()) => {
+                    if entry.is_dir {
+                        stats.dirs += 1;
+                        info_log!(Del, 1, "deleting {}/", entry.rel.display());
+                    } else {
+                        if entry.is_symlink {
+                            stats.symlinks += 1;
+                        } else {
+                            stats.files += 1;
+                        }
+                        info_log!(Del, 1, "deleting {}", entry.rel.display());
+                    }
+                    if emit_itemize {
+                        let line = format!("*deleting   {}\n", entry.rel.display());
+                        let _ = writer.send_msg_info(line.as_bytes());
+                    }
+                }
+                Err(e) => {
+                    debug_log!(Del, 1, "failed to delete {}: {}", path.display(), e);
+                    if fail_loud_unlink_error(e).is_some() {
+                        io_bits |= crate::generator::io_error_flags::IOERR_GENERAL;
+                    }
+                }
+            }
+        }
+        Ok((stats, io_bits))
+    }
+
+    /// Reports whether the delete pass routes through the serial, leaf-granular
+    /// executor (`--max-delete` cap or `--one-file-system` boundary) rather than
+    /// the parallel fast path.
+    ///
+    /// `--delete-delay` can only collect-then-execute on the parallel path; a
+    /// capped or one-file-system delay run enforces its cap/boundary inline, so
+    /// it stays on the immediate early pass. Mirrors the engine crate's
+    /// `delay_decides_during` gate, which likewise excludes `--max-delete`.
+    pub(in crate::receiver) fn delete_pass_uses_serial_executor(&self) -> bool {
+        #[cfg(unix)]
+        {
+            self.config.deletion.max_delete.is_some() || self.config.flags.one_file_system >= 1
+        }
+        #[cfg(not(unix))]
+        {
+            self.config.deletion.max_delete.is_some()
+        }
+    }
+
+    /// Scans the destination for extraneous entries and, unless `collect_only`,
+    /// unlinks them and emits their `deleting`/`*deleting` lines.
     ///
     /// Groups file list entries by parent directory, then for each destination directory,
     /// scans for entries not present in the source list and removes them. Directories
@@ -150,8 +312,11 @@ impl ReceiverContext {
     /// every site falls back to the path-based `std::fs` syscalls and is
     /// byte-identical to the pre-SEC-1.q2 behaviour.
     ///
-    /// Returns `(stats, limit_exceeded)` where `limit_exceeded` is true when deletions
-    /// were stopped due to `--max-delete`.
+    /// When `collect_only` is true the pass records each victim but performs no
+    /// unlink and no emission, returning the ordered victim list for a deferred
+    /// `--delete-delay` execution (upstream `remember_delete()`).
+    ///
+    /// Returns `(stats, limit_exceeded, io_error_bits, ordered_victims)`.
     ///
     /// # Upstream Reference
     ///
@@ -159,12 +324,13 @@ impl ReceiverContext {
     /// - `generator.c:do_delete_pass()` - full tree walk deletion sweep
     /// - `main.c:1367` - `deletion_count >= max_delete` check
     /// - `exclude.c:check_filter()` - is_excluded() before deletion
-    pub(in crate::receiver) fn delete_extraneous_files<W: crate::writer::MsgInfoSender + ?Sized>(
+    fn run_delete_scan<W: crate::writer::MsgInfoSender + ?Sized>(
         &self,
         dest_dir: &Path,
         #[cfg(unix)] sandbox: Option<&std::sync::Arc<fast_io::DirSandbox>>,
         writer: &mut W,
-    ) -> io::Result<(DeleteStats, bool, i32)> {
+        collect_only: bool,
+    ) -> io::Result<(DeleteStats, bool, i32, Vec<DeletedEntry>)> {
         use std::collections::{HashMap, HashSet};
         use std::path::PathBuf;
         use std::sync::Arc;
@@ -358,7 +524,15 @@ impl ReceiverContext {
             // unreachable u64::MAX sentinel keeps the executor's guard-before-
             // delete logic intact without ever tripping the limit warning.
             let limit = max_delete.unwrap_or(u64::MAX);
-            return self.delete_extraneous_files_capped(
+            // The serial executor unlinks inline, so a `--delete-delay` run that
+            // reaches it cannot defer; the caller keeps such a run on the
+            // immediate early pass (see `delete_pass_uses_serial_executor`), and
+            // `collect_only` is never set here.
+            debug_assert!(
+                !collect_only,
+                "delayed collection never uses the serial executor"
+            );
+            let (stats, limit_exceeded, io_bits) = self.delete_extraneous_files_capped(
                 dest_dir,
                 &dir_children,
                 &dirs_to_scan,
@@ -370,7 +544,8 @@ impl ReceiverContext {
                 limit,
                 #[cfg(unix)]
                 boundary_dev,
-            );
+            )?;
+            return Ok((stats, limit_exceeded, io_bits, Vec::new()));
         }
 
         // Atomic counter for max_delete enforcement across parallel workers.
@@ -613,7 +788,13 @@ impl ReceiverContext {
                             type_bits
                         );
 
-                        let result = if is_dir {
+                        // upstream: generator.c:345 `delete_during == 2` records
+                        // the victim via remember_delete() and defers the unlink;
+                        // in collect_only mode the worker only records the entry so
+                        // the physical removal runs later in do_delayed_deletions().
+                        let result = if collect_only {
+                            Ok(())
+                        } else if is_dir {
                             // SEC-1.q2 audit row #6
                             #[cfg(unix)]
                             {
@@ -671,7 +852,11 @@ impl ReceiverContext {
                                 // `order_deletions_upstream`); workers only
                                 // record what was deleted so the unlinks stay
                                 // parallel.
-                                deleted_paths.push(DeletedEntry { rel, is_dir });
+                                deleted_paths.push(DeletedEntry {
+                                    rel,
+                                    is_dir,
+                                    is_symlink,
+                                });
                             }
                             Err(e) => {
                                 debug_log!(Del, 1, "failed to delete {}: {}", path.display(), e);
@@ -722,21 +907,29 @@ impl ReceiverContext {
         // identical to upstream without serializing the unlinks.
         // upstream: log.c:log_delete() emits one line per deleted item.
         let all_deleted = order_deletions_upstream(all_deleted);
-        let emit_itemize = self.should_emit_itemize();
-        for entry in &all_deleted {
-            // upstream: log.c:845 log_delete uses one "deleting %n" form; %n
-            // (log.c:633-641) appends a trailing slash for directories, so a
-            // dir prints "deleting sub/" - no word "directory".
-            if entry.is_dir {
-                info_log!(Del, 1, "deleting {}/", entry.rel.display());
-            } else {
-                info_log!(Del, 1, "deleting {}", entry.rel.display());
-            }
-            // upstream: log.c:log_delete() emits the "*deleting" itemize line
-            // for each deleted item when --itemize-changes is active.
-            if emit_itemize {
-                let line = format!("*deleting   {}\n", entry.rel.display());
-                let _ = writer.send_msg_info(line.as_bytes());
+        // In collect_only mode nothing has been unlinked yet: skip emission so
+        // the `deleting`/`*deleting` lines appear only when the deferred
+        // `--delete-delay` executor actually removes each victim, matching
+        // upstream where log_delete() fires from delete_item() inside
+        // do_delayed_deletions() (generator.c:2419), not at remember_delete()
+        // time. The ordered victim list is returned for that later execution.
+        if !collect_only {
+            let emit_itemize = self.should_emit_itemize();
+            for entry in &all_deleted {
+                // upstream: log.c:845 log_delete uses one "deleting %n" form; %n
+                // (log.c:633-641) appends a trailing slash for directories, so a
+                // dir prints "deleting sub/" - no word "directory".
+                if entry.is_dir {
+                    info_log!(Del, 1, "deleting {}/", entry.rel.display());
+                } else {
+                    info_log!(Del, 1, "deleting {}", entry.rel.display());
+                }
+                // upstream: log.c:log_delete() emits the "*deleting" itemize line
+                // for each deleted item when --itemize-changes is active.
+                if emit_itemize {
+                    let line = format!("*deleting   {}\n", entry.rel.display());
+                    let _ = writer.send_msg_info(line.as_bytes());
+                }
             }
         }
 
@@ -748,7 +941,7 @@ impl ReceiverContext {
             + u64::from(combined.specials);
         let limit_exceeded = max_delete.is_some_and(|limit| total_deletions >= limit);
 
-        Ok((combined, limit_exceeded, io_err_bits))
+        Ok((combined, limit_exceeded, io_err_bits, all_deleted))
     }
 
     /// Serial, leaf-granular deletion path used when `--max-delete` is set.
@@ -1351,6 +1544,7 @@ mod tests {
         DeletedEntry {
             rel: PathBuf::from(rel),
             is_dir,
+            is_symlink: false,
         }
     }
 

@@ -126,11 +126,14 @@ pub struct DeletionConfig {
     /// NOT set for `--delete-delay` (`delete_during == 2`): upstream makes the
     /// delete *decision* during the walk (delete_in_dir via remember_delete,
     /// generator.c:2315-2327) - before that directory's `.rsync-filter` has been
-    /// received - and defers only the physical unlink. Its observable file
-    /// outcome therefore matches `--delete-during` / `--delete-before`, so oc
-    /// runs the delete pass early for delay just like those modes. This is
-    /// distinct from [`late_delete`] (delay || after), which governs only the
-    /// goodbye NDX_DEL_STATS timing.
+    /// received - so its victim set matches `--delete-during` / `--delete-before`,
+    /// but it defers the physical unlink to `do_delayed_deletions()` after the
+    /// whole transfer (generator.c:2419). The receiver therefore *collects* the
+    /// delay victims at the early site and *executes* them at the late site (a
+    /// mid-transfer abort leaves them in place), rather than deferring the
+    /// decision the way `--delete-after` does. This is distinct from
+    /// [`late_delete`] (delay || after), which additionally governs the goodbye
+    /// NDX_DEL_STATS timing and gates the late delete site.
     ///
     /// Verified empirically vs upstream 3.4.4: over SSH (inc-recurse), delay
     /// DELETES a per-dir-merge-protected entry while after PROTECTS it.

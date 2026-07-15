@@ -249,6 +249,23 @@ pub struct ReceiverContext {
     /// redo re-itemizing an entry. `RefCell` suffices: every emit site runs on
     /// the main driver thread (rayon workers never touch this).
     pub(in crate::receiver) itemize_rows: RefCell<BTreeMap<usize, Vec<String>>>,
+    /// Extraneous-entry victims decided during the transfer walk for a
+    /// `--delete-delay` run, awaiting execution after the transfer completes.
+    ///
+    /// Populated by [`collect_delayed_deletions`] at the early (pre-loop) delete
+    /// site and drained by [`execute_delayed_deletions`] at the late site, so the
+    /// deletion *decision* uses the DURING-time destination state while the
+    /// physical unlink is postponed to the end of the run. Empty for every other
+    /// delete mode.
+    ///
+    /// upstream: generator.c:157 `remember_delete()` fills the delete-delay buffer
+    /// during the walk; generator.c:2419 `do_delayed_deletions()` flushes it after
+    /// `generate_files()` finishes.
+    ///
+    /// [`collect_delayed_deletions`]: Self::collect_delayed_deletions
+    /// [`execute_delayed_deletions`]: Self::execute_delayed_deletions
+    pub(in crate::receiver) delayed_delete_victims:
+        Vec<crate::receiver::directory::deletion::DeletedEntry>,
 }
 
 impl ReceiverContext {
@@ -317,6 +334,7 @@ impl ReceiverContext {
             hardlink_lookahead_target: 500,
             defer_itemize: false,
             itemize_rows: RefCell::new(BTreeMap::new()),
+            delayed_delete_victims: Vec::new(),
         }
     }
 

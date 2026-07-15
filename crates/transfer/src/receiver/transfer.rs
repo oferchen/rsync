@@ -133,59 +133,144 @@ impl ReceiverContext {
         }
     }
 
-    /// True when the delete pass runs EARLY, before the per-file transfer loop.
+    /// True when the delete pass has work to do at the EARLY site, before the
+    /// per-file transfer loop.
     ///
-    /// Covers `--delete-before`, `--delete-during`, AND `--delete-delay`. Mirrors
-    /// upstream generator.c:2280-2281 (`delete_before` runs `do_delete_pass()` up
-    /// front) and generator.c:2315-2327 (`delete_during` / `delete_during == 2`
-    /// decide as each directory is entered during the loop). oc collapses these
-    /// into one pre-loop sweep; the observable file outcome matches because none
-    /// of these modes has the destination `.rsync-filter` merge files present
-    /// when the deletion decision is made. `--delete-delay` defers only the
-    /// physical unlink upstream, not the decision, so its kept/deleted set equals
-    /// `--delete-during` - verified vs upstream 3.4.4 over SSH (delay DELETES a
-    /// per-dir-merge-protected entry, exactly as during/before do).
+    /// Covers `--delete-before` and `--delete-during` (each an immediate sweep
+    /// here) and `--delete-delay` (which *decides* its victim set here, deferring
+    /// the unlink to the late site - upstream generator.c:2315-2327 calls
+    /// `delete_in_dir()` during the walk, and `delete_during == 2` records the
+    /// victim via `remember_delete()` rather than unlinking). `--delete-after`
+    /// alone does nothing early. The phase dispatch in
+    /// [`run_receiver_delete_pass`](Self::run_receiver_delete_pass) picks
+    /// immediate-vs-collect per mode.
+    ///
+    /// upstream: generator.c:2280-2281 (`delete_before` -> `do_delete_pass()` up
+    /// front), generator.c:2315-2327 (`delete_during` / `delete_during == 2`
+    /// decide as each directory is entered during the loop).
     pub(in crate::receiver) fn delete_pass_is_early(&self) -> bool {
         self.config.flags.delete && !self.config.deletion.delete_after
     }
 
-    /// True when the delete pass is DEFERRED to after the per-file transfer loop.
+    /// True when the delete pass has work to do at the LATE site, after the
+    /// per-file transfer loop.
     ///
-    /// Covers `--delete-after` ONLY. Mirrors upstream generator.c:2425-2428 which
-    /// runs `do_delete_pass()` after every file - including each destination
-    /// `.rsync-filter` merge file - has been transferred. Deferring is
-    /// load-bearing: the delete pass reloads each destination directory's
-    /// per-directory `.rsync-filter` at delete time, so a merge-file protect rule
-    /// (e.g. `- *.bak`) only survives the sweep once that filter file is present
-    /// in the destination, which it is not until the transfer has run.
+    /// Covers `--delete-after` (an immediate sweep here, once every destination
+    /// `.rsync-filter` merge file has landed so its protect rules apply) AND
+    /// `--delete-delay` (which *executes* the victims it decided early). Both are
+    /// the upstream `late_delete` modes (`delete_during == 2 || delete_after`).
     ///
-    /// `--delete-delay` is deliberately NOT here: upstream makes its deletion
-    /// decision during the walk (deferring only the unlink), so it deletes such
-    /// an entry - see [`delete_pass_is_early`](Self::delete_pass_is_early).
+    /// `--delete-delay`'s split is load-bearing: upstream decides during the walk
+    /// (deferring only the unlink) so it DELETES a per-dir-merge-protected entry
+    /// exactly as `--delete-during` does (verified vs upstream 3.4.4 over SSH),
+    /// yet the unlink and `*deleting` output happen after the whole transfer -
+    /// so a mid-transfer abort leaves the stale file in place.
+    ///
+    /// upstream: generator.c:2425-2428 - `do_delayed_deletions()` (delay) and
+    /// `do_delete_pass()` (after) both run after `generate_files()` finishes.
     pub(in crate::receiver) fn delete_pass_is_late(&self) -> bool {
-        self.config.flags.delete && self.config.deletion.delete_after
+        self.config.flags.delete && self.config.deletion.late_delete
     }
 
-    /// Runs the destination delete pass and folds its results into `stats`.
+    /// Runs the destination delete pass for `phase` and folds its results into
+    /// `stats`. Called once at the early site (before the per-file loop) and once
+    /// at the late site (after it, before finalize); the mode decides what each
+    /// phase actually does:
     ///
-    /// Sweeps the destination for entries absent from the sender's file list,
-    /// reloading each directory's per-directory `.rsync-filter` merge files so
-    /// their protect rules apply at delete time. Shared by all four receiver
-    /// pipeline drivers so the defer-and-filter logic lives in exactly one place.
+    /// | mode | early | late |
+    /// |------|-------|------|
+    /// | `--delete-before` / `--delete-during` | immediate sweep | - |
+    /// | `--delete-after` | - | immediate sweep |
+    /// | `--delete-delay` (parallel path) | collect victims | execute victims |
+    /// | `--delete-delay` (+`--max-delete`/`-x`) | immediate sweep | - |
     ///
-    /// The caller positions the call via [`delete_pass_is_early`] (before the
-    /// per-file loop) or [`delete_pass_is_late`] (after it, before finalize).
+    /// A `--delete-delay` run that would route through the serial, leaf-granular
+    /// executor (`--max-delete` cap or `--one-file-system` boundary) cannot defer
+    /// through the collect/execute split, so it stays on the immediate early pass,
+    /// mirroring the engine crate's `delay_decides_during` gate.
     ///
     /// # Upstream Reference
     ///
-    /// - `generator.c:358` - `do_delete_pass()` tree sweep
+    /// - `generator.c:358` - `do_delete_pass()` tree sweep (before/after)
     /// - `generator.c:279` - `delete_in_dir()` per-directory candidate check
+    /// - `generator.c:157` - `remember_delete()` records a delay victim
+    /// - `generator.c:2419` - `do_delayed_deletions()` unlinks delay victims
     /// - `exclude.c:875` - `change_local_filter_dir()` reloads dest `.rsync-filter`
-    /// - `generator.c:2393-2398` / `2437-2440` - `write_del_stats()` emission
-    ///
-    /// [`delete_pass_is_early`]: Self::delete_pass_is_early
-    /// [`delete_pass_is_late`]: Self::delete_pass_is_late
     pub(in crate::receiver) fn run_receiver_delete_pass<W>(
+        &mut self,
+        phase: DeletePassPhase,
+        dest_dir: &Path,
+        #[cfg(unix)] sandbox: Option<&std::sync::Arc<fast_io::DirSandbox>>,
+        writer: &mut W,
+        stats: &mut TransferStats,
+    ) -> io::Result<()>
+    where
+        W: Write + crate::writer::MsgInfoSender + ?Sized,
+    {
+        // `--delete-delay` (`delete_during == 2`): late_delete without the
+        // `delete_after` decision-deferral. Deferrable only on the parallel path.
+        let delay = self.config.deletion.late_delete && !self.config.deletion.delete_after;
+        let deferrable_delay = delay && !self.delete_pass_uses_serial_executor();
+
+        match phase {
+            DeletePassPhase::Early => {
+                if deferrable_delay {
+                    // upstream: generator.c:345 remember_delete() records each
+                    // victim during the walk; the unlink is deferred.
+                    let (victims, io_bits) = self.collect_delayed_deletions(
+                        dest_dir,
+                        #[cfg(unix)]
+                        sandbox,
+                        writer,
+                    )?;
+                    stats.io_error |= io_bits;
+                    self.delayed_delete_victims = victims;
+                } else {
+                    self.run_immediate_delete_pass(
+                        dest_dir,
+                        #[cfg(unix)]
+                        sandbox,
+                        writer,
+                        stats,
+                    )?;
+                }
+            }
+            DeletePassPhase::Late => {
+                if self.config.deletion.delete_after {
+                    self.run_immediate_delete_pass(
+                        dest_dir,
+                        #[cfg(unix)]
+                        sandbox,
+                        writer,
+                        stats,
+                    )?;
+                } else if deferrable_delay {
+                    // upstream: generator.c:2419 do_delayed_deletions() unlinks the
+                    // remembered victims after the whole transfer has completed.
+                    let victims = std::mem::take(&mut self.delayed_delete_victims);
+                    let (delete_stats, io_bits) = self.execute_delayed_deletions(
+                        dest_dir,
+                        #[cfg(unix)]
+                        sandbox,
+                        &victims,
+                        writer,
+                    )?;
+                    stats.io_error |= io_bits;
+                    stats.delete_stats = delete_stats;
+                    // Carry the per-type counters into the receiver context so the
+                    // goodbye handshake can emit NDX_DEL_STATS to the peer sender.
+                    // upstream: generator.c:2437-2440 - late write_del_stats().
+                    self.pending_del_stats = delete_stats;
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// Immediate delete sweep: scan, unlink, emit, and fold the stats into
+    /// `stats`. Used by `--delete-before` / `--delete-during` / `--delete-after`
+    /// and a capped/`--one-file-system` `--delete-delay`.
+    fn run_immediate_delete_pass<W>(
         &mut self,
         dest_dir: &Path,
         #[cfg(unix)] sandbox: Option<&std::sync::Arc<fast_io::DirSandbox>>,
@@ -210,6 +295,19 @@ impl ReceiverContext {
         self.pending_del_stats = delete_stats;
         Ok(())
     }
+}
+
+/// Which side of the per-file transfer loop a
+/// [`run_receiver_delete_pass`](ReceiverContext::run_receiver_delete_pass) call
+/// sits on. The mode decides what work each phase performs (see that method).
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(in crate::receiver) enum DeletePassPhase {
+    /// Before the per-file transfer loop (upstream `do_delete_pass()` /
+    /// `delete_in_dir()` during the walk).
+    Early,
+    /// After the per-file transfer loop (upstream `do_delayed_deletions()` /
+    /// late `do_delete_pass()`).
+    Late,
 }
 
 /// Renames all delayed-update files from their `.~tmp~` staging paths to

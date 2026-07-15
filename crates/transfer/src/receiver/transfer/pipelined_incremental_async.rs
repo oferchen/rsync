@@ -138,6 +138,7 @@ impl ReceiverContext {
         // present and consulted at delete time.
         if self.delete_pass_is_early() {
             self.run_receiver_delete_pass(
+                super::DeletePassPhase::Early,
                 &setup.dest_dir,
                 #[cfg(unix)]
                 setup.sandbox.as_ref(),
@@ -277,6 +278,7 @@ impl ReceiverContext {
         // follows the late delete pass).
         if self.delete_pass_is_late() {
             self.run_receiver_delete_pass(
+                super::DeletePassPhase::Late,
                 &setup.dest_dir,
                 #[cfg(unix)]
                 setup.sandbox.as_ref(),

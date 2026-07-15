@@ -25,41 +25,58 @@ use super::super::super::ReceiverContext;
 use super::super::support::{TestDeletionWriter, test_config, test_handshake};
 
 /// The early/late routing predicates must partition the four delete modes the
-/// way upstream does: only `--delete-after` (`delete_after`) defers the delete
-/// *decision* to after the transfer (generator.c:2427-2428); `--delete-before`,
-/// `--delete-during`, AND `--delete-delay` all decide early. `--delete-delay`
-/// belongs with the early group because upstream makes its decision during the
-/// walk (generator.c:2315) and defers only the unlink - verified vs upstream
-/// 3.4.4 over SSH, where delay DELETES a per-dir-merge-protected entry exactly
-/// as during/before do, while after PROTECTS it. A regression that deferred
-/// delay would over-protect (keep files upstream deletes); one that failed to
-/// defer after would reintroduce the #280 data loss. The sweep runs exactly
-/// once when `--delete` is set (never both, never neither).
+/// way upstream does:
+///
+/// - `--delete-before` / `--delete-during`: EARLY only (immediate pre-loop
+///   sweep, generator.c:2280 / 2315).
+/// - `--delete-after`: LATE only (`do_delete_pass()` after the transfer,
+///   generator.c:2427).
+/// - `--delete-delay`: BOTH sites. Upstream decides the victim set during the
+///   walk (generator.c:2315 `remember_delete`) but unlinks them only in
+///   `do_delayed_deletions()` after the whole transfer (generator.c:2419), so
+///   oc collects at the early site and executes at the late site. Verified vs
+///   upstream 3.4.4 over SSH: delay DELETES a per-dir-merge-protected entry
+///   (its decision matches during/before), yet the unlink is deferred to the
+///   end (a mid-transfer abort leaves the stale file in place).
+///
+/// A regression that dropped delay from the early site would decide too late
+/// (over-protecting merge-shielded entries like `--delete-after`); one that
+/// dropped it from the late site would unlink during the transfer (losing the
+/// crash-safety upstream guarantees). The sweep never runs when `--delete` is
+/// off, regardless of stale deferral bits.
 #[test]
 fn delete_pass_timing_predicates_partition_the_four_modes() {
     let handshake = test_handshake();
 
-    // --delete-before / --delete-during / --delete-delay: delete on, but the
-    // decision is NOT deferred (`delete_after` off). late_delete may be set for
-    // delay (it governs only goodbye del-stats), which must not affect routing.
-    for (label, late_delete) in [("before/during", false), ("delay", true)] {
-        let mut early = test_config();
-        early.flags.delete = true;
-        early.deletion.delete_after = false;
-        early.deletion.late_delete = late_delete;
-        let ctx = ReceiverContext::new_for_test(&handshake, early);
-        assert!(ctx.delete_pass_is_early(), "{label} must sweep early");
-        assert!(!ctx.delete_pass_is_late(), "{label} must not sweep late");
-    }
+    // --delete-before / --delete-during: EARLY only.
+    let mut early = test_config();
+    early.flags.delete = true;
+    early.deletion.delete_after = false;
+    early.deletion.late_delete = false;
+    let ctx = ReceiverContext::new_for_test(&handshake, early);
+    assert!(ctx.delete_pass_is_early(), "before/during must run early");
+    assert!(
+        !ctx.delete_pass_is_late(),
+        "before/during must not run late"
+    );
 
-    // --delete-after: delete on, decision deferred.
+    // --delete-delay: BOTH sites (collect early, execute late).
+    let mut delay = test_config();
+    delay.flags.delete = true;
+    delay.deletion.delete_after = false;
+    delay.deletion.late_delete = true;
+    let ctx = ReceiverContext::new_for_test(&handshake, delay);
+    assert!(ctx.delete_pass_is_early(), "delay must collect early");
+    assert!(ctx.delete_pass_is_late(), "delay must execute late");
+
+    // --delete-after: LATE only (decision deferred).
     let mut late = test_config();
     late.flags.delete = true;
     late.deletion.late_delete = true;
     late.deletion.delete_after = true;
     let ctx = ReceiverContext::new_for_test(&handshake, late);
-    assert!(!ctx.delete_pass_is_early(), "after must not sweep early");
-    assert!(ctx.delete_pass_is_late(), "after must sweep late");
+    assert!(!ctx.delete_pass_is_early(), "after must not run early");
+    assert!(ctx.delete_pass_is_late(), "after must run late");
 
     // No --delete: neither site fires, regardless of the deferral bits (which a
     // stale config could still carry). The sweep must never run unrequested.
@@ -67,12 +84,116 @@ fn delete_pass_timing_predicates_partition_the_four_modes() {
         let mut off = test_config();
         off.flags.delete = false;
         off.deletion.delete_after = delete_after;
+        off.deletion.late_delete = delete_after;
         let ctx = ReceiverContext::new_for_test(&handshake, off);
         assert!(
             !ctx.delete_pass_is_early() && !ctx.delete_pass_is_late(),
             "no --delete => no sweep (delete_after={delete_after})"
         );
     }
+}
+
+/// The load-bearing `--delete-during` vs `--delete-delay` timing distinction:
+/// during unlinks an extraneous file as its directory is processed, while delay
+/// only *records* the victim during the walk and unlinks it after the whole
+/// transfer completes. This is upstream's crash-safety guarantee for delay
+/// (generator.c:345 `remember_delete` vs generator.c:2419
+/// `do_delayed_deletions`): if the transfer aborts mid-way, a delay run has not
+/// deleted anything yet, whereas a during run already has.
+///
+/// The test proves the distinction directly: `collect_delayed_deletions`
+/// (delay's early phase) must leave the stale file ON DISK - standing in for the
+/// mid-transfer state - while returning it as a pending victim; only
+/// `execute_delayed_deletions` (delay's late phase) removes it. An immediate
+/// sweep (during/before) removes the very same file in a single call. Both modes
+/// converge on the identical final set: stale gone, listed file kept.
+#[test]
+fn delete_delay_defers_unlink_until_execute_phase() {
+    let handshake = test_handshake();
+
+    // Shared destination layout builder: one extraneous file plus one listed
+    // file that must always survive. Returns a receiver whose file list carries
+    // only the survivor, making `stale.txt` an extraneous deletion candidate.
+    let build = |dest: &std::path::Path| {
+        std::fs::write(dest.join("stale.txt"), b"extraneous").unwrap();
+        std::fs::write(dest.join("keep.txt"), b"listed").unwrap();
+        let mut config = test_config();
+        config.flags.delete = true;
+        config.deletion.delete_after = false;
+        config.deletion.late_delete = true; // --delete-delay
+        config.args = vec![OsString::from(dest.to_str().unwrap())];
+        let mut ctx = ReceiverContext::new_for_test(&handshake, config);
+        ctx.file_list
+            .push(FileEntry::new_directory(".".into(), 0o755));
+        ctx.file_list
+            .push(FileEntry::new_file("keep.txt".into(), 6, 0o644));
+        ctx
+    };
+
+    // --delete-delay: collect must NOT unlink (mid-transfer crash-safety).
+    let delay_dir = tempfile::TempDir::new().unwrap();
+    let dest = delay_dir.path();
+    let ctx = build(dest);
+    let mut writer = TestDeletionWriter;
+    let (victims, _io) = ctx
+        .collect_delayed_deletions(
+            dest,
+            #[cfg(unix)]
+            None,
+            &mut writer,
+        )
+        .unwrap();
+    assert!(
+        dest.join("stale.txt").exists(),
+        "delay must NOT unlink during collection - the file survives a mid-transfer abort",
+    );
+    assert!(!victims.is_empty(), "delay must record the pending victim");
+
+    // The late phase executes the recorded victims: now the file is gone.
+    let (stats, _io) = ctx
+        .execute_delayed_deletions(
+            dest,
+            #[cfg(unix)]
+            None,
+            &victims,
+            &mut writer,
+        )
+        .unwrap();
+    assert!(
+        !dest.join("stale.txt").exists(),
+        "delay must unlink the recorded victim at the execute (late) phase",
+    );
+    assert_eq!(stats.files, 1, "exactly one extraneous file deleted");
+    assert!(
+        dest.join("keep.txt").exists(),
+        "listed file must survive delay"
+    );
+
+    // --delete-during / --delete-before: an immediate sweep removes the same
+    // stale file in one call, and the surviving set is identical.
+    let during_dir = tempfile::TempDir::new().unwrap();
+    let dest2 = during_dir.path();
+    let ctx2 = build(dest2);
+    let (during_stats, _, _) = ctx2
+        .delete_extraneous_files(
+            dest2,
+            #[cfg(unix)]
+            None,
+            &mut writer,
+        )
+        .unwrap();
+    assert!(
+        !dest2.join("stale.txt").exists(),
+        "during/before unlinks the stale file immediately",
+    );
+    assert_eq!(
+        during_stats.files, stats.files,
+        "during and delay must delete the identical final set",
+    );
+    assert!(
+        dest2.join("keep.txt").exists(),
+        "listed file must survive during"
+    );
 }
 
 /// Builds the destination tree and receiver used by both invariant tests: a
