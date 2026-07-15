@@ -196,7 +196,7 @@ include!("tests/chunks/run_daemon_denies_module_when_host_not_allowed.rs");
 include!("tests/chunks/run_daemon_enforces_bwlimit_during_module_list.rs");
 include!("tests/chunks/run_daemon_enforces_module_connection_limit.rs");
 include!("tests/chunks/run_daemon_per_module_cap_overrides_global_max_connections.rs");
-include!("tests/chunks/run_daemon_filters_modules_during_list_request.rs");
+include!("tests/chunks/run_daemon_lists_host_denied_module.rs");
 include!("tests/chunks/run_daemon_handles_binary_negotiation.rs");
 include!("tests/chunks/run_daemon_handles_parallel_sessions.rs");
 include!("tests/chunks/run_daemon_honours_max_sessions.rs");

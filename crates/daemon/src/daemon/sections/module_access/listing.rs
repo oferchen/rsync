@@ -20,38 +20,30 @@ fn format_module_listing_line(name: &str, comment: &str) -> String {
 /// Sends the list of available modules to a client.
 ///
 /// This responds to a module listing request by sending the names and comments
-/// of modules the peer is allowed to access. Only modules marked as listable and
-/// that permit the peer's IP address are included in the response. The MOTD is
-/// emitted earlier, right after the greeting, matching upstream's
-/// `exchange_protocols()` (clientserver.c:158-170).
+/// of every listable module. A module appears iff `list = yes` (the default);
+/// host access (`hosts allow`/`hosts deny`) is NOT applied here - it is enforced
+/// only when the client tries to open a module. A host denied access still sees
+/// the module in the listing, matching upstream. The MOTD is emitted earlier,
+/// right after the greeting, matching upstream's `exchange_protocols()`
+/// (clientserver.c:158-170).
 fn respond_with_module_list(
     stream: &mut DaemonStream,
     limiter: &mut Option<BandwidthLimiter>,
     modules: &[ModuleRuntime],
-    peer_ip: IpAddr,
-    reverse_lookup: bool,
     messages: &LegacyMessageCache,
 ) -> io::Result<()> {
-    // upstream: clientserver.c:1266-1272 send_listing() - the listing goes
-    // straight to the module names followed by @RSYNCD: EXIT. It does NOT send
-    // @RSYNCD: OK first, and the MOTD was already emitted after the greeting.
-
-    let mut hostname_cache: Option<Option<String>> = None;
+    // upstream: clientserver.c:1261-1272 send_listing() - the listing loops over
+    // every module and prints it iff `lp_list(i)`. No `allow_access()`/hosts
+    // check is applied; host filtering happens only in rsync_module() on the
+    // module-open path (clientserver.c:728). The listing goes straight to the
+    // module names followed by @RSYNCD: EXIT - it does NOT send @RSYNCD: OK
+    // first, and the MOTD was already emitted after the greeting.
     for module in modules {
         if !module.listable {
             continue;
         }
 
-        // upstream: clientserver.c:723 `lp_reverse_lookup(i)` - effective
-        // per-module value is the global default OR the module override.
-        let module_reverse_lookup = reverse_lookup || module.reverse_lookup;
-        let peer_host =
-            module_peer_hostname(module, &mut hostname_cache, peer_ip, module_reverse_lookup);
-        if !module.permits(peer_ip, peer_host) {
-            continue;
-        }
-
-        // upstream: clientserver.c:1254 - io_printf(fd, "%-15s\t%s\n", lp_name(i), lp_comment(i));
+        // upstream: clientserver.c:1267 - io_printf(fd, "%-15s\t%s\n", lp_name(i), lp_comment(i));
         let comment = module.comment.as_deref().unwrap_or("");
         let line = format_module_listing_line(&module.name, comment);
         write_limited(stream, limiter, line.as_bytes())?;
