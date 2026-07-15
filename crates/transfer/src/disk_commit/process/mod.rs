@@ -31,7 +31,9 @@ pub(super) use self::file_ops::{process_file, process_whole_file};
 #[cfg(all(test, unix))]
 use self::commit::rename_config_sandboxed;
 #[cfg(test)]
-use self::commit::{is_cross_device, make_backup, partial_dir_path, rename_with_io_uring_fallback};
+use self::commit::{
+    is_cross_device, make_backup, make_backup_copy, partial_dir_path, rename_with_io_uring_fallback,
+};
 #[cfg(all(test, target_os = "macos"))]
 use self::file_ops::make_writer;
 #[cfg(test)]
