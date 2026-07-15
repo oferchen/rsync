@@ -561,6 +561,14 @@ fn delete_stats_rejects_oversized_wire_value() {
         err.to_string().contains("MAX_WIRE_DEL_STAT"),
         "error should mention MAX_WIRE_DEL_STAT, got: {err}"
     );
+    // WHY: upstream main.c reads these via read_varint_bounded, exiting
+    // RERR_PROTOCOL (2) on an out-of-range value; the tag must survive so the
+    // core exit-code mapper reproduces exit 2, not RERR_STREAMIO (12).
+    assert!(
+        err.get_ref()
+            .is_some_and(|e| e.is::<crate::protocol_violation::ProtocolViolation>()),
+        "oversized delete-stat must be tagged ProtocolViolation (RERR_PROTOCOL=2)"
+    );
 }
 
 /// upstream: io.c - MAX_WIRE_DEL_STAT defence-in-depth (3.4.3)
@@ -580,6 +588,11 @@ fn delete_stats_rejects_negative_wire_value() {
     assert!(
         err.to_string().contains("MAX_WIRE_DEL_STAT"),
         "negative value should be rejected, got: {err}"
+    );
+    assert!(
+        err.get_ref()
+            .is_some_and(|e| e.is::<crate::protocol_violation::ProtocolViolation>()),
+        "negative delete-stat must be tagged ProtocolViolation (RERR_PROTOCOL=2)"
     );
 }
 

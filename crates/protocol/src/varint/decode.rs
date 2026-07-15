@@ -100,7 +100,11 @@ pub fn read_varint_bounded<R: Read + ?Sized>(
 ) -> io::Result<i32> {
     let v = read_varint(reader)?;
     if v < lo || v > hi {
-        return Err(invalid_data(&format!(
+        // upstream: io.c:read_varint_bounded() aborts with
+        // exit_cleanup(RERR_PROTOCOL) (exit 2) on an out-of-range wire value.
+        // Tag the error so the core exit-code mapper yields RERR_PROTOCOL, not
+        // the generic RERR_STREAMIO (12) that a bare InvalidData maps to.
+        return Err(crate::protocol_violation::protocol_violation(format!(
             "wire value {what} out of range: {v} not in [{lo},{hi}]"
         )));
     }
@@ -114,7 +118,9 @@ pub fn read_varint_bounded<R: Read + ?Sized>(
 /// so a negative wire value cannot wrap to `~SIZE_MAX`. Callers reading a
 /// length or count from the wire should use this instead of casting the result
 /// of [`read_varint`] directly. Upstream aborts with `RERR_PROTOCOL` on a bad
-/// value; the Rust equivalent is a typed [`io::ErrorKind::InvalidData`].
+/// value; the Rust equivalent is an [`io::ErrorKind::InvalidData`] tagged as a
+/// [`ProtocolViolation`](crate::protocol_violation::ProtocolViolation) so the
+/// core exit-code mapper reproduces upstream's exit 2.
 ///
 /// # Errors
 ///
@@ -128,7 +134,11 @@ pub fn read_varint_size<R: Read + ?Sized>(
 ) -> io::Result<usize> {
     let v = read_varint(reader)?;
     if v < 0 || (v as usize) > max {
-        return Err(invalid_data(&format!(
+        // upstream: io.c:read_varint_size() aborts with
+        // exit_cleanup(RERR_PROTOCOL) (exit 2) on a negative or over-max wire
+        // value. Tag the error so the core exit-code mapper yields
+        // RERR_PROTOCOL, not the generic RERR_STREAMIO (12).
+        return Err(crate::protocol_violation::protocol_violation(format!(
             "wire size {what} out of range: {v} > {max}"
         )));
     }
