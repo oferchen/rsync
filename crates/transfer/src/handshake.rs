@@ -172,14 +172,15 @@ pub fn perform_handshake_with_max(
 
     let remote_version = read_client_version(stdin)?;
 
+    // upstream: compat.c:619-623 setup_protocol - a remote protocol version
+    // outside [MIN_PROTOCOL_VERSION, MAX_PROTOCOL_VERSION] calls
+    // exit_cleanup(RERR_PROTOCOL) (exit 2), not RERR_STREAMIO (12). Tag the
+    // negotiation failure so the exit-code mapper reports RERR_PROTOCOL.
     let negotiated = select_highest_mutual([remote_version]).map_err(|e| {
-        io::Error::new(
-            io::ErrorKind::InvalidData,
-            format!(
-                "remote protocol version {} is not supported: {e}",
-                remote_version.as_u8()
-            ),
-        )
+        protocol::protocol_violation(format!(
+            "remote protocol version {} is not supported: {e}",
+            remote_version.as_u8()
+        ))
     })?;
     // upstream: compat.c:606-607 - protocol_version = MIN(protocol_version,
     // remote_protocol). Clamp the mutually-supported version to our advertised
@@ -204,19 +205,19 @@ fn read_client_version(stdin: &mut dyn Read) -> io::Result<ProtocolVersion> {
     stdin.read_exact(&mut buf)?;
 
     let version_byte = buf[0];
+    // upstream: compat.c:619-623 setup_protocol - an out-of-range remote
+    // protocol version is a protocol incompatibility (RERR_PROTOCOL, exit 2),
+    // distinct from a truncated stream (RERR_STREAMIO, exit 12). The
+    // read_exact above keeps its stream-error mapping; only the version-value
+    // checks are tagged as protocol violations.
     if version_byte == 0 {
-        return Err(io::Error::new(
-            io::ErrorKind::InvalidData,
+        return Err(protocol::protocol_violation(
             "received invalid protocol version 0",
         ));
     }
 
-    ProtocolVersion::try_from(version_byte).map_err(|e| {
-        io::Error::new(
-            io::ErrorKind::InvalidData,
-            format!("invalid protocol version: {e}"),
-        )
-    })
+    ProtocolVersion::try_from(version_byte)
+        .map_err(|e| protocol::protocol_violation(format!("invalid protocol version: {e}")))
 }
 
 /// Writes the server's protocol version advertisement.
@@ -277,18 +278,15 @@ pub fn perform_legacy_handshake(
             )
         })?;
 
-    let client_version = ProtocolVersion::try_from(version_number).map_err(|e| {
-        io::Error::new(
-            io::ErrorKind::InvalidData,
-            format!("unsupported protocol version: {e}"),
-        )
-    })?;
+    // upstream: compat.c:619-623 setup_protocol - an out-of-range peer protocol
+    // version is RERR_PROTOCOL (exit 2), not RERR_STREAMIO (12).
+    let client_version = ProtocolVersion::try_from(version_number)
+        .map_err(|e| protocol::protocol_violation(format!("unsupported protocol version: {e}")))?;
 
     let negotiated = select_highest_mutual([client_version]).map_err(|e| {
-        io::Error::new(
-            io::ErrorKind::InvalidData,
-            format!("protocol version {version_number} is not supported: {e}"),
-        )
+        protocol::protocol_violation(format!(
+            "protocol version {version_number} is not supported: {e}"
+        ))
     })?;
 
     let response = format!("@RSYNCD: {}.0\n", negotiated.as_u8());
@@ -508,5 +506,73 @@ mod tests {
 
         let response = String::from_utf8_lossy(&stdout);
         assert!(response.starts_with("@RSYNCD: 32"));
+    }
+
+    /// Asserts that `error` is an `InvalidData` error tagged as a
+    /// [`protocol::ProtocolViolation`], which the core exit-code mapper turns
+    /// into `RERR_PROTOCOL` (exit 2) rather than `RERR_STREAMIO` (exit 12).
+    fn assert_maps_to_rerr_protocol(error: &io::Error) {
+        assert_eq!(
+            error.kind(),
+            io::ErrorKind::InvalidData,
+            "kind must stay InvalidData for backward compatibility"
+        );
+        assert!(
+            error
+                .get_ref()
+                .is_some_and(|inner| inner.is::<protocol::ProtocolViolation>()),
+            "out-of-range protocol version must map to RERR_PROTOCOL (2), not RERR_STREAMIO (12)"
+        );
+    }
+
+    // WHY: upstream compat.c:619-623 exits RERR_PROTOCOL (2) for a peer protocol
+    // version outside [MIN_PROTOCOL_VERSION, MAX_PROTOCOL_VERSION]. A drop-in
+    // tool or wrapper script keys on that exit code to distinguish a protocol
+    // mismatch (2) from a corrupt/truncated data stream (12), so the binary
+    // handshake must tag the out-of-range version as a protocol violation.
+    #[test]
+    fn binary_handshake_out_of_range_version_maps_to_rerr_protocol() {
+        let mut stdin = Cursor::new(vec![99, 0, 0, 0]);
+        let mut stdout = Vec::new();
+
+        let error = perform_handshake(&mut stdin, &mut stdout)
+            .expect_err("version 99 is outside the supported range");
+        assert_maps_to_rerr_protocol(&error);
+    }
+
+    // WHY: a zero version byte is an invalid protocol version, not a stream
+    // error; upstream treats an out-of-range remote_protocol as RERR_PROTOCOL.
+    #[test]
+    fn binary_handshake_version_zero_maps_to_rerr_protocol() {
+        let mut stdin = Cursor::new(vec![0, 0, 0, 0]);
+        let mut stdout = Vec::new();
+
+        let error = perform_handshake(&mut stdin, &mut stdout).expect_err("version 0 is invalid");
+        assert_maps_to_rerr_protocol(&error);
+    }
+
+    // WHY: the legacy `@RSYNCD:` handshake path must classify an out-of-range
+    // version identically to the binary path - protocol version 27 is below the
+    // supported floor and must exit RERR_PROTOCOL (2), not RERR_STREAMIO (12).
+    #[test]
+    fn legacy_handshake_out_of_range_version_maps_to_rerr_protocol() {
+        let mut stdin = Cursor::new(b"@RSYNCD: 27.0\n".to_vec());
+        let mut stdout = Vec::new();
+
+        let error = perform_legacy_handshake(&mut stdin, &mut stdout)
+            .expect_err("protocol 27 is below the supported floor");
+        assert_maps_to_rerr_protocol(&error);
+    }
+
+    // Regression guard: a legitimate in-range version must still negotiate
+    // successfully and must NOT be misclassified as a protocol violation.
+    #[test]
+    fn binary_handshake_in_range_version_still_succeeds() {
+        let mut stdin = Cursor::new(vec![30, 0, 0, 0]);
+        let mut stdout = Vec::new();
+
+        let result =
+            perform_handshake(&mut stdin, &mut stdout).expect("in-range handshake succeeds");
+        assert_eq!(result.protocol, ProtocolVersion::V30);
     }
 }
