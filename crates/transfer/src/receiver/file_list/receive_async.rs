@@ -193,7 +193,12 @@ impl ReceiverContext {
                 ));
             }
 
+            // `ndx <= NDX_FLIST_OFFSET`, so `dir_ndx` is always in
+            // `0..=2147483547` and cannot overflow or go negative. Reject an
+            // out-of-range or duplicate dir_ndx fail-closed, exactly like the
+            // synchronous receive path.
             let dir_ndx = NDX_FLIST_OFFSET - ndx;
+            self.validate_extra_segment_dir_ndx(dir_ndx)?;
             let flat_start = self.file_list.len();
 
             let &(prev_flat_start, prev_ndx_start) =
@@ -235,6 +240,11 @@ impl ReceiverContext {
             if self.protocol.as_u8() < 30 && self.config.flags.hard_links {
                 normalize_pre30_hardlinks(&mut self.file_list[flat_start..]);
             }
+
+            // upstream: flist.c:2695-2701 - fold this sub-list's directories into
+            // the running dir_flist->used count so a later sub-list may reference
+            // them by dir_ndx.
+            self.dir_flist_used += super::receive::count_directories(&self.file_list[flat_start..]);
 
             // upstream: flist.c:2931 - ndx_start = prev->ndx_start + prev->used + 1
             self.ndx_segments.push((flat_start, seg_ndx_start));

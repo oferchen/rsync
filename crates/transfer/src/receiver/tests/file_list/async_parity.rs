@@ -144,7 +144,11 @@ async fn receive_extra_file_lists_async_matches_sync() {
     };
 
     // Sync baseline: seed an initial (empty) segment so ndx_segments has a base.
+    // The lone sub-list is for dir_ndx 0 (the top-level content dir), so pretend
+    // the initial flist carried one directory to satisfy the fail-closed range
+    // check; both the sync and async paths get the identical seed.
     let mut sync_ctx = ReceiverContext::new_for_test(&handshake, test_config());
+    sync_ctx.dir_flist_used = 1;
     let sync_total = sync_ctx
         .receive_extra_file_lists(&mut Cursor::new(&extra[..]))
         .unwrap();
@@ -152,6 +156,7 @@ async fn receive_extra_file_lists_async_matches_sync() {
 
     for chunk in [1usize, 2, 3, 8, extra.len()] {
         let mut async_ctx = ReceiverContext::new_for_test(&handshake, test_config());
+        async_ctx.dir_flist_used = 1;
         let mut src = ChunkedReader::new(extra.clone(), chunk);
         let (async_total, _leftover) = async_ctx
             .receive_extra_file_lists_async(&mut src, Vec::new())
