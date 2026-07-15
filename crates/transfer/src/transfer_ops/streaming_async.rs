@@ -104,6 +104,14 @@ where
 {
     let header = read_response_header_async(reader, ndx_codec, pending, ctx).await?;
 
+    // upstream: receiver.c:911-912 - updating_basis_or_equiv is set when the
+    // basis file IS the destination being updated in place (fnamecmp == fname).
+    // We take the provably-safe subset: --inplace with the basis path equal to
+    // the output path. Matched blocks whose basis offset equals the output
+    // position are then seeked past rather than rewritten.
+    let updating_basis =
+        header.use_inplace && header.basis_path.as_deref() == Some(header.file_path.as_path());
+
     // upstream: xattrs.c:744-755 - apply abbreviated values from sender to xattr list
     let xattr_list = if !header.xattr_values.is_empty() {
         let mut list = xattr_list.unwrap_or_default();
@@ -215,6 +223,7 @@ where
                 Some(next_delta),
                 token_reader,
                 total_bytes, // initial literal bytes from first chunk
+                updating_basis,
             )
             .await
         }
@@ -235,6 +244,7 @@ where
                 Some(first_delta),
                 token_reader,
                 0,
+                updating_basis,
             )
             .await
         }
@@ -260,6 +270,7 @@ async fn process_remaining_tokens_async<R>(
     pending_delta: Option<DeltaToken>,
     token_reader: &mut TokenReader,
     initial_literal_bytes: u64,
+    updating_basis: bool,
 ) -> io::Result<StreamingResult>
 where
     R: tokio::io::AsyncRead + Unpin + ?Sized,
@@ -365,7 +376,16 @@ where
 
                     let mut buf = recycle_or_alloc(buf_return_rx, bytes_to_copy);
                     buf.extend_from_slice(block_data);
-                    file_tx.send(FileMessage::Chunk(buf)).map_err(|_| {
+                    // upstream: receiver.c:468-474 - seek past matched blocks
+                    // already at their destination offset in an in-place update
+                    // instead of rewriting identical bytes. See the sync twin in
+                    // token_loop.rs for the full rationale.
+                    let msg = if updating_basis && offset == total_bytes {
+                        FileMessage::SkipMatched(buf)
+                    } else {
+                        FileMessage::Chunk(buf)
+                    };
+                    file_tx.send(msg).map_err(|_| {
                         io::Error::new(
                             io::ErrorKind::BrokenPipe,
                             "disk commit thread disconnected during block send",

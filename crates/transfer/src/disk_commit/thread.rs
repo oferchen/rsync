@@ -256,7 +256,10 @@ fn disk_thread_main(
                     break;
                 }
             }
-            FileMessage::Chunk(_) | FileMessage::Commit | FileMessage::Abort { .. } => {
+            FileMessage::Chunk(_)
+            | FileMessage::SkipMatched(_)
+            | FileMessage::Commit
+            | FileMessage::Abort { .. } => {
                 let err = io::Error::new(
                     io::ErrorKind::InvalidData,
                     "disk thread received message without preceding Begin",

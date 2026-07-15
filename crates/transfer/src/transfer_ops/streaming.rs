@@ -86,6 +86,14 @@ pub fn process_file_response_streaming<R: Read>(
 ) -> io::Result<StreamingResult> {
     let header = read_response_header(reader, ndx_codec, pending, ctx)?;
 
+    // upstream: receiver.c:911-912 - updating_basis_or_equiv is set when the
+    // basis file IS the destination being updated in place (fnamecmp == fname).
+    // We take the provably-safe subset: --inplace with the basis path equal to
+    // the output path. Matched blocks whose basis offset equals the output
+    // position are then seeked past rather than rewritten.
+    let updating_basis =
+        header.use_inplace && header.basis_path.as_deref() == Some(header.file_path.as_path());
+
     // upstream: xattrs.c:744-755 - apply abbreviated values from sender to xattr list
     let xattr_list = if !header.xattr_values.is_empty() {
         let mut list = xattr_list.unwrap_or_default();
@@ -195,6 +203,7 @@ pub fn process_file_response_streaming<R: Read>(
                 Some(next_delta),
                 token_reader,
                 total_bytes, // initial literal bytes from first chunk
+                updating_basis,
             )
         }
         first_delta => {
@@ -214,6 +223,7 @@ pub fn process_file_response_streaming<R: Read>(
                 Some(first_delta),
                 token_reader,
                 0,
+                updating_basis,
             )
         }
     }

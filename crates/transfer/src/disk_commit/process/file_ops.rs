@@ -130,6 +130,7 @@ pub(in crate::disk_commit) fn process_file(
         iocp_batch,
         config.use_sparse,
         begin.append_offset,
+        begin.is_inplace,
         begin.target_size,
     )?;
 
@@ -192,6 +193,29 @@ pub(in crate::disk_commit) fn process_file(
                 bytes_written += data.len() as u64;
                 // Return the buffer for reuse. Ignore errors - the network
                 // thread may have moved on (e.g. after an error).
+                let _ = buf_return_tx.try_send(data);
+            }
+            FileMessage::SkipMatched(data) => {
+                // In-place matched block already at its destination offset.
+                // upstream: receiver.c:461-465 hashes the matched bytes via
+                // sum_update BEFORE skip_matched(), so fold them into the
+                // per-file checksum here regardless of whether we write them.
+                if let Some(ref mut verifier) = checksum_verifier {
+                    verifier.update(&data);
+                }
+                if let Some(ref mut sparse) = sparse_state {
+                    // upstream: fileio.c:196-200 skip_matched() sparse branch
+                    // hands the bytes to the sparse processor (with the seek
+                    // flag). Writing them through SparseWriteState is
+                    // byte-identical for an in-place basis==dest update.
+                    sparse.write(output.buffered_for_sparse(), &data)?;
+                } else {
+                    // upstream: fileio.c:202-209 skip_matched() - flush then
+                    // lseek past the already-in-place bytes instead of
+                    // rewriting identical data.
+                    output.skip_matched(data.len() as u64)?;
+                }
+                bytes_written += data.len() as u64;
                 let _ = buf_return_tx.try_send(data);
             }
             FileMessage::Commit => {
@@ -353,6 +377,7 @@ pub(in crate::disk_commit) fn process_whole_file(
         iocp_batch,
         config.use_sparse,
         begin.append_offset,
+        begin.is_inplace,
         begin.target_size,
     )?;
     let bytes_written = data.len() as u64;
@@ -452,7 +477,7 @@ fn discard_file_on_open_failure(
 ) -> io::Result<CommitResult> {
     loop {
         match file_rx.recv() {
-            Ok(FileMessage::Chunk(data)) => {
+            Ok(FileMessage::Chunk(data) | FileMessage::SkipMatched(data)) => {
                 // Recycle the buffer for the network thread; drop the bytes.
                 let _ = buf_return_tx.try_send(data);
             }
@@ -603,11 +628,18 @@ pub(super) fn make_writer<'a>(
     iocp_batch: Option<&'a mut fast_io::IocpDiskBatch>,
     use_sparse: bool,
     append_offset: u64,
+    is_inplace: bool,
     size_hint: u64,
 ) -> io::Result<Writer<'a>> {
+    // In-place updates must use the buffered writer: they seek past matched
+    // basis bytes already in the destination (upstream skip_matched, fileio.c:
+    // 202-209), and the batched backends submit at their own internally
+    // tracked offset and cannot honor an intervening seek. This mirrors
+    // upstream, which always drives in-place writes through buffered
+    // write_file + lseek rather than any async submission path.
     #[cfg(all(target_os = "linux", feature = "io_uring"))]
     {
-        if !use_sparse && append_offset == 0 {
+        if !use_sparse && append_offset == 0 && !is_inplace {
             if let Some(batch) = disk_batch {
                 batch.begin_file(file)?;
                 return Ok(Writer::IoUring { batch });
@@ -616,7 +648,7 @@ pub(super) fn make_writer<'a>(
     }
     #[cfg(all(target_os = "windows", feature = "iocp"))]
     {
-        if !use_sparse && append_offset == 0 {
+        if !use_sparse && append_offset == 0 && !is_inplace {
             if let Some(batch) = iocp_batch {
                 batch.begin_file(file)?;
                 return Ok(Writer::Iocp { batch });
@@ -629,13 +661,13 @@ pub(super) fn make_writer<'a>(
     // they fall back to the buffered writer below.
     #[cfg(all(target_os = "macos", feature = "macos-gcd"))]
     {
-        if !use_sparse && append_offset == 0 {
+        if !use_sparse && append_offset == 0 && !is_inplace {
             return Ok(Writer::MacosGcd(fast_io::GcdWriter::from_file(file)?));
         }
     }
     #[cfg(target_os = "macos")]
     {
-        if !use_sparse && append_offset == 0 {
+        if !use_sparse && append_offset == 0 && !is_inplace {
             return Ok(Writer::Macos(fast_io::MacosWriter::from_file(
                 file, size_hint,
             )));
@@ -651,7 +683,7 @@ pub(super) fn make_writer<'a>(
     // Buffered.
     #[cfg(all(target_os = "linux", feature = "dontcache"))]
     {
-        if !use_sparse && append_offset == 0 && fast_io::dontcache_supported() {
+        if !use_sparse && append_offset == 0 && !is_inplace && fast_io::dontcache_supported() {
             return Ok(Writer::Dontcache(fast_io::DontcacheFileWriter::new(file)?));
         }
     }
@@ -661,7 +693,7 @@ pub(super) fn make_writer<'a>(
     // shape B. Sparse and append require Seek, so they keep using Buffered.
     #[cfg(all(target_os = "linux", feature = "vmsplice"))]
     {
-        if !use_sparse && append_offset == 0 {
+        if !use_sparse && append_offset == 0 && !is_inplace {
             return Ok(Writer::Vmsplice(fast_io::VmspliceFileWriter::new(file)?));
         }
     }
