@@ -212,6 +212,19 @@ impl<W: Write> ServerWriter<W> {
         }
     }
 
+    /// Returns the configured keep-alive lull interval, or `None` when no
+    /// `--timeout` is set or the stream is not multiplexed.
+    ///
+    /// Callers use this to derive upstream's `lull_mod = allowed_lull * 5`
+    /// cadence (sender.c:76) when poking keepalives inside a long read loop.
+    pub fn allowed_lull(&self) -> Option<Duration> {
+        match self {
+            Self::Multiplex(mux) => mux.allowed_lull(),
+            Self::Compressed(compressed) => compressed.inner_ref().allowed_lull(),
+            Self::Plain(_) | Self::Taken => None,
+        }
+    }
+
     /// Sends a `MSG_NO_SEND` message for the given file index.
     ///
     /// Indicates that the sender could not open the requested file and will

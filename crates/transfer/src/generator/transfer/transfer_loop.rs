@@ -96,7 +96,7 @@ impl GeneratorContext {
         use super::super::delta::{
             generate_delta_from_signature, generate_delta_from_signature_chunked,
         };
-        use super::super::protocol_io::read_signature_blocks;
+        use super::super::protocol_io::{read_signature_blocks_keepalive, signature_read_lull_mod};
 
         // upstream: sender.c:217-218 - rprintf(FINFO, "send_files starting\n")
         debug_log!(Send, 1, "send_files starting");
@@ -488,7 +488,15 @@ impl GeneratorContext {
             let sig_blocks = if is_append {
                 Vec::new()
             } else {
-                let blocks = read_signature_blocks(&mut *reader, &sum_head)?;
+                // upstream: sender.c:76 receive_sums() - on protocols below 31 the
+                // sender pokes a keepalive every `allowed_lull * 5` blocks so a
+                // large/slow checksum read does not trip the peer's --timeout.
+                // Newer protocols multiplex the stream and set lull_mod = 0.
+                let lull_mod = signature_read_lull_mod(self.protocol, writer.allowed_lull());
+                let blocks =
+                    read_signature_blocks_keepalive(&mut *reader, &sum_head, lull_mod, || {
+                        writer.maybe_send_keepalive().map(|_| ())
+                    })?;
                 let bytes_per_block = 4 + sum_head.s2length as u64;
                 self.timing.total_bytes_read += sum_head.count as u64 * bytes_per_block;
                 blocks
