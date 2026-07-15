@@ -85,6 +85,7 @@ pub(super) fn process_remaining_tokens<R: Read>(
     pending_delta: Option<DeltaToken>,
     token_reader: &mut TokenReader,
     initial_literal_bytes: u64,
+    updating_basis: bool,
 ) -> io::Result<StreamingResult> {
     let send_abort = |tx: &spsc::Sender<FileMessage>, reason: String| {
         let _ = tx.send(FileMessage::Abort { reason });
@@ -184,7 +185,21 @@ pub(super) fn process_remaining_tokens<R: Read>(
 
                     let mut buf = recycle_or_alloc(buf_return_rx, bytes_to_copy);
                     buf.extend_from_slice(block_data);
-                    file_tx.send(FileMessage::Chunk(buf)).map_err(|_| {
+
+                    // upstream: receiver.c:468-474 - when updating the basis in
+                    // place (fnamecmp == fname) and this matched block's basis
+                    // offset equals the current output position, the bytes are
+                    // already correct in the destination. Seek past them via
+                    // skip_matched() instead of rewriting identical data. The
+                    // bytes are still hashed on the disk thread (upstream's
+                    // sum_update runs regardless), so the file checksum and
+                    // final size stay byte-identical to a full rewrite.
+                    let msg = if updating_basis && offset == total_bytes {
+                        FileMessage::SkipMatched(buf)
+                    } else {
+                        FileMessage::Chunk(buf)
+                    };
+                    file_tx.send(msg).map_err(|_| {
                         io::Error::new(
                             io::ErrorKind::BrokenPipe,
                             "disk commit thread disconnected during block send",

@@ -23,6 +23,25 @@ pub enum FileMessage {
     Begin(Box<BeginMessage>),
     /// A chunk of file data to write.
     Chunk(Vec<u8>),
+    /// Matched basis bytes for an in-place update that already sit at the same
+    /// offset in the destination as where they would be written.
+    ///
+    /// The disk thread folds these bytes into the per-file checksum (upstream
+    /// hashes matched blocks via `sum_update` regardless) but seeks past them
+    /// instead of rewriting identical data, avoiding a needless write and
+    /// leaving the pages clean.
+    ///
+    /// Only produced when the basis file IS the destination being updated
+    /// (`--inplace` with `fnamecmp == fname`) and the matched block's basis
+    /// offset equals the current output position.
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `receiver.c:468-474` - `updating_basis_or_equiv && offset == offset2`
+    ///   dispatches to `skip_matched()` instead of `write_file()`.
+    /// - `fileio.c:192-211` - `skip_matched()` flushes then `lseek`s past the
+    ///   in-place bytes (or feeds the sparse processor with the seek flag).
+    SkipMatched(Vec<u8>),
     /// Finalize the current file (flush, fsync, rename).
     Commit,
     /// Coalesced message for single-chunk files: combines Begin + one Chunk +

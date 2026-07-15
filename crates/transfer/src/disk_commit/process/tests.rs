@@ -89,6 +89,7 @@ fn make_writer_selects_macos_for_non_sparse_zero_offset() {
         None,
         /* use_sparse */ false,
         /* append_offset */ 0,
+        /* is_inplace */ false,
         /* size_hint */ 0,
     )
     .unwrap();
@@ -117,6 +118,7 @@ fn make_writer_falls_back_to_buffered_when_seek_required() {
         None,
         /* use_sparse */ true,
         /* append_offset */ 0,
+        /* is_inplace */ false,
         /* size_hint */ 0,
     )
     .unwrap();
@@ -136,6 +138,7 @@ fn make_writer_falls_back_to_buffered_when_seek_required() {
         None,
         /* use_sparse */ false,
         /* append_offset */ 4096,
+        /* is_inplace */ false,
         /* size_hint */ 0,
     )
     .unwrap();
@@ -163,6 +166,7 @@ fn make_writer_selects_macos_gcd_when_feature_enabled() {
         None,
         /* use_sparse */ false,
         /* append_offset */ 0,
+        /* is_inplace */ false,
         /* size_hint */ 0,
     )
     .unwrap();
@@ -191,6 +195,7 @@ fn make_writer_macos_gcd_falls_back_to_buffered_for_seek() {
         None,
         /* use_sparse */ true,
         /* append_offset */ 0,
+        /* is_inplace */ false,
         /* size_hint */ 0,
     )
     .unwrap();
@@ -209,6 +214,7 @@ fn make_writer_macos_gcd_falls_back_to_buffered_for_seek() {
         None,
         /* use_sparse */ false,
         /* append_offset */ 4096,
+        /* is_inplace */ false,
         /* size_hint */ 0,
     )
     .unwrap();
@@ -257,6 +263,7 @@ fn macos_gcd_writer_matches_buffered_byte_for_byte() {
         None,
         /* use_sparse */ true,
         /* append_offset */ 0,
+        /* is_inplace */ false,
         /* size_hint */ 0,
     )
     .unwrap();
