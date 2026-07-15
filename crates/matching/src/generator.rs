@@ -235,6 +235,18 @@ pub struct DeltaGenerator {
     /// `CAP_CONSECUTIVE_MATCH` bit is present, which is also the sole condition
     /// under which the receiver halves the per-block strong-sum length.
     consecutive_match_needed: u8,
+    /// Enforces upstream's in-place ("updating basis file") monotonicity guard.
+    ///
+    /// When `true` the scan mirrors `match.c:211` (`updating_basis_file`): a
+    /// candidate whose basis offset precedes the current source cursor is
+    /// suppressed and its bytes are emitted as a literal instead of a `Copy`.
+    /// This is required under `--inplace`, where the receiver reads the basis
+    /// (the destination itself) while overwriting it: a back-referencing `Copy`
+    /// would read a region already clobbered by an earlier write. The data is
+    /// still transferred (as a literal), so the reconstructed file is
+    /// byte-identical - only the unsafe seek-backwards read is avoided. `false`
+    /// (default) leaves the scan byte-for-byte unchanged.
+    updating_basis_file: bool,
     /// Test-only knob disabling the matched-block pruning bitmap so the
     /// property tests can compare prune-on against prune-off output. The
     /// production path always prunes; see `docs/design/zsync-prune.md`.
@@ -249,6 +261,7 @@ impl DeltaGenerator {
         Self {
             buffer_len: DEFAULT_BUFFER_LEN,
             consecutive_match_needed: 1,
+            updating_basis_file: false,
             #[cfg(any(test, feature = "bench-internal"))]
             prune_matched: true,
         }
@@ -269,6 +282,23 @@ impl DeltaGenerator {
     #[must_use]
     pub fn with_consecutive_match_needed(mut self, needed: u8) -> Self {
         self.consecutive_match_needed = needed.max(1);
+        self
+    }
+
+    /// Enables upstream's in-place ("updating basis file") monotonicity guard.
+    ///
+    /// Set this when the receiver is updating the basis file in place
+    /// (`--inplace`, where `fnamecmp` is the destination itself). With the guard
+    /// on, a block match whose basis offset precedes the current source cursor
+    /// is suppressed and its bytes are emitted as a literal, so the receiver
+    /// never seeks backwards to read a basis region it has already overwritten.
+    /// Reconstruction stays byte-identical; only the unsafe read is avoided.
+    ///
+    /// upstream: match.c:211 (`if (updating_basis_file && s->sums[i].offset <
+    /// offset ...)`), sender.c:337 (`updating_basis_file = ... inplace ...`).
+    #[must_use]
+    pub fn with_updating_basis_file(mut self, updating: bool) -> Self {
+        self.updating_basis_file = updating;
         self
     }
 
@@ -335,6 +365,30 @@ impl DeltaGenerator {
         #[cfg(not(any(test, feature = "bench-internal")))]
         let prune_matched = true;
         self.generate_with_prune(reader, index, prune_matched)
+    }
+
+    /// Reports whether emitting a `Copy` for basis block `idx` is safe at the
+    /// current source `cursor` under the in-place guard.
+    ///
+    /// With the guard off this is always `true` (no restriction). With it on it
+    /// mirrors `match.c:211`: the block's basis offset (`idx * block_len`) must
+    /// be at or ahead of the write cursor, otherwise the receiver would read a
+    /// destination region it has already overwritten. A block matched at its
+    /// identical offset (`basis_offset == cursor`, upstream's
+    /// `SUMFLG_SAME_OFFSET` case) passes because `>=` is not strict.
+    #[inline]
+    fn basis_offset_ok(
+        &self,
+        index: &DeltaSignatureIndex,
+        block_len: usize,
+        idx: usize,
+        cursor: u64,
+    ) -> bool {
+        if !self.updating_basis_file {
+            return true;
+        }
+        let basis_offset = index.block(idx).index() * block_len as u64;
+        basis_offset >= cursor
     }
 
     /// Core single-stream delta scan, parameterized on whether the shared
@@ -477,6 +531,10 @@ impl DeltaGenerator {
                     index.find_match_slices_filtered(digest, first, second, prune_filter)
                 }
             };
+            // upstream: match.c:211 - under --inplace, drop any candidate whose
+            // basis offset precedes the write cursor (fall back to literal).
+            let matched =
+                matched.filter(|&idx| self.basis_offset_ok(index, block_len, idx, offset));
             if let Some(mut match_idx) = matched {
                 // upstream: match.c:265-310 - block match with bulk refill.
                 // After each match, refill the window in bulk and compute the
@@ -615,6 +673,11 @@ impl DeltaGenerator {
                             index.find_match_slices_filtered(adj_digest, f, s, adj_filter)
                         }
                     };
+                    // upstream: match.c:211 - `offset` has advanced by one block
+                    // above, so re-apply the in-place guard to the adjacent
+                    // candidate before extending the run.
+                    let adj_match = adj_match
+                        .filter(|&idx| self.basis_offset_ok(index, block_len, idx, offset));
                     if let Some(next_idx) = adj_match {
                         match_idx = next_idx;
                     } else {
@@ -716,6 +779,10 @@ impl DeltaGenerator {
         let mut buffer_pos = 0usize;
         let mut buffer_len = 0usize;
 
+        // Source cursor (window-start offset), tracked so the in-place guard can
+        // compare each candidate's basis offset against the write position.
+        let mut offset = 0u64;
+
         // Flushes accumulated literal bytes as a single token, keeping the
         // total/literal accounting in step. Returns nothing; mutates in place.
         macro_rules! flush_pending {
@@ -748,6 +815,7 @@ impl DeltaGenerator {
                     .roll(outgoing_byte, byte)
                     .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
                 pending_literals.push(outgoing_byte);
+                offset += 1;
             } else {
                 rolling.update_byte(byte);
             }
@@ -758,8 +826,11 @@ impl DeltaGenerator {
 
             let digest = rolling.digest();
             let (first, second) = window.as_slices();
-            let matched =
-                index.find_match_slices_filtered(digest, first, second, Some(&matched_blocks));
+            // upstream: match.c:211 - under --inplace, suppress a candidate whose
+            // basis offset precedes the write cursor so it demotes to a literal.
+            let matched = index
+                .find_match_slices_filtered(digest, first, second, Some(&matched_blocks))
+                .filter(|&idx| self.basis_offset_ok(index, block_len, idx, offset));
 
             let Some(mut match_idx) = matched else {
                 continue;
@@ -785,6 +856,9 @@ impl DeltaGenerator {
 
                 window.clear();
                 rolling.reset();
+                // The matched block consumed `block_len` source bytes; advance
+                // the cursor to the next window start for the guard below.
+                offset += block_len as u64;
 
                 let mut filled = 0usize;
                 while filled < block_len {
@@ -813,7 +887,10 @@ impl DeltaGenerator {
                     rolling.update(s);
                 }
                 let adj_digest = rolling.digest();
-                match index.find_match_slices_filtered(adj_digest, f, s, Some(&matched_blocks)) {
+                let adj = index
+                    .find_match_slices_filtered(adj_digest, f, s, Some(&matched_blocks))
+                    .filter(|&idx| self.basis_offset_ok(index, block_len, idx, offset));
+                match adj {
                     Some(next_idx) => match_idx = next_idx,
                     None => break,
                 }
@@ -909,6 +986,14 @@ impl DeltaGenerator {
         // the sequential `generate`, so no parallelism is lost in practice.
         if self.consecutive_match_needed >= 2 {
             return self.generate_gated(Cursor::new(source), index);
+        }
+
+        // The in-place monotonicity guard (`match.c:211`) compares each match's
+        // basis offset against the global source cursor. Parallel stripes only
+        // know a stripe-local cursor, so route the guarded scan through the
+        // sequential path, which tracks the true global offset.
+        if self.updating_basis_file {
+            return self.generate(Cursor::new(source), index);
         }
 
         let block_len = index.block_length();
@@ -1648,5 +1733,143 @@ mod tests {
             index.has_duplicate_blocks(),
             "repeated block content must be flagged as duplicate"
         );
+    }
+
+    /// Walks a script and reports whether every `Copy` reads a basis offset at
+    /// or ahead of the running output cursor.
+    ///
+    /// This is exactly the invariant `--inplace` demands: the receiver reads the
+    /// basis (the destination itself) while overwriting it, so a `Copy` that
+    /// references a basis offset behind the write cursor would read a region it
+    /// has already clobbered. A `false` here means the script would corrupt an
+    /// in-place transfer.
+    fn copies_are_monotonic(script: &DeltaScript, block_len: usize) -> bool {
+        let mut cursor = 0u64;
+        for token in script.tokens() {
+            match token {
+                DeltaToken::Copy { index, len } => {
+                    if *index * (block_len as u64) < cursor {
+                        return false;
+                    }
+                    cursor += *len as u64;
+                }
+                DeltaToken::Literal(bytes) => cursor += bytes.len() as u64,
+            }
+        }
+        true
+    }
+
+    #[test]
+    fn updating_basis_file_suppresses_backward_copy() {
+        // Two distinct full blocks (sliced from one random stream so their
+        // contents differ) so each matches its basis block uniquely.
+        let block_len = 64u32;
+        let bl = block_len as usize;
+        let basis = pseudo_random(2 * bl, 0x5741_5000);
+        let index = build_index_fixed(&basis, block_len);
+
+        // Swap the two blocks: the second source half matches basis block 0,
+        // whose offset (0) precedes the write cursor once block 1 is written.
+        let mut source = basis[bl..].to_vec();
+        source.extend_from_slice(&basis[..bl]);
+
+        // Default (temp-file) transfer: the backward match is still a Copy, so
+        // the guard leaves the ordinary scan byte-for-byte unchanged.
+        let plain = DeltaGenerator::new()
+            .generate(Cursor::new(&source[..]), &index)
+            .expect("plain");
+        assert!(
+            !copies_are_monotonic(&plain, block_len as usize),
+            "non-inplace scan must still emit the backward Copy"
+        );
+        assert_eq!(reconstruct(&basis, &index, &plain), source);
+
+        // In-place transfer: the backward Copy is suppressed to a literal so the
+        // receiver never seeks back into an already-overwritten basis region.
+        let inplace = DeltaGenerator::new()
+            .with_updating_basis_file(true)
+            .generate(Cursor::new(&source[..]), &index)
+            .expect("inplace");
+        assert!(
+            copies_are_monotonic(&inplace, block_len as usize),
+            "inplace scan must never read behind the write cursor"
+        );
+        // The forward-safe block is still copied; only the backward one demotes.
+        assert!(
+            inplace
+                .tokens()
+                .iter()
+                .any(|t| matches!(t, DeltaToken::Copy { index, .. } if *index == 1)),
+            "the forward (same-or-ahead) block must still match as a Copy"
+        );
+        assert!(
+            inplace
+                .tokens()
+                .iter()
+                .any(|t| matches!(t, DeltaToken::Literal(_))),
+            "the backward block must be demoted to a literal"
+        );
+        // Data is still transferred: reconstruction is byte-identical.
+        assert_eq!(reconstruct(&basis, &index, &inplace), source);
+    }
+
+    #[test]
+    fn updating_basis_file_guard_holds_in_gated_scan() {
+        // Four distinct full blocks (sliced from one random stream); source runs
+        // [B2,B3] then [B0,B1] so the second run references basis offsets behind
+        // the write cursor.
+        let block_len = 64u32;
+        let bl = block_len as usize;
+        let basis = pseudo_random(4 * bl, 0x4741_5444);
+        let index = build_index_fixed(&basis, block_len);
+
+        let mut source = basis[2 * bl..4 * bl].to_vec();
+        source.extend_from_slice(&basis[0..2 * bl]);
+
+        // Gated scan without the guard trusts the full consecutive run and emits
+        // the backward blocks as Copies - unsafe for an in-place receiver.
+        let unguarded = DeltaGenerator::new()
+            .with_consecutive_match_needed(2)
+            .generate(Cursor::new(&source[..]), &index)
+            .expect("unguarded");
+        assert!(
+            !copies_are_monotonic(&unguarded, bl),
+            "gated scan without the guard must emit the backward Copies"
+        );
+        assert_eq!(reconstruct(&basis, &index, &unguarded), source);
+
+        // With the guard the backward run is suppressed to literals.
+        let guarded = DeltaGenerator::new()
+            .with_consecutive_match_needed(2)
+            .with_updating_basis_file(true)
+            .generate(Cursor::new(&source[..]), &index)
+            .expect("guarded");
+        assert!(
+            copies_are_monotonic(&guarded, bl),
+            "gated inplace scan must never read behind the write cursor"
+        );
+        assert_eq!(reconstruct(&basis, &index, &guarded), source);
+    }
+
+    #[test]
+    fn updating_basis_file_forward_copies_unaffected() {
+        // A source identical to the basis matches every block at its own offset
+        // (all forward / same-offset), so the guard must suppress nothing and
+        // leave the script identical to the unguarded scan.
+        let basis: Vec<u8> = (0..10_000).map(|b| (b % 251) as u8).collect();
+        let index = build_index(&basis);
+        let source = basis.clone();
+
+        let plain = DeltaGenerator::new()
+            .generate(Cursor::new(&source[..]), &index)
+            .expect("plain");
+        let inplace = DeltaGenerator::new()
+            .with_updating_basis_file(true)
+            .generate(Cursor::new(&source[..]), &index)
+            .expect("inplace");
+
+        assert_eq!(plain.tokens(), inplace.tokens());
+        assert!(copies_are_monotonic(&inplace, index.block_length()));
+        assert_eq!(reconstruct(&basis, &index, &inplace), source);
     }
 }
