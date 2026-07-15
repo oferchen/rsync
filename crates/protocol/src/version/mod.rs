@@ -16,6 +16,7 @@ mod parse;
 mod protocol_version;
 mod recognized;
 mod select;
+mod sub_protocol;
 
 pub use advertisement::ProtocolVersionAdvertisement;
 #[allow(unused_imports)] // REASON: convenience re-export; not all constants used externally
@@ -29,6 +30,9 @@ pub use protocol_version::{
     SUPPORTED_PROTOCOLS, SUPPORTED_PROTOCOLS_DISPLAY,
 };
 pub use select::select_highest_mutual;
+pub use sub_protocol::{
+    PROTOCOL_VERSION, SUBPROTOCOL_VERSION, check_sub_protocol, get_subprotocol_version,
+};
 
 #[cfg(test)]
 mod tests;

@@ -212,9 +212,10 @@ pub use varint::{
 #[cfg(feature = "tokio-transfer")]
 pub use varint::{read_int_async, read_longint_async, read_varint_async, read_varlong_async};
 pub use version::{
-    ParseProtocolVersionError, ParseProtocolVersionErrorKind, ProtocolCapabilities,
-    ProtocolVersion, ProtocolVersionAdvertisement, SUPPORTED_PROTOCOL_BITMAP,
-    SUPPORTED_PROTOCOL_BOUNDS, SUPPORTED_PROTOCOL_COUNT, SUPPORTED_PROTOCOL_RANGE,
-    SUPPORTED_PROTOCOLS, SUPPORTED_PROTOCOLS_DISPLAY, SupportedProtocolNumbersIter,
-    SupportedVersionsIter, select_highest_mutual,
+    PROTOCOL_VERSION, ParseProtocolVersionError, ParseProtocolVersionErrorKind,
+    ProtocolCapabilities, ProtocolVersion, ProtocolVersionAdvertisement, SUBPROTOCOL_VERSION,
+    SUPPORTED_PROTOCOL_BITMAP, SUPPORTED_PROTOCOL_BOUNDS, SUPPORTED_PROTOCOL_COUNT,
+    SUPPORTED_PROTOCOL_RANGE, SUPPORTED_PROTOCOLS, SUPPORTED_PROTOCOLS_DISPLAY,
+    SupportedProtocolNumbersIter, SupportedVersionsIter, check_sub_protocol,
+    get_subprotocol_version, select_highest_mutual,
 };
