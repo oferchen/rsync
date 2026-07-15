@@ -25,6 +25,17 @@ use crate::server::ServerConfig;
 pub(crate) fn build_server_flag_string(config: &ClientConfig) -> String {
     let mut flags = String::from("-");
 
+    // upstream: options.c:2625-2626 - `for (i = 0; i < verbose; i++)
+    // argstr[x++] = 'v';` packs one 'v' per verbosity level, first after the
+    // leading '-'. server_options() sends the count to the remote so its
+    // generator/receiver emits matching verbose diagnostics; the daemon wire
+    // path (build_full_daemon_args) carries this string verbatim. The
+    // in-process half re-parses the same string (from_flag_string_and_args)
+    // and honours the 'v' count too, redundantly with apply_common_server_flags.
+    for _ in 0..config.verbosity() {
+        flags.push('v');
+    }
+
     // upstream: options.c:2628-2629 - `if (quiet && msgs2stderr) 'q'`. The
     // default `msgs2stderr` is 2 (nonzero), so plain `-q` packs 'q';
     // `--no-msgs2stderr` (msgs2stderr == 0) suppresses it. The local-half
@@ -149,19 +160,16 @@ pub(crate) fn build_server_flag_string(config: &ClientConfig) -> String {
     if config.preserve_crtimes() {
         flags.push('N');
     }
-    // upstream: options.c:764 - 'L' = copy_links (resolve symlinks).
-    if config.copy_links() {
-        flags.push('L');
-    }
-    // upstream: options.c:2658-2659 - 'k' = copy_dirlinks. Packed alongside
-    // 'L' so the in-process push sender (build_server_config_for_generator)
-    // sets `flags.copy_dirlinks` and the flist walker transmits a
-    // symlink-to-directory as a real directory; also forwarded to a remote
-    // daemon sender on a pull. Both dereference on the sender exactly like
-    // copy_links.
-    if config.copy_dirlinks() {
-        flags.push('k');
-    }
+    // upstream: options.c:2655-2660 - `if (am_sender) { ... } else { if
+    // (copy_links) 'L'; if (copy_dirlinks) 'k'; }`. The compact L/k letters are
+    // role-specific: server_options() emits them ONLY when the local side is
+    // NOT the sender (a pull), because copy_links/copy_dirlinks dereference
+    // symlinks on the SENDER, so they matter to the remote only when the remote
+    // is the sender. This role-agnostic builder therefore does NOT pack L/k -
+    // the daemon wire path (build_full_daemon_args) re-adds them gated on the
+    // pull direction, and the in-process half sets `flags.copy_links` /
+    // `flags.copy_dirlinks` directly in apply_common_server_flags so a push
+    // generator still dereferences.
 
     // upstream: options.c:2750-2762 - itemize-changes is forwarded via
     // --log-format=%i in the long-form args, not as a compact flag.
@@ -408,6 +416,16 @@ pub(crate) fn apply_common_server_flags(config: &ClientConfig, server_config: &m
     // protocol >= 30 forces them. `implied_dirs()` defaults true, so this stays
     // false (implied dirs on) unless the client passed --no-implied-dirs.
     server_config.flags.no_implied_dirs = !config.implied_dirs();
+    // upstream: options.c:2655-2660 - `if (!am_sender) { if (copy_links) 'L';
+    // if (copy_dirlinks) 'k'; }`. The compact L/k letters are wire-role-gated
+    // (see build_server_flag_string, which no longer packs them). The in-process
+    // half still needs the flags set directly: on a push the LOCAL generator IS
+    // the sender and must dereference symlinks (copy_links) and dir-symlinks
+    // (copy_dirlinks) while building its flist. Setting them unconditionally is
+    // inert on a pull, where the local half is the receiver and the remote
+    // sender does the dereferencing.
+    server_config.flags.copy_links = config.copy_links();
+    server_config.flags.copy_dirlinks = config.copy_dirlinks();
     // upstream: options.c:2881-2885 - copy_unsafe_links and safe_links are long-form only
     server_config.flags.copy_unsafe_links = config.copy_unsafe_links();
     server_config.flags.safe_links = config.safe_links();
@@ -558,6 +576,85 @@ mod tests {
             .build();
         let flags = build_server_flag_string(&config);
         assert!(!flags.contains('z'), "should not send 'z' for lz4: {flags}");
+    }
+
+    // upstream: options.c:2625-2626 - `for (i = 0; i < verbose; i++)
+    // argstr[x++] = 'v';` packs one 'v' per verbosity level, and none at all
+    // when verbose == 0. server_options() sends the count to the remote so its
+    // half emits matching verbose diagnostics; a builder that dropped 'v'
+    // silenced the remote generator's output relative to upstream.
+    #[test]
+    fn server_flag_string_emits_one_v_per_verbosity_level() {
+        let config = ClientConfig::builder().verbosity(3).build();
+        let flags = build_server_flag_string(&config);
+        // 'v' is the ONLY letter that can repeat here; the leading '-' plus
+        // exactly three 'v's must lead the string in upstream source order.
+        assert!(
+            flags.starts_with("-vvv"),
+            "verbosity 3 must pack 'vvv' first: {flags}"
+        );
+        assert_eq!(
+            flags.matches('v').count(),
+            3,
+            "exactly one 'v' per level: {flags}"
+        );
+    }
+
+    #[test]
+    fn server_flag_string_omits_v_at_zero_verbosity() {
+        let config = ClientConfig::builder().build();
+        let flags = build_server_flag_string(&config);
+        assert!(
+            !flags.contains('v'),
+            "default (verbose 0) must pack no 'v': {flags}"
+        );
+    }
+
+    // upstream: options.c:2655-2660 - L/k live in the `!am_sender` (else) branch
+    // of server_options(), so they are role-specific and must NOT be packed by
+    // this role-agnostic builder. Packing them unconditionally sent 'L'/'k' to a
+    // remote RECEIVER on a push, diverging from upstream which only sends them to
+    // a remote SENDER (pull). The daemon wire path re-adds them role-gated.
+    #[test]
+    fn server_flag_string_never_packs_copy_links_or_dirlinks() {
+        let config = ClientConfig::builder()
+            .copy_links(true)
+            .copy_dirlinks(true)
+            .build();
+        let flags = build_server_flag_string(&config);
+        assert!(
+            !flags.contains('L'),
+            "role-agnostic builder must not pack 'L' (copy-links): {flags}"
+        );
+        assert!(
+            !flags.contains('k'),
+            "role-agnostic builder must not pack 'k' (copy-dirlinks): {flags}"
+        );
+    }
+
+    // upstream: options.c:2655-2660 - the in-process half no longer learns
+    // copy_links/copy_dirlinks from the compact string (build_server_flag_string
+    // dropped L/k), so apply_common_server_flags must carry them directly. On a
+    // push the local generator IS the sender and must dereference symlinks.
+    #[test]
+    fn apply_common_server_flags_sets_copy_links_and_dirlinks() {
+        let config = ClientConfig::builder()
+            .copy_links(true)
+            .copy_dirlinks(true)
+            .build();
+        let mut server_config = ServerConfig::default();
+        apply_common_server_flags(&config, &mut server_config);
+        assert!(server_config.flags.copy_links);
+        assert!(server_config.flags.copy_dirlinks);
+    }
+
+    #[test]
+    fn apply_common_server_flags_copy_links_default_false() {
+        let config = ClientConfig::default();
+        let mut server_config = ServerConfig::default();
+        apply_common_server_flags(&config, &mut server_config);
+        assert!(!server_config.flags.copy_links);
+        assert!(!server_config.flags.copy_dirlinks);
     }
 
     #[test]
