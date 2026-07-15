@@ -180,22 +180,37 @@ pub(in crate::local_copy) fn execute_transfer(
     let mut delta_basis_override: Option<PathBuf> =
         fuzzy_basis.as_ref().map(|(path, _)| path.clone());
     if let Some(existing) = existing_metadata {
-        context.backup_existing_entry(destination, relative, existing.file_type())?;
-        // When backup renamed the basis file and delta transfer will need it,
-        // record the backup path so copy_file_contents reads from the right
-        // location. The delta signature is only built for regular files, so
-        // this condition is sufficient.
-        if delta_signature.is_some()
+        // upstream: generator.c:1862,1898 - under --inplace, --backup COPIES the
+        // pre-image aside (preserving the destination inode for the in-place
+        // rewrite) rather than renaming the destination away. Only a regular-file
+        // inplace update qualifies; every other entry keeps the rename path.
+        let inplace_regular_backup = inplace_enabled
+            && existing.is_file()
             && context.options().backup_enabled()
-            && !context.mode().is_dry_run()
-        {
-            delta_basis_override = Some(compute_backup_path(
-                context.destination_root(),
-                destination,
-                None,
-                context.options().backup_directory(),
-                context.options().backup_suffix(),
-            ));
+            && !context.mode().is_dry_run();
+        if inplace_regular_backup {
+            context.backup_existing_entry_copy(destination)?;
+            // The destination stays in place as the true in-place basis, so no
+            // basis override: copy_file_contents rewrites the existing inode via
+            // the proven inplace path (which truncates to the final length).
+        } else {
+            context.backup_existing_entry(destination, relative, existing.file_type())?;
+            // When a rename moved the basis file, delta transfer must read
+            // matched blocks from the backup location. The delta signature is
+            // only built for regular files, so this condition is sufficient.
+            // upstream: receiver.c:872-876 (FNAMECMP_BACKUP).
+            if delta_signature.is_some()
+                && context.options().backup_enabled()
+                && !context.mode().is_dry_run()
+            {
+                delta_basis_override = Some(compute_backup_path(
+                    context.destination_root(),
+                    destination,
+                    None,
+                    context.options().backup_directory(),
+                    context.options().backup_suffix(),
+                ));
+            }
         }
     }
 
@@ -565,16 +580,18 @@ pub(in crate::local_copy) fn execute_transfer(
         }
     );
 
-    // When backup moved the basis file, point the delta transfer at its new
-    // location so it can read matched blocks from the backup copy.
+    // When a backup RENAME moved the basis file (non-inplace --backup) or a
+    // fuzzy basis is used, point the delta transfer at that separate location so
+    // it reads matched blocks from there while the writer builds a fresh
+    // destination. Under `--inplace --backup` the destination is instead copied
+    // aside (inode preserved) and rewritten in place, so `delta_basis_override`
+    // stays unset and the writer IS the basis.
     let delta_basis = delta_basis_override.as_deref().unwrap_or(destination);
-    // upstream: receiver.c:872-876 - when --inplace + --backup runs, upstream
-    // sets `fnamecmp = get_backup_name(fname)` (FNAMECMP_BACKUP) so matched
-    // blocks read from the backup path while the writer overwrites the
-    // (now-empty) destination. If we kept the inplace optimization in this
-    // case, matched-block bytes would never reach the writer (the writer's
-    // file is fresh after the backup rename), and the destination would end
-    // up with only literal bytes plus sparse holes.
+    // The inplace skip-optimization is unsafe whenever the writer's file is
+    // separate from the basis: a freshly created destination contains nothing to
+    // skip over, so every matched block must be copied through. Forcing
+    // non-inplace here keeps matched-block bytes flowing to the writer instead of
+    // being skipped against an empty file.
     let basis_separate_from_writer = delta_basis_override.is_some();
     let copy_result = context.copy_file_contents(
         &mut reader,

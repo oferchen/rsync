@@ -1008,6 +1008,92 @@ impl<'a> CopyContext<'a> {
         Ok(())
     }
 
+    /// Backs up an existing regular destination file by COPYING it aside,
+    /// leaving the destination inode in place for an `--inplace` rewrite.
+    ///
+    /// Unlike [`backup_existing_entry`](Self::backup_existing_entry), which
+    /// renames the destination (moving its inode to the backup name), this
+    /// duplicates the pre-transfer contents so the original inode stays put and
+    /// is updated in place - the whole point of `--inplace`. Only used for
+    /// regular-file inplace updates; other entries keep the rename path.
+    ///
+    /// upstream: backup.c make_backup() inplace copy path - the generator makes
+    /// the backup a COPY (`generator.c:1862` `copy_file(fname, backupptr, ...)`,
+    /// with the delta twin building the same copy at `generator.c:1898`) BEFORE
+    /// the receiver rewrites the destination in place. The inplace copy bypasses
+    /// `make_backup()`, so it emits no `DEBUG_GTE(BACKUP, 1)` trace, but it still
+    /// emits the `INFO_GTE(BACKUP, 1)` "backed up X to Y" line
+    /// (`generator.c:1990-1992`).
+    pub(super) fn backup_existing_entry_copy(
+        &mut self,
+        destination: &Path,
+    ) -> Result<(), LocalCopyError> {
+        let backup_path = compute_backup_path(
+            self.destination_root(),
+            destination,
+            None,
+            self.options.backup_directory(),
+            self.options.backup_suffix(),
+        );
+
+        if let Some(parent) = backup_path.parent()
+            && !parent.as_os_str().is_empty()
+        {
+            fs::create_dir_all(parent)
+                .map_err(|error| LocalCopyError::io("create backup directory", parent, error))?;
+        }
+
+        // upstream: generator.c:1866 copy_file() - duplicate the pre-image; the
+        // destination inode is left in place to be rewritten by the inplace
+        // writer. A pre-existing backup is overwritten (upstream robust_unlinks
+        // it at generator.c:1901); fs::copy truncates to the same end state.
+        match fs::copy(destination, &backup_path) {
+            Ok(_) => {}
+            // A vanished destination has nothing to back up, mirroring the
+            // NotFound arm of the rename path (backup.c:make_backup returns 3).
+            Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(()),
+            Err(error) => {
+                return Err(LocalCopyError::io("create backup", backup_path, error));
+            }
+        }
+
+        // upstream: generator.c:1988 set_file_attrs(backupptr, back_file, ...) -
+        // the backup carries the source node's mode/owner/times. fs::copy
+        // preserves only permissions, so reapply full metadata like the
+        // cross-device COPY fallback in backup_existing_entry.
+        if let Ok(source_meta) = fs::symlink_metadata(destination) {
+            let metadata_options = self.metadata_options();
+            apply_file_metadata_with_options(&backup_path, &source_meta, &metadata_options)
+                .map_err(map_metadata_error)?;
+            // upstream: generator.c:1985 copy_xattrs() under --fake-super
+            // re-records the source stat in `user.rsync.%stat`; no-op otherwise.
+            #[cfg(all(unix, feature = "xattr"))]
+            store_effective_fake_super_if_requested(
+                &metadata_options,
+                destination,
+                &backup_path,
+                &source_meta,
+            )?;
+        }
+
+        // upstream: generator.c:1990-1992 - INFO_GTE(BACKUP, 1) "backed up X to
+        // Y". No DEBUG_GTE(BACKUP) trace: the inplace copy bypasses make_backup().
+        let dest_root = self.destination_root();
+        let destination_rel = destination.strip_prefix(dest_root).unwrap_or(destination);
+        let backup_rel = backup_path
+            .strip_prefix(dest_root)
+            .unwrap_or(backup_path.as_path());
+        info_log!(
+            Backup,
+            1,
+            "backed up {} to {}",
+            destination_rel.display(),
+            backup_rel.display()
+        );
+
+        Ok(())
+    }
+
     /// Forcibly removes a type-conflicting destination entry (backing it up
     /// first if needed) to make room for an incoming item of a different type.
     ///
