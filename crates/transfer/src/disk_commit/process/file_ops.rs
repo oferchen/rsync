@@ -22,7 +22,7 @@ use crate::temp_guard::open_tmpfile_sandboxed;
 
 use super::super::config::DiskCommitConfig;
 use super::super::writer::{ReusableBufWriter, Writer};
-use super::commit::{SparseFinalize, commit_file, retain_partial_file};
+use super::commit::{SparseFinalize, commit_file, make_backup_copy, retain_partial_file};
 use super::metadata::{apply_file_metadata, finalize_checksum};
 
 /// Folds the existing on-disk prefix into the whole-file checksum for
@@ -158,6 +158,13 @@ pub(in crate::disk_commit) fn process_file(
     // permission failure to a per-file partial (IOERR_GENERAL -> RERR_PARTIAL,
     // exit 23) with the upstream sender warning, exactly like the synchronous
     // receiver (receiver/transfer/sync.rs via delta_apply::discard_delta_stream).
+    // upstream: generator.c:1862,1898 make_backup() inplace copy path - under
+    // --inplace --backup the destination inode is rewritten in place, so the
+    // backup must be a COPY of the pre-transfer contents taken BEFORE the first
+    // write (a rename would move the very inode we are about to update). The
+    // temp+rename path instead backs up at commit time (see commit_file).
+    let inplace_backup_notice = make_inplace_backup(&begin, config)?;
+
     let (file, mut cleanup_guard, needs_rename) = match open_output_file(&begin, config) {
         Ok(triple) => triple,
         Err(open_err) => {
@@ -370,7 +377,9 @@ pub(in crate::disk_commit) fn process_file(
                     metadata_error,
                     computed_checksum,
                     delayed_path: outcome.delayed_path,
-                    backup_notice: outcome.backup_notice,
+                    // Inplace copy-backup (taken before the write) or the
+                    // temp+rename backup (taken at commit); never both.
+                    backup_notice: outcome.backup_notice.or(inplace_backup_notice),
                 });
             }
             FileMessage::Abort { reason } => {
@@ -441,6 +450,10 @@ pub(in crate::disk_commit) fn process_whole_file(
     // there are no queued channel messages to drain (unlike process_file); the
     // open error surfaces directly and drain_all_results maps a permission
     // failure to RERR_PARTIAL (exit 23).
+    // upstream: generator.c:1862,1898 - copy the pre-transfer contents aside
+    // before rewriting the destination in place (see process_file).
+    let inplace_backup_notice = make_inplace_backup(&begin, config)?;
+
     let (file, mut cleanup_guard, needs_rename) = open_output_file(&begin, config)?;
     if needs_rename {
         CleanupManager::global().register_temp_file(cleanup_guard.path().to_path_buf());
@@ -547,7 +560,9 @@ pub(in crate::disk_commit) fn process_whole_file(
         metadata_error,
         computed_checksum,
         delayed_path: outcome.delayed_path,
-        backup_notice: outcome.backup_notice,
+        // Inplace copy-backup (before the write) or temp+rename backup (at
+        // commit); never both.
+        backup_notice: outcome.backup_notice.or(inplace_backup_notice),
     })
 }
 
@@ -607,6 +622,33 @@ fn discard_file_on_open_failure(
             }
         }
     }
+}
+
+/// Makes the `--inplace --backup` pre-image copy when required.
+///
+/// Under `--inplace` the destination is rewritten in place (same inode), so the
+/// backup cannot be a rename of the destination - it must be a COPY of the
+/// pre-transfer contents taken before the first write. Upstream does this in the
+/// generator (`generator.c:1862,1898` `copy_file(fname, backupptr, ...)`) while
+/// keeping `fnamecmp_type == FNAMECMP_FNAME`. Because oc refuses
+/// `--inplace --partial-dir` (config validation), an inplace basis is always the
+/// destination itself, so `begin.is_inplace` here matches upstream's
+/// `inplace && fnamecmp_type == FNAMECMP_FNAME` condition exactly.
+///
+/// Returns `Ok(None)` (no backup) unless the target is inplace, backup is
+/// configured, and `--delay-updates` is off (which stages its own backup during
+/// the sweep). `make_backup_copy` further no-ops when the destination is absent.
+fn make_inplace_backup(
+    begin: &BeginMessage,
+    config: &DiskCommitConfig,
+) -> io::Result<Option<crate::pipeline::messages::BackupNotice>> {
+    if !begin.is_inplace || config.delay_updates {
+        return Ok(None);
+    }
+    let Some(ref backup_config) = config.backup else {
+        return Ok(None);
+    };
+    make_backup_copy(&begin.file_path, backup_config, config)
 }
 
 /// Opens the output file using device write, inplace, or temp+rename strategy.

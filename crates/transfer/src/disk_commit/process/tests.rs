@@ -375,6 +375,76 @@ fn make_backup_missing_file_is_noop() {
     assert!(notice.is_none(), "no notice when nothing was backed up");
 }
 
+/// Verifies `make_backup_copy` (the `--inplace --backup` path) DUPLICATES the
+/// original to the backup and LEAVES the original in place, unlike `make_backup`
+/// which renames it away. Preserving the original is the whole point: under
+/// `--inplace` that file is the destination inode about to be rewritten in
+/// place, so it must survive the backup step.
+///
+/// upstream: generator.c:1862 - `copy_file(fname, backupptr, ...)` copies the
+/// pre-image aside while the destination stays put for the inplace rewrite.
+#[test]
+fn make_backup_copy_duplicates_and_keeps_original() {
+    use std::ffi::OsString;
+
+    let dir = tempfile::tempdir().unwrap();
+    let file_path = dir.path().join("payload.bin");
+    fs::write(&file_path, b"original bytes").unwrap();
+
+    let config = BackupConfig {
+        dest_dir: dir.path().to_path_buf(),
+        backup_dir: None,
+        suffix: OsString::from("~"),
+    };
+    let notice = make_backup_copy(&file_path, &config, &DiskCommitConfig::default())
+        .expect("make_backup_copy succeeds")
+        .expect("notice produced when an existing file is copied");
+
+    let backup_path = file_path.with_extension("bin~");
+    assert!(backup_path.exists(), "backup copy must exist");
+    assert!(
+        file_path.exists(),
+        "original must REMAIN in place for the inplace rewrite (copy, not rename)"
+    );
+    assert_eq!(
+        fs::read(&backup_path).unwrap(),
+        b"original bytes",
+        "backup must hold the original pre-transfer bytes"
+    );
+    assert_eq!(
+        fs::read(&file_path).unwrap(),
+        b"original bytes",
+        "original content is untouched by the copy step"
+    );
+
+    assert_eq!(notice.original, PathBuf::from("payload.bin"));
+    assert_eq!(notice.backup, PathBuf::from("payload.bin~"));
+}
+
+/// Verifies `make_backup_copy` no-ops (returns `None`, writes nothing) when the
+/// destination does not yet exist, mirroring upstream's `x_lstat` guard: a
+/// first-time inplace create has no pre-image to preserve.
+#[test]
+fn make_backup_copy_missing_file_is_noop() {
+    use std::ffi::OsString;
+
+    let dir = tempfile::tempdir().unwrap();
+    let file_path = dir.path().join("absent.bin");
+
+    let config = BackupConfig {
+        dest_dir: dir.path().to_path_buf(),
+        backup_dir: None,
+        suffix: OsString::from("~"),
+    };
+    let notice = make_backup_copy(&file_path, &config, &DiskCommitConfig::default())
+        .expect("make_backup_copy succeeds");
+    assert!(notice.is_none(), "no notice when nothing was backed up");
+    assert!(
+        !file_path.with_extension("bin~").exists(),
+        "no backup file created when the destination is absent"
+    );
+}
+
 /// #507 (TOCTOU regression): the dirfd anchor on the commit rename refuses to
 /// land the final file through a destination parent that was swapped for a
 /// symlink pointing outside the tree.

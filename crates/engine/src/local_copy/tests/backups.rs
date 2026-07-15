@@ -1323,6 +1323,67 @@ fn backup_with_inplace_mode() {
     assert_eq!(fs::read(dest_root.join("file.txt")).expect("read dest"), b"inplace new");
 }
 
+// The inode-preservation contract for `--inplace --backup`. Under --inplace the
+// destination must be rewritten in place (same inode); the backup is a COPY of
+// the pre-image, NOT a rename of the destination. Renaming the destination away
+// (the pre-fix behavior) gave the updated file a fresh inode, defeating
+// --inplace for hardlinked / mmapped / reflinked consumers. The old content is
+// LONGER than the new content so this also pins the final truncation: after an
+// in-place delta rewrite the destination must not retain trailing stale bytes.
+//
+// upstream: generator.c:1862 - copy_file(fname, backupptr, ...) copies the
+// pre-image aside while the original inode stays put for the inplace rewrite.
+#[cfg(unix)]
+#[test]
+fn backup_with_inplace_preserves_dest_inode_and_truncates() {
+    use std::os::unix::fs::MetadataExt;
+
+    let ctx = test_helpers::setup_copy_test();
+    fs::create_dir_all(&ctx.dest).expect("create dest");
+
+    let source_file = ctx.source.join("file.txt");
+    fs::write(&source_file, b"short-new").expect("write source");
+
+    let dest_root = ctx.dest.join("source");
+    fs::create_dir_all(&dest_root).expect("create dest root");
+    let existing = dest_root.join("file.txt");
+    fs::write(&existing, b"much-longer-original-content").expect("write dest");
+    let inode_before = fs::metadata(&existing).expect("stat dest").ino();
+
+    let operands = vec![
+        ctx.source.into_os_string(),
+        ctx.dest.clone().into_os_string(),
+    ];
+    let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
+    let options = LocalCopyOptions::default()
+        .backup(true)
+        .inplace(true)
+        .whole_file(false);
+
+    plan.execute_with_options(LocalCopyExecution::Apply, options)
+        .expect("copy succeeds");
+
+    // Backup holds the ORIGINAL pre-transfer bytes (copy, not the rewrite).
+    let backup = dest_root.join("file.txt~");
+    assert_eq!(
+        fs::read(&backup).expect("read backup"),
+        b"much-longer-original-content",
+        "backup must hold the original pre-image, not the rewritten content"
+    );
+    // Destination holds exactly the new content - fully truncated, no stale tail.
+    assert_eq!(
+        fs::read(&existing).expect("read dest"),
+        b"short-new",
+        "inplace rewrite must truncate the shorter new content, leaving no stale bytes"
+    );
+    // The destination inode is unchanged - the whole point of --inplace.
+    assert_eq!(
+        fs::metadata(&existing).expect("stat dest").ino(),
+        inode_before,
+        "--inplace --backup must preserve the destination inode (copy-backup, not rename)"
+    );
+}
+
 // Regression: --inplace + --no-whole-file + --backup-dir on a delta transfer
 // must copy matched blocks from the renamed-away basis. Before the fix, the
 // inplace optimization (skip reading matched blocks because writer is the

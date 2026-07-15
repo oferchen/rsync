@@ -88,9 +88,16 @@ pub(super) fn commit_file(
         }
     }
 
-    // upstream: backup.c:make_backup() - rename existing file before overwrite
+    // upstream: backup.c:make_backup() - rename existing file before overwrite.
     // With delay_updates, backup happens during the sweep, not here.
-    let backup_notice = if !config.delay_updates {
+    //
+    // The inplace case is deliberately excluded: under --inplace the destination
+    // inode is rewritten in place, so a rename-to-backup here would move the very
+    // file we already overwrote (its pre-transfer contents are gone by commit).
+    // Upstream instead COPIES the pre-image aside BEFORE the inplace rewrite
+    // (generator.c:1862,1898); oc mirrors that in `process_file` /
+    // `process_whole_file` via `make_backup_copy` prior to the first write.
+    let backup_notice = if !config.delay_updates && !begin.is_inplace {
         if let Some(ref backup_config) = config.backup {
             make_backup(&begin.file_path, backup_config, config)?
         } else {
@@ -523,6 +530,72 @@ pub(super) fn make_backup(
     // root to match upstream test assertions (testsuite/backup.test). The
     // actual `info_log!` emission happens on the main thread; see
     // `crate::pipeline::receiver::emit_backup_notice`.
+    let file_rel = file_path
+        .strip_prefix(&backup_config.dest_dir)
+        .unwrap_or(file_path)
+        .to_path_buf();
+    let backup_rel = backup_path
+        .strip_prefix(&backup_config.dest_dir)
+        .unwrap_or(&backup_path)
+        .to_path_buf();
+    Ok(Some(BackupNotice {
+        original: file_rel,
+        backup: backup_rel,
+    }))
+}
+
+/// Copies the destination's pre-transfer contents aside to the backup path,
+/// used for the `--inplace --backup` case where the destination inode is
+/// rewritten in place rather than replaced by a temp+rename.
+///
+/// upstream: backup.c make_backup() inplace copy path - the generator makes the
+/// backup a COPY (`generator.c:1862` `copy_file(fname, backupptr, ...)`, and the
+/// delta twin at `generator.c:1898`) BEFORE the receiver rewrites the
+/// destination in place, keeping `fnamecmp_type == FNAMECMP_FNAME`. A plain
+/// rename-to-backup would move the very inode we are about to update, so the
+/// pre-image must be duplicated first. Unlike the rename path this does NOT emit
+/// the `make_backup: RENAME` debug line (upstream's inplace copy bypasses
+/// `make_backup()` and so emits no `DEBUG_GTE(BACKUP, 1)` trace), but it still
+/// returns a [`BackupNotice`] so the main thread emits the same
+/// `INFO_GTE(BACKUP, 1)` "backed up X to Y" line (`generator.c:1990-1992`).
+///
+/// Called before the first inplace write; the caller has already confirmed
+/// `begin.is_inplace`. Returns `Ok(None)` when the destination does not yet
+/// exist (nothing to back up), matching upstream's `x_lstat` guard.
+pub(super) fn make_backup_copy(
+    file_path: &Path,
+    backup_config: &BackupConfig,
+    config: &DiskCommitConfig,
+) -> io::Result<Option<BackupNotice>> {
+    if !file_path.exists() {
+        return Ok(None);
+    }
+
+    let backup_path = compute_backup_path(
+        &backup_config.dest_dir,
+        file_path,
+        None,
+        backup_config.backup_dir.as_deref(),
+        &backup_config.suffix,
+    );
+
+    if let Some(parent) = backup_path.parent() {
+        if !parent.exists() {
+            create_dir_all_sandboxed(config, parent)?;
+        }
+    }
+
+    // upstream: generator.c:1866 copy_file() - duplicate the pre-transfer bytes
+    // into the backup, leaving the original inode in place to be updated. A
+    // pre-existing backup at this path is overwritten (upstream robust_unlinks
+    // it at generator.c:1901); `fs::copy` truncates, reaching the same end
+    // state. `fs::copy` is portable across Linux/macOS/Windows.
+    fs::copy(file_path, &backup_path)?;
+
+    // upstream: generator.c:1990-1992 - INFO_GTE(BACKUP, 1) "backed up X to Y".
+    // Paths are relative to the destination root to match test assertions; the
+    // `info_log!` emission happens on the main thread (see
+    // `crate::pipeline::receiver::emit_backup_notice`).
     let file_rel = file_path
         .strip_prefix(&backup_config.dest_dir)
         .unwrap_or(file_path)
