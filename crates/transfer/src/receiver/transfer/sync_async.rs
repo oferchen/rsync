@@ -204,16 +204,15 @@ impl ReceiverContext {
                 continue;
             }
 
-            let file_size = file_entry.size();
-            if let Some(min_limit) = self.config.file_selection.min_file_size {
-                if file_size < min_limit {
-                    continue;
-                }
-            }
-            if let Some(max_limit) = self.config.file_selection.max_file_size {
-                if file_size > max_limit {
-                    continue;
-                }
+            // upstream: generator.c:1704-1718 - skip files outside the
+            // min-size/max-size window with a SKIP-gated notice on FINFO.
+            if self.emit_size_bound_skip(
+                writer,
+                file_entry,
+                self.config.file_selection.min_file_size,
+                self.config.file_selection.max_file_size,
+            ) {
+                continue;
             }
 
             let outcome = self

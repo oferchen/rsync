@@ -131,8 +131,11 @@ impl ReceiverContext {
                 if !has_size_bounds {
                     return true;
                 }
-                let sz = e.size();
-                min_size.is_none_or(|m| sz >= m) && max_size.is_none_or(|m| sz <= m)
+                // upstream: generator.c:1704-1718 - a file whose sender-side
+                // length exceeds max-size or falls below min-size is skipped
+                // with a SKIP-gated notice on FINFO. The bound uses the flist
+                // length, so no destination stat is needed here.
+                !self.emit_size_bound_skip(writer, e, min_size, max_size)
             })
             .filter(|(_, e)| {
                 // upstream: receiver.c:599-604 - check_filter(&daemon_filter_list, ...)
@@ -246,7 +249,21 @@ impl ReceiverContext {
                     // SKIP-gated notice; existing directories stay silent.
                     if !entry.is_dir() && logging::info_gte(logging::InfoFlag::Skip, 1) {
                         let name = entry.path().to_string_lossy();
-                        let _ = self.emit_info_line(writer, &format!("{name} exists\n"));
+                        // upstream: generator.c:1398-1408 - the notice is
+                        // "%s exists%s"; the suffix is empty at SKIP1 and gains
+                        // a parenthesised reason (type/sum/file/attr change or
+                        // uptodate) at SKIP2.
+                        let suffix = self.ignore_existing_suffix(
+                            entry,
+                            &file_path,
+                            meta,
+                            preserve_times,
+                            size_only,
+                            always_checksum,
+                            modify_window,
+                            metadata_opts,
+                        );
+                        let _ = self.emit_info_line(writer, &format!("{name} exists{suffix}\n"));
                     }
                     continue;
                 }
@@ -303,6 +320,16 @@ impl ReceiverContext {
                 }
             } else {
                 if existing_only {
+                    // upstream: generator.c:1368-1383 - --existing /
+                    // --ignore-non-existing never creates an absent
+                    // destination; a missing regular file is skipped with a
+                    // SKIP-gated "not creating new file" notice. Directories
+                    // take the same path in receiver/directory/creation.rs.
+                    if logging::info_gte(logging::InfoFlag::Skip, 1) {
+                        let name = entry.path().to_string_lossy();
+                        let _ = self
+                            .emit_info_line(writer, &format!("not creating new file \"{name}\"\n"));
+                    }
                     continue;
                 }
                 if has_reference_dirs
@@ -434,6 +461,96 @@ impl ReceiverContext {
             }
         }
         iflags
+    }
+
+    /// Emits the upstream size-bound SKIP notice for a candidate whose flist
+    /// length is outside the `--min-size`/`--max-size` window, returning `true`
+    /// when the entry is filtered out.
+    ///
+    /// Over max-size is tested before under min-size, matching upstream's
+    /// evaluation order. The notice text and `INFO_GTE(SKIP,1)` gate mirror
+    /// upstream exactly; below the gate the entry is still skipped silently.
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `generator.c:1704-1711` - `"%s is over max-size\n"`
+    /// - `generator.c:1712-1718` - `"%s is under min-size\n"`
+    pub(in crate::receiver) fn emit_size_bound_skip<W: crate::writer::MsgInfoSender + ?Sized>(
+        &self,
+        writer: &mut W,
+        entry: &FileEntry,
+        min_size: Option<u64>,
+        max_size: Option<u64>,
+    ) -> bool {
+        let size = entry.size();
+        if let Some(max) = max_size {
+            if size > max {
+                if logging::info_gte(logging::InfoFlag::Skip, 1) {
+                    let name = entry.path().to_string_lossy();
+                    let _ = self.emit_info_line(writer, &format!("{name} is over max-size\n"));
+                }
+                return true;
+            }
+        }
+        if let Some(min) = min_size {
+            if size < min {
+                if logging::info_gte(logging::InfoFlag::Skip, 1) {
+                    let name = entry.path().to_string_lossy();
+                    let _ = self.emit_info_line(writer, &format!("{name} is under min-size\n"));
+                }
+                return true;
+            }
+        }
+        false
+    }
+
+    /// Computes the parenthesised reason suffix for the `--ignore-existing`
+    /// `"%s exists%s"` notice.
+    ///
+    /// Empty unless `INFO_GTE(SKIP,2)`; at SKIP2 it classifies why the existing
+    /// destination is being kept, reusing oc's already-computed compare
+    /// primitives so the mapping tracks the upstream decision cascade exactly.
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `generator.c:1399-1408` - suffix selection cascade (type change ->
+    ///   sum/file change -> attr change -> uptodate)
+    #[allow(clippy::too_many_arguments)]
+    fn ignore_existing_suffix(
+        &self,
+        entry: &FileEntry,
+        dest_path: &Path,
+        dest_meta: &fs::Metadata,
+        preserve_times: bool,
+        size_only: bool,
+        always_checksum: Option<protocol::ChecksumAlgorithm>,
+        modify_window: metadata::ModifyWindow,
+        metadata_opts: &MetadataOptions,
+    ) -> &'static str {
+        if !logging::info_gte(logging::InfoFlag::Skip, 2) {
+            return "";
+        }
+        if !dest_type_matches_source(dest_path, entry) {
+            " (type change)"
+        } else if !quick_check_matches(
+            entry,
+            dest_path,
+            dest_meta,
+            preserve_times,
+            size_only,
+            always_checksum,
+            modify_window,
+        ) {
+            if always_checksum.is_some() {
+                " (sum change)"
+            } else {
+                " (file change)"
+            }
+        } else if !metadata_unchanged(entry, metadata_opts, dest_meta) {
+            " (attr change)"
+        } else {
+            " (uptodate)"
+        }
     }
 
     /// Applies metadata updates for a file that passed quick-check (no transfer needed).
@@ -664,5 +781,236 @@ mod itemize_order_tests {
             "row 3 must be the new file b/f2: {:?}",
             rows[3].1
         );
+    }
+}
+
+/// Receiver SKIP-notice fidelity: the generator emits `rprintf(FINFO, ...)`
+/// chatter for files it declines to transfer. These tests pin the exact
+/// upstream text and the `INFO_GTE(SKIP, N)` gate for each notice, and assert
+/// silence below the gate.
+#[cfg(test)]
+mod skip_notice_tests {
+    use std::ffi::OsString;
+    use std::io;
+    use std::path::Path;
+
+    use logging::{InfoFlag, VerbosityConfig};
+    use metadata::MetadataOptions;
+    use protocol::ProtocolVersion;
+    use protocol::flist::FileEntry;
+
+    use crate::config::ServerConfig;
+    use crate::flags::ParsedServerFlags;
+    use crate::handshake::HandshakeResult;
+    use crate::receiver::ReceiverContext;
+    use crate::receiver::stats::TransferStats;
+    use crate::role::ServerRole;
+
+    /// Records every `MSG_INFO` frame emitted by a server-mode receiver so the
+    /// tests can assert the exact skip-notice bytes.
+    #[derive(Default)]
+    struct CaptureWriter {
+        lines: Vec<String>,
+    }
+
+    impl io::Write for CaptureWriter {
+        fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+            Ok(buf.len())
+        }
+        fn flush(&mut self) -> io::Result<()> {
+            Ok(())
+        }
+    }
+
+    impl crate::writer::MsgInfoSender for CaptureWriter {
+        fn send_msg_info(&mut self, data: &[u8]) -> io::Result<()> {
+            self.lines.push(String::from_utf8_lossy(data).into_owned());
+            Ok(())
+        }
+    }
+
+    fn handshake() -> HandshakeResult {
+        HandshakeResult {
+            protocol: ProtocolVersion::try_from(32u8).unwrap(),
+            buffered: Vec::new(),
+            compat_exchanged: false,
+            client_args: None,
+            io_timeout: None,
+            negotiated_algorithms: None,
+            compat_flags: None,
+            checksum_seed: 0,
+        }
+    }
+
+    /// A server-mode receiver: skip notices route through `send_msg_info` (the
+    /// `MSG_INFO` sink) instead of the client's stdout, so `CaptureWriter` sees
+    /// them verbatim.
+    fn server_config() -> ServerConfig {
+        let mut config = ServerConfig {
+            role: ServerRole::Receiver,
+            protocol: ProtocolVersion::try_from(32u8).unwrap(),
+            flag_string: "-r".to_owned(),
+            flags: ParsedServerFlags {
+                recursive: true,
+                ..ParsedServerFlags::default()
+            },
+            args: vec![OsString::from(".")],
+            ..Default::default()
+        };
+        config.connection.client_mode = false;
+        config
+    }
+
+    /// Runs the candidate pass at a given `--info=skip` level and returns the
+    /// captured notice lines.
+    fn run(
+        config: ServerConfig,
+        skip_level: u8,
+        files: Vec<FileEntry>,
+        dest: &Path,
+    ) -> Vec<String> {
+        let mut cfg = VerbosityConfig::default();
+        cfg.info.set(InfoFlag::Skip, skip_level);
+        logging::init(cfg);
+
+        let hs = handshake();
+        let mut ctx = ReceiverContext::new_for_test(&hs, config);
+        ctx.file_list = files;
+
+        let mut writer = CaptureWriter::default();
+        let opts = MetadataOptions::default();
+        let mut errs = Vec::new();
+        let mut stats = TransferStats::default();
+        let _ = ctx.build_files_to_transfer(
+            &mut writer,
+            dest,
+            &opts,
+            None,
+            &mut errs,
+            &mut stats,
+            None,
+            None,
+        );
+        writer.lines
+    }
+
+    /// #46 - upstream: generator.c:1704-1718. A file over `--max-size` or under
+    /// `--min-size` is skipped with `"%s is over max-size"` / `"%s is under
+    /// min-size"`, gated on `INFO_GTE(SKIP, 1)`. Below the gate the skip is
+    /// silent. The order (over-max before under-min) mirrors upstream.
+    #[test]
+    fn size_bound_notices_match_upstream_text_and_gate() {
+        let dir = test_support::create_tempdir();
+        let dest = dir.path();
+        let files = || {
+            vec![
+                FileEntry::new_file("big".into(), 200, 0o644),
+                FileEntry::new_file("small".into(), 5, 0o644),
+                FileEntry::new_file("ok".into(), 50, 0o644),
+            ]
+        };
+        let cfg = || {
+            let mut c = server_config();
+            c.file_selection.max_file_size = Some(100);
+            c.file_selection.min_file_size = Some(10);
+            c
+        };
+
+        // SKIP1: both out-of-bounds files are named; the in-bounds file is not.
+        let lines = run(cfg(), 1, files(), dest);
+        assert_eq!(
+            lines,
+            vec![
+                "big is over max-size\n".to_owned(),
+                "small is under min-size\n".to_owned(),
+            ]
+        );
+
+        // Below the gate the skip is silent (business rule: no chatter without
+        // -vv / --info=skip).
+        assert!(run(cfg(), 0, files(), dest).is_empty());
+    }
+
+    /// #44 - upstream: generator.c:1368-1383. With `--existing`, a regular file
+    /// absent at the destination is never created; upstream prints `not
+    /// creating new file "%s"` (literal quotes) at `INFO_GTE(SKIP, 1)`, silent
+    /// otherwise.
+    #[test]
+    fn not_creating_new_file_notice_match_upstream_text_and_gate() {
+        let dir = test_support::create_tempdir();
+        let dest = dir.path();
+        let files = || vec![FileEntry::new_file("newfile".into(), 10, 0o644)];
+        let cfg = || {
+            let mut c = server_config();
+            c.file_selection.existing_only = true;
+            c
+        };
+
+        let lines = run(cfg(), 1, files(), dest);
+        assert_eq!(
+            lines,
+            vec!["not creating new file \"newfile\"\n".to_owned()]
+        );
+
+        assert!(run(cfg(), 0, files(), dest).is_empty());
+    }
+
+    /// #45 - upstream: generator.c:1395-1410. With `--ignore-existing`, a file
+    /// already present is skipped with `"%s exists%s"`. At SKIP1 the suffix is
+    /// empty; at SKIP2 it names the reason. The suffix must NOT leak at SKIP1
+    /// (else oc would out-chatter upstream).
+    #[test]
+    fn ignore_existing_notice_suffix_matches_upstream_per_level() {
+        let dir = test_support::create_tempdir();
+        let dest = dir.path();
+        std::fs::write(dest.join("exists.txt"), b"12345").expect("seed dest file (5 bytes)");
+
+        // Source length differs from the 5-byte destination.
+        let files = || vec![FileEntry::new_file("exists.txt".into(), 10, 0o644)];
+        let base_cfg = || {
+            let mut c = server_config();
+            c.file_selection.ignore_existing = true;
+            c
+        };
+
+        // SKIP1: no suffix.
+        let lines = run(base_cfg(), 1, files(), dest);
+        assert_eq!(lines, vec!["exists.txt exists\n".to_owned()]);
+
+        // SKIP2, no --checksum: size mismatch -> " (file change)".
+        let lines = run(base_cfg(), 2, files(), dest);
+        assert_eq!(lines, vec!["exists.txt exists (file change)\n".to_owned()]);
+
+        // SKIP2, --checksum: the same size mismatch reports " (sum change)".
+        let sum_cfg = || {
+            let mut c = base_cfg();
+            c.flags.checksum = true;
+            c
+        };
+        let lines = run(sum_cfg(), 2, files(), dest);
+        assert_eq!(lines, vec!["exists.txt exists (sum change)\n".to_owned()]);
+
+        // Below the gate: the skip is entirely silent.
+        assert!(run(base_cfg(), 0, files(), dest).is_empty());
+    }
+
+    /// #45 (type-change branch) - upstream: generator.c:1400-1401. When the
+    /// destination is a directory but the source is a regular file, the SKIP2
+    /// suffix is " (type change)".
+    #[test]
+    fn ignore_existing_type_change_suffix() {
+        let dir = test_support::create_tempdir();
+        let dest = dir.path();
+        std::fs::create_dir(dest.join("typed")).expect("seed dest directory");
+
+        let files = || vec![FileEntry::new_file("typed".into(), 10, 0o644)];
+        let cfg = || {
+            let mut c = server_config();
+            c.file_selection.ignore_existing = true;
+            c
+        };
+
+        let lines = run(cfg(), 2, files(), dest);
+        assert_eq!(lines, vec!["typed exists (type change)\n".to_owned()]);
     }
 }
