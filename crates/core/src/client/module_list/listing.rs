@@ -14,16 +14,16 @@ use std::io::{BufReader, Write};
 use std::time::Duration;
 
 use protocol::{
-    LEGACY_DAEMON_PREFIX, LegacyDaemonMessage, parse_legacy_daemon_message,
-    parse_legacy_warning_message,
+    LEGACY_DAEMON_PREFIX, LegacyDaemonGreetingOwned, LegacyDaemonMessage, missing_greeting_token,
+    parse_legacy_daemon_message, parse_legacy_warning_message,
 };
 use rsync_io::negotiate_legacy_daemon_session;
 
 use super::super::{
-    ClientError, DAEMON_SOCKET_TIMEOUT, PARTIAL_TRANSFER_EXIT_CODE, TransferTimeout,
-    daemon_access_denied_error, daemon_authentication_failed_error,
-    daemon_authentication_required_error, daemon_error, daemon_listing_unavailable_error,
-    daemon_protocol_error, socket_error,
+    CLIENT_SERVER_PROTOCOL_EXIT_CODE, ClientError, DAEMON_SOCKET_TIMEOUT,
+    PARTIAL_TRANSFER_EXIT_CODE, TransferTimeout, daemon_access_denied_error,
+    daemon_authentication_failed_error, daemon_authentication_required_error, daemon_error,
+    daemon_listing_unavailable_error, daemon_protocol_error, socket_error,
 };
 use super::auth::{
     DaemonAuthContext, SensitiveBytes, is_motd_payload, load_daemon_password,
@@ -231,6 +231,7 @@ pub fn run_module_list_with_password_and_options(
         .map_err(|error| map_daemon_handshake_error(error, addr))?;
     let negotiated_protocol = handshake.negotiated_protocol();
     let server_greeting = handshake.server_greeting().clone();
+    reject_incomplete_daemon_greeting(&server_greeting)?;
     let advertised_digests = parse_daemon_digest_list(server_greeting.digest_list());
     let selected_digest = select_daemon_digest(&advertised_digests, negotiated_protocol.as_u8());
     let mut reader = BufReader::new(handshake.into_stream());
@@ -408,6 +409,58 @@ pub fn run_module_list_with_password_and_options(
     Ok(ModuleList::new(motd, warnings, capabilities, entries))
 }
 
+/// Enforces upstream's greeting-completeness gate on the daemon's banner.
+///
+/// upstream: clientserver.c:188-210 `exchange_protocols()` (am_client == 1) -
+/// after parsing the `@RSYNCD:` greeting the client rejects a banner that omits
+/// the subprotocol value (`remote_protocol >= 30`) or the digest name list
+/// (`remote_protocol > 31`), printing `rsync: the server omitted the <token>:
+/// <buf>` and aborting with `RERR_STARTCLIENT`. Module listing reaches this gate
+/// through the same `start_inband_exchange()` path as a transfer (an empty
+/// module name only changes what follows the handshake), so the listing client
+/// applies the identical shared [`missing_greeting_token`] check that #6609
+/// wired into the transfer handshake. The gate lives here at the application
+/// layer, not in the lenient negotiation parser, so protocol-clamping paths that
+/// deliberately accept digest-less banners to exercise version capping stay
+/// intact.
+fn reject_incomplete_daemon_greeting(
+    greeting: &LegacyDaemonGreetingOwned,
+) -> Result<(), ClientError> {
+    let banner = reconstruct_daemon_greeting_line(greeting);
+    if let Some(missing) = missing_greeting_token(&banner) {
+        return Err(daemon_error(
+            format!(
+                "the server omitted the {}: {}",
+                missing.description(),
+                banner
+            ),
+            CLIENT_SERVER_PROTOCOL_EXIT_CODE,
+        ));
+    }
+    Ok(())
+}
+
+/// Rebuilds the `@RSYNCD:` banner line from the parsed greeting metadata.
+///
+/// The negotiation helper consumes the raw greeting bytes while replying, so the
+/// listing client reconstructs the canonical banner from the retained advertised
+/// protocol, optional subprotocol suffix, and optional digest list. The gate in
+/// [`missing_greeting_token`] depends only on those three fields, so the
+/// reconstruction preserves the decision exactly and reproduces the banner real
+/// daemons emit for the `the server omitted the <token>: <buf>` diagnostic.
+fn reconstruct_daemon_greeting_line(greeting: &LegacyDaemonGreetingOwned) -> String {
+    let mut banner = format!("{LEGACY_DAEMON_PREFIX} {}", greeting.advertised_protocol());
+    if let Some(subprotocol) = greeting.subprotocol_raw() {
+        banner.push('.');
+        banner.push_str(&subprotocol.to_string());
+    }
+    if let Some(digests) = greeting.digest_list() {
+        banner.push(' ');
+        banner.push_str(digests);
+    }
+    banner
+}
+
 fn configure_daemon_stream(
     stream: &mut super::connect::DaemonStream,
     options: &ModuleListOptions,
@@ -510,6 +563,89 @@ mod tests {
         let custom = NonZeroU64::new(60).unwrap();
         let result = effective_timeout(TransferTimeout::Seconds(custom), default);
         assert_eq!(result, Some(Duration::from_secs(60)));
+    }
+
+    fn greeting(
+        advertised: u32,
+        subprotocol: Option<u32>,
+        digests: Option<&str>,
+    ) -> LegacyDaemonGreetingOwned {
+        LegacyDaemonGreetingOwned::from_parts(advertised, subprotocol, digests.map(str::to_owned))
+            .expect("greeting parts within supported range")
+    }
+
+    #[test]
+    fn reconstruct_banner_matches_canonical_daemon_form() {
+        assert_eq!(
+            reconstruct_daemon_greeting_line(&greeting(30, None, None)),
+            "@RSYNCD: 30"
+        );
+        assert_eq!(
+            reconstruct_daemon_greeting_line(&greeting(32, Some(0), None)),
+            "@RSYNCD: 32.0"
+        );
+        assert_eq!(
+            reconstruct_daemon_greeting_line(&greeting(31, Some(0), Some("md5 md4"))),
+            "@RSYNCD: 31.0 md5 md4"
+        );
+    }
+
+    /// upstream: clientserver.c:191 - a `remote_protocol >= 30` banner that omits
+    /// the subprotocol value is fatal for the client with `RERR_STARTCLIENT`.
+    /// The message and exit code must match so a listing sees the same failure a
+    /// transfer would.
+    #[test]
+    fn listing_rejects_missing_subprotocol() {
+        let err = reject_incomplete_daemon_greeting(&greeting(30, None, None))
+            .expect_err("proto>=30 without subprotocol must be rejected");
+        assert_eq!(err.exit_code(), CLIENT_SERVER_PROTOCOL_EXIT_CODE);
+        assert_eq!(err.exit_code(), 5);
+        assert!(
+            err.to_string()
+                .contains("the server omitted the subprotocol value: @RSYNCD: 30"),
+            "got: {err}"
+        );
+    }
+
+    /// upstream: clientserver.c:207 - a `remote_protocol > 31` banner that omits
+    /// the digest name list is fatal for the client with `RERR_STARTCLIENT`.
+    #[test]
+    fn listing_rejects_missing_digest_list() {
+        let err = reject_incomplete_daemon_greeting(&greeting(32, Some(0), None))
+            .expect_err("proto>31 without digest list must be rejected");
+        assert_eq!(err.exit_code(), 5);
+        assert!(
+            err.to_string()
+                .contains("the server omitted the digest name list: @RSYNCD: 32.0"),
+            "got: {err}"
+        );
+    }
+
+    /// A clamped future advertisement is gated on the raw advertised number, as
+    /// upstream applies the digest gate before clamping `protocol_version`.
+    #[test]
+    fn listing_rejects_missing_digest_on_future_protocol() {
+        let err = reject_incomplete_daemon_greeting(&greeting(40, Some(0), None))
+            .expect_err("proto>31 without digest list must be rejected");
+        assert_eq!(err.exit_code(), 5);
+        assert!(
+            err.to_string()
+                .contains("the server omitted the digest name list: @RSYNCD: 40.0"),
+            "got: {err}"
+        );
+    }
+
+    /// Well-formed banners for every gated threshold must list normally: a
+    /// modern banner carrying both tokens, a protocol-30 banner needing no digest
+    /// list, and a legacy sub-30 banner needing neither token.
+    #[test]
+    fn listing_accepts_well_formed_greetings() {
+        reject_incomplete_daemon_greeting(&greeting(31, Some(0), Some("md5 md4")))
+            .expect("complete modern greeting is accepted");
+        reject_incomplete_daemon_greeting(&greeting(30, Some(0), None))
+            .expect("protocol 30 needs no digest list");
+        reject_incomplete_daemon_greeting(&greeting(29, None, None))
+            .expect("legacy protocol needs neither token");
     }
 
     /// When `-e`/remote_shell is configured (and no connect program), a
