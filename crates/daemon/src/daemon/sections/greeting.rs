@@ -76,46 +76,16 @@ pub(crate) fn cached_legacy_daemon_greeting() -> &'static [u8] {
 /// list (`strchr(buf + 9, ' ')` is NULL) yields, for `remote_protocol > 31`,
 /// `@ERROR: your client omitted the digest name list: %s`. The `%s` echoes the raw
 /// greeting line.
+///
+/// The presence gates themselves live in [`missing_greeting_token`] so the
+/// daemon (`am_client == 0`) and the client (`am_client == 1`) enforce the exact
+/// same upstream thresholds; only the diagnostic wording differs by role.
 pub(crate) fn reject_malformed_client_greeting(line: &str) -> Option<String> {
-    let after_prefix = line.strip_prefix(LEGACY_DAEMON_PREFIX)?;
-
-    // upstream: sscanf `%d` skips leading whitespace before the protocol number.
-    let rest = after_prefix.trim_start();
-    let digits = rest
-        .as_bytes()
-        .iter()
-        .take_while(|byte| byte.is_ascii_digit())
-        .count();
-    if digits == 0 {
-        // sscanf(...) < 1: not a version banner - leave it to the other handlers.
-        return None;
-    }
-    let remote_protocol: u32 = rest[..digits].parse().unwrap_or(u32::MAX);
-
-    // upstream: `remote_sub` stays < 0 unless a ".NNN" suffix follows the number.
-    let has_subprotocol = rest[digits..]
-        .strip_prefix('.')
-        .and_then(|fractional| fractional.as_bytes().first())
-        .is_some_and(u8::is_ascii_digit);
-    if !has_subprotocol && remote_protocol >= 30 {
-        return Some(format!(
-            "@ERROR: your client omitted the subprotocol value: {line}"
-        ));
-    }
-
-    // upstream: `daemon_auth_choices = strchr(buf + 9, ' ')` - any space past
-    // "@RSYNCD: " marks the start of the digest-name list.
-    let has_digest_list = line
-        .as_bytes()
-        .get(LEGACY_DAEMON_PREFIX_LEN + 1..)
-        .is_some_and(|tail| tail.contains(&b' '));
-    if !has_digest_list && remote_protocol > 31 {
-        return Some(format!(
-            "@ERROR: your client omitted the digest name list: {line}"
-        ));
-    }
-
-    None
+    let token = missing_greeting_token(line)?;
+    Some(format!(
+        "@ERROR: your client omitted the {}: {line}",
+        token.description()
+    ))
 }
 
 /// Reads one line from `reader`, stripping trailing `\r` and `\n`.
@@ -224,5 +194,27 @@ mod greeting_validation_tests {
         assert_eq!(reject_malformed_client_greeting("module"), None);
         assert_eq!(reject_malformed_client_greeting("@RSYNCD: OK"), None);
         assert_eq!(reject_malformed_client_greeting("#list"), None);
+    }
+
+    // Regression for #6604: the daemon refusal now delegates to the shared
+    // `missing_greeting_token` gate, but the @ERROR wording and the exact set of
+    // refused greetings must stay byte-identical. A greeting the gate accepts
+    // must return `None` here so `parse_legacy_daemon_message` handles it next -
+    // the daemon must never double-reject a greeting the shared gate cleared.
+    #[test]
+    fn daemon_refusal_agrees_with_shared_gate() {
+        for line in [
+            "@RSYNCD: 32.0 sha512 sha256 sha1 md5 md4",
+            "@RSYNCD: 31.0",
+            "@RSYNCD: 29",
+            "@RSYNCD: OK",
+            "module",
+        ] {
+            assert_eq!(
+                protocol::missing_greeting_token(line).is_none(),
+                reject_malformed_client_greeting(line).is_none(),
+                "daemon refusal must track the shared gate for {line:?}",
+            );
+        }
     }
 }

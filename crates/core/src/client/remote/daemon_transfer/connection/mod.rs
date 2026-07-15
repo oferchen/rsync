@@ -8,6 +8,7 @@ use std::io::{BufRead, BufReader, Write};
 use std::path::Path;
 
 use protocol::ProtocolVersion;
+use protocol::missing_greeting_token;
 use protocol::nstr::{trace_daemon_auth_negotiated, trace_daemon_greeting_auth_list};
 
 use crate::auth::{
@@ -223,6 +224,24 @@ pub(crate) fn perform_daemon_handshake<R: std::io::Read, W: Write>(
 
     // upstream: exchange_protocols line 178 - sscanf(buf, "@RSYNCD: %d.%d", ...)
     let remote_protocol = parse_protocol_from_greeting(&greeting)?;
+
+    // upstream: clientserver.c:188-210 (exchange_protocols, am_client == 1) - a
+    // server greeting that omits the subprotocol value (protocol >= 30) or the
+    // digest name list (protocol > 31) is fatal. Upstream prints
+    // `rsync: the server omitted the <token>: <buf>` to stderr and aborts with
+    // RERR_STARTCLIENT. The shared gate mirrors the daemon's `am_client == 0`
+    // check so both roles enforce identical thresholds.
+    if let Some(missing) = missing_greeting_token(&greeting) {
+        return Err(daemon_error(
+            format!(
+                "the server omitted the {}: {}",
+                missing.description(),
+                greeting.trim_end_matches(['\r', '\n'])
+            ),
+            CLIENT_SERVER_PROTOCOL_EXIT_CODE,
+        ));
+    }
+
     let advertised_digests = parse_digest_list_from_greeting(&greeting);
 
     // upstream: compat.c:843-844 - `am_client && DEBUG_GTE(NSTR, 2)` emits
