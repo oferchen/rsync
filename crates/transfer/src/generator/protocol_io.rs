@@ -15,6 +15,7 @@ use std::time::{Duration, Instant};
 
 use logging::{InfoFlag, PhaseTimer, debug_log, info_gte, info_log};
 use protocol::CompatibilityFlags;
+use protocol::ProtocolVersion;
 use protocol::codec::{NDX_FLIST_EOF, NDX_FLIST_OFFSET, NdxCodec, NdxCodecEnum};
 use protocol::wire::SignatureBlock;
 
@@ -770,6 +771,10 @@ impl GeneratorContext {
 /// After reading sum_head, this reads the rolling and strong checksums for each block.
 /// When sum_head.count is 0, returns an empty Vec (whole-file transfer).
 ///
+/// This is the keepalive-free path used for whole-file transfers and unit tests.
+/// The live sender loop uses [`read_signature_blocks_keepalive`] so a slow read on
+/// an older protocol does not trip the peer's `--timeout`.
+///
 /// # Upstream Reference
 ///
 /// - `sender.c:120` - `receive_sums()` reads signature blocks
@@ -778,6 +783,34 @@ pub fn read_signature_blocks<R: Read>(
     reader: &mut R,
     sum_head: &SumHead,
 ) -> io::Result<Vec<SignatureBlock>> {
+    read_signature_blocks_keepalive(reader, sum_head, 0, || Ok(()))
+}
+
+/// Reads signature blocks from the receiver, poking a keepalive every `lull_mod`
+/// blocks so a large/slow checksum read does not exceed the peer's I/O timeout.
+///
+/// `on_lull` is invoked once every `lull_mod` blocks (starting at block 0), or
+/// never when `lull_mod` is 0. It maps to upstream's `maybe_send_keepalive()`,
+/// which itself only emits an empty `MSG_DATA` frame once a full `allowed_lull`
+/// has elapsed with no output - so passing a keepalive closure is wire-neutral
+/// until the lull actually fires.
+///
+/// # Upstream Reference
+///
+/// - `sender.c:73` - `receive_sums()`; `lull_mod = protocol_version >= 31 ? 0 : allowed_lull * 5`
+/// - `sender.c:115-116` - `if (lull_mod && !(i % lull_mod)) maybe_send_keepalive(time(NULL), True)`
+/// - `io.c:1453` - `maybe_send_keepalive()` gates the actual emission on `allowed_lull`
+/// - `match.c:395` - Block format: rolling_sum (4 bytes) + strong_sum (s2length bytes)
+pub fn read_signature_blocks_keepalive<R, F>(
+    reader: &mut R,
+    sum_head: &SumHead,
+    lull_mod: u32,
+    mut on_lull: F,
+) -> io::Result<Vec<SignatureBlock>>
+where
+    R: Read,
+    F: FnMut() -> io::Result<()>,
+{
     if sum_head.is_empty() {
         // No basis file (count=0), whole-file transfer - no blocks to read
         return Ok(Vec::new());
@@ -800,9 +833,40 @@ pub fn read_signature_blocks<R: Read>(
             rolling_sum,
             strong_sum,
         });
+
+        // upstream: sender.c:115-116 - if (lull_mod && !(i % lull_mod))
+        //     maybe_send_keepalive(time(NULL), True);
+        // Poke a keepalive at the same cadence so a long checksum read on an
+        // older protocol keeps the write side alive.
+        if lull_mod != 0 && i % lull_mod == 0 {
+            on_lull()?;
+        }
     }
 
     Ok(blocks)
+}
+
+/// Derives upstream's signature-read keepalive cadence for a sender.
+///
+/// Returns the number of blocks between keepalive pokes, or 0 to disable them.
+/// Keepalives are only needed on protocols below 31; newer protocols multiplex
+/// the checksum stream so the sender's read no longer starves the write side.
+///
+/// # Upstream Reference
+///
+/// - `sender.c:76` - `int lull_mod = protocol_version >= 31 ? 0 : allowed_lull * 5;`
+///   (`allowed_lull` is in seconds, derived from `--timeout` at io.c:1151).
+#[must_use]
+pub fn signature_read_lull_mod(protocol: ProtocolVersion, allowed_lull: Option<Duration>) -> u32 {
+    if protocol.as_u8() >= 31 {
+        return 0;
+    }
+    match allowed_lull {
+        Some(lull) => u32::try_from(lull.as_secs())
+            .unwrap_or(u32::MAX)
+            .saturating_mul(5),
+        None => 0,
+    }
 }
 
 /// Calculates duration in milliseconds between two optional timestamps.
