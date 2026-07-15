@@ -121,19 +121,42 @@ impl ReceiverContext {
                     info_log!(Name, 2, "{} is uptodate", relative_path.display());
                     continue;
                 }
-                // SEC-1.g: route the obstacle unlink through the sandbox
-                // dirfd when the destination parent is the sandbox root,
-                // so a TOCTOU swap on `link_path` between the readlink
-                // above and this unlink cannot redirect the syscall to
-                // an attacker-chosen parent. Falls back to path-based
-                // `remove_file` otherwise.
-                let _ = fast_io::unlink_via_sandbox_or_fallback(
-                    sandbox,
-                    dest_dir,
-                    relative_path,
+                // upstream: generator.c:2018-2020 atomic_create - back the old
+                // symlink up before it is removed when --backup is set; on
+                // backup-mechanism failure upstream skips the entry.
+                match self.backup_existing_before_replace(
                     &link_path,
-                    fast_io::UnlinkFlags::File,
-                );
+                    relative_path,
+                    dest_dir,
+                    sandbox,
+                ) {
+                    Ok(true) => {}
+                    Ok(false) => {
+                        // SEC-1.g: route the obstacle unlink through the sandbox
+                        // dirfd when the destination parent is the sandbox root,
+                        // so a TOCTOU swap on `link_path` between the readlink
+                        // above and this unlink cannot redirect the syscall to
+                        // an attacker-chosen parent. Falls back to path-based
+                        // `remove_file` otherwise.
+                        let _ = fast_io::unlink_via_sandbox_or_fallback(
+                            sandbox,
+                            dest_dir,
+                            relative_path,
+                            &link_path,
+                            fast_io::UnlinkFlags::File,
+                        );
+                    }
+                    Err(error) => {
+                        debug_log!(
+                            Recv,
+                            1,
+                            "failed to back up existing symlink {}: {}",
+                            link_path.display(),
+                            error
+                        );
+                        continue;
+                    }
+                }
             } else if fast_io::lstat_via_sandbox_or_fallback(
                 sandbox,
                 dest_dir,
@@ -148,16 +171,38 @@ impl ReceiverContext {
                 // `link_path` cannot redirect the probe to a different
                 // inode. Falls back to `symlink_metadata` otherwise.
                 //
-                // SEC-1.g: matching unlink also goes through the sandbox
-                // dirfd via `unlinkat` so the obstacle-remove syscall is
-                // anchored on the same parent the stat just observed.
-                let _ = fast_io::unlink_via_sandbox_or_fallback(
-                    sandbox,
-                    dest_dir,
-                    relative_path,
+                // upstream: generator.c:2018-2020 atomic_create - back the old
+                // obstacle up before removal when --backup is set.
+                match self.backup_existing_before_replace(
                     &link_path,
-                    fast_io::UnlinkFlags::File,
-                );
+                    relative_path,
+                    dest_dir,
+                    sandbox,
+                ) {
+                    Ok(true) => {}
+                    Ok(false) => {
+                        // SEC-1.g: matching unlink also goes through the sandbox
+                        // dirfd via `unlinkat` so the obstacle-remove syscall is
+                        // anchored on the same parent the stat just observed.
+                        let _ = fast_io::unlink_via_sandbox_or_fallback(
+                            sandbox,
+                            dest_dir,
+                            relative_path,
+                            &link_path,
+                            fast_io::UnlinkFlags::File,
+                        );
+                    }
+                    Err(error) => {
+                        debug_log!(
+                            Recv,
+                            1,
+                            "failed to back up existing obstacle {}: {}",
+                            link_path.display(),
+                            error
+                        );
+                        continue;
+                    }
+                }
             }
 
             // Ensure parent directory exists for --relative paths.
@@ -338,9 +383,43 @@ impl ReceiverContext {
                     info_log!(Name, 2, "{} is uptodate", relative_path.display());
                     continue;
                 }
-                let _ = fs::remove_file(&link_path);
+                // upstream: generator.c:2018-2020 atomic_create - back the old
+                // symlink up before removal when --backup is set.
+                match self.backup_existing_before_replace(&link_path, relative_path, dest_dir) {
+                    Ok(true) => {}
+                    Ok(false) => {
+                        let _ = fs::remove_file(&link_path);
+                    }
+                    Err(error) => {
+                        debug_log!(
+                            Recv,
+                            1,
+                            "failed to back up existing symlink {}: {}",
+                            link_path.display(),
+                            error
+                        );
+                        continue;
+                    }
+                }
             } else if fs::symlink_metadata(&link_path).is_ok() {
-                let _ = fs::remove_file(&link_path);
+                // upstream: generator.c:2018-2020 atomic_create - back the old
+                // obstacle up before removal when --backup is set.
+                match self.backup_existing_before_replace(&link_path, relative_path, dest_dir) {
+                    Ok(true) => {}
+                    Ok(false) => {
+                        let _ = fs::remove_file(&link_path);
+                    }
+                    Err(error) => {
+                        debug_log!(
+                            Recv,
+                            1,
+                            "failed to back up existing obstacle {}: {}",
+                            link_path.display(),
+                            error
+                        );
+                        continue;
+                    }
+                }
             }
 
             // Ensure parent directory exists for --relative paths.

@@ -276,3 +276,44 @@ fn msg_info_sender_default_noop() {
     // Default impl should succeed silently
     w.send_msg_info(b"test data").unwrap();
 }
+
+/// With `--backup`, replacing an existing destination symlink must preserve the
+/// old link (its target intact) at the backup path before the new one is
+/// created. upstream: generator.c:2018-2020 - `atomic_create` calls
+/// `make_backup` before removing the obstacle; without this the receiver would
+/// unlink the old symlink and lose the user's prior target silently.
+#[test]
+#[cfg(unix)]
+fn receiver_backs_up_existing_symlink_before_replacing() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let dest = tmp.path();
+
+    // An existing symlink with the OLD target occupies the destination path.
+    std::os::unix::fs::symlink("old-target", dest.join("mylink")).expect("seed old symlink");
+
+    let mut config = test_config();
+    config.flags.links = true;
+    config.flags.backup = true;
+    config.connection.client_mode = false;
+
+    let handshake = test_handshake();
+    let mut ctx = ReceiverContext::new_for_test(&handshake, config);
+    ctx.file_list = vec![FileEntry::new_symlink("mylink".into(), "new-target".into())];
+
+    let mut writer = MockMsgInfoWriter::new();
+    ctx.create_symlinks(dest, None, &mut writer)
+        .expect("create_symlinks must succeed");
+
+    // The new target replaced the old link.
+    assert_eq!(
+        std::fs::read_link(dest.join("mylink")).expect("new symlink must exist"),
+        std::path::Path::new("new-target"),
+        "the receiver must install the new symlink target",
+    );
+    // The old link survives at the ~ backup with its original target.
+    assert_eq!(
+        std::fs::read_link(dest.join("mylink~")).expect("backup symlink must exist"),
+        std::path::Path::new("old-target"),
+        "the prior symlink target must be preserved in the ~ backup",
+    );
+}

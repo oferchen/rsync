@@ -133,6 +133,50 @@ fn receiver_creates_char_device_from_flist_entry() {
     );
 }
 
+/// With `--backup`, an existing destination entry must be preserved to the
+/// backup location before the receiver replaces it with a fresh special node.
+/// Here a regular file sits where a FIFO is about to be created: upstream's
+/// `atomic_create` (generator.c:2018-2020) calls `make_backup` before removing
+/// it, so the old content must survive at `pipe~` and the new FIFO must land at
+/// `pipe`. Without the backup wiring the receiver would unlink the old file and
+/// lose it silently.
+#[test]
+fn receiver_backs_up_existing_entry_before_creating_special() {
+    use std::os::unix::fs::FileTypeExt;
+
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let dest = tmp.path();
+
+    // An existing regular file occupies the path the FIFO will replace.
+    std::fs::write(dest.join("pipe"), b"old-payload").expect("seed existing dest entry");
+
+    let mut config = special_receiver_config();
+    config.flags.backup = true;
+
+    let handshake = test_handshake();
+    let mut ctx = ReceiverContext::new_for_test(&handshake, config);
+    ctx.file_list = vec![FileEntry::new_fifo("pipe".into(), 0o640)];
+
+    let mut writer = CapturingMsgInfoWriter;
+    ctx.create_specials(dest, None, &mut writer)
+        .expect("create_specials must succeed");
+
+    // The prior content is preserved under the default `~` suffix.
+    assert_eq!(
+        std::fs::read(dest.join("pipe~")).expect("backup must be created before replacement"),
+        b"old-payload",
+        "the pre-existing file must be preserved in the ~ backup, not silently unlinked",
+    );
+    // The fresh FIFO replaced the old entry.
+    assert!(
+        std::fs::symlink_metadata(dest.join("pipe"))
+            .expect("the FIFO must be materialised")
+            .file_type()
+            .is_fifo(),
+        "the receiver must create the FIFO node in place of the backed-up file",
+    );
+}
+
 /// Without `--specials` the receiver must not create a FIFO - the entry is left
 /// absent, matching upstream where `preserve_specials` gates FT_SPECIAL
 /// creation. This guards against the fix over-creating specials.
