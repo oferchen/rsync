@@ -116,12 +116,19 @@ pub(super) fn process_remaining_tokens<R: Read>(
                     return Err(e);
                 }
 
-                file_tx.send(FileMessage::Commit).map_err(|_| {
-                    io::Error::new(
-                        io::ErrorKind::BrokenPipe,
-                        "disk commit thread disconnected during commit",
-                    )
-                })?;
+                file_tx
+                    .send(FileMessage::Commit {
+                        expected_checksum: crate::pipeline::messages::ExpectedChecksum {
+                            bytes: expected_checksum,
+                            len: checksum_len,
+                        },
+                    })
+                    .map_err(|_| {
+                        io::Error::new(
+                            io::ErrorKind::BrokenPipe,
+                            "disk commit thread disconnected during commit",
+                        )
+                    })?;
 
                 return Ok(StreamingResult {
                     total_bytes,

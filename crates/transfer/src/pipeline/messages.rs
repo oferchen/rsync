@@ -42,8 +42,18 @@ pub enum FileMessage {
     /// - `fileio.c:192-211` - `skip_matched()` flushes then `lseek`s past the
     ///   in-place bytes (or feeds the sparse processor with the seek flag).
     SkipMatched(Vec<u8>),
-    /// Finalize the current file (flush, fsync, rename).
-    Commit,
+    /// Finalize the current file: compute the whole-file checksum, verify it
+    /// against the sender's trailing sum, and only then flush, fsync, and
+    /// rename into place.
+    ///
+    /// The expected checksum travels with this message so the disk thread can
+    /// verify BEFORE committing, mirroring upstream `receiver.c:505-519` where
+    /// `receive_data()` compares `sum_end()` against the sender's sum before
+    /// `recv_files()` calls `finish_transfer()`.
+    Commit {
+        /// Sender's trailing whole-file checksum for pre-commit verification.
+        expected_checksum: ExpectedChecksum,
+    },
     /// Coalesced message for single-chunk files: combines Begin + one Chunk +
     /// Commit into a single channel send, reducing futex overhead from 3+
     /// sends to 1. Used when the sender transmits the entire file as a single
@@ -53,6 +63,8 @@ pub enum FileMessage {
         begin: Box<BeginMessage>,
         /// Complete file data.
         data: Vec<u8>,
+        /// Sender's trailing whole-file checksum for pre-commit verification.
+        expected_checksum: ExpectedChecksum,
     },
     /// Abort the current file due to an error.
     Abort {
@@ -115,6 +127,21 @@ pub struct BeginMessage {
     /// Mirrors `xattrs.c:set_xattr()` called from `set_file_attrs()` in
     /// `receiver.c` after file transfer completes.
     pub xattr_list: Option<XattrList>,
+}
+
+/// Sender's trailing whole-file checksum, carried to the disk thread for
+/// pre-commit verification.
+///
+/// A `len` of 0 means the caller supplied no checksum, so verification is
+/// skipped and the file always commits. This mirrors the `fd == -1`
+/// short-circuit at upstream `receiver.c:518` where the memcmp is not
+/// performed.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct ExpectedChecksum {
+    /// Digest bytes (only `len` bytes are valid).
+    pub bytes: [u8; ChecksumVerifier::MAX_DIGEST_LEN],
+    /// Number of valid bytes in `bytes`. Zero disables verification.
+    pub len: usize,
 }
 
 /// Computed checksum digest returned by the disk thread.
