@@ -6,6 +6,7 @@
 
 use std::io::{self, IoSlice, Write};
 use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 
 use protocol::{MessageCode, MessageHeader};
 
@@ -38,6 +39,15 @@ pub(crate) struct MultiplexWriter<W> {
     /// Optional recorder for batch mode - captures pre-mux data.
     /// upstream: `io.c` `write_batch_monitor_out` + `safe_write(batch_fd, buf, len)`
     pub(crate) batch_recorder: Option<Arc<Mutex<dyn Write + Send>>>,
+    /// Instant of the last actual write to `inner`, tracking upstream's
+    /// `last_io_out`. A lull is measured from this point.
+    last_io_out: Instant,
+    /// The keep-alive lull interval, `None` when `--timeout` is not set.
+    ///
+    /// upstream: `io.c:set_io_timeout()` sets `allowed_lull = (io_timeout + 1) / 2`
+    /// (io.c:1151); a keepalive is emitted once this much time has elapsed with
+    /// no output.
+    allowed_lull: Option<Duration>,
 }
 
 /// Default buffer size - 64KB to batch ~2 wire chunks per flush.
@@ -58,7 +68,56 @@ impl<W: Write> MultiplexWriter<W> {
             buffer_size: DEFAULT_BUFFER_SIZE,
             dirty: false,
             batch_recorder: None,
+            last_io_out: Instant::now(),
+            allowed_lull: None,
         }
+    }
+
+    /// Configures the keep-alive lull interval.
+    ///
+    /// upstream: `io.c:set_io_timeout()` derives `allowed_lull = (io_timeout + 1) / 2`
+    /// (io.c:1151). Passing `None` (no `--timeout`) disables lull keepalives, so
+    /// the default transfer path stays byte-for-byte identical.
+    pub(crate) fn set_allowed_lull(&mut self, lull: Option<Duration>) {
+        self.allowed_lull = lull;
+        self.last_io_out = Instant::now();
+    }
+
+    /// Emits a lull keepalive if the configured `allowed_lull` has elapsed with
+    /// no output since the last write.
+    ///
+    /// Returns `true` when an empty `MSG_DATA` keepalive was written.
+    ///
+    /// Mirrors upstream `io.c:maybe_send_keepalive()` (io.c:1466-1479): the
+    /// keepalive is emitted only when a full `allowed_lull` has passed since the
+    /// last output and the output buffer sits at a frame boundary. When data is
+    /// still buffered, flushing it is itself output activity, so upstream flushes
+    /// instead of emitting the empty frame (io.c:1476-1479).
+    pub(crate) fn maybe_send_keepalive(&mut self) -> io::Result<bool> {
+        let Some(lull) = self.allowed_lull else {
+            return Ok(false);
+        };
+        if self.last_io_out.elapsed() < lull {
+            return Ok(false);
+        }
+
+        // upstream: io.c:1476-1479 - pending output is flushed rather than
+        // emitting a keepalive; the flush itself is the I/O that resets the lull.
+        if !self.buffer.is_empty() {
+            self.flush_buffer()?;
+            self.inner.flush()?;
+            self.dirty = false;
+            self.last_io_out = Instant::now();
+            return Ok(false);
+        }
+
+        // upstream: io.c:1472-1473 - only at a frame boundary, emit an empty
+        // MSG_DATA that the peer absorbs as a no-op keepalive.
+        protocol::send_msg(&mut self.inner, MessageCode::Data, &[])?;
+        self.inner.flush()?;
+        self.dirty = false;
+        self.last_io_out = Instant::now();
+        Ok(true)
     }
 
     /// Flushes the internal buffer by sending it as a `MSG_DATA` frame.
@@ -68,6 +127,7 @@ impl<W: Write> MultiplexWriter<W> {
             protocol::send_msg(&mut self.inner, code, &self.buffer)?;
             self.buffer.clear();
             self.dirty = true;
+            self.last_io_out = Instant::now();
         }
         Ok(())
     }
@@ -88,6 +148,7 @@ impl<W: Write> MultiplexWriter<W> {
         self.flush_buffer()?;
         protocol::send_msg(&mut self.inner, code, payload)?;
         self.dirty = true;
+        self.last_io_out = Instant::now();
         if code.requires_immediate_flush() {
             self.inner.flush()?;
             self.dirty = false;
@@ -104,6 +165,7 @@ impl<W: Write> MultiplexWriter<W> {
         self.inner.write_all(data)?;
         self.inner.flush()?;
         self.dirty = false;
+        self.last_io_out = Instant::now();
         Ok(())
     }
 }
@@ -133,6 +195,7 @@ impl<W: Write> Write for MultiplexWriter<W> {
             let code = MessageCode::Data;
             protocol::send_msg(&mut self.inner, code, buf)?;
             self.dirty = true;
+            self.last_io_out = Instant::now();
             return Ok(buf.len());
         }
 
@@ -190,6 +253,7 @@ impl<W: Write> Write for MultiplexWriter<W> {
                 self.inner.write_all(buf)?;
             }
             self.dirty = true;
+            self.last_io_out = Instant::now();
         }
 
         Ok(total_len)
@@ -200,7 +264,100 @@ impl<W: Write> Write for MultiplexWriter<W> {
         if self.dirty {
             self.inner.flush()?;
             self.dirty = false;
+            self.last_io_out = Instant::now();
         }
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod keepalive_tests {
+    use super::*;
+    use protocol::recv_msg;
+    use std::io::Cursor;
+
+    /// Without `--timeout` there is no lull tracking: `maybe_send_keepalive` is a
+    /// no-op and emits nothing, keeping the default transfer path wire-identical.
+    #[test]
+    fn no_lull_configured_emits_nothing() {
+        let mut out: Vec<u8> = Vec::new();
+        let mut w = MultiplexWriter::new(&mut out);
+        assert!(!w.maybe_send_keepalive().unwrap());
+        assert!(
+            out.is_empty(),
+            "no keepalive must be written without a lull"
+        );
+    }
+
+    /// A lull that has not yet elapsed produces no keepalive (upstream gates on
+    /// `now - last_io_out >= allowed_lull`, io.c:1466).
+    #[test]
+    fn lull_not_elapsed_emits_nothing() {
+        let mut out: Vec<u8> = Vec::new();
+        let mut w = MultiplexWriter::new(&mut out);
+        w.set_allowed_lull(Some(Duration::from_secs(3600)));
+        assert!(!w.maybe_send_keepalive().unwrap());
+        assert!(
+            out.is_empty(),
+            "keepalive must not fire before the lull elapses"
+        );
+    }
+
+    /// Once the lull has elapsed at a frame boundary, an empty MSG_DATA keepalive
+    /// is emitted, matching upstream `send_msg(MSG_DATA, "", 0, 0)` (io.c:1473).
+    #[test]
+    fn lull_elapsed_emits_empty_msg_data() {
+        let mut out: Vec<u8> = Vec::new();
+        let mut w = MultiplexWriter::new(&mut out);
+        // A zero lull is always "elapsed", giving a deterministic (non-flaky)
+        // trigger without sleeping.
+        w.set_allowed_lull(Some(Duration::ZERO));
+
+        assert!(w.maybe_send_keepalive().unwrap());
+
+        let frame = recv_msg(&mut Cursor::new(&out)).unwrap();
+        assert_eq!(
+            frame.code(),
+            MessageCode::Data,
+            "keepalive must be MSG_DATA, not MSG_NOOP"
+        );
+        assert!(
+            frame.payload().is_empty(),
+            "keepalive payload must be empty"
+        );
+    }
+
+    /// When output is still buffered, the lull flushes the pending data instead
+    /// of emitting an empty frame; the flush is itself the I/O that resets the
+    /// lull (upstream io.c:1476-1479).
+    #[test]
+    fn lull_with_pending_data_flushes_instead_of_keepalive() {
+        let mut out: Vec<u8> = Vec::new();
+        let mut w = MultiplexWriter::new(&mut out);
+        w.set_allowed_lull(Some(Duration::ZERO));
+
+        w.write_all(b"pending").unwrap();
+        assert!(!w.maybe_send_keepalive().unwrap());
+
+        // The single frame on the wire carries the real data, not an empty frame.
+        let frame = recv_msg(&mut Cursor::new(&out)).unwrap();
+        assert_eq!(frame.code(), MessageCode::Data);
+        assert_eq!(frame.payload(), b"pending");
+    }
+
+    /// Emitting a keepalive resets the lull timer, so an immediate follow-up call
+    /// does not emit a second keepalive.
+    #[test]
+    fn keepalive_resets_lull_timer() {
+        let mut out: Vec<u8> = Vec::new();
+        let mut w = MultiplexWriter::new(&mut out);
+        // Non-zero lull so the reset is observable.
+        w.set_allowed_lull(Some(Duration::from_millis(50)));
+        std::thread::sleep(Duration::from_millis(60));
+        assert!(w.maybe_send_keepalive().unwrap(), "first call fires");
+        assert!(
+            !w.maybe_send_keepalive().unwrap(),
+            "second call must not fire until the lull elapses again"
+        );
     }
 }

@@ -181,6 +181,37 @@ impl<W: Write> ServerWriter<W> {
         }
     }
 
+    /// Configures the keep-alive lull interval on the active multiplex writer.
+    ///
+    /// A no-op in plain mode (keepalives only apply once the multiplexed stream
+    /// is active). Passing `None` (no `--timeout`) disables lull keepalives so
+    /// the default transfer path stays byte-for-byte identical.
+    ///
+    /// upstream: `io.c:set_io_timeout()` derives `allowed_lull = (io_timeout + 1) / 2`.
+    pub fn set_allowed_lull(&mut self, lull: Option<Duration>) {
+        match self {
+            Self::Multiplex(mux) => mux.set_allowed_lull(lull),
+            Self::Compressed(compressed) => compressed.inner_mut().set_allowed_lull(lull),
+            Self::Plain(_) | Self::Taken => {}
+        }
+    }
+
+    /// Emits a lull keepalive if the configured lull has elapsed with no output.
+    ///
+    /// Returns `true` when an empty `MSG_DATA` keepalive was written. A no-op
+    /// (returns `false`) in plain mode, when no `--timeout` is configured, or
+    /// when the lull has not yet elapsed.
+    ///
+    /// upstream: `io.c:maybe_send_keepalive()` (io.c:1453-1481), invoked from the
+    /// generator/sender loop during an I/O lull (e.g. generator.c:2139).
+    pub fn maybe_send_keepalive(&mut self) -> io::Result<bool> {
+        match self {
+            Self::Multiplex(mux) => mux.maybe_send_keepalive(),
+            Self::Compressed(compressed) => compressed.inner_mut().maybe_send_keepalive(),
+            Self::Plain(_) | Self::Taken => Ok(false),
+        }
+    }
+
     /// Sends a `MSG_NO_SEND` message for the given file index.
     ///
     /// Indicates that the sender could not open the requested file and will

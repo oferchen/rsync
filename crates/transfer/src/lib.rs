@@ -684,6 +684,16 @@ pub fn run_server_with_handshake_adopting<W: Write>(
         writer = writer.activate_multiplex()?;
     }
 
+    // upstream: io.c:set_io_timeout() derives allowed_lull = (io_timeout + 1) / 2
+    // (io.c:1151). Once configured, the generator/sender loop emits an empty
+    // MSG_DATA keepalive during an I/O lull so the peer's timeout does not fire.
+    // Without --timeout there is no lull tracking and the wire stays identical.
+    if let Some(timeout_secs) = handshake.io_timeout {
+        // upstream: (io_timeout + 1) / 2, i.e. ceil(io_timeout / 2).
+        let allowed_lull = std::time::Duration::from_secs(timeout_secs.div_ceil(2));
+        writer.set_allowed_lull(Some(allowed_lull));
+    }
+
     // upstream: exclude.c:1650 - am_sender && !receiver_wants_list skips sending.
     // Push mode applies exclusion locally in the generator; only delete/prune
     // needs the filter list on the wire.

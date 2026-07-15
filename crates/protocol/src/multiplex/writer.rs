@@ -312,13 +312,16 @@ impl<W: Write> MplexWriter<W> {
         self.inner.flush()
     }
 
-    /// Sends a keepalive (MSG_NOOP) message to prevent connection timeouts.
+    /// Sends a lull keepalive as an empty `MSG_DATA` frame to prevent I/O timeouts.
     ///
-    /// Upstream rsync periodically sends `MSG_NOOP` with an empty payload as a
-    /// heartbeat when the sender may be silent for extended periods, such as
-    /// during large file checksumming. The receiver silently discards these
-    /// messages. Any buffered DATA is flushed first to maintain proper message
-    /// ordering.
+    /// Upstream rsync emits an **empty `MSG_DATA`** message (zero-length payload)
+    /// as its keepalive, deliberately *not* `MSG_NOOP`: a zero-length data frame
+    /// contributes no bytes to the raw data stream and is silently absorbed by
+    /// the peer, so it needs no forwarding and works with every rsync version.
+    /// Any buffered DATA is flushed first to maintain proper message ordering.
+    ///
+    /// upstream: `io.c:maybe_send_keepalive()` (io.c:1453-1481) sends
+    /// `send_msg(MSG_DATA, "", 0, 0)`; see the comment at io.c:1446-1452.
     ///
     /// # Examples
     ///
@@ -337,7 +340,7 @@ impl<W: Write> MplexWriter<W> {
     /// ```
     #[inline]
     pub fn write_keepalive(&mut self) -> io::Result<()> {
-        self.write_message(MessageCode::NoOp, &[])
+        self.write_message(MessageCode::Data, &[])
     }
 
     /// Convenience method for writing an error message.

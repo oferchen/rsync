@@ -225,6 +225,13 @@ impl GeneratorContext {
             // when buffered delta data hasn't reached the receiver yet.
             flush_with_count(writer)?;
 
+            // upstream: generator.c:2138-2144 - during the send loop, emit a
+            // keepalive once the I/O lull has elapsed so the receiver's timeout
+            // does not fire while the sender is sifting files without writing.
+            // A no-op unless --timeout is set (maybe_send_keepalive gates on the
+            // configured allowed_lull), keeping the default path wire-identical.
+            writer.maybe_send_keepalive()?;
+
             // upstream: sender.c:210-462 - read NDX request from receiver
             let ndx = match ndx_read_codec.read_ndx(&mut *reader) {
                 Ok(ndx) => ndx,
