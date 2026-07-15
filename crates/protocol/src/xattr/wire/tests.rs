@@ -1004,6 +1004,17 @@ fn read_definitions_exceeds_max_count() {
     let err = result.unwrap_err();
     assert_eq!(err.kind(), std::io::ErrorKind::InvalidData);
     assert!(err.to_string().contains("exceeds maximum"));
+    // WHY: upstream reads these counts/lengths via read_varint_bounded /
+    // read_varint_size (xattrs.c:793,802-803; io.c:1904-1926), which
+    // exit_cleanup(RERR_PROTOCOL) (exit 2) on overrun. The ProtocolViolation
+    // tag must survive so the core exit-code mapper reproduces exit 2, not the
+    // RERR_STREAMIO (12) a bare InvalidData maps to - a drop-in tool must
+    // distinguish a hostile wire value from a genuinely broken stream.
+    assert!(
+        err.get_ref()
+            .is_some_and(|e| e.is::<crate::protocol_violation::ProtocolViolation>()),
+        "oversized xattr wire value must be tagged ProtocolViolation (RERR_PROTOCOL=2)"
+    );
 }
 
 #[test]
@@ -1021,6 +1032,17 @@ fn read_definitions_exceeds_max_name_len() {
     let err = result.unwrap_err();
     assert_eq!(err.kind(), std::io::ErrorKind::InvalidData);
     assert!(err.to_string().contains("exceeds maximum"));
+    // WHY: upstream reads these counts/lengths via read_varint_bounded /
+    // read_varint_size (xattrs.c:793,802-803; io.c:1904-1926), which
+    // exit_cleanup(RERR_PROTOCOL) (exit 2) on overrun. The ProtocolViolation
+    // tag must survive so the core exit-code mapper reproduces exit 2, not the
+    // RERR_STREAMIO (12) a bare InvalidData maps to - a drop-in tool must
+    // distinguish a hostile wire value from a genuinely broken stream.
+    assert!(
+        err.get_ref()
+            .is_some_and(|e| e.is::<crate::protocol_violation::ProtocolViolation>()),
+        "oversized xattr wire value must be tagged ProtocolViolation (RERR_PROTOCOL=2)"
+    );
 }
 
 #[test]
@@ -1038,6 +1060,17 @@ fn read_definitions_exceeds_max_value_len() {
     let err = result.unwrap_err();
     assert_eq!(err.kind(), std::io::ErrorKind::InvalidData);
     assert!(err.to_string().contains("exceeds maximum"));
+    // WHY: upstream reads these counts/lengths via read_varint_bounded /
+    // read_varint_size (xattrs.c:793,802-803; io.c:1904-1926), which
+    // exit_cleanup(RERR_PROTOCOL) (exit 2) on overrun. The ProtocolViolation
+    // tag must survive so the core exit-code mapper reproduces exit 2, not the
+    // RERR_STREAMIO (12) a bare InvalidData maps to - a drop-in tool must
+    // distinguish a hostile wire value from a genuinely broken stream.
+    assert!(
+        err.get_ref()
+            .is_some_and(|e| e.is::<crate::protocol_violation::ProtocolViolation>()),
+        "oversized xattr wire value must be tagged ProtocolViolation (RERR_PROTOCOL=2)"
+    );
 }
 
 #[test]
@@ -1055,6 +1088,17 @@ fn recv_xattr_exceeds_max_count() {
     let err = result.unwrap_err();
     assert_eq!(err.kind(), std::io::ErrorKind::InvalidData);
     assert!(err.to_string().contains("exceeds maximum"));
+    // WHY: upstream reads these counts/lengths via read_varint_bounded /
+    // read_varint_size (xattrs.c:793,802-803; io.c:1904-1926), which
+    // exit_cleanup(RERR_PROTOCOL) (exit 2) on overrun. The ProtocolViolation
+    // tag must survive so the core exit-code mapper reproduces exit 2, not the
+    // RERR_STREAMIO (12) a bare InvalidData maps to - a drop-in tool must
+    // distinguish a hostile wire value from a genuinely broken stream.
+    assert!(
+        err.get_ref()
+            .is_some_and(|e| e.is::<crate::protocol_violation::ProtocolViolation>()),
+        "oversized xattr wire value must be tagged ProtocolViolation (RERR_PROTOCOL=2)"
+    );
 }
 
 #[test]
@@ -1073,6 +1117,17 @@ fn recv_xattr_exceeds_max_name_len() {
     let err = result.unwrap_err();
     assert_eq!(err.kind(), std::io::ErrorKind::InvalidData);
     assert!(err.to_string().contains("exceeds maximum"));
+    // WHY: upstream reads these counts/lengths via read_varint_bounded /
+    // read_varint_size (xattrs.c:793,802-803; io.c:1904-1926), which
+    // exit_cleanup(RERR_PROTOCOL) (exit 2) on overrun. The ProtocolViolation
+    // tag must survive so the core exit-code mapper reproduces exit 2, not the
+    // RERR_STREAMIO (12) a bare InvalidData maps to - a drop-in tool must
+    // distinguish a hostile wire value from a genuinely broken stream.
+    assert!(
+        err.get_ref()
+            .is_some_and(|e| e.is::<crate::protocol_violation::ProtocolViolation>()),
+        "oversized xattr wire value must be tagged ProtocolViolation (RERR_PROTOCOL=2)"
+    );
 }
 
 #[test]
@@ -1091,6 +1146,17 @@ fn recv_xattr_exceeds_max_value_len() {
     let err = result.unwrap_err();
     assert_eq!(err.kind(), std::io::ErrorKind::InvalidData);
     assert!(err.to_string().contains("exceeds maximum"));
+    // WHY: upstream reads these counts/lengths via read_varint_bounded /
+    // read_varint_size (xattrs.c:793,802-803; io.c:1904-1926), which
+    // exit_cleanup(RERR_PROTOCOL) (exit 2) on overrun. The ProtocolViolation
+    // tag must survive so the core exit-code mapper reproduces exit 2, not the
+    // RERR_STREAMIO (12) a bare InvalidData maps to - a drop-in tool must
+    // distinguish a hostile wire value from a genuinely broken stream.
+    assert!(
+        err.get_ref()
+            .is_some_and(|e| e.is::<crate::protocol_violation::ProtocolViolation>()),
+        "oversized xattr wire value must be tagged ProtocolViolation (RERR_PROTOCOL=2)"
+    );
 }
 
 #[test]
@@ -1113,6 +1179,42 @@ fn recv_xattr_values_exceeds_max_value_len() {
     let err = result.unwrap_err();
     assert_eq!(err.kind(), std::io::ErrorKind::InvalidData);
     assert!(err.to_string().contains("exceeds maximum"));
+    // WHY: upstream reads these counts/lengths via read_varint_bounded /
+    // read_varint_size (xattrs.c:793,802-803; io.c:1904-1926), which
+    // exit_cleanup(RERR_PROTOCOL) (exit 2) on overrun. The ProtocolViolation
+    // tag must survive so the core exit-code mapper reproduces exit 2, not the
+    // RERR_STREAMIO (12) a bare InvalidData maps to - a drop-in tool must
+    // distinguish a hostile wire value from a genuinely broken stream.
+    assert!(
+        err.get_ref()
+            .is_some_and(|e| e.is::<crate::protocol_violation::ProtocolViolation>()),
+        "oversized xattr wire value must be tagged ProtocolViolation (RERR_PROTOCOL=2)"
+    );
+}
+
+#[test]
+fn read_definitions_missing_nul_maps_to_fileio() {
+    // A literal xattr name whose declared bytes lack the trailing NUL. upstream:
+    // xattrs.c:811-814 receive_xattr() rejects this with
+    // exit_cleanup(RERR_FILEIO) (exit 11) - a file-IO error, NOT a protocol (2)
+    // or stream (12) error. WHY it matters: a drop-in tool must reproduce
+    // upstream's exact exit classification. io::Error::other maps to RERR_FILEIO
+    // via the core mapper's catch-all, and the error must NOT carry the
+    // ProtocolViolation tag (which would wrongly downgrade the exit code to 2).
+    let mut buf = Vec::new();
+    write_varint(&mut buf, 1).unwrap(); // count
+    write_varint(&mut buf, 3).unwrap(); // name_len (the 3 bytes hold no NUL)
+    write_varint(&mut buf, 0).unwrap(); // datum_len
+    buf.extend_from_slice(b"abc");
+
+    let mut cursor = Cursor::new(buf);
+    let err = read_xattr_definitions(&mut cursor).expect_err("missing NUL must be rejected");
+    assert_eq!(err.kind(), std::io::ErrorKind::Other);
+    assert!(
+        err.get_ref()
+            .is_none_or(|e| !e.is::<crate::protocol_violation::ProtocolViolation>()),
+        "missing-NUL must map to RERR_FILEIO (11), never ProtocolViolation (2)"
+    );
 }
 
 /// Pins the literal-xattr wire layout to exact bytes and asserts it is

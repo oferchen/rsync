@@ -53,52 +53,56 @@ use super::types::{RecvXattrResult, XattrDefinition, XattrSet};
 /// See `xattrs.c:receive_xattr()` lines 790-860 - the entry-reading loop
 /// after `ndx == 0` and before `rsync_xal_store()`.
 pub fn read_xattr_definitions<R: Read>(reader: &mut R) -> io::Result<XattrSet> {
+    // upstream: xattrs.c:793 receive_xattr() reads the count via
+    // read_varint_bounded(f, 0, MAX_WIRE_XATTR_COUNT, ...) (io.c:1904-1913),
+    // which aborts with exit_cleanup(RERR_PROTOCOL) (exit 2) on a negative or
+    // over-range value. Tag both rejections so the core exit-code mapper yields
+    // RERR_PROTOCOL, not the RERR_STREAMIO (12) that a bare InvalidData maps to.
     let count = read_varint(reader)?;
     if count < 0 {
-        return Err(io::Error::new(
-            io::ErrorKind::InvalidData,
-            format!("negative xattr count: {count}"),
-        ));
+        return Err(crate::protocol_violation::protocol_violation(format!(
+            "negative xattr count: {count}"
+        )));
     }
     let count = count as usize;
     if count > MAX_WIRE_XATTR_COUNT {
-        return Err(io::Error::new(
-            io::ErrorKind::InvalidData,
-            format!("xattr count {count} exceeds maximum {MAX_WIRE_XATTR_COUNT}"),
-        ));
+        return Err(crate::protocol_violation::protocol_violation(format!(
+            "xattr count {count} exceeds maximum {MAX_WIRE_XATTR_COUNT}"
+        )));
     }
 
     let mut entries = Vec::with_capacity(count);
 
     for _ in 0..count {
-        // upstream: name_len = read_varint(f); datum_len = read_varint(f)
+        // upstream: name_len = read_varint_size(f, MAX_WIRE_XATTR_NAMELEN, ...);
+        // datum_len = read_varint_size(f, MAX_WIRE_XATTR_DATALEN, ...) at
+        // xattrs.c:802-803. read_varint_size (io.c:1917-1926) aborts with
+        // exit_cleanup(RERR_PROTOCOL) (exit 2) on a negative or over-max value,
+        // so tag these to reproduce exit 2 rather than RERR_STREAMIO (12).
         let name_len = read_varint(reader)? as usize;
         let datum_len = read_varint(reader)? as usize;
 
         if name_len > MAX_WIRE_XATTR_NAME_LEN {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidData,
-                format!("xattr name length {name_len} exceeds maximum {MAX_WIRE_XATTR_NAME_LEN}"),
-            ));
+            return Err(crate::protocol_violation::protocol_violation(format!(
+                "xattr name length {name_len} exceeds maximum {MAX_WIRE_XATTR_NAME_LEN}"
+            )));
         }
         if datum_len > MAX_WIRE_XATTR_VALUE_LEN {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidData,
-                format!(
-                    "xattr value length {datum_len} exceeds maximum {MAX_WIRE_XATTR_VALUE_LEN}"
-                ),
-            ));
+            return Err(crate::protocol_violation::protocol_violation(format!(
+                "xattr value length {datum_len} exceeds maximum {MAX_WIRE_XATTR_VALUE_LEN}"
+            )));
         }
 
         let mut name = vec![0u8; name_len];
         reader.read_exact(&mut name)?;
 
-        // upstream: name_len < 1 || name[name_len-1] != '\0' -> out_of_memory("receive_xattr")
+        // upstream: xattrs.c:811-814 receive_xattr() - `name_len < 1 ||
+        // name[name_len-1] != '\0'` prints "Invalid xattr name received" and
+        // calls exit_cleanup(RERR_FILEIO) (exit 11), a file-IO error, not a
+        // protocol (2) or stream (12) error. io::Error::other maps to
+        // RERR_FILEIO via the core exit-code mapper's catch-all arm.
         if name.is_empty() || name[name_len - 1] != 0 {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidData,
-                "invalid xattr name: missing trailing NUL",
-            ));
+            return Err(io::Error::other("invalid xattr name: missing trailing NUL"));
         }
 
         // Strip the NUL terminator for internal storage
@@ -154,32 +158,32 @@ pub fn recv_xattr<R: Read>(reader: &mut R) -> io::Result<RecvXattrResult> {
         return Ok(RecvXattrResult::CacheHit(ndx as u32));
     }
 
+    // upstream: xattrs.c:793 read_varint_bounded(f, 0, MAX_WIRE_XATTR_COUNT,
+    // ...) aborts with exit_cleanup(RERR_PROTOCOL) (exit 2) on an over-range
+    // count; tag it so the mapper yields RERR_PROTOCOL, not RERR_STREAMIO (12).
     let count = read_varint(reader)? as usize;
     if count > MAX_WIRE_XATTR_COUNT {
-        return Err(io::Error::new(
-            io::ErrorKind::InvalidData,
-            format!("xattr count {count} exceeds maximum {MAX_WIRE_XATTR_COUNT}"),
-        ));
+        return Err(crate::protocol_violation::protocol_violation(format!(
+            "xattr count {count} exceeds maximum {MAX_WIRE_XATTR_COUNT}"
+        )));
     }
     let mut list = XattrList::new();
 
     for _ in 0..count {
+        // upstream: name_len/datum_len via read_varint_size (xattrs.c:802-803,
+        // io.c:1917-1926) -> exit_cleanup(RERR_PROTOCOL) (exit 2) on overrun.
         let name_len = read_varint(reader)? as usize;
         let datum_len = read_varint(reader)? as usize;
 
         if name_len > MAX_WIRE_XATTR_NAME_LEN {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidData,
-                format!("xattr name length {name_len} exceeds maximum {MAX_WIRE_XATTR_NAME_LEN}"),
-            ));
+            return Err(crate::protocol_violation::protocol_violation(format!(
+                "xattr name length {name_len} exceeds maximum {MAX_WIRE_XATTR_NAME_LEN}"
+            )));
         }
         if datum_len > MAX_WIRE_XATTR_VALUE_LEN {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidData,
-                format!(
-                    "xattr value length {datum_len} exceeds maximum {MAX_WIRE_XATTR_VALUE_LEN}"
-                ),
-            ));
+            return Err(crate::protocol_violation::protocol_violation(format!(
+                "xattr value length {datum_len} exceeds maximum {MAX_WIRE_XATTR_VALUE_LEN}"
+            )));
         }
 
         // upstream: name_len includes a trailing NUL terminator on the wire
@@ -260,12 +264,14 @@ pub fn recv_xattr_request<R: Read>(reader: &mut R, list: &mut XattrList) -> io::
 pub fn recv_xattr_values<R: Read>(reader: &mut R, list: &mut XattrList) -> io::Result<()> {
     for entry in list.entries_mut() {
         if entry.state().needs_request() {
+            // upstream: xattrs.c:752 recv_xattr_request() reads the resolved
+            // datum_len via read_varint_size(f_in, MAX_WIRE_XATTR_DATALEN, ...)
+            // (io.c:1917-1926) -> exit_cleanup(RERR_PROTOCOL) (exit 2) on overrun.
             let len = read_varint(reader)? as usize;
             if len > MAX_WIRE_XATTR_VALUE_LEN {
-                return Err(io::Error::new(
-                    io::ErrorKind::InvalidData,
-                    format!("xattr value length {len} exceeds maximum {MAX_WIRE_XATTR_VALUE_LEN}"),
-                ));
+                return Err(crate::protocol_violation::protocol_violation(format!(
+                    "xattr value length {len} exceeds maximum {MAX_WIRE_XATTR_VALUE_LEN}"
+                )));
             }
             let mut value = vec![0u8; len];
             reader.read_exact(&mut value)?;

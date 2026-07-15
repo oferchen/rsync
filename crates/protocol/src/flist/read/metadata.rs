@@ -17,6 +17,14 @@ use crate::varint::read_varint;
 
 use super::FileListReader;
 
+/// Maximum wire-encoded nanosecond value accepted for `modtime_nsec`.
+///
+/// upstream: rsync.h `#define MAX_WIRE_NSEC 999999999` - the inclusive upper
+/// bound `recv_file_entry()` passes to `read_varint_bounded()` (flist.c:855/857)
+/// when decoding the sub-second modification time. A wire value outside
+/// `[0, MAX_WIRE_NSEC]` is a protocol violation (`RERR_PROTOCOL`, exit 2).
+const MAX_WIRE_NSEC: i32 = 999_999_999;
+
 /// Decoded metadata fields for a single file entry.
 ///
 /// Fields are `Option` when conditionally present based on protocol options
@@ -79,8 +87,19 @@ impl FileListReader {
         };
 
         // 2. Read nanoseconds if flag set (protocol 31+)
+        // upstream: flist.c:855/857 recv_file_entry() reads modtime_nsec via
+        // read_varint_bounded(f, 0, MAX_WIRE_NSEC, "modtime_nsec")
+        // (io.c:1904-1913), which aborts with exit_cleanup(RERR_PROTOCOL)
+        // (exit 2) on a value outside [0, MAX_WIRE_NSEC]. Mirror that bound so a
+        // hostile nsec yields RERR_PROTOCOL rather than being accepted unchecked.
         let nsec = if flags.mod_nsec() {
-            crate::read_varint(reader)? as u32
+            let raw = read_varint(reader)?;
+            if !(0..=MAX_WIRE_NSEC).contains(&raw) {
+                return Err(crate::protocol_violation::protocol_violation(format!(
+                    "modtime_nsec {raw} out of range: not in [0,{MAX_WIRE_NSEC}]"
+                )));
+            }
+            raw as u32
         } else {
             0
         };
@@ -273,4 +292,69 @@ fn read_owner_id<R: Read + ?Sized>(
     };
 
     Ok((id, name))
+}
+
+#[cfg(test)]
+mod nsec_tests {
+    use std::io::Cursor;
+
+    use crate::ProtocolVersion;
+    use crate::flist::flags::{FileFlags, XMIT_MOD_NSEC, XMIT_SAME_TIME};
+    use crate::varint::write_varint;
+
+    use super::{FileListReader, MAX_WIRE_NSEC};
+
+    fn reader() -> FileListReader {
+        FileListReader::new(ProtocolVersion::try_from(31u8).unwrap())
+    }
+
+    // SAME_TIME reuses the previous second (no mtime field on the wire) and
+    // MOD_NSEC signals the sub-second varint is present - the minimal flag set
+    // that drives read_metadata straight to the nsec read.
+    fn nsec_flags() -> FileFlags {
+        FileFlags::new(XMIT_SAME_TIME, XMIT_MOD_NSEC)
+    }
+
+    #[test]
+    fn modtime_nsec_in_range_still_parses() {
+        // WHY: the new bound must not over-reject legitimate sub-second mtimes.
+        // A value at exactly MAX_WIRE_NSEC is the largest upstream accepts
+        // (flist.c:855/857 read_varint_bounded(f, 0, MAX_WIRE_NSEC, ...)).
+        let mut buf = Vec::new();
+        write_varint(&mut buf, MAX_WIRE_NSEC).unwrap();
+        // read_metadata continues to the 4-byte mode after nsec; supply a
+        // regular-file mode so the entry decodes cleanly.
+        buf.extend_from_slice(&0o100644i32.to_le_bytes());
+
+        let mut cursor = Cursor::new(buf);
+        let meta = reader()
+            .read_metadata(&mut cursor, nsec_flags())
+            .expect("in-range nsec must parse");
+        assert_eq!(meta.nsec, MAX_WIRE_NSEC as u32);
+    }
+
+    #[test]
+    fn modtime_nsec_out_of_range_is_protocol_violation() {
+        // WHY: upstream flist.c:855/857 bounds modtime_nsec to [0, MAX_WIRE_NSEC]
+        // via read_varint_bounded (io.c:1904-1913), which
+        // exit_cleanup(RERR_PROTOCOL) (exit 2) on an out-of-range value. A
+        // drop-in tool must exit 2 (protocol incompatibility) on a hostile nsec,
+        // never accept it unchecked nor exit RERR_STREAMIO (12); the
+        // ProtocolViolation tag is what makes the core mapper reproduce exit 2.
+        for raw in [MAX_WIRE_NSEC + 1, -1] {
+            let mut buf = Vec::new();
+            write_varint(&mut buf, raw).unwrap();
+            let mut cursor = Cursor::new(buf);
+            // MetadataResult is not Debug, so avoid expect_err/unwrap_err.
+            let Err(err) = reader().read_metadata(&mut cursor, nsec_flags()) else {
+                panic!("out-of-range nsec must be rejected");
+            };
+            assert_eq!(err.kind(), std::io::ErrorKind::InvalidData);
+            assert!(
+                err.get_ref()
+                    .is_some_and(|e| e.is::<crate::protocol_violation::ProtocolViolation>()),
+                "out-of-range modtime_nsec must be tagged ProtocolViolation (RERR_PROTOCOL=2)"
+            );
+        }
+    }
 }
