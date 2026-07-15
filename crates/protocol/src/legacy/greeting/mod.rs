@@ -9,6 +9,7 @@ mod format;
 mod parse;
 mod tokens;
 mod types;
+mod validate;
 
 pub use format::{format_legacy_daemon_greeting, write_legacy_daemon_greeting};
 pub use parse::{
@@ -17,6 +18,7 @@ pub use parse::{
 };
 pub use tokens::DigestListTokens;
 pub use types::{LegacyDaemonGreeting, LegacyDaemonGreetingOwned};
+pub use validate::{MissingGreetingToken, missing_greeting_token};
 
 #[cfg(test)]
 mod tests;
