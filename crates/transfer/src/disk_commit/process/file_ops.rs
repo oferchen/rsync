@@ -122,6 +122,11 @@ pub(in crate::disk_commit) fn process_file(
     } else {
         0
     };
+    // upstream: receiver.c:319-336 - when --preallocate is set, fallocate the
+    // destination to its eventual length before writing. do_fallocate()'s return
+    // becomes preallocated_len, overriding the inplace basis for sparse hole
+    // decisions; a failure warns and continues (never aborts).
+    let preallocated_len = maybe_preallocate(&file, config, &begin, basis_len);
 
     let mut output = make_writer(
         file,
@@ -136,7 +141,7 @@ pub(in crate::disk_commit) fn process_file(
 
     let mut sparse_state = if config.use_sparse {
         let mut state = SparseWriteState::default();
-        state.set_preallocated_len(basis_len);
+        state.set_preallocated_len(preallocated_len);
         Some(state)
     } else {
         None
@@ -369,6 +374,9 @@ pub(in crate::disk_commit) fn process_whole_file(
     } else {
         0
     };
+    // upstream: receiver.c:319-336 - preallocate the destination before writing
+    // when --preallocate is set (see process_file).
+    let preallocated_len = maybe_preallocate(&file, config, &begin, basis_len);
 
     let mut output = make_writer(
         file,
@@ -392,7 +400,7 @@ pub(in crate::disk_commit) fn process_whole_file(
 
     let sparse_final = if config.use_sparse {
         let mut sparse = SparseWriteState::default();
-        sparse.set_preallocated_len(basis_len);
+        sparse.set_preallocated_len(preallocated_len);
         sparse.write(output.buffered_for_sparse(), &data)?;
         let logical = sparse.finish(output.buffered_for_sparse())?;
         Some(SparseFinalize {
@@ -594,6 +602,51 @@ fn open_output_file(
         #[cfg(not(unix))]
         let (file, guard) = open_tmpfile(&begin.file_path, config.temp_dir.as_deref())?;
         Ok((file, guard, true))
+    }
+}
+
+/// Preallocates the destination file to its eventual length under
+/// `config.preallocate`, returning the `preallocated_len` the sparse writer
+/// must use (bytes reserved that a zero run should punch rather than seek).
+///
+/// Mirrors upstream `receiver.c:319-336`: the preallocation branch gates on
+/// `preallocate_files && total_size > 0 && (!inplace_sizing || total_size >
+/// size_r)`, and its `do_fallocate()` return value overrides the inplace basis
+/// length. A `do_fallocate()` failure warns and continues (`receiver.c:324`), so
+/// this never propagates an error - preallocation is a best-effort optimization
+/// and its failure must not abort the receive.
+// upstream: receiver.c:320 - preallocated_len = do_fallocate(fd, 0, total_size)
+fn maybe_preallocate(
+    file: &fs::File,
+    config: &DiskCommitConfig,
+    begin: &BeginMessage,
+    fallback_preallocated_len: u64,
+) -> u64 {
+    if !config.preallocate {
+        return fallback_preallocated_len;
+    }
+    // upstream: receiver.c:320 - size_r is the existing basis length; only an
+    // in-place write reuses it, otherwise the temp file starts empty.
+    let existing_len = if begin.is_inplace {
+        file.metadata().map(|m| m.len()).unwrap_or(0)
+    } else {
+        0
+    };
+    if begin.target_size == 0 || (begin.is_inplace && begin.target_size <= existing_len) {
+        return fallback_preallocated_len;
+    }
+    match fast_io::preallocate(file, begin.target_size) {
+        Ok(preallocated_len) => preallocated_len,
+        // upstream: receiver.c:324 - rsyserr(FWARNING, ...) then continue.
+        Err(err) => {
+            logging::debug_log!(
+                Io,
+                1,
+                "preallocate {}: {err}; continuing without preallocation",
+                begin.file_path.display()
+            );
+            fallback_preallocated_len
+        }
     }
 }
 

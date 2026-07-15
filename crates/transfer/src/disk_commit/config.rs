@@ -81,6 +81,10 @@ pub struct DiskCommitConfig {
     pub do_fsync: bool,
     /// Whether to use sparse file writing.
     pub use_sparse: bool,
+    /// Whether to preallocate each destination file to its eventual length
+    /// before writing (`--preallocate`). Reserves blocks up front to reduce
+    /// fragmentation. upstream: receiver.c:320 do_fallocate(fd, 0, total_size).
+    pub preallocate: bool,
     /// Destination tree root used to anchor SEC-1.r/SEC-1.j cross-thread
     /// `*at` syscalls. `None` when the destination root could not be opened
     /// at receiver setup or when running on a platform without the carrier.
@@ -193,6 +197,7 @@ impl Default for DiskCommitConfig {
         Self {
             do_fsync: false,
             use_sparse: false,
+            preallocate: false,
             dest_dir: None,
             #[cfg(unix)]
             sandbox: None,

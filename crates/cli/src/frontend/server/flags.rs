@@ -94,6 +94,10 @@ pub(super) struct ServerLongFlags {
     /// existing length and the sender streams only the tail (sender.c:89-95,
     /// generator.c:786).
     pub(super) append: bool,
+    /// upstream: options.c:715 / 2990-2991 - `--preallocate` (preallocate_files)
+    /// is forwarded to a server receiver, which `fallocate()`s each destination
+    /// file to its eventual length before writing to reduce fragmentation.
+    pub(super) preallocate: bool,
     /// Re-verify the existing prefix under append (upstream: `--append-verify`,
     /// wire-encoded as a doubled `--append`, `append_mode == 2`).
     ///
@@ -392,6 +396,7 @@ pub(super) fn parse_server_long_flags(args: &[OsString]) -> ServerLongFlags {
         from0: false,
         inplace: false,
         append: false,
+        preallocate: false,
         append_verify: false,
         size_only: false,
         modify_window: None,
@@ -494,13 +499,12 @@ pub(super) fn parse_server_long_flags(args: &[OsString]) -> ServerLongFlags {
             "--super" => {}
             // upstream: options.c:2990-2991 - `if (preallocate_files && am_sender)
             // args[ac++] = "--preallocate"`, forwarded to a server receiver so
-            // it fallocate()s each destination file before writing. Preallocation
-            // affects only on-disk block allocation, never file content, so a
-            // receiver that skips it produces byte-identical results. oc
-            // implements preallocation in the local-copy executor only, not the
-            // network receiver, so this is recognized to prevent a positional
-            // leak; the transferred bytes match upstream.
-            "--preallocate" => {}
+            // it fallocate()s each destination file before writing (receiver.c:
+            // 320). Preallocation affects only on-disk block allocation, never
+            // file content, so a receiver that skips it produces byte-identical
+            // results; the flag is carried onto the receiver config to reserve
+            // extents up front.
+            "--preallocate" => flags.preallocate = true,
             // upstream: options.c:696 / 2976-2977 - `--no-implied-dirs` is
             // forwarded to the sender on a pull. The server-side sender must omit
             // implied parent dirs from the flist at protocol < 30.
