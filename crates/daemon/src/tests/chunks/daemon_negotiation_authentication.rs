@@ -75,7 +75,7 @@ fn daemon_negotiation_auth_challenge_is_unique_per_session() {
 
         // Send version response
         stream
-            .write_all(b"@RSYNCD: 32.0\n")
+            .write_all(b"@RSYNCD: 32.0 sha512 sha256 sha1 md5 md4\n")
             .expect("send version");
         stream.flush().expect("flush");
 
@@ -166,7 +166,7 @@ fn daemon_negotiation_auth_denies_wrong_password() {
 
     // Send version response
     stream
-        .write_all(b"@RSYNCD: 32.0\n")
+        .write_all(b"@RSYNCD: 32.0 sha512 sha256 sha1 md5 md4\n")
         .expect("send version");
     stream.flush().expect("flush");
 
@@ -261,7 +261,7 @@ fn daemon_negotiation_auth_denies_unknown_user() {
 
     // Send version response
     stream
-        .write_all(b"@RSYNCD: 32.0\n")
+        .write_all(b"@RSYNCD: 32.0 sha512 sha256 sha1 md5 md4\n")
         .expect("send version");
     stream.flush().expect("flush");
 
@@ -347,7 +347,7 @@ fn daemon_negotiation_auth_skipped_for_unprotected_module() {
 
     // Send version response
     stream
-        .write_all(b"@RSYNCD: 32.0\n")
+        .write_all(b"@RSYNCD: 32.0 sha512 sha256 sha1 md5 md4\n")
         .expect("send version");
     stream.flush().expect("flush");
 
@@ -424,7 +424,7 @@ fn daemon_negotiation_auth_denies_empty_credentials() {
 
     // Send version response
     stream
-        .write_all(b"@RSYNCD: 32.0\n")
+        .write_all(b"@RSYNCD: 32.0 sha512 sha256 sha1 md5 md4\n")
         .expect("send version");
     stream.flush().expect("flush");
 
@@ -514,7 +514,7 @@ fn daemon_negotiation_auth_successful_sends_ok() {
 
     // Send version response
     stream
-        .write_all(b"@RSYNCD: 32.0\n")
+        .write_all(b"@RSYNCD: 32.0 sha512 sha256 sha1 md5 md4\n")
         .expect("send version");
     stream.flush().expect("flush");
 

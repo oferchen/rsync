@@ -82,7 +82,7 @@ fn run_daemon_panic_isolation_keeps_daemon_alive() {
 
         // Complete the session so the daemon counts it toward max-sessions
         // and can exit cleanly.
-        good.write_all(b"@RSYNCD: 32.0\n")
+        good.write_all(b"@RSYNCD: 32.0 sha512 sha256 sha1 md5 md4\n")
             .expect("send version");
         good.flush().expect("flush version");
 

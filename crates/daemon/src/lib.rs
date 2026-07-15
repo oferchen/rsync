@@ -151,7 +151,7 @@
 //! let mut line = String::new();
 //! reader.read_line(&mut line)?;
 //! assert_eq!(line, "@RSYNCD: 32.0 sha512 sha256 sha1 md5 md4\n");
-//! stream.write_all(b"@RSYNCD: 32.0\n")?;
+//! stream.write_all(b"@RSYNCD: 32.0 sha512 sha256 sha1 md5 md4\n")?;
 //! stream.flush()?;
 //! // Send a non-existent module name
 //! stream.write_all(b"module\n")?;
