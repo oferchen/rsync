@@ -10,7 +10,7 @@ use std::io::{self, Read};
 use logging::debug_log;
 use protocol::CompatibilityFlags;
 use protocol::codec::{NDX_FLIST_EOF, NDX_FLIST_OFFSET, NdxCodec, create_ndx_codec};
-use protocol::flist::{IncrementalFileListBuilder, sort_file_list};
+use protocol::flist::{FileEntry, IncrementalFileListBuilder, sort_file_list};
 
 use super::super::ReceiverContext;
 use super::hardlinks::{match_hard_links, normalize_pre30_hardlinks};
@@ -64,6 +64,15 @@ impl ReceiverContext {
         let inc_recurse = self
             .compat_flags
             .is_some_and(|f| f.contains(CompatibilityFlags::INC_RECURSE));
+
+        // upstream: flist.c:2695-2701 - every received directory is appended to
+        // dir_flist as the read loop runs, so dir_flist->used counts all dirs in
+        // this list. We track the equivalent count only under INC_RECURSE (the
+        // sole mode that frames sub-list headers by dir_ndx) and take it before
+        // the receiver-only prune pass so it matches the sender's numbering.
+        if inc_recurse {
+            self.dir_flist_used += count_directories(&self.file_list[seg_start..]);
+        }
 
         // Without INC_RECURSE the whole list arrives in this single call, so the
         // file list is complete. With INC_RECURSE the sender streams per-directory
@@ -242,6 +251,11 @@ impl ReceiverContext {
             ));
         }
 
+        // `ndx <= NDX_FLIST_OFFSET` (checked above), so `dir_ndx = NDX_FLIST_OFFSET
+        // - ndx` is always in `0..=2147483547` and cannot overflow or go negative.
+        let dir_ndx = NDX_FLIST_OFFSET - ndx;
+        self.validate_extra_segment_dir_ndx(dir_ndx)?;
+
         // upstream: flist.c:recv_file_entry() - reuse cached reader to preserve
         // compression state (prev_name, prev_mode, prev_uid, prev_gid).
         let mut flist_reader = self
@@ -249,7 +263,6 @@ impl ReceiverContext {
             .take()
             .unwrap_or_else(|| self.build_flist_reader());
 
-        let dir_ndx = NDX_FLIST_OFFSET - ndx;
         let flat_start = self.file_list.len();
 
         // Compute seg_ndx_start BEFORE reading entries so the reader can
@@ -299,6 +312,11 @@ impl ReceiverContext {
             normalize_pre30_hardlinks(&mut self.file_list[flat_start..]);
         }
 
+        // upstream: flist.c:2695-2701 - directories in this sub-list are appended
+        // to dir_flist, so a later sub-list may legitimately reference them by
+        // dir_ndx. Fold them into the running count.
+        self.dir_flist_used += count_directories(&self.file_list[flat_start..]);
+
         // upstream: flist.c:2931 - ndx_start = prev->ndx_start + prev->used + 1
         self.ndx_segments.push((flat_start, seg_ndx_start));
 
@@ -323,6 +341,52 @@ impl ReceiverContext {
             seg_ndx_start
         );
         Ok(segment_count)
+    }
+
+    /// Validates an INC_RECURSE sub-list header's `dir_ndx` against untrusted
+    /// wire data, failing closed exactly like upstream, and claims the directory
+    /// so a duplicate sub-list is rejected.
+    ///
+    /// Two guards, both mapped to `RERR_PROTOCOL` (2) via
+    /// [`protocol::protocol_violation`]:
+    ///
+    /// 1. **Range** - a `dir_ndx` that references a directory not yet received
+    ///    (`dir_ndx >= dir_flist_used`) cannot belong to any real sender tree and
+    ///    is rejected. `dir_ndx` is always `>= 0` (see the caller), so the single
+    ///    `>=` test also covers the negative case upstream checks separately.
+    /// 2. **Duplicate** - a second sub-list for a directory already served is a
+    ///    malicious duplicate that would otherwise grow `file_list` unbounded.
+    ///
+    /// Shared by the synchronous [`Self::receive_one_extra_segment`] and the
+    /// asynchronous `receive_extra_file_lists_async` so both wire paths reject
+    /// identical bytes with identical exit codes.
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `flist.c:2622-2626` - `if (dir_ndx >= dir_flist->used) ... "refusing
+    ///   invalid dir_ndx %u >= %u" ... exit_cleanup(RERR_PROTOCOL)`.
+    /// - `flist.c:2627-2632` - `FLAG_GOT_DIR_FLIST` duplicate guard, "refusing
+    ///   malicious duplicate flist for dir %d", `exit_cleanup(RERR_PROTOCOL)`.
+    pub(in crate::receiver) fn validate_extra_segment_dir_ndx(
+        &mut self,
+        dir_ndx: i32,
+    ) -> io::Result<()> {
+        if dir_ndx < 0 || dir_ndx as usize >= self.dir_flist_used {
+            return Err(protocol::protocol_violation(format!(
+                "refusing invalid dir_ndx {dir_ndx} >= {} {}{}",
+                self.dir_flist_used,
+                crate::role_trailer::error_location!(),
+                crate::role_trailer::receiver()
+            )));
+        }
+        if !self.served_dir_flists.insert(dir_ndx) {
+            return Err(protocol::protocol_violation(format!(
+                "refusing malicious duplicate flist for dir {dir_ndx} {}{}",
+                crate::role_trailer::error_location!(),
+                crate::role_trailer::receiver()
+            )));
+        }
+        Ok(())
     }
 
     /// Publishes one INC_RECURSE segment into the parallel-deterministic-
@@ -431,4 +495,18 @@ impl ReceiverContext {
             iconv_reorder_suppressed: self.iconv_reorder_suppressed(),
         }
     }
+}
+
+/// Counts the directory entries in a received file-list slice.
+///
+/// Mirrors upstream's `dir_flist` accounting: every `S_ISDIR` entry read in a
+/// list is appended to `dir_flist`, so this count is what `dir_flist->used`
+/// grows by for that list.
+///
+/// # Upstream Reference
+///
+/// - `flist.c:2695-2701` - `if (S_ISDIR(file->mode)) { ... dir_flist->files[
+///   dir_flist->used++] = file; }`.
+pub(super) fn count_directories(entries: &[FileEntry]) -> usize {
+    entries.iter().filter(|e| e.is_dir()).count()
 }
