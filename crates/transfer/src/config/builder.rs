@@ -202,6 +202,13 @@ impl ServerConfigBuilder {
         self
     }
 
+    /// Records the client's requested remote source args as implied includes
+    /// used to validate the received file list (CVE-2022-29154).
+    pub fn implied_source_args(&mut self, args: Vec<String>) -> &mut Self {
+        self.connection.implied_source_args = args;
+        self
+    }
+
     /// Sets the filename encoding converter for `--iconv` support.
     pub fn iconv(&mut self, converter: Option<FilenameConverter>) -> &mut Self {
         self.connection.iconv = converter;

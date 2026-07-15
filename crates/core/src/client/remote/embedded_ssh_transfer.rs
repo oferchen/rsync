@@ -38,6 +38,7 @@ use super::super::progress::ClientProgressObserver;
 use super::super::summary::ClientSummary;
 use super::batch_support::{build_batch_context, build_batch_recording};
 use super::flags;
+use super::implied_source::implied_source_args_for_pull;
 use super::invocation::{
     RemoteInvocationBuilder, RemoteOperands, RemoteRole, TransferSpec, determine_transfer_role,
 };
@@ -179,6 +180,15 @@ fn run_embedded_pull(
             )?;
         server_config.connection.files_from_data = Some(data);
     }
+
+    // upstream: main.c:1525,1549 / io.c:427,464 / flist.c:1026 - record each
+    // requested source path (or each local --files-from entry) as an implied
+    // include so the receiver rejects any unrequested name (CVE-2022-29154).
+    server_config.connection.implied_source_args = implied_source_args_for_pull(
+        config,
+        &paths,
+        server_config.connection.files_from_data.as_deref(),
+    );
 
     let batch_ctx = batch_writer.map(|bw| build_batch_context(config, bw));
 

@@ -37,6 +37,7 @@ mod filter_recheck;
 #[cfg(feature = "iconv")]
 mod iconv_wire_order;
 mod id_lists;
+mod implied_recheck;
 mod incremental_directories;
 mod incremental_receiver;
 mod missing_args_sentinel;

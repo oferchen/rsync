@@ -218,6 +218,22 @@ pub struct ConnectionConfig {
     /// - `io.c:forward_filesfrom_data()` - forwards local file to socket
     /// - `main.c:1354-1356` - `start_filesfrom_forwarding(filesfrom_fd)`
     pub files_from_data: Option<Vec<u8>>,
+    /// Remote source arguments the client requested on a pull, recorded as
+    /// implied includes to validate the received file list (CVE-2022-29154).
+    ///
+    /// Populated only by a client-receiver pulling from a remote sender. The
+    /// receiver rejects any incoming file-list name not covered by these args,
+    /// preventing a malicious sender from injecting unrequested files. Empty
+    /// (the default) leaves the check inactive, matching upstream's behaviour
+    /// when `trust_sender_args` is set (local, server, `--trust-sender`,
+    /// old-style, or `files-from-host` transfers).
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `main.c:1525,1549` - `add_implied_include()` per requested source arg
+    /// - `exclude.c:379` `add_implied_include()`
+    /// - `flist.c:1026` `recv_file_entry()` - the receiver-side name check
+    pub implied_source_args: Vec<String>,
 }
 
 /// File selection and filtering options for transfer candidates.

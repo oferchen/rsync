@@ -24,12 +24,13 @@ use super::super::super::summary::ClientSummary;
 use super::super::batch_support::{BatchContext, build_batch_context, build_batch_recording};
 use super::super::files_from_forwarding::read_local_files_from_for_forwarding;
 use super::super::flags;
+use super::super::implied_source::implied_source_args_for_pull;
 use super::super::invocation::{RemoteOperands, RemoteRole, TransferSpec, determine_transfer_role};
 use super::connection::build_ssh_connection;
 use super::exit_status::{
     convert_server_stats_to_summary, format_stderr_context, map_child_exit_status,
 };
-use super::parse::{parse_remote_operands, parse_single_remote};
+use super::parse::{parse_remote_operands, parse_single_remote, remote_operand_source_paths};
 use super::progress::ServerProgressAdapter;
 use super::server_config::{build_server_config_for_generator, build_server_config_for_receiver};
 use crate::exit_code::ExitCode;
@@ -120,6 +121,9 @@ pub fn run_ssh_transfer(
             remote_sources,
             local_dest,
         } => {
+            // upstream: main.c:1525,1549 - each requested source path is
+            // recorded as an implied include to validate the received flist.
+            let implied_source_args = remote_operand_source_paths(&remote_sources)?;
             let (invocation_args, ssh_host, ssh_user, ssh_port, stdin_args) =
                 parse_remote_operands(&remote_sources, config, RemoteRole::Receiver)?;
             let connection = build_ssh_connection(
@@ -130,7 +134,14 @@ pub fn run_ssh_transfer(
                 config,
                 &stdin_args,
             )?;
-            run_pull_transfer(config, connection, &[local_dest], observer, batch_writer)
+            run_pull_transfer(
+                config,
+                connection,
+                &[local_dest],
+                &implied_source_args,
+                observer,
+                batch_writer,
+            )
         }
         TransferSpec::Proxy {
             remote_sources,
@@ -147,6 +158,7 @@ fn run_pull_transfer(
     config: &ClientConfig,
     connection: SshConnection,
     local_paths: &[String],
+    source_paths: &[String],
     observer: Option<&mut dyn ClientProgressObserver>,
     batch_writer: Option<Arc<Mutex<BatchWriter>>>,
 ) -> Result<ClientSummary, ClientError> {
@@ -174,6 +186,15 @@ fn run_pull_transfer(
         let data = read_local_files_from_for_forwarding(config)?;
         server_config.connection.files_from_data = Some(data);
     }
+
+    // upstream: flist.c:1026 recv_file_entry() validates each received name
+    // against these implied includes (CVE-2022-29154). Computed after staging
+    // so a local --files-from folds each forwarded entry into the set.
+    server_config.connection.implied_source_args = implied_source_args_for_pull(
+        config,
+        source_paths,
+        server_config.connection.files_from_data.as_deref(),
+    );
 
     let batch_ctx = batch_writer.map(|bw| build_batch_context(config, bw));
 
