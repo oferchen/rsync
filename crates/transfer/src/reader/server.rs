@@ -18,6 +18,11 @@ pub struct ServerReader<R: Read> {
     /// `MultiplexReader`. Stored here because the reader starts in Plain mode
     /// and transitions to Multiplex later.
     pending_batch_recorder: Option<Arc<Mutex<dyn Write + Send>>>,
+    /// Client-receiver I/O-timeout adoption state, applied to the
+    /// `MultiplexReader` on multiplex activation. Held here because the reader
+    /// starts in Plain mode. `(current --timeout secs, live-socket re-apply)`.
+    /// upstream: io.c:1551-1561 read_a_msg() case MSG_IO_TIMEOUT.
+    pending_io_timeout_adoption: Option<(Option<u32>, crate::handshake::IoTimeoutReapply)>,
 }
 
 #[allow(private_interfaces)]
@@ -38,7 +43,24 @@ impl<R: Read> ServerReader<R> {
         Self {
             inner: ServerReaderInner::Plain(reader),
             pending_batch_recorder: None,
+            pending_io_timeout_adoption: None,
         }
+    }
+
+    /// Registers client-receiver I/O-timeout adoption state.
+    ///
+    /// `current` is the client's own `--timeout` in seconds (`None`/`0` =
+    /// infinite); `reapply` re-applies an adopted daemon timeout to the live
+    /// socket. Applied to the `MultiplexReader` on `activate_multiplex`. Only
+    /// the client receiver of a daemon transfer calls this.
+    ///
+    /// upstream: io.c:1551-1561 read_a_msg() case MSG_IO_TIMEOUT.
+    pub fn enable_io_timeout_adoption(
+        &mut self,
+        current: Option<u32>,
+        reapply: crate::handshake::IoTimeoutReapply,
+    ) {
+        self.pending_io_timeout_adoption = Some((current, reapply));
     }
 
     /// Registers a batch recorder for capturing compressed protocol data.
@@ -81,9 +103,13 @@ impl<R: Read> ServerReader<R> {
                 if let Some(recorder) = self.pending_batch_recorder {
                     mux.batch_recorder = Some(recorder);
                 }
+                if let Some((current, reapply)) = self.pending_io_timeout_adoption {
+                    mux.set_io_timeout_adoption(current, reapply);
+                }
                 Ok(Self {
                     inner: ServerReaderInner::Multiplex(mux),
                     pending_batch_recorder: None,
+                    pending_io_timeout_adoption: None,
                 })
             }
             ServerReaderInner::Multiplex(_) => Err(io::Error::new(
@@ -121,6 +147,7 @@ impl<R: Read> ServerReader<R> {
                 Ok(Self {
                     inner: ServerReaderInner::Compressed(compressed),
                     pending_batch_recorder: None,
+                    pending_io_timeout_adoption: None,
                 })
             }
             ServerReaderInner::Plain(_) => Err(io::Error::new(

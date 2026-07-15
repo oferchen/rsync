@@ -49,9 +49,9 @@ pub(super) use auth::{
 #[allow(unused_imports)] // REASON: convenience re-export for sibling modules
 pub(super) use connect::{
     ConnectProgramConfig, DaemonStream, DaemonStreamGuard, DaemonStreamReader, DaemonStreamWriter,
-    ProxyConfig, ProxyCredentials, RshDaemonSpawn, connect_direct, connect_via_proxy,
-    establish_proxy_tunnel, open_daemon_stream, parse_proxy_spec, resolve_connect_timeout,
-    resolve_daemon_addresses, spawn_rsh_daemon_stream,
+    ProxyConfig, ProxyCredentials, RshDaemonSpawn, build_io_timeout_reapply, connect_direct,
+    connect_via_proxy, establish_proxy_tunnel, open_daemon_stream, parse_proxy_spec,
+    resolve_connect_timeout, resolve_daemon_addresses, spawn_rsh_daemon_stream,
 };
 #[allow(unused_imports)] // REASON: convenience re-export for sibling modules
 pub(super) use errors::map_daemon_handshake_error;
