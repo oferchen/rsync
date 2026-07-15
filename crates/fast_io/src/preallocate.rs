@@ -11,10 +11,7 @@ use std::fs::File;
 use std::io;
 
 #[cfg(target_os = "linux")]
-use rustix::{
-    fs::{FallocateFlags, fallocate},
-    io::Errno,
-};
+use rustix::fs::{FallocateFlags, fallocate};
 
 /// Preallocates disk blocks for `file`'s eventual `length` bytes without
 /// changing the file's logical size.
