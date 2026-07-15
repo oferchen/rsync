@@ -179,8 +179,14 @@ impl crate::writer::MsgInfoSender for TestDeletionWriter {
     }
 }
 
-/// Writer that records every `MSG_INFO` frame so tests can assert the
-/// emitted `*deleting` itemize order.
+/// Writer that records every client-visible delete itemize row so tests can
+/// assert the emitted `*deleting` order.
+///
+/// A local/client receiver renders the row itself and forwards it as a
+/// `MSG_INFO` frame; a server generator instead forwards the raw deleted name
+/// as a `MSG_DELETED` frame that the client renders into the same
+/// `*deleting   <name>` row (upstream `log.c:869` vs `log.c:873`). Both channels
+/// are captured here so the order assertion holds regardless of role.
 #[cfg(unix)]
 #[derive(Default)]
 pub(super) struct CapturingDeletionWriter {
@@ -202,6 +208,24 @@ impl crate::writer::MsgInfoSender for CapturingDeletionWriter {
     fn send_msg_info(&mut self, data: &[u8]) -> io::Result<()> {
         self.lines
             .push(String::from_utf8_lossy(data).trim_end().to_owned());
+        Ok(())
+    }
+
+    fn send_msg_deleted(&mut self, data: &[u8]) -> io::Result<()> {
+        // Reproduce the client-side render (DeletedRender, itemize form): a
+        // trailing NUL marks a directory (upstream io.c:1616), which the client
+        // prints with a trailing slash.
+        let (is_dir, name_bytes) = match data.split_last() {
+            Some((0, rest)) => (true, rest),
+            _ => (false, data),
+        };
+        let name = String::from_utf8_lossy(name_bytes);
+        let display = if is_dir {
+            format!("{name}/")
+        } else {
+            name.into_owned()
+        };
+        self.lines.push(format!("*deleting   {display}"));
         Ok(())
     }
 }
