@@ -6,13 +6,12 @@
 //! parallel-deterministic-delete pipeline.
 
 use std::io::{self, Read};
+use std::path::Path;
 
 use logging::debug_log;
 use protocol::CompatibilityFlags;
 use protocol::codec::{NDX_FLIST_EOF, NDX_FLIST_OFFSET, NdxCodec, create_ndx_codec};
-use protocol::flist::{
-    FileEntry, IncrementalFileListBuilder, sort_and_clean_file_list, sort_file_list,
-};
+use protocol::flist::{FileEntry, IncrementalFileListBuilder, sort_and_clean_file_list};
 
 use super::super::ReceiverContext;
 use super::hardlinks::{match_hard_links, normalize_pre30_hardlinks};
@@ -156,6 +155,18 @@ impl ReceiverContext {
             let list = std::mem::take(&mut self.file_list);
             let (cleaned, _clean) = sort_and_clean_file_list(list, self.config.qsort, pre29);
             self.file_list = cleaned;
+        }
+
+        // upstream: flist.c:recv_file_list() appends every directory to
+        // `dir_flist` as it is read, so a later INC_RECURSE sub-list header's
+        // `dir_ndx` resolves to that directory's full path (flist.c:2685). Record
+        // the same mapping in wire `dir_ndx` order - sorted here (or sender scan
+        // order under iconv) and taken before the receiver-only prune pass, so it
+        // stays aligned with the sender's `dir_ndx` numbering over every shipped
+        // directory. `receive_one_extra_segment()` uses it to reject a sub-list
+        // entry that does not live under its declared parent.
+        if inc_recurse {
+            self.record_dir_flist_names(0);
         }
 
         // upstream: flist.c:3121-3184 - flist_sort_and_clean() runs the
@@ -309,6 +320,14 @@ impl ReceiverContext {
             segment_count += 1;
         }
 
+        // upstream: flist.c:2684-2695 - every entry in a sub-list must live under
+        // the directory named by its header `dir_ndx`; a mismatch is an attempt
+        // by a hostile sender to inject a path that escapes its declared parent,
+        // which upstream aborts with `exit_cleanup(RERR_UNSUPPORTED)`. Validate
+        // before any further processing and drop the offending entries so nothing
+        // escapes into the transfer.
+        self.validate_extra_segment_path_belongs(dir_ndx, flat_start)?;
+
         // upstream: flist.c:1646 - leader GNUM is readdir-order wire NDX,
         // assigned before sorting.
         if self.config.flags.hard_links {
@@ -319,16 +338,25 @@ impl ReceiverContext {
             }
         }
 
-        // upstream: flist.c:2155,2736 - both sides call flist_sort_and_clean()
-        // independently. Unstable sort (true) is safe - entries have unique paths.
-        // INC_RECURSE requires protocol >= 30, so pre29 is always false here.
+        // upstream: flist.c:2190,2771 - both sides call flist_sort_and_clean()
+        // on EACH sub-list independently (send_extra_file_list / recv_file_list).
+        // That runs sort THEN the duplicate-clean pass (flist.c:3031, active for
+        // the receiver because `!am_sender || inc_recurse`), so a sub-list that
+        // repeats a normalized name collapses to a single entry with the upstream
+        // tie-break (a directory over a same-named file, else the first). We reuse
+        // the shared sort+dedup primitive so this matches the receiver's initial
+        // pass and the sender's per-dir clean, keeping the NDX numbering of the
+        // next segment identical on both sides. INC_RECURSE requires protocol >=
+        // 30, so pre29 is always false here.
         //
-        // Iconv suppresses the in-place reorder for the same reason as the
-        // initial flist: upstream's `need_unsorted_flist` keeps the
-        // NDX-addressed array in scan order so the receiver can resolve
-        // generator requests against the bytes the sender emitted.
+        // Iconv suppresses the in-place reorder+dedup for the same reason as the
+        // initial flist: upstream's `need_unsorted_flist` keeps the NDX-addressed
+        // array in scan order so the receiver can resolve generator requests
+        // against the bytes the sender emitted.
         if !self.iconv_reorder_suppressed() {
-            sort_file_list(&mut self.file_list[flat_start..], true, false);
+            let tail = self.file_list.split_off(flat_start);
+            let (cleaned, _clean) = sort_and_clean_file_list(tail, true, false);
+            self.file_list.extend(cleaned);
         }
         match_hard_links(&mut self.file_list[flat_start..], &mut self.prior_hlinks);
 
@@ -339,8 +367,11 @@ impl ReceiverContext {
 
         // upstream: flist.c:2695-2701 - directories in this sub-list are appended
         // to dir_flist, so a later sub-list may legitimately reference them by
-        // dir_ndx. Fold them into the running count.
+        // dir_ndx. Fold them into the running count and record their full paths in
+        // the same wire dir_ndx order so a deeper sub-list's path-belongs check
+        // resolves this segment's directories.
         self.dir_flist_used += count_directories(&self.file_list[flat_start..]);
+        self.record_dir_flist_names(flat_start);
 
         // upstream: flist.c:2931 - ndx_start = prev->ndx_start + prev->used + 1
         self.ndx_segments.push((flat_start, seg_ndx_start));
@@ -410,6 +441,76 @@ impl ReceiverContext {
                 crate::role_trailer::error_location!(),
                 crate::role_trailer::receiver()
             )));
+        }
+        Ok(())
+    }
+
+    /// Records the full relative path of every directory in `file_list[from..]`
+    /// into [`dir_flist_names`](super::super::ReceiverContext::dir_flist_names),
+    /// in the order they appear. Called after each list/sub-list is sorted (and,
+    /// under non-iconv, deduped) so the vector index matches the wire `dir_ndx`
+    /// the sender assigns to that directory.
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `flist.c:2704` - `dir_flist->files[dir_flist->used++] = file` appends
+    ///   each directory so `dir_flist->files[dir_ndx]` names it later.
+    pub(in crate::receiver) fn record_dir_flist_names(&mut self, from: usize) {
+        for entry in &self.file_list[from..] {
+            if entry.is_dir() {
+                self.dir_flist_names.push(entry.path().clone());
+            }
+        }
+    }
+
+    /// Validates that every entry in the just-read INC_RECURSE sub-list
+    /// (`file_list[flat_start..]`) lives directly under the directory named by
+    /// the header's `dir_ndx`. A hostile sender that frames a sub-list for a
+    /// legitimate parent but fills it with an entry whose dirname escapes that
+    /// parent (`../` or an unrelated tree) is rejected, mapping to
+    /// `RERR_UNSUPPORTED` (4) exactly like upstream's `exit_cleanup`. The
+    /// offending segment's entries are dropped so nothing escapes into the
+    /// transfer.
+    ///
+    /// The parent name is looked up in [`dir_flist_names`] built by
+    /// [`record_dir_flist_names`](Self::record_dir_flist_names). Leading slashes
+    /// (present only under `--relative`, where upstream defers stripping to
+    /// `flist_sort_and_clean(..., strip_root)`) are ignored on both sides so a
+    /// legitimate relative transfer is never falsely rejected.
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `flist.c:2684-2695` - `strcmp(cur_dir, d) != 0` -> "ABORTING due to
+    ///   invalid path from sender" -> `exit_cleanup(RERR_UNSUPPORTED)`.
+    pub(in crate::receiver) fn validate_extra_segment_path_belongs(
+        &mut self,
+        dir_ndx: i32,
+        flat_start: usize,
+    ) -> io::Result<()> {
+        // The range check in validate_extra_segment_dir_ndx guarantees
+        // `dir_ndx < dir_flist_used`; the name vector is kept in lockstep with
+        // that count, so a present entry is expected. If it is somehow absent we
+        // cannot name the parent, so skip rather than falsely abort.
+        let Some(parent) = self.dir_flist_names.get(dir_ndx as usize) else {
+            return Ok(());
+        };
+        let parent = strip_leading_slashes(parent);
+        for i in flat_start..self.file_list.len() {
+            let child_dir = strip_leading_slashes(self.file_list[i].dirname());
+            if child_dir != parent {
+                let basename = self.file_list[i].name().to_owned();
+                let cur = self.file_list[i].dirname().display().to_string();
+                // Drop this segment's entries so nothing escapes the tree.
+                self.file_list.truncate(flat_start);
+                return Err(io::Error::new(
+                    io::ErrorKind::Unsupported,
+                    format!(
+                        "ABORTING due to invalid path from sender: {cur}/{basename} {}{}",
+                        crate::role_trailer::error_location!(),
+                        crate::role_trailer::receiver()
+                    ),
+                ));
+            }
         }
         Ok(())
     }
@@ -534,4 +635,22 @@ impl ReceiverContext {
 ///   dir_flist->used++] = file; }`.
 pub(super) fn count_directories(entries: &[FileEntry]) -> usize {
     entries.iter().filter(|e| e.is_dir()).count()
+}
+
+/// Strips leading path separators so a `--relative` dirname - which carries a
+/// leading `/` until upstream's `strip_root` pass runs - compares equal to the
+/// slash-free parent path recorded in `dir_flist_names`.
+///
+/// # Upstream Reference
+///
+/// - `flist.c:2685-2686` - `if (relative_paths && *cur_dir == '/') cur_dir++;`
+fn strip_leading_slashes(p: &Path) -> &Path {
+    let mut s = p;
+    while let Ok(rest) = s.strip_prefix("/") {
+        if rest.as_os_str().is_empty() {
+            break;
+        }
+        s = rest;
+    }
+    s
 }
