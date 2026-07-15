@@ -101,6 +101,7 @@ mod parse;
 /// Cross-platform stderr aux-channel between the parent process and a spawned `ssh` child.
 #[cfg(feature = "ssh-socketpair-stderr")]
 pub mod socketpair_stderr;
+mod stall;
 
 #[cfg(all(feature = "async-ssh", feature = "ssh-socketpair-stderr"))]
 pub use async_stderr_drain::{ASYNC_STDERR_BUFFER_CAP, AsyncStderrDrain, RingBuffer};

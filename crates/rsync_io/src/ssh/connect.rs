@@ -107,6 +107,12 @@ pub struct SshConnectConfig {
     /// Connection establishment timeout. `None` disables the
     /// `-o ConnectTimeout` injection and the in-process watchdog.
     pub connect_timeout: Option<Duration>,
+    /// Data-channel I/O timeout (the negotiated `--timeout`). When
+    /// `Some(non-zero)`, the spawned connection arms a stall watchdog that
+    /// aborts the transfer with a timeout error after that much idle time,
+    /// mirroring upstream's uniform `io_timeout` enforcement. `None` or
+    /// `Some(0)` disables stall detection.
+    pub io_timeout: Option<Duration>,
     /// Keepalive parameters. `None` disables `-o ServerAliveInterval` and
     /// `-o ServerAliveCountMax` injection.
     pub keepalive: Option<KeepAliveConfig>,
@@ -118,6 +124,7 @@ impl Default for SshConnectConfig {
     fn default() -> Self {
         Self {
             connect_timeout: Some(DEFAULT_CONNECT_TIMEOUT),
+            io_timeout: None,
             keepalive: Some(KeepAliveConfig::default()),
             remote_command: Vec::new(),
         }
@@ -137,6 +144,17 @@ impl SshConnectConfig {
     #[must_use]
     pub const fn with_connect_timeout(mut self, timeout: Option<Duration>) -> Self {
         self.connect_timeout = timeout;
+        self
+    }
+
+    /// Builder-style setter for [`SshConnectConfig::io_timeout`].
+    ///
+    /// Threads the negotiated `--timeout` into the SSH transport so a stalled
+    /// data channel aborts instead of hanging indefinitely. `None` or
+    /// `Some(0)` leaves stall detection disabled.
+    #[must_use]
+    pub const fn with_io_timeout(mut self, timeout: Option<Duration>) -> Self {
+        self.io_timeout = timeout;
         self
     }
 
@@ -200,6 +218,7 @@ pub(super) fn build_ssh_command(remote: &str, config: &SshConnectConfig) -> SshC
     }
 
     command.set_connect_timeout(config.connect_timeout);
+    command.set_io_timeout(config.io_timeout);
 
     if let Some(keepalive) = config.keepalive {
         let interval_secs = duration_to_secs_ceil(keepalive.interval);
@@ -260,10 +279,44 @@ mod tests {
     fn default_config_matches_builder_defaults() {
         let config = SshConnectConfig::new();
         assert_eq!(config.connect_timeout, Some(DEFAULT_CONNECT_TIMEOUT));
+        // Stall detection is off by default; the negotiated `--timeout` must be
+        // supplied explicitly via `with_io_timeout`.
+        assert_eq!(config.io_timeout, None);
         let keepalive = config.keepalive.expect("default keepalive present");
         assert_eq!(keepalive.interval, DEFAULT_KEEPALIVE_INTERVAL);
         assert_eq!(keepalive.max_failures, DEFAULT_KEEPALIVE_MAX_FAILURES);
         assert!(config.remote_command.is_empty());
+    }
+
+    #[test]
+    fn io_timeout_is_threaded_into_the_ssh_command() {
+        // Regression guard: SSH transfers previously dropped `--timeout`
+        // entirely. The negotiated value must reach the spawned command so the
+        // stall watchdog is armed with the effective deadline.
+        let timeout = Duration::from_secs(45);
+        let config = SshConnectConfig::new().with_io_timeout(Some(timeout));
+        assert_eq!(config.io_timeout, Some(timeout));
+
+        let command = build_ssh_command("user@example.com", &config);
+        assert_eq!(command.io_timeout_for_testing(), Some(timeout));
+
+        // The I/O timeout is a parent-side detector, not an `ssh` option, so it
+        // must not leak into the rendered argv.
+        let (_, args) = command.command_parts_for_testing();
+        let rendered = args_to_strings(&args);
+        assert!(
+            !rendered
+                .iter()
+                .any(|a| a.to_ascii_lowercase().contains("timeout=45")),
+            "io_timeout must not render as an ssh option: {rendered:?}"
+        );
+    }
+
+    #[test]
+    fn io_timeout_defaults_to_disabled_in_command() {
+        let config = SshConnectConfig::new();
+        let command = build_ssh_command("example.com", &config);
+        assert_eq!(command.io_timeout_for_testing(), None);
     }
 
     #[test]

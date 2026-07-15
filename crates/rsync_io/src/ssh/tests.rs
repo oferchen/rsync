@@ -411,6 +411,110 @@ fn spawned_connection_forwards_io() {
     assert!(status.success());
 }
 
+/// A stalled SSH read must abort with a timeout error rather than hang the
+/// client forever. WHY: a hung remote (no data for `io_timeout`) must not block
+/// the client indefinitely; upstream aborts with `RERR_TIMEOUT` (exit 30), and
+/// `core` maps `io::ErrorKind::TimedOut` to that same exit code.
+#[cfg(unix)]
+#[test]
+fn stalled_read_aborts_with_timeout_error() {
+    // Spawn `cat` directly (not via `sh -c cat`) so the spawned child IS the
+    // blocking process. A shell wrapper is unreliable here: on some platforms
+    // `sh -c cat` forks `cat` rather than exec'ing it, so killing the child
+    // (the shell) would orphan `cat` and never close the stdout pipe, hanging
+    // the read forever. In production the SSH child is the `ssh` binary spawned
+    // directly, so the watchdog's `Child::kill()` reaches the right process.
+    let mut command = SshCommand::new("ignored");
+    command.set_program("cat");
+    command.set_batch_mode(false);
+    command.set_target_override(Some(OsString::new()));
+    command.set_io_timeout(Some(std::time::Duration::from_millis(300)));
+
+    let connection = command.spawn().expect("spawn stalling child");
+    // `_writer` keeps stdin open so `cat` stays blocked; `handle` keeps the
+    // stall watchdog alive for the duration of the read.
+    let (mut reader, _writer, handle) = connection.split().expect("split");
+
+    // Run the blocking read on a worker thread and bound the wait. `cat` blocks
+    // until the watchdog kills it; if the watchdog ever regresses, this fails
+    // fast with a diagnostic instead of hanging until the CI harness cap.
+    let (tx, rx) = std::sync::mpsc::channel();
+    let worker = std::thread::spawn(move || {
+        let start = std::time::Instant::now();
+        let mut buf = [0u8; 16];
+        let outcome = reader.read(&mut buf).map_err(|e| e.kind());
+        let _ = tx.send((start.elapsed(), outcome));
+    });
+
+    // io_timeout is 300ms, so the watchdog fires at ~300-450ms; 8s tolerates a
+    // heavily loaded runner yet is far below any test-harness hang cap.
+    match rx.recv_timeout(std::time::Duration::from_secs(8)) {
+        Ok((elapsed, outcome)) => {
+            worker.join().expect("reader thread panicked");
+            assert_eq!(
+                outcome,
+                Err(std::io::ErrorKind::TimedOut),
+                "stalled read must map to a timeout after {elapsed:?}"
+            );
+        }
+        Err(_) => {
+            // Watchdog never fired: kill the child so the worker unblocks and
+            // the process can exit, then fail loudly.
+            drop(handle);
+            let _ = worker.join();
+            panic!("stalled read did not time out within 8s: watchdog never fired");
+        }
+    }
+}
+
+/// Continued progress (as keepalive writes provide) must prevent a false
+/// timeout even when the total transfer outlasts `io_timeout`. WHY: upstream
+/// resets its idle clock on every successful read/write, so a busy channel never
+/// trips the timeout no matter how long the transfer runs.
+#[cfg(unix)]
+#[test]
+fn progress_prevents_false_timeout() {
+    // A 1s timeout with round-trips spaced only ~5ms apart leaves a ~200x margin
+    // between the record cadence and the timeout, so scheduling drift on a slow
+    // runner cannot push the idle clock to the timeout and false-trip.
+    let timeout = std::time::Duration::from_secs(1);
+    let mut command = SshCommand::new("ignored");
+    // Spawn `cat` directly so it echoes stdin verbatim (child == the process we
+    // read/write), avoiding any shell-wrapper fork ambiguity.
+    command.set_program("cat");
+    command.set_batch_mode(false);
+    command.set_target_override(Some(OsString::new()));
+    command.set_io_timeout(Some(timeout));
+
+    let connection = command.spawn().expect("spawn echo child");
+    let (mut reader, mut writer, child_handle) = connection.split().expect("split");
+
+    // Drive continuous echo round-trips for longer than the timeout (plus a poll
+    // cycle). Each successful write and read resets the idle clock, so the
+    // watchdog must never fire despite the transfer outlasting `io_timeout`.
+    let payload = b"ping-pkt";
+    let mut got = [0u8; 8];
+    let start = std::time::Instant::now();
+    while start.elapsed() < timeout + std::time::Duration::from_millis(600) {
+        writer.write_all(payload).expect("write payload");
+        writer.flush().expect("flush payload");
+        reader
+            .read_exact(&mut got)
+            .expect("echo must arrive, not time out");
+        assert_eq!(&got, payload);
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    }
+    assert!(
+        start.elapsed() >= timeout,
+        "test must outlast the timeout to be meaningful"
+    );
+
+    // Closing stdin lets `cat` exit cleanly; the watchdog is cancelled on wait.
+    writer.close().expect("close writer");
+    let status = child_handle.wait().expect("wait for cat");
+    assert!(status.success());
+}
+
 #[cfg(unix)]
 #[test]
 fn stderr_output_collected_via_child_handle() {
@@ -1819,18 +1923,20 @@ fn connect_timeout_zero_duration() {
 fn connect_watchdog_fires_on_timeout() {
     use std::time::Duration;
 
-    // Spawn a process that sleeps for a long time - simulating an SSH process
-    // that hangs during connection establishment.
+    // Spawn a long-running process directly (not via `sh -c`) so the spawned
+    // child IS the sleeper: the final `connection.read()` below relies on the
+    // watchdog's `Child::kill()` closing the stdout pipe, and on some shells
+    // `sh -c 'sleep 60'` forks `sleep`, so killing the child (the shell) would
+    // orphan `sleep` and never close the pipe - hanging the read.
     let mut command = SshCommand::new("ignored");
-    command.set_program("sh");
+    command.set_program("sleep");
     command.set_batch_mode(false);
-    command.push_option("-c");
-    command.push_option("sleep 60");
+    command.push_option("60");
     command.set_target_override(Some(OsString::new()));
     // Set a very short connect timeout to trigger the watchdog quickly.
     command.set_connect_timeout(Some(Duration::from_millis(200)));
 
-    let mut connection = command.spawn().expect("spawn shell");
+    let mut connection = command.spawn().expect("spawn sleeper");
 
     // Wait for the watchdog to fire before attempting any read. This avoids
     // relying on Child::kill() to unblock a blocking pipe read, which is
