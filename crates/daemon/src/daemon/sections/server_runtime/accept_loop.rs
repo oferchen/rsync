@@ -105,12 +105,8 @@ fn serve_connections(
         None
     };
 
-    let modules: Arc<Vec<ModuleRuntime>> = Arc::new(
-        modules
-            .into_iter()
-            .map(|definition| ModuleRuntime::new(definition, connection_limiter.clone()))
-            .collect(),
-    );
+    let modules: Arc<Vec<ModuleRuntime>> =
+        Arc::new(build_module_runtimes(modules, &connection_limiter)?);
     let motd_lines = Arc::new(motd_lines);
 
     // LSM-CAP.5: verify required Linux capabilities are present before binding

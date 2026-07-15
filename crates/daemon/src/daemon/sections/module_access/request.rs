@@ -557,8 +557,13 @@ fn respond_with_module_request(
     );
 
     let mut hostname_cache: Option<Option<String>> = None;
+    // upstream: clientserver.c:1392 resolves the host when `lp_reverse_lookup(-1)`
+    // (the global default = `reverse_lookup`) is set, then rsync_module (:723)
+    // resolves it per-module when `lp_reverse_lookup(i)` is set. The effective
+    // per-module value is therefore the global default OR the module override.
+    let module_reverse_lookup = reverse_lookup || module.reverse_lookup;
     let module_peer_host =
-        module_peer_hostname(module, &mut hostname_cache, peer_ip, reverse_lookup);
+        module_peer_hostname(module, &mut hostname_cache, peer_ip, module_reverse_lookup);
 
     if change != LimiterChange::Unchanged {
         if let Some(log) = log_sink {

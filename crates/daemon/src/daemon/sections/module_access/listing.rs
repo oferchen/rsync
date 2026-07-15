@@ -42,7 +42,11 @@ fn respond_with_module_list(
             continue;
         }
 
-        let peer_host = module_peer_hostname(module, &mut hostname_cache, peer_ip, reverse_lookup);
+        // upstream: clientserver.c:723 `lp_reverse_lookup(i)` - effective
+        // per-module value is the global default OR the module override.
+        let module_reverse_lookup = reverse_lookup || module.reverse_lookup;
+        let peer_host =
+            module_peer_hostname(module, &mut hostname_cache, peer_ip, module_reverse_lookup);
         if !module.permits(peer_ip, peer_host) {
             continue;
         }

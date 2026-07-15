@@ -1468,6 +1468,148 @@ mod config_parsing_tests {
         assert!(!value);
     }
 
+    // upstream: reverse lookup is P_LOCAL (daemon-parm.h:78). A module value
+    // overrides the global default for that module only; another module without
+    // its own directive inherits the global default. Proving the override wins
+    // guards against a regression back to treating it as a daemon-wide singleton.
+    #[test]
+    fn module_reverse_lookup_override_beats_global_and_sibling_inherits() {
+        let dir = TempDir::new().expect("create temp dir");
+        let a = dir.path().join("a");
+        let b = dir.path().join("b");
+        fs::create_dir(&a).expect("create a");
+        fs::create_dir(&b).expect("create b");
+
+        let config = format!(
+            "reverse lookup = yes\n\
+             [override]\n\
+             path = {}\n\
+             reverse lookup = no\n\
+             [inherit]\n\
+             path = {}\n",
+            a.display(),
+            b.display()
+        );
+        let file = write_config(&config);
+        let result = parse_config_modules(file.path()).expect("parse succeeds");
+
+        let override_mod = result
+            .modules
+            .iter()
+            .find(|m| m.name == "override")
+            .expect("override module");
+        let inherit_mod = result
+            .modules
+            .iter()
+            .find(|m| m.name == "inherit")
+            .expect("inherit module");
+        assert!(!override_mod.reverse_lookup, "module override must win");
+        assert!(inherit_mod.reverse_lookup, "sibling inherits global yes");
+    }
+
+    // upstream: loadparm.c init_section copies the global default into each
+    // module, so a global `reverse lookup = no` becomes the module default.
+    #[test]
+    fn module_inherits_global_reverse_lookup_disabled() {
+        let dir = TempDir::new().expect("create temp dir");
+        let path = dir.path().join("data");
+        fs::create_dir(&path).expect("create dir");
+
+        let config = format!(
+            "reverse lookup = no\n\
+             [mod]\n\
+             path = {}\n",
+            path.display()
+        );
+        let file = write_config(&config);
+        let result = parse_config_modules(file.path()).expect("parse succeeds");
+        assert!(!result.modules[0].reverse_lookup);
+    }
+
+    // upstream: daemon-parm.h:78 default True when neither global nor module set.
+    #[test]
+    fn module_reverse_lookup_defaults_true_when_unset() {
+        let dir = TempDir::new().expect("create temp dir");
+        let path = dir.path().join("data");
+        fs::create_dir(&path).expect("create dir");
+
+        let config = format!("[mod]\npath = {}\n", path.display());
+        let file = write_config(&config);
+        let result = parse_config_modules(file.path()).expect("parse succeeds");
+        assert!(result.modules[0].reverse_lookup);
+    }
+
+    #[test]
+    fn duplicate_module_reverse_lookup_errors() {
+        let dir = TempDir::new().expect("create temp dir");
+        let path = dir.path().join("data");
+        fs::create_dir(&path).expect("create dir");
+
+        let config = format!(
+            "[mod]\npath = {}\nreverse lookup = yes\nreverse lookup = no\n",
+            path.display()
+        );
+        let file = write_config(&config);
+        let err = parse_config_modules(file.path()).expect_err("duplicate rejected");
+        assert!(err.to_string().contains("reverse lookup"));
+    }
+
+    // upstream: lock file is P_LOCAL (daemon-parm.h:46). A module value overrides
+    // the daemon-wide lock file for that module; an unset module inherits it.
+    #[test]
+    fn module_lock_file_override_parsed_and_sibling_inherits() {
+        let dir = TempDir::new().expect("create temp dir");
+        let a = dir.path().join("a");
+        let b = dir.path().join("b");
+        fs::create_dir(&a).expect("create a");
+        fs::create_dir(&b).expect("create b");
+        let lock = dir.path().join("mod-a.lock");
+
+        let config = format!(
+            "[locked]\n\
+             path = {}\n\
+             lock file = {}\n\
+             [plain]\n\
+             path = {}\n",
+            a.display(),
+            lock.display(),
+            b.display()
+        );
+        let file = write_config(&config);
+        let result = parse_config_modules(file.path()).expect("parse succeeds");
+
+        let locked = result
+            .modules
+            .iter()
+            .find(|m| m.name == "locked")
+            .expect("locked module");
+        let plain = result
+            .modules
+            .iter()
+            .find(|m| m.name == "plain")
+            .expect("plain module");
+        assert_eq!(locked.lock_file.as_deref(), Some(lock.as_path()));
+        assert!(
+            plain.lock_file.is_none(),
+            "module without override inherits the daemon lock file at runtime"
+        );
+    }
+
+    #[test]
+    fn duplicate_module_lock_file_errors() {
+        let dir = TempDir::new().expect("create temp dir");
+        let path = dir.path().join("data");
+        fs::create_dir(&path).expect("create dir");
+
+        let config = format!(
+            "[mod]\npath = {}\nlock file = /tmp/a.lock\nlock file = /tmp/b.lock\n",
+            path.display()
+        );
+        let file = write_config(&config);
+        let err = parse_config_modules(file.path()).expect_err("duplicate rejected");
+        assert!(err.to_string().contains("lock file"));
+    }
+
     #[test]
     fn multiple_modules_with_independent_boolean_settings() {
         let dir = TempDir::new().expect("create temp dir");
