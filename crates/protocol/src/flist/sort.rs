@@ -287,6 +287,45 @@ pub struct CleanResult {
     pub flags_merged: usize,
 }
 
+/// Resolves a duplicate-name pair during a file-list clean, single-sourcing the
+/// upstream tie-break for both the receiver's [`flist_clean`] and the sender's
+/// [`super::dual::DualFileList::dedup_with_parallel`].
+///
+/// `write` is the currently-kept entry, `read` the later duplicate. Returns
+/// `true` when the caller must replace `write` with `read` (take the read
+/// entry), `false` to keep `write`. Updates `stats` for the removed duplicate
+/// and any merged directory flag.
+///
+/// # Upstream Reference
+///
+/// - `flist.c:3050-3082` - "If one is a dir and the other is not, we want to
+///   keep the dir because it might have contents in the list. Otherwise keep
+///   the first one." When both are dirs, upstream merges the vital flags into
+///   the survivor (`fp->flags |= file->flags & (FLAG_TOP_DIR|FLAG_CONTENT_DIR)`).
+pub(super) fn resolve_duplicate(
+    write: &mut FileEntry,
+    read: &FileEntry,
+    stats: &mut CleanResult,
+) -> bool {
+    stats.duplicates_removed += 1;
+    match (write.is_dir(), read.is_dir()) {
+        // Keep the directory (read) over the plain file (write).
+        (false, true) => true,
+        // Keep the directory (write) over the plain file (read).
+        (true, false) => false,
+        // Both directories - keep the first, merge the content-dir flag.
+        (true, true) => {
+            if read.content_dir() {
+                write.set_content_dir(true);
+            }
+            stats.flags_merged += 1;
+            false
+        }
+        // Both plain entries - keep the first.
+        (false, false) => false,
+    }
+}
+
 /// Cleans a sorted file list in-place by removing duplicates and merging directory flags.
 ///
 /// This mirrors upstream's `clean_flist()` which operates in-place with zero allocation,
@@ -337,33 +376,12 @@ pub fn flist_clean(mut file_list: Vec<FileEntry>) -> (Vec<FileEntry>, CleanResul
             continue;
         }
 
-        // Duplicate found - decide which to keep at position `w`
-        let w_is_dir = file_list[w].is_dir();
-        let r_is_dir = file_list[r].is_dir();
-
-        match (w_is_dir, r_is_dir) {
-            (false, true) => {
-                // Keep the directory (at r), replace current write position
-                file_list.swap(w, r);
-                stats.duplicates_removed += 1;
-            }
-            (true, false) => {
-                // Keep current (directory at w), drop r
-                stats.duplicates_removed += 1;
-            }
-            (true, true) => {
-                // Both directories - merge flags into w
-                // upstream: flist.c merges FLAG_TOP_DIR, FLAG_CONTENT_DIR
-                if file_list[r].content_dir() {
-                    file_list[w].set_content_dir(true);
-                }
-                stats.duplicates_removed += 1;
-                stats.flags_merged += 1;
-            }
-            (false, false) => {
-                // Both files - keep first (at w)
-                stats.duplicates_removed += 1;
-            }
+        // Duplicate found - decide which entry survives at position `w`.
+        // Split the borrow so the write entry is `&mut` and the read entry
+        // `&` simultaneously; a `true` verdict means take the read entry.
+        let (left, right) = file_list.split_at_mut(r);
+        if resolve_duplicate(&mut left[w], &right[0], &mut stats) {
+            file_list.swap(w, r);
         }
 
         r += 1;

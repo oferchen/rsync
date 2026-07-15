@@ -55,6 +55,37 @@ sort-suppression rationale).
 All three drive the real `receive_file_list` decode path with crafted wire
 buffers via the existing receiver flist harness.
 
+### Sender-side dedup (NDX-sync fix)
+
+A receiver-only dedup desyncs the wire NDX: oc's sender never ran
+`flist_sort_and_clean`, so with `--files-from` a redundant list entry produced
+a duplicate name in the transmitted list that the new receiver pass then
+removed - the receiver's entry count no longer matched the sender's NDX
+numbering, and the remote leg died with `RERR_PROTOCOL` (code 16). The local
+leg was unaffected because sender and receiver share one in-memory list.
+
+Upstream runs the pass on BOTH sides (`send_file_list` at `flist.c:2544`,
+`recv_file_list` at `flist.c:2771`); the sender dedups first so the receiver's
+identical pass is idempotent. This PR mirrors that: a parallel-aware
+`DualFileList::dedup_with_parallel` runs on the sender right after the sort,
+removing duplicates while keeping the generator's `source_bases` array aligned.
+Both sides now share one tie-break helper (`resolve_duplicate`), so the sender
+and receiver converge to the same sorted+cleaned list.
+
+`am_sender` asymmetry and `strip_root`: upstream's sender marks a duplicate
+directory `FLAG_DUPLICATE` and keeps it for its in-place `dir_flist` tree
+(`flist.c:3067`); oc has no such tree and converges both sides to the same list,
+so keeping a dup dir only on the sender would itself desync the NDX count.
+oc therefore drops symmetrically - verified dest-correct for INC_RECURSE
+(recursive push/pull and `--relative` overlapping paths) over `lsh`. The dedup
+primitive does not implement `strip_root` (no leading-slash strip), so neither
+side's `strip_root` semantics change.
+
+Verified locally over `support/lsh.sh`: all four `files-from` host combinations
+(both `filehost` x `srchost`) exit 0 with `todir == chkdir`; plain and recursive
+remote push/pull match a local copy byte-for-byte (no NDX shift on
+duplicate-free lists).
+
 ### Overlap with the INC_RECURSE sub-list dedup work
 
 This closes the duplicate-clean portion of `flist_sort_and_clean` for the
