@@ -262,6 +262,78 @@ pub(crate) fn parse_client_info(client_args: &[String]) -> Cow<'_, str> {
     Cow::Borrowed("")
 }
 
+/// Extracts a peer's advertised `(protocol, subprotocol)` from the `-e`
+/// capability payload embedded in a compact server flag string, mirroring
+/// upstream `check_sub_protocol`'s parse of `client_info` (compat.c:139-148).
+///
+/// Upstream's `client_info` is the raw value of the client's `-e` option
+/// (`client_info = shell_cmd`, compat.c:163-164). A pre-release client
+/// negotiating the newest protocol emits `-e<proto>.<sub><caps>`
+/// (options.c:3031-3036), e.g. `-e32.7LsfxCIvu`; a release client emits
+/// `-e.<caps>`, e.g. `-e.LsfxCIvu`. `check_sub_protocol()` then computes
+/// `their_protocol = atoi(client_info)` and, when a `.` follows,
+/// `their_sub = atoi(dot+1)`. The leading `.` of a release payload makes the
+/// first `atoi` return `0`, folding into the "no pre-release info" branch.
+///
+/// Returns `(0, 0)` when there is no usable VER.SUB - a release peer, no `-e`
+/// payload, or a value whose protocol or subprotocol parses as zero - so the
+/// caller's `check_sub_protocol` is a no-op against every stock release peer.
+pub(crate) fn parse_peer_subprotocol(flag_string: &str) -> (u8, u8) {
+    let Some(info) = e_capability_payload(flag_string) else {
+        return (0, 0);
+    };
+    // upstream: compat.c:140 `atoi(client_info)` - a leading '.' (release peer)
+    // or any non-digit start yields 0.
+    let their_protocol = leading_atoi(info);
+    if their_protocol == 0 {
+        return (0, 0);
+    }
+    // upstream: compat.c:141 `strchr(client_info, '.')` then `atoi(dot+1)`.
+    let Some(dot) = info.find('.') else {
+        return (0, 0);
+    };
+    let their_sub = leading_atoi(&info[dot + 1..]);
+    if their_sub == 0 {
+        return (0, 0);
+    }
+    (their_protocol, their_sub)
+}
+
+/// Returns the raw capability payload following the `-e` option letter in a
+/// compact flag string (everything after the first `e` in a `-`-prefixed,
+/// non-`--` token), WITHOUT stripping the leading VER.SUB placeholder.
+///
+/// This is upstream's `client_info` string. Unlike [`parse_client_info`], the
+/// leading `.`/`<proto>.<sub>` prefix is preserved so the subprotocol can be
+/// read by [`parse_peer_subprotocol`].
+fn e_capability_payload(flag_string: &str) -> Option<&str> {
+    for token in flag_string.split_whitespace() {
+        if token.starts_with('-')
+            && !token.starts_with("--")
+            && let Some(e_pos) = token.find('e')
+            && e_pos + 1 < token.len()
+        {
+            return Some(&token[e_pos + 1..]);
+        }
+    }
+    None
+}
+
+/// Mirrors C `atoi` for the leading run of ASCII digits, saturating at
+/// `u8::MAX`. A non-digit prefix (e.g. the release `.` placeholder) yields 0.
+fn leading_atoi(s: &str) -> u8 {
+    let mut value: u32 = 0;
+    for byte in s.bytes() {
+        if !byte.is_ascii_digit() {
+            break;
+        }
+        value = value
+            .saturating_mul(10)
+            .saturating_add(u32::from(byte - b'0'));
+    }
+    value.min(u32::from(u8::MAX)) as u8
+}
+
 /// Builds compatibility flags based on client capabilities.
 ///
 /// Uses table-driven approach for maintainability. This mirrors upstream

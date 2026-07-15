@@ -66,7 +66,10 @@ pub fn run_server_stdio(
     // The handshake is intrinsically part of the server body; perform it inside
     // the same driver invocation so the tokio path is a drop-in for the
     // threaded `transfer::run_server_stdio` (which does handshake + transfer).
-    let handshake = transfer::perform_handshake(stdin, stdout)?;
+    // upstream: compat.c:600-602 - reconcile a pre-release peer's subprotocol
+    // (carried in its `-e` capability string) before advertising our version.
+    // Wire-identical to a plain handshake for any stock release peer.
+    let handshake = transfer::perform_server_handshake(stdin, stdout, &config.flag_string)?;
     with_transfer_runtime(|handle| {
         transfer::run_server_with_handshake_on(
             handle, config, handshake, stdin, stdout, progress, None, None,

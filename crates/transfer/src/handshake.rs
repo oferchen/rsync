@@ -16,7 +16,10 @@
 use std::io::{self, BufRead, BufReader, Read, Write};
 use std::sync::Arc;
 
-use protocol::{CompatibilityFlags, NegotiationResult, ProtocolVersion, select_highest_mutual};
+use protocol::{
+    CompatibilityFlags, NegotiationResult, ProtocolVersion, check_sub_protocol,
+    get_subprotocol_version, select_highest_mutual,
+};
 
 /// Re-applies an adopted daemon `MSG_IO_TIMEOUT` to the live client socket.
 ///
@@ -94,6 +97,57 @@ pub fn perform_handshake(
     stdout: &mut dyn Write,
 ) -> io::Result<HandshakeResult> {
     perform_handshake_with_max(stdin, stdout, ProtocolVersion::NEWEST)
+}
+
+/// Performs the server-side version handshake, reconciling a pre-release peer's
+/// subprotocol before advertising our protocol version.
+///
+/// upstream: compat.c:600-602 `setup_protocol()` - on the server side of a
+/// non-local (remote-shell) transfer the server runs `check_sub_protocol()`
+/// (compat.c:133-160) against the client's advertised `VER.SUB` BEFORE it writes
+/// its own protocol version. The client's `VER.SUB` rides its `-e` capability
+/// string (`client_info = shell_cmd`, compat.c:163-164), which oc receives in the
+/// compact server flag string. When both sides are final releases (subprotocol
+/// 0) this is a no-op and the exchange is byte-identical to [`perform_handshake`];
+/// only a pre-release peer triggers the one-step downgrade.
+///
+/// `client_flags` is the compact server flag string the client sent (oc's
+/// equivalent of upstream `shell_cmd`). A release peer that advertised no
+/// pre-release `VER.SUB` yields no downgrade and the uncapped newest-version
+/// handshake stands.
+pub fn perform_server_handshake(
+    stdin: &mut dyn Read,
+    stdout: &mut dyn Write,
+    client_flags: &str,
+) -> io::Result<HandshakeResult> {
+    let effective = reconcile_subprotocol(ProtocolVersion::NEWEST, client_flags);
+    perform_handshake_with_max(stdin, stdout, effective)
+}
+
+/// Applies upstream `check_sub_protocol()` (compat.c:133-160) to derive the
+/// protocol version the server advertises after reconciling the peer's
+/// pre-release `VER.SUB`.
+///
+/// upstream: compat.c:602 - the reconciliation runs against `protocol_version`
+/// (here `max_version`, the newest version the server would otherwise advertise)
+/// and lowers it by one step when the peer is a pre-release whose subprotocol is
+/// incompatible with ours. A stock release peer parses to `(0, 0)` and leaves the
+/// version unchanged, so the write remains wire-identical to [`perform_handshake`].
+fn reconcile_subprotocol(max_version: ProtocolVersion, client_flags: &str) -> ProtocolVersion {
+    let (their_protocol, their_sub) = crate::setup::parse_peer_subprotocol(client_flags);
+    // upstream: compat.c:137 `get_subprotocol_version()` - a release oc build
+    // (SUBPROTOCOL_VERSION == 0) always advertises subprotocol 0.
+    let our_sub = get_subprotocol_version(max_version.as_u8());
+    let reconciled = check_sub_protocol(max_version.as_u8(), our_sub, their_protocol, their_sub);
+    if reconciled == max_version.as_u8() {
+        return max_version;
+    }
+    // check_sub_protocol never raises the version. Clamp the (unreachable for a
+    // release peer) sub-OLDEST result to the floor so the downgrade direction is
+    // preserved, mirroring upstream which advertises the lowered value and lets
+    // the later MIN_PROTOCOL_VERSION guard reject anything too old.
+    let floor = ProtocolVersion::OLDEST.as_u8();
+    ProtocolVersion::try_from(reconciled.max(floor)).unwrap_or(max_version)
 }
 
 /// Performs the version handshake while advertising at most `max_version`.
@@ -339,6 +393,109 @@ mod tests {
 
         let result = perform_handshake(&mut stdin, &mut stdout);
         assert!(result.is_err());
+    }
+
+    // upstream: compat.c:600-602 + compat.c:156-159 - the non-local server runs
+    // check_sub_protocol() before writing its version. A pre-release peer of the
+    // SAME protocol whose subprotocol differs from ours forces the one-step
+    // downgrade so both sides drop to the last mutually compatible protocol.
+    // This is the WHY: without it, an oc server would advertise 32 to a
+    // pre-release-32 peer and the two would disagree on wire semantics.
+    #[test]
+    fn server_handshake_downgrades_against_equal_prerelease_peer() {
+        // Peer advertises numeric protocol 32 and, via its `-e` capability
+        // string, subprotocol 7 of protocol 32 (a pre-release).
+        let mut stdin = Cursor::new(vec![32, 0, 0, 0]);
+        let mut stdout = Vec::new();
+
+        let result = perform_server_handshake(&mut stdin, &mut stdout, "-logDtpre32.7LsfxCIvu")
+            .expect("handshake succeeds");
+
+        assert_eq!(result.protocol, ProtocolVersion::V31);
+        assert_eq!(
+            stdout[0], 31,
+            "server must advertise the downgraded version"
+        );
+    }
+
+    // upstream: compat.c:150-154 - a pre-release of an OLDER protocol pins the
+    // negotiated version to the last release of that older protocol.
+    #[test]
+    fn server_handshake_downgrades_against_older_prerelease_peer() {
+        // Peer is a pre-release of protocol 30 (subprotocol 5).
+        let mut stdin = Cursor::new(vec![30, 0, 0, 0]);
+        let mut stdout = Vec::new();
+
+        let result = perform_server_handshake(&mut stdin, &mut stdout, "-logDtpre30.5LsfxCIvu")
+            .expect("handshake succeeds");
+
+        assert_eq!(result.protocol, ProtocolVersion::V29);
+        assert_eq!(stdout[0], 29, "pins to their_protocol - 1");
+    }
+
+    // upstream: compat.c:139-148 - a stock release peer advertises `-e.<caps>`
+    // whose leading '.' makes `atoi` return 0, so check_sub_protocol is a no-op.
+    // This is the wire-transparency guarantee: current behaviour is unchanged for
+    // every real release peer.
+    #[test]
+    fn server_handshake_noop_against_release_peer() {
+        let mut stdin = Cursor::new(vec![32, 0, 0, 0]);
+        let mut stdout = Vec::new();
+
+        let result = perform_server_handshake(&mut stdin, &mut stdout, "-logDtpre.LsfxCIvu")
+            .expect("handshake succeeds");
+
+        assert_eq!(result.protocol, ProtocolVersion::NEWEST);
+        assert_eq!(stdout[0], ProtocolVersion::NEWEST.as_u8());
+    }
+
+    // A flag string with no `-e` capability payload carries no VER.SUB, so there
+    // is nothing to reconcile and the newest version stands.
+    #[test]
+    fn server_handshake_noop_without_capability_string() {
+        let mut stdin = Cursor::new(vec![32, 0, 0, 0]);
+        let mut stdout = Vec::new();
+
+        let result = perform_server_handshake(&mut stdin, &mut stdout, "-logDtpr")
+            .expect("handshake succeeds");
+
+        assert_eq!(result.protocol, ProtocolVersion::NEWEST);
+        assert_eq!(stdout[0], ProtocolVersion::NEWEST.as_u8());
+    }
+
+    // upstream: compat.c:600-601 - check_sub_protocol runs ONLY on the server
+    // (am_server && !local_server). The client-side handshake has no client_info
+    // channel, so a plain `perform_handshake` never reconciles: even when the
+    // peer would be a pre-release, the client leaves the version untouched.
+    #[test]
+    fn client_handshake_never_reconciles() {
+        let mut stdin = Cursor::new(vec![32, 0, 0, 0]);
+        let mut stdout = Vec::new();
+
+        let result = perform_handshake(&mut stdin, &mut stdout).expect("handshake succeeds");
+
+        assert_eq!(result.protocol, ProtocolVersion::NEWEST);
+        assert_eq!(stdout[0], ProtocolVersion::NEWEST.as_u8());
+    }
+
+    // Pins the reconciliation mapping directly, independent of the I/O exchange.
+    // upstream: compat.c:133-160 check_sub_protocol() driven from a release side.
+    #[test]
+    fn reconcile_subprotocol_matches_check_sub_protocol() {
+        let newest = ProtocolVersion::NEWEST;
+        // Release peer / no VER.SUB -> unchanged.
+        assert_eq!(reconcile_subprotocol(newest, "-e.LsfxCIvu"), newest);
+        assert_eq!(reconcile_subprotocol(newest, ""), newest);
+        // Equal-protocol pre-release peer -> newest - 1.
+        assert_eq!(
+            reconcile_subprotocol(newest, "-e32.4LsfxCIvu"),
+            ProtocolVersion::V31,
+        );
+        // Older-protocol pre-release peer -> their_protocol - 1.
+        assert_eq!(
+            reconcile_subprotocol(newest, "-e31.2LsfxCIvu"),
+            ProtocolVersion::V30,
+        );
     }
 
     #[test]

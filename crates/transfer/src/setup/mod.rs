@@ -25,6 +25,7 @@ mod negotiator;
 mod restrictions;
 mod types;
 
+pub(crate) use capability::parse_peer_subprotocol;
 pub use capability::{build_capability_string, build_capability_string_suffix};
 pub use compat::exchange_compat_flags_direct;
 pub use negotiator::{
