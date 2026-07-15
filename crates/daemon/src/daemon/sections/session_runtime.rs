@@ -341,14 +341,7 @@ fn handle_legacy_session(
         if let Some(log) = log_sink.as_ref() {
             log_list_request(log, peer_host.as_deref(), peer_addr);
         }
-        respond_with_module_list(
-            reader.get_mut(),
-            &mut limiter,
-            modules,
-            peer_addr.ip(),
-            reverse_lookup,
-            messages,
-        )?;
+        respond_with_module_list(reader.get_mut(), &mut limiter, modules, messages)?;
         // FSM: -> Closing after sending the module list and EXIT.
         _ = conn_state
             .transition(ConnectionState::Closing)

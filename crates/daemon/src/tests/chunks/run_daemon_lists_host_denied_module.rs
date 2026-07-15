@@ -1,5 +1,5 @@
 #[test]
-fn run_daemon_filters_modules_during_list_request() {
+fn run_daemon_lists_host_denied_module() {
     let _lock = ENV_LOCK.lock().expect("env lock");
     let _primary = EnvGuard::set(DAEMON_FALLBACK_ENV, OsStr::new("0"));
     let _secondary = EnvGuard::set(CLIENT_FALLBACK_ENV, OsStr::new("0"));
@@ -10,6 +10,9 @@ fn run_daemon_filters_modules_during_list_request() {
     // so the daemon module-arg parser doesn't swallow escapes (see PR #4560).
     let module_path = std::env::temp_dir().display().to_string().replace('\\', "/");
     let mut file = NamedTempFile::new().expect("config file");
+    // `private` restricts access to 10.0.0.0/8, so the loopback client is
+    // denied on connect. It is still `list = yes` (the default), so it MUST
+    // appear in the listing. Visibility and access are separate concerns.
     writeln!(
         file,
         "[public]\npath = {module_path}\n\n[private]\npath = {module_path}\nhosts allow = 10.0.0.0/8\n",
@@ -38,18 +41,25 @@ fn run_daemon_filters_modules_during_list_request() {
     stream.write_all(b"#list\n").expect("send list request");
     stream.flush().expect("flush list request");
 
+    // upstream: clientserver.c:1261-1272 send_listing() lists every module with
+    // `list = yes` and applies NO hosts allow/deny filtering. The host-denied
+    // `private` module therefore appears alongside `public`; the deny only
+    // takes effect on the module-open path (clientserver.c:728 allow_access).
     line.clear();
     reader.read_line(&mut line).expect("public module");
     assert_eq!(line, "public         \t\n");
 
     line.clear();
+    reader.read_line(&mut line).expect("host-denied private module");
+    assert_eq!(line, "private        \t\n");
+
+    line.clear();
     reader
         .read_line(&mut line)
-        .expect("exit line after accessible modules");
+        .expect("exit line after all listable modules");
     assert_eq!(line, "@RSYNCD: EXIT\n");
 
     drop(reader);
     let result = handle.join().expect("daemon thread");
     assert!(result.is_ok());
 }
-
