@@ -78,6 +78,37 @@ pub(super) fn create_token_encoder(
     }
 }
 
+/// Selects the whole-stream compression level, applying upstream's
+/// skip-compress "match all" special case.
+///
+/// When `match_all` is set (a daemon module's `dont compress = *`) and the
+/// negotiated codec is zlib/zlibx, the entire deflate stream is initialised at
+/// level 0 (store) instead of compressing per block. All other cases keep the
+/// `configured` level.
+///
+/// upstream: token.c:206-211 `init_set_compression()` - a bare `*` in the
+/// sender's dont-compress match list sets `per_file_default_level =
+/// skip_compression_level` (`Z_NO_COMPRESSION` for zlib), which token.c:378
+/// feeds into `deflateInit2()` to store the whole stream. zstd/lz4 keep
+/// `do_compression_level` (token.c:748), so the match-all case never lowers
+/// their level.
+pub(super) fn whole_stream_compression_level(
+    match_all: bool,
+    codec: CompressionAlgorithm,
+    configured: CompressionLevel,
+) -> CompressionLevel {
+    if match_all
+        && matches!(
+            codec,
+            CompressionAlgorithm::Zlib | CompressionAlgorithm::ZlibX
+        )
+    {
+        CompressionLevel::None
+    } else {
+        configured
+    }
+}
+
 /// Protocol version historically used to initialise the zlib token encoder.
 ///
 /// Matches the previous `CompressedTokenEncoder::default()` behaviour so this
@@ -806,6 +837,59 @@ pub(super) fn write_delta_with_inline_checksum<W: Write>(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // WHY: a daemon module's `dont compress = *` must store the whole zlib
+    // stream (level 0), because upstream token.c:206-211 sets
+    // per_file_default_level = skip_compression_level for a `*` match list and
+    // token.c:378 feeds it into deflateInit2(). Compressing per block instead
+    // would diverge from upstream's observable "no compression savings" output.
+    #[test]
+    fn whole_stream_store_forces_level_none_for_zlib() {
+        assert_eq!(
+            whole_stream_compression_level(
+                true,
+                CompressionAlgorithm::Zlib,
+                CompressionLevel::Best
+            ),
+            CompressionLevel::None,
+        );
+        assert_eq!(
+            whole_stream_compression_level(
+                true,
+                CompressionAlgorithm::ZlibX,
+                CompressionLevel::Best,
+            ),
+            CompressionLevel::None,
+        );
+    }
+
+    // WHY: upstream feeds per_file_default_level only into deflateInit2() (zlib).
+    // zstd/lz4 use do_compression_level unconditionally (token.c:748), so the
+    // match-all case must NOT lower their level.
+    #[test]
+    fn whole_stream_store_leaves_non_zlib_codecs_unchanged() {
+        for codec in [CompressionAlgorithm::Zstd, CompressionAlgorithm::LZ4] {
+            assert_eq!(
+                whole_stream_compression_level(true, codec, CompressionLevel::Best),
+                CompressionLevel::Best,
+            );
+        }
+    }
+
+    // WHY: without the match-all trigger (normal skip list or none) the
+    // configured level must pass through untouched so ordinary transfers stay
+    // wire-identical to upstream.
+    #[test]
+    fn without_match_all_configured_level_passes_through() {
+        assert_eq!(
+            whole_stream_compression_level(
+                false,
+                CompressionAlgorithm::Zlib,
+                CompressionLevel::Best,
+            ),
+            CompressionLevel::Best,
+        );
+    }
 
     #[cfg(feature = "zstd")]
     #[test]

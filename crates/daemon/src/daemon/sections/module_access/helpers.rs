@@ -174,6 +174,22 @@ pub(crate) fn format_bandwidth_rate(value: NonZeroU64) -> String {
     }
 }
 
+/// Reports whether a daemon `dont compress` value collapses to the whole-stream
+/// "match all" special case.
+///
+/// Upstream treats a bare `*` token in the sender's dont-compress match list as
+/// a signal to store the entire zlib stream (level 0) rather than compress per
+/// block. Any other suffix present alongside the `*` is discarded.
+///
+/// # Upstream Reference
+///
+/// - `token.c:206-211`: `init_set_compression()` optimises a `*` match-string,
+///   setting `per_file_default_level = skip_compression_level` and clearing the
+///   per-file suffix tree.
+fn dont_compress_is_match_all(value: &str) -> bool {
+    value.split_whitespace().any(|token| token == "*")
+}
+
 /// Parses the daemon `dont compress` parameter into a `SkipCompressList`.
 ///
 /// The daemon format uses space-separated glob-style suffixes (e.g., `"*.gz *.zip *.jpg"`).

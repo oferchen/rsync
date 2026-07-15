@@ -181,6 +181,24 @@ pub struct ConnectionConfig {
     /// - `options.c:89`: `do_compression_threads` global
     /// - `token.c:701`: `ZSTD_CCtx_setParameter(.., ZSTD_c_nbWorkers, ..)`
     pub compression_threads: Option<std::num::NonZeroU8>,
+    /// Whole-stream compression store triggered by a daemon module's
+    /// `dont compress = *` (upstream's match-all special case).
+    ///
+    /// When true and the negotiated codec is zlib/zlibx, the sender initialises
+    /// the deflate stream at level 0 (store) for the entire transfer rather than
+    /// compressing per block. Mirrors upstream `init_set_compression()`, where a
+    /// bare `*` in the sender's dont-compress match list sets
+    /// `per_file_default_level = skip_compression_level`. Has no effect on
+    /// zstd/lz4, which use `do_compression_level`. A client's `--skip-compress`
+    /// never sets this: upstream discards it (`f = ""`).
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `token.c:206-211`: `init_set_compression()` `*` match-string optimization
+    /// - `token.c:378`: `deflateInit2(.., per_file_default_level, ..)` (zlib store)
+    /// - `token.c:748`: zstd uses `do_compression_level`, ignoring the match-all case
+    /// - `token.c:182`: non-daemon `--skip-compress` sets `f = ""`
+    pub dont_compress_match_all: bool,
     /// Pre-read `--files-from` data for forwarding to a remote daemon.
     ///
     /// When the client has `--files-from` pointing to stdin or a local file,
