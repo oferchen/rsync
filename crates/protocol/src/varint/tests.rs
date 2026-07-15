@@ -2010,12 +2010,20 @@ fn read_varint_bounded_accepts_in_range() {
 fn read_varint_bounded_rejects_below_and_above() {
     // A value one past either boundary is a protocol error (InvalidData). This
     // is the parity guarantee vs upstream io.c:read_varint_bounded, which aborts
-    // with RERR_PROTOCOL; callers must not receive an out-of-range value.
+    // with exit_cleanup(RERR_PROTOCOL); callers must not receive an out-of-range
+    // value. WHY the tag matters: a bare InvalidData maps to RERR_STREAMIO (12),
+    // but upstream exits 2 here - a drop-in tool that distinguishes "hostile
+    // wire value" (2) from "stream broke" (12) would misbehave on the wrong code.
     for (value, lo, hi) in [(-1, 0, 10), (11, 0, 10)] {
         let mut cursor = Cursor::new(encoded(value));
         let err = read_varint_bounded(&mut cursor, lo, hi, "flag")
             .expect_err("out-of-range value must be rejected");
         assert_eq!(err.kind(), io::ErrorKind::InvalidData);
+        assert!(
+            err.get_ref()
+                .is_some_and(|e| e.is::<crate::protocol_violation::ProtocolViolation>()),
+            "out-of-range wire value must be tagged ProtocolViolation (RERR_PROTOCOL=2)"
+        );
     }
 }
 
@@ -2036,6 +2044,11 @@ fn read_varint_size_rejects_negative() {
     let err =
         read_varint_size(&mut cursor, 1024, "xattr").expect_err("negative size must be rejected");
     assert_eq!(err.kind(), io::ErrorKind::InvalidData);
+    assert!(
+        err.get_ref()
+            .is_some_and(|e| e.is::<crate::protocol_violation::ProtocolViolation>()),
+        "negative wire size must be tagged ProtocolViolation (RERR_PROTOCOL=2)"
+    );
 }
 
 #[test]
@@ -2044,6 +2057,11 @@ fn read_varint_size_rejects_above_max() {
     let err = read_varint_size(&mut cursor, 1024, "xattr")
         .expect_err("size exceeding max must be rejected");
     assert_eq!(err.kind(), io::ErrorKind::InvalidData);
+    assert!(
+        err.get_ref()
+            .is_some_and(|e| e.is::<crate::protocol_violation::ProtocolViolation>()),
+        "over-max wire size must be tagged ProtocolViolation (RERR_PROTOCOL=2)"
+    );
 }
 
 #[test]
