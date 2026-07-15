@@ -288,6 +288,10 @@ mod tests {
         assert_eq!(total, 6);
 
         let mut ctx = inc_recurse_receiver();
+        // Stand in for an initial flist that already carried the three parent
+        // directories (dir0..dir2), so each sub-list's dir_ndx (0..2) passes the
+        // fail-closed `dir_ndx >= dir_flist_used` range check.
+        ctx.dir_flist_used = segments.len();
         // A fresh INC_RECURSE receiver has no entries yet and is not at EOF.
         assert_eq!(ctx.file_list().len(), 0);
         assert!(!ctx.flist_eof);
@@ -338,6 +342,9 @@ mod tests {
         let (wire, total) = encode_segments(&segments);
 
         let mut ctx = inc_recurse_receiver();
+        // Two parent dirs (s0, s1) were in the initial flist; seed the count so
+        // dir_ndx 0 and 1 pass the fail-closed range check.
+        ctx.dir_flist_used = segments.len();
         let mut reader = Cursor::new(wire);
         let mut codec = create_ndx_codec(PROTOCOL);
 
@@ -481,5 +488,120 @@ mod tests {
         assert!(ctx.ensure_flat_idx(0, &mut reader, &mut codec).unwrap());
         assert!(!ctx.ensure_flat_idx(1, &mut reader, &mut codec).unwrap());
         assert_eq!(reader.position(), 0);
+    }
+
+    /// Encodes a single INC_RECURSE sub-list header framed for `dir_ndx`, its
+    /// entries, and the `NDX_FLIST_EOF` terminator. Unlike `encode_segments`,
+    /// the `dir_ndx` is caller-chosen so a malformed/out-of-range index can be
+    /// forced onto the wire.
+    fn encode_segment_with_dir_ndx(dir_ndx: i32, entries: &[(&str, u64)]) -> Vec<u8> {
+        let protocol = ProtocolVersion::try_from(PROTOCOL).unwrap();
+        let mut writer = FileListWriter::new(protocol);
+        let mut ndx_codec = create_ndx_codec(PROTOCOL);
+        let mut wire = Vec::new();
+        ndx_codec
+            .write_ndx(&mut wire, NDX_FLIST_OFFSET - dir_ndx)
+            .unwrap();
+        for (name, size) in entries {
+            let mut e = FileEntry::new_file(PathBuf::from(name), *size, 0o100644);
+            e.set_mtime(1_700_000_000, 0);
+            writer.write_entry(&mut wire, &e).unwrap();
+        }
+        writer.write_end(&mut wire, None).unwrap();
+        ndx_codec.write_ndx(&mut wire, NDX_FLIST_EOF).unwrap();
+        wire
+    }
+
+    /// A `dir_ndx` equal to, past, or absurdly beyond `dir_flist_used` is
+    /// untrusted wire data that references a directory the receiver never saw.
+    ///
+    /// WHY: upstream `flist.c:2622-2626` aborts with `exit_cleanup(RERR_PROTOCOL)`
+    /// on `dir_ndx >= dir_flist->used`. oc must fail closed - reject with a
+    /// `ProtocolViolation` (RERR_PROTOCOL) and append nothing - rather than trust
+    /// the sender's index or (for a huge value) panic on the framing arithmetic.
+    #[test]
+    fn out_of_range_sublist_dir_ndx_is_rejected_fail_closed() {
+        for bad in [1i32, 5, 2_000_000_000] {
+            let wire = encode_segment_with_dir_ndx(bad, &[("x/a.txt", 1)]);
+            let mut ctx = inc_recurse_receiver();
+            // Only dir_ndx 0 would be in range.
+            ctx.dir_flist_used = 1;
+            let err = ctx
+                .receive_extra_file_lists(&mut Cursor::new(wire))
+                .expect_err("out-of-range dir_ndx must be rejected, not appended");
+            assert_eq!(err.kind(), std::io::ErrorKind::InvalidData);
+            assert!(
+                err.get_ref()
+                    .and_then(|e| e.downcast_ref::<protocol::ProtocolViolation>())
+                    .is_some(),
+                "range rejection must map to RERR_PROTOCOL, got {err:?}"
+            );
+            assert!(
+                err.to_string().contains("refusing invalid dir_ndx"),
+                "unexpected message: {err}"
+            );
+            assert_eq!(
+                ctx.file_list().len(),
+                0,
+                "no entries may be appended when the header is rejected"
+            );
+        }
+    }
+
+    /// A second sub-list for a directory already served is a malicious duplicate.
+    ///
+    /// WHY: upstream `flist.c:2627-2632` sets `FLAG_GOT_DIR_FLIST` and aborts with
+    /// `RERR_PROTOCOL` on the second sub-list; without the guard a sender could
+    /// replay sub-lists to grow `file_list` without bound. The first sub-list for
+    /// dir_ndx 0 is accepted, the second is refused.
+    #[test]
+    fn duplicate_sublist_for_same_dir_is_rejected() {
+        let protocol = ProtocolVersion::try_from(PROTOCOL).unwrap();
+        let mut writer = FileListWriter::new(protocol);
+        let mut ndx_codec = create_ndx_codec(PROTOCOL);
+        let mut wire = Vec::new();
+        for entries in [&[("dir0/a.txt", 1u64)][..], &[("dir0/b.txt", 2u64)][..]] {
+            // Both headers target dir_ndx 0.
+            ndx_codec.write_ndx(&mut wire, NDX_FLIST_OFFSET).unwrap();
+            for (name, size) in entries {
+                let mut e = FileEntry::new_file(PathBuf::from(name), *size, 0o100644);
+                e.set_mtime(1_700_000_000, 0);
+                writer.write_entry(&mut wire, &e).unwrap();
+            }
+            writer.write_end(&mut wire, None).unwrap();
+        }
+        ndx_codec.write_ndx(&mut wire, NDX_FLIST_EOF).unwrap();
+
+        let mut ctx = inc_recurse_receiver();
+        ctx.dir_flist_used = 1;
+        let err = ctx
+            .receive_extra_file_lists(&mut Cursor::new(wire))
+            .expect_err("duplicate sub-list for dir 0 must be rejected");
+        assert!(
+            err.get_ref()
+                .and_then(|e| e.downcast_ref::<protocol::ProtocolViolation>())
+                .is_some(),
+            "duplicate rejection must map to RERR_PROTOCOL, got {err:?}"
+        );
+        assert!(
+            err.to_string()
+                .contains("refusing malicious duplicate flist for dir 0"),
+            "unexpected message: {err}"
+        );
+    }
+
+    /// An in-range, non-duplicate `dir_ndx` sub-list is accepted normally - the
+    /// guards must not reject legitimate wire data.
+    #[test]
+    fn in_range_sublist_dir_ndx_is_accepted() {
+        let wire = encode_segment_with_dir_ndx(0, &[("dir0/a.txt", 3u64), ("dir0/b.txt", 4)]);
+        let mut ctx = inc_recurse_receiver();
+        ctx.dir_flist_used = 1;
+        let n = ctx
+            .receive_extra_file_lists(&mut Cursor::new(wire))
+            .expect("in-range dir_ndx must be accepted");
+        assert_eq!(n, 2);
+        assert_eq!(ctx.file_list().len(), 2);
+        assert!(ctx.flist_eof);
     }
 }

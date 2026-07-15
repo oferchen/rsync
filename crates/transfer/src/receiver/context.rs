@@ -6,7 +6,7 @@
 //! [`super::itemize`] module.
 
 use std::cell::RefCell;
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::num::NonZeroU8;
 use std::sync::Arc;
 use std::sync::atomic::Ordering;
@@ -76,6 +76,33 @@ pub struct ReceiverContext {
     /// - `flist.c:101` - `first_flist` pointer
     /// - `receiver.c:573` - `flist_free(first_flist)` advances `first_flist`
     pub(in crate::receiver) first_segment_idx: usize,
+    /// Count of directory entries received so far across the initial file list
+    /// and every INC_RECURSE sub-list, mirroring upstream's `dir_flist->used`.
+    ///
+    /// The sender frames each sub-list header as `NDX_FLIST_OFFSET - dir_ndx`,
+    /// where `dir_ndx` indexes the directories in reception (growth) order. A
+    /// header referencing a directory that has not been received yet
+    /// (`dir_ndx >= dir_flist_used`) is malformed or malicious and is rejected
+    /// fail-closed. The count is taken pre-prune (the `--prune-empty-dirs` pass
+    /// is receiver-only; the sender numbers `dir_ndx` over every directory it
+    /// ships), so a valid transfer never trips the bound.
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `flist.c:2622-2626` - `if (dir_ndx >= dir_flist->used) ... "refusing
+    ///   invalid dir_ndx %u >= %u" ... exit_cleanup(RERR_PROTOCOL)`.
+    pub(in crate::receiver) dir_flist_used: usize,
+    /// Set of `dir_ndx` values that have already been served a sub-list,
+    /// mirroring upstream's per-directory `FLAG_GOT_DIR_FLIST`. A second
+    /// sub-list for the same directory is a malicious duplicate and is rejected
+    /// fail-closed with `RERR_PROTOCOL`.
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `flist.c:2627-2632` - `if (file->flags & FLAG_GOT_DIR_FLIST) ...
+    ///   "refusing malicious duplicate flist for dir %d" ...
+    ///   exit_cleanup(RERR_PROTOCOL)`.
+    pub(in crate::receiver) served_dir_flists: HashSet<i32>,
     /// Cached file list reader for compression state continuity across sub-lists.
     ///
     /// Upstream rsync uses `static` variables in `recv_file_entry()` that persist
@@ -315,6 +342,8 @@ impl ReceiverContext {
             checksum_seed: handshake.checksum_seed,
             ndx_segments: vec![(0, initial_ndx_start)],
             first_segment_idx: 0,
+            dir_flist_used: 0,
+            served_dir_flists: HashSet::new(),
             flist_reader_cache: None,
             uid_list: IdList::new(),
             gid_list: IdList::new(),
