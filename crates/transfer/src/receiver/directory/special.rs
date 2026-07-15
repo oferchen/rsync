@@ -99,20 +99,45 @@ impl ReceiverContext {
             let up_to_date = existing_special_matches(&node_path, entry, is_device);
 
             if !up_to_date {
-                // SEC-1.g: route the obstacle unlink through the sandbox dirfd
-                // when the destination parent is the sandbox root so a TOCTOU
-                // swap between the stat above and this unlink cannot redirect
-                // the syscall. Falls back to path-based removal otherwise. The
-                // result is intentionally ignored: the receiver may attempt but
-                // is not required to succeed at obstacle removal (a dangling
-                // obstacle simply surfaces as a create failure below).
-                let _ = fast_io::unlink_via_sandbox_or_fallback(
-                    sandbox,
-                    dest_dir,
-                    relative_path,
+                // upstream: generator.c:2018-2020 atomic_create - when --backup
+                // is set and an existing item is being replaced, preserve it to
+                // the backup location before it is removed. On backup-mechanism
+                // failure upstream returns 0 from atomic_create (skips the
+                // entry); mirror that by logging and continuing.
+                match self.backup_existing_before_replace(
                     &node_path,
-                    fast_io::UnlinkFlags::File,
-                );
+                    relative_path,
+                    dest_dir,
+                    sandbox,
+                ) {
+                    Ok(true) => {}
+                    Ok(false) => {
+                        // SEC-1.g: route the obstacle unlink through the sandbox
+                        // dirfd when the destination parent is the sandbox root
+                        // so a TOCTOU swap between the stat above and this
+                        // unlink cannot redirect the syscall. Falls back to
+                        // path-based removal otherwise. The result is
+                        // intentionally ignored: a dangling obstacle simply
+                        // surfaces as a create failure below.
+                        let _ = fast_io::unlink_via_sandbox_or_fallback(
+                            sandbox,
+                            dest_dir,
+                            relative_path,
+                            &node_path,
+                            fast_io::UnlinkFlags::File,
+                        );
+                    }
+                    Err(error) => {
+                        debug_log!(
+                            Recv,
+                            1,
+                            "failed to back up existing special file {}: {}",
+                            node_path.display(),
+                            error
+                        );
+                        continue;
+                    }
+                }
 
                 // upstream: generator.c:1663 atomic_create -> do_mknod_at
                 let create_result = if is_device {
