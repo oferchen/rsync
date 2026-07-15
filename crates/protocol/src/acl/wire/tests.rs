@@ -249,6 +249,31 @@ fn recv_ida_entries_eof_reading_count() {
 }
 
 #[test]
+fn recv_ida_entries_exceeds_max_count_is_protocol_violation() {
+    use crate::acl::constants::MAX_WIRE_ACL_ENTRIES;
+    use crate::varint::write_varint;
+
+    // A hostile ACL entry count above the cap. upstream: acls.c:700
+    // recv_ida_entries() reads it via read_varint_bounded(f, 0,
+    // MAX_WIRE_ACL_COUNT, "ACL count") (io.c:1904-1913), which
+    // exit_cleanup(RERR_PROTOCOL) (exit 2) on overrun. WHY it matters: a drop-in
+    // tool must exit 2 (protocol incompatibility) here, not RERR_STREAMIO (12);
+    // the ProtocolViolation tag is what makes the core mapper reproduce exit 2.
+    let mut buf = Vec::new();
+    write_varint(&mut buf, (MAX_WIRE_ACL_ENTRIES as i32) + 1).unwrap();
+
+    let mut cursor = Cursor::new(buf);
+    let err = recv_ida_entries(&mut cursor).expect_err("oversized ACL count must be rejected");
+    assert_eq!(err.kind(), std::io::ErrorKind::InvalidData);
+    assert!(err.to_string().contains("exceeds maximum"));
+    assert!(
+        err.get_ref()
+            .is_some_and(|e| e.is::<crate::protocol_violation::ProtocolViolation>()),
+        "oversized ACL count must be tagged ProtocolViolation (RERR_PROTOCOL=2)"
+    );
+}
+
+#[test]
 fn recv_ida_entries_eof_reading_id() {
     // Count says 1 entry but no id follows
     let data = vec![0x01]; // count = 1
