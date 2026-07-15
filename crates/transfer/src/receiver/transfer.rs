@@ -39,6 +39,8 @@ mod sync;
 #[cfg(feature = "tokio-transfer")]
 mod sync_async;
 
+pub(in crate::receiver) use setup::parse_wire_filters_for_receiver;
+
 use std::io::{self, Read, Write};
 use std::path::{Path, PathBuf};
 

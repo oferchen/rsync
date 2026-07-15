@@ -150,6 +150,13 @@ impl ReceiverContext {
         let removed = self.sanitize_file_list();
         let file_count = file_count - removed;
 
+        // upstream: flist.c:1019-1030 recv_file_entry() re-runs each received
+        // name through the receiver's own filter list and aborts with
+        // RERR_UNSUPPORTED if the sender sent a name the receiver excludes. This
+        // runs after sanitize (which mirrors clean_fname) so the paths are
+        // already cleaned, matching upstream's per-entry ordering.
+        self.recheck_received_filter()?;
+
         let checksum_factory = ChecksumFactory::from_negotiation(
             self.negotiated_algorithms.as_ref(),
             self.protocol,
