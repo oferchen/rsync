@@ -165,6 +165,10 @@ pub fn process_file_response_streaming<R: Read>(
                     .send(FileMessage::WholeFile {
                         begin: begin_msg,
                         data: buf,
+                        expected_checksum: crate::pipeline::messages::ExpectedChecksum {
+                            bytes: expected_checksum,
+                            len: checksum_len,
+                        },
                     })
                     .map_err(|_| {
                         io::Error::new(io::ErrorKind::BrokenPipe, "disk commit thread disconnected")

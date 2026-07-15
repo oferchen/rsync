@@ -10,7 +10,9 @@ use std::io;
 use engine::CleanupManager;
 
 use crate::delta_apply::{ChecksumVerifier, SparseWriteState};
-use crate::pipeline::messages::{BeginMessage, CommitResult, FileMessage};
+use crate::pipeline::messages::{
+    BeginMessage, CommitResult, ComputedChecksum, ExpectedChecksum, FileMessage,
+};
 use crate::pipeline::spsc;
 use crate::temp_guard::TempFileGuard;
 #[cfg(not(unix))]
@@ -61,6 +63,65 @@ fn sum_append_prefix(
         remaining -= to_read as u64;
     }
     Ok(())
+}
+
+/// Finalizes the per-file checksum and compares it against the sender's
+/// trailing whole-file sum.
+///
+/// Returns the computed digest (so the receiver's redo bookkeeping still runs)
+/// and whether verification passed. A missing verifier or a zero-length
+/// expected sum means no checksum was supplied, so it always passes.
+///
+/// # Upstream Reference
+///
+/// - `receiver.c:505` - `sum_end(file_sum1)` computes the whole-file digest.
+/// - `receiver.c:515-519` - `read_buf(f_in, sender_file_sum, ...)` then
+///   `if (fd != -1 && memcmp(file_sum1, sender_file_sum, xfer_sum_len) != 0)
+///   return 0;` - a mismatch yields `recv_ok = 0` and the file is not put into
+///   place.
+fn verify_whole_file_checksum(
+    verifier: Option<ChecksumVerifier>,
+    expected: &ExpectedChecksum,
+) -> (Option<ComputedChecksum>, bool) {
+    let computed = finalize_checksum(verifier);
+    let verify_ok = match computed {
+        Some(ref c) if expected.len > 0 => {
+            c.len == expected.len && c.bytes[..c.len] == expected.bytes[..expected.len]
+        }
+        _ => true,
+    };
+    (computed, verify_ok)
+}
+
+/// Handles a whole-file checksum verification failure for a temp+rename file.
+///
+/// The temp file is retained in the partial dir (when `--partial`/`--partial-dir`
+/// is active) or discarded via the guard's `Drop`; it is never renamed over the
+/// destination. The computed digest is still reported so the receiver queues a
+/// redo (phase 1) or logs the error (phase 2).
+///
+/// # Upstream Reference
+///
+/// - `receiver.c:1039-1056` - on `recv_ok == 0` the temp goes to the partial dir
+///   (`handle_partial_dir(PDIR_CREATE)`) or is unlinked (`do_unlink_at`);
+///   `finish_transfer()` - the destination rename - is skipped.
+fn withhold_failed_commit(
+    config: &DiskCommitConfig,
+    mut cleanup_guard: TempFileGuard,
+    begin: &BeginMessage,
+    bytes_written: u64,
+    computed_checksum: Option<ComputedChecksum>,
+) -> CommitResult {
+    retain_partial_file(config, &mut cleanup_guard, &begin.file_path);
+    drop(cleanup_guard);
+    CommitResult {
+        bytes_written,
+        file_entry_index: begin.file_entry_index,
+        metadata_error: None,
+        computed_checksum,
+        delayed_path: None,
+        backup_notice: None,
+    }
 }
 
 /// Processes a single file: open, write chunks, commit or abort.
@@ -223,7 +284,7 @@ pub(in crate::disk_commit) fn process_file(
                 bytes_written += data.len() as u64;
                 let _ = buf_return_tx.try_send(data);
             }
-            FileMessage::Commit => {
+            FileMessage::Commit { expected_checksum } => {
                 // upstream: fileio.c:43 sparse_end() - flush the trailing hole
                 // and hand the logical length + in-basis hole ranges to the
                 // commit step for ftruncate + punch (no materialized byte).
@@ -239,6 +300,25 @@ pub(in crate::disk_commit) fn process_file(
 
                 output.flush_and_sync(config.do_fsync, &begin.file_path)?;
                 output.finish(config.do_fsync, &begin.file_path)?;
+
+                // upstream: receiver.c:505-519 - compute the whole-file checksum
+                // and compare it against the sender's trailing sum BEFORE the
+                // file is put into place. On a temp+rename mismatch (recv_ok == 0)
+                // the temp is retained/discarded, never renamed over the
+                // destination. Inplace/device targets cannot be withheld (the
+                // bytes already landed), matching upstream's `|| inplace` branch
+                // at receiver.c:1029; the receiver still queues the redo.
+                let (computed_checksum, verify_ok) =
+                    verify_whole_file_checksum(checksum_verifier.take(), &expected_checksum);
+                if !verify_ok && needs_rename {
+                    return Ok(withhold_failed_commit(
+                        config,
+                        cleanup_guard,
+                        &begin,
+                        bytes_written,
+                        computed_checksum,
+                    ));
+                }
 
                 // upstream: rsync.c:748 finish_transfer() - "Change
                 // permissions before putting the file into place."
@@ -283,8 +363,6 @@ pub(in crate::disk_commit) fn process_file(
                 } else {
                     apply_file_metadata(&begin.file_path, &begin, config)
                 };
-
-                let computed_checksum = finalize_checksum(checksum_verifier);
 
                 return Ok(CommitResult {
                     bytes_written,
@@ -353,6 +431,7 @@ pub(in crate::disk_commit) fn process_whole_file(
     config: &DiskCommitConfig,
     mut begin: BeginMessage,
     data: Vec<u8>,
+    expected_checksum: ExpectedChecksum,
     write_buf: &mut Vec<u8>,
     disk_batch: Option<&mut fast_io::IoUringDiskBatch>,
     iocp_batch: Option<&mut fast_io::IocpDiskBatch>,
@@ -417,6 +496,21 @@ pub(in crate::disk_commit) fn process_whole_file(
     output.flush_and_sync(config.do_fsync, &begin.file_path)?;
     output.finish(config.do_fsync, &begin.file_path)?;
 
+    // upstream: receiver.c:505-519 - verify the whole-file checksum before the
+    // file is put into place (see process_file for the full rationale). A
+    // temp+rename mismatch is retained/discarded, never renamed over dest.
+    let (computed_checksum, verify_ok) =
+        verify_whole_file_checksum(checksum_verifier.take(), &expected_checksum);
+    if !verify_ok && needs_rename {
+        return Ok(withhold_failed_commit(
+            config,
+            cleanup_guard,
+            &begin,
+            bytes_written,
+            computed_checksum,
+        ));
+    }
+
     // upstream: rsync.c:748 finish_transfer() - apply metadata to the
     // temp file before rename (see process_file for full rationale).
     let pre_meta_error = if needs_rename {
@@ -446,8 +540,6 @@ pub(in crate::disk_commit) fn process_whole_file(
     } else {
         apply_file_metadata(&begin.file_path, &begin, config)
     };
-
-    let computed_checksum = finalize_checksum(checksum_verifier);
 
     Ok(CommitResult {
         bytes_written,
@@ -489,7 +581,7 @@ fn discard_file_on_open_failure(
                 // Recycle the buffer for the network thread; drop the bytes.
                 let _ = buf_return_tx.try_send(data);
             }
-            Ok(FileMessage::Commit) => {
+            Ok(FileMessage::Commit { .. }) => {
                 return Err(open_err);
             }
             Ok(FileMessage::Abort { reason }) => {

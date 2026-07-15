@@ -242,12 +242,17 @@ fn disk_thread_main(
                     break;
                 }
             }
-            FileMessage::WholeFile { begin, data } => {
+            FileMessage::WholeFile {
+                begin,
+                data,
+                expected_checksum,
+            } => {
                 let result = process_whole_file(
                     &buf_return_tx,
                     &config,
                     *begin,
                     data,
+                    expected_checksum,
                     &mut write_buf,
                     disk_batch.as_mut(),
                     iocp_batch.as_mut(),
@@ -258,7 +263,7 @@ fn disk_thread_main(
             }
             FileMessage::Chunk(_)
             | FileMessage::SkipMatched(_)
-            | FileMessage::Commit
+            | FileMessage::Commit { .. }
             | FileMessage::Abort { .. } => {
                 let err = io::Error::new(
                     io::ErrorKind::InvalidData,

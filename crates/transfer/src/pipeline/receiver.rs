@@ -517,7 +517,11 @@ mod tests {
             .send(FileMessage::Chunk(b"test data".to_vec()))
             .unwrap();
 
-        pr.file_sender().send(FileMessage::Commit).unwrap();
+        pr.file_sender()
+            .send(FileMessage::Commit {
+                expected_checksum: Default::default(),
+            })
+            .unwrap();
         pr.note_commit_sent(
             [0u8; ChecksumVerifier::MAX_DIGEST_LEN],
             0,
@@ -727,6 +731,7 @@ mod tests {
                     xattr_list: None,
                 }),
                 data: b"test data".to_vec(),
+                expected_checksum: Default::default(),
             })
             .unwrap();
 
@@ -807,7 +812,11 @@ mod tests {
         pr.file_sender()
             .send(FileMessage::Chunk(b"ccc".to_vec()))
             .unwrap();
-        pr.file_sender().send(FileMessage::Commit).unwrap();
+        pr.file_sender()
+            .send(FileMessage::Commit {
+                expected_checksum: Default::default(),
+            })
+            .unwrap();
 
         pr.note_commit_sent([0u8; ChecksumVerifier::MAX_DIGEST_LEN], 0, file_path, 0);
 
@@ -848,6 +857,7 @@ mod tests {
                     xattr_list: None,
                 }),
                 data: b"next".to_vec(),
+                expected_checksum: Default::default(),
             })
             .unwrap();
         pr.note_commit_sent(
@@ -909,6 +919,7 @@ mod tests {
                     xattr_list: None,
                 }),
                 data: b"test data".to_vec(),
+                expected_checksum: Default::default(),
             })
             .unwrap();
         pr.note_commit_sent([0u8; ChecksumVerifier::MAX_DIGEST_LEN], 0, file_path, 0);
@@ -1035,6 +1046,7 @@ mod tests {
                     xattr_list: None,
                 }),
                 data: b"drop staged".to_vec(),
+                expected_checksum: Default::default(),
             })
             .unwrap();
 
@@ -1097,6 +1109,7 @@ mod tests {
                     xattr_list: None,
                 }),
                 data: b"shutdown stage".to_vec(),
+                expected_checksum: Default::default(),
             })
             .unwrap();
 
@@ -1149,6 +1162,7 @@ mod tests {
                     xattr_list: None,
                 }),
                 data: b"e2e staged".to_vec(),
+                expected_checksum: Default::default(),
             })
             .unwrap();
 
