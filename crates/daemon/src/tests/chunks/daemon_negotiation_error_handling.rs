@@ -30,7 +30,7 @@ fn daemon_negotiation_error_unknown_module() {
 
     // Send version
     stream
-        .write_all(b"@RSYNCD: 32.0\n")
+        .write_all(b"@RSYNCD: 32.0 sha512 sha256 sha1 md5 md4\n")
         .expect("send version");
     stream.flush().expect("flush");
 
@@ -87,7 +87,7 @@ fn daemon_negotiation_error_empty_module_request() {
 
     // Send version
     stream
-        .write_all(b"@RSYNCD: 32.0\n")
+        .write_all(b"@RSYNCD: 32.0 sha512 sha256 sha1 md5 md4\n")
         .expect("send version");
     stream.flush().expect("flush");
 
@@ -151,7 +151,7 @@ fn daemon_negotiation_error_host_denied() {
 
     // Send version
     stream
-        .write_all(b"@RSYNCD: 32.0\n")
+        .write_all(b"@RSYNCD: 32.0 sha512 sha256 sha1 md5 md4\n")
         .expect("send version");
     stream.flush().expect("flush");
 
@@ -218,7 +218,7 @@ fn daemon_negotiation_error_refused_options() {
 
     // Send version
     stream
-        .write_all(b"@RSYNCD: 32.0\n")
+        .write_all(b"@RSYNCD: 32.0 sha512 sha256 sha1 md5 md4\n")
         .expect("send version");
     stream.flush().expect("flush");
 
@@ -304,7 +304,7 @@ fn daemon_negotiation_error_max_connections_exceeded() {
     reader1.read_line(&mut line).expect("greeting1");
 
     stream1
-        .write_all(b"@RSYNCD: 32.0\n")
+        .write_all(b"@RSYNCD: 32.0 sha512 sha256 sha1 md5 md4\n")
         .expect("send version1");
     stream1.flush().expect("flush1");
 
@@ -328,7 +328,7 @@ fn daemon_negotiation_error_max_connections_exceeded() {
     reader2.read_line(&mut line).expect("greeting2");
 
     stream2
-        .write_all(b"@RSYNCD: 32.0\n")
+        .write_all(b"@RSYNCD: 32.0 sha512 sha256 sha1 md5 md4\n")
         .expect("send version2");
     stream2.flush().expect("flush2");
 
@@ -379,7 +379,7 @@ fn daemon_negotiation_error_sanitizes_module_name_in_response() {
 
     // Send version
     stream
-        .write_all(b"@RSYNCD: 32.0\n")
+        .write_all(b"@RSYNCD: 32.0 sha512 sha256 sha1 md5 md4\n")
         .expect("send version");
     stream.flush().expect("flush");
 
@@ -436,7 +436,7 @@ fn daemon_negotiation_error_no_exit_after_error() {
 
     // Send version
     stream
-        .write_all(b"@RSYNCD: 32.0\n")
+        .write_all(b"@RSYNCD: 32.0 sha512 sha256 sha1 md5 md4\n")
         .expect("send version");
     stream.flush().expect("flush");
 

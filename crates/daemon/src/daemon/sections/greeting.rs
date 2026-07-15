@@ -59,6 +59,65 @@ pub(crate) fn cached_legacy_daemon_greeting() -> &'static [u8] {
     GREETING.get_or_init(|| legacy_daemon_greeting().into_bytes().into_boxed_slice())
 }
 
+/// Validates a client's `@RSYNCD:` version greeting the way an rsync daemon
+/// does, returning the fatal `@ERROR:` line to emit when it is malformed.
+///
+/// Returns `Some(payload)` (including the `@ERROR:` prefix) when the greeting
+/// announces a protocol version but omits a token the protocol requires: the
+/// `.subprotocol` suffix for protocol >= 30, or the digest-name list for
+/// protocol > 31. The caller must write the payload, close the connection, and
+/// stop. Returns `None` when the line is a well-formed greeting or is not a
+/// version banner at all, in which case normal parsing proceeds.
+///
+/// upstream: clientserver.c:180-211 `exchange_protocols()` with `am_client == 0`.
+/// The daemon reads the protocol number with `sscanf(buf, "@RSYNCD: %d.%d", ...)`;
+/// a missing `.subprotocol` leaves `remote_sub < 0` and, for `remote_protocol >= 30`,
+/// yields `@ERROR: your client omitted the subprotocol value: %s`. A missing digest
+/// list (`strchr(buf + 9, ' ')` is NULL) yields, for `remote_protocol > 31`,
+/// `@ERROR: your client omitted the digest name list: %s`. The `%s` echoes the raw
+/// greeting line.
+pub(crate) fn reject_malformed_client_greeting(line: &str) -> Option<String> {
+    let after_prefix = line.strip_prefix(LEGACY_DAEMON_PREFIX)?;
+
+    // upstream: sscanf `%d` skips leading whitespace before the protocol number.
+    let rest = after_prefix.trim_start();
+    let digits = rest
+        .as_bytes()
+        .iter()
+        .take_while(|byte| byte.is_ascii_digit())
+        .count();
+    if digits == 0 {
+        // sscanf(...) < 1: not a version banner - leave it to the other handlers.
+        return None;
+    }
+    let remote_protocol: u32 = rest[..digits].parse().unwrap_or(u32::MAX);
+
+    // upstream: `remote_sub` stays < 0 unless a ".NNN" suffix follows the number.
+    let has_subprotocol = rest[digits..]
+        .strip_prefix('.')
+        .and_then(|fractional| fractional.as_bytes().first())
+        .is_some_and(u8::is_ascii_digit);
+    if !has_subprotocol && remote_protocol >= 30 {
+        return Some(format!(
+            "@ERROR: your client omitted the subprotocol value: {line}"
+        ));
+    }
+
+    // upstream: `daemon_auth_choices = strchr(buf + 9, ' ')` - any space past
+    // "@RSYNCD: " marks the start of the digest-name list.
+    let has_digest_list = line
+        .as_bytes()
+        .get(LEGACY_DAEMON_PREFIX_LEN + 1..)
+        .is_some_and(|tail| tail.contains(&b' '));
+    if !has_digest_list && remote_protocol > 31 {
+        return Some(format!(
+            "@ERROR: your client omitted the digest name list: {line}"
+        ));
+    }
+
+    None
+}
+
 /// Reads one line from `reader`, stripping trailing `\r` and `\n`.
 ///
 /// Returns `Ok(None)` on EOF, or `Ok(Some(line))` with the stripped content.
@@ -99,4 +158,71 @@ pub(crate) fn advertised_capability_lines(modules: &[ModuleRuntime]) -> Vec<Stri
     }
 
     vec![features.join(" ")]
+}
+
+#[cfg(test)]
+mod greeting_validation_tests {
+    use super::reject_malformed_client_greeting;
+
+    // upstream: clientserver.c:188-197 - a protocol >= 30 greeting without a
+    // ".subprotocol" suffix leaves remote_sub < 0 and is fatal. The @ERROR line
+    // must echo the raw greeting so the client can report what it sent.
+    #[test]
+    fn rejects_greeting_missing_subprotocol() {
+        assert_eq!(
+            reject_malformed_client_greeting("@RSYNCD: 32").as_deref(),
+            Some("@ERROR: your client omitted the subprotocol value: @RSYNCD: 32"),
+        );
+        assert_eq!(
+            reject_malformed_client_greeting("@RSYNCD: 30").as_deref(),
+            Some("@ERROR: your client omitted the subprotocol value: @RSYNCD: 30"),
+        );
+    }
+
+    // upstream: clientserver.c:199-211 - protocol > 31 must carry a digest name
+    // list; its absence is fatal even when the subprotocol value is present.
+    #[test]
+    fn rejects_greeting_missing_digest_list() {
+        assert_eq!(
+            reject_malformed_client_greeting("@RSYNCD: 32.0").as_deref(),
+            Some("@ERROR: your client omitted the digest name list: @RSYNCD: 32.0"),
+        );
+    }
+
+    // upstream: clientserver.c:205 - the digest gate is `remote_protocol > 31`, so
+    // protocol 31 needs the subprotocol but not a digest list.
+    #[test]
+    fn protocol_31_requires_subprotocol_not_digest() {
+        assert_eq!(
+            reject_malformed_client_greeting("@RSYNCD: 31").as_deref(),
+            Some("@ERROR: your client omitted the subprotocol value: @RSYNCD: 31"),
+        );
+        assert_eq!(reject_malformed_client_greeting("@RSYNCD: 31.0"), None);
+    }
+
+    // upstream: clientserver.c:196 - protocol < 30 defaults remote_sub to 0 and
+    // needs no digest list, so a bare legacy version is accepted.
+    #[test]
+    fn accepts_legacy_greeting_without_subprotocol_or_digest() {
+        assert_eq!(reject_malformed_client_greeting("@RSYNCD: 29"), None);
+    }
+
+    // A fully-formed modern greeting (subprotocol suffix + digest list), exactly
+    // what upstream and oc-rsync clients send, is accepted unchanged.
+    #[test]
+    fn accepts_well_formed_modern_greeting() {
+        assert_eq!(
+            reject_malformed_client_greeting("@RSYNCD: 32.0 sha512 sha256 sha1 md5 md4"),
+            None,
+        );
+    }
+
+    // Non-version lines (module names, control keywords) are not greetings and
+    // pass through so the normal message parser handles them.
+    #[test]
+    fn ignores_non_version_lines() {
+        assert_eq!(reject_malformed_client_greeting("module"), None);
+        assert_eq!(reject_malformed_client_greeting("@RSYNCD: OK"), None);
+        assert_eq!(reject_malformed_client_greeting("#list"), None);
+    }
 }

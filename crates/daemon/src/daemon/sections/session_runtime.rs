@@ -204,7 +204,7 @@ fn write_limited(
 ///
 /// upstream: clientserver.c - the daemon greeting/response sequence is:
 /// 1. Server sends `@RSYNCD: 32.0 sha512 sha256 sha1 md5 md4\n`
-/// 2. Client responds with `@RSYNCD: 32.0\n`
+/// 2. Client responds with `@RSYNCD: 32.0 sha512 sha256 sha1 md5 md4\n`
 /// 3. Client sends module name (or `#list`)
 #[cfg_attr(feature = "tracing", instrument(skip(stream, params), fields(peer = %peer_addr), name = "legacy_session"))]
 fn handle_legacy_session(
@@ -264,6 +264,21 @@ fn handle_legacy_session(
     fast_io::rearm_tcp_quickack(reader.get_ref().tcp_stream());
     while let Some(line) = read_trimmed_line(&mut reader)? {
         fast_io::rearm_tcp_quickack(reader.get_ref().tcp_stream());
+        // upstream: clientserver.c:180-211 exchange_protocols() (am_client == 0) -
+        // before proceeding the daemon validates the client's version greeting,
+        // refusing one that omits the subprotocol value (protocol >= 30) or the
+        // digest name list (protocol > 31). The refusal is a fatal pre-OK
+        // @ERROR line, after which the client returns and the socket closes.
+        if negotiated_protocol.is_none() {
+            if let Some(payload) = reject_malformed_client_greeting(&line) {
+                write_limited(reader.get_mut(), &mut limiter, payload.as_bytes())?;
+                write_limited(reader.get_mut(), &mut limiter, b"\n")?;
+                reader.get_mut().flush()?;
+                // FSM: -> Closing after the fatal @ERROR refusal.
+                let _ = conn_state.transition(ConnectionState::Closing);
+                return Ok(());
+            }
+        }
         match parse_legacy_daemon_message(&line) {
             Ok(LegacyDaemonMessage::Version(version)) => {
                 // Record the negotiated protocol version but do NOT send @RSYNCD: OK here.
