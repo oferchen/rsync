@@ -13,7 +13,8 @@
 //! 2. Launches `N` client threads (in batches of `CLIENT_BATCH_SIZE` for
 //!    higher connection counts to avoid client-side thread exhaustion).
 //!    Each client opens a TCP connection, reads the `@RSYNCD: <ver>`
-//!    greeting, sends `@RSYNCD: 32.0\n`, then closes the socket. This
+//!    greeting, sends `@RSYNCD: 32.0 sha512 sha256 sha1 md5 md4\n`, then
+//!    closes the socket. This
 //!    exercises the accept loop, thread spawn, handshake write, and worker
 //!    join paths without doing any file transfer work.
 //! 3. Records wall time, peak RSS (via `getrusage(RUSAGE_SELF).ru_maxrss`),
@@ -290,7 +291,10 @@ fn run_one_client(target: SocketAddr) -> (ConnectionOutcome, Option<u64>) {
     let latency_us = t0.elapsed().as_micros() as u64;
 
     let mut writer = stream;
-    if writer.write_all(b"@RSYNCD: 32.0\n").is_err() {
+    if writer
+        .write_all(b"@RSYNCD: 32.0 sha512 sha256 sha1 md5 md4\n")
+        .is_err()
+    {
         // The handshake reached the daemon thread; a broken pipe at this
         // point still counts as a successful accept.
         return (ConnectionOutcome::Ok, Some(latency_us));

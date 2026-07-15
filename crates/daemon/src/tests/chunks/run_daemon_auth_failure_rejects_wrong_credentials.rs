@@ -51,7 +51,7 @@ fn run_daemon_auth_failure_rejects_wrong_credentials() {
 
     // Send client version
     stream
-        .write_all(b"@RSYNCD: 32.0\n")
+        .write_all(b"@RSYNCD: 32.0 sha512 sha256 sha1 md5 md4\n")
         .expect("send handshake response");
     stream.flush().expect("flush handshake response");
 

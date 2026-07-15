@@ -49,7 +49,7 @@ fn run_daemon_enforces_module_connection_limit() {
     assert_eq!(line, expected_greeting);
 
     first_stream
-        .write_all(b"@RSYNCD: 32.0\n")
+        .write_all(b"@RSYNCD: 32.0 sha512 sha256 sha1 md5 md4\n")
         .expect("send handshake");
     first_stream.flush().expect("flush handshake");
 
@@ -74,7 +74,7 @@ fn run_daemon_enforces_module_connection_limit() {
     assert_eq!(line, expected_greeting);
 
     second_stream
-        .write_all(b"@RSYNCD: 32.0\n")
+        .write_all(b"@RSYNCD: 32.0 sha512 sha256 sha1 md5 md4\n")
         .expect("send second handshake");
     second_stream.flush().expect("flush second handshake");
 
