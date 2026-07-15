@@ -33,6 +33,7 @@ mod async_parity;
 mod delete_pipeline_hook;
 mod delete_timing;
 mod filter_chain;
+mod filter_recheck;
 #[cfg(feature = "iconv")]
 mod iconv_wire_order;
 mod id_lists;

@@ -4,6 +4,7 @@
 //! `FilterSet` plus the per-directory `DirMergeConfig` list the deletion pass
 //! consults.
 
+use std::borrow::Cow;
 use std::io;
 
 use protocol::filters::{FilterRuleWireFormat, RuleType};
@@ -21,7 +22,7 @@ use filters::{DirMergeConfig, FilterSet};
 ///
 /// - `exclude.c:recv_filter_list()` - receiver-side filter list reception
 /// - `generator.c:delete_in_dir()` - deletion pass uses filter evaluation
-pub(super) fn parse_wire_filters_for_receiver(
+pub(in crate::receiver) fn parse_wire_filters_for_receiver(
     wire_rules: &[FilterRuleWireFormat],
 ) -> io::Result<(FilterSet, Vec<DirMergeConfig>)> {
     use ::filters::FilterRule;
@@ -30,11 +31,27 @@ pub(super) fn parse_wire_filters_for_receiver(
     let mut merge_configs = Vec::new();
 
     for wire_rule in wire_rules {
+        // The wire format carries the directory-only (`/`) modifier as a
+        // separate flag, but the `filters` crate encodes it as a trailing `/`
+        // in the pattern string. Re-append it so a rule like `- foo/*/` keeps
+        // its directory-only semantics instead of matching plain files. Without
+        // this the receiver's rule set diverges from the sender's (which uses
+        // generator/filters.rs reconstruct_pattern), causing the flist re-check
+        // and the deletion pass to over-match. The anchored (`/`) modifier is
+        // applied below via `anchor_to_root()`.
+        // upstream: exclude.c:get_rule_prefix() - directory-only is a trailing
+        // slash on the pattern body.
+        let pattern: Cow<'_, str> = if wire_rule.directory_only && !wire_rule.pattern.ends_with('/')
+        {
+            Cow::Owned(format!("{}/", wire_rule.pattern))
+        } else {
+            Cow::Borrowed(wire_rule.pattern.as_str())
+        };
         let mut rule = match wire_rule.rule_type {
-            RuleType::Include => FilterRule::include(&wire_rule.pattern),
-            RuleType::Exclude => FilterRule::exclude(&wire_rule.pattern),
-            RuleType::Protect => FilterRule::protect(&wire_rule.pattern),
-            RuleType::Risk => FilterRule::risk(&wire_rule.pattern),
+            RuleType::Include => FilterRule::include(pattern.as_ref()),
+            RuleType::Exclude => FilterRule::exclude(pattern.as_ref()),
+            RuleType::Protect => FilterRule::protect(pattern.as_ref()),
+            RuleType::Risk => FilterRule::risk(pattern.as_ref()),
             RuleType::Clear => {
                 rules.push(
                     FilterRule::clear().with_sides(wire_rule.sender_side, wire_rule.receiver_side),
