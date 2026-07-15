@@ -82,3 +82,71 @@ pub mod syslog;
 
 pub use line_mode::LineMode;
 pub use sink::{LineModeGuard, MessageSink, TryMapWriterError};
+
+/// Canonical (lowercase) syslog facility names accepted in `rsyncd.conf`.
+///
+/// Mirrors upstream `loadparm.c`'s `enum_syslog_facility[]` table. The list is
+/// platform-independent so daemon config parsing validates a `syslog facility`
+/// directive identically on every target; the name-to-constant mapping used
+/// when a connection actually opens syslog lives in the Unix-only
+/// [`syslog::SyslogFacility`].
+///
+/// upstream: loadparm.c enum_syslog_facility[]
+const SYSLOG_FACILITY_NAMES: &[&str] = &[
+    "kern", "user", "mail", "daemon", "auth", "syslog", "lpr", "news", "uucp", "cron", "local0",
+    "local1", "local2", "local3", "local4", "local5", "local6", "local7",
+];
+
+/// Returns the canonical (lowercase) form of a syslog facility name, or `None`
+/// when `name` is not a recognised facility.
+///
+/// Matching is case-insensitive, matching upstream `loadparm.c`'s
+/// `strequal()`-based enum lookup. This is the cross-platform validation entry
+/// point for the daemon's `syslog facility` directive; unknown names are
+/// rejected here before a module override is recorded.
+///
+/// upstream: loadparm.c:456 `case P_ENUM` walks `enum_syslog_facility[]`.
+pub fn canonical_syslog_facility(name: &str) -> Option<&'static str> {
+    SYSLOG_FACILITY_NAMES
+        .iter()
+        .copied()
+        .find(|candidate| candidate.eq_ignore_ascii_case(name))
+}
+
+#[cfg(test)]
+mod facility_tests {
+    use super::*;
+
+    #[test]
+    fn canonical_facility_is_case_insensitive() {
+        assert_eq!(canonical_syslog_facility("DAEMON"), Some("daemon"));
+        assert_eq!(canonical_syslog_facility("Local3"), Some("local3"));
+        assert_eq!(canonical_syslog_facility("local0"), Some("local0"));
+    }
+
+    #[test]
+    fn canonical_facility_rejects_unknown() {
+        // WHY: the daemon must reject a typo'd `syslog facility` so the module
+        // silently inherits the global facility (upstream P_ENUM keep-default),
+        // rather than routing logs to an unintended sink.
+        assert_eq!(canonical_syslog_facility("bogus"), None);
+        assert_eq!(canonical_syslog_facility("local8"), None);
+        assert_eq!(canonical_syslog_facility("LOG_DAEMON"), None);
+        assert_eq!(canonical_syslog_facility(""), None);
+    }
+
+    // WHY: the cross-platform name table used for config validation and the
+    // Unix-only name-to-constant map used to open syslog must never drift out
+    // of sync; a name accepted by one but not the other would validate a
+    // directive that then silently falls back to the default facility.
+    #[cfg(unix)]
+    #[test]
+    fn canonical_names_map_to_a_facility_constant() {
+        for name in SYSLOG_FACILITY_NAMES {
+            assert!(
+                syslog::SyslogFacility::from_name(name).is_some(),
+                "facility name '{name}' accepted by validator but unmapped in SyslogFacility"
+            );
+        }
+    }
+}

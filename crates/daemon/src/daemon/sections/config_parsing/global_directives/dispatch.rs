@@ -368,6 +368,11 @@ fn apply_global_directive(
             } else {
                 let mut owned = String::new();
                 value.clone_into(&mut owned);
+                // upstream: loadparm.c - `syslog facility` is P_LOCAL, so a
+                // global-section value becomes the default every later module
+                // inherits (init_section copies Vars.l). state.syslog_facility
+                // is the daemon-wide value read as `lp_syslog_facility(-1)`.
+                state.module_defaults.syslog_facility = Some(owned.clone());
                 state.syslog_facility = Some((owned, origin));
             }
         }
@@ -400,6 +405,9 @@ fn apply_global_directive(
             } else {
                 let mut owned = String::new();
                 value.clone_into(&mut owned);
+                // upstream: loadparm.c - `syslog tag` is P_LOCAL; the
+                // global-section value seeds every module's inherited default.
+                state.module_defaults.syslog_tag = Some(owned.clone());
                 state.syslog_tag = Some((owned, origin));
             }
         }

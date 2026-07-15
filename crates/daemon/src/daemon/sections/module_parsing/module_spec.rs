@@ -155,6 +155,8 @@ fn parse_module_definition(
         open_noatime: false,
         reverse_lookup: true,
         lock_file: None,
+        syslog_tag: None,
+        syslog_facility: None,
         filter: Vec::new(),
         exclude: Vec::new(),
         include: Vec::new(),

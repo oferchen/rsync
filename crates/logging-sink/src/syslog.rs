@@ -259,6 +259,41 @@ impl SyslogConfig {
     /// logging to syslog opportunistically. Subsequent [`syslog_message`]
     /// calls become no-ops until the next successful `open`.
     pub fn open(&self) -> SyslogGuard {
+        if let Ok(mut slot) = logger_slot().lock() {
+            *slot = self.connect();
+        }
+
+        SyslogGuard { _private: () }
+    }
+
+    /// Temporarily installs this configuration's logger as the active syslog
+    /// sink, restoring the previously-active logger when the returned
+    /// [`SyslogReconfigGuard`] is dropped.
+    ///
+    /// upstream: log.c:169 `log_init` reopens syslog for the selected module
+    /// (`closelog()` then `openlog(lp_syslog_tag(module_id), LOG_PID,
+    /// lp_syslog_facility(module_id))`) when the module's tag or facility differ
+    /// from the global (`-1`) values. Upstream serves each connection in a
+    /// forked child that never restores the global handle because it exits;
+    /// oc-rsync serves connections on threads sharing one process-wide syslog
+    /// handle, so the guard restores the daemon-global logger on drop to keep
+    /// later global diagnostics on the configured facility and tag.
+    pub fn reconfigure(&self) -> SyslogReconfigGuard {
+        let logger = self.connect();
+        let previous = match logger_slot().lock() {
+            Ok(mut slot) => std::mem::replace(&mut *slot, logger),
+            Err(_) => None,
+        };
+        SyslogReconfigGuard {
+            previous: Some(previous),
+        }
+    }
+
+    /// Builds the concrete syslog logger for this configuration.
+    ///
+    /// Returns `None` when the connection cannot be established (e.g. no syslog
+    /// daemon is listening); callers treat that as a no-op sink.
+    fn connect(&self) -> Option<BsdLogger> {
         let tag = if self.tag.is_empty() {
             DEFAULT_SYSLOG_TAG.to_string()
         } else {
@@ -275,13 +310,7 @@ impl SyslogConfig {
         // upstream: log.c - openlog(tag, LOG_PID, facility)
         // The syslog crate's `unix(formatter)` connects to /dev/log on Linux
         // and falls back to /var/run/syslog on macOS, mirroring openlog(3).
-        let logger = syslog::unix(formatter).ok();
-
-        if let Ok(mut slot) = logger_slot().lock() {
-            *slot = logger;
-        }
-
-        SyslogGuard { _private: () }
+        syslog::unix(formatter).ok()
     }
 }
 
@@ -373,6 +402,40 @@ impl Drop for SyslogGuard {
     fn drop(&mut self) {
         if let Ok(mut slot) = logger_slot().lock() {
             *slot = None;
+        }
+    }
+}
+
+/// RAII guard that restores the previously-active syslog logger when dropped.
+///
+/// Created by [`SyslogConfig::reconfigure`]. While alive, [`syslog_message`]
+/// routes diagnostics through the reconfigured (per-module) facility and tag.
+/// Dropping the guard reinstates whichever logger was active before the
+/// reconfiguration - typically the daemon-global logger opened at startup.
+///
+/// upstream: log.c:169 `log_init` reopens syslog per selected module; the guard
+/// models the "restore to global" transition that upstream gets for free by
+/// serving each connection in a short-lived forked child.
+pub struct SyslogReconfigGuard {
+    previous: Option<Option<BsdLogger>>,
+}
+
+impl fmt::Debug for SyslogReconfigGuard {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        // The held logger is an opaque socket handle without a Debug impl, so
+        // report only whether a prior logger is still pending restoration.
+        f.debug_struct("SyslogReconfigGuard")
+            .field("pending_restore", &self.previous.is_some())
+            .finish()
+    }
+}
+
+impl Drop for SyslogReconfigGuard {
+    fn drop(&mut self) {
+        if let Some(previous) = self.previous.take() {
+            if let Ok(mut slot) = logger_slot().lock() {
+                *slot = previous;
+            }
         }
     }
 }
@@ -637,5 +700,41 @@ mod tests {
         let guard = config.open();
         let debug = format!("{guard:?}");
         assert!(debug.contains("SyslogGuard"));
+    }
+
+    // WHY: a module that sets `syslog facility`/`syslog tag` reconfigures the
+    // shared, process-wide syslog handle for the duration of its connection.
+    // Because oc-rsync serves connections on threads (not forked children),
+    // the reconfiguration must be reverted on drop so subsequent daemon-global
+    // diagnostics are not stranded on the last module's facility/tag. Seeding a
+    // known prior state (no logger) makes the restoration observable regardless
+    // of whether a syslogd is listening in the test environment.
+    #[test]
+    fn reconfigure_restores_previous_logger_on_drop() {
+        if let Ok(mut slot) = logger_slot().lock() {
+            *slot = None;
+        }
+        {
+            let _guard = SyslogConfig::new(SyslogFacility::Local5, "reconfig-test").reconfigure();
+            syslog_message(
+                SyslogPriority::Info,
+                "per-module syslog reconfiguration active",
+            );
+        }
+        let restored_is_none = logger_slot()
+            .lock()
+            .map(|slot| slot.is_none())
+            .unwrap_or(false);
+        assert!(
+            restored_is_none,
+            "reconfigure guard must restore the previously-active logger on drop"
+        );
+    }
+
+    #[test]
+    fn reconfigure_guard_debug_format() {
+        let guard = SyslogConfig::new(SyslogFacility::Local3, "dbg").reconfigure();
+        let debug = format!("{guard:?}");
+        assert!(debug.contains("SyslogReconfigGuard"));
     }
 }
