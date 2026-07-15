@@ -177,6 +177,25 @@ pub(crate) fn build_server_flag_string(config: &ClientConfig) -> String {
     flags
 }
 
+/// Sender-only `--super`/`--stats` server args, shared by the SSH and
+/// daemon-push argument builders.
+///
+/// upstream: options.c:2852-2857 server_options() - inside the `if (am_sender)`
+/// block, `--super` is appended when `am_root > 1` (an explicit `--super`, never
+/// mere root) and `--stats` when `do_stats`. Both are forwarded only on a push,
+/// where the remote receiver/generator performs the privileged operations and
+/// computes the transfer statistics. Callers invoke this only from their sender
+/// branch so both transports emit the same trailer in the same order.
+/// `--fake-super` (am_root == -1) is receiver-local and is never forwarded.
+pub(crate) fn sender_super_stats_args(config: &ClientConfig) -> impl Iterator<Item = &'static str> {
+    [
+        config.super_user().then_some("--super"),
+        config.stats().then_some("--stats"),
+    ]
+    .into_iter()
+    .flatten()
+}
+
 /// Converts client filter rules to wire format.
 ///
 /// Maps [`FilterRuleSpec`] (client-side representation) to [`FilterRuleWireFormat`]
