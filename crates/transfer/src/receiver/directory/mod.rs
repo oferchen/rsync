@@ -6,6 +6,7 @@
 //! creation (FIFOs, sockets, and device nodes), hardlink creation for both
 //! protocol 30+ and pre-30 modes, and `--delete` scanning.
 
+mod backup;
 mod creation;
 mod deletion;
 mod links;
