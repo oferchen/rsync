@@ -8,7 +8,9 @@
 
 mod backup;
 mod creation;
-mod deletion;
+// `pub(in crate::receiver)` so the receiver context can name `DeletedEntry`
+// for its deferred `--delete-delay` victim queue.
+pub(in crate::receiver) mod deletion;
 mod links;
 mod missing_args;
 mod special;
