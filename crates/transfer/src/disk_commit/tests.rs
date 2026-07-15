@@ -123,7 +123,11 @@ fn write_file_with_io_uring_auto_policy() {
     h.file_tx
         .send(FileMessage::Chunk(b"uring".to_vec()))
         .unwrap();
-    h.file_tx.send(FileMessage::Commit).unwrap();
+    h.file_tx
+        .send(FileMessage::Commit {
+            expected_checksum: Default::default(),
+        })
+        .unwrap();
 
     let result = h.result_rx.recv().unwrap().unwrap();
     assert_eq!(result.bytes_written, 5);
@@ -228,7 +232,11 @@ fn write_and_commit_file() {
     h.file_tx
         .send(FileMessage::Chunk(b"hello world".to_vec()))
         .unwrap();
-    h.file_tx.send(FileMessage::Commit).unwrap();
+    h.file_tx
+        .send(FileMessage::Commit {
+            expected_checksum: Default::default(),
+        })
+        .unwrap();
 
     let result = h.result_rx.recv().unwrap().unwrap();
     assert_eq!(result.bytes_written, 11);
@@ -289,7 +297,11 @@ fn inplace_skip_matched_seeks_without_rewriting() {
     h.file_tx
         .send(FileMessage::Chunk(b"CCCCCCCC".to_vec()))
         .unwrap();
-    h.file_tx.send(FileMessage::Commit).unwrap();
+    h.file_tx
+        .send(FileMessage::Commit {
+            expected_checksum: Default::default(),
+        })
+        .unwrap();
 
     let result = h.result_rx.recv().unwrap().unwrap();
     // Both the skipped and the written block count toward the final size so the
@@ -367,7 +379,11 @@ fn multiple_files_sequential() {
         h.file_tx
             .send(FileMessage::Chunk(data.into_bytes()))
             .unwrap();
-        h.file_tx.send(FileMessage::Commit).unwrap();
+        h.file_tx
+            .send(FileMessage::Commit {
+                expected_checksum: Default::default(),
+            })
+            .unwrap();
 
         let result = h.result_rx.recv().unwrap().unwrap();
         assert_eq!(result.file_entry_index, i);
@@ -416,7 +432,11 @@ fn multi_chunk_file() {
     h.file_tx.send(FileMessage::Chunk(b"aaa".to_vec())).unwrap();
     h.file_tx.send(FileMessage::Chunk(b"bbb".to_vec())).unwrap();
     h.file_tx.send(FileMessage::Chunk(b"ccc".to_vec())).unwrap();
-    h.file_tx.send(FileMessage::Commit).unwrap();
+    h.file_tx
+        .send(FileMessage::Commit {
+            expected_checksum: Default::default(),
+        })
+        .unwrap();
 
     let result = h.result_rx.recv().unwrap().unwrap();
     assert_eq!(result.bytes_written, 9);
@@ -453,7 +473,11 @@ fn buffer_recycling() {
     h.file_tx
         .send(FileMessage::Chunk(b" world".to_vec()))
         .unwrap();
-    h.file_tx.send(FileMessage::Commit).unwrap();
+    h.file_tx
+        .send(FileMessage::Commit {
+            expected_checksum: Default::default(),
+        })
+        .unwrap();
 
     let result = h.result_rx.recv().unwrap().unwrap();
     assert_eq!(result.bytes_written, 11);
@@ -489,6 +513,7 @@ fn whole_file_coalesced() {
                 xattr_list: None,
             }),
             data: b"whole dat".to_vec(),
+            expected_checksum: Default::default(),
         })
         .unwrap();
 
@@ -538,7 +563,11 @@ fn commit_file_rename_via_io_uring_or_fallback() {
     h.file_tx
         .send(FileMessage::Chunk(b"rename content".to_vec()))
         .unwrap();
-    h.file_tx.send(FileMessage::Commit).unwrap();
+    h.file_tx
+        .send(FileMessage::Commit {
+            expected_checksum: Default::default(),
+        })
+        .unwrap();
 
     let result = h.result_rx.recv().unwrap().unwrap();
     assert_eq!(result.bytes_written, 14);
@@ -581,7 +610,11 @@ fn commit_file_rename_replaces_existing_via_io_uring_or_fallback() {
     h.file_tx
         .send(FileMessage::Chunk(b"new content".to_vec()))
         .unwrap();
-    h.file_tx.send(FileMessage::Commit).unwrap();
+    h.file_tx
+        .send(FileMessage::Commit {
+            expected_checksum: Default::default(),
+        })
+        .unwrap();
 
     let result = h.result_rx.recv().unwrap().unwrap();
     assert_eq!(result.bytes_written, 11);
@@ -624,7 +657,11 @@ fn delay_updates_stages_to_partial_dir() {
     h.file_tx
         .send(FileMessage::Chunk(b"delayed write".to_vec()))
         .unwrap();
-    h.file_tx.send(FileMessage::Commit).unwrap();
+    h.file_tx
+        .send(FileMessage::Commit {
+            expected_checksum: Default::default(),
+        })
+        .unwrap();
 
     let result = h.result_rx.recv().unwrap().unwrap();
     assert_eq!(result.bytes_written, 13);
@@ -685,6 +722,7 @@ fn delay_updates_whole_file_stages_to_partial_dir() {
                 xattr_list: None,
             }),
             data: b"whole delayed!".to_vec(),
+            expected_checksum: Default::default(),
         })
         .unwrap();
 
@@ -730,6 +768,7 @@ fn whole_file_commit_via_io_uring_or_fallback() {
                 xattr_list: None,
             }),
             data: b"whole iouring".to_vec(),
+            expected_checksum: Default::default(),
         })
         .unwrap();
 
@@ -1192,7 +1231,11 @@ fn cleanup_manager_unregisters_on_successful_commit() {
     h.file_tx
         .send(FileMessage::Chunk(b"committed dat".to_vec()))
         .unwrap();
-    h.file_tx.send(FileMessage::Commit).unwrap();
+    h.file_tx
+        .send(FileMessage::Commit {
+            expected_checksum: Default::default(),
+        })
+        .unwrap();
 
     let result = h.result_rx.recv().unwrap().unwrap();
     assert_eq!(result.bytes_written, 13);
@@ -1248,7 +1291,11 @@ fn cleanup_manager_mixed_committed_and_orphaned_files() {
     h.file_tx
         .send(FileMessage::Chunk(b"good".to_vec()))
         .unwrap();
-    h.file_tx.send(FileMessage::Commit).unwrap();
+    h.file_tx
+        .send(FileMessage::Commit {
+            expected_checksum: Default::default(),
+        })
+        .unwrap();
     let result = h.result_rx.recv().unwrap().unwrap();
     assert_eq!(result.bytes_written, 4);
 
@@ -1359,6 +1406,7 @@ fn cleanup_manager_whole_file_unregisters_on_commit() {
                 xattr_list: None,
             }),
             data: b"whole file".to_vec(),
+            expected_checksum: Default::default(),
         })
         .unwrap();
 
@@ -1411,7 +1459,11 @@ fn cleanup_manager_inplace_skips_registration() {
     h.file_tx
         .send(FileMessage::Chunk(b"inplace".to_vec()))
         .unwrap();
-    h.file_tx.send(FileMessage::Commit).unwrap();
+    h.file_tx
+        .send(FileMessage::Commit {
+            expected_checksum: Default::default(),
+        })
+        .unwrap();
 
     let result = h.result_rx.recv().unwrap().unwrap();
     assert_eq!(result.bytes_written, 7);
@@ -1851,6 +1903,7 @@ fn partial_dir_whole_file_success_no_leftover_in_partial_dir() {
                 xattr_list: None,
             }),
             data: b"complete-dat".to_vec(),
+            expected_checksum: Default::default(),
         })
         .unwrap();
 
@@ -2097,7 +2150,11 @@ fn delay_updates_disk_thread_e2e_single_file() {
     h.file_tx
         .send(FileMessage::Chunk(b"e2e content!".to_vec()))
         .unwrap();
-    h.file_tx.send(FileMessage::Commit).unwrap();
+    h.file_tx
+        .send(FileMessage::Commit {
+            expected_checksum: Default::default(),
+        })
+        .unwrap();
 
     let result = h.result_rx.recv().unwrap().unwrap();
     assert_eq!(result.bytes_written, 12);
@@ -2172,7 +2229,11 @@ fn delay_updates_disk_thread_e2e_multiple_files() {
         h.file_tx
             .send(FileMessage::Chunk(content.into_bytes()))
             .unwrap();
-        h.file_tx.send(FileMessage::Commit).unwrap();
+        h.file_tx
+            .send(FileMessage::Commit {
+                expected_checksum: Default::default(),
+            })
+            .unwrap();
 
         let result = h.result_rx.recv().unwrap().unwrap();
         assert_eq!(result.file_entry_index, i);
@@ -2249,6 +2310,7 @@ fn delay_updates_disk_thread_e2e_whole_file() {
                 xattr_list: None,
             }),
             data: b"whole file sweep!".to_vec(),
+            expected_checksum: Default::default(),
         })
         .unwrap();
 
@@ -2306,7 +2368,11 @@ fn delay_updates_disk_thread_e2e_nested_dirs() {
     h.file_tx
         .send(FileMessage::Chunk(b"root data".to_vec()))
         .unwrap();
-    h.file_tx.send(FileMessage::Commit).unwrap();
+    h.file_tx
+        .send(FileMessage::Commit {
+            expected_checksum: Default::default(),
+        })
+        .unwrap();
     let _ = h.result_rx.recv().unwrap().unwrap();
 
     // File at sub level staging.
@@ -2327,7 +2393,11 @@ fn delay_updates_disk_thread_e2e_nested_dirs() {
     h.file_tx
         .send(FileMessage::Chunk(b"nested data".to_vec()))
         .unwrap();
-    h.file_tx.send(FileMessage::Commit).unwrap();
+    h.file_tx
+        .send(FileMessage::Commit {
+            expected_checksum: Default::default(),
+        })
+        .unwrap();
     let _ = h.result_rx.recv().unwrap().unwrap();
 
     h.file_tx.send(FileMessage::Shutdown).unwrap();
@@ -2683,6 +2753,7 @@ fn delay_updates_interrupt_leaves_committed_files_in_staging() {
                 xattr_list: None,
             }),
             data: b"file1 staged".to_vec(),
+            expected_checksum: Default::default(),
         })
         .unwrap();
 
@@ -2705,6 +2776,7 @@ fn delay_updates_interrupt_leaves_committed_files_in_staging() {
                 xattr_list: None,
             }),
             data: b"file2 staged".to_vec(),
+            expected_checksum: Default::default(),
         })
         .unwrap();
 
@@ -2775,6 +2847,7 @@ fn delay_updates_interrupt_mid_file_retains_prior_staged_files() {
                 xattr_list: None,
             }),
             data: b"committed".to_vec(),
+            expected_checksum: Default::default(),
         })
         .unwrap();
 
@@ -2855,6 +2928,7 @@ fn delay_updates_manual_sweep_after_commit_moves_to_final() {
                 xattr_list: None,
             }),
             data: b"sweep1".to_vec(),
+            expected_checksum: Default::default(),
         })
         .unwrap();
 
@@ -2874,6 +2948,7 @@ fn delay_updates_manual_sweep_after_commit_moves_to_final() {
                 xattr_list: None,
             }),
             data: b"sweep2".to_vec(),
+            expected_checksum: Default::default(),
         })
         .unwrap();
 
@@ -2934,6 +3009,7 @@ fn delay_updates_channel_disconnect_preserves_staged_files() {
                 xattr_list: None,
             }),
             data: b"disconnect data".to_vec(),
+            expected_checksum: Default::default(),
         })
         .unwrap();
 
@@ -3006,7 +3082,11 @@ fn pipelined_backup_default_suffix_returns_destination_relative_notice() {
     h.file_tx
         .send(FileMessage::Chunk(b"fresh".to_vec()))
         .unwrap();
-    h.file_tx.send(FileMessage::Commit).unwrap();
+    h.file_tx
+        .send(FileMessage::Commit {
+            expected_checksum: Default::default(),
+        })
+        .unwrap();
 
     let result = h.result_rx.recv().unwrap().unwrap();
     let notice = result
@@ -3072,7 +3152,11 @@ fn pipelined_backup_with_backup_dir_reports_destination_relative_paths() {
     h.file_tx
         .send(FileMessage::Chunk(b"updated".to_vec()))
         .unwrap();
-    h.file_tx.send(FileMessage::Commit).unwrap();
+    h.file_tx
+        .send(FileMessage::Commit {
+            expected_checksum: Default::default(),
+        })
+        .unwrap();
 
     let result = h.result_rx.recv().unwrap().unwrap();
     let notice = result
@@ -3093,6 +3177,194 @@ fn pipelined_backup_with_backup_dir_reports_destination_relative_paths() {
     assert_eq!(fs::read(&backup_path).unwrap(), b"pre-existing content");
     // Destination now holds the new content.
     assert_eq!(fs::read(&file_path).unwrap(), b"updated");
+
+    h.file_tx.send(FileMessage::Shutdown).unwrap();
+    h.join_handle.join().unwrap();
+}
+
+/// Builds the expected whole-file checksum the disk thread verifies against,
+/// using the same MD5 algorithm as [`md5_verifier`].
+fn expected_md5(data: &[u8]) -> crate::pipeline::messages::ExpectedChecksum {
+    use crate::delta_apply::ChecksumVerifier;
+    let mut v = ChecksumVerifier::for_algorithm(protocol::ChecksumAlgorithm::MD5);
+    v.update(data);
+    let mut bytes = [0u8; ChecksumVerifier::MAX_DIGEST_LEN];
+    let len = v.finalize_into(&mut bytes);
+    crate::pipeline::messages::ExpectedChecksum { bytes, len }
+}
+
+/// A live MD5 verifier for the disk thread to hash received bytes into.
+fn md5_verifier() -> crate::delta_apply::ChecksumVerifier {
+    crate::delta_apply::ChecksumVerifier::for_algorithm(protocol::ChecksumAlgorithm::MD5)
+}
+
+/// WHY: a file whose whole-file checksum fails verification must NOT be renamed
+/// over the destination. Upstream `receive_data()` returns `recv_ok = 0` on a
+/// `memcmp` mismatch (receiver.c:518) and `recv_files()` then skips
+/// `finish_transfer()` (receiver.c:1029), so a corrupted transfer never lands
+/// at the destination. This pins the coalesced whole-file path.
+#[test]
+fn whole_file_checksum_mismatch_is_not_committed_to_dest() {
+    let _registry_lock = test_support::cleanup_registry_test_guard();
+    let dir = test_support::create_tempdir();
+    let file_path = dir.path().join("corrupt.dat");
+
+    let h = spawn_disk_thread(DiskCommitConfig::default()).unwrap();
+
+    let data = b"corrupt payload";
+    h.file_tx
+        .send(FileMessage::WholeFile {
+            begin: Box::new(BeginMessage {
+                file_path: file_path.clone(),
+                target_size: data.len() as u64,
+                file_entry_index: 0,
+                checksum_verifier: Some(md5_verifier()),
+                is_device_target: false,
+                is_inplace: false,
+                append_offset: 0,
+                xattr_list: None,
+            }),
+            data: data.to_vec(),
+            // Sender's sum for entirely different bytes: forces a mismatch.
+            expected_checksum: expected_md5(b"the good bytes"),
+        })
+        .unwrap();
+
+    let result = h.result_rx.recv().unwrap().unwrap();
+    assert_eq!(result.bytes_written, data.len() as u64);
+    assert!(
+        result.computed_checksum.is_some(),
+        "disk thread must still report the computed digest for redo bookkeeping"
+    );
+    assert!(
+        result.delayed_path.is_none(),
+        "a verification failure is never staged for the delay-updates sweep"
+    );
+    assert!(
+        !file_path.exists(),
+        "checksum-failed file must NOT be committed to the destination"
+    );
+
+    h.file_tx.send(FileMessage::Shutdown).unwrap();
+    h.join_handle.join().unwrap();
+}
+
+/// The happy-path counterpart: a matching whole-file checksum commits normally.
+#[test]
+fn whole_file_checksum_match_commits_to_dest() {
+    let _registry_lock = test_support::cleanup_registry_test_guard();
+    let dir = test_support::create_tempdir();
+    let file_path = dir.path().join("verified.dat");
+
+    let h = spawn_disk_thread(DiskCommitConfig::default()).unwrap();
+
+    let data = b"verified payload";
+    h.file_tx
+        .send(FileMessage::WholeFile {
+            begin: Box::new(BeginMessage {
+                file_path: file_path.clone(),
+                target_size: data.len() as u64,
+                file_entry_index: 0,
+                checksum_verifier: Some(md5_verifier()),
+                is_device_target: false,
+                is_inplace: false,
+                append_offset: 0,
+                xattr_list: None,
+            }),
+            data: data.to_vec(),
+            expected_checksum: expected_md5(data),
+        })
+        .unwrap();
+
+    let result = h.result_rx.recv().unwrap().unwrap();
+    assert_eq!(result.bytes_written, data.len() as u64);
+    assert!(result.metadata_error.is_none());
+    assert_eq!(
+        fs::read(&file_path).unwrap(),
+        data,
+        "a verified file must be committed to the destination"
+    );
+
+    h.file_tx.send(FileMessage::Shutdown).unwrap();
+    h.join_handle.join().unwrap();
+}
+
+/// Same invariant for the multi-message chunked path (Begin + Chunk + Commit).
+#[test]
+fn chunked_checksum_mismatch_is_not_committed_to_dest() {
+    let _registry_lock = test_support::cleanup_registry_test_guard();
+    let dir = test_support::create_tempdir();
+    let file_path = dir.path().join("chunked_corrupt.dat");
+
+    let h = spawn_disk_thread(DiskCommitConfig::default()).unwrap();
+
+    h.file_tx
+        .send(FileMessage::Begin(Box::new(BeginMessage {
+            file_path: file_path.clone(),
+            target_size: 6,
+            file_entry_index: 0,
+            checksum_verifier: Some(md5_verifier()),
+            is_device_target: false,
+            is_inplace: false,
+            append_offset: 0,
+            xattr_list: None,
+        })))
+        .unwrap();
+    h.file_tx.send(FileMessage::Chunk(b"aaa".to_vec())).unwrap();
+    h.file_tx.send(FileMessage::Chunk(b"bbb".to_vec())).unwrap();
+    h.file_tx
+        .send(FileMessage::Commit {
+            expected_checksum: expected_md5(b"not aaabbb"),
+        })
+        .unwrap();
+
+    let result = h.result_rx.recv().unwrap().unwrap();
+    assert_eq!(result.bytes_written, 6);
+    assert!(
+        !file_path.exists(),
+        "checksum-failed chunked file must NOT be committed to the destination"
+    );
+
+    h.file_tx.send(FileMessage::Shutdown).unwrap();
+    h.join_handle.join().unwrap();
+}
+
+/// The strongest form of the invariant: a corrupted update must leave a good
+/// pre-existing destination file untouched. With temp+rename the failed temp
+/// is discarded and the original never sees the rename.
+#[test]
+fn checksum_mismatch_leaves_preexisting_dest_untouched() {
+    let _registry_lock = test_support::cleanup_registry_test_guard();
+    let dir = test_support::create_tempdir();
+    let file_path = dir.path().join("existing.dat");
+    fs::write(&file_path, b"original good data").unwrap();
+
+    let h = spawn_disk_thread(DiskCommitConfig::default()).unwrap();
+
+    let data = b"corrupt replacement";
+    h.file_tx
+        .send(FileMessage::WholeFile {
+            begin: Box::new(BeginMessage {
+                file_path: file_path.clone(),
+                target_size: data.len() as u64,
+                file_entry_index: 0,
+                checksum_verifier: Some(md5_verifier()),
+                is_device_target: false,
+                is_inplace: false,
+                append_offset: 0,
+                xattr_list: None,
+            }),
+            data: data.to_vec(),
+            expected_checksum: expected_md5(b"a different payload"),
+        })
+        .unwrap();
+
+    let _ = h.result_rx.recv().unwrap().unwrap();
+    assert_eq!(
+        fs::read(&file_path).unwrap(),
+        b"original good data",
+        "a checksum-failed update must not clobber the existing destination file"
+    );
 
     h.file_tx.send(FileMessage::Shutdown).unwrap();
     h.join_handle.join().unwrap();
