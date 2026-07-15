@@ -34,6 +34,8 @@ struct GlobalModuleDefaults {
     strict_modes: Option<bool>,
     forward_lookup: Option<bool>,
     reverse_lookup: Option<bool>,
+    syslog_tag: Option<String>,
+    syslog_facility: Option<String>,
     open_noatime: Option<bool>,
     exclude_from: Option<PathBuf>,
     include_from: Option<PathBuf>,

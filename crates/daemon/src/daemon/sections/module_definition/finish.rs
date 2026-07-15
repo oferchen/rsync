@@ -171,6 +171,14 @@ impl ModuleDefinitionBuilder {
             // upstream: daemon-parm.h:46 - a module `lock file` overrides the
             // daemon-wide lock file; `None` inherits it at connection setup.
             lock_file: self.lock_file,
+            // upstream: loadparm.c syslog_tag/syslog_facility are P_LOCAL, so a
+            // global-section value seeds every module's default (init_section
+            // copy). A module directive overrides it; otherwise the module
+            // inherits the global-section value, else the built-in default.
+            syslog_tag: self.syslog_tag.or_else(|| defaults.syslog_tag.clone()),
+            syslog_facility: self
+                .syslog_facility
+                .or_else(|| defaults.syslog_facility.clone()),
             filter,
             exclude,
             include,

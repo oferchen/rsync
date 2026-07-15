@@ -107,6 +107,19 @@ fn process_approved_module(
     };
     let module = &effective_module;
 
+    // Reconfigure the process-wide syslog handle for this connection when the
+    // selected module carries a `syslog tag`/`syslog facility` (its own override
+    // or an inherited global-section value). The guard restores the daemon-global
+    // logger on drop, so it is held for the module's whole session. In log-file
+    // mode (`log_sink` is Some) syslog is inactive, so the reconfiguration is
+    // skipped. upstream: log.c:169 log_init reopens syslog per selected module.
+    #[cfg(unix)]
+    let _module_syslog_guard = if ctx.log_sink.is_none() {
+        module.reconfigure_syslog()
+    } else {
+        None
+    };
+
     apply_module_timeout(ctx.reader.get_mut(), module)?;
 
     let (auth_user, auth_access_level) =
