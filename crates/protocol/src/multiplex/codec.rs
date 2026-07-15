@@ -294,7 +294,19 @@ mod tests {
         let result = codec.decode(&mut buf);
         assert!(result.is_err());
         let err = result.unwrap_err();
+        // upstream: io.c:1667 - an incoming multiplexed message whose byte count
+        // exceeds the receive buffer prints "multiplexing overflow" and calls
+        // exit_cleanup(RERR_STREAMIO) (exit 12), a stream error, NOT a protocol
+        // violation (2). WHY it matters: a drop-in tool must classify an
+        // oversized wire frame as RERR_STREAMIO. InvalidData maps to RERR_STREAMIO
+        // in the core mapper, so the error must NOT carry the ProtocolViolation
+        // tag (which would wrongly downgrade the exit code to RERR_PROTOCOL=2).
         assert_eq!(err.kind(), io::ErrorKind::InvalidData);
+        assert!(
+            err.get_ref()
+                .is_none_or(|e| !e.is::<crate::protocol_violation::ProtocolViolation>()),
+            "oversized multiplex frame must map to RERR_STREAMIO (12), not ProtocolViolation (2)"
+        );
     }
 
     #[test]

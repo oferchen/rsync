@@ -25,12 +25,16 @@ use super::types::{AclType, RecvAclResult};
 ///
 /// Mirrors `recv_ida_entries()` in `acls.c` lines 697-729.
 pub fn recv_ida_entries<R: Read + ?Sized>(reader: &mut R) -> io::Result<(IdaEntries, u8)> {
+    // upstream: acls.c:700 recv_ida_entries() reads the count via
+    // read_varint_bounded(f, 0, MAX_WIRE_ACL_COUNT, "ACL count") (io.c:1904-1913),
+    // which aborts with exit_cleanup(RERR_PROTOCOL) (exit 2) on an over-range
+    // value. Tag it so the core exit-code mapper yields RERR_PROTOCOL, not the
+    // RERR_STREAMIO (12) that a bare InvalidData maps to.
     let count = read_varint(reader)? as usize;
     if count > MAX_WIRE_ACL_ENTRIES {
-        return Err(io::Error::new(
-            io::ErrorKind::InvalidData,
-            format!("ACL entry count {count} exceeds maximum {MAX_WIRE_ACL_ENTRIES}"),
-        ));
+        return Err(crate::protocol_violation::protocol_violation(format!(
+            "ACL entry count {count} exceeds maximum {MAX_WIRE_ACL_ENTRIES}"
+        )));
     }
     let mut entries = IdaEntries::with_capacity(count);
     let mut computed_mask: u8 = 0;
