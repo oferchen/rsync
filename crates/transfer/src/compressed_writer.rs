@@ -223,6 +223,14 @@ impl<W: Write> CompressedWriter<W> {
     pub const fn inner_mut(&mut self) -> &mut W {
         &mut self.inner
     }
+
+    /// Provides shared access to the underlying writer.
+    ///
+    /// Used to read pass-through state (e.g. the keep-alive lull interval) that
+    /// lives on the multiplex writer without mutating it.
+    pub const fn inner_ref(&self) -> &W {
+        &self.inner
+    }
 }
 
 impl<W: Write> Write for CompressedWriter<W> {

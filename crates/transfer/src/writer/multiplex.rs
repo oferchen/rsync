@@ -83,6 +83,15 @@ impl<W: Write> MultiplexWriter<W> {
         self.last_io_out = Instant::now();
     }
 
+    /// Returns the configured keep-alive lull interval, or `None` when
+    /// `--timeout` is not set.
+    ///
+    /// Callers use this to derive upstream's `lull_mod = allowed_lull * 5`
+    /// cadence (sender.c:76) when poking keepalives inside a long read loop.
+    pub(crate) fn allowed_lull(&self) -> Option<Duration> {
+        self.allowed_lull
+    }
+
     /// Emits a lull keepalive if the configured `allowed_lull` has elapsed with
     /// no output since the last write.
     ///

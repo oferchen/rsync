@@ -7,7 +7,10 @@ use super::delta::{
     write_delta_with_compression,
 };
 use super::file_list::apply_permutation_in_place;
-use super::protocol_io::{calculate_duration_ms, read_signature_blocks};
+use super::protocol_io::{
+    calculate_duration_ms, read_signature_blocks, read_signature_blocks_keepalive,
+    signature_read_lull_mod,
+};
 use super::*;
 use crate::delta_apply::ChecksumVerifier;
 use crate::handshake::HandshakeResult;
@@ -20,7 +23,7 @@ use std::ffi::OsString;
 use std::fs;
 use std::io::{self, Cursor, Write};
 use std::path::{Path, PathBuf};
-use std::time::Instant;
+use std::time::{Duration, Instant};
 use tempfile::TempDir;
 
 use crate::config::ServerConfig;
@@ -1504,6 +1507,113 @@ fn read_signature_blocks_truncated_data() {
     let result = read_signature_blocks(&mut cursor, &sum_head);
 
     assert!(result.is_err());
+}
+
+/// Builds a wire buffer of `count` signature blocks with 16-byte strong sums.
+fn signature_wire(count: u32) -> Vec<u8> {
+    let mut data = Vec::new();
+    for i in 0..count {
+        data.extend_from_slice(&i.to_le_bytes());
+        data.extend_from_slice(&[0x5A; 16]);
+    }
+    data
+}
+
+/// On an older protocol with a slow/large checksum read, the sender must poke a
+/// keepalive every `lull_mod` blocks so the peer's --timeout does not fire while
+/// the write side is starved. upstream: sender.c:115-116.
+#[test]
+fn read_signature_blocks_keepalive_fires_on_cadence() {
+    let data = signature_wire(5);
+    let mut cursor = Cursor::new(&data[..]);
+    let sum_head = SumHead::new(5, 1024, 16, 0);
+
+    // lull_mod = 2 -> poke at blocks 0, 2, 4 (upstream `!(i % lull_mod)`).
+    let mut pokes = 0u32;
+    let blocks = read_signature_blocks_keepalive(&mut cursor, &sum_head, 2, || {
+        pokes += 1;
+        Ok(())
+    })
+    .unwrap();
+
+    assert_eq!(blocks.len(), 5);
+    assert_eq!(pokes, 3, "keepalive must fire at blocks 0, 2, and 4");
+}
+
+/// A `lull_mod` of 0 (modern protocol, or `--timeout` unset) must never poke a
+/// keepalive, keeping the default transfer path wire-identical. upstream:
+/// sender.c:76 sets `lull_mod = 0` for protocol_version >= 31.
+#[test]
+fn read_signature_blocks_keepalive_disabled_never_fires() {
+    let data = signature_wire(4);
+    let mut cursor = Cursor::new(&data[..]);
+    let sum_head = SumHead::new(4, 1024, 16, 0);
+
+    let mut pokes = 0u32;
+    let blocks = read_signature_blocks_keepalive(&mut cursor, &sum_head, 0, || {
+        pokes += 1;
+        Ok(())
+    })
+    .unwrap();
+
+    assert_eq!(blocks.len(), 4);
+    assert_eq!(pokes, 0, "lull_mod=0 must suppress all keepalives");
+}
+
+/// A whole-file transfer (count=0) reads no blocks and therefore never pokes a
+/// keepalive, regardless of `lull_mod`.
+#[test]
+fn read_signature_blocks_keepalive_empty_never_fires() {
+    let data: [u8; 0] = [];
+    let mut cursor = Cursor::new(&data[..]);
+    let sum_head = SumHead::empty();
+
+    let mut pokes = 0u32;
+    let blocks = read_signature_blocks_keepalive(&mut cursor, &sum_head, 5, || {
+        pokes += 1;
+        Ok(())
+    })
+    .unwrap();
+
+    assert!(blocks.is_empty());
+    assert_eq!(pokes, 0);
+}
+
+/// upstream: sender.c:76 - `lull_mod = protocol_version >= 31 ? 0 : allowed_lull * 5`.
+/// Protocol 31 and newer multiplex the checksum stream, so the sender never pokes
+/// keepalives during the signature read.
+#[test]
+fn signature_read_lull_mod_disabled_on_modern_protocol() {
+    assert_eq!(
+        signature_read_lull_mod(ProtocolVersion::V31, Some(Duration::from_secs(15))),
+        0
+    );
+    assert_eq!(
+        signature_read_lull_mod(ProtocolVersion::V32, Some(Duration::from_secs(15))),
+        0
+    );
+}
+
+/// On protocols below 31, the cadence is `allowed_lull * 5` blocks (seconds).
+/// upstream: sender.c:76.
+#[test]
+fn signature_read_lull_mod_scales_with_lull_on_old_protocol() {
+    assert_eq!(
+        signature_read_lull_mod(ProtocolVersion::V30, Some(Duration::from_secs(15))),
+        75
+    );
+    assert_eq!(
+        signature_read_lull_mod(ProtocolVersion::V28, Some(Duration::from_secs(1))),
+        5
+    );
+}
+
+/// Without `--timeout` there is no lull, so no keepalives even on an old
+/// protocol; the default path stays wire-identical. upstream: `allowed_lull`
+/// is 0 when no timeout is set (io.c:1151), making `lull_mod` 0.
+#[test]
+fn signature_read_lull_mod_zero_without_timeout() {
+    assert_eq!(signature_read_lull_mod(ProtocolVersion::V30, None), 0);
 }
 
 #[test]

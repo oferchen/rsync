@@ -100,7 +100,10 @@ pub use self::diagnostics::{
     flush_rate_totals, ndx_convert_totals, prepare_acl_totals, segment_dispatch_totals,
 };
 pub use self::item_flags::ItemFlags;
-pub use self::protocol_io::{calculate_duration_ms, read_signature_blocks};
+pub use self::protocol_io::{
+    calculate_duration_ms, read_signature_blocks, read_signature_blocks_keepalive,
+    signature_read_lull_mod,
+};
 pub use self::stats::GeneratorStats;
 
 // Re-exports for sibling submodules accessing diagnostics, segments, and stats
