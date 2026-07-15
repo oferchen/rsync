@@ -24,6 +24,75 @@ use protocol::stats::DeleteStats;
 use super::normalize_filename_for_compare;
 use crate::receiver::ReceiverContext;
 
+/// Upstream `MAXPATHLEN` (`rsync.h`): a deleted name is only sent as a
+/// `MSG_DELETED` frame when `len < MAXPATHLEN` (`log.c:866`); longer names fall
+/// back to the local render path.
+const MAXPATHLEN: usize = 4096;
+
+/// Routes one deletion notification the way upstream `log_delete()` does.
+///
+/// A server generator (`server_mode`, i.e. `am_server`) at protocol >= 29 sends
+/// the raw name to the client as a `MSG_DELETED` frame and prints nothing
+/// locally; the client formats and gates the `deleting`/`*deleting` line. Every
+/// other side (a local or client-side receiver) renders directly, exactly as
+/// before.
+///
+/// # Upstream Reference
+///
+/// - `log.c:845-875` - `log_delete()`: `am_server && protocol_version >= 29 &&
+///   len < MAXPATHLEN` emits `send_msg(MSG_DELETED, fname, len, ...)`, otherwise
+///   `log_formatted(FCLIENT, "deleting %n" | stdout_format, ...)`.
+/// - `log.c:867-868` - a directory bumps `len` to include its trailing NUL.
+fn emit_delete_notification<W: crate::writer::MsgInfoSender + ?Sized>(
+    writer: &mut W,
+    rel: &Path,
+    is_dir: bool,
+    server_mode: bool,
+    protocol: u8,
+    emit_itemize: bool,
+) {
+    if server_mode && protocol >= 29 {
+        let name = path_wire_bytes(rel);
+        if name.len() < MAXPATHLEN {
+            // upstream: log.c:867-868 - a directory carries a trailing NUL so
+            // the reader (io.c:1616) can distinguish it from a regular file.
+            let mut payload = name;
+            if is_dir {
+                payload.push(0);
+            }
+            let _ = writer.send_msg_deleted(&payload);
+            return;
+        }
+    }
+    // upstream: log.c:872-874 - a local/client receiver renders "deleting %n"
+    // directly; %n (log.c:633-641) appends a trailing slash for a directory.
+    if is_dir {
+        info_log!(Del, 1, "deleting {}/", rel.display());
+    } else {
+        info_log!(Del, 1, "deleting {}", rel.display());
+    }
+    if emit_itemize {
+        // upstream: log.c:log_delete() emits the "*deleting" itemize row when
+        // --itemize-changes is active.
+        let line = format!("*deleting   {}\n", rel.display());
+        let _ = writer.send_msg_info(line.as_bytes());
+    }
+}
+
+/// Returns the on-the-wire bytes of a deletion-root-relative name, matching the
+/// raw `fname` upstream passes to `send_msg(MSG_DELETED, ...)` (`log.c:869`).
+fn path_wire_bytes(rel: &Path) -> Vec<u8> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::ffi::OsStrExt;
+        rel.as_os_str().as_bytes().to_vec()
+    }
+    #[cfg(not(unix))]
+    {
+        rel.to_string_lossy().into_owned().into_bytes()
+    }
+}
+
 /// A single deleted destination entry carried out of the parallel scan
 /// workers so its `deleting`/`*deleting` line can be emitted in upstream's
 /// deterministic per-directory sorted order rather than the hash-random
@@ -211,6 +280,8 @@ impl ReceiverContext {
         let mut stats = DeleteStats::new();
         let mut io_bits: i32 = 0;
         let emit_itemize = self.should_emit_itemize();
+        let server_mode = !self.config.connection.client_mode;
+        let protocol = self.protocol.as_u8();
         for entry in victims {
             let path = dest_dir.join(&entry.rel);
             let result = if entry.is_dir {
@@ -249,19 +320,19 @@ impl ReceiverContext {
                 Ok(()) => {
                     if entry.is_dir {
                         stats.dirs += 1;
-                        info_log!(Del, 1, "deleting {}/", entry.rel.display());
+                    } else if entry.is_symlink {
+                        stats.symlinks += 1;
                     } else {
-                        if entry.is_symlink {
-                            stats.symlinks += 1;
-                        } else {
-                            stats.files += 1;
-                        }
-                        info_log!(Del, 1, "deleting {}", entry.rel.display());
+                        stats.files += 1;
                     }
-                    if emit_itemize {
-                        let line = format!("*deleting   {}\n", entry.rel.display());
-                        let _ = writer.send_msg_info(line.as_bytes());
-                    }
+                    emit_delete_notification(
+                        writer,
+                        &entry.rel,
+                        entry.is_dir,
+                        server_mode,
+                        protocol,
+                        emit_itemize,
+                    );
                 }
                 Err(e) => {
                     debug_log!(Del, 1, "failed to delete {}: {}", path.display(), e);
@@ -915,21 +986,20 @@ impl ReceiverContext {
         // time. The ordered victim list is returned for that later execution.
         if !collect_only {
             let emit_itemize = self.should_emit_itemize();
+            let server_mode = !self.config.connection.client_mode;
+            let protocol = self.protocol.as_u8();
             for entry in &all_deleted {
-                // upstream: log.c:845 log_delete uses one "deleting %n" form; %n
-                // (log.c:633-641) appends a trailing slash for directories, so a
-                // dir prints "deleting sub/" - no word "directory".
-                if entry.is_dir {
-                    info_log!(Del, 1, "deleting {}/", entry.rel.display());
-                } else {
-                    info_log!(Del, 1, "deleting {}", entry.rel.display());
-                }
-                // upstream: log.c:log_delete() emits the "*deleting" itemize line
-                // for each deleted item when --itemize-changes is active.
-                if emit_itemize {
-                    let line = format!("*deleting   {}\n", entry.rel.display());
-                    let _ = writer.send_msg_info(line.as_bytes());
-                }
+                // upstream: log.c:845 log_delete() - a server generator forwards
+                // the raw name as MSG_DELETED; a local/client receiver renders
+                // "deleting %n" directly (%n appends a trailing slash for dirs).
+                emit_delete_notification(
+                    writer,
+                    &entry.rel,
+                    entry.is_dir,
+                    server_mode,
+                    protocol,
+                    emit_itemize,
+                );
             }
         }
 
@@ -987,6 +1057,8 @@ impl ReceiverContext {
             combined: DeleteStats::new(),
             io_err_bits: 0,
             emit_itemize: self.should_emit_itemize(),
+            server_mode: !self.config.connection.client_mode,
+            protocol: self.protocol.as_u8(),
             writer,
         };
 
@@ -1144,6 +1216,11 @@ struct CappedDeleteState<'w, W: ?Sized> {
     combined: DeleteStats,
     io_err_bits: i32,
     emit_itemize: bool,
+    /// `true` when this receiver is a server generator (`am_server`) and must
+    /// forward deletions to the client as `MSG_DELETED` rather than render them.
+    server_mode: bool,
+    /// Negotiated protocol version, gating the `>= 29` `MSG_DELETED` path.
+    protocol: u8,
     writer: &'w mut W,
 }
 
@@ -1300,16 +1377,17 @@ impl<W: crate::writer::MsgInfoSender + ?Sized> CappedDeleteState<'_, W> {
                 } else {
                     self.combined.files = self.combined.files.saturating_add(1);
                 }
-                // upstream: log.c:log_delete() emits one line per deleted item.
-                if is_dir {
-                    info_log!(Del, 1, "deleting {}/", rel.display());
-                } else {
-                    info_log!(Del, 1, "deleting {}", rel.display());
-                }
-                if self.emit_itemize {
-                    let line = format!("*deleting   {}\n", rel.display());
-                    let _ = self.writer.send_msg_info(line.as_bytes());
-                }
+                // upstream: log.c:log_delete() emits one line per deleted item -
+                // forwarded as MSG_DELETED on a server generator, rendered
+                // directly otherwise.
+                emit_delete_notification(
+                    self.writer,
+                    rel,
+                    is_dir,
+                    self.server_mode,
+                    self.protocol,
+                    self.emit_itemize,
+                );
                 Ok(true)
             }
             Err(e) => {
@@ -1419,6 +1497,103 @@ fn fail_loud_unlink_error(e: io::Error) -> Option<io::Error> {
 #[cfg(unix)]
 fn crosses_mount_boundary(boundary_dev: u64, entry_dev: u64) -> bool {
     entry_dev != boundary_dev
+}
+
+/// Tests for the server-vs-local routing of a deletion notification, encoding
+/// the upstream `log.c:866-874` gate: a server generator at protocol >= 29
+/// forwards the raw name (dir bytes + trailing NUL) as MSG_DELETED and prints
+/// nothing locally; every other side renders `deleting %n` directly.
+#[cfg(test)]
+mod emit_notification_tests {
+    use super::*;
+    use logging::{DiagnosticEvent, InfoFlag, VerbosityConfig, drain_events, init};
+
+    /// Records the frames a receiver would put on the wire.
+    #[derive(Default)]
+    struct RecordingWriter {
+        deleted: Vec<Vec<u8>>,
+        info: Vec<Vec<u8>>,
+    }
+
+    impl crate::writer::MsgInfoSender for RecordingWriter {
+        fn send_msg_deleted(&mut self, data: &[u8]) -> io::Result<()> {
+            self.deleted.push(data.to_vec());
+            Ok(())
+        }
+        fn send_msg_info(&mut self, data: &[u8]) -> io::Result<()> {
+            self.info.push(data.to_vec());
+            Ok(())
+        }
+    }
+
+    fn del_events() -> Vec<String> {
+        drain_events()
+            .into_iter()
+            .filter_map(|e| match e {
+                DiagnosticEvent::Info {
+                    flag: InfoFlag::Del,
+                    message,
+                    ..
+                } => Some(message),
+                _ => None,
+            })
+            .collect()
+    }
+
+    #[test]
+    fn server_generator_forwards_msg_deleted_not_local_print() {
+        let mut cfg = VerbosityConfig::default();
+        cfg.info.del = 1;
+        init(cfg);
+        let _ = drain_events();
+
+        let mut w = RecordingWriter::default();
+        // server_mode=true, proto 32: file -> raw name, dir -> name + NUL.
+        emit_delete_notification(&mut w, Path::new("foo"), false, true, 32, false);
+        emit_delete_notification(&mut w, Path::new("sub/bar"), true, true, 32, false);
+
+        assert_eq!(w.deleted, vec![b"foo".to_vec(), b"sub/bar\0".to_vec()]);
+        // Server prints nothing locally: the client renders from the wire.
+        assert!(w.info.is_empty());
+        assert!(
+            del_events().is_empty(),
+            "server must not emit local Del lines"
+        );
+    }
+
+    #[test]
+    fn local_receiver_renders_directly_no_frame() {
+        let mut cfg = VerbosityConfig::default();
+        cfg.info.del = 1;
+        init(cfg);
+        let _ = drain_events();
+
+        let mut w = RecordingWriter::default();
+        // server_mode=false: local/client receiver renders "deleting %n".
+        emit_delete_notification(&mut w, Path::new("foo"), false, false, 32, false);
+        emit_delete_notification(&mut w, Path::new("bar"), true, false, 32, false);
+
+        assert!(w.deleted.is_empty(), "a local receiver sends no wire frame");
+        assert_eq!(
+            del_events(),
+            vec!["deleting foo".to_owned(), "deleting bar/".to_owned()]
+        );
+    }
+
+    #[test]
+    fn protocol_below_29_falls_back_to_local_render() {
+        let mut cfg = VerbosityConfig::default();
+        cfg.info.del = 1;
+        init(cfg);
+        let _ = drain_events();
+
+        let mut w = RecordingWriter::default();
+        // upstream: log.c:866 - the MSG_DELETED path requires protocol >= 29.
+        emit_delete_notification(&mut w, Path::new("foo"), false, true, 28, false);
+
+        assert!(w.deleted.is_empty(), "proto 28 must not send MSG_DELETED");
+        assert_eq!(del_events(), vec!["deleting foo".to_owned()]);
+    }
 }
 
 #[cfg(all(test, unix))]

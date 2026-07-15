@@ -16,8 +16,8 @@ mod compressed;
 mod tests;
 
 pub(crate) use counting::CountingReader;
-pub(crate) use multiplex::MultiplexReader;
 pub use multiplex::RemoteExitError;
+pub(crate) use multiplex::{DeletedRender, MultiplexReader};
 pub use server::ServerReader;
 
 #[cfg(feature = "tokio-transfer")]

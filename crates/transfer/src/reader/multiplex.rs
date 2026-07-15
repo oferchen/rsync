@@ -53,6 +53,58 @@ impl MuxSink for RealSink {
     }
 }
 
+/// Client-side rendering state for received `MSG_DELETED` frames.
+///
+/// A server generator sends only the raw deleted name (a directory carries a
+/// trailing NUL); the client formats and gates the line itself, exactly as
+/// upstream `log_delete()` does on the non-`am_server` side. Present only on the
+/// client-sender reader (a push, where the remote receiver performs `--delete`);
+/// every other reader leaves it `None` so the `MSG_DELETED` arm is inert.
+///
+/// # Upstream Reference
+///
+/// - `log.c:870-874` - the client renders `stdout_format` (itemize) when set,
+///   else `"deleting %n"`, and skips output when neither `INFO_GTE(DEL, 1)` nor
+///   `stdout_format` is active.
+/// - `io.c:1616-1621` - a trailing NUL in the payload marks a directory.
+#[derive(Clone, Copy)]
+pub(crate) struct DeletedRender {
+    /// `--itemize-changes` is active: render the `*deleting` row form.
+    pub(crate) itemize: bool,
+    /// `INFO_GTE(DEL, 1)` (e.g. `-v` or `--info=del`): render the plain
+    /// `deleting <path>` line when itemize is off.
+    pub(crate) show_plain: bool,
+}
+
+impl DeletedRender {
+    /// Formats a received `MSG_DELETED` payload into the client-visible line, or
+    /// `None` when the current verbosity suppresses it.
+    ///
+    /// upstream: log.c:870-874 - `stdout_format` (itemize) wins over
+    /// `"deleting %n"`; both append a trailing slash for a directory (log.c:%n).
+    fn format(&self, payload: &[u8]) -> Option<String> {
+        if !self.itemize && !self.show_plain {
+            return None;
+        }
+        // upstream: io.c:1616 - a trailing NUL byte marks a deleted directory.
+        let (is_dir, name_bytes) = match payload.split_last() {
+            Some((0, rest)) => (true, rest),
+            _ => (false, payload),
+        };
+        let name = String::from_utf8_lossy(name_bytes);
+        let display = if is_dir {
+            format!("{name}/")
+        } else {
+            name.into_owned()
+        };
+        Some(if self.itemize {
+            format!("*deleting   {display}\n")
+        } else {
+            format!("deleting {display}\n")
+        })
+    }
+}
+
 /// Reader that automatically demultiplexes incoming messages.
 ///
 /// Reads multiplex frames from the wire and extracts MSG_DATA payloads.
@@ -116,6 +168,11 @@ pub(crate) struct MultiplexReader<R> {
     /// Set once a received `MSG_IO_TIMEOUT` violated the upstream `msg_bytes == 4`
     /// / role invariant (upstream `goto invalid_msg`, fatal `RERR_STREAMIO`).
     io_timeout_invalid: bool,
+    /// Client-sender rendering state for `MSG_DELETED` frames. `Some` only on
+    /// the client side of a push, where the remote receiver runs `--delete`;
+    /// every other reader leaves it `None` so the frame is dropped like upstream
+    /// drops it on `am_server`. upstream: log.c:870-874.
+    deleted_render: Option<DeletedRender>,
 }
 
 /// Exit code for partial transfer due to error.
@@ -194,7 +251,20 @@ impl<R> MultiplexReader<R> {
             io_timeout: None,
             io_timeout_reapply: None,
             io_timeout_invalid: false,
+            deleted_render: None,
         }
+    }
+
+    /// Enables client-side rendering of received `MSG_DELETED` frames.
+    ///
+    /// Called only on the client-sender reader (a push, where the remote
+    /// receiver performs `--delete`), so a server or client-receiver reader
+    /// leaves the state unset and silently drops any `MSG_DELETED` frame,
+    /// mirroring upstream's `am_server`/`am_generator` non-rendering path.
+    ///
+    /// upstream: log.c:870-874 `log_delete()` renders on the non-server side.
+    pub(super) fn set_deleted_render(&mut self, render: DeletedRender) {
+        self.deleted_render = Some(render);
     }
 
     /// Installs client-receiver I/O-timeout adoption state.
@@ -521,6 +591,18 @@ impl<R> MultiplexReader<R> {
                 // upstream: io.c:1551-1561
                 self.handle_io_timeout_msg(sink);
             }
+            protocol::MessageCode::Deleted => {
+                // upstream: io.c:1614-1621 + log.c:870-874 - the client formats
+                // the raw deleted name (a trailing NUL marks a directory) and
+                // gates on its own info=del / itemize verbosity. A server or
+                // client-receiver reader has no render state and drops the frame,
+                // matching upstream's non-rendering `am_server` path.
+                if let Some(render) = self.deleted_render {
+                    if let Some(line) = render.format(&self.buffer) {
+                        sink.info(&line);
+                    }
+                }
+            }
             _ => {}
         }
         false
@@ -780,6 +862,84 @@ mod remote_exit_error_tests {
         let mut reader = MultiplexReader::new(io::empty());
         reader.error_exit_code = Some(RERR_PARTIAL);
         assert!(reader.check_error_exit().is_ok());
+    }
+}
+
+/// Tests for the client-side `MSG_DELETED` render, encoding the upstream
+/// `log.c:870-874` + `io.c:1614-1621` contract: the client formats the raw
+/// deleted name (a trailing NUL marks a directory), itemize (`stdout_format`)
+/// wins over `"deleting %n"`, and a reader without render state drops the frame
+/// exactly as upstream drops it on `am_server`.
+#[cfg(test)]
+mod deleted_render_tests {
+    use super::*;
+
+    /// Minimal capturing sink so the render assertion is byte-exact.
+    struct CapturingSink(Vec<String>);
+
+    impl MuxSink for CapturingSink {
+        fn info(&mut self, msg: &str) {
+            self.0.push(msg.to_owned());
+        }
+        fn error(&mut self, _msg: &str) {
+            panic!("MSG_DELETED must render via info(), never error()");
+        }
+    }
+
+    fn render(payload: &[u8], render: DeletedRender) -> Vec<String> {
+        let mut reader = MultiplexReader::new(io::empty());
+        reader.set_deleted_render(render);
+        reader.buffer = payload.to_vec();
+        let mut sink = CapturingSink(Vec::new());
+        // A MSG_DELETED frame never breaks the read loop.
+        assert!(!reader.dispatch_message_with(protocol::MessageCode::Deleted, &mut sink));
+        sink.0
+    }
+
+    #[test]
+    fn plain_render_file_and_dir() {
+        // upstream: log.c:874 "deleting %n"; %n appends a trailing slash for a
+        // directory (the trailing-NUL payload marks it).
+        let cfg = DeletedRender {
+            itemize: false,
+            show_plain: true,
+        };
+        assert_eq!(render(b"foo", cfg), vec!["deleting foo\n".to_owned()]);
+        assert_eq!(render(b"bar\0", cfg), vec!["deleting bar/\n".to_owned()]);
+    }
+
+    #[test]
+    fn itemize_render_wins_over_plain() {
+        // upstream: log.c:873 - stdout_format (itemize) is used instead of the
+        // plain form when active, even at -v.
+        let cfg = DeletedRender {
+            itemize: true,
+            show_plain: true,
+        };
+        assert_eq!(render(b"foo", cfg), vec!["*deleting   foo\n".to_owned()]);
+        assert_eq!(render(b"bar\0", cfg), vec!["*deleting   bar/\n".to_owned()]);
+    }
+
+    #[test]
+    fn suppressed_when_neither_gate_active() {
+        // upstream: log.c:870 - `!INFO_GTE(DEL,1) && !stdout_format` prints
+        // nothing even though the frame arrived.
+        let cfg = DeletedRender {
+            itemize: false,
+            show_plain: false,
+        };
+        assert!(render(b"foo", cfg).is_empty());
+    }
+
+    #[test]
+    fn dropped_without_render_state() {
+        // A server or client-receiver reader never enables rendering, so a
+        // MSG_DELETED frame is silently dropped (upstream `am_server` path).
+        let mut reader = MultiplexReader::new(io::empty());
+        reader.buffer = b"foo".to_vec();
+        let mut sink = CapturingSink(Vec::new());
+        assert!(!reader.dispatch_message_with(protocol::MessageCode::Deleted, &mut sink));
+        assert!(sink.0.is_empty());
     }
 }
 

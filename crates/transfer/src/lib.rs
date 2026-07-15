@@ -671,6 +671,21 @@ pub fn run_server_with_handshake_adopting<W: Write>(
         }
     }
 
+    // upstream: log.c:870-874 - the client (a push client is the sender/generator
+    // role) renders each MSG_DELETED the remote receiver forwards, gating on its
+    // own info=del / itemize verbosity. Capture the gate now, on the setup
+    // thread where the verbosity thread-local is valid, so the read loop never
+    // depends on its own thread's state. `-v` sets INFO_GTE(DEL, 1)
+    // (options.c:251), so verbose_level covers the common case even if the
+    // read loop runs elsewhere; --info=del without -v is caught by info_gte.
+    if config.connection.client_mode && config.role == crate::role::ServerRole::Generator {
+        reader.enable_deleted_render(reader::DeletedRender {
+            itemize: config.flags.info_flags.itemize,
+            show_plain: config.flags.verbose_level >= 1
+                || logging::info_gte(logging::InfoFlag::Del, 1),
+        });
+    }
+
     // MultiplexWriter provides 64KB buffering (matching upstream iobuf_out).
     let mut writer = writer::ServerWriter::new_plain(stdout);
 

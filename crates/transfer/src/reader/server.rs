@@ -23,6 +23,10 @@ pub struct ServerReader<R: Read> {
     /// starts in Plain mode. `(current --timeout secs, live-socket re-apply)`.
     /// upstream: io.c:1551-1561 read_a_msg() case MSG_IO_TIMEOUT.
     pending_io_timeout_adoption: Option<(Option<u32>, crate::handshake::IoTimeoutReapply)>,
+    /// Client-sender `MSG_DELETED` render state, applied to the
+    /// `MultiplexReader` on multiplex activation. `Some` only on a push where
+    /// the remote receiver performs `--delete`. upstream: log.c:870-874.
+    pending_deleted_render: Option<super::DeletedRender>,
 }
 
 #[allow(private_interfaces)]
@@ -44,7 +48,19 @@ impl<R: Read> ServerReader<R> {
             inner: ServerReaderInner::Plain(reader),
             pending_batch_recorder: None,
             pending_io_timeout_adoption: None,
+            pending_deleted_render: None,
         }
+    }
+
+    /// Enables client-side rendering of received `MSG_DELETED` frames.
+    ///
+    /// Applied to the `MultiplexReader` on `activate_multiplex`. Called only on
+    /// the client-sender path of a push, where the remote receiver performs
+    /// `--delete`; every other reader leaves it unset and drops the frames.
+    ///
+    /// upstream: log.c:870-874 `log_delete()` renders on the non-server side.
+    pub(crate) fn enable_deleted_render(&mut self, render: super::DeletedRender) {
+        self.pending_deleted_render = Some(render);
     }
 
     /// Registers client-receiver I/O-timeout adoption state.
@@ -106,10 +122,14 @@ impl<R: Read> ServerReader<R> {
                 if let Some((current, reapply)) = self.pending_io_timeout_adoption {
                     mux.set_io_timeout_adoption(current, reapply);
                 }
+                if let Some(render) = self.pending_deleted_render {
+                    mux.set_deleted_render(render);
+                }
                 Ok(Self {
                     inner: ServerReaderInner::Multiplex(mux),
                     pending_batch_recorder: None,
                     pending_io_timeout_adoption: None,
+                    pending_deleted_render: None,
                 })
             }
             ServerReaderInner::Multiplex(_) => Err(io::Error::new(
@@ -148,6 +168,7 @@ impl<R: Read> ServerReader<R> {
                     inner: ServerReaderInner::Compressed(compressed),
                     pending_batch_recorder: None,
                     pending_io_timeout_adoption: None,
+                    pending_deleted_render: None,
                 })
             }
             ServerReaderInner::Plain(_) => Err(io::Error::new(
