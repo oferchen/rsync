@@ -400,6 +400,12 @@ pub(super) fn build_full_daemon_args(
         if let Some(max) = config.max_file_size() {
             args.push(format!("--max-size={max}"));
         }
+
+        // upstream: options.c:2852-2857 - sender-only `--super` (am_root > 1)
+        // and `--stats` (do_stats). Shared with the SSH push builder via
+        // flags::sender_super_stats_args so both transports forward the same
+        // trailer on a push.
+        args.extend(flags::sender_super_stats_args(config).map(str::to_owned));
     }
 
     // upstream: options.c:2863-2864 - `if (max_alloc_arg && max_alloc !=

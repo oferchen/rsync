@@ -16,6 +16,7 @@ use super::super::super::config::{
     ClientConfig, DeleteMode, IconvSetting, ReferenceDirectoryKind, StrongChecksumAlgorithm,
     TransferTimeout,
 };
+use super::super::flags;
 use super::super::output_option::{OutputWordKind, make_output_option};
 use super::{RemoteRole, SecludedInvocation};
 use transfer::setup::build_capability_string_suffix;
@@ -546,12 +547,7 @@ impl<'a> RemoteInvocationBuilder<'a> {
         // made the remote stat source paths under fake-super semantics, which
         // upstream never does.
         if self.role == RemoteRole::Sender {
-            if self.config.super_user() {
-                args.push(OsString::from("--super"));
-            }
-            if self.config.stats() {
-                args.push(OsString::from("--stats"));
-            }
+            args.extend(flags::sender_super_stats_args(self.config).map(OsString::from));
         }
 
         // upstream: options.c:2646-2649 - --omit-dir-times ('O') and
