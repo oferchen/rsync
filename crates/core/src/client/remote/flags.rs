@@ -384,6 +384,14 @@ pub(crate) fn apply_common_server_flags(config: &ClientConfig, server_config: &m
     // they must be carried onto the in-process ServerConfig for SSH and daemon.
     server_config.flags.append = config.append();
     server_config.flags.append_verify = config.append_verify();
+    // upstream: receiver.c:320 - `--preallocate` (preallocate_files) is a
+    // long-form-only flag with no compact letter, so build_server_flag_string
+    // never packs it into the capability string this local ServerConfig is
+    // parsed from. On a remote-shell/daemon pull the LOCAL client is the
+    // receiver, so carry the flag directly onto its config; without this the
+    // receiver never fallocate()s its destination files. Inert on a push (the
+    // remote receiver picks it up from the forwarded --preallocate arg).
+    server_config.flags.preallocate = config.preallocate();
     server_config.has_partial_dir = config.partial_directory().is_some();
     server_config.partial_dir = config.partial_directory().map(std::path::Path::to_path_buf);
     server_config.file_selection.min_file_size = config.min_file_size();
