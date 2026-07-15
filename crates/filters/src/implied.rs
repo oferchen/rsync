@@ -318,6 +318,71 @@ mod tests {
     }
 
     #[test]
+    fn trailing_slash_source_admits_bare_child_names() {
+        // A trailing-slash source (`host:dir/`) transfers the directory's
+        // CONTENTS, so the received names are bare children. upstream reduces
+        // the arg to "" and (with -r) builds `/**`, admitting them. Regression
+        // for over-rejecting `file`/`one` on a trailing-slash pull.
+        let opts = ImpliedIncludeOptions {
+            recurse: true,
+            ..Default::default()
+        };
+        let implied = ImpliedIncludes::from_args(opts, ["/abs/A weird)name/"]).unwrap();
+        assert!(covers(&implied, "file", false));
+        assert!(covers(&implied, "one", false));
+        assert!(covers(&implied, "sub/deep", false));
+    }
+
+    #[test]
+    fn files_from_relative_entries_admit_requested_tree() {
+        // --files-from implies --relative and disables recursion in favour of
+        // --dirs (options.c:2169-2173,2205-2206). `from/./` reduces to `/*`,
+        // admitting every top-level name the whole-dir entry requested.
+        let opts = ImpliedIncludeOptions {
+            relative: true,
+            recurse: false,
+            dirs: true,
+            skip_daemon_module: false,
+        };
+        let implied = ImpliedIncludes::from_args(
+            opts,
+            [
+                "from/./",
+                "from/./dir/subdir",
+                "from/./dir/subdir/subsubdir2/",
+                "from/./dir/subdir/foobar.baz",
+            ],
+        )
+        .unwrap();
+        // `from/./` -> `/*` admits every top-level requested name.
+        assert!(covers(&implied, "empty", false));
+        // Implied parent dirs and the listed paths.
+        assert!(covers(&implied, "dir", true));
+        assert!(covers(&implied, "dir/subdir", true));
+        assert!(covers(&implied, "dir/subdir/foobar.baz", false));
+        assert!(covers(&implied, "dir/subdir/subsubdir2", true));
+        assert!(covers(&implied, "dir/subdir/subsubdir2/y", false));
+    }
+
+    #[test]
+    fn files_from_without_whole_dir_entry_rejects_out_of_tree_name() {
+        // Without a `from/./` whole-tree entry, a name outside every requested
+        // path is still rejected - the check keeps its teeth under --files-from.
+        let opts = ImpliedIncludeOptions {
+            relative: true,
+            recurse: false,
+            dirs: true,
+            skip_daemon_module: false,
+        };
+        let implied = ImpliedIncludes::from_args(opts, ["from/./dir/subdir"]).unwrap();
+        assert!(covers(&implied, "dir", true));
+        assert!(covers(&implied, "dir/subdir", true));
+        assert!(covers(&implied, "dir/subdir/child", false));
+        assert!(!covers(&implied, "empty", false));
+        assert!(!covers(&implied, "other/evil", false));
+    }
+
+    #[test]
     fn dot_arg_with_recurse_accepts_whole_tree() {
         let opts = ImpliedIncludeOptions {
             recurse: true,

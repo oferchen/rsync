@@ -24,6 +24,7 @@ use super::super::super::summary::ClientSummary;
 use super::super::batch_support::{BatchContext, build_batch_context, build_batch_recording};
 use super::super::files_from_forwarding::read_local_files_from_for_forwarding;
 use super::super::flags;
+use super::super::implied_source::implied_source_args_for_pull;
 use super::super::invocation::{RemoteOperands, RemoteRole, TransferSpec, determine_transfer_role};
 use super::connection::build_ssh_connection;
 use super::exit_status::{
@@ -157,7 +158,7 @@ fn run_pull_transfer(
     config: &ClientConfig,
     connection: SshConnection,
     local_paths: &[String],
-    implied_source_args: &[String],
+    source_paths: &[String],
     observer: Option<&mut dyn ClientProgressObserver>,
     batch_writer: Option<Arc<Mutex<BatchWriter>>>,
 ) -> Result<ClientSummary, ClientError> {
@@ -166,9 +167,6 @@ fn run_pull_transfer(
     // called inside the server).
     let mut server_config = build_server_config_for_receiver(config, local_paths)?;
     server_config.connection.client_mode = true;
-    // upstream: flist.c:1026 recv_file_entry() validates each received name
-    // against these implied includes (CVE-2022-29154).
-    server_config.connection.implied_source_args = implied_source_args.to_vec();
     server_config.connection.filter_rules =
         flags::build_wire_format_rules(config.filter_rules(), config.delete_excluded()).map_err(
             |e| invalid_argument_error(&format!("failed to build filter rules: {e}"), 12),
@@ -188,6 +186,15 @@ fn run_pull_transfer(
         let data = read_local_files_from_for_forwarding(config)?;
         server_config.connection.files_from_data = Some(data);
     }
+
+    // upstream: flist.c:1026 recv_file_entry() validates each received name
+    // against these implied includes (CVE-2022-29154). Computed after staging
+    // so a local --files-from folds each forwarded entry into the set.
+    server_config.connection.implied_source_args = implied_source_args_for_pull(
+        config,
+        source_paths,
+        server_config.connection.files_from_data.as_deref(),
+    );
 
     let batch_ctx = batch_writer.map(|bw| build_batch_context(config, bw));
 

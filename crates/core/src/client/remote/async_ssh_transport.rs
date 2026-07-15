@@ -60,6 +60,7 @@ use super::super::progress::ClientProgressObserver;
 use super::super::summary::ClientSummary;
 use super::batch_support::{BatchContext, build_batch_context, build_batch_recording};
 use super::flags;
+use super::implied_source::implied_source_args_for_pull;
 use super::invocation::{RemoteOperands, RemoteRole, TransferSpec, determine_transfer_role};
 use super::ssh_transfer::{
     build_server_config_for_generator, build_server_config_for_receiver,
@@ -165,11 +166,15 @@ pub fn run_async_ssh_transfer(
         } => {
             let plan = build_plan(config, RemoteRole::Receiver, "", Some(&remote_sources))?;
             let mut server_config = build_pull_server_config(config, &[local_dest])?;
-            // upstream: main.c:1525,1549 / flist.c:1026 - record each requested
-            // source path as an implied include so the receiver rejects any
-            // unrequested file-list name (CVE-2022-29154).
-            server_config.connection.implied_source_args =
-                remote_operand_source_paths(&remote_sources)?;
+            // upstream: main.c:1525,1549 / io.c:427,464 / flist.c:1026 - record
+            // each requested source path (or local --files-from entry) as an
+            // implied include so the receiver rejects any unrequested name
+            // (CVE-2022-29154).
+            server_config.connection.implied_source_args = implied_source_args_for_pull(
+                config,
+                &remote_operand_source_paths(&remote_sources)?,
+                server_config.connection.files_from_data.as_deref(),
+            );
             run_async_session(config, plan, server_config, batch_writer)
         }
         TransferSpec::Proxy { .. } => Err(invalid_argument_error(

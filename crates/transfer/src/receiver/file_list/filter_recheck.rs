@@ -165,12 +165,18 @@ impl ReceiverContext {
         }
 
         // upstream: exclude.c:403-567 - relative_paths, recurse, xfer_dirs and
-        // the daemon-module flag shape the implied rules.
+        // the daemon-module flag shape the implied rules. The module-name strip
+        // applies only to a daemon source arg (main.c:1549 passes
+        // skip_daemon_module=daemon_connection); local --files-from entries are
+        // already module-relative, so upstream records them with
+        // skip_daemon_module=0 (io.c:427,464). files_from_data being present is
+        // exactly that local-files-from case.
         let opts = ImpliedIncludeOptions {
             relative: self.config.flags.relative,
             recurse: self.config.flags.recursive,
             dirs: self.config.flags.dirs,
-            skip_daemon_module: self.config.connection.is_daemon_connection,
+            skip_daemon_module: self.config.connection.is_daemon_connection
+                && self.config.connection.files_from_data.is_none(),
         };
         let implied = ImpliedIncludes::from_args(opts, sources)
             .map_err(|err| io::Error::new(io::ErrorKind::InvalidInput, err))?;

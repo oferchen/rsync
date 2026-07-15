@@ -38,6 +38,7 @@ use super::super::progress::ClientProgressObserver;
 use super::super::summary::ClientSummary;
 use super::batch_support::{build_batch_context, build_batch_recording};
 use super::flags;
+use super::implied_source::implied_source_args_for_pull;
 use super::invocation::{
     RemoteInvocationBuilder, RemoteOperands, RemoteRole, TransferSpec, determine_transfer_role,
 };
@@ -160,10 +161,6 @@ fn run_embedded_pull(
 
     let mut server_config = build_server_config_for_receiver(config, &[local_dest.to_owned()])?;
     server_config.connection.client_mode = true;
-    // upstream: main.c:1525,1549 / flist.c:1026 - record each requested source
-    // path as an implied include so the receiver rejects any unrequested
-    // file-list name (CVE-2022-29154).
-    server_config.connection.implied_source_args = paths.clone();
     server_config.connection.filter_rules =
         flags::build_wire_format_rules(config.filter_rules(), config.delete_excluded()).map_err(
             |e| invalid_argument_error(&format!("failed to build filter rules: {e}"), 12),
@@ -183,6 +180,15 @@ fn run_embedded_pull(
             )?;
         server_config.connection.files_from_data = Some(data);
     }
+
+    // upstream: main.c:1525,1549 / io.c:427,464 / flist.c:1026 - record each
+    // requested source path (or each local --files-from entry) as an implied
+    // include so the receiver rejects any unrequested name (CVE-2022-29154).
+    server_config.connection.implied_source_args = implied_source_args_for_pull(
+        config,
+        &paths,
+        server_config.connection.files_from_data.as_deref(),
+    );
 
     let batch_ctx = batch_writer.map(|bw| build_batch_context(config, bw));
 

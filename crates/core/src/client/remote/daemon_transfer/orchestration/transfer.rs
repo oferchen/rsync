@@ -20,6 +20,7 @@ use crate::client::module_list::{
 use crate::client::progress::ClientProgressObserver;
 use crate::client::remote::batch_support::{BatchContext, build_batch_recording};
 use crate::client::remote::flags;
+use crate::client::remote::implied_source::implied_source_args_for_pull;
 use crate::client::summary::ClientSummary;
 use crate::exit_code::ExitCode;
 use crate::message::Role;
@@ -59,11 +60,6 @@ pub(crate) fn run_pull_transfer(
     handshake.buffered = buffered;
 
     let mut server_config = build_server_config_for_receiver(config, local_paths, filter_rules)?;
-    // upstream: main.c:1549 - the requested daemon source (module/path) is
-    // recorded as an implied include; the receiver rejects any file-list name
-    // it does not cover (CVE-2022-29154). is_daemon_connection drives the
-    // module-name strip on the receiver side (exclude.c:396-401).
-    server_config.connection.implied_source_args = implied_source_args.to_vec();
 
     // upstream: main.c:1354-1356 - when pulling with --files-from pointing to a
     // local file or stdin, the client reads the file list locally and forwards
@@ -79,6 +75,17 @@ pub(crate) fn run_pull_transfer(
             )?;
         server_config.connection.files_from_data = Some(data);
     }
+
+    // upstream: main.c:1549 / io.c:427,464 / flist.c:1026 - the requested daemon
+    // source (module/path), or each local --files-from entry, is recorded as an
+    // implied include; the receiver rejects any file-list name it does not cover
+    // (CVE-2022-29154). is_daemon_connection drives the module-name strip on the
+    // receiver side (exclude.c:396-401).
+    server_config.connection.implied_source_args = implied_source_args_for_pull(
+        config,
+        implied_source_args,
+        server_config.connection.files_from_data.as_deref(),
+    );
 
     // Pull: local side is Receiver; batch records incoming data (is_sender=false).
     let batch_recording = batch_ctx
