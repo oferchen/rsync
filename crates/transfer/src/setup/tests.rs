@@ -2026,3 +2026,29 @@ fn no_crtimes_never_aborts_even_without_varint_flist_flags() {
     let peer_flags = CompatibilityFlags::from_bits(0);
     assert!(require_crtimes_capability(false, peer_flags).is_ok());
 }
+
+// upstream: compat.c:139-148 - parse a peer's advertised (protocol, subprotocol)
+// from its `-e` capability payload exactly as check_sub_protocol() does.
+#[test]
+fn parse_peer_subprotocol_reads_prerelease_ver_sub() {
+    // Pre-release peer at the newest protocol: "-e32.7<caps>".
+    assert_eq!(parse_peer_subprotocol("-logDtpre32.7LsfxCIvu"), (32, 7));
+    // Pre-release peer of an older protocol.
+    assert_eq!(parse_peer_subprotocol("-logDtpre30.5LsfxCIvu"), (30, 5));
+    // `-e` supplied as its own token.
+    assert_eq!(parse_peer_subprotocol("-e31.2LsfxCIvu"), (31, 2));
+}
+
+// upstream: compat.c:140 - a release peer's leading '.' makes atoi return 0,
+// which folds into the "no pre-release info" branch (returns (0, 0) here).
+#[test]
+fn parse_peer_subprotocol_release_peer_yields_zero() {
+    assert_eq!(parse_peer_subprotocol("-logDtpre.LsfxCIvu"), (0, 0));
+    // A protocol with an explicit `.0` subprotocol is still a final release.
+    assert_eq!(parse_peer_subprotocol("-e32.0LsfxCIvu"), (0, 0));
+    // No `-e` payload at all.
+    assert_eq!(parse_peer_subprotocol("-logDtpr"), (0, 0));
+    assert_eq!(parse_peer_subprotocol(""), (0, 0));
+    // A `<proto>` with no trailing '.' has no subprotocol.
+    assert_eq!(parse_peer_subprotocol("-e32LsfxCIvu"), (0, 0));
+}
