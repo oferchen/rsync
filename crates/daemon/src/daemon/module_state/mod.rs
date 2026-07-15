@@ -25,6 +25,7 @@ pub(crate) use connection_limiter::{ConnectionLimiter, ConnectionLockGuard};
 pub(crate) use definition::ModuleDefinition;
 pub(crate) use hostname::module_peer_hostname;
 pub(in crate::daemon) use hostname::{forward_resolve, resolve_peer_hostname};
+pub(in crate::daemon) use runtime::build_module_runtimes;
 pub(crate) use runtime::{ModuleConnectionError, ModuleRuntime};
 
 #[cfg(test)]

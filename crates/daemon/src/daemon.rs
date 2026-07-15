@@ -210,6 +210,7 @@ pub(crate) const MODULE_WRITE_ONLY_PAYLOAD: &str = "ERROR: module is write only"
 mod module_state;
 #[cfg(test)]
 use self::module_state::TEST_CONFIG_CANDIDATES;
+use self::module_state::build_module_runtimes;
 use self::module_state::resolve_peer_hostname;
 pub(crate) use self::module_state::{
     AuthUser, ConnectionLimiter, ModuleConnectionError, ModuleDefinition, ModuleRuntime,
@@ -525,12 +526,8 @@ pub fn run_async_daemon(mut config: DaemonConfig) -> Result<(), DaemonError> {
         None
     };
 
-    let modules: Arc<Vec<ModuleRuntime>> = Arc::new(
-        modules
-            .into_iter()
-            .map(|definition| ModuleRuntime::new(definition, connection_limiter.clone()))
-            .collect(),
-    );
+    let modules: Arc<Vec<ModuleRuntime>> =
+        Arc::new(build_module_runtimes(modules, &connection_limiter)?);
 
     // Reject privileged per-module settings for the same reason as the global
     // checks above.

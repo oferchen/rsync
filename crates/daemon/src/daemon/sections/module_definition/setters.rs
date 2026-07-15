@@ -803,4 +803,52 @@ impl ModuleDefinitionBuilder {
         self.log_file = Some(path);
         Ok(())
     }
+
+    /// Sets the per-module `reverse lookup` override.
+    ///
+    /// upstream: daemon-parm.h:78 `reverse_lookup` BOOL, P_LOCAL.
+    fn set_reverse_lookup(
+        &mut self,
+        reverse_lookup: bool,
+        config_path: &Path,
+        line: usize,
+    ) -> Result<(), DaemonError> {
+        if self.reverse_lookup.is_some() {
+            return Err(config_parse_error(
+                config_path,
+                line,
+                format!(
+                    "duplicate 'reverse lookup' directive in module '{}'",
+                    self.name
+                ),
+            ));
+        }
+
+        self.reverse_lookup = Some(reverse_lookup);
+        Ok(())
+    }
+
+    /// Sets the per-module `lock file` override.
+    ///
+    /// upstream: daemon-parm.h:46 `lock_file` STRING, P_LOCAL.
+    fn set_lock_file(
+        &mut self,
+        path: PathBuf,
+        config_path: &Path,
+        line: usize,
+    ) -> Result<(), DaemonError> {
+        if self.lock_file.is_some() {
+            return Err(config_parse_error(
+                config_path,
+                line,
+                format!(
+                    "duplicate 'lock file' directive in module '{}'",
+                    self.name
+                ),
+            ));
+        }
+
+        self.lock_file = Some(path);
+        Ok(())
+    }
 }

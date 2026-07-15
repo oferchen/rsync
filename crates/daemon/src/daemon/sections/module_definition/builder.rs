@@ -52,6 +52,8 @@ struct ModuleDefinitionBuilder {
     include_from: Option<PathBuf>,
     open_noatime: Option<bool>,
     log_file: Option<PathBuf>,
+    reverse_lookup: Option<bool>,
+    lock_file: Option<PathBuf>,
     /// Direct filter rules for this module.
     ///
     /// upstream: daemon-parm.h - `filter` STRING, P_LOCAL.
@@ -114,6 +116,8 @@ impl ModuleDefinitionBuilder {
             include_from: None,
             open_noatime: None,
             log_file: None,
+            reverse_lookup: None,
+            lock_file: None,
             filter: Vec::new(),
             exclude: Vec::new(),
             include: Vec::new(),

@@ -1,9 +1,50 @@
+use std::collections::HashMap;
 use std::io;
 use std::num::NonZeroU32;
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU32, Ordering};
 
+use crate::error::DaemonError;
+
 use super::{ConnectionLimiter, ConnectionLockGuard, ModuleDefinition};
+
+/// Pairs each module definition with the connection limiter that enforces its
+/// `max connections` cap, honouring a per-module `lock file` override.
+///
+/// A module that sets its own `lock file` gets a limiter bound to that path;
+/// modules without an override share `global_limiter` (the daemon-wide lock
+/// file). Distinct override paths are opened once and shared via the cache so
+/// two modules naming the same file coordinate through one handle.
+///
+/// upstream: clientserver.c:746 calls `claim_connection(lp_lock_file(i),
+/// lp_max_connections(i))`. The lock file is a P_LOCAL parameter, so each module
+/// claims its slot in the file named by its own (inherited or overridden) value.
+pub(in crate::daemon) fn build_module_runtimes(
+    definitions: Vec<ModuleDefinition>,
+    global_limiter: &Option<Arc<ConnectionLimiter>>,
+) -> Result<Vec<ModuleRuntime>, DaemonError> {
+    let mut cache: HashMap<PathBuf, Arc<ConnectionLimiter>> = HashMap::new();
+    let mut runtimes = Vec::with_capacity(definitions.len());
+    for definition in definitions {
+        let limiter = match definition.lock_file.clone() {
+            Some(path) => {
+                let limiter = match cache.get(&path) {
+                    Some(existing) => Arc::clone(existing),
+                    None => {
+                        let created = Arc::new(ConnectionLimiter::open(path.clone())?);
+                        cache.insert(path, Arc::clone(&created));
+                        created
+                    }
+                };
+                Some(limiter)
+            }
+            None => global_limiter.clone(),
+        };
+        runtimes.push(ModuleRuntime::new(definition, limiter));
+    }
+    Ok(runtimes)
+}
 
 /// Live state for a module, pairing its static definition with runtime connection tracking.
 ///
