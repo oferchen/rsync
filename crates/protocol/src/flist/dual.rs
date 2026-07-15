@@ -146,6 +146,72 @@ impl DualFileList {
         super::sort::apply_permutation_in_place(&mut self.legacy, parallel, indices);
     }
 
+    /// Removes duplicate-name entries in-place after sorting, keeping the
+    /// upstream survivor, and applies the same removals to `parallel` in
+    /// lockstep so a caller-owned array (the generator's `source_bases`) stays
+    /// aligned with the cleaned list.
+    ///
+    /// This is the sender-side half of upstream's `flist_sort_and_clean`: the
+    /// sender dedups before transmitting so the receiver's identical pass is
+    /// idempotent and both sides keep matching NDX numbering. The list MUST
+    /// already be sorted (call [`sort_with_parallel`](Self::sort_with_parallel)
+    /// first) - dedup only collapses adjacent equal names. On a list with no
+    /// duplicates this changes neither order nor length.
+    ///
+    /// Reuses [`resolve_duplicate`](super::sort::resolve_duplicate) so the
+    /// keep/drop tie-break is identical to the receiver's [`flist_clean`]. oc
+    /// converges both sides to the same sorted+cleaned list, so it drops
+    /// duplicates symmetrically rather than following upstream's `am_sender`
+    /// branch (mark a dup dir `FLAG_DUPLICATE` and keep it for the in-place
+    /// `dir_flist` tree at `flist.c:3067`); oc has no such tree, and keeping the
+    /// dup only on the sender would desync the NDX count.
+    ///
+    /// # Panics
+    ///
+    /// Panics in debug builds when `parallel.len() != self.len()`.
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `flist.c:2544` - `flist_sort_and_clean(flist, 0)` runs in
+    ///   `send_file_list()`; the sender passes `strip_root = 0`.
+    /// - `flist.c:3046-3082` - the duplicate-removal tie-break this mirrors.
+    pub fn dedup_with_parallel<P>(&mut self, parallel: &mut Vec<P>) -> super::sort::CleanResult {
+        let len = self.legacy.len();
+        let mut stats = super::sort::CleanResult::default();
+        if len == 0 {
+            return stats;
+        }
+        debug_assert_eq!(parallel.len(), len);
+
+        // Write cursor `w` marks the last kept entry; read cursor `r` scans
+        // ahead. Adjacent equal names collapse; the survivor's parallel base
+        // travels with it.
+        let mut w: usize = 0;
+        let mut r: usize = 1;
+        while r < len {
+            if self.legacy[w].name() != self.legacy[r].name() {
+                w += 1;
+                if w != r {
+                    self.legacy.swap(w, r);
+                    parallel.swap(w, r);
+                }
+                r += 1;
+                continue;
+            }
+
+            let (left, right) = self.legacy.split_at_mut(r);
+            if super::sort::resolve_duplicate(&mut left[w], &right[0], &mut stats) {
+                self.legacy.swap(w, r);
+                parallel.swap(w, r);
+            }
+            r += 1;
+        }
+
+        self.legacy.truncate(w + 1);
+        parallel.truncate(w + 1);
+        stats
+    }
+
     /// Reclaims heap data from entries in the range `[start..end)`.
     ///
     /// Calls [`FileEntry::reclaim_heap_data`] on each entry in the range,
@@ -379,6 +445,74 @@ mod tests {
 
         // List length is unchanged (entries stay in place).
         assert_eq!(list.len(), 5);
+    }
+
+    #[test]
+    fn dedup_with_parallel_noop_on_distinct_names() {
+        // WHY: the sender dedup must not shift order or count for a normal
+        // (duplicate-free) list, or sender/receiver NDX numbering desyncs.
+        let mut list = DualFileList::new();
+        for n in ["a.txt", "b.txt", "c.txt"] {
+            list.push(FileEntry::new_file(n.into(), 0, 0o644));
+        }
+        let mut bases = vec!["ba", "bb", "bc"];
+        let stats = list.dedup_with_parallel(&mut bases);
+        assert_eq!(stats.duplicates_removed, 0);
+        let names: Vec<&str> = list.iter().map(|e| e.name()).collect();
+        assert_eq!(names, ["a.txt", "b.txt", "c.txt"]);
+        assert_eq!(bases, ["ba", "bb", "bc"]);
+    }
+
+    #[test]
+    fn dedup_with_parallel_removes_dup_and_keeps_base_aligned() {
+        // WHY: when a duplicate is dropped, the survivor's parallel source_base
+        // must travel with it so file_list[i] still maps to source_bases[i].
+        let mut list = DualFileList::new();
+        list.push(FileEntry::new_file("dup".into(), 0, 0o644));
+        list.push(FileEntry::new_file("dup".into(), 0, 0o644));
+        list.push(FileEntry::new_file("z".into(), 0, 0o644));
+        let mut bases = vec!["first", "second", "zbase"];
+        let stats = list.dedup_with_parallel(&mut bases);
+        assert_eq!(stats.duplicates_removed, 1);
+        let names: Vec<&str> = list.iter().map(|e| e.name()).collect();
+        assert_eq!(names, ["dup", "z"]);
+        // The first "dup" survives (keep-first), so its base leads; z stays put.
+        assert_eq!(bases, ["first", "zbase"]);
+    }
+
+    #[test]
+    fn dedup_with_parallel_keeps_directory_over_file() {
+        // WHY: a dir must win over a same-named file "because it might have
+        // contents in the list" (flist.c:3060); its base must travel with it.
+        let mut list = DualFileList::new();
+        list.push(FileEntry::new_file("item".into(), 0, 0o644));
+        list.push(FileEntry::new_directory("item".into(), 0o755));
+        let mut bases = vec!["file_base", "dir_base"];
+        let stats = list.dedup_with_parallel(&mut bases);
+        assert_eq!(stats.duplicates_removed, 1);
+        assert_eq!(list.len(), 1);
+        assert!(list[0].is_dir());
+        assert_eq!(bases, ["dir_base"]);
+    }
+
+    #[test]
+    fn sender_dedup_makes_receiver_pass_idempotent() {
+        // WHY: the whole point of the sender-side dedup is that the receiver's
+        // identical flist_clean then removes NOTHING, so both sides keep the
+        // same entry count and NDX numbering (no RERR_PROTOCOL desync).
+        let mut list = DualFileList::new();
+        list.push(FileEntry::new_file("a".into(), 0, 0o644));
+        list.push(FileEntry::new_file("dup".into(), 0, 0o644));
+        list.push(FileEntry::new_file("dup".into(), 0, 0o644));
+        let mut bases = vec!["a", "d1", "d2"];
+        list.dedup_with_parallel(&mut bases);
+        let transmitted = list.into_vec();
+        // Receiver runs the same clean over the (already-deduped) transmitted list.
+        let (_receiver_list, stats) = crate::flist::sort::flist_clean(transmitted.clone());
+        assert_eq!(
+            stats.duplicates_removed, 0,
+            "receiver must remove nothing from a sender-deduped list"
+        );
     }
 
     #[test]

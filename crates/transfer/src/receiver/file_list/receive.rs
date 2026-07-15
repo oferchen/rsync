@@ -10,7 +10,9 @@ use std::io::{self, Read};
 use logging::debug_log;
 use protocol::CompatibilityFlags;
 use protocol::codec::{NDX_FLIST_EOF, NDX_FLIST_OFFSET, NdxCodec, create_ndx_codec};
-use protocol::flist::{FileEntry, IncrementalFileListBuilder, sort_file_list};
+use protocol::flist::{
+    FileEntry, IncrementalFileListBuilder, sort_and_clean_file_list, sort_file_list,
+};
 
 use super::super::ReceiverContext;
 use super::hardlinks::{match_hard_links, normalize_pre30_hardlinks};
@@ -128,13 +130,36 @@ impl ReceiverContext {
         // upstream: flist.c:2496-2498 - "both sides keep an unsorted
         // file-list array because the names will differ on the sending and
         // receiving sides".
+        // upstream: flist.c:3016 flist_sort_and_clean() runs sort THEN the
+        // duplicate-clean pass (flist.c:3046-3082) on the receiver (am_sender
+        // is false). A sender that emits the same normalized name twice
+        // (redundant or hostile) must collapse to a single entry, keeping the
+        // upstream survivor: a directory over a plain file of the same name
+        // "because it might have contents in the list" (flist.c:3060), else the
+        // first entry. We reuse the shared sort+dedup primitive so both sides
+        // clean identically. `_clean` stats mirror the DEBUG_GTE(DUP) trace and
+        // are not surfaced elsewhere.
+        //
+        // When `--iconv` is in effect, upstream sets `need_unsorted_flist = 1`
+        // (options.c:2056) so the receiver's NDX-addressed `flist->files[]`
+        // array stays in sender scan order; only a separate `flist->sorted[]`
+        // pointer array is reordered and dedup-cleared. We do not maintain a
+        // parallel pointer array, so we mirror upstream by skipping the in-place
+        // reorder+dedup when an active (non-identity) iconv converter is
+        // configured. This keeps `self.file_list` in wire (NDX) order so
+        // subsequent generator requests resolve to the entry the sender meant.
+        // upstream: flist.c:2496-2498 - "both sides keep an unsorted file-list
+        // array because the names will differ on the sending and receiving
+        // sides".
         let pre29 = self.protocol.as_u8() < 29;
         if !self.iconv_reorder_suppressed() {
-            sort_file_list(&mut self.file_list, self.config.qsort, pre29);
+            let list = std::mem::take(&mut self.file_list);
+            let (cleaned, _clean) = sort_and_clean_file_list(list, self.config.qsort, pre29);
+            self.file_list = cleaned;
         }
 
         // upstream: flist.c:3121-3184 - flist_sort_and_clean() runs the
-        // `--prune-empty-dirs` pass after sorting and before the caller's
+        // `--prune-empty-dirs` pass after sorting and dedup, before the caller's
         // match_hard_links() in recv_file_list(). Only the receiver runs this
         // pass (am_sender is false); the sender ships every directory.
         if self.config.flags.prune_empty_dirs {

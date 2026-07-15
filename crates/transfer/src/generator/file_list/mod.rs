@@ -140,6 +140,22 @@ impl GeneratorContext {
                 .sort_with_parallel(&mut self.source_bases, self.config.qsort);
         }
 
+        // upstream: flist.c:2544 flist_sort_and_clean(flist, 0) in send_file_list
+        // - the sender sorts+cleans its built list so its post-clean NDX matches
+        // the receiver's flist.c:2771 pass. We dedup the transmitted list here so
+        // the receiver's identical pass is idempotent and both sides keep the
+        // same NDX numbering. A list with no duplicate names is unchanged
+        // (neither order nor length), so this is a no-op for normal transfers.
+        //
+        // oc converges BOTH sides to the same sorted+cleaned list (wire order =
+        // sorted order), so it drops duplicates symmetrically. Upstream's
+        // am_sender branch instead marks a duplicate dir FLAG_DUPLICATE and keeps
+        // it for its in-place dir_flist tree (flist.c:3067); oc has no such tree,
+        // and keeping the dup only on the sender would desync the NDX count, so a
+        // symmetric drop is the correct mirror for oc's model. INC_RECURSE
+        // (recursive + --relative overlap) stays dest-correct under this pass.
+        self.file_list.dedup_with_parallel(&mut self.source_bases);
+
         // upstream: hlink.c:match_hard_links() - must be called after sort
         #[cfg(unix)]
         if self.config.flags.hard_links {
@@ -369,6 +385,15 @@ impl GeneratorContext {
             self.file_list
                 .sort_with_parallel(&mut self.source_bases, self.config.qsort);
         }
+
+        // upstream: flist.c:2544 flist_sort_and_clean(flist, 0) in send_file_list
+        // - dedup the built list before transmit so the receiver's pass is
+        // idempotent and NDX numbering stays in sync. This is the --files-from
+        // build path where a redundant list entry can produce a duplicate name;
+        // deduping here (keep-first, matching the receiver for the non-dir case)
+        // is what fixed the remote files-from RERR_PROTOCOL. No-op when there are
+        // no duplicate names.
+        self.file_list.dedup_with_parallel(&mut self.source_bases);
 
         // upstream: hlink.c:match_hard_links() - must be called after sort
         #[cfg(unix)]

@@ -19,6 +19,8 @@
 //!   the file-list end marker.
 //! - [`ndx_convert`] - `flat_to_wire_ndx` / `wire_to_flat_ndx` counters
 //!   and round-trip coverage.
+//! - [`dedup`] - receiver duplicate-clean pass (`flist_sort_and_clean` step 2)
+//!   that removes duplicate received names, keeping the upstream survivor.
 //! - [`delete_pipeline_hook`] - DDP-B3 hook that publishes one delete
 //!   plan per INC_RECURSE segment.
 //! - [`delete_timing`] - early vs late (`--delete-after` / `--delete-delay`)
@@ -30,6 +32,7 @@
 
 #[cfg(feature = "tokio-transfer")]
 mod async_parity;
+mod dedup;
 mod delete_pipeline_hook;
 mod delete_timing;
 mod filter_chain;
