@@ -47,6 +47,23 @@ pub trait MsgInfoSender {
     fn send_msg_error_xfer(&mut self, _data: &[u8]) -> io::Result<()> {
         Ok(())
     }
+
+    /// Sends a `MSG_DELETED` frame carrying the raw name of a deleted entry.
+    ///
+    /// A server generator emits one frame per deletion so the client renders the
+    /// `deleting <path>` line itself (the client owns the verbosity and itemize
+    /// gating). Directories carry a trailing NUL in `data` so the peer can tell
+    /// a directory from a regular file (upstream `io.c:1616`).
+    ///
+    /// The default implementation is a no-op, matching [`Self::send_msg_info`].
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `log.c:866-869` - `am_server && protocol_version >= 29` sends
+    ///   `send_msg(MSG_DELETED, fname, len, am_generator)`.
+    fn send_msg_deleted(&mut self, _data: &[u8]) -> io::Result<()> {
+        Ok(())
+    }
 }
 
 impl<W: Write> MsgInfoSender for ServerWriter<W> {
@@ -67,6 +84,16 @@ impl<W: Write> MsgInfoSender for ServerWriter<W> {
             Ok(())
         }
     }
+
+    fn send_msg_deleted(&mut self, data: &[u8]) -> io::Result<()> {
+        // upstream: log.c:866-869 - the MSG_DELETED path only exists on a
+        // multiplexed server stream; plain mode never reaches this branch.
+        if self.is_multiplexed() {
+            self.send_message(MessageCode::Deleted, data)
+        } else {
+            Ok(())
+        }
+    }
 }
 
 impl<T: MsgInfoSender + ?Sized> MsgInfoSender for &mut T {
@@ -77,6 +104,10 @@ impl<T: MsgInfoSender + ?Sized> MsgInfoSender for &mut T {
     fn send_msg_error_xfer(&mut self, data: &[u8]) -> io::Result<()> {
         (**self).send_msg_error_xfer(data)
     }
+
+    fn send_msg_deleted(&mut self, data: &[u8]) -> io::Result<()> {
+        (**self).send_msg_deleted(data)
+    }
 }
 
 impl<W: MsgInfoSender> MsgInfoSender for CountingWriter<W> {
@@ -86,5 +117,9 @@ impl<W: MsgInfoSender> MsgInfoSender for CountingWriter<W> {
 
     fn send_msg_error_xfer(&mut self, data: &[u8]) -> io::Result<()> {
         self.inner_ref_mut().send_msg_error_xfer(data)
+    }
+
+    fn send_msg_deleted(&mut self, data: &[u8]) -> io::Result<()> {
+        self.inner_ref_mut().send_msg_deleted(data)
     }
 }
