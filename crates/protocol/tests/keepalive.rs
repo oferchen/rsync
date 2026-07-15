@@ -1,15 +1,22 @@
 //! Keepalive mechanism tests.
 //!
-//! Upstream rsync sends MSG_NOOP (code 42) messages as keepalive heartbeats to
-//! prevent connection timeouts during long operations such as large file
-//! checksumming. These tests verify:
+//! Upstream rsync's lull keepalive is an **empty `MSG_DATA`** frame (a
+//! zero-length data message on the multiplexed stream), deliberately *not*
+//! `MSG_NOOP`. `MSG_NOOP` (code 42) is a legacy protocol-30 construct that had
+//! to be forwarded through the sender; the modern keepalive avoids forwarding
+//! and works with every rsync version because a zero-length data frame adds no
+//! bytes to the raw data stream and is silently absorbed by the peer.
 //!
-//! - The keepalive wire format matches upstream rsync (MSG_NOOP with empty payload)
-//! - Receiving keepalives is handled silently
+//! upstream: `io.c:maybe_send_keepalive()` (io.c:1453-1481) sends
+//! `send_msg(MSG_DATA, "", 0, 0)`; the rationale is documented at io.c:1446-1452.
+//!
+//! These tests verify:
+//!
+//! - The keepalive wire format is an empty `MSG_DATA` frame (tag = MPLEX_BASE, len 0)
+//! - A received empty `MSG_DATA` keepalive is absorbed silently, never surfaced
+//!   as data or as an out-of-band message, and never read as end-of-stream
 //! - Keepalives do not interfere with data transfer
-//! - Multiple keepalives in sequence are handled correctly
-//! - The MplexReader transparently skips keepalives
-//! - The MplexWriter can send keepalives interleaved with data
+//! - Legacy `MSG_NOOP` is still recognized as a keepalive for proto-30 peers
 
 use std::io::{self, Cursor, Read};
 use std::sync::{Arc, Mutex};
@@ -19,13 +26,13 @@ use protocol::{
     recv_msg_into, send_keepalive, send_msg,
 };
 
-/// Keepalive produces correct 4-byte header with zero-length payload.
+/// Keepalive produces a 4-byte header with zero-length payload.
 #[test]
 fn keepalive_wire_format_is_4_byte_header_only() {
     let mut buf = Vec::new();
     send_keepalive(&mut buf).expect("send_keepalive must succeed");
 
-    // MSG_NOOP with empty payload = header only
+    // Empty MSG_DATA = header only.
     assert_eq!(
         buf.len(),
         4,
@@ -33,9 +40,9 @@ fn keepalive_wire_format_is_4_byte_header_only() {
     );
 }
 
-/// The keepalive header encodes MSG_NOOP (tag = MPLEX_BASE + 42 = 49) with length 0.
+/// The keepalive header encodes MSG_DATA (tag = MPLEX_BASE + 0 = 7) with length 0.
 #[test]
-fn keepalive_header_encodes_noop_tag_49() {
+fn keepalive_header_encodes_data_tag() {
     let mut buf = Vec::new();
     send_keepalive(&mut buf).expect("send_keepalive must succeed");
 
@@ -43,49 +50,61 @@ fn keepalive_header_encodes_noop_tag_49() {
     let tag = (raw_header >> 24) as u8;
     let payload_len = raw_header & 0x00FF_FFFF;
 
+    // upstream: io.c:1473 send_msg(MSG_DATA, "", 0, 0). MSG_DATA is code 0, so
+    // the multiplex tag is MPLEX_BASE (7), NOT the legacy MSG_NOOP tag (49).
     assert_eq!(
         tag,
-        MPLEX_BASE + MessageCode::NoOp.as_u8(),
-        "tag must be MPLEX_BASE + MSG_NOOP"
+        MPLEX_BASE + MessageCode::Data.as_u8(),
+        "tag must be MPLEX_BASE + MSG_DATA"
     );
-    assert_eq!(tag, 49, "tag must be 49 (7 + 42)");
+    assert_eq!(tag, 7, "tag must be 7 (MPLEX_BASE + 0)");
+    assert_ne!(
+        tag,
+        MPLEX_BASE + MessageCode::NoOp.as_u8(),
+        "keepalive must NOT be MSG_NOOP"
+    );
     assert_eq!(payload_len, 0, "keepalive payload length must be 0");
 }
 
-/// send_keepalive produces the same bytes as send_msg(NoOp, &[]).
+/// send_keepalive produces the same bytes as send_msg(Data, &[]).
 #[test]
-fn keepalive_matches_explicit_noop_send() {
+fn keepalive_matches_explicit_empty_data_send() {
     let mut keepalive_buf = Vec::new();
     send_keepalive(&mut keepalive_buf).expect("send_keepalive must succeed");
 
-    let mut noop_buf = Vec::new();
-    send_msg(&mut noop_buf, MessageCode::NoOp, &[]).expect("send_msg must succeed");
+    let mut data_buf = Vec::new();
+    send_msg(&mut data_buf, MessageCode::Data, &[]).expect("send_msg must succeed");
 
     assert_eq!(
-        keepalive_buf, noop_buf,
-        "send_keepalive must produce identical bytes to send_msg(NoOp, &[])"
+        keepalive_buf, data_buf,
+        "send_keepalive must produce identical bytes to send_msg(Data, &[])"
     );
 }
 
-/// Decoding a keepalive message yields NoOp code with empty payload.
+/// Decoding a keepalive message yields an empty DATA frame.
 #[test]
-fn keepalive_roundtrip_decodes_to_noop_empty() {
+fn keepalive_roundtrip_decodes_to_empty_data() {
     let mut buf = Vec::new();
     send_keepalive(&mut buf).expect("send_keepalive must succeed");
 
     let mut cursor = Cursor::new(&buf);
     let frame = recv_msg(&mut cursor).expect("recv_msg must succeed");
 
-    assert_eq!(frame.code(), MessageCode::NoOp, "code must be NoOp");
+    assert_eq!(frame.code(), MessageCode::Data, "code must be Data");
     assert!(frame.payload().is_empty(), "payload must be empty");
 }
 
-/// The is_keepalive() helper correctly identifies keepalive messages.
+/// The legacy is_keepalive() helper still identifies MSG_NOOP (proto-30 peers).
 #[test]
-fn is_keepalive_identifies_noop_only() {
-    assert!(MessageCode::NoOp.is_keepalive(), "NoOp must be keepalive");
+fn is_keepalive_identifies_legacy_noop_only() {
+    assert!(
+        MessageCode::NoOp.is_keepalive(),
+        "legacy NoOp must still be recognized as keepalive"
+    );
 
-    // All other codes must not be keepalive
+    // All other codes, including Data, are not flagged by is_keepalive(): the
+    // modern empty-DATA keepalive is recognized structurally (zero-length DATA),
+    // not by code.
     for code in MessageCode::ALL {
         if code == MessageCode::NoOp {
             continue;
@@ -98,7 +117,7 @@ fn is_keepalive_identifies_noop_only() {
     }
 }
 
-/// recv_msg decodes keepalive as NoOp with empty payload.
+/// recv_msg decodes the keepalive as an empty DATA frame.
 #[test]
 fn recv_msg_decodes_keepalive() {
     let mut buf = Vec::new();
@@ -107,12 +126,11 @@ fn recv_msg_decodes_keepalive() {
     let mut cursor = Cursor::new(&buf);
     let frame = recv_msg(&mut cursor).unwrap();
 
-    assert_eq!(frame.code(), MessageCode::NoOp);
+    assert_eq!(frame.code(), MessageCode::Data);
     assert!(frame.payload().is_empty());
-    assert!(frame.code().is_keepalive());
 }
 
-/// recv_msg_into decodes keepalive and leaves the buffer empty.
+/// recv_msg_into decodes the keepalive and leaves the buffer empty.
 #[test]
 fn recv_msg_into_decodes_keepalive_empty_buffer() {
     let mut buf = Vec::new();
@@ -122,13 +140,13 @@ fn recv_msg_into_decodes_keepalive_empty_buffer() {
     let mut payload_buf = vec![0xFF; 64]; // pre-filled
     let code = recv_msg_into(&mut cursor, &mut payload_buf).unwrap();
 
-    assert_eq!(code, MessageCode::NoOp);
+    assert_eq!(code, MessageCode::Data);
     assert!(payload_buf.is_empty(), "keepalive must clear the buffer");
 }
 
-/// Keepalive messages interleaved with data messages are silently consumed by MplexReader.
+/// Keepalive messages interleaved with data are silently absorbed by MplexReader.
 #[test]
-fn mplex_reader_skips_keepalives_between_data() {
+fn mplex_reader_absorbs_keepalives_between_data() {
     let mut stream = Vec::new();
     send_keepalive(&mut stream).unwrap();
     send_msg(&mut stream, MessageCode::Data, b"hello").unwrap();
@@ -156,7 +174,7 @@ fn mplex_reader_skips_keepalives_between_data() {
     );
 }
 
-/// Keepalive before any data does not cause errors in MplexReader.
+/// Leading keepalives do not cause a premature EOF in MplexReader.
 #[test]
 fn mplex_reader_handles_leading_keepalives() {
     let mut stream = Vec::new();
@@ -172,9 +190,13 @@ fn mplex_reader_handles_leading_keepalives() {
     assert_eq!(&buf[..n], b"after keepalives");
 }
 
-/// Keepalive messages are reported to the message handler.
+/// Empty-DATA keepalives are absorbed silently and NOT reported to the handler.
+///
+/// upstream: an empty MSG_DATA contributes zero bytes to the data channel and is
+/// consumed by the ordinary read path, never surfacing as an out-of-band message
+/// (contrast the legacy MSG_NOOP, which was a distinct control frame).
 #[test]
-fn mplex_reader_reports_keepalive_to_handler() {
+fn mplex_reader_does_not_report_empty_data_keepalive_to_handler() {
     let mut stream = Vec::new();
     send_keepalive(&mut stream).unwrap();
     send_msg(&mut stream, MessageCode::Data, b"data").unwrap();
@@ -195,12 +217,39 @@ fn mplex_reader_reports_keepalive_to_handler() {
     assert_eq!(&buf[..n], b"data");
 
     let captured = messages.lock().unwrap();
-    assert_eq!(captured.len(), 1);
-    assert_eq!(captured[0].0, MessageCode::NoOp);
-    assert!(captured[0].1.is_empty());
+    assert!(
+        captured.is_empty(),
+        "empty-DATA keepalives must not be surfaced as out-of-band messages"
+    );
 }
 
-/// Keepalive interleaved with other out-of-band messages and data.
+/// A received legacy MSG_NOOP is still recognized and absorbed by the reader.
+#[test]
+fn mplex_reader_absorbs_legacy_noop_keepalive() {
+    let mut stream = Vec::new();
+    send_msg(&mut stream, MessageCode::NoOp, &[]).unwrap();
+    send_msg(&mut stream, MessageCode::Data, b"payload").unwrap();
+
+    let saw_noop = Arc::new(Mutex::new(false));
+    let saw_noop_clone = saw_noop.clone();
+
+    let mut reader = MplexReader::new(Cursor::new(stream));
+    reader.set_message_handler(move |code, _payload| {
+        if code == MessageCode::NoOp {
+            *saw_noop_clone.lock().unwrap() = true;
+        }
+    });
+
+    let mut buf = [0u8; 64];
+    let n = reader.read(&mut buf).unwrap();
+    assert_eq!(&buf[..n], b"payload");
+    assert!(
+        *saw_noop.lock().unwrap(),
+        "legacy NoOp must reach the handler and be absorbed"
+    );
+}
+
+/// Keepalives interleaved with other out-of-band messages and data.
 #[test]
 fn keepalive_interleaved_with_oob_and_data() {
     let mut stream = Vec::new();
@@ -235,16 +284,13 @@ fn keepalive_interleaved_with_oob_and_data() {
     assert_eq!(data, b"chunk1chunk2");
 
     let captured = oob.lock().unwrap();
-    // Should have: Info, NoOp, NoOp, Warning, NoOp (in order)
-    assert_eq!(captured.len(), 5);
+    // Only true out-of-band messages surface; empty-DATA keepalives are absorbed.
+    assert_eq!(captured.len(), 2);
     assert_eq!(captured[0].0, MessageCode::Info);
-    assert_eq!(captured[1].0, MessageCode::NoOp);
-    assert_eq!(captured[2].0, MessageCode::NoOp);
-    assert_eq!(captured[3].0, MessageCode::Warning);
-    assert_eq!(captured[4].0, MessageCode::NoOp);
+    assert_eq!(captured[1].0, MessageCode::Warning);
 }
 
-/// A burst of keepalives can be sent and received without error.
+/// A burst of keepalives can be sent and decoded without error.
 #[test]
 fn multiple_keepalives_in_sequence() {
     let count = 100;
@@ -253,16 +299,17 @@ fn multiple_keepalives_in_sequence() {
         send_keepalive(&mut buf).unwrap();
     }
 
-    // All must decode as NoOp with empty payload
+    // All must decode as empty DATA frames.
     let mut cursor = Cursor::new(&buf);
     for i in 0..count {
         let frame = recv_msg(&mut cursor).unwrap_or_else(|_| panic!("keepalive {i} must decode"));
-        assert_eq!(frame.code(), MessageCode::NoOp);
+        assert_eq!(frame.code(), MessageCode::Data);
         assert!(frame.payload().is_empty());
     }
 }
 
-/// MplexReader handles a stream of only keepalives (reaches EOF after consuming all).
+/// A stream of only keepalives reaches EOF (never a spurious Ok(0)) after
+/// consuming all of them.
 #[test]
 fn mplex_reader_only_keepalives_reaches_eof() {
     let mut stream = Vec::new();
@@ -273,13 +320,14 @@ fn mplex_reader_only_keepalives_reaches_eof() {
     let mut reader = MplexReader::new(Cursor::new(stream));
     let mut buf = [0u8; 64];
 
-    // Attempting to read should eventually hit EOF after consuming all keepalives
+    // Reading absorbs all keepalives, then hits real EOF as an error (not Ok(0),
+    // which callers would treat as a legitimate end-of-data marker).
     let result = reader.read(&mut buf);
     assert!(result.is_err());
     assert_eq!(result.unwrap_err().kind(), io::ErrorKind::UnexpectedEof);
 }
 
-/// Keepalives followed by data -- MplexReader correctly returns data after skipping keepalives.
+/// Keepalives followed by data -- MplexReader returns data after absorbing them.
 #[test]
 fn keepalive_burst_then_data() {
     let mut stream = Vec::new();
@@ -295,7 +343,7 @@ fn keepalive_burst_then_data() {
     assert_eq!(&buf[..n], b"finally!");
 }
 
-/// MplexWriter::write_keepalive sends a properly formatted MSG_NOOP.
+/// MplexWriter::write_keepalive sends a properly formatted empty MSG_DATA.
 #[test]
 fn mplex_writer_keepalive_produces_correct_frame() {
     let mut output = Vec::new();
@@ -303,10 +351,10 @@ fn mplex_writer_keepalive_produces_correct_frame() {
 
     writer.write_keepalive().unwrap();
 
-    // Verify it can be decoded
+    // Verify it can be decoded as an empty DATA frame.
     let mut cursor = Cursor::new(&output);
     let frame = recv_msg(&mut cursor).unwrap();
-    assert_eq!(frame.code(), MessageCode::NoOp);
+    assert_eq!(frame.code(), MessageCode::Data);
     assert!(frame.payload().is_empty());
 }
 
@@ -324,7 +372,7 @@ fn mplex_writer_keepalive_flushes_buffered_data() {
     writer.write_keepalive().unwrap();
     assert_eq!(writer.buffered(), 0);
 
-    // Verify: DATA frame, then NOOP frame
+    // Verify: DATA frame "buffered", then the empty DATA keepalive frame.
     let mut cursor = Cursor::new(&output);
 
     let frame1 = recv_msg(&mut cursor).unwrap();
@@ -332,7 +380,7 @@ fn mplex_writer_keepalive_flushes_buffered_data() {
     assert_eq!(frame1.payload(), b"buffered");
 
     let frame2 = recv_msg(&mut cursor).unwrap();
-    assert_eq!(frame2.code(), MessageCode::NoOp);
+    assert_eq!(frame2.code(), MessageCode::Data);
     assert!(frame2.payload().is_empty());
 }
 
@@ -350,7 +398,7 @@ fn mplex_writer_keepalive_interleaved_with_data() {
     writer.write_data(b"chunk3").unwrap();
     writer.flush().unwrap();
 
-    // Verify the sequence
+    // Verify the sequence: data and empty-DATA keepalives, all MSG_DATA frames.
     let mut cursor = Cursor::new(&output);
 
     let f1 = recv_msg(&mut cursor).unwrap();
@@ -358,7 +406,7 @@ fn mplex_writer_keepalive_interleaved_with_data() {
     assert_eq!(f1.payload(), b"chunk1");
 
     let f2 = recv_msg(&mut cursor).unwrap();
-    assert_eq!(f2.code(), MessageCode::NoOp);
+    assert_eq!(f2.code(), MessageCode::Data);
     assert!(f2.payload().is_empty());
 
     let f3 = recv_msg(&mut cursor).unwrap();
@@ -366,21 +414,22 @@ fn mplex_writer_keepalive_interleaved_with_data() {
     assert_eq!(f3.payload(), b"chunk2");
 
     let f4 = recv_msg(&mut cursor).unwrap();
-    assert_eq!(f4.code(), MessageCode::NoOp);
+    assert_eq!(f4.code(), MessageCode::Data);
+    assert!(f4.payload().is_empty());
 
     let f5 = recv_msg(&mut cursor).unwrap();
-    assert_eq!(f5.code(), MessageCode::NoOp);
+    assert_eq!(f5.code(), MessageCode::Data);
+    assert!(f5.payload().is_empty());
 
     let f6 = recv_msg(&mut cursor).unwrap();
     assert_eq!(f6.code(), MessageCode::Data);
     assert_eq!(f6.payload(), b"chunk3");
 }
 
-/// A keepalive can be constructed and encoded via MessageFrame.
+/// An empty-DATA keepalive can be constructed and encoded via MessageFrame.
 #[test]
-fn message_frame_keepalive_roundtrip() {
-    let frame = MessageFrame::new(MessageCode::NoOp, vec![]).unwrap();
-    assert!(frame.code().is_keepalive());
+fn message_frame_empty_data_keepalive_roundtrip() {
+    let frame = MessageFrame::new(MessageCode::Data, vec![]).unwrap();
     assert!(frame.payload().is_empty());
 
     let mut encoded = Vec::new();
@@ -388,15 +437,14 @@ fn message_frame_keepalive_roundtrip() {
 
     let (decoded, remainder) = MessageFrame::decode_from_slice(&encoded).unwrap();
     assert!(remainder.is_empty());
-    assert_eq!(decoded.code(), MessageCode::NoOp);
+    assert_eq!(decoded.code(), MessageCode::Data);
     assert!(decoded.payload().is_empty());
-    assert!(decoded.code().is_keepalive());
 }
 
-/// Keepalive MessageFrame encodes to the same bytes as send_keepalive.
+/// An empty-DATA MessageFrame encodes to the same bytes as send_keepalive.
 #[test]
 fn message_frame_keepalive_matches_send_keepalive() {
-    let frame = MessageFrame::new(MessageCode::NoOp, vec![]).unwrap();
+    let frame = MessageFrame::new(MessageCode::Data, vec![]).unwrap();
     let mut frame_bytes = Vec::new();
     frame.encode_into_vec(&mut frame_bytes).unwrap();
 
@@ -406,53 +454,46 @@ fn message_frame_keepalive_matches_send_keepalive() {
     assert_eq!(frame_bytes, keepalive_bytes);
 }
 
-/// Simulates a transfer pipeline where keepalives are sent during a long operation.
-/// Writer sends keepalives between data chunks; reader extracts data transparently.
+/// Simulates a transfer pipeline where keepalives are sent during a long
+/// operation. The writer emits empty-DATA keepalives between data chunks; the
+/// reader absorbs them transparently and never surfaces them to the handler.
 #[test]
 fn end_to_end_keepalive_during_transfer() {
     let mut wire = Vec::new();
 
-    // Simulate sender writing chunks with keepalives
+    // Simulate the sender writing chunks with lull keepalives.
     {
         let mut writer = MplexWriter::new(&mut wire);
 
-        // Send first chunk
         writer.write_data(b"file header data").unwrap();
 
-        // Simulate long operation -- send keepalives
+        // Simulate a long operation -- emit keepalives.
         writer.write_keepalive().unwrap();
         writer.write_keepalive().unwrap();
         writer.write_keepalive().unwrap();
 
-        // Send info message (like progress)
+        // Send an info message (like progress).
         writer
             .write_message(MessageCode::Info, b"checksumming...")
             .unwrap();
 
-        // More keepalives
         writer.write_keepalive().unwrap();
-
-        // Continue data
         writer.write_data(b"file body data").unwrap();
-
-        // Final keepalive before completion
         writer.write_keepalive().unwrap();
-
         writer.write_data(b"file trailer").unwrap();
         writer.flush().unwrap();
     }
 
-    // Simulate receiver reading the stream
-    let keepalive_count = Arc::new(Mutex::new(0u32));
+    // Simulate the receiver reading the stream.
+    let oob_count = Arc::new(Mutex::new(0u32));
     let info_messages = Arc::new(Mutex::new(Vec::new()));
-    let keepalive_count_clone = keepalive_count.clone();
+    let oob_count_clone = oob_count.clone();
     let info_messages_clone = info_messages.clone();
 
     let mut reader = MplexReader::new(Cursor::new(wire));
     reader.set_message_handler(move |code, payload| {
-        if code.is_keepalive() {
-            *keepalive_count_clone.lock().unwrap() += 1;
-        } else if code == MessageCode::Info {
+        *oob_count_clone.lock().unwrap() += 1;
+        if code == MessageCode::Info {
             info_messages_clone
                 .lock()
                 .unwrap()
@@ -460,7 +501,6 @@ fn end_to_end_keepalive_during_transfer() {
         }
     });
 
-    // Read all data
     let mut data = Vec::new();
     let mut buf = [0u8; 1024];
     loop {
@@ -472,43 +512,42 @@ fn end_to_end_keepalive_during_transfer() {
         }
     }
 
-    // Verify data integrity
     assert_eq!(
         data, b"file header datafile body datafile trailer",
         "data must be reconstructed without keepalive interference"
     );
 
-    // Verify keepalives were counted
+    // Only the single Info message is surfaced out-of-band; the empty-DATA
+    // keepalives are absorbed into the data path, matching upstream.
     assert_eq!(
-        *keepalive_count.lock().unwrap(),
-        5,
-        "all 5 keepalives must have been handled"
+        *oob_count.lock().unwrap(),
+        1,
+        "only the Info message must reach the handler"
     );
 
-    // Verify info message was received
     let infos = info_messages.lock().unwrap();
     assert_eq!(infos.len(), 1);
     assert_eq!(infos[0], "checksumming...");
 }
 
-/// Keepalive MessageHeader encodes and decodes correctly.
+/// The keepalive MessageHeader (empty MSG_DATA) encodes and decodes correctly.
 #[test]
 fn keepalive_header_roundtrip() {
-    let header = MessageHeader::new(MessageCode::NoOp, 0).unwrap();
-    assert_eq!(header.code(), MessageCode::NoOp);
+    let header = MessageHeader::new(MessageCode::Data, 0).unwrap();
+    assert_eq!(header.code(), MessageCode::Data);
     assert_eq!(header.payload_len(), 0);
 
     let encoded = header.encode();
     let decoded = MessageHeader::decode(&encoded).unwrap();
-    assert_eq!(decoded.code(), MessageCode::NoOp);
+    assert_eq!(decoded.code(), MessageCode::Data);
     assert_eq!(decoded.payload_len(), 0);
 }
 
 use std::io::Write;
 
-/// Keepalive is distinct from IoTimeout in both code and semantics.
+/// Legacy MSG_NOOP remains distinct from MSG_IO_TIMEOUT in code and semantics.
 #[test]
-fn keepalive_distinct_from_io_timeout() {
+fn legacy_noop_distinct_from_io_timeout() {
     assert_ne!(MessageCode::NoOp, MessageCode::IoTimeout);
     assert_ne!(MessageCode::NoOp.as_u8(), MessageCode::IoTimeout.as_u8());
 
@@ -516,8 +555,8 @@ fn keepalive_distinct_from_io_timeout() {
     assert!(!MessageCode::IoTimeout.is_keepalive());
 }
 
-/// Keepalive is not a logging message.
+/// Legacy MSG_NOOP is not a logging message.
 #[test]
-fn keepalive_is_not_logging() {
+fn legacy_noop_is_not_logging() {
     assert!(!MessageCode::NoOp.is_logging());
 }

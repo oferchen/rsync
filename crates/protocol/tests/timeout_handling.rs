@@ -736,6 +736,9 @@ fn end_to_end_io_timeout_writer_to_reader_pipeline() {
             let val = u32::from_le_bytes(payload.try_into().unwrap());
             *received_timeout_clone.lock().unwrap() = Some(val);
         }
+        // The modern keepalive is an empty MSG_DATA frame absorbed by the data
+        // path, so it never reaches the handler. Counting any stray NoOp here
+        // proves none is emitted.
         MessageCode::NoOp => {
             *keepalive_count_clone.lock().unwrap() += 1;
         }
@@ -754,14 +757,14 @@ fn end_to_end_io_timeout_writer_to_reader_pipeline() {
         }
     }
 
-    // Verify data integrity
+    // Verify data integrity: the empty-DATA keepalive is absorbed transparently.
     assert_eq!(data, b"file contents here and more data");
 
     // Verify timeout was received
     assert_eq!(*received_timeout.lock().unwrap(), Some(300));
 
-    // Verify keepalive was counted
-    assert_eq!(*keepalive_count.lock().unwrap(), 1);
+    // The empty-DATA keepalive (upstream io.c:1473) is not surfaced as MSG_NOOP.
+    assert_eq!(*keepalive_count.lock().unwrap(), 0);
 }
 
 /// MSG_IO_TIMEOUT is not a keepalive -- is_keepalive() returns false.
