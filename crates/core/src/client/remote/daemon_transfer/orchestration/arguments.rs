@@ -207,15 +207,15 @@ pub(super) fn build_full_daemon_args(
     // like `-logDtpre.iLsfxCIvu`. We follow the same format for interop.
     let mut flag_string = flags::build_server_flag_string(config);
 
-    // upstream: options.c:2641-2654 - the `am_sender` branch of server_options()
-    // packs several sender-only compact letters. `build_server_flag_string` is
+    // upstream: options.c:2641-2660 - server_options() packs a direction-
+    // specific branch of compact letters. `build_server_flag_string` is
     // role-agnostic and also feeds the local in-process ServerConfig parser
-    // (server_config.rs), where the L/k letters must stay unconditional for the
-    // local push sender's copy_links/copy_dirlinks (flags.rs:152-164). So the
-    // sender-only letters are appended here, on the daemon wire path only. On a
-    // daemon PUSH the local client is the sender (`we_are_sender`), so these ride
-    // to the remote receiver; on a PULL they are omitted (the local receiver
-    // applies omit-dir/link-times, prune-empty-dirs, and fuzzy matching itself).
+    // (server_config.rs), so the role-gated letters are applied here, on the
+    // daemon wire path only. On a daemon PUSH the local client is the sender
+    // (`we_are_sender`), so the `am_sender` letters (K/m/O/J/y/E) ride to the
+    // remote receiver; on a PULL the remote is the sender, so the `else`-branch
+    // letters (L/k) ride to it instead and the local receiver applies
+    // omit-dir/link-times, prune-empty-dirs, and fuzzy matching itself.
     if we_are_sender {
         // upstream: options.c:2642-2643 - keep_dirlinks 'K'.
         if config.keep_dirlinks() {
@@ -246,6 +246,19 @@ pub(super) fn build_full_daemon_args(
         // receiver's generator to keep the executable bit.
         if !config.preserve_permissions() && config.preserve_executability() {
             flag_string.push('E');
+        }
+    } else {
+        // upstream: options.c:2655-2660 - the `!am_sender` (else) branch packs
+        // copy_links 'L' and copy_dirlinks 'k'. On a daemon PULL the remote is
+        // the sender, so these ride to it to dereference symlinks and
+        // dir-symlinks; on a PUSH they are omitted (the local sender
+        // dereferences itself). `build_server_flag_string` no longer packs L/k,
+        // so the pull wire gets them here.
+        if config.copy_links() {
+            flag_string.push('L');
+        }
+        if config.copy_dirlinks() {
+            flag_string.push('k');
         }
     }
 
