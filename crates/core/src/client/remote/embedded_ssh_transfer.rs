@@ -160,6 +160,10 @@ fn run_embedded_pull(
 
     let mut server_config = build_server_config_for_receiver(config, &[local_dest.to_owned()])?;
     server_config.connection.client_mode = true;
+    // upstream: main.c:1525,1549 / flist.c:1026 - record each requested source
+    // path as an implied include so the receiver rejects any unrequested
+    // file-list name (CVE-2022-29154).
+    server_config.connection.implied_source_args = paths.clone();
     server_config.connection.filter_rules =
         flags::build_wire_format_rules(config.filter_rules(), config.delete_excluded()).map_err(
             |e| invalid_argument_error(&format!("failed to build filter rules: {e}"), 12),

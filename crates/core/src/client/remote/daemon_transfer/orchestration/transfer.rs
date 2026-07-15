@@ -44,6 +44,7 @@ pub(crate) fn run_pull_transfer(
     writer: &mut DaemonStreamWriter,
     _guard: DaemonStreamGuard,
     local_paths: &[String],
+    implied_source_args: &[String],
     protocol: ProtocolVersion,
     batch_ctx: Option<BatchContext>,
     buffered: Vec<u8>,
@@ -58,6 +59,11 @@ pub(crate) fn run_pull_transfer(
     handshake.buffered = buffered;
 
     let mut server_config = build_server_config_for_receiver(config, local_paths, filter_rules)?;
+    // upstream: main.c:1549 - the requested daemon source (module/path) is
+    // recorded as an implied include; the receiver rejects any file-list name
+    // it does not cover (CVE-2022-29154). is_daemon_connection drives the
+    // module-name strip on the receiver side (exclude.c:396-401).
+    server_config.connection.implied_source_args = implied_source_args.to_vec();
 
     // upstream: main.c:1354-1356 - when pulling with --files-from pointing to a
     // local file or stdin, the client reads the file list locally and forwards

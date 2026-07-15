@@ -216,6 +216,10 @@ pub fn run_daemon_transfer(
     // Protocol is already negotiated via @RSYNCD text exchange (not binary 4-byte).
     // upstream: compat.c:599 - when remote_protocol != 0, setup_protocol skips
     // the binary exchange.
+    // upstream: main.c:1549 - record the requested daemon source (module/path)
+    // as an implied include for the receiver-side flist validation
+    // (CVE-2022-29154); is_daemon_connection strips the module on the receiver.
+    let implied_source_args = [format!("{}/{}", request.module, request.path)];
     match role {
         RemoteRole::Receiver => run_pull_transfer(
             config,
@@ -223,6 +227,7 @@ pub fn run_daemon_transfer(
             &mut writer_half,
             guard,
             &local_paths,
+            &implied_source_args,
             protocol,
             batch_ctx,
             buffered,
@@ -365,6 +370,10 @@ pub fn run_daemon_over_remote_shell(
     let buffered = buf_reader.buffer().to_vec();
     let mut reader_half = buf_reader.into_inner();
 
+    // upstream: main.c:1549 - record the requested daemon source (module/path)
+    // as an implied include for the receiver-side flist validation
+    // (CVE-2022-29154); is_daemon_connection strips the module on the receiver.
+    let implied_source_args = [format!("{}/{}", request.module, request.path)];
     match role {
         RemoteRole::Receiver => run_pull_transfer(
             config,
@@ -372,6 +381,7 @@ pub fn run_daemon_over_remote_shell(
             &mut writer_half,
             guard,
             &local_paths,
+            &implied_source_args,
             protocol,
             batch_ctx,
             buffered,

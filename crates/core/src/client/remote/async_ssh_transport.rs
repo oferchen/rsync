@@ -64,6 +64,7 @@ use super::invocation::{RemoteOperands, RemoteRole, TransferSpec, determine_tran
 use super::ssh_transfer::{
     build_server_config_for_generator, build_server_config_for_receiver,
     convert_server_stats_to_summary, parse_remote_operands, parse_single_remote,
+    remote_operand_source_paths,
 };
 use crate::exit_code::ExitCode;
 use crate::server::{ServerConfig, ServerRole, ServerStats};
@@ -163,7 +164,12 @@ pub fn run_async_ssh_transfer(
             local_dest,
         } => {
             let plan = build_plan(config, RemoteRole::Receiver, "", Some(&remote_sources))?;
-            let server_config = build_pull_server_config(config, &[local_dest])?;
+            let mut server_config = build_pull_server_config(config, &[local_dest])?;
+            // upstream: main.c:1525,1549 / flist.c:1026 - record each requested
+            // source path as an implied include so the receiver rejects any
+            // unrequested file-list name (CVE-2022-29154).
+            server_config.connection.implied_source_args =
+                remote_operand_source_paths(&remote_sources)?;
             run_async_session(config, plan, server_config, batch_writer)
         }
         TransferSpec::Proxy { .. } => Err(invalid_argument_error(

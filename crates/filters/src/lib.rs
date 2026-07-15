@@ -110,6 +110,8 @@ pub mod cvs;
 pub mod debug_filter;
 mod decision;
 mod error;
+/// Implied-include validation of received file-list names (CVE-2022-29154).
+pub mod implied;
 /// Merge-file reader and parser for filter rules.
 pub mod merge;
 mod rule;
@@ -123,6 +125,7 @@ pub use apple_double::{
 pub use chain::{DirFilterGuard, DirMergeConfig, FilterChain, FilterChainError};
 pub use cvs::{DEFAULT_CVSIGNORE, default_patterns as cvs_default_patterns};
 pub use error::FilterError;
+pub use implied::{ImpliedIncludeOptions, ImpliedIncludes};
 pub use merge::{MergeFileError, parse_rules, read_rules, read_rules_recursive};
 pub use rule::FilterRule;
 pub use set::{FilterSet, FilterSetError, apple_double_exclusion_rules, cvs_exclusion_rules};
