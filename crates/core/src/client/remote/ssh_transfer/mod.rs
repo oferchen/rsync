@@ -39,7 +39,7 @@ pub(super) use exit_status::{format_stderr_context, map_child_exit_status};
 #[cfg(any(feature = "async-ssh", feature = "embedded-ssh"))]
 pub(super) use exit_status::convert_server_stats_to_summary;
 #[cfg(feature = "async-ssh")]
-pub(super) use parse::{parse_remote_operands, parse_single_remote};
+pub(super) use parse::{parse_remote_operands, parse_single_remote, remote_operand_source_paths};
 #[cfg(any(test, feature = "async-ssh"))]
 pub(super) use server_config::{
     build_server_config_for_generator, build_server_config_for_receiver,

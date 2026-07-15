@@ -81,3 +81,26 @@ pub(in crate::client::remote) fn parse_remote_operands(
         }
     }
 }
+
+/// Extracts the host-stripped path portion of each remote pull source operand.
+///
+/// These paths are recorded as implied includes so the receiver can reject any
+/// file-list name the remote sender was never asked for (CVE-2022-29154).
+/// Mirrors upstream `check_for_hostspec()`, which returns the operand's path
+/// portion before `add_implied_include()` records it (main.c:1525,1549).
+pub(in crate::client::remote) fn remote_operand_source_paths(
+    operands: &RemoteOperands,
+) -> Result<Vec<String>, ClientError> {
+    let operand_strs: &[String] = match operands {
+        RemoteOperands::Single(operand) => std::slice::from_ref(operand),
+        RemoteOperands::Multiple(operands) => operands.as_slice(),
+    };
+    operand_strs
+        .iter()
+        .map(|operand| {
+            parse_ssh_operand(OsStr::new(operand))
+                .map(|parsed| parsed.path().to_owned())
+                .map_err(|e| invalid_argument_error(&format!("invalid remote operand: {e}"), 1))
+        })
+        .collect()
+}

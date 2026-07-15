@@ -157,6 +157,12 @@ impl ReceiverContext {
         // already cleaned, matching upstream's per-entry ordering.
         self.recheck_received_filter()?;
 
+        // upstream: flist.c:1026-1029 recv_file_entry() also validates each
+        // received name against the implied-include list built from the
+        // client's requested source args, aborting with RERR_UNSUPPORTED if the
+        // sender injected a name that was never requested (CVE-2022-29154).
+        self.recheck_received_implied_includes()?;
+
         let checksum_factory = ChecksumFactory::from_negotiation(
             self.negotiated_algorithms.as_ref(),
             self.protocol,
