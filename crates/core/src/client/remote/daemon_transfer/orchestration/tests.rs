@@ -399,6 +399,89 @@ mod protect_args_daemon_tests {
         );
     }
 
+    // upstream: options.c:2852-2853 - `if (am_root > 1) --super`, inside the
+    // am_sender block. On a daemon push the client is the sender, so --super is
+    // forwarded to the remote receiver which performs the privileged operations.
+    // Shared with the SSH builder via flags::sender_super_stats_args.
+    #[test]
+    fn build_full_args_forwards_super_on_push_only() {
+        let config = ClientConfig::builder().super_user(true).build();
+        let request = test_daemon_request();
+        let protocol = ProtocolVersion::try_from(32u8).unwrap();
+
+        // Push (is_sender=false => daemon is receiver, local side is sender).
+        let push = build_full_daemon_args(&config, &request, protocol, false);
+        assert!(
+            push.iter().any(|a| a == "--super"),
+            "daemon push must forward --super: {push:?}"
+        );
+
+        // Pull (is_sender=true => daemon is sender): --super is receiver-side and
+        // must not be forwarded to the remote sender.
+        let pull = build_full_daemon_args(&config, &request, protocol, true);
+        assert!(
+            !pull.iter().any(|a| a == "--super"),
+            "daemon pull must not forward --super: {pull:?}"
+        );
+
+        // Not requested: never forwarded.
+        let off = ClientConfig::default();
+        let args = build_full_daemon_args(&off, &request, protocol, false);
+        assert!(!args.iter().any(|a| a == "--super"));
+    }
+
+    // upstream: options.c:2856-2857 - `if (do_stats) --stats`, inside the
+    // am_sender block. Forwarded only on a daemon push, where the remote
+    // receiver/generator computes the transfer statistics.
+    #[test]
+    fn build_full_args_forwards_stats_on_push_only() {
+        let config = ClientConfig::builder().stats(true).build();
+        let request = test_daemon_request();
+        let protocol = ProtocolVersion::try_from(32u8).unwrap();
+
+        let push = build_full_daemon_args(&config, &request, protocol, false);
+        assert!(
+            push.iter().any(|a| a == "--stats"),
+            "daemon push must forward --stats: {push:?}"
+        );
+
+        let pull = build_full_daemon_args(&config, &request, protocol, true);
+        assert!(
+            !pull.iter().any(|a| a == "--stats"),
+            "daemon pull must not forward --stats: {pull:?}"
+        );
+
+        let off = ClientConfig::default();
+        let args = build_full_daemon_args(&off, &request, protocol, false);
+        assert!(!args.iter().any(|a| a == "--stats"));
+    }
+
+    // WHY: the daemon push builder must emit the sender-only --super/--stats
+    // trailer with the same spelling and adjacency as the SSH push builder,
+    // since both consume flags::sender_super_stats_args. This encodes the
+    // SSH<->daemon parity that task #48 established for the SSH path.
+    #[test]
+    fn build_full_args_super_stats_match_ssh_push_order() {
+        let config = ClientConfig::builder().super_user(true).stats(true).build();
+        let request = test_daemon_request();
+        let protocol = ProtocolVersion::try_from(32u8).unwrap();
+        let args = build_full_daemon_args(&config, &request, protocol, false);
+
+        let super_pos = args
+            .iter()
+            .position(|a| a == "--super")
+            .expect("--super must be present");
+        let stats_pos = args
+            .iter()
+            .position(|a| a == "--stats")
+            .expect("--stats must be present");
+        assert_eq!(
+            stats_pos,
+            super_pos + 1,
+            "--super must immediately precede --stats: {args:?}"
+        );
+    }
+
     #[test]
     fn build_full_args_omits_missing_args_by_default() {
         let config = ClientConfig::default();
