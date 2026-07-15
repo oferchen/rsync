@@ -1988,8 +1988,13 @@ mod config_parsing_tests {
         assert!(err.to_string().contains("syslog facility"));
     }
 
+    // upstream: `syslog facility` is P_LOCAL (loadparm.c). A value inside a
+    // module section is a per-module override, not a global one: it must land on
+    // the module (so its connection logs to that facility) and must not leak into
+    // the global default. WHY: operators route per-module logs to distinct syslog
+    // facilities; treating the directive as global-only silently dropped it.
     #[test]
-    fn parse_syslog_facility_inside_module_is_unknown() {
+    fn parse_syslog_facility_inside_module_overrides_that_module() {
         let dir = TempDir::new().expect("create temp dir");
         let path = dir.path().join("data");
         fs::create_dir(&path).expect("create dir");
@@ -2000,7 +2005,125 @@ mod config_parsing_tests {
         );
         let file = write_config(&config);
         let result = parse_config_modules(file.path()).expect("parse succeeds");
-        assert!(result.syslog_facility.is_none());
+        assert!(
+            result.syslog_facility.is_none(),
+            "a module-scoped directive must not set the global facility"
+        );
+        let module = result
+            .modules
+            .iter()
+            .find(|m| m.name == "mod")
+            .expect("mod module");
+        assert_eq!(module.syslog_facility.as_deref(), Some("local0"));
+    }
+
+    // upstream: loadparm.c:456 `case P_ENUM` leaves the inherited value unchanged
+    // when the facility name matches no entry, so an unknown name is not a config
+    // error - the module keeps inheriting the global/default facility. WHY: mirror
+    // upstream's accept-and-continue instead of failing the daemon on a typo.
+    #[test]
+    fn parse_syslog_facility_unknown_name_inherits_silently() {
+        let dir = TempDir::new().expect("create temp dir");
+        let path = dir.path().join("data");
+        fs::create_dir(&path).expect("create dir");
+
+        let config = format!("[mod]\npath = {}\nsyslog facility = bogus\n", path.display());
+        let file = write_config(&config);
+        let result = parse_config_modules(file.path()).expect("parse succeeds");
+        let module = result
+            .modules
+            .iter()
+            .find(|m| m.name == "mod")
+            .expect("mod module");
+        assert!(
+            module.syslog_facility.is_none(),
+            "unknown facility name must inherit, not override"
+        );
+    }
+
+    // upstream: `syslog tag`/`syslog facility` are P_LOCAL; a module override wins
+    // for that module only while a sibling without its own directive inherits the
+    // global-section value. WHY: guards against regressing to a daemon-wide
+    // singleton that ignores per-module routing.
+    #[test]
+    fn module_syslog_override_beats_global_and_sibling_inherits() {
+        let dir = TempDir::new().expect("create temp dir");
+        let a = dir.path().join("a");
+        let b = dir.path().join("b");
+        fs::create_dir(&a).expect("create a");
+        fs::create_dir(&b).expect("create b");
+
+        let config = format!(
+            "syslog tag = globaltag\n\
+             syslog facility = local1\n\
+             [override]\n\
+             path = {}\n\
+             syslog tag = overridetag\n\
+             syslog facility = local5\n\
+             [inherit]\n\
+             path = {}\n",
+            a.display(),
+            b.display()
+        );
+        let file = write_config(&config);
+        let result = parse_config_modules(file.path()).expect("parse succeeds");
+
+        let override_mod = result
+            .modules
+            .iter()
+            .find(|m| m.name == "override")
+            .expect("override module");
+        let inherit_mod = result
+            .modules
+            .iter()
+            .find(|m| m.name == "inherit")
+            .expect("inherit module");
+
+        assert_eq!(override_mod.syslog_tag.as_deref(), Some("overridetag"));
+        assert_eq!(override_mod.syslog_facility.as_deref(), Some("local5"));
+        assert_eq!(inherit_mod.syslog_tag.as_deref(), Some("globaltag"));
+        assert_eq!(inherit_mod.syslog_facility.as_deref(), Some("local1"));
+    }
+
+    // A module without any syslog directive, under a config with no global
+    // directive either, resolves to None (inherits the daemon-global logger).
+    #[test]
+    fn module_without_syslog_directive_inherits_default() {
+        let dir = TempDir::new().expect("create temp dir");
+        let path = dir.path().join("data");
+        fs::create_dir(&path).expect("create dir");
+
+        let file = write_config(&format!("[mod]\npath = {}\n", path.display()));
+        let result = parse_config_modules(file.path()).expect("parse succeeds");
+        let module = result
+            .modules
+            .iter()
+            .find(|m| m.name == "mod")
+            .expect("mod module");
+        assert!(module.syslog_tag.is_none());
+        assert!(module.syslog_facility.is_none());
+    }
+
+    #[test]
+    fn parse_module_syslog_tag_empty_rejected() {
+        let file = write_config("[mod]\npath = /tmp\nsyslog tag =\n");
+        let err = parse_config_modules(file.path()).expect_err("should fail on empty");
+        assert!(err.to_string().contains("syslog tag"));
+    }
+
+    #[test]
+    fn parse_module_duplicate_syslog_facility_rejected() {
+        let dir = TempDir::new().expect("create temp dir");
+        let path = dir.path().join("data");
+        fs::create_dir(&path).expect("create dir");
+
+        let config = format!(
+            "[mod]\npath = {}\nsyslog facility = local2\nsyslog facility = local3\n",
+            path.display()
+        );
+        let file = write_config(&config);
+        let err = parse_config_modules(file.path()).expect_err("should fail on duplicate");
+        assert!(err.to_string().contains("syslog facility"));
     }
 
 
@@ -2050,7 +2173,11 @@ mod config_parsing_tests {
     }
 
     #[test]
-    fn parse_syslog_tag_inside_module_is_unknown() {
+    // upstream: `syslog tag` is P_LOCAL (loadparm.c). A value inside a module
+    // section overrides that module's tag and must not set the global default.
+    // WHY: operators tag per-module logs distinctly; treating it as global-only
+    // silently dropped the override.
+    fn parse_syslog_tag_inside_module_overrides_that_module() {
         let dir = TempDir::new().expect("create temp dir");
         let path = dir.path().join("data");
         fs::create_dir(&path).expect("create dir");
@@ -2058,7 +2185,16 @@ mod config_parsing_tests {
         let config = format!("[mod]\npath = {}\nsyslog tag = custom\n", path.display());
         let file = write_config(&config);
         let result = parse_config_modules(file.path()).expect("parse succeeds");
-        assert!(result.syslog_tag.is_none());
+        assert!(
+            result.syslog_tag.is_none(),
+            "a module-scoped directive must not set the global tag"
+        );
+        let module = result
+            .modules
+            .iter()
+            .find(|m| m.name == "mod")
+            .expect("mod module");
+        assert_eq!(module.syslog_tag.as_deref(), Some("custom"));
     }
 
     #[test]

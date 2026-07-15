@@ -851,4 +851,50 @@ impl ModuleDefinitionBuilder {
         self.lock_file = Some(path);
         Ok(())
     }
+
+    /// Sets the per-module `syslog tag` override.
+    ///
+    /// upstream: loadparm.c syslog_tag (P_STRING, P_LOCAL, default "rsyncd").
+    fn set_syslog_tag(
+        &mut self,
+        tag: String,
+        config_path: &Path,
+        line: usize,
+    ) -> Result<(), DaemonError> {
+        if self.syslog_tag.is_some() {
+            return Err(config_parse_error(
+                config_path,
+                line,
+                format!("duplicate 'syslog tag' directive in module '{}'", self.name),
+            ));
+        }
+
+        self.syslog_tag = Some(tag);
+        Ok(())
+    }
+
+    /// Sets the per-module `syslog facility` override to a canonical facility
+    /// name.
+    ///
+    /// upstream: loadparm.c syslog_facility (P_ENUM, P_LOCAL, default LOG_DAEMON).
+    fn set_syslog_facility(
+        &mut self,
+        facility: String,
+        config_path: &Path,
+        line: usize,
+    ) -> Result<(), DaemonError> {
+        if self.syslog_facility.is_some() {
+            return Err(config_parse_error(
+                config_path,
+                line,
+                format!(
+                    "duplicate 'syslog facility' directive in module '{}'",
+                    self.name
+                ),
+            ));
+        }
+
+        self.syslog_facility = Some(facility);
+        Ok(())
+    }
 }

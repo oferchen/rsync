@@ -414,6 +414,36 @@ fn apply_module_directive(
             let resolved = resolve_config_relative_path(canonical, value);
             builder.set_lock_file(resolved, path, line_number)?;
         }
+        // upstream: loadparm.c syslog_tag (P_STRING, P_LOCAL). Consumed
+        // per-module at log.c:143 `openlog(lp_syslog_tag(module_id), ...)`.
+        "syslogtag" => {
+            if value.is_empty() {
+                return Err(config_parse_error(
+                    path,
+                    line_number,
+                    "'syslog tag' directive must not be empty",
+                ));
+            }
+            builder.set_syslog_tag(value.to_owned(), path, line_number)?;
+        }
+        // upstream: loadparm.c syslog_facility (P_ENUM, P_LOCAL). Consumed
+        // per-module at log.c:143 `openlog(..., lp_syslog_facility(module_id))`.
+        "syslogfacility" => {
+            if value.is_empty() {
+                return Err(config_parse_error(
+                    path,
+                    line_number,
+                    "'syslog facility' directive must not be empty",
+                ));
+            }
+            // upstream: loadparm.c:456 `case P_ENUM` leaves the (inherited)
+            // value unchanged when the name matches no facility, so an
+            // unrecognised name silently falls back to the global/default
+            // facility rather than raising a config error.
+            if let Some(canonical) = logging_sink::canonical_syslog_facility(value) {
+                builder.set_syslog_facility(canonical.to_owned(), path, line_number)?;
+            }
+        }
         _ if is_global_only_directive(key) => {
             // upstream: loadparm.c:do_parameter - a known P_GLOBAL parameter
             // that appears inside a module section is reported and ignored,

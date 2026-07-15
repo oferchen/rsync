@@ -159,6 +159,20 @@ pub(crate) struct ModuleDefinition {
     /// `lock_file` STRING, P_LOCAL; consumed per-module at clientserver.c:746
     /// `claim_connection(lp_lock_file(i), lp_max_connections(i))`.
     pub(crate) lock_file: Option<PathBuf>,
+    /// Per-module syslog ident (tag) override, resolved with the global default.
+    ///
+    /// `None` means the module did not set (and no global `syslog tag` directive
+    /// supplied) a value, so it inherits the daemon-global tag opened at startup.
+    /// upstream: loadparm.c syslog_tag (P_STRING, P_LOCAL, default "rsyncd");
+    /// consumed per-module at log.c:143 `openlog(lp_syslog_tag(module_id), ...)`.
+    pub(crate) syslog_tag: Option<String>,
+    /// Per-module syslog facility name override, resolved with the global
+    /// default (canonical lowercase, e.g. "daemon", "local3").
+    ///
+    /// `None` means the module inherits the daemon-global facility. upstream:
+    /// loadparm.c syslog_facility (P_ENUM, P_LOCAL, default LOG_DAEMON);
+    /// consumed per-module at log.c:143 `openlog(..., lp_syslog_facility(module_id))`.
+    pub(crate) syslog_facility: Option<String>,
 }
 
 impl ModuleDefinition {
@@ -345,6 +359,36 @@ impl ModuleDefinition {
         if self.outgoing_chmod.is_none() {
             self.outgoing_chmod = chmod.map(str::to_string);
         }
+    }
+
+    /// Reconfigures the process-wide syslog handle for this module's connection
+    /// when the module carries a resolved `syslog tag` or `syslog facility`,
+    /// returning a guard that restores the daemon-global logger on drop.
+    ///
+    /// Returns `None` when the module neither overrides nor inherits an explicit
+    /// syslog value, leaving the startup logger untouched. An unrecognised
+    /// facility name resolves to the default facility, mirroring upstream's
+    /// P_ENUM keep-default behaviour.
+    ///
+    /// upstream: log.c:169 `log_init` reopens syslog for the selected module via
+    /// `openlog(lp_syslog_tag(module_id), LOG_PID, lp_syslog_facility(module_id))`.
+    #[cfg(unix)]
+    pub(in crate::daemon) fn reconfigure_syslog(
+        &self,
+    ) -> Option<logging_sink::syslog::SyslogReconfigGuard> {
+        use logging_sink::syslog::{DEFAULT_SYSLOG_TAG, SyslogConfig, SyslogFacility};
+
+        if self.syslog_tag.is_none() && self.syslog_facility.is_none() {
+            return None;
+        }
+
+        let facility = self
+            .syslog_facility
+            .as_deref()
+            .and_then(SyslogFacility::from_name)
+            .unwrap_or_default();
+        let tag = self.syslog_tag.as_deref().unwrap_or(DEFAULT_SYSLOG_TAG);
+        Some(SyslogConfig::new(facility, tag).reconfigure())
     }
 }
 

@@ -584,3 +584,34 @@ fn per_module_reverse_lookup_gates_resolution_when_global_disabled() {
 
     clear_test_hostname_overrides();
 }
+
+// WHY: only a module that carries a resolved syslog tag/facility should reopen
+// the process-wide syslog handle for its connection; a module inheriting the
+// daemon-global logger must leave it untouched (returns None) so the startup
+// tag/facility keep serving. upstream: log.c:169 log_init reopens per module.
+#[cfg(unix)]
+#[test]
+fn reconfigure_syslog_only_when_module_sets_a_value() {
+    let inherit = ModuleDefinition::default();
+    assert!(
+        inherit.reconfigure_syslog().is_none(),
+        "a module with no syslog override must not reconfigure the shared handle"
+    );
+
+    let with_facility = ModuleDefinition {
+        syslog_facility: Some("local4".to_owned()),
+        ..ModuleDefinition::default()
+    };
+    let guard = with_facility.reconfigure_syslog();
+    assert!(
+        guard.is_some(),
+        "a module with a syslog facility must reconfigure syslog"
+    );
+    drop(guard);
+
+    let with_tag = ModuleDefinition {
+        syslog_tag: Some("mytag".to_owned()),
+        ..ModuleDefinition::default()
+    };
+    assert!(with_tag.reconfigure_syslog().is_some());
+}

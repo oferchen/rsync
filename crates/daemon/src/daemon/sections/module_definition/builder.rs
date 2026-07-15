@@ -54,6 +54,8 @@ struct ModuleDefinitionBuilder {
     log_file: Option<PathBuf>,
     reverse_lookup: Option<bool>,
     lock_file: Option<PathBuf>,
+    syslog_tag: Option<String>,
+    syslog_facility: Option<String>,
     /// Direct filter rules for this module.
     ///
     /// upstream: daemon-parm.h - `filter` STRING, P_LOCAL.
@@ -118,6 +120,8 @@ impl ModuleDefinitionBuilder {
             log_file: None,
             reverse_lookup: None,
             lock_file: None,
+            syslog_tag: None,
+            syslog_facility: None,
             filter: Vec::new(),
             exclude: Vec::new(),
             include: Vec::new(),
