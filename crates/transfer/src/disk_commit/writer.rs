@@ -221,6 +221,56 @@ impl<'a> Writer<'a> {
         }
     }
 
+    /// Seeks past `len` bytes that are already correct in the destination,
+    /// instead of rewriting them (the `--inplace` matched-at-same-offset case).
+    ///
+    /// Mirrors upstream `skip_matched()` (`fileio.c:202-209`): flush any pending
+    /// buffered bytes, then advance the file position by `len` via
+    /// `lseek(SEEK_CUR)`. The buffered writer's [`Seek`] impl performs exactly
+    /// that flush-then-seek. Only the buffered writer is used for in-place
+    /// updates (`make_writer` forces it whenever `is_inplace` is set), because
+    /// the batched backends submit at their own internally tracked offset and
+    /// cannot honor an intervening seek; the other variants are therefore
+    /// unreachable here.
+    pub(super) fn skip_matched(&mut self, len: u64) -> io::Result<()> {
+        match self {
+            Writer::Buffered(w) => {
+                w.seek(io::SeekFrom::Current(len as i64))?;
+                Ok(())
+            }
+            #[cfg(all(target_os = "linux", feature = "io_uring"))]
+            Writer::IoUring { .. } => {
+                debug_assert!(false, "in-place skip must select buffered writer");
+                unreachable!("in-place skip must select buffered writer")
+            }
+            #[cfg(all(target_os = "windows", feature = "iocp"))]
+            Writer::Iocp { .. } => {
+                debug_assert!(false, "in-place skip must select buffered writer");
+                unreachable!("in-place skip must select buffered writer")
+            }
+            #[cfg(target_os = "macos")]
+            Writer::Macos(_) => {
+                debug_assert!(false, "in-place skip must select buffered writer");
+                unreachable!("in-place skip must select buffered writer")
+            }
+            #[cfg(all(target_os = "macos", feature = "macos-gcd"))]
+            Writer::MacosGcd(_) => {
+                debug_assert!(false, "in-place skip must select buffered writer");
+                unreachable!("in-place skip must select buffered writer")
+            }
+            #[cfg(all(target_os = "linux", feature = "vmsplice"))]
+            Writer::Vmsplice(_) => {
+                debug_assert!(false, "in-place skip must select buffered writer");
+                unreachable!("in-place skip must select buffered writer")
+            }
+            #[cfg(all(target_os = "linux", feature = "dontcache"))]
+            Writer::Dontcache(_) => {
+                debug_assert!(false, "in-place skip must select buffered writer");
+                unreachable!("in-place skip must select buffered writer")
+            }
+        }
+    }
+
     /// Writes the entire chunk, dispatching to the active variant.
     pub(super) fn write_chunk(&mut self, data: &[u8]) -> io::Result<()> {
         match self {

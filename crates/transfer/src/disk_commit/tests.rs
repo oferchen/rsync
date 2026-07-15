@@ -241,6 +241,67 @@ fn write_and_commit_file() {
     h.join_handle.join().unwrap();
 }
 
+/// A `SkipMatched` message in an in-place update must SEEK past the matched
+/// bytes, not rewrite them. This is upstream's `skip_matched()` optimization
+/// (receiver.c:468-474 -> fileio.c:202-209): a block that already sits at its
+/// destination offset is left untouched on disk while the write position still
+/// advances so the following data lands at the correct offset.
+///
+/// WHY this matters: rewriting bytes that are already correct dirties clean
+/// pages and issues a needless write, diverging from upstream's I/O profile.
+/// The final file content must stay byte-identical to a full rewrite.
+///
+/// To observe "not rewritten" directly, the `SkipMatched` payload here
+/// deliberately differs from the on-disk bytes: if the disk thread wrote the
+/// payload (a bug) the first block would change; because it seeks, the original
+/// on-disk bytes survive. The trailing `Chunk` proves the write cursor advanced
+/// past the skipped block (it lands at offset 8, not 0).
+#[test]
+fn inplace_skip_matched_seeks_without_rewriting() {
+    let _registry_lock = test_support::cleanup_registry_test_guard();
+    let dir = test_support::create_tempdir();
+    let file_path = dir.path().join("inplace_skip.dat");
+
+    // Pre-existing destination: block0 already correct, block1 to be replaced.
+    fs::write(&file_path, b"AAAAAAAABBBBBBBB").unwrap();
+
+    let h = spawn_disk_thread(DiskCommitConfig::default()).unwrap();
+
+    h.file_tx
+        .send(FileMessage::Begin(Box::new(BeginMessage {
+            file_path: file_path.clone(),
+            target_size: 16,
+            file_entry_index: 0,
+            checksum_verifier: None,
+            is_device_target: false,
+            is_inplace: true,
+            append_offset: 0,
+            xattr_list: None,
+        })))
+        .unwrap();
+
+    // block0 matches at offset 0: seek past it. The probe payload differs from
+    // the on-disk bytes so a stray write would be observable.
+    h.file_tx
+        .send(FileMessage::SkipMatched(b"XXXXXXXX".to_vec()))
+        .unwrap();
+    // block1 is new literal data written at the advanced offset (8).
+    h.file_tx
+        .send(FileMessage::Chunk(b"CCCCCCCC".to_vec()))
+        .unwrap();
+    h.file_tx.send(FileMessage::Commit).unwrap();
+
+    let result = h.result_rx.recv().unwrap().unwrap();
+    // Both the skipped and the written block count toward the final size so the
+    // in-place ftruncate (commit.rs) clips to the right length.
+    assert_eq!(result.bytes_written, 16);
+    // block0 preserved (seek, not rewrite); block1 overwritten at offset 8.
+    assert_eq!(fs::read(&file_path).unwrap(), b"AAAAAAAACCCCCCCC");
+
+    h.file_tx.send(FileMessage::Shutdown).unwrap();
+    h.join_handle.join().unwrap();
+}
+
 #[test]
 fn abort_cleans_up_temp_file() {
     let _registry_lock = test_support::cleanup_registry_test_guard();
