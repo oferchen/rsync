@@ -14,8 +14,41 @@
 //! same implementation.
 
 use std::io::{self, BufRead, BufReader, Read, Write};
+use std::sync::Arc;
 
 use protocol::{CompatibilityFlags, NegotiationResult, ProtocolVersion, select_highest_mutual};
+
+/// Re-applies an adopted daemon `MSG_IO_TIMEOUT` to the live client socket.
+///
+/// Upstream `io.c:set_io_timeout` updates the global `io_timeout` so the select
+/// loop's stall detection changes immediately after the client adopts a
+/// daemon-advertised timeout (upstream: `io.c:1551-1561` `read_a_msg()` case
+/// `MSG_IO_TIMEOUT`). The oc client has no global; instead the daemon-pull path
+/// installs this hook, which re-applies the adopted value to the socket's read
+/// and write timeouts. Only the client receiver of a daemon transfer installs
+/// one - every other path leaves it `None`, so the default transfer performs no
+/// re-apply and stays wire-identical.
+///
+/// The wrapped closure takes the adopted timeout in whole seconds (`0` clears
+/// the timeout, i.e. infinite) and is best-effort: a transport without a socket
+/// timeout (a connect-program pipe) installs no hook at all.
+#[derive(Clone)]
+pub struct IoTimeoutReapply(pub Arc<dyn Fn(u32) -> io::Result<()> + Send + Sync>);
+
+impl std::fmt::Debug for IoTimeoutReapply {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("IoTimeoutReapply(<fn>)")
+    }
+}
+
+impl IoTimeoutReapply {
+    /// Re-applies `secs` as the live socket's read and write I/O timeout.
+    ///
+    /// upstream: `io.c:1148-1157` `set_io_timeout()`.
+    pub fn apply(&self, secs: u32) -> io::Result<()> {
+        (self.0)(secs)
+    }
+}
 
 /// Result of a successful server-side handshake.
 #[derive(Debug, Clone)]

@@ -174,7 +174,8 @@ pub use self::generator::{
     GeneratorContext, GeneratorStats, generate_delta_from_signature, io_error_flags,
 };
 pub use self::handshake::{
-    HandshakeResult, perform_handshake, perform_handshake_with_max, perform_legacy_handshake,
+    HandshakeResult, IoTimeoutReapply, perform_handshake, perform_handshake_with_max,
+    perform_legacy_handshake,
 };
 pub use self::reader::RemoteExitError;
 pub use self::receiver::{ListOnlyEntry, ReceiverContext, SumHead, TransferStats};
@@ -387,21 +388,83 @@ pub struct AsyncBenchReceiver<'a> {
 /// - Multiplex activation fails
 /// - Sending the MSG_IO_TIMEOUT message fails (for daemon mode)
 /// - The receiver or generator role encounters a transfer error
-#[cfg_attr(feature = "tracing", instrument(skip(stdin, stdout, progress, batch, itemize), fields(role = ?config.role, protocol = %handshake.protocol)))]
 pub fn run_server_with_handshake<W: Write>(
+    config: ServerConfig,
+    handshake: HandshakeResult,
+    stdin: &mut dyn Read,
+    stdout: W,
+    progress: Option<&mut dyn TransferProgressCallback>,
+    batch: Option<BatchRecording>,
+    itemize: Option<&mut dyn ItemizeCallback>,
+    #[cfg(feature = "async-bench")] async_bench: Option<AsyncBenchReceiver<'_>>,
+) -> ServerResult {
+    // Default entry: no daemon-advertised I/O-timeout adoption. Only the client
+    // receiver of a daemon transfer supplies a re-apply hook, via
+    // `run_server_with_handshake_adopting`.
+    run_server_with_handshake_adopting(
+        config,
+        handshake,
+        stdin,
+        stdout,
+        ServerTransferHooks {
+            progress,
+            batch,
+            itemize,
+            io_timeout_reapply: None,
+        },
+        #[cfg(feature = "async-bench")]
+        async_bench,
+    )
+}
+
+/// Optional side-channels for a server transfer.
+///
+/// Groups the per-transfer callbacks and hooks so the entry point stays within
+/// a reasonable argument count: live progress, batch recording, the push
+/// itemize callback, and the client-receiver I/O-timeout re-apply hook.
+#[derive(Default)]
+pub struct ServerTransferHooks<'p, 'i> {
+    /// Live per-file progress callback.
+    pub progress: Option<&'p mut dyn TransferProgressCallback>,
+    /// Batch recording sink for `--write-batch` / `--only-write-batch`.
+    pub batch: Option<BatchRecording>,
+    /// Push itemize callback (client-as-sender itemized output).
+    pub itemize: Option<&'i mut dyn ItemizeCallback>,
+    /// Re-applies a daemon-advertised `MSG_IO_TIMEOUT` to the live socket.
+    /// `Some` only on the daemon-pull (client receiver) path.
+    /// upstream: io.c:1551-1561 `read_a_msg()` case `MSG_IO_TIMEOUT`.
+    pub io_timeout_reapply: Option<IoTimeoutReapply>,
+}
+
+/// Runs a server transfer that may adopt a daemon-advertised `MSG_IO_TIMEOUT`.
+///
+/// Identical to [`run_server_with_handshake`] but takes an optional
+/// `io_timeout_reapply` hook (via [`ServerTransferHooks`]). When the local side
+/// is the client receiver of a daemon transfer
+/// (`config.connection.client_mode && role == Receiver`) and a hook is supplied,
+/// the demultiplexer adopts a daemon-advertised timeout and re-applies it to the
+/// live socket, mirroring upstream `io.c:1551-1561`. Every other caller passes
+/// `None` through the thin wrapper above, so the default path is unchanged and
+/// wire-identical.
+#[cfg_attr(feature = "tracing", instrument(skip(stdin, stdout, hooks), fields(role = ?config.role, protocol = %handshake.protocol)))]
+pub fn run_server_with_handshake_adopting<W: Write>(
     mut config: ServerConfig,
     mut handshake: HandshakeResult,
     stdin: &mut dyn Read,
     mut stdout: W,
-    progress: Option<&mut dyn TransferProgressCallback>,
-    batch: Option<BatchRecording>,
-    itemize: Option<&mut dyn ItemizeCallback>,
+    hooks: ServerTransferHooks<'_, '_>,
     // BENCHMARK-ONLY (default-off): when `Some`, the receiver dispatch runs the
     // async driver over `async_bench.socket` instead of the threaded path. The
     // parameter only exists under the `async-bench` feature, so the default
     // build's signature and every production call site are unchanged.
     #[cfg(feature = "async-bench")] async_bench: Option<AsyncBenchReceiver<'_>>,
 ) -> ServerResult {
+    let ServerTransferHooks {
+        progress,
+        batch,
+        itemize,
+        io_timeout_reapply,
+    } = hooks;
     // FSM: begin at Handshake (version exchange is already complete when this
     // function is called - either via run_server_stdio or daemon greeting).
     let mut pipeline = TransferPipeline::new(config.role);
@@ -592,8 +655,22 @@ pub fn run_server_with_handshake<W: Write>(
     // matching upstream's `stats.total_read` (io.c:820).
     let counting_stdin = reader::CountingReader::new(chained_stdin);
     let bytes_received_counter = counting_stdin.counter();
-    let reader =
+    let mut reader =
         reader::ServerReader::new_plain(io::BufReader::with_capacity(64 * 1024, counting_stdin));
+
+    // upstream: io.c:1551-1561 - only the client receiver adopts a
+    // daemon-advertised MSG_IO_TIMEOUT (`am_server || am_generator` treat it as
+    // an invalid message). The re-apply hook is supplied only on the daemon-pull
+    // path, so its presence plus the client-receiver role gates adoption exactly
+    // as upstream does. The client's own --timeout is the current value the
+    // adoption test compares against (upstream io.c:1556 `!io_timeout || io_timeout > val`).
+    if let Some(reapply) = io_timeout_reapply {
+        if config.connection.client_mode && config.role == crate::role::ServerRole::Receiver {
+            reader
+                .enable_io_timeout_adoption(handshake.io_timeout.map(|secs| secs as u32), reapply);
+        }
+    }
+
     // MultiplexWriter provides 64KB buffering (matching upstream iobuf_out).
     let mut writer = writer::ServerWriter::new_plain(stdout);
 
