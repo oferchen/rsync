@@ -299,8 +299,12 @@ mod core_tests {
     /// A single consumer thread owns the `ReorderBuffer` and receives items
     /// via a channel, inserting them and draining in-order results.
     ///
-    /// The bounded capacity is exercised: when the buffer is full, the
-    /// consumer must drain before accepting more items.
+    /// This is a pure ordering-correctness test. Whether the bounded capacity
+    /// is actually pressured depends on the non-deterministic race between the
+    /// producers and the consumer, so this test asserts only what it can
+    /// deterministically guarantee: every item is delivered exactly once in
+    /// strict ascending order. Capacity backpressure is covered deterministically
+    /// by `backpressure_triggers_on_capacity_exceeded`.
     #[test]
     fn concurrent_producers_in_order_delivery() {
         use std::sync::mpsc;
@@ -339,14 +343,12 @@ mod core_tests {
         // Consumer owns the buffer - no shared-mutable-state deadlock.
         let mut buf: ReorderBuffer<u64> = ReorderBuffer::new(BUFFER_CAPACITY);
         let mut collected: Vec<u64> = Vec::with_capacity(TOTAL_ITEMS as usize);
-        let mut capacity_pressure_observed = false;
 
         for (seq, val) in rx {
             // Try normal insert; on capacity exceeded, drain first then force.
             match buf.insert(seq, val) {
                 Ok(()) => {}
                 Err(CapacityExceeded) => {
-                    capacity_pressure_observed = true;
                     // Drain what we can, then force-insert the item.
                     collected.extend(buf.drain_ready());
                     buf.force_insert(seq, val);
@@ -376,13 +378,62 @@ mod core_tests {
                 "expected sequence {i} but got {val} - ordering violated"
             );
         }
+    }
 
-        // With 4 producers racing and capacity 32, we expect the buffer to
-        // have been pressured at least once during the run.
-        assert!(
-            capacity_pressure_observed,
-            "capacity backpressure was never triggered - increase TOTAL_ITEMS or decrease BUFFER_CAPACITY"
+    /// Deterministically exercises capacity backpressure and recovery.
+    ///
+    /// The concurrent ordering test above cannot guarantee the buffer is ever
+    /// pressured - on a fast consumer the gap never widens past capacity. This
+    /// single-threaded test constructs a guaranteed out-of-order arrival by
+    /// holding back the head sequence (seq 0) and feeding higher sequences until
+    /// the offset from `next_expected` exceeds the fixed capacity. Backpressure
+    /// must be observable (`insert` returns `Err(CapacityExceeded)` exactly at
+    /// the boundary) and recoverable (`force_insert` plus `drain_ready` restore
+    /// full in-order delivery) regardless of scheduling.
+    #[test]
+    fn backpressure_triggers_on_capacity_exceeded() {
+        const CAPACITY: usize = 8;
+        let mut buf: ReorderBuffer<u64> = ReorderBuffer::new(CAPACITY);
+
+        // Hold back seq 0 so nothing can drain, then fill offsets 1..CAPACITY.
+        // Offsets 1..=CAPACITY-1 fit within the ring; the head slot (offset 0)
+        // stays empty, blocking all delivery.
+        for seq in 1..CAPACITY as u64 {
+            assert_eq!(
+                buf.insert(seq, seq),
+                Ok(()),
+                "seq {seq} within capacity must insert"
+            );
+        }
+        assert_eq!(buf.buffered_count(), CAPACITY - 1);
+        // Buffer stays stalled: seq 0 is missing so nothing is deliverable.
+        assert_eq!(buf.next_in_order(), None);
+
+        // Seq CAPACITY has offset == CAPACITY from next_expected (0), which is
+        // exactly the boundary: backpressure must trigger here.
+        assert_eq!(
+            buf.insert(CAPACITY as u64, CAPACITY as u64),
+            Err(CapacityExceeded),
+            "offset == capacity must be rejected"
         );
+        // The rejected item was not consumed - occupancy is unchanged.
+        assert_eq!(buf.buffered_count(), CAPACITY - 1);
+
+        // Recover: force_insert grows the ring to accept the over-capacity item.
+        buf.force_insert(CAPACITY as u64, CAPACITY as u64);
+        assert!(
+            buf.capacity() > CAPACITY,
+            "force_insert must grow the ring beyond {CAPACITY}"
+        );
+        assert_eq!(buf.buffered_count(), CAPACITY);
+
+        // Fill the head gap; the whole run now drains in strict order.
+        buf.insert(0, 0).unwrap();
+        let drained: Vec<u64> = buf.drain_ready().collect();
+        let expected: Vec<u64> = (0..=CAPACITY as u64).collect();
+        assert_eq!(drained, expected, "recovered delivery must be in order");
+        assert!(buf.is_empty());
+        assert_eq!(buf.next_expected(), CAPACITY as u64 + 1);
     }
 
     #[test]
