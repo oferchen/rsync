@@ -14,7 +14,9 @@ use super::server_config::{build_server_config_for_generator, build_server_confi
 use super::stats::convert_server_stats_to_summary;
 use crate::client::config::ClientConfig;
 use crate::client::error::{ClientError, invalid_argument_error, remote_exit_error};
-use crate::client::module_list::{DaemonStreamGuard, DaemonStreamReader, DaemonStreamWriter};
+use crate::client::module_list::{
+    DaemonStreamGuard, DaemonStreamReader, DaemonStreamWriter, build_io_timeout_reapply,
+};
 use crate::client::progress::ClientProgressObserver;
 use crate::client::remote::batch_support::{BatchContext, build_batch_recording};
 use crate::client::remote::flags;
@@ -83,14 +85,22 @@ pub(crate) fn run_pull_transfer(
         .as_mut()
         .map(|a| a as &mut dyn TransferProgressCallback);
 
-    let server_stats = crate::server::run_server_with_handshake(
+    // upstream: io.c:1551-1561 - the daemon sends MSG_IO_TIMEOUT once, right
+    // after io_start_multiplex_out (main.c:1267-1268). As the client receiver we
+    // adopt it and re-apply to the live socket. Build the re-apply hook from the
+    // split socket halves; connect-program (pipe) transports yield None.
+    let io_timeout_reapply = build_io_timeout_reapply(reader, writer);
+    let server_stats = crate::server::run_server_with_handshake_adopting(
         server_config,
         handshake,
         reader,
         writer,
-        progress,
-        batch_recording,
-        None,
+        crate::server::ServerTransferHooks {
+            progress,
+            batch: batch_recording,
+            itemize: None,
+            io_timeout_reapply,
+        },
         #[cfg(feature = "async-bench")]
         None,
     )

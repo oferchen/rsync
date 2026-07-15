@@ -40,6 +40,18 @@ impl Read for DaemonStreamReader {
     }
 }
 
+impl DaemonStreamReader {
+    /// Clones the underlying TCP read half so an adopted daemon
+    /// `MSG_IO_TIMEOUT` can be re-applied to the live socket. Returns `None`
+    /// for connect-program (pipe) transports, which carry no socket timeout.
+    pub(crate) fn try_clone_tcp(&self) -> Option<TcpStream> {
+        match self {
+            Self::Tcp(stream) => stream.try_clone().ok(),
+            Self::Program(_) => None,
+        }
+    }
+}
+
 /// TCP write half that corks output around each write-then-flush burst.
 ///
 /// The multiplex writer above this layer accumulates a burst of `MSG_DATA`
@@ -161,6 +173,53 @@ impl Write for DaemonStreamWriter {
             Self::Program(writer) => writer.flush(),
         }
     }
+}
+
+impl DaemonStreamWriter {
+    /// Clones the underlying TCP write half so an adopted daemon
+    /// `MSG_IO_TIMEOUT` can be re-applied to the live socket. Returns `None`
+    /// for connect-program (pipe) transports, which carry no socket timeout.
+    pub(crate) fn try_clone_tcp(&self) -> Option<TcpStream> {
+        match self {
+            Self::Tcp(writer) => writer.stream.try_clone().ok(),
+            Self::Program(_) => None,
+        }
+    }
+}
+
+/// Builds a live-socket I/O-timeout re-apply hook for the client receiver.
+///
+/// Captures cloned read and write halves of the daemon socket. When the client
+/// adopts a daemon-advertised `MSG_IO_TIMEOUT`, the hook re-applies the value as
+/// the socket's read and write timeouts (both fds reference one kernel socket,
+/// so either updates the pair). Returns `None` for connect-program transports,
+/// which have no socket timeout to adjust.
+///
+/// upstream: io.c:1148-1157 `set_io_timeout()` - the client-side effect of
+/// adopting a daemon `MSG_IO_TIMEOUT` (io.c:1551-1561).
+pub(crate) fn build_io_timeout_reapply(
+    reader: &DaemonStreamReader,
+    writer: &DaemonStreamWriter,
+) -> Option<crate::server::IoTimeoutReapply> {
+    let read_half = reader.try_clone_tcp();
+    let write_half = writer.try_clone_tcp();
+    if read_half.is_none() && write_half.is_none() {
+        return None;
+    }
+    Some(crate::server::IoTimeoutReapply(std::sync::Arc::new(
+        move |secs: u32| -> io::Result<()> {
+            let timeout = (secs != 0).then(|| Duration::from_secs(u64::from(secs)));
+            if let Some(stream) = &read_half {
+                stream.set_read_timeout(timeout)?;
+                stream.set_write_timeout(timeout)?;
+            }
+            if let Some(stream) = &write_half {
+                stream.set_read_timeout(timeout)?;
+                stream.set_write_timeout(timeout)?;
+            }
+            Ok(())
+        },
+    )))
 }
 
 /// Opens a plain TCP connection to a daemon.

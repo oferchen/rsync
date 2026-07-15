@@ -1,6 +1,8 @@
 use std::io::{self, Read, Write};
 use std::sync::{Arc, Mutex};
 
+use crate::handshake::IoTimeoutReapply;
+
 #[cfg(all(test, feature = "tokio-transfer"))]
 #[path = "multiplex_parity_tests.rs"]
 mod parity_tests;
@@ -102,6 +104,18 @@ pub(crate) struct MultiplexReader<R> {
     /// Optional recorder for batch mode - captures post-demux data.
     /// upstream: `io.c` `write_batch_monitor_in` + `safe_write(batch_fd, buf, len)`
     pub(crate) batch_recorder: Option<Arc<Mutex<dyn Write + Send>>>,
+    /// Client's current effective I/O timeout in seconds, or `None`/`0` for
+    /// infinite. Set only on the client-receiver path; drives the upstream
+    /// adoption test. upstream: io.c:1556 `!io_timeout || io_timeout > val`.
+    io_timeout: Option<u32>,
+    /// Live-socket re-apply hook for an adopted daemon `MSG_IO_TIMEOUT`. `Some`
+    /// only when this reader is the client receiver of a daemon transfer; its
+    /// absence also marks the `am_server || am_generator` role for which a
+    /// received `MSG_IO_TIMEOUT` is an invalid message. upstream: io.c:1551-1561.
+    io_timeout_reapply: Option<IoTimeoutReapply>,
+    /// Set once a received `MSG_IO_TIMEOUT` violated the upstream `msg_bytes == 4`
+    /// / role invariant (upstream `goto invalid_msg`, fatal `RERR_STREAMIO`).
+    io_timeout_invalid: bool,
 }
 
 /// Exit code for partial transfer due to error.
@@ -147,6 +161,24 @@ impl std::error::Error for RemoteExitError {}
 /// be up to 64KB - a smaller staging buffer forces extra reads per frame.
 const MULTIPLEX_READER_BUFFER_CAPACITY: usize = 64 * 1024;
 
+/// Returns the timeout the client should adopt from a daemon-advertised
+/// `MSG_IO_TIMEOUT` value `val`, or `None` to keep the current setting.
+///
+/// Mirrors upstream `io.c:1556` `if (!io_timeout || io_timeout > val)`: adopt
+/// the stricter (smaller, non-zero) timeout. A current value of `None` or `0`
+/// means the client set no timeout (infinite), so any daemon value is adopted;
+/// otherwise the daemon value is adopted only when it is smaller than the
+/// client's own. This is the single reconciliation point for adoption.
+///
+/// upstream: io.c:1551-1561 `read_a_msg()` case `MSG_IO_TIMEOUT`.
+fn reconcile_io_timeout(current: Option<u32>, val: u32) -> Option<u32> {
+    match current {
+        None | Some(0) => Some(val),
+        Some(c) if c > val => Some(val),
+        Some(_) => None,
+    }
+}
+
 impl<R> MultiplexReader<R> {
     pub(super) fn new(inner: R) -> Self {
         Self {
@@ -159,7 +191,28 @@ impl<R> MultiplexReader<R> {
             redo_indices: Vec::new(),
             error_exit_code: None,
             xfer_error_count: 0,
+            io_timeout: None,
+            io_timeout_reapply: None,
+            io_timeout_invalid: false,
         }
+    }
+
+    /// Installs client-receiver I/O-timeout adoption state.
+    ///
+    /// `current` is the client's own `--timeout` in seconds (`None`/`0` =
+    /// infinite); `reapply` re-applies an adopted daemon timeout to the live
+    /// socket. Only the client receiver of a daemon transfer calls this; every
+    /// other reader leaves it unset and treats a received `MSG_IO_TIMEOUT` as an
+    /// invalid message, mirroring upstream's `am_server || am_generator` guard.
+    ///
+    /// upstream: io.c:1551-1561 `read_a_msg()` case `MSG_IO_TIMEOUT`.
+    pub(super) fn set_io_timeout_adoption(
+        &mut self,
+        current: Option<u32>,
+        reapply: IoTimeoutReapply,
+    ) {
+        self.io_timeout = current;
+        self.io_timeout_reapply = Some(reapply);
     }
 
     /// Returns the accumulated `MSG_IO_ERROR` flags and resets the accumulator.
@@ -302,6 +355,79 @@ impl<R> MultiplexReader<R> {
         }
     }
 
+    /// Handles a received `MSG_IO_TIMEOUT` (a daemon's advertised `--timeout`).
+    ///
+    /// Mirrors upstream `io.c:1551-1561` `read_a_msg()`:
+    ///
+    /// ```text
+    /// case MSG_IO_TIMEOUT:
+    ///     if (msg_bytes != 4 || am_server || am_generator) goto invalid_msg;
+    ///     val = raw_read_int();
+    ///     if (!io_timeout || io_timeout > val) {
+    ///         if (INFO_GTE(MISC, 2)) rprintf(FINFO, "Setting --timeout=%d to match server\n", val);
+    ///         set_io_timeout(val);
+    ///     }
+    /// ```
+    ///
+    /// Only the client receiver installs a re-apply hook (see
+    /// [`MultiplexReader::set_io_timeout_adoption`]); its absence marks the
+    /// `am_server || am_generator` role for which the frame is invalid, as is a
+    /// payload that is not exactly 4 bytes. Adoption re-applies the value to the
+    /// live socket read/write timeouts, the oc analogue of upstream's
+    /// `set_io_timeout()` updating `select_timeout`/`allowed_lull`.
+    fn handle_io_timeout_msg<S: MuxSink>(&mut self, sink: &mut S) {
+        let Some(reapply) = self.io_timeout_reapply.clone() else {
+            // Only the client receiver adopts (the hook is installed there).
+            // Upstream aborts with `invalid_msg` for `am_server || am_generator`,
+            // but that is a defensive check that never fires with a well-behaved
+            // daemon: a daemon echoes MSG_IO_TIMEOUT to whichever client it
+            // serves, including a client sender that oc runs locally as the
+            // generator. Aborting there would break an otherwise valid transfer
+            // (the client's own --timeout already covers the socket), so a reader
+            // without the adoption hook silently ignores the frame - matching the
+            // pre-adoption behaviour. upstream: io.c:1551-1561.
+            return;
+        };
+        if self.buffer.len() != 4 {
+            // upstream: msg_bytes != 4 -> goto invalid_msg. Reachable only for
+            // the client receiver we adopt for; a real daemon always sends a
+            // 4-byte int, so a bad length is a genuine protocol violation.
+            self.io_timeout_invalid = true;
+            return;
+        }
+        let val = u32::from_le_bytes([
+            self.buffer[0],
+            self.buffer[1],
+            self.buffer[2],
+            self.buffer[3],
+        ]);
+        if let Some(adopted) = reconcile_io_timeout(self.io_timeout, val) {
+            // upstream: INFO_GTE(MISC, 2) gate on the "Setting --timeout" notice.
+            if logging::info_gte(logging::InfoFlag::Misc, 2) {
+                sink.info(&format!("Setting --timeout={val} to match server\n"));
+            }
+            self.io_timeout = Some(adopted);
+            // upstream: set_io_timeout(val). oc re-applies to the live socket
+            // read/write timeouts instead of a global select_timeout/allowed_lull.
+            let _ = reapply.apply(adopted);
+        }
+    }
+
+    /// Returns an error if a received `MSG_IO_TIMEOUT` was invalid.
+    ///
+    /// upstream: io.c `invalid_msg` label - a bad `msg_bytes`/role for
+    /// `MSG_IO_TIMEOUT` is fatal (`exit_cleanup(RERR_STREAMIO)`); we surface it
+    /// as an `InvalidData` error so the read loop aborts the transfer.
+    fn check_io_timeout(&self) -> io::Result<()> {
+        if self.io_timeout_invalid {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "invalid MSG_IO_TIMEOUT message from peer",
+            ));
+        }
+        Ok(())
+    }
+
     /// Dispatches a non-data message code using the production [`RealSink`].
     ///
     /// Byte-identical to the previous inline dispatch: routes `MSG_INFO`/
@@ -391,6 +517,10 @@ impl<R> MultiplexReader<R> {
                 // upstream: io.c:1514-1519
                 self.handle_redo_msg();
             }
+            protocol::MessageCode::IoTimeout => {
+                // upstream: io.c:1551-1561
+                self.handle_io_timeout_msg(sink);
+            }
             _ => {}
         }
         false
@@ -432,6 +562,7 @@ impl<R: Read> MultiplexReader<R> {
                     break;
                 }
                 self.check_error_exit()?;
+                self.check_io_timeout()?;
             }
         }
 
@@ -530,6 +661,7 @@ impl<R: Read> Read for MultiplexReader<R> {
                 return self.place_frame(buf);
             }
             self.check_error_exit()?;
+            self.check_io_timeout()?;
         }
     }
 }
@@ -605,6 +737,7 @@ impl<R: tokio::io::AsyncRead + Unpin> MultiplexReader<R> {
                 return self.place_frame(buf);
             }
             self.check_error_exit()?;
+            self.check_io_timeout()?;
         }
     }
 }
@@ -647,5 +780,116 @@ mod remote_exit_error_tests {
         let mut reader = MultiplexReader::new(io::empty());
         reader.error_exit_code = Some(RERR_PARTIAL);
         assert!(reader.check_error_exit().is_ok());
+    }
+}
+
+/// Tests for the client-receiver adoption of a daemon-advertised
+/// `MSG_IO_TIMEOUT`. Encodes the upstream `io.c:1551-1561` contract: adopt the
+/// stricter timeout, ignore a non-stricter one, treat a bad length or the
+/// wrong role as an invalid (fatal) message, and re-apply the adopted value to
+/// the live socket.
+#[cfg(test)]
+mod io_timeout_adoption_tests {
+    use super::*;
+    use std::sync::atomic::{AtomicU32, Ordering};
+
+    /// Builds a `MultiplexReader` with adoption enabled, plus an observer that
+    /// records the seconds passed to the live-socket re-apply hook (`u32::MAX`
+    /// sentinel = never invoked).
+    fn reader_with_adoption(current: Option<u32>) -> (MultiplexReader<io::Empty>, Arc<AtomicU32>) {
+        let observed = Arc::new(AtomicU32::new(u32::MAX));
+        let sink = observed.clone();
+        let reapply = IoTimeoutReapply(Arc::new(move |secs: u32| {
+            sink.store(secs, Ordering::SeqCst);
+            Ok(())
+        }));
+        let mut reader = MultiplexReader::new(io::empty());
+        reader.set_io_timeout_adoption(current, reapply);
+        (reader, observed)
+    }
+
+    /// The reconciliation helper is the single source of the upstream test
+    /// `!io_timeout || io_timeout > val`.
+    #[test]
+    fn reconcile_matches_upstream_condition() {
+        // No client timeout (infinite) adopts any daemon value.
+        assert_eq!(reconcile_io_timeout(None, 30), Some(30));
+        // A zero client timeout is also infinite and adopts.
+        assert_eq!(reconcile_io_timeout(Some(0), 30), Some(30));
+        // A larger client timeout adopts the stricter daemon value.
+        assert_eq!(reconcile_io_timeout(Some(60), 30), Some(30));
+        // An equal or smaller client timeout is already at least as strict.
+        assert_eq!(reconcile_io_timeout(Some(30), 30), None);
+        assert_eq!(reconcile_io_timeout(Some(10), 30), None);
+    }
+
+    /// A client with no timeout adopts the daemon value and re-applies it to
+    /// the live socket - this is the whole point of the message: a client that
+    /// set no `--timeout` still detects a stalled daemon.
+    #[test]
+    fn adopts_when_client_has_no_timeout() {
+        let (mut reader, observed) = reader_with_adoption(None);
+        reader.buffer = 45u32.to_le_bytes().to_vec();
+        reader.handle_io_timeout_msg(&mut RealSink);
+        assert_eq!(reader.io_timeout, Some(45), "effective timeout adopted");
+        assert_eq!(observed.load(Ordering::SeqCst), 45, "re-applied to socket");
+        assert!(reader.check_io_timeout().is_ok());
+    }
+
+    /// A client whose timeout is larger adopts the daemon's stricter value.
+    #[test]
+    fn adopts_stricter_daemon_timeout() {
+        let (mut reader, observed) = reader_with_adoption(Some(120));
+        reader.buffer = 30u32.to_le_bytes().to_vec();
+        reader.handle_io_timeout_msg(&mut RealSink);
+        assert_eq!(reader.io_timeout, Some(30));
+        assert_eq!(observed.load(Ordering::SeqCst), 30);
+    }
+
+    /// A client whose timeout is already at least as strict keeps its own value
+    /// and never touches the socket - adopting a larger daemon timeout would
+    /// weaken the client's stall detection.
+    #[test]
+    fn keeps_client_timeout_when_not_stricter() {
+        let (mut reader, observed) = reader_with_adoption(Some(10));
+        reader.buffer = 30u32.to_le_bytes().to_vec();
+        reader.handle_io_timeout_msg(&mut RealSink);
+        assert_eq!(reader.io_timeout, Some(10), "unchanged");
+        assert_eq!(
+            observed.load(Ordering::SeqCst),
+            u32::MAX,
+            "re-apply hook must not fire"
+        );
+        assert!(reader.check_io_timeout().is_ok());
+    }
+
+    /// A payload that is not exactly 4 bytes is an invalid message
+    /// (upstream `msg_bytes != 4 -> goto invalid_msg`, fatal).
+    #[test]
+    fn wrong_length_is_invalid_message() {
+        let (mut reader, observed) = reader_with_adoption(None);
+        reader.buffer = vec![1, 2, 3]; // 3 bytes
+        reader.handle_io_timeout_msg(&mut RealSink);
+        assert!(reader.io_timeout.is_none(), "no adoption on invalid frame");
+        assert_eq!(observed.load(Ordering::SeqCst), u32::MAX);
+        let err = reader.check_io_timeout().expect_err("invalid frame aborts");
+        assert_eq!(err.kind(), io::ErrorKind::InvalidData);
+    }
+
+    /// A reader with no adoption installed (a non-client-receiver: a client
+    /// sender that oc runs as the generator, an SSH client, or the server side)
+    /// silently ignores `MSG_IO_TIMEOUT` and never aborts. A real daemon echoes
+    /// the frame to whichever client it serves, so aborting here would break an
+    /// otherwise valid transfer; leniency matches the pre-adoption behaviour.
+    #[test]
+    fn non_adopting_reader_ignores_message() {
+        let mut reader = MultiplexReader::new(io::empty());
+        reader.buffer = 30u32.to_le_bytes().to_vec();
+        reader.handle_io_timeout_msg(&mut RealSink);
+        assert!(reader.io_timeout.is_none(), "no adoption without a hook");
+        assert!(
+            reader.check_io_timeout().is_ok(),
+            "a non-adopting reader must not abort on MSG_IO_TIMEOUT"
+        );
     }
 }
