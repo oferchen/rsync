@@ -96,11 +96,17 @@ pub fn send_msgs_vectored<W: Write>(
     write_all_vectored_slices(writer, &slices)
 }
 
-/// Sends a keepalive (MSG_NOOP) message to prevent connection timeouts.
+/// Sends a lull keepalive as an empty `MSG_DATA` frame to prevent I/O timeouts.
 ///
-/// Upstream rsync periodically sends `MSG_NOOP` with an empty payload as a
-/// heartbeat when the sender may be silent for extended periods, such as during
-/// large file checksumming. The receiver silently discards these messages.
+/// Upstream rsync emits an **empty `MSG_DATA`** message (zero-length payload) as
+/// its keepalive heartbeat, deliberately *not* `MSG_NOOP`. `MSG_NOOP` (code 42)
+/// is a legacy protocol-30 construct that had to be forwarded through the sender;
+/// the modern keepalive avoids that forwarding and works with all rsync versions
+/// because a zero-length data frame contributes no bytes to the raw data stream
+/// and is silently absorbed by the peer.
+///
+/// upstream: `io.c:maybe_send_keepalive()` (io.c:1453-1481) sends
+/// `send_msg(MSG_DATA, "", 0, 0)`; the explanatory comment is at io.c:1446-1452.
 ///
 /// # Examples
 ///
@@ -112,7 +118,7 @@ pub fn send_msgs_vectored<W: Write>(
 /// assert_eq!(buffer.len(), 4); // header only, no payload
 /// ```
 pub fn send_keepalive<W: Write>(writer: &mut W) -> io::Result<()> {
-    send_msg(writer, MessageCode::NoOp, &[])
+    send_msg(writer, MessageCode::Data, &[])
 }
 
 fn write_validated_message<W: Write + ?Sized>(

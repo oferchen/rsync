@@ -224,9 +224,18 @@ impl<R: Read> Read for MplexReader<R> {
         }
 
         // Buffer exhausted: pump out-of-band frames through the handler until
-        // the next DATA frame arrives, then return its bytes to the caller.
+        // the next non-empty DATA frame arrives, then return its bytes to the
+        // caller.
+        //
+        // An empty DATA frame (zero-length payload) is upstream rsync's lull
+        // keepalive (io.c:maybe_send_keepalive sends `send_msg(MSG_DATA, "", 0, 0)`).
+        // It carries no data, so it must be absorbed silently: returning the
+        // resulting `Ok(0)` here would be read by callers as end-of-stream and
+        // would truncate the transfer. Continue the loop instead so the next
+        // real frame is fetched. Genuine end-of-stream still surfaces as the
+        // `UnexpectedEof` error from `read_header`, never as `Ok(0)`.
         loop {
-            if self.read_message()? {
+            if self.read_message()? && !self.buffer.is_empty() {
                 let to_copy = self.buffer.len().min(buf.len());
                 buf[..to_copy].copy_from_slice(&self.buffer[..to_copy]);
                 self.pos = to_copy;
@@ -375,7 +384,11 @@ mod tests {
     }
 
     #[test]
-    fn mplex_reader_empty_data_message() {
+    fn mplex_reader_absorbs_empty_data_keepalive() {
+        // An empty DATA frame is upstream's lull keepalive (io.c:1473
+        // `send_msg(MSG_DATA, "", 0, 0)`). It must be absorbed silently: the
+        // reader skips it and returns the following real frame's bytes, never a
+        // premature `Ok(0)` that a caller would read as end-of-stream.
         let mut stream = Vec::new();
         send_msg(&mut stream, MessageCode::Data, &[]).unwrap();
         send_msg(&mut stream, MessageCode::Data, b"next").unwrap();
@@ -384,10 +397,10 @@ mod tests {
         let mut buf = [0u8; 10];
 
         let n = reader.read(&mut buf).unwrap();
-        assert_eq!(n, 0);
-
-        let n = reader.read(&mut buf).unwrap();
-        assert_eq!(n, 4);
+        assert_eq!(
+            n, 4,
+            "empty keepalive frame must be absorbed, not seen as EOF"
+        );
         assert_eq!(&buf[..4], b"next");
     }
 
