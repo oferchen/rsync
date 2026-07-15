@@ -31,7 +31,7 @@ use std::io;
 use logging::debug_log;
 use protocol::CompatibilityFlags;
 use protocol::codec::{NDX_FLIST_EOF, NDX_FLIST_OFFSET, create_ndx_codec};
-use protocol::flist::{read_entry_with_flist_async, sort_file_list};
+use protocol::flist::{read_entry_with_flist_async, sort_and_clean_file_list};
 use tokio::io::AsyncRead;
 
 use super::super::ReceiverContext;
@@ -100,10 +100,24 @@ impl ReceiverContext {
             }
         }
 
-        // upstream: flist.c:2736 - flist_sort_and_clean() after recv_id_list().
+        // upstream: flist.c:2736,3016 - flist_sort_and_clean() runs sort THEN the
+        // duplicate-clean pass on the receiver; mirror the sync path so both wire
+        // surfaces collapse a redundant name identically.
         let pre29 = self.protocol.as_u8() < 29;
         if !self.iconv_reorder_suppressed() {
-            sort_file_list(&mut self.file_list, self.config.qsort, pre29);
+            let list = std::mem::take(&mut self.file_list);
+            let (cleaned, _clean) = sort_and_clean_file_list(list, self.config.qsort, pre29);
+            self.file_list = cleaned;
+        }
+
+        // upstream: flist.c:2704 - record each directory's full path in wire
+        // dir_ndx order (pre-prune) so a later sub-list's path-belongs check
+        // resolves its parent, matching the sync path.
+        if self
+            .compat_flags
+            .is_some_and(|f| f.contains(CompatibilityFlags::INC_RECURSE))
+        {
+            self.record_dir_flist_names(seg_start);
         }
 
         // upstream: flist.c:3121-3184 - `--prune-empty-dirs` pass after sorting.
@@ -222,6 +236,10 @@ impl ReceiverContext {
                 segment_count += 1;
             }
 
+            // upstream: flist.c:2684-2695 - reject any entry that does not live
+            // under its header dir_ndx's directory, matching the sync path.
+            self.validate_extra_segment_path_belongs(dir_ndx, flat_start)?;
+
             // upstream: flist.c:1646 - leader GNUM is readdir-order wire NDX.
             if self.config.flags.hard_links {
                 for (i, entry) in self.file_list[flat_start..].iter_mut().enumerate() {
@@ -231,9 +249,13 @@ impl ReceiverContext {
                 }
             }
 
-            // upstream: flist.c:2155,2736 - both sides call flist_sort_and_clean().
+            // upstream: flist.c:2190,2771 - both sides call flist_sort_and_clean()
+            // per sub-list (sort THEN dedup); mirror the sync path so a repeated
+            // name collapses identically and the next segment's NDX stays in sync.
             if !self.iconv_reorder_suppressed() {
-                sort_file_list(&mut self.file_list[flat_start..], true, false);
+                let tail = self.file_list.split_off(flat_start);
+                let (cleaned, _clean) = sort_and_clean_file_list(tail, true, false);
+                self.file_list.extend(cleaned);
             }
             match_hard_links(&mut self.file_list[flat_start..], &mut self.prior_hlinks);
 
@@ -242,9 +264,10 @@ impl ReceiverContext {
             }
 
             // upstream: flist.c:2695-2701 - fold this sub-list's directories into
-            // the running dir_flist->used count so a later sub-list may reference
-            // them by dir_ndx.
+            // the running dir_flist->used count and record their paths so a later
+            // sub-list may reference them by dir_ndx.
             self.dir_flist_used += super::receive::count_directories(&self.file_list[flat_start..]);
+            self.record_dir_flist_names(flat_start);
 
             // upstream: flist.c:2931 - ndx_start = prev->ndx_start + prev->used + 1
             self.ndx_segments.push((flat_start, seg_ndx_start));
