@@ -511,6 +511,25 @@ impl<'a> CopyContext<'a> {
     }
 
     pub(super) fn record(&mut self, record: LocalCopyRecord) {
+        // upstream: receiver.c:733-746 / sender.c:295-308 - every ITEM_IS_NEW
+        // entry bumps `stats.created_*` for its type, whether or not file data
+        // moved. `was_created()` is the ITEM_IS_NEW mirror; classify by action
+        // to hit the right per-type counter. Directories are counted separately
+        // via `record_directory`/`mark_destination_root_created` (which also
+        // covers the synthesized root that has no record here), so they are
+        // skipped. Runs for both real and dry-run records, matching upstream's
+        // dry-run `--stats` accounting.
+        if record.was_created() {
+            match record.action() {
+                LocalCopyAction::DataCopied | LocalCopyAction::HardLink => {
+                    self.summary.record_created_regular_file();
+                }
+                LocalCopyAction::SymlinkCopied => self.summary.record_created_symlink(),
+                LocalCopyAction::DeviceCopied => self.summary.record_created_device(),
+                LocalCopyAction::FifoCopied => self.summary.record_created_special(),
+                _ => {}
+            }
+        }
         if let Some(observer) = &mut self.observer {
             observer.handle(record.clone());
         }

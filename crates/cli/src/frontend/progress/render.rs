@@ -483,11 +483,8 @@ fn emit_stats_detail_block<W: Write + ?Sized>(
     let files_total = summary.regular_files_total();
     let directories = summary.directories_created();
     let directories_total = summary.directories_total();
-    let symlinks = summary.symlinks_copied();
     let symlinks_total = summary.symlinks_total();
-    let devices = summary.devices_created();
     let devices_total = summary.devices_total();
-    let fifos = summary.fifos_created();
     let fifos_total = summary.fifos_total();
     let deleted = summary.items_deleted();
     // upstream: main.c output_itemized_counts("Number of deleted files", ...)
@@ -513,15 +510,26 @@ fn emit_stats_detail_block<W: Write + ?Sized>(
     let file_list_transfer = summary.file_list_transfer_time().as_secs_f64();
 
     let special_total = devices_total.saturating_add(fifos_total);
-    let special_created = devices.saturating_add(fifos);
     let total_entries = files_total
         .saturating_add(directories_total)
         .saturating_add(symlinks_total)
         .saturating_add(special_total);
-    let created_total = files
+
+    // upstream: receiver.c:733-746 / sender.c:295-308 - "Number of created
+    // files" counts ITEM_IS_NEW entries per type (new dirs, symlinks, devices,
+    // specials and empty files included), NOT the "copied/updated" tallies. An
+    // in-place update of a pre-existing file/symlink is transferred but never
+    // ITEM_IS_NEW, so it must not inflate the created counts. `created_dirs`
+    // uses `directories_created`, already new-only (mkdir + synthesized root).
+    let created_reg = summary.created_regular_files();
+    let created_symlinks = summary.created_symlinks();
+    let created_devices = summary.created_devices();
+    let created_specials = summary.created_specials();
+    let created_total = created_reg
         .saturating_add(directories)
-        .saturating_add(symlinks)
-        .saturating_add(special_created);
+        .saturating_add(created_symlinks)
+        .saturating_add(created_devices)
+        .saturating_add(created_specials);
 
     let files_breakdown = format_stat_categories(&[
         ("reg", files_total),
@@ -529,11 +537,14 @@ fn emit_stats_detail_block<W: Write + ?Sized>(
         ("link", symlinks_total),
         ("special", special_total),
     ]);
+    // upstream: main.c output_itemized_counts labels the created breakdown
+    // reg/dir/link/dev/special, with devices ('dev') split from other specials.
     let created_breakdown = format_stat_categories(&[
-        ("reg", files),
+        ("reg", created_reg),
         ("dir", directories),
-        ("link", symlinks),
-        ("special", special_created),
+        ("link", created_symlinks),
+        ("dev", created_devices),
+        ("special", created_specials),
     ]);
 
     let total_size_display = format_size(total_size, human_readable);

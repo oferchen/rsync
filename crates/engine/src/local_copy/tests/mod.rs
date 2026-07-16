@@ -981,6 +981,8 @@ include!("execute_executability.rs");
 include!("execute_special.rs");
 include!("execute_specials.rs");
 include!("execute_directories.rs");
+#[cfg(unix)]
+include!("execute_created_stats.rs");
 include!("execute_prune_empty_dirs.rs");
 include!("execute_hardlinks.rs");
 include!("execute_link_dest.rs");

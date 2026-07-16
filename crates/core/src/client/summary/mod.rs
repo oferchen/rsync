@@ -226,6 +226,45 @@ impl ClientSummary {
         self.stats.fifos_total()
     }
 
+    /// Returns the number of newly created regular files (destination absent
+    /// before the transfer), for the `--stats` "Number of created files"
+    /// `reg:` sub-count. Distinct from [`Self::files_copied`], which also
+    /// counts in-place updates.
+    ///
+    /// upstream: receiver.c:733-746 / sender.c:295-308 - the reg portion of
+    /// `stats.created_files`.
+    #[must_use]
+    pub const fn created_regular_files(&self) -> u64 {
+        self.stats.created_regular_files()
+    }
+
+    /// Returns the number of newly created symbolic links for the `link:`
+    /// sub-count of "Number of created files".
+    ///
+    /// upstream: receiver.c:740-741 `stats.created_symlinks++`.
+    #[must_use]
+    pub const fn created_symlinks(&self) -> u64 {
+        self.stats.created_symlinks()
+    }
+
+    /// Returns the number of newly created device nodes for the `dev:`
+    /// sub-count of "Number of created files".
+    ///
+    /// upstream: receiver.c:743-744 `stats.created_devices++`.
+    #[must_use]
+    pub const fn created_devices(&self) -> u64 {
+        self.stats.created_devices()
+    }
+
+    /// Returns the number of newly created special files (FIFOs, sockets) for
+    /// the `special:` sub-count of "Number of created files".
+    ///
+    /// upstream: receiver.c:745-746 `stats.created_specials++`.
+    #[must_use]
+    pub const fn created_specials(&self) -> u64 {
+        self.stats.created_specials()
+    }
+
     /// Returns the number of extraneous entries removed due to `--delete`.
     #[must_use]
     pub const fn items_deleted(&self) -> u64 {
