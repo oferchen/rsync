@@ -15,9 +15,10 @@ configuration via `oc-rsyncd.conf`.
 
 - `run` / `run_daemon` - top-level entry points mirroring upstream `rsyncd`
 - `DaemonConfig` / `DaemonConfigBuilder` - fluent configuration assembly
-- `RsyncdConfig` - parsed `oc-rsyncd.conf` representation
-- `ModuleConfig` - per-module settings (path, auth, read-only, filters)
 - Authentication - SHA-512/256/SHA-1/MD5/MD4 challenge/response
+
+`oc-rsyncd.conf` parsing is internal: the config file is loaded through
+`RuntimeOptions` during daemon startup, mirroring upstream `loadparm.c`.
 
 ## Dependencies (upstream)
 
