@@ -597,80 +597,65 @@ impl FileListReader {
                 };
                 let leader_local_idx = (idx as i32 - self.ndx_start) as usize;
 
-                if let Some(leader) = segment_entries.get(leader_local_idx) {
-                    // upstream: flist.c:795-810 - copy fields from leader
-                    let leader_mode = leader.mode();
-                    let leader_mtime = leader.mtime();
-                    let leader_uid = leader.uid();
-                    let leader_gid = leader.gid();
-                    let leader_atime = leader.atime();
+                // upstream: flist.c:794-799 - a follower whose reference index
+                // is beyond the entries received so far (>= ndx_start + used)
+                // is a protocol violation. Upstream logs "hard-link reference
+                // out of range" and aborts with exit_cleanup(RERR_PROTOCOL).
+                // Mirror that abort instead of silently substituting zero
+                // metadata, which would desync the remaining decode.
+                let Some(leader) = segment_entries.get(leader_local_idx) else {
+                    return Err(crate::protocol_violation::protocol_violation(format!(
+                        "hard-link reference out of range: {idx} ({})",
+                        self.ndx_start as i64 + segment_entries.len() as i64
+                    )));
+                };
 
-                    // Update compression state to match sender's statics
-                    // upstream: sender updates mode/modtime/uid/gid/atime at
-                    // flist.c:430-493 BEFORE goto the_end
-                    self.state.update_mode(leader_mode);
-                    self.state.update_mtime(leader_mtime);
-                    if let Some(uid) = leader_uid {
-                        self.state.update_uid(uid);
-                    }
-                    if let Some(gid) = leader_gid {
-                        self.state.update_gid(gid);
-                    }
-                    if (leader_mode & 0o170000) != 0o040000 {
-                        self.state.update_atime(leader_atime);
-                    }
+                // upstream: flist.c:795-810 - copy fields from leader
+                let leader_mode = leader.mode();
+                let leader_mtime = leader.mtime();
+                let leader_uid = leader.uid();
+                let leader_gid = leader.gid();
+                let leader_atime = leader.atime();
 
-                    (
-                        leader.size(),
-                        MetadataResult {
-                            mtime: leader_mtime,
-                            nsec: leader.mtime_nsec(),
-                            mode: leader_mode,
-                            uid: leader_uid,
-                            gid: leader_gid,
-                            user_name: None,
-                            group_name: None,
-                            atime: if leader_atime != 0 {
-                                Some(leader_atime)
-                            } else {
-                                None
-                            },
-                            atime_nsec: leader.atime_nsec(),
-                            crtime: None,
-                            content_dir: (leader_mode & 0o170000) == 0o040000,
-                        },
-                        leader.link_target().cloned(),
-                        leader.rdev_major().zip(leader.rdev_minor()),
-                        None,
-                        leader.checksum().map(|s| s.to_vec()),
-                    )
-                } else {
-                    // Leader not available (segment_entries not provided or
-                    // index out of range) - fall back to zero metadata.
-                    // Compression state is NOT updated, which may cause
-                    // subsequent decode errors if the caller didn't pass
-                    // segment_entries.
-                    (
-                        0u64,
-                        MetadataResult {
-                            mtime: 0,
-                            nsec: 0,
-                            mode: 0,
-                            uid: None,
-                            gid: None,
-                            user_name: None,
-                            group_name: None,
-                            atime: None,
-                            atime_nsec: 0,
-                            crtime: None,
-                            content_dir: true,
-                        },
-                        None,
-                        None,
-                        None,
-                        None,
-                    )
+                // Update compression state to match sender's statics
+                // upstream: sender updates mode/modtime/uid/gid/atime at
+                // flist.c:430-493 BEFORE goto the_end
+                self.state.update_mode(leader_mode);
+                self.state.update_mtime(leader_mtime);
+                if let Some(uid) = leader_uid {
+                    self.state.update_uid(uid);
                 }
+                if let Some(gid) = leader_gid {
+                    self.state.update_gid(gid);
+                }
+                if (leader_mode & 0o170000) != 0o040000 {
+                    self.state.update_atime(leader_atime);
+                }
+
+                (
+                    leader.size(),
+                    MetadataResult {
+                        mtime: leader_mtime,
+                        nsec: leader.mtime_nsec(),
+                        mode: leader_mode,
+                        uid: leader_uid,
+                        gid: leader_gid,
+                        user_name: None,
+                        group_name: None,
+                        atime: if leader_atime != 0 {
+                            Some(leader_atime)
+                        } else {
+                            None
+                        },
+                        atime_nsec: leader.atime_nsec(),
+                        crtime: None,
+                        content_dir: (leader_mode & 0o170000) == 0o040000,
+                    },
+                    leader.link_target().cloned(),
+                    leader.rdev_major().zip(leader.rdev_minor()),
+                    None,
+                    leader.checksum().map(|s| s.to_vec()),
+                )
             } else {
                 let size = self.read_size(reader)?;
                 let metadata = self.read_metadata(reader, flags)?;

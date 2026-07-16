@@ -134,22 +134,36 @@ fn extended_flags_hardlink_flag_combinations() {
         );
     }
 
-    // Test: XMIT_HLINKED only (hardlink follower)
+    // Test: XMIT_HLINKED only (hardlink follower). A follower must reference an
+    // already-seen leader (upstream flist.c:794), so write the leader at NDX 0
+    // and the follower at NDX 1 pointing back to it.
     {
         let mut buf = Vec::new();
         let mut writer = FileListWriter::new(protocol).with_preserve_hard_links(true);
-        let mut entry = FileEntry::new_file("follower.txt".into(), 100, 0o644);
-        entry.set_hardlink_idx(42);
-        writer.write_entry(&mut buf, &entry).unwrap();
+        let mut leader = FileEntry::new_file("leader.txt".into(), 100, 0o644);
+        leader.set_hardlink_idx(u32::MAX);
+        let mut follower = FileEntry::new_file("follower.txt".into(), 100, 0o644);
+        follower.set_hardlink_idx(0);
+        writer.write_entry(&mut buf, &leader).unwrap();
+        writer.write_entry(&mut buf, &follower).unwrap();
         writer.write_end(&mut buf, None).unwrap();
 
         let mut cursor = Cursor::new(&buf[..]);
         let mut reader = FileListReader::new(protocol).with_preserve_hard_links(true);
-        let read = reader.read_entry(&mut cursor).unwrap().unwrap();
+        let mut segment: Vec<FileEntry> = Vec::new();
+        let leader_read = reader
+            .read_entry_with_flist(&mut cursor, &segment)
+            .unwrap()
+            .unwrap();
+        segment.push(leader_read);
+        let follower_read = reader
+            .read_entry_with_flist(&mut cursor, &segment)
+            .unwrap()
+            .unwrap();
         assert_eq!(
-            read.hardlink_idx(),
-            Some(42),
-            "follower should have index 42"
+            follower_read.hardlink_idx(),
+            Some(0),
+            "follower should reference the leader at NDX 0"
         );
     }
 }
