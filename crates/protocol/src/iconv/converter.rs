@@ -7,11 +7,12 @@
 //!   explicitly (e.g., flist reader/writer which skip the entry and set
 //!   `io_error`).
 //!
-//! - **Lossy** (`remote_to_local_lossy`, `local_to_remote_lossy`): replaces
-//!   unconvertible bytes with a replacement character and returns a
-//!   [`ConversionOutcome`] indicating whether any replacements occurred.
-//!   Used by callers that pass bad bytes through verbatim (e.g.,
-//!   `send_protected_args`, `--files-from` exchange).
+//! - **Lossy** (`remote_to_local_lossy`, `local_to_remote_lossy`): mirrors
+//!   upstream `iconvbufs()` with `ICB_INCLUDE_BAD`, copying unconvertible
+//!   bytes to the output verbatim and returning a [`ConversionOutcome`]
+//!   indicating whether any verbatim pass-through occurred. Used by callers
+//!   that must not corrupt bad bytes (e.g., `read_line(RL_CONVERT)`,
+//!   `send_protected_args`).
 //!
 //! # Upstream Reference
 //!
@@ -35,16 +36,17 @@ pub type EncodingConverter = FilenameConverter;
 
 /// Result of a lossy encoding conversion.
 ///
-/// Contains the converted bytes and metadata about whether any bytes
-/// were replaced during conversion. This mirrors upstream rsync's
-/// `iconvbufs()` with `ICB_INCLUDE_BAD` set, where invalid bytes are
-/// included verbatim rather than causing an error.
+/// Contains the converted bytes and metadata about whether any bytes were
+/// passed through verbatim during conversion. This mirrors upstream rsync's
+/// `iconvbufs()` with `ICB_INCLUDE_BAD` set, where unconvertible bytes are
+/// copied to the output verbatim rather than causing an error.
 #[derive(Debug, Clone)]
 pub struct ConversionOutcome<'a> {
-    /// The converted bytes. When `had_replacements` is true, some bytes
-    /// were replaced with a substitution character.
+    /// The converted bytes. When `had_replacements` is true, some source
+    /// bytes were copied through verbatim because they could not be converted.
     pub output: Cow<'a, [u8]>,
-    /// Whether any bytes were replaced during conversion.
+    /// Whether any source bytes were passed through verbatim (i.e. any byte
+    /// was unconvertible under `ICB_INCLUDE_BAD`).
     pub had_replacements: bool,
 }
 
@@ -294,21 +296,22 @@ impl FilenameConverter {
         Ok(Cow::Borrowed(bytes))
     }
 
-    /// Converts a filename from remote encoding to local encoding, replacing
-    /// unconvertible bytes rather than failing.
+    /// Converts a filename from remote encoding to local encoding, copying
+    /// unconvertible bytes through verbatim rather than failing.
     ///
-    /// Invalid sequences in the remote encoding are decoded as U+FFFD
-    /// (replacement character). Characters that cannot be represented in the
-    /// local encoding are replaced with `?`. The returned
-    /// [`ConversionOutcome`] indicates whether any replacements occurred.
+    /// Bytes that are invalid in the remote encoding, and remote characters
+    /// that the local encoding cannot represent, are copied to the output
+    /// verbatim (byte-for-byte). The returned [`ConversionOutcome`] indicates
+    /// whether any verbatim pass-through occurred.
     ///
-    /// This mirrors upstream `iconvbufs()` with `ICB_INCLUDE_BAD` set
-    /// (rsync.c:229-231), where invalid bytes are passed through verbatim
-    /// rather than causing `EILSEQ`.
+    /// This mirrors upstream `iconvbufs()` with `ICB_INCLUDE_BAD` set: on an
+    /// unconvertible byte it runs `*obuf++ = *ibuf++` (rsync.c:261), copying
+    /// the offending source byte straight to the output rather than
+    /// substituting it.
     ///
     /// # Upstream Reference
     ///
-    /// - `io.c:1283` - `read_line(RL_CONVERT)` uses `ICB_INCLUDE_BAD`
+    /// - `io.c:1286` - `read_line(RL_CONVERT)` uses `ICB_INCLUDE_BAD`
     /// - `rsync.c:305` - `send_protected_args` uses `ICB_INCLUDE_BAD`
     #[cfg(feature = "iconv")]
     pub fn remote_to_local_lossy<'a>(&self, bytes: &'a [u8]) -> ConversionOutcome<'a> {
@@ -319,29 +322,25 @@ impl FilenameConverter {
             };
         }
 
-        // Decode from remote encoding to UTF-8. encoding_rs replaces
-        // invalid sequences with U+FFFD and reports via had_errors.
-        let (decoded, _, decode_had_errors) = self.remote_encoding.decode(bytes);
-
-        // Encode from UTF-8 to local encoding with replacement.
-        let (encoded, had_encode_errors) = encode_with_replacement(&decoded, self.local_encoding);
+        let (output, had_bad) =
+            convert_include_bad(bytes, self.remote_encoding, self.local_encoding);
 
         ConversionOutcome {
-            output: Cow::Owned(encoded),
-            had_replacements: decode_had_errors || had_encode_errors,
+            output: Cow::Owned(output),
+            had_replacements: had_bad,
         }
     }
 
-    /// Converts a filename from local encoding to remote encoding, replacing
-    /// unconvertible bytes rather than failing.
+    /// Converts a filename from local encoding to remote encoding, copying
+    /// unconvertible bytes through verbatim rather than failing.
     ///
-    /// Invalid sequences in the local encoding are decoded as U+FFFD
-    /// (replacement character). Characters that cannot be represented in the
-    /// remote encoding are replaced with `?`. The returned
-    /// [`ConversionOutcome`] indicates whether any replacements occurred.
+    /// Bytes that are invalid in the local encoding, and local characters that
+    /// the remote encoding cannot represent, are copied to the output verbatim
+    /// (byte-for-byte). The returned [`ConversionOutcome`] indicates whether
+    /// any verbatim pass-through occurred.
     ///
     /// This mirrors upstream `iconvbufs()` with `ICB_INCLUDE_BAD` set
-    /// (rsync.c:229-231).
+    /// (rsync.c:261 `*obuf++ = *ibuf++`).
     #[cfg(feature = "iconv")]
     pub fn local_to_remote_lossy<'a>(&self, bytes: &'a [u8]) -> ConversionOutcome<'a> {
         if self.is_identity() {
@@ -351,15 +350,12 @@ impl FilenameConverter {
             };
         }
 
-        // Decode from local encoding to UTF-8.
-        let (decoded, _, decode_had_errors) = self.local_encoding.decode(bytes);
-
-        // Encode from UTF-8 to remote encoding with replacement.
-        let (encoded, had_encode_errors) = encode_with_replacement(&decoded, self.remote_encoding);
+        let (output, had_bad) =
+            convert_include_bad(bytes, self.local_encoding, self.remote_encoding);
 
         ConversionOutcome {
-            output: Cow::Owned(encoded),
-            had_replacements: decode_had_errors || had_encode_errors,
+            output: Cow::Owned(output),
+            had_replacements: had_bad,
         }
     }
 
@@ -511,72 +507,149 @@ impl FilenameConverter {
     }
 }
 
-/// Encodes a UTF-8 string into the target encoding, replacing unmappable
-/// characters with `?` instead of using `encoding_rs`'s default HTML numeric
-/// character reference substitution.
+/// Converts `input` from `src` to `tgt` using upstream's `ICB_INCLUDE_BAD`
+/// semantics: bytes that cannot be converted are copied to the output
+/// verbatim rather than substituted.
 ///
-/// Returns the encoded bytes and a flag indicating whether any replacements
-/// were made. The `?` replacement matches upstream rsync's single-byte
-/// pass-through behaviour for `ICB_INCLUDE_BAD` in single-byte encodings.
+/// Upstream `iconvbufs()` (rsync.c:179) runs a single `iconv()` from the
+/// source charset to the target charset. When `iconv()` reports `EILSEQ` (an
+/// invalid input byte, or an input character that the target charset cannot
+/// represent) and `ICB_INCLUDE_BAD` is set, it executes `*obuf++ = *ibuf++`
+/// (rsync.c:261): it copies the offending source byte straight into the
+/// output and advances one byte, then resumes conversion. Trailing incomplete
+/// multibyte sequences are likewise passed through under
+/// `ICB_INCLUDE_INCOMPLETE`, which both lossy callers set (io.c:1286
+/// `read_line(RL_CONVERT)`, rsync.c:305 `send_protected_args`).
 ///
-/// # Upstream Reference
+/// Because `encoding_rs` converts through a Unicode intermediate rather than a
+/// direct charset-to-charset table, this walks the input one source byte at a
+/// time so that each decoded scalar retains its exact source byte span. An
+/// invalid source byte, and a scalar the target charset cannot encode, are
+/// both emitted as their verbatim source bytes - matching upstream's
+/// `*obuf++ = *ibuf++` (each byte of an unmappable multibyte scalar is itself
+/// an invalid standalone lead, so upstream copies them all verbatim in turn).
 ///
-/// - `rsync.c:261` - `*obuf++ = *ibuf++` copies the invalid byte verbatim.
-///   Since we go through a Unicode intermediate representation, verbatim
-///   copy is not possible; `?` is the closest portable substitute.
+/// Returns the converted bytes and whether any verbatim pass-through occurred.
 #[cfg(feature = "iconv")]
-fn encode_with_replacement(
-    utf8: &str,
-    encoding: &'static encoding_rs::Encoding,
+fn convert_include_bad(
+    input: &[u8],
+    src: &'static encoding_rs::Encoding,
+    tgt: &'static encoding_rs::Encoding,
 ) -> (Vec<u8>, bool) {
-    // Fast path: UTF-8 target encoding never has unmappable characters.
-    if encoding == encoding_rs::UTF_8 {
-        return (utf8.as_bytes().to_vec(), false);
-    }
+    let mut decoder = src.new_decoder_without_bom_handling();
+    let mut encoder = tgt.new_encoder();
+    let mut out = Vec::with_capacity(input.len());
+    let mut had_bad = false;
+    // A single fed byte completes at most one scalar (<= 4 UTF-8 bytes); 16
+    // bytes leave ample headroom so `OutputFull` cannot occur.
+    let mut scalar = [0u8; 16];
+    // Source offset where the in-progress (not-yet-emitted) sequence began.
+    let mut seq_start = 0usize;
+    let mut pos = 0usize;
 
-    let mut encoder = encoding.new_encoder();
-    let mut output = Vec::with_capacity(utf8.len());
-    let mut had_replacements = false;
-    let mut remaining = utf8;
-
-    // Process all input, replacing unmappable characters with '?'.
-    while !remaining.is_empty() {
-        let needed = encoder
-            .max_buffer_length_from_utf8_without_replacement(remaining.len())
-            .unwrap_or(remaining.len() * 4);
-        let start = output.len();
-        output.resize(start + needed, 0);
-
-        let (result, consumed, written) =
-            encoder.encode_from_utf8_without_replacement(remaining, &mut output[start..], false);
-        output.truncate(start + written);
-        remaining = &remaining[consumed..];
+    while pos < input.len() {
+        let last = pos + 1 == input.len();
+        let (result, read, written) =
+            decoder.decode_to_utf8_without_replacement(&input[pos..=pos], &mut scalar, last);
+        pos += read;
 
         match result {
-            encoding_rs::EncoderResult::InputEmpty => break,
-            encoding_rs::EncoderResult::OutputFull => {
-                // Need more output space, loop will reallocate.
+            encoding_rs::DecoderResult::InputEmpty => {
+                if written == 0 {
+                    // Byte buffered as part of an incomplete multibyte scalar.
+                    continue;
+                }
+                let span = &input[seq_start..pos];
+                match std::str::from_utf8(&scalar[..written]) {
+                    Ok(text) if encode_scalar(text, &mut encoder, tgt, &mut out) => {
+                        // Target charset cannot represent the scalar: copy its
+                        // source bytes verbatim (rsync.c:261).
+                        out.extend_from_slice(span);
+                        had_bad = true;
+                    }
+                    Ok(_) => {}
+                    // The decoder only ever emits valid UTF-8; this arm is
+                    // unreachable but degrades to verbatim pass-through.
+                    Err(_) => {
+                        out.extend_from_slice(span);
+                        had_bad = true;
+                    }
+                }
+                seq_start = pos;
             }
-            encoding_rs::EncoderResult::Unmappable(_) => {
-                had_replacements = true;
-                output.push(b'?');
-                // encoding_rs includes the unmappable character in
-                // `consumed`, so `remaining` is already past it.
+            encoding_rs::DecoderResult::Malformed(..) => {
+                // The malformed run is exactly the in-progress sequence: bytes
+                // consumed since the last emitted scalar. Feeding one byte at a
+                // time means any following byte is never consumed into this
+                // result, so `input[seq_start..pos]` is precisely the bad run.
+                // Copy it verbatim (rsync.c:261).
+                out.extend_from_slice(&input[seq_start..pos]);
+                had_bad = true;
+                seq_start = pos;
+            }
+            encoding_rs::DecoderResult::OutputFull => {
+                // Unreachable: one source byte completes at most one scalar,
+                // which always fits in `scalar`. Guard against a stall.
+                break;
             }
         }
     }
 
-    // Flush any pending state in stateful encodings (e.g., ISO-2022-JP).
-    let flush_needed = encoder
-        .max_buffer_length_from_utf8_without_replacement(0)
-        .unwrap_or(16);
-    let start = output.len();
-    output.resize(start + flush_needed, 0);
-    let (_result, _consumed, written) =
-        encoder.encode_from_utf8_without_replacement("", &mut output[start..], true);
-    output.truncate(start + written);
+    // Flush any trailing encoder state (e.g. an ISO-2022-JP shift back to
+    // ASCII) so the output is a complete byte sequence.
+    flush_encoder(&mut encoder, tgt, &mut out);
 
-    (output, had_replacements)
+    (out, had_bad)
+}
+
+/// Encodes a single decoded scalar run into the target charset via `encoder`,
+/// appending the bytes to `out`.
+///
+/// Returns `true` when the target charset cannot represent the scalar, in
+/// which case nothing is appended and the caller copies the verbatim source
+/// bytes (mirroring upstream's `*obuf++ = *ibuf++`, rsync.c:261).
+#[cfg(feature = "iconv")]
+fn encode_scalar(
+    text: &str,
+    encoder: &mut encoding_rs::Encoder,
+    tgt: &'static encoding_rs::Encoding,
+    out: &mut Vec<u8>,
+) -> bool {
+    // Fast path: a UTF-8 target needs no re-encoding of already-UTF-8 scalars.
+    if tgt == encoding_rs::UTF_8 {
+        out.extend_from_slice(text.as_bytes());
+        return false;
+    }
+
+    // 16 bytes hold any single scalar's encoding, so one call suffices.
+    let mut buf = [0u8; 16];
+    let (result, _read, written) =
+        encoder.encode_from_utf8_without_replacement(text, &mut buf, false);
+    match result {
+        encoding_rs::EncoderResult::Unmappable(_) => true,
+        encoding_rs::EncoderResult::InputEmpty | encoding_rs::EncoderResult::OutputFull => {
+            out.extend_from_slice(&buf[..written]);
+            false
+        }
+    }
+}
+
+/// Flushes any pending encoder state into `out` (e.g. an ISO-2022-JP escape
+/// sequence resetting the charset back to ASCII at end of input).
+#[cfg(feature = "iconv")]
+fn flush_encoder(
+    encoder: &mut encoding_rs::Encoder,
+    tgt: &'static encoding_rs::Encoding,
+    out: &mut Vec<u8>,
+) {
+    // The UTF-8 fast path in `encode_scalar` never advances encoder state.
+    if tgt == encoding_rs::UTF_8 {
+        return;
+    }
+    let mut buf = [0u8; 16];
+    let (_result, _read, written) =
+        encoder.encode_from_utf8_without_replacement("", &mut buf, true);
+    out.extend_from_slice(&buf[..written]);
 }
 
 /// Normalizes encoding names for lookup.

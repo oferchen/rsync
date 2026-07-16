@@ -78,12 +78,15 @@ fn bytes_to_os_string(bytes: Vec<u8>) -> OsString {
 /// preserves the no-allocation hot path for transfers without `--iconv`.
 ///
 /// When the converter encounters bytes that cannot be represented in the
-/// target encoding, unconvertible characters are replaced with `?` rather
-/// than aborting the transfer. This mirrors upstream rsync's
-/// `ICB_INCLUDE_BAD` behaviour (rsync.c:229-231) where invalid bytes are
-/// passed through verbatim. A warning is emitted via
+/// target encoding, those source bytes are passed through verbatim rather
+/// than aborting the transfer, mirroring upstream's `ICB_INCLUDE_BAD`
+/// `*obuf++ = *ibuf++` (rsync.c:261). In the real local-copy flow such names
+/// are already screened out by the strict [`name_is_convertible`] gate
+/// (`flist.c:1624-1631` `ICB_INIT`), so this path only runs for convertible
+/// names; the verbatim fallback keeps parity with the shared lossy converter.
+/// A warning is emitted via
 /// [`trace_conversion_warning`](protocol::iconv::trace_conversion_warning)
-/// when replacement occurs.
+/// when pass-through occurs.
 #[must_use]
 pub(crate) fn transcode_filename_component<'a>(
     name: &'a OsStr,
@@ -200,16 +203,17 @@ mod tests {
 
     #[cfg(all(unix, feature = "iconv"))]
     #[test]
-    fn invalid_bytes_replaced_with_lossy_conversion() {
+    fn invalid_bytes_passed_through_verbatim() {
         use std::os::unix::ffi::OsStrExt;
 
-        // Lone continuation byte 0x80 is not valid UTF-8. encoding_rs
-        // decodes it as U+FFFD, which ISO-8859-1 cannot represent, so
-        // the lossy encoder replaces it with '?'.
+        // Lone continuation byte 0x80 is not valid UTF-8. Under ICB_INCLUDE_BAD
+        // upstream copies the offending source byte straight through
+        // (`*obuf++ = *ibuf++`, rsync.c:261), so 0x80 survives byte-for-byte
+        // rather than becoming '?' or U+FFFD.
         let bad = OsStr::from_bytes(b"bad\x80name");
         let conv = FilenameConverter::new("UTF-8", "ISO-8859-1").expect("ctor");
         let out = transcode_filename_component(bad, Some(&conv));
-        assert_eq!(out.as_bytes(), b"bad?name");
+        assert_eq!(out.as_bytes(), b"bad\x80name");
     }
 
     #[test]
