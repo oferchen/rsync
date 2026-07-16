@@ -11,6 +11,7 @@ use crate::frontend::execution::drive::module_listing::{
     ModuleListingInputs, maybe_handle_module_listing,
 };
 use crate::frontend::execution::drive::{config, filters, metadata, options, summary, validation};
+use crate::frontend::log_format_has;
 use crate::frontend::outbuf::parse_outbuf_mode;
 use crate::frontend::progress::{ProgressOutputConfig, StderrMode};
 use crate::frontend::{
@@ -195,6 +196,7 @@ where
         early_input,
         link_dests,
         remove_source_files,
+        remove_sent_files,
         inplace,
         append,
         append_verify,
@@ -826,6 +828,18 @@ where
     let checksum_for_config = checksum.unwrap_or(false);
     let fuzzy_level_value = fuzzy.unwrap_or(0);
 
+    // upstream: options.c:2375-2376,2768-2780 - the explicit `--out-format` /
+    // `--log-format` string tells the server which placeholders it uses. A `%o`
+    // directive (without `%i`) forwards `--log-format=%o`; a format with neither
+    // `%i` nor `%o` forwards the placeholder `--log-format=X` for a non-verbose
+    // client. The `%i` cases are handled by the itemize signal.
+    let out_format_has_operation = out_format
+        .as_ref()
+        .is_some_and(|fmt| !log_format_has(fmt, 'i') && log_format_has(fmt, 'o'));
+    let out_format_placeholder = out_format
+        .as_ref()
+        .is_some_and(|fmt| !log_format_has(fmt, 'i') && !log_format_has(fmt, 'o'));
+
     let config_inputs = config::ConfigInputs {
         transfer_operands,
         desired_protocol,
@@ -939,6 +953,9 @@ where
         delay_updates,
         link_dests,
         remove_source_files,
+        remove_sent_files,
+        out_format_has_operation,
+        out_format_placeholder,
         inplace: inplace_enabled,
         append: append_enabled,
         append_verify,

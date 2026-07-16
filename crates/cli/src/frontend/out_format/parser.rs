@@ -140,6 +140,47 @@ pub(crate) fn parse_out_format(value: &OsStr) -> Result<OutFormat, Message> {
     Ok(OutFormat::new(tokens))
 }
 
+/// Reports whether an `--out-format` / `--log-format` string contains the given
+/// `%esc` directive, mirroring upstream `log_format_has()` byte-for-byte so the
+/// client and server agree on which placeholders a format uses. Scans for `%`,
+/// skips the shared-iterator apostrophes, an optional `-`, a digit run, and any
+/// trailing apostrophes, then compares the escape character. All directives are
+/// ASCII, so scanning the lossy conversion of a non-UTF-8 `OsStr` is safe: ASCII
+/// bytes always round-trip and cannot be introduced by lossy replacement.
+///
+/// upstream: log.c:793 `log_format_has()`.
+pub(crate) fn log_format_has(format: &OsStr, esc: char) -> bool {
+    let text = format.to_string_lossy();
+    let bytes = text.as_bytes();
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] != b'%' {
+            i += 1;
+            continue;
+        }
+        i += 1;
+        while i < bytes.len() && bytes[i] == b'\'' {
+            i += 1;
+        }
+        if i < bytes.len() && bytes[i] == b'-' {
+            i += 1;
+        }
+        while i < bytes.len() && bytes[i].is_ascii_digit() {
+            i += 1;
+        }
+        while i < bytes.len() && bytes[i] == b'\'' {
+            i += 1;
+        }
+        if i >= bytes.len() {
+            break;
+        }
+        if bytes[i] == esc as u8 {
+            return true;
+        }
+    }
+    false
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -178,6 +219,32 @@ mod tests {
     fn parse_out_format_itemized() {
         let result = parse_out_format(&os("%i"));
         assert!(result.is_ok());
+    }
+
+    #[test]
+    fn log_format_has_detects_bare_directive() {
+        assert!(log_format_has(&os("%o"), 'o'));
+        assert!(log_format_has(&os("%i %n%L"), 'i'));
+        assert!(!log_format_has(&os("%f %n"), 'o'));
+        assert!(!log_format_has(&os("plain text"), 'i'));
+    }
+
+    #[test]
+    fn log_format_has_skips_width_and_flags() {
+        // upstream log_format_has() skips apostrophes, an optional `-`, digits,
+        // and trailing apostrophes before comparing the escape char.
+        assert!(log_format_has(&os("%-10o"), 'o'));
+        assert!(log_format_has(&os("%'12i"), 'i'));
+        // A width run that never reaches the target directive is not a match.
+        assert!(!log_format_has(&os("%-10n"), 'o'));
+    }
+
+    #[test]
+    fn log_format_has_ignores_escaped_percent() {
+        // `%%` is a literal percent; the following char is not a directive.
+        assert!(!log_format_has(&os("100%% done"), 'o'));
+        // A trailing bare `%` has no directive char.
+        assert!(!log_format_has(&os("done %"), 'o'));
     }
 
     #[test]

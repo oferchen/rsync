@@ -297,16 +297,25 @@ pub(super) fn build_full_daemon_args(
         None => {}
     }
 
-    // upstream: options.c:164-175 server_options - the server needs the
-    // log-format to generate itemize output. Only sent when the client is the
-    // sender (push), matching upstream's `stdout_format && am_sender` guard.
-    // `%i%I` is the `-ii` form (stdout_format_has_i > 1) that itemizes
-    // unchanged entries too; `%i` alone is the `-i` form.
-    if we_are_sender && config.itemize_changes() {
-        if config.itemize_unchanged() {
-            args.push("--log-format=%i%I".to_owned());
-        } else {
-            args.push("--log-format=%i".to_owned());
+    // upstream: options.c:2768-2780 - `if (stdout_format && am_sender)` the
+    // server is told a little about the client's out-format via a `--log-format`
+    // arg, in a first-match-wins chain. Only sent when the client is the sender
+    // (push), matching upstream's `am_sender` guard. `%i%I` is the `-ii` form
+    // (stdout_format_has_i > 1) that itemizes unchanged entries too; `%i` is the
+    // `-i` form; `%o` is forwarded when the format has the `%o` operation
+    // directive; the placeholder `X` is forwarded when a non-verbose client set
+    // an out-format with neither `%i` nor `%o`.
+    if we_are_sender {
+        if config.itemize_changes() {
+            if config.itemize_unchanged() {
+                args.push("--log-format=%i%I".to_owned());
+            } else {
+                args.push("--log-format=%i".to_owned());
+            }
+        } else if config.out_format_has_operation() {
+            args.push("--log-format=%o".to_owned());
+        } else if config.out_format_placeholder() && config.verbosity() == 0 {
+            args.push("--log-format=X".to_owned());
         }
     }
 
@@ -595,9 +604,16 @@ pub(super) fn build_full_daemon_args(
         }
     }
 
-    // upstream: options.c:2964-2965
+    // upstream: options.c:2982-2985 - `if (remove_source_files == 1)
+    // "--remove-source-files"; else if (remove_source_files)
+    // "--remove-sent-files"`. The deprecated alias is forwarded verbatim when
+    // the user typed it, matching upstream byte-for-byte.
     if config.remove_source_files() {
-        args.push("--remove-source-files".to_owned());
+        if config.remove_sent_files() {
+            args.push("--remove-sent-files".to_owned());
+        } else {
+            args.push("--remove-source-files".to_owned());
+        }
     }
 
     // upstream: options.c:2979 - `if (write_devices && am_sender) args[ac++] =
