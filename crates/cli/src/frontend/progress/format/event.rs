@@ -56,6 +56,8 @@ pub(crate) const fn describe_event_kind(kind: &ClientEventKind) -> &'static str 
         ClientEventKind::SkippedUnsafeSymlink => "skipped unsafe symlink",
         ClientEventKind::SkippedMountPoint => "skipped mount point",
         ClientEventKind::SkippedNewerDestination => "skipped newer destination file",
+        ClientEventKind::SkippedOverMaxSize => "skipped file over max-size",
+        ClientEventKind::SkippedUnderMinSize => "skipped file under min-size",
         ClientEventKind::EntryDeleted => "deleted",
         ClientEventKind::SourceRemoved => "source removed",
     }

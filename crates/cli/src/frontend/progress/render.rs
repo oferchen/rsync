@@ -674,16 +674,19 @@ fn is_uptodate_event(event: &ClientEvent) -> bool {
 
 /// Returns `true` for the per-file skip notices that upstream's `recv_generator`
 /// emits during the generator phase (`"exists"`, `"not creating new"`, `"is
-/// newer"`), ahead of the receiver phase that prints transferred-file names.
-/// Bucketing these with the uptodate notices reproduces that interleaving.
+/// newer"`, `"is over max-size"`, `"is under min-size"`), ahead of the receiver
+/// phase that prints transferred-file names. Bucketing these with the uptodate
+/// notices reproduces that interleaving.
 ///
-/// upstream: generator.c:1379,1395,1723 (recv_generator)
+/// upstream: generator.c:1379,1395,1708,1716,1723 (recv_generator)
 fn is_generator_phase_skip(event: &ClientEvent) -> bool {
     matches!(
         event.kind(),
         ClientEventKind::SkippedExisting
             | ClientEventKind::SkippedMissingDestination
             | ClientEventKind::SkippedNewerDestination
+            | ClientEventKind::SkippedOverMaxSize
+            | ClientEventKind::SkippedUnderMinSize
     )
 }
 
@@ -881,6 +884,38 @@ pub(crate) fn emit_verbose<W: Write + ?Sized>(
                         event.relative_path(),
                         eight_bit_output,
                         " is newer",
+                    )?;
+                }
+                continue;
+            }
+            ClientEventKind::SkippedOverMaxSize => {
+                // upstream: generator.c:1704-1711 - `rprintf(FINFO,
+                // "%s is over max-size\n", fname)` for a `--max-size` skip: the
+                // bare relative name followed by " is over max-size", gated on
+                // INFO_GTE(SKIP, 1).
+                if info_gte(InfoFlag::Skip, 1) {
+                    writeln_wrapped(
+                        stdout,
+                        "",
+                        event.relative_path(),
+                        eight_bit_output,
+                        " is over max-size",
+                    )?;
+                }
+                continue;
+            }
+            ClientEventKind::SkippedUnderMinSize => {
+                // upstream: generator.c:1712-1719 - `rprintf(FINFO,
+                // "%s is under min-size\n", fname)` for a `--min-size` skip: the
+                // bare relative name followed by " is under min-size", gated on
+                // INFO_GTE(SKIP, 1).
+                if info_gte(InfoFlag::Skip, 1) {
+                    writeln_wrapped(
+                        stdout,
+                        "",
+                        event.relative_path(),
+                        eight_bit_output,
+                        " is under min-size",
                     )?;
                 }
                 continue;
@@ -1199,6 +1234,64 @@ mod tests {
             ClientEventKind::SkippedNewerDestination,
         )];
         assert_eq!(render_verbose_scenario(newer, 2), "big.txt is newer\n");
+    }
+
+    #[test]
+    fn size_skip_notices_cluster_before_transferred_at_vv() {
+        // WHY: upstream recv_generator emits the `"%s is over max-size"` /
+        // `"%s is under min-size"` notices in the generator phase, ahead of the
+        // receiver phase that prints transferred names, and only at
+        // INFO_GTE(SKIP, 1) (i.e. -vv). A drop-in tool parses the stream in
+        // order, so the two size-skip notices must surface first, in flist
+        // order, with upstream's exact bare-name text - never after the
+        // transferred names or after the stats block.
+        // upstream: generator.c:1704-1719
+        let events = vec![
+            transferred_event("keep.txt"),
+            skip_event("big.bin", ClientEventKind::SkippedOverMaxSize),
+            skip_event("tiny.bin", ClientEventKind::SkippedUnderMinSize),
+            transferred_event("also.txt"),
+        ];
+        assert_eq!(
+            render_verbose_scenario(events, 2),
+            "big.bin is over max-size\ntiny.bin is under min-size\nkeep.txt\nalso.txt\n"
+        );
+    }
+
+    #[test]
+    fn size_skip_notices_suppressed_below_skip_verbosity() {
+        // WHY: upstream gates the size-skip notices on INFO_GTE(SKIP, 1), which
+        // the info verbosity table raises only at -vv (options.c:252). At plain
+        // -v they must be silent, leaving only the transferred name - otherwise
+        // a drop-in tool sees phantom lines upstream never emits.
+        let events = vec![
+            transferred_event("keep.txt"),
+            skip_event("big.bin", ClientEventKind::SkippedOverMaxSize),
+            skip_event("tiny.bin", ClientEventKind::SkippedUnderMinSize),
+        ];
+        assert_eq!(render_verbose_scenario(events, 1), "keep.txt\n");
+    }
+
+    #[test]
+    fn size_skips_and_6639_notices_share_generator_phase_bucket() {
+        // WHY: the size-skip notices extend the same generator-phase bucket that
+        // #6639 established for the "exists" / "not creating new" / "is newer"
+        // notices. Mixing all of them must keep every generator-phase notice
+        // ahead of the transferred names, in flist order, so adding the size
+        // cases does not regress the #6639 ordering.
+        // upstream: generator.c:1379,1395,1708,1716,1723
+        let events = vec![
+            transferred_event("keep.txt"),
+            skip_event("exists.txt", ClientEventKind::SkippedExisting),
+            skip_event("big.bin", ClientEventKind::SkippedOverMaxSize),
+            skip_event("newer.txt", ClientEventKind::SkippedNewerDestination),
+            skip_event("tiny.bin", ClientEventKind::SkippedUnderMinSize),
+        ];
+        assert_eq!(
+            render_verbose_scenario(events, 2),
+            "exists.txt exists\nbig.bin is over max-size\nnewer.txt is newer\n\
+             tiny.bin is under min-size\nkeep.txt\n"
+        );
     }
 
     #[test]
