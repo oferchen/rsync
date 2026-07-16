@@ -447,11 +447,11 @@ pub fn run_daemon_stdio(config: DaemonConfig) -> Result<(), DaemonError> {
 /// loop is hosted on a tokio multi-thread runtime via
 /// [`crate::async_listener::run_hybrid_listener`]. Each accepted connection is
 /// served by the existing synchronous session handler on a dedicated OS thread
-/// (see [`ConnectionContext::serve_one_connection`]), so the wire protocol,
+/// (see `ConnectionContext::serve_one_connection`), so the wire protocol,
 /// auth, and transfer pipeline stay byte-identical with the sync daemon; only
 /// the accept + task dispatch is asynchronous. The number of concurrent worker
 /// threads is bounded so it never throttles below the configured
-/// `max connections` (see [`async_max_inflight`]).
+/// `max connections` (see `async_max_inflight`).
 ///
 /// # Selection
 ///

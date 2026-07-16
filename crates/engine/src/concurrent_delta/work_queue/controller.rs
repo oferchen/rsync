@@ -124,7 +124,7 @@ pub enum TickOutcome {
 
 /// AIMD grow/shrink controller for a [`DynamicWorkQueue`]'s admission depth.
 ///
-/// See the [module documentation](self) for the control law and opt-in policy.
+/// See the module documentation for the control law and opt-in policy.
 /// The controller owns a shared handle to the queue's [`AdaptiveSemaphore`] and
 /// an internal [`AimdLimiter`] whose `target` tracks the desired depth. Call
 /// [`tick`](Self::tick) periodically (for example once per drained batch) to

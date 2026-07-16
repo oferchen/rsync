@@ -424,7 +424,7 @@ impl DeleteContext {
     /// `ReorderBuffer`, a Condvar-driven consumer thread, and a rayon
     /// dispatch) costs a fixed overhead that dominates when only a handful
     /// of entries are being deleted. When the whole transfer plans fewer
-    /// than [`SMALL_DIR_FAST_PATH_THRESHOLD`] extras, or the process has no
+    /// than `SMALL_DIR_FAST_PATH_THRESHOLD` extras, or the process has no
     /// spare rayon worker to parallelise onto, the drain runs the
     /// sequential [`DeleteEmitter`](super::super::emitter::DeleteEmitter)
     /// directly. That emitter is the exact
