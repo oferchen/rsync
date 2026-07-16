@@ -17,14 +17,35 @@ use super::{FUZZY_LEVEL_2, FuzzyMatch, FuzzyMatcher};
 
 /// A destination-directory file eligible to be a fuzzy basis.
 struct Candidate {
-    /// Basename (lossy) used for distance scoring and tracing.
-    name: String,
+    /// Basename as raw OS bytes. Distance scoring and the candidate sort both
+    /// run on these bytes, never a lossy-UTF8 rendering, so non-UTF8 filenames
+    /// score and order exactly as upstream's byte-oriented `fuzzy_distance()`
+    /// and bytewise `f_name_cmp()` dictate. upstream: util1.c:1588
+    /// `fuzzy_distance()`, flist.c `f_name_cmp()`.
+    name: Vec<u8>,
     /// Absolute path to the candidate file.
     path: PathBuf,
     /// File length in bytes.
     size: u64,
     /// Modification time in whole seconds since the Unix epoch, if available.
     mtime_secs: Option<i64>,
+}
+
+/// Returns the raw OS bytes of a filename component.
+///
+/// On Unix the byte string is the kernel-native filename, matching upstream's
+/// byte-oriented fuzzy comparison. On other platforms filenames are valid
+/// Unicode, so the UTF-8 encoding is a lossless, deterministic stand-in.
+#[cfg(unix)]
+fn os_str_bytes(s: &OsStr) -> Vec<u8> {
+    use std::os::unix::ffi::OsStrExt;
+    s.as_bytes().to_vec()
+}
+
+/// Returns the raw OS bytes of a filename component (non-Unix fallback).
+#[cfg(not(unix))]
+fn os_str_bytes(s: &OsStr) -> Vec<u8> {
+    s.to_string_lossy().into_owned().into_bytes()
 }
 
 impl FuzzyMatcher {
@@ -48,9 +69,8 @@ impl FuzzyMatcher {
         target_size: u64,
         target_mtime: Option<i64>,
     ) -> Option<FuzzyMatch> {
-        let target = target_name.to_string_lossy();
-        let target_bytes = target.as_bytes();
-        let target_suffix = find_filename_suffix(target_bytes).to_vec();
+        let target_bytes = os_str_bytes(target_name);
+        let target_suffix = find_filename_suffix(&target_bytes).to_vec();
 
         // upstream: generator.c:843/868 - iterate dirlist_array[0..fuzzy_basis],
         // the destination directory first then each reference directory.
@@ -62,7 +82,7 @@ impl FuzzyMatcher {
 
         let per_dir: Vec<Vec<Candidate>> = dirs
             .iter()
-            .map(|dir| collect_candidates(dir, &target))
+            .map(|dir| collect_candidates(dir, &target_bytes))
             .collect();
 
         // Pass 1: exact size + mtime fast-path. upstream: generator.c:842-866.
@@ -70,7 +90,7 @@ impl FuzzyMatcher {
             for candidates in &per_dir {
                 for candidate in candidates {
                     if candidate.size == target_size && candidate.mtime_secs == Some(target_secs) {
-                        trace_fuzzy_size_mtime_match(&candidate.name);
+                        trace_fuzzy_size_mtime_match(&String::from_utf8_lossy(&candidate.name));
                         return Some(FuzzyMatch {
                             path: candidate.path.clone(),
                             distance: 0,
@@ -86,14 +106,14 @@ impl FuzzyMatcher {
         for candidates in &per_dir {
             for candidate in candidates {
                 let dist = fuzzy_name_distance(
-                    candidate.name.as_bytes(),
-                    target_bytes,
+                    &candidate.name,
+                    &target_bytes,
                     &target_suffix,
                     lowest_dist,
                 );
                 // upstream: generator.c:896-899 - emit each candidate's distance
                 // as fixed-point `%d.%05d` for --debug=FUZZY parsers.
-                trace_fuzzy_distance(&candidate.name, dist);
+                trace_fuzzy_distance(&String::from_utf8_lossy(&candidate.name), dist);
                 // upstream: generator.c:900 - `<=` lets a later equal-distance
                 // candidate win; the sorted scan order makes this deterministic.
                 if dist <= lowest_dist {
@@ -119,7 +139,7 @@ impl FuzzyMatcher {
 ///
 /// upstream: generator.c:852-856,883 - `F_IS_ACTIVE`, `S_ISREG`, and
 /// `!F_LENGTH(fp)` screening.
-fn collect_candidates(dir: &Path, target_name: &str) -> Vec<Candidate> {
+fn collect_candidates(dir: &Path, target_name: &[u8]) -> Vec<Candidate> {
     let Ok(entries) = fs::read_dir(dir) else {
         return Vec::new();
     };
@@ -138,12 +158,14 @@ fn collect_candidates(dir: &Path, target_name: &str) -> Vec<Candidate> {
 
         let path = entry.path();
         let name = match path.file_name() {
-            Some(name) => name.to_string_lossy().into_owned(),
+            Some(name) => os_str_bytes(name),
             None => continue,
         };
 
         // The exact-name file is used as the direct basis (FNAMECMP_FNAME)
-        // before fuzzy matching runs, never as a fuzzy candidate.
+        // before fuzzy matching runs, never as a fuzzy candidate. Compare raw
+        // bytes so a non-UTF8 basename is not conflated with the target via
+        // U+FFFD replacement.
         if name == target_name {
             continue;
         }
@@ -156,7 +178,9 @@ fn collect_candidates(dir: &Path, target_name: &str) -> Vec<Candidate> {
         });
     }
 
-    out.sort_by(|a, b| a.name.as_bytes().cmp(b.name.as_bytes()));
+    // upstream: flist.c `f_name_cmp()` sorts the dirlist bytewise; a bytewise
+    // sort here keeps the tie-break scan order identical for non-UTF8 names.
+    out.sort_by(|a, b| a.name.cmp(&b.name));
     out
 }
 
@@ -319,6 +343,90 @@ mod tests {
             let result =
                 matcher.find_fuzzy_basis(OsStr::new("report_2024.csv"), dir.path(), 0, None);
             assert!(result.is_none(), "empty candidate must not be a basis");
+        }
+    }
+
+    // Non-UTF8 basenames only exist where the kernel permits arbitrary bytes in
+    // a filename: Linux allows them, whereas macOS (HFS+/APFS) and Windows
+    // enforce valid Unicode and reject them with EILSEQ. The lossy-vs-raw fuzzy
+    // divergence therefore can only arise on Linux, so these integration tests
+    // are Linux-gated and additionally skip if the backing filesystem still
+    // refuses the names.
+    #[cfg(target_os = "linux")]
+    mod raw_byte_name_tests {
+        use super::*;
+        use std::os::unix::ffi::OsStrExt;
+
+        /// Writes `contents` to `dir/<raw name bytes>`; returns the path, or
+        /// `None` if the filesystem rejects the non-UTF8 name (skip signal).
+        fn try_write_raw(dir: &Path, name: &[u8], contents: &[u8]) -> Option<PathBuf> {
+            let path = dir.join(OsStr::from_bytes(name));
+            fs::write(&path, contents).ok().map(|()| path)
+        }
+
+        /// WHY: upstream `fuzzy_distance()` / `find_filename_suffix()` and the
+        /// dirlist sort are byte-oriented (util1.c:1528,1588; flist.c
+        /// `f_name_cmp`). Routing candidate names through `to_string_lossy`
+        /// first collapses every distinct invalid byte to U+FFFD, so two
+        /// different non-UTF8 basenames become the same string and score an
+        /// identical (zero) distance to a non-UTF8 target - selecting a
+        /// different basis than upstream and thus emitting different delta
+        /// bytes. Scoring on raw bytes instead picks the byte-closest candidate
+        /// with a non-zero distance that lossy scoring could never produce.
+        #[test]
+        fn non_utf8_names_scored_by_raw_bytes_not_lossy() {
+            let dir = tempfile::tempdir().unwrap();
+            // Both basenames lossy-decode to "f\u{FFFD}" but differ in their raw
+            // trailing byte (0xF0 vs 0xF4).
+            let Some(near) = try_write_raw(dir.path(), b"f\xF0", b"some bytes") else {
+                return;
+            };
+            if try_write_raw(dir.path(), b"f\xF4", b"some bytes").is_none() {
+                return;
+            }
+
+            // Target basename raw bytes: f 0xF1. Byte distance to 0xF0 is 1 and
+            // to 0xF4 is 3; under lossy all three are "f\u{FFFD}" and score 0.
+            let target = OsStr::from_bytes(b"f\xF1");
+            let matcher = FuzzyMatcher::new();
+            let result = matcher
+                .find_fuzzy_basis(target, dir.path(), 10, None)
+                .expect("a fuzzy basis must be selected");
+
+            assert_eq!(result.path, near, "byte-closest candidate (0xF0) must win");
+            // UNIT + |0xF0 - 0xF1| = 0x10000 + 1. Lossy scoring would report 0
+            // because the mangled strings are identical, so this exact value
+            // proves the comparison ran on raw bytes.
+            assert_eq!(result.distance, (1 << 16) + 1);
+        }
+
+        /// WHY: the candidate sort must also be bytewise so equal-distance
+        /// tie-breaks follow upstream's `f_name_cmp` order for non-UTF8 names.
+        /// Two candidates equidistant from the target settle deterministically
+        /// by raw-byte order, not by an arbitrary lossy-string collision.
+        #[test]
+        fn non_utf8_tie_break_follows_bytewise_order() {
+            let dir = tempfile::tempdir().unwrap();
+            // Distances from target "m\xF2": |0xF1-0xF2| = 1 and |0xF3-0xF2| = 1
+            // are equal, so the `<=` rule selects the last in bytewise order.
+            if try_write_raw(dir.path(), b"m\xF1", b"payload!!").is_none() {
+                return;
+            }
+            let Some(higher) = try_write_raw(dir.path(), b"m\xF3", b"payload!!") else {
+                return;
+            };
+
+            let target = OsStr::from_bytes(b"m\xF2");
+            let matcher = FuzzyMatcher::new();
+            let result = matcher
+                .find_fuzzy_basis(target, dir.path(), 9, None)
+                .expect("a fuzzy basis must be selected");
+
+            assert_eq!(
+                result.path, higher,
+                "bytewise sort orders 0xF1 before 0xF3, so 0xF3 wins the <= tie"
+            );
+            assert_eq!(result.distance, (1 << 16) + 1);
         }
     }
 
