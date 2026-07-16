@@ -12,13 +12,14 @@ use crate::acl::constants::{
     XMIT_USER_OBJ,
 };
 use crate::acl::entry::{AclCache, IdAccess, IdaEntries, RsyncAcl};
+use crate::varint::write_varint;
 
 #[test]
 fn encode_decode_access_roundtrip() {
     // User entry with rwx
     let access = 0x07 | NAME_IS_USER;
     let encoded = encode_access(access, false);
-    let (decoded, name_follows) = decode_access(encoded, true);
+    let (decoded, name_follows) = decode_access(encoded, true).unwrap();
     assert_eq!(decoded & !NAME_IS_USER, access & !NAME_IS_USER);
     assert!(decoded & NAME_IS_USER != 0);
     assert!(!name_follows);
@@ -26,7 +27,7 @@ fn encode_decode_access_roundtrip() {
     // Group entry with rx
     let access = 0x05;
     let encoded = encode_access(access, true);
-    let (decoded, name_follows) = decode_access(encoded, true);
+    let (decoded, name_follows) = decode_access(encoded, true).unwrap();
     assert_eq!(decoded, access);
     assert!(name_follows);
 }
@@ -196,7 +197,7 @@ fn encode_access_all_permission_bits() {
     // Test all permission combinations
     for perms in 0..=7 {
         let encoded = encode_access(perms, false);
-        let (decoded, _) = decode_access(encoded, true);
+        let (decoded, _) = decode_access(encoded, true).unwrap();
         assert_eq!(
             decoded & !NAME_IS_USER,
             perms,
@@ -214,7 +215,7 @@ fn encode_access_name_is_user_flag() {
     assert!(encoded & XFLAG_NAME_FOLLOWS != 0);
     assert!(encoded & XFLAG_NAME_IS_USER != 0);
 
-    let (decoded, name_follows) = decode_access(encoded, true);
+    let (decoded, name_follows) = decode_access(encoded, true).unwrap();
     assert!(name_follows);
     assert!(decoded & NAME_IS_USER != 0);
     assert_eq!(decoded & !NAME_IS_USER, 0x05);
@@ -222,11 +223,52 @@ fn encode_access_name_is_user_flag() {
 
 #[test]
 fn decode_access_non_name_entry() {
-    // Non-name entries return the raw value without flag interpretation
-    let value = 0x1234;
-    let (decoded, name_follows) = decode_access(value, false);
+    // Object entries return the raw permission mask without flag interpretation.
+    let value = 0x05;
+    let (decoded, name_follows) = decode_access(value, false).unwrap();
     assert_eq!(decoded, value);
     assert!(!name_follows);
+}
+
+#[test]
+fn decode_access_named_out_of_range_is_stream_io() {
+    // upstream: acls.c:672-695 recv_acl_access() rejects a named entry whose
+    // shifted permission bits exceed SMB_ACL_VALID_NAME_BITS (rwx = 0x07) via
+    // rprintf(FERROR_XFER) + exit_cleanup(RERR_STREAMIO). A bare InvalidData
+    // io::Error maps to RERR_STREAMIO (exit 12) in the core exit-code mapper.
+    // WHY this matters: without the range check the extra bit is silently
+    // truncated by `as u8`, corrupting the applied ACL instead of aborting the
+    // transfer as upstream does.
+    let out_of_range_perms = 0x08; // bit 3 is outside rwx
+    let encoded = out_of_range_perms << ACCESS_SHIFT;
+
+    let err = decode_access(encoded, true).unwrap_err();
+    assert_eq!(err.kind(), std::io::ErrorKind::InvalidData);
+}
+
+#[test]
+fn decode_access_object_out_of_range_is_stream_io() {
+    // upstream: acls.c:687-692 recv_acl_access() rejects an object entry whose
+    // bits exceed SMB_ACL_VALID_OBJ_BITS (0x07) with exit_cleanup(RERR_STREAMIO).
+    let err = decode_access(0x08, false).unwrap_err();
+    assert_eq!(err.kind(), std::io::ErrorKind::InvalidData);
+}
+
+#[test]
+fn recv_ida_entries_out_of_range_access_is_stream_io() {
+    // upstream: acls.c:672-695 recv_acl_access() (called from recv_ida_entries,
+    // acls.c:708) aborts with RERR_STREAMIO on an out-of-range named-entry
+    // access value. Drive the full wire decode to prove the error surfaces from
+    // the receive path, not just the pure decoder. An out-of-range value must
+    // yield the InvalidData -> RERR_STREAMIO (exit 12) error, never a silent
+    // `as u8` truncation.
+    let mut wire = Vec::new();
+    write_varint(&mut wire, 1).unwrap(); // one named entry
+    write_varint(&mut wire, 1000).unwrap(); // id
+    write_varint(&mut wire, 0x08i32 << ACCESS_SHIFT).unwrap(); // out-of-range perms
+
+    let err = recv_ida_entries(&mut Cursor::new(wire)).unwrap_err();
+    assert_eq!(err.kind(), std::io::ErrorKind::InvalidData);
 }
 
 #[test]
