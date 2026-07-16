@@ -18,4 +18,7 @@ mod tests;
 pub use coerce::ChecksumThreadsSetting;
 pub use entry::parse_args;
 
-use super::{BandwidthArgument, ParsedArgs, detect_program_name, env_protect_args_default};
+use super::{
+    BandwidthArgument, ParsedArgs, detect_program_name, env_iconv_default, env_max_alloc_default,
+    env_protect_args_default,
+};
