@@ -304,14 +304,22 @@ pub fn sync_xattrs(
 /// * `destination` - Path to apply xattrs to.
 /// * `xattr_list` - Parsed xattr name-value pairs from the wire protocol.
 /// * `follow_symlinks` - Whether to follow symlinks when setting xattrs.
+/// * `filter` - Optional `x`-modifier filter predicate. When present, a name for
+///   which it returns `false` is neither applied to the destination nor removed
+///   from it, mirroring upstream's `saw_xattr_filter` screening.
 ///
 /// # Upstream Reference
 ///
-/// Mirrors `xattrs.c:set_xattr()` - applies received xattr data to destination files.
+/// Mirrors `xattrs.c:set_xattr()` - applies received xattr data to destination
+/// files. The `filter` argument mirrors the receive-side screening upstream
+/// performs in `receive_xattr()` (xattrs.c:822, drop an excluded received name)
+/// and `rsync_xal_set()` (xattrs.c:1026, keep an excluded destination name),
+/// both gated on `name_is_excluded(name, NAME_IS_XATTR, ALL_FILTERS)`.
 pub fn apply_xattrs_from_list(
     destination: &Path,
     xattr_list: &XattrList,
     follow_symlinks: bool,
+    filter: Option<&dyn Fn(&str) -> bool>,
 ) -> Result<(), MetadataError> {
     let mut applied_names: HashSet<Vec<u8>> = HashSet::with_capacity(xattr_list.len());
 
@@ -339,6 +347,13 @@ pub fn apply_xattrs_from_list(
             continue;
         }
 
+        // upstream: xattrs.c:822 receive_xattr() drops a received xattr whose
+        // name is excluded by an `x`-modifier filter rule before it is stored,
+        // so it is never applied to the destination.
+        if !filter.is_none_or(|predicate| predicate(&name_str)) {
+            continue;
+        }
+
         // Skip the reserved SDDL slot on every platform: Windows has
         // already applied it via the DACL path, POSIX targets do not have
         // a corresponding native sink.
@@ -358,7 +373,11 @@ pub fn apply_xattrs_from_list(
     for name in &dest_attrs {
         if !applied_names.contains(name) {
             let name_str = String::from_utf8_lossy(name);
-            if is_xattr_permitted(&name_str) {
+            // upstream: xattrs.c:1026 rsync_xal_set() skips the removal of a
+            // destination xattr whose name is excluded by an `x`-modifier
+            // filter rule, leaving the pre-existing value in place.
+            if is_xattr_permitted(&name_str) && filter.is_none_or(|predicate| predicate(&name_str))
+            {
                 remove_attribute(destination, name, follow_symlinks)?;
             }
         }
@@ -850,7 +869,7 @@ mod tests {
             b"value2".to_vec(),
         ));
 
-        apply_xattrs_from_list(&file, &list, false).expect("apply xattrs");
+        apply_xattrs_from_list(&file, &list, false, None).expect("apply xattrs");
 
         let attr1 = test_xattr_name("attr1");
         let attr2 = test_xattr_name("attr2");
@@ -866,6 +885,101 @@ mod tests {
                 .expect("read")
                 .expect("attr2"),
             b"value2"
+        );
+    }
+
+    // Receive-side mirror of the send-side x-modifier filter (#128): a received
+    // xattr whose name the filter excludes must never be applied to the
+    // destination, even though the sender put it on the wire, while an allowed
+    // name IS applied. upstream: xattrs.c:822 receive_xattr() drops an excluded
+    // received name via name_is_excluded(name, NAME_IS_XATTR, ALL_FILTERS).
+    #[test]
+    fn apply_xattrs_from_list_filter_drops_excluded_received() {
+        let dir = tempdir().expect("create temp dir");
+        let file = dir.path().join("dest.txt");
+        fs::write(&file, "content").expect("write file");
+
+        if !xattrs_supported(&file) {
+            eprintln!("xattrs not supported, skipping test");
+            return;
+        }
+
+        let mut list = XattrList::new();
+        list.push(XattrEntry::new(test_xattr_name("keep"), b"kept".to_vec()));
+        list.push(XattrEntry::new(
+            test_xattr_name("skipme"),
+            b"dropped".to_vec(),
+        ));
+
+        // Exclude any name containing "skip" (matches on the local xattr name,
+        // which carries the `user.` prefix on Linux and is bare elsewhere).
+        let filter = |name: &str| !name.contains("skip");
+        apply_xattrs_from_list(&file, &list, false, Some(&filter)).expect("apply xattrs");
+
+        // The allowed attr is applied.
+        assert_eq!(
+            read_attribute(&file, &test_xattr_name("keep"), false)
+                .expect("read")
+                .expect("keep"),
+            b"kept"
+        );
+        // The excluded attr the sender transmitted is NOT applied.
+        assert!(
+            read_attribute(&file, &test_xattr_name("skipme"), false)
+                .expect("read")
+                .is_none(),
+            "filtered received xattr must not land on the destination"
+        );
+    }
+
+    // A destination xattr the filter excludes must be preserved even when it is
+    // absent from the received list, while a non-excluded stale attr is still
+    // removed. upstream: xattrs.c:1026 rsync_xal_set() skips the removal of an
+    // excluded destination name.
+    #[test]
+    fn apply_xattrs_from_list_filter_preserves_excluded_dest_attr() {
+        let dir = tempdir().expect("create temp dir");
+        let file = dir.path().join("dest.txt");
+        fs::write(&file, "content").expect("write file");
+
+        if !xattrs_supported(&file) {
+            eprintln!("xattrs not supported, skipping test");
+            return;
+        }
+
+        // Excluded pre-existing attr (not in the received list).
+        let excluded = test_xattr_name("skipme");
+        write_attribute(&file, &excluded, b"local", false).expect("write excluded");
+        // Non-excluded stale attr (not in the received list).
+        let stale = test_xattr_name("stale");
+        write_attribute(&file, &stale, b"old", false).expect("write stale");
+
+        let mut list = XattrList::new();
+        list.push(XattrEntry::new(test_xattr_name("keep"), b"kept".to_vec()));
+
+        let filter = |name: &str| !name.contains("skip");
+        apply_xattrs_from_list(&file, &list, false, Some(&filter)).expect("apply xattrs");
+
+        // Excluded destination attr is preserved.
+        assert_eq!(
+            read_attribute(&file, &excluded, false)
+                .expect("read")
+                .expect("excluded preserved"),
+            b"local"
+        );
+        // Non-excluded stale attr is removed.
+        assert!(
+            read_attribute(&file, &stale, false)
+                .expect("read")
+                .is_none(),
+            "non-excluded stale dest xattr must be removed"
+        );
+        // The received attr is applied.
+        assert_eq!(
+            read_attribute(&file, &test_xattr_name("keep"), false)
+                .expect("read")
+                .expect("keep"),
+            b"kept"
         );
     }
 
@@ -890,7 +1004,7 @@ mod tests {
             b"new_value".to_vec(),
         ));
 
-        apply_xattrs_from_list(&file, &list, false).expect("apply xattrs");
+        apply_xattrs_from_list(&file, &list, false, None).expect("apply xattrs");
 
         // Stale attr should be removed
         assert!(
@@ -933,7 +1047,7 @@ mod tests {
             b"full_value".to_vec(),
         ));
 
-        apply_xattrs_from_list(&file, &list, false).expect("apply xattrs");
+        apply_xattrs_from_list(&file, &list, false, None).expect("apply xattrs");
 
         // Abbreviated entry should not be set
         let abbrev = test_xattr_name("abbrev");
@@ -969,7 +1083,7 @@ mod tests {
         write_attribute(&file, &attr, b"value", false).expect("write existing");
 
         let list = XattrList::new();
-        apply_xattrs_from_list(&file, &list, false).expect("apply empty list");
+        apply_xattrs_from_list(&file, &list, false, None).expect("apply empty list");
 
         // All permitted xattrs should be removed
         assert!(read_attribute(&file, &attr, false).expect("read").is_none());
@@ -995,7 +1109,7 @@ mod tests {
             b"new_value".to_vec(),
         ));
 
-        apply_xattrs_from_list(&file, &list, false).expect("apply xattrs");
+        apply_xattrs_from_list(&file, &list, false, None).expect("apply xattrs");
 
         assert_eq!(
             read_attribute(&file, &attr, false)
@@ -1019,7 +1133,7 @@ mod tests {
         let mut list = XattrList::new();
         list.push(XattrEntry::new(test_xattr_name("empty_val"), b"".to_vec()));
 
-        apply_xattrs_from_list(&file, &list, false).expect("apply xattrs");
+        apply_xattrs_from_list(&file, &list, false, None).expect("apply xattrs");
 
         let attr = test_xattr_name("empty_val");
         let value = read_attribute(&file, &attr, false)

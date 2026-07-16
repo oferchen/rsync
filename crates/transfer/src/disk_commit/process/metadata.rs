@@ -44,6 +44,7 @@ pub(super) fn apply_file_metadata(
             config.acl_cache.as_deref(),
             config.acl_id_map.as_deref(),
             begin.xattr_list.as_ref(),
+            config.xattr_filter.as_deref(),
         )
     }
 }
@@ -64,6 +65,7 @@ fn apply_metadata_acls_and_xattrs(
     acl_cache: Option<&AclCache>,
     acl_id_map: Option<&AclIdMapper>,
     xattr_list: Option<&protocol::xattr::XattrList>,
+    xattr_filter: Option<&filters::FilterSet>,
 ) -> Option<(PathBuf, String)> {
     let (opts, entry) = match (metadata_opts, file_entry) {
         (Some(o), Some(e)) => (o, e),
@@ -97,7 +99,9 @@ fn apply_metadata_acls_and_xattrs(
 
     // upstream: xattrs.c:set_xattr() - apply xattrs after metadata and ACLs
     if let Some(xattr_list) = xattr_list {
-        if let Err(e) = metadata::apply_xattrs_from_list(file_path, xattr_list, true) {
+        let filter = xattr_filter.map(|set| move |name: &str| set.xattr_name_allowed(name));
+        let filter_ref = filter.as_ref().map(|f| f as &dyn Fn(&str) -> bool);
+        if let Err(e) = metadata::apply_xattrs_from_list(file_path, xattr_list, true, filter_ref) {
             return Some((file_path.to_path_buf(), e.to_string()));
         }
     }

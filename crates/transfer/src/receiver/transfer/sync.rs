@@ -503,7 +503,13 @@ impl ReceiverContext {
                 metadata_errors.push((file_path.clone(), meta_err.to_string()));
             } else if let Some(ref xattr_list) = self.resolve_xattr_list(file_entry) {
                 // upstream: xattrs.c:set_xattr() - apply xattrs after metadata
-                if let Err(e) = metadata::apply_xattrs_from_list(&file_path, xattr_list, true) {
+                let filter = self
+                    .xattr_name_filter()
+                    .map(|set| move |name: &str| set.xattr_name_allowed(name));
+                let filter_ref = filter.as_ref().map(|f| f as &dyn Fn(&str) -> bool);
+                if let Err(e) =
+                    metadata::apply_xattrs_from_list(&file_path, xattr_list, true, filter_ref)
+                {
                     metadata_errors.push((file_path.clone(), e.to_string()));
                 }
             }

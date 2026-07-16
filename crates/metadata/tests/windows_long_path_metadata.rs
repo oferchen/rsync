@@ -105,7 +105,7 @@ fn ads_supported(file: &Path) -> bool {
     let probe_name = b"oc_rsync_longpath_probe".to_vec();
     let mut probe = XattrList::new();
     probe.push(XattrEntry::new(probe_name, b"1".to_vec()));
-    match apply_xattrs_from_list(file, &probe, false) {
+    match apply_xattrs_from_list(file, &probe, false, None) {
         Ok(()) => true,
         Err(error) => {
             eprintln!("ADS not supported on this volume ({error}); skipping");
@@ -186,7 +186,7 @@ fn long_path_ads_round_trip() {
     let stream_value = b"[ZoneTransfer]\r\nZoneId=3\r\n".to_vec();
     let mut list = XattrList::new();
     list.push(XattrEntry::new(local_name.to_vec(), stream_value.clone()));
-    apply_xattrs_from_list(&file, &list, false).expect("apply ADS on long path");
+    apply_xattrs_from_list(&file, &list, false, None).expect("apply ADS on long path");
 
     // Read the xattrs back; the boundary path here is
     // `xattr_windows::path_to_wide` feeding `FindFirstStreamW`. The wire
