@@ -1666,122 +1666,64 @@ fn lz4_decoder_rejects_run_overflow() {
     assert_rejects_run_overflow(CompressedTokenDecoder::new_lz4());
 }
 
-/// Defence-in-depth: the zlib decoder must reject accumulated compressed
-/// data that exceeds `MAX_ACCUMULATED_COMPRESSED_BYTES` (64 MiB).
+/// A whole-file `-z` transfer whose compressed literal run exceeds the old
+/// 64 MiB accumulation cap must round-trip byte-for-byte.
 ///
-/// Rust's `usize` arithmetic prevents the integer-overflow CVE that
-/// affected upstream C (CVE-2026-43618), but an explicit cap prevents
-/// OOM from crafted input sending an unbounded chain of DEFLATED_DATA
-/// blocks.
+/// WHY: upstream token.c:recv_deflated_token() streams each DEFLATED_DATA block
+/// through a persistent inflate state into a fixed CHUNK_SIZE buffer, emitting
+/// output incrementally with NO size cap - O(CHUNK_SIZE) memory for a multi-GB
+/// transfer. oc previously accumulated the entire compressed literal run and
+/// inflated it once, guarded by a 64 MiB cap that upstream does not have, so any
+/// compressed literal over 64 MiB aborted a transfer upstream completes fine.
 ///
-/// upstream: token.c defence-in-depth - bound accumulated compressed data (3.4.3)
+/// This builds a single consecutive DEFLATED_DATA run larger than that cap
+/// (level-0 "stored" deflate keeps the compressed size ~= the input size) and
+/// asserts a byte-identical round-trip, decoding incrementally so the decoder's
+/// own working set stays bounded. It fails against the accumulate+cap design
+/// (recv_token returns an "accumulated compressed data exceeds" error) and
+/// passes once the decoder streams per block, as upstream does.
 #[test]
-fn zlib_decoder_rejects_oversized_accumulated_compressed_data() {
-    use super::zlib_codec::MAX_ACCUMULATED_COMPRESSED_BYTES;
+fn zlib_streams_large_literal_exceeding_old_64mib_cap() {
+    // 65 MiB of varied bytes: a level-0 (stored) deflate run of this literal
+    // exceeds the removed 64 MiB cap. A deterministic non-uniform pattern keeps
+    // the round-trip assertion meaningful.
+    let size = 65 * 1024 * 1024;
+    let data: Vec<u8> = (0..size).map(|i| (i % 251) as u8).collect();
 
-    // Build a synthetic wire stream: an initial DEFLATED_DATA block
-    // followed by enough consecutive DEFLATED_DATA blocks to breach
-    // the cap. Use a streaming reader to avoid allocating 64 MiB.
-    struct OverflowReader {
-        /// Pre-built header+payload for each DEFLATED_DATA block.
-        block: Vec<u8>,
-        /// Total bytes of compressed data emitted so far.
-        emitted: usize,
-        /// Position within the current copy of `block`.
-        pos: usize,
-        /// Whether the first flag byte (the one that enters the
-        /// DEFLATED_DATA branch in recv_token) has been emitted.
-        first_flag_emitted: bool,
-        cap: usize,
-    }
+    // Level 0 (stored) keeps compressed size ~= input size and is fast, so the
+    // single consecutive DEFLATED_DATA run clears the old 64 MiB cap.
+    let mut encoded = Vec::new();
+    let mut encoder = CompressedTokenEncoder::new(CompressionLevel::None, 31);
+    encoder.send_literal(&mut encoded, &data).unwrap();
+    encoder.finish(&mut encoded).unwrap();
 
-    impl io::Read for OverflowReader {
-        fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
-            if buf.is_empty() {
-                return Ok(0);
+    // Sanity: the compressed literal run really is larger than the removed cap,
+    // otherwise this would not exercise the regression.
+    assert!(
+        encoded.len() > 64 * 1024 * 1024,
+        "compressed run ({} bytes) must exceed the old 64 MiB cap",
+        encoded.len()
+    );
+
+    // Decode incrementally, comparing against the source as we go so the
+    // decoder streams rather than materialising the whole literal.
+    let mut cursor = Cursor::new(&encoded);
+    let mut decoder = CompressedTokenDecoder::new();
+    let mut offset = 0usize;
+    loop {
+        match decoder.recv_token(&mut cursor).unwrap() {
+            CompressedToken::Literal(chunk) => {
+                assert!(offset + chunk.len() <= data.len(), "decoder overran source");
+                assert_eq!(
+                    chunk.as_slice(),
+                    &data[offset..offset + chunk.len()],
+                    "mismatch at offset {offset}"
+                );
+                offset += chunk.len();
             }
-
-            // The very first byte the decoder reads is the flag byte
-            // that routes into the DEFLATED_DATA branch. Emit it once.
-            if !self.first_flag_emitted {
-                // DEFLATED_DATA with length = MAX_DATA_COUNT
-                let len = MAX_DATA_COUNT;
-                let flag = DEFLATED_DATA | ((len >> 8) as u8);
-                buf[0] = flag;
-                self.first_flag_emitted = true;
-                // The next read_exact(1) from the decoder will read
-                // the low-byte of the length from the block data.
-                // We set pos to 0 so the block data starts being read.
-                self.pos = 0;
-                // Prepend the low byte of the length to the block
-                // payload. We handle this by having `block` start
-                // with the low byte.
-                return Ok(1);
-            }
-
-            // Keep emitting blocks until we exceed the cap.
-            // Each "block" in self.block is: [len_low_byte, payload...]
-            // followed by the next DEFLATED_DATA header for the
-            // subsequent block (2 bytes).
-            let remaining_in_block = self.block.len() - self.pos;
-            if remaining_in_block == 0 {
-                // We just finished a block. Decide whether to emit
-                // another DEFLATED_DATA header or stop.
-                if self.emitted > self.cap {
-                    // We've exceeded the cap; the decoder should have
-                    // already errored. If we get here, something is
-                    // wrong - just return EOF to avoid infinite loops.
-                    return Ok(0);
-                }
-                self.pos = 0;
-            }
-
-            let n = buf.len().min(self.block.len() - self.pos);
-            buf[..n].copy_from_slice(&self.block[self.pos..self.pos + n]);
-            self.pos += n;
-
-            // Track emitted compressed data bytes (payload only, not
-            // headers).
-            if self.pos >= 1 {
-                // Approximate: most of what we emit is payload.
-                self.emitted += n;
-            }
-
-            Ok(n)
+            CompressedToken::End => break,
+            CompressedToken::BlockMatch(_) => panic!("unexpected block match"),
         }
     }
-
-    // Build a repeating block: low byte of length + MAX_DATA_COUNT
-    // bytes of payload + next DEFLATED_DATA header (2 bytes).
-    let payload_len = MAX_DATA_COUNT;
-    let mut block = Vec::with_capacity(1 + payload_len + 2);
-    // Low byte of the length for read_deflated_data_length
-    block.push((payload_len & 0xFF) as u8);
-    // Payload (content doesn't matter - the decoder will try to
-    // inflate it and may fail, but the cap check happens before
-    // decompression)
-    block.extend(std::iter::repeat_n(0xAA, payload_len));
-    // Next DEFLATED_DATA header (flag + low byte will be read by the
-    // next iteration of the accumulation loop)
-    let next_flag = DEFLATED_DATA | ((payload_len >> 8) as u8);
-    block.push(next_flag);
-
-    let mut reader = OverflowReader {
-        block,
-        emitted: 0,
-        pos: 0,
-        first_flag_emitted: false,
-        cap: MAX_ACCUMULATED_COMPRESSED_BYTES + MAX_DATA_COUNT,
-    };
-
-    let mut decoder = CompressedTokenDecoder::new();
-    let err = decoder
-        .recv_token(&mut reader)
-        .expect_err("decoder must reject oversized accumulated compressed data");
-    assert_eq!(err.kind(), io::ErrorKind::InvalidData);
-    assert!(
-        err.to_string()
-            .contains("accumulated compressed data exceeds"),
-        "unexpected error message: {err}"
-    );
+    assert_eq!(offset, data.len(), "decoded length must match the source");
 }
