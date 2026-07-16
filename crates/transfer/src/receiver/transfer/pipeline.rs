@@ -439,6 +439,15 @@ impl ReceiverContext {
                 };
             }
 
+            // upstream: generator.c:2169 finish_hard_link() itemizes every
+            // follower once the leader completes, before the phase-1 NDX_DONE.
+            // Emit through the request-phase NDX diff-state (never the redo
+            // pass, which carries no new followers) so a pushing client's
+            // sender renders each `hf...` / `=> leader` row.
+            if !is_redo_pass {
+                self.emit_server_hardlink_follower_itemize(writer, ndx_write_codec.inner_mut())?;
+            }
+
             let redo_indices = pipelined_receiver.take_redo_indices();
             let delayed = pipelined_receiver.take_delayed_updates();
 
