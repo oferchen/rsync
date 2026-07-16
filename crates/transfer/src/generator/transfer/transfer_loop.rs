@@ -119,6 +119,10 @@ impl GeneratorContext {
         let deadline = TransferDeadline::from_system_time(self.config.stop_at);
 
         let mut files_transferred = 0;
+        // upstream: sender.c:319-335,480 - FLAG_FILE_SENT per file. A resend of
+        // an already-sent entry (the redo pass) is a full-content transfer, not
+        // another append delta, so track which entries have been sent once.
+        let mut sent_files = SentFileTracker::default();
         let mut bytes_sent = 0u64;
         // upstream: match.c stats.matched_data / stats.literal_data accumulated
         // per token as the sender emits the delta stream.
@@ -480,12 +484,24 @@ impl GeneratorContext {
             let source_path = self.reconstruct_source_path(ndx);
             let source_path_display = source_path.display().to_string();
 
+            // upstream: sender.c:319-335 - when a file arrives again on the redo
+            // pass (`file->flags & FLAG_FILE_SENT`), the sender negates
+            // append_mode and make_backups so the resend is a full-content
+            // transfer. The receiver's generator has already restored
+            // `csum_length = SUM_LENGTH` and negated append_mode for that redo
+            // (generator.c:2178-2216), so it now sends a full block signature.
+            // Honouring append here would skip reading those block sums and
+            // desync the wire.
+            let is_resend = sent_files.is_resend(ndx);
+
             // upstream: sender.c:89-95 receive_sums() - in append mode the
             // receiver's generator writes only the sum_head, not the block
             // checksums (generator.c:786 `if (append_mode > 0 && f_copy < 0)
             // return 0`). Reading blocks here would block forever, so derive
-            // flength from the header and take the append literal path.
-            let is_append = self.config.flags.append;
+            // flength from the header and take the append literal path. A resend
+            // (redo pass) clears append_mode (sender.c:324), so the signature
+            // blocks are present and must be read like any full transfer.
+            let is_append = self.config.flags.append && !is_resend;
             let sig_blocks = if is_append {
                 Vec::new()
             } else {
@@ -622,11 +638,14 @@ impl GeneratorContext {
                 };
 
                 // upstream: sender.c:337 - the per-file updating_basis_file flag
-                // gates match.c:211's backward-Copy suppression.
+                // gates match.c:211's backward-Copy suppression. On a redo-pass
+                // resend upstream negates make_backups (sender.c:323,329) so the
+                // inplace send skips the duplicate backup; mirror that by
+                // clearing the backup flag for a resend (proto < 29 path).
                 let updating_basis_file = updating_basis_file(
                     self.config.write.inplace,
                     self.config.write.inplace_partial,
-                    self.config.flags.backup,
+                    self.config.flags.backup && !is_resend,
                     self.protocol,
                     fnamecmp_type,
                 );
@@ -789,6 +808,12 @@ impl GeneratorContext {
                 literal_data += file_size;
             }
             files_transferred += 1;
+            // upstream: sender.c:480 - `file->flags |= FLAG_FILE_SENT` once the
+            // entry has actually been transferred, so a later redo request for
+            // it clears append_mode/make_backups above. Skipped items
+            // (diminished, open failure, non-regular) `continue` before here,
+            // matching upstream which sets the flag only after a real send.
+            sent_files.mark_sent(ndx);
 
             // upstream: sender.c:131-182 successful_send() - unlink the source
             // when --remove-source-files is active and the transfer succeeded.
@@ -1036,6 +1061,44 @@ impl GeneratorContext {
                 IOERR_GENERAL
             }
         }
+    }
+}
+
+/// Per-index record of which file-list entries the sender has already
+/// transferred, mirroring upstream's per-file `FLAG_FILE_SENT` bit.
+///
+/// On a redo pass the receiver's generator re-requests a file it already
+/// consumed, this time sending a full-length block signature instead of the
+/// append short-circuit: `check_for_finished_files()` restores
+/// `csum_length = SUM_LENGTH` and negates `append_mode`/`make_backups` around
+/// the redo `recv_generator` call (generator.c:2178-2216). The sender mirrors
+/// this from its side by keying off `FLAG_FILE_SENT`: a resend is a
+/// full-content transfer, not another append delta (sender.c:319-335,482-483).
+/// Without it the sender would take the no-signature append path and leave the
+/// block sums the receiver just sent unread on the wire, desyncing the stream
+/// against a real upstream peer.
+#[derive(Default)]
+struct SentFileTracker {
+    /// `sent[ndx]` becomes true once entry `ndx` has been transferred at least
+    /// once. Indexed by the flat file-list index, so a redo request for the
+    /// same entry reads back its prior send.
+    sent: Vec<bool>,
+}
+
+impl SentFileTracker {
+    /// Returns true when `ndx` was already transferred, i.e. this request is a
+    /// redo-pass resend (upstream `file->flags & FLAG_FILE_SENT`, sender.c:319).
+    fn is_resend(&self, ndx: usize) -> bool {
+        self.sent.get(ndx).copied().unwrap_or(false)
+    }
+
+    /// Records that `ndx` has now been transferred, so any later request for it
+    /// is a resend (upstream `file->flags |= FLAG_FILE_SENT`, sender.c:480).
+    fn mark_sent(&mut self, ndx: usize) {
+        if ndx >= self.sent.len() {
+            self.sent.resize(ndx + 1, false);
+        }
+        self.sent[ndx] = true;
     }
 }
 
@@ -1399,5 +1462,150 @@ mod phase2_guard_tests {
         ndx.write_ndx_done(&mut wire).unwrap();
 
         drive(&mut ctx, wire).expect("clean phase completion");
+    }
+}
+
+#[cfg(test)]
+mod append_redo_tests {
+    //! Redo-pass append desync guard for the sender loop.
+    //!
+    //! upstream: sender.c:319-338,482-483 - the sender tracks `FLAG_FILE_SENT`
+    //! per file. The first request for an entry is sent as an append delta
+    //! (`append_mode > 0`, no block signature - receive_sums returns early at
+    //! generator.c:786). On a redo request the receiver's generator has already
+    //! restored `csum_length = SUM_LENGTH` and negated `append_mode`
+    //! (check_for_finished_files, generator.c:2178-2216) and now transmits a
+    //! full block signature. The sender must negate `append_mode` too
+    //! (sender.c:324) so it reads those block sums and does a full-content
+    //! transfer. A static append branch would skip the block-sum read and leave
+    //! them on the wire, desyncing every subsequent NDX against a real upstream
+    //! peer.
+
+    use std::ffi::OsString;
+    use std::io::{self, Cursor};
+    use std::path::PathBuf;
+
+    use protocol::ProtocolVersion;
+    use protocol::codec::{NdxCodec, create_ndx_codec};
+
+    use crate::config::ServerConfig;
+    use crate::flags::ParsedServerFlags;
+    use crate::generator::GeneratorContext;
+    use crate::handshake::HandshakeResult;
+    use crate::receiver::SumHead;
+    use crate::role::ServerRole;
+    use crate::writer::ServerWriter;
+
+    /// `ITEM_TRANSFER` (0x8000) as its 2-byte little-endian wire encoding.
+    const ITEM_TRANSFER_LE: [u8; 2] = [0x00, 0x80];
+
+    fn test_handshake() -> HandshakeResult {
+        HandshakeResult {
+            protocol: ProtocolVersion::try_from(32u8).unwrap(),
+            buffered: Vec::new(),
+            compat_exchanged: false,
+            client_args: None,
+            io_timeout: None,
+            negotiated_algorithms: None,
+            compat_flags: None,
+            checksum_seed: 0,
+        }
+    }
+
+    /// Builds an `--append` generator over a single 100-byte source file, so
+    /// wire NDX 0 is a valid in-range transfer request.
+    fn append_generator() -> (tempfile::TempDir, GeneratorContext) {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let file = dir.path().join("data.bin");
+        std::fs::write(&file, vec![0xA5u8; 100]).expect("write source");
+
+        let handshake = test_handshake();
+        let config = ServerConfig {
+            role: ServerRole::Generator,
+            protocol: ProtocolVersion::try_from(32u8).unwrap(),
+            flag_string: "-logDtpre.".to_owned(),
+            args: vec![OsString::from(&file)],
+            flags: ParsedServerFlags {
+                append: true,
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let mut ctx = GeneratorContext::new_for_test(&handshake, config);
+        ctx.build_file_list(&[PathBuf::from(&file)])
+            .expect("build file list");
+        (dir, ctx)
+    }
+
+    /// Drives the sender loop over a crafted receiver stream, returning
+    /// `(files_transferred, bytes_consumed_from_reader)`.
+    fn drive(ctx: &mut GeneratorContext, incoming: Vec<u8>) -> io::Result<(usize, u64)> {
+        let mut reader = Cursor::new(incoming);
+        let mut writer = ServerWriter::new_plain(Vec::new());
+        let mut progress: Option<&mut dyn crate::TransferProgressCallback> = None;
+        let mut itemize: Option<&mut dyn crate::ItemizeCallback> = None;
+        let result =
+            ctx.run_transfer_loop(&mut reader, &mut writer, &mut progress, &mut itemize)?;
+        Ok((result.files_transferred, reader.position()))
+    }
+
+    /// A file first sent as an append delta and then re-requested on the redo
+    /// pass must, on the resend, read the receiver's full block signature and
+    /// perform a full-content transfer - never a second append that skips the
+    /// block sums (sender.c:319-335,482-483).
+    ///
+    /// The redo request carries 5 block sums (100 wire bytes) the receiver's
+    /// generator produced after negating `append_mode` for the redo
+    /// (generator.c:2178-2216). With the static append branch the sender skips
+    /// those 100 bytes; they then remain on the wire and are misread as the
+    /// following NDX values, so the reader is left with 100 bytes unconsumed -
+    /// the block-sum desync. Honouring `FLAG_FILE_SENT` clears append for the
+    /// resend, so the whole crafted stream is consumed and both transfers land.
+    #[test]
+    fn append_redo_reads_full_signature_without_desync() {
+        let (_dir, mut ctx) = append_generator();
+
+        let mut rx = create_ndx_codec(32);
+        let mut wire = Vec::new();
+
+        // Phase 1 append request for NDX 0. In append mode the receiver's
+        // generator writes only the sum_head (generator.c:786), here describing
+        // a 40-byte existing prefix, and NO block sums.
+        rx.write_ndx(&mut wire, 0).unwrap();
+        wire.extend_from_slice(&ITEM_TRANSFER_LE);
+        SumHead::new(2, 20, 0, 0).write(&mut wire).unwrap(); // flength = 40
+        // NDX_DONE advances the sender phase 0 -> 1.
+        rx.write_ndx_done(&mut wire).unwrap();
+
+        // Redo pass: the SAME NDX 0 is re-requested, this time with a full block
+        // signature (generator.c:2178-2216 restored csum_length = SUM_LENGTH and
+        // negated append_mode for the redo). 5 blocks of a 16-byte strong sum
+        // describe the whole 100-byte file: 5 * (4 rolling + 16 strong) = 100
+        // wire bytes the sender MUST consume to stay in sync.
+        rx.write_ndx(&mut wire, 0).unwrap();
+        wire.extend_from_slice(&ITEM_TRANSFER_LE);
+        SumHead::new(5, 20, 16, 0).write(&mut wire).unwrap();
+        let block_sum_bytes = 5 * (4 + 16);
+        wire.extend(std::iter::repeat_n(0x00u8, block_sum_bytes));
+
+        // Two more NDX_DONEs drain phases 1 -> 2 -> break past max_phase.
+        rx.write_ndx_done(&mut wire).unwrap();
+        rx.write_ndx_done(&mut wire).unwrap();
+        let total = wire.len() as u64;
+
+        let (files, consumed) = drive(&mut ctx, wire).expect("append redo must not desync");
+
+        // Both the append send and the full-content redo completed.
+        assert_eq!(
+            files, 2,
+            "append send + redo resend both count as transfers"
+        );
+        // Every crafted byte was consumed: the resend read the full block
+        // signature instead of leaving it on the wire. The static-append bug
+        // leaves exactly the block-sum bytes unread, so `consumed` falls short.
+        assert_eq!(
+            consumed, total,
+            "resend left the redo block signature unread -> wire desync"
+        );
     }
 }
