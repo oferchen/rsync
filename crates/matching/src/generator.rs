@@ -839,17 +839,27 @@ impl DeltaGenerator {
             // A run begins: flush any literals accumulated before it.
             flush_pending!();
 
-            // Buffer the run of consecutive matching blocks with their source
-            // bytes so a lone match can be demoted to a literal.
-            let mut run: Vec<(u64, Vec<u8>)> = Vec::new();
+            // Buffer the run of consecutive matching blocks by basis index.
+            // Every block the loop extends spans exactly `block_len` source
+            // bytes (the run only grows on a full next block), so a trusted run
+            // (>= 2) reconstructs from the index alone and never needs a
+            // per-block byte copy. Only a lone match is demoted to a Literal,
+            // and that needs the source bytes - but the window is cleared before
+            // the next block, so the first block's bytes are captured once,
+            // up front. This drops the discarded per-block `Vec` allocation the
+            // trusted path used to make (one copy per matched block).
+            let mut run: Vec<u64> = Vec::new();
+            let mut lone_src: Vec<u8> = Vec::new();
 
             loop {
                 let basis_idx = index.block(match_idx).index();
-                let (s1, s2) = window.as_slices();
-                let mut src = Vec::with_capacity(block_len);
-                src.extend_from_slice(s1);
-                src.extend_from_slice(s2);
-                run.push((basis_idx, src));
+                if run.is_empty() {
+                    let (s1, s2) = window.as_slices();
+                    lone_src.reserve_exact(block_len);
+                    lone_src.extend_from_slice(s1);
+                    lone_src.extend_from_slice(s2);
+                }
+                run.push(basis_idx);
 
                 matched_blocks.mark_matched(match_idx);
                 index.mark_consumed(match_idx as u32);
@@ -899,17 +909,17 @@ impl DeltaGenerator {
             // Flush the run: trusted runs (>= 2) become Copy tokens; a lone
             // match is demoted to a Literal of its own source bytes.
             if run.len() >= 2 {
-                for (idx, bytes) in run {
-                    total_bytes += bytes.len() as u64;
+                for idx in run {
+                    total_bytes += block_len as u64;
                     tokens.push(DeltaToken::Copy {
                         index: idx,
-                        len: bytes.len(),
+                        len: block_len,
                     });
                 }
-            } else if let Some((_, bytes)) = run.into_iter().next() {
-                literal_bytes += bytes.len() as u64;
-                total_bytes += bytes.len() as u64;
-                tokens.push(DeltaToken::Literal(bytes));
+            } else if !run.is_empty() {
+                literal_bytes += lone_src.len() as u64;
+                total_bytes += lone_src.len() as u64;
+                tokens.push(DeltaToken::Literal(lone_src));
             }
         }
 
@@ -1494,6 +1504,44 @@ mod tests {
             .filter(|t| matches!(t, DeltaToken::Copy { .. }))
             .count();
         assert_eq!(copies, 2, "both consecutive blocks must be copied");
+        assert_eq!(reconstruct(&basis, &index, &script), input);
+    }
+
+    #[test]
+    fn gated_trusted_run_emits_exact_block_len_copy_tokens() {
+        // Pins the exact Copy token stream for a trusted (>= 2) consecutive run.
+        // The gated flush tracks basis indices and reconstructs each Copy length
+        // from `block_len` instead of materializing (then discarding) every
+        // block's source bytes; this golden locks that the emitted tokens - one
+        // `block_len` Copy per basis block, in order - stay byte-identical to the
+        // materialized baseline, so the wire output cannot silently drift.
+        const BLOCK_LEN: u32 = 512;
+        let basis = pseudo_random(4 * BLOCK_LEN as usize, 0x7eed_1234);
+        let index = build_index_fixed(&basis, BLOCK_LEN);
+        assert!(
+            !index.has_duplicate_blocks(),
+            "run indices are only deterministic on a duplicate-free basis"
+        );
+        let bl = index.block_length();
+        let input = basis[..3 * bl].to_vec();
+
+        let script = DeltaGenerator::new()
+            .with_consecutive_match_needed(2)
+            .generate(&input[..], &index)
+            .expect("script");
+
+        let expected = [
+            DeltaToken::Copy { index: 0, len: bl },
+            DeltaToken::Copy { index: 1, len: bl },
+            DeltaToken::Copy { index: 2, len: bl },
+        ];
+        assert_eq!(
+            script.tokens(),
+            expected.as_slice(),
+            "trusted run must emit one block_len Copy per basis block, in order"
+        );
+        assert_eq!(script.literal_bytes(), 0);
+        assert_eq!(script.total_bytes(), input.len() as u64);
         assert_eq!(reconstruct(&basis, &index, &script), input);
     }
 
