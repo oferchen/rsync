@@ -67,6 +67,7 @@ use crate::daemon::{
     sanitize_module_identifier,
     set_test_forward_override,
     set_test_hostname_override,
+    set_test_netgroup_members,
 };
 
 use core::{
@@ -160,9 +161,13 @@ include!("tests/chunks/module_hostname_allow_fails_closed_under_chroot.rs");
 include!("tests/chunks/module_hostname_allow_forward_resolve_failure_fails_closed.rs");
 include!("tests/chunks/module_hostname_allow_forward_resolve_non_matching_denies.rs");
 include!("tests/chunks/module_hostname_allow_forward_resolves_token_to_peer.rs");
+include!("tests/chunks/module_hostname_allow_netgroup_admits_member.rs");
 include!("tests/chunks/module_hostname_deny_fails_closed_when_dns_unresolved.rs");
 include!("tests/chunks/module_hostname_deny_forward_resolves_token_to_peer.rs");
 include!("tests/chunks/module_hostname_forward_lookup_off_skips_token_resolution.rs");
+include!("tests/chunks/module_hostname_netgroup_deny_blocks_member.rs");
+include!("tests/chunks/module_hostname_netgroup_deny_fails_closed_without_hostname.rs");
+include!("tests/chunks/module_hostname_netgroup_non_member_falls_through.rs");
 include!("tests/chunks/module_hostname_wildcard_token_not_forward_resolved.rs");
 include!("tests/chunks/module_ip_deny_unaffected_by_dns_failure.rs");
 include!("tests/chunks/module_peer_hostname_forward_confirm_rejects_spoofed_ptr.rs");

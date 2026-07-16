@@ -130,6 +130,34 @@ fn resolve_forward_key(key: &str) -> Vec<IpAddr> {
         .unwrap_or_default()
 }
 
+/// Tests whether the connecting client `host` belongs to the named `netgroup`.
+///
+/// This is the daemon-side seam for `@netgroup` tokens in `hosts allow`/`hosts
+/// deny`. Production builds delegate to [`metadata::host_in_netgroup`], which
+/// performs a real `innetgr` lookup on platforms with a netgroup database
+/// (glibc, macOS, the BSDs) and is a no-op returning `false` on musl/Windows.
+/// Tests inject deterministic membership via `TEST_NETGROUP_MEMBERS`, keeping
+/// access-control tests hermetic and free of a real netgroup database.
+///
+/// upstream: access.c:42 `innetgr(tok + 1, host, NULL, NULL)` - only the
+/// netgroup's host field is consulted (user and domain are NULL).
+#[cfg(not(test))]
+pub(in crate::daemon) fn netgroup_contains(netgroup: &str, host: &str) -> bool {
+    metadata::host_in_netgroup(netgroup, host)
+}
+
+/// Test-build netgroup resolver: consults the injected membership table and
+/// treats any unknown netgroup as empty, so a `@netgroup` token yields a
+/// deterministic non-match without a real netgroup database.
+#[cfg(test)]
+pub(in crate::daemon) fn netgroup_contains(netgroup: &str, host: &str) -> bool {
+    TEST_NETGROUP_MEMBERS.with(|map| {
+        map.borrow()
+            .get(netgroup)
+            .is_some_and(|hosts| hosts.iter().any(|member| member == host))
+    })
+}
+
 /// Normalizes a hostname by removing trailing dots and lowercasing.
 pub(super) fn normalize_hostname_owned(mut name: String) -> String {
     if name.ends_with('.') {
@@ -144,6 +172,8 @@ thread_local! {
     pub(in crate::daemon) static TEST_HOSTNAME_OVERRIDES: RefCell<HashMap<IpAddr, Option<String>>> =
         RefCell::new(HashMap::new());
     pub(in crate::daemon) static TEST_FORWARD_OVERRIDES: RefCell<HashMap<String, Vec<IpAddr>>> =
+        RefCell::new(HashMap::new());
+    pub(in crate::daemon) static TEST_NETGROUP_MEMBERS: RefCell<HashMap<String, Vec<String>>> =
         RefCell::new(HashMap::new());
 }
 
@@ -171,10 +201,27 @@ pub(crate) fn set_test_forward_override(name: &str, addrs: &[IpAddr]) {
     });
 }
 
-/// Clears all test hostname resolution overrides (reverse and forward).
+/// Declares that `hosts` are members of `netgroup` for the duration of a test.
+///
+/// The daemon's `@netgroup` matching consults this table via
+/// [`netgroup_contains`] in test builds, so access-control tests are hermetic
+/// and never touch a real netgroup database.
+#[cfg(test)]
+#[allow(dead_code)]
+pub(crate) fn set_test_netgroup_members(netgroup: &str, hosts: &[&str]) {
+    TEST_NETGROUP_MEMBERS.with(|map| {
+        map.borrow_mut().insert(
+            netgroup.to_owned(),
+            hosts.iter().map(|host| (*host).to_owned()).collect(),
+        );
+    });
+}
+
+/// Clears all test hostname resolution overrides (reverse, forward, netgroup).
 #[cfg(test)]
 #[allow(dead_code)]
 pub(crate) fn clear_test_hostname_overrides() {
     TEST_HOSTNAME_OVERRIDES.with(|map| map.borrow_mut().clear());
     TEST_FORWARD_OVERRIDES.with(|map| map.borrow_mut().clear());
+    TEST_NETGROUP_MEMBERS.with(|map| map.borrow_mut().clear());
 }

@@ -220,6 +220,7 @@ pub(crate) use self::module_state::{
 pub(crate) use self::module_state::{
     TEST_SECRETS_CANDIDATES, TEST_SECRETS_ENV, TestSecretsEnvOverride,
     clear_test_hostname_overrides, set_test_forward_override, set_test_hostname_override,
+    set_test_netgroup_members,
 };
 
 type SharedLogSink = Arc<Mutex<MessageSink<std::fs::File>>>;
