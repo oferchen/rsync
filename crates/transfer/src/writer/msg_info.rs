@@ -64,6 +64,23 @@ pub trait MsgInfoSender {
     fn send_msg_deleted(&mut self, _data: &[u8]) -> io::Result<()> {
         Ok(())
     }
+
+    /// Sends a `MSG_SUCCESS` frame carrying the committed file's wire NDX.
+    ///
+    /// The receiver emits this once a file has been fully received and committed
+    /// (`recv_ok == 1`), telling the sender it is now safe to unlink that file's
+    /// `--remove-source-files` source. The payload is the bare 4-byte
+    /// little-endian file index.
+    ///
+    /// The default implementation is a no-op, matching [`Self::send_msg_info`].
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `receiver.c:1063-1069` - `send_msg_success(fname, ndx)` on `recv_ok == 1`.
+    /// - `io.c:1071-1086` - `send_msg_int(MSG_SUCCESS, ndx)` wire framing.
+    fn send_msg_success(&mut self, _ndx: i32) -> io::Result<()> {
+        Ok(())
+    }
 }
 
 impl<W: Write> MsgInfoSender for ServerWriter<W> {
@@ -94,6 +111,17 @@ impl<W: Write> MsgInfoSender for ServerWriter<W> {
             Ok(())
         }
     }
+
+    fn send_msg_success(&mut self, ndx: i32) -> io::Result<()> {
+        // upstream: receiver.c:1063-1069 - MSG_SUCCESS only rides the
+        // multiplexed server stream back to the sender; plain mode (e.g. tests)
+        // never reaches this branch.
+        if self.is_multiplexed() {
+            self.send_success(ndx)
+        } else {
+            Ok(())
+        }
+    }
 }
 
 impl<T: MsgInfoSender + ?Sized> MsgInfoSender for &mut T {
@@ -108,6 +136,10 @@ impl<T: MsgInfoSender + ?Sized> MsgInfoSender for &mut T {
     fn send_msg_deleted(&mut self, data: &[u8]) -> io::Result<()> {
         (**self).send_msg_deleted(data)
     }
+
+    fn send_msg_success(&mut self, ndx: i32) -> io::Result<()> {
+        (**self).send_msg_success(ndx)
+    }
 }
 
 impl<W: MsgInfoSender> MsgInfoSender for CountingWriter<W> {
@@ -121,5 +153,9 @@ impl<W: MsgInfoSender> MsgInfoSender for CountingWriter<W> {
 
     fn send_msg_deleted(&mut self, data: &[u8]) -> io::Result<()> {
         self.inner_ref_mut().send_msg_deleted(data)
+    }
+
+    fn send_msg_success(&mut self, ndx: i32) -> io::Result<()> {
+        self.inner_ref_mut().send_msg_success(ndx)
     }
 }

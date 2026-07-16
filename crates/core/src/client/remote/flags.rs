@@ -392,6 +392,17 @@ pub(crate) fn apply_common_server_flags(config: &ClientConfig, server_config: &m
     // receiver never fallocate()s its destination files. Inert on a push (the
     // remote receiver picks it up from the forwarded --preallocate arg).
     server_config.flags.preallocate = config.preallocate();
+    // upstream: options.c:730-731 - `--remove-source-files` is a long-form-only
+    // flag with no compact letter, so build_server_flag_string never packs it
+    // into the capability string this local ServerConfig is parsed from. It
+    // governs the local half of BOTH roles: on a push the local client is the
+    // sender and must run the deferred unlink of its own sources once the remote
+    // receiver confirms each commit with MSG_SUCCESS (sender.c:131-182); on a
+    // pull the local client is the generator/receiver and must emit MSG_SUCCESS
+    // to the remote sender so it can unlink the remote sources (receiver.c:1063-1069).
+    // Without carrying it here the removal is silently skipped for every remote
+    // transfer, so it must ride onto the local config exactly like `--preallocate`.
+    server_config.flags.remove_source_files = config.remove_source_files();
     server_config.has_partial_dir = config.partial_directory().is_some();
     server_config.partial_dir = config.partial_directory().map(std::path::Path::to_path_buf);
     server_config.file_selection.min_file_size = config.min_file_size();

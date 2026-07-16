@@ -86,6 +86,16 @@ pub struct PipelinedReceiver {
     /// - `receiver.c:546-547`: `delayed_bits = bitbag_create()`
     /// - `receiver.c:584-585`: `handle_delayed_updates()` sweep
     delayed_updates: Vec<(PathBuf, PathBuf)>,
+    /// Flat file indices whose commit was confirmed (finish_transfer succeeded,
+    /// checksum verified). The receiver drains these and, when
+    /// `--remove-source-files` is active, sends `MSG_SUCCESS(ndx)` to the sender
+    /// so it can unlink the confirmed source. Mirrors upstream's
+    /// `send_msg_success()` at `recv_ok == 1`.
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `receiver.c:1063-1069`: `send_msg_success(fname, ndx)` on `recv_ok == 1`.
+    success_indices: Vec<usize>,
 }
 
 impl PipelinedReceiver {
@@ -109,6 +119,7 @@ impl PipelinedReceiver {
             permission_error_count: 0,
             warnings: Vec::new(),
             delayed_updates: Vec::new(),
+            success_indices: Vec::new(),
         })
     }
 
@@ -338,6 +349,12 @@ impl PipelinedReceiver {
             }
         }
 
+        // upstream: receiver.c:1063-1069 - the file committed cleanly
+        // (finish_transfer succeeded and any wire checksum verified), i.e.
+        // `recv_ok == 1`. Record it as a confirmed success so the receiver can
+        // emit MSG_SUCCESS(ndx) to the sender, which drives the deferred
+        // --remove-source-files unlink of the confirmed source.
+        self.success_indices.push(pending.file_index);
         Ok(())
     }
 
@@ -409,6 +426,23 @@ impl PipelinedReceiver {
     ///   when a checksum mismatch is detected during phase 1.
     pub fn drain_new_redo_indices(&mut self) -> Vec<usize> {
         std::mem::take(&mut self.redo_indices)
+    }
+
+    /// Drains the flat file indices whose commit has been confirmed since the
+    /// last call.
+    ///
+    /// Call this after `drain_ready_results` / `drain_all_results`. When
+    /// `--remove-source-files` is active the caller maps each index to its wire
+    /// NDX and sends `MSG_SUCCESS(ndx)` to the sender so it unlinks the
+    /// confirmed source; otherwise the drained indices are simply discarded, so
+    /// this stays bounded even when the flag is off.
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `receiver.c:1063-1069`: `send_msg_success(fname, ndx)` on `recv_ok == 1`.
+    /// - `io.c:1623-1637`: sender-side `MSG_SUCCESS` handler -> `successful_send`.
+    pub fn drain_new_success_indices(&mut self) -> Vec<usize> {
+        std::mem::take(&mut self.success_indices)
     }
 
     /// Returns the list of file indices that need redo (failed checksum in phase 1).

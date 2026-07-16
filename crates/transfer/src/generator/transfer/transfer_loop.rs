@@ -815,23 +815,19 @@ impl GeneratorContext {
             // matching upstream which sets the flag only after a real send.
             sent_files.mark_sent(ndx);
 
-            // upstream: sender.c:131-182 successful_send() - unlink the source
-            // when --remove-source-files is active and the transfer succeeded.
-            // Upstream defers the unlink to the MSG_SUCCESS handshake so the
-            // receiver's commit is confirmed; we run inline here at the
-            // file-transfer boundary because the generator does not exchange
-            // an MSG_SUCCESS round-trip with the receiver. The re-stat and
-            // changed-file guards still run, so a source that vanished or was
-            // modified since it entered the file list is never removed, and a
-            // guard refusal or unlink failure sets io_error -> exit 23.
-            let recorded_identity = RecordedSourceIdentity {
-                size: file_entry.size(),
-                mtime: file_entry.mtime(),
-                mtime_nsec: file_entry.mtime_nsec(),
-            };
-            let remove_io_error =
-                self.remove_source_file_if_requested(&source_path, recorded_identity);
-            self.io_error |= remove_io_error;
+            // upstream: sender.c:131-182 successful_send() - the source unlink is
+            // DEFERRED, never run inline at send time. Upstream waits for the
+            // receiver/generator to confirm the commit with MSG_SUCCESS(ndx)
+            // (io.c:1623-1637) and only then unlinks in successful_send().
+            // Recording this entry as pending - instead of unlinking now - is
+            // what makes --remove-source-files crash-safe: an interrupted,
+            // failed, or redone transfer never deletes a source that did not
+            // safely land at the destination. The re-stat and changed-file
+            // guards still run later, at confirmation time, inside
+            // confirm_source_removal() -> remove_source_file_if_requested().
+            if self.config.flags.remove_source_files && !self.config.flags.dry_run {
+                self.pending_source_removals.mark_pending(ndx);
+            }
 
             // upstream: sender.c:445-446
             // rprintf(FINFO, "sender finished %s%s%s\n", path,slash,fname)
@@ -1061,6 +1057,48 @@ impl GeneratorContext {
                 IOERR_GENERAL
             }
         }
+    }
+
+    /// Runs the deferred `--remove-source-files` unlink for a file the peer has
+    /// confirmed committed via `MSG_SUCCESS(wire_ndx)`.
+    ///
+    /// This is the sender-side reaction to a received `MSG_SUCCESS`, mirroring
+    /// upstream's `successful_send()` being invoked from the message handler
+    /// (`io.c:1637`). The wire index is mapped back to its flat file-list entry
+    /// and the source is unlinked only if this sender actually deferred a
+    /// removal for it - an index the sender never marked pending (a duplicate
+    /// confirmation, or an up-to-date entry the sender never transmitted) is
+    /// ignored, so a stray `MSG_SUCCESS` can never trigger a spurious deletion.
+    /// The re-stat and changed-file guards in
+    /// [`remove_source_file_if_requested`](Self::remove_source_file_if_requested)
+    /// still gate the unlink, so a source that vanished or changed since it
+    /// entered the file list is never removed. Returns the `io_error` bits the
+    /// caller must OR into the transfer's accumulated error state.
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `io.c:1623-1637` - `MSG_SUCCESS` receipt drives `successful_send(val)`.
+    /// - `sender.c:131-182` - `successful_send()` unlink + guards.
+    #[must_use]
+    pub(crate) fn confirm_source_removal(&mut self, wire_ndx: i32) -> i32 {
+        if wire_ndx < 0 {
+            return 0;
+        }
+        let flat_ndx = self.wire_to_flat_ndx(wire_ndx);
+        if flat_ndx >= self.file_list.len() {
+            return 0;
+        }
+        if !self.pending_source_removals.confirm(flat_ndx) {
+            return 0;
+        }
+        let source_path = self.reconstruct_source_path(flat_ndx);
+        let entry = &self.file_list[flat_ndx];
+        let recorded = RecordedSourceIdentity {
+            size: entry.size(),
+            mtime: entry.mtime(),
+            mtime_nsec: entry.mtime_nsec(),
+        };
+        self.remove_source_file_if_requested(&source_path, recorded)
     }
 }
 
