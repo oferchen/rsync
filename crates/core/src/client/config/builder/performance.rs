@@ -83,6 +83,17 @@ impl ClientConfigBuilder {
         self
     }
 
+    /// Records the raw `--skip-compress` spec to forward to the remote sender.
+    ///
+    /// `Some` marks the suffix list as explicitly set so the builder emits
+    /// `--skip-compress=<spec>` verbatim, matching upstream options.c:2858-2860.
+    #[must_use]
+    #[doc(alias = "--skip-compress")]
+    pub fn skip_compress_spec(mut self, spec: Option<String>) -> Self {
+        self.skip_compress_spec = spec;
+        self
+    }
+
     /// Records the requested zstd worker thread count.
     ///
     /// `None` (the default) lets the codec pick its own worker count. The

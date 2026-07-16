@@ -45,7 +45,8 @@ pub(crate) struct MetadataInputs<'a> {
     pub(crate) perms: Option<bool>,
     pub(crate) super_mode: Option<bool>,
     pub(crate) times: Option<bool>,
-    pub(crate) atimes: Option<bool>,
+    /// Access-time preservation level (0/1/2); `None` when unset.
+    pub(crate) atimes: Option<u8>,
     pub(crate) crtimes: Option<bool>,
     pub(crate) omit_dir_times: Option<bool>,
     pub(crate) omit_link_times: Option<bool>,

@@ -23,7 +23,9 @@ use core::client::{
 
 use super::coerce::{parse_checksum_threads, parse_spill_threshold_bytes, parse_thread_count};
 use super::cow::{last_occurrence, parse_reflink_mode, resolve_cow_policy};
-use super::flags::{tri_state_flag_negative_first, tri_state_flag_positive_first};
+use super::flags::{
+    leveled_flag_pair, tri_state_flag_negative_first, tri_state_flag_positive_first,
+};
 use super::values::join_os_values;
 use super::{BandwidthArgument, ParsedArgs, detect_program_name, env_protect_args_default};
 
@@ -133,7 +135,7 @@ where
         tri_state_flag_negative_first(&matches, "prune-empty-dirs", "no-prune-empty-dirs");
     let omit_link_times =
         tri_state_flag_negative_first(&matches, "omit-link-times", "no-omit-link-times");
-    let atimes = tri_state_flag_negative_first(&matches, "atimes", "no-atimes");
+    let atimes = leveled_flag_pair(&matches, "atimes", "no-atimes");
     let crtimes = tri_state_flag_negative_first(&matches, "crtimes", "no-crtimes");
     // upstream: options.c:2366-2367 - only `dry_run` sets `do_xfers = 0` (and
     // thus the compact `n` letter); `list_only` does NOT (options.c:2634 "Note:
@@ -413,7 +415,7 @@ where
     let omit_dir_times =
         tri_state_flag_positive_first(&matches, "omit-dir-times", "no-omit-dir-times");
     let acls = tri_state_flag_positive_first(&matches, "acls", "no-acls");
-    let xattrs = tri_state_flag_positive_first(&matches, "xattrs", "no-xattrs");
+    let xattrs = leveled_flag_pair(&matches, "xattrs", "no-xattrs");
     let numeric_ids = tri_state_flag_positive_first(&matches, "numeric-ids", "no-numeric-ids");
     let hard_links = tri_state_flag_positive_first(&matches, "hard-links", "no-hard-links");
     let links = tri_state_flag_positive_first(&matches, "links", "no-links");

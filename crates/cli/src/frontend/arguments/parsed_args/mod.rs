@@ -294,7 +294,10 @@ pub struct ParsedArgs {
     pub omit_link_times: Option<bool>,
 
     /// `--atimes`, `-U` / `--no-atimes` - preserve access times.
-    pub atimes: Option<bool>,
+    ///
+    /// Level: `Some(1)` for `-U`, `Some(2)` for `-UU`, `Some(0)` for
+    /// `--no-atimes`, `None` when unset.
+    pub atimes: Option<u8>,
 
     /// `--crtimes`, `-N` / `--no-crtimes` - preserve creation times (macOS/Windows).
     pub crtimes: Option<bool>,
@@ -303,7 +306,10 @@ pub struct ParsedArgs {
     pub acls: Option<bool>,
 
     /// `--xattrs`, `-X` / `--no-xattrs` - preserve extended attributes.
-    pub xattrs: Option<bool>,
+    ///
+    /// Level: `Some(1)` for `-X`, `Some(2)` for `-XX`, `Some(0)` for
+    /// `--no-xattrs`, `None` when unset.
+    pub xattrs: Option<u8>,
 
     /// `--numeric-ids` / `--no-numeric-ids` - use numeric uid/gid instead of names.
     pub numeric_ids: Option<bool>,

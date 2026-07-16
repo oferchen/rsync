@@ -10,21 +10,24 @@ impl ClientConfigBuilder {
     }
 
     #[cfg(all(any(unix, windows), feature = "xattr"))]
-    /// Enables or disables extended attribute preservation for the transfer.
+    /// Sets the extended-attribute preservation level (0 = off, 1 = `-X`,
+    /// 2 = `-XX`).
     ///
-    /// On Windows `-X` maps onto NTFS Alternate Data Streams.
+    /// On Windows `-X` maps onto NTFS Alternate Data Streams. Level 2 doubles
+    /// the compact `X` letter forwarded to the remote peer (upstream
+    /// options.c:2698-2704).
     #[must_use]
     #[doc(alias = "--xattrs")]
     #[doc(alias = "-X")]
-    pub const fn xattrs(mut self, preserve: bool) -> Self {
-        self.preserve_xattrs = preserve;
+    pub const fn xattrs(mut self, level: u8) -> Self {
+        self.preserve_xattrs = level;
         self
     }
 
     #[cfg(not(all(any(unix, windows), feature = "xattr")))]
     /// No-op on platforms without xattr support.
     #[must_use]
-    pub const fn xattrs(self, _preserve: bool) -> Self {
+    pub const fn xattrs(self, _level: u8) -> Self {
         self
     }
 
@@ -129,15 +132,17 @@ impl ClientConfigBuilder {
         self
     }
 
-    /// Requests that access times be preserved when applying metadata.
+    /// Sets the access-time preservation level (0 = off, 1 = `-U`, 2 = `-UU`).
     ///
-    /// When enabled, the source file's access time (atime) is preserved on the
-    /// destination. This corresponds to the `-U` / `--atimes` flag in upstream rsync.
+    /// The source file's access time (atime) is preserved on the destination.
+    /// This corresponds to the `-U` / `--atimes` flag in upstream rsync; level 2
+    /// doubles the compact `U` letter forwarded to the remote peer (upstream
+    /// options.c:2681-2685).
     #[must_use]
     #[doc(alias = "--atimes")]
     #[doc(alias = "-U")]
-    pub const fn atimes(mut self, preserve: bool) -> Self {
-        self.preserve_atimes = preserve;
+    pub const fn atimes(mut self, level: u8) -> Self {
+        self.preserve_atimes = level;
         self
     }
 

@@ -62,6 +62,17 @@ impl ClientConfig {
         &self.skip_compress
     }
 
+    /// Returns the raw `--skip-compress` spec to forward to the remote sender.
+    ///
+    /// `Some` only when the suffix list was explicitly set; the built-in default
+    /// list is never forwarded, matching upstream's NULL `skip_compress` global
+    /// (options.c:150, forwarded at options.c:2858-2860).
+    #[must_use]
+    #[doc(alias = "--skip-compress")]
+    pub fn skip_compress_spec(&self) -> Option<&str> {
+        self.skip_compress_spec.as_deref()
+    }
+
     /// Returns the requested zstd worker thread count, when set.
     ///
     /// `None` keeps zstd single-threaded. Propagated to the local copy engine

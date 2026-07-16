@@ -82,7 +82,8 @@ pub struct ClientConfig {
     pub(super) fake_super: bool,
     pub(super) super_user: bool,
     pub(super) preserve_times: bool,
-    pub(super) preserve_atimes: bool,
+    /// Access-time preservation level: 0 = off, 1 = `-U`, 2 = `-UU`.
+    pub(super) preserve_atimes: u8,
     pub(super) preserve_crtimes: bool,
     pub(super) owner_override: Option<u32>,
     pub(super) group_override: Option<u32>,
@@ -121,6 +122,14 @@ pub struct ClientConfig {
     /// `token.c:701 ZSTD_c_nbWorkers`.
     pub(super) compression_threads: Option<std::num::NonZeroU8>,
     pub(super) skip_compress: SkipCompressList,
+    /// Raw `--skip-compress` spec forwarded verbatim to the remote sender.
+    ///
+    /// `Some` only when the suffix list was explicitly set (CLI or environment);
+    /// the built-in default list forwards nothing, matching upstream's NULL
+    /// `skip_compress` global (options.c:150).
+    pub(super) skip_compress_spec: Option<String>,
+    /// Whether `-C` / `--cvs-exclude` was requested (upstream `cvs_exclude`).
+    pub(super) cvs_exclude: bool,
     pub(super) open_noatime: bool,
     pub(super) whole_file: Option<bool>,
     /// Internal-only xxh64 file-dedup heuristic toggle.
@@ -269,8 +278,9 @@ pub struct ClientConfig {
     pub(super) embedded_ssh_config: Option<EmbeddedSshOptions>,
     #[cfg(all(any(unix, windows), feature = "acl"))]
     pub(super) preserve_acls: bool,
+    /// Extended-attribute preservation level: 0 = off, 1 = `-X`, 2 = `-XX`.
     #[cfg(all(any(unix, windows), feature = "xattr"))]
-    pub(super) preserve_xattrs: bool,
+    pub(super) preserve_xattrs: u8,
 }
 
 /// Options for the embedded SSH transport (russh-based).
@@ -327,7 +337,7 @@ impl Default for ClientConfig {
             fake_super: false,
             super_user: false,
             preserve_times: false,
-            preserve_atimes: false,
+            preserve_atimes: 0,
             preserve_crtimes: false,
             owner_override: None,
             group_override: None,
@@ -345,6 +355,8 @@ impl Default for ClientConfig {
             compression_setting: CompressionSetting::default(),
             compression_threads: None,
             skip_compress: SkipCompressList::default(),
+            skip_compress_spec: None,
+            cvs_exclude: false,
             open_noatime: false,
             whole_file: None,
             xxh64_dedup: false,
@@ -448,7 +460,7 @@ impl Default for ClientConfig {
             #[cfg(all(any(unix, windows), feature = "acl"))]
             preserve_acls: false,
             #[cfg(all(any(unix, windows), feature = "xattr"))]
-            preserve_xattrs: false,
+            preserve_xattrs: 0,
         }
     }
 }

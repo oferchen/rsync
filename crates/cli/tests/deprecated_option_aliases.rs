@@ -185,7 +185,7 @@ fn test_no_capital_x_alias_for_no_xattrs() {
     let args = parse_args(["oc-rsync", "--no-X", "src", "dest"]).unwrap();
     assert_eq!(
         args.xattrs,
-        Some(false),
+        Some(0),
         "--no-X should behave like --no-xattrs"
     );
 }

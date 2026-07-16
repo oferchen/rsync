@@ -185,7 +185,7 @@ fn parse_args_negative_aliases_disable_flags() {
     assert_eq!(parsed.dirs, Some(false));
     assert_eq!(parsed.perms, Some(false));
     assert_eq!(parsed.acls, Some(false));
-    assert_eq!(parsed.xattrs, Some(false));
+    assert_eq!(parsed.xattrs, Some(0));
     assert_eq!(parsed.times, Some(false));
     assert_eq!(parsed.omit_dir_times, Some(false));
     assert_eq!(parsed.omit_link_times, Some(false));
