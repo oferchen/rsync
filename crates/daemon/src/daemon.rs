@@ -213,8 +213,8 @@ use self::module_state::TEST_CONFIG_CANDIDATES;
 use self::module_state::build_module_runtimes;
 use self::module_state::resolve_peer_hostname;
 pub(crate) use self::module_state::{
-    AuthUser, ConnectionLimiter, ModuleConnectionError, ModuleDefinition, ModuleRuntime,
-    UserAccessLevel, module_peer_hostname,
+    AuthUser, ConnectionLimiter, GidSetting, ModuleConnectionError, ModuleDefinition,
+    ModuleRuntime, UserAccessLevel, module_peer_hostname,
 };
 #[cfg(test)]
 pub(crate) use self::module_state::{

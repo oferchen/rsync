@@ -240,3 +240,77 @@ pub fn lookup_group_by_name(name: &[u8]) -> Result<Option<RawGid>, io::Error> {
         return Err(io::Error::from_raw_os_error(errno));
     }
 }
+
+/// Returns every group the given uid belongs to, with the user's primary
+/// group first.
+///
+/// Resolves the passwd entry for `uid` and calls `getgrouplist(pw_name,
+/// pw_gid)` via the safe `nix` wrapper, so no additional unsafe FFI is
+/// introduced. Used by the daemon to implement a module `gid = *` directive,
+/// which installs the full group set with `setgroups`.
+///
+/// upstream: uidlist.c:576 `getallgroups()` - `getpwuid()` then
+/// `getgrouplist(pw->pw_name, pw->pw_gid, ...)`; consumed by
+/// clientserver.c:797 `want_all_groups()` for `gid = *`.
+pub fn supplementary_gids_for_uid(uid: RawUid) -> Result<Vec<u32>, io::Error> {
+    use nix::unistd::{Uid, User};
+
+    let user = User::from_uid(Uid::from_raw(uid))
+        .map_err(|err| io::Error::from_raw_os_error(err as i32))?
+        .ok_or_else(|| {
+            io::Error::new(
+                io::ErrorKind::NotFound,
+                format!("no passwd entry for uid {uid}"),
+            )
+        })?;
+
+    let name = CString::new(user.name.as_bytes()).map_err(|_| {
+        io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "user name contains an interior NUL byte",
+        )
+    })?;
+
+    group_list_for(&name, user.gid.as_raw())
+}
+
+/// Group-list lookup on platforms where `nix` exposes `getgrouplist`
+/// (Linux and friends).
+#[cfg(not(target_vendor = "apple"))]
+fn group_list_for(name: &CStr, primary: u32) -> Result<Vec<u32>, io::Error> {
+    let groups = nix::unistd::getgrouplist(name, nix::unistd::Gid::from_raw(primary))
+        .map_err(|err| io::Error::from_raw_os_error(err as i32))?;
+    Ok(groups.into_iter().map(|gid| gid.as_raw()).collect())
+}
+
+/// Group-list lookup on Apple targets, where `nix` gates out `getgrouplist`.
+///
+/// Calls `libc::getgrouplist` directly (Apple's variant uses an `int` group
+/// array), growing the buffer on the documented `-1` "too small" return.
+#[cfg(target_vendor = "apple")]
+fn group_list_for(name: &CStr, primary: u32) -> Result<Vec<u32>, io::Error> {
+    let mut ngroups: libc::c_int = 32;
+    loop {
+        let mut groups = vec![0 as libc::c_int; ngroups.max(1) as usize];
+        // SAFETY: `name` is a valid C string; `groups` has `ngroups` capacity;
+        // `ngroups` is a valid out-pointer. On success the call writes at most
+        // `ngroups` entries and updates the count.
+        let rc = unsafe {
+            libc::getgrouplist(
+                name.as_ptr(),
+                primary as libc::c_int,
+                groups.as_mut_ptr(),
+                &mut ngroups,
+            )
+        };
+        if rc >= 0 {
+            groups.truncate(ngroups.max(0) as usize);
+            return Ok(groups.into_iter().map(|gid| gid as u32).collect());
+        }
+        // rc == -1: the buffer was too small and `ngroups` now holds the
+        // required size. Guard against a non-growing count to avoid a loop.
+        if ngroups <= groups.len() as libc::c_int {
+            return Err(io::Error::other("getgrouplist failed to size group list"));
+        }
+    }
+}

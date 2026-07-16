@@ -225,6 +225,51 @@ mod config_helpers_tests {
         assert_eq!(parse_numeric_identifier("-1"), None);
     }
 
+    /// WHY: upstream clientserver.c:791-817 - a module `gid` is a
+    /// whitespace/comma-separated list. Every entry must reach `setgroups`, so
+    /// the parser must preserve order and count rather than collapse to one gid.
+    #[test]
+    fn parse_gid_setting_accepts_list() {
+        assert_eq!(
+            parse_gid_setting("100"),
+            Ok(GidSetting::List(vec![100])),
+            "single gid parses to a one-element list"
+        );
+        assert_eq!(
+            parse_gid_setting("100, 200 300"),
+            Ok(GidSetting::List(vec![100, 200, 300])),
+            "comma and whitespace both separate gid list entries"
+        );
+    }
+
+    /// WHY: upstream clientserver.c:793-799 - a leading `*` requests all of the
+    /// target user's groups (`want_all_groups`), and may be followed by extra
+    /// explicit gids.
+    #[test]
+    fn parse_gid_setting_accepts_star() {
+        assert_eq!(
+            parse_gid_setting("*"),
+            Ok(GidSetting::AllUserGroups { extra: vec![] })
+        );
+        assert_eq!(
+            parse_gid_setting("*, 42"),
+            Ok(GidSetting::AllUserGroups { extra: vec![42] })
+        );
+    }
+
+    /// WHY: upstream clientserver.c:793 - `The "*" gid must be the first item in
+    /// the list.` A `*` appearing later is a configuration error.
+    #[test]
+    fn parse_gid_setting_rejects_non_leading_star() {
+        assert!(parse_gid_setting("100, *").is_err());
+    }
+
+    #[test]
+    fn parse_gid_setting_rejects_empty_and_non_numeric() {
+        assert!(parse_gid_setting("   ").is_err());
+        assert!(parse_gid_setting("nobody").is_err());
+    }
+
     #[test]
     fn parse_timeout_seconds_zero() {
         assert_eq!(parse_timeout_seconds("0"), Some(None));

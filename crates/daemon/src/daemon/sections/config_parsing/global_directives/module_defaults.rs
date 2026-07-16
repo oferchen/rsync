@@ -46,4 +46,11 @@ struct GlobalModuleDefaults {
     name_converter: Option<String>,
     temp_dir: Option<String>,
     charset: Option<String>,
+    // upstream: daemon-parm.txt `Locals:` - `uid`/`gid` are P_LOCAL. A value in
+    // the global section is the default `lp_uid(i)`/`lp_gid(i)` every module
+    // inherits (clientserver.c:781,790 read the per-module value). These are
+    // distinct from the P_GLOBAL `daemon uid`/`daemon gid` process-wide drop
+    // (clientserver.c:1363,1376 `lp_daemon_gid`/`lp_daemon_uid`).
+    uid: Option<u32>,
+    gid: Option<GidSetting>,
 }

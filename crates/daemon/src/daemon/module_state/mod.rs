@@ -22,7 +22,7 @@ mod tests;
 
 pub(crate) use auth::{AuthUser, SystemGroupMembership, UserAccessLevel, authorize_auth_user};
 pub(crate) use connection_limiter::{ConnectionLimiter, ConnectionLockGuard};
-pub(crate) use definition::ModuleDefinition;
+pub(crate) use definition::{GidSetting, ModuleDefinition};
 pub(crate) use hostname::module_peer_hostname;
 pub(in crate::daemon) use hostname::{forward_resolve, netgroup_contains, resolve_peer_hostname};
 pub(in crate::daemon) use runtime::build_module_runtimes;

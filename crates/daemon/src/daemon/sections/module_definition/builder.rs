@@ -25,7 +25,7 @@ struct ModuleDefinitionBuilder {
     write_only: Option<bool>,
     numeric_ids: Option<bool>,
     uid: Option<u32>,
-    gid: Option<u32>,
+    gid: Option<GidSetting>,
     timeout: Option<Option<NonZeroU64>>,
     listable: Option<bool>,
     use_chroot: Option<bool>,

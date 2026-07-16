@@ -262,6 +262,58 @@ pub(crate) fn parse_numeric_identifier(value: &str) -> Option<u32> {
     trimmed.parse().ok()
 }
 
+/// Parses a module `gid` directive into a [`GidSetting`].
+///
+/// Accepts a whitespace- or comma-separated list of numeric gids. A leading
+/// `*` requests every group the target user belongs to; it must appear first,
+/// and any following tokens are extra explicit gids.
+///
+/// upstream: clientserver.c:791-822 `rsync_module()` splits `lp_gid()` with
+/// `conf_strtok`; `*` triggers `want_all_groups`, and each remaining token is
+/// added via `add_a_group`. The whole list is later installed with
+/// `setgroups`, clearing inherited supplementary groups.
+pub(crate) fn parse_gid_setting(value: &str) -> Result<GidSetting, String> {
+    let mut tokens = value
+        .split([',', ' ', '\t'])
+        .map(str::trim)
+        .filter(|token| !token.is_empty());
+
+    let Some(first) = tokens.next() else {
+        return Err("directive is empty".to_owned());
+    };
+
+    let all_groups = first == "*";
+    let mut extra = Vec::new();
+    if !all_groups {
+        extra.push(parse_gid_token(first)?);
+    }
+
+    for token in tokens {
+        if token == "*" {
+            return Err("'*' must be the first entry in the list".to_owned());
+        }
+        extra.push(parse_gid_token(token)?);
+    }
+
+    if all_groups {
+        Ok(GidSetting::AllUserGroups { extra })
+    } else {
+        Ok(GidSetting::List(extra))
+    }
+}
+
+/// Parses a single gid token (numeric only).
+///
+/// upstream resolves group *names* via `group_to_gid`, but oc's daemon config
+/// path has always accepted numeric gids only; keeping that here avoids a
+/// behavioural regression. Name resolution remains available on the daemon's
+/// global `uid`/`gid` directives.
+fn parse_gid_token(token: &str) -> Result<u32, String> {
+    token
+        .parse::<u32>()
+        .map_err(|_| format!("'{token}' is not a numeric gid"))
+}
+
 /// Parses a timeout directive value in seconds.
 ///
 /// upstream: `timeout` is a P_INTEGER directive (daemon-parm.h:294), so the

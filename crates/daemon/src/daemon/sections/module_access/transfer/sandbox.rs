@@ -9,17 +9,23 @@
 /// - `@ERROR: setgroups failed` (clientserver.c:1017)
 /// - `@ERROR: setuid failed` (clientserver.c:1039)
 ///
-/// Returns `Ok(true)` when restrictions applied successfully or were not
-/// configured. Returns `Ok(false)` after sending an error to the client.
+/// Returns `Ok(Some(outcome))` when restrictions applied successfully or were
+/// not configured; `outcome.chroot_applied` records whether the process is
+/// actually chrooted (false after a rootless auto-fallback). Returns `Ok(None)`
+/// after sending an error to the client.
 fn apply_privilege_restrictions_with_upstream_errors(
     ctx: &mut ModuleRequestContext<'_>,
     module: &ModuleRuntime,
-) -> io::Result<bool> {
+) -> io::Result<Option<PrivilegeOutcome>> {
+    // upstream: clientserver.c:779-780 - `uid = MY_UID(); am_root = (uid ==
+    // ROOT_UID)`. A root daemon drops to `nobody:nobody` by default even when
+    // the module sets no explicit uid/gid.
+    let am_root = daemon_is_root();
     let needs_chroot = module.use_chroot;
-    let needs_privdrop = module.uid.is_some() || module.gid.is_some();
+    let needs_privdrop = am_root || module.uid.is_some() || module.gid.is_some();
 
     if !needs_chroot && !needs_privdrop {
-        return Ok(true);
+        return Ok(Some(PrivilegeOutcome::not_chrooted()));
     }
 
     // Resolve log sink: use the configured one, or create a fallback.
@@ -33,39 +39,83 @@ fn apply_privilege_restrictions_with_upstream_errors(
     };
 
     // upstream: clientserver.c:978-984 - chroot first, then privilege drop.
+    // A rootless auto-fallback (unset `use chroot` + failing probe) yields
+    // `Ok(false)`; an explicit `use chroot = yes` that fails is fatal.
+    let mut chroot_applied = false;
     if needs_chroot {
-        if let Err(err) = apply_chroot(&module.path, log_sink) {
-            // upstream: clientserver.c:981 - `@ERROR: chroot failed\n`
-            // upstream: clientserver.c:647 - `@ERROR: chdir failed\n`
-            let text = err.to_string();
-            let payload = if text.contains("chdir") {
-                CHDIR_FAILED_PAYLOAD
-            } else {
-                CHROOT_FAILED_PAYLOAD
-            };
-            send_error(ctx.reader.get_mut(), ctx.limiter, payload)?;
-            return Ok(false);
+        match chroot_or_fallback(module, log_sink) {
+            Ok(applied) => chroot_applied = applied,
+            Err(err) => {
+                // Operator demanded chroot explicitly: a failure is fatal.
+                // upstream: clientserver.c:981 - `@ERROR: chroot failed\n`
+                // upstream: clientserver.c:647 - `@ERROR: chdir failed\n`
+                let text = err.to_string();
+                let payload = if text.contains("chdir") {
+                    CHDIR_FAILED_PAYLOAD
+                } else {
+                    CHROOT_FAILED_PAYLOAD
+                };
+                send_error(ctx.reader.get_mut(), ctx.limiter, payload)?;
+                return Ok(None);
+            }
         }
     }
 
     if needs_privdrop {
-        if let Err(err) = drop_privileges(module.uid, module.gid, log_sink) {
-            // Distinguish upstream error messages based on the error text.
-            // upstream: clientserver.c:1010/1017/1039
-            let text = err.to_string();
-            let payload = if text.contains("setgroups") {
-                SETGROUPS_FAILED_PAYLOAD
-            } else if text.contains("setuid") {
-                SETUID_FAILED_PAYLOAD
-            } else {
-                SETGID_FAILED_PAYLOAD
-            };
-            send_error(ctx.reader.get_mut(), ctx.limiter, payload)?;
-            return Ok(false);
+        // upstream: clientserver.c:781-822 - resolve the effective uid and full
+        // group set (nobody defaults, `gid = *` expansion) before dropping.
+        let target = match resolve_drop_target(module, am_root) {
+            Ok(target) => target,
+            Err(err) => {
+                // upstream: clientserver.c:784-786 - `@ERROR: invalid uid`.
+                let message = rsync_error!(1, format!("privilege drop resolution failed: {err}"))
+                    .with_role(Role::Daemon);
+                log_message(log_sink, &message);
+                send_error(ctx.reader.get_mut(), ctx.limiter, SETUID_FAILED_PAYLOAD)?;
+                return Ok(None);
+            }
+        };
+
+        if target.uid.is_some() || !target.gids.is_empty() {
+            if let Err(err) = drop_privileges(target.uid, &target.gids, log_sink) {
+                // Distinguish upstream error messages based on the error text.
+                // upstream: clientserver.c:1010/1017/1039
+                let text = err.to_string();
+                let payload = if text.contains("setgroups") {
+                    SETGROUPS_FAILED_PAYLOAD
+                } else if text.contains("setuid") {
+                    SETUID_FAILED_PAYLOAD
+                } else {
+                    SETGID_FAILED_PAYLOAD
+                };
+                send_error(ctx.reader.get_mut(), ctx.limiter, payload)?;
+                return Ok(None);
+            }
         }
     }
 
-    Ok(true)
+    Ok(Some(PrivilegeOutcome { chroot_applied }))
+}
+
+/// Result of applying a module's chroot and privilege restrictions.
+struct PrivilegeOutcome {
+    /// Whether `chroot()` was actually applied. `false` when the module runs
+    /// without chroot, or when `use chroot` was unset and the runtime probe
+    /// failed (rootless fallback) - downstream path handling must then treat
+    /// the module as non-chrooted.
+    ///
+    /// upstream: clientserver.c:831-862 - the effective `use_chroot` decides
+    /// whether the module path is rewritten to `/`.
+    chroot_applied: bool,
+}
+
+impl PrivilegeOutcome {
+    /// Outcome for a module served without chroot.
+    const fn not_chrooted() -> Self {
+        Self {
+            chroot_applied: false,
+        }
+    }
 }
 
 /// Validates that the module path exists.

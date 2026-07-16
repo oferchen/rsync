@@ -33,15 +33,18 @@ pub(crate) struct ParsedConfigModules {
     /// upstream: loadparm.c - `bind address` / `address` parameter sets the
     /// interface the daemon listens on.
     bind_address: Option<(IpAddr, ConfigDirectiveOrigin)>,
-    /// Daemon-level uid from the global section.
+    /// Process-wide daemon uid from the `daemon uid` global directive.
     ///
-    /// upstream: loadparm.c - `uid` in the global section sets the daemon process uid.
-    /// The value is a username string or numeric uid that gets resolved at runtime.
+    /// upstream: daemon-parm.txt `Globals:` `daemon_uid`; clientserver.c:1376
+    /// `lp_daemon_uid` drops the listener once before the accept loop. Distinct
+    /// from the P_LOCAL `uid` module default. The value is a username string or
+    /// numeric uid resolved at runtime.
     daemon_uid: Option<(String, ConfigDirectiveOrigin)>,
-    /// Daemon-level gid from the global section.
+    /// Process-wide daemon gid from the `daemon gid` global directive.
     ///
-    /// upstream: loadparm.c - `gid` in the global section sets the daemon process gid.
-    /// The value is a groupname string or numeric gid that gets resolved at runtime.
+    /// upstream: daemon-parm.txt `Globals:` `daemon_gid`; clientserver.c:1363
+    /// `lp_daemon_gid`. Distinct from the P_LOCAL `gid` module default. The
+    /// value is a groupname string or numeric gid resolved at runtime.
     daemon_gid: Option<(String, ConfigDirectiveOrigin)>,
     listen_backlog: Option<(u32, ConfigDirectiveOrigin)>,
     /// Number of SO_REUSEPORT listener replicas per family from the

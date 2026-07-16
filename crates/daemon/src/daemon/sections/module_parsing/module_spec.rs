@@ -130,6 +130,7 @@ fn parse_module_definition(
         timeout: None,
         listable: true,
         use_chroot: true,
+        use_chroot_explicit: false,
         max_connections: None,
         incoming_chmod: None,
         outgoing_chmod: None,
@@ -345,6 +346,7 @@ fn apply_inline_module_options(
                     config_error(format!("invalid boolean value '{value}' for 'use chroot'"))
                 })?;
                 module.use_chroot = parsed;
+                module.use_chroot_explicit = true;
             }
             "hosts allow" | "hosts-allow" => {
                 let patterns = parse_host_list(value, path, 0, "hosts allow")?;
@@ -398,8 +400,8 @@ fn apply_inline_module_options(
                 module.uid = Some(uid);
             }
             "gid" => {
-                let gid = parse_numeric_identifier(value)
-                    .ok_or_else(|| config_error(format!("invalid gid '{value}'")))?;
+                let gid = parse_gid_setting(value)
+                    .map_err(|reason| config_error(format!("invalid gid '{value}': {reason}")))?;
                 module.gid = Some(gid);
             }
             "timeout" => {
@@ -495,6 +497,7 @@ fn apply_daemon_param_overrides(
                     config_error(format!("invalid boolean value '{value}' for 'use chroot'"))
                 })?;
                 module.use_chroot = parsed;
+                module.use_chroot_explicit = true;
             }
             "timeout" => {
                 let timeout = parse_timeout_seconds(value)
