@@ -74,6 +74,26 @@ pub struct ClientConfig {
     pub(super) max_alloc: Option<u64>,
     pub(super) modify_window: Option<i64>,
     pub(super) remove_source_files: bool,
+    /// Whether the user spelled the deprecated `--remove-sent-files` alias (and
+    /// it was not overridden by a later `--remove-source-files`). Selects which
+    /// spelling `server_options()` forwards on the wire.
+    ///
+    /// upstream: options.c:730 (option table sets `remove_source_files = 2`) and
+    /// options.c:2982-2985 (emit `--remove-sent-files` when the value is 2).
+    pub(super) remove_sent_files: bool,
+    /// Whether the explicit `--out-format` / `--log-format` string contains the
+    /// `%o` (operation) directive but not `%i`. Drives the `--log-format=%o`
+    /// server arg so the remote emits matching operation output.
+    ///
+    /// upstream: options.c:2375-2376 (`stdout_format_has_o_or_i`) and
+    /// options.c:2776-2777 (emit `--log-format=%o`).
+    pub(super) out_format_has_operation: bool,
+    /// Whether an explicit `--out-format` / `--log-format` string was given that
+    /// contains neither `%i` nor `%o`. Drives the placeholder `--log-format=X`
+    /// server arg (further gated on the client not being verbose).
+    ///
+    /// upstream: options.c:2778-2779 (emit `--log-format=X` when `!verbose`).
+    pub(super) out_format_placeholder: bool,
     pub(super) bandwidth_limit: Option<BandwidthLimit>,
     pub(super) preserve_owner: bool,
     pub(super) preserve_group: bool,
@@ -329,6 +349,9 @@ impl Default for ClientConfig {
             max_alloc: None,
             modify_window: None,
             remove_source_files: false,
+            remove_sent_files: false,
+            out_format_has_operation: false,
+            out_format_placeholder: false,
             bandwidth_limit: None,
             preserve_owner: false,
             preserve_group: false,

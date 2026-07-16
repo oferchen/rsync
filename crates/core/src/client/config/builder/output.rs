@@ -59,6 +59,32 @@ impl ClientConfigBuilder {
         self
     }
 
+    /// Records that the explicit `--out-format` / `--log-format` string contains
+    /// the `%o` (operation) directive without `%i`, so the remote is told via
+    /// `--log-format=%o`.
+    ///
+    /// upstream: options.c:2375-2376, 2776-2777.
+    #[must_use]
+    #[doc(alias = "--out-format")]
+    #[doc(alias = "--log-format")]
+    pub const fn out_format_has_operation(mut self, enabled: bool) -> Self {
+        self.out_format_has_operation = enabled;
+        self
+    }
+
+    /// Records that an explicit `--out-format` / `--log-format` string was given
+    /// that contains neither `%i` nor `%o`, so a non-verbose client forwards the
+    /// placeholder `--log-format=X`.
+    ///
+    /// upstream: options.c:2778-2779.
+    #[must_use]
+    #[doc(alias = "--out-format")]
+    #[doc(alias = "--log-format")]
+    pub const fn out_format_placeholder(mut self, enabled: bool) -> Self {
+        self.out_format_placeholder = enabled;
+        self
+    }
+
     /// Suppresses daemon MOTD (message of the day) output.
     #[must_use]
     #[doc(alias = "--no-motd")]

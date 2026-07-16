@@ -229,6 +229,14 @@ pub struct ParsedArgs {
     /// `--remove-source-files` - delete source files after successful transfer.
     pub remove_source_files: bool,
 
+    /// `--remove-sent-files` - deprecated alias of `--remove-source-files`. True
+    /// when the user spelled the deprecated form and it was the effective one
+    /// (clap `overrides_with` mirrors upstream's last-wins popt semantics). The
+    /// deprecated spelling is forwarded verbatim on the wire.
+    ///
+    /// upstream: options.c:730, 2982-2985.
+    pub remove_sent_files: bool,
+
     /// `--trust-sender` - trust the sending side's file list.
     pub trust_sender: bool,
 

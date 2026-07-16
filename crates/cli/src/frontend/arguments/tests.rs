@@ -779,12 +779,32 @@ mod long_options {
     fn remove_source_files_long_flag() {
         let parsed = parse_test_args(["--remove-source-files", "src/", "dst/"]).expect("parse");
         assert!(parsed.remove_source_files);
+        // The canonical spelling must not set the deprecated-alias signal.
+        assert!(!parsed.remove_sent_files);
     }
 
     #[test]
     fn remove_sent_files_alias() {
         let parsed = parse_test_args(["--remove-sent-files", "src/", "dst/"]).expect("parse");
         assert!(parsed.remove_source_files);
+        // upstream: options.c:730,2982-2985 - the deprecated spelling is tracked
+        // so it can be forwarded verbatim on the wire.
+        assert!(parsed.remove_sent_files);
+    }
+
+    #[test]
+    fn remove_source_files_overrides_deprecated_alias() {
+        // clap `overrides_with` mirrors upstream popt last-wins: the canonical
+        // spelling given last clears the deprecated-alias signal.
+        let parsed = parse_test_args([
+            "--remove-sent-files",
+            "--remove-source-files",
+            "src/",
+            "dst/",
+        ])
+        .expect("parse");
+        assert!(parsed.remove_source_files);
+        assert!(!parsed.remove_sent_files);
     }
 
     #[test]

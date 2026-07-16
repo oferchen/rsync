@@ -578,8 +578,17 @@ impl<'a> RemoteInvocationBuilder<'a> {
             args.push(OsString::from("--delete-missing-args"));
         }
 
+        // upstream: options.c:2982-2985 - `if (remove_source_files == 1)
+        // "--remove-source-files"; else if (remove_source_files)
+        // "--remove-sent-files"`. The deprecated alias is forwarded verbatim so
+        // a pre-3.0 remote sees the spelling the user typed; every supported
+        // remote accepts both, but we mirror upstream byte-for-byte.
         if self.config.remove_source_files() {
-            args.push(OsString::from("--remove-source-files"));
+            if self.config.remove_sent_files() {
+                args.push(OsString::from("--remove-sent-files"));
+            } else {
+                args.push(OsString::from("--remove-source-files"));
+            }
         }
 
         // upstream: options.c:2976-2977 - `if (relative_paths && !implied_dirs
@@ -720,15 +729,26 @@ impl<'a> RemoteInvocationBuilder<'a> {
             args.push(OsString::from("--preallocate"));
         }
 
-        // upstream: options.c:164-175 server_options - itemize-changes is
-        // forwarded as --log-format, not as a compact flag character. `%i%I` is
-        // the `-ii` form (stdout_format_has_i > 1) that itemizes unchanged
-        // entries too; `%i` alone is the `-i` form.
-        if self.config.itemize_changes() {
-            if self.config.itemize_unchanged() {
-                args.push(OsString::from("--log-format=%i%I"));
-            } else {
-                args.push(OsString::from("--log-format=%i"));
+        // upstream: options.c:2768-2780 - `if (stdout_format && am_sender)` the
+        // server is told a little about the client's out-format via a
+        // `--log-format` arg, in a first-match-wins chain. `%i%I` is the `-ii`
+        // form (stdout_format_has_i > 1) that itemizes unchanged entries too;
+        // `%i` is the `-i` form; `%o` is forwarded when the format has the `%o`
+        // operation directive; the placeholder `X` is forwarded when a
+        // non-verbose client set an out-format with neither `%i` nor `%o`. The
+        // whole chain is gated on `am_sender` (a PUSH); a remote sender never
+        // needs it.
+        if am_sender {
+            if self.config.itemize_changes() {
+                if self.config.itemize_unchanged() {
+                    args.push(OsString::from("--log-format=%i%I"));
+                } else {
+                    args.push(OsString::from("--log-format=%i"));
+                }
+            } else if self.config.out_format_has_operation() {
+                args.push(OsString::from("--log-format=%o"));
+            } else if self.config.out_format_placeholder() && self.config.verbosity() == 0 {
+                args.push(OsString::from("--log-format=X"));
             }
         }
 

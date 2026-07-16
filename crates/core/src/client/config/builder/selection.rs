@@ -12,6 +12,12 @@ impl ClientConfigBuilder {
         modify_window: Option<i64>,
         /// Enables or disables removal of source files after a successful transfer.
         remove_source_files: bool,
+        /// Records that the deprecated `--remove-sent-files` spelling was the
+        /// effective one, so the wire forwards that alias instead of the
+        /// canonical `--remove-source-files`.
+        ///
+        /// upstream: options.c:2982-2985.
+        remove_sent_files: bool,
         /// Enables or disables size-only change detection.
         size_only: bool,
         /// Enables or disables ignoring file timestamps during quick checks.

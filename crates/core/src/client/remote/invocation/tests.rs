@@ -937,6 +937,106 @@ fn includes_remove_source_files_long_arg() {
 }
 
 #[test]
+fn forwards_deprecated_remove_sent_files_spelling() {
+    // upstream: options.c:2982-2985 - the deprecated `--remove-sent-files`
+    // spelling is forwarded verbatim; the canonical form must not also appear.
+    let config = ClientConfig::builder()
+        .remove_source_files(true)
+        .remove_sent_files(true)
+        .build();
+    let builder = RemoteInvocationBuilder::new(&config, RemoteRole::Sender);
+    let args = builder.build("/path");
+
+    assert!(
+        args.iter().any(|a| a == "--remove-sent-files"),
+        "expected --remove-sent-files in args: {args:?}"
+    );
+    assert!(
+        !args.iter().any(|a| a == "--remove-source-files"),
+        "canonical spelling must not also appear: {args:?}"
+    );
+}
+
+#[test]
+fn forwards_log_format_o_when_out_format_has_operation() {
+    // upstream: options.c:2776-2777 - an out-format with `%o` (and no `%i`)
+    // forwards `--log-format=%o` so the remote emits operation output.
+    let config = ClientConfig::builder()
+        .out_format_has_operation(true)
+        .build();
+    let builder = RemoteInvocationBuilder::new(&config, RemoteRole::Sender);
+    let args: Vec<_> = builder
+        .build("/path")
+        .iter()
+        .map(|a| a.to_string_lossy().into_owned())
+        .collect();
+
+    assert!(
+        args.contains(&"--log-format=%o".to_string()),
+        "expected --log-format=%o in args: {args:?}"
+    );
+}
+
+#[test]
+fn omits_log_format_o_on_pull() {
+    // upstream: options.c:2768 - the whole chain is gated on `am_sender`; a pull
+    // (RemoteRole::Receiver) never forwards a --log-format arg.
+    let config = ClientConfig::builder()
+        .out_format_has_operation(true)
+        .build();
+    let builder = RemoteInvocationBuilder::new(&config, RemoteRole::Receiver);
+    let args: Vec<_> = builder
+        .build("/path")
+        .iter()
+        .map(|a| a.to_string_lossy().into_owned())
+        .collect();
+
+    assert!(
+        !args.iter().any(|a| a.starts_with("--log-format")),
+        "pull must not forward --log-format: {args:?}"
+    );
+}
+
+#[test]
+fn forwards_log_format_placeholder_when_not_verbose() {
+    // upstream: options.c:2778-2779 - an out-format with neither `%i` nor `%o`
+    // forwards the placeholder `--log-format=X` for a non-verbose client.
+    let config = ClientConfig::builder().out_format_placeholder(true).build();
+    let builder = RemoteInvocationBuilder::new(&config, RemoteRole::Sender);
+    let args: Vec<_> = builder
+        .build("/path")
+        .iter()
+        .map(|a| a.to_string_lossy().into_owned())
+        .collect();
+
+    assert!(
+        args.contains(&"--log-format=X".to_string()),
+        "expected --log-format=X in args: {args:?}"
+    );
+}
+
+#[test]
+fn omits_log_format_placeholder_when_verbose() {
+    // upstream: options.c:2778 - the `X` placeholder is only forwarded when the
+    // client is not verbose (`else if (!verbose)`).
+    let config = ClientConfig::builder()
+        .out_format_placeholder(true)
+        .verbosity(1)
+        .build();
+    let builder = RemoteInvocationBuilder::new(&config, RemoteRole::Sender);
+    let args: Vec<_> = builder
+        .build("/path")
+        .iter()
+        .map(|a| a.to_string_lossy().into_owned())
+        .collect();
+
+    assert!(
+        !args.contains(&"--log-format=X".to_string()),
+        "verbose client must not forward --log-format=X: {args:?}"
+    );
+}
+
+#[test]
 fn includes_size_only_long_arg() {
     let config = ClientConfig::builder().size_only(true).build();
     let builder = RemoteInvocationBuilder::new(&config, RemoteRole::Sender);

@@ -619,6 +619,115 @@ mod protect_args_daemon_tests {
         );
     }
 
+    #[test]
+    fn build_full_args_forwards_log_format_o_for_operation_push() {
+        // upstream: options.c:2776-2777 - an out-format with `%o` (no `%i`)
+        // forwards `--log-format=%o` on a push so the daemon emits operation
+        // output.
+        let config = ClientConfig::builder()
+            .out_format_has_operation(true)
+            .build();
+        let request = test_daemon_request();
+        let protocol = ProtocolVersion::try_from(32u8).unwrap();
+        let args = build_full_daemon_args(&config, &request, protocol, false);
+
+        assert!(
+            args.iter().any(|a| a == "--log-format=%o"),
+            "push with %o out-format should forward --log-format=%o: {args:?}"
+        );
+    }
+
+    #[test]
+    fn build_full_args_omits_log_format_o_on_pull() {
+        // upstream: options.c:2768 - the chain is gated on `am_sender`; a pull
+        // (daemon is sender) never forwards a --log-format arg.
+        let config = ClientConfig::builder()
+            .out_format_has_operation(true)
+            .build();
+        let request = test_daemon_request();
+        let protocol = ProtocolVersion::try_from(32u8).unwrap();
+        let args = build_full_daemon_args(&config, &request, protocol, true);
+
+        assert!(
+            !args.iter().any(|a| a.starts_with("--log-format")),
+            "pull must not forward --log-format: {args:?}"
+        );
+    }
+
+    #[test]
+    fn build_full_args_forwards_log_format_placeholder_when_not_verbose() {
+        // upstream: options.c:2778-2779 - an out-format with neither `%i` nor
+        // `%o` forwards the placeholder `--log-format=X` for a non-verbose push.
+        let config = ClientConfig::builder().out_format_placeholder(true).build();
+        let request = test_daemon_request();
+        let protocol = ProtocolVersion::try_from(32u8).unwrap();
+        let args = build_full_daemon_args(&config, &request, protocol, false);
+
+        assert!(
+            args.iter().any(|a| a == "--log-format=X"),
+            "push with plain out-format should forward --log-format=X: {args:?}"
+        );
+    }
+
+    #[test]
+    fn build_full_args_omits_log_format_placeholder_when_verbose() {
+        // upstream: options.c:2778 - the `X` placeholder only forwards when the
+        // client is not verbose.
+        let config = ClientConfig::builder()
+            .out_format_placeholder(true)
+            .verbosity(1)
+            .build();
+        let request = test_daemon_request();
+        let protocol = ProtocolVersion::try_from(32u8).unwrap();
+        let args = build_full_daemon_args(&config, &request, protocol, false);
+
+        assert!(
+            !args.iter().any(|a| a == "--log-format=X"),
+            "verbose client must not forward --log-format=X: {args:?}"
+        );
+    }
+
+    #[test]
+    fn build_full_args_forwards_deprecated_remove_sent_files() {
+        // upstream: options.c:2982-2985 - the deprecated `--remove-sent-files`
+        // spelling is forwarded verbatim; the canonical form must not appear.
+        let config = ClientConfig::builder()
+            .remove_source_files(true)
+            .remove_sent_files(true)
+            .build();
+        let request = test_daemon_request();
+        let protocol = ProtocolVersion::try_from(32u8).unwrap();
+        let args = build_full_daemon_args(&config, &request, protocol, false);
+
+        assert!(
+            args.iter().any(|a| a == "--remove-sent-files"),
+            "expected --remove-sent-files in args: {args:?}"
+        );
+        assert!(
+            !args.iter().any(|a| a == "--remove-source-files"),
+            "canonical spelling must not also appear: {args:?}"
+        );
+    }
+
+    #[test]
+    fn build_full_args_forwards_canonical_remove_source_files() {
+        // upstream: options.c:2982-2983 - the canonical spelling is forwarded
+        // when the user did not type the deprecated alias.
+        let config = ClientConfig::builder().remove_source_files(true).build();
+        let request = test_daemon_request();
+        let protocol = ProtocolVersion::try_from(32u8).unwrap();
+        let args = build_full_daemon_args(&config, &request, protocol, false);
+
+        assert!(
+            args.iter().any(|a| a == "--remove-source-files"),
+            "expected --remove-source-files in args: {args:?}"
+        );
+        assert!(
+            !args.iter().any(|a| a == "--remove-sent-files"),
+            "deprecated spelling must not appear: {args:?}"
+        );
+    }
+
     #[cfg(unix)]
     #[test]
     fn build_full_args_forwards_groupmap_wildcard_verbatim() {
