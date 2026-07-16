@@ -71,21 +71,6 @@ pub(crate) fn copy_file(
     context.summary_mut().record_regular_file_total();
     context.summary_mut().record_total_bytes(file_size);
 
-    // upstream: generator.c:recv_generator() - skip files outside size range
-    if let Some(min_limit) = context.min_file_size_limit()
-        && file_size < min_limit
-    {
-        info_log!(Skip, 1, "{} is under min-size", record_path.display());
-        return Ok(false);
-    }
-
-    if let Some(max_limit) = context.max_file_size_limit()
-        && file_size > max_limit
-    {
-        info_log!(Skip, 1, "{} is over max-size", record_path.display());
-        return Ok(false);
-    }
-
     // Reuse the destination lstat gathered by the checksum-mode prefetch when
     // present; otherwise lstat here. This keeps checksum mode at one generator
     // link_stat per destination instead of two. upstream: generator.c:recv_generator().
@@ -152,6 +137,24 @@ pub(crate) fn copy_file(
             Some(metadata_snapshot),
         ));
         return Ok(true);
+    }
+
+    // upstream: generator.c:1704-1719 recv_generator() - the max-size/min-size
+    // filter runs after the "not creating new" (--existing) check at
+    // generator.c:1368, so an out-of-range file absent from the destination
+    // reports "not creating new file" rather than a size skip.
+    if let Some(max_limit) = context.max_file_size_limit()
+        && file_size > max_limit
+    {
+        info_log!(Skip, 1, "{} is over max-size", record_path.display());
+        return Ok(false);
+    }
+
+    if let Some(min_limit) = context.min_file_size_limit()
+        && file_size < min_limit
+    {
+        info_log!(Skip, 1, "{} is under min-size", record_path.display());
+        return Ok(false);
     }
 
     // Dry-run check must precede parent directory preparation: in dry-run mode

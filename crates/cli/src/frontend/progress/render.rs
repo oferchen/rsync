@@ -672,6 +672,21 @@ fn is_uptodate_event(event: &ClientEvent) -> bool {
     event.is_uptodate()
 }
 
+/// Returns `true` for the per-file skip notices that upstream's `recv_generator`
+/// emits during the generator phase (`"exists"`, `"not creating new"`, `"is
+/// newer"`), ahead of the receiver phase that prints transferred-file names.
+/// Bucketing these with the uptodate notices reproduces that interleaving.
+///
+/// upstream: generator.c:1379,1395,1723 (recv_generator)
+fn is_generator_phase_skip(event: &ClientEvent) -> bool {
+    matches!(
+        event.kind(),
+        ClientEventKind::SkippedExisting
+            | ClientEventKind::SkippedMissingDestination
+            | ClientEventKind::SkippedNewerDestination
+    )
+}
+
 /// Returns `true` for a HardLink event describing a hard-linked symlink (`hL`).
 /// Its metadata kind is `Symlink` and its `symlink_target` slot holds the link
 /// target, not a `=> leader` trailer.
@@ -752,7 +767,13 @@ pub(crate) fn emit_verbose<W: Write + ?Sized>(
     // group preserves its original relative ordering.
     let mut ordered_events: Vec<&ClientEvent> = events.iter().collect();
     ordered_events.sort_by_key(|event| {
-        if is_uptodate_event(event) {
+        // upstream: recv_generator() emits the "is uptodate", "exists",
+        // "not creating new", and "is newer" notices synchronously in the
+        // generator phase, ahead of the receiver phase that prints the
+        // transferred-file names. Bucket those generator-phase notices first
+        // so the stable sort reproduces that interleaving.
+        // (generator.c:1379,1395,1723)
+        if is_uptodate_event(event) || is_generator_phase_skip(event) {
             0u8
         } else if is_deferred_hardlink_event(event) {
             // Hardlink aliases linked to a this-run leader are finished last.
@@ -817,36 +838,51 @@ pub(crate) fn emit_verbose<W: Write + ?Sized>(
 
         match kind {
             ClientEventKind::SkippedExisting => {
-                // upstream: generator.c:1409 - `rprintf(FINFO, "%s exists\n",
+                // upstream: generator.c:1397-1409 - `rprintf(FINFO, "%s exists\n",
                 // fname)` for an --ignore-existing skip: the bare relative name
-                // followed by " exists", no descriptor and no quotes.
-                writeln_wrapped(
-                    stdout,
-                    "",
-                    event.relative_path(),
-                    eight_bit_output,
-                    " exists",
-                )?;
+                // followed by " exists", no descriptor and no quotes. Gated on
+                // INFO_GTE(SKIP, 1), which the info verbosity table raises only
+                // at -vv (options.c:252).
+                if info_gte(InfoFlag::Skip, 1) {
+                    writeln_wrapped(
+                        stdout,
+                        "",
+                        event.relative_path(),
+                        eight_bit_output,
+                        " exists",
+                    )?;
+                }
                 continue;
             }
             ClientEventKind::SkippedMissingDestination => {
-                writeln_wrapped(
-                    stdout,
-                    "skipping non-existent destination file \"",
-                    event.relative_path(),
-                    eight_bit_output,
-                    "\"",
-                )?;
+                // upstream: generator.c:1379-1382 - `rprintf(FINFO,
+                // "not creating new %s \"%s\"\n", "file", fname)` for an
+                // --existing / --ignore-non-existing skip, gated on
+                // INFO_GTE(SKIP, 1).
+                if info_gte(InfoFlag::Skip, 1) {
+                    writeln_wrapped(
+                        stdout,
+                        "not creating new file \"",
+                        event.relative_path(),
+                        eight_bit_output,
+                        "\"",
+                    )?;
+                }
                 continue;
             }
             ClientEventKind::SkippedNewerDestination => {
-                writeln_wrapped(
-                    stdout,
-                    "skipping newer destination file \"",
-                    event.relative_path(),
-                    eight_bit_output,
-                    "\"",
-                )?;
+                // upstream: generator.c:1723-1724 - `rprintf(FINFO, "%s is
+                // newer\n", fname)` for an --update skip: the bare relative name
+                // followed by " is newer", gated on INFO_GTE(SKIP, 1).
+                if info_gte(InfoFlag::Skip, 1) {
+                    writeln_wrapped(
+                        stdout,
+                        "",
+                        event.relative_path(),
+                        eight_bit_output,
+                        " is newer",
+                    )?;
+                }
                 continue;
             }
             ClientEventKind::SkippedNonRegular => {
@@ -1063,6 +1099,106 @@ mod tests {
         )
         .expect("emit_verbose writes to an in-memory buffer");
         String::from_utf8(out).expect("output is valid UTF-8")
+    }
+
+    fn render_verbose_scenario(events: Vec<ClientEvent>, verbose_level: u8) -> String {
+        // Mirror the CLI's per-thread verbosity setup so `info_gte(Skip, ..)`
+        // reflects the requested level. `from_verbose_level(2)` raises Skip to 1
+        // (upstream options.c:252), `(1)` leaves it at 0.
+        logging::init(logging::VerbosityConfig::from_verbose_level(verbose_level));
+        let mut out = Vec::new();
+        emit_verbose(
+            &events,
+            verbose_level,
+            NameOutputLevel::UpdatedAndUnchanged,
+            false,
+            HumanReadableMode::Grouped,
+            false,
+            &mut out,
+        )
+        .expect("emit_verbose writes to an in-memory buffer");
+        String::from_utf8(out).expect("output is valid UTF-8")
+    }
+
+    fn transferred_event(name: &str) -> ClientEvent {
+        ClientEvent::for_test(
+            PathBuf::from(name),
+            ClientEventKind::DataCopied,
+            true,
+            Some(ClientEntryMetadata::for_test(ClientEntryKind::File)),
+            LocalCopyChangeSet::new(),
+        )
+    }
+
+    fn skip_event(name: &str, kind: ClientEventKind) -> ClientEvent {
+        ClientEvent::for_test(
+            PathBuf::from(name),
+            kind,
+            false,
+            Some(ClientEntryMetadata::for_test(ClientEntryKind::File)),
+            LocalCopyChangeSet::new(),
+        )
+    }
+
+    #[test]
+    fn ignore_existing_skip_notices_cluster_before_transferred_at_vv() {
+        // WHY: a drop-in tool parses the local client stream in order. Upstream's
+        // recv_generator emits the `"%s exists"` --ignore-existing notice in the
+        // generator phase, ahead of the receiver phase that prints transferred
+        // names, and only at INFO_GTE(SKIP, 1) (i.e. -vv). Collection order here
+        // is the sorted flist (big, onlyexists, small, tiny); the two skip
+        // notices must surface first, in flist order, with upstream's exact
+        // bare-name-plus-" exists" text - never after the transferred names or
+        // after the stats block.
+        // upstream: generator.c:1395-1409
+        let events = vec![
+            transferred_event("big.txt"),
+            skip_event("onlyexists.txt", ClientEventKind::SkippedExisting),
+            skip_event("small.txt", ClientEventKind::SkippedExisting),
+            transferred_event("tiny.txt"),
+        ];
+        assert_eq!(
+            render_verbose_scenario(events, 2),
+            "onlyexists.txt exists\nsmall.txt exists\nbig.txt\ntiny.txt\n"
+        );
+    }
+
+    #[test]
+    fn skip_notices_suppressed_below_skip_verbosity() {
+        // WHY: upstream gates the exists/not-creating/is-newer notices on
+        // INFO_GTE(SKIP, 1), which the info verbosity table raises only at -vv
+        // (options.c:252). At plain -v they must be silent, leaving only the
+        // transferred-file names - otherwise a drop-in tool sees phantom lines
+        // that upstream never emits.
+        let events = vec![
+            transferred_event("big.txt"),
+            skip_event("onlyexists.txt", ClientEventKind::SkippedExisting),
+            skip_event("small.txt", ClientEventKind::SkippedExisting),
+            transferred_event("tiny.txt"),
+        ];
+        assert_eq!(render_verbose_scenario(events, 1), "big.txt\ntiny.txt\n");
+    }
+
+    #[test]
+    fn not_creating_and_is_newer_use_upstream_text_at_vv() {
+        // WHY: the local path previously emitted oc-invented wording ("skipping
+        // non-existent destination file", "skipping newer destination file").
+        // Upstream prints `not creating new file "%s"` (generator.c:1380) and
+        // `%s is newer` (generator.c:1724). Drop-in parsers key on the exact
+        // strings, so any deviation breaks compatibility.
+        let missing = vec![skip_event(
+            "big.txt",
+            ClientEventKind::SkippedMissingDestination,
+        )];
+        assert_eq!(
+            render_verbose_scenario(missing, 2),
+            "not creating new file \"big.txt\"\n"
+        );
+        let newer = vec![skip_event(
+            "big.txt",
+            ClientEventKind::SkippedNewerDestination,
+        )];
+        assert_eq!(render_verbose_scenario(newer, 2), "big.txt is newer\n");
     }
 
     #[test]
