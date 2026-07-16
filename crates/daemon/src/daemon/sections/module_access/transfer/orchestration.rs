@@ -296,9 +296,10 @@ fn process_approved_module(
     // after auth and arg reading but before the transfer starts.
     // Split into separate steps so each failure sends the correct upstream
     // error message: `@ERROR: chroot failed` vs `@ERROR: setuid failed` etc.
-    if !apply_privilege_restrictions_with_upstream_errors(ctx, module)? {
-        return Ok(());
-    }
+    let privilege_outcome = match apply_privilege_restrictions_with_upstream_errors(ctx, module)? {
+        Some(outcome) => outcome,
+        None => return Ok(()),
+    };
 
     // upstream: clientserver.c:962-969 - spawn name converter after privilege
     // reduction so it runs with reduced privileges inside the chroot.
@@ -328,8 +329,12 @@ fn process_approved_module(
     #[cfg(windows)]
     let _name_converter_guard = Some(install_windows_name_converter());
 
+    // Rewrite the module path to "/" only when chroot was actually applied.
+    // After a rootless auto-fallback (D3) the process is not chrooted, so the
+    // real absolute module path must be preserved.
+    // upstream: clientserver.c:848-862 - the post-chroot inner path is "/".
     let effective_module;
-    let config_module = if module.use_chroot {
+    let config_module = if privilege_outcome.chroot_applied {
         let mut adjusted = module.definition.clone();
         adjusted.path = PathBuf::from("/");
         effective_module = ModuleRuntime::from(adjusted);

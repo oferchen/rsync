@@ -35,7 +35,10 @@ pub use cache::{map_gid, map_uid};
 pub use converter::{NameConverterCallbacks, clear_name_converter, set_name_converter};
 pub use name_cache::{lookup_group_name_cached, lookup_user_name_cached};
 #[cfg(unix)]
-pub use nss::{lookup_group_by_name, lookup_group_name, lookup_user_by_name, lookup_user_name};
+pub use nss::{
+    lookup_group_by_name, lookup_group_name, lookup_user_by_name, lookup_user_name,
+    supplementary_gids_for_uid,
+};
 #[cfg(not(unix))]
 pub use nss_stub::{
     lookup_group_by_name, lookup_group_name, lookup_user_by_name, lookup_user_name,

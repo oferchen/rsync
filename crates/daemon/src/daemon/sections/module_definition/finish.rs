@@ -34,6 +34,10 @@ impl ModuleDefinitionBuilder {
         })?;
 
         let use_chroot = self.use_chroot.or(default_use_chroot).unwrap_or(true);
+        // upstream: clientserver.c:831 - `use_chroot < 0` means unset. Track
+        // explicitness so a runtime chroot() failure can fall back to
+        // no-chroot only when the operator did not demand it.
+        let use_chroot_explicit = self.use_chroot.is_some() || default_use_chroot.is_some();
 
         // Windows has no chroot(2), so the absolute-path enforcement gated on
         // `use chroot` does not apply there. The check uses `Path::is_absolute()`
@@ -128,11 +132,15 @@ impl ModuleDefinitionBuilder {
             read_only: self.read_only.or(defaults.read_only).unwrap_or(true),
             write_only: self.write_only.or(defaults.write_only).unwrap_or(false),
             numeric_ids: self.numeric_ids.or(defaults.numeric_ids).unwrap_or(false),
-            uid: self.uid,
-            gid: self.gid,
+            // upstream: clientserver.c:781,790 read the per-module `lp_uid`/
+            // `lp_gid`, which inherit the global-section default when the module
+            // sets no explicit value (daemon-parm.txt marks both P_LOCAL).
+            uid: self.uid.or(defaults.uid),
+            gid: self.gid.or_else(|| defaults.gid.clone()),
             timeout: self.timeout.or(defaults.timeout).unwrap_or(None),
             listable: self.listable.or(defaults.listable).unwrap_or(true),
             use_chroot,
+            use_chroot_explicit,
             max_connections: self.max_connections.or(defaults.max_connections).unwrap_or(None),
             incoming_chmod: self
                 .incoming_chmod

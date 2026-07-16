@@ -65,21 +65,28 @@ pub fn apply_chroot(_path: &Path) -> io::Result<()> {
     Ok(())
 }
 
-/// Drops process privileges to the specified uid and gid.
+/// Drops process privileges to the specified uid and group list.
 ///
-/// The call sequence follows the security-critical POSIX ordering:
-/// 1. `setgroups()` - clear supplementary groups (must happen while still root)
-/// 2. `setgid()` - drop group privileges
-/// 3. `setuid()` - drop user privileges (irreversible, must be last)
+/// `gids` is the complete group set to install, primary group first (as
+/// resolved by the daemon from the module's `gid` directive, or the
+/// `nobody` default). An empty slice leaves the group identity untouched.
 ///
-/// upstream: `clientserver.c:rsync_module()` - setgid/setuid after chroot.
+/// The call sequence follows upstream's security-critical ordering:
+/// 1. `setgid(gids[0])` - drop the primary group (clientserver.c:1022)
+/// 2. `setgroups(gids)` - install the group set, clearing every inherited
+///    supplementary group (clientserver.c:1029)
+/// 3. `setuid()` - drop user privileges (irreversible, must be last;
+///    clientserver.c:1046)
+///
+/// upstream: `clientserver.c:rsync_module()` - setgid/setgroups/setuid after
+/// chroot.
 #[cfg(unix)]
-pub fn drop_privileges(uid: Option<u32>, gid: Option<u32>) -> io::Result<()> {
-    if let Some(gid_val) = gid {
-        set_supplementary_groups(gid_val)?;
-
-        let nix_gid = nix::unistd::Gid::from_raw(gid_val);
+pub fn drop_privileges(uid: Option<u32>, gids: &[u32]) -> io::Result<()> {
+    if let Some(&primary) = gids.first() {
+        let nix_gid = nix::unistd::Gid::from_raw(primary);
         nix::unistd::setgid(nix_gid).map_err(nix_to_io)?;
+
+        set_supplementary_groups(gids)?;
     }
 
     if let Some(uid_val) = uid {
@@ -90,32 +97,37 @@ pub fn drop_privileges(uid: Option<u32>, gid: Option<u32>) -> io::Result<()> {
     Ok(())
 }
 
-/// Sets supplementary groups to a single-element list containing `gid`.
+/// Installs the given group list as the process's active groups, replacing
+/// (and thereby clearing) any inherited supplementary groups.
 ///
 /// Uses `nix::unistd::setgroups` on Linux. On macOS (where nix doesn't
 /// provide setgroups), falls back to `libc::setgroups` directly.
 #[cfg(unix)]
-fn set_supplementary_groups(gid: u32) -> io::Result<()> {
+fn set_supplementary_groups(gids: &[u32]) -> io::Result<()> {
     #[cfg(not(target_vendor = "apple"))]
     {
-        let nix_gid = nix::unistd::Gid::from_raw(gid);
-        nix::unistd::setgroups(&[nix_gid]).map_err(nix_to_io)
+        let nix_gids: Vec<nix::unistd::Gid> = gids
+            .iter()
+            .copied()
+            .map(nix::unistd::Gid::from_raw)
+            .collect();
+        nix::unistd::setgroups(&nix_gids).map_err(nix_to_io)
     }
 
     #[cfg(target_vendor = "apple")]
     {
-        set_supplementary_groups_libc(gid)
+        set_supplementary_groups_libc(gids)
     }
 }
 
 /// Fallback setgroups via libc for macOS where nix doesn't provide it.
 #[cfg(all(unix, target_vendor = "apple"))]
 #[allow(unsafe_code)]
-fn set_supplementary_groups_libc(gid: u32) -> io::Result<()> {
-    let gid_t = libc::gid_t::from(gid);
-    // SAFETY: `setgroups` with a single-element array is a standard POSIX call.
-    // The array lives on the stack for the duration of the call.
-    let ret = unsafe { libc::setgroups(1, [gid_t].as_ptr()) };
+fn set_supplementary_groups_libc(gids: &[u32]) -> io::Result<()> {
+    let gid_array: Vec<libc::gid_t> = gids.iter().map(|&gid| gid as libc::gid_t).collect();
+    // SAFETY: `setgroups` reads `gid_array.len()` entries from the array, which
+    // lives on the heap for the duration of the call.
+    let ret = unsafe { libc::setgroups(gid_array.len() as libc::c_int, gid_array.as_ptr()) };
     if ret != 0 {
         return Err(io::Error::last_os_error());
     }
@@ -124,8 +136,38 @@ fn set_supplementary_groups_libc(gid: u32) -> io::Result<()> {
 
 /// No-op privilege drop on non-Unix platforms.
 #[cfg(not(unix))]
-pub fn drop_privileges(_uid: Option<u32>, _gid: Option<u32>) -> io::Result<()> {
+pub fn drop_privileges(_uid: Option<u32>, _gids: &[u32]) -> io::Result<()> {
     Ok(())
+}
+
+/// Returns whether the process has an effective uid of 0 (root).
+///
+/// Non-Unix platforms have no root uid and always return `false`.
+///
+/// upstream: clientserver.c:780 `am_root = (uid == ROOT_UID)`.
+#[cfg(unix)]
+pub fn is_effective_root() -> bool {
+    nix::unistd::geteuid().is_root()
+}
+
+/// Non-Unix stub: there is no root uid.
+#[cfg(not(unix))]
+pub fn is_effective_root() -> bool {
+    false
+}
+
+/// Returns the process's current effective uid.
+///
+/// Non-Unix platforms have no POSIX uid and return `0`.
+#[cfg(unix)]
+pub fn effective_uid() -> u32 {
+    nix::unistd::geteuid().as_raw()
+}
+
+/// Non-Unix stub: there is no POSIX effective uid.
+#[cfg(not(unix))]
+pub fn effective_uid() -> u32 {
+    0
 }
 
 /// Drops privileges on Windows via user impersonation.
@@ -237,7 +279,7 @@ mod tests {
 
     #[test]
     fn drop_privileges_noop_when_none() {
-        let result = drop_privileges(None, None);
+        let result = drop_privileges(None, &[]);
         assert!(result.is_ok());
     }
 
@@ -370,7 +412,7 @@ mod tests {
         // Only meaningful when running as root - otherwise setuid fails with EPERM
         // which is the expected non-root behavior. This test verifies the error path.
         if !nix::unistd::getuid().is_root() {
-            let result = drop_privileges(Some(99999), None);
+            let result = drop_privileges(Some(99999), &[]);
             assert!(result.is_err(), "non-root should fail to setuid");
         }
     }

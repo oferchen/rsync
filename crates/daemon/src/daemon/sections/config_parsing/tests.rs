@@ -334,7 +334,7 @@ mod config_parsing_tests {
         let file = write_config(&config);
         let result = parse_config_modules(file.path()).expect("parse succeeds");
         assert_eq!(result.modules[0].uid, Some(1000));
-        assert_eq!(result.modules[0].gid, Some(1000));
+        assert_eq!(result.modules[0].gid, Some(GidSetting::List(vec![1000])));
     }
 
     #[test]
@@ -3067,6 +3067,87 @@ mod config_parsing_tests {
         assert!(
             !result.modules[1].read_only,
             "module-level P_LOCAL directive overrides the global default",
+        );
+    }
+
+    // WHY: upstream daemon-parm.txt marks `uid`/`gid` P_LOCAL, so a value in the
+    // global section is the default `lp_uid(module_id)`/`lp_gid(module_id)` every
+    // module inherits (clientserver.c:781,790). A root daemon only drops a module
+    // to `nobody` when that per-module value is unset (`am_root ? NOBODY_USER`).
+    // Regression guard: mapping the global `uid`/`gid` to the process-wide daemon
+    // drop instead made a root daemon silently run every uid-less module as
+    // nobody even under `uid = 0`, leaving nobody-owned files upstream keeps as
+    // root. The default MUST reach the module so the drop resolves to root.
+    #[test]
+    fn global_uid_gid_seed_module_default() {
+        let dir = TempDir::new().expect("create temp dir");
+        let path = dir.path().join("data");
+        fs::create_dir(&path).expect("create dir");
+
+        let config = format!("uid = 0\ngid = 0\n[mod]\npath = {}\n", path.display());
+        let file = write_config(&config);
+        let result = parse_config_modules(file.path()).expect("parse succeeds");
+
+        assert_eq!(
+            result.modules[0].uid,
+            Some(0),
+            "module without an explicit uid inherits the global P_LOCAL uid default",
+        );
+        assert_eq!(
+            result.modules[0].gid,
+            Some(GidSetting::List(vec![0])),
+            "module without an explicit gid inherits the global P_LOCAL gid default",
+        );
+        assert!(
+            result.daemon_uid.is_none() && result.daemon_gid.is_none(),
+            "bare `uid`/`gid` are P_LOCAL and must NOT arm the process-wide daemon drop",
+        );
+    }
+
+    // WHY: upstream clientserver.c:781 - an explicit per-module `uid` overrides
+    // the inherited global default, exactly like every other P_LOCAL parameter.
+    #[test]
+    fn module_uid_overrides_global_uid_default() {
+        let dir = TempDir::new().expect("create temp dir");
+        let inherited = dir.path().join("inherited");
+        let overridden = dir.path().join("overridden");
+        fs::create_dir(&inherited).expect("create inherited dir");
+        fs::create_dir(&overridden).expect("create overridden dir");
+
+        let config = format!(
+            "uid = 0\n[inherited]\npath = {}\n[overridden]\npath = {}\nuid = 1000\n",
+            inherited.display(),
+            overridden.display(),
+        );
+        let file = write_config(&config);
+        let result = parse_config_modules(file.path()).expect("parse succeeds");
+
+        assert_eq!(result.modules[0].uid, Some(0), "inherits global default");
+        assert_eq!(result.modules[1].uid, Some(1000), "module override wins");
+    }
+
+    // WHY: upstream daemon-parm.txt marks `daemon_uid`/`daemon_gid` P_GLOBAL;
+    // `daemon uid` sets the process-wide drop the listener applies once before
+    // the accept loop (clientserver.c:1376), and must NOT leak into per-module
+    // uid defaults. Keeps the two identity mechanisms cleanly separated.
+    #[test]
+    fn daemon_uid_directive_is_process_wide_not_module_default() {
+        let dir = TempDir::new().expect("create temp dir");
+        let path = dir.path().join("data");
+        fs::create_dir(&path).expect("create dir");
+
+        let config = format!("daemon uid = 0\ndaemon gid = 0\n[mod]\npath = {}\n", path.display());
+        let file = write_config(&config);
+        let result = parse_config_modules(file.path()).expect("parse succeeds");
+
+        assert_eq!(
+            result.modules[0].uid, None,
+            "`daemon uid` is P_GLOBAL and must not seed the per-module uid default",
+        );
+        assert_eq!(result.modules[0].gid, None, "`daemon gid` must not seed module gid");
+        assert!(
+            result.daemon_uid.is_some(),
+            "`daemon uid` must arm the process-wide daemon drop",
         );
     }
 }

@@ -65,18 +65,18 @@ fn apply_chroot(_module_path: &Path, _log_sink: &SharedLogSink) -> io::Result<()
 /// connection is dropped.
 fn drop_privileges(
     uid: Option<u32>,
-    gid: Option<u32>,
+    gids: &[u32],
     log_sink: &SharedLogSink,
 ) -> io::Result<()> {
-    if let Err(err) = platform::privilege::drop_privileges(uid, gid) {
-        let text = format!("drop_privileges(uid={uid:?}, gid={gid:?}) failed: {err}");
+    if let Err(err) = platform::privilege::drop_privileges(uid, gids) {
+        let text = format!("drop_privileges(uid={uid:?}, gids={gids:?}) failed: {err}");
         let message = rsync_error!(1, text).with_role(Role::Daemon);
         log_message(log_sink, &message);
         return Err(err);
     }
 
-    if let Some(gid_val) = gid {
-        let text = format!("dropped group privileges to gid {gid_val}");
+    if let Some(&primary) = gids.first() {
+        let text = format!("dropped group privileges to gid {primary} (group set: {gids:?})");
         let message = rsync_info!(text).with_role(Role::Daemon);
         log_message(log_sink, &message);
     }
@@ -88,6 +88,160 @@ fn drop_privileges(
     }
 
     Ok(())
+}
+
+/// Applies chroot for a module, auto-falling back to no-chroot when `use
+/// chroot` was unset and the runtime chroot probe fails.
+///
+/// Returns `Ok(true)` when the process is chrooted, `Ok(false)` after a
+/// rootless auto-fallback, and `Err` when chroot was demanded explicitly but
+/// failed (the caller then refuses the connection).
+///
+/// upstream: clientserver.c:831-838 `rsync_module()` - `use_chroot < 0` (unset)
+/// probes `chroot("/")`; on failure it logs "Switching 'use chroot' from unset
+/// to false" and clears the flag. An explicit `use chroot = yes` has no such
+/// escape and aborts the connection.
+fn chroot_or_fallback(module: &ModuleDefinition, log_sink: &SharedLogSink) -> io::Result<bool> {
+    match apply_chroot(&module.path, log_sink) {
+        Ok(()) => Ok(true),
+        Err(err) if !module.use_chroot_explicit => {
+            let notice =
+                format!("chroot test failed: {err}. Switching 'use chroot' from unset to false.");
+            let message = rsync_warning!(notice).with_role(Role::Daemon);
+            log_message(log_sink, &message);
+            Ok(false)
+        }
+        Err(err) => Err(err),
+    }
+}
+
+/// The uid and complete group set the daemon will drop to for a connection.
+///
+/// upstream: clientserver.c:779-822 `rsync_module()` resolves the effective
+/// identity before `setgid`/`setgroups`/`setuid`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct DropTarget {
+    /// Target uid, or `None` to leave the user identity unchanged.
+    uid: Option<u32>,
+    /// Complete group set (primary first). Empty leaves groups unchanged.
+    gids: Vec<u32>,
+}
+
+/// Returns whether the daemon process currently has an effective uid of 0.
+///
+/// Delegates to the `platform` crate, which owns the `nix` dependency on every
+/// Unix target (the daemon crate links `nix` only on Linux).
+///
+/// upstream: clientserver.c:780 `am_root = (uid == ROOT_UID)`. Non-Unix
+/// platforms have no root uid and use the impersonation path instead.
+fn daemon_is_root() -> bool {
+    platform::privilege::is_effective_root()
+}
+
+/// Resolves the effective uid/gid drop for a module, applying upstream's
+/// default-to-`nobody` policy when the daemon runs as root.
+///
+/// - An explicit module `uid` always wins; otherwise a root daemon defaults to
+///   the `nobody` user (upstream clientserver.c:781
+///   `am_root ? NOBODY_USER : NULL`).
+/// - An explicit module `gid` list wins; `gid = *` expands to the target user's
+///   full group set (clientserver.c:797 `want_all_groups`); otherwise a root
+///   daemon defaults to the `nobody` group (clientserver.c:820-821).
+/// - When the daemon is not root and the module sets no `uid`/`gid`, nothing is
+///   dropped, matching `set_uid = 0` with an empty `gid_list`.
+///
+/// upstream: clientserver.c:779-822 `rsync_module()`.
+fn resolve_drop_target(module: &ModuleDefinition, am_root: bool) -> io::Result<DropTarget> {
+    let uid = match module.uid {
+        Some(explicit) => Some(explicit),
+        None if am_root => Some(resolve_nobody_uid()?),
+        None => None,
+    };
+
+    let gids = match module.gid.as_ref() {
+        Some(GidSetting::List(list)) => list.clone(),
+        Some(GidSetting::AllUserGroups { extra }) => {
+            let mut all = resolve_all_user_groups(uid)?;
+            for gid in extra {
+                if !all.contains(gid) {
+                    all.push(*gid);
+                }
+            }
+            all
+        }
+        None if am_root => vec![resolve_nobody_gid()?],
+        None => Vec::new(),
+    };
+
+    Ok(DropTarget { uid, gids })
+}
+
+/// Resolves the `nobody` user to its uid via NSS.
+///
+/// upstream: clientserver.c:782 `user_to_uid(NOBODY_USER, ...)`; NOBODY_USER is
+/// `"nobody"` (config.h). Errors when the account is absent, mirroring
+/// upstream's `@ERROR: invalid uid nobody`.
+#[cfg(unix)]
+fn resolve_nobody_uid() -> io::Result<u32> {
+    metadata::id_lookup::lookup_user_by_name(b"nobody")?.ok_or_else(|| {
+        io::Error::new(
+            io::ErrorKind::NotFound,
+            "cannot drop to default user: no 'nobody' account (set an explicit uid)",
+        )
+    })
+}
+
+/// Non-Unix stub: only reachable via `am_root`, which is always false off Unix.
+#[cfg(not(unix))]
+fn resolve_nobody_uid() -> io::Result<u32> {
+    Err(io::Error::new(
+        io::ErrorKind::Unsupported,
+        "default 'nobody' user drop is Unix-only",
+    ))
+}
+
+/// Resolves the `nobody` group to its gid via NSS.
+///
+/// upstream: clientserver.c:821 `add_a_group(f_out, NOBODY_GROUP)`; NOBODY_GROUP
+/// is `"nobody"` (config.h).
+#[cfg(unix)]
+fn resolve_nobody_gid() -> io::Result<u32> {
+    metadata::id_lookup::lookup_group_by_name(b"nobody")?.ok_or_else(|| {
+        io::Error::new(
+            io::ErrorKind::NotFound,
+            "cannot drop to default group: no 'nobody' group (set an explicit gid)",
+        )
+    })
+}
+
+/// Non-Unix stub: only reachable via `am_root`, which is always false off Unix.
+#[cfg(not(unix))]
+fn resolve_nobody_gid() -> io::Result<u32> {
+    Err(io::Error::new(
+        io::ErrorKind::Unsupported,
+        "default 'nobody' group drop is Unix-only",
+    ))
+}
+
+/// Resolves every group of the target uid for a `gid = *` directive.
+///
+/// Falls back to the current effective uid when no target uid is known (the
+/// non-root, no-explicit-uid case), matching upstream's use of the resolved
+/// `uid` variable in `want_all_groups`.
+///
+/// upstream: clientserver.c:797 `want_all_groups(f_out, uid)` ->
+/// uidlist.c:576 `getallgroups`.
+#[cfg(unix)]
+fn resolve_all_user_groups(uid: Option<u32>) -> io::Result<Vec<u32>> {
+    let target = uid.unwrap_or_else(platform::privilege::effective_uid);
+    metadata::id_lookup::supplementary_gids_for_uid(target)
+}
+
+/// Non-Unix stub: no NSS group list is available, so only the explicit extras
+/// (resolved by the caller) apply.
+#[cfg(not(unix))]
+fn resolve_all_user_groups(_uid: Option<u32>) -> io::Result<Vec<u32>> {
+    Ok(Vec::new())
 }
 
 /// Applies chroot and privilege restrictions for a daemon module.
@@ -113,11 +267,17 @@ fn apply_module_privilege_restrictions(
     log_sink: &SharedLogSink,
 ) -> io::Result<()> {
     if module.use_chroot {
-        apply_chroot(&module.path, log_sink)?;
+        chroot_or_fallback(module, log_sink)?;
     }
 
+    // Test scaffold only: drop for explicitly-configured uid/gid. The
+    // root-defaults-to-nobody policy (`am_root`) is exercised by the live
+    // `apply_privilege_restrictions_with_upstream_errors` path and by the
+    // `resolve_drop_target` unit tests; performing a real setuid here would
+    // irreversibly mutate the shared test process when the suite runs as root.
     if module.uid.is_some() || module.gid.is_some() {
-        drop_privileges(module.uid, module.gid, log_sink)?;
+        let target = resolve_drop_target(module, false)?;
+        drop_privileges(target.uid, &target.gids, log_sink)?;
     }
 
     Ok(())
@@ -187,5 +347,135 @@ mod privilege_tests {
             &sink,
         );
         assert!(result.is_err(), "chroot to missing path must fail");
+    }
+
+    /// WHY: upstream clientserver.c:781,820 - a root daemon whose module sets
+    /// no `uid`/`gid` MUST drop to `nobody:nobody`, not keep serving as root.
+    /// A regression here re-exposes the HIGH-severity default-root-worker gap.
+    /// Asserts the resolver picks the `nobody` account, not that we perform a
+    /// real setuid (which would corrupt the shared test process).
+    #[cfg(unix)]
+    #[test]
+    fn resolve_drop_target_defaults_root_daemon_to_nobody() {
+        let (Ok(Some(nobody_uid)), Ok(Some(nobody_gid))) = (
+            metadata::id_lookup::lookup_user_by_name(b"nobody"),
+            metadata::id_lookup::lookup_group_by_name(b"nobody"),
+        ) else {
+            // System without a `nobody` account/group: nothing to assert.
+            return;
+        };
+
+        let module = ModuleDefinition {
+            uid: None,
+            gid: None,
+            ..Default::default()
+        };
+        let target = resolve_drop_target(&module, true).expect("resolve nobody target");
+        assert_eq!(
+            target.uid,
+            Some(nobody_uid),
+            "root daemon must default uid to nobody"
+        );
+        assert_eq!(
+            target.gids,
+            vec![nobody_gid],
+            "root daemon must default group set to [nobody]"
+        );
+    }
+
+    /// WHY: upstream clientserver.c:779-780 recomputes `am_root` from the live
+    /// uid; a non-root daemon with an unconfigured module leaves the identity
+    /// untouched (`set_uid = 0`, empty `gid_list`). Guarantees we never attempt
+    /// a spurious drop that would EPERM and break unprivileged daemons.
+    #[test]
+    fn resolve_drop_target_non_root_no_config_drops_nothing() {
+        let module = ModuleDefinition {
+            uid: None,
+            gid: None,
+            ..Default::default()
+        };
+        let target = resolve_drop_target(&module, false).expect("resolve empty target");
+        assert_eq!(target.uid, None);
+        assert!(target.gids.is_empty());
+    }
+
+    /// WHY: upstream clientserver.c:1022,1029 - `setgid(gid_array[0])` then
+    /// `setgroups(gid_list)` install EXACTLY the configured list, clearing every
+    /// inherited supplementary group. The resolver must hand `drop_privileges`
+    /// the full list verbatim so the `setgroups` call replaces the group set.
+    #[test]
+    fn resolve_drop_target_gid_list_is_installed_verbatim() {
+        let module = ModuleDefinition {
+            uid: None,
+            gid: Some(GidSetting::List(vec![4321, 27, 44])),
+            ..Default::default()
+        };
+        let target = resolve_drop_target(&module, false).expect("resolve gid list");
+        assert_eq!(
+            target.gids,
+            vec![4321, 27, 44],
+            "the whole gid list must reach setgroups so inherited groups are cleared"
+        );
+        assert_eq!(target.uid, None);
+    }
+
+    /// WHY: upstream clientserver.c:781 - an explicit module `uid` overrides the
+    /// nobody default even on a root daemon. Preserves existing deployments.
+    #[cfg(unix)]
+    #[test]
+    fn resolve_drop_target_explicit_uid_overrides_nobody_default() {
+        let module = ModuleDefinition {
+            uid: Some(1234),
+            gid: Some(GidSetting::List(vec![5678])),
+            ..Default::default()
+        };
+        let target = resolve_drop_target(&module, true).expect("resolve explicit target");
+        assert_eq!(target.uid, Some(1234));
+        assert_eq!(target.gids, vec![5678]);
+    }
+
+    /// WHY: upstream clientserver.c:831-838 - when `use chroot` is UNSET and the
+    /// runtime `chroot()` probe fails (rootless daemon), the daemon switches to
+    /// no-chroot instead of aborting. Non-root callers cannot chroot, so this
+    /// reproduces the rootless case and asserts the connection is not refused.
+    #[cfg(unix)]
+    #[test]
+    fn chroot_or_fallback_auto_disables_when_unset_and_probe_fails() {
+        if platform::privilege::is_effective_root() {
+            // A root tester could actually chroot; the fallback is untestable.
+            return;
+        }
+        let module = ModuleDefinition {
+            path: PathBuf::from("/nonexistent_oc_rsync_rootless_xyz_98765"),
+            use_chroot: true,
+            use_chroot_explicit: false,
+            ..Default::default()
+        };
+        let sink = test_log_sink();
+        let applied = chroot_or_fallback(&module, &sink)
+            .expect("unset use chroot must fall back, not error");
+        assert!(!applied, "rootless fallback must report chroot NOT applied");
+    }
+
+    /// WHY: upstream clientserver.c:831 - an EXPLICIT `use chroot = yes` has no
+    /// unset-fallback escape; a chroot failure must abort so the operator's
+    /// isolation guarantee is never silently dropped.
+    #[cfg(unix)]
+    #[test]
+    fn chroot_or_fallback_is_fatal_when_explicitly_requested() {
+        if platform::privilege::is_effective_root() {
+            return;
+        }
+        let module = ModuleDefinition {
+            path: PathBuf::from("/nonexistent_oc_rsync_explicit_xyz_98765"),
+            use_chroot: true,
+            use_chroot_explicit: true,
+            ..Default::default()
+        };
+        let sink = test_log_sink();
+        assert!(
+            chroot_or_fallback(&module, &sink).is_err(),
+            "explicit use chroot must not silently fall back"
+        );
     }
 }
