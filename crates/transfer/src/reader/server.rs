@@ -291,6 +291,30 @@ impl<R: Read> ServerReader<R> {
             ServerReaderInner::Plain(_) => Vec::new(),
         }
     }
+
+    /// Returns and drains accumulated `MSG_SUCCESS` file indices from the peer.
+    ///
+    /// The peer's generator/receiver sends `MSG_SUCCESS` with a 4-byte
+    /// little-endian file index once a file has been fully received and
+    /// committed. The sender drains these to run the deferred
+    /// `--remove-source-files` unlink for confirmed files only.
+    ///
+    /// Returns an empty `Vec` for plain-mode readers.
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `io.c:1623-1637`: `MSG_SUCCESS` received; `!am_generator` calls
+    ///   `successful_send(val)`.
+    /// - `sender.c:131-182`: `successful_send()` performs the deferred unlink.
+    pub fn take_success_indices(&mut self) -> Vec<i32> {
+        match &mut self.inner {
+            ServerReaderInner::Multiplex(mux) => mux.take_success_indices(),
+            ServerReaderInner::Compressed(compressed) => {
+                compressed.get_mut().take_success_indices()
+            }
+            ServerReaderInner::Plain(_) => Vec::new(),
+        }
+    }
 }
 
 impl<R: Read> Read for ServerReader<R> {

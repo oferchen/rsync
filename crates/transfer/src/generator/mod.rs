@@ -86,6 +86,7 @@ pub mod io_error_flags;
 mod item_flags;
 pub mod itemize;
 mod open_source;
+mod pending_removal;
 mod protocol_io;
 mod segments;
 mod stats;

@@ -108,6 +108,13 @@ pub struct GeneratorContext {
     /// I/O error flags accumulated during file list building and transfer.
     /// Uses [`io_error_flags`] constants (IOERR_GENERAL, IOERR_VANISHED, etc.).
     pub(crate) io_error: i32,
+    /// Flat file-list indices whose `--remove-source-files` unlink is deferred
+    /// until the peer confirms the commit via `MSG_SUCCESS`. Empty and unused
+    /// unless `--remove-source-files` is active.
+    ///
+    /// upstream: sender.c:131-182 `successful_send()` unlinks on confirmation,
+    /// never inline at send time (io.c:1623-1637 `MSG_SUCCESS` handler).
+    pub(crate) pending_source_removals: super::pending_removal::PendingSourceRemovals,
     /// Incremental recursion (INC_RECURSE) state for segmented file list sending.
     pub(crate) incremental: IncrementalState,
     /// Accumulated deletion statistics received via NDX_DEL_STATS messages.
@@ -167,6 +174,7 @@ impl GeneratorContext {
             uid_list: IdList::new(),
             gid_list: IdList::new(),
             io_error: 0,
+            pending_source_removals: super::pending_removal::PendingSourceRemovals::default(),
             incremental: IncrementalState::new(initial_ndx_start),
             delete_stats: DeleteStats::new(),
             parallel_thresholds: crate::parallel_io::ParallelThresholds::default(),
@@ -469,8 +477,20 @@ impl GeneratorContext {
     /// **Client mode** (client pushing to daemon - `main.c:1304-1305` `client_run am_sender`):
     /// - `if (protocol_version >= 31 || (!filesfrom_host && protocol_version >= 23))`
     /// - We don't support filesfrom, so this simplifies to >= 23
+    ///
+    /// **`--remove-source-files`** (`options.c:2243-2251`): the sender must
+    /// receive `MSG_SUCCESS` before it may unlink a source, so upstream sets
+    /// `need_messages_from_generator = 1` unconditionally when the flag is
+    /// active, forcing input multiplex regardless of protocol version. Both
+    /// peers share the option, so both force it and the stream stays in sync.
     #[must_use]
     pub(crate) const fn should_activate_input_multiplex(&self) -> bool {
+        // upstream: options.c:2243-2251 - --remove-source-files always needs the
+        // generator->sender message channel so MSG_SUCCESS can drive the
+        // deferred unlink, independent of protocol version.
+        if self.config.flags.remove_source_files {
+            return true;
+        }
         if self.config.connection.client_mode {
             // Client mode: >= 23 (upstream main.c:1304-1305, no filesfrom)
             self.protocol.supports_multiplex_io()

@@ -5177,3 +5177,79 @@ fn source_base_interning_round_trips_and_shares() {
         "distinct source bases must not share an allocation",
     );
 }
+
+/// A source is removed only after its commit is confirmed by `MSG_SUCCESS`.
+///
+/// Encodes the crash-safety contract of upstream `successful_send()`
+/// (sender.c:131-182): the unlink runs from the `MSG_SUCCESS` handler
+/// (io.c:1623-1637), never inline at send time. Here the sender has transmitted
+/// the file (so its removal is marked pending) and the peer then confirms the
+/// commit - only then does the source disappear.
+#[test]
+fn remove_source_files_unlinks_after_msg_success() {
+    let temp = create_test_files(&[("keep.txt", b"payload")]);
+    let src = temp.path().join("keep.txt");
+    let (_h, mut ctx) = test_generator_for_path(&src, false);
+    ctx.config.flags.remove_source_files = true;
+    build_file_list_for(&mut ctx, &src);
+
+    let flat = (0..ctx.file_list.len())
+        .find(|&i| ctx.file_list[i].is_file())
+        .expect("the single-file source produces one file entry");
+    let wire = ctx.flat_to_wire_ndx(flat);
+
+    // The sender finished transmitting the file: its unlink is deferred, not run.
+    ctx.pending_source_removals.mark_pending(flat);
+    assert!(
+        src.exists(),
+        "the source must survive until the commit is confirmed"
+    );
+
+    // MSG_SUCCESS(ndx) confirms the commit and drives the deferred unlink.
+    let io_error = ctx.confirm_source_removal(wire);
+    assert_eq!(io_error, 0, "a clean removal sets no io_error bits");
+    assert!(!src.exists(), "a confirmed source must be removed");
+    assert!(
+        ctx.pending_source_removals.is_empty(),
+        "the confirmed entry must be cleared from the pending set"
+    );
+}
+
+/// An interrupted or failed transfer never deletes the source, because no
+/// `MSG_SUCCESS` arrives to confirm the commit.
+///
+/// This is the data-loss fix: the previous inline unlink removed the source the
+/// instant the bytes were sent, before the receiver committed, so a broken
+/// transfer could destroy a source that never safely landed. With the deferral,
+/// an unconfirmed pending entry leaves its source untouched, and a stray
+/// confirmation for an index the sender never marked is ignored.
+#[test]
+fn remove_source_files_defers_until_msg_success() {
+    let temp = create_test_files(&[("keep.txt", b"payload")]);
+    let src = temp.path().join("keep.txt");
+    let (_h, mut ctx) = test_generator_for_path(&src, false);
+    ctx.config.flags.remove_source_files = true;
+    build_file_list_for(&mut ctx, &src);
+
+    let flat = (0..ctx.file_list.len())
+        .find(|&i| ctx.file_list[i].is_file())
+        .expect("the single-file source produces one file entry");
+
+    // The sender transmitted the file, then the transfer is interrupted: the
+    // pending removal is recorded but no MSG_SUCCESS is ever consumed.
+    ctx.pending_source_removals.mark_pending(flat);
+    assert!(src.exists(), "an unconfirmed source must stay in place");
+
+    // A confirmation for an index the sender never marked pending must not
+    // trigger a spurious deletion.
+    let bogus_wire = ctx.flat_to_wire_ndx(flat) + 100;
+    assert_eq!(ctx.confirm_source_removal(bogus_wire), 0);
+    assert!(
+        src.exists(),
+        "a stray MSG_SUCCESS must never delete an unrelated source"
+    );
+    assert!(
+        !ctx.pending_source_removals.is_empty(),
+        "the genuine pending entry must remain until its own confirmation"
+    );
+}

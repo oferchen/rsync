@@ -142,6 +142,13 @@ pub(crate) struct MultiplexReader<R> {
     /// File indices received via `MSG_REDO` from the receiver.
     /// upstream: io.c:1514-1519, receiver.c:970-974
     pub(super) redo_indices: Vec<i32>,
+    /// File indices received via `MSG_SUCCESS` from the peer's generator or
+    /// receiver, each confirming that the file was fully received and committed
+    /// to its final destination. The sender drains these to drive the deferred
+    /// `--remove-source-files` unlink - a source is removed only after its
+    /// transfer is confirmed, never inline right after the bytes are sent.
+    /// upstream: io.c:1623-1637, sender.c:131-182 `successful_send()`.
+    pub(super) success_indices: Vec<i32>,
     /// Exit code from MSG_ERROR_EXIT. When set, the remote has requested
     /// immediate termination. upstream: io.c:1663-1701 calls _exit_cleanup().
     pub(super) error_exit_code: Option<i32>,
@@ -246,6 +253,7 @@ impl<R> MultiplexReader<R> {
             io_error: 0,
             no_send_indices: Vec::new(),
             redo_indices: Vec::new(),
+            success_indices: Vec::new(),
             error_exit_code: None,
             xfer_error_count: 0,
             io_timeout: None,
@@ -326,6 +334,22 @@ impl<R> MultiplexReader<R> {
     /// - `receiver.c:970-974`: receiver sends `MSG_REDO` when `!redoing`.
     pub(super) fn take_redo_indices(&mut self) -> Vec<i32> {
         std::mem::take(&mut self.redo_indices)
+    }
+
+    /// Returns and drains the accumulated `MSG_SUCCESS` file indices.
+    ///
+    /// Each index is a file the peer's generator/receiver has confirmed as
+    /// fully received and committed. The sender consumes them to unlink the
+    /// corresponding `--remove-source-files` source only after the commit is
+    /// confirmed.
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `io.c:1623-1637`: `MSG_SUCCESS` received; when `!am_generator` it
+    ///   drives `successful_send(val)`.
+    /// - `sender.c:131-182`: `successful_send()` performs the deferred unlink.
+    pub(super) fn take_success_indices(&mut self) -> Vec<i32> {
+        std::mem::take(&mut self.success_indices)
     }
 
     /// Returns an error if MSG_ERROR_EXIT has been received.
@@ -422,6 +446,30 @@ impl<R> MultiplexReader<R> {
                 self.buffer[3],
             ]);
             self.no_send_indices.push(ndx);
+        }
+    }
+
+    /// Handles a `MSG_SUCCESS` payload by recording the confirmed file index.
+    ///
+    /// The peer's generator/receiver emits `MSG_SUCCESS` only after a file has
+    /// been fully received and committed to its final destination, so the index
+    /// is safe to act on (it drives the deferred `--remove-source-files`
+    /// unlink on the sender). A non-`local_server` peer frames the payload as a
+    /// bare 4-byte little-endian file index (`send_msg_int(MSG_SUCCESS, ndx)`);
+    /// a `local_server` peer prepends the same 4-byte index with an 8+8 byte
+    /// dev/ino guard. oc's wire sender is never `local_server` (same-host
+    /// copies take the engine path), so only the leading 4-byte index is read.
+    ///
+    /// upstream: io.c:1071-1086 `send_msg_success()`, io.c:1623-1637 handler.
+    fn handle_success_msg(&mut self) {
+        if self.buffer.len() >= 4 {
+            let ndx = i32::from_le_bytes([
+                self.buffer[0],
+                self.buffer[1],
+                self.buffer[2],
+                self.buffer[3],
+            ]);
+            self.success_indices.push(ndx);
         }
     }
 
@@ -586,6 +634,13 @@ impl<R> MultiplexReader<R> {
             protocol::MessageCode::Redo => {
                 // upstream: io.c:1514-1519
                 self.handle_redo_msg();
+            }
+            protocol::MessageCode::Success => {
+                // upstream: io.c:1623-1637 - MSG_SUCCESS carries a committed
+                // file index. On the sender it drives successful_send() (the
+                // deferred --remove-source-files unlink); accumulate it here so
+                // the transfer driver can consume it, instead of dropping it.
+                self.handle_success_msg();
             }
             protocol::MessageCode::IoTimeout => {
                 // upstream: io.c:1551-1561
@@ -1051,5 +1106,49 @@ mod io_timeout_adoption_tests {
             reader.check_io_timeout().is_ok(),
             "a non-adopting reader must not abort on MSG_IO_TIMEOUT"
         );
+    }
+}
+
+#[cfg(test)]
+mod success_dispatch_tests {
+    use super::*;
+
+    /// A `MSG_SUCCESS` frame must be dispatched to the success accumulator, not
+    /// dropped. The sender's deferred `--remove-source-files` unlink depends on
+    /// reading `MSG_SUCCESS(ndx)`; the previous catch-all `_ => {}` arm silently
+    /// discarded it, so a sender that defers its unlink would never learn a
+    /// commit was confirmed and would never remove the source. This test fails
+    /// against the drop-on-the-floor behaviour.
+    ///
+    /// upstream: io.c:1623-1637 - `!am_generator` runs `successful_send(val)`.
+    #[test]
+    fn msg_success_is_dispatched_not_dropped() {
+        let mut reader = MultiplexReader::new(io::empty());
+        // A non-local_server MSG_SUCCESS payload is the bare 4-byte LE ndx
+        // (io.c:1086 send_msg_int(MSG_SUCCESS, ndx)).
+        reader.buffer = 42i32.to_le_bytes().to_vec();
+        let is_data = reader.dispatch_message_with(protocol::MessageCode::Success, &mut RealSink);
+        assert!(!is_data, "MSG_SUCCESS is a control frame, not MSG_DATA");
+        assert_eq!(
+            reader.take_success_indices(),
+            vec![42],
+            "the committed ndx must be captured for the deferred unlink"
+        );
+        assert!(
+            reader.take_success_indices().is_empty(),
+            "draining must leave the accumulator empty"
+        );
+    }
+
+    /// Multiple confirmations accumulate in receipt order so the sender can
+    /// unlink every confirmed source once the transfer's wire drains.
+    #[test]
+    fn msg_success_indices_accumulate_in_order() {
+        let mut reader = MultiplexReader::new(io::empty());
+        for ndx in [1i32, 5, 9] {
+            reader.buffer = ndx.to_le_bytes().to_vec();
+            reader.dispatch_message_with(protocol::MessageCode::Success, &mut RealSink);
+        }
+        assert_eq!(reader.take_success_indices(), vec![1, 5, 9]);
     }
 }
