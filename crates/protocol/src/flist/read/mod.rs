@@ -108,6 +108,16 @@ pub struct FileListReader {
     flist_csum_len: usize,
     /// Optional filename encoding converter (for --iconv support).
     iconv: Option<FilenameConverter>,
+    /// Whether the negotiated session converts symlink TARGETS through iconv.
+    ///
+    /// Mirrors the sender's `sender_symlink_iconv`: the receiver only runs a
+    /// received symlink target through `ic_recv` when `--iconv` is active AND
+    /// `CF_SYMLINK_ICONV` was negotiated. Against a proto-30 / pre-3.1 peer the
+    /// target arrives as raw local bytes and must NOT be transcoded.
+    ///
+    /// upstream: flist.c:1156 gates the recv-side conversion on
+    /// `sender_symlink_iconv` (compat.c:765-767).
+    symlink_iconv: bool,
     /// Whether `--relative` (`-R`) paths are active.
     ///
     /// Controls pathname validation: when false, absolute paths (leading `/`)
@@ -177,6 +187,7 @@ impl FileListReader {
             am_root: false,
             flist_csum_len: 0,
             iconv: None,
+            symlink_iconv: false,
             relative_paths: false,
             ndx_start: 0,
             dirname_interner: PathInterner::new(),
@@ -213,6 +224,7 @@ impl FileListReader {
             am_root: false,
             flist_csum_len: 0,
             iconv: None,
+            symlink_iconv: false,
             relative_paths: false,
             ndx_start: 0,
             dirname_interner: PathInterner::new(),
@@ -364,6 +376,21 @@ impl FileListReader {
     #[must_use]
     pub const fn with_iconv(mut self, converter: FilenameConverter) -> Self {
         self.iconv = Some(converter);
+        self
+    }
+
+    /// Sets whether received symlink TARGETS are transcoded through iconv.
+    ///
+    /// Must reflect the negotiated `CF_SYMLINK_ICONV` capability AND an active
+    /// `--iconv`. When `false`, symlink targets are decoded as raw local bytes
+    /// even if a filename converter is attached.
+    ///
+    /// upstream: flist.c:1156 gates the recv-side conversion on
+    /// `sender_symlink_iconv` (compat.c:765-767).
+    #[inline]
+    #[must_use]
+    pub const fn with_symlink_iconv(mut self, symlink_iconv: bool) -> Self {
+        self.symlink_iconv = symlink_iconv;
         self
     }
 
@@ -648,7 +675,7 @@ impl FileListReader {
                 let size = self.read_size(reader)?;
                 let metadata = self.read_metadata(reader, flags)?;
                 let rdev = self.read_rdev(reader, metadata.mode, flags)?;
-                let link_target = self.read_symlink_target(reader, metadata.mode)?;
+                let link_target = self.read_symlink_target(reader, metadata.mode, &name)?;
                 let hardlink_dev_ino = self.read_hardlink_dev_ino(reader, flags, metadata.mode)?;
                 let checksum = self.read_checksum(reader, metadata.mode)?;
 

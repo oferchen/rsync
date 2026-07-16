@@ -92,6 +92,17 @@ pub struct FileListWriter {
     flist_csum_len: usize,
     /// Optional filename encoding converter (for --iconv support).
     iconv: Option<FilenameConverter>,
+    /// Whether the negotiated session converts symlink TARGETS through iconv.
+    ///
+    /// Filename iconv (`iconv`) and symlink-target iconv are gated separately by
+    /// upstream. The sender only transcodes a symlink target when `--iconv` is
+    /// active AND the peer negotiated `CF_SYMLINK_ICONV` (the `'s'` capability).
+    /// Against a proto-30 / pre-3.1 peer that lacks the capability, targets are
+    /// sent as raw local bytes even while filenames are transcoded.
+    ///
+    /// upstream: compat.c:765-767 `sender_symlink_iconv = iconv_opt && (...)`,
+    /// applied at flist.c:1642.
+    symlink_iconv: bool,
     /// Cached: whether varint flag encoding is enabled (computed once at construction).
     use_varint_flags: bool,
     /// Cached: whether safe file list mode is enabled (computed once at construction).
@@ -150,6 +161,7 @@ impl FileListWriter {
             always_checksum: false,
             flist_csum_len: 0,
             iconv: None,
+            symlink_iconv: false,
             use_varint_flags: false,
             use_safe_file_list: protocol.safe_file_list_always_enabled(),
             first_ndx: 0,
@@ -174,6 +186,7 @@ impl FileListWriter {
             always_checksum: false,
             flist_csum_len: 0,
             iconv: None,
+            symlink_iconv: false,
             use_varint_flags: compat_flags.contains(CompatibilityFlags::VARINT_FLIST_FLAGS),
             use_safe_file_list: compat_flags.contains(CompatibilityFlags::SAFE_FILE_LIST)
                 || protocol.safe_file_list_always_enabled(),
@@ -359,6 +372,20 @@ impl FileListWriter {
     #[must_use]
     pub const fn with_iconv(mut self, converter: FilenameConverter) -> Self {
         self.iconv = Some(converter);
+        self
+    }
+
+    /// Sets whether symlink TARGETS are transcoded through iconv.
+    ///
+    /// Must reflect the negotiated `CF_SYMLINK_ICONV` capability AND an active
+    /// `--iconv`. When `false`, symlink targets are written as raw local bytes
+    /// even if a filename converter is attached.
+    ///
+    /// upstream: compat.c:765-767 `sender_symlink_iconv`, applied at flist.c:1642.
+    #[inline]
+    #[must_use]
+    pub const fn with_symlink_iconv(mut self, symlink_iconv: bool) -> Self {
+        self.symlink_iconv = symlink_iconv;
         self
     }
 

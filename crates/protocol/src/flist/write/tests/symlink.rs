@@ -139,12 +139,12 @@ fn wire_encoded_symlink_target_never_contains_backslash_byte() {
 }
 
 /// Symlink targets are transcoded by the same `ic_send` converter as
-/// filenames when `--iconv=LOCAL,REMOTE` is in effect and CF_SYMLINK_ICONV
-/// has been negotiated. A UTF-8 local target must appear on the wire as
-/// ISO-8859-1 bytes when the converter is configured `(local=UTF-8,
-/// remote=ISO-8859-1)`.
+/// filenames ONLY when `--iconv=LOCAL,REMOTE` is in effect AND CF_SYMLINK_ICONV
+/// has been negotiated (`with_symlink_iconv(true)`). A UTF-8 local target must
+/// appear on the wire as ISO-8859-1 bytes when the converter is configured
+/// `(local=UTF-8, remote=ISO-8859-1)`.
 ///
-/// upstream: flist.c:1606-1621 send_file_entry() - sender_symlink_iconv path
+/// upstream: flist.c:1642 send_file1() - `sender_symlink_iconv` path.
 #[cfg(feature = "iconv")]
 #[test]
 fn write_symlink_target_transcodes_with_iconv_to_remote_charset() {
@@ -156,7 +156,8 @@ fn write_symlink_target_transcodes_with_iconv_to_remote_charset() {
     let converter = FilenameConverter::new("UTF-8", "ISO-8859-1").unwrap();
     let mut writer = FileListWriter::new(test_protocol())
         .with_preserve_links(true)
-        .with_iconv(converter);
+        .with_iconv(converter)
+        .with_symlink_iconv(true);
 
     let mut entry = FileEntry::new_symlink("link".into(), utf8_target.into());
     entry.set_mtime(1_700_000_000, 0);
@@ -172,6 +173,44 @@ fn write_symlink_target_transcodes_with_iconv_to_remote_charset() {
         !buf.windows(utf8_target_bytes.len())
             .any(|w| w == utf8_target_bytes),
         "wire bytes must not contain UTF-8 form of the symlink target, got: {buf:?}",
+    );
+}
+
+/// A converter WITHOUT negotiated CF_SYMLINK_ICONV (e.g. a proto-30 / rsync
+/// 3.0.x peer) must leave symlink targets as raw local bytes even while
+/// filenames are transcoded. This is the `else` branch at upstream flist.c:1659
+/// where `sender_symlink_iconv` is 0.
+///
+/// upstream: compat.c:765-767 - `sender_symlink_iconv = iconv_opt &&
+/// (... CF_SYMLINK_ICONV)`; flist.c:1642 gate.
+#[cfg(feature = "iconv")]
+#[test]
+fn write_symlink_target_without_negotiated_flag_passes_raw_local_bytes() {
+    use crate::iconv::FilenameConverter;
+
+    let utf8_target = "café";
+    let utf8_bytes = utf8_target.as_bytes();
+    let latin1_bytes: &[u8] = &[0x63, 0x61, 0x66, 0xe9];
+
+    // Converter is attached (filenames would transcode) but symlink_iconv is
+    // left at its default `false`, modelling a peer that did not advertise 's'.
+    let converter = FilenameConverter::new("UTF-8", "ISO-8859-1").unwrap();
+    let mut writer = FileListWriter::new(test_protocol())
+        .with_preserve_links(true)
+        .with_iconv(converter);
+
+    let mut entry = FileEntry::new_symlink("link".into(), utf8_target.into());
+    entry.set_mtime(1_700_000_000, 0);
+    let mut buf = Vec::new();
+    writer.write_entry(&mut buf, &entry).unwrap();
+
+    assert!(
+        buf.windows(utf8_bytes.len()).any(|w| w == utf8_bytes),
+        "target must stay raw UTF-8 local bytes without CF_SYMLINK_ICONV, got: {buf:?}",
+    );
+    assert!(
+        !buf.windows(latin1_bytes.len()).any(|w| w == latin1_bytes),
+        "target must NOT be transcoded to ISO-8859-1 without CF_SYMLINK_ICONV, got: {buf:?}",
     );
 }
 
