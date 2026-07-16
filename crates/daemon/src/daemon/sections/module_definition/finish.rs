@@ -132,8 +132,11 @@ impl ModuleDefinitionBuilder {
             read_only: self.read_only.or(defaults.read_only).unwrap_or(true),
             write_only: self.write_only.or(defaults.write_only).unwrap_or(false),
             numeric_ids: self.numeric_ids.or(defaults.numeric_ids).unwrap_or(false),
-            uid: self.uid,
-            gid: self.gid,
+            // upstream: clientserver.c:781,790 read the per-module `lp_uid`/
+            // `lp_gid`, which inherit the global-section default when the module
+            // sets no explicit value (daemon-parm.txt marks both P_LOCAL).
+            uid: self.uid.or(defaults.uid),
+            gid: self.gid.or_else(|| defaults.gid.clone()),
             timeout: self.timeout.or(defaults.timeout).unwrap_or(None),
             listable: self.listable.or(defaults.listable).unwrap_or(true),
             use_chroot,

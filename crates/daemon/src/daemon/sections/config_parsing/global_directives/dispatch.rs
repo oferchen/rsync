@@ -451,14 +451,50 @@ fn apply_global_directive(
                 state.bind_address = Some((parsed_addr, origin));
             }
         }
-        // upstream: loadparm.c - `uid` in the global section sets the
-        // daemon process uid after binding and daemonizing.
+        // upstream: daemon-parm.txt `Locals:` `uid` is P_LOCAL. A value in the
+        // global section is the default `lp_uid(module_id)` every module
+        // inherits (clientserver.c:781); it is NOT a process-wide daemon drop.
+        // Conflating it with the P_GLOBAL `daemon uid` made a root daemon drop
+        // every uid-less module to `nobody` (clientserver.c:781 `am_root ?
+        // NOBODY_USER`) even when the operator set a global `uid = 0`.
         "uid" => {
             if value.is_empty() {
                 return Err(config_parse_error(
                     path,
                     line_number,
                     "'uid' directive must not be empty",
+                ));
+            }
+            let uid = parse_numeric_identifier(value).ok_or_else(|| {
+                config_parse_error(path, line_number, format!("invalid uid '{value}'"))
+            })?;
+            state.module_defaults.uid = Some(uid);
+        }
+        // upstream: daemon-parm.txt `Locals:` `gid` is P_LOCAL - the global
+        // value is the default `lp_gid(module_id)` every module inherits
+        // (clientserver.c:790), distinct from the P_GLOBAL `daemon gid` drop.
+        "gid" => {
+            if value.is_empty() {
+                return Err(config_parse_error(
+                    path,
+                    line_number,
+                    "'gid' directive must not be empty",
+                ));
+            }
+            let gid = parse_gid_setting(value).map_err(|reason| {
+                config_parse_error(path, line_number, format!("invalid gid '{value}': {reason}"))
+            })?;
+            state.module_defaults.gid = Some(gid);
+        }
+        // upstream: daemon-parm.txt `Globals:` `daemon_uid`/`daemon_gid` are
+        // P_GLOBAL. `daemon uid` sets the process-wide uid the listener drops
+        // to once, before the accept loop (clientserver.c:1376 `lp_daemon_uid`).
+        "daemonuid" => {
+            if value.is_empty() {
+                return Err(config_parse_error(
+                    path,
+                    line_number,
+                    "'daemon uid' directive must not be empty",
                 ));
             }
 
@@ -474,7 +510,7 @@ fn apply_global_directive(
                         path,
                         line_number,
                         format!(
-                            "duplicate 'uid' directive in global section (previously defined on line {existing_line})"
+                            "duplicate 'daemon uid' directive in global section (previously defined on line {existing_line})"
                         ),
                     ));
                 }
@@ -484,14 +520,14 @@ fn apply_global_directive(
                 state.daemon_uid = Some((owned, origin));
             }
         }
-        // upstream: loadparm.c - `gid` in the global section sets the
-        // daemon process gid after binding and daemonizing.
-        "gid" => {
+        // upstream: clientserver.c:1363 `lp_daemon_gid` - `daemon gid` sets the
+        // process-wide gid the listener drops to before the accept loop.
+        "daemongid" => {
             if value.is_empty() {
                 return Err(config_parse_error(
                     path,
                     line_number,
-                    "'gid' directive must not be empty",
+                    "'daemon gid' directive must not be empty",
                 ));
             }
 
@@ -507,7 +543,7 @@ fn apply_global_directive(
                         path,
                         line_number,
                         format!(
-                            "duplicate 'gid' directive in global section (previously defined on line {existing_line})"
+                            "duplicate 'daemon gid' directive in global section (previously defined on line {existing_line})"
                         ),
                     ));
                 }
