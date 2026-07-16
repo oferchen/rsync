@@ -184,6 +184,7 @@ impl ReceiverContext {
             backup,
             acl_cache: setup.acl_cache.clone(),
             acl_id_map: setup.acl_id_map.clone(),
+            xattr_filter: self.xattr_name_filter_arc(),
             io_uring_policy: self.config.write.io_uring_policy,
             io_uring_depth: self.config.write.io_uring_depth,
             partial_mode,
