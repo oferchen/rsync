@@ -1,10 +1,26 @@
+use std::io::Cursor;
+
+use super::super::super::read::FileListReader;
 use super::*;
+
+/// Decodes every entry from `buf`, threading the accumulating segment so
+/// abbreviated hardlink followers resolve their leader - exactly as the real
+/// receiver does (it passes `file_list[seg_start..]` to
+/// [`FileListReader::read_entry_with_flist`]). Panics on decode error.
+fn read_all(reader: &mut FileListReader, buf: &[u8]) -> Vec<FileEntry> {
+    let mut cursor = Cursor::new(buf);
+    let mut out: Vec<FileEntry> = Vec::new();
+    while let Some(entry) = reader
+        .read_entry_with_flist(&mut cursor, &out.clone())
+        .expect("decode entry")
+    {
+        out.push(entry);
+    }
+    out
+}
 
 #[test]
 fn write_hardlink_first_round_trip_protocol_30() {
-    use super::super::super::read::FileListReader;
-    use std::io::Cursor;
-
     let protocol = ProtocolVersion::try_from(30u8).unwrap();
     let mut buf = Vec::new();
     let mut writer = FileListWriter::new(protocol).with_preserve_hard_links(true);
@@ -25,32 +41,31 @@ fn write_hardlink_first_round_trip_protocol_30() {
 
 #[test]
 fn write_hardlink_follower_round_trip_protocol_30() {
-    use super::super::super::read::FileListReader;
-    use std::io::Cursor;
-
     let protocol = ProtocolVersion::try_from(30u8).unwrap();
     let mut buf = Vec::new();
     let mut writer = FileListWriter::new(protocol).with_preserve_hard_links(true);
 
-    let mut entry = FileEntry::new_file("file2.txt".into(), 100, 0o644);
-    entry.set_hardlink_idx(5);
+    // A follower must reference an already-seen leader (upstream flist.c:794).
+    // Write the leader at NDX 0 and the follower at NDX 1 pointing back to it.
+    let mut leader = FileEntry::new_file("file1.txt".into(), 100, 0o644);
+    leader.set_hardlink_idx(u32::MAX);
+    let mut follower = FileEntry::new_file("file2.txt".into(), 100, 0o644);
+    follower.set_hardlink_idx(0);
 
-    writer.write_entry(&mut buf, &entry).unwrap();
+    writer.write_entry(&mut buf, &leader).unwrap();
+    writer.write_entry(&mut buf, &follower).unwrap();
     writer.write_end(&mut buf, None).unwrap();
 
-    let mut cursor = Cursor::new(&buf[..]);
     let mut reader = FileListReader::new(protocol).with_preserve_hard_links(true);
+    let entries = read_all(&mut reader, &buf);
 
-    let read_entry = reader.read_entry(&mut cursor).unwrap().unwrap();
-    assert_eq!(read_entry.name(), "file2.txt");
-    assert_eq!(read_entry.hardlink_idx(), Some(5));
+    assert_eq!(entries.len(), 2);
+    assert_eq!(entries[1].name(), "file2.txt");
+    assert_eq!(entries[1].hardlink_idx(), Some(0));
 }
 
 #[test]
 fn write_hardlink_without_preserve_hard_links_omits_idx() {
-    use super::super::super::read::FileListReader;
-    use std::io::Cursor;
-
     let protocol = test_protocol();
     let mut buf = Vec::new();
     let mut writer = FileListWriter::new(protocol);
@@ -71,9 +86,6 @@ fn write_hardlink_without_preserve_hard_links_omits_idx() {
 
 #[test]
 fn write_hardlink_group_round_trip_protocol_32() {
-    use super::super::super::read::FileListReader;
-    use std::io::Cursor;
-
     let protocol = ProtocolVersion::try_from(32u8).unwrap();
     let mut buf = Vec::new();
     let mut writer = FileListWriter::new(protocol).with_preserve_hard_links(true);
@@ -92,28 +104,22 @@ fn write_hardlink_group_round_trip_protocol_32() {
     writer.write_entry(&mut buf, &entry3).unwrap();
     writer.write_end(&mut buf, None).unwrap();
 
-    let mut cursor = Cursor::new(&buf[..]);
     let mut reader = FileListReader::new(protocol).with_preserve_hard_links(true);
+    let entries = read_all(&mut reader, &buf);
 
-    let read1 = reader.read_entry(&mut cursor).unwrap().unwrap();
-    let read2 = reader.read_entry(&mut cursor).unwrap().unwrap();
-    let read3 = reader.read_entry(&mut cursor).unwrap().unwrap();
+    assert_eq!(entries.len(), 3);
+    assert_eq!(entries[0].name(), "original.txt");
+    assert_eq!(entries[0].hardlink_idx(), Some(u32::MAX));
 
-    assert_eq!(read1.name(), "original.txt");
-    assert_eq!(read1.hardlink_idx(), Some(u32::MAX));
+    assert_eq!(entries[1].name(), "link1.txt");
+    assert_eq!(entries[1].hardlink_idx(), Some(0));
 
-    assert_eq!(read2.name(), "link1.txt");
-    assert_eq!(read2.hardlink_idx(), Some(0));
-
-    assert_eq!(read3.name(), "link2.txt");
-    assert_eq!(read3.hardlink_idx(), Some(0));
+    assert_eq!(entries[2].name(), "link2.txt");
+    assert_eq!(entries[2].hardlink_idx(), Some(0));
 }
 
 #[test]
 fn write_hardlink_follower_skips_metadata() {
-    use super::super::super::read::FileListReader;
-    use std::io::Cursor;
-
     let protocol = ProtocolVersion::try_from(30u8).unwrap();
     let mut buf = Vec::new();
     let mut writer = FileListWriter::new(protocol).with_preserve_hard_links(true);
@@ -137,30 +143,25 @@ fn write_hardlink_follower_skips_metadata() {
         "follower entry should be much smaller: {second_len} vs {first_len}"
     );
 
-    let mut cursor = Cursor::new(&buf[..]);
     let mut reader = FileListReader::new(protocol).with_preserve_hard_links(true);
+    let entries = read_all(&mut reader, &buf);
 
-    let read1 = reader.read_entry(&mut cursor).unwrap().unwrap();
-    let read2 = reader.read_entry(&mut cursor).unwrap().unwrap();
+    assert_eq!(entries[0].name(), "original.txt");
+    assert_eq!(entries[0].size(), 500);
+    assert_eq!(entries[0].mtime(), 1700000000);
+    assert_eq!(entries[0].hardlink_idx(), Some(u32::MAX));
 
-    assert_eq!(read1.name(), "original.txt");
-    assert_eq!(read1.size(), 500);
-    assert_eq!(read1.mtime(), 1700000000);
-    assert_eq!(read1.hardlink_idx(), Some(u32::MAX));
-
-    // Follower metadata is intentionally skipped on the wire; the caller copies
-    // it from the leader (upstream flist.c:recv_file_entry lines 793-822).
-    assert_eq!(read2.name(), "link.txt");
-    assert_eq!(read2.size(), 0);
-    assert_eq!(read2.mtime(), 0);
-    assert_eq!(read2.hardlink_idx(), Some(0));
+    // Follower metadata is skipped on the wire; the receiver copies it from the
+    // leader in the same segment (upstream flist.c:recv_file_entry lines
+    // 793-822), so size and mtime match the leader rather than being blank.
+    assert_eq!(entries[1].name(), "link.txt");
+    assert_eq!(entries[1].size(), 500);
+    assert_eq!(entries[1].mtime(), 1700000000);
+    assert_eq!(entries[1].hardlink_idx(), Some(0));
 }
 
 #[test]
 fn write_hardlink_follower_with_uid_gid_skips_all() {
-    use super::super::super::read::FileListReader;
-    use std::io::Cursor;
-
     let protocol = ProtocolVersion::try_from(32u8).unwrap();
     let mut buf = Vec::new();
     let mut writer = FileListWriter::new(protocol)
@@ -194,31 +195,29 @@ fn write_hardlink_follower_with_uid_gid_skips_all() {
         "follower should skip metadata: {second_len} vs {first_len}"
     );
 
-    let mut cursor = Cursor::new(&buf[..]);
     let mut reader = FileListReader::new(protocol)
         .with_preserve_hard_links(true)
         .with_preserve_uid(true)
         .with_preserve_gid(true);
+    let entries = read_all(&mut reader, &buf);
 
-    let read1 = reader.read_entry(&mut cursor).unwrap().unwrap();
-    let read2 = reader.read_entry(&mut cursor).unwrap().unwrap();
+    assert_eq!(entries[0].user_name(), Some("testuser"));
+    assert_eq!(entries[0].group_name(), Some("testgroup"));
 
-    assert_eq!(read1.user_name(), Some("testuser"));
-    assert_eq!(read1.group_name(), Some("testgroup"));
-
-    assert_eq!(read2.size(), 0);
-    assert_eq!(read2.mtime(), 0);
-    assert_eq!(read2.mode(), 0);
-    assert_eq!(read2.user_name(), None);
-    assert_eq!(read2.group_name(), None);
-    assert_eq!(read2.hardlink_idx(), Some(0));
+    // The follower inherits size/mtime/mode/uid/gid from the leader in the same
+    // segment; the id->name strings are not part of the copied metadata.
+    assert_eq!(entries[1].size(), 1000);
+    assert_eq!(entries[1].mtime(), 1700000000);
+    assert_eq!(entries[1].mode(), entries[0].mode());
+    assert_eq!(entries[1].uid(), entries[0].uid());
+    assert_eq!(entries[1].gid(), entries[0].gid());
+    assert_eq!(entries[1].user_name(), None);
+    assert_eq!(entries[1].group_name(), None);
+    assert_eq!(entries[1].hardlink_idx(), Some(0));
 }
 
 #[test]
 fn write_hardlink_leader_has_full_metadata() {
-    use super::super::super::read::FileListReader;
-    use std::io::Cursor;
-
     let protocol = ProtocolVersion::try_from(30u8).unwrap();
     let mut buf = Vec::new();
     let mut writer = FileListWriter::new(protocol).with_preserve_hard_links(true);
@@ -286,9 +285,6 @@ fn abbreviated_vs_unabbreviated_hardlink_follower() {
 
 #[test]
 fn hardlink_dev_ino_round_trip_protocol_29() {
-    use super::super::super::read::FileListReader;
-    use std::io::Cursor;
-
     let protocol = ProtocolVersion::try_from(29u8).unwrap();
     let mut buf = Vec::new();
     let mut writer = FileListWriter::new(protocol).with_preserve_hard_links(true);
@@ -312,9 +308,6 @@ fn hardlink_dev_ino_round_trip_protocol_29() {
 
 #[test]
 fn hardlink_dev_compression_protocol_29() {
-    use super::super::super::read::FileListReader;
-    use std::io::Cursor;
-
     let protocol = ProtocolVersion::try_from(29u8).unwrap();
     let mut buf = Vec::new();
     let mut writer = FileListWriter::new(protocol).with_preserve_hard_links(true);
@@ -362,9 +355,6 @@ fn hardlink_dev_compression_protocol_29() {
 /// that occupy wire positions but are not hardlinked themselves.
 #[test]
 fn hardlink_round_trip_with_interspersed_directories() {
-    use super::super::super::read::FileListReader;
-    use std::io::Cursor;
-
     let protocol = ProtocolVersion::try_from(32u8).unwrap();
     let mut buf = Vec::new();
     let mut writer = FileListWriter::new(protocol).with_preserve_hard_links(true);
@@ -394,25 +384,20 @@ fn hardlink_round_trip_with_interspersed_directories() {
     writer.write_entry(&mut buf, &follower).unwrap();
     writer.write_end(&mut buf, None).unwrap();
 
-    let mut cursor = Cursor::new(&buf[..]);
     let mut reader = FileListReader::new(protocol).with_preserve_hard_links(true);
-
-    let read_dir_a = reader.read_entry(&mut cursor).unwrap().unwrap();
-    let read_leader = reader.read_entry(&mut cursor).unwrap().unwrap();
-    let read_dir_b = reader.read_entry(&mut cursor).unwrap().unwrap();
-    let read_follower = reader.read_entry(&mut cursor).unwrap().unwrap();
+    let entries = read_all(&mut reader, &buf);
 
     // Directory entries have no hardlink index
-    assert_eq!(read_dir_a.hardlink_idx(), None);
-    assert_eq!(read_dir_b.hardlink_idx(), None);
+    assert_eq!(entries[0].hardlink_idx(), None);
+    assert_eq!(entries[2].hardlink_idx(), None);
 
     // Leader round-trips with u32::MAX
-    assert_eq!(read_leader.name(), "a/orig.txt");
-    assert_eq!(read_leader.hardlink_idx(), Some(u32::MAX));
+    assert_eq!(entries[1].name(), "a/orig.txt");
+    assert_eq!(entries[1].hardlink_idx(), Some(u32::MAX));
 
     // Follower round-trips with the correct wire NDX pointing to the leader
-    assert_eq!(read_follower.name(), "b/link.txt");
-    assert_eq!(read_follower.hardlink_idx(), Some(1));
+    assert_eq!(entries[3].name(), "b/link.txt");
+    assert_eq!(entries[3].hardlink_idx(), Some(1));
 }
 
 /// Verifies that multiple hardlink groups with directories interspersed all
@@ -420,9 +405,6 @@ fn hardlink_round_trip_with_interspersed_directories() {
 /// between them must maintain independent leader/follower relationships.
 #[test]
 fn hardlink_multiple_groups_with_directories() {
-    use super::super::super::read::FileListReader;
-    use std::io::Cursor;
-
     let protocol = ProtocolVersion::try_from(32u8).unwrap();
     let mut buf = Vec::new();
     let mut writer = FileListWriter::new(protocol).with_preserve_hard_links(true);
@@ -464,18 +446,12 @@ fn hardlink_multiple_groups_with_directories() {
     writer.write_entry(&mut buf, &follower_b).unwrap();
     writer.write_end(&mut buf, None).unwrap();
 
-    let mut cursor = Cursor::new(&buf[..]);
     let mut reader = FileListReader::new(protocol).with_preserve_hard_links(true);
+    let entries = read_all(&mut reader, &buf);
 
-    let _ = reader.read_entry(&mut cursor).unwrap().unwrap(); // dir d
-    let read_la = reader.read_entry(&mut cursor).unwrap().unwrap();
-    let read_fa = reader.read_entry(&mut cursor).unwrap().unwrap();
-    let _ = reader.read_entry(&mut cursor).unwrap().unwrap(); // dir e
-    let read_lb = reader.read_entry(&mut cursor).unwrap().unwrap();
-    let read_fb = reader.read_entry(&mut cursor).unwrap().unwrap();
-
-    assert_eq!(read_la.hardlink_idx(), Some(u32::MAX));
-    assert_eq!(read_fa.hardlink_idx(), Some(1));
-    assert_eq!(read_lb.hardlink_idx(), Some(u32::MAX));
-    assert_eq!(read_fb.hardlink_idx(), Some(4));
+    // NDX 1/4 are the group leaders; NDX 2/5 the followers referencing them.
+    assert_eq!(entries[1].hardlink_idx(), Some(u32::MAX));
+    assert_eq!(entries[2].hardlink_idx(), Some(1));
+    assert_eq!(entries[4].hardlink_idx(), Some(u32::MAX));
+    assert_eq!(entries[5].hardlink_idx(), Some(4));
 }

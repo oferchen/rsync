@@ -166,8 +166,13 @@ fn roundtrip_sequence(
     writer.write_end(&mut buf, None).unwrap();
 
     let mut cursor = Cursor::new(&buf[..]);
-    let mut decoded = Vec::new();
-    while let Some(entry) = reader.read_entry(&mut cursor).unwrap() {
+    let mut decoded: Vec<FileEntry> = Vec::new();
+    // Thread the accumulating segment so abbreviated hardlink followers can
+    // resolve their leader, exactly as the real receiver does.
+    while let Some(entry) = reader
+        .read_entry_with_flist(&mut cursor, &decoded.clone())
+        .unwrap()
+    {
         decoded.push(entry);
     }
     decoded
@@ -951,33 +956,45 @@ proptest! {
         assert_eq!(decoded.hardlink_idx(), Some(u32::MAX), "leader should have u32::MAX idx");
     }
 
-    /// Hardlink followers reference a leader by index.
+    /// Hardlink followers reference an already-seen leader by index.
     ///
-    /// A follower has hardlink_idx < u32::MAX. The writer sets XMIT_HLINKED
-    /// but NOT XMIT_HLINK_FIRST, and skips all metadata after the index.
-    /// The decoded entry will have zeroed metadata fields.
+    /// A follower has hardlink_idx < u32::MAX. The writer sets XMIT_HLINKED but
+    /// NOT XMIT_HLINK_FIRST, and skips all metadata after the index; the
+    /// receiver copies that metadata from the leader. The reference must point
+    /// at an entry received so far (upstream flist.c:794): here the follower
+    /// references the leader at NDX 0, so it is always in range.
     #[test]
     fn hardlink_follower_roundtrip(
         proto in modern_protocol_version_strategy(),
         name in basename_strategy(),
-        idx in 0u32..1000,
+        leaders in 1usize..8,
     ) {
         let protocol = ProtocolVersion::try_from(proto).unwrap();
-        let mut entry = FileEntry::new_file(name, 500, 0o644);
-        entry.set_mtime(1000, 0);
-        entry.set_hardlink_idx(idx);
+
+        // Build `leaders` leaders at NDX 0.., then a follower referencing NDX 0.
+        let mut entries = Vec::new();
+        for i in 0..leaders {
+            let mut leader = FileEntry::new_file(format!("leader{i}").into(), 500, 0o644);
+            leader.set_mtime(1000, 0);
+            leader.set_hardlink_idx(u32::MAX);
+            entries.push(leader);
+        }
+        let mut follower = FileEntry::new_file(name.clone(), 500, 0o644);
+        follower.set_mtime(1000, 0);
+        follower.set_hardlink_idx(0);
+        entries.push(follower);
 
         let mut writer = FileListWriter::new(protocol)
             .with_preserve_hard_links(true);
         let mut reader = FileListReader::new(protocol)
             .with_preserve_hard_links(true);
 
-        let decoded = roundtrip(&mut writer, &mut reader, &entry);
-        assert_eq!(decoded.name(), entry.name(), "name mismatch");
-        assert_eq!(decoded.hardlink_idx(), Some(idx), "follower idx mismatch");
-        // Followers have zeroed metadata on the wire
-        assert_eq!(decoded.size(), 0, "follower size should be 0");
-        assert_eq!(decoded.mode(), 0, "follower mode should be 0");
+        let decoded = roundtrip_sequence(&mut writer, &mut reader, &entries);
+        let follower_decoded = decoded.last().expect("follower decoded");
+        assert_eq!(follower_decoded.name(), &*name.to_string_lossy(), "name mismatch");
+        assert_eq!(follower_decoded.hardlink_idx(), Some(0), "follower idx mismatch");
+        // Follower metadata is skipped on the wire and copied from the leader.
+        assert_eq!(follower_decoded.size(), 500, "follower inherits leader size");
     }
 }
 

@@ -1677,6 +1677,105 @@ fn read_entry_rejects_mode_zero_without_delete_missing_args() {
     assert_eq!(err.kind(), io::ErrorKind::InvalidData);
 }
 
+/// upstream: flist.c:794-799 recv_file_entry() validates the abbreviated
+/// hard-link follower's reference index against the entries received so far
+/// (`first_hlink_ndx < 0 || first_hlink_ndx >= flist->ndx_start + flist->used`)
+/// and aborts with exit_cleanup(RERR_PROTOCOL) when it is out of range. A
+/// hostile sender that points a follower past the leaders it has actually sent
+/// must be refused with a protocol error - not decoded on with zero-filled
+/// metadata, which would silently desync every subsequent entry in the stream.
+#[test]
+fn abbreviated_hardlink_follower_out_of_range_is_protocol_violation() {
+    use crate::flist::write::FileListWriter;
+
+    let protocol = test_protocol();
+    let mut data = Vec::new();
+    let mut writer = FileListWriter::new(protocol).with_preserve_hard_links(true);
+
+    // NDX 0: a valid leader. NDX 1: a follower whose index (99) points far
+    // beyond the single leader received so far, so it is out of range.
+    let mut leader = FileEntry::new_file("leader".into(), 100, 0o100644);
+    leader.set_mtime(1700000000, 0);
+    leader.set_hardlink_idx(u32::MAX);
+    let mut follower = FileEntry::new_file("bogus".into(), 100, 0o100644);
+    follower.set_hardlink_idx(99);
+
+    writer.write_entry(&mut data, &leader).unwrap();
+    writer.write_entry(&mut data, &follower).unwrap();
+
+    let mut cursor = Cursor::new(&data[..]);
+    let mut reader = FileListReader::new(protocol).with_preserve_hard_links(true);
+
+    // Decode the leader; it is the only entry received so far.
+    let mut segment: Vec<FileEntry> = Vec::new();
+    let leader_entry = reader
+        .read_entry_with_flist(&mut cursor, &segment)
+        .expect("leader decodes")
+        .expect("leader present");
+    segment.push(leader_entry);
+
+    // The out-of-range follower must abort with RERR_PROTOCOL, not zero-fill.
+    let err = reader
+        .read_entry_with_flist(&mut cursor, &segment)
+        .unwrap_err();
+    assert_eq!(err.kind(), io::ErrorKind::InvalidData);
+    assert!(
+        err.get_ref()
+            .is_some_and(|e| e.is::<crate::ProtocolViolation>()),
+        "out-of-range hard-link reference must be tagged RERR_PROTOCOL (exit 2)",
+    );
+    assert!(
+        err.to_string().contains("hard-link reference out of range"),
+        "error message must mirror upstream flist.c:795, got: {err}",
+    );
+}
+
+/// A follower whose reference index is in range (its leader precedes it in the
+/// same segment) still decodes cleanly and inherits the leader's metadata,
+/// proving the bounds check in
+/// `abbreviated_hardlink_follower_out_of_range_is_protocol_violation` never
+/// rejects a legitimate follower. upstream: flist.c:795-810.
+#[test]
+fn abbreviated_hardlink_follower_in_range_decodes() {
+    use crate::flist::write::FileListWriter;
+
+    let protocol = test_protocol();
+    let mut data = Vec::new();
+    let mut writer = FileListWriter::new(protocol).with_preserve_hard_links(true);
+
+    let mut leader = FileEntry::new_file("leader".into(), 500, 0o100644);
+    leader.set_mtime(1700000000, 0);
+    leader.set_hardlink_idx(u32::MAX);
+    let mut follower = FileEntry::new_file("link".into(), 500, 0o100644);
+    follower.set_hardlink_idx(0); // points to the leader at NDX 0
+
+    writer.write_entry(&mut data, &leader).unwrap();
+    writer.write_entry(&mut data, &follower).unwrap();
+    writer.write_end(&mut data, None).unwrap();
+
+    let mut cursor = Cursor::new(&data[..]);
+    let mut reader = FileListReader::new(protocol).with_preserve_hard_links(true);
+
+    // Thread the accumulating segment, exactly as the real receiver does.
+    let mut segment: Vec<FileEntry> = Vec::new();
+    loop {
+        let next = reader
+            .read_entry_with_flist(&mut cursor, &segment)
+            .expect("entry decodes");
+        match next {
+            Some(entry) => segment.push(entry),
+            None => break,
+        }
+    }
+
+    assert_eq!(segment.len(), 2);
+    assert_eq!(segment[1].name(), "link");
+    assert_eq!(segment[1].hardlink_idx(), Some(0));
+    // Follower metadata is skipped on the wire and copied from the leader.
+    assert_eq!(segment[1].size(), 500);
+    assert_eq!(segment[1].mtime(), 1700000000);
+}
+
 /// Tests for ACL integration in the flist read path.
 mod acl_integration {
     use super::*;
