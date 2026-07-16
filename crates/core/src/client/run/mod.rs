@@ -458,6 +458,10 @@ fn apply_max_alloc(config: &ClientConfig) {
     if limit_usize == 0 {
         return;
     }
+    // upstream: options.c:1959-1965 rewrites the `max_alloc` global, which then
+    // bounds every attacker-controlled wire allocation (util2.c:75), including
+    // the xattr datum decoders. Publish it before any transfer decodes xattrs.
+    protocol::set_max_alloc(limit_usize);
     let cfg = GlobalBufferPoolConfig {
         byte_budget: Some(limit_usize),
         ..GlobalBufferPoolConfig::default()

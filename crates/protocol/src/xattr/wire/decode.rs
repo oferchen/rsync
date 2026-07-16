@@ -10,10 +10,11 @@
 
 use std::io::{self, Read};
 
+use crate::max_alloc::effective_max_alloc;
 use crate::varint::read_varint;
 use crate::xattr::{
-    MAX_FULL_DATUM, MAX_WIRE_XATTR_COUNT, MAX_WIRE_XATTR_NAME_LEN, MAX_WIRE_XATTR_VALUE_LEN,
-    MAX_XATTR_DIGEST_LEN, XattrEntry, XattrList,
+    MAX_FULL_DATUM, MAX_WIRE_XATTR_COUNT, MAX_WIRE_XATTR_NAME_LEN, MAX_XATTR_DIGEST_LEN,
+    XattrEntry, XattrList,
 };
 
 use super::encode::compute_xattr_checksum;
@@ -87,9 +88,15 @@ pub fn read_xattr_definitions<R: Read>(reader: &mut R) -> io::Result<XattrSet> {
                 "xattr name length {name_len} exceeds maximum {MAX_WIRE_XATTR_NAME_LEN}"
             )));
         }
-        if datum_len > MAX_WIRE_XATTR_VALUE_LEN {
+        // upstream: xattrs.c:808 new_array() -> my_alloc() aborts once the
+        // datum reaches the negotiated `--max-alloc` (util2.c:75). Bounding by
+        // `effective_max_alloc()` accepts a peer that raised `--max-alloc` up to
+        // the `0x7fffffff` field ceiling, while a negative varint (which cannot
+        // fit the field encoding) still fails this check as RERR_PROTOCOL.
+        let max_datum = effective_max_alloc();
+        if datum_len > max_datum {
             return Err(crate::protocol_violation::protocol_violation(format!(
-                "xattr value length {datum_len} exceeds maximum {MAX_WIRE_XATTR_VALUE_LEN}"
+                "xattr value length {datum_len} exceeds maximum {max_datum}"
             )));
         }
 
@@ -180,9 +187,13 @@ pub fn recv_xattr<R: Read>(reader: &mut R) -> io::Result<RecvXattrResult> {
                 "xattr name length {name_len} exceeds maximum {MAX_WIRE_XATTR_NAME_LEN}"
             )));
         }
-        if datum_len > MAX_WIRE_XATTR_VALUE_LEN {
+        // upstream: xattrs.c:808 new_array() -> my_alloc() bounds the datum by
+        // the negotiated `--max-alloc` (util2.c:75), not by a fixed per-field
+        // cap. A negative varint still overruns this check as RERR_PROTOCOL.
+        let max_datum = effective_max_alloc();
+        if datum_len > max_datum {
             return Err(crate::protocol_violation::protocol_violation(format!(
-                "xattr value length {datum_len} exceeds maximum {MAX_WIRE_XATTR_VALUE_LEN}"
+                "xattr value length {datum_len} exceeds maximum {max_datum}"
             )));
         }
 
@@ -268,9 +279,14 @@ pub fn recv_xattr_values<R: Read>(reader: &mut R, list: &mut XattrList) -> io::R
             // datum_len via read_varint_size(f_in, MAX_WIRE_XATTR_DATALEN, ...)
             // (io.c:1917-1926) -> exit_cleanup(RERR_PROTOCOL) (exit 2) on overrun.
             let len = read_varint(reader)? as usize;
-            if len > MAX_WIRE_XATTR_VALUE_LEN {
+            // upstream: xattrs.c:756 new_array(rxa->datum_len + name_len) ->
+            // my_alloc() bounds the resolved full value by the negotiated
+            // `--max-alloc` (util2.c:75). This path allocates `len` bytes up
+            // front, so the ceiling is a real allocation bound.
+            let max_datum = effective_max_alloc();
+            if len > max_datum {
                 return Err(crate::protocol_violation::protocol_violation(format!(
-                    "xattr value length {len} exceeds maximum {MAX_WIRE_XATTR_VALUE_LEN}"
+                    "xattr value length {len} exceeds maximum {max_datum}"
                 )));
             }
             let mut value = vec![0u8; len];
