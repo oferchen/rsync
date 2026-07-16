@@ -53,6 +53,14 @@ pub(in crate::client::remote) fn build_server_config_for_receiver(
     // Without this the receiver renders the flist AND writes files (the compact
     // 'n' is no longer packed for list-only after decoupling it from dry_run).
     server_config.flags.list_only = config.list_only();
+    // upstream: options.c:777 / receiver.c:656,1029-1050 - --delay-updates is a
+    // plain receiver-side option (no am_sender gate) that stages updates into
+    // the partial dir and renames them in the phase-2 sweep. options.c:2886-2892
+    // forwards --delay-updates to the remote only on a push (partial_dir &&
+    // am_sender); on a pull the local client IS the receiver and the flag is
+    // never sent over the wire, so carry it onto the local receiver config here.
+    // Without this the receiver updates files in place, defeating --delay-updates.
+    server_config.write.delay_updates = config.delay_updates();
 
     flags::apply_common_server_flags(config, &mut server_config);
     Ok(server_config)
