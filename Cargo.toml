@@ -128,31 +128,6 @@ embedded-ssh = ["core/embedded-ssh"]
 # Async runtime support - enables tokio-based async I/O throughout the codebase
 async = ["daemon/async", "core/async"]
 
-# EXPERIMENTAL (ASY-3, default-off): hosts the transfer pipeline on a tokio
-# runtime instead of the threaded scheduler. Implies `async`. The threaded
-# production path is unchanged when this is off; when on, the tokio driver
-# runs the same sync pipeline body inside a runtime and MUST produce
-# byte-identical wire output. Not stabilized until the ASY-12 bench gate.
-# See docs/design/asy-2-tokio-runtime-feature.md and asy-3-async-boundary-spec.md.
-tokio-transfer = [
-    "async",
-    "protocol/tokio-transfer",
-    "core/tokio-transfer",
-    "transfer/tokio-transfer",
-    "daemon/tokio-transfer",
-]
-
-# BENCHMARK-ONLY (default-off): forwards the gated async-receiver daemon path to
-# the workspace binary so it can be enabled from the root package. Reachable only
-# with this feature AND the OC_RSYNC_ASYNC_BENCH=1 runtime env; production/default
-# builds are unaffected. Not wire-fidelity-guaranteed under arbitrary backpressure.
-async-bench = [
-    "tokio-transfer",
-    "core/async-bench",
-    "transfer/async-bench",
-    "daemon/async-bench",
-]
-
 # systemd sd-notify integration for daemon
 sd-notify = ["daemon/sd-notify"]
 

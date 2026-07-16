@@ -513,10 +513,6 @@ fn process_approved_module(
     let final_protocol = handshake.protocol;
 
     let supports_tcp_shutdown = streams.supports_tcp_shutdown;
-    // ASY sub-rung 2: move the pre-erasure socket clone out before borrowing the
-    // erased read/write handles, so the tokio driver can adopt it.
-    #[cfg(feature = "tokio-transfer")]
-    let async_socket = streams.async_socket.take();
     let exit_status = execute_transfer(
         ctx,
         config,
@@ -526,8 +522,6 @@ fn process_approved_module(
         role,
         final_protocol,
         module,
-        #[cfg(feature = "tokio-transfer")]
-        async_socket,
     );
 
     // #503: stop and join the background delta-drain thread before the TCP

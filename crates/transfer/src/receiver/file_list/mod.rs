@@ -27,8 +27,6 @@ mod incremental;
 mod on_demand;
 mod prune;
 mod receive;
-#[cfg(feature = "tokio-transfer")]
-mod receive_async;
 mod sanitize;
 
 pub use incremental::IncrementalFileListReceiver;

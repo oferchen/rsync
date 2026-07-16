@@ -16,10 +16,9 @@ const MAX_XNAME_LEN: usize = 4096;
 
 /// Validates and wraps a sender-echoed basis-type byte.
 ///
-/// Shared by the sync [`SenderAttrs::read_with_codec_xattr`] and async
-/// [`SenderAttrs::read_with_codec_xattr_async`] leaves so the `fnamecmp_type`
-/// validation can never diverge between them. Upstream `rsync.c:read_ndx_and_attrs`
-/// reads a single byte and maps it through `FnameCmpType`.
+/// Used by [`SenderAttrs::read_with_codec_xattr`] to decode the `fnamecmp_type`.
+/// Upstream `rsync.c:read_ndx_and_attrs` reads a single byte and maps it through
+/// `FnameCmpType`.
 fn parse_fnamecmp_type(byte: u8) -> io::Result<protocol::FnameCmpType> {
     protocol::FnameCmpType::from_wire(byte).ok_or_else(|| {
         io::Error::new(
@@ -37,8 +36,7 @@ fn parse_fnamecmp_type(byte: u8) -> io::Result<protocol::FnameCmpType> {
 /// Decodes an xname vstring length from its 1- or 2-byte prefix.
 ///
 /// If the high bit of `len_byte` is set the length spans two bytes
-/// (`(len_byte & 0x7F) * 256 + second`); otherwise it is `len_byte`. Shared by
-/// the sync and async leaves so the vstring framing stays identical. Upstream
+/// (`(len_byte & 0x7F) * 256 + second`); otherwise it is `len_byte`. Upstream
 /// `io.c:1944-1960` `read_vstring()`.
 #[inline]
 fn xname_len_from_bytes(len_byte: u8, second: Option<u8>) -> usize {
@@ -49,7 +47,7 @@ fn xname_len_from_bytes(len_byte: u8, second: Option<u8>) -> usize {
     }
 }
 
-/// Rejects an oversized xname length with the same typed error on both leaves.
+/// Rejects an oversized xname length with a typed error.
 #[inline]
 fn check_xname_len(xname_len: usize) -> io::Result<()> {
     if xname_len > MAX_XNAME_LEN {
@@ -69,7 +67,7 @@ fn check_xname_len(xname_len: usize) -> io::Result<()> {
 ///
 /// Mirrors upstream `receiver.c:609-611`: read when xattrs are preserved and
 /// `ITEM_REPORT_XATTR` is set, unless the xattr hardlink optimization elides it
-/// for a local-change rename. Shared by the sync and async leaves.
+/// for a local-change rename.
 #[inline]
 fn want_xattr_read(preserve_xattrs: bool, iflags: u16, want_xattr_optim: bool) -> bool {
     preserve_xattrs
@@ -193,9 +191,7 @@ impl SumHead {
     /// malicious sum_head is a memory-exhaustion (DoS) vector, so every field is
     /// range-checked exactly as upstream does before it is used.
     ///
-    /// Shared by the sync [`read`](Self::read) and async
-    /// [`read_async`](Self::read_async) leaves so the field decode + validation
-    /// can never diverge between them. Rejections return an
+    /// Rejections return an
     /// [`io::ErrorKind::InvalidData`] error, which the receiver already maps to
     /// the `RERR_PROTOCOL` (exit code 2) path for malformed wire input.
     ///
@@ -282,24 +278,6 @@ impl SumHead {
     pub fn read<R: Read>(reader: &mut R) -> io::Result<Self> {
         let mut buf = [0u8; 16];
         reader.read_exact(&mut buf)?;
-        Self::from_wire_bytes(&buf)
-    }
-
-    /// Async twin of [`read`](Self::read).
-    ///
-    /// Reads the same 16 bytes (`.await`-driven) and decodes them through the
-    /// shared `from_wire_bytes` (`Self::from_wire_bytes`) core, so it yields the
-    /// same `SumHead` and consumes the same bytes as the sync leaf. Gated on
-    /// `tokio-transfer`.
-    #[cfg(feature = "tokio-transfer")]
-    pub async fn read_async<R>(reader: &mut R) -> io::Result<Self>
-    where
-        R: tokio::io::AsyncRead + Unpin + ?Sized,
-    {
-        use tokio::io::AsyncReadExt;
-
-        let mut buf = [0u8; 16];
-        reader.read_exact(&mut buf).await?;
         Self::from_wire_bytes(&buf)
     }
 }
@@ -447,97 +425,6 @@ impl SenderAttrs {
         // && !(want_xattr_optim && BITS_SET(iflags, ITEM_XNAME_FOLLOWS|ITEM_LOCAL_CHANGE))
         let xattr_values = if want_xattr_read(preserve_xattrs, iflags, want_xattr_optim) {
             read_xattr_abbreviation_data(reader)?
-        } else {
-            Vec::new()
-        };
-
-        Ok((
-            ndx,
-            Self {
-                iflags,
-                fnamecmp_type,
-                xname,
-                xattr_values,
-            },
-        ))
-    }
-
-    /// Async twin of [`read_with_codec_xattr`](Self::read_with_codec_xattr).
-    ///
-    /// Reads the receiver's per-file sender-response header
-    /// (NDX + iflags + optional basis-type / xname / xattr-abbreviation data)
-    /// off an [`AsyncRead`](tokio::io::AsyncRead), driving the same
-    /// `NdxCodecEnum::read_ndx_async` and `read_varint_async` leaves plus
-    /// the shared sans-io decode helpers (`parse_fnamecmp_type`,
-    /// `xname_len_from_bytes`, `check_xname_len`, `want_xattr_read`) as
-    /// the sync leaf. For the same wire bytes it yields the same
-    /// `(ndx, SenderAttrs)` and consumes the same bytes as the sync path,
-    /// including when the source delivers bytes one at a time across `.await`
-    /// points. Gated on `tokio-transfer`.
-    ///
-    /// # Upstream Reference
-    ///
-    /// - `rsync.c:383` - `read_ndx_and_attrs()` (the sync twin mirrors this)
-    #[cfg(feature = "tokio-transfer")]
-    pub async fn read_with_codec_xattr_async<R>(
-        reader: &mut R,
-        ndx_codec: &mut protocol::codec::NdxCodecEnum,
-        preserve_xattrs: bool,
-        want_xattr_optim: bool,
-    ) -> io::Result<(i32, Self)>
-    where
-        R: tokio::io::AsyncRead + Unpin + ?Sized,
-    {
-        use tokio::io::AsyncReadExt;
-
-        // Read NDX using protocol-aware codec (handles delta encoding for protocol 30+)
-        let ndx = ndx_codec.read_ndx_async(reader).await?;
-
-        let protocol_version = ndx_codec.protocol_version();
-
-        // For protocol >= 29, read iflags (shortint = 2 bytes LE)
-        let iflags = if protocol_version >= 29 {
-            let mut iflags_buf = [0u8; 2];
-            reader.read_exact(&mut iflags_buf).await?;
-            u16::from_le_bytes(iflags_buf)
-        } else {
-            Self::ITEM_TRANSFER // Default for older protocols
-        };
-
-        // Read optional fields based on iflags
-        let fnamecmp_type = if iflags & Self::ITEM_BASIS_TYPE_FOLLOWS != 0 {
-            let mut byte = [0u8; 1];
-            reader.read_exact(&mut byte).await?;
-            Some(parse_fnamecmp_type(byte[0])?)
-        } else {
-            None
-        };
-
-        let xname = if iflags & Self::ITEM_XNAME_FOLLOWS != 0 {
-            // upstream io.c:1944-1960 read_vstring()
-            let mut len_byte = [0u8; 1];
-            reader.read_exact(&mut len_byte).await?;
-            let xname_len = if len_byte[0] & 0x80 != 0 {
-                let mut second_byte = [0u8; 1];
-                reader.read_exact(&mut second_byte).await?;
-                xname_len_from_bytes(len_byte[0], Some(second_byte[0]))
-            } else {
-                xname_len_from_bytes(len_byte[0], None)
-            };
-            check_xname_len(xname_len)?;
-            if xname_len > 0 {
-                let mut xname_buf = vec![0u8; xname_len];
-                reader.read_exact(&mut xname_buf).await?;
-                Some(xname_buf)
-            } else {
-                None
-            }
-        } else {
-            None
-        };
-
-        let xattr_values = if want_xattr_read(preserve_xattrs, iflags, want_xattr_optim) {
-            read_xattr_abbreviation_data_async(reader).await?
         } else {
             Vec::new()
         };
@@ -709,7 +596,7 @@ fn read_xattr_abbreviation_data<R: Read>(reader: &mut R) -> io::Result<Vec<(i32,
 
 /// Accumulates the 1-based xattr entry number, rejecting signed overflow.
 ///
-/// Shared by the sync and async xattr readers. Upstream `xattrs.c:700-705`
+/// Upstream `xattrs.c:700-705`
 /// rejects overflow before `num += rel_pos` to stop a hostile peer wrapping
 /// `num` to an arbitrary value.
 #[inline]
@@ -728,7 +615,7 @@ fn accumulate_xattr_num(prior_req: i32, rel_pos: i32) -> io::Result<i32> {
 
 /// Validates a raw xattr datum length against the receiver-side ceiling.
 ///
-/// Shared by the sync and async xattr readers. Upstream `xattrs.c:752` reads
+/// Upstream `xattrs.c:752` reads
 /// `datum_len` via `read_varint_size(..., MAX_WIRE_XATTR_DATALEN, ...)`; we use
 /// the oc-rsync ceiling (`MAX_WIRE_XATTR_VALUE_LEN`, upstream default --max-alloc) so a
 /// corrupt or hostile frame surfaces as a typed error instead of an unbounded
@@ -746,43 +633,6 @@ fn check_xattr_datum_len(raw_len: i32) -> io::Result<usize> {
         ));
     }
     Ok(raw_len as usize)
-}
-
-/// Async twin of [`read_xattr_abbreviation_data`].
-///
-/// Reads the identical `(rel_pos, datum_len, value)` sequence (`.await`-driven)
-/// through the same shared bounds helpers ([`accumulate_xattr_num`],
-/// [`check_xattr_datum_len`]) and `read_varint_async`, so it returns the same
-/// `(num, value)` pairs and consumes the same bytes as the sync leaf. Gated on
-/// `tokio-transfer`.
-#[cfg(feature = "tokio-transfer")]
-async fn read_xattr_abbreviation_data_async<R>(reader: &mut R) -> io::Result<Vec<(i32, Vec<u8>)>>
-where
-    R: tokio::io::AsyncRead + Unpin + ?Sized,
-{
-    use protocol::read_varint_async;
-    use tokio::io::AsyncReadExt;
-
-    let mut values = Vec::new();
-    let mut prior_req = 0i32;
-
-    loop {
-        let rel_pos = read_varint_async(reader).await?;
-        if rel_pos == 0 {
-            break;
-        }
-        let num = accumulate_xattr_num(prior_req, rel_pos)?;
-        prior_req = num;
-
-        let raw_len = read_varint_async(reader).await?;
-        let datum_len = check_xattr_datum_len(raw_len)?;
-        let mut value = vec![0u8; datum_len];
-        reader.read_exact(&mut value).await?;
-
-        values.push((num, value));
-    }
-
-    Ok(values)
 }
 
 /// Writes the generator-side xattr abbreviation request.

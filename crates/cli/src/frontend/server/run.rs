@@ -25,10 +25,8 @@ where
     Out: Write,
     Err: Write,
 {
-    // Route through the session-level driver facade so the `tokio-transfer`
-    // feature can select the tokio-hosted driver. The signature and result are
-    // identical to `core::server::run_server_stdio`; only the driver changes.
-    // Default builds forward straight to the threaded path (ASY-3).
+    // Route through the session-level driver facade
+    // (`core::session::run_server_stdio`), which runs the threaded server body.
     use core::server::{ServerConfig, ServerRole};
     use core::session::run_server_stdio;
 
