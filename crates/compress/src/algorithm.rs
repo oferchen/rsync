@@ -8,6 +8,8 @@ use std::num::NonZeroU8;
 
 use thiserror::Error;
 
+use crate::zlib::CompressionLevel;
+
 /// Default zlib compression level matching upstream rsync.
 /// upstream: token.c - `Z_DEFAULT_COMPRESSION` resolves to 6.
 pub const ZLIB_DEFAULT_LEVEL: i32 = 6;
@@ -140,17 +142,24 @@ impl CompressionAlgorithm {
     /// the codec's `min_level`/`max_level` ("We don't bother with any errors or
     /// warnings -- just make sure that the values are valid."). Returns `None`
     /// when the level disables compression (zlib `off_level` of `0`); `Some`
-    /// with the clamped level otherwise.
+    /// with the clamped level otherwise. For zstd the returned level may be a
+    /// negative [`CompressionLevel::PreciseSigned`], since zstd's range extends
+    /// below zero down to `ZSTD_minCLevel()`.
     #[must_use]
-    pub fn clamp_level(self, level: i32) -> Option<NonZeroU8> {
+    pub fn clamp_level(self, level: i32) -> Option<CompressionLevel> {
         match self {
-            CompressionAlgorithm::Zlib => clamp_zlib_level(level),
+            CompressionAlgorithm::Zlib => clamp_zlib_level(level).map(CompressionLevel::Precise),
             #[cfg(feature = "lz4")]
             // upstream: token.c:81-87 - lz4 forces min/max/def to 0 and never
             // disables; oc represents this as the fastest expressible level.
-            CompressionAlgorithm::Lz4 => Some(clamped(1)),
+            CompressionAlgorithm::Lz4 => Some(CompressionLevel::Precise(clamped(1))),
+            // upstream: token.c:72-79,101-104 - reuse the shared resolver so the
+            // encoder and the debug-print paths clamp identically. A negative
+            // result is preserved as PreciseSigned instead of being raised to 1.
             #[cfg(feature = "zstd")]
-            CompressionAlgorithm::Zstd => Some(clamp_zstd_level(level)),
+            CompressionAlgorithm::Zstd => Some(CompressionLevel::from_signed(
+                self.resolve_debug_level(level),
+            )),
         }
     }
 
@@ -217,19 +226,6 @@ fn clamp_zlib_level(level: i32) -> Option<NonZeroU8> {
     Some(clamped(level.clamp(1, 9) as u8))
 }
 
-/// Clamps into the zstd range, mirroring `token.c:72-79`.
-///
-/// `0` selects `ZSTD_CLEVEL_DEFAULT` (3); zstd's `off_level` is
-/// `CLVL_NOT_SPECIFIED`, so `0` never disables. The representable range is
-/// `1..=ZSTD_MAX_LEVEL`.
-#[cfg(feature = "zstd")]
-fn clamp_zstd_level(level: i32) -> NonZeroU8 {
-    if level == 0 {
-        return clamped(ZSTD_DEFAULT_LEVEL as u8);
-    }
-    clamped(level.clamp(1, ZSTD_MAX_LEVEL) as u8)
-}
-
 impl Default for CompressionAlgorithm {
     fn default() -> Self {
         Self::default_algorithm()
@@ -267,8 +263,15 @@ mod tests {
         assert_eq!(available, &[CompressionAlgorithm::Zlib]);
     }
 
-    fn level(algorithm: CompressionAlgorithm, raw: i32) -> Option<u8> {
-        algorithm.clamp_level(raw).map(NonZeroU8::get)
+    fn level(algorithm: CompressionAlgorithm, raw: i32) -> Option<i32> {
+        algorithm.clamp_level(raw).map(|resolved| match resolved {
+            CompressionLevel::None => 0,
+            CompressionLevel::Fast => ZSTD_FAST_LEVEL,
+            CompressionLevel::Default => ZSTD_DEFAULT_LEVEL,
+            CompressionLevel::Best => ZSTD_BEST_LEVEL,
+            CompressionLevel::Precise(value) => i32::from(value.get()),
+            CompressionLevel::PreciseSigned(value) => value,
+        })
     }
 
     #[test]
@@ -300,7 +303,32 @@ mod tests {
         assert_eq!(level(CompressionAlgorithm::Zstd, 15), Some(15), "in range");
         assert_eq!(level(CompressionAlgorithm::Zstd, 22), Some(22), "max");
         assert_eq!(level(CompressionAlgorithm::Zstd, 99), Some(22), "above max");
-        assert_eq!(level(CompressionAlgorithm::Zstd, -5), Some(1), "below min");
+    }
+
+    #[cfg(feature = "zstd")]
+    #[test]
+    fn zstd_clamp_preserves_negative_levels_to_the_encoder() {
+        // WHY: the encoder path (clamp_level) - not just the debug-print path -
+        // must carry a negative zstd "fast" level all the way to
+        // ZSTD_c_compressionLevel. Guards against the historical unsigned
+        // NonZeroU8 clamp that rewrote every negative to 1. upstream:
+        // token.c:73,101-102 - the lower bound is ZSTD_minCLevel(), not 1.
+        assert_eq!(
+            level(CompressionAlgorithm::Zstd, -5),
+            Some(-5),
+            "-5 survives clamp_level as a signed encoder level"
+        );
+        let min = zstd_min_level();
+        assert_eq!(
+            level(CompressionAlgorithm::Zstd, min),
+            Some(min),
+            "the exact ZSTD_minCLevel() boundary is preserved"
+        );
+        assert_eq!(
+            level(CompressionAlgorithm::Zstd, min - 1),
+            Some(min),
+            "below ZSTD_minCLevel() saturates UP to the min, never rejected"
+        );
     }
 
     #[test]

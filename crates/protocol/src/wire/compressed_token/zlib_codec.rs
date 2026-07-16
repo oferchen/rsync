@@ -59,6 +59,9 @@ impl ZlibTokenEncoder {
             CompressionLevel::Default => Compression::default(),
             CompressionLevel::Best => Compression::best(),
             CompressionLevel::Precise(n) => Compression::new(u32::from(n.get())),
+            // zlib tokens never carry a signed (zstd-only) level; clamp
+            // defensively into zlib's 0..=9 range so flate2 cannot panic.
+            CompressionLevel::PreciseSigned(v) => Compression::new(v.clamp(0, 9) as u32),
         };
         Self {
             literal_buf: Vec::new(),

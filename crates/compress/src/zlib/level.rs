@@ -20,6 +20,14 @@ pub enum CompressionLevel {
     Best,
     /// Use an explicit zlib compression level in the range `1..=9`.
     Precise(NonZeroU8),
+    /// Use an explicit signed codec level that a [`NonZeroU8`] cannot express.
+    ///
+    /// This exists for zstd, whose valid `--compress-level` range extends below
+    /// zero down to `ZSTD_minCLevel()`. Upstream passes those negative "fast"
+    /// levels straight to `ZSTD_c_compressionLevel` (token.c:73,748), so they
+    /// must survive end to end rather than being collapsed into the unsigned
+    /// [`Precise`](Self::Precise) range. Never produced for zlib.
+    PreciseSigned(i32),
 }
 
 impl CompressionLevel {
@@ -51,6 +59,21 @@ impl CompressionLevel {
     pub const fn precise(level: NonZeroU8) -> Self {
         Self::Precise(level)
     }
+
+    /// Builds a level from an already-range-checked signed codec level.
+    ///
+    /// Used by the zstd clamp path, whose valid range includes negative "fast"
+    /// levels down to `ZSTD_minCLevel()`. A positive level (`1..=255`) becomes
+    /// [`Precise`](Self::Precise); any value a [`NonZeroU8`] cannot hold (i.e. a
+    /// negative one) becomes [`PreciseSigned`](Self::PreciseSigned), preserving
+    /// the sign so it reaches `ZSTD_c_compressionLevel` unchanged.
+    #[must_use]
+    pub fn from_signed(level: i32) -> Self {
+        match u8::try_from(level).ok().and_then(NonZeroU8::new) {
+            Some(value) => Self::Precise(value),
+            None => Self::PreciseSigned(level),
+        }
+    }
 }
 
 impl From<CompressionLevel> for Compression {
@@ -61,6 +84,9 @@ impl From<CompressionLevel> for Compression {
             CompressionLevel::Default => Compression::default(),
             CompressionLevel::Best => Compression::best(),
             CompressionLevel::Precise(value) => Compression::new(u32::from(value.get())),
+            // zlib never yields a signed level; clamp defensively into zlib's
+            // valid 0..=9 range so this arm can never panic in flate2.
+            CompressionLevel::PreciseSigned(value) => Compression::new(value.clamp(0, 9) as u32),
         }
     }
 }

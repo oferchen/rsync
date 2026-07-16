@@ -842,15 +842,19 @@ fn escape_with(prefix: &str, value: &str, escapes: &str, is_filename_arg: bool) 
     out
 }
 
-/// Converts a [`compress::zlib::CompressionLevel`] to its numeric zlib value.
-fn compression_level_numeric(level: compress::zlib::CompressionLevel) -> u32 {
+/// Converts a [`compress::zlib::CompressionLevel`] to its signed wire value.
+///
+/// upstream: options.c:2755-2756 - `--compress-level=%d` forwards the signed
+/// `do_compression_level`, so a negative zstd "fast" level is preserved.
+fn compression_level_numeric(level: compress::zlib::CompressionLevel) -> i32 {
     use compress::zlib::CompressionLevel;
     match level {
         CompressionLevel::None => 0,
         CompressionLevel::Fast => 1,
         CompressionLevel::Default => 6,
         CompressionLevel::Best => 9,
-        CompressionLevel::Precise(n) => u32::from(n.get()),
+        CompressionLevel::Precise(n) => i32::from(n.get()),
+        CompressionLevel::PreciseSigned(v) => v,
     }
 }
 
