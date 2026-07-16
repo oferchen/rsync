@@ -375,26 +375,42 @@ mod tests {
 
     #[cfg(feature = "iconv")]
     #[test]
-    fn lossy_remote_to_local_unmappable_chars_replaced() {
-        // Convert UTF-8 with CJK character to ISO-8859-1 (cannot represent CJK).
-        // The CJK character should be replaced with '?'.
+    fn lossy_remote_to_local_unmappable_chars_verbatim() {
+        // Convert UTF-8 with CJK characters to ISO-8859-1 (cannot represent CJK).
+        // Under ICB_INCLUDE_BAD upstream copies the unconvertible source bytes
+        // verbatim (rsync.c:261 `*obuf++ = *ibuf++`); it does NOT substitute.
         let conv = FilenameConverter::new("ISO-8859-1", "UTF-8").unwrap();
         let utf8_with_cjk = "file_\u{4e16}\u{754c}.txt"; // file_世界.txt
         let outcome = conv.remote_to_local_lossy(utf8_with_cjk.as_bytes());
         assert!(outcome.had_replacements);
-        // CJK characters replaced with '?', ASCII parts preserved.
-        assert_eq!(&*outcome.output, b"file_??.txt");
+        // The raw UTF-8 bytes of 世界 survive verbatim; ASCII parts preserved.
+        assert_eq!(
+            &*outcome.output,
+            &[
+                b'f', b'i', b'l', b'e', b'_', 0xe4, 0xb8, 0x96, 0xe7, 0x95, 0x8c, b'.', b't', b'x',
+                b't'
+            ]
+        );
     }
 
     #[cfg(feature = "iconv")]
     #[test]
-    fn lossy_local_to_remote_unmappable_chars_replaced() {
-        // UTF-8 local with CJK -> ASCII remote (cannot represent CJK).
+    fn lossy_local_to_remote_unmappable_chars_verbatim() {
+        // UTF-8 local with CJK -> windows-1252 remote (cannot represent CJK).
+        // ICB_INCLUDE_BAD copies the unconvertible source bytes verbatim
+        // (rsync.c:261) instead of substituting them.
         let conv = FilenameConverter::new("UTF-8", "windows-1252").unwrap();
         let utf8_with_cjk = "dir_\u{4e16}/file.txt";
         let outcome = conv.local_to_remote_lossy(utf8_with_cjk.as_bytes());
         assert!(outcome.had_replacements);
-        assert_eq!(&*outcome.output, b"dir_?/file.txt");
+        // The raw UTF-8 bytes of 世 (E4 B8 96) survive verbatim.
+        assert_eq!(
+            &*outcome.output,
+            &[
+                b'd', b'i', b'r', b'_', 0xe4, 0xb8, 0x96, b'/', b'f', b'i', b'l', b'e', b'.', b't',
+                b'x', b't'
+            ]
+        );
     }
 
     #[cfg(feature = "iconv")]
@@ -420,10 +436,16 @@ mod tests {
         let strict_result = conv.remote_to_local(utf8_with_cjk.as_bytes());
         assert!(strict_result.is_err());
 
-        // Lossy: succeeds with replacement.
+        // Lossy: succeeds, copying the unconvertible source bytes verbatim
+        // (rsync.c:261) rather than substituting them.
         let lossy_result = conv.remote_to_local_lossy(utf8_with_cjk.as_bytes());
         assert!(lossy_result.had_replacements);
-        assert_eq!(&*lossy_result.output, b"file_?.txt");
+        assert_eq!(
+            &*lossy_result.output,
+            &[
+                b'f', b'i', b'l', b'e', b'_', 0xe4, 0xb8, 0x96, b'.', b't', b'x', b't'
+            ]
+        );
     }
 
     #[cfg(feature = "iconv")]
@@ -496,23 +518,44 @@ mod tests {
 
     #[cfg(feature = "iconv")]
     #[test]
-    fn lossy_invalid_utf8_in_remote_decodes_with_replacement() {
+    fn lossy_invalid_utf8_in_remote_passes_through_verbatim() {
         // Remote is UTF-8 but the bytes are invalid UTF-8.
-        // encoding_rs decodes invalid UTF-8 sequences as U+FFFD.
         let conv = FilenameConverter::new("UTF-8", "UTF-8").unwrap();
         // Identity converter returns input unchanged.
         assert!(conv.is_identity());
 
         // Non-identity: local=latin1, remote=UTF-8.
         let conv = FilenameConverter::new("ISO-8859-1", "UTF-8").unwrap();
-        // Valid UTF-8 prefix + invalid continuation byte.
+        // Valid UTF-8 prefix + invalid byte (0xFF is never a valid UTF-8 byte).
         let invalid_utf8 = &[b'f', b'i', b'l', b'e', 0xFF, b'.', b't', b'x', b't'];
         let outcome = conv.remote_to_local_lossy(invalid_utf8);
         assert!(outcome.had_replacements);
-        // The invalid 0xFF byte triggers U+FFFD in UTF-8 decode, then the
-        // encoder maps it to '?' in ISO-8859-1 output.
-        // ASCII parts survive unchanged.
-        assert!(outcome.output.starts_with(b"file"));
-        assert!(outcome.output.ends_with(b".txt"));
+        // Under ICB_INCLUDE_BAD the invalid 0xFF byte is copied verbatim
+        // (rsync.c:261), not turned into U+FFFD or '?'. ASCII surrounds it.
+        assert_eq!(
+            &*outcome.output,
+            &[b'f', b'i', b'l', b'e', 0xFF, b'.', b't', b'x', b't']
+        );
+    }
+
+    /// WHY this matters: upstream `iconvbufs()` with `ICB_INCLUDE_BAD` copies
+    /// unconvertible source bytes straight to the output (`*obuf++ = *ibuf++`,
+    /// rsync.c:261) instead of substituting them. Both lossy callers -
+    /// `read_line(RL_CONVERT)` (io.c:1286) and `send_protected_args`
+    /// (rsync.c:305) - rely on this: a peer must be able to reproduce the
+    /// bytes we emit exactly. Substituting invalid bytes with `?`/U+FFFD would
+    /// silently corrupt the byte stream, so scattered invalid source bytes
+    /// must survive verbatim, byte-for-byte.
+    #[cfg(feature = "iconv")]
+    #[test]
+    fn lossy_include_bad_preserves_scattered_invalid_bytes_verbatim() {
+        // local=ISO-8859-1, remote=UTF-8 so the receiver runs a real UTF-8
+        // decode over the wire bytes. 0x80 and 0xFF are invalid UTF-8 leads.
+        let conv = FilenameConverter::new("ISO-8859-1", "UTF-8").unwrap();
+        let input = &[b'a', 0x80, b'b', 0xFF, b'c'];
+        let outcome = conv.remote_to_local_lossy(input);
+        assert!(outcome.had_replacements);
+        // No '?' (0x3F) and no U+FFFD (0xEF 0xBF 0xBD): exact bytes preserved.
+        assert_eq!(&*outcome.output, &[b'a', 0x80, b'b', 0xFF, b'c']);
     }
 }
