@@ -254,7 +254,7 @@ impl ReceiverContext {
             }
         }
 
-        let mut emitted = false;
+        let mut emitted = 0usize;
         for (flat_idx, entry) in self.file_list.iter().enumerate() {
             if !entry.hlinked() || entry.hlink_first() {
                 continue;
@@ -275,14 +275,20 @@ impl ReceiverContext {
             writer.write_all(&iflags.to_le_bytes())?;
             // upstream: generator.c:591 write_vstring(sock_f_out, xname, len)
             write_itemize_vstring(writer, leader_name.as_bytes())?;
-            emitted = true;
+            emitted += 1;
         }
 
-        // upstream: generator.c flushes each itemize via rwrite(); flush once so
-        // the peer's sender sees the follower rows without waiting on the
-        // create_hardlinks pass that follows.
-        if emitted {
+        if emitted > 0 {
+            // upstream: generator.c flushes each itemize via rwrite(); flush once
+            // so the peer's sender sees the follower rows without waiting on the
+            // create_hardlinks pass that follows.
             writer.flush()?;
+            // The peer's sender echoes every non-transfer item back
+            // (upstream sender.c:286-292). Record the count so the phase-done
+            // read drains those echoes before expecting NDX_DONE - the pipeline
+            // response loop is request-count driven and never reads them.
+            self.hardlink_follower_echoes
+                .set(self.hardlink_follower_echoes.get() + emitted);
         }
         Ok(())
     }

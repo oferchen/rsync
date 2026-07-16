@@ -669,6 +669,12 @@ fn server_push_emits_follower_ndx_iflags_and_leader_xname() {
         !buf.is_empty(),
         "a server-mode push must forward the follower itemize record",
     );
+    assert_eq!(
+        ctx.hardlink_follower_echoes.get(),
+        1,
+        "the peer will echo the one non-transfer record; the phase-done read \
+         must drain exactly that many or it reads the echo as NDX_DONE (exit 10)",
+    );
 
     // Decode with the peer sender's own reader path so the test fails if the
     // emitted bytes ever diverge from what the sender consumes.
@@ -726,6 +732,11 @@ fn server_push_emits_one_record_per_follower() {
     let mut ndx_codec = create_ndx_codec(32);
     ctx.emit_server_hardlink_follower_itemize(&mut buf, &mut ndx_codec)
         .expect("server-mode follower itemize must serialize");
+    assert_eq!(
+        ctx.hardlink_follower_echoes.get(),
+        2,
+        "two followers produce two echoes to drain at the phase boundary",
+    );
 
     let mut cur = std::io::Cursor::new(buf);
     let mut rd = create_ndx_codec(32);
@@ -769,6 +780,11 @@ fn pull_receiver_emits_no_follower_wire_record() {
         buf.is_empty(),
         "a pull renders follower rows locally; nothing crosses the wire",
     );
+    assert_eq!(
+        ctx.hardlink_follower_echoes.get(),
+        0,
+        "a pull emits nothing, so there are no echoes to drain",
+    );
 }
 
 /// With no hardlink followers in the file list, a server push must emit nothing
@@ -787,5 +803,58 @@ fn server_push_without_followers_emits_nothing() {
     assert!(
         buf.is_empty(),
         "a lone leader has no follower rows to forward",
+    );
+    assert_eq!(ctx.hardlink_follower_echoes.get(), 0);
+}
+
+/// The peer's sender echoes every non-transfer item back (upstream
+/// `sender.c:286-292`), but the request-count-driven pipeline response loop
+/// never reads them. If they are not drained at the phase boundary, the first
+/// `read_expected_ndx_done` reads a follower echo's NDX instead of NDX_DONE and
+/// aborts with a protocol error (the exit-10 `hardlinks` testsuite failure).
+/// This crafts the sender's echo stream and asserts the phase-done read
+/// consumes every echo before matching NDX_DONE.
+#[test]
+fn phase_done_read_drains_pending_follower_echoes() {
+    use crate::generator::ItemFlags;
+    use protocol::codec::{NdxCodec, create_ndx_codec};
+
+    // Sender echo stream: two non-transfer follower records (NDX + iflags +
+    // xname vstring) then the phase NDX_DONE.
+    let mut wire: Vec<u8> = Vec::new();
+    let mut wc = create_ndx_codec(32);
+    let iflags = (ItemFlags::ITEM_LOCAL_CHANGE
+        | ItemFlags::ITEM_XNAME_FOLLOWS
+        | ItemFlags::ITEM_IS_NEW) as u16;
+    for ndx in [2i32, 3i32] {
+        wc.write_ndx(&mut wire, ndx).unwrap();
+        wire.extend_from_slice(&iflags.to_le_bytes());
+        let leader = b"a.txt";
+        wire.push(leader.len() as u8);
+        wire.extend_from_slice(leader);
+    }
+    wc.write_ndx_done(&mut wire).unwrap();
+    let total = wire.len();
+
+    let ctx = receiver_with_hardlinks(vec![
+        make_hlink_leader("a.txt", 6, 1),
+        make_hlink_follower("b.txt", 6, 1),
+        make_hlink_follower("c.txt", 6, 1),
+    ]);
+    ctx.hardlink_follower_echoes.set(2);
+
+    let mut cur = std::io::Cursor::new(wire);
+    let mut rc = create_ndx_codec(32);
+    ctx.read_expected_ndx_done(&mut rc, &mut cur, "test phase transition")
+        .expect("must drain the two follower echoes then match NDX_DONE");
+    assert_eq!(
+        ctx.hardlink_follower_echoes.get(),
+        0,
+        "the pending-echo count must reset so later NDX_DONE reads do not re-drain",
+    );
+    assert_eq!(
+        cur.position() as usize,
+        total,
+        "every echo plus the trailing NDX_DONE must be consumed from the stream",
     );
 }

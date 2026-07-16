@@ -110,6 +110,30 @@ impl ReceiverContext {
         Ok(())
     }
 
+    /// Drains the peer sender's echoes of this phase's hardlink-follower itemize
+    /// records before an NDX_DONE read.
+    ///
+    /// A server-mode push forwards `NDX + iflags + xname` for each hardlink
+    /// follower (see `emit_server_hardlink_follower_itemize`); the peer's sender
+    /// echoes every non-transfer item back (upstream `sender.c:286-292`), yet the
+    /// request-count-driven pipeline response loop never reads them. The sender
+    /// buffers those echoes until it reads the receiver's NDX_DONE, so this runs
+    /// on the first NDX_DONE read - once the sender has flushed - consuming each
+    /// echo and leaving the stream aligned on the sender's NDX_DONE. `read_ndx`
+    /// framing is delta-state independent, so consuming with the fresh phase
+    /// codec still advances by the exact wire bytes even though the discarded
+    /// index values are not needed.
+    fn drain_hardlink_follower_echoes<R: Read>(
+        &self,
+        ndx_read_codec: &mut NdxCodecEnum,
+        reader: &mut R,
+    ) -> io::Result<()> {
+        for _ in 0..self.hardlink_follower_echoes.take() {
+            crate::receiver::wire::SenderAttrs::read_with_codec(reader, ndx_read_codec)?;
+        }
+        Ok(())
+    }
+
     /// Reads an NDX and validates it is NDX_DONE (-1).
     pub(in crate::receiver) fn read_expected_ndx_done<R: Read>(
         &self,
@@ -117,6 +141,7 @@ impl ReceiverContext {
         reader: &mut R,
         context: &str,
     ) -> io::Result<()> {
+        self.drain_hardlink_follower_echoes(ndx_read_codec, reader)?;
         let ndx = ndx_read_codec.read_ndx(reader)?;
         if ndx != -1 {
             // upstream: io.c read_ndx / rsync.c:818 - a wire index that is not

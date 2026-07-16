@@ -290,6 +290,14 @@ pub struct ReceiverContext {
     /// redo re-itemizing an entry. `RefCell` suffices: every emit site runs on
     /// the main driver thread (rayon workers never touch this).
     pub(in crate::receiver) itemize_rows: RefCell<BTreeMap<usize, Vec<String>>>,
+    /// Count of server-mode hardlink-follower itemize records emitted this phase
+    /// that the peer's sender will echo back (upstream `sender.c:286-292` echoes
+    /// every non-transfer item). The pipeline response loop is request-count
+    /// driven and never reads these echoes, so they must be drained at the phase
+    /// boundary - after the receiver's NDX_DONE unblocks the sender to flush -
+    /// before [`Self::read_expected_ndx_done`] expects the sender's NDX_DONE.
+    /// `Cell` because the emit site runs behind a `&self` pipeline closure.
+    pub(in crate::receiver) hardlink_follower_echoes: std::cell::Cell<usize>,
     /// Extraneous-entry victims decided during the transfer walk for a
     /// `--delete-delay` run, awaiting execution after the transfer completes.
     ///
@@ -378,6 +386,7 @@ impl ReceiverContext {
             hardlink_lookahead_target: 500,
             defer_itemize: false,
             itemize_rows: RefCell::new(BTreeMap::new()),
+            hardlink_follower_echoes: std::cell::Cell::new(0),
             delayed_delete_victims: Vec::new(),
         }
     }
