@@ -122,11 +122,7 @@ fn receiver_keeps_directory_over_file_duplicate() {
     // Both NDX slots are preserved; the plain-file slot is tombstoned and the
     // directory survives so its NDX still matches the sender's dir entry.
     assert_eq!(ctx.file_list().len(), 2);
-    let active: Vec<_> = ctx
-        .file_list()
-        .iter()
-        .filter(|e| e.is_active())
-        .collect();
+    let active: Vec<_> = ctx.file_list().iter().filter(|e| e.is_active()).collect();
     assert_eq!(active.len(), 1);
     assert!(
         active[0].is_dir(),
