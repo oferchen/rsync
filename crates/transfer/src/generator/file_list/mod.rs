@@ -374,6 +374,13 @@ impl GeneratorContext {
             }
         }
 
+        // upstream: flist.c:1614-1638 send_file1() - drop entries whose names
+        // cannot be strictly transcoded under --iconv before ndx assignment and
+        // INC_RECURSE segmentation, so sender/receiver ndx values stay aligned.
+        // The --files-from build path runs send_file_name() per source exactly
+        // like the recursive walk, so the same strict drop applies here.
+        self.drop_unconvertible_entries();
+
         // upstream: flist.c:f_name_cmp() - sort via indirect permutation
         {
             let _t = PhaseTimer::new("file-list-sort");

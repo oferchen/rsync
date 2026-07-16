@@ -3153,6 +3153,54 @@ mod files_from {
         );
     }
 
+    /// upstream: flist.c:1614-1638 send_file1() - a name that cannot be
+    /// strictly transcoded under --iconv is dropped (io_error |= IOERR_GENERAL,
+    /// "cannot convert filename", return NULL) so it never enters the file list.
+    /// The --files-from build path runs the same per-source send_file_name(), so
+    /// the strict drop must apply here too, not only in the recursive walk.
+    #[cfg(all(feature = "iconv", unix))]
+    #[test]
+    fn build_file_list_with_base_drops_unconvertible_iconv_name() {
+        let temp_dir = TempDir::new().unwrap();
+        let src = temp_dir.path().join("src");
+        std::fs::create_dir_all(&src).unwrap();
+        std::fs::write(src.join("hello.txt"), "hello").unwrap();
+        // U+3042 (Hiragana A) has no windows-1252/ISO-8859-1 representation, so
+        // its strict UTF-8 -> ISO-8859-1 conversion fails (matches the drop
+        // predicate tests in generator::file_list::iconv).
+        std::fs::write(src.join("\u{3042}.txt"), "nope").unwrap();
+
+        let handshake = test_handshake();
+        let mut config = test_config();
+        config.args = vec![OsString::from(&src)];
+        config.connection.iconv = Some(
+            protocol::iconv::FilenameConverter::new("UTF-8", "ISO-8859-1")
+                .expect("converter builds"),
+        );
+        let mut ctx = GeneratorContext::new_for_test(&handshake, config);
+
+        let file_paths = vec![src.join("hello.txt"), src.join("\u{3042}.txt")];
+        ctx.build_file_list_with_base(&src, &files_from_entries(&src, file_paths))
+            .unwrap();
+
+        let names: Vec<&str> = ctx.file_list().iter().map(|e| e.name()).collect();
+        assert!(
+            names.contains(&"hello.txt"),
+            "convertible name must survive: {names:?}"
+        );
+        assert!(
+            !names.iter().any(|n| n.contains('\u{3042}')),
+            "unconvertible --files-from name must be dropped, not passed \
+             through: {names:?}"
+        );
+        // upstream: flist.c:1633 - io_error |= IOERR_GENERAL -> exit 23.
+        assert_ne!(
+            ctx.io_error() & io_error_flags::IOERR_GENERAL,
+            0,
+            "dropping an unconvertible name must record IOERR_GENERAL"
+        );
+    }
+
     #[test]
     fn build_file_list_with_base_leading_dot_anchor_emits_implied_root_dot() {
         // upstream: flist.c:2417-2419 - in --relative mode a leading `./`

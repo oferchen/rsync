@@ -233,16 +233,20 @@ fn golden_sender_identity_converter_preserves_utf8() {
     assert_eq!(name_on_wire, vec![0x63, 0x61, 0x66, 0xc3, 0xa9]);
 }
 
-/// A filename containing characters that ISO-8859-1 cannot represent (here:
-/// the Greek letter alpha, U+03B1) is currently passed through verbatim by the
-/// sender, with a warning emitted via the ICONV debug trace.
+/// The protocol-layer `FileListWriter` does NOT drop an unconvertible name:
+/// handed an entry directly, it transcodes the name with include-bad
+/// conversion, copying any byte the remote charset cannot represent (here the
+/// Greek letter alpha, U+03B1) through verbatim. The writer cannot renumber ndx
+/// values, so dropping at this layer would desync the peer.
 ///
-/// NOTE: this pins oc's CURRENT behaviour, which DIVERGES from upstream. The
-/// sender flist name path uses `iconvbufs(ic_send, ..., ICB_INIT)` (strict,
-/// flist.c:1624-1631); on an unconvertible name upstream sets `io_error`,
-/// prints "cannot convert filename", and `return NULL` to DROP the entry - it
-/// does not pass bytes through. Bringing the sender to strict-drop parity is
-/// tracked separately; until then this test guards the current wire output.
+/// Upstream's strict drop (`send_file1()` `return NULL` on
+/// `iconvbufs(ic_send, ..., ICB_INIT)` failure, flist.c:1624-1638) is mirrored
+/// one layer up, at file-list build time, in
+/// `generator::file_list::drop_unconvertible_entries` - before ndx assignment,
+/// so sender/receiver ndx stay aligned - and is covered by that module's
+/// `drop_decision_tests`. This test locks the writer's defensive passthrough,
+/// which the build pass guarantees is never exercised in a real transfer
+/// because every surviving entry is already convertible.
 #[test]
 fn golden_sender_unmappable_char_verbatim() {
     let mut writer = sender_writer("ISO-8859-1");
