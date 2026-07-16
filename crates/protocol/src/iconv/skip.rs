@@ -32,6 +32,31 @@ pub fn cannot_convert_filename_message(role: &str, name_bytes: &[u8]) -> String 
     )
 }
 
+/// Formats the upstream `cannot convert symlink data for` diagnostic.
+///
+/// Emitted when a symlink TARGET cannot be strictly transcoded under `--iconv`
+/// while `CF_SYMLINK_ICONV` is negotiated. Unlike the filename diagnostic,
+/// upstream renders the referenced pathname through `full_fname()`, which wraps
+/// it in double quotes, so `name_bytes` (the symlink's own path) is quoted here
+/// to match.
+///
+/// # Upstream Reference
+///
+/// - `flist.c:1648-1650` `send_file1()` - sender: `rprintf(FERROR_XFER, "[%s]
+///   cannot convert symlink data for: %s (%s)\n", who_am_i(),
+///   full_fname(fbuf), strerror(errno))`.
+/// - `flist.c:1171-1173` `recv_file_entry()` - receiver: same message via
+///   `full_fname(thisname)`.
+#[must_use]
+pub fn cannot_convert_symlink_message(role: &str, name_bytes: &[u8]) -> String {
+    format!(
+        "[{}] cannot convert symlink data for: \"{}\" ({})",
+        role,
+        escape_filename(name_bytes),
+        eilseq_strerror()
+    )
+}
+
 /// Escapes non-printable bytes in a filename for terminal output, matching
 /// upstream rsync's `filtered_fwrite()` octal escape (`log.c:239` `"\#%03o"`).
 ///
@@ -99,6 +124,18 @@ mod tests {
         let msg = cannot_convert_filename_message("sender", b"caf\xe9.txt");
         assert!(
             msg.starts_with("[sender] cannot convert filename: caf\\#351.txt ("),
+            "{msg}"
+        );
+        assert!(msg.ends_with(')'), "{msg}");
+    }
+
+    #[test]
+    fn symlink_message_shape_matches_upstream() {
+        // upstream renders the referenced pathname via `full_fname()`, which
+        // wraps it in double quotes; the wording is "symlink data for".
+        let msg = cannot_convert_symlink_message("receiver", b"link");
+        assert!(
+            msg.starts_with("[receiver] cannot convert symlink data for: \"link\" ("),
             "{msg}"
         );
         assert!(msg.ends_with(')'), "{msg}");

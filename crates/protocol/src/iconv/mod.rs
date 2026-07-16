@@ -39,7 +39,7 @@ pub use converter::{
 };
 pub use error::{ConversionError, EncodingError};
 pub use pair::EncodingPair;
-pub use skip::{cannot_convert_filename_message, escape_filename};
+pub use skip::{cannot_convert_filename_message, cannot_convert_symlink_message, escape_filename};
 pub use trace::{
     IconvRole, trace_conversion_warning, trace_msg_checking_charset,
     trace_msg_checking_via_isprint, trace_peer_charset,

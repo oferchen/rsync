@@ -22,10 +22,15 @@ impl FileListReader {
     /// Wire format: varint30(len) + raw bytes
     ///
     /// upstream: flist.c:recv_file_entry() lines 920-935
+    ///
+    /// `name` is the entry's already-read wire filename, used only to render the
+    /// `cannot convert symlink data for` diagnostic on a strict conversion
+    /// failure (mirroring upstream's `full_fname(thisname)`).
     pub(super) fn read_symlink_target<R: Read + ?Sized>(
-        &self,
+        &mut self,
         reader: &mut R,
         mode: u32,
+        name: &[u8],
     ) -> io::Result<Option<PathBuf>> {
         let is_symlink = mode & 0o170000 == 0o120000;
 
@@ -53,28 +58,32 @@ impl FileListReader {
         let mut target_bytes = vec![0u8; len];
         reader.read_exact(&mut target_bytes)?;
 
-        // upstream: flist.c:1127-1150 - when sender_symlink_iconv is set (peer
-        // advertised CF_SYMLINK_ICONV) and ic_recv is configured, run the
-        // target through iconvbufs(ic_recv, ...) so the receiver sees the
-        // local-charset bytes rather than the wire-charset (UTF-8) bytes.
-        // On conversion failure, upstream warns and empties the target
-        // (flist.c:1141-1148). We use lossy conversion instead, replacing
-        // unconvertible bytes with '?' and warning.
-        let target_bytes: std::borrow::Cow<'_, [u8]> = match self.iconv.as_ref() {
-            Some(converter) => {
-                let outcome = converter.remote_to_local_lossy(&target_bytes);
-                if outcome.had_replacements {
-                    // upstream: flist.c:1142-1145 - warn about unconvertible symlink
-                    crate::iconv::trace_conversion_warning(
-                        crate::iconv::IconvRole::Client,
-                        &String::from_utf8_lossy(&target_bytes),
-                        converter.remote_encoding_name(),
-                        converter.local_encoding_name(),
-                    );
-                }
-                outcome.output
+        // upstream: flist.c:1156 - the target is transcoded through ic_recv ONLY
+        // when `sender_symlink_iconv` (iconv active AND CF_SYMLINK_ICONV
+        // negotiated). Against a peer that lacks the capability the raw local
+        // bytes are read verbatim (flist.c:1181 `read_sbuf` else branch), so a
+        // proto-30 / pre-3.1 peer must NOT be transcoded here.
+        let target_bytes: std::borrow::Cow<'_, [u8]> = if self.symlink_iconv {
+            match self.iconv.as_ref() {
+                Some(converter) => match converter.remote_to_local(&target_bytes) {
+                    Ok(converted) => converted,
+                    Err(_) => {
+                        // upstream: flist.c:1169-1177 - strict `ic_recv` failure
+                        // warns via FERROR_XFER, sets io_error |= IOERR_GENERAL,
+                        // and empties the target (bp[0]='\0', outbuf.len=0). The
+                        // entry stays a symlink with an empty target.
+                        eprintln!(
+                            "{}",
+                            crate::iconv::cannot_convert_symlink_message("receiver", name)
+                        );
+                        self.io_error |= 1;
+                        return Ok(Some(PathBuf::new()));
+                    }
+                },
+                None => std::borrow::Cow::Borrowed(target_bytes.as_slice()),
             }
-            None => std::borrow::Cow::Borrowed(target_bytes.as_slice()),
+        } else {
+            std::borrow::Cow::Borrowed(target_bytes.as_slice())
         };
 
         #[cfg(unix)]
