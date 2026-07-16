@@ -730,7 +730,7 @@ fn accumulate_xattr_num(prior_req: i32, rel_pos: i32) -> io::Result<i32> {
 ///
 /// Shared by the sync and async xattr readers. Upstream `xattrs.c:752` reads
 /// `datum_len` via `read_varint_size(..., MAX_WIRE_XATTR_DATALEN, ...)`; we use
-/// the stricter oc-rsync ceiling (`MAX_WIRE_XATTR_VALUE_LEN`, 64 MiB) so a
+/// the oc-rsync ceiling (`MAX_WIRE_XATTR_VALUE_LEN`, upstream default --max-alloc) so a
 /// corrupt or hostile frame surfaces as a typed error instead of an unbounded
 /// allocation or a varint overflow panic.
 #[inline]
@@ -922,12 +922,14 @@ mod xattr_abbrev_guard_tests {
 
     #[test]
     fn datum_len_exceeding_cap_returns_typed_error() {
-        // datum_len just above the 64 MiB receiver-side ceiling must be
+        // datum_len just above the receiver-side ceiling must be
         // rejected with InvalidData rather than triggering a giant `vec!`
         // allocation. Mirrors upstream xattrs.c:752 bounded read.
         let mut bytes = Vec::new();
         bytes.extend(encode_varint(1));
-        bytes.extend(encode_varint((64 * 1024 * 1024) + 1));
+        bytes.extend(encode_varint(
+            (protocol::xattr::MAX_WIRE_XATTR_VALUE_LEN as i32) + 1,
+        ));
 
         let mut reader = Cursor::new(bytes);
         let err = read_xattr_abbreviation_data(&mut reader).expect_err("must error");

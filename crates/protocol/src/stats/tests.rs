@@ -540,12 +540,12 @@ fn delete_stats_total() {
     assert_eq!(empty.total(), 0);
 }
 
-/// upstream: io.c - MAX_WIRE_DEL_STAT defence-in-depth (3.4.3)
+/// upstream: rsync.h:181-187 - MAX_WIRE_DEL_STAT = (int32)1 << 28.
 #[test]
 fn delete_stats_rejects_oversized_wire_value() {
     use crate::varint::write_varint;
 
-    // Encode a value just above MAX_WIRE_DEL_STAT (0x3FFF_FFFF = 1_073_741_823)
+    // Encode a value well above MAX_WIRE_DEL_STAT (1 << 28 = 268_435_456).
     let oversized: i32 = 0x3FFF_FFFF + 1;
     let mut buf = Vec::new();
     write_varint(&mut buf, oversized).unwrap();
@@ -571,7 +571,7 @@ fn delete_stats_rejects_oversized_wire_value() {
     );
 }
 
-/// upstream: io.c - MAX_WIRE_DEL_STAT defence-in-depth (3.4.3)
+/// upstream: rsync.h:181-187 - MAX_WIRE_DEL_STAT = (int32)1 << 28.
 #[test]
 fn delete_stats_rejects_negative_wire_value() {
     use crate::varint::write_varint;
@@ -597,11 +597,13 @@ fn delete_stats_rejects_negative_wire_value() {
 }
 
 /// Values at exactly MAX_WIRE_DEL_STAT must be accepted.
+///
+/// upstream: rsync.h:181-187 sets MAX_WIRE_DEL_STAT = `(int32)1 << 28`.
 #[test]
 fn delete_stats_accepts_value_at_cap() {
     use crate::varint::write_varint;
 
-    let at_cap: i32 = 0x3FFF_FFFF;
+    let at_cap: i32 = 1 << 28;
     let mut buf = Vec::new();
     write_varint(&mut buf, at_cap).unwrap();
     for _ in 0..4 {
@@ -611,6 +613,43 @@ fn delete_stats_accepts_value_at_cap() {
     let mut cursor = Cursor::new(&buf);
     let decoded = DeleteStats::read_from(&mut cursor).unwrap();
     assert_eq!(decoded.files, at_cap as u32);
+}
+
+/// A value above the lowered cap but at or below the former `0x3FFF_FFFF`
+/// ceiling must now be rejected.
+///
+/// This is the security-tightening WHY: read_del_stats() accumulates 5
+/// wire-supplied counts into the signed int32 `stats.deleted_files`
+/// accumulator (rsync.h:181-187). The former `0x3FFF_FFFF` cap let a hostile
+/// peer supplying 3+ near-max counts overflow that accumulator (signed-int UB).
+/// Holding the per-field cap at `1 << 28` keeps `5 * 2^28 = 1.34 GB` under
+/// `INT32_MAX` with margin. Values that oc formerly accepted are now rejected,
+/// matching upstream.
+#[test]
+fn delete_stats_rejects_value_above_lowered_cap() {
+    use crate::varint::write_varint;
+
+    // In (1<<28, 0x3FFF_FFFF]: accepted under the old cap, rejected under the new.
+    let above_new_cap: i32 = (1 << 28) + 1;
+    assert!(above_new_cap <= 0x3FFF_FFFF);
+    let mut buf = Vec::new();
+    write_varint(&mut buf, above_new_cap).unwrap();
+    for _ in 0..4 {
+        write_varint(&mut buf, 0).unwrap();
+    }
+
+    let mut cursor = Cursor::new(&buf);
+    let err = DeleteStats::read_from(&mut cursor).unwrap_err();
+    assert_eq!(err.kind(), std::io::ErrorKind::InvalidData);
+    assert!(
+        err.to_string().contains("MAX_WIRE_DEL_STAT"),
+        "error should mention MAX_WIRE_DEL_STAT, got: {err}"
+    );
+    assert!(
+        err.get_ref()
+            .is_some_and(|e| e.is::<crate::protocol_violation::ProtocolViolation>()),
+        "over-cap delete-stat must be tagged ProtocolViolation (RERR_PROTOCOL=2)"
+    );
 }
 
 /// Oversized value in a non-first field is also rejected.

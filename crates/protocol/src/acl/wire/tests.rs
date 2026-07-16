@@ -291,6 +291,28 @@ fn recv_ida_entries_eof_reading_count() {
 }
 
 #[test]
+fn recv_ida_entries_five_thousand_entries_decodes() {
+    // A large-but-legitimate ACL with 5000 named entries: above the former 4096
+    // cap, below upstream's 65536 ceiling. upstream: acls.c:700 reads the count
+    // via read_varint_bounded(f, 0, MAX_WIRE_ACL_COUNT, "ACL count"), where
+    // MAX_WIRE_ACL_COUNT is 65536 (rsync.h:179), then new_array(id_access, count)
+    // succeeds. WHY it matters: a 4096 cap rejected (exit 23) a transfer upstream
+    // 3.4.4 accepts (exit 0); a drop-in tool must accept the same ACLs upstream does.
+    let mut entries = IdaEntries::new();
+    for i in 0..5000u32 {
+        entries.push(IdAccess::user(1000 + i, 0x07));
+    }
+
+    let mut buf = Vec::new();
+    send_ida_entries(&mut buf, &entries, false).unwrap();
+
+    let mut cursor = Cursor::new(buf);
+    let (received, mask) = recv_ida_entries(&mut cursor).expect("5000 entries must decode");
+    assert_eq!(received.len(), 5000);
+    assert_eq!(mask, 0x07);
+}
+
+#[test]
 fn recv_ida_entries_exceeds_max_count_is_protocol_violation() {
     use crate::acl::constants::MAX_WIRE_ACL_ENTRIES;
     use crate::varint::write_varint;
