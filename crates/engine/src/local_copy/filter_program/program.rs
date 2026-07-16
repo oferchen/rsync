@@ -289,28 +289,18 @@ impl FilterProgram {
 
     #[cfg(all(any(unix, windows), feature = "xattr"))]
     pub(crate) fn allows_xattr(&self, name: &str) -> bool {
-        if self.xattr_rules.is_empty() {
-            return true;
-        }
-
-        let mut decision = None;
+        // upstream: exclude.c:check_filter() evaluates rules first-match-wins,
+        // returning on the FIRST matching rule (include -> allow, exclude ->
+        // deny). A later rule never overrides an earlier match, so `+x
+        // user.keep` before `-x user.*` keeps user.keep.
         for rule in &self.xattr_rules {
             if rule.matches(name) {
-                decision = Some(rule.action);
+                return matches!(rule.action, FilterAction::Include);
             }
         }
 
-        match decision {
-            Some(FilterAction::Exclude) => false,
-            Some(FilterAction::Include) | None => true,
-            Some(
-                FilterAction::Protect
-                | FilterAction::Risk
-                | FilterAction::Clear
-                | FilterAction::Merge
-                | FilterAction::DirMerge,
-            ) => true,
-        }
+        // No rule matched: the xattr is transferred (upstream default).
+        true
     }
 }
 
@@ -502,6 +492,30 @@ mod tests {
         assert!(
             outcome.allows_transfer(),
             "child directory include must override parent directory exclude"
+        );
+    }
+
+    #[cfg(all(any(unix, windows), feature = "xattr"))]
+    #[test]
+    fn xattr_rules_are_first_match_wins() {
+        // upstream: exclude.c:check_filter() returns on the FIRST matching rule
+        // (first-match-wins), so `+x user.keep` placed before `-x user.*` keeps
+        // user.keep while all other user.* xattrs are dropped. Last-match-wins
+        // evaluation would incorrectly let `-x user.*` override the earlier
+        // include and deny user.keep.
+        let entries = [
+            FilterProgramEntry::Rule(FilterRule::include("user.keep").with_xattr_only(true)),
+            FilterProgramEntry::Rule(FilterRule::exclude("user.*").with_xattr_only(true)),
+        ];
+        let program = FilterProgram::new(entries).unwrap();
+
+        assert!(
+            program.allows_xattr("user.keep"),
+            "earlier include rule must win under first-match-wins"
+        );
+        assert!(
+            !program.allows_xattr("user.other"),
+            "later exclude rule must drop non-matching user.* xattrs"
         );
     }
 }
