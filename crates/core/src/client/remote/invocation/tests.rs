@@ -4096,3 +4096,103 @@ fn bwlimit_forwarded_in_kib_not_bytes() {
         "bwlimit must NOT forward the raw byte count: {args:?}"
     );
 }
+
+// upstream: options.c:2750-2753 - `--no-r` tells the remote receiver that a
+// dirs-mode delete (`-d --delete`) is NOT recursive. Without it the receiver
+// could re-enable recursion and delete beyond the top level, so the flag is
+// load-bearing for delete correctness, not cosmetic.
+#[test]
+fn dirs_delete_push_forwards_no_r() {
+    // `ClientConfig::builder()` presets recursion on, so a `-d --delete` (no
+    // `-r`) transfer must explicitly clear it to reach the guard.
+    let config = ClientConfig::builder()
+        .recursive(false)
+        .dirs(true)
+        .delete(true)
+        .build();
+    let args = build_sender_args(&config);
+    assert!(
+        args.iter().any(|a| a == "--no-r"),
+        "expected --no-r for -d --delete push: {args:?}"
+    );
+}
+
+// upstream: options.c:2752 - the guard requires !recurse; with recursion on the
+// receiver already recurses, so --no-r must NOT be sent.
+#[test]
+fn recursive_delete_push_omits_no_r() {
+    let config = ClientConfig::builder()
+        .dirs(true)
+        .recursive(true)
+        .delete(true)
+        .build();
+    let args = build_sender_args(&config);
+    assert!(
+        !args.iter().any(|a| a == "--no-r"),
+        "recursive delete must NOT send --no-r: {args:?}"
+    );
+}
+
+// upstream: options.c:2752 - the guard requires delete_mode; without --delete
+// there is nothing to protect, so --no-r must NOT be sent.
+#[test]
+fn dirs_push_without_delete_omits_no_r() {
+    let config = ClientConfig::builder().recursive(false).dirs(true).build();
+    let args = build_sender_args(&config);
+    assert!(
+        !args.iter().any(|a| a == "--no-r"),
+        "dirs push without --delete must NOT send --no-r: {args:?}"
+    );
+}
+
+// upstream: options.c:2752 - the guard requires am_sender; on a PULL the local
+// process is the receiver, so --no-r must NOT be forwarded to the remote sender.
+#[test]
+fn dirs_delete_pull_omits_no_r() {
+    let config = ClientConfig::builder()
+        .recursive(false)
+        .dirs(true)
+        .delete(true)
+        .build();
+    let args = build_receiver_args(&config);
+    assert!(
+        !args.iter().any(|a| a == "--no-r"),
+        "dirs delete PULL must NOT send --no-r: {args:?}"
+    );
+}
+
+// upstream: options.c:2993 - `if (open_noatime && preserve_atimes <= 1)`. Plain
+// --open-noatime (no -U) is below the threshold, so the flag is forwarded.
+#[test]
+fn open_noatime_forwarded_without_atimes() {
+    let config = ClientConfig::builder().open_noatime(true).build();
+    let args = build_sender_args(&config);
+    assert!(
+        args.iter().any(|a| a == "--open-noatime"),
+        "expected --open-noatime: {args:?}"
+    );
+}
+
+// upstream: options.c:2993 - a single -U (preserve_atimes == 1) is still <= 1,
+// so --open-noatime is forwarded.
+#[test]
+fn open_noatime_forwarded_with_single_atimes() {
+    let config = ClientConfig::builder().open_noatime(true).atimes(1).build();
+    let args = build_sender_args(&config);
+    assert!(
+        args.iter().any(|a| a == "--open-noatime"),
+        "expected --open-noatime with -U: {args:?}"
+    );
+}
+
+// upstream: options.c:2993 - `-UU` (preserve_atimes == 2) exceeds the threshold,
+// so --open-noatime is suppressed even though open_noatime is set.
+#[test]
+fn open_noatime_suppressed_with_double_atimes() {
+    let config = ClientConfig::builder().open_noatime(true).atimes(2).build();
+    let args = build_sender_args(&config);
+    assert!(
+        !args.iter().any(|a| a == "--open-noatime"),
+        "-UU must suppress --open-noatime: {args:?}"
+    );
+}

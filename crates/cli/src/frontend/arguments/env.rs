@@ -28,6 +28,27 @@ pub(crate) fn env_protect_args_default() -> Option<bool> {
     }
 }
 
+/// Returns the default `--iconv` value derived from `RSYNC_ICONV`.
+///
+/// Returns `Some(value)` when the variable is set and non-empty, `None`
+/// otherwise. Mirrors upstream rsync's `options.c:1377-1378`
+/// (`(arg = getenv("RSYNC_ICONV")) != NULL && *arg`), which seeds `iconv_opt`
+/// from the environment when the option was not given on the command line.
+pub(crate) fn env_iconv_default() -> Option<std::ffi::OsString> {
+    env::var_os("RSYNC_ICONV").filter(|value| !value.is_empty())
+}
+
+/// Returns the default `--max-alloc` argument derived from `RSYNC_MAX_ALLOC`.
+///
+/// Returns `Some(value)` when the variable is set and non-empty, `None`
+/// otherwise. Mirrors upstream rsync's `options.c:1954-1957`
+/// (`max_alloc_arg = getenv("RSYNC_MAX_ALLOC"); if (max_alloc_arg &&
+/// !*max_alloc_arg) max_alloc_arg = NULL`), which supplies the default cap when
+/// `--max-alloc` was not given on the command line.
+pub(crate) fn env_max_alloc_default() -> Option<std::ffi::OsString> {
+    env::var_os("RSYNC_MAX_ALLOC").filter(|value| !value.is_empty())
+}
+
 #[cfg(test)]
 #[allow(unsafe_code)]
 mod tests {
@@ -168,5 +189,59 @@ mod tests {
         let _lock = ENV_MUTEX.lock().expect("env mutex poisoned");
         let _guard = EnvGuard::set("RSYNC_PROTECT_ARGS", "true");
         assert_eq!(env_protect_args_default(), Some(true));
+    }
+
+    // upstream: options.c:1377-1378 - RSYNC_ICONV seeds the default --iconv value.
+    #[test]
+    fn env_iconv_default_returns_none_when_unset() {
+        let _lock = ENV_MUTEX.lock().expect("env mutex poisoned");
+        let _guard = EnvGuard::remove("RSYNC_ICONV");
+        assert_eq!(env_iconv_default(), None);
+    }
+
+    // upstream: options.c:1377-1378 - `*arg` requires a non-empty value.
+    #[test]
+    fn env_iconv_default_ignores_empty_value() {
+        let _lock = ENV_MUTEX.lock().expect("env mutex poisoned");
+        let _guard = EnvGuard::set("RSYNC_ICONV", "");
+        assert_eq!(env_iconv_default(), None);
+    }
+
+    // upstream: options.c:1377-1378 - a non-empty value becomes iconv_opt.
+    #[test]
+    fn env_iconv_default_returns_value() {
+        let _lock = ENV_MUTEX.lock().expect("env mutex poisoned");
+        let _guard = EnvGuard::set("RSYNC_ICONV", "utf-8,latin1");
+        assert_eq!(
+            env_iconv_default(),
+            Some(std::ffi::OsString::from("utf-8,latin1"))
+        );
+    }
+
+    // upstream: options.c:1954-1957 - RSYNC_MAX_ALLOC seeds the default cap.
+    #[test]
+    fn env_max_alloc_default_returns_none_when_unset() {
+        let _lock = ENV_MUTEX.lock().expect("env mutex poisoned");
+        let _guard = EnvGuard::remove("RSYNC_MAX_ALLOC");
+        assert_eq!(env_max_alloc_default(), None);
+    }
+
+    // upstream: options.c:1956-1957 - an empty value is treated as unset.
+    #[test]
+    fn env_max_alloc_default_ignores_empty_value() {
+        let _lock = ENV_MUTEX.lock().expect("env mutex poisoned");
+        let _guard = EnvGuard::set("RSYNC_MAX_ALLOC", "");
+        assert_eq!(env_max_alloc_default(), None);
+    }
+
+    // upstream: options.c:1954-1955 - a non-empty value becomes max_alloc_arg.
+    #[test]
+    fn env_max_alloc_default_returns_value() {
+        let _lock = ENV_MUTEX.lock().expect("env mutex poisoned");
+        let _guard = EnvGuard::set("RSYNC_MAX_ALLOC", "2G");
+        assert_eq!(
+            env_max_alloc_default(),
+            Some(std::ffi::OsString::from("2G"))
+        );
     }
 }
