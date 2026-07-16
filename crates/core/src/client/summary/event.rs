@@ -38,6 +38,10 @@ pub enum ClientEventKind {
     SkippedMissingDestination,
     /// An existing destination file was left untouched because it is newer.
     SkippedNewerDestination,
+    /// A regular file was skipped because it exceeds `--max-size`.
+    SkippedOverMaxSize,
+    /// A regular file was skipped because it is smaller than `--min-size`.
+    SkippedUnderMinSize,
     /// A non-regular entry was skipped because support was disabled.
     SkippedNonRegular,
     /// A directory was skipped because recursion was disabled.
@@ -144,6 +148,8 @@ impl ClientEvent {
                 ClientEventKind::SkippedMissingDestination
             }
             LocalCopyAction::SkippedNewerDestination => ClientEventKind::SkippedNewerDestination,
+            LocalCopyAction::SkippedOverMaxSize => ClientEventKind::SkippedOverMaxSize,
+            LocalCopyAction::SkippedUnderMinSize => ClientEventKind::SkippedUnderMinSize,
             LocalCopyAction::SkippedNonRegular => ClientEventKind::SkippedNonRegular,
             LocalCopyAction::SkippedDirectory => ClientEventKind::SkippedDirectory,
             LocalCopyAction::SkippedUnsafeSymlink => ClientEventKind::SkippedUnsafeSymlink,
@@ -181,6 +187,8 @@ impl ClientEvent {
             | LocalCopyAction::SkippedExisting
             | LocalCopyAction::SkippedMissingDestination
             | LocalCopyAction::SkippedNewerDestination
+            | LocalCopyAction::SkippedOverMaxSize
+            | LocalCopyAction::SkippedUnderMinSize
             | LocalCopyAction::SkippedNonRegular
             | LocalCopyAction::SkippedDirectory
             | LocalCopyAction::SkippedUnsafeSymlink
@@ -524,6 +532,8 @@ mod tests {
         assert!(!ClientEventKind::SkippedExisting.is_progress());
         assert!(!ClientEventKind::SkippedMissingDestination.is_progress());
         assert!(!ClientEventKind::SkippedNewerDestination.is_progress());
+        assert!(!ClientEventKind::SkippedOverMaxSize.is_progress());
+        assert!(!ClientEventKind::SkippedUnderMinSize.is_progress());
         assert!(!ClientEventKind::SkippedNonRegular.is_progress());
         assert!(!ClientEventKind::SkippedDirectory.is_progress());
     }

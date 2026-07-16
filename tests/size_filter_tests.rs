@@ -917,3 +917,117 @@ fn size_filter_incremental_transfer() {
     // Dest file should remain at original size (new version filtered out)
     assert_eq!(fs::metadata(dest_dir.join("file.txt")).unwrap().len(), 100);
 }
+
+/// A `--max-size` skip notice must render inline during the transfer, ahead of
+/// the final statistics block - not after it.
+///
+/// WHY: upstream `recv_generator()` prints `"%s is over max-size"` via
+/// `rprintf(FINFO, ...)` and then `goto cleanup`, so the notice lands in the
+/// generator phase before `output_summary()` emits the stats block
+/// (generator.c:1704-1711). A drop-in tool parsing the client stream in order
+/// depends on that sequence; emitting the notice after the stats block (the old
+/// `info_log!` diagnostic-drain behaviour) breaks compatibility.
+#[test]
+fn max_size_skip_notice_precedes_stats_block() {
+    let test_dir = TestDir::new().expect("create test dir");
+    let src_dir = test_dir.mkdir("src").unwrap();
+    let dest_dir = test_dir.mkdir("dest").unwrap();
+
+    fs::write(src_dir.join("keep.txt"), vec![0u8; 100]).unwrap();
+    fs::write(src_dir.join("big.bin"), vec![0u8; 4096]).unwrap();
+
+    let mut cmd = RsyncCommand::new();
+    cmd.args([
+        "-r",
+        "-vv",
+        "--stats",
+        "--max-size=1K",
+        &format!("{}/", src_dir.display()),
+        dest_dir.to_str().unwrap(),
+    ]);
+    let output = cmd.assert_success();
+    let stdout = String::from_utf8_lossy(&output.stdout);
+
+    let skip_pos = stdout
+        .find("big.bin is over max-size")
+        .unwrap_or_else(|| panic!("max-size skip notice missing:\n{stdout}"));
+    let stats_pos = stdout
+        .find("Number of files:")
+        .unwrap_or_else(|| panic!("stats block missing:\n{stdout}"));
+    assert!(
+        skip_pos < stats_pos,
+        "max-size skip notice must precede the stats block:\n{stdout}"
+    );
+}
+
+/// A `--min-size` skip notice must render inline during the transfer, ahead of
+/// the final statistics block.
+///
+/// WHY: upstream `recv_generator()` prints `"%s is under min-size"` before the
+/// stats block (generator.c:1712-1719); the ordering is part of the observable
+/// output contract a drop-in tool relies on.
+#[test]
+fn min_size_skip_notice_precedes_stats_block() {
+    let test_dir = TestDir::new().expect("create test dir");
+    let src_dir = test_dir.mkdir("src").unwrap();
+    let dest_dir = test_dir.mkdir("dest").unwrap();
+
+    fs::write(src_dir.join("keep.txt"), vec![0u8; 500]).unwrap();
+    fs::write(src_dir.join("tiny.bin"), b"ab").unwrap();
+
+    let mut cmd = RsyncCommand::new();
+    cmd.args([
+        "-r",
+        "-vv",
+        "--stats",
+        "--min-size=100",
+        &format!("{}/", src_dir.display()),
+        dest_dir.to_str().unwrap(),
+    ]);
+    let output = cmd.assert_success();
+    let stdout = String::from_utf8_lossy(&output.stdout);
+
+    let skip_pos = stdout
+        .find("tiny.bin is under min-size")
+        .unwrap_or_else(|| panic!("min-size skip notice missing:\n{stdout}"));
+    let stats_pos = stdout
+        .find("Number of files:")
+        .unwrap_or_else(|| panic!("stats block missing:\n{stdout}"));
+    assert!(
+        skip_pos < stats_pos,
+        "min-size skip notice must precede the stats block:\n{stdout}"
+    );
+}
+
+/// The size-skip notice uses upstream's exact wording and stays gated on
+/// INFO_GTE(SKIP, 1): a plain `-v` run (Skip == 0) emits neither the
+/// `"is over max-size"` nor the `"is under min-size"` notice.
+///
+/// WHY: upstream gates both notices on INFO_GTE(SKIP, 1), which the info
+/// verbosity table raises only at `-vv` (options.c:252). Surfacing them at
+/// plain `-v` would print phantom lines upstream never emits.
+#[test]
+fn size_skip_notices_suppressed_at_plain_v() {
+    let test_dir = TestDir::new().expect("create test dir");
+    let src_dir = test_dir.mkdir("src").unwrap();
+    let dest_dir = test_dir.mkdir("dest").unwrap();
+
+    fs::write(src_dir.join("keep.txt"), vec![0u8; 100]).unwrap();
+    fs::write(src_dir.join("big.bin"), vec![0u8; 4096]).unwrap();
+
+    let mut cmd = RsyncCommand::new();
+    cmd.args([
+        "-r",
+        "-v",
+        "--max-size=1K",
+        &format!("{}/", src_dir.display()),
+        dest_dir.to_str().unwrap(),
+    ]);
+    let output = cmd.assert_success();
+    let stdout = String::from_utf8_lossy(&output.stdout);
+
+    assert!(
+        !stdout.contains("is over max-size"),
+        "max-size skip notice must be silent at plain -v:\n{stdout}"
+    );
+}

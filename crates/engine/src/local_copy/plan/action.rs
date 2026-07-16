@@ -28,6 +28,16 @@ pub enum LocalCopyAction {
     SkippedMissingDestination,
     /// An existing destination file was newer than the source and left untouched.
     SkippedNewerDestination,
+    /// A regular file was skipped because it exceeds `--max-size`.
+    ///
+    /// upstream: generator.c:1704-1711 recv_generator() - `rprintf(FINFO,
+    /// "%s is over max-size\n", fname)` then `goto cleanup`.
+    SkippedOverMaxSize,
+    /// A regular file was skipped because it is smaller than `--min-size`.
+    ///
+    /// upstream: generator.c:1712-1719 recv_generator() - `rprintf(FINFO,
+    /// "%s is under min-size\n", fname)` then `goto cleanup`.
+    SkippedUnderMinSize,
     /// A non-regular file was skipped because support was disabled.
     SkippedNonRegular,
     /// A directory was skipped because recursion was disabled.
@@ -79,6 +89,8 @@ mod tests {
             LocalCopyAction::SkippedExisting,
             LocalCopyAction::SkippedMissingDestination,
             LocalCopyAction::SkippedNewerDestination,
+            LocalCopyAction::SkippedOverMaxSize,
+            LocalCopyAction::SkippedUnderMinSize,
             LocalCopyAction::SkippedNonRegular,
             LocalCopyAction::SkippedDirectory,
             LocalCopyAction::SkippedUnsafeSymlink,
@@ -111,6 +123,8 @@ mod tests {
             LocalCopyAction::SkippedExisting,
             LocalCopyAction::SkippedMissingDestination,
             LocalCopyAction::SkippedNewerDestination,
+            LocalCopyAction::SkippedOverMaxSize,
+            LocalCopyAction::SkippedUnderMinSize,
             LocalCopyAction::SkippedNonRegular,
             LocalCopyAction::SkippedDirectory,
             LocalCopyAction::SkippedUnsafeSymlink,

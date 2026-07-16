@@ -13,7 +13,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use logging::{debug_log, info_log};
+use logging::debug_log;
 
 use crate::local_copy::{
     CopyContext, LocalCopyAction, LocalCopyError, LocalCopyMetadata, LocalCopyRecord,
@@ -143,17 +143,39 @@ pub(crate) fn copy_file(
     // filter runs after the "not creating new" (--existing) check at
     // generator.c:1368, so an out-of-range file absent from the destination
     // reports "not creating new file" rather than a size skip.
+    //
+    // Record the skip as a client event rather than emitting it via `info_log!`
+    // so the "%s is over max-size" / "%s is under min-size" notice renders
+    // inline in file order during the generator phase, ahead of the final
+    // statistics block. Routing an `info_log!` here would drain the notice
+    // after the summary (the diagnostic pipeline flushes last), which upstream
+    // never does. Return `Ok(false)` regardless so `--prune-empty-dirs`
+    // accounting still treats the file as filtered out.
     if let Some(max_limit) = context.max_file_size_limit()
         && file_size > max_limit
     {
-        info_log!(Skip, 1, "{} is over max-size", record_path.display());
+        record_size_skip(
+            context,
+            source,
+            metadata,
+            metadata_options.fake_super_enabled(),
+            record_path.as_path(),
+            LocalCopyAction::SkippedOverMaxSize,
+        );
         return Ok(false);
     }
 
     if let Some(min_limit) = context.min_file_size_limit()
         && file_size < min_limit
     {
-        info_log!(Skip, 1, "{} is under min-size", record_path.display());
+        record_size_skip(
+            context,
+            source,
+            metadata,
+            metadata_options.fake_super_enabled(),
+            record_path.as_path(),
+            LocalCopyAction::SkippedUnderMinSize,
+        );
         return Ok(false);
     }
 
@@ -269,4 +291,31 @@ pub(crate) fn copy_file(
         link_outcome.reference_basis,
     )?;
     Ok(true)
+}
+
+/// Records a `--max-size` / `--min-size` skip as a client event.
+///
+/// Mirrors the `SkippedMissingDestination` recording path so the notice renders
+/// inline during the generator phase (before the statistics block) in file
+/// order, matching upstream `recv_generator()` which prints the notice via
+/// `rprintf(FINFO, ...)` and then `goto cleanup`. upstream: generator.c:1704-1719.
+fn record_size_skip(
+    context: &mut CopyContext,
+    source: &Path,
+    metadata: &fs::Metadata,
+    fake_super_enabled: bool,
+    record_path: &Path,
+    action: LocalCopyAction,
+) {
+    let metadata_snapshot = LocalCopyMetadata::from_metadata(metadata, None)
+        .virtualize_fake_super(source, fake_super_enabled);
+    let total_bytes = Some(metadata_snapshot.len());
+    context.record(LocalCopyRecord::new(
+        record_path.to_path_buf(),
+        action,
+        0,
+        total_bytes,
+        Duration::default(),
+        Some(metadata_snapshot),
+    ));
 }
