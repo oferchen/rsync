@@ -206,8 +206,14 @@ pub(crate) fn format_iflags(
 
 /// Formats a complete itemize output line for MSG_INFO emission.
 ///
-/// Produces `"{iflags_str} {filename}\n"` matching upstream's default
+/// Produces `"{iflags_str} {filename}{L-suffix}\n"` matching upstream's default
 /// `stdout_format = "%i %n%L"` when `--itemize-changes` is active.
+///
+/// `xname` is the alternate-basis name read off the wire when the item carries
+/// `ITEM_XNAME_FOLLOWS` (the hard-link leader from `hlink.c:232-234`), or `None`
+/// otherwise. When present and non-empty it renders the `%L` ` => <xname>`
+/// suffix; upstream's `%L` gates purely on `hlink && *hlink` and takes priority
+/// over the symlink ` -> target` form (`log.c:643-655`).
 ///
 /// Uses a single `String` buffer to avoid intermediate allocations from
 /// `format_iflags`, path display, and symlink target formatting.
@@ -216,12 +222,16 @@ pub(crate) fn format_iflags(
 ///
 /// - `options.c:2336-2338` - `stdout_format = "%i %n%L"` for `-i`
 /// - `log.c:627-636` - `%n` expansion (filename with trailing `/` for dirs)
-/// - `log.c:637-653` - `%L` expansion (` -> target` for symlinks)
+/// - `log.c:643-655` - `%L` expansion: ` => hlink` when the xname is non-empty,
+///   else ` -> target` for symlinks
+/// - `hlink.c:232-234` - hard-link follower emits `ITEM_XNAME_FOLLOWS` with the
+///   leader name as the xname
 pub(crate) fn format_itemize_line(
     iflags: &ItemFlags,
     entry: &FileEntry,
     is_sender: bool,
     ctx: &ItemizeContext,
+    xname: Option<&[u8]>,
 ) -> String {
     use std::fmt::Write;
 
@@ -239,8 +249,16 @@ pub(crate) fn format_itemize_line(
         buf.push('/');
     }
 
-    // upstream: log.c:637-653 - append " -> target" for symlinks
-    if entry.is_symlink() {
+    // upstream: log.c:643-655 - %L expansion. The ` => <xname>` form wins
+    // whenever the item carries a non-empty alternate-basis name (the hard-link
+    // leader), mirroring the `if (hlink && *hlink)` branch that precedes the
+    // symlink case. Only when no xname trails does `%L` fall through to the
+    // symlink ` -> target` form.
+    let hlink =
+        xname.filter(|name| iflags.raw() & ItemFlags::ITEM_XNAME_FOLLOWS != 0 && !name.is_empty());
+    if let Some(name) = hlink {
+        let _ = write!(buf, " => {}", String::from_utf8_lossy(name));
+    } else if entry.is_symlink() {
         if let Some(target) = entry.link_target() {
             let _ = write!(buf, " -> {}", target.display());
         }
@@ -540,7 +558,7 @@ mod tests {
     fn format_itemize_line_file() {
         let iflags = ItemFlags::from_raw(ItemFlags::ITEM_TRANSFER | ItemFlags::ITEM_IS_NEW);
         let entry = make_file_entry("docs/readme.txt");
-        let line = format_itemize_line(&iflags, &entry, true, &default_ctx());
+        let line = format_itemize_line(&iflags, &entry, true, &default_ctx(), None);
         assert_eq!(line, "<f+++++++++ docs/readme.txt\n");
     }
 
@@ -548,7 +566,7 @@ mod tests {
     fn format_itemize_line_directory() {
         let iflags = ItemFlags::from_raw(ItemFlags::ITEM_LOCAL_CHANGE | ItemFlags::ITEM_IS_NEW);
         let entry = make_dir_entry("subdir");
-        let line = format_itemize_line(&iflags, &entry, true, &default_ctx());
+        let line = format_itemize_line(&iflags, &entry, true, &default_ctx(), None);
         assert_eq!(line, "cd+++++++++ subdir/\n");
     }
 
@@ -569,8 +587,38 @@ mod tests {
     fn format_itemize_line_symlink() {
         let iflags = ItemFlags::from_raw(ItemFlags::ITEM_LOCAL_CHANGE | ItemFlags::ITEM_IS_NEW);
         let entry = make_symlink_entry("mylink");
-        let line = format_itemize_line(&iflags, &entry, true, &default_ctx());
+        let line = format_itemize_line(&iflags, &entry, true, &default_ctx(), None);
         assert_eq!(line, "cL+++++++++ mylink -> target\n");
+    }
+
+    /// A hard-link follower carries `ITEM_XNAME_FOLLOWS` with the leader name as
+    /// the wire xname (upstream `hlink.c:232-234`). The push sender renderer must
+    /// append the `%L` ` => <leader>` suffix so oc's own client renders
+    /// `hf+++++++++ follower => leader`, not a bare `hf+++++++++ follower`.
+    ///
+    /// upstream: log.c:643-646 - `%L` renders ` => hlink` for a non-empty xname.
+    #[test]
+    fn format_itemize_line_hardlink_follower_appends_leader() {
+        let iflags = ItemFlags::from_raw(
+            ItemFlags::ITEM_LOCAL_CHANGE | ItemFlags::ITEM_XNAME_FOLLOWS | ItemFlags::ITEM_IS_NEW,
+        );
+        let entry = make_file_entry("follower");
+        let line = format_itemize_line(&iflags, &entry, true, &default_ctx(), Some(b"leader"));
+        assert_eq!(line, "hf+++++++++ follower => leader\n");
+    }
+
+    /// The `%L` ` => ` suffix must not appear when the xname is empty - upstream's
+    /// alt-dest hard-link/copy-dest paths (e.g. `hlink.c:219-221`,
+    /// `generator.c:1011-1013`) set `ITEM_XNAME_FOLLOWS` with an empty string, and
+    /// `%L` gates on `hlink && *hlink` (log.c:644).
+    #[test]
+    fn format_itemize_line_empty_xname_renders_no_suffix() {
+        let iflags = ItemFlags::from_raw(
+            ItemFlags::ITEM_LOCAL_CHANGE | ItemFlags::ITEM_XNAME_FOLLOWS | ItemFlags::ITEM_IS_NEW,
+        );
+        let entry = make_file_entry("follower");
+        let line = format_itemize_line(&iflags, &entry, true, &default_ctx(), Some(b""));
+        assert_eq!(line, "hf+++++++++ follower\n");
     }
 
     /// upstream: log.c:716-717 - non-symlink with preserve_mtimes shows lowercase 't'

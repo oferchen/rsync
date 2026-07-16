@@ -460,15 +460,15 @@ fn inc_recurse_gap_ndx_itemizes_parent_directory() {
     let sub = &ctx.file_list[ctx.resolve_itemize_ndx(3)];
     let child = &ctx.file_list[ctx.resolve_itemize_ndx(4)];
     assert_eq!(
-        itemize::format_itemize_line(&unchanged, root, true, &itemize_ctx),
+        itemize::format_itemize_line(&unchanged, root, true, &itemize_ctx, None),
         ".d          ./\n"
     );
     assert_eq!(
-        itemize::format_itemize_line(&new_local, sub, true, &itemize_ctx),
+        itemize::format_itemize_line(&new_local, sub, true, &itemize_ctx, None),
         "cd+++++++++ sub/\n"
     );
     assert_eq!(
-        itemize::format_itemize_line(&new_xfer, child, true, &itemize_ctx),
+        itemize::format_itemize_line(&new_xfer, child, true, &itemize_ctx, None),
         "<f+++++++++ sub/child.txt\n"
     );
 
@@ -478,15 +478,15 @@ fn inc_recurse_gap_ndx_itemizes_parent_directory() {
     let dir_mtime = ItemFlags::from_raw(ItemFlags::ITEM_REPORT_TIME);
     let file_mtime = ItemFlags::from_raw(ItemFlags::ITEM_TRANSFER | ItemFlags::ITEM_REPORT_TIME);
     assert_eq!(
-        itemize::format_itemize_line(&dir_mtime, root, true, &itemize_ctx),
+        itemize::format_itemize_line(&dir_mtime, root, true, &itemize_ctx, None),
         ".d..t...... ./\n"
     );
     assert_eq!(
-        itemize::format_itemize_line(&dir_mtime, sub, true, &itemize_ctx),
+        itemize::format_itemize_line(&dir_mtime, sub, true, &itemize_ctx, None),
         ".d..t...... sub/\n"
     );
     assert_eq!(
-        itemize::format_itemize_line(&file_mtime, child, true, &itemize_ctx),
+        itemize::format_itemize_line(&file_mtime, child, true, &itemize_ctx, None),
         "<f..t...... sub/child.txt\n"
     );
 }
@@ -5037,7 +5037,7 @@ mod itemize_emit_gate {
 
         let mut writer = crate::writer::ServerWriter::new_plain(Vec::new());
         let iflags = ItemFlags::from_raw(iflags_raw);
-        ctx.maybe_emit_itemize(&mut writer, &iflags, 0, &mut callback)
+        ctx.maybe_emit_itemize(&mut writer, &iflags, 0, None, &mut callback)
             .expect("maybe_emit_itemize must not error in client mode");
 
         // Reset the verbosity config so siblings see a clean default.
@@ -5082,6 +5082,55 @@ mod itemize_emit_gate {
             lines.len(),
             1,
             "ITEM_XNAME_FOLLOWS must force an itemize line under upstream gate; got: {lines:?}"
+        );
+    }
+
+    /// A `--hard-links -i` push where oc is BOTH the sender renderer and the
+    /// receiver: the remote generator forwards `ITEM_XNAME_FOLLOWS` plus the
+    /// leader vstring (upstream `hlink.c:232-234`), and the client-side sender
+    /// owns the visible itemize (`sender.c:293 maybe_log_item`). The follower row
+    /// must render `hf+++++++++ follower => leader`, not a bare
+    /// `hf+++++++++ follower`, matching upstream `%L` (`log.c:643-646`).
+    #[test]
+    fn hardlink_follower_renders_leader_suffix_through_emit_path() {
+        init({
+            let mut cfg = VerbosityConfig::default();
+            cfg.info.name = 0;
+            cfg
+        });
+
+        let handshake = test_handshake();
+        let mut config = test_config();
+        config.connection.client_mode = true;
+        config.flags.info_flags.itemize = true;
+        let mut ctx = GeneratorContext::new_for_test(&handshake, config);
+        ctx.file_list.push(protocol::flist::FileEntry::new_file(
+            "follower".into(),
+            0,
+            0o644,
+        ));
+
+        let captured: Rc<RefCell<Vec<String>>> = Rc::new(RefCell::new(Vec::new()));
+        let lines = Rc::clone(&captured);
+        let mut sink = move |line: &str| {
+            lines.borrow_mut().push(line.to_owned());
+        };
+        let mut callback: Option<&mut dyn crate::ItemizeCallback> = Some(&mut sink);
+
+        let mut writer = crate::writer::ServerWriter::new_plain(Vec::new());
+        let iflags = ItemFlags::from_raw(
+            ItemFlags::ITEM_LOCAL_CHANGE | ItemFlags::ITEM_XNAME_FOLLOWS | ItemFlags::ITEM_IS_NEW,
+        );
+        ctx.maybe_emit_itemize(&mut writer, &iflags, 0, Some(b"leader"), &mut callback)
+            .expect("maybe_emit_itemize must not error in client mode");
+
+        init(VerbosityConfig::default());
+
+        let rows = captured.borrow();
+        assert_eq!(rows.len(), 1, "expected one follower row; got: {rows:?}");
+        assert_eq!(
+            rows[0], "hf+++++++++ follower => leader\n",
+            "hard-link follower must carry the `%L` ` => leader` suffix",
         );
     }
 }

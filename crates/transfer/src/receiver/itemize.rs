@@ -149,11 +149,16 @@ impl ReceiverContext {
         // end of a push (the client is the sender), so it renders `<`; a
         // client-mode receiver is a local pull and renders `>`.
         let is_sender = !self.config.connection.client_mode;
+        // The receiver-side generator computes iflags locally rather than reading
+        // them off the wire, so no alternate-basis xname is available here; the
+        // hard-link ` => leader` suffix is owned by the push sender renderer
+        // (generator/transfer/transfer_loop.rs::maybe_emit_itemize).
         Some(crate::generator::itemize::format_itemize_line(
             &effective_iflags,
             entry,
             is_sender,
             &ctx,
+            None,
         ))
     }
 
