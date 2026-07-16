@@ -12,7 +12,7 @@ use core::{
 
 pub(crate) enum CompressLevelArg {
     Disable,
-    Level(NonZeroU8),
+    Level(CompressionLevel),
 }
 
 enum CompressionLevelParseError {
@@ -207,9 +207,7 @@ pub(crate) fn parse_compress_level_argument(
 ) -> Result<CompressionSetting, Message> {
     match parse_raw_level(value).map(|raw| clamp_level(codec, raw)) {
         Ok(CompressLevelArg::Disable) => Ok(CompressionSetting::disabled()),
-        Ok(CompressLevelArg::Level(level)) => {
-            Ok(CompressionSetting::level(CompressionLevel::precise(level)))
-        }
+        Ok(CompressLevelArg::Level(level)) => Ok(CompressionSetting::level(level)),
         Err(error) => Err(error.into_argument_message()),
     }
 }

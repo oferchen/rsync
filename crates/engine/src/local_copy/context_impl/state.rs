@@ -87,6 +87,8 @@ impl<'a> CopyContext<'a> {
                 CompressionLevel::Default => 6,
                 CompressionLevel::Best => 9,
                 CompressionLevel::Precise(v) => i32::from(v.get()),
+                // upstream: token.c:73 - preserve zstd's negative "fast" levels.
+                CompressionLevel::PreciseSigned(v) => v,
             };
             match options.compression_algorithm() {
                 CompressionAlgorithm::Zlib => Some(

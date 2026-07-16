@@ -300,6 +300,9 @@ pub fn level_to_i32(level: CompressionLevel) -> i32 {
         CompressionLevel::Default => ZSTD_DEFAULT_LEVEL,
         CompressionLevel::Best => ZSTD_BEST_LEVEL,
         CompressionLevel::Precise(value) => i32::from(value.get()),
+        // upstream: token.c:73,748 - negative "fast" levels pass straight to
+        // ZSTD_c_compressionLevel; forward the signed value unchanged.
+        CompressionLevel::PreciseSigned(value) => value,
     }
 }
 
@@ -347,16 +350,23 @@ mod tests {
     fn encoder_accepts_negative_zstd_levels() {
         // WHY: upstream passes do_compression_level (which can be a negative
         // "fast" level for zstd) straight to ZSTD_c_compressionLevel
-        // (token.c:748). The level the shared clamp resolves for a negative
-        // --compress-level is therefore a real, usable encoder input - proving
-        // it must NOT be raised to 1. This exercises the resolved level end to
-        // end through a live zstd encoder/decoder round trip.
+        // (token.c:748). This drives the level through the real encoder pipeline
+        // - clamp_level -> CompressionLevel -> level_to_i32 - proving the signed
+        // value survives representation AND is a usable encoder input, never
+        // raised to 1. A live encode/decode round trip confirms it.
         use crate::algorithm::{CompressionAlgorithm, zstd_min_level};
 
         let payload = b"the quick brown fox jumps over the lazy dog\n".repeat(64);
         for raw in [-5, zstd_min_level()] {
-            let level = CompressionAlgorithm::Zstd.resolve_debug_level(raw);
-            assert!(level < 0, "resolver preserves the negative level {raw}");
+            let resolved = CompressionAlgorithm::Zstd
+                .clamp_level(raw)
+                .expect("zstd never disables compression");
+            assert!(
+                matches!(resolved, CompressionLevel::PreciseSigned(_)),
+                "negative level {raw} is carried as a signed CompressionLevel"
+            );
+            let level = level_to_i32(resolved);
+            assert_eq!(level, raw, "clamp_level preserves the signed level {raw}");
 
             let mut encoder =
                 ZstdEncoder::new(Vec::new(), level).expect("encoder accepts negative level");
