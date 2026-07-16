@@ -588,7 +588,16 @@ impl ReceiverContext {
         }
 
         if let Some(ref converter) = self.config.connection.iconv {
-            reader = reader.with_iconv(converter.clone());
+            // upstream: flist.c:1156 gates recv-side symlink-target conversion on
+            // `sender_symlink_iconv` (compat.c:765-767). Only transcode targets
+            // when the peer negotiated CF_SYMLINK_ICONV; otherwise the target
+            // arrives as raw local bytes and must pass through untouched.
+            let symlink_iconv = self
+                .compat_flags
+                .is_some_and(|f| f.contains(protocol::CompatibilityFlags::SYMLINK_ICONV));
+            reader = reader
+                .with_iconv(converter.clone())
+                .with_symlink_iconv(symlink_iconv);
         }
 
         reader

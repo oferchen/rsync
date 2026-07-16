@@ -2612,11 +2612,12 @@ mod iconv_integration {
         data
     }
 
-    /// Symlink targets are decoded by `ic_recv` when `--iconv=LOCAL,REMOTE`
-    /// is in effect and CF_SYMLINK_ICONV has been negotiated, mirroring the
-    /// upstream `sender_symlink_iconv` path.
+    /// Symlink targets are decoded by `ic_recv` ONLY when `--iconv=LOCAL,REMOTE`
+    /// is in effect AND CF_SYMLINK_ICONV has been negotiated
+    /// (`with_symlink_iconv(true)`), mirroring the upstream `sender_symlink_iconv`
+    /// path.
     ///
-    /// upstream: flist.c:1127-1150 recv_file_entry() - sender_symlink_iconv
+    /// upstream: flist.c:1156 recv_file_entry() - sender_symlink_iconv gate.
     #[cfg(unix)]
     #[test]
     fn read_symlink_target_converts_latin1_wire_bytes_to_utf8() {
@@ -2633,13 +2634,49 @@ mod iconv_integration {
         let protocol = test_protocol();
         let mut reader = FileListReader::new(protocol)
             .with_preserve_links(true)
-            .with_iconv(converter);
+            .with_iconv(converter)
+            .with_symlink_iconv(true);
 
         let mut cursor = io::Cursor::new(&data[..]);
         let entry = reader.read_entry(&mut cursor).unwrap().unwrap();
 
         let target = entry.link_target().expect("symlink target present");
         assert_eq!(target.as_os_str().as_bytes(), utf8_local);
+    }
+
+    /// A converter WITHOUT negotiated CF_SYMLINK_ICONV (proto-30 / rsync 3.0.x
+    /// peer) must leave the received symlink target as RAW wire bytes, even
+    /// while filenames would be transcoded. This is the `read_sbuf` else branch
+    /// at upstream flist.c:1181 where `sender_symlink_iconv` is 0.
+    ///
+    /// upstream: compat.c:765-767 gate; flist.c:1156/1181 branch.
+    #[cfg(unix)]
+    #[test]
+    fn read_symlink_target_without_negotiated_flag_preserves_wire_bytes() {
+        use std::os::unix::ffi::OsStrExt;
+
+        // "café" target on the wire in ISO-8859-1; must survive verbatim.
+        let latin1_wire: &[u8] = &[0x63, 0x61, 0x66, 0xe9];
+
+        let data = write_symlink_with_raw_target(latin1_wire);
+
+        // Converter attached (would transcode) but symlink_iconv defaults false.
+        let converter = FilenameConverter::new("UTF-8", "ISO-8859-1").unwrap();
+        let protocol = test_protocol();
+        let mut reader = FileListReader::new(protocol)
+            .with_preserve_links(true)
+            .with_iconv(converter);
+
+        let mut cursor = io::Cursor::new(&data[..]);
+        let entry = reader.read_entry(&mut cursor).unwrap().unwrap();
+
+        let target = entry.link_target().expect("symlink target present");
+        assert_eq!(
+            target.as_os_str().as_bytes(),
+            latin1_wire,
+            "target must stay raw wire bytes without CF_SYMLINK_ICONV",
+        );
+        assert_eq!(reader.io_error(), 0, "raw pass-through sets no io_error");
     }
 
     /// Without a converter, the symlink target wire bytes pass through
@@ -2659,6 +2696,78 @@ mod iconv_integration {
 
         let target = entry.link_target().expect("symlink target present");
         assert_eq!(target.as_os_str().as_bytes(), wire);
+    }
+
+    /// A received symlink target that cannot be strictly transcoded to the local
+    /// charset (CF_SYMLINK_ICONV negotiated) must be EMPTIED and record
+    /// `io_error` (exit 23), not kept as a `?`-mangled target.
+    ///
+    /// upstream: flist.c:1169-1177 recv_file_entry() - `io_error |=
+    /// IOERR_GENERAL`, warn, `bp[0]='\0'`, `outbuf.len = 0`.
+    #[cfg(unix)]
+    #[test]
+    fn read_symlink_target_strict_failure_empties_target_and_sets_io_error() {
+        use std::os::unix::ffi::OsStrExt;
+
+        // "あ" (U+3042) in UTF-8 has no ISO-8859-1 / windows-1252 representation,
+        // so a strict remote(UTF-8) -> local(ISO-8859-1) conversion fails.
+        let hiragana_utf8_wire: &[u8] = &[0xe3, 0x81, 0x82];
+        let data = write_symlink_with_raw_target(hiragana_utf8_wire);
+
+        let converter = FilenameConverter::new("ISO-8859-1", "UTF-8").unwrap();
+        let protocol = test_protocol();
+        let mut reader = FileListReader::new(protocol)
+            .with_preserve_links(true)
+            .with_iconv(converter)
+            .with_symlink_iconv(true);
+
+        let mut cursor = io::Cursor::new(&data[..]);
+        let entry = reader.read_entry(&mut cursor).unwrap().unwrap();
+
+        let target = entry.link_target().expect("symlink entry retained");
+        assert_eq!(
+            target.as_os_str().as_bytes(),
+            b"",
+            "unconvertible target must be emptied, matching upstream",
+        );
+        assert_ne!(
+            reader.io_error(),
+            0,
+            "strict symlink-target failure must record io_error (exit 23)",
+        );
+    }
+
+    /// A received FILENAME that cannot be strictly transcoded to the local
+    /// charset must be EMPTIED and record `io_error` (exit 23) - upstream's
+    /// `outbuf.len = 0` semantics, NOT a lossy `?`-mangled name.
+    ///
+    /// upstream: flist.c:757-764 recv_file_entry() - `io_error |= IOERR_GENERAL`,
+    /// FERROR_UTF8, `outbuf.len = 0`.
+    #[cfg(unix)]
+    #[test]
+    fn read_entry_strict_filename_failure_empties_name_and_sets_io_error() {
+        // "あ" (U+3042) UTF-8 wire name has no ISO-8859-1 / windows-1252
+        // representation, forcing a strict conversion failure.
+        let hiragana_utf8_wire: &[u8] = &[0xe3, 0x81, 0x82];
+        let data = write_entry_with_raw_name(hiragana_utf8_wire);
+
+        let converter = FilenameConverter::new("ISO-8859-1", "UTF-8").unwrap();
+        let protocol = test_protocol();
+        let mut reader = FileListReader::new(protocol).with_iconv(converter);
+
+        let mut cursor = io::Cursor::new(&data[..]);
+        let entry = reader.read_entry(&mut cursor).unwrap().unwrap();
+
+        assert_eq!(
+            entry.name_bytes().as_ref(),
+            b"",
+            "unconvertible filename must be emptied, matching upstream",
+        );
+        assert_ne!(
+            reader.io_error(),
+            0,
+            "strict filename failure must record io_error (exit 23)",
+        );
     }
 }
 

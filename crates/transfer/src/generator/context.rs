@@ -368,7 +368,17 @@ impl GeneratorContext {
         }
 
         if let Some(ref converter) = self.config.connection.iconv {
-            writer = writer.with_iconv(converter.clone());
+            // upstream: compat.c:765-767 `sender_symlink_iconv = iconv_opt &&
+            // (... CF_SYMLINK_ICONV)`. Symlink-target iconv is gated separately
+            // from filename iconv: only transcode targets when the peer
+            // negotiated CF_SYMLINK_ICONV. A proto-30 / pre-3.1 peer receives
+            // raw local target bytes.
+            let symlink_iconv = self
+                .compat_flags
+                .is_some_and(|f| f.contains(CompatibilityFlags::SYMLINK_ICONV));
+            writer = writer
+                .with_iconv(converter.clone())
+                .with_symlink_iconv(symlink_iconv);
         }
         writer
     }
