@@ -50,6 +50,7 @@ pub struct SshCommand {
     keepalive: bool,
     options: Vec<OsString>,
     connect_timeout: Option<Duration>,
+    io_timeout: Option<Duration>,
     remote_command: Vec<OsString>,
     envs: Vec<(OsString, OsString)>,
     target_override: Option<OsString>,
@@ -70,6 +71,7 @@ impl SshCommand {
             bind_address: None,
             keepalive: true,
             connect_timeout: Some(Duration::from_secs(DEFAULT_CONNECT_TIMEOUT_SECS)),
+            io_timeout: None,
             options: Vec::new(),
             remote_command: Vec::new(),
             envs: Vec::new(),
@@ -147,6 +149,26 @@ impl SshCommand {
     /// The default is `Some(Duration::from_secs(30))`.
     pub const fn set_connect_timeout(&mut self, timeout: Option<Duration>) -> &mut Self {
         self.connect_timeout = timeout;
+        self
+    }
+
+    /// Sets the data-channel I/O timeout (the negotiated `--timeout`).
+    ///
+    /// When `Some(non-zero)`, the spawned [`SshConnection`] arms a stall
+    /// watchdog that aborts the transfer with a timeout error if no read or
+    /// write makes progress for that long, mirroring upstream rsync's uniform
+    /// `io_timeout` enforcement across transports. Keepalive writes emitted by
+    /// the transfer layer reset the progress clock, so a legitimate lull does
+    /// not trip the timeout. `None` or `Some(0)` disables stall detection,
+    /// matching upstream's `io_timeout == 0` off state.
+    ///
+    /// Unlike [`set_connect_timeout`](Self::set_connect_timeout), this is not
+    /// rendered as an `ssh` command-line option: it governs the parent-side
+    /// stall detector over the child's stdio pipes.
+    ///
+    /// upstream: io.c `set_io_timeout` / `check_timeout`; errcode.h `RERR_TIMEOUT`.
+    pub const fn set_io_timeout(&mut self, timeout: Option<Duration>) -> &mut Self {
+        self.io_timeout = timeout;
         self
     }
 
@@ -397,6 +419,7 @@ impl SshCommand {
             stdout,
             stderr_channel,
             self.connect_timeout,
+            self.io_timeout,
         ))
     }
 
@@ -623,6 +646,14 @@ impl SshCommand {
     #[cfg(test)]
     pub(crate) fn command_parts_for_testing(&self) -> (OsString, Vec<OsString>) {
         self.command_parts()
+    }
+
+    /// Returns the configured data-channel I/O timeout. Test-only accessor used
+    /// to assert the negotiated `--timeout` is threaded into the transport (it
+    /// governs the parent-side stall detector, not the rendered argv).
+    #[cfg(test)]
+    pub(crate) fn io_timeout_for_testing(&self) -> Option<Duration> {
+        self.io_timeout
     }
 }
 
