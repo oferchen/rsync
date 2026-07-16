@@ -234,13 +234,15 @@ fn golden_sender_identity_converter_preserves_utf8() {
 }
 
 /// A filename containing characters that ISO-8859-1 cannot represent (here:
-/// the Greek letter alpha, U+03B1) must be handled gracefully by the sender.
-/// Unconvertible characters are passed through verbatim and a warning is
-/// emitted via the ICONV debug trace, allowing the transfer to continue.
+/// the Greek letter alpha, U+03B1) is currently passed through verbatim by the
+/// sender, with a warning emitted via the ICONV debug trace.
 ///
-/// This mirrors upstream's `ICB_INCLUDE_BAD` behaviour: on an unconvertible
-/// byte `iconvbufs()` runs `*obuf++ = *ibuf++` (rsync.c:261), copying the
-/// source byte(s) straight to the output rather than substituting them.
+/// NOTE: this pins oc's CURRENT behaviour, which DIVERGES from upstream. The
+/// sender flist name path uses `iconvbufs(ic_send, ..., ICB_INIT)` (strict,
+/// flist.c:1624-1631); on an unconvertible name upstream sets `io_error`,
+/// prints "cannot convert filename", and `return NULL` to DROP the entry - it
+/// does not pass bytes through. Bringing the sender to strict-drop parity is
+/// tracked separately; until then this test guards the current wire output.
 #[test]
 fn golden_sender_unmappable_char_verbatim() {
     let mut writer = sender_writer("ISO-8859-1");
@@ -377,17 +379,18 @@ fn golden_receiver_ascii_passthrough_under_iconv() {
     assert_eq!(&*entry.name_bytes(), b"plain.txt");
 }
 
-/// Wire bytes that are invalid in the declared remote charset are handled
-/// gracefully by passing the offending byte through verbatim. The transfer
-/// continues rather than aborting.
+/// Wire bytes that are invalid in the declared remote charset empty the
+/// received filename rather than aborting the file-list read.
 ///
-/// This mirrors upstream's `ICB_INCLUDE_BAD` behaviour: `iconvbufs(ic_recv,
-/// ...)` (io.c:1286 via `read_line(RL_CONVERT)`) copies the invalid source
-/// byte straight to the output (`*obuf++ = *ibuf++`, rsync.c:261) instead of
-/// substituting it, so the filename is preserved byte-for-byte.
+/// The receiver flist name path is STRICT: upstream converts the name with
+/// `iconvbufs(ic_recv, ..., ICB_INIT)` (flist.c:757) - NOT the lossy
+/// `ICB_INCLUDE_BAD` used by `read_line(RL_CONVERT)`/`send_protected_args`.
+/// On an EILSEQ it prints an `FERROR_UTF8` warning, sets `io_error`, and sets
+/// `outbuf.len = 0` to empty the name (flist.c:759-762). The entry is kept
+/// with an empty name; the transfer continues.
 #[cfg(unix)]
 #[test]
-fn golden_receiver_invalid_remote_bytes_verbatim() {
+fn golden_receiver_invalid_remote_bytes_empties_name() {
     // [0xc3, 0x28] is invalid UTF-8: c3 begins a 2-byte sequence but 28 is
     // not a valid continuation byte (continuations must be 80-bf).
     let wire = build_wire_with_name(&[0xc3, 0x28]);
@@ -402,17 +405,19 @@ fn golden_receiver_invalid_remote_bytes_verbatim() {
     let mut cursor = Cursor::new(&wire[..]);
     let result = reader.read_entry(&mut cursor);
 
-    // Lossy conversion passes invalid bytes through rather than failing.
+    // Strict conversion empties the name rather than failing the read.
     assert!(
         result.is_ok(),
-        "lossy conversion must not fail - invalid bytes pass through verbatim"
+        "strict recv conversion must not abort the file-list read"
     );
     let entry = result.unwrap().expect("entry must be present");
 
-    // 0xc3 is an invalid UTF-8 lead here -> copied verbatim (rsync.c:261).
-    // 0x28 is valid ASCII '(' in both UTF-8 and ISO-8859-1. The exact input
-    // bytes survive byte-for-byte.
-    assert_eq!(&*entry.name_bytes(), &[0xc3, 0x28]);
+    // upstream flist.c:761 `outbuf.len = 0` empties the name on EILSEQ.
+    assert!(
+        entry.name_bytes().is_empty(),
+        "unconvertible remote name must be emptied (flist.c:761), got {:?}",
+        &*entry.name_bytes()
+    );
 }
 
 // ===========================================================================
