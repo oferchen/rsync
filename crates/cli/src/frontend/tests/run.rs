@@ -51,6 +51,30 @@ fn clap_error_uses_canonical_exit_code_text() {
     );
 }
 
+// upstream: options.c:1749-1754 - the 21st alt-dest arg overflows the shared
+// `basis_dir[]` array (rsync.h:196 MAX_BASIS_DIRS) and exits RERR_SYNTAX (1)
+// with a verbatim `ERROR: at most 20 <opt> args may be specified` message. We
+// assert both the exit code and the message end-to-end.
+#[test]
+fn run_rejects_excess_alt_dest_dirs() {
+    let mut args = vec![OsString::from(OC_RSYNC)];
+    for index in 0..21 {
+        args.push(OsString::from(format!("--link-dest=dir{index}")));
+    }
+    args.push(OsString::from("src"));
+    args.push(OsString::from("dst"));
+
+    let (code, stdout, stderr) = run_with_args(args);
+
+    assert_eq!(code, 1, "21 alt-dest dirs must exit RERR_SYNTAX");
+    assert!(stdout.is_empty());
+    let rendered = String::from_utf8(stderr).expect("diagnostic utf8");
+    assert!(
+        rendered.contains("ERROR: at most 20 --link-dest args may be specified"),
+        "diagnostic was: {rendered}"
+    );
+}
+
 #[test]
 fn clap_value_error_does_not_double_error_prefix() {
     // A clap value-validation failure (here `--block-size`) surfaces through

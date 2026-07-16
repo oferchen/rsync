@@ -27,6 +27,55 @@ use super::flags::{tri_state_flag_negative_first, tri_state_flag_positive_first}
 use super::values::join_os_values;
 use super::{BandwidthArgument, ParsedArgs, detect_program_name, env_protect_args_default};
 
+/// Maximum number of alt-dest directories rsync accepts across `--compare-dest`,
+/// `--copy-dest`, and `--link-dest` combined.
+///
+/// The three options share a single `basis_dir[]` array, so the cap is on their
+/// combined total. A separate conflict rule (upstream: options.c:1741-1745,
+/// mirrored by `conflicts_with_all` on the args) forbids mixing the types, so in
+/// practice the array only ever holds one type. upstream: rsync.h:196
+/// `#define MAX_BASIS_DIRS 20`.
+const MAX_BASIS_DIRS: usize = 20;
+
+/// Enforces upstream's [`MAX_BASIS_DIRS`] cap on alt-dest directories.
+///
+/// upstream: options.c:1749-1754 rejects the arg that would push the shared
+/// `basis_dir[]` array past `MAX_BASIS_DIRS`, reporting the alt-dest option in
+/// effect and exiting `RERR_SYNTAX` (1). The reported option is the first
+/// alt-dest option on the command line, mirroring upstream's `alt_dest_opt(0)`,
+/// which returns the type fixed by the first alt-dest arg parsed.
+fn check_basis_dir_limit(matches: &clap::ArgMatches) -> Result<(), clap::Error> {
+    const ALT_DEST: [(&str, &str); 3] = [
+        ("compare-dest", "--compare-dest"),
+        ("copy-dest", "--copy-dest"),
+        ("link-dest", "--link-dest"),
+    ];
+
+    let total: usize = ALT_DEST
+        .iter()
+        .filter_map(|(id, _)| matches.get_many::<OsString>(id).map(Iterator::count))
+        .sum();
+    if total <= MAX_BASIS_DIRS {
+        return Ok(());
+    }
+
+    let option = ALT_DEST
+        .iter()
+        .filter_map(|(id, label)| {
+            matches
+                .indices_of(id)
+                .and_then(Iterator::min)
+                .map(|index| (index, *label))
+        })
+        .min_by_key(|(index, _)| *index)
+        .map_or("--link-dest", |(_, label)| label);
+
+    Err(clap::Error::raw(
+        clap::error::ErrorKind::TooManyValues,
+        format!("ERROR: at most {MAX_BASIS_DIRS} {option} args may be specified\n"),
+    ))
+}
+
 /// Parses command-line arguments into a structured [`ParsedArgs`] representation.
 ///
 /// This function accepts an iterator of arguments (typically from `std::env::args_os()`)
@@ -51,6 +100,8 @@ where
     let args = hoist_options_before_operands(&command, args);
     let args = expand_short_options(&command, args);
     let mut matches = command.try_get_matches_from(args.clone())?;
+
+    check_basis_dir_limit(&matches)?;
 
     let show_help = matches.get_flag("help");
     let show_version = matches.get_count("version");
