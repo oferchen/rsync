@@ -58,6 +58,11 @@ pub(super) fn build_ssh_connection(
     let connect_timeout = config.connect_timeout().effective(Duration::from_secs(30));
     ssh.set_connect_timeout(connect_timeout);
 
+    // upstream: options.c:2369 set_io_timeout(io_timeout) applies --timeout
+    // uniformly to every transport; on the SSH pipe it drives the stall
+    // watchdog. 0/unset leaves it disabled.
+    ssh.set_io_timeout(config.ssh_io_timeout());
+
     ssh.set_remote_command(invocation_args);
 
     warn_double_compression_once(config.compress(), ssh.has_ssh_compression());
