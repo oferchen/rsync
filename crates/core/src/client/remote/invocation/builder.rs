@@ -275,6 +275,21 @@ impl<'a> RemoteInvocationBuilder<'a> {
             args.push(OsString::from("--list-only"));
         }
 
+        // upstream: options.c:2750-2753 - `if (xfer_dirs && !recurse &&
+        // delete_mode && am_sender) args[ac++] = "--no-r"`. When a PUSH deletes
+        // with --dirs but without recursion (`-d --delete` sans `-r`), the
+        // remote receiver must be told recursion is off: the compact flag string
+        // carries 'd' but no 'r', and older receivers gained `--no-r` at the
+        // same time as `-d`, so the explicit negation guarantees the remote does
+        // not re-enable recursion. `--files-from` resolves to xfer_dirs=1,
+        // recurse=0 (options.c:2188-2191), matching `effective_*` below.
+        let files_from_active = self.config.files_from().is_active();
+        let effective_recursive = self.config.recursive() && !files_from_active;
+        let effective_dirs = self.config.dirs() || files_from_active;
+        if am_sender && effective_dirs && !effective_recursive && self.config.delete() {
+            args.push(OsString::from("--no-r"));
+        }
+
         // upstream: options.c:2782-2785 - `if (msgs2stderr == 1) "--msgs2stderr";
         // else if (msgs2stderr == 0) "--no-msgs2stderr"`. The default (2) is not
         // forwarded. Modelled as the tri-state `Option<bool>`.
@@ -688,7 +703,12 @@ impl<'a> RemoteInvocationBuilder<'a> {
             args.push(OsString::from(arg));
         }
 
-        if self.config.open_noatime() {
+        // upstream: options.c:2993 - `if (open_noatime && preserve_atimes <= 1)
+        // args[ac++] = "--open-noatime"`. When `-UU` (preserve_atimes == 2) is
+        // active the flag is suppressed: at that level the receiver already
+        // opens files with O_NOATIME implicitly, so forwarding it is redundant
+        // and upstream drops it.
+        if self.config.open_noatime() && self.config.preserve_atimes_level() <= 1 {
             args.push(OsString::from("--open-noatime"));
         }
 

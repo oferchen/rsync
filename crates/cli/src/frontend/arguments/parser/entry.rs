@@ -27,7 +27,10 @@ use super::flags::{
     leveled_flag_pair, tri_state_flag_negative_first, tri_state_flag_positive_first,
 };
 use super::values::join_os_values;
-use super::{BandwidthArgument, ParsedArgs, detect_program_name, env_protect_args_default};
+use super::{
+    BandwidthArgument, ParsedArgs, detect_program_name, env_iconv_default, env_max_alloc_default,
+    env_protect_args_default,
+};
 
 /// Maximum number of alt-dest directories rsync accepts across `--compare-dest`,
 /// `--copy-dest`, and `--link-dest` combined.
@@ -391,8 +394,19 @@ where
         // `parse_compression_settings()` once `--compress-choice` is known.
         compress = !setting.is_disabled();
     }
-    let iconv = matches.remove_one::<OsString>("iconv");
     let no_iconv = matches.get_flag("no-iconv");
+    // upstream: options.c:1377-1378 - `if (!am_daemon && protect_args <= 0 &&
+    // (arg = getenv("RSYNC_ICONV")) != NULL && *arg) iconv_opt = strdup(arg);`.
+    // RSYNC_ICONV seeds the default --iconv value when the option is absent,
+    // unless the caller explicitly enabled protect_args (`protect_args > 0`,
+    // i.e. `Some(true)` here). `--no-iconv` still wins over the env default.
+    let iconv = matches.remove_one::<OsString>("iconv").or_else(|| {
+        if no_iconv || protect_args == Some(true) {
+            None
+        } else {
+            env_iconv_default()
+        }
+    });
     let owner = tri_state_flag_positive_first(&matches, "owner", "no-owner");
     let group = tri_state_flag_positive_first(&matches, "group", "no-group");
     let usermap = join_os_values(matches.remove_many::<OsString>("usermap"));
@@ -517,7 +531,12 @@ where
         }
     }
     let outbuf = matches.remove_one::<OsString>("outbuf");
-    let max_alloc = matches.remove_one::<OsString>("max-alloc");
+    // upstream: options.c:1954-1957 - `if (!max_alloc_arg) { max_alloc_arg =
+    // getenv("RSYNC_MAX_ALLOC"); ... }`. RSYNC_MAX_ALLOC supplies the default
+    // cap when --max-alloc is absent; an empty value is treated as unset.
+    let max_alloc = matches
+        .remove_one::<OsString>("max-alloc")
+        .or_else(env_max_alloc_default);
     let stats = matches.get_flag("stats");
     let eight_bit_output = matches.get_flag("8-bit-output");
     let partial_flag = matches.get_flag("partial") || matches.get_count("partial-progress") > 0;

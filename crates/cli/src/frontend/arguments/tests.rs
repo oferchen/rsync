@@ -3214,3 +3214,109 @@ mod parsed_args_traits {
         assert_ne!(parsed1, parsed2);
     }
 }
+
+/// Environment-derived option defaults (`RSYNC_ICONV`, `RSYNC_MAX_ALLOC`).
+///
+/// These encode WHY the env defaults matter: upstream rsync seeds `--iconv`
+/// (options.c:1377-1378) and `--max-alloc` (options.c:1954-1957) from the
+/// environment so a caller can configure them without repeating the flag.
+#[cfg(test)]
+#[allow(unsafe_code)]
+mod env_option_defaults {
+    use super::*;
+    use std::sync::Mutex;
+
+    static ENV_MUTEX: Mutex<()> = Mutex::new(());
+
+    struct EnvGuard {
+        key: &'static str,
+        previous: Option<OsString>,
+    }
+
+    impl EnvGuard {
+        fn set(key: &'static str, value: &str) -> Self {
+            let previous = std::env::var_os(key);
+            // SAFETY: the test holds ENV_MUTEX, serialising every mutation.
+            unsafe {
+                std::env::set_var(key, value);
+            }
+            Self { key, previous }
+        }
+
+        fn remove(key: &'static str) -> Self {
+            let previous = std::env::var_os(key);
+            // SAFETY: see `set` above.
+            unsafe {
+                std::env::remove_var(key);
+            }
+            Self { key, previous }
+        }
+    }
+
+    impl Drop for EnvGuard {
+        fn drop(&mut self) {
+            match self.previous.take() {
+                // SAFETY: still holding ENV_MUTEX at scope exit.
+                Some(value) => unsafe { std::env::set_var(self.key, value) },
+                None => unsafe { std::env::remove_var(self.key) },
+            }
+        }
+    }
+
+    // upstream: options.c:1377-1378 - RSYNC_ICONV supplies the default --iconv
+    // value when the option is absent; the transfer must honour it exactly as
+    // if `--iconv=<value>` had been typed.
+    #[test]
+    fn iconv_defaults_to_rsync_iconv_env() {
+        let _lock = ENV_MUTEX.lock().expect("env mutex poisoned");
+        let _protect = EnvGuard::remove("RSYNC_PROTECT_ARGS");
+        let _iconv = EnvGuard::set("RSYNC_ICONV", "utf-8,latin1");
+
+        let parsed = parse_test_args(["src/", "dst/"]).expect("parse");
+        assert_eq!(parsed.iconv, Some(OsString::from("utf-8,latin1")));
+    }
+
+    // upstream: options.c:1377-1378 - an explicit --iconv wins over the env.
+    #[test]
+    fn explicit_iconv_overrides_rsync_iconv_env() {
+        let _lock = ENV_MUTEX.lock().expect("env mutex poisoned");
+        let _protect = EnvGuard::remove("RSYNC_PROTECT_ARGS");
+        let _iconv = EnvGuard::set("RSYNC_ICONV", "utf-8,latin1");
+
+        let parsed = parse_test_args(["--iconv=.", "src/", "dst/"]).expect("parse");
+        assert_eq!(parsed.iconv, Some(OsString::from(".")));
+    }
+
+    // upstream: options.c:1377 - `protect_args <= 0` guard: an explicitly
+    // enabled protect_args suppresses the RSYNC_ICONV default.
+    #[test]
+    fn protect_args_suppresses_rsync_iconv_env() {
+        let _lock = ENV_MUTEX.lock().expect("env mutex poisoned");
+        let _protect = EnvGuard::remove("RSYNC_PROTECT_ARGS");
+        let _iconv = EnvGuard::set("RSYNC_ICONV", "utf-8,latin1");
+
+        let parsed = parse_test_args(["--protect-args", "src/", "dst/"]).expect("parse");
+        assert_eq!(parsed.iconv, None);
+    }
+
+    // upstream: options.c:1954-1957 - RSYNC_MAX_ALLOC supplies the default cap
+    // when --max-alloc is absent.
+    #[test]
+    fn max_alloc_defaults_to_rsync_max_alloc_env() {
+        let _lock = ENV_MUTEX.lock().expect("env mutex poisoned");
+        let _max = EnvGuard::set("RSYNC_MAX_ALLOC", "2G");
+
+        let parsed = parse_test_args(["src/", "dst/"]).expect("parse");
+        assert_eq!(parsed.max_alloc, Some(OsString::from("2G")));
+    }
+
+    // upstream: options.c:1954 - an explicit --max-alloc wins over the env.
+    #[test]
+    fn explicit_max_alloc_overrides_rsync_max_alloc_env() {
+        let _lock = ENV_MUTEX.lock().expect("env mutex poisoned");
+        let _max = EnvGuard::set("RSYNC_MAX_ALLOC", "2G");
+
+        let parsed = parse_test_args(["--max-alloc=512M", "src/", "dst/"]).expect("parse");
+        assert_eq!(parsed.max_alloc, Some(OsString::from("512M")));
+    }
+}
