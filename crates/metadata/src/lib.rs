@@ -173,6 +173,11 @@ pub use nfsv4_acl_stub as nfsv4_acl;
 /// Fake super-user mode for preserving privileged metadata without root.
 pub mod fake_super;
 
+/// Netgroup host-membership lookup for daemon `hosts allow`/`hosts deny`
+/// `@netgroup` tokens.
+pub mod netgroup;
+pub use netgroup::host_in_netgroup;
+
 /// Windows-specific NTFS metadata helpers (reparse-point classification,
 /// future native primitives). Empty on non-Windows targets.
 #[cfg(target_os = "windows")]
