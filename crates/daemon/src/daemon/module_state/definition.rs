@@ -333,12 +333,33 @@ impl ModuleDefinition {
 
     /// Returns whether symlink munging is effective for this module.
     ///
-    /// When `munge_symlinks` is `None` (auto), defaults to `!use_chroot`.
-    /// Upstream: `clientserver.c` sets `munge_symlinks = !use_chroot` before reading
-    /// the per-module override.
+    /// An explicit `munge symlinks` directive always wins. When unset (auto),
+    /// upstream defaults munging on whenever the module is not fully chrooted -
+    /// either because `use chroot` is off, or because a partial-chroot module
+    /// path splits at a `/./` marker (`module_dirlen > 0`), which still exposes
+    /// a sanitized inner path.
+    ///
+    /// upstream: clientserver.c:997-998 -
+    /// `munge_symlinks = !use_chroot || module_dirlen`.
     #[allow(dead_code)] // Wired during file list send/receive in daemon mode
     pub(crate) fn effective_munge_symlinks(&self) -> bool {
-        self.munge_symlinks.unwrap_or(!self.use_chroot)
+        self.munge_symlinks
+            .unwrap_or(!self.use_chroot || self.has_inside_chroot_split())
+    }
+
+    /// Returns whether the module path carries an inside-chroot split marker
+    /// (`/./`) with a non-empty inner path, mirroring upstream's
+    /// `module_dirlen > 0`.
+    ///
+    /// upstream: clientserver.c:845-872 - when `use chroot` is set and the
+    /// module path contains a `/./` marker, the normalized inner path length
+    /// (`module_dirlen`) is non-zero. A `/./` at the very end (empty inner
+    /// path) normalizes to `/` and resets `module_dirlen` back to 0.
+    fn has_inside_chroot_split(&self) -> bool {
+        self.path
+            .to_str()
+            .and_then(|path| path.split_once("/./"))
+            .is_some_and(|(_, inner)| inner.split('/').any(|part| !part.is_empty() && part != "."))
     }
 
     /// Returns the per-module log file path, if configured.
