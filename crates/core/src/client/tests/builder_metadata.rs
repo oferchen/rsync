@@ -129,7 +129,7 @@ fn builder_preserves_acls_flag() {
 fn builder_preserves_xattrs_flag() {
     let config = ClientConfig::builder()
         .transfer_args([OsString::from("src"), OsString::from("dst")])
-        .xattrs(true)
+        .xattrs(1)
         .build();
 
     assert!(config.preserve_xattrs());

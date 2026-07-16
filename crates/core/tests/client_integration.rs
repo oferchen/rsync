@@ -265,7 +265,7 @@ fn test_atimes_preservation() {
         let config = ClientConfig::builder()
             .transfer_args([source_arg, dest_root.clone().into_os_string()])
             .mkpath(true)
-            .atimes(true)
+            .atimes(1)
             .times(true)
             .build();
 
