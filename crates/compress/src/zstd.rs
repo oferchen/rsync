@@ -344,6 +344,35 @@ mod tests {
     }
 
     #[test]
+    fn encoder_accepts_negative_zstd_levels() {
+        // WHY: upstream passes do_compression_level (which can be a negative
+        // "fast" level for zstd) straight to ZSTD_c_compressionLevel
+        // (token.c:748). The level the shared clamp resolves for a negative
+        // --compress-level is therefore a real, usable encoder input - proving
+        // it must NOT be raised to 1. This exercises the resolved level end to
+        // end through a live zstd encoder/decoder round trip.
+        use crate::algorithm::{CompressionAlgorithm, zstd_min_level};
+
+        let payload = b"the quick brown fox jumps over the lazy dog\n".repeat(64);
+        for raw in [-5, zstd_min_level()] {
+            let level = CompressionAlgorithm::Zstd.resolve_debug_level(raw);
+            assert!(level < 0, "resolver preserves the negative level {raw}");
+
+            let mut encoder =
+                ZstdEncoder::new(Vec::new(), level).expect("encoder accepts negative level");
+            encoder.write_all(&payload).expect("compress payload");
+            let compressed = encoder.finish().expect("finish stream");
+
+            let mut decoded = Vec::new();
+            ZstdDecoder::new(&compressed[..])
+                .expect("decoder")
+                .read_to_end(&mut decoded)
+                .expect("decompress");
+            assert_eq!(decoded, payload, "round trip at level {level}");
+        }
+    }
+
+    #[test]
     fn all_levels_produce_valid_output() {
         let input = b"The quick brown fox jumps over the lazy dog";
 

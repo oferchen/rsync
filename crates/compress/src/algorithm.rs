@@ -38,6 +38,21 @@ pub const LZ4_DEFAULT_ACCELERATION: i32 = 1;
 /// `token.c:init_compression_level()`.
 pub const CLVL_NOT_SPECIFIED: i32 = i32::MIN;
 
+/// Minimum (fastest) zstd compression level, i.e. `ZSTD_minCLevel()`.
+///
+/// This is a large negative value whose exact magnitude depends on the linked
+/// libzstd version, so it is queried at runtime through the safe `zstd` crate
+/// API rather than hard-coded. That keeps oc's lower bound identical to the
+/// libzstd it is built against, matching upstream, which likewise calls
+/// `ZSTD_minCLevel()` at run time.
+///
+/// upstream: token.c:73 - `min_level = skip_compression_level = ZSTD_minCLevel()`.
+#[cfg(feature = "zstd")]
+#[must_use]
+pub fn zstd_min_level() -> i32 {
+    *::zstd::compression_level_range().start()
+}
+
 /// Compression algorithms recognised by the workspace.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
 pub enum CompressionAlgorithm {
@@ -162,14 +177,17 @@ impl CompressionAlgorithm {
                     raw_level.clamp(1, 9)
                 }
             }
-            // upstream: token.c:72-79 - def ZSTD_CLEVEL_DEFAULT (3); a literal 0
-            // also maps to def; values saturate into [minCLevel, maxCLevel].
+            // upstream: token.c:72-79,101-104 - def ZSTD_CLEVEL_DEFAULT (3); a
+            // literal 0 also maps to def; other values saturate into
+            // [ZSTD_minCLevel(), ZSTD_maxCLevel()]. The lower bound is negative,
+            // so "fast" levels below 1 (e.g. --compress-level=-5) are preserved,
+            // not raised to 1.
             #[cfg(feature = "zstd")]
             CompressionAlgorithm::Zstd => {
                 if raw_level == CLVL_NOT_SPECIFIED || raw_level == 0 {
                     ZSTD_DEFAULT_LEVEL
                 } else {
-                    raw_level.clamp(1, ZSTD_MAX_LEVEL)
+                    raw_level.clamp(zstd_min_level(), ZSTD_MAX_LEVEL)
                 }
             }
             // upstream: token.c:81-87 - lz4 forces min/max/def to 0.
@@ -501,6 +519,70 @@ mod tests {
         );
         assert_eq!(CompressionAlgorithm::Zstd.resolve_debug_level(0), 3);
         assert_eq!(CompressionAlgorithm::Zstd.resolve_debug_level(19), 19);
+    }
+
+    #[cfg(feature = "zstd")]
+    #[test]
+    fn zstd_min_level_is_negative() {
+        // upstream: token.c:73 - zstd's min_level is ZSTD_minCLevel(), which
+        // libzstd documents as "a very large negative number". If this were
+        // >= 1 the negative-level fix below would be silently meaningless.
+        assert!(
+            zstd_min_level() < 0,
+            "ZSTD_minCLevel() must be negative, got {}",
+            zstd_min_level()
+        );
+    }
+
+    #[cfg(feature = "zstd")]
+    #[test]
+    fn resolve_debug_level_preserves_negative_zstd_levels() {
+        // upstream: token.c:73,101-104 - zstd's lower clamp bound is
+        // ZSTD_minCLevel() (negative), NOT 1. A "fast" level such as
+        // --compress-level=-5 is a valid zstd level that upstream passes
+        // straight to ZSTD_c_compressionLevel; it must be preserved, never
+        // raised to 1. Regression guard for the old `.clamp(1, ..)` bound that
+        // silently rewrote every negative level to 1.
+        assert_eq!(CompressionAlgorithm::Zstd.resolve_debug_level(-5), -5);
+        let min = zstd_min_level();
+        assert_eq!(
+            CompressionAlgorithm::Zstd.resolve_debug_level(min),
+            min,
+            "the exact ZSTD_minCLevel() boundary is preserved"
+        );
+    }
+
+    #[cfg(feature = "zstd")]
+    #[test]
+    fn resolve_debug_level_clamps_below_min_to_zstd_min() {
+        // upstream: token.c:101-102 - a level below min_level saturates UP to
+        // min_level (ZSTD_minCLevel()); upstream never rejects it. Mirrors the
+        // zlib below-min behaviour but at zstd's negative floor.
+        let min = zstd_min_level();
+        assert_eq!(
+            CompressionAlgorithm::Zstd.resolve_debug_level(min - 1),
+            min,
+            "below-min saturates to ZSTD_minCLevel(), not rejected"
+        );
+        // The i32::MIN sentinel is CLVL_NOT_SPECIFIED, which resolves to the
+        // codec default (3) - it is not treated as a below-min level.
+        assert_eq!(
+            CompressionAlgorithm::Zstd.resolve_debug_level(CLVL_NOT_SPECIFIED),
+            ZSTD_DEFAULT_LEVEL
+        );
+    }
+
+    #[cfg(feature = "zstd")]
+    #[test]
+    fn resolve_debug_level_positive_and_zero_zstd_unchanged() {
+        // No regression: positive levels, the default substitution for 0, and
+        // the upper clamp to ZSTD_maxCLevel (22) are all unchanged by the
+        // negative-level fix. upstream: token.c:74,77-78,103-104.
+        assert_eq!(CompressionAlgorithm::Zstd.resolve_debug_level(0), 3);
+        assert_eq!(CompressionAlgorithm::Zstd.resolve_debug_level(1), 1);
+        assert_eq!(CompressionAlgorithm::Zstd.resolve_debug_level(15), 15);
+        assert_eq!(CompressionAlgorithm::Zstd.resolve_debug_level(22), 22);
+        assert_eq!(CompressionAlgorithm::Zstd.resolve_debug_level(99), 22);
     }
 
     #[cfg(feature = "lz4")]
