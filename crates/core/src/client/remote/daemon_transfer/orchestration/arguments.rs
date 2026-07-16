@@ -345,13 +345,12 @@ pub(super) fn build_full_daemon_args(
         args.push(format!("--timeout={}", secs.get()));
     }
 
-    // upstream: options.c:2799-2803 - --bwlimit=BYTES so the remote peer
-    // throttles to the same rate the client requested.
+    // upstream: options.c:2799 - `--bwlimit=%d` forwards the rate in whole KiB
+    // (options.c:1718), NOT bytes: the remote peer re-parses the value with a
+    // default `K` suffix, so a byte count would be scaled up 1024x and the
+    // throttle would effectively vanish.
     if let Some(bwlimit) = config.bandwidth_limit() {
-        args.push(format!(
-            "--bwlimit={}",
-            bwlimit.fallback_argument().to_string_lossy()
-        ));
+        args.push(format!("--bwlimit={}", bwlimit.server_option_kib()));
     }
 
     // upstream: options.c:2807-2839 - sender-specific args.
@@ -1444,17 +1443,28 @@ mod server_option_fidelity_tests {
         assert!(args(&config, false).iter().any(|a| a == "--timeout=60"));
     }
 
-    // upstream: options.c:2799-2803 - --bwlimit in bytes/sec so the remote
-    // throttles identically.
+    // WHY: upstream options.c:2799 forwards `--bwlimit=%d` in whole KiB
+    // (options.c:1718 `bwlimit = (size + 512) / 1024`), NOT bytes/sec. The
+    // remote peer re-parses the value with a default `K` suffix (options.c:1714
+    // `parse_size_arg(bwlimit_arg, 'K', ...)`), so a byte count of 1048576 would
+    // be read as 1048576 KiB and the throttle would balloon 1024x. A rate of
+    // 1 MiB/s (1048576 B/s) must therefore travel as `--bwlimit=1024`.
     #[test]
-    fn bwlimit_forwarded() {
+    fn bwlimit_forwarded_in_kib_not_bytes() {
         let limit = crate::client::config::BandwidthLimit::from_bytes_per_second(
-            std::num::NonZeroU64::new(1024).unwrap(),
+            std::num::NonZeroU64::new(1_048_576).unwrap(),
         );
         let config = ClientConfig::builder().bandwidth_limit(Some(limit)).build();
         assert!(
             args(&config, false).iter().any(|a| a == "--bwlimit=1024"),
-            "bwlimit must forward as bytes/sec: {:?}",
+            "bwlimit must forward as whole KiB: {:?}",
+            args(&config, false)
+        );
+        assert!(
+            !args(&config, false)
+                .iter()
+                .any(|a| a == "--bwlimit=1048576"),
+            "bwlimit must NOT forward the raw byte count: {:?}",
             args(&config, false)
         );
     }
