@@ -158,8 +158,8 @@ impl DualFileList {
     /// first) - dedup only collapses adjacent equal names. On a list with no
     /// duplicates this changes neither order nor length.
     ///
-    /// Reuses [`resolve_duplicate`](super::sort::resolve_duplicate) so the
-    /// keep/drop tie-break is identical to the receiver's [`flist_clean`]. oc
+    /// Reuses `resolve_duplicate` (`super::sort::resolve_duplicate`) so the
+    /// keep/drop tie-break is identical to the receiver's `flist_clean`. oc
     /// converges both sides to the same sorted+cleaned list, so it drops
     /// duplicates symmetrically rather than following upstream's `am_sender`
     /// branch (mark a dup dir `FLAG_DUPLICATE` and keep it for the in-place

@@ -8,7 +8,7 @@ a single re-export surface so upper layers have a single dependency.
 
 ## Crate Position in the Dependency Graph
 
-```
+```text
 cli ──► core ──► engine, protocol, transport, flist, rsync_io
                  core ──► checksums, filters, compress, bandwidth, metadata
 ```

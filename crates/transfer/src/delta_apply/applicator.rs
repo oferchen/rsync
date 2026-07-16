@@ -854,9 +854,9 @@ impl<'a> DeltaApplicator<'a> {
     /// raw payload `read_exact`. Every byte the token turns into - the literal
     /// write, the basis block copy, the checksum-verifier update, the sparse
     /// bookkeeping, and the `see_token` dictionary feed - runs through the exact
-    /// same synchronous helpers the sync path uses ([`Self::apply_literal_bytes`],
-    /// [`Self::apply_literal_from_buffer`], [`Self::apply_block_ref`],
-    /// [`Self::feed_see_token`]). For the same wire bytes it therefore produces a
+    /// same synchronous helpers the sync path uses (`Self::apply_literal_bytes`,
+    /// `Self::apply_literal_from_buffer`, `Self::apply_block_ref`,
+    /// `Self::feed_see_token`). For the same wire bytes it therefore produces a
     /// byte-identical destination file, an identical [`DeltaApplyResult`], and
     /// leaves the reader positioned exactly where the sync leaf would - including
     /// when the source delivers bytes one at a time across `.await` points.

@@ -288,7 +288,7 @@ impl SumHead {
     /// Async twin of [`read`](Self::read).
     ///
     /// Reads the same 16 bytes (`.await`-driven) and decodes them through the
-    /// shared [`from_wire_bytes`](Self::from_wire_bytes) core, so it yields the
+    /// shared `from_wire_bytes` (`Self::from_wire_bytes`) core, so it yields the
     /// same `SumHead` and consumes the same bytes as the sync leaf. Gated on
     /// `tokio-transfer`.
     #[cfg(feature = "tokio-transfer")]
@@ -468,8 +468,8 @@ impl SenderAttrs {
     /// (NDX + iflags + optional basis-type / xname / xattr-abbreviation data)
     /// off an [`AsyncRead`](tokio::io::AsyncRead), driving the same
     /// `NdxCodecEnum::read_ndx_async` and `read_varint_async` leaves plus
-    /// the shared sans-io decode helpers ([`parse_fnamecmp_type`],
-    /// [`xname_len_from_bytes`], [`check_xname_len`], [`want_xattr_read`]) as
+    /// the shared sans-io decode helpers (`parse_fnamecmp_type`,
+    /// `xname_len_from_bytes`, `check_xname_len`, `want_xattr_read`) as
     /// the sync leaf. For the same wire bytes it yields the same
     /// `(ndx, SenderAttrs)` and consumes the same bytes as the sync path,
     /// including when the source delivers bytes one at a time across `.await`

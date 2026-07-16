@@ -8,7 +8,7 @@
 //! # Submodules
 //!
 //! - `server` - Mode-switching writer enum dispatching plain, multiplex, and compressed I/O.
-//! - [`multiplex`] - Buffered writer that frames output in `MSG_DATA` multiplex frames.
+//! - `multiplex` - Buffered writer that frames output in `MSG_DATA` multiplex frames.
 //! - `msg_info` - Trait for sending `MSG_INFO` protocol messages through multiplexed streams.
 //! - `counting` - Byte-counting writer wrapper for transfer statistics.
 

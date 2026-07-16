@@ -42,7 +42,7 @@ pub fn trace_fuzzy_size_mtime_match(candidate: &str) {
 /// Upstream encodes `dist` as a 32-bit fixed-point value: the high 16 bits are
 /// the integer part (whole Levenshtein units) and the low 16 bits are the
 /// fractional part (accumulated ASCII weighting), printed as `%d.%05d`. We pass
-/// the same `u32` distance produced by [`super::distance::fuzzy_name_distance`]
+/// the same `u32` distance produced by `super::distance::fuzzy_name_distance`
 /// and split it identically so `--debug=FUZZY` output matches byte-for-byte.
 ///
 /// Matches upstream rsync format:

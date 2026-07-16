@@ -108,7 +108,7 @@ struct SemInner {
 
 /// A counting semaphore whose capacity can change while permits are in flight.
 ///
-/// See the [module documentation](self) for the design and resize semantics.
+/// See the module documentation for the design and resize semantics.
 /// The semaphore is `Send + Sync` and is intended to be shared across threads
 /// via `Arc`. Permits are released with [`release`](Self::release); there is no
 /// RAII guard, so callers must pair every successful acquire with exactly one

@@ -53,7 +53,7 @@ impl CompatibilityFlags {
     /// per-block strong checksum (`CAP_CONSECUTIVE_MATCH`).
     ///
     /// This is NOT an upstream rsync flag. It occupies a high private bit
-    /// (`0x0200_0000`) deliberately kept out of [`Self::KNOWN_MASK`], the
+    /// (`0x0200_0000`) deliberately kept out of `Self::KNOWN_MASK`, the
     /// default-advertised set, and [`Self::ALL_KNOWN`]. compat_flags is a
     /// varint on the wire (upstream `compat.c:741` `read_varint`), and upstream
     /// tolerates unknown bits by ignoring them, so this private bit transmits

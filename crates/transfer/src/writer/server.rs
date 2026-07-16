@@ -346,7 +346,7 @@ impl<W: Write> ServerWriter<W> {
     /// zstd end-of-frame epilogue) before the connection is closed.
     ///
     /// In Plain or Multiplex mode this is a plain [`flush`](Self::flush). In
-    /// Compressed mode it consumes the [`CompressedWriter`], calls its
+    /// Compressed mode it consumes the `CompressedWriter`, calls its
     /// `finish()` to emit the end-of-stream trailer, and downgrades the
     /// `ServerWriter` back to [`Self::Multiplex`]. After this the underlying
     /// multiplex stream is fully drained and any subsequent writes go through
@@ -355,7 +355,7 @@ impl<W: Write> ServerWriter<W> {
     /// upstream: `token.c:send_deflated_token()` issues `Z_FINISH` via
     /// `deflateEnd()` when the sender tears down its compression context at
     /// end of transfer. Without this finalisation, the receiver's
-    /// [`CompressedReader`](crate::compressed_reader::CompressedReader) may be
+    /// `CompressedReader` (`crate::compressed_reader::CompressedReader`) may be
     /// waiting on the closing block of the deflate stream while the daemon
     /// has already shut down the socket, producing the "connection
     /// unexpectedly closed (N bytes received so far)" error mid-goodbye.

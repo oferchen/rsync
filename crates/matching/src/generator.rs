@@ -951,14 +951,14 @@ impl DeltaGenerator {
     /// past its stripe end, so a match starting inside its stripe that crosses
     /// the boundary is completed here rather than degrading to literals. Every
     /// match-start offset is therefore scanned with a full window by exactly the
-    /// worker that owns it. [`merge_copy_runs`] takes the union of all workers'
+    /// worker that owns it. `merge_copy_runs` takes the union of all workers'
     /// `Copy` tokens tagged with their absolute source offset and walks a cursor
     /// that emits the earliest match at or after the cursor, then jumps past it -
     /// the identical "first match wins, then skip its bytes" rule the sequential
     /// [`Self::generate`] applies. Gaps are literal bytes taken straight from
     /// `source`, so a boundary can never drop or duplicate a byte, and
-    /// [`resegment_literals`] frames those gaps at the shared
-    /// [`literal_flush_cadence`].
+    /// `resegment_literals` frames those gaps at the shared
+    /// `literal_flush_cadence`.
     ///
     /// # Wire transparency
     ///

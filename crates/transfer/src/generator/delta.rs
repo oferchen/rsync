@@ -210,7 +210,7 @@ pub fn generate_delta_from_signature<R: Read>(
 /// chunked scan is proportional to the file size, not bounded to a fixed
 /// window; the win is CPU parallelism, not a memory reduction. This
 /// function then reconstructs the signature index (sharing
-/// [`build_signature_index`] with the sequential
+/// `build_signature_index` with the sequential
 /// [`generate_delta_from_signature`], so there is a single reconstruction
 /// path) and decides:
 ///

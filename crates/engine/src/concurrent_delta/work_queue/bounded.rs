@@ -123,7 +123,7 @@ impl WorkQueueSender {
     ///
     /// Returns `Err(SendError)` if the receiver has been dropped.
     ///
-    /// For a [`CapacitySource::Fixed`] queue (the default), admission is gated
+    /// For a `CapacitySource::Fixed` queue (the default), admission is gated
     /// solely by the bounded channel, so this is identical to a plain channel
     /// send. For a dynamic queue, admission is first gated by the backing
     /// [`AdaptiveSemaphore`] before the item enters the (over-provisioned)
@@ -218,7 +218,7 @@ pub struct DynamicWorkQueue {
 /// permits already granted.
 ///
 /// The returned [`WorkQueueReceiver`] carries a clone of the semaphore and
-/// returns one permit per drained item (see [`PermitGuard`] and the drain
+/// returns one permit per drained item (see `PermitGuard` and the drain
 /// methods), so admission refills as work completes. An
 /// [`AdaptiveQueueController`](super::controller::AdaptiveQueueController) can
 /// then move the ceiling within `[min, max]` in response to the observed block

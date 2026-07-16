@@ -229,7 +229,7 @@ pub fn read_filter_list(
 ///
 /// Reads the same length-prefixed rule records (`.await`-driven) in the same
 /// order, terminated by the 4-byte little-endian zero, and runs the identical
-/// [`parse_wire_rule`] decode/validation on each record. It therefore yields the
+/// `parse_wire_rule` decode/validation on each record. It therefore yields the
 /// same `Vec<FilterRuleWireFormat>` and consumes the same bytes for the same
 /// wire input; only the I/O mechanism (await vs blocking) differs. Gated on
 /// `tokio-transfer`.
@@ -241,7 +241,7 @@ pub fn read_filter_list(
 ///
 /// - A negative length prefix yields [`io::ErrorKind::InvalidData`], exactly as
 ///   the blocking reader surfaces it.
-/// - Any decode error from [`parse_wire_rule`] propagates unchanged.
+/// - Any decode error from `parse_wire_rule` propagates unchanged.
 /// - Truncation mid-record surfaces the underlying read error (typically
 ///   [`io::ErrorKind::UnexpectedEof`]).
 #[cfg(feature = "tokio-transfer")]

@@ -123,7 +123,7 @@ impl DeleteStats {
     /// Async twin of [`read_from`](Self::read_from).
     ///
     /// Reads the same five varints (`.await`-driven) in the same order and
-    /// applies the identical [`read_capped_del_stat`] validation, so it yields
+    /// applies the identical `read_capped_del_stat` validation, so it yields
     /// the same `DeleteStats` and consumes the same bytes for the same wire
     /// input. Gated on `tokio-transfer`.
     ///

@@ -118,7 +118,7 @@ pub const DEFAULT_BYTE_BUDGET: usize = 32 * 1024 * 1024;
 
 /// Default per-buffer block size for pooled I/O buffers (128 KiB).
 ///
-/// Matches [`COPY_BUFFER_SIZE`](super::super::COPY_BUFFER_SIZE), the size the
+/// Matches `COPY_BUFFER_SIZE` (`super::super::COPY_BUFFER_SIZE`), the size the
 /// pool has always used. This is a purely local performance knob: it governs
 /// how much data each reusable I/O buffer holds during file copy and has no
 /// effect on the wire protocol, delta block size, or on-disk contents.

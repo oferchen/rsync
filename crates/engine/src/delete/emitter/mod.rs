@@ -186,7 +186,7 @@ impl<F: DeleteFs> DeleteEmitter<F> {
     /// opened at.
     ///
     /// Identical to [`Self::with_sandbox`] except the emitter also records
-    /// the sandbox root so [`Self::open_plan_dirfd`] can resolve absolute
+    /// the sandbox root so `Self::open_plan_dirfd` can resolve absolute
     /// plan directory keys (the production local-copy cleanup path keys
     /// plans on the absolute destination directory) relative to that root
     /// before the `openat` walk. Callers with plan keys already relative
