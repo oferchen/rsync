@@ -430,6 +430,7 @@ impl GeneratorContext {
         writer: &mut super::super::writer::ServerWriter<W>,
         iflags: &super::item_flags::ItemFlags,
         ndx: usize,
+        xname: Option<&[u8]>,
         itemize_cb: &mut Option<&mut dyn super::super::ItemizeCallback>,
     ) -> io::Result<()> {
         if !self.config.flags.info_flags.itemize {
@@ -456,8 +457,11 @@ impl GeneratorContext {
 
         let entry = &self.file_list[ndx];
         let ctx = self.itemize_context();
-        // Generator role is always the sender side
-        let line = super::itemize::format_itemize_line(iflags, entry, true, &ctx);
+        // Generator role is always the sender side. The wire xname carries the
+        // hard-link leader for an ITEM_XNAME_FOLLOWS follower so `%L` can append
+        // the ` => leader` suffix (upstream sender.c:293 maybe_log_item passes
+        // the xname buffer as the hlink arg to log_item -> log.c:643-646).
+        let line = super::itemize::format_itemize_line(iflags, entry, true, &ctx, xname);
 
         if self.config.connection.client_mode {
             // upstream: log.c:822-823 - when !am_server, rwrite() sends FCLIENT
