@@ -480,17 +480,24 @@ fn many_rules() {
     assert!(set.allows(Path::new("file1001.txt"), false));
 }
 
-/// Verifies xattr_only rules are filtered out.
+/// Verifies xattr_only rules apply to xattr names, not file paths.
+///
+/// upstream: exclude.c:914 - an `x`-modifier rule matches xattr NAMES only
+/// (NAME_IS_XATTR), never a file path.
 #[test]
-fn xattr_only_rules_filtered() {
+fn xattr_only_rules_apply_to_names_not_paths() {
     let rule = FilterRule::exclude("*.xattr").with_xattr_only(true);
     let set = FilterSet::from_rules([rule]).unwrap();
 
-    // XAttr-only rules are filtered out during compilation
-    assert!(set.is_empty());
+    // The rule is retained as an xattr-name rule, so the set is not empty.
+    assert!(!set.is_empty());
+    assert!(set.has_xattr_rules());
 
-    // So the pattern doesn't affect file matching
+    // The xattr-only rule does not affect file (path) matching...
     assert!(set.allows(Path::new("file.xattr"), false));
+    // ...but it does exclude a matching xattr NAME.
+    assert!(!set.xattr_name_allowed("user.xattr"));
+    assert!(set.xattr_name_allowed("user.keep"));
 }
 
 /// Verifies Unicode patterns.
