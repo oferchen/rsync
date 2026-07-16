@@ -16,6 +16,56 @@ use std::time::Duration;
 use logging::debug_log;
 
 use super::aux_channel::BoxedStderrChannel;
+use super::stall::{IoStallWatchdog, StallHandle, effective_io_timeout};
+
+/// Applies stall detection to a completed read/write on a stall-tracked half.
+///
+/// Translates the watchdog's latched timeout into an [`io::ErrorKind::TimedOut`]
+/// error (mapped by `core` to `ExitCode::Timeout`, upstream `RERR_TIMEOUT`) and
+/// records forward progress on success so the shared clock is reset. When no
+/// timeout is configured the result passes through untouched.
+fn guard_io_result(stall: Option<&StallHandle>, res: io::Result<usize>) -> io::Result<usize> {
+    let Some(handle) = stall else {
+        return res;
+    };
+    // Checking after the (possibly blocking) call catches a watchdog that fired
+    // mid-read: the child was killed to unblock the pipe, so the raw result is
+    // an EOF or broken-pipe error that must surface as a timeout.
+    if handle.timed_out() {
+        return Err(handle.timeout_error());
+    }
+    if let Ok(n) = &res {
+        handle.record(*n);
+    }
+    res
+}
+
+/// Arms the data-phase stall watchdog for a shared child handle.
+///
+/// Returns `(None, None)` when `io_timeout` is disabled. Otherwise arms a
+/// watchdog whose abort action kills the child - closing its pipe endpoints and
+/// unblocking any pending read/write - so the stalled I/O returns promptly and
+/// the read/write half can surface a timeout error.
+fn arm_io_stall(
+    io_timeout: Option<Duration>,
+    shared_child: &Arc<Mutex<Option<Child>>>,
+) -> (Option<IoStallWatchdog>, Option<StallHandle>) {
+    match effective_io_timeout(io_timeout) {
+        Some(timeout) => {
+            let kill_child = Arc::clone(shared_child);
+            let abort = Box::new(move || {
+                if let Ok(mut guard) = kill_child.lock() {
+                    if let Some(child) = guard.as_mut() {
+                        let _ = child.kill();
+                    }
+                }
+            });
+            let (watchdog, handle) = IoStallWatchdog::arm(timeout, abort);
+            (Some(watchdog), Some(handle))
+        }
+        None => (None, None),
+    }
+}
 
 /// Owns an active SSH subprocess and exposes its stdio handles.
 ///
@@ -36,6 +86,12 @@ pub struct SshConnection {
     stdout: Option<ChildStdout>,
     stderr_drain: Option<BoxedStderrChannel>,
     connect_watchdog: Option<ConnectWatchdog>,
+    /// Data-phase stall watchdog enforcing the negotiated `--timeout`. `None`
+    /// when the timeout is disabled (`0`/absent), matching upstream's off state.
+    io_stall_watchdog: Option<IoStallWatchdog>,
+    /// Progress/timeout handle consulted by the read and write paths. Shares
+    /// its clock and latch with [`Self::io_stall_watchdog`].
+    stall: Option<StallHandle>,
 }
 
 impl SshConnection {
@@ -49,22 +105,32 @@ impl SshConnection {
     /// given duration. Call
     /// [`cancel_connect_watchdog`](Self::cancel_connect_watchdog) after
     /// the remote rsync version greeting is received to disarm it.
+    ///
+    /// `io_timeout` is the negotiated `--timeout` applied to the data channel.
+    /// When `Some(non-zero)`, a stall watchdog is armed that aborts the transfer
+    /// with a timeout error if no read/write makes progress for that long. `0`
+    /// or `None` disables stall detection, matching upstream's `io_timeout == 0`
+    /// off state. upstream: io.c `set_io_timeout` / `check_timeout`.
     pub(super) fn new(
         child: Child,
         stdin: Option<ChildStdin>,
         stdout: ChildStdout,
         stderr_channel: Option<BoxedStderrChannel>,
         connect_timeout: Option<Duration>,
+        io_timeout: Option<Duration>,
     ) -> Self {
         let shared_child = Arc::new(Mutex::new(Some(child)));
         let connect_watchdog =
             connect_timeout.map(|timeout| ConnectWatchdog::arm(timeout, Arc::clone(&shared_child)));
+        let (io_stall_watchdog, stall) = arm_io_stall(io_timeout, &shared_child);
         Self {
             child: shared_child,
             stdin,
             stdout: Some(stdout),
             stderr_drain: stderr_channel,
             connect_watchdog,
+            io_stall_watchdog,
+            stall,
         }
     }
 
@@ -193,25 +259,37 @@ impl SshConnection {
             io::Error::new(io::ErrorKind::BrokenPipe, "stdout has already been taken")
         })?;
 
-        let child = self
-            .child
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .take()
-            .ok_or_else(|| {
-                io::Error::new(io::ErrorKind::InvalidInput, "child process already taken")
-            })?;
+        {
+            let guard = self.child.lock().unwrap_or_else(|e| e.into_inner());
+            if guard.is_none() {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidInput,
+                    "child process already taken",
+                ));
+            }
+        }
+        // Move the whole shared handle to the child owner so the stall watchdog
+        // (which holds a clone of this same `Arc`) can still reach the child to
+        // kill it on a timeout. Leaving an empty `Arc` behind keeps
+        // `SshConnection::Drop` from reaping the child we just handed off.
+        let child = std::mem::replace(&mut self.child, Arc::new(Mutex::new(None)));
 
         let stderr_drain = self.stderr_drain.take();
         let connect_watchdog = self.connect_watchdog.take();
+        let io_stall_watchdog = self.io_stall_watchdog.take();
+        let stall = self.stall.take();
 
         Ok((
-            SshReader { stdout },
-            SshWriter { stdin },
+            SshReader {
+                stdout,
+                stall: stall.clone(),
+            },
+            SshWriter { stdin, stall },
             SshChildHandle {
                 child,
                 stderr_drain,
                 connect_watchdog,
+                io_stall_watchdog,
             },
         ))
     }
@@ -221,11 +299,14 @@ impl SshConnection {
 #[derive(Debug)]
 pub struct SshReader {
     stdout: ChildStdout,
+    /// Shared stall handle; `None` when `--timeout` is disabled.
+    stall: Option<StallHandle>,
 }
 
 impl Read for SshReader {
     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
-        self.stdout.read(buf)
+        let res = self.stdout.read(buf);
+        guard_io_result(self.stall.as_ref(), res)
     }
 }
 
@@ -233,11 +314,14 @@ impl Read for SshReader {
 #[derive(Debug)]
 pub struct SshWriter {
     stdin: ChildStdin,
+    /// Shared stall handle; `None` when `--timeout` is disabled.
+    stall: Option<StallHandle>,
 }
 
 impl Write for SshWriter {
     fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
-        self.stdin.write(buf)
+        let res = self.stdin.write(buf);
+        guard_io_result(self.stall.as_ref(), res)
     }
 
     fn flush(&mut self) -> io::Result<()> {
@@ -394,9 +478,14 @@ impl Drop for ConnectWatchdog {
 /// to process stderr. Collected output is retrievable via
 /// [`stderr_output`](Self::stderr_output).
 pub struct SshChildHandle {
-    child: Child,
+    /// Shared with the stall watchdog so both can reach the child; the watchdog
+    /// kills it on an I/O timeout, while `wait`/`Drop` reap it normally.
+    child: Arc<Mutex<Option<Child>>>,
     stderr_drain: Option<BoxedStderrChannel>,
     connect_watchdog: Option<ConnectWatchdog>,
+    /// Data-phase stall watchdog transferred here on `split`. Dropped/cancelled
+    /// before the child is reaped so it cannot fire during teardown.
+    io_stall_watchdog: Option<IoStallWatchdog>,
 }
 
 impl std::fmt::Debug for SshChildHandle {
@@ -416,6 +505,13 @@ impl std::fmt::Debug for SshChildHandle {
                     .connect_watchdog
                     .as_ref()
                     .map(|_| "ConnectWatchdog(armed)"),
+            )
+            .field(
+                "io_stall_watchdog",
+                &self
+                    .io_stall_watchdog
+                    .as_ref()
+                    .map(|_| "IoStallWatchdog(armed)"),
             )
             .finish()
     }
@@ -450,12 +546,32 @@ impl SshChildHandle {
             .map_or_else(Vec::new, |drain| drain.collected())
     }
 
+    /// Reaps the shared child handle, waiting for it to exit.
+    ///
+    /// Returns an error if the child was already taken by a prior wait/drop.
+    fn take_and_wait_child(&mut self) -> io::Result<ExitStatus> {
+        let mut guard = self.child.lock().unwrap_or_else(|e| e.into_inner());
+        match guard.take() {
+            Some(mut child) => {
+                drop(guard);
+                child.wait()
+            }
+            None => Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "child process already taken",
+            )),
+        }
+    }
+
     /// Waits for the subprocess to exit.
     ///
     /// Joins the stderr drain thread after the child exits to ensure all
     /// error output has been forwarded.
     pub fn wait(mut self) -> io::Result<ExitStatus> {
-        let status = self.child.wait();
+        // Cancel stall detection before reaping so it cannot kill the child
+        // during a legitimate final lull.
+        drop(self.io_stall_watchdog.take());
+        let status = self.take_and_wait_child();
         if let Some(ref drain) = self.stderr_drain {
             drain.shutdown_read();
         }
@@ -471,7 +587,8 @@ impl SshChildHandle {
     /// into a single call, ensuring all stderr is captured before the handle
     /// is consumed.
     pub fn wait_with_stderr(mut self) -> io::Result<(ExitStatus, Vec<u8>)> {
-        let status = self.child.wait();
+        drop(self.io_stall_watchdog.take());
+        let status = self.take_and_wait_child();
         // Wake the drain thread now that the child is reaped; a re-execed
         // ssh helper may still hold the write end open so EOF cannot be
         // relied on by itself.
@@ -491,24 +608,29 @@ impl SshChildHandle {
 
 impl Drop for SshChildHandle {
     fn drop(&mut self) {
-        // Drop the watchdog first so its background thread exits before we
+        // Drop the watchdogs first so their background threads exit before we
         // touch the child handle.
         drop(self.connect_watchdog.take());
+        drop(self.io_stall_watchdog.take());
 
         // Reap the child to prevent zombies. Unlike SshConnection::Drop,
         // stdin is not owned here (it lives in SshWriter) so we skip the
         // close_stdin step.
-        if let Ok(None) = self.child.try_wait() {
-            let _ = self.child.kill();
-        }
-        let status = self.child.wait();
+        let mut guard = self.child.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some(mut child) = guard.take() {
+            drop(guard);
+            if let Ok(None) = child.try_wait() {
+                let _ = child.kill();
+            }
+            let status = child.wait();
 
-        // Surface collected stderr when the child exited with an error,
-        // ensuring SSH diagnostics are visible even on abnormal control
-        // flow (panic, early return) where the caller never calls
-        // wait_with_stderr().
-        if let Some(ref mut drain) = self.stderr_drain {
-            drain.join_and_surface_on_error(&status);
+            // Surface collected stderr when the child exited with an error,
+            // ensuring SSH diagnostics are visible even on abnormal control
+            // flow (panic, early return) where the caller never calls
+            // wait_with_stderr().
+            if let Some(ref mut drain) = self.stderr_drain {
+                drain.join_and_surface_on_error(&status);
+            }
         }
     }
 }
@@ -530,25 +652,27 @@ impl Read for SshConnection {
                 ));
             }
         }
-        match self.stdout.as_mut() {
+        let res = match self.stdout.as_mut() {
             Some(stdout) => stdout.read(buf),
             None => Err(io::Error::new(
                 io::ErrorKind::BrokenPipe,
                 "stdout has already been taken",
             )),
-        }
+        };
+        guard_io_result(self.stall.as_ref(), res)
     }
 }
 
 impl Write for SshConnection {
     fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
-        match self.stdin.as_mut() {
+        let res = match self.stdin.as_mut() {
             Some(stdin) => stdin.write(buf),
             None => Err(io::Error::new(
                 io::ErrorKind::BrokenPipe,
                 "stdin has already been closed",
             )),
-        }
+        };
+        guard_io_result(self.stall.as_ref(), res)
     }
 
     fn flush(&mut self) -> io::Result<()> {
@@ -561,9 +685,10 @@ impl Write for SshConnection {
 
 impl Drop for SshConnection {
     fn drop(&mut self) {
-        // Drop the watchdog first so its background thread exits before we
+        // Drop the watchdogs first so their background threads exit before we
         // touch the child handle.
         drop(self.connect_watchdog.take());
+        drop(self.io_stall_watchdog.take());
 
         let _ = self.close_stdin();
 
