@@ -173,7 +173,12 @@ impl<'a> RemoteInvocationBuilder<'a> {
             args.push(OsString::from("--ignore-errors"));
         }
 
-        if self.config.fsync() {
+        // upstream: options.c:2930-2931 - `if (do_fsync) --fsync` lives inside
+        // the `if (am_sender)` block, so it is forwarded only on a PUSH
+        // (RemoteRole::Sender): the remote receiver fsyncs the files it writes.
+        // On a PULL the local receiver fsyncs its own writes and the remote
+        // sender, which never writes destination files, must not receive it.
+        if self.config.fsync() && self.role == RemoteRole::Sender {
             args.push(OsString::from("--fsync"));
         }
 
@@ -251,6 +256,16 @@ impl<'a> RemoteInvocationBuilder<'a> {
     /// `--key=value` tokens rather than single-character flags. The order mirrors
     /// upstream for predictable interop testing.
     fn append_long_form_args(&self, args: &mut Vec<OsString>) {
+        // upstream: options.c server_options() - `am_sender` is true when the
+        // local process is the sender (a PUSH). RemoteRole::Sender == am_sender.
+        // A large block of options (options.c:2825-2857, 2911-2943, 2990) is
+        // emitted only inside `if (am_sender)` because they steer the remote
+        // RECEIVER; forwarding them on a PULL makes the remote sender link_stat()
+        // the flag as a source path or mutate its own send behaviour (the
+        // --delete-excluded leak is the worst: it rewrites the remote sender's
+        // send_rules so excluded files vanish from the file list).
+        let am_sender = self.role == RemoteRole::Sender;
+
         // upstream: options.c:2747-2748 - `if (list_only > 1) "--list-only"`.
         // Only the EXPLICIT `--list-only` (list_only == 2) is forwarded; the
         // implicit single-source listing (list_only == 1) is not. The compact
@@ -269,40 +284,62 @@ impl<'a> RemoteInvocationBuilder<'a> {
             None => {}
         }
 
-        // upstream: options.c:2818-2829 - delete timing variants. Explicit
-        // --delete-before/during/after/delay are always sent. Bare --delete
-        // (DuringDefault) is suppressed when --delete-excluded is active,
-        // matching upstream: `else if (delete_mode && !delete_excluded)`.
-        match self.config.delete_mode() {
-            DeleteMode::Disabled => {}
-            DeleteMode::Before => args.push(OsString::from("--delete-before")),
-            DeleteMode::During => args.push(OsString::from("--delete-during")),
-            DeleteMode::DuringDefault => {
-                if !self.config.delete_excluded() {
-                    args.push(OsString::from("--delete"));
+        // upstream: options.c:2825-2857 - the delete timing/limit and size
+        // filters all sit inside the `if (am_sender)` block, so they are
+        // forwarded only on a PUSH; the remote receiver is what performs the
+        // deletion and size-based skip decisions.
+        if am_sender {
+            // upstream: options.c:2826-2831 - `if (max_delete > 0)
+            // --max-delete=N; else if (max_delete == 0) --max-delete=-1`. A
+            // ceiling of 0 MUST be remapped to -1: the remote receiver reads
+            // `--max-delete=0` as UNLIMITED (max_delete <= 0 disables the cap at
+            // options.c:2182-2184), so forwarding `--max-delete=0` with --delete
+            // would delete every extraneous file instead of none. Placed first
+            // to match upstream's emission order within the am_sender block.
+            if let Some(max) = self.config.max_delete() {
+                if max > 0 {
+                    args.push(OsString::from(format!("--max-delete={max}")));
+                } else {
+                    args.push(OsString::from("--max-delete=-1"));
                 }
             }
-            DeleteMode::After => args.push(OsString::from("--delete-after")),
-            DeleteMode::Delay => args.push(OsString::from("--delete-delay")),
-        }
 
-        if self.config.delete_excluded() {
-            args.push(OsString::from("--delete-excluded"));
-        }
+            // upstream: options.c:2832-2835 - --min-size / --max-size.
+            if let Some(min) = self.config.min_file_size() {
+                args.push(OsString::from(format!("--min-size={min}")));
+            }
+            if let Some(max) = self.config.max_file_size() {
+                args.push(OsString::from(format!("--max-size={max}")));
+            }
 
-        if self.config.force_replacements() {
-            args.push(OsString::from("--force"));
-        }
+            // upstream: options.c:2836-2845 - delete timing variants. Explicit
+            // --delete-before/during/after/delay are always sent. Bare --delete
+            // (DuringDefault) is suppressed when --delete-excluded is active,
+            // matching upstream: `else if (delete_mode && !delete_excluded)`.
+            match self.config.delete_mode() {
+                DeleteMode::Disabled => {}
+                DeleteMode::Before => args.push(OsString::from("--delete-before")),
+                DeleteMode::During => args.push(OsString::from("--delete-during")),
+                DeleteMode::DuringDefault => {
+                    if !self.config.delete_excluded() {
+                        args.push(OsString::from("--delete"));
+                    }
+                }
+                DeleteMode::After => args.push(OsString::from("--delete-after")),
+                DeleteMode::Delay => args.push(OsString::from("--delete-delay")),
+            }
 
-        if let Some(max) = self.config.max_delete() {
-            args.push(OsString::from(format!("--max-delete={max}")));
-        }
+            // upstream: options.c:2846-2847 - --delete-excluded. On a PULL this
+            // must NOT be forwarded: it rewrites the remote sender's send_rules
+            // so excluded files disappear from the file list entirely.
+            if self.config.delete_excluded() {
+                args.push(OsString::from("--delete-excluded"));
+            }
 
-        if let Some(max) = self.config.max_file_size() {
-            args.push(OsString::from(format!("--max-size={max}")));
-        }
-        if let Some(min) = self.config.min_file_size() {
-            args.push(OsString::from(format!("--min-size={min}")));
+            // upstream: options.c:2848-2849 - --force.
+            if self.config.force_replacements() {
+                args.push(OsString::from("--force"));
+            }
         }
 
         // upstream: options.c:2845-2846 - `--max-alloc=arg` is forwarded to
@@ -385,11 +422,14 @@ impl<'a> RemoteInvocationBuilder<'a> {
             }
         }
 
-        // upstream: options.c - bwlimit forwarded as bytes-per-second.
+        // upstream: options.c:2799 - `--bwlimit=%d` forwards the rate in whole
+        // KiB (options.c:1718), NOT bytes: the remote peer re-parses the value
+        // with a default `K` suffix, so a byte count would be scaled up 1024x.
         if let Some(bwlimit) = self.config.bandwidth_limit() {
-            let mut arg = OsString::from("--bwlimit=");
-            arg.push(bwlimit.fallback_argument());
-            args.push(arg);
+            args.push(OsString::from(format!(
+                "--bwlimit={}",
+                bwlimit.server_option_kib()
+            )));
         }
 
         if let Some(dir) = self.config.partial_directory() {
@@ -410,7 +450,11 @@ impl<'a> RemoteInvocationBuilder<'a> {
             args.push(OsString::from("--partial"));
         }
 
-        if let Some(dir) = self.config.temp_directory() {
+        // upstream: options.c:2925-2928 - `if (tmpdir) { --temp-dir; ... }`
+        // inside the `if (am_sender)` block. Forwarded only on a PUSH so the
+        // remote receiver writes temp files under the requested directory; a
+        // remote sender never writes temp files and must not receive it.
+        if am_sender && let Some(dir) = self.config.temp_directory() {
             let mut arg = OsString::from("--temp-dir=");
             arg.push(dir.as_os_str());
             args.push(arg);
@@ -479,16 +523,25 @@ impl<'a> RemoteInvocationBuilder<'a> {
             args.push(OsString::from(format!("--checksum-seed={seed}")));
         }
 
-        if self.config.size_only() {
+        // upstream: options.c:2854-2855 - `if (size_only) --size-only` inside
+        // the `if (am_sender)` block (a PUSH), so the remote receiver's
+        // generator applies the size-only quick-check the client requested.
+        if am_sender && self.config.size_only() {
             args.push(OsString::from("--size-only"));
         }
+        // upstream: options.c:2918-2923 - --ignore-existing and --existing
+        // (sent as --existing for ignore_non_existing) both sit inside the
+        // `if (am_sender)` block: they steer the remote receiver's generator,
+        // so they are forwarded only on a PUSH.
         // upstream: options.c:2711-2712 - --ignore-times is emitted as the
         // compact `I` letter in build_flag_string(), not as a long-form arg.
-        if self.config.ignore_existing() {
-            args.push(OsString::from("--ignore-existing"));
-        }
-        if self.config.existing_only() {
-            args.push(OsString::from("--existing"));
+        if am_sender {
+            if self.config.ignore_existing() {
+                args.push(OsString::from("--ignore-existing"));
+            }
+            if self.config.existing_only() {
+                args.push(OsString::from("--existing"));
+            }
         }
 
         // upstream: options.c:817-818 - missing_args forwarded as long-form.
@@ -613,7 +666,6 @@ impl<'a> RemoteInvocationBuilder<'a> {
         // forwards the explicitly-set --info / --debug levels to the peer so
         // its diagnostic output matches. `am_sender` (a push) selects the
         // receiving half of the role `where` filter.
-        let am_sender = self.role == RemoteRole::Sender;
         if let Some(arg) =
             make_output_option(OutputWordKind::Info, self.config.info_flags(), am_sender)
         {
@@ -629,7 +681,11 @@ impl<'a> RemoteInvocationBuilder<'a> {
             args.push(OsString::from("--open-noatime"));
         }
 
-        if self.config.preallocate() {
+        // upstream: options.c:2990-2991 - `if (preallocate_files && am_sender)
+        // --preallocate`. Forwarded only on a PUSH so the remote receiver
+        // preallocates the destination file extents; a remote sender allocates
+        // nothing and must not receive it.
+        if am_sender && self.config.preallocate() {
             args.push(OsString::from("--preallocate"));
         }
 
@@ -696,11 +752,19 @@ impl<'a> RemoteInvocationBuilder<'a> {
         // We rely on `protect_args` being the default for SSH transports
         // (matching upstream's `old_style_args = -1` default at options.c:325),
         // so the verbatim form is correct and the wildcard `*` survives.
-        if let Some(mapping) = self.config.user_mapping() {
-            args.push(OsString::from(format!("--usermap={}", mapping.spec())));
-        }
-        if let Some(mapping) = self.config.group_mapping() {
-            args.push(OsString::from(format!("--groupmap={}", mapping.spec())));
+        //
+        // upstream: options.c:2911-2917 - both --usermap and --groupmap sit
+        // inside the `if (am_sender)` block, so they are forwarded only on a
+        // PUSH: the remote receiver applies the id remapping when it writes
+        // ownership. On a PULL the local receiver owns the mapping and the
+        // remote sender must not receive it.
+        if am_sender {
+            if let Some(mapping) = self.config.user_mapping() {
+                args.push(OsString::from(format!("--usermap={}", mapping.spec())));
+            }
+            if let Some(mapping) = self.config.group_mapping() {
+                args.push(OsString::from(format!("--groupmap={}", mapping.spec())));
+            }
         }
 
         // upstream: options.c:2716-2723 - --iconv forwarding. When iconv_opt

@@ -428,22 +428,32 @@ fn omits_ignore_errors_flag_when_not_set() {
     );
 }
 
+// WHY: upstream options.c:2930-2931 emits `--fsync` inside the `if (am_sender)`
+// block, so it rides only on a PUSH (RemoteRole::Sender) where the remote
+// receiver fsyncs the files it writes. On a PULL the remote sender writes no
+// destination files, so forwarding --fsync would be meaningless (and upstream
+// never does), while the local receiver still fsyncs its own writes.
 #[test]
-fn includes_fsync_flag_when_set() {
+fn fsync_forwarded_on_push_only() {
     let config = ClientConfig::builder().fsync(true).build();
-    let builder = RemoteInvocationBuilder::new(&config, RemoteRole::Receiver);
-    let args = builder.build("/path");
 
+    let push = RemoteInvocationBuilder::new(&config, RemoteRole::Sender).build("/path");
     assert!(
-        args.iter().any(|a| a == "--fsync"),
-        "expected --fsync in args: {args:?}"
+        push.iter().any(|a| a == "--fsync"),
+        "push must forward --fsync: {push:?}"
+    );
+
+    let pull = RemoteInvocationBuilder::new(&config, RemoteRole::Receiver).build("/path");
+    assert!(
+        !pull.iter().any(|a| a == "--fsync"),
+        "pull must not forward --fsync to the remote sender: {pull:?}"
     );
 }
 
 #[test]
 fn omits_fsync_flag_when_not_set() {
     let config = ClientConfig::builder().build();
-    let builder = RemoteInvocationBuilder::new(&config, RemoteRole::Receiver);
+    let builder = RemoteInvocationBuilder::new(&config, RemoteRole::Sender);
     let args = builder.build("/path");
 
     assert!(
@@ -3792,5 +3802,175 @@ fn ssh_forwards_info_and_debug_when_set() {
             .any(|a| a.to_string_lossy().starts_with("--info=")
                 || a.to_string_lossy().starts_with("--debug=")),
         "no info/debug flags must yield no --info/--debug arg: {args:?}"
+    );
+}
+
+// WHY (OPT-GAP-01, HIGH DATA-LOSS): upstream options.c:2826-2831 remaps a
+// max-delete ceiling of 0 to `--max-delete=-1` before forwarding. The remote
+// receiver treats `--max-delete=0` as UNLIMITED (options.c:2182-2184 disables
+// the cap for max_delete <= 0), so a client that ran `--max-delete=0 --delete`
+// - meaning "delete NOTHING" - would instead delete EVERY extraneous file if we
+// forwarded `--max-delete=0` verbatim. The inversion (0 -> -1) is what makes the
+// remote enforce the "delete nothing" ceiling the user asked for.
+#[test]
+fn max_delete_zero_forwards_minus_one_not_zero_on_push() {
+    let config = ClientConfig::builder().max_delete(Some(0)).build();
+    let args = build_sender_args(&config);
+    assert!(
+        args.iter().any(|a| a == "--max-delete=-1"),
+        "max-delete=0 must forward as --max-delete=-1 (unlimited-cap inversion): {args:?}"
+    );
+    assert!(
+        !args.iter().any(|a| a == "--max-delete=0"),
+        "max-delete=0 must NEVER reach the remote verbatim (deletes everything): {args:?}"
+    );
+}
+
+// WHY (OPT-GAP-01): a positive ceiling is forwarded unchanged, matching
+// upstream's `if (max_delete > 0) --max-delete=N` branch.
+#[test]
+fn max_delete_positive_forwarded_verbatim_on_push() {
+    let config = ClientConfig::builder().max_delete(Some(7)).build();
+    let args = build_sender_args(&config);
+    assert!(
+        args.iter().any(|a| a == "--max-delete=7"),
+        "positive max-delete must forward verbatim: {args:?}"
+    );
+}
+
+// WHY (OPT-GAP-01 + OPT-GAP-05): every option in upstream's `if (am_sender)`
+// block (options.c:2825-2857) is receiver-steering, so on a PULL (the local
+// process is the receiver, RemoteRole::Receiver) NONE of them may be forwarded
+// to the remote sender. In particular --max-delete=0 must not leak even in its
+// remapped form, because the remote sender performs no deletion at all.
+#[test]
+fn sender_only_delete_and_size_options_not_forwarded_on_pull() {
+    let config = ClientConfig::builder()
+        .max_delete(Some(0))
+        .max_file_size(Some(1_048_576))
+        .min_file_size(Some(1024))
+        .delete_before(true)
+        .force_replacements(true)
+        .size_only(true)
+        .build();
+    let pull = build_receiver_args(&config);
+    for needle in [
+        "--max-delete=-1",
+        "--max-delete=0",
+        "--max-size=1048576",
+        "--min-size=1024",
+        "--delete-before",
+        "--force",
+        "--size-only",
+    ] {
+        assert!(
+            !pull.iter().any(|a| a == needle),
+            "PULL must not forward am_sender-only {needle} to the remote sender: {pull:?}"
+        );
+    }
+
+    // Same config on a PUSH forwards them (the remote receiver needs them).
+    let push = build_sender_args(&config);
+    assert!(
+        push.iter().any(|a| a == "--delete-before") && push.iter().any(|a| a == "--size-only"),
+        "PUSH must still forward the am_sender-only options: {push:?}"
+    );
+}
+
+// WHY (OPT-GAP-05, most-important leak): upstream options.c:2846-2847 emits
+// --delete-excluded only inside `if (am_sender)`. On a PULL, forwarding it
+// rewrites the remote sender's send_rules so excluded files vanish from the
+// file list, corrupting what the receiver sees. It must ride only on a PUSH.
+#[test]
+fn delete_excluded_forwarded_on_push_only() {
+    let config = ClientConfig::builder()
+        .delete_excluded(true)
+        .delete_before(true)
+        .build();
+
+    let push = build_sender_args(&config);
+    assert!(
+        push.iter().any(|a| a == "--delete-excluded"),
+        "PUSH must forward --delete-excluded: {push:?}"
+    );
+
+    let pull = build_receiver_args(&config);
+    assert!(
+        !pull.iter().any(|a| a == "--delete-excluded"),
+        "PULL must NOT forward --delete-excluded (it rewrites the remote sender's send_rules): {pull:?}"
+    );
+}
+
+// WHY (OPT-GAP-05): --usermap / --groupmap, --ignore-existing / --existing,
+// --temp-dir and --preallocate all live in upstream's `if (am_sender)` block
+// (options.c:2911-2943, 2990). They steer the remote receiver, so a PULL must
+// not forward them to the remote sender.
+#[cfg(unix)]
+#[test]
+fn sender_only_mapping_and_dest_options_not_forwarded_on_pull() {
+    let user = ::metadata::UserMapping::parse("*:5678").expect("parse");
+    let group = ::metadata::GroupMapping::parse("*:1234").expect("parse");
+    let config = ClientConfig::builder()
+        .user_mapping(Some(user))
+        .group_mapping(Some(group))
+        .ignore_existing(true)
+        .existing_only(true)
+        .temp_directory(Some("/tmp/staging"))
+        .preallocate(true)
+        .build();
+
+    let pull = build_receiver_args(&config);
+    for needle in [
+        "--usermap=*:5678",
+        "--groupmap=*:1234",
+        "--ignore-existing",
+        "--existing",
+        "--temp-dir=/tmp/staging",
+        "--preallocate",
+    ] {
+        assert!(
+            !pull.iter().any(|a| a == needle),
+            "PULL must not forward am_sender-only {needle}: {pull:?}"
+        );
+    }
+
+    let push = build_sender_args(&config);
+    for needle in [
+        "--usermap=*:5678",
+        "--groupmap=*:1234",
+        "--ignore-existing",
+        "--existing",
+        "--temp-dir=/tmp/staging",
+        "--preallocate",
+    ] {
+        assert!(
+            push.iter().any(|a| a == needle),
+            "PUSH must forward am_sender-only {needle}: {push:?}"
+        );
+    }
+}
+
+// WHY (OPT-GAP-02): upstream options.c:2799 forwards `--bwlimit=%d` in whole KiB
+// (options.c:1718 `bwlimit = (size + 512) / 1024`), NOT bytes/sec. The remote
+// peer re-parses the value with a default `K` suffix (options.c:1714), so a raw
+// byte count is scaled up 1024x and the throttle effectively vanishes. A rate of
+// 1 MiB/s (1048576 B/s) must travel as `--bwlimit=1024`.
+#[test]
+fn bwlimit_forwarded_in_kib_not_bytes() {
+    use crate::client::config::BandwidthLimit;
+    use std::num::NonZeroU64;
+    let config = ClientConfig::builder()
+        .bandwidth_limit(Some(BandwidthLimit::from_bytes_per_second(
+            NonZeroU64::new(1_048_576).unwrap(),
+        )))
+        .build();
+    let args = build_sender_args(&config);
+    assert!(
+        args.iter().any(|a| a == "--bwlimit=1024"),
+        "bwlimit must forward as whole KiB: {args:?}"
+    );
+    assert!(
+        !args.iter().any(|a| a == "--bwlimit=1048576"),
+        "bwlimit must NOT forward the raw byte count: {args:?}"
     );
 }
