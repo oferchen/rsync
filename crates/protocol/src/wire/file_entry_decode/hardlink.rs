@@ -26,6 +26,12 @@ pub fn decode_hardlink_idx<R: Read>(reader: &mut R, flags: u32) -> io::Result<Op
         } else {
             // Cast i32 bits to u32 to preserve the full index space;
             // upstream C uses unsigned int for hlink_flist indices.
+            //
+            // The value is range-checked by the caller against the entries
+            // received so far (upstream: flist.c:794-799, `first_hlink_ndx < 0
+            // || first_hlink_ndx >= flist->ndx_start + flist->used`) - see
+            // `FileListReader::read_entry_with_flist`. Decoding here stays
+            // context-free because `ndx_start`/`used` live in the reader state.
             Ok(Some(read_varint(reader)? as u32))
         }
     } else {
