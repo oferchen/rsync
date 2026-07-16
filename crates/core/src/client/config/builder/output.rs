@@ -59,6 +59,23 @@ impl ClientConfigBuilder {
         self
     }
 
+    /// Records that the resolved out-format string carries the `%i` (itemize)
+    /// directive, so the remote is told via `--log-format=%i`. This mirrors
+    /// upstream's `stdout_format_has_i`, which is derived from the resolved
+    /// format string rather than the `-i` flag: an explicit `--out-format` that
+    /// lacks `%i` clears it even under `-i`, while `-i` alone installs the
+    /// default `"%i %n%L"` format whose `%i` is forwarded.
+    ///
+    /// upstream: options.c:2345-2358 (`stdout_format_has_i`), 2772-2775 (emit
+    /// `--log-format=%i`).
+    #[must_use]
+    #[doc(alias = "--out-format")]
+    #[doc(alias = "--log-format")]
+    pub const fn out_format_forwards_i(mut self, enabled: bool) -> Self {
+        self.out_format_forwards_i = enabled;
+        self
+    }
+
     /// Records that the explicit `--out-format` / `--log-format` string contains
     /// the `%o` (operation) directive without `%i`, so the remote is told via
     /// `--log-format=%o`.

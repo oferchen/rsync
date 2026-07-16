@@ -300,13 +300,17 @@ pub(super) fn build_full_daemon_args(
     // upstream: options.c:2768-2780 - `if (stdout_format && am_sender)` the
     // server is told a little about the client's out-format via a `--log-format`
     // arg, in a first-match-wins chain. Only sent when the client is the sender
-    // (push), matching upstream's `am_sender` guard. `%i%I` is the `-ii` form
-    // (stdout_format_has_i > 1) that itemizes unchanged entries too; `%i` is the
-    // `-i` form; `%o` is forwarded when the format has the `%o` operation
-    // directive; the placeholder `X` is forwarded when a non-verbose client set
-    // an out-format with neither `%i` nor `%o`.
+    // (push), matching upstream's `am_sender` guard. The `%i` branches key off
+    // `stdout_format_has_i`, which upstream derives from the RESOLVED out-format
+    // string (options.c:2345-2358), not the `-i` flag: an explicit
+    // `--out-format` without `%i` clears it even under `-i`, while `-i` alone
+    // installs the default `"%i %n%L"` format. `%i%I` is the `-ii` form
+    // (stdout_format_has_i > 1) that itemizes unchanged entries too; `%o` is
+    // forwarded when the format has the `%o` operation directive; the
+    // placeholder `X` is forwarded when a non-verbose client set an out-format
+    // with neither `%i` nor `%o`.
     if we_are_sender {
-        if config.itemize_changes() {
+        if config.out_format_forwards_i() {
             if config.itemize_unchanged() {
                 args.push("--log-format=%i%I".to_owned());
             } else {

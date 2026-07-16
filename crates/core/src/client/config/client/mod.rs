@@ -82,6 +82,15 @@ pub struct ClientConfig {
     /// options.c:2982-2985 (emit `--remove-sent-files` when the value is 2).
     pub(super) remove_sent_files: bool,
     /// Whether the explicit `--out-format` / `--log-format` string contains the
+    /// Whether the resolved out-format string carries the `%i` (itemize)
+    /// directive. Mirrors upstream `stdout_format_has_i`, derived from the
+    /// resolved format string (not the `-i` flag): an explicit `--out-format`
+    /// without `%i` clears it even under `-i`, while `-i` alone installs the
+    /// default `"%i %n%L"` format. Drives the `--log-format=%i` server arg.
+    ///
+    /// upstream: options.c:2345-2358 (`stdout_format_has_i`) and
+    /// options.c:2772-2775 (emit `--log-format=%i`).
+    pub(super) out_format_forwards_i: bool,
     /// `%o` (operation) directive but not `%i`. Drives the `--log-format=%o`
     /// server arg so the remote emits matching operation output.
     ///
@@ -350,6 +359,7 @@ impl Default for ClientConfig {
             modify_window: None,
             remove_source_files: false,
             remove_sent_files: false,
+            out_format_forwards_i: false,
             out_format_has_operation: false,
             out_format_placeholder: false,
             bandwidth_limit: None,

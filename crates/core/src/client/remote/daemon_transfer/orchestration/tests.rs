@@ -553,9 +553,14 @@ mod protect_args_daemon_tests {
 
     #[test]
     fn build_full_args_includes_log_format_for_itemize_push() {
-        // upstream: options.c:2750-2762 - --log-format=%i sent when am_sender
-        // (client is sender / push mode) so daemon receiver emits itemize via MSG_INFO.
-        let config = ClientConfig::builder().itemize_changes(true).build();
+        // upstream: options.c:2345-2358,2772-2775 - `-i` alone installs the
+        // default "%i %n%L" format, so `stdout_format_has_i` is set and the
+        // server arg is --log-format=%i on a push. The CLI models this by
+        // setting `out_format_forwards_i`.
+        let config = ClientConfig::builder()
+            .itemize_changes(true)
+            .out_format_forwards_i(true)
+            .build();
         let request = test_daemon_request();
         let protocol = ProtocolVersion::try_from(32u8).unwrap();
         // is_sender=false means daemon is NOT sender, i.e., client IS sender (push)
@@ -571,7 +576,10 @@ mod protect_args_daemon_tests {
     fn build_full_args_omits_log_format_for_itemize_pull() {
         // upstream: options.c:2752 - --log-format only sent when am_sender.
         // In pull mode (daemon is sender), client handles itemize locally.
-        let config = ClientConfig::builder().itemize_changes(true).build();
+        let config = ClientConfig::builder()
+            .itemize_changes(true)
+            .out_format_forwards_i(true)
+            .build();
         let request = test_daemon_request();
         let protocol = ProtocolVersion::try_from(32u8).unwrap();
         // is_sender=true means daemon IS sender (pull)
@@ -591,6 +599,7 @@ mod protect_args_daemon_tests {
         let config = ClientConfig::builder()
             .itemize_changes(true)
             .itemize_unchanged(true)
+            .out_format_forwards_i(true)
             .build();
         let request = test_daemon_request();
         let protocol = ProtocolVersion::try_from(32u8).unwrap();
@@ -651,6 +660,48 @@ mod protect_args_daemon_tests {
         assert!(
             !args.iter().any(|a| a.starts_with("--log-format")),
             "pull must not forward --log-format: {args:?}"
+        );
+    }
+
+    #[test]
+    fn build_full_args_out_format_without_i_forwards_o_not_i_with_dash_i() {
+        // upstream: options.c:2345-2358 - `stdout_format_has_i` is derived from
+        // the resolved out-format string, not the `-i` flag. `--out-format="%o"
+        // -i` keeps the explicit "%o" format (no `%i`), so has_i stays 0 and the
+        // server arg must be `--log-format=%o`, NOT `%i`. The CLI models this by
+        // NOT setting `out_format_forwards_i` when the explicit format lacks %i.
+        let config = ClientConfig::builder()
+            .itemize_changes(true)
+            .out_format_forwards_i(false)
+            .out_format_has_operation(true)
+            .build();
+        let request = test_daemon_request();
+        let protocol = ProtocolVersion::try_from(32u8).unwrap();
+        let args = build_full_daemon_args(&config, &request, protocol, false);
+
+        assert!(
+            args.iter().any(|a| a == "--log-format=%o"),
+            "explicit %o out-format must forward --log-format=%o: {args:?}"
+        );
+        assert!(
+            !args.iter().any(|a| a.starts_with("--log-format=%i")),
+            "must not forward --log-format=%i when the format lacks %i: {args:?}"
+        );
+    }
+
+    #[test]
+    fn build_full_args_explicit_out_format_with_i_forwards_log_format_i() {
+        // upstream: options.c:2345-2349 - an explicit `--out-format="%i"` sets
+        // `stdout_format_has_i` even without `-i`, so the server arg is
+        // --log-format=%i. The CLI models this via `out_format_forwards_i`.
+        let config = ClientConfig::builder().out_format_forwards_i(true).build();
+        let request = test_daemon_request();
+        let protocol = ProtocolVersion::try_from(32u8).unwrap();
+        let args = build_full_daemon_args(&config, &request, protocol, false);
+
+        assert!(
+            args.iter().any(|a| a == "--log-format=%i"),
+            "explicit %i out-format must forward --log-format=%i: {args:?}"
         );
     }
 
