@@ -30,6 +30,17 @@ pub struct SparseWriteState {
     /// Absolute `(start, len)` ranges to punch after the write pass, in file
     /// order. Only populated for in-place updates over an existing basis.
     holes: Vec<(u64, u64)>,
+    /// Running mirror of the writer's stream position, matching upstream
+    /// `write_file()`'s caller-tracked `offset` / `sparse_past_write`. Primed
+    /// once from the real position on first use, then advanced in step with
+    /// every data write and hole seek so no per-zero-run `stream_position()`
+    /// query (and its buffer flush + `lseek`) is issued.
+    ///
+    /// upstream: `fileio.c:78` `sparse_past_write = offset + len - l2`.
+    stream_offset: u64,
+    /// Whether [`Self::stream_offset`] has been primed from the writer's real
+    /// position. Guards the single position query per file.
+    offset_primed: bool,
 }
 
 impl SparseWriteState {
@@ -40,7 +51,25 @@ impl SparseWriteState {
             pending_zeros: 0,
             preallocated_len: 0,
             holes: Vec::new(),
+            stream_offset: 0,
+            offset_primed: false,
         }
+    }
+
+    /// Returns the writer's current stream position, priming the tracked
+    /// offset from the real position on the first call and returning the
+    /// maintained value thereafter. This replaces the per-zero-run
+    /// `stream_position()` query with at most one query per file.
+    ///
+    /// upstream: `write_file()` passes a caller-tracked `offset` rather than
+    /// querying the OS position (`fileio.c:150`).
+    #[inline]
+    fn ensure_offset<W: Seek>(&mut self, writer: &mut W) -> io::Result<u64> {
+        if !self.offset_primed {
+            self.stream_offset = writer.stream_position()?;
+            self.offset_primed = true;
+        }
+        Ok(self.stream_offset)
     }
 
     /// Records the destination's pre-existing length so zero runs that overlap
@@ -83,7 +112,7 @@ impl SparseWriteState {
             return Ok(());
         }
 
-        let start = writer.stream_position()?;
+        let start = self.ensure_offset(writer)?;
         if start < self.preallocated_len {
             self.holes.push((start, self.pending_zeros));
         }
@@ -95,6 +124,9 @@ impl SparseWriteState {
             remaining -= step;
         }
 
+        // Advance the tracked offset over the seeked hole so the next flush
+        // needs no position query (upstream keeps `offset` running in sync).
+        self.stream_offset = start.saturating_add(self.pending_zeros);
         self.pending_zeros = 0;
         Ok(())
     }
@@ -110,6 +142,10 @@ impl SparseWriteState {
         if data.is_empty() {
             return Ok(0);
         }
+
+        // Prime the tracked offset before any write advances the position, so
+        // the interior flush() calls never issue a position query.
+        self.ensure_offset(writer)?;
 
         let mut offset = 0;
 
@@ -132,7 +168,9 @@ impl SparseWriteState {
 
             if data_end > data_start {
                 self.flush(writer)?;
-                writer.write_all(&data[data_start..data_end])?;
+                let chunk = &data[data_start..data_end];
+                writer.write_all(chunk)?;
+                self.stream_offset = self.stream_offset.saturating_add(chunk.len() as u64);
             }
 
             self.pending_zeros = trailing_zeros as u64;
@@ -151,7 +189,7 @@ impl SparseWriteState {
     ///
     /// upstream: `fileio.c:43` `sparse_end()` -> `do_ftruncate(f, size)`.
     pub fn finish<W: Write + Seek>(&mut self, writer: &mut W) -> io::Result<u64> {
-        let position = writer.stream_position()?;
+        let position = self.ensure_offset(writer)?;
         let logical_end = position.saturating_add(self.pending_zeros);
         self.flush(writer)?;
         Ok(logical_end)
@@ -348,5 +386,84 @@ mod tests {
             state.take_holes().is_empty(),
             "run past basis extent needs no punch"
         );
+    }
+
+    /// A writer that distinguishes forward hole seeks from position queries so
+    /// a test can prove the sparse writer tracks its offset in a variable
+    /// instead of querying the OS position on every zero run.
+    ///
+    /// `stream_position()` and every no-op relative seek land as
+    /// `SeekFrom::Current(0)` and increment `position_queries`; each punched
+    /// hole lands as a `SeekFrom::Current(n > 0)` and increments `hole_seeks`.
+    struct SeekAccountingWriter {
+        inner: Cursor<Vec<u8>>,
+        hole_seeks: u64,
+        position_queries: u64,
+    }
+
+    impl Write for SeekAccountingWriter {
+        fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+            self.inner.write(buf)
+        }
+        fn flush(&mut self) -> io::Result<()> {
+            self.inner.flush()
+        }
+    }
+
+    impl Seek for SeekAccountingWriter {
+        fn seek(&mut self, pos: SeekFrom) -> io::Result<u64> {
+            if let SeekFrom::Current(delta) = pos {
+                if delta == 0 {
+                    self.position_queries += 1;
+                } else {
+                    self.hole_seeks += 1;
+                }
+            }
+            self.inner.seek(pos)
+        }
+    }
+
+    #[test]
+    fn offset_tracked_without_per_run_position_query() {
+        // WHY: upstream fileio.c keeps the file offset in a running variable
+        // (sparse_past_write) and issues exactly one lseek per zero run - it
+        // never queries the OS position. This asserts the Rust port matches
+        // that syscall profile: N distinct zero runs cost N forward seeks and
+        // at most one position query for the whole file, while the byte output
+        // is identical to a plain (non-sparse) writer.
+        // upstream: fileio.c:75-97 write_sparse().
+        let mut reference = vec![0xAAu8; 2048];
+        reference.extend(std::iter::repeat_n(0u8, 3072)); // hole 1
+        reference.extend(std::iter::repeat_n(0xBBu8, 2048));
+        reference.extend(std::iter::repeat_n(0u8, 5120)); // hole 2
+        reference.extend(std::iter::repeat_n(0xCCu8, 2048));
+        reference.extend(std::iter::repeat_n(0u8, 1024)); // trailing hole 3
+        let total = reference.len() as u64;
+
+        let mut state = SparseWriteState::new();
+        let mut w = SeekAccountingWriter {
+            inner: Cursor::new(Vec::new()),
+            hole_seeks: 0,
+            position_queries: 0,
+        };
+        state.write(&mut w, &reference).unwrap();
+        let logical = state.finish(&mut w).unwrap();
+
+        assert_eq!(logical, total, "logical size includes every hole");
+        assert_eq!(
+            w.hole_seeks, 3,
+            "one forward seek per zero run (single-seek-per-run invariant)"
+        );
+        assert!(
+            w.position_queries <= 1,
+            "offset is variable-tracked, not queried per zero run (got {})",
+            w.position_queries
+        );
+
+        // Byte-identical guarantee: materialize the trailing hole via set_len
+        // (as the applicator does) and compare to the plain-writer bytes.
+        let mut produced = w.inner.into_inner();
+        produced.resize(logical as usize, 0);
+        assert_eq!(produced, reference, "sparse output is byte-identical");
     }
 }
