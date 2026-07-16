@@ -2,17 +2,44 @@ use std::path::Path;
 
 use logging::debug_log;
 
-use crate::{FilterAction, compiled::CompiledRule};
+use crate::{
+    FilterAction,
+    compiled::{CompiledRule, CompiledXattrRule},
+};
 
 /// Internal rule storage shared by [`FilterSet`](crate::FilterSet) instances.
 ///
-/// Maintains two independent rule chains following the Chain of Responsibility
-/// pattern. Each chain is evaluated with first-match-wins semantics, mirroring
-/// upstream rsync's `check_filter()` in `exclude.c`.
+/// Maintains three independent rule chains following the Chain of
+/// Responsibility pattern. Each chain is evaluated with first-match-wins
+/// semantics, mirroring upstream rsync's `check_filter()` in `exclude.c`.
+///
+/// - `include_exclude` / `protect_risk` govern path (file) decisions.
+/// - `xattr` holds `x`-modifier rules that govern xattr-name decisions only,
+///   kept separate because upstream `exclude.c:914` never matches an
+///   `x`-modifier rule against a path nor an ordinary rule against an xattr
+///   name.
 #[derive(Debug, Default)]
 pub(crate) struct FilterSetInner {
     pub(crate) include_exclude: Vec<CompiledRule>,
     pub(crate) protect_risk: Vec<CompiledRule>,
+    pub(crate) xattr: Vec<CompiledXattrRule>,
+}
+
+impl FilterSetInner {
+    /// Resolves whether an xattr `name` is allowed by the `x`-modifier rules.
+    ///
+    /// Evaluates the xattr chain first-match-wins and returns the matching
+    /// rule's include/exclude verdict; with no match the name is included by
+    /// default. Mirrors upstream `exclude.c:name_is_excluded(name,
+    /// NAME_IS_XATTR, ALL_FILTERS)` consulted from `xattrs.c:250`.
+    pub(crate) fn xattr_name_allowed(&self, name: &str) -> bool {
+        for rule in &self.xattr {
+            if rule.matches(name) {
+                return matches!(rule.action(), FilterAction::Include);
+            }
+        }
+        true
+    }
 }
 
 impl FilterSetInner {

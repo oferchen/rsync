@@ -19,7 +19,7 @@ use std::sync::Arc;
 use crate::{
     FilterAction, FilterError, FilterRule, MergeFileError,
     apple_double::default_patterns as apple_double_default_patterns,
-    compiled::{CompiledRule, apply_clear_rule},
+    compiled::{CompiledRule, CompiledXattrRule, apply_clear_rule},
     cvs::default_patterns as cvs_default_patterns,
     decision::{DecisionContext, FilterSetInner},
     merge::{read_rules_recursive, scope_local_clear},
@@ -87,9 +87,17 @@ impl FilterSet {
     {
         let mut include_exclude = Vec::new();
         let mut protect_risk = Vec::new();
+        let mut xattr = Vec::new();
 
         for rule in rules.into_iter() {
+            // upstream: exclude.c:914 rule_matches() - an `x`-modifier rule
+            // matches xattr names only, never a path. Route it into its own
+            // chain instead of dropping it so `--filter='-x user.foo'` can be
+            // honoured by xattr-name matching (upstream: xattrs.c:250).
             if rule.is_xattr_only() {
+                if matches!(rule.action, FilterAction::Include | FilterAction::Exclude) {
+                    xattr.push(CompiledXattrRule::new(rule)?);
+                }
                 continue;
             }
             match rule.action {
@@ -110,6 +118,9 @@ impl FilterSet {
                         rule.applies_to_sender,
                         rule.applies_to_receiver,
                     );
+                    // upstream: exclude.c:pop_filter_list() clears the whole
+                    // active section, including any xattr-name rules.
+                    xattr.clear();
                 }
                 FilterAction::Merge | FilterAction::DirMerge => {}
             }
@@ -119,6 +130,7 @@ impl FilterSet {
             inner: Arc::new(FilterSetInner {
                 include_exclude,
                 protect_risk,
+                xattr,
             }),
         })
     }
@@ -128,7 +140,32 @@ impl FilterSet {
     /// An empty filter set allows all paths and all deletions.
     #[must_use]
     pub fn is_empty(&self) -> bool {
-        self.inner.include_exclude.is_empty() && self.inner.protect_risk.is_empty()
+        self.inner.include_exclude.is_empty()
+            && self.inner.protect_risk.is_empty()
+            && self.inner.xattr.is_empty()
+    }
+
+    /// Returns `true` when the set carries any `x`-modifier (xattr-name) rules.
+    ///
+    /// Callers gate xattr-name filtering on this so a transfer without any `x`
+    /// rules keeps upstream's "no `saw_xattr_filter`" fast path (upstream:
+    /// xattrs.c:250 only calls `name_is_excluded` when `saw_xattr_filter`).
+    #[must_use]
+    pub fn has_xattr_rules(&self) -> bool {
+        !self.inner.xattr.is_empty()
+    }
+
+    /// Returns `true` when the extended-attribute `name` is allowed by the
+    /// `x`-modifier rules.
+    ///
+    /// Only rules carrying the `x` modifier participate; ordinary path rules
+    /// never affect the verdict. Evaluation is first-match-wins and a name that
+    /// matches no rule is allowed. Mirrors upstream rsync's
+    /// `name_is_excluded(name, NAME_IS_XATTR, ALL_FILTERS)` (exclude.c:914,
+    /// consulted from xattrs.c:250).
+    #[must_use]
+    pub fn xattr_name_allowed(&self, name: &str) -> bool {
+        self.inner.xattr_name_allowed(name)
     }
 
     /// Returns `true` if the path should be included in the transfer.
@@ -745,5 +782,63 @@ mod tests {
         assert!(!set.allows(Path::new("new/lose/this"), false));
         // A file named "new/lose" is still allowed (directory-only match).
         assert!(set.allows(Path::new("new/lose"), false));
+    }
+
+    /// upstream: exclude.c:914 - rule_matches() gates every rule on
+    /// `!(name_flags & NAME_IS_XATTR) ^ !(ex->rflags & FILTRULE_XATTR)`. An
+    /// `x`-modifier rule must match xattr NAMES (and only xattr names), so a
+    /// `-x user.foo` rule excludes the `user.foo` xattr during an `-X`
+    /// transfer. This regression-guards FLT-1, where `x`-modifier rules were
+    /// silently dropped from the compiled set and the xattr filter was a no-op.
+    #[test]
+    fn xattr_modifier_rule_excludes_matching_xattr_name() {
+        let set =
+            FilterSet::from_rules([FilterRule::exclude("user.foo").with_xattr_only(true)]).unwrap();
+
+        assert!(set.has_xattr_rules());
+        // The named xattr is excluded...
+        assert!(!set.xattr_name_allowed("user.foo"));
+        // ...while an unrelated xattr name is still allowed (default include).
+        assert!(set.xattr_name_allowed("user.bar"));
+        // ...and the rule must NOT leak into path matching: a *file* called
+        // "user.foo" is unaffected by the xattr-only rule.
+        assert!(set.allows(Path::new("user.foo"), false));
+    }
+
+    /// upstream: exclude.c:914 - the include (`+x`) variant makes an otherwise
+    /// excluded xattr name pass, first-match-wins.
+    #[test]
+    fn xattr_modifier_include_wins_over_later_exclude() {
+        let set = FilterSet::from_rules([
+            FilterRule::include("user.keep").with_xattr_only(true),
+            FilterRule::exclude("user.*").with_xattr_only(true),
+        ])
+        .unwrap();
+
+        assert!(set.xattr_name_allowed("user.keep"));
+        assert!(!set.xattr_name_allowed("user.drop"));
+    }
+
+    /// upstream: exclude.c:914 - a rule WITHOUT the `x` modifier never
+    /// participates in xattr-name matching. It governs paths only.
+    #[test]
+    fn plain_rule_does_not_affect_xattr_names() {
+        let set = FilterSet::from_rules([FilterRule::exclude("user.foo")]).unwrap();
+
+        assert!(!set.has_xattr_rules());
+        // The plain rule excludes the *file* path "user.foo"...
+        assert!(!set.allows(Path::new("user.foo"), false));
+        // ...but leaves the xattr NAME "user.foo" allowed - no `x` modifier.
+        assert!(set.xattr_name_allowed("user.foo"));
+    }
+
+    /// An empty set (or one with only path rules) allows every xattr name and
+    /// reports no xattr rules, so callers keep upstream's `saw_xattr_filter`
+    /// fast path.
+    #[test]
+    fn xattr_name_allowed_defaults_to_true() {
+        let set = FilterSet::default();
+        assert!(!set.has_xattr_rules());
+        assert!(set.xattr_name_allowed("user.anything"));
     }
 }

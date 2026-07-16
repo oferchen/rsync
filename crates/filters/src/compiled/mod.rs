@@ -10,6 +10,7 @@
 mod clear;
 mod pattern;
 mod rule;
+mod xattr;
 
 use std::collections::HashSet;
 
@@ -18,6 +19,7 @@ use crate::{FilterAction, FilterError, FilterRule};
 pub(crate) use clear::apply_clear_rule;
 use pattern::{compile_patterns, normalise_pattern};
 pub(crate) use rule::CompiledRule;
+pub(crate) use xattr::CompiledXattrRule;
 
 impl CompiledRule {
     /// Compiles a [`FilterRule`] into optimised glob matchers.
