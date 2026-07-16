@@ -731,15 +731,18 @@ impl<'a> RemoteInvocationBuilder<'a> {
 
         // upstream: options.c:2768-2780 - `if (stdout_format && am_sender)` the
         // server is told a little about the client's out-format via a
-        // `--log-format` arg, in a first-match-wins chain. `%i%I` is the `-ii`
-        // form (stdout_format_has_i > 1) that itemizes unchanged entries too;
-        // `%i` is the `-i` form; `%o` is forwarded when the format has the `%o`
-        // operation directive; the placeholder `X` is forwarded when a
-        // non-verbose client set an out-format with neither `%i` nor `%o`. The
-        // whole chain is gated on `am_sender` (a PUSH); a remote sender never
-        // needs it.
+        // `--log-format` arg, in a first-match-wins chain. The `%i` branches key
+        // off `stdout_format_has_i`, which upstream derives from the RESOLVED
+        // out-format string (options.c:2345-2358), not the `-i` flag: an
+        // explicit `--out-format` without `%i` clears it even under `-i`, while
+        // `-i` alone installs the default `"%i %n%L"` format. `%i%I` is the
+        // `-ii` form (stdout_format_has_i > 1) that itemizes unchanged entries
+        // too; `%o` is forwarded when the format has the `%o` operation
+        // directive; the placeholder `X` is forwarded when a non-verbose client
+        // set an out-format with neither `%i` nor `%o`. The whole chain is gated
+        // on `am_sender` (a PUSH); a remote sender never needs it.
         if am_sender {
-            if self.config.itemize_changes() {
+            if self.config.out_format_forwards_i() {
                 if self.config.itemize_unchanged() {
                     args.push(OsString::from("--log-format=%i%I"));
                 } else {

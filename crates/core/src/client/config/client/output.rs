@@ -54,6 +54,20 @@ impl ClientConfig {
         self.itemize_unchanged
     }
 
+    /// Reports whether the resolved out-format string carries the `%i` (itemize)
+    /// directive. Mirrors upstream `stdout_format_has_i`, derived from the
+    /// resolved format string rather than the `-i` flag. For remote pushes this
+    /// forwards `--log-format=%i`.
+    ///
+    /// upstream: options.c:2345-2358 (`stdout_format_has_i`) and
+    /// options.c:2772-2775 (`args[ac++] = "--log-format=%i"`).
+    #[must_use]
+    #[doc(alias = "--out-format")]
+    #[doc(alias = "--log-format")]
+    pub const fn out_format_forwards_i(&self) -> bool {
+        self.out_format_forwards_i
+    }
+
     /// Reports whether the explicit `--out-format` / `--log-format` string
     /// contains the `%o` (operation) directive without `%i`. For remote pushes
     /// this forwards `--log-format=%o` so the remote emits matching operation
