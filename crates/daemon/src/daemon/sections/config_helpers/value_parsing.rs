@@ -262,6 +262,32 @@ pub(crate) fn parse_numeric_identifier(value: &str) -> Option<u32> {
     trimmed.parse().ok()
 }
 
+/// Resolves an rsyncd.conf `uid` directive to a numeric uid.
+///
+/// Accepts either a numeric id or a username. An all-digits value parses
+/// directly as a numeric id; any other non-empty value is resolved through the
+/// local NSS database (`getpwnam`). Returns `None` for an empty value or a name
+/// that does not resolve, so the caller emits the same `invalid uid '<value>'`
+/// config error it already produced for a bad numeric id.
+///
+/// upstream: uidlist.c:144 `user_to_uid()` called with `num_ok = True`
+/// (clientserver.c:783) - a value made only of digits is `id_parse()`d, any
+/// other value goes through `getpwnam()`.
+pub(crate) fn parse_uid_setting(value: &str) -> Option<u32> {
+    let trimmed = value.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+
+    if trimmed.bytes().all(|byte| byte.is_ascii_digit()) {
+        return parse_numeric_identifier(trimmed);
+    }
+
+    metadata::id_lookup::lookup_user_by_name(trimmed.as_bytes())
+        .ok()
+        .flatten()
+}
+
 /// Parses a module `gid` directive into a [`GidSetting`].
 ///
 /// Accepts a whitespace- or comma-separated list of numeric gids. A leading
@@ -302,16 +328,26 @@ pub(crate) fn parse_gid_setting(value: &str) -> Result<GidSetting, String> {
     }
 }
 
-/// Parses a single gid token (numeric only).
+/// Parses a single gid token, accepting either a numeric id or a group name.
 ///
-/// upstream resolves group *names* via `group_to_gid`, but oc's daemon config
-/// path has always accepted numeric gids only; keeping that here avoids a
-/// behavioural regression. Name resolution remains available on the daemon's
-/// global `uid`/`gid` directives.
+/// An all-digits token parses directly as a numeric gid; any other token is
+/// resolved through the local NSS database (`getgrnam`). An unresolvable token
+/// is an error, matching the config value rejection upstream performs.
+///
+/// upstream: uidlist.c:170 `group_to_gid()` called with `num_ok = True`
+/// (clientserver.c:807 `add_a_group()`) - a digits-only token is `id_parse()`d,
+/// any other token goes through `getgrnam()`.
 fn parse_gid_token(token: &str) -> Result<u32, String> {
-    token
-        .parse::<u32>()
-        .map_err(|_| format!("'{token}' is not a numeric gid"))
+    if token.bytes().all(|byte| byte.is_ascii_digit()) {
+        return token
+            .parse::<u32>()
+            .map_err(|_| format!("'{token}' is not a valid gid"));
+    }
+
+    metadata::id_lookup::lookup_group_by_name(token.as_bytes())
+        .ok()
+        .flatten()
+        .ok_or_else(|| format!("'{token}' is not a valid group name or gid"))
 }
 
 /// Parses a timeout directive value in seconds.

@@ -265,9 +265,65 @@ mod config_helpers_tests {
     }
 
     #[test]
-    fn parse_gid_setting_rejects_empty_and_non_numeric() {
+    fn parse_gid_setting_rejects_empty_and_unresolvable() {
         assert!(parse_gid_setting("   ").is_err());
-        assert!(parse_gid_setting("nobody").is_err());
+        // WHY: upstream group_to_gid() fails when getgrnam() cannot resolve the
+        // name, so a name guaranteed absent from the group database must error
+        // rather than default silently. The `\0`-free control name below is not
+        // a valid group anywhere.
+        assert!(parse_gid_setting("oc_definitely_absent_group").is_err());
+    }
+
+    /// WHY: the canonical rsyncd.conf ships `uid = nobody` / `gid = nogroup`.
+    /// upstream resolves both a numeric id and a name (user_to_uid /
+    /// group_to_gid with num_ok=True); oc must accept the name form too or the
+    /// default config fails to parse. `root`/gid 0 exist on every POSIX host,
+    /// giving a deterministic name to resolve.
+    #[test]
+    #[cfg(unix)]
+    fn parse_uid_setting_resolves_root_name_and_numeric() {
+        assert_eq!(parse_uid_setting("0"), Some(0));
+        assert_eq!(parse_uid_setting("65534"), Some(65534));
+        assert_eq!(
+            parse_uid_setting("root"),
+            Some(0),
+            "the username 'root' must resolve to uid 0"
+        );
+    }
+
+    /// WHY: a name that resolves nowhere must surface as a parse failure (the
+    /// caller wraps `None` into `invalid uid '<value>'`), never a silent
+    /// default. Mirrors upstream `@ERROR: invalid uid <name>`.
+    #[test]
+    fn parse_uid_setting_rejects_empty_and_unresolvable() {
+        assert_eq!(parse_uid_setting(""), None);
+        assert_eq!(parse_uid_setting("   "), None);
+        assert_eq!(parse_uid_setting("oc_definitely_absent_user"), None);
+    }
+
+    /// WHY: `nobody`/`nogroup` are the canonical daemon defaults. They exist on
+    /// most hosts but not all CI images, so resolve-or-skip rather than assert a
+    /// fixed id; when present, the resolved value must be a real numeric id.
+    #[test]
+    #[cfg(unix)]
+    fn parse_uid_setting_resolves_nobody_when_present() {
+        if let Some(uid) = parse_uid_setting("nobody") {
+            assert_eq!(parse_uid_setting(&uid.to_string()), Some(uid));
+        }
+        if let Ok(GidSetting::List(gids)) = parse_gid_setting("nogroup") {
+            assert_eq!(gids.len(), 1, "a single group name yields one gid");
+        }
+    }
+
+    /// WHY: a group name resolves the same as a numeric gid. `root`/`wheel` gid 0
+    /// exists on every POSIX host under one of those two names.
+    #[test]
+    #[cfg(unix)]
+    fn parse_gid_setting_resolves_group_name() {
+        let by_name = parse_gid_setting("root")
+            .or_else(|_| parse_gid_setting("wheel"))
+            .expect("gid 0 is named root or wheel on every POSIX host");
+        assert_eq!(by_name, GidSetting::List(vec![0]));
     }
 
     #[test]
