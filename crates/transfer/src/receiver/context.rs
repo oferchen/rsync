@@ -680,6 +680,30 @@ impl ReceiverContext {
         reader.xattr_cache().get(ndx as usize).cloned()
     }
 
+    /// Returns the `x`-modifier xattr-name filter to screen received xattrs
+    /// when applying them, or `None` when the transfer carries no such rules.
+    ///
+    /// The returned set is consulted via [`FilterSet::xattr_name_allowed`] at
+    /// each xattr apply site so an excluded name is neither written to nor
+    /// removed from the destination.
+    ///
+    /// # Upstream Reference
+    ///
+    /// Mirrors upstream's `saw_xattr_filter` gate: `receive_xattr()`
+    /// (xattrs.c:822) and `rsync_xal_set()` (xattrs.c:1026) both consult
+    /// `name_is_excluded(name, NAME_IS_XATTR, ALL_FILTERS)`.
+    pub(in crate::receiver) fn xattr_name_filter(&self) -> Option<&FilterSet> {
+        let global = self.filter_chain.global();
+        global.has_xattr_rules().then_some(global)
+    }
+
+    /// Owned (`Arc`) form of [`xattr_name_filter`](Self::xattr_name_filter) for
+    /// apply sites that run on the disk-commit thread or in a parallel map and
+    /// therefore cannot borrow `self`.
+    pub(in crate::receiver) fn xattr_name_filter_arc(&self) -> Option<Arc<FilterSet>> {
+        self.xattr_name_filter().map(|set| Arc::new(set.clone()))
+    }
+
     /// Determines if input multiplex should be activated based on mode and protocol.
     ///
     /// The activation threshold differs by mode:

@@ -8,6 +8,7 @@ use std::ffi::OsString;
 use std::path::PathBuf;
 use std::sync::Arc;
 
+use filters::FilterSet;
 use metadata::MetadataOptions;
 use protocol::acl::AclCache;
 
@@ -124,6 +125,13 @@ pub struct DiskCommitConfig {
     ///
     /// upstream: acls.c:1059-1081 `match_acl_ids()`.
     pub acl_id_map: Option<Arc<metadata::AclIdMapper>>,
+    /// Compiled `x`-modifier xattr-name filter, shared via `Arc`. When `Some`,
+    /// the disk thread screens each received xattr name before applying it and
+    /// preserves excluded names already on the destination.
+    ///
+    /// upstream: `saw_xattr_filter` gate in `receive_xattr()` (xattrs.c:822)
+    /// and `rsync_xal_set()` (xattrs.c:1026).
+    pub xattr_filter: Option<Arc<FilterSet>>,
     /// SPSC channel capacity for the disk commit thread.
     ///
     /// Controls how many `FileMessage` items can be buffered between the
@@ -207,6 +215,7 @@ impl Default for DiskCommitConfig {
             backup: None,
             acl_cache: None,
             acl_id_map: None,
+            xattr_filter: None,
             channel_capacity: DEFAULT_CHANNEL_CAPACITY,
             io_uring_policy: fast_io::IoUringPolicy::Auto,
             io_uring_depth: None,

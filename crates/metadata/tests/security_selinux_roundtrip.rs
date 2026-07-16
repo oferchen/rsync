@@ -143,7 +143,7 @@ fn security_selinux_xattr_preserved_via_wire_path() {
         FIXTURE_LABEL.to_vec(),
     ));
 
-    apply_xattrs_from_list(&destination, &list, false).expect("apply wire xattrs");
+    apply_xattrs_from_list(&destination, &list, false, None).expect("apply wire xattrs");
 
     let landed = xattr::get(&destination, "security.selinux")
         .expect("read dest label")

@@ -393,6 +393,7 @@ impl ReceiverContext {
 
         let acl_cache_clone = acl_cache.cloned();
         let acl_id_map_clone = acl_id_map.cloned();
+        let xattr_filter = self.xattr_name_filter_arc();
         let results = crate::parallel_io::map_blocking(
             entry_snapshots,
             self.parallel_thresholds
@@ -415,7 +416,13 @@ impl ReceiverContext {
                 }
                 // upstream: xattrs.c:set_xattr() - apply xattrs after metadata
                 if let Some(ref xattr_list) = xattr_list {
-                    if let Err(e) = metadata::apply_xattrs_from_list(&dir_path, xattr_list, true) {
+                    let filter = xattr_filter
+                        .as_ref()
+                        .map(|set| move |name: &str| set.xattr_name_allowed(name));
+                    let filter_ref = filter.as_ref().map(|f| f as &dyn Fn(&str) -> bool);
+                    if let Err(e) =
+                        metadata::apply_xattrs_from_list(&dir_path, xattr_list, true, filter_ref)
+                    {
                         return Some((dir_path, e.to_string()));
                     }
                 }
@@ -697,7 +704,13 @@ impl ReceiverContext {
             }
         } else if let Some(ref xattr_list) = self.resolve_xattr_list(entry) {
             // upstream: xattrs.c:set_xattr() - apply xattrs after metadata
-            if let Err(e) = metadata::apply_xattrs_from_list(&dir_path, xattr_list, true) {
+            let filter = self
+                .xattr_name_filter()
+                .map(|set| move |name: &str| set.xattr_name_allowed(name));
+            let filter_ref = filter.as_ref().map(|f| f as &dyn Fn(&str) -> bool);
+            if let Err(e) =
+                metadata::apply_xattrs_from_list(&dir_path, xattr_list, true, filter_ref)
+            {
                 if self.config.flags.verbose && self.config.connection.client_mode {
                     info_log!(
                         Misc,
