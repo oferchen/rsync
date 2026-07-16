@@ -170,6 +170,24 @@ pub(crate) fn emit_out_format<W: Write + ?Sized>(
             }
             continue;
         }
+        // upstream: generator.c:1704-1719 - a file skipped by `--max-size` /
+        // `--min-size` never reaches the itemize call. The generator emits the
+        // notice only at INFO_GTE(SKIP, 1) and then `goto cleanup`, so the
+        // itemized row is suppressed regardless of `-i`/`-ii`.
+        if let Some(suffix) = match event.kind() {
+            ClientEventKind::SkippedOverMaxSize => Some(&b" is over max-size\n"[..]),
+            ClientEventKind::SkippedUnderMinSize => Some(&b" is under min-size\n"[..]),
+            _ => None,
+        } {
+            if info_gte(InfoFlag::Skip, 1) {
+                writer.write_all(&escape_path(
+                    event.relative_path(),
+                    context.eight_bit_output,
+                ))?;
+                writer.write_all(suffix)?;
+            }
+            continue;
+        }
         if should_suppress_event(event, context) {
             continue;
         }

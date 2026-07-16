@@ -102,7 +102,7 @@ fn execute_with_report_dry_run_records_directory_event() {
 }
 
 #[test]
-fn execute_with_report_dry_run_skips_records_for_filtered_small_files() {
+fn execute_with_report_records_min_size_skip_notice_without_copying() {
     let temp = tempdir().expect("tempdir");
     let source = temp.path().join("tiny.txt");
     fs::write(&source, b"abc").expect("write source");
@@ -120,7 +120,17 @@ fn execute_with_report_dry_run_skips_records_for_filtered_small_files() {
         .execute_with_report(LocalCopyExecution::DryRun, options)
         .expect("dry run succeeds");
 
-    assert!(report.records().is_empty());
+    // A `--min-size` skip records a `SkippedUnderMinSize` notice action, exactly
+    // like the other generator-phase skips (`SkippedNewerDestination`,
+    // `SkippedExisting`, `SkippedMissingDestination`) upstream emits during the
+    // generator loop. The record is the only channel that carries the
+    // "%s is under min-size" notice to the renderer, which prints it ahead of
+    // the statistics block (upstream: generator.c:1712-1719; ClientEvents derive
+    // from records() in core `ClientSummary::from_report`). It is a skip notice,
+    // not a copy: no data is written and no file is counted as copied.
+    let records = report.records();
+    assert_eq!(records.len(), 1);
+    assert_eq!(records[0].action(), &LocalCopyAction::SkippedUnderMinSize);
     assert_eq!(report.summary().files_copied(), 0);
     assert_eq!(report.summary().regular_files_total(), 1);
     assert_eq!(report.summary().bytes_copied(), 0);
