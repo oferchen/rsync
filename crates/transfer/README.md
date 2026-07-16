@@ -20,7 +20,6 @@ maximum throughput.
 - `TransferConfig` / `TransferConfigBuilder` - transfer parameter assembly
 - `DiskCommitChannel` - SPSC channel decoupling network receives from disk writes
 - `Pipeline` - bounded-concurrency request pipeline overlapping I/O with processing
-- `AckBatcher` - amortizes per-file acknowledgment overhead
 - `TokenReader` / `TokenBuffer` - delta token stream decoding
 
 ## Architecture

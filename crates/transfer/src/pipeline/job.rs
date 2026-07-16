@@ -95,10 +95,6 @@ pub struct TransferFlags {
 /// Produced by iterating the [`FileList`] and consumed by the transfer executor.
 /// Contains everything needed to initiate one file's transfer: the protocol index
 /// (NDX), a reference to the file entry, and control flags.
-///
-/// `FileJob` flows through a bounded `tokio::sync::mpsc` channel from the producer
-/// task to the consumer task. Channel backpressure naturally throttles the producer
-/// when the consumer falls behind.
 #[derive(Debug, Clone)]
 pub struct FileJob {
     /// Protocol index (position in the sorted file list). Stable after sort.

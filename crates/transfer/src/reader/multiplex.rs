@@ -3,10 +3,6 @@ use std::sync::{Arc, Mutex};
 
 use crate::handshake::IoTimeoutReapply;
 
-#[cfg(all(test, feature = "tokio-transfer"))]
-#[path = "multiplex_parity_tests.rs"]
-mod parity_tests;
-
 /// Sink for the inline, wire-visible side effects that frame dispatch performs.
 ///
 /// Upstream rsync's `log.c:rwrite()` writes `MSG_INFO`/`MSG_CLIENT` to stdout
@@ -792,82 +788,6 @@ impl<R: Read> Read for MultiplexReader<R> {
                 // MSG_DATA frame as a multiplex activation marker. Returning
                 // Ok(0) from Read::read() signals EOF in Rust, so we must
                 // skip empty data frames and continue to the next message.
-                if self.buffer.is_empty() {
-                    continue;
-                }
-                return self.place_frame(buf);
-            }
-            self.check_error_exit()?;
-            self.check_io_timeout()?;
-        }
-    }
-}
-
-/// Async `.await`-driven demux, gated on the `tokio-transfer` feature.
-///
-/// This is the `.await` counterpart to the blocking [`Read`] impl above. It
-/// exists so a genuine receiver-side `.await` can pull multiplex frames off a
-/// [`tokio::io::AsyncRead`] socket without a blocking read, per the ASY-7
-/// receiver-prototype scoping (`docs/design/asy-7-receiver-tokio-prototype.md`).
-///
-/// The only difference from the sync driver is the frame read: it awaits
-/// [`protocol::recv_msg_into_async`] instead of blocking on
-/// [`protocol::recv_msg_into`]. Every non-read step - the demux loop shape, the
-/// empty-frame skip, the buffer-drain/place copies, the batch tee, the
-/// `check_error_exit` abort, and (crucially) the inline print/flush side effects
-/// via [`MultiplexReader::dispatch_message_with`] - is the exact same shared,
-/// reader-free code the sync driver runs. Because the dispatch core fires each
-/// side effect at the identical point relative to data delivery, the async
-/// output is byte-identical to the sync output, effect ordering included.
-///
-/// Additive and unwired: this driver is not connected to the receiver hot path
-/// yet (that routing is the next rung). It is exercised only by the sync-vs-
-/// async parity tests.
-#[cfg(feature = "tokio-transfer")]
-impl<R: tokio::io::AsyncRead + Unpin> MultiplexReader<R> {
-    /// Reads demultiplexed data into `buf`, awaiting the underlying socket.
-    ///
-    /// Byte-for-byte equivalent to [`Read::read`] with the production
-    /// [`RealSink`] side effects. See the impl-level docs for the parity
-    /// guarantee.
-    ///
-    /// Unwired pending the receiver-routing rung; only tests drive it, so it is
-    /// dead code in non-test builds.
-    #[cfg_attr(not(test), allow(dead_code))]
-    pub(super) async fn read_async(&mut self, buf: &mut [u8]) -> io::Result<usize> {
-        self.read_async_with(buf, &mut RealSink).await
-    }
-
-    /// Reads demultiplexed data into `buf`, routing side effects through `sink`.
-    ///
-    /// Identical demux logic to [`Read::read`]; only the frame read is awaited
-    /// and the side-effect sink is injectable so parity tests can capture the
-    /// ordered effect sequence. Production callers use [`read_async`], which
-    /// supplies [`RealSink`].
-    ///
-    /// [`read_async`]: MultiplexReader::read_async
-    #[cfg_attr(not(test), allow(dead_code))]
-    pub(super) async fn read_async_with<S: MuxSink>(
-        &mut self,
-        buf: &mut [u8],
-        sink: &mut S,
-    ) -> io::Result<usize> {
-        if self.pos < self.buffer.len() {
-            return self.drain_buffered(buf);
-        }
-
-        // Loop until we get a MSG_DATA message
-        loop {
-            self.buffer.clear();
-            self.pos = 0;
-
-            let code = protocol::recv_msg_into_async(&mut self.inner, &mut self.buffer).await?;
-
-            if self.dispatch_message_with(code, sink) {
-                // upstream: io.c io_start_multiplex_out() sends a length-0
-                // MSG_DATA frame as a multiplex activation marker. Returning
-                // Ok(0) signals EOF, so we must skip empty data frames and
-                // continue to the next message - matching the sync driver.
                 if self.buffer.is_empty() {
                     continue;
                 }

@@ -52,12 +52,6 @@
 //! The pipelined receiver is fully compatible with upstream rsync daemons.
 //! The sender doesn't need to know about pipelining - it simply processes
 //! requests as they arrive and sends responses in order.
-//!
-//! # ACK Batching
-//!
-//! When combined with the [`crate::ack_batcher`] module, acknowledgments for
-//! completed transfers can be batched to further reduce network round-trips.
-//! This is configured via [`PipelineConfig::ack_batch_size`].
 
 pub mod async_signature;
 pub mod job;
@@ -67,32 +61,9 @@ pub mod receiver;
 pub mod spsc;
 mod state;
 
-#[cfg(feature = "async")]
-pub mod async_dispatch;
-#[cfg(feature = "async")]
-pub mod async_pipeline;
-
-// ASY-3: tokio-hosted server driver. Gated on `tokio-transfer` (which implies
-// `async`), it hosts the sync server body on a tokio runtime and is wired into
-// the `core` session shim. Default-off; the threaded path is unchanged.
-#[cfg(feature = "tokio-transfer")]
-pub mod tokio_driver;
-
-// ASY-4: async transport wrapper seam. Gated on `tokio-transfer`. An additive,
-// unwired `AsyncRead + AsyncWrite` adapter over the socket-backed transport
-// that the coupled ASY-7-redo receiver rung consumes. Not wired into the
-// receiver read path, demux, SPSC bridge, or `core::session`; default-off.
-#[cfg(feature = "tokio-transfer")]
-pub(crate) mod async_transport;
-
 pub use job::{FileJob, FileList, MAX_RETRY_COUNT, TransferFlags};
 pub use pending::PendingTransfer;
 pub use state::PipelineState;
-
-use crate::ack_batcher::{
-    AckBatcherConfig, DEFAULT_BATCH_SIZE, DEFAULT_BATCH_TIMEOUT_MS, MAX_BATCH_SIZE,
-    MAX_BATCH_TIMEOUT_MS, MIN_BATCH_SIZE,
-};
 
 /// Default pipeline window size.
 ///
@@ -115,21 +86,12 @@ pub const MAX_PIPELINE_WINDOW: usize = 256;
 pub struct PipelineConfig {
     /// Number of concurrent requests to keep in flight.
     pub window_size: usize,
-    /// Number of ACKs to batch before sending (0 = disabled).
-    pub ack_batch_size: usize,
-    /// Timeout in milliseconds before flushing ACK batch (0 = no timeout).
-    pub ack_batch_timeout_ms: u64,
-    /// Whether ACK batching is enabled.
-    pub ack_batching_enabled: bool,
 }
 
 impl Default for PipelineConfig {
     fn default() -> Self {
         Self {
             window_size: DEFAULT_PIPELINE_WINDOW,
-            ack_batch_size: DEFAULT_BATCH_SIZE,
-            ack_batch_timeout_ms: DEFAULT_BATCH_TIMEOUT_MS,
-            ack_batching_enabled: true,
         }
     }
 }
@@ -142,90 +104,10 @@ impl PipelineConfig {
         self
     }
 
-    /// Sets the ACK batch size.
-    ///
-    /// # Arguments
-    ///
-    /// * `size` - Number of ACKs to batch (1-256). Values outside this range
-    ///   are clamped.
-    #[must_use]
-    pub fn with_ack_batch_size(mut self, size: usize) -> Self {
-        self.ack_batch_size = size.clamp(MIN_BATCH_SIZE, MAX_BATCH_SIZE);
-        self
-    }
-
-    /// Sets the ACK batch timeout in milliseconds.
-    ///
-    /// # Arguments
-    ///
-    /// * `timeout_ms` - Maximum time to wait before flushing batch (max 1000ms).
-    #[must_use]
-    pub fn with_ack_batch_timeout_ms(mut self, timeout_ms: u64) -> Self {
-        self.ack_batch_timeout_ms = timeout_ms.min(MAX_BATCH_TIMEOUT_MS);
-        self
-    }
-
-    /// Enables or disables ACK batching.
-    #[must_use]
-    pub const fn with_ack_batching(mut self, enabled: bool) -> Self {
-        self.ack_batching_enabled = enabled;
-        self
-    }
-
-    /// Creates a synchronous configuration (window size = 1, no batching).
+    /// Creates a synchronous configuration (window size = 1).
     #[must_use]
     pub fn synchronous() -> Self {
-        Self {
-            window_size: 1,
-            ack_batch_size: 1,
-            ack_batch_timeout_ms: 0,
-            ack_batching_enabled: false,
-        }
-    }
-
-    /// Creates an [`AckBatcherConfig`] from this pipeline configuration.
-    #[must_use]
-    pub fn ack_batcher_config(&self) -> AckBatcherConfig {
-        if self.ack_batching_enabled {
-            AckBatcherConfig::default()
-                .with_batch_size(self.ack_batch_size)
-                .with_timeout_ms(self.ack_batch_timeout_ms)
-        } else {
-            AckBatcherConfig::disabled()
-        }
-    }
-}
-
-/// Configuration for the async tokio-based transfer pipeline.
-///
-/// Extends [`PipelineConfig`] with async-specific settings for channel
-/// capacity and retry behavior. Used by the `run_pipeline()` async entry point.
-#[derive(Debug, Clone)]
-pub struct AsyncPipelineConfig {
-    /// Base pipeline configuration (window size, ACK batching, etc.).
-    pub pipeline: PipelineConfig,
-    /// Bounded channel capacity for `FileJob` dispatch (default: 32).
-    ///
-    /// Controls backpressure: when the consumer falls behind, the producer
-    /// blocks on `send().await` once this many jobs are in flight.
-    pub job_channel_capacity: usize,
-    /// Whether to enable the retry channel for failed transfers.
-    pub retry_enabled: bool,
-    /// Maximum retry attempts per file (default: 2).
-    pub max_retries: u8,
-}
-
-/// Default channel capacity for `FileJob` dispatch.
-pub const DEFAULT_JOB_CHANNEL_CAPACITY: usize = 32;
-
-impl Default for AsyncPipelineConfig {
-    fn default() -> Self {
-        Self {
-            pipeline: PipelineConfig::default(),
-            job_channel_capacity: DEFAULT_JOB_CHANNEL_CAPACITY,
-            retry_enabled: true,
-            max_retries: job::MAX_RETRY_COUNT,
-        }
+        Self { window_size: 1 }
     }
 }
 
@@ -255,56 +137,6 @@ mod tests {
     fn synchronous_config() {
         let config = PipelineConfig::synchronous();
         assert_eq!(config.window_size, 1);
-        assert!(!config.ack_batching_enabled);
-        assert_eq!(config.ack_batch_size, 1);
-    }
-
-    #[test]
-    fn default_config_has_ack_batching() {
-        let config = PipelineConfig::default();
-        assert!(config.ack_batching_enabled);
-        assert_eq!(config.ack_batch_size, DEFAULT_BATCH_SIZE);
-        assert_eq!(config.ack_batch_timeout_ms, DEFAULT_BATCH_TIMEOUT_MS);
-    }
-
-    #[test]
-    fn with_ack_batch_size_clamps() {
-        let config = PipelineConfig::default().with_ack_batch_size(0);
-        assert_eq!(config.ack_batch_size, MIN_BATCH_SIZE);
-
-        let config = PipelineConfig::default().with_ack_batch_size(1000);
-        assert_eq!(config.ack_batch_size, MAX_BATCH_SIZE);
-    }
-
-    #[test]
-    fn with_ack_batch_timeout_clamps() {
-        let config = PipelineConfig::default().with_ack_batch_timeout_ms(5000);
-        assert_eq!(config.ack_batch_timeout_ms, MAX_BATCH_TIMEOUT_MS);
-    }
-
-    #[test]
-    fn with_ack_batching_disabled() {
-        let config = PipelineConfig::default().with_ack_batching(false);
-        assert!(!config.ack_batching_enabled);
-    }
-
-    #[test]
-    fn ack_batcher_config_from_pipeline_config() {
-        let pipeline_config = PipelineConfig::default()
-            .with_ack_batch_size(32)
-            .with_ack_batch_timeout_ms(100);
-
-        let ack_config = pipeline_config.ack_batcher_config();
-        assert!(ack_config.is_enabled());
-        assert_eq!(ack_config.batch_size, 32);
-        assert_eq!(ack_config.batch_timeout_ms, 100);
-    }
-
-    #[test]
-    fn ack_batcher_config_disabled() {
-        let pipeline_config = PipelineConfig::default().with_ack_batching(false);
-        let ack_config = pipeline_config.ack_batcher_config();
-        assert!(!ack_config.is_enabled());
     }
 
     #[test]
@@ -314,34 +146,8 @@ mod tests {
     }
 
     #[test]
-    fn with_ack_batch_size_accepts_valid_value() {
-        let config = PipelineConfig::default().with_ack_batch_size(32);
-        assert_eq!(config.ack_batch_size, 32);
-    }
-
-    #[test]
-    fn with_ack_batch_timeout_accepts_valid_value() {
-        let config = PipelineConfig::default().with_ack_batch_timeout_ms(500);
-        assert_eq!(config.ack_batch_timeout_ms, 500);
-    }
-
-    #[test]
     fn builder_method_chaining() {
-        let config = PipelineConfig::default()
-            .with_window_size(100)
-            .with_ack_batch_size(64)
-            .with_ack_batch_timeout_ms(200)
-            .with_ack_batching(true);
-
+        let config = PipelineConfig::default().with_window_size(100);
         assert_eq!(config.window_size, 100);
-        assert_eq!(config.ack_batch_size, 64);
-        assert_eq!(config.ack_batch_timeout_ms, 200);
-        assert!(config.ack_batching_enabled);
-    }
-
-    #[test]
-    fn with_ack_batching_enables() {
-        let config = PipelineConfig::synchronous().with_ack_batching(true);
-        assert!(config.ack_batching_enabled);
     }
 }

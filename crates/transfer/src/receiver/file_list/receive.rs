@@ -418,9 +418,8 @@ impl ReceiverContext {
     /// 2. **Duplicate** - a second sub-list for a directory already served is a
     ///    malicious duplicate that would otherwise grow `file_list` unbounded.
     ///
-    /// Shared by the synchronous [`Self::receive_one_extra_segment`] and the
-    /// asynchronous `receive_extra_file_lists_async` so both wire paths reject
-    /// identical bytes with identical exit codes.
+    /// Used by [`Self::receive_one_extra_segment`] to reject malformed segments
+    /// with the exit codes upstream uses.
     ///
     /// # Upstream Reference
     ///

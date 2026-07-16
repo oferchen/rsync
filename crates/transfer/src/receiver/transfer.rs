@@ -5,39 +5,21 @@
 //! loops live in their own submodules:
 //!
 //! - `sync` - sequential per-file transfer used by `run_sync`.
-//! - `sync_async` - `.await` twin of `sync` used by `run_sync_async`
-//!   (`tokio-transfer` only).
 //! - `pipelined` - decoupled two-phase pipeline used by `run_pipelined`.
-//! - `pipelined_async` - `.await` twin of `pipelined` used by
-//!   `run_pipelined_async` (`tokio-transfer` only).
 //! - `pipelined_incremental` - same as `pipelined` plus incremental directory
 //!   creation and failed-dir tracking.
-//! - `pipelined_incremental_async` - `.await` twin of `pipelined_incremental`
-//!   used by `run_pipelined_incremental_async` (`tokio-transfer` only).
 //! - `setup` - common multiplex/filter/file-list setup.
 //! - `phases` - protocol phase exchange and goodbye handshake.
 //! - `candidates` - candidate-file selection for the pipelined paths.
 //! - `pipeline` - the inner `run_pipeline_loop_decoupled` plus dry-run loop.
-//! - `pipeline_async` - `.await` twin of `pipeline` used by the async pipelined
-//!   drivers (`tokio-transfer` only).
 
 mod candidates;
-#[cfg(feature = "tokio-transfer")]
-mod file_async;
 mod phases;
 mod pipeline;
-#[cfg(feature = "tokio-transfer")]
-mod pipeline_async;
 mod pipelined;
-#[cfg(feature = "tokio-transfer")]
-mod pipelined_async;
 mod pipelined_incremental;
-#[cfg(feature = "tokio-transfer")]
-mod pipelined_incremental_async;
 mod setup;
 mod sync;
-#[cfg(feature = "tokio-transfer")]
-mod sync_async;
 
 pub(in crate::receiver) use setup::parse_wire_filters_for_receiver;
 
@@ -92,9 +74,9 @@ impl ReceiverContext {
     /// (a fatal transfer error) or a stale pre-existing inode with the wrong
     /// content.
     ///
-    /// This is the single ordering site shared by all four pipelined drivers
-    /// (`run_pipelined`, `run_pipelined_async`, `run_pipelined_incremental`,
-    /// `run_pipelined_incremental_async`) so they cannot drift apart.
+    /// This is the single ordering site shared by both pipelined drivers
+    /// (`run_pipelined` and `run_pipelined_incremental`) so they cannot drift
+    /// apart.
     ///
     /// # Upstream Reference
     ///
@@ -131,59 +113,6 @@ impl ReceiverContext {
         self.create_hardlinks(dest_dir, writer)?;
 
         Ok(())
-    }
-
-    /// BENCHMARK-ONLY async twin of [`run`](Self::run) over a real socket.
-    ///
-    /// Adopts `socket` (a dup'd clone of the transfer socket) as the async read
-    /// half: it is flipped non-blocking and handed to the tokio reactor, then
-    /// wrapped as a plain [`AsyncServerReader`](crate::reader::AsyncServerReader)
-    /// (multiplex activation happens inside the driver's `setup_transfer_async`,
-    /// exactly as the sync path activates it inside `setup_transfer`). The
-    /// wire-facing reads are driven through the matching async receiver driver;
-    /// the synchronous request half keeps writing through the caller's blocking
-    /// `writer`, which is a separate socket clone. Both fds point at the same
-    /// kernel socket, so the async reads continue from exactly where the
-    /// synchronous protocol setup left off - sound only because that setup reads
-    /// the compat exchange directly (no look-ahead buffer that could strand wire
-    /// bytes in a discarded reader).
-    ///
-    /// This exists purely to measure the async receiver driver against the
-    /// threaded one over a live socket. The synchronous write leg still blocks,
-    /// so it is not production-safe and not wire-fidelity-guaranteed under
-    /// arbitrary backpressure. Reachable only with the `async-bench` feature
-    /// compiled AND `OC_RSYNC_ASYNC_BENCH=1` set at runtime.
-    #[cfg(feature = "async-bench")]
-    pub(crate) async fn run_receiver_async_bench<W>(
-        &mut self,
-        socket: std::net::TcpStream,
-        writer: &mut W,
-    ) -> io::Result<TransferStats>
-    where
-        W: Write + crate::writer::MsgInfoSender + ?Sized,
-    {
-        socket.set_nonblocking(true)?;
-        let async_socket = tokio::net::TcpStream::from_std(socket)?;
-        let reader = crate::reader::AsyncServerReader::new_plain(async_socket);
-
-        // Mirror the sync `run` dispatch exactly so the benchmark compares
-        // like-for-like: incremental directory creation when `incremental-flist`
-        // is compiled, otherwise the decoupled pipeline.
-        #[cfg(feature = "incremental-flist")]
-        {
-            self.run_pipelined_incremental_async(
-                reader,
-                writer,
-                crate::pipeline::PipelineConfig::default(),
-                None,
-            )
-            .await
-        }
-        #[cfg(not(feature = "incremental-flist"))]
-        {
-            self.run_pipelined_async(reader, writer, crate::pipeline::PipelineConfig::default())
-                .await
-        }
     }
 
     /// True when the delete pass has work to do at the EARLY site, before the

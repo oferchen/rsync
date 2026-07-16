@@ -34,8 +34,6 @@ rayon = { workspace = true }
 # explicit SO_LINGER + half-close drain barrier after the daemon-sender's
 # generator orchestrator returns (UTS-V3.A audit).
 socket2 = { workspace = true, features = ["all"] }
-tokio = { workspace = true, optional = true }
-tokio-util = { workspace = true, optional = true }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 apple-fs = { path = "../apple-fs" }
@@ -141,31 +139,6 @@ incremental-flist = []
 sender-inc-recurse = []
 
 # ============================================================================
-# Runtime Features
-# ============================================================================
-
-# Async runtime support - enables tokio-based async pipeline for transfers
-async = ["dep:tokio", "dep:tokio-util"]
-
-# EXPERIMENTAL (ASY-3, default-off): compiles the tokio-hosted transfer
-# driver (`pipeline::tokio_driver`). Implies `async` (which pulls tokio +
-# tokio-util). For this rung the driver hosts the existing sync server body
-# on a tokio runtime and produces byte-identical wire output; per-boundary
-# `.await` conversion is deferred to ASY-7/8. See
-# docs/design/asy-3-async-boundary-spec.md.
-tokio-transfer = ["async", "protocol/tokio-transfer"]
-
-# BENCHMARK-ONLY (default-off): compiles the gated daemon-receiver path that
-# runs the existing async receiver driver over a real socket on a multi-thread
-# runtime, for a fair async-vs-threaded receiver benchmark. Also requires the
-# `OC_RSYNC_ASYNC_BENCH=1` env var at runtime; both gates must be present for
-# the path to activate. The synchronous write leg still blocks (no AsyncWrite
-# stack), so this is NOT production-safe and NOT wire-fidelity-guaranteed under
-# arbitrary backpressure - it does not satisfy the live-wiring rung. Implies
-# `tokio-transfer`.
-async-bench = ["tokio-transfer"]
-
-# ============================================================================
 # Debugging Features
 # ============================================================================
 
@@ -182,11 +155,6 @@ criterion = { workspace = true }
 proptest = { workspace = true }
 rand = { workspace = true }
 crossbeam-channel = { workspace = true }
-# Drives the sync-vs-async MultiplexReader demux parity tests
-# (`reader::multiplex::parity_tests`) under `--features tokio-transfer`.
-# `macros` + `rt` supply `#[tokio::test]` and a current-thread runtime; unused
-# in the default build, so the default demux is unaffected.
-tokio = { workspace = true, features = ["macros", "rt"] }
 
 [target.'cfg(any(target_os = "linux", target_os = "android"))'.dev-dependencies]
 filetime = { workspace = true }

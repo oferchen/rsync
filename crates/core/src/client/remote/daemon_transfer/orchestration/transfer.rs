@@ -114,8 +114,6 @@ pub(crate) fn run_pull_transfer(
             itemize: None,
             io_timeout_reapply,
         },
-        #[cfg(feature = "async-bench")]
-        None,
     )
     .map_err(|e| map_server_transfer_error(e, Role::Receiver))?;
     let elapsed = start.elapsed();
@@ -198,8 +196,6 @@ pub(crate) fn run_push_transfer(
         } else {
             None
         },
-        #[cfg(feature = "async-bench")]
-        None,
     );
 
     match result {

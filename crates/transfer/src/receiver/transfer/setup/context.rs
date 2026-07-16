@@ -12,8 +12,6 @@ use std::sync::Arc;
 
 use logging::{debug_log, info_log};
 use metadata::MetadataOptions;
-#[cfg(feature = "tokio-transfer")]
-use protocol::filters::read_filter_list_async;
 use protocol::filters::{FilterRuleWireFormat, read_filter_list};
 
 use filters::FilterChain;
@@ -413,11 +411,8 @@ impl ReceiverContext {
     /// compiles them into the receiver's per-directory [`FilterChain`].
     ///
     /// This is the reader-free tail of the filter-list read: it takes the
-    /// already-decoded `wire_rules` and produces the identical `filter_chain`
-    /// regardless of whether the rules were read by the blocking
-    /// [`read_filter_list`] or the async [`read_filter_list_async`]. Only the
-    /// read that produces `wire_rules` differs between the sync and async setup
-    /// paths; this rule-combination and chain build is shared verbatim.
+    /// already-decoded `wire_rules` (read by [`read_filter_list`]) and produces
+    /// the `filter_chain`.
     ///
     /// upstream: clientserver.c:rsync_module() - daemon_filter_list is applied
     /// on top of client filters. Daemon rules take precedence (prepended).
@@ -521,140 +516,6 @@ impl ReceiverContext {
         );
         self.deletion_filter_chain = chain;
         Ok(())
-    }
-
-    /// Async twin of [`setup_transfer`](Self::setup_transfer), gated on the
-    /// `tokio-transfer` feature.
-    ///
-    /// Runs the identical receiver transfer-setup sequence with `.await` on the
-    /// two wire reads: the filter-list read
-    /// ([`read_filter_list_async`](protocol::filters::read_filter_list_async))
-    /// and the initial file-list reception
-    /// ([`receive_file_list_async`](Self::receive_file_list_async)). INC_RECURSE
-    /// sub-list segments are pulled lazily by the drivers, not drained here.
-    /// Every other step - multiplex activation, filter-chain compilation
-    /// ([`apply_received_filter_rules`](Self::apply_received_filter_rules) /
-    /// [`build_client_deletion_filter_chain`](Self::build_client_deletion_filter_chain)),
-    /// `--files-from` forwarding, and the reader-free
-    /// [`build_pipeline_setup`](Self::build_pipeline_setup) tail - is the same
-    /// shared logic the blocking path runs, so for the same wire bytes this
-    /// produces a byte-identical [`PipelineSetup`], `file_list`, and
-    /// post-sanitize `file_count`, independent of how the bytes are chunked
-    /// across `.await` points.
-    ///
-    /// The fourth tuple element is the file-list look-ahead carry: bytes the
-    /// async flist reader pulled past the end of the list (and past
-    /// `NDX_FLIST_EOF`) that belong to the following per-file wire phase. The
-    /// sync path never over-reads, so the driver must prepend these to the
-    /// per-file read stream to preserve the identical byte discipline; see
-    /// [`run_sync_async`](Self::run_sync_async).
-    ///
-    /// Additive and unwired: the coupled async receiver driver (the deferred
-    /// atomic ASY receiver fork) is the consuming rung. Exercised only by the
-    /// `setup_transfer_async_matches_sync` parity test, so the non-test lib build
-    /// sees no caller.
-    ///
-    /// # Upstream Reference
-    ///
-    /// - `main.c:1342-1343` - client receiver activates multiplex at protocol >= 23
-    /// - `main.c:1167-1168` - server receiver activates multiplex at protocol >= 30
-    #[cfg(feature = "tokio-transfer")]
-    #[allow(dead_code)]
-    pub(in crate::receiver) async fn setup_transfer_async<R, W>(
-        &mut self,
-        reader: crate::reader::AsyncServerReader<R>,
-        writer: &mut W,
-    ) -> io::Result<(
-        crate::reader::AsyncServerReader<R>,
-        usize,
-        PipelineSetup,
-        Vec<u8>,
-    )>
-    where
-        R: tokio::io::AsyncRead + Unpin + Send + 'static,
-        W: io::Write + ?Sized,
-    {
-        // upstream: generator.c:2260-2261 - emitted at the top of generate_files.
-        debug_log!(Genr, 1, "generator starting pid={}", std::process::id());
-
-        // upstream: generator.c:2290-2295 - delta-transmission status, DEBUG_GTE(FLIST, 1).
-        debug_log!(
-            Flist,
-            1,
-            "delta-transmission {}",
-            if self.config.flags.whole_file {
-                "disabled for local transfer or --whole-file"
-            } else {
-                "enabled"
-            }
-        );
-
-        // Parallel receive-side delta apply is unconditionally compiled (PFF-7).
-        debug_log!(Recv, 1, "parallel receive-delta path active");
-
-        let mut reader = if self.should_activate_input_multiplex() {
-            reader.activate_multiplex().map_err(|e| {
-                io::Error::new(
-                    e.kind(),
-                    format!(
-                        "failed to activate INPUT multiplex: {e} {}{}",
-                        crate::role_trailer::error_location!(),
-                        crate::role_trailer::receiver()
-                    ),
-                )
-            })?
-        } else {
-            reader
-        };
-
-        if self.should_read_filter_list() {
-            let wire_rules = read_filter_list_async(&mut reader, self.protocol)
-                .await
-                .map_err(|e| {
-                    io::Error::new(
-                        e.kind(),
-                        format!(
-                            "failed to read filter list: {e} {}{}",
-                            crate::role_trailer::error_location!(),
-                            crate::role_trailer::receiver()
-                        ),
-                    )
-                })?;
-
-            self.apply_received_filter_rules(wire_rules)?;
-        } else if self.config.connection.client_mode
-            && !self.config.connection.filter_rules.is_empty()
-        {
-            self.build_client_deletion_filter_chain()?;
-        }
-
-        // FSM: filter list reading is complete. Advance to FileListTransfer.
-        self.pipeline
-            .advance_to(TransferPhase::FileListTransfer)
-            .map_err(crate::fsm_error)?;
-
-        // upstream: main.c:1173-1180 - forward a server-side `--files-from` file
-        // to the sender. Local file read + writer push, unchanged from sync.
-        self.forward_files_from_to_sender(writer)?;
-
-        if self.config.flags.verbose && self.config.connection.client_mode {
-            info_log!(Flist, 1, "receiving incremental file list");
-        }
-
-        // Thread the file-list read's look-ahead carry through the extra-lists
-        // read and back out to the driver: the async flist leaf fills an ~8 KiB
-        // buffer per demux read, so bytes read past the end-of-list marker (and
-        // past NDX_FLIST_EOF) belong to the following per-file wire phase and
-        // must not be dropped. `run_sync_async` prepends the returned `carry` to
-        // the per-file read stream so no wire bytes are lost when the sender
-        // packs the list and the first per-file response into one frame.
-        // INC_RECURSE sub-list segments are no longer drained here (see the sync
-        // `setup_transfer`); the async drivers materialize them lazily. `carry`
-        // is threaded straight through so no look-ahead wire bytes are lost.
-        let (file_count, carry) = self.receive_file_list_async(&mut reader).await?;
-
-        let (file_count, setup) = self.build_pipeline_setup(file_count)?;
-        Ok((reader, file_count, setup, carry))
     }
 
     /// Applies upstream's `get_local_name()` single-file rename semantics.

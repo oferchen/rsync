@@ -51,19 +51,6 @@ parallel = ["engine/lazy-metadata", "checksums/parallel"]
 # concurrency benchmark.
 async-daemon = ["daemon/async-daemon"]
 
-# EXPERIMENTAL (default-off): route the per-connection daemon transfer through
-# the tokio driver. Forwards to both `core` and `daemon` so the callee signature
-# (`run_server_with_handshake`, re-exported from `core`) and the daemon call-site
-# cfg gates stay in lockstep - selecting `-p cli --all-features` must not enable
-# `core/tokio-transfer` (which changes the signature) without also enabling
-# `daemon/tokio-transfer` (which selects the matching call site).
-tokio-transfer = ["async-daemon", "core/tokio-transfer", "daemon/tokio-transfer"]
-
-# BENCHMARK-ONLY (default-off): the gated async-receiver daemon path. Forwards to
-# both `core` and `daemon` for the same lockstep reason as `tokio-transfer`.
-# Also requires OC_RSYNC_ASYNC_BENCH=1 at runtime; production builds unaffected.
-async-bench = ["tokio-transfer", "core/async-bench", "daemon/async-bench"]
-
 
 [dependencies]
 bandwidth = { path = "../bandwidth" }

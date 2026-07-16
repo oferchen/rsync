@@ -90,22 +90,7 @@ iconv = ["protocol/iconv", "transfer/iconv", "engine/iconv"]
 embedded-ssh = ["dep:tokio", "rsync_io/embedded-ssh"]
 
 # Async runtime support - enables tokio-based async I/O for core operations
-async = ["dep:tokio", "engine/async", "transfer/async"]
-
-# EXPERIMENTAL (ASY-3, default-off): adds the runtime-ownership shim in the
-# core client facade. Implies `async` and pulls tokio + the transfer-side
-# tokio driver. The shim probes `Handle::try_current()`, adopting an existing
-# runtime or building a session-scoped current-thread runtime and
-# `block_on`-ing the transfer future. No tokio type appears in any public
-# `core` signature. See docs/design/asy-2-tokio-runtime-feature.md section 5.
-tokio-transfer = ["async", "dep:tokio", "transfer/tokio-transfer"]
-
-# BENCHMARK-ONLY (default-off): forwards `transfer/async-bench` so the daemon
-# receiver can run the async driver over a real socket for benchmarking. Also
-# gated at runtime by `OC_RSYNC_ASYNC_BENCH=1`. NOT production-safe. Implies
-# `tokio-transfer`.
-async-bench = ["tokio-transfer", "transfer/async-bench"]
-
+async = ["dep:tokio", "engine/async"]
 
 # DEPRECATED (ISI.h): sender INC_RECURSE is now default-on. Marker
 # retained for one release until ISI.i.2 retires the feature flag.

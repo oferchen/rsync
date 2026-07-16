@@ -3969,8 +3969,6 @@ dependencies = [
  "tempfile",
  "test-support",
  "thiserror",
- "tokio",
- "tokio-util",
  "tracing",
  "xattr",
 ]

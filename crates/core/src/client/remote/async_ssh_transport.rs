@@ -594,8 +594,6 @@ fn run_blocking_server(
         None,
         batch_recording,
         None,
-        #[cfg(feature = "async-bench")]
-        None,
     );
 
     // Drop the writer to signal EOF so the remote process can exit
