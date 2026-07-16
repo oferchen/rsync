@@ -12,12 +12,15 @@
 //!    it is within [`MAX_FUZZY_DISTANCE`]. upstream: generator.c:868-908.
 //!
 //! Upstream additionally skips candidates whose source-flist entry carries
-//! `FLAG_FILE_SENT` (a file being changed in this same run must not become a
+//! `FLAG_FILE_SENT` (a file already generated in this same run must not become a
 //! future fuzzy basis; generator.c:855,883,1879). oc scans the live destination
-//! filesystem rather than a persistent per-directory flist and has no
-//! equivalent sent-flag, so that screening is not reproduced here; its only
-//! effect is to avoid reusing an about-to-change sibling, and the whole-file
-//! checksum always verifies the reconstructed result regardless.
+//! filesystem rather than a persistent per-directory flist and has no runtime
+//! sent-flag reachable from this pure algorithm crate, so that screening is not
+//! reproduced here. The reconstructed file always stays correct (the whole-file
+//! checksum verifies it), but the selected basis - and therefore the delta the
+//! sender emits - can differ from upstream when a just-updated sibling is the
+//! closest name. Reproducing it faithfully needs the receiver to thread a
+//! per-run "already generated" set down into candidate collection.
 //!
 //! upstream: generator.c:831 `find_fuzzy()`, util1.c:1588 `fuzzy_distance()`.
 
