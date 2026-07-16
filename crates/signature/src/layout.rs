@@ -16,6 +16,13 @@ const OLD_MAX_BLOCK_SIZE: u32 = 1 << 29;
 /// Bias applied when computing strong checksum lengths for larger files.
 const BLOCKSUM_BIAS: i32 = 10;
 
+/// Default negotiated transfer-digest width, matching upstream's 16-byte digests
+/// (MD5, MD4, XXH3-128) for which `MIN(SUM_LENGTH, xfer_sum_len)` is a no-op.
+const DEFAULT_TRANSFER_DIGEST_LENGTH: NonZeroU8 = match NonZeroU8::new(SUM_LENGTH) {
+    Some(len) => len,
+    None => panic!("SUM_LENGTH must be non-zero"),
+};
+
 /// Parameters describing a file signature computation.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct SignatureLayoutParams {
@@ -23,6 +30,7 @@ pub struct SignatureLayoutParams {
     forced_block_length: Option<NonZeroU32>,
     protocol: ProtocolVersion,
     checksum_length: NonZeroU8,
+    transfer_digest_length: NonZeroU8,
 }
 
 impl SignatureLayoutParams {
@@ -39,7 +47,23 @@ impl SignatureLayoutParams {
             forced_block_length,
             protocol,
             checksum_length,
+            transfer_digest_length: DEFAULT_TRANSFER_DIGEST_LENGTH,
         }
+    }
+
+    /// Sets the negotiated transfer-checksum digest width in bytes.
+    ///
+    /// The strong sum can be no longer than the negotiated digest: a short
+    /// checksum (e.g. XXH64 / XXH3-64 = 8 bytes) makes the digest width less
+    /// than [`SUM_LENGTH`], and the sender rejects a `s2length` wider than the
+    /// digest it expects. Defaults to [`SUM_LENGTH`] (16), so the standard
+    /// 16-byte digests (MD5, MD4, XXH3-128) leave the layout byte-identical to
+    /// upstream. (upstream: generator.c:705 `max_s2length = MIN(SUM_LENGTH, xfer_sum_len)`)
+    #[inline]
+    #[must_use]
+    pub const fn with_transfer_digest_length(mut self, transfer_digest_length: NonZeroU8) -> Self {
+        self.transfer_digest_length = transfer_digest_length;
+        self
     }
 
     /// Source file size in bytes.
@@ -67,6 +91,13 @@ impl SignatureLayoutParams {
     #[must_use]
     pub const fn checksum_length(self) -> NonZeroU8 {
         self.checksum_length
+    }
+
+    /// Negotiated transfer-checksum digest width in bytes.
+    #[inline]
+    #[must_use]
+    pub const fn transfer_digest_length(self) -> NonZeroU8 {
+        self.transfer_digest_length
     }
 }
 
@@ -213,6 +244,7 @@ pub fn calculate_signature_layout(
         block_length,
         params.protocol(),
         params.checksum_length(),
+        params.transfer_digest_length(),
     );
 
     Ok(SignatureLayout {
@@ -271,22 +303,35 @@ fn derive_block_length(file_length: u64, protocol: ProtocolVersion) -> u32 {
 /// - **Phase 1** (`checksum_length = SHORT_SUM_LENGTH = 2`): dynamically computes
 ///   a length between 2-16 bytes using a bias heuristic based on file and block sizes.
 ///   Smaller files get shorter checksums, reducing signature overhead.
-/// - **Phase 2 redo** (`checksum_length = SUM_LENGTH = 16`): short-circuits to return
-///   16 bytes unconditionally, ensuring full collision resistance for retransmissions.
+/// - **Phase 2 redo** (`checksum_length = SUM_LENGTH = 16`): returns the full
+///   negotiated digest width (`max_s2length`), ensuring maximal collision
+///   resistance for retransmissions without exceeding the negotiated digest.
 ///
-/// (upstream: generator.c:725-738 `sum_sizes_sqroot()`)
+/// The result is capped by `max_s2length = MIN(SUM_LENGTH, transfer_digest_length)`:
+/// a narrower negotiated transfer digest (XXH64 / XXH3-64 = 8 bytes) bounds the
+/// strong sum so the wire `sum_head` never advertises a `s2length` wider than the
+/// checksum the sender expects.
+///
+/// (upstream: generator.c:697-750 `sum_sizes_sqroot()`, specifically
+/// generator.c:705 `max_s2length = MIN(SUM_LENGTH, xfer_sum_len)`)
 fn derive_strong_sum_length(
     file_length: u64,
     block_length: u32,
     protocol: ProtocolVersion,
     checksum_length: NonZeroU8,
+    transfer_digest_length: NonZeroU8,
 ) -> NonZeroU8 {
     if protocol.as_u8() < 27 {
         return checksum_length;
     }
 
+    // upstream: generator.c:705 `max_s2length = MIN(SUM_LENGTH, xfer_sum_len)`.
+    let max_s2length = i32::from(SUM_LENGTH.min(transfer_digest_length.get()));
+
+    // upstream: generator.c:738-740 - a full-length phase csum yields the whole
+    // negotiated digest, not an unconditional SUM_LENGTH.
     if checksum_length.get() == SUM_LENGTH {
-        return checksum_length;
+        return NonZeroU8::new(max_s2length as u8).expect("max_s2length floors at 1");
     }
 
     let mut bias = BLOCKSUM_BIAS;
@@ -302,14 +347,16 @@ fn derive_strong_sum_length(
         bias -= 1;
     }
 
+    // upstream: generator.c:747-749 - `MAX(s2length, csum_length)` floors the
+    // computed length, then `MIN(s2length, max_s2length)` caps it last, so the
+    // negotiated digest width wins even below the phase csum length.
     let mut strong_len = (bias + 1 - 32 + 7) / 8;
     let min_len = i32::from(checksum_length.get());
     if strong_len < min_len {
         strong_len = min_len;
     }
-    let max_len = i32::from(SUM_LENGTH);
-    if strong_len > max_len {
-        strong_len = max_len;
+    if strong_len > max_s2length {
+        strong_len = max_s2length;
     }
 
     NonZeroU8::new(strong_len as u8).expect("strong checksum length must be non-zero")
@@ -318,6 +365,7 @@ fn derive_strong_sum_length(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::block_size::SHORT_SUM_LENGTH;
     use core::num::NonZeroU8;
     use std::convert::TryFrom;
 
@@ -333,6 +381,49 @@ mod tests {
             ProtocolVersion::try_from(protocol).expect("supported protocol"),
             NonZeroU8::new(checksum).expect("checksum length must be non-zero"),
         )
+    }
+
+    /// A narrower negotiated transfer digest (XXH64 / XXH3-64 = 8 bytes) must cap
+    /// the `sum_head` `s2length`, mirroring upstream generator.c:705
+    /// `max_s2length = MIN(SUM_LENGTH, xfer_sum_len)`. The sender rejects an
+    /// `s2length` wider than the digest it expects, so an uncapped 16-byte sum
+    /// desyncs the wire. WHY: the strong-sum byte on the wire must equal what a
+    /// real upstream generator writes for the same negotiated digest.
+    #[test]
+    fn phase2_strong_sum_capped_by_narrow_transfer_digest() {
+        let digest8 = NonZeroU8::new(8).expect("digest length");
+        let capped = calculate_signature_layout(
+            params(1 << 20, None, 32, SUM_LENGTH).with_transfer_digest_length(digest8),
+        )
+        .expect("layout");
+        // upstream returns max_s2length = MIN(16, 8) = 8, not a full 16-byte sum.
+        assert_eq!(capped.strong_sum_length().get(), 8);
+
+        // The default 16-byte digests (MD5, MD4, XXH3-128) stay byte-identical.
+        let full =
+            calculate_signature_layout(params(1 << 20, None, 32, SUM_LENGTH)).expect("layout");
+        assert_eq!(full.strong_sum_length().get(), SUM_LENGTH);
+    }
+
+    /// The heuristic (phase-1) branch also caps at the negotiated digest width.
+    /// A large file that naturally yields a strong sum wider than the negotiated
+    /// 8-byte digest must be clamped to 8, not to SUM_LENGTH. Uses protocol 29
+    /// (`OLD_MAX_BLOCK_SIZE`) so a large forced block is not clamped to 2^17,
+    /// letting the computed s2length exceed 8.
+    #[test]
+    fn phase1_strong_sum_capped_by_narrow_transfer_digest() {
+        let digest8 = NonZeroU8::new(8).expect("digest length");
+        let uncapped =
+            calculate_signature_layout(params(1 << 57, Some(1 << 27), 29, SHORT_SUM_LENGTH))
+                .expect("layout");
+        assert!(uncapped.strong_sum_length().get() > 8);
+
+        let capped = calculate_signature_layout(
+            params(1 << 57, Some(1 << 27), 29, SHORT_SUM_LENGTH)
+                .with_transfer_digest_length(digest8),
+        )
+        .expect("layout");
+        assert_eq!(capped.strong_sum_length().get(), 8);
     }
 
     #[test]
@@ -417,7 +508,9 @@ mod tests {
 
         let checksum_len = NonZeroU8::new(SHORT_SUM_LENGTH).unwrap();
         let protocol = ProtocolVersion::try_from(31u8).unwrap();
-        let result = derive_strong_sum_length(100 * 1024 * 1024, 10_240, protocol, checksum_len);
+        let digest = NonZeroU8::new(SUM_LENGTH).unwrap();
+        let result =
+            derive_strong_sum_length(100 * 1024 * 1024, 10_240, protocol, checksum_len, digest);
 
         assert!(result.get() >= SHORT_SUM_LENGTH);
         assert!(result.get() <= SUM_LENGTH);
@@ -433,13 +526,15 @@ mod tests {
         // file/block-size combination.
         let checksum_len = NonZeroU8::new(SUM_LENGTH).unwrap();
         let protocol = ProtocolVersion::try_from(31u8).unwrap();
+        let digest = NonZeroU8::new(SUM_LENGTH).unwrap();
 
         for &(file_len, block_len) in &[
             (1024u64, 700u32),
             (10 * 1024 * 1024, 3232),
             (1u64 << 30, 32768),
         ] {
-            let result = derive_strong_sum_length(file_len, block_len, protocol, checksum_len);
+            let result =
+                derive_strong_sum_length(file_len, block_len, protocol, checksum_len, digest);
             assert_eq!(
                 result.get(),
                 SUM_LENGTH,

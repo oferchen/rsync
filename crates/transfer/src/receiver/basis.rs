@@ -245,42 +245,30 @@ fn generate_basis_signature(
     fnamecmp_type: protocol::FnameCmpType,
     config: SignatureGenerationConfig,
 ) -> BasisFileResult {
+    // Cap the per-file strong-sum length by the negotiated transfer checksum's
+    // digest width. `sum_sizes_sqroot()` clamps s2length to
+    // `max_s2length = MIN(SUM_LENGTH, xfer_sum_len)`, so it never exceeds the
+    // negotiated digest length. `calculate_signature_layout` applies both halves
+    // once the digest width is threaded in: the `SUM_LENGTH` (16) cap plus the
+    // `xfer_sum_len` cap from the negotiated algorithm's digest width. For the
+    // default 16-byte digests (MD5, MD4, XXH3-128) this is a no-op and the
+    // SumHead stays byte-identical to upstream; a short digest (XXH64 / XXH3-64 =
+    // 8 bytes) bounds s2length so we never write a zero-padded strong sum wider
+    // than the checksum the sender expects. This runs before the private
+    // CAP_CONSECUTIVE_MATCH halving below, mirroring upstream's order (cap in
+    // sum_sizes_sqroot, then any extension).
+    // upstream: generator.c:705 sum_sizes_sqroot() `max_s2length`,
+    // checksum.c:214 csum_len_for_type().
+    let digest_len =
+        NonZeroU8::new(config.checksum_algorithm.digest_len().min(u8::MAX as usize) as u8)
+            .expect("negotiated digest length is at least one byte");
     let params =
-        SignatureLayoutParams::new(basis_size, None, config.protocol, config.checksum_length);
+        SignatureLayoutParams::new(basis_size, None, config.protocol, config.checksum_length)
+            .with_transfer_digest_length(digest_len);
 
     let layout = match calculate_signature_layout(params) {
         Ok(layout) => layout,
         Err(_) => return BasisFileResult::EMPTY,
-    };
-
-    // Cap the per-file strong-sum length by the negotiated transfer checksum's
-    // digest width. `sum_sizes_sqroot()` clamps s2length to
-    // `max_s2length = MIN(SUM_LENGTH, xfer_sum_len)`, so it never exceeds the
-    // negotiated digest length; `calculate_signature_layout` only enforces the
-    // `SUM_LENGTH` (16) half, so the `xfer_sum_len` half is applied here using
-    // the negotiated algorithm's digest width. For the default 16-byte digests
-    // (MD5, MD4, XXH3-128) this is a no-op and the SumHead stays byte-identical
-    // to upstream; a short digest (XXH64 / XXH3-64 = 8 bytes) bounds s2length so
-    // we never write a zero-padded strong sum wider than the checksum the sender
-    // expects. This runs before the private CAP_CONSECUTIVE_MATCH halving below,
-    // mirroring upstream's order (cap in sum_sizes_sqroot, then any extension).
-    // upstream: generator.c:705 sum_sizes_sqroot() `max_s2length`,
-    // checksum.c:214 csum_len_for_type().
-    let layout = {
-        let base_len = layout.strong_sum_length().get() as usize;
-        let digest_cap = config.checksum_algorithm.digest_len();
-        if base_len > digest_cap {
-            let capped = NonZeroU8::new(digest_cap as u8)
-                .expect("negotiated digest length is at least one byte");
-            SignatureLayout::from_raw_parts(
-                layout.block_length(),
-                layout.remainder(),
-                layout.block_count(),
-                capped,
-            )
-        } else {
-            layout
-        }
     };
 
     // Iron invariant choke-point: the per-block strong-sum length is shrunk
