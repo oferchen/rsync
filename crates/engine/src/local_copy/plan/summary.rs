@@ -97,6 +97,18 @@ pub struct LocalCopySummary {
     hard_links_created: u64,
     devices_created: u64,
     fifos_created: u64,
+    // Per-type counts of entries whose destination did NOT previously exist,
+    // mirroring upstream's `stats.created_{files,symlinks,devices,specials}`
+    // accounting (receiver.c:733-746 / sender.c:295-308): every ITEM_IS_NEW
+    // entry bumps the created counter for its type, whether or not it moved
+    // file data. Kept distinct from the "copied" tallies above, which also
+    // count in-place updates of pre-existing files/symlinks/nodes. `created_dirs`
+    // reuses `directories_created`, which is already new-only (a mkdir plus the
+    // synthesized destination root).
+    created_regular_files: u64,
+    created_symlinks: u64,
+    created_devices: u64,
+    created_specials: u64,
     items_deleted: u64,
     // Per-type deletion counts, mirroring upstream's `stats.deleted_*` fields
     // (main.c write_del_stats/read_del_stats). `items_deleted` is the total;
@@ -212,6 +224,46 @@ impl LocalCopySummary {
     #[must_use]
     pub const fn fifos_created(&self) -> u64 {
         self.fifos_created
+    }
+
+    /// Returns the number of newly created regular files (destination absent
+    /// before the transfer). Distinct from [`Self::files_copied`], which also
+    /// counts in-place updates of pre-existing files.
+    ///
+    /// upstream: receiver.c:733-746 / sender.c:295-308 - the reg portion of
+    /// `stats.created_files`, reported by `--stats` as
+    /// `Number of created files: N (reg: X, ...)`.
+    #[must_use]
+    pub const fn created_regular_files(&self) -> u64 {
+        self.created_regular_files
+    }
+
+    /// Returns the number of newly created symbolic links (destination absent
+    /// before the transfer). Distinct from [`Self::symlinks_copied`], which
+    /// also counts re-pointed pre-existing links.
+    ///
+    /// upstream: receiver.c:740-741 `stats.created_symlinks++`.
+    #[must_use]
+    pub const fn created_symlinks(&self) -> u64 {
+        self.created_symlinks
+    }
+
+    /// Returns the number of newly created device nodes (destination absent
+    /// before the transfer).
+    ///
+    /// upstream: receiver.c:743-744 `stats.created_devices++`.
+    #[must_use]
+    pub const fn created_devices(&self) -> u64 {
+        self.created_devices
+    }
+
+    /// Returns the number of newly created special files - FIFOs and sockets -
+    /// (destination absent before the transfer).
+    ///
+    /// upstream: receiver.c:745-746 `stats.created_specials++`.
+    #[must_use]
+    pub const fn created_specials(&self) -> u64 {
+        self.created_specials
     }
 
     /// Returns the number of FIFOs encountered in the source set.
@@ -474,6 +526,12 @@ impl LocalCopySummary {
         Self {
             regular_files_total: files_listed as u64,
             files_copied: files_transferred as u64,
+            // Remote transfers do not carry a per-entry new/updated breakdown
+            // (upstream never sends `stats.created_*` over the wire - the client
+            // recomputes it locally from its own itemize pass). Absent that
+            // stream, mirror the historical reg-created figure so remote
+            // `--stats` output is unchanged by the local-copy accounting fix.
+            created_regular_files: files_transferred as u64,
             bytes_received,
             bytes_sent,
             bytes_copied: literal_data,
@@ -512,6 +570,10 @@ impl LocalCopySummary {
         Self {
             regular_files_total: files_listed as u64,
             files_copied: files_transferred as u64,
+            // See `from_receiver_stats`: no per-entry new/updated breakdown is
+            // available for remote transfers, so preserve the historical
+            // reg-created figure.
+            created_regular_files: files_transferred as u64,
             bytes_received,
             bytes_sent,
             bytes_copied: literal_data,
@@ -552,6 +614,10 @@ impl LocalCopySummary {
             hard_links_created: 0,
             devices_created: 0,
             fifos_created: 0,
+            created_regular_files: 0,
+            created_symlinks: 0,
+            created_devices: 0,
+            created_specials: 0,
             items_deleted: 0,
             deleted_dirs: 0,
             deleted_symlinks: 0,
@@ -671,6 +737,31 @@ impl LocalCopySummary {
 
     pub(in crate::local_copy) const fn record_fifo(&mut self) {
         self.fifos_created = self.fifos_created.saturating_add(1);
+    }
+
+    /// Records the creation of one new entry (destination did not previously
+    /// exist), bumping the per-type `created_*` counter for its kind. Directory
+    /// creations are tracked separately via [`Self::record_directory`], so they
+    /// are ignored here. Called once per ITEM_IS_NEW record, in both real and
+    /// dry-run modes, so `--stats` counts match upstream even when no file data
+    /// moved (a new empty file, symlink, device, FIFO, or empty directory).
+    ///
+    /// upstream: receiver.c:733-746 / sender.c:295-308 - `stats.created_*++`
+    /// under the `iflags & ITEM_IS_NEW` guard, keyed by the entry's mode.
+    pub(in crate::local_copy) const fn record_created_regular_file(&mut self) {
+        self.created_regular_files = self.created_regular_files.saturating_add(1);
+    }
+
+    pub(in crate::local_copy) const fn record_created_symlink(&mut self) {
+        self.created_symlinks = self.created_symlinks.saturating_add(1);
+    }
+
+    pub(in crate::local_copy) const fn record_created_device(&mut self) {
+        self.created_devices = self.created_devices.saturating_add(1);
+    }
+
+    pub(in crate::local_copy) const fn record_created_special(&mut self) {
+        self.created_specials = self.created_specials.saturating_add(1);
     }
 
     pub(in crate::local_copy) const fn record_fifo_total(&mut self) {
