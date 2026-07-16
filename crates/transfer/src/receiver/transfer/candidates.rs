@@ -128,16 +128,6 @@ impl ReceiverContext {
             .filter(|(_, e)| e.is_file())
             .filter(|(_, e)| !is_hardlink_follower(e))
             .filter(|(_, e)| {
-                if !has_size_bounds {
-                    return true;
-                }
-                // upstream: generator.c:1704-1718 - a file whose sender-side
-                // length exceeds max-size or falls below min-size is skipped
-                // with a SKIP-gated notice on FINFO. The bound uses the flist
-                // length, so no destination stat is needed here.
-                !self.emit_size_bound_skip(writer, e, min_size, max_size)
-            })
-            .filter(|(_, e)| {
                 // upstream: receiver.c:599-604 - check_filter(&daemon_filter_list, ...)
                 // rejects daemon-excluded files before accepting transfer data.
                 if has_daemon_filters {
@@ -179,6 +169,14 @@ impl ReceiverContext {
             // attrs over the wire and does not consume this precomputed value.
             return candidates
                 .into_iter()
+                .filter(|(_, entry)| {
+                    // upstream: generator.c:1704-1718 - the max/min-size skip
+                    // (`goto cleanup`) fires before the `do_xfers` gate, so a
+                    // dry run still excludes out-of-range files and emits the
+                    // SKIP-gated notice in flist order.
+                    !has_size_bounds
+                        || !self.emit_size_bound_skip(writer, entry, min_size, max_size)
+                })
                 .map(|(idx, entry)| {
                     (
                         idx,
@@ -267,6 +265,14 @@ impl ReceiverContext {
                     }
                     continue;
                 }
+                // upstream: generator.c:1704-1718 - the max/min-size skip is
+                // tested per file after the `--ignore-existing` "exists" notice
+                // (1395) and before the `--update` "is newer" notice (1721), so
+                // the size notices interleave with the other skip notices in
+                // strict flist order rather than as a separate batch.
+                if has_size_bounds && self.emit_size_bound_skip(writer, entry, min_size, max_size) {
+                    continue;
+                }
                 if update_only
                     && dest_type_matches_source(&file_path, entry)
                     && dest_mtime_newer(meta, entry)
@@ -330,6 +336,13 @@ impl ReceiverContext {
                         let _ = self
                             .emit_info_line(writer, &format!("not creating new file \"{name}\"\n"));
                     }
+                    continue;
+                }
+                // upstream: generator.c:1704-1718 - a not-yet-existing file
+                // still hits the max/min-size skip (after the not-creating
+                // check at 1368), so the size notice for an absent file appears
+                // in flist order alongside the other per-file notices.
+                if has_size_bounds && self.emit_size_bound_skip(writer, entry, min_size, max_size) {
                     continue;
                 }
                 if has_reference_dirs
@@ -953,6 +966,51 @@ mod skip_notice_tests {
         );
 
         assert!(run(cfg(), 0, files(), dest).is_empty());
+    }
+
+    /// #81 - upstream: generator.c:1368-1719. `recv_generator` tests every
+    /// per-file skip in one strictly sequential pass, so the max/min-size skip
+    /// (1704-1718) is evaluated right after the `--existing` not-creating check
+    /// (1368) for the *same* file. The notices therefore interleave in flist
+    /// order; a size notice must never batch ahead of a not-creating notice for
+    /// an earlier file. This matters because drop-in tools parse rsync's output
+    /// stream line-by-line in order: a reordered notice block changes the
+    /// observable transcript even though every individual line is correct.
+    #[test]
+    fn skip_notices_interleave_in_flist_order() {
+        let dir = test_support::create_tempdir();
+        let dest = dir.path();
+        // `b_big` / `d_small` must exist at the destination so `--existing`
+        // routes them to the size check (Some branch) rather than emitting a
+        // not-creating notice; `a_new` / `e_new` stay absent.
+        std::fs::write(dest.join("b_big"), b"x").expect("seed dest b_big");
+        std::fs::write(dest.join("d_small"), b"x").expect("seed dest d_small");
+        let files = || {
+            vec![
+                FileEntry::new_file("a_new".into(), 50, 0o644),
+                FileEntry::new_file("b_big".into(), 200, 0o644),
+                FileEntry::new_file("d_small".into(), 5, 0o644),
+                FileEntry::new_file("e_new".into(), 50, 0o644),
+            ]
+        };
+        let cfg = || {
+            let mut c = server_config();
+            c.file_selection.existing_only = true;
+            c.file_selection.max_file_size = Some(100);
+            c.file_selection.min_file_size = Some(10);
+            c
+        };
+
+        let lines = run(cfg(), 1, files(), dest);
+        assert_eq!(
+            lines,
+            vec![
+                "not creating new file \"a_new\"\n".to_owned(),
+                "b_big is over max-size\n".to_owned(),
+                "d_small is under min-size\n".to_owned(),
+                "not creating new file \"e_new\"\n".to_owned(),
+            ]
+        );
     }
 
     /// #45 - upstream: generator.c:1395-1410. With `--ignore-existing`, a file
