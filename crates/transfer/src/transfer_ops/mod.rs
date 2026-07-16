@@ -39,8 +39,6 @@
 mod request;
 mod response;
 mod streaming;
-#[cfg(feature = "tokio-transfer")]
-mod streaming_async;
 mod token_loop;
 
 use std::io::{self, Read};
@@ -55,8 +53,6 @@ use crate::receiver::{SenderAttrs, SumHead};
 pub use self::request::{send_file_request, send_file_request_xattr};
 pub use self::response::process_file_response;
 pub use self::streaming::{StreamingResult, process_file_response_streaming};
-#[cfg(feature = "tokio-transfer")]
-pub use self::streaming_async::process_file_response_streaming_async;
 pub use crate::token_reader::TokenReader;
 
 /// Configuration for sending file transfer requests and processing responses.
@@ -253,76 +249,6 @@ fn read_response_header<R: Read>(
 
     // The echoed sum_head carries the existing file length used for the append mode offset.
     let echoed_sum_head = SumHead::read(reader)?;
-
-    let (file_path, basis_path, signature, target_size) = pending.into_parts();
-
-    // upstream: receiver.c:797 - one_inplace = inplace_partial && fnamecmp_type == FNAMECMP_PARTIAL_DIR
-    // upstream: receiver.c:855 - append mode implies inplace (write directly to destination,
-    // preserving existing content; sender only sends data beyond the existing length)
-    let use_inplace = ctx.config.inplace
-        || ctx.config.append
-        || (ctx.config.inplace_partial
-            && sender_attrs.fnamecmp_type == Some(protocol::FnameCmpType::PartialDir));
-
-    // upstream: receiver.c:287-307 - in append mode, seek output fd to existing file length
-    // (derived from echoed sum_head) before writing new data
-    let append_offset = if ctx.config.append {
-        echoed_sum_head.flength()
-    } else {
-        0
-    };
-
-    Ok(ResponseHeader {
-        file_path,
-        basis_path,
-        signature,
-        target_size,
-        use_inplace,
-        append_offset,
-        xattr_values: sender_attrs.xattr_values,
-    })
-}
-
-/// Async twin of [`read_response_header`].
-///
-/// Reads the echoed NDX + attrs ([`SenderAttrs::read_with_codec_xattr_async`])
-/// and echoed sum-head ([`SumHead::read_async`]) off an
-/// [`AsyncRead`](tokio::io::AsyncRead) transport, then applies the identical
-/// NDX-match validation and inplace/append-offset derivation the sync leaf runs.
-/// For the same wire bytes it yields the same [`ResponseHeader`] and consumes the
-/// same bytes as the sync path. Gated on `tokio-transfer`.
-#[cfg(feature = "tokio-transfer")]
-async fn read_response_header_async<R>(
-    reader: &mut R,
-    ndx_codec: &mut protocol::codec::NdxCodecEnum,
-    pending: crate::pipeline::PendingTransfer,
-    ctx: &ResponseContext<'_>,
-) -> io::Result<ResponseHeader>
-where
-    R: tokio::io::AsyncRead + Unpin + ?Sized,
-{
-    let expected_ndx = pending.ndx();
-
-    let (echoed_ndx, sender_attrs) = SenderAttrs::read_with_codec_xattr_async(
-        reader,
-        ndx_codec,
-        ctx.config.preserve_xattrs,
-        ctx.config.want_xattr_optim,
-    )
-    .await?;
-
-    // upstream: sender.c emits responses in NDX order; out-of-order is a protocol violation.
-    if echoed_ndx != expected_ndx {
-        return Err(io::Error::new(
-            io::ErrorKind::InvalidData,
-            format!(
-                "sender echoed NDX {echoed_ndx} but expected {expected_ndx} - protocol violation"
-            ),
-        ));
-    }
-
-    // The echoed sum_head carries the existing file length used for the append mode offset.
-    let echoed_sum_head = SumHead::read_async(reader).await?;
 
     let (file_path, basis_path, signature, target_size) = pending.into_parts();
 

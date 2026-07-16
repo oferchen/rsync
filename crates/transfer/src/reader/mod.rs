@@ -9,9 +9,6 @@ mod counting;
 mod multiplex;
 mod server;
 
-#[cfg(feature = "tokio-transfer")]
-mod compressed;
-
 #[cfg(test)]
 mod tests;
 
@@ -19,11 +16,3 @@ pub(crate) use counting::CountingReader;
 pub use multiplex::RemoteExitError;
 pub(crate) use multiplex::{DeletedRender, MultiplexReader};
 pub use server::ServerReader;
-
-#[cfg(feature = "tokio-transfer")]
-#[cfg_attr(not(test), allow(unused_imports))]
-pub(crate) use compressed::AsyncCompressedReader;
-
-#[cfg(feature = "tokio-transfer")]
-#[cfg_attr(not(test), allow(unused_imports))]
-pub(crate) use server::AsyncServerReader;
