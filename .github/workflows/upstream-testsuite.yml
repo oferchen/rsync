@@ -1,10 +1,9 @@
 name: Upstream Testsuite (rsync 3.4.4)
 
-# Standalone entry point for the upstream rsync testsuite so its pass/fail
-# status is visible as a README badge. Runs the same reusable suite that the
-# CI workflow gates on, against upstream rsync 3.4.4's own testsuite/*.test
-# corpus. Scheduled daily plus on-demand; per-push coverage is already the
-# required "upstream testsuite" gate inside ci.yml.
+# Standalone entry point for the NON-ROOT upstream rsync testsuite so its
+# pass/fail status is visible as a README badge. This is the same suite that
+# CI gates on as the required "upstream testsuite" check, run against upstream
+# rsync 3.4.4's own testsuite/*.test corpus. Scheduled daily plus on-demand.
 on:
   workflow_dispatch:
   schedule:
@@ -14,7 +13,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: upstream-testsuite-${{ github.ref }}
+  group: upstream-testsuite-nonroot-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
@@ -22,3 +21,4 @@ jobs:
     uses: ./.github/workflows/_upstream-testsuite.yml
     with:
       upstream_rsync_version: '3.4.4'
+      variant: 'nonroot'
