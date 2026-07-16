@@ -333,7 +333,7 @@ impl ExitCode {
     /// A wire-protocol violation that upstream rsync exits with
     /// `RERR_PROTOCOL` (2) is encoded as an `InvalidData` error whose inner
     /// error is a [`protocol::ProtocolViolation`] (see
-    /// [`protocol::protocol_violation`]). Such errors map to
+    /// [`fn@protocol::protocol_violation`]). Such errors map to
     /// [`ExitCode::Protocol`]; every other `InvalidData`/`UnexpectedEof`
     /// (truncated stream, corrupt frame, unexpected EOF) stays
     /// [`ExitCode::StreamIo`] (12), matching upstream's `RERR_STREAMIO`.

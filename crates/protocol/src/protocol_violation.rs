@@ -2,7 +2,7 @@
 //!
 //! Rust's [`std::io::ErrorKind`] has no protocol-violation variant, so oc has
 //! historically encoded wire-protocol violations as
-//! [`io::ErrorKind::InvalidData`]. That kind is shared with truncated-stream
+//! [`std::io::ErrorKind::InvalidData`]. That kind is shared with truncated-stream
 //! and corrupt-frame conditions, which upstream rsync exits with
 //! `RERR_STREAMIO` (12). A subset of `InvalidData` sites correspond instead to
 //! upstream call sites that invoke `exit_cleanup(RERR_PROTOCOL)` (exit code 2)
@@ -10,8 +10,8 @@
 //! transfer request arriving in phase 2.
 //!
 //! [`ProtocolViolation`] tags exactly those sites. It is attached as the inner
-//! error of an `InvalidData` [`io::Error`] via [`protocol_violation`], so the
-//! error's [`kind`](io::Error::kind) and [`Display`](std::fmt::Display) text are
+//! error of an `InvalidData` [`std::io::Error`] via [`fn@protocol_violation`], so the
+//! error's [`kind`](std::io::Error::kind) and [`Display`](std::fmt::Display) text are
 //! unchanged (fully backward compatible), while the exit-code mapper can
 //! downcast the inner error and return `RERR_PROTOCOL` (2) rather than
 //! `RERR_STREAMIO` (12).

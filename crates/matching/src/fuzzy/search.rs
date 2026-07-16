@@ -53,7 +53,7 @@ impl FuzzyMatcher {
     ///
     /// Mirrors upstream `find_fuzzy()`: an exact size + mtime match (when
     /// `target_mtime` is known) returns immediately; otherwise the candidate
-    /// with the lowest [`fuzzy_name_distance`] within the matcher's distance
+    /// with the lowest `fuzzy_name_distance` within the matcher's distance
     /// cap wins. At level 2 the configured `fuzzy_basis_dirs` are scanned after
     /// the destination directory, sharing a single running lowest distance so
     /// ordering and tie-breaks match upstream's single-pass loop.

@@ -235,7 +235,7 @@ pub fn generate_file_signature_auto<R: Read>(
 /// (sized to `available_parallelism()` unless `--rayon-threads` overrode the
 /// global pool). Unlike [`generate_file_signature_parallel`], which buffers the
 /// entire file in memory, this caps resident block buffers at roughly
-/// [`WINDOW_BYTE_BUDGET`] bytes regardless of basis size - so large files scale
+/// `WINDOW_BYTE_BUDGET` bytes regardless of basis size - so large files scale
 /// across cores without the peak-RSS cost of a full-file slurp.
 ///
 /// Output is byte-identical to the sequential

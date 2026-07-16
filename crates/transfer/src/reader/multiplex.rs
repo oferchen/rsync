@@ -191,7 +191,7 @@ pub(super) const RERR_PARTIAL: i32 = 23;
 /// Typed error carrying the exit code a remote peer requested via
 /// `MSG_ERROR_EXIT`.
 ///
-/// [`MultiplexReader::check_error_exit`] wraps this in an [`io::Error`] as its
+/// `MultiplexReader::check_error_exit` wraps this in an [`io::Error`] as its
 /// inner error so the code survives `?` propagation up the read stack. Callers
 /// that terminate a transfer can `downcast_ref` the inner error to recover the
 /// peer's exact exit code (e.g. `RERR_SYNTAX = 1` for a read-only module
