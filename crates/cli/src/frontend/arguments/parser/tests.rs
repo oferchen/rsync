@@ -953,3 +953,77 @@ fn checksum_threads_rejects_invalid_and_out_of_range() {
         assert!(result.is_err(), "value {arg:?} must be rejected");
     }
 }
+
+/// Builds `count` repetitions of a single alt-dest option plus operands.
+fn alt_dest_args(flag: &str, count: usize) -> Vec<String> {
+    let mut args: Vec<String> = (0..count)
+        .map(|index| format!("{flag}=dir{index}"))
+        .collect();
+    args.push("src/".to_string());
+    args.push("dst/".to_string());
+    args
+}
+
+/// upstream: options.c:1749-1754 accepts up to `MAX_BASIS_DIRS` (rsync.h:196)
+/// alt-dest args; the boundary itself must not be rejected.
+#[test]
+fn alt_dest_limit_accepts_twenty() {
+    let result = parse_test_args(alt_dest_args("--link-dest", 20));
+    assert!(result.is_ok(), "20 alt-dest dirs must be accepted");
+}
+
+/// upstream: options.c:1752-1753 rejects the 21st alt-dest arg with the verbatim
+/// `ERROR: at most 20 <opt> args may be specified` message and RERR_SYNTAX. The
+/// exact wording matters because it is observable output a drop-in must mirror.
+#[test]
+fn alt_dest_limit_rejects_twenty_one() {
+    let result = parse_test_args(alt_dest_args("--link-dest", 21));
+    let err = result.expect_err("21 alt-dest dirs must be rejected");
+    assert_eq!(err.kind(), clap::error::ErrorKind::TooManyValues);
+    assert!(
+        err.to_string()
+            .contains("ERROR: at most 20 --link-dest args may be specified"),
+        "unexpected message: {err}"
+    );
+}
+
+/// The cap counts the shared `basis_dir[]` array, so it fires for whichever of
+/// the three alt-dest option types is in use and names that option verbatim
+/// (upstream: `alt_dest_opt(0)`). Every type must be capped identically.
+#[test]
+fn alt_dest_limit_enforced_for_each_type() {
+    for flag in ["--compare-dest", "--copy-dest", "--link-dest"] {
+        assert!(
+            parse_test_args(alt_dest_args(flag, 20)).is_ok(),
+            "20 {flag} dirs must be accepted"
+        );
+        let err = parse_test_args(alt_dest_args(flag, 21))
+            .expect_err(&format!("21 {flag} dirs must be rejected"));
+        assert!(
+            err.to_string()
+                .contains(&format!("ERROR: at most 20 {flag} args may be specified")),
+            "unexpected message for {flag}: {err}"
+        );
+    }
+}
+
+/// The `basis_dir[]` array is shared, but upstream forbids mixing the three
+/// alt-dest types (options.c:1741-1745), a rule oc mirrors with
+/// `conflicts_with_all`. So a "combined" total spanning types (here 10
+/// `--compare-dest` + 11 `--link-dest`) can never reach the count check - it is
+/// rejected first by the conflict rule. This proves only one type ever populates
+/// the shared array, which is why the cap is enforced per type in effect.
+#[test]
+fn alt_dest_types_cannot_be_mixed() {
+    let mut args: Vec<String> = (0..10).map(|i| format!("--compare-dest=c{i}")).collect();
+    args.extend((0..11).map(|i| format!("--link-dest=l{i}")));
+    args.push("src/".to_string());
+    args.push("dst/".to_string());
+
+    let err = parse_test_args(args).expect_err("mixed alt-dest types must be rejected");
+    assert_eq!(err.kind(), clap::error::ErrorKind::ArgumentConflict);
+    assert!(
+        err.to_string().contains("cannot be used with"),
+        "expected a conflict diagnostic, got: {err}"
+    );
+}
