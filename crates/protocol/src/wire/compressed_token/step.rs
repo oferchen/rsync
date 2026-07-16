@@ -19,7 +19,7 @@
 
 use std::io::{self, Read};
 
-use super::{CHUNK_SIZE, CompressedToken, DEFLATED_DATA, END_FLAG, TOKEN_LONG, TOKEN_REL};
+use super::{CHUNK_SIZE, CompressedToken, DEFLATED_DATA, END_FLAG, TOKEN_REL};
 
 /// The outcome of a single decoder step.
 ///
@@ -434,17 +434,19 @@ impl TokenDecodeCore {
             Ok(TokenStep::Emit(CompressedToken::BlockMatch(
                 self.rx_token as u32,
             )))
-        } else if flag & 0xE0 == TOKEN_LONG {
+        } else {
+            // upstream: token.c:539-543 recv_compressed_token_num - after the
+            // DEFLATED_DATA, END_FLAG, and TOKEN_REL cases, the receiver treats
+            // every remaining flag (0x01-0x3f) as an absolute long token via a
+            // bare `else { rx_token = read_int(f) }`. A conforming encoder only
+            // ever emits TOKEN_LONG (0x20) / TOKENRUN_LONG (0x21), so the low
+            // 0x01-0x1f range is unreachable from a valid stream, but matching
+            // upstream's permissive dispatch keeps us wire-compatible with real
+            // rsync on any nonconforming peer. Bit 0 selects the 16-bit run.
             self.phase = Phase::LongToken {
                 has_run: flag & 1 != 0,
             };
             Ok(TokenStep::Need(4))
-        } else {
-            self.phase = Phase::Idle;
-            Err(io::Error::new(
-                io::ErrorKind::InvalidData,
-                format!("invalid compressed token flag: 0x{flag:02X}"),
-            ))
         }
     }
 
