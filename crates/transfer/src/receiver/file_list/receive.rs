@@ -153,7 +153,11 @@ impl ReceiverContext {
         let pre29 = self.protocol.as_u8() < 29;
         if !self.iconv_reorder_suppressed() {
             let list = std::mem::take(&mut self.file_list);
-            let (cleaned, _clean) = sort_and_clean_file_list(list, self.config.qsort, pre29);
+            // am_sender=false: the receiver always runs the duplicate-clean,
+            // tombstoning dropped duplicates in place so NDX stays aligned with
+            // the sender's full un-deduped array (flist.c:3031,3089).
+            let (cleaned, _clean) =
+                sort_and_clean_file_list(list, self.config.qsort, pre29, false, inc_recurse);
             self.file_list = cleaned;
         }
 
@@ -355,7 +359,8 @@ impl ReceiverContext {
         // against the bytes the sender emitted.
         if !self.iconv_reorder_suppressed() {
             let tail = self.file_list.split_off(flat_start);
-            let (cleaned, _clean) = sort_and_clean_file_list(tail, true, false);
+            // Receiver sub-list clean: am_sender=false, inc_recurse=true.
+            let (cleaned, _clean) = sort_and_clean_file_list(tail, true, false, false, true);
             self.file_list.extend(cleaned);
         }
         match_hard_links(&mut self.file_list[flat_start..], &mut self.prior_hlinks);

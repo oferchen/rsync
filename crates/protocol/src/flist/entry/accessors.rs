@@ -640,6 +640,42 @@ impl FileEntry {
         type_bits == 0o140000 || type_bits == 0o010000 // S_IFSOCK or S_IFIFO
     }
 
+    /// Returns `true` when this entry is a live file-list slot (not a tombstone).
+    ///
+    /// Mirrors upstream rsync's `F_IS_ACTIVE(f)` macro, which tests
+    /// `basename[0]` (rsync.h:925): a real entry always has a non-empty name,
+    /// while a slot cleared by `clear_file()` (a dropped duplicate) or
+    /// `flist_free()` (a reclaimed INC_RECURSE segment) has an empty name and
+    /// is therefore inactive. Inactive slots keep their array position so NDX
+    /// (file index) values stay aligned with the sender's un-deduped array;
+    /// consumers iterate the list and skip inactive slots without renumbering.
+    #[inline]
+    #[must_use]
+    pub fn is_active(&self) -> bool {
+        !self.name.as_os_str().is_empty()
+    }
+
+    /// Marks this entry as a dead-but-present tombstone in place.
+    ///
+    /// The slot keeps its array index (and therefore its NDX) so the file
+    /// list stays aligned with a peer that transmitted the entry, but the
+    /// entry is cleared to an inert state that every consumer skips
+    /// (`is_active()` returns `false`; `is_dir()`/`is_file()` return `false`
+    /// for the zeroed mode). Used by the receiver's duplicate-name clean to
+    /// drop a duplicate without compacting or renumbering the list.
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `flist.c:2930 clear_file()` - `memset(file, 0, ...)` zeroes the
+    ///   struct (including `basename[0]`, making `F_IS_ACTIVE` false) while
+    ///   leaving the slot in `flist->files[]` so following NDX values are
+    ///   unaffected.
+    /// - `flist.c:3089` - the receiver's dedup pass calls `clear_file()` on
+    ///   the dropped duplicate.
+    pub fn tombstone(&mut self) {
+        self.reclaim_heap_data();
+    }
+
     /// Releases heap-allocated data from this entry to reduce RSS.
     ///
     /// Clears the `name` (PathBuf), resets `dirname` to a shared empty arc,
