@@ -779,7 +779,7 @@ mod module_access_tests {
         // violation is an auth denial, not a fatal error: verify returns
         // Ok(false) so the daemon emits `@ERROR: auth failed on module X`
         // rather than dropping the socket mid-handshake.
-        let result = verify_secret_response(&module, "alice", "challenge", "response", None)
+        let result = verify_secret_response(&module, "alice", None, "challenge", "response", None)
             .expect("strict-modes violation must be a denial, not an io error");
         assert!(
             !result,
@@ -804,7 +804,7 @@ mod module_access_tests {
 
         // With strict_modes disabled, the file is read even though it's world-readable.
         // Authentication will fail (wrong response), but no permission error is returned.
-        let result = verify_secret_response(&module, "alice", "challenge", "response", None)
+        let result = verify_secret_response(&module, "alice", None, "challenge", "response", None)
             .expect("should not error on permissions");
         assert!(
             !result,
@@ -829,11 +829,105 @@ mod module_access_tests {
 
         // Permissions are fine, so the file is read. Auth will fail (wrong response)
         // but no permission error is returned.
-        let result = verify_secret_response(&module, "alice", "challenge", "response", None)
+        let result = verify_secret_response(&module, "alice", None, "challenge", "response", None)
             .expect("should not error on permissions");
         assert!(!result, "auth should fail due to wrong response");
     }
 
+    /// Computes the client digest a member of the authorizing group (or the
+    /// user) would send for `secret`, so the shared-secret tests below assert
+    /// real authentication rather than a hard-coded string.
+    fn client_digest(secret: &str, challenge: &str) -> String {
+        core::auth::compute_daemon_auth_response(
+            secret.as_bytes(),
+            challenge,
+            core::auth::DaemonAuthDigest::Md5,
+        )
+    }
+
+    /// A shared `@group:secret` line authenticates a member authorized through
+    /// that same group token. Upstream matches such a line against the group
+    /// name that `auth users` resolved, so the shared entry is the credential
+    /// for every member - without this, a `auth users = @grp` + `@grp:pass`
+    /// config would authorize the user then wrongly deny at the secret lookup.
+    ///
+    /// upstream: authenticate.c:145-156 - an `@`-prefixed secrets key is matched
+    /// against the authorizing group rather than the username.
+    #[test]
+    fn verify_secret_matches_group_line_for_group_member() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let secrets = dir.path().join("secrets");
+        fs::write(&secrets, "@devs:groupsecret\n").expect("write");
+
+        let module = ModuleDefinition {
+            secrets_file: Some(secrets),
+            strict_modes: false,
+            ..Default::default()
+        };
+
+        let challenge = "challenge";
+        let response = client_digest("groupsecret", challenge);
+
+        // Authorized via the `@devs` token: the group line is the credential.
+        let granted =
+            verify_secret_response(&module, "alice", Some("devs"), challenge, &response, None)
+                .expect("no io error");
+        assert!(granted, "group member must authenticate via @devs shared secret");
+
+        // upstream: authenticate.c:318 - a plain-username authorization passes a
+        // NULL group, so `@group:` lines are never consulted. Denied here.
+        let denied = verify_secret_response(&module, "alice", None, challenge, &response, None)
+            .expect("no io error");
+        assert!(
+            !denied,
+            "a @group secret must not match when the user was not authorized via that group"
+        );
+    }
+
+    /// Duplicate username entries: the first key-matching line decides the
+    /// outcome. An earlier wrong-password line retires the username, so a later
+    /// correct-password line for the same user cannot flip the denial. This
+    /// mirrors upstream setting the name pointer to NULL on mismatch.
+    ///
+    /// upstream: authenticate.c:158-162 - on password mismatch `err =
+    /// "password mismatch"; *ptr = NULL;` ends the search for that name.
+    #[test]
+    fn verify_secret_first_username_match_wins() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let secrets = dir.path().join("secrets");
+        fs::write(&secrets, "alice:wrongpass\nalice:rightpass\n").expect("write");
+
+        let module = ModuleDefinition {
+            secrets_file: Some(secrets),
+            strict_modes: false,
+            ..Default::default()
+        };
+
+        let challenge = "challenge";
+        let response = client_digest("rightpass", challenge);
+
+        // The first `alice:` line mismatches, retiring the username; the later
+        // `alice:rightpass` duplicate must NOT authenticate.
+        let denied = verify_secret_response(&module, "alice", None, challenge, &response, None)
+            .expect("no io error");
+        assert!(
+            !denied,
+            "an earlier wrong-password line must retire the username and deny"
+        );
+
+        // Control: when the first line is the correct one, auth succeeds.
+        let secrets_ok = dir.path().join("secrets_ok");
+        fs::write(&secrets_ok, "alice:rightpass\nalice:wrongpass\n").expect("write");
+        let module_ok = ModuleDefinition {
+            secrets_file: Some(secrets_ok),
+            strict_modes: false,
+            ..Default::default()
+        };
+        let granted =
+            verify_secret_response(&module_ok, "alice", None, challenge, &response, None)
+                .expect("no io error");
+        assert!(granted, "a correct first line must authenticate");
+    }
 
     #[test]
     fn read_client_arguments_normal_protocol30() {
