@@ -208,6 +208,11 @@ fn spawn_ssh_connection(
         .effective(std::time::Duration::from_secs(30));
     ssh.set_connect_timeout(connect_timeout);
 
+    // upstream: options.c:2369 set_io_timeout(io_timeout) applies --timeout to
+    // every transport; on the SSH pipe it drives the stall watchdog. 0/unset
+    // leaves it disabled.
+    ssh.set_io_timeout(config.ssh_io_timeout());
+
     ssh.set_remote_command(invocation_args);
 
     ssh.spawn().map_err(|e| {

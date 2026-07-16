@@ -57,6 +57,22 @@ impl ClientConfig {
         self.timeout
     }
 
+    /// Resolves the `--timeout` value into the I/O stall timeout applied to the
+    /// SSH data channel.
+    ///
+    /// Returns `None` when `--timeout` is unset or `0`, matching upstream where
+    /// `io_timeout == 0` disables the check entirely; a positive value maps to
+    /// that many seconds. Upstream applies the same `io_timeout` uniformly to
+    /// every transport (the SSH pipe included) via `set_io_timeout(io_timeout)`.
+    ///
+    /// upstream: options.c:2369 `set_io_timeout(io_timeout)`, io.c:1148-1160.
+    #[must_use]
+    pub fn ssh_io_timeout(&self) -> Option<std::time::Duration> {
+        self.timeout
+            .as_seconds()
+            .map(|secs| std::time::Duration::from_secs(secs.get()))
+    }
+
     /// Returns the configured connection timeout.
     #[must_use]
     #[doc(alias = "--contimeout")]
@@ -241,6 +257,33 @@ mod tests {
     fn connect_timeout_default_is_default() {
         let config = default_config();
         assert_eq!(config.connect_timeout(), TransferTimeout::Default);
+    }
+
+    #[test]
+    fn ssh_io_timeout_maps_positive_timeout_to_seconds() {
+        // WHY: --timeout N must reach the SSH stall watchdog so a hung remote
+        // aborts after N seconds instead of hanging the client forever.
+        // upstream: options.c:815 --timeout sets io_timeout; options.c:2369
+        // set_io_timeout applies it to every transport, the SSH pipe included.
+        let mut config = default_config();
+        config.timeout = TransferTimeout::Seconds(std::num::NonZeroU64::new(45).unwrap());
+        assert_eq!(
+            config.ssh_io_timeout(),
+            Some(std::time::Duration::from_secs(45))
+        );
+    }
+
+    #[test]
+    fn ssh_io_timeout_absent_or_disabled_stays_off() {
+        // WHY: io_timeout == 0 (unset or --no-timeout) disables the check, so
+        // the SSH watchdog must remain in its default-off state and never abort
+        // an otherwise-healthy transfer. upstream: io.c:1153 `if (!io_timeout)`.
+        let default = default_config();
+        assert_eq!(default.ssh_io_timeout(), None);
+
+        let mut disabled = default_config();
+        disabled.timeout = TransferTimeout::Disabled;
+        assert_eq!(disabled.ssh_io_timeout(), None);
     }
 
     #[test]

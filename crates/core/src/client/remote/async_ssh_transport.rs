@@ -210,7 +210,12 @@ fn build_plan(
     };
 
     let connect_timeout = config.connect_timeout().effective(Duration::from_secs(30));
-    let connect_config = SshConnectConfig::new().with_connect_timeout(connect_timeout);
+    // upstream: options.c:2369 set_io_timeout(io_timeout) applies --timeout to
+    // every transport; on the SSH pipe it drives the stall watchdog. 0/unset
+    // leaves it disabled.
+    let connect_config = SshConnectConfig::new()
+        .with_connect_timeout(connect_timeout)
+        .with_io_timeout(config.ssh_io_timeout());
 
     Ok(AsyncSpawnPlan {
         remote,
@@ -662,6 +667,38 @@ mod tests {
         let mut writer = SyncWriter::new(tx);
         let err = writer.write_all(b"x").unwrap_err();
         assert_eq!(err.kind(), io::ErrorKind::BrokenPipe);
+    }
+
+    #[test]
+    fn build_plan_threads_timeout_into_ssh_transport_config() {
+        // WHY: before this wiring the async SSH transport always constructed the
+        // connect config with io_timeout: None, so a stalled remote could hang
+        // the client forever despite an explicit --timeout. The parsed value
+        // must reach the SshConnectConfig the stall watchdog reads.
+        // upstream: options.c:2369 set_io_timeout(io_timeout) on the SSH pipe.
+        let config = crate::client::config::ClientConfigBuilder::default()
+            .timeout(crate::client::config::TransferTimeout::Seconds(
+                std::num::NonZeroU64::new(37).unwrap(),
+            ))
+            .build();
+        let plan = build_plan(&config, RemoteRole::Sender, "host:/data", None)
+            .expect("build_plan should succeed for a simple remote dest");
+        assert_eq!(
+            plan.config.io_timeout,
+            Some(std::time::Duration::from_secs(37)),
+            "parsed --timeout must reach the SSH transport's io_timeout"
+        );
+    }
+
+    #[test]
+    fn build_plan_leaves_io_timeout_disabled_when_unset() {
+        // WHY: --timeout unset means io_timeout == 0 (off); the SSH transport
+        // must preserve the watchdog's default-off behavior, matching the
+        // pre-wiring contract for transfers that never opt into a timeout.
+        let config = crate::client::config::ClientConfigBuilder::default().build();
+        let plan = build_plan(&config, RemoteRole::Sender, "host:/data", None)
+            .expect("build_plan should succeed for a simple remote dest");
+        assert_eq!(plan.config.io_timeout, None);
     }
 
     #[test]
