@@ -230,24 +230,19 @@ impl ReceiverContext {
             }
         }
 
+        // upstream: receiver.c:694-695 then :551-552 - handle_delayed_updates()
+        // renames each delay-updates leader to its final path in phase 2, and
+        // only then are followers hard-linked to it. See
+        // finalize_delayed_updates_and_hardlinks for the ordering rationale.
         #[cfg(unix)]
-        self.create_hardlinks(&setup.dest_dir, setup.sandbox.as_deref(), writer)?;
+        self.finalize_delayed_updates_and_hardlinks(
+            &setup.dest_dir,
+            setup.sandbox.as_deref(),
+            &all_delayed_updates,
+            writer,
+        )?;
         #[cfg(not(unix))]
-        self.create_hardlinks(&setup.dest_dir, writer)?;
-
-        // upstream: receiver.c:584-585 - handle_delayed_updates() at phase 2
-        if !all_delayed_updates.is_empty() {
-            let backup_cfg = if self.config.flags.backup {
-                Some(crate::disk_commit::BackupConfig {
-                    dest_dir: setup.dest_dir.clone(),
-                    backup_dir: self.config.backup_dir.as_ref().map(PathBuf::from),
-                    suffix: self.config.effective_backup_suffix().into(),
-                })
-            } else {
-                None
-            };
-            super::handle_delayed_updates(&all_delayed_updates, backup_cfg);
-        }
+        self.finalize_delayed_updates_and_hardlinks(&setup.dest_dir, &all_delayed_updates, writer)?;
 
         // upstream: generator.c:2425-2428 - --delete-after / --delete-delay run
         // the sweep only after every file (including each destination

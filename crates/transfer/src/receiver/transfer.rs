@@ -82,6 +82,57 @@ impl ReceiverContext {
         }
     }
 
+    /// Finalizes a completed transfer's delayed updates and hardlink followers,
+    /// in the order upstream mandates.
+    ///
+    /// `handle_delayed_updates` runs first, renaming every `--delay-updates`
+    /// leader out of the `.~tmp~` partial-dir to its final path; only then does
+    /// `create_hardlinks` link followers to those leaders. Running the hardlink
+    /// pass first would target a leader still staged under `.~tmp~` - `ENOENT`
+    /// (a fatal transfer error) or a stale pre-existing inode with the wrong
+    /// content.
+    ///
+    /// This is the single ordering site shared by all four pipelined drivers
+    /// (`run_pipelined`, `run_pipelined_async`, `run_pipelined_incremental`,
+    /// `run_pipelined_incremental_async`) so they cannot drift apart.
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `receiver.c:694-695` - `handle_delayed_updates()` at `phase == 2`.
+    /// - `receiver.c:551-552` - only after the delayed rename does
+    ///   `send_msg_success()` drive `finish_hard_link()` (`hlink.c:475`,
+    ///   `generator.c:2169`) to link the leader's followers.
+    pub(in crate::receiver) fn finalize_delayed_updates_and_hardlinks<W>(
+        &mut self,
+        dest_dir: &Path,
+        #[cfg(unix)] sandbox: Option<&fast_io::DirSandbox>,
+        all_delayed_updates: &[(PathBuf, PathBuf)],
+        writer: &mut W,
+    ) -> io::Result<()>
+    where
+        W: Write + crate::writer::MsgInfoSender + ?Sized,
+    {
+        if !all_delayed_updates.is_empty() {
+            let backup_cfg = if self.config.flags.backup {
+                Some(crate::disk_commit::BackupConfig {
+                    dest_dir: dest_dir.to_path_buf(),
+                    backup_dir: self.config.backup_dir.as_ref().map(PathBuf::from),
+                    suffix: self.config.effective_backup_suffix().into(),
+                })
+            } else {
+                None
+            };
+            handle_delayed_updates(all_delayed_updates, backup_cfg);
+        }
+
+        #[cfg(unix)]
+        self.create_hardlinks(dest_dir, sandbox, writer)?;
+        #[cfg(not(unix))]
+        self.create_hardlinks(dest_dir, writer)?;
+
+        Ok(())
+    }
+
     /// BENCHMARK-ONLY async twin of [`run`](Self::run) over a real socket.
     ///
     /// Adopts `socket` (a dup'd clone of the transfer socket) as the async read
