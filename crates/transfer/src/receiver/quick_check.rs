@@ -451,6 +451,185 @@ pub(super) fn try_reference_dest(
     }
 }
 
+/// The per-type identity data for a non-regular basis-dir match, carrying the
+/// values upstream's `quick_check_ok` compares for each non-regular `filetype`.
+///
+/// # Upstream Reference
+///
+/// - `generator.c:648-657` - `FT_SYMLINK`: `do_readlink()` then `strcmp()`
+///   against `F_SYMLINK(file)`.
+/// - `generator.c:665-667` - `FT_SPECIAL`: `BITS_EQUAL(file->mode, st_mode,
+///   _S_IFMT)` distinguishes fifo from socket.
+/// - `generator.c:669-673` - `FT_DEVICE`: `st_rdev == MAKEDEV(major, minor)`.
+#[cfg(unix)]
+pub(super) enum NonRegularBasis<'a> {
+    /// A symlink entry: identical when the basis link resolves to `target`.
+    Symlink {
+        /// The (already-munged if `--munge-links`) target the source link holds.
+        target: &'a Path,
+    },
+    /// A fifo/socket entry: identical when the basis node is the same kind.
+    Special {
+        /// `true` for an `AF_UNIX` socket, `false` for a fifo.
+        is_socket: bool,
+    },
+    /// A device entry: identical when the basis node is a device with `rdev`.
+    Device {
+        /// The device word (`makedev(major, minor)`) the source entry carries.
+        rdev: u64,
+    },
+}
+
+/// Returns `true` when the basis-dir node at `ref_path` is identical to the
+/// source non-regular entry, mirroring upstream `quick_check_ok` for the
+/// matching `filetype` plus the preceding `get_file_type()` category test.
+///
+/// The category test (`generator.c:1087` - `ftype != get_file_type(st_mode)`)
+/// requires the basis be the same coarse type; `quick_check_ok` then applies the
+/// per-type identity comparison. Any read failure (missing basis, unreadable
+/// link) reports `false`.
+#[cfg(unix)]
+fn nonregular_identity_matches(
+    basis: &NonRegularBasis,
+    ref_path: &Path,
+    ref_meta: &fs::Metadata,
+) -> bool {
+    use std::os::unix::fs::{FileTypeExt, MetadataExt};
+
+    let ft = ref_meta.file_type();
+    match *basis {
+        // upstream: generator.c:648-657 - a symlink basis must itself be a
+        // symlink whose target string equals the source link's target.
+        NonRegularBasis::Symlink { target } => {
+            ft.is_symlink()
+                && fs::read_link(ref_path)
+                    .map(|t| t == target)
+                    .unwrap_or(false)
+        }
+        // upstream: generator.c:665-667 - fifo vs socket is distinguished by the
+        // S_IFMT bits, so a socket source never matches a fifo basis (or vice
+        // versa) even though both collapse to FT_SPECIAL.
+        NonRegularBasis::Special { is_socket } => {
+            if is_socket {
+                ft.is_socket()
+            } else {
+                ft.is_fifo()
+            }
+        }
+        // upstream: generator.c:669-673 - a device basis matches on rdev alone;
+        // both block and char nodes share the FT_DEVICE category, so the type
+        // test only requires the basis be some device node.
+        NonRegularBasis::Device { rdev } => {
+            (ft.is_block_device() || ft.is_char_device()) && ref_meta.rdev() == rdev
+        }
+    }
+}
+
+/// Applies the alternate-basis (`--compare-dest` / `--copy-dest` /
+/// `--link-dest`) decision for a non-regular file (symlink, device, fifo,
+/// socket) whose destination does not yet exist, mirroring upstream
+/// `try_dests_non`.
+///
+/// Only a full match_level-3 basis (identity *and* every preserved attribute
+/// equal) changes what reaches disk for a non-regular file:
+///
+/// - `--compare-dest`: the reference tree already holds the file, so the
+///   destination is left absent (returns `true`; the caller skips creation).
+/// - `--link-dest`: the basis node is hard-linked into the destination -
+///   symlinks and specials/devices are all hard-linkable on Linux
+///   (`CAN_HARDLINK_SYMLINK` / `CAN_HARDLINK_SPECIAL`). A link failure returns
+///   `false`, so the caller falls back to creating the node from the flist
+///   entry (upstream downgrades to match_level 2).
+/// - `--copy-dest`: never skips; there is no byte payload to copy for a
+///   non-regular file, so the node is materialised from the flist entry exactly
+///   as it would be without a basis (returns `false`).
+///
+/// A match at level 1 or 2 (identity fails, or attributes differ) leaves the
+/// on-disk outcome unchanged from a plain create, so it also returns `false`.
+/// Returns `true` only when the entry is fully handled and the caller must not
+/// create the node.
+///
+/// # Upstream Reference
+///
+/// - `generator.c:1063-1153` - `try_dests_non()`
+/// - `generator.c:1083-1102` - the `basis_dir[]` match_level scan and `-2`
+///   (compare-dest skip / link-dest done) versus `>= 0` return
+/// - `generator.c:1118-1136` - `do_link_at()` hard-links the basis node at
+///   match_level 3 then `goto cleanup` (no `set_file_attrs`, attrs already equal)
+/// - `generator.c:1586` (symlinks), `1667` (specials/devices) - the
+///   `else if (basis_dir[0] != NULL)` call site, reached only when the
+///   destination is absent (`statret != 0`)
+#[cfg(unix)]
+pub(super) fn try_reference_dest_non(
+    entry: &FileEntry,
+    dest_dir: &Path,
+    reference_directories: &[ReferenceDirectory],
+    basis: &NonRegularBasis,
+    metadata_opts: &MetadataOptions,
+) -> bool {
+    if reference_directories.is_empty() {
+        return false;
+    }
+
+    let relative_path = entry.path();
+    // upstream: generator.c:1083-1102 - scan basis_dir[] and keep the strongest
+    // match. For a non-regular file only match_level 3 (identity + every
+    // preserved attribute equal) alters the on-disk result, so find the first
+    // basis dir reaching it. Levels 1 and 2 fall through to normal creation.
+    let matched = reference_directories.iter().find_map(|ref_dir| {
+        let ref_path = ref_dir.path.join(relative_path);
+        // upstream: generator.c:1085 - link_stat(cmpbuf, &sxp->st, 0) lstats the
+        // basis so a basis symlink is inspected, not its target.
+        let ref_meta = fs::symlink_metadata(&ref_path).ok()?;
+        if !nonregular_identity_matches(basis, &ref_path, &ref_meta) {
+            return None;
+        }
+        // upstream: generator.c:1100 - unchanged_attrs() promotes to match_level
+        // 3; `metadata_unchanged` is oc's equivalent.
+        if !metadata_unchanged(entry, metadata_opts, &ref_meta) {
+            return None;
+        }
+        Some((ref_dir.kind, ref_path))
+    });
+    let Some((kind, ref_path)) = matched else {
+        return false;
+    };
+
+    let dest_path = dest_dir.join(relative_path);
+    match kind {
+        // upstream: generator.c:1102 - a COMPARE_DEST level-3 match returns -2;
+        // `if (alt_dest_type != COPY_DEST) goto cleanup` leaves the destination
+        // absent because the file is already correct in the reference tree.
+        ReferenceDirectoryKind::Compare => true,
+        // upstream: generator.c:1118-1136 - LINK_DEST hard-links the basis node.
+        ReferenceDirectoryKind::Link => hard_link_reference_non(&ref_path, &dest_path),
+        // upstream: generator.c:1591/1667 - COPY_DEST (and any non-level-3 match)
+        // falls through to atomic_create, which materialises the node from the
+        // flist entry. There is no payload to copy for a non-regular file.
+        ReferenceDirectoryKind::Copy => false,
+    }
+}
+
+/// Hard-links a non-regular basis node (`--link-dest`) into the destination.
+///
+/// Uses `linkat(..., 0)` semantics (no symlink follow), so a symlink basis is
+/// hard-linked as the link itself and a device/fifo/socket node is hard-linked
+/// directly. At match_level 3 every preserved attribute already matches, so -
+/// like upstream - no `set_file_attrs` runs afterwards. Returns `true` on a
+/// successful link and `false` on failure (the caller then creates the node).
+///
+/// upstream: generator.c:1126 - `do_link_at(cmpbuf, fname)` then `goto cleanup`
+#[cfg(unix)]
+fn hard_link_reference_non(ref_path: &Path, dest_path: &Path) -> bool {
+    if let Some(parent) = dest_path.parent() {
+        let _ = fs::create_dir_all(parent);
+    }
+    // Try io_uring LINKAT on Linux 5.15+, fall back to std::fs::hard_link. Both
+    // use linkat flags 0, hard-linking the basis node itself rather than a
+    // symlink's target.
+    fast_io::hard_link(ref_path, dest_path).is_ok()
+}
+
 /// Applies the source entry's metadata and ACLs onto a freshly materialised
 /// destination (hard link or copy), recording any failures in `metadata_errors`.
 ///
@@ -1491,5 +1670,328 @@ mod alt_dest_match_level_tests {
             1,
             "the earlier level-2 reference must be left untouched"
         );
+    }
+}
+
+/// Regression tests pinning upstream's `try_dests_non` alternate-basis matrix
+/// for non-regular files - symlinks, fifos/sockets, and devices
+/// (`generator.c:1063-1153`).
+///
+/// The core fidelity invariant: alt-dest applies to non-regular files too, not
+/// just regular files. Upstream `try_dests_non` is called for symlinks
+/// (generator.c:1586), devices, and specials (generator.c:1667). Only a full
+/// match_level-3 basis (identity plus every preserved attribute equal) changes
+/// what reaches disk:
+///
+/// - `--compare-dest` identical basis: the destination node is NOT created (the
+///   reference tree already holds it).
+/// - `--link-dest` identical basis: the node is hard-linked from the basis
+///   (shared inode) rather than materialised fresh.
+/// - `--copy-dest`, a differing basis, or an attrs-only mismatch: the node is
+///   materialised from the flist entry exactly as without a basis.
+///
+/// These tests encode WHY: before this path, oc dropped alt-dest for every
+/// non-regular file, so a `--compare-dest` run needlessly recreated identical
+/// symlinks/fifos in the destination and `--link-dest` never shared their
+/// inodes, diverging from upstream over both local and remote transports.
+#[cfg(unix)]
+#[cfg(test)]
+mod non_regular_alt_dest_tests {
+    use std::fs;
+    use std::os::unix::fs::{MetadataExt, symlink};
+    use std::path::{Path, PathBuf};
+
+    use filetime::{FileTime, set_symlink_file_times};
+    use metadata::MetadataOptions;
+    use protocol::flist::FileEntry;
+
+    use super::{NonRegularBasis, try_reference_dest_non};
+    use crate::config::{ReferenceDirectory, ReferenceDirectoryKind};
+
+    fn refs(kind: ReferenceDirectoryKind, dir: &Path) -> Vec<ReferenceDirectory> {
+        vec![ReferenceDirectory {
+            kind,
+            path: dir.to_path_buf(),
+        }]
+    }
+
+    /// Options that preserve no attributes, so `metadata_unchanged` is always
+    /// true and the match_level is driven purely by the per-type identity test
+    /// (link target / node kind / rdev). This isolates the identity behaviour
+    /// tested in cases (a)-(d) from the separate attribute-level gate, which the
+    /// `compare_dest_attr_mismatch_does_not_skip` test covers on its own.
+    fn identity_only_opts() -> MetadataOptions {
+        MetadataOptions::new()
+            .preserve_permissions(false)
+            .preserve_times(false)
+    }
+
+    fn ino(path: &Path) -> u64 {
+        fs::symlink_metadata(path).expect("stat").ino()
+    }
+
+    /// Builds a `(basis_dir, dest_dir)` pair under a fresh tempdir.
+    fn dirs() -> (tempfile::TempDir, PathBuf, PathBuf) {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let basis = tmp.path().join("basis");
+        let dest = tmp.path().join("dest");
+        fs::create_dir_all(&basis).expect("mk basis");
+        fs::create_dir_all(&dest).expect("mk dest");
+        (tmp, basis, dest)
+    }
+
+    /// (a) `--compare-dest` with an identical symlink in the basis leaves the
+    /// destination absent (upstream `try_dests_non` returns -2 and the caller
+    /// `goto cleanup`s). The node must NOT be created in the destination.
+    #[test]
+    fn compare_dest_identical_symlink_skips_creation() {
+        let (_tmp, basis, dest) = dirs();
+        symlink("target", basis.join("link")).expect("basis symlink");
+        let entry = FileEntry::new_symlink("link".into(), "target".into());
+
+        let handled = try_reference_dest_non(
+            &entry,
+            &dest,
+            &refs(ReferenceDirectoryKind::Compare, &basis),
+            &NonRegularBasis::Symlink {
+                target: Path::new("target"),
+            },
+            &identity_only_opts(),
+        );
+
+        assert!(handled, "identical compare-dest symlink must be handled");
+        assert!(
+            !dest.join("link").exists(),
+            "compare-dest must leave the destination symlink absent"
+        );
+    }
+
+    /// (b) `--copy-dest` never skips a non-regular file: there is no byte
+    /// payload to copy, so upstream falls through to `atomic_create`. The
+    /// function reports "not handled" so the caller materialises the node from
+    /// the flist entry (the same as with no basis).
+    #[test]
+    fn copy_dest_identical_symlink_is_not_handled() {
+        let (_tmp, basis, dest) = dirs();
+        symlink("target", basis.join("link")).expect("basis symlink");
+        let entry = FileEntry::new_symlink("link".into(), "target".into());
+
+        let handled = try_reference_dest_non(
+            &entry,
+            &dest,
+            &refs(ReferenceDirectoryKind::Copy, &basis),
+            &NonRegularBasis::Symlink {
+                target: Path::new("target"),
+            },
+            &identity_only_opts(),
+        );
+
+        assert!(
+            !handled,
+            "copy-dest must not skip; the caller creates the node"
+        );
+    }
+
+    /// (c) `--link-dest` with an identical symlink hard-links the basis link
+    /// into the destination (upstream `do_link_at`, `CAN_HARDLINK_SYMLINK`).
+    /// The destination link must share the basis inode, and be the symlink
+    /// itself - not a hard link to the symlink's target.
+    #[test]
+    fn link_dest_identical_symlink_hard_links_shared_inode() {
+        let (_tmp, basis, dest) = dirs();
+        let basis_link = basis.join("link");
+        symlink("target", &basis_link).expect("basis symlink");
+        let entry = FileEntry::new_symlink("link".into(), "target".into());
+
+        let handled = try_reference_dest_non(
+            &entry,
+            &dest,
+            &refs(ReferenceDirectoryKind::Link, &basis),
+            &NonRegularBasis::Symlink {
+                target: Path::new("target"),
+            },
+            &identity_only_opts(),
+        );
+
+        let dest_link = dest.join("link");
+        assert!(handled, "identical link-dest symlink must be handled");
+        assert!(
+            fs::symlink_metadata(&dest_link)
+                .expect("dest stat")
+                .file_type()
+                .is_symlink(),
+            "the hard link must be to the symlink itself, not its target"
+        );
+        assert_eq!(
+            ino(&dest_link),
+            ino(&basis_link),
+            "link-dest must hard-link the basis symlink (shared inode)"
+        );
+    }
+
+    /// (c, special) `--link-dest` with an identical fifo hard-links the basis
+    /// node (upstream `CAN_HARDLINK_SPECIAL`). fifos need no privilege to
+    /// create, so this exercises the specials path without root.
+    #[test]
+    fn link_dest_identical_fifo_hard_links_shared_inode() {
+        let (_tmp, basis, dest) = dirs();
+        let basis_fifo = basis.join("pipe");
+        metadata::create_fifo_node_from_parts(&basis_fifo, 0o644, false, false)
+            .expect("basis fifo");
+        let entry = FileEntry::new_fifo("pipe".into(), 0o644);
+
+        let handled = try_reference_dest_non(
+            &entry,
+            &dest,
+            &refs(ReferenceDirectoryKind::Link, &basis),
+            &NonRegularBasis::Special { is_socket: false },
+            &identity_only_opts(),
+        );
+
+        let dest_fifo = dest.join("pipe");
+        assert!(handled, "identical link-dest fifo must be handled");
+        assert_eq!(
+            ino(&dest_fifo),
+            ino(&basis_fifo),
+            "link-dest must hard-link the basis fifo (shared inode)"
+        );
+    }
+
+    /// (d) A basis symlink whose target differs is not a match: upstream reaches
+    /// only match_level 1 (`quick_check_ok` fails), so no skip or hard-link
+    /// occurs and the caller creates the node normally.
+    #[test]
+    fn differing_symlink_target_is_not_matched() {
+        let (_tmp, basis, dest) = dirs();
+        symlink("OTHER", basis.join("link")).expect("basis symlink");
+        // The source link points elsewhere than the basis link.
+        let entry = FileEntry::new_symlink("link".into(), "target".into());
+
+        let handled = try_reference_dest_non(
+            &entry,
+            &dest,
+            &refs(ReferenceDirectoryKind::Compare, &basis),
+            &NonRegularBasis::Symlink {
+                target: Path::new("target"),
+            },
+            &identity_only_opts(),
+        );
+
+        assert!(
+            !handled,
+            "a differing symlink target must not match (caller creates it)"
+        );
+        assert!(
+            !dest.join("link").exists(),
+            "a non-match must not touch the destination"
+        );
+    }
+
+    /// (d, special) A socket source over a fifo basis is a type mismatch:
+    /// upstream's `quick_check_ok(FT_SPECIAL)` distinguishes the S_IFMT bits, so
+    /// they never match even though both collapse to FT_SPECIAL.
+    #[test]
+    fn socket_source_over_fifo_basis_is_not_matched() {
+        let (_tmp, basis, dest) = dirs();
+        metadata::create_fifo_node_from_parts(&basis.join("node"), 0o644, false, false)
+            .expect("basis fifo");
+        let entry = FileEntry::new_socket("node".into(), 0o644);
+
+        let handled = try_reference_dest_non(
+            &entry,
+            &dest,
+            &refs(ReferenceDirectoryKind::Compare, &basis),
+            &NonRegularBasis::Special { is_socket: true },
+            &identity_only_opts(),
+        );
+
+        assert!(!handled, "a socket source must not match a fifo basis");
+    }
+
+    /// A `--compare-dest` symlink whose target matches but whose mtime differs
+    /// (with `--times`) is only match_level 2, so upstream does NOT skip - the
+    /// destination node is created from the flist entry. This encodes WHY the
+    /// compare-dest skip requires a full attribute match (match_level 3), not
+    /// merely an identity match.
+    #[test]
+    fn compare_dest_attr_mismatch_does_not_skip() {
+        let (_tmp, basis, dest) = dirs();
+        let basis_link = basis.join("link");
+        symlink("target", &basis_link).expect("basis symlink");
+        // Backdate the basis link's mtime so it differs from the entry's.
+        set_symlink_file_times(
+            &basis_link,
+            FileTime::from_unix_time(1_600_000_000, 0),
+            FileTime::from_unix_time(1_600_000_000, 0),
+        )
+        .expect("set basis symlink times");
+
+        let mut entry = FileEntry::new_symlink("link".into(), "target".into());
+        entry.set_mtime(1_700_000_000, 0);
+
+        let opts = MetadataOptions::new().preserve_times(true);
+        let handled = try_reference_dest_non(
+            &entry,
+            &dest,
+            &refs(ReferenceDirectoryKind::Compare, &basis),
+            &NonRegularBasis::Symlink {
+                target: Path::new("target"),
+            },
+            &opts,
+        );
+
+        assert!(
+            !handled,
+            "an attrs-only (mtime) mismatch is match_level 2; compare-dest must not skip"
+        );
+    }
+
+    /// Root-gated: `--link-dest` with an identical character device hard-links
+    /// the basis node (upstream `CAN_HARDLINK_SPECIAL`), and a differing rdev
+    /// does not match. Creating a device node requires `CAP_MKNOD`, so the test
+    /// is skipped when not run as root.
+    #[test]
+    fn link_dest_identical_device_hard_links_shared_inode() {
+        if !metadata::am_root() {
+            return;
+        }
+        let (_tmp, basis, dest) = dirs();
+        let basis_dev = basis.join("dev");
+        // /dev/null is char device 1:3 on Linux; any stable rdev works here.
+        metadata::create_device_node_from_parts(&basis_dev, 0o644, false, 1, 3, false)
+            .expect("basis device");
+        let rdev = metadata::device_word(1, 3);
+        let entry = FileEntry::new_char_device("dev".into(), 0o644, 1, 3);
+
+        let handled = try_reference_dest_non(
+            &entry,
+            &dest,
+            &refs(ReferenceDirectoryKind::Link, &basis),
+            &NonRegularBasis::Device { rdev },
+            &identity_only_opts(),
+        );
+        let dest_dev = dest.join("dev");
+        assert!(handled, "identical link-dest device must be handled");
+        assert_eq!(
+            ino(&dest_dev),
+            ino(&basis_dev),
+            "link-dest must hard-link the basis device (shared inode)"
+        );
+
+        // A differing rdev must not match: compare-dest with rdev 1:5.
+        let (_tmp2, basis2, dest2) = dirs();
+        metadata::create_device_node_from_parts(&basis2.join("dev"), 0o644, false, 1, 3, false)
+            .expect("basis2 device");
+        let entry2 = FileEntry::new_char_device("dev".into(), 0o644, 1, 5);
+        let handled2 = try_reference_dest_non(
+            &entry2,
+            &dest2,
+            &refs(ReferenceDirectoryKind::Compare, &basis2),
+            &NonRegularBasis::Device {
+                rdev: metadata::device_word(1, 5),
+            },
+            &identity_only_opts(),
+        );
+        assert!(!handled2, "a differing device rdev must not match");
     }
 }
