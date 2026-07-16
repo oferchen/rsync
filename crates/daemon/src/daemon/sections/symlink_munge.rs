@@ -174,4 +174,47 @@ mod symlink_munge_tests {
         };
         assert!(!def.effective_munge_symlinks());
     }
+
+    /// A chrooted module whose path splits at a `/./` marker is only partially
+    /// confined (`module_dirlen > 0`), so munging must still default ON to keep
+    /// symlinks from escaping the sanitized inner path. A bare `use chroot=yes`
+    /// with a non-split path stays OFF (covered by `effective_munge_auto_chroot_on`).
+    ///
+    /// upstream: clientserver.c:997-998 - `munge_symlinks = !use_chroot || module_dirlen`.
+    #[test]
+    fn effective_munge_auto_chroot_partial_split_on() {
+        let def = ModuleDefinition {
+            use_chroot: true,
+            munge_symlinks: None,
+            path: "/srv/./data".into(),
+            ..Default::default()
+        };
+        assert!(def.effective_munge_symlinks());
+    }
+
+    /// An explicit `munge symlinks = no` still wins over the partial-chroot
+    /// default, matching upstream's `lp_munge_symlinks(i) >= 0` short-circuit.
+    #[test]
+    fn effective_munge_explicit_false_overrides_partial_split() {
+        let def = ModuleDefinition {
+            use_chroot: true,
+            munge_symlinks: Some(false),
+            path: "/srv/./data".into(),
+            ..Default::default()
+        };
+        assert!(!def.effective_munge_symlinks());
+    }
+
+    /// A `/./` at the very end has an empty inner path, so upstream normalizes
+    /// it to `/` and resets `module_dirlen` to 0 - munging stays OFF.
+    #[test]
+    fn effective_munge_auto_chroot_trailing_split_off() {
+        let def = ModuleDefinition {
+            use_chroot: true,
+            munge_symlinks: None,
+            path: "/srv/./".into(),
+            ..Default::default()
+        };
+        assert!(!def.effective_munge_symlinks());
+    }
 }

@@ -107,7 +107,21 @@ fn perform_module_authentication(
         }
     };
 
-    if !verify_secret_response(module, username, &challenge, digest, protocol_version)? {
+    // upstream: authenticate.c:318 - check_secret() receives the group name only
+    // when the client was authorized via a matching `@group` token in
+    // `auth users` (`group_match >= 0 ? auth_uid_groups[group_match] : NULL`).
+    // A plain-username authorization passes NULL, so `@group:` secret lines
+    // never match. The matched entry's verbatim token carries that group.
+    let auth_group = auth_user.username.strip_prefix('@');
+
+    if !verify_secret_response(
+        module,
+        username,
+        auth_group,
+        &challenge,
+        digest,
+        protocol_version,
+    )? {
         send_auth_failed(reader.get_mut(), module, limiter)?;
         return Ok(AuthenticationStatus::Denied);
     }
@@ -173,25 +187,35 @@ fn generate_auth_challenge(
 
 /// Verifies a client's authentication response against the secrets file.
 ///
-/// Reads the module's secrets file line by line, looking for a matching
-/// username entry. For matching usernames, computes the expected digest
-/// using the stored secret and challenge, then compares with the client's
-/// response.
+/// Reads the module's secrets file line by line, mirroring upstream
+/// `check_secret()`. A line whose key starts with `@` is matched against the
+/// group `auth users` used to authorize the client (`group`, `None` when the
+/// client was authorized by a plain-username token); every other line is
+/// matched against `username`. This lets a shared `@group:secret` entry
+/// authenticate any member of that group, as upstream does.
+///
+/// First-name-match wins: on the first line whose key matches but whose digest
+/// mismatches, that key is retired so later duplicate entries for the same key
+/// cannot override the denial. User and group keys are retired independently,
+/// exactly as upstream nulls the individual `user`/`group` pointer.
 ///
 /// When the module has `strict_modes` enabled (the default), the secrets file
 /// permissions are validated before reading: the file must not be accessible by
 /// "other" users.
 ///
-/// upstream: authenticate.c - `check_secret()` enforces `lp_strict_modes(module)`
-/// by rejecting files with `(st.st_mode & 06) != 0`.
+/// upstream: authenticate.c:100-169 - `check_secret()` matches `@group`/user
+/// keys, enforces `lp_strict_modes(module)` by rejecting files with
+/// `(st.st_mode & 06) != 0`, and on a password mismatch sets `*ptr = NULL`
+/// ("Don't look for name again").
 ///
 /// The `protocol_version` is forwarded to `verify_daemon_auth_response` to
 /// select the correct digest for ambiguous MD4/MD5 responses.
 ///
-/// Returns `true` if the username exists and the digest matches, `false` otherwise.
+/// Returns `true` if a matching key's digest matches, `false` otherwise.
 fn verify_secret_response(
     module: &ModuleDefinition,
     username: &str,
+    group: Option<&str>,
     challenge: &str,
     response: &str,
     protocol_version: Option<ProtocolVersion>,
@@ -219,23 +243,52 @@ fn verify_secret_response(
         Err(_) => return Ok(false),
     };
 
+    // upstream: authenticate.c:141 `while ((user || group) && ...)` - each key
+    // is retired once it mismatches, so scanning stops when neither a user nor
+    // a group line can still match.
+    let mut user_active = true;
+    let mut group_active = group.is_some();
+
     for raw_line in contents.lines() {
+        if !user_active && !group_active {
+            break;
+        }
+
         let line = raw_line.trim_end_matches('\r');
         if line.is_empty() || line.starts_with('#') {
             continue;
         }
 
-        if let Some((user, secret)) = line.split_once(':')
-            && user == username
-            && verify_daemon_auth_response(
-                secret.as_bytes(),
-                challenge,
-                response,
-                protocol_version.map(|v| v.as_u8()),
-            )
-        {
+        // upstream: authenticate.c:145-152 - an `@`-prefixed key selects the
+        // group pointer (skipping the `@`); every other key selects the user.
+        let (active, expected, entry) = match line.strip_prefix('@') {
+            Some(rest) => (&mut group_active, group, rest),
+            None => (&mut user_active, Some(username), line),
+        };
+
+        if !*active {
+            continue;
+        }
+
+        let Some((key, secret)) = entry.split_once(':') else {
+            continue;
+        };
+        if Some(key) != expected {
+            continue;
+        }
+
+        // upstream: authenticate.c:158-163 - the first key-matching line decides
+        // the outcome; a digest match authenticates, a mismatch retires the key
+        // (`*ptr = NULL`) so later duplicates cannot flip the denial.
+        if verify_daemon_auth_response(
+            secret.as_bytes(),
+            challenge,
+            response,
+            protocol_version.map(|v| v.as_u8()),
+        ) {
             return Ok(true);
         }
+        *active = false;
     }
 
     Ok(false)
