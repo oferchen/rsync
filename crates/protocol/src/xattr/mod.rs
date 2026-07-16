@@ -86,7 +86,8 @@ pub const MAX_WIRE_XATTR_COUNT: usize = 1024;
 /// no upper bound beyond the overflow check against `SIZE_MAX`.
 pub const MAX_WIRE_XATTR_NAME_LEN: usize = 1024;
 
-/// Defence-in-depth cap on a single xattr value length from the wire (1 GiB).
+/// Default per-value allocation ceiling before `--max-alloc` is negotiated
+/// (1 GiB, equal to [`crate::max_alloc::DEFAULT_MAX_ALLOC`]).
 ///
 /// Linux `XATTR_SIZE_MAX` is 65536 bytes, but some filesystems (XFS, Btrfs)
 /// and platforms (macOS resource forks, transferred as `com.apple.ResourceFork`)
@@ -99,16 +100,13 @@ pub const MAX_WIRE_XATTR_NAME_LEN: usize = 1024;
 /// allocation guard is `--max-alloc` (default `DEFAULT_MAX_ALLOC` = 1 GiB,
 /// options.c:203) enforced inside `new_array()`/`my_alloc()`.
 ///
-/// The full-value decode path (`recv_xattr_values`) allocates `datum_len`
-/// bytes up front, so the cap must stay a real allocation bound. `--max-alloc`
-/// is parsed at the CLI/core layer but is not threaded into these pure
-/// `fn(reader)` protocol decoders, so we pin the ceiling at the upstream
-/// default `--max-alloc` (1 GiB) rather than the `0x7fffffff` wire maximum.
-/// This accepts every legitimately sized macOS resource fork that upstream's
-/// default configuration accepts while keeping the allocation bounded. Full
-/// parity up to `0x7fffffff` requires wiring the configurable `--max-alloc`
-/// value from core into the decode path.
-pub const MAX_WIRE_XATTR_VALUE_LEN: usize = 1024 * 1024 * 1024;
+/// The decoders no longer compare against this fixed constant. They call
+/// [`crate::max_alloc::effective_max_alloc`], which returns this default until
+/// `--max-alloc` rewrites the process-global ceiling. A peer that raised
+/// `--max-alloc` can then send larger datum values, up to the `0x7fffffff`
+/// signed-`int32` field ceiling. This constant remains the documented default
+/// (and the value the decoders enforce when `--max-alloc` is unset).
+pub const MAX_WIRE_XATTR_VALUE_LEN: usize = crate::max_alloc::DEFAULT_MAX_ALLOC;
 
 /// User namespace prefix for xattrs.
 pub const USER_PREFIX: &str = "user.";

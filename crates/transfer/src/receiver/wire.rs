@@ -8,8 +8,9 @@ use std::io::{self, Read, Write};
 
 use engine::signature::FileSignature;
 use protocol::codec::NdxCodec;
+use protocol::effective_max_alloc;
 use protocol::read_varint;
-use protocol::xattr::{MAX_WIRE_XATTR_VALUE_LEN, XattrList};
+use protocol::xattr::XattrList;
 
 /// Upstream MAXPATHLEN ceiling for an xname vstring (io.c:1944-1960).
 const MAX_XNAME_LEN: usize = 4096;
@@ -613,20 +614,24 @@ fn accumulate_xattr_num(prior_req: i32, rel_pos: i32) -> io::Result<i32> {
     })
 }
 
-/// Validates a raw xattr datum length against the receiver-side ceiling.
+/// Validates a raw xattr datum length against the negotiated `--max-alloc`.
 ///
-/// Upstream `xattrs.c:752` reads
-/// `datum_len` via `read_varint_size(..., MAX_WIRE_XATTR_DATALEN, ...)`; we use
-/// the oc-rsync ceiling (`MAX_WIRE_XATTR_VALUE_LEN`, upstream default --max-alloc) so a
-/// corrupt or hostile frame surfaces as a typed error instead of an unbounded
-/// allocation or a varint overflow panic.
+/// Upstream `xattrs.c:752-756` reads `datum_len` via
+/// `read_varint_size(..., MAX_WIRE_XATTR_DATALEN, ...)` and then allocates it
+/// with `new_array()`, whose `my_alloc()` aborts once the request reaches the
+/// negotiated `--max-alloc` (util2.c:75). We mirror that by bounding against
+/// [`effective_max_alloc`], which defaults to the upstream 1 GiB
+/// `DEFAULT_MAX_ALLOC` and rises when the peer raised `--max-alloc` (up to the
+/// `0x7fffffff` field ceiling), so a corrupt or hostile frame surfaces as a
+/// typed error instead of an unbounded allocation or a varint overflow panic.
 #[inline]
 fn check_xattr_datum_len(raw_len: i32) -> io::Result<usize> {
-    if raw_len < 0 || raw_len as usize > MAX_WIRE_XATTR_VALUE_LEN {
+    let max_datum = effective_max_alloc();
+    if raw_len < 0 || raw_len as usize > max_datum {
         return Err(io::Error::new(
             io::ErrorKind::InvalidData,
             format!(
-                "xattr datum_len {raw_len} exceeds maximum {MAX_WIRE_XATTR_VALUE_LEN} {}{}",
+                "xattr datum_len {raw_len} exceeds maximum {max_datum} {}{}",
                 crate::role_trailer::error_location!(),
                 crate::role_trailer::receiver()
             ),
@@ -772,19 +777,67 @@ mod xattr_abbrev_guard_tests {
 
     #[test]
     fn datum_len_exceeding_cap_returns_typed_error() {
-        // datum_len just above the receiver-side ceiling must be
+        // datum_len just above the effective --max-alloc ceiling must be
         // rejected with InvalidData rather than triggering a giant `vec!`
-        // allocation. Mirrors upstream xattrs.c:752 bounded read.
+        // allocation. Keys off the effective ceiling (default 1 GiB), not a
+        // fixed constant. Mirrors upstream xattrs.c:752 bounded read.
         let mut bytes = Vec::new();
         bytes.extend(encode_varint(1));
-        bytes.extend(encode_varint(
-            (protocol::xattr::MAX_WIRE_XATTR_VALUE_LEN as i32) + 1,
-        ));
+        bytes.extend(encode_varint((protocol::effective_max_alloc() as i32) + 1));
 
         let mut reader = Cursor::new(bytes);
         let err = read_xattr_abbreviation_data(&mut reader).expect_err("must error");
         assert_eq!(err.kind(), ErrorKind::InvalidData);
         assert!(err.to_string().contains("datum_len"));
+    }
+
+    #[test]
+    fn lowered_max_alloc_rejects_sub_gib_datum_len() {
+        // With --max-alloc lowered below the 1 GiB default, a datum length the
+        // former fixed cap would have accepted is now rejected - proving the
+        // bound tracks the effective ceiling. Uses a small ceiling so the
+        // rejected length stays tiny (no large allocation).
+        let restore = protocol::effective_max_alloc();
+        let lowered = 64usize;
+        protocol::set_max_alloc(lowered);
+
+        let mut bytes = Vec::new();
+        bytes.extend(encode_varint(1)); // rel_pos
+        bytes.extend(encode_varint(200)); // datum_len > lowered, < 1 GiB default
+
+        let mut reader = Cursor::new(bytes);
+        let result = read_xattr_abbreviation_data(&mut reader);
+        protocol::set_max_alloc(restore);
+
+        let err = result.expect_err("datum above lowered cap must be rejected");
+        assert_eq!(err.kind(), ErrorKind::InvalidData);
+        assert!(err.to_string().contains("datum_len"));
+    }
+
+    #[test]
+    fn raised_max_alloc_accepts_datum_len_above_default() {
+        // With --max-alloc raised, a datum length above the 1 GiB default (but
+        // within the raised ceiling) passes the length check and proceeds to
+        // read the value bytes. We provide only a truncated body, so the decoder
+        // fails at the read (UnexpectedEof), NOT at the length check - proving
+        // the length itself is accepted. A small raised ceiling keeps the
+        // provided body tiny.
+        let restore = protocol::effective_max_alloc();
+        let raised = 4096usize;
+        protocol::set_max_alloc(raised);
+
+        let mut bytes = Vec::new();
+        bytes.extend(encode_varint(1)); // rel_pos
+        bytes.extend(encode_varint(2048)); // datum_len within raised ceiling
+        // Deliberately omit the 2048 value bytes.
+
+        let mut reader = Cursor::new(bytes);
+        let result = read_xattr_abbreviation_data(&mut reader);
+        protocol::set_max_alloc(restore);
+
+        let err = result.expect_err("truncated body must error after the accepted length");
+        assert_eq!(err.kind(), ErrorKind::UnexpectedEof);
+        assert!(!err.to_string().contains("datum_len"));
     }
 
     #[test]

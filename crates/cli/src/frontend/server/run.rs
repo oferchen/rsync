@@ -670,6 +670,11 @@ fn apply_value_flags<Err: Write>(
                 if let Ok(limit_usize) = usize::try_from(limit)
                     && limit_usize > 0
                 {
+                    // upstream: options.c:1959-1965 - the server rewrites its own
+                    // `max_alloc` global from the forwarded `--max-alloc`, which
+                    // bounds the xattr datum decoders on the receive path
+                    // (util2.c:75).
+                    protocol::set_max_alloc(limit_usize);
                     let cfg = engine::local_copy::GlobalBufferPoolConfig {
                         byte_budget: Some(limit_usize),
                         ..engine::local_copy::GlobalBufferPoolConfig::default()

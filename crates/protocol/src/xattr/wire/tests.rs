@@ -1047,12 +1047,14 @@ fn read_definitions_exceeds_max_name_len() {
 
 #[test]
 fn read_definitions_exceeds_max_value_len() {
-    use crate::xattr::MAX_WIRE_XATTR_VALUE_LEN;
+    use crate::max_alloc::effective_max_alloc;
 
+    // Key off the effective --max-alloc (default DEFAULT_MAX_ALLOC = 1 GiB),
+    // not a hard-coded constant, so this stays correct when the ceiling moves.
     let mut buf = Vec::new();
     write_varint(&mut buf, 1).unwrap();
     write_varint(&mut buf, 5).unwrap();
-    write_varint(&mut buf, (MAX_WIRE_XATTR_VALUE_LEN + 1) as i32).unwrap();
+    write_varint(&mut buf, (effective_max_alloc() + 1) as i32).unwrap();
 
     let mut cursor = Cursor::new(buf);
     let result = read_xattr_definitions(&mut cursor);
@@ -1132,13 +1134,13 @@ fn recv_xattr_exceeds_max_name_len() {
 
 #[test]
 fn recv_xattr_exceeds_max_value_len() {
-    use crate::xattr::MAX_WIRE_XATTR_VALUE_LEN;
+    use crate::max_alloc::effective_max_alloc;
 
     let mut buf = Vec::new();
     write_varint(&mut buf, 0).unwrap();
     write_varint(&mut buf, 1).unwrap();
     write_varint(&mut buf, 5).unwrap();
-    write_varint(&mut buf, (MAX_WIRE_XATTR_VALUE_LEN + 1) as i32).unwrap();
+    write_varint(&mut buf, (effective_max_alloc() + 1) as i32).unwrap();
 
     let mut cursor = Cursor::new(buf);
     let result = recv_xattr(&mut cursor);
@@ -1161,7 +1163,7 @@ fn recv_xattr_exceeds_max_value_len() {
 
 #[test]
 fn recv_xattr_values_exceeds_max_value_len() {
-    use crate::xattr::MAX_WIRE_XATTR_VALUE_LEN;
+    use crate::max_alloc::effective_max_alloc;
 
     let mut list = XattrList::new();
     list.push(XattrEntry::abbreviated(
@@ -1171,7 +1173,7 @@ fn recv_xattr_values_exceeds_max_value_len() {
     ));
 
     let mut buf = Vec::new();
-    write_varint(&mut buf, (MAX_WIRE_XATTR_VALUE_LEN + 1) as i32).unwrap();
+    write_varint(&mut buf, (effective_max_alloc() + 1) as i32).unwrap();
 
     let mut cursor = Cursor::new(buf);
     let result = recv_xattr_values(&mut cursor, &mut list);
@@ -1219,14 +1221,15 @@ fn read_definitions_missing_nul_maps_to_fileio() {
 
 #[test]
 fn read_definitions_large_datum_within_max_alloc_decodes() {
-    use crate::xattr::MAX_WIRE_XATTR_VALUE_LEN;
+    use crate::max_alloc::effective_max_alloc;
 
     // A macOS resource fork (com.apple.ResourceFork) between the former 64 MiB
-    // cap and upstream's default --max-alloc ceiling (1 GiB). Declared datum_len
-    // exceeds MAX_FULL_DATUM (32), so this list-phase entry is abbreviated: only
-    // the 16-byte digest is on the wire, no large allocation occurs here.
-    let datum_len: i32 = 65 * 1024 * 1024; // > old 64 MiB cap, < 1 GiB new cap
-    assert!(datum_len as usize <= MAX_WIRE_XATTR_VALUE_LEN);
+    // cap and the effective --max-alloc ceiling (default 1 GiB). Declared
+    // datum_len exceeds MAX_FULL_DATUM (32), so this list-phase entry is
+    // abbreviated: only the 16-byte digest is on the wire, no large allocation
+    // occurs here.
+    let datum_len: i32 = 65 * 1024 * 1024; // > old 64 MiB cap, < default cap
+    assert!(datum_len as usize <= effective_max_alloc());
 
     let mut buf = Vec::new();
     write_varint(&mut buf, 1).unwrap(); // count
@@ -1252,15 +1255,15 @@ fn read_definitions_large_datum_within_max_alloc_decodes() {
 
 #[test]
 fn read_definitions_datum_over_max_alloc_rejected() {
-    use crate::xattr::MAX_WIRE_XATTR_VALUE_LEN;
+    use crate::max_alloc::effective_max_alloc;
 
-    // One byte past the --max-alloc-derived ceiling stays rejected: the cap is a
-    // real allocation bound, not merely the 0x7fffffff wire maximum, so a hostile
-    // ~2 GiB claim cannot OOM the receiver before --max-alloc is threaded here.
+    // One byte past the effective --max-alloc ceiling stays rejected: the cap is
+    // a real allocation bound, not merely the 0x7fffffff wire maximum, so a
+    // hostile ~2 GiB claim cannot OOM the receiver.
     let mut buf = Vec::new();
     write_varint(&mut buf, 1).unwrap();
     write_varint(&mut buf, 10).unwrap();
-    write_varint(&mut buf, (MAX_WIRE_XATTR_VALUE_LEN + 1) as i32).unwrap();
+    write_varint(&mut buf, (effective_max_alloc() + 1) as i32).unwrap();
     buf.extend_from_slice(b"user.fork");
     buf.push(0);
 
@@ -1276,6 +1279,142 @@ fn read_definitions_datum_over_max_alloc_rejected() {
         err.get_ref()
             .is_some_and(|e| e.is::<crate::protocol_violation::ProtocolViolation>()),
         "oversized xattr datum must be tagged ProtocolViolation (RERR_PROTOCOL=2)"
+    );
+}
+
+/// A raised `--max-alloc` lets the list-phase decoder accept a datum between the
+/// former 1 GiB default cap and the `0x7fffffff` field ceiling. The entry is
+/// abbreviated (datum_len > MAX_FULL_DATUM), so only the 16-byte digest is on
+/// the wire and no multi-GiB allocation occurs. WHY: upstream bounds the datum
+/// by the negotiated `--max-alloc` (util2.c:75), not by a fixed per-field cap,
+/// so a peer that raised `--max-alloc` may legitimately send this.
+#[test]
+fn read_definitions_datum_above_default_accepted_when_max_alloc_raised() {
+    use crate::max_alloc::{DEFAULT_MAX_ALLOC, effective_max_alloc, set_max_alloc};
+
+    let restore = effective_max_alloc();
+    // Raise the ceiling to just below the field maximum, then declare a datum
+    // above the 1 GiB default but below the raised ceiling.
+    let raised = 0x7000_0000usize; // 1.75 GiB, < 0x7fffffff field ceiling
+    let datum_len: i32 = 0x5000_0000; // 1.25 GiB, > DEFAULT_MAX_ALLOC (1 GiB)
+    assert!(datum_len as usize > DEFAULT_MAX_ALLOC);
+    assert!((datum_len as usize) < raised);
+    set_max_alloc(raised);
+
+    let mut buf = Vec::new();
+    write_varint(&mut buf, 1).unwrap(); // count
+    write_varint(&mut buf, 10).unwrap(); // name_len (incl NUL)
+    write_varint(&mut buf, datum_len).unwrap();
+    buf.extend_from_slice(b"user.fork");
+    buf.push(0);
+    buf.extend_from_slice(&[0xAA; MAX_XATTR_DIGEST_LEN]);
+
+    let mut cursor = Cursor::new(buf);
+    let set = read_xattr_definitions(&mut cursor).expect("datum below raised cap must decode");
+    set_max_alloc(restore);
+
+    assert_eq!(set.len(), 1);
+    let entry = &set.entries()[0];
+    assert!(entry.is_abbreviated());
+    assert_eq!(entry.datum_len(), datum_len as usize);
+}
+
+/// With `--max-alloc` raised, a datum one byte past the raised ceiling is still
+/// rejected as RERR_PROTOCOL: the bound tracks the effective ceiling, not a
+/// fixed constant. Uses a small ceiling so the rejected length stays tiny.
+#[test]
+fn recv_xattr_values_rejects_above_raised_max_alloc() {
+    use crate::max_alloc::{effective_max_alloc, set_max_alloc};
+
+    let restore = effective_max_alloc();
+    let raised = 4096usize;
+    set_max_alloc(raised);
+
+    let mut list = XattrList::new();
+    list.push(XattrEntry::abbreviated(
+        b"user.test".to_vec(),
+        vec![0u8; MAX_XATTR_DIGEST_LEN],
+        100,
+    ));
+
+    let mut buf = Vec::new();
+    write_varint(&mut buf, (raised + 1) as i32).unwrap();
+
+    let mut cursor = Cursor::new(buf);
+    let result = recv_xattr_values(&mut cursor, &mut list);
+    set_max_alloc(restore);
+
+    let err = result.expect_err("length past raised cap must be rejected");
+    assert_eq!(err.kind(), std::io::ErrorKind::InvalidData);
+    assert!(err.to_string().contains("exceeds maximum"));
+    assert!(
+        err.get_ref()
+            .is_some_and(|e| e.is::<crate::protocol_violation::ProtocolViolation>()),
+        "oversized xattr datum must stay tagged ProtocolViolation (RERR_PROTOCOL=2)"
+    );
+}
+
+/// With `--max-alloc` raised below the effective ceiling, a length the old 1 GiB
+/// default would have accepted is now rejected - proving the check keys off the
+/// effective ceiling rather than the former constant.
+#[test]
+fn recv_xattr_values_lowered_max_alloc_rejects_sub_gib_length() {
+    use crate::max_alloc::{DEFAULT_MAX_ALLOC, effective_max_alloc, set_max_alloc};
+
+    let restore = effective_max_alloc();
+    let lowered = 64usize;
+    set_max_alloc(lowered);
+
+    let mut list = XattrList::new();
+    list.push(XattrEntry::abbreviated(
+        b"user.test".to_vec(),
+        vec![0u8; MAX_XATTR_DIGEST_LEN],
+        100,
+    ));
+
+    // 200 bytes: far below the 1 GiB default, but above the lowered ceiling.
+    let length = 200usize;
+    assert!(length < DEFAULT_MAX_ALLOC);
+    assert!(length > lowered);
+
+    let mut buf = Vec::new();
+    write_varint(&mut buf, length as i32).unwrap();
+
+    let mut cursor = Cursor::new(buf);
+    let result = recv_xattr_values(&mut cursor, &mut list);
+    set_max_alloc(restore);
+
+    let err = result.expect_err("length above lowered cap must be rejected");
+    assert!(err.to_string().contains("exceeds maximum"));
+}
+
+/// A negative datum varint cannot fit the signed-`int32` field encoding, so it
+/// stays a protocol violation (exit 2) even when `--max-alloc` is raised to the
+/// field maximum. WHY: upstream's read_varint_size rejects a negative value
+/// with RERR_PROTOCOL regardless of `max_alloc` (io.c:1917-1926); raising the
+/// allocation ceiling must never make a malformed field decode.
+#[test]
+fn read_definitions_negative_datum_rejected_even_when_max_alloc_raised() {
+    use crate::max_alloc::{effective_max_alloc, set_max_alloc};
+
+    let restore = effective_max_alloc();
+    set_max_alloc(0x7fff_ffff); // field maximum
+
+    let mut buf = Vec::new();
+    write_varint(&mut buf, 1).unwrap(); // count
+    write_varint(&mut buf, 10).unwrap(); // name_len
+    write_varint(&mut buf, -1).unwrap(); // negative datum_len
+
+    let mut cursor = Cursor::new(buf);
+    let result = read_xattr_definitions(&mut cursor);
+    set_max_alloc(restore);
+
+    let err = result.expect_err("negative datum_len must be rejected");
+    assert_eq!(err.kind(), std::io::ErrorKind::InvalidData);
+    assert!(
+        err.get_ref()
+            .is_some_and(|e| e.is::<crate::protocol_violation::ProtocolViolation>()),
+        "negative datum must map to RERR_PROTOCOL (2)"
     );
 }
 
