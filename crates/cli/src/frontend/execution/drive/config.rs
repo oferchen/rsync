@@ -145,6 +145,10 @@ pub(crate) struct ConfigInputs {
     /// `--remove-sent-files` - deprecated alias; forwarded verbatim on the wire.
     /// upstream: options.c:2982-2985.
     pub(crate) remove_sent_files: bool,
+    /// Resolved out-format string carries `%i`; forwards `--log-format=%i`.
+    /// Mirrors upstream `stdout_format_has_i`, derived from the resolved format
+    /// string rather than the `-i` flag. upstream: options.c:2345-2358,2772-2775.
+    pub(crate) out_format_forwards_i: bool,
     /// Explicit `--out-format` / `--log-format` contains `%o` but not `%i`;
     /// forwards `--log-format=%o`. upstream: options.c:2776-2777.
     pub(crate) out_format_has_operation: bool,
@@ -343,6 +347,7 @@ pub(crate) fn build_base_config(mut inputs: ConfigInputs) -> ClientConfigBuilder
         .extend_link_dests(inputs.link_dests.clone())
         .remove_source_files(inputs.remove_source_files)
         .remove_sent_files(inputs.remove_sent_files)
+        .out_format_forwards_i(inputs.out_format_forwards_i)
         .out_format_has_operation(inputs.out_format_has_operation)
         .out_format_placeholder(inputs.out_format_placeholder)
         .inplace(inputs.inplace)

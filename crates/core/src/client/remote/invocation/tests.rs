@@ -198,8 +198,13 @@ fn includes_compress_flag() {
 
 #[test]
 fn includes_log_format_for_itemize() {
-    // upstream: options.c:2750-2762 - itemize is sent as --log-format=%i
-    let config = ClientConfig::builder().itemize_changes(true).build();
+    // upstream: options.c:2345-2358,2772-2775 - `-i` alone installs the default
+    // "%i %n%L" format, so `stdout_format_has_i` is set and the server arg is
+    // --log-format=%i. The CLI models this by setting `out_format_forwards_i`.
+    let config = ClientConfig::builder()
+        .itemize_changes(true)
+        .out_format_forwards_i(true)
+        .build();
     let builder = RemoteInvocationBuilder::new(&config, RemoteRole::Sender);
     let args = builder.build("/path");
 
@@ -230,6 +235,7 @@ fn includes_ii_log_format_for_itemize_unchanged() {
     let config = ClientConfig::builder()
         .itemize_changes(true)
         .itemize_unchanged(true)
+        .out_format_forwards_i(true)
         .build();
     let builder = RemoteInvocationBuilder::new(&config, RemoteRole::Sender);
     let args = builder.build("/path");
@@ -1033,6 +1039,54 @@ fn omits_log_format_placeholder_when_verbose() {
     assert!(
         !args.contains(&"--log-format=X".to_string()),
         "verbose client must not forward --log-format=X: {args:?}"
+    );
+}
+
+#[test]
+fn out_format_without_i_forwards_o_not_i_even_with_dash_i() {
+    // upstream: options.c:2345-2358 - `stdout_format_has_i` is derived from the
+    // resolved out-format string, not the `-i` flag. `--out-format="%o" -i`
+    // leaves the explicit "%o" format in place (no `%i`), so has_i stays 0 and
+    // the server arg must be `--log-format=%o`, NOT `%i`. The CLI models this by
+    // NOT setting `out_format_forwards_i` when the explicit format lacks `%i`.
+    let config = ClientConfig::builder()
+        .itemize_changes(true)
+        .out_format_forwards_i(false)
+        .out_format_has_operation(true)
+        .build();
+    let builder = RemoteInvocationBuilder::new(&config, RemoteRole::Sender);
+    let args: Vec<_> = builder
+        .build("/path")
+        .iter()
+        .map(|a| a.to_string_lossy().into_owned())
+        .collect();
+
+    assert!(
+        args.contains(&"--log-format=%o".to_string()),
+        "explicit %o out-format must forward --log-format=%o: {args:?}"
+    );
+    assert!(
+        !args.iter().any(|a| a.starts_with("--log-format=%i")),
+        "must not forward --log-format=%i when the format lacks %i: {args:?}"
+    );
+}
+
+#[test]
+fn explicit_out_format_with_i_forwards_log_format_i() {
+    // upstream: options.c:2345-2349 - an explicit `--out-format="%i"` sets
+    // `stdout_format_has_i` even without `-i`, so the server arg is
+    // --log-format=%i. The CLI models this by setting `out_format_forwards_i`.
+    let config = ClientConfig::builder().out_format_forwards_i(true).build();
+    let builder = RemoteInvocationBuilder::new(&config, RemoteRole::Sender);
+    let args: Vec<_> = builder
+        .build("/path")
+        .iter()
+        .map(|a| a.to_string_lossy().into_owned())
+        .collect();
+
+    assert!(
+        args.contains(&"--log-format=%i".to_string()),
+        "explicit %i out-format must forward --log-format=%i: {args:?}"
     );
 }
 
