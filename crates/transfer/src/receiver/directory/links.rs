@@ -203,6 +203,29 @@ impl ReceiverContext {
                         continue;
                     }
                 }
+            } else if !self.config.reference_directories.is_empty() {
+                // upstream: generator.c:1586 - `else if (basis_dir[0] != NULL)`
+                // is reached only when the destination is absent (`statret !=
+                // 0`). An identical symlink in a `--compare-dest` basis leaves
+                // the destination absent; a `--link-dest` basis is hard-linked.
+                // The comparison target is the post-munge on-disk value, matching
+                // the stored `F_SYMLINK(file)` upstream compares.
+                let compare_opts = MetadataOptions::new()
+                    .preserve_owner(self.config.flags.owner)
+                    .preserve_group(self.config.flags.group)
+                    .preserve_times(self.config.flags.times)
+                    .preserve_atimes(self.config.flags.atimes)
+                    .numeric_ids(self.config.flags.numeric_ids.maps_numeric())
+                    .fake_super(self.config.fake_super);
+                if crate::receiver::quick_check::try_reference_dest_non(
+                    entry,
+                    dest_dir,
+                    &self.config.reference_directories,
+                    &crate::receiver::quick_check::NonRegularBasis::Symlink { target },
+                    &compare_opts,
+                ) {
+                    continue;
+                }
             }
 
             // Ensure parent directory exists for --relative paths.

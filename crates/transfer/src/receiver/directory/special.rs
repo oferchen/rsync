@@ -99,6 +99,47 @@ impl ReceiverContext {
             let up_to_date = existing_special_matches(&node_path, entry, is_device);
 
             if !up_to_date {
+                // upstream: generator.c:1667 - `else if (basis_dir[0] != NULL)`
+                // is reached only when the destination is absent (`statret !=
+                // 0`). An identical node in a `--compare-dest` basis leaves the
+                // destination absent; a `--link-dest` basis is hard-linked. A
+                // wrong-type obstacle (dest present) skips the basis lookup and
+                // is replaced below, matching upstream's `statret == 0` branch.
+                if !self.config.reference_directories.is_empty()
+                    && fs::symlink_metadata(&node_path).is_err()
+                {
+                    let basis = if is_device {
+                        crate::receiver::quick_check::NonRegularBasis::Device {
+                            rdev: metadata::device_word(
+                                entry.rdev_major().unwrap_or(0),
+                                entry.rdev_minor().unwrap_or(0),
+                            ),
+                        }
+                    } else {
+                        crate::receiver::quick_check::NonRegularBasis::Special {
+                            is_socket: entry.file_type() == FileType::Socket,
+                        }
+                    };
+                    let compare_opts = MetadataOptions::new()
+                        .preserve_permissions(self.config.flags.perms)
+                        .preserve_owner(self.config.flags.owner)
+                        .preserve_group(self.config.flags.group)
+                        .preserve_times(self.config.flags.times)
+                        .preserve_atimes(self.config.flags.atimes)
+                        .preserve_crtimes(self.config.flags.crtimes)
+                        .numeric_ids(self.config.flags.numeric_ids.maps_numeric())
+                        .fake_super(self.config.fake_super);
+                    if crate::receiver::quick_check::try_reference_dest_non(
+                        entry,
+                        dest_dir,
+                        &self.config.reference_directories,
+                        &basis,
+                        &compare_opts,
+                    ) {
+                        continue;
+                    }
+                }
+
                 // upstream: generator.c:2018-2020 atomic_create - when --backup
                 // is set and an existing item is being replaced, preserve it to
                 // the backup location before it is removed. On backup-mechanism
