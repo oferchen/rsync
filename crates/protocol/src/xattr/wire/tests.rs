@@ -1217,6 +1217,68 @@ fn read_definitions_missing_nul_maps_to_fileio() {
     );
 }
 
+#[test]
+fn read_definitions_large_datum_within_max_alloc_decodes() {
+    use crate::xattr::MAX_WIRE_XATTR_VALUE_LEN;
+
+    // A macOS resource fork (com.apple.ResourceFork) between the former 64 MiB
+    // cap and upstream's default --max-alloc ceiling (1 GiB). Declared datum_len
+    // exceeds MAX_FULL_DATUM (32), so this list-phase entry is abbreviated: only
+    // the 16-byte digest is on the wire, no large allocation occurs here.
+    let datum_len: i32 = 65 * 1024 * 1024; // > old 64 MiB cap, < 1 GiB new cap
+    assert!(datum_len as usize <= MAX_WIRE_XATTR_VALUE_LEN);
+
+    let mut buf = Vec::new();
+    write_varint(&mut buf, 1).unwrap(); // count
+    write_varint(&mut buf, 10).unwrap(); // name_len (incl NUL)
+    write_varint(&mut buf, datum_len).unwrap();
+    buf.extend_from_slice(b"user.fork");
+    buf.push(0);
+    buf.extend_from_slice(&[0xAA; MAX_XATTR_DIGEST_LEN]);
+
+    let mut cursor = Cursor::new(buf);
+    let set = read_xattr_definitions(&mut cursor).expect("datum below --max-alloc must decode");
+    // WHY: upstream reads datum_len via read_varint_size(f, MAX_WIRE_XATTR_DATALEN,
+    // ...) at xattrs.c:803, where MAX_WIRE_XATTR_DATALEN is 0x7fffffff (rsync.h:178);
+    // the real bound is --max-alloc (default 1 GiB, options.c:203). A 64 MiB cap
+    // rejected legitimate resource forks that upstream 3.4.4 accepts under its
+    // default config. A drop-in tool must accept the same transfers upstream does.
+    assert_eq!(set.len(), 1);
+    let entry = &set.entries()[0];
+    assert_eq!(entry.name(), b"user.fork");
+    assert!(entry.is_abbreviated());
+    assert_eq!(entry.datum_len(), datum_len as usize);
+}
+
+#[test]
+fn read_definitions_datum_over_max_alloc_rejected() {
+    use crate::xattr::MAX_WIRE_XATTR_VALUE_LEN;
+
+    // One byte past the --max-alloc-derived ceiling stays rejected: the cap is a
+    // real allocation bound, not merely the 0x7fffffff wire maximum, so a hostile
+    // ~2 GiB claim cannot OOM the receiver before --max-alloc is threaded here.
+    let mut buf = Vec::new();
+    write_varint(&mut buf, 1).unwrap();
+    write_varint(&mut buf, 10).unwrap();
+    write_varint(&mut buf, (MAX_WIRE_XATTR_VALUE_LEN + 1) as i32).unwrap();
+    buf.extend_from_slice(b"user.fork");
+    buf.push(0);
+
+    let mut cursor = Cursor::new(buf);
+    let err = read_xattr_definitions(&mut cursor).expect_err("datum over cap must be rejected");
+    // WHY: upstream's new_array()/my_alloc() aborts a transfer whose single datum
+    // exceeds --max-alloc. We hold the same allocation bound and tag it
+    // ProtocolViolation so the core mapper yields RERR_PROTOCOL (2), not the
+    // RERR_STREAMIO (12) a bare InvalidData maps to.
+    assert_eq!(err.kind(), std::io::ErrorKind::InvalidData);
+    assert!(err.to_string().contains("exceeds maximum"));
+    assert!(
+        err.get_ref()
+            .is_some_and(|e| e.is::<crate::protocol_violation::ProtocolViolation>()),
+        "oversized xattr datum must be tagged ProtocolViolation (RERR_PROTOCOL=2)"
+    );
+}
+
 /// Pins the literal-xattr wire layout to exact bytes and asserts it is
 /// protocol-version independent.
 ///

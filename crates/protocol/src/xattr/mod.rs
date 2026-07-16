@@ -86,15 +86,29 @@ pub const MAX_WIRE_XATTR_COUNT: usize = 1024;
 /// no upper bound beyond the overflow check against `SIZE_MAX`.
 pub const MAX_WIRE_XATTR_NAME_LEN: usize = 1024;
 
-/// Defence-in-depth cap on a single xattr value length from the wire (64 MiB).
+/// Defence-in-depth cap on a single xattr value length from the wire (1 GiB).
 ///
 /// Linux `XATTR_SIZE_MAX` is 65536 bytes, but some filesystems (XFS, Btrfs)
-/// and platforms (macOS resource forks) allow larger values. 64 MiB is
-/// generous enough for any legitimate xattr while bounding allocation.
+/// and platforms (macOS resource forks, transferred as `com.apple.ResourceFork`)
+/// allow much larger values.
 ///
-/// upstream: xattrs.c does an overflow check against `SIZE_MAX` but has
-/// no practical upper bound.
-pub const MAX_WIRE_XATTR_VALUE_LEN: usize = 64 * 1024 * 1024;
+/// upstream: xattrs.c:803 reads the datum length via
+/// `read_varint_size(f, MAX_WIRE_XATTR_DATALEN, "xattr datum_len")`, where
+/// `MAX_WIRE_XATTR_DATALEN` is `0x7fffffff` (~2 GiB, rsync.h:178). Upstream
+/// does not bound the datum by that wire ceiling directly; the real
+/// allocation guard is `--max-alloc` (default `DEFAULT_MAX_ALLOC` = 1 GiB,
+/// options.c:203) enforced inside `new_array()`/`my_alloc()`.
+///
+/// The full-value decode path (`recv_xattr_values`) allocates `datum_len`
+/// bytes up front, so the cap must stay a real allocation bound. `--max-alloc`
+/// is parsed at the CLI/core layer but is not threaded into these pure
+/// `fn(reader)` protocol decoders, so we pin the ceiling at the upstream
+/// default `--max-alloc` (1 GiB) rather than the `0x7fffffff` wire maximum.
+/// This accepts every legitimately sized macOS resource fork that upstream's
+/// default configuration accepts while keeping the allocation bounded. Full
+/// parity up to `0x7fffffff` requires wiring the configurable `--max-alloc`
+/// value from core into the decode path.
+pub const MAX_WIRE_XATTR_VALUE_LEN: usize = 1024 * 1024 * 1024;
 
 /// User namespace prefix for xattrs.
 pub const USER_PREFIX: &str = "user.";

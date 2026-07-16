@@ -74,10 +74,12 @@ pub const ACCESS_SHIFT: u32 = 2;
 
 /// Defence-in-depth cap on the number of ACL named entries from the wire.
 ///
-/// POSIX ACLs typically have fewer than a dozen named entries. 4096 is
+/// POSIX ACLs typically have fewer than a dozen named entries. 65536 is
 /// well above any real-world usage while preventing a malicious peer from
 /// forcing unbounded allocations via a crafted count varint.
 ///
-/// upstream: acls.c `recv_ida_entries()` uses `EXPAND_ITEM_LIST` which
-/// reallocs but has no explicit count cap.
-pub const MAX_WIRE_ACL_ENTRIES: usize = 4096;
+/// upstream: acls.c:700 `recv_ida_entries()` reads the count via
+/// `read_varint_bounded(f, 0, MAX_WIRE_ACL_COUNT, "ACL count")`, and
+/// `MAX_WIRE_ACL_COUNT` is 65536 (rsync.h:179). We match that ceiling
+/// exactly so a transfer upstream 3.4.4 accepts is not rejected here.
+pub const MAX_WIRE_ACL_ENTRIES: usize = 65536;

@@ -11,8 +11,13 @@ use std::io::{self, Read, Write};
 /// overflow when the receiver accumulates counts across multiple
 /// `NDX_DEL_STATS` messages.
 ///
-/// upstream: io.c - MAX_WIRE_DEL_STAT defence-in-depth (3.4.3)
-const MAX_WIRE_DEL_STAT: i32 = 0x3FFF_FFFF;
+/// upstream: rsync.h:181-187 defines `MAX_WIRE_DEL_STAT` as `(int32)1 << 28`.
+/// `read_del_stats()` accumulates 5 wire-supplied counts into the signed int32
+/// `stats.deleted_files` accumulator, so the per-field cap is held at 2^28 to
+/// keep `5 * 2^28 = 1.34 GB` under `INT32_MAX` (2.15 GB) with margin. A higher
+/// cap would let a hostile peer overflow the accumulator (signed-int UB). Match
+/// upstream exactly.
+const MAX_WIRE_DEL_STAT: i32 = 1 << 28;
 
 /// Deletion statistics exchanged via `NDX_DEL_STATS`.
 ///
@@ -158,7 +163,7 @@ impl DeleteStats {
 ///
 /// Rejects negative values and values exceeding [`MAX_WIRE_DEL_STAT`].
 ///
-/// upstream: io.c - MAX_WIRE_DEL_STAT defence-in-depth (3.4.3)
+/// upstream: rsync.h:181-187 - MAX_WIRE_DEL_STAT = `(int32)1 << 28`.
 fn read_capped_del_stat(raw: i32, field: &str) -> io::Result<u32> {
     if !(0..=MAX_WIRE_DEL_STAT).contains(&raw) {
         // upstream: main.c:read_del_stats() reads each field via

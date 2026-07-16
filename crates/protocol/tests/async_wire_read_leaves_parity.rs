@@ -271,7 +271,9 @@ async fn read_leaf_parity_delete_stats() {
             specials: 4,
         },
         DeleteStats {
-            files: 0x3FFF_FFFF,
+            // At the MAX_WIRE_DEL_STAT cap (rsync.h:181-187 = 1 << 28); a larger
+            // value is now rejected as a wire-overflow guard.
+            files: 1 << 28,
             dirs: 0,
             symlinks: 1,
             devices: 0x1234,
