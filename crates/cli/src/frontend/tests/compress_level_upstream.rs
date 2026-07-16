@@ -399,6 +399,38 @@ fn parse_compress_level_argument_clamps_to_zstd_range() {
     expect("15", 15);
 }
 
+#[cfg(feature = "zstd")]
+#[test]
+fn parse_compress_level_argument_threads_negative_zstd_to_encoder() {
+    use compress::algorithm::{CompressionAlgorithm, zstd_min_level};
+
+    // WHY: --compress-level=-5 must survive the whole CLI pipeline
+    // (parse -> CompressionSetting -> CompressionLevel) and map to the raw
+    // signed level the zstd encoder feeds to ZSTD_c_compressionLevel. The
+    // historical unsigned NonZeroU8 clamp collapsed every negative to 1 here,
+    // long before the resolver saw it. upstream: token.c:73,748.
+    let resolved = |raw: &str| {
+        let setting = parse_compress_level_argument(OsStr::new(raw), CompressionAlgorithm::Zstd)
+            .unwrap_or_else(|_| panic!("zstd level {raw} should clamp, not error"));
+        compress::zstd::level_to_i32(setting.level_or_default())
+    };
+
+    assert_eq!(resolved("-5"), -5, "-5 reaches the encoder unchanged");
+    let min = zstd_min_level();
+    assert_eq!(
+        resolved(&min.to_string()),
+        min,
+        "the exact ZSTD_minCLevel() boundary is preserved end to end"
+    );
+    assert_eq!(
+        resolved(&(min - 1).to_string()),
+        min,
+        "below ZSTD_minCLevel() saturates UP to the min, never rejected"
+    );
+    // No regression: level 0 still selects the zstd default (3), never negative.
+    assert_eq!(resolved("0"), 3, "level 0 = zstd default, unchanged");
+}
+
 #[test]
 fn parse_compress_level_argument_rejects_empty() {
     use compress::algorithm::CompressionAlgorithm;

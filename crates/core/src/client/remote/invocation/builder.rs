@@ -1006,15 +1006,18 @@ pub(super) fn shell_safe_filename_arg_with_tilde(arg: &str, escape_leading_tilde
 
 /// Converts a `CompressionLevel` into its numeric representation for the wire.
 ///
-/// Upstream rsync sends the compression level as an integer in the range 0-9.
-pub(super) fn compression_level_to_numeric(level: compress::zlib::CompressionLevel) -> u32 {
+/// upstream: options.c:2755-2756 - `--compress-level=%d` forwards the signed
+/// `do_compression_level`, so a negative zstd "fast" level reaches the server
+/// verbatim rather than being collapsed into an unsigned range.
+pub(super) fn compression_level_to_numeric(level: compress::zlib::CompressionLevel) -> i32 {
     use compress::zlib::CompressionLevel;
     match level {
         CompressionLevel::None => 0,
         CompressionLevel::Fast => 1,
         CompressionLevel::Default => 6,
         CompressionLevel::Best => 9,
-        CompressionLevel::Precise(n) => u32::from(n.get()),
+        CompressionLevel::Precise(n) => i32::from(n.get()),
+        CompressionLevel::PreciseSigned(v) => v,
     }
 }
 

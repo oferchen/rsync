@@ -263,6 +263,8 @@ fn compression_level_to_i32(level: compress::zlib::CompressionLevel) -> i32 {
         CompressionLevel::Default => 6,
         CompressionLevel::Best => 9,
         CompressionLevel::Precise(n) => i32::from(n.get()),
+        // upstream: token.c:73 - preserve zstd's negative "fast" levels.
+        CompressionLevel::PreciseSigned(v) => v,
     }
 }
 

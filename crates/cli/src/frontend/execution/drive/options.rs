@@ -455,7 +455,7 @@ where
             CompressLevelArg::Level(level) => {
                 if !no_compress {
                     compress = true;
-                    compression_level_override = Some(CompressionLevel::precise(*level));
+                    compression_level_override = Some(*level);
                 }
             }
         }
@@ -488,9 +488,7 @@ where
 
     let compression_setting = match compress_level_setting {
         Some(CompressLevelArg::Disable) => CompressionSetting::disabled(),
-        Some(CompressLevelArg::Level(level)) => {
-            CompressionSetting::level(CompressionLevel::precise(level))
-        }
+        Some(CompressLevelArg::Level(level)) => CompressionSetting::level(level),
         None => CompressionSetting::default(),
     };
 

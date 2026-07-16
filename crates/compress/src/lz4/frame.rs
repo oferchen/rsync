@@ -206,6 +206,8 @@ fn frame_info_for_level(level: CompressionLevel) -> FrameInfo {
             7..=8 => BlockSize::Max1MB,
             _ => BlockSize::Max4MB,
         },
+        // lz4 never receives a signed (zstd-only) level; treat the fastest.
+        CompressionLevel::PreciseSigned(_) => BlockSize::Max64KB,
     };
 
     FrameInfo::new()
