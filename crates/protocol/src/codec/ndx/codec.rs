@@ -553,27 +553,34 @@ pub fn create_ndx_codec(protocol_version: u8) -> NdxCodecEnum {
     NdxCodecEnum::new(protocol_version)
 }
 
-/// NDX codec wrapper that asserts strictly monotonic positive file indices.
+/// NDX codec wrapper that guards forward-pass ordering of positive file
+/// indices, with a redo-pass exemption.
 ///
-/// Wraps an [`NdxCodecEnum`] and adds a `debug_assert!` in `write_ndx` to
-/// verify that each positive NDX (file index) is strictly greater than the
-/// previous one. Negative sentinel values (NDX_DONE, NDX_FLIST_EOF, etc.)
-/// are excluded from this check since they are control signals, not file
-/// indices.
+/// Wraps an [`NdxCodecEnum`] and adds a debug-only guard in `write_ndx` that
+/// tracks the highest positive NDX (file index) emitted so far. On the forward
+/// pass file indices are strictly increasing, and a jump backwards there would
+/// signal an ordering bug from parallel processing. Negative sentinel values
+/// (NDX_DONE, NDX_FLIST_EOF, etc.) are control signals, not file indices, and
+/// are excluded.
 ///
-/// Use this at wire-emission points (generator/receiver transfer loops) to
-/// catch ordering violations from parallel processing before they become
-/// protocol errors.
-///
-/// In release builds, the assertion is compiled out and this wrapper has
-/// zero overhead.
+/// A redo pass legitimately re-emits an already-sent index: upstream
+/// `io.c:write_ndx` imposes no ordering, and `sender.c:442` echoes the redo
+/// NDX via the same `write_ndx_and_attrs` path used for the first send
+/// (`generator.c:2178-2216` re-requests the file on the redo). Once such a
+/// re-emission is seen the guard latches off, since no monotonic invariant
+/// holds across redo. The tracking is `debug_assert`-only, so release builds
+/// compile it out and this wrapper has zero overhead.
 #[derive(Debug, Clone)]
 pub struct MonotonicNdxWriter {
     /// Inner codec that performs the actual wire encoding.
     inner: NdxCodecEnum,
-    /// Tracks the last positive NDX written for monotonicity verification.
+    /// Highest positive NDX written so far, for the forward-pass ordering guard.
     #[cfg(debug_assertions)]
     last_positive: Option<i32>,
+    /// Latches true once a redo re-emits a non-increasing index, disabling the
+    /// forward-pass ordering guard for the rest of the transfer.
+    #[cfg(debug_assertions)]
+    redo_seen: bool,
 }
 
 impl MonotonicNdxWriter {
@@ -584,6 +591,8 @@ impl MonotonicNdxWriter {
             inner: NdxCodecEnum::new(protocol_version),
             #[cfg(debug_assertions)]
             last_positive: None,
+            #[cfg(debug_assertions)]
+            redo_seen: false,
         }
     }
 
@@ -618,17 +627,27 @@ impl MonotonicNdxWriter {
 impl NdxCodec for MonotonicNdxWriter {
     fn write_ndx<W: Write + ?Sized>(&mut self, writer: &mut W, ndx: i32) -> io::Result<()> {
         // Only check positive file indices - negative values are sentinels
-        // (NDX_DONE, NDX_FLIST_EOF, NDX_DEL_STATS, NDX_FLIST_OFFSET).
+        // (NDX_DONE, NDX_FLIST_EOF, NDX_DEL_STATS, NDX_FLIST_OFFSET). A redo
+        // pass re-emits an already-sent index (sender.c:442 echoes the redo NDX
+        // via write_ndx_and_attrs), so a non-increasing value latches the guard
+        // off rather than tripping it.
         #[cfg(debug_assertions)]
         if ndx >= 0 {
-            if let Some(prev) = self.last_positive {
-                debug_assert!(
-                    ndx > prev,
-                    "NDX monotonicity violation: emitted {ndx} after {prev} - \
-                     file indices must be strictly increasing on the wire"
-                );
+            match self.last_positive {
+                Some(prev) if ndx <= prev => self.redo_seen = true,
+                _ => {}
             }
-            self.last_positive = Some(ndx);
+            if !self.redo_seen {
+                if let Some(prev) = self.last_positive {
+                    debug_assert!(
+                        ndx > prev,
+                        "NDX monotonicity violation: emitted {ndx} after {prev} \
+                         on the forward pass - file indices must be strictly \
+                         increasing until a redo re-emits one"
+                    );
+                }
+                self.last_positive = Some(ndx);
+            }
         }
         self.inner.write_ndx(writer, ndx)
     }
