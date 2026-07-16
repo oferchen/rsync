@@ -395,7 +395,7 @@ fn apply_inline_module_options(
                 module.refuse_options = options;
             }
             "uid" => {
-                let uid = parse_numeric_identifier(value)
+                let uid = parse_uid_setting(value)
                     .ok_or_else(|| config_error(format!("invalid uid '{value}'")))?;
                 module.uid = Some(uid);
             }

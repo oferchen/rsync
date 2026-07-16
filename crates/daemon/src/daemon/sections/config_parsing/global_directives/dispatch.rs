@@ -465,7 +465,7 @@ fn apply_global_directive(
                     "'uid' directive must not be empty",
                 ));
             }
-            let uid = parse_numeric_identifier(value).ok_or_else(|| {
+            let uid = parse_uid_setting(value).ok_or_else(|| {
                 config_parse_error(path, line_number, format!("invalid uid '{value}'"))
             })?;
             state.module_defaults.uid = Some(uid);

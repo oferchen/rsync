@@ -167,7 +167,7 @@ fn apply_module_directive(
             }
         }
         "uid" => {
-            let uid = parse_numeric_identifier(value).ok_or_else(|| {
+            let uid = parse_uid_setting(value).ok_or_else(|| {
                 config_parse_error(path, line_number, format!("invalid uid '{value}'"))
             })?;
             builder.set_uid(uid, path, line_number)?;
