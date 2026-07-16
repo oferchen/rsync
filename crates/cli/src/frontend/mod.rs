@@ -152,7 +152,9 @@ pub(crate) use filter_rules::{
 };
 use help::help_text;
 use lsm_status::render_lsm_status;
-pub(crate) use out_format::{OutFormat, OutFormatContext, emit_out_format, parse_out_format};
+pub(crate) use out_format::{
+    OutFormat, OutFormatContext, emit_out_format, log_format_has, parse_out_format,
+};
 pub(crate) use progress::*;
 #[cfg(test)]
 pub(crate) use std::num::NonZeroU64;

@@ -40,6 +40,18 @@ impl ClientConfig {
         self.remove_source_files
     }
 
+    /// Reports whether the deprecated `--remove-sent-files` spelling was the
+    /// effective one, so `server_options()` forwards that alias.
+    ///
+    /// upstream: options.c:730, 2982-2985 - the option table sets
+    /// `remove_source_files = 2` for the deprecated alias, and the emitter picks
+    /// `--remove-sent-files` when the value is 2.
+    #[must_use]
+    #[doc(alias = "--remove-sent-files")]
+    pub const fn remove_sent_files(&self) -> bool {
+        self.remove_sent_files
+    }
+
     /// Reports whether size-only change detection should be used when evaluating updates.
     #[must_use]
     #[doc(alias = "--size-only")]

@@ -54,6 +54,33 @@ impl ClientConfig {
         self.itemize_unchanged
     }
 
+    /// Reports whether the explicit `--out-format` / `--log-format` string
+    /// contains the `%o` (operation) directive without `%i`. For remote pushes
+    /// this forwards `--log-format=%o` so the remote emits matching operation
+    /// output.
+    ///
+    /// upstream: options.c:2375-2376 (`stdout_format_has_o_or_i`) and
+    /// options.c:2776-2777 (`args[ac++] = "--log-format=%o"`).
+    #[must_use]
+    #[doc(alias = "--out-format")]
+    #[doc(alias = "--log-format")]
+    pub const fn out_format_has_operation(&self) -> bool {
+        self.out_format_has_operation
+    }
+
+    /// Reports whether an explicit `--out-format` / `--log-format` string was
+    /// given that contains neither `%i` nor `%o`. For a non-verbose remote push
+    /// this forwards the placeholder `--log-format=X`.
+    ///
+    /// upstream: options.c:2778-2779 (`else if (!verbose) args[ac++] =
+    /// "--log-format=X"`).
+    #[must_use]
+    #[doc(alias = "--out-format")]
+    #[doc(alias = "--log-format")]
+    pub const fn out_format_placeholder(&self) -> bool {
+        self.out_format_placeholder
+    }
+
     /// Reports whether event collection has been explicitly requested by the caller.
     #[must_use]
     pub const fn force_event_collection(&self) -> bool {

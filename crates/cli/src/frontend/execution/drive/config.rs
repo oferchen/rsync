@@ -142,6 +142,16 @@ pub(crate) struct ConfigInputs {
     pub(crate) delay_updates: bool,
     pub(crate) link_dests: Vec<PathBuf>,
     pub(crate) remove_source_files: bool,
+    /// `--remove-sent-files` - deprecated alias; forwarded verbatim on the wire.
+    /// upstream: options.c:2982-2985.
+    pub(crate) remove_sent_files: bool,
+    /// Explicit `--out-format` / `--log-format` contains `%o` but not `%i`;
+    /// forwards `--log-format=%o`. upstream: options.c:2776-2777.
+    pub(crate) out_format_has_operation: bool,
+    /// Explicit `--out-format` / `--log-format` was given with neither `%i` nor
+    /// `%o`; forwards the placeholder `--log-format=X` for a non-verbose client.
+    /// upstream: options.c:2778-2779.
+    pub(crate) out_format_placeholder: bool,
     pub(crate) inplace: bool,
     pub(crate) append: bool,
     pub(crate) append_verify: bool,
@@ -332,6 +342,9 @@ pub(crate) fn build_base_config(mut inputs: ConfigInputs) -> ClientConfigBuilder
         .delay_updates(inputs.delay_updates)
         .extend_link_dests(inputs.link_dests.clone())
         .remove_source_files(inputs.remove_source_files)
+        .remove_sent_files(inputs.remove_sent_files)
+        .out_format_has_operation(inputs.out_format_has_operation)
+        .out_format_placeholder(inputs.out_format_placeholder)
         .inplace(inputs.inplace)
         .append(inputs.append)
         .append_verify(inputs.append_verify)

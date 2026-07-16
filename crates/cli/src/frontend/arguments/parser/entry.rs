@@ -663,6 +663,11 @@ where
     let link_destinations = link_dest_args;
     let remove_source_files =
         matches.get_flag("remove-source-files") || matches.get_flag("remove-sent-files");
+    // upstream: options.c:730,2982-2985 - the deprecated `--remove-sent-files`
+    // spelling is forwarded verbatim. The two flags `.overrides_with` each other
+    // (transfer_behavior_options.rs), so `get_flag` yields the effective
+    // last-wins spelling, matching upstream's popt `remove_source_files = 2`.
+    let remove_sent_files = matches.get_flag("remove-sent-files");
     let inplace = tri_state_flag_positive_first(&matches, "inplace", "no-inplace");
     // upstream: options.c:1722-1726 - OPT_APPEND increments append_mode only on
     // the server (`am_server`); a non-server invocation caps it at 1. A second
@@ -1016,6 +1021,7 @@ where
         early_input,
         link_dests,
         remove_source_files,
+        remove_sent_files,
         inplace,
         append,
         append_verify: append_verify_flag,
