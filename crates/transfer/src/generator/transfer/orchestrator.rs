@@ -165,6 +165,19 @@ impl GeneratorContext {
             },
         )?;
 
+        // upstream: io.c:1623-1637 - MSG_SUCCESS(ndx) frames arrive interleaved
+        // with the receiver's NDX requests and are demultiplexed as the sender
+        // drives the transfer loop and goodbye handshake. Now that the wire is
+        // drained, run the deferred --remove-source-files unlink for every file
+        // the peer confirmed committed (sender.c:131-182 successful_send()). A
+        // file the peer never confirmed keeps its source: an interrupted or
+        // failed transfer returns via `?` above and never reaches this point,
+        // so its source is intentionally left in place. This is the crash-safe
+        // ordering the inline unlink violated.
+        for wire_ndx in reader.take_success_indices() {
+            self.io_error |= self.confirm_source_removal(wire_ndx);
+        }
+
         // UTS-V3.A drain barrier: explicit user-space drain after
         // `handle_goodbye_with_finalizer` returns and before the writer
         // graph drops. The audit traced the cluster-A wire-cutoffs

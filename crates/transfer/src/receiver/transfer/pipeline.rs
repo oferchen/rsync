@@ -33,6 +33,36 @@ use crate::transfer_ops::{
 type PipelineResult = (usize, u64, u64, u64, Vec<usize>, Vec<(PathBuf, PathBuf)>);
 
 impl ReceiverContext {
+    /// Emits `MSG_SUCCESS(ndx)` to the sender for every file whose commit was
+    /// confirmed since the last drain, when `--remove-source-files` is active.
+    ///
+    /// The sender defers its source unlink until it receives this confirmation,
+    /// so this is what lets the sender remove a source only after the file has
+    /// safely landed at the destination. When the flag is off the confirmed
+    /// indices are drained and discarded, keeping the accumulator bounded.
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `receiver.c:1063-1069` - `send_msg_success(fname, ndx)` on `recv_ok == 1`.
+    /// - `io.c:1623-1637` - sender-side `MSG_SUCCESS` handler -> `successful_send`.
+    fn emit_confirmed_source_removals<W>(
+        &self,
+        writer: &mut W,
+        pipelined_receiver: &mut crate::pipeline::receiver::PipelinedReceiver,
+    ) -> io::Result<()>
+    where
+        W: crate::writer::MsgInfoSender + ?Sized,
+    {
+        let confirmed = pipelined_receiver.drain_new_success_indices();
+        if !self.config.flags.remove_source_files {
+            return Ok(());
+        }
+        for flat_idx in confirmed {
+            writer.send_msg_success(self.flat_to_wire_ndx(flat_idx))?;
+        }
+        Ok(())
+    }
+
     /// Pipelined transfer loop with decoupled network/disk I/O.
     ///
     /// Fills a sliding window of file requests, computes signatures in parallel
@@ -363,6 +393,12 @@ impl ReceiverContext {
                 let (_disk_bytes, disk_meta_errors) = pipelined_receiver.drain_ready_results()?;
                 metadata_errors.extend(disk_meta_errors);
 
+                // upstream: receiver.c:1063-1069 - a committed file (recv_ok == 1)
+                // gets an immediate MSG_SUCCESS so the sender can unlink its
+                // --remove-source-files source. Emit for every file the drain
+                // just confirmed committed.
+                self.emit_confirmed_source_removals(writer, &mut pipelined_receiver)?;
+
                 // Route accumulated warnings through the multiplexed writer
                 // instead of eprintln (which deadlocks in daemon handler threads).
                 // Fatal transfer errors ride MSG_ERROR_XFER so the peer sets
@@ -427,6 +463,11 @@ impl ReceiverContext {
             // Drain all remaining disk results
             let (_disk_bytes, disk_meta_errors) = pipelined_receiver.drain_all_results()?;
             metadata_errors.extend(disk_meta_errors);
+
+            // upstream: receiver.c:1063-1069 - flush MSG_SUCCESS for the final
+            // batch of files the blocking drain just confirmed committed, so the
+            // sender unlinks their --remove-source-files sources.
+            self.emit_confirmed_source_removals(writer, &mut pipelined_receiver)?;
 
             // Route accumulated warnings through the multiplexed writer.
             // Fatal transfer errors ride MSG_ERROR_XFER so the peer sets

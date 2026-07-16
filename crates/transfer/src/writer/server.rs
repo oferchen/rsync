@@ -263,6 +263,31 @@ impl<W: Write> ServerWriter<W> {
         self.send_message(MessageCode::Redo, &ndx.to_le_bytes())
     }
 
+    /// Sends a `MSG_SUCCESS` message for the given committed file index.
+    ///
+    /// The generator/receiver emits this only after a file has been fully
+    /// received and committed to its final destination, telling the sender it
+    /// is now safe to unlink that file's `--remove-source-files` source. The
+    /// payload is the bare 4-byte little-endian file index used by every
+    /// non-`local_server` peer; oc never runs as a `local_server` on the wire
+    /// (same-host copies take the engine path), so the 8+8 byte dev/ino guard
+    /// variant is not emitted.
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `io.c:1071-1086`: `send_msg_success()` -> `send_msg_int(MSG_SUCCESS, ndx)`.
+    /// - `receiver.c:1063-1069`: emitted on `recv_ok == 1` (finish_transfer succeeded).
+    /// - `generator.c:1834-1839`: emitted for an already up-to-date source.
+    /// - `io.c:1623-1637`: sender-side handler runs `successful_send(ndx)`.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the writer is not in multiplex mode or the underlying
+    /// I/O operation fails.
+    pub fn send_success(&mut self, ndx: i32) -> io::Result<()> {
+        self.send_message(MessageCode::Success, &ndx.to_le_bytes())
+    }
+
     /// Sends a `MSG_IO_ERROR` message carrying the accumulated io_error bits.
     ///
     /// After the transfer loop, the sender reports any io_error accumulated
