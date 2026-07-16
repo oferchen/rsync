@@ -151,20 +151,24 @@ impl DualFileList {
     /// lockstep so a caller-owned array (the generator's `source_bases`) stays
     /// aligned with the cleaned list.
     ///
-    /// This is the sender-side half of upstream's `flist_sort_and_clean`: the
-    /// sender dedups before transmitting so the receiver's identical pass is
-    /// idempotent and both sides keep matching NDX numbering. The list MUST
-    /// already be sorted (call [`sort_with_parallel`](Self::sort_with_parallel)
-    /// first) - dedup only collapses adjacent equal names. On a list with no
-    /// duplicates this changes neither order nor length.
+    /// The list MUST already be sorted (call
+    /// [`sort_with_parallel`](Self::sort_with_parallel) first) - dedup only
+    /// collapses adjacent equal names. On a list with no duplicates this changes
+    /// neither order nor length.
     ///
-    /// Reuses `resolve_duplicate` (`super::sort::resolve_duplicate`) so the
-    /// keep/drop tie-break is identical to the receiver's `flist_clean`. oc
-    /// converges both sides to the same sorted+cleaned list, so it drops
-    /// duplicates symmetrically rather than following upstream's `am_sender`
-    /// branch (mark a dup dir `FLAG_DUPLICATE` and keep it for the in-place
-    /// `dir_flist` tree at `flist.c:3067`); oc has no such tree, and keeping the
-    /// dup only on the sender would desync the NDX count.
+    /// # Sender skip
+    ///
+    /// A non-incremental sender (`am_sender && !inc_recurse`) must NOT remove
+    /// duplicates: upstream skips the clean loop entirely (`flist.c:3039-3042`)
+    /// and transmits every entry as-is, so the receiver's in-place tombstones
+    /// keep both sides' NDX numbering aligned. This method returns immediately in
+    /// that case, leaving the list (and `parallel`) untouched.
+    ///
+    /// Under INC_RECURSE the pass still runs (upstream's `!am_sender ||
+    /// inc_recurse` branch): each sub-list is cleaned so its numbering matches
+    /// the receiver's identical pass. It reuses
+    /// [`resolve_duplicate`](super::sort::resolve_duplicate) for an identical
+    /// keep/drop tie-break.
     ///
     /// # Panics
     ///
@@ -174,11 +178,26 @@ impl DualFileList {
     ///
     /// - `flist.c:2544` - `flist_sort_and_clean(flist, 0)` runs in
     ///   `send_file_list()`; the sender passes `strip_root = 0`.
+    /// - `flist.c:3039-3042` - `am_sender && !inc_recurse` skips the clean loop.
     /// - `flist.c:3046-3082` - the duplicate-removal tie-break this mirrors.
-    pub fn dedup_with_parallel<P>(&mut self, parallel: &mut Vec<P>) -> super::sort::CleanResult {
+    pub fn dedup_with_parallel<P>(
+        &mut self,
+        parallel: &mut Vec<P>,
+        am_sender: bool,
+        inc_recurse: bool,
+    ) -> super::sort::CleanResult {
         let len = self.legacy.len();
         let mut stats = super::sort::CleanResult::default();
         if len == 0 {
+            return stats;
+        }
+        // upstream: flist.c:3039-3042 - a non-incremental sender transmits
+        // duplicates as-is (skips the clean loop) so the receiver's tombstones
+        // keep both sides' NDX numbering aligned. A sender cannot tombstone-skip
+        // a slot without transmitting fewer entries than its array holds, which
+        // would desync the wire NDX; transmitting the full array is the only
+        // NDX-safe behaviour.
+        if am_sender && !inc_recurse {
             return stats;
         }
         debug_assert_eq!(parallel.len(), len);
@@ -449,14 +468,15 @@ mod tests {
 
     #[test]
     fn dedup_with_parallel_noop_on_distinct_names() {
-        // WHY: the sender dedup must not shift order or count for a normal
+        // WHY: the dedup must not shift order or count for a normal
         // (duplicate-free) list, or sender/receiver NDX numbering desyncs.
+        // Exercised in the INC_RECURSE mode where the sender still cleans.
         let mut list = DualFileList::new();
         for n in ["a.txt", "b.txt", "c.txt"] {
             list.push(FileEntry::new_file(n.into(), 0, 0o644));
         }
         let mut bases = vec!["ba", "bb", "bc"];
-        let stats = list.dedup_with_parallel(&mut bases);
+        let stats = list.dedup_with_parallel(&mut bases, true, true);
         assert_eq!(stats.duplicates_removed, 0);
         let names: Vec<&str> = list.iter().map(|e| e.name()).collect();
         assert_eq!(names, ["a.txt", "b.txt", "c.txt"]);
@@ -464,15 +484,33 @@ mod tests {
     }
 
     #[test]
-    fn dedup_with_parallel_removes_dup_and_keeps_base_aligned() {
-        // WHY: when a duplicate is dropped, the survivor's parallel source_base
-        // must travel with it so file_list[i] still maps to source_bases[i].
+    fn dedup_with_parallel_sender_noninc_transmits_duplicates() {
+        // WHY: a non-incremental sender must NOT remove duplicates - it transmits
+        // every entry so the receiver's in-place tombstones keep the wire NDX
+        // aligned. upstream: flist.c:3039-3042.
         let mut list = DualFileList::new();
         list.push(FileEntry::new_file("dup".into(), 0, 0o644));
         list.push(FileEntry::new_file("dup".into(), 0, 0o644));
         list.push(FileEntry::new_file("z".into(), 0, 0o644));
         let mut bases = vec!["first", "second", "zbase"];
-        let stats = list.dedup_with_parallel(&mut bases);
+        let stats = list.dedup_with_parallel(&mut bases, true, false);
+        assert_eq!(stats.duplicates_removed, 0);
+        let names: Vec<&str> = list.iter().map(|e| e.name()).collect();
+        assert_eq!(names, ["dup", "dup", "z"]);
+        assert_eq!(bases, ["first", "second", "zbase"]);
+    }
+
+    #[test]
+    fn dedup_with_parallel_removes_dup_and_keeps_base_aligned() {
+        // WHY: when a duplicate is dropped (INC_RECURSE sender clean), the
+        // survivor's parallel source_base must travel with it so file_list[i]
+        // still maps to source_bases[i].
+        let mut list = DualFileList::new();
+        list.push(FileEntry::new_file("dup".into(), 0, 0o644));
+        list.push(FileEntry::new_file("dup".into(), 0, 0o644));
+        list.push(FileEntry::new_file("z".into(), 0, 0o644));
+        let mut bases = vec!["first", "second", "zbase"];
+        let stats = list.dedup_with_parallel(&mut bases, true, true);
         assert_eq!(stats.duplicates_removed, 1);
         let names: Vec<&str> = list.iter().map(|e| e.name()).collect();
         assert_eq!(names, ["dup", "z"]);
@@ -488,7 +526,7 @@ mod tests {
         list.push(FileEntry::new_file("item".into(), 0, 0o644));
         list.push(FileEntry::new_directory("item".into(), 0o755));
         let mut bases = vec!["file_base", "dir_base"];
-        let stats = list.dedup_with_parallel(&mut bases);
+        let stats = list.dedup_with_parallel(&mut bases, true, true);
         assert_eq!(stats.duplicates_removed, 1);
         assert_eq!(list.len(), 1);
         assert!(list[0].is_dir());
@@ -496,23 +534,35 @@ mod tests {
     }
 
     #[test]
-    fn sender_dedup_makes_receiver_pass_idempotent() {
-        // WHY: the whole point of the sender-side dedup is that the receiver's
-        // identical flist_clean then removes NOTHING, so both sides keep the
-        // same entry count and NDX numbering (no RERR_PROTOCOL desync).
+    fn sender_noninc_transmit_then_receiver_tombstones_align() {
+        // WHY: the non-incremental sender transmits duplicates as-is; the
+        // receiver's flist_clean then TOMBSTONES the duplicate in place, keeping
+        // the array length (and every NDX slot) so both sides stay aligned (no
+        // RERR_PROTOCOL desync). upstream: flist.c:3039-3042 + 3089.
         let mut list = DualFileList::new();
         list.push(FileEntry::new_file("a".into(), 0, 0o644));
         list.push(FileEntry::new_file("dup".into(), 0, 0o644));
         list.push(FileEntry::new_file("dup".into(), 0, 0o644));
         let mut bases = vec!["a", "d1", "d2"];
-        list.dedup_with_parallel(&mut bases);
+        // Non-inc sender: no removal.
+        list.dedup_with_parallel(&mut bases, true, false);
+        assert_eq!(list.len(), 3);
         let transmitted = list.into_vec();
-        // Receiver runs the same clean over the (already-deduped) transmitted list.
-        let (_receiver_list, stats) = crate::flist::sort::flist_clean(transmitted.clone());
+        // Receiver tombstones the second "dup" but preserves the slot count.
+        let (receiver_list, stats) =
+            crate::flist::sort::flist_clean(transmitted.clone(), false, false);
+        assert_eq!(stats.duplicates_removed, 1);
         assert_eq!(
-            stats.duplicates_removed, 0,
-            "receiver must remove nothing from a sender-deduped list"
+            receiver_list.len(),
+            transmitted.len(),
+            "receiver must keep every NDX slot"
         );
+        let active: Vec<&str> = receiver_list
+            .iter()
+            .filter(|e| e.is_active())
+            .map(|e| e.name())
+            .collect();
+        assert_eq!(active, ["a", "dup"]);
     }
 
     #[test]

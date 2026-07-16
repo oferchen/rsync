@@ -606,20 +606,20 @@ mod tests {
         assert!(ctx.flist_eof);
     }
 
-    /// A sub-list that repeats a normalized name must collapse to a single entry.
+    /// A sub-list that repeats a normalized name must TOMBSTONE the duplicate
+    /// in place, preserving the slot count so NDX stays aligned.
     ///
     /// WHY: upstream runs `flist_sort_and_clean()` on EACH INC_RECURSE sub-list
     /// (send `flist.c:2190`, recv `flist.c:2771`), whose clean pass
-    /// (`flist.c:3031`, active for the receiver) removes duplicate names. Before
-    /// this fix `receive_one_extra_segment` sorted the sub-list but skipped the
-    /// dedup, so a redundant or hostile duplicate survived and the generator
-    /// requested the same path twice - an NDX divergence driven by untrusted
-    /// bytes, exactly the class of bug the initial-list dedup (#6631) closed. The
-    /// legitimate sender ships deduped sub-lists (partitions of an already-cleaned
-    /// list), so this pass is a no-op there and only collapses a duplicate,
-    /// keeping both sides' NDX numbering identical.
+    /// (`flist.c:3031`, active for the receiver) drops duplicate names by
+    /// `clear_file()` (`flist.c:3089`) - a tombstone that keeps the entry's
+    /// array slot so following NDX values are unaffected. The receiver must NOT
+    /// compact or renumber, or its numbering desyncs from the sender's full
+    /// un-deduped array. The legitimate sender ships un-deduped sub-lists (a
+    /// non-incremental sender skips its clean), so the receiver's tombstone is
+    /// what keeps both sides' NDX numbering identical.
     #[test]
-    fn sublist_duplicate_name_is_deduped() {
+    fn sublist_duplicate_name_is_tombstoned() {
         let wire = encode_segment_with_dir_ndx(
             0,
             &[("x/dup.txt", 10u64), ("x/dup.txt", 10), ("x/z.txt", 20)],
@@ -630,17 +630,27 @@ mod tests {
         let n = ctx
             .receive_extra_file_lists(&mut Cursor::new(wire))
             .expect("legitimate sub-list must be accepted");
-        // Three entries arrive on the wire; the duplicate "x/dup.txt" collapses.
+        // Three entries arrive on the wire; all three slots are preserved.
         assert_eq!(n, 3, "the wire carried three entries");
-        let names: Vec<String> = ctx
+        assert_eq!(
+            ctx.file_list().len(),
+            3,
+            "every NDX slot is preserved (tombstone, not compact)"
+        );
+        // The middle slot is a tombstone (inactive); NDX 0 and 2 stay put.
+        assert!(ctx.file_list()[0].is_active());
+        assert!(!ctx.file_list()[1].is_active());
+        assert!(ctx.file_list()[2].is_active());
+        let active: Vec<String> = ctx
             .file_list()
             .iter()
+            .filter(|e| e.is_active())
             .map(|e| e.name().to_owned())
             .collect();
         assert_eq!(
-            names,
+            active,
             vec!["x/dup.txt".to_owned(), "x/z.txt".to_owned()],
-            "the repeated name must be deduped, leaving two entries"
+            "the repeated name is dropped, leaving two active entries"
         );
     }
 
