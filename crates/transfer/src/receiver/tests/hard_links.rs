@@ -523,3 +523,95 @@ fn create_hardlinks_surfaces_non_eacces_error() {
          incremental segments preserve their leader-path state",
     );
 }
+
+/// Pins the `--delay-updates` + `--hard-links` phase ordering (Rule 9).
+///
+/// A `--delay-updates` leader is committed under the `.~tmp~` partial-dir and is
+/// renamed to its final path only in phase 2 by `handle_delayed_updates`. A
+/// follower may be hard-linked to it only *after* that rename - upstream
+/// `receiver.c:694-695` (the phase-2 rename) then `:551-552`
+/// (`send_msg_success` -> `finish_hard_link`). `create_hardlinks` links the
+/// follower against the leader's FINAL path (`dest_dir.join(rel)`), so if it ran
+/// before the delayed rename the follower's `linkat` would target a leader still
+/// staged under `.~tmp~`: `ENOENT` (a fatal transfer error) or a stale
+/// pre-existing inode.
+///
+/// `finalize_delayed_updates_and_hardlinks` is the single ordering site the four
+/// pipelined drivers share. This test stages a leader under `.~tmp~` (its final
+/// path absent, exactly as a delayed commit leaves it) and drives the finalize
+/// step: the follower must end up hard-linked to the leader at its final path
+/// with the committed content. Reversing the two calls inside the helper makes
+/// `create_hardlinks` run first and fail with `ENOENT`, failing this test.
+#[cfg(unix)]
+#[test]
+fn finalize_links_followers_after_delayed_leader_rename() {
+    use std::os::unix::fs::MetadataExt;
+
+    let temp_dir = tempfile::TempDir::new().unwrap();
+    let dest = temp_dir.path();
+
+    // Leader staged under `.~tmp~`, as a `--delay-updates` commit leaves it: its
+    // final path `dest/leader.txt` does NOT exist yet.
+    let staging = dest.join(".~tmp~");
+    std::fs::create_dir_all(&staging).unwrap();
+    let payload = b"shared delayed payload\n";
+    std::fs::write(staging.join("leader.txt"), payload).unwrap();
+
+    let entries = vec![
+        make_hlink_leader("leader.txt", payload.len() as u64, 42),
+        make_hlink_follower("follower.txt", payload.len() as u64, 42),
+    ];
+    let mut ctx = receiver_with_hardlinks(entries);
+    let mut writer = TestDeletionWriter;
+
+    // The delayed-updates list the driver hands to the finalize step: rename the
+    // staged leader to its final path.
+    let delayed = vec![(staging.join("leader.txt"), dest.join("leader.txt"))];
+
+    ctx.finalize_delayed_updates_and_hardlinks(dest, None, &delayed, &mut writer)
+        .expect(
+            "finalize must succeed: handle_delayed_updates renames the staged \
+             leader to its final path before the follower is linked to it",
+        );
+
+    let leader = dest.join("leader.txt");
+    let follower = dest.join("follower.txt");
+    assert!(
+        leader.exists(),
+        "the delayed leader must be renamed to its final path",
+    );
+    assert!(
+        follower.exists(),
+        "the follower must be hard-linked to the final leader path",
+    );
+    assert_eq!(
+        std::fs::read(&leader).unwrap(),
+        payload,
+        "leader must hold the committed content",
+    );
+    assert_eq!(
+        std::fs::read(&follower).unwrap(),
+        payload,
+        "follower must carry the leader's content via the shared inode, not a \
+         stale or empty file",
+    );
+
+    let leader_meta = std::fs::metadata(&leader).unwrap();
+    let follower_meta = std::fs::metadata(&follower).unwrap();
+    assert_eq!(
+        leader_meta.ino(),
+        follower_meta.ino(),
+        "follower must share the leader's inode at its FINAL path; a follower \
+         linked before the delayed rename would target the still-staged leader \
+         (ENOENT) or a stale inode",
+    );
+    assert!(
+        leader_meta.nlink() >= 2,
+        "leader nlink must be >= 2 for a hard-link pair, got {}",
+        leader_meta.nlink(),
+    );
+    assert!(
+        !staging.exists(),
+        "the .~tmp~ staging dir must be removed after the delayed rename",
+    );
+}
