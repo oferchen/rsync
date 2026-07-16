@@ -2989,6 +2989,31 @@ mod config_parsing_tests {
         );
     }
 
+    /// Regression guard for the config-parser consolidation: the daemon once
+    /// carried a second, weaker `rsyncd.conf` parser whose name matching only
+    /// lowercased the directive (never folding interior whitespace), so it
+    /// rejected the collapsed spelling `maxconnections`. The surviving parser
+    /// folds whitespace exactly like upstream `strwiEQ`, so every spacing
+    /// variant of an integer directive - like the multi-word `max connections`
+    /// - resolves to the same parameter and yields an identical value.
+    #[test]
+    fn parse_module_max_connections_whitespace_insensitive() {
+        for spelling in ["max connections", "maxconnections", "Max  Connections"] {
+            let dir = TempDir::new().expect("create temp dir");
+            let path = dir.path().join("data");
+            fs::create_dir(&path).expect("create dir");
+
+            let config = format!("[mod]\npath = {}\n{spelling} = 10\n", path.display());
+            let file = write_config(&config);
+            let result = parse_config_modules(file.path()).expect("parse succeeds");
+            assert_eq!(
+                result.modules[0].max_connections.map(NonZeroU32::get),
+                Some(10),
+                "'{spelling}' must resolve to the max connections parameter",
+            );
+        }
+    }
+
     // upstream: daemon-parm.txt classifies each parameter P_GLOBAL or P_LOCAL.
     // The `Globals:` block is valid only before the first module; everything in
     // the `Locals:` block may be set per-module. This test pins that boundary so

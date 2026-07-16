@@ -134,9 +134,8 @@ impl RuntimeOptions {
         //        rsync_port = RSYNC_PORT;`
         // After CLI and config resolution, a still-zero port coerces to the
         // well-known rsync port 873 rather than binding a kernel-assigned
-        // ephemeral port. This is the same 0 -> 873 coercion the config
-        // accessor applies (`rsyncd_config::sections::port`), applied once here
-        // so both the sync and async daemon bind paths share it.
+        // ephemeral port. Applied once here so both the sync and async daemon
+        // bind paths share the same 0 -> 873 coercion.
         if options.port == 0 {
             options.port = DEFAULT_PORT;
         }
