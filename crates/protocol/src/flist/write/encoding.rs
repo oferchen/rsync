@@ -318,20 +318,31 @@ impl FileListWriter {
         Ok(())
     }
 
-    /// Applies iconv encoding conversion to a filename.
+    /// Transcodes a filename (or symlink target) from the local charset to the
+    /// remote charset for `--iconv` transmission.
     ///
-    /// When `--iconv` is used, filenames are converted from the local encoding
-    /// to the remote encoding before transmission. Unconvertible bytes are
-    /// replaced with `?` rather than aborting the transfer, matching upstream
-    /// rsync's behaviour of warning and continuing.
+    /// Upstream drops an entry whose name cannot be strictly transcoded:
+    /// `send_file1()` sets `io_error |= IOERR_GENERAL`, prints `cannot convert
+    /// filename`, and `return NULL`s so the file never enters the list. oc
+    /// mirrors that drop one layer up, at file-list BUILD time, in
+    /// `generator::file_list::drop_unconvertible_entries` - before ndx
+    /// assignment and INC_RECURSE segmentation, so the sender and receiver ndx
+    /// spaces stay aligned. By the time an entry reaches this writer it is
+    /// therefore already known-convertible, and for real transfers the
+    /// transcode below cannot fail.
+    ///
+    /// For direct `FileListWriter` users that bypass the generator build pass
+    /// (unit tests, batch encoding) this falls back to include-bad conversion,
+    /// which copies any unconvertible byte through verbatim rather than
+    /// corrupting the wire framing. It never drops at this layer: the writer
+    /// cannot renumber ndx values, so a drop here would desync the peer.
     ///
     /// # Upstream Reference
     ///
-    /// `flist.c:1580-1603` - `send_file_entry()` runs filenames through
-    /// `iconvbufs(ic_send, ...)`. On failure, upstream sets
-    /// `io_error |= IOERR_GENERAL`, warns, and returns `NULL` (skips the
-    /// entry). We use lossy conversion instead, which replaces
-    /// unconvertible bytes with `?` and warns.
+    /// - `flist.c:1624-1638` `send_file1()` - strict `ic_send` conversion, then
+    ///   `io_error |= IOERR_GENERAL` + `cannot convert filename` + `return NULL`.
+    /// - `generator::file_list::drop_unconvertible_entries` - oc's build-time
+    ///   drop that keeps sender/receiver ndx aligned.
     pub(super) fn apply_encoding_conversion<'a>(
         &self,
         name: &'a [u8],
