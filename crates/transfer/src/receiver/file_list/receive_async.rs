@@ -104,9 +104,15 @@ impl ReceiverContext {
         // duplicate-clean pass on the receiver; mirror the sync path so both wire
         // surfaces collapse a redundant name identically.
         let pre29 = self.protocol.as_u8() < 29;
+        let inc_recurse = self
+            .compat_flags
+            .is_some_and(|f| f.contains(CompatibilityFlags::INC_RECURSE));
         if !self.iconv_reorder_suppressed() {
             let list = std::mem::take(&mut self.file_list);
-            let (cleaned, _clean) = sort_and_clean_file_list(list, self.config.qsort, pre29);
+            // am_sender=false: the receiver tombstones dropped duplicates in
+            // place so NDX stays aligned with the sender's full array.
+            let (cleaned, _clean) =
+                sort_and_clean_file_list(list, self.config.qsort, pre29, false, inc_recurse);
             self.file_list = cleaned;
         }
 
@@ -254,7 +260,8 @@ impl ReceiverContext {
             // name collapses identically and the next segment's NDX stays in sync.
             if !self.iconv_reorder_suppressed() {
                 let tail = self.file_list.split_off(flat_start);
-                let (cleaned, _clean) = sort_and_clean_file_list(tail, true, false);
+                // Receiver sub-list clean: am_sender=false, inc_recurse=true.
+                let (cleaned, _clean) = sort_and_clean_file_list(tail, true, false, false, true);
                 self.file_list.extend(cleaned);
             }
             match_hard_links(&mut self.file_list[flat_start..], &mut self.prior_hlinks);

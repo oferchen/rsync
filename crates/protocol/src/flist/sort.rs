@@ -326,74 +326,170 @@ pub(super) fn resolve_duplicate(
     }
 }
 
-/// Cleans a sorted file list in-place by removing duplicates and merging directory flags.
+/// Scans backward from a directory entry for an active, same-named non-dir
+/// earlier in the sorted list.
 ///
-/// This mirrors upstream's `clean_flist()` which operates in-place with zero allocation,
-/// clearing duplicate entries as tombstones rather than building a new list.
-///
-/// # Duplicate Handling Rules
-///
-/// When duplicate paths are found:
-/// 1. If one is a directory and the other isn't, keep the directory
-///    (it may have contents in the list)
-/// 2. If both are directories, keep the first and merge flags
-/// 3. Otherwise, keep the first entry
-///
-/// # Arguments
-///
-/// * `file_list` - A sorted file list (call `sort_file_list` first)
-///
-/// # Returns
-///
-/// A tuple of `(cleaned_list, CleanResult)` where `cleaned_list` contains
-/// deduplicated entries and `CleanResult` has statistics.
+/// The primary adjacent-name check catches a directory whose same-named non-dir
+/// twin sorts immediately before it. This handles the non-adjacent case: files
+/// sort before directories, but an entry such as `item!` (a byte that sorts
+/// before `/`) can sit between the exact same-named non-dir `item` and the
+/// directory `item` (which sorts as `item/`). Only names equal to this dir's
+/// name, or extending it with a byte that sorts before `/`, can lie in that
+/// span, so the scan stops once it leaves the zone. Tombstoned slots keep their
+/// position and are skipped without ending the scan.
 ///
 /// # Upstream Reference
 ///
-/// - `flist.c:flist_sort_and_clean()` lines 2979-3069
+/// - `flist.c:3052-3059` - "Make sure that this directory doesn't duplicate a
+///   non-directory earlier in the list." Upstream temporarily sets
+///   `file->mode = S_IFREG` and calls `flist_find()` (a binary search over the
+///   sorted array) to locate the twin.
+fn find_regfile_dup(file_list: &[FileEntry], dir_idx: usize) -> Option<usize> {
+    let dir_name = file_list[dir_idx].name_bytes();
+    let dir_name = dir_name.as_ref();
+    let mut k = dir_idx;
+    while k > 0 {
+        k -= 1;
+        // Tombstones keep their slot; skip them and keep scanning.
+        if !file_list[k].is_active() {
+            continue;
+        }
+        let name = file_list[k].name_bytes();
+        let name = name.as_ref();
+        if name == dir_name {
+            if !file_list[k].is_dir() {
+                return Some(k);
+            }
+            // A same-named dir is handled via the adjacent-name path; keep
+            // scanning past it for an earlier non-dir twin.
+            continue;
+        }
+        // Leave the zone once the name is neither the dir's name nor an
+        // extension of it by a byte that sorts before '/'.
+        let extends_before_slash = name.len() > dir_name.len()
+            && name.starts_with(dir_name)
+            && name[dir_name.len()] < b'/';
+        if !extends_before_slash {
+            break;
+        }
+    }
+    None
+}
+
+/// Cleans a sorted file list in-place by tombstoning duplicate names.
+///
+/// Mirrors upstream's duplicate-clean pass inside `flist_sort_and_clean()`.
+/// The dropped duplicate is cleared in place (see [`FileEntry::tombstone`]) so
+/// the array length and every NDX (file index) slot are preserved: the
+/// receiver's numbering stays aligned with the sender's full un-deduped array.
+/// The list is NOT compacted, truncated, or renumbered. Consumers iterate the
+/// list and skip inactive slots.
+///
+/// # Sender vs receiver
+///
+/// A non-incremental sender (`am_sender && !inc_recurse`) skips the pass
+/// entirely and transmits every entry as-is; the receiver's tombstones then
+/// keep both sides aligned. The receiver (`am_sender == false`) always runs
+/// the pass.
+///
+/// # Duplicate Handling Rules
+///
+/// When duplicate names are found:
+/// 1. If one is a directory and the other isn't, keep the directory
+///    (it may have contents in the list).
+/// 2. If both are directories, keep the first and merge flags.
+/// 3. Otherwise, keep the first entry.
+///
+/// # Arguments
+///
+/// * `file_list` - A sorted file list (call `sort_file_list` first).
+/// * `am_sender` - `true` on the sending side.
+/// * `inc_recurse` - `true` when INC_RECURSE is negotiated.
+///
+/// # Returns
+///
+/// A tuple of `(cleaned_list, CleanResult)` where `cleaned_list` has the same
+/// length as the input, dropped duplicates tombstoned, and `CleanResult`
+/// carries statistics.
+///
+/// # Upstream Reference
+///
+/// - `flist.c:3016-3104 flist_sort_and_clean()` - the sort + duplicate-clean.
+/// - `flist.c:3031-3042` - `am_sender && !inc_recurse` skips the clean loop.
+/// - `flist.c:3089 clear_file()` - the receiver tombstones the dropped slot.
 #[must_use]
-pub fn flist_clean(mut file_list: Vec<FileEntry>) -> (Vec<FileEntry>, CleanResult) {
+pub fn flist_clean(
+    mut file_list: Vec<FileEntry>,
+    am_sender: bool,
+    inc_recurse: bool,
+) -> (Vec<FileEntry>, CleanResult) {
     let len = file_list.len();
+    let mut stats = CleanResult::default();
     if len == 0 {
-        return (file_list, CleanResult::default());
+        return (file_list, stats);
     }
 
-    let mut stats = CleanResult::default();
+    // upstream: flist.c:3039-3042 - a non-incremental sender sets `i = used - 1`
+    // so the clean loop never runs; it transmits duplicates as-is so the
+    // receiver's tombstones keep NDX aligned with this full array.
+    if am_sender && !inc_recurse {
+        return (file_list, stats);
+    }
 
-    // Write cursor: position where the next kept entry goes.
-    // Read cursor `r` scans ahead. Like upstream's in-place tombstone approach,
-    // but we compact immediately so a single truncate suffices.
-    let mut w: usize = 0;
-    let mut r: usize = 1;
+    // upstream: flist.c:3032-3038 - anchor `prev` on the first active entry.
+    // A freshly sorted list has no tombstones, but scan defensively.
+    let mut prev = 0usize;
+    while prev < len && !file_list[prev].is_active() {
+        prev += 1;
+    }
+    if prev >= len {
+        return (file_list, stats);
+    }
 
-    while r < len {
-        if file_list[w].name() != file_list[r].name() {
-            w += 1;
-            if w != r {
-                file_list.swap(w, r);
-            }
-            r += 1;
+    let mut i = prev + 1;
+    while i < len {
+        if !file_list[i].is_active() {
+            i += 1;
             continue;
         }
 
-        // Duplicate found - decide which entry survives at position `w`.
-        // Split the borrow so the write entry is `&mut` and the read entry
-        // `&` simultaneously; a `true` verdict means take the read entry.
-        let (left, right) = file_list.split_at_mut(r);
-        if resolve_duplicate(&mut left[w], &right[0], &mut stats) {
-            file_list.swap(w, r);
+        // upstream: flist.c:3050-3061 - a duplicate is either the same name as
+        // the previous kept entry, or (for a directory) an earlier same-named
+        // non-dir found via flist_find().
+        let dup = if file_list[i].name() == file_list[prev].name() {
+            Some(prev)
+        } else if file_list[i].is_dir() {
+            find_regfile_dup(&file_list, i)
+        } else {
+            None
+        };
+
+        let Some(j) = dup else {
+            prev = i;
+            i += 1;
+            continue;
+        };
+
+        // upstream: flist.c:3062-3090 - keep the directory over a plain file
+        // (it may have contents in the list), else keep the first; the receiver
+        // tombstones the dropped slot in place. `resolve_duplicate` returns
+        // `true` when the later entry `i` wins.
+        let (left, right) = file_list.split_at_mut(i);
+        let take_read = resolve_duplicate(&mut left[j], &right[0], &mut stats);
+        if take_read {
+            file_list[j].tombstone();
+            prev = i;
+        } else {
+            file_list[i].tombstone();
         }
-
-        r += 1;
+        i += 1;
     }
-
-    file_list.truncate(w + 1);
 
     debug_log!(
         Flist,
         2,
-        "cleaned file list: {} entries, {} duplicates removed, {} flags merged",
-        file_list.len(),
+        "cleaned file list: {} slots, {} duplicates tombstoned, {} flags merged",
+        len,
         stats.duplicates_removed,
         stats.flags_merged
     );
@@ -414,9 +510,11 @@ pub fn sort_and_clean_file_list(
     mut file_list: Vec<FileEntry>,
     use_qsort: bool,
     protocol_pre29: bool,
+    am_sender: bool,
+    inc_recurse: bool,
 ) -> (Vec<FileEntry>, CleanResult) {
     sort_file_list(&mut file_list, use_qsort, protocol_pre29);
-    flist_clean(file_list)
+    flist_clean(file_list, am_sender, inc_recurse)
 }
 
 /// Apply a precomputed sort permutation to two parallel slices in lockstep.
@@ -554,10 +652,18 @@ mod tests {
 
     // flist_clean tests
 
+    /// Names of the active (non-tombstone) entries, in array order.
+    fn active_names(list: &[FileEntry]) -> Vec<&str> {
+        list.iter()
+            .filter(|e| e.is_active())
+            .map(FileEntry::name)
+            .collect()
+    }
+
     #[test]
     fn flist_clean_empty_list() {
         let entries: Vec<FileEntry> = vec![];
-        let (cleaned, stats) = flist_clean(entries);
+        let (cleaned, stats) = flist_clean(entries, false, false);
         assert!(cleaned.is_empty());
         assert_eq!(stats.duplicates_removed, 0);
         assert_eq!(stats.flags_merged, 0);
@@ -566,56 +672,75 @@ mod tests {
     #[test]
     fn flist_clean_no_duplicates() {
         let entries = vec![make_file("a.txt"), make_file("b.txt"), make_dir("c")];
-        let (cleaned, stats) = flist_clean(entries);
+        let (cleaned, stats) = flist_clean(entries, false, false);
         assert_eq!(cleaned.len(), 3);
+        assert!(cleaned.iter().all(FileEntry::is_active));
         assert_eq!(stats.duplicates_removed, 0);
     }
 
+    /// The receiver must TOMBSTONE dropped duplicates in place, preserving the
+    /// array length and every NDX slot, rather than compacting and renumbering.
+    /// A shorter list would desync the receiver's NDX from an upstream sender's
+    /// full un-deduped array (received "non-regular file" / silent corruption).
+    /// upstream: flist.c:3089 clear_file() drops the slot without moving others.
     #[test]
-    fn flist_clean_removes_file_duplicates() {
-        // Two files with same name - keep first
+    fn flist_clean_tombstones_file_duplicates_in_place() {
+        // Two files with same name - keep first, tombstone the second slot.
         let entries = vec![make_file("a.txt"), make_file("a.txt"), make_file("b.txt")];
-        let (cleaned, stats) = flist_clean(entries);
-        assert_eq!(cleaned.len(), 2);
+        let (cleaned, stats) = flist_clean(entries, false, false);
+        // Length and NDX slots preserved.
+        assert_eq!(cleaned.len(), 3);
         assert_eq!(stats.duplicates_removed, 1);
-        let mut names = Vec::with_capacity(cleaned.len());
-        names.extend(cleaned.iter().map(|e| e.name()));
-        assert_eq!(names, vec!["a.txt", "b.txt"]);
+        // Slot 0 kept, slot 1 tombstoned, slot 2 kept.
+        assert!(cleaned[0].is_active());
+        assert_eq!(cleaned[0].name(), "a.txt");
+        assert!(!cleaned[1].is_active());
+        assert!(cleaned[2].is_active());
+        assert_eq!(cleaned[2].name(), "b.txt");
+        assert_eq!(active_names(&cleaned), vec!["a.txt", "b.txt"]);
     }
 
     #[test]
     fn flist_clean_keeps_dir_over_file() {
-        // Directory vs file with same name - keep directory
+        // Directory vs file with same name - keep directory, tombstone the file.
         let entries = vec![make_file("item"), make_dir("item")];
-        let (cleaned, stats) = flist_clean(entries);
-        assert_eq!(cleaned.len(), 1);
+        let (cleaned, stats) = flist_clean(entries, false, false);
+        assert_eq!(cleaned.len(), 2);
         assert_eq!(stats.duplicates_removed, 1);
-        assert!(cleaned[0].is_dir());
+        // The file slot (0) is tombstoned; the dir survives at slot 1 so its
+        // NDX still matches the sender's directory entry.
+        assert!(!cleaned[0].is_active());
+        assert!(cleaned[1].is_active());
+        assert!(cleaned[1].is_dir());
     }
 
     #[test]
     fn flist_clean_keeps_dir_over_file_reverse_order() {
-        // Directory first, then file with same name - still keep directory
+        // Directory first, then file with same name - still keep the directory.
         let entries = vec![make_dir("item"), make_file("item")];
-        let (cleaned, stats) = flist_clean(entries);
-        assert_eq!(cleaned.len(), 1);
+        let (cleaned, stats) = flist_clean(entries, false, false);
+        assert_eq!(cleaned.len(), 2);
         assert_eq!(stats.duplicates_removed, 1);
+        assert!(cleaned[0].is_active());
         assert!(cleaned[0].is_dir());
+        assert!(!cleaned[1].is_active());
     }
 
     #[test]
     fn flist_clean_merges_directory_flags() {
-        // Two directories with same name - merge flags, keep first
+        // Two directories with same name - merge flags, keep first.
         let mut dir1 = make_dir("subdir");
         dir1.set_content_dir(false);
         let dir2 = make_dir("subdir"); // content_dir is true by default
         let entries = vec![dir1, dir2];
-        let (cleaned, stats) = flist_clean(entries);
-        assert_eq!(cleaned.len(), 1);
+        let (cleaned, stats) = flist_clean(entries, false, false);
+        assert_eq!(cleaned.len(), 2);
         assert_eq!(stats.duplicates_removed, 1);
         assert_eq!(stats.flags_merged, 1);
-        // Flag should be merged (content_dir should be true since dir2 had it)
+        // Survivor at slot 0 with the merged content-dir flag; slot 1 tombstoned.
+        assert!(cleaned[0].is_active());
         assert!(cleaned[0].content_dir());
+        assert!(!cleaned[1].is_active());
     }
 
     #[test]
@@ -626,9 +751,61 @@ mod tests {
             make_file("a.txt"),
             make_file("b.txt"),
         ];
-        let (cleaned, stats) = flist_clean(entries);
-        assert_eq!(cleaned.len(), 2);
+        let (cleaned, stats) = flist_clean(entries, false, false);
+        // Length preserved; two slots tombstoned.
+        assert_eq!(cleaned.len(), 4);
         assert_eq!(stats.duplicates_removed, 2);
+        assert!(cleaned[0].is_active());
+        assert!(!cleaned[1].is_active());
+        assert!(!cleaned[2].is_active());
+        assert!(cleaned[3].is_active());
+        assert_eq!(active_names(&cleaned), vec!["a.txt", "b.txt"]);
+    }
+
+    /// A non-incremental SENDER must skip the clean pass entirely and transmit
+    /// duplicates as-is; otherwise it would ship fewer entries than the receiver
+    /// tombstones, desyncing the wire NDX. upstream: flist.c:3039-3042.
+    #[test]
+    fn flist_clean_sender_noninc_skips_dedup() {
+        let entries = vec![make_file("dup"), make_file("dup"), make_file("z")];
+        let (kept, stats) = flist_clean(entries, true, false);
+        assert_eq!(stats.duplicates_removed, 0);
+        // Nothing tombstoned: all three transmitted as-is.
+        assert_eq!(kept.len(), 3);
+        assert!(kept.iter().all(FileEntry::is_active));
+        assert_eq!(active_names(&kept), vec!["dup", "dup", "z"]);
+    }
+
+    /// An incremental sender still cleans (upstream `!am_sender || inc_recurse`).
+    #[test]
+    fn flist_clean_sender_inc_recurse_still_cleans() {
+        let entries = vec![make_file("dup"), make_file("dup"), make_file("z")];
+        let (cleaned, stats) = flist_clean(entries, true, true);
+        assert_eq!(stats.duplicates_removed, 1);
+        assert_eq!(cleaned.len(), 3);
+        assert!(!cleaned[1].is_active());
+    }
+
+    /// A directory that duplicates a NON-ADJACENT same-named non-dir (separated
+    /// by an entry that sorts before the dir's implicit trailing '/') must still
+    /// be detected and the file dropped. upstream: flist.c:3052-3059 flist_find()
+    /// as-regfile. This is the #145 half of the fix.
+    #[test]
+    fn flist_clean_dir_dups_nonadjacent_regfile() {
+        // Sorted order: file "item" < file "item!" < dir "item" (= "item/").
+        let mut entries = vec![make_file("item"), make_file("item!"), make_dir("item")];
+        sort_file_list(&mut entries, false, false);
+        assert_eq!(active_names(&entries), vec!["item", "item!", "item"]);
+        let (cleaned, stats) = flist_clean(entries, false, false);
+        assert_eq!(cleaned.len(), 3);
+        assert_eq!(stats.duplicates_removed, 1);
+        // The non-adjacent file "item" is tombstoned; "item!" and the dir survive.
+        let survivors: Vec<(&str, bool)> = cleaned
+            .iter()
+            .filter(|e| e.is_active())
+            .map(|e| (e.name(), e.is_dir()))
+            .collect();
+        assert_eq!(survivors, vec![("item!", false), ("item", true)]);
     }
 
     #[test]
@@ -639,11 +816,11 @@ mod tests {
             make_file("a.txt"),
             make_file("a.txt"), // duplicate
         ];
-        let (cleaned, stats) = sort_and_clean_file_list(entries, false, false);
+        let (cleaned, stats) = sort_and_clean_file_list(entries, false, false, false, false);
         assert_eq!(stats.duplicates_removed, 1);
-        let mut names = Vec::with_capacity(cleaned.len());
-        names.extend(cleaned.iter().map(|e| e.name()));
-        assert_eq!(names, vec!["a.txt", "z.txt", "a"]);
+        // One slot tombstoned; length preserved.
+        assert_eq!(cleaned.len(), 4);
+        assert_eq!(active_names(&cleaned), vec!["a.txt", "z.txt", "a"]);
     }
 
     /// Comprehensive edge-case sort order golden test.
@@ -793,9 +970,14 @@ mod tests {
             make_file("a.txt"),
             make_file("a.txt"), // duplicate
         ];
-        let (cleaned, stats) = sort_and_clean_file_list(entries, true, false);
+        let (cleaned, stats) = sort_and_clean_file_list(entries, true, false, false, false);
         assert_eq!(stats.duplicates_removed, 1);
-        let names: Vec<&str> = cleaned.iter().map(|e| e.name()).collect();
+        assert_eq!(cleaned.len(), 4);
+        let names: Vec<&str> = cleaned
+            .iter()
+            .filter(|e| e.is_active())
+            .map(|e| e.name())
+            .collect();
         assert_eq!(names, vec!["a.txt", "z.txt", "a"]);
     }
 

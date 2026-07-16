@@ -252,23 +252,34 @@ fn stress_10k_sort_and_clean_with_duplicates() {
     }
 
     let original_count = entries.len();
-    let (cleaned, stats) = sort_and_clean_file_list(entries, false, false);
+    let (cleaned, stats) = sort_and_clean_file_list(entries, false, false, false, false);
 
-    // Should have removed duplicates
-    assert!(
-        cleaned.len() < original_count,
-        "Expected duplicates to be removed"
+    // Duplicates are TOMBSTONED in place, not compacted: the receiver preserves
+    // every NDX slot so its numbering stays aligned with the sender's full
+    // un-deduped array. upstream: flist.c:3089 clear_file().
+    assert_eq!(
+        cleaned.len(),
+        original_count,
+        "clean must preserve the array length (tombstone, not compact)"
     );
     assert!(
         stats.duplicates_removed > 0,
-        "Should have removed some duplicates"
+        "Should have tombstoned some duplicates"
     );
 
-    // Verify no duplicates remain
-    for i in 0..cleaned.len() - 1 {
-        if cleaned[i].name() == cleaned[i + 1].name() {
-            panic!("Duplicate found at index {}: {}", i, cleaned[i].name());
-        }
+    // Verify no duplicate names remain among the ACTIVE (non-tombstone) entries.
+    let active: Vec<&str> = cleaned
+        .iter()
+        .filter(|e| e.is_active())
+        .map(|e| e.name())
+        .collect();
+    for i in 0..active.len().saturating_sub(1) {
+        assert_ne!(
+            active[i],
+            active[i + 1],
+            "duplicate active entry at {i}: {}",
+            active[i]
+        );
     }
 }
 

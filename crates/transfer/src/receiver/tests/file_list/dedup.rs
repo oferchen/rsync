@@ -1,10 +1,12 @@
 //! Receiver-side duplicate-clean pass coverage.
 //!
 //! Upstream `flist.c:flist_sort_and_clean()` runs three steps after the
-//! receiver decodes the file list: sort, remove duplicate names (keeping the
-//! upstream-correct survivor), then prune empty dirs. These tests pin the
-//! second step - a sender that emits the same normalized name twice (redundant
-//! or hostile) must not leave a duplicate in `self.file_list`.
+//! receiver decodes the file list: sort, drop duplicate names (keeping the
+//! upstream-correct survivor by tombstoning the dropped slot in place), then
+//! prune empty dirs. These tests pin the second step - a sender that emits the
+//! same normalized name twice (redundant or hostile) must leave the dropped
+//! entry as an inactive tombstone that preserves every NDX slot, never a
+//! compacted/renumbered list.
 //!
 //! # Upstream Reference
 //!
@@ -29,14 +31,18 @@ fn encode(protocol: protocol::ProtocolVersion, entries: &[FileEntry]) -> Vec<u8>
     data
 }
 
-/// A file name emitted twice by the sender must collapse to a single entry.
+/// A file name emitted twice by the sender must be TOMBSTONED in place, not
+/// compacted away.
 ///
-/// WHY: upstream removes the duplicate (`clear_file` on the dropped index)
-/// inside `flist_sort_and_clean` before the transfer runs. Leaving both would
-/// make the generator request the same path twice - a wire/NDX divergence and
-/// wasted work driven by untrusted sender bytes.
+/// WHY: upstream drops the duplicate via `clear_file()` on the dropped index
+/// (`flist.c:3089`), which zeroes the entry but leaves its slot in
+/// `flist->files[]` so every following NDX is unchanged. The receiver must
+/// preserve the array length and every NDX slot; compacting/renumbering would
+/// desync the receiver's numbering from the sender's full un-deduped array
+/// (received "non-regular file" / silent corruption). The generator skips the
+/// inactive slot, so the path is never requested twice.
 #[test]
-fn receiver_removes_duplicate_file_name() {
+fn receiver_tombstones_duplicate_file_name() {
     let handshake = test_handshake();
     let config = test_config();
     let mut ctx = ReceiverContext::new_for_test(&handshake, config);
@@ -51,8 +57,20 @@ fn receiver_removes_duplicate_file_name() {
     let mut cursor = Cursor::new(&data[..]);
     ctx.receive_file_list(&mut cursor).unwrap();
 
-    let names: Vec<_> = ctx.file_list().iter().map(|e| e.name()).collect();
-    assert_eq!(names, vec!["b.txt", "dup.txt"]);
+    // All three NDX slots are preserved; one is an inactive tombstone.
+    assert_eq!(ctx.file_list().len(), 3);
+    let active: Vec<_> = ctx
+        .file_list()
+        .iter()
+        .filter(|e| e.is_active())
+        .map(|e| e.name())
+        .collect();
+    assert_eq!(active, vec!["b.txt", "dup.txt"]);
+    assert_eq!(
+        ctx.file_list().iter().filter(|e| !e.is_active()).count(),
+        1,
+        "the repeated name leaves exactly one tombstone slot"
+    );
 }
 
 /// Legitimately distinct names must all survive - no over-dedup.
@@ -101,9 +119,17 @@ fn receiver_keeps_directory_over_file_duplicate() {
     let mut cursor = Cursor::new(&data[..]);
     ctx.receive_file_list(&mut cursor).unwrap();
 
-    assert_eq!(ctx.file_list().len(), 1);
+    // Both NDX slots are preserved; the plain-file slot is tombstoned and the
+    // directory survives so its NDX still matches the sender's dir entry.
+    assert_eq!(ctx.file_list().len(), 2);
+    let active: Vec<_> = ctx
+        .file_list()
+        .iter()
+        .filter(|e| e.is_active())
+        .collect();
+    assert_eq!(active.len(), 1);
     assert!(
-        ctx.file_list()[0].is_dir(),
+        active[0].is_dir(),
         "duplicate collision must keep the directory, not the plain file"
     );
 }
