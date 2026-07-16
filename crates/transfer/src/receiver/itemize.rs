@@ -193,6 +193,100 @@ impl ReceiverContext {
         }
     }
 
+    /// Emits over-the-wire itemize records for every hardlink follower so a
+    /// pushing client's sender renders the `hf...` / `=> leader` row.
+    ///
+    /// A hardlink follower is never sent for transfer, so it produces no
+    /// `NDX + iflags` request in the per-file loop. Upstream instead itemizes
+    /// each follower from `finish_hard_link()` -> `maybe_hard_link()`, which
+    /// writes `NDX + write_shortint(iflags) + write_vstring(xname)` to
+    /// `sock_f_out`; the peer's sender reads those attrs and logs the row
+    /// (`sender.c:287` `maybe_log_item`). Without this a server-mode receiver
+    /// (the remote end of a push) drops every follower row, because
+    /// [`emit_itemize`](Self::emit_itemize) is a no-op off the client.
+    ///
+    /// This is the server-only counterpart of the client-mode follower rows that
+    /// `create_hardlinks` renders locally, so a pull is left untouched. The
+    /// `iflags` mirror `maybe_hard_link()`'s `ITEM_LOCAL_CHANGE |
+    /// ITEM_XNAME_FOLLOWS`, plus `ITEM_IS_NEW` for the new-follower case, and the
+    /// xname carries the leader's transfer-relative name the peer renders after
+    /// `=>`.
+    ///
+    /// Writes go through `ndx_codec`, which MUST be the same NDX diff-state used
+    /// for this phase's file requests so the delta encoding stays in sync with
+    /// the peer's read state.
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `generator.c:585-591` - `itemize()` writes `NDX`,
+    ///   `write_shortint(iflags)`, then `write_vstring(xname)`.
+    /// - `hlink.c:218-234` - `maybe_hard_link()` itemizes each follower with
+    ///   `ITEM_LOCAL_CHANGE | ITEM_XNAME_FOLLOWS`, passing the leader realname.
+    pub(in crate::receiver) fn emit_server_hardlink_follower_itemize<W>(
+        &self,
+        writer: &mut W,
+        ndx_codec: &mut protocol::codec::NdxCodecEnum,
+    ) -> std::io::Result<()>
+    where
+        W: std::io::Write + ?Sized,
+    {
+        use protocol::codec::NdxCodec;
+
+        // Client-mode (pull) receivers render follower rows locally in
+        // create_hardlinks; only a server-mode (push) receiver forwards them over
+        // the wire. Pre-iflags protocols (< 29) carry no itemize attrs.
+        if self.config.connection.client_mode
+            || !self.config.flags.hard_links
+            || !self.protocol.supports_iflags()
+        {
+            return Ok(());
+        }
+
+        // Leader group index -> transfer-relative name, so each follower can name
+        // its leader in the xname the peer renders after "=>".
+        let mut leader_names: std::collections::HashMap<u32, &str> =
+            std::collections::HashMap::new();
+        for entry in &self.file_list {
+            if entry.hlink_first() {
+                if let Some(gnum) = entry.hardlink_idx() {
+                    leader_names.entry(gnum).or_insert_with(|| entry.name());
+                }
+            }
+        }
+
+        let mut emitted = false;
+        for (flat_idx, entry) in self.file_list.iter().enumerate() {
+            if !entry.hlinked() || entry.hlink_first() {
+                continue;
+            }
+            let Some(gnum) = entry.hardlink_idx() else {
+                continue;
+            };
+            let Some(leader_name) = leader_names.get(&gnum).copied() else {
+                continue;
+            };
+
+            let ndx = self.flat_to_wire_ndx(flat_idx);
+            ndx_codec.write_ndx(writer, ndx)?;
+            // upstream: generator.c:587 write_shortint(sock_f_out, iflags)
+            let iflags = (crate::generator::ItemFlags::ITEM_LOCAL_CHANGE
+                | crate::generator::ItemFlags::ITEM_XNAME_FOLLOWS
+                | crate::generator::ItemFlags::ITEM_IS_NEW) as u16;
+            writer.write_all(&iflags.to_le_bytes())?;
+            // upstream: generator.c:591 write_vstring(sock_f_out, xname, len)
+            write_itemize_vstring(writer, leader_name.as_bytes())?;
+            emitted = true;
+        }
+
+        // upstream: generator.c flushes each itemize via rwrite(); flush once so
+        // the peer's sender sees the follower rows without waiting on the
+        // create_hardlinks pass that follows.
+        if emitted {
+            writer.flush()?;
+        }
+        Ok(())
+    }
+
     /// Emits an itemize row immediately, or buffers it for the deferred
     /// flist-index-order flush when [`Self::defer_itemize`] is set.
     ///
@@ -265,4 +359,26 @@ impl ReceiverContext {
         }
         Ok(())
     }
+}
+
+/// Writes an itemize xname as an upstream `io.c:write_vstring()` length-prefixed
+/// string: a single length byte for `len <= 0x7F`, otherwise a two-byte prefix
+/// (`0x80 | len >> 8`, then `len & 0xFF`). Mirrors the reader in
+/// `generator::item_flags::ItemFlags::read_trailing` so a peer's sender decodes
+/// the exact bytes it emitted.
+fn write_itemize_vstring<W: std::io::Write + ?Sized>(
+    writer: &mut W,
+    bytes: &[u8],
+) -> std::io::Result<()> {
+    let len = bytes.len();
+    debug_assert!(len <= 0x7FFF, "itemize xname exceeds vstring capacity");
+    if len > 0x7F {
+        writer.write_all(&[((len >> 8) as u8) | 0x80, (len & 0xFF) as u8])?;
+    } else {
+        writer.write_all(&[len as u8])?;
+    }
+    if len > 0 {
+        writer.write_all(bytes)?;
+    }
+    Ok(())
 }

@@ -536,6 +536,12 @@ impl ReceiverContext {
             files_transferred += 1;
         }
 
+        // upstream: generator.c:2169 finish_hard_link() itemizes every follower
+        // before the phase's NDX_DONE. Emit through the request-phase NDX
+        // diff-state so a pushing client's sender renders each `hf...` /
+        // `=> leader` row (a no-op in client-mode pull).
+        self.emit_server_hardlink_follower_itemize(writer, ndx_write_codec.inner_mut())?;
+
         #[cfg(unix)]
         self.create_hardlinks(&dest_dir, sandbox.as_deref(), writer)?;
         #[cfg(not(unix))]

@@ -4,6 +4,7 @@
 use std::ffi::OsString;
 
 use protocol::ProtocolVersion;
+use protocol::flist::FileEntry;
 
 use super::support::{
     TestDeletionWriter, make_hlink_follower, make_hlink_leader, receiver_with_hardlinks,
@@ -613,5 +614,178 @@ fn finalize_links_followers_after_delayed_leader_rename() {
     assert!(
         !staging.exists(),
         "the .~tmp~ staging dir must be removed after the delayed rename",
+    );
+}
+
+/// Builds a client-mode (pull) receiver over the same hardlink fixture so the
+/// scope guard in [`ReceiverContext::emit_server_hardlink_follower_itemize`] can
+/// be exercised. A pull renders follower rows locally in `create_hardlinks`, so
+/// nothing must cross the wire here.
+fn pull_receiver_with_hardlinks(entries: Vec<FileEntry>) -> ReceiverContext {
+    let handshake = test_handshake();
+    let config = ServerConfig {
+        role: ServerRole::Receiver,
+        protocol: ProtocolVersion::try_from(32u8).unwrap(),
+        flag_string: "-logDtpHre.".to_owned(),
+        flags: ParsedServerFlags {
+            hard_links: true,
+            ..Default::default()
+        },
+        connection: crate::config::ConnectionConfig {
+            client_mode: true,
+            ..Default::default()
+        },
+        args: vec![OsString::from(".")],
+        ..Default::default()
+    };
+    let mut ctx = ReceiverContext::new_for_test(&handshake, config);
+    ctx.file_list = entries;
+    ctx
+}
+
+/// A hardlink follower is never sent for transfer, so a server-mode push
+/// receiver must forward its itemize record (`NDX + iflags + xname`)
+/// explicitly; otherwise the pushing client's sender has nothing to render and
+/// the follower's `hf...` / `=> leader` row is silently dropped (issue #119).
+/// This pins the exact wire shape upstream emits (`generator.c:585-591`,
+/// `hlink.c:218-234`) and proves the peer's own sender decoder round-trips it.
+#[test]
+fn server_push_emits_follower_ndx_iflags_and_leader_xname() {
+    use crate::generator::ItemFlags;
+    use protocol::codec::{NdxCodec, create_ndx_codec};
+
+    let entries = vec![
+        make_hlink_leader("leader.txt", 14, 42),
+        make_hlink_follower("follower.txt", 14, 42),
+    ];
+    let ctx = receiver_with_hardlinks(entries);
+    let expected_ndx = ctx.flat_to_wire_ndx(1);
+
+    let mut buf: Vec<u8> = Vec::new();
+    let mut ndx_codec = create_ndx_codec(32);
+    ctx.emit_server_hardlink_follower_itemize(&mut buf, &mut ndx_codec)
+        .expect("server-mode follower itemize must serialize");
+    assert!(
+        !buf.is_empty(),
+        "a server-mode push must forward the follower itemize record",
+    );
+
+    // Decode with the peer sender's own reader path so the test fails if the
+    // emitted bytes ever diverge from what the sender consumes.
+    let mut cur = std::io::Cursor::new(buf);
+    let mut rd = create_ndx_codec(32);
+    let ndx = rd.read_ndx(&mut cur).expect("follower NDX must decode");
+    assert_eq!(
+        ndx, expected_ndx,
+        "the follower must be itemized under its own wire NDX",
+    );
+
+    let iflags = ItemFlags::read(&mut cur, 32).expect("follower iflags must decode");
+    assert!(
+        iflags.raw() & ItemFlags::ITEM_XNAME_FOLLOWS != 0,
+        "the follower carries ITEM_XNAME_FOLLOWS so the peer expects a leader name",
+    );
+    assert!(
+        iflags.raw() & ItemFlags::ITEM_LOCAL_CHANGE != 0,
+        "the follower is a local hardlink change (renders the `h` itemize char)",
+    );
+
+    let (fnamecmp_type, xname, _trailing) = iflags
+        .read_trailing(&mut cur)
+        .expect("the xname vstring must decode");
+    assert!(fnamecmp_type.is_none(), "a follower carries no basis type");
+    assert_eq!(
+        xname.as_deref(),
+        Some(b"leader.txt".as_ref()),
+        "the xname must name the leader so the peer renders `=> leader.txt`",
+    );
+    assert_eq!(
+        cur.position() as usize,
+        cur.get_ref().len(),
+        "exactly one follower record, fully consumed, must be on the wire",
+    );
+}
+
+/// Two followers sharing one leader must each get their own record, in flist
+/// order, so the peer renders a row per follower rather than a single collapsed
+/// line.
+#[test]
+fn server_push_emits_one_record_per_follower() {
+    use crate::generator::ItemFlags;
+    use protocol::codec::{NdxCodec, create_ndx_codec};
+
+    let entries = vec![
+        make_hlink_leader("a.txt", 11, 100),
+        make_hlink_follower("b.txt", 11, 100),
+        make_hlink_follower("c.txt", 11, 100),
+    ];
+    let ctx = receiver_with_hardlinks(entries);
+    let expected = [ctx.flat_to_wire_ndx(1), ctx.flat_to_wire_ndx(2)];
+
+    let mut buf: Vec<u8> = Vec::new();
+    let mut ndx_codec = create_ndx_codec(32);
+    ctx.emit_server_hardlink_follower_itemize(&mut buf, &mut ndx_codec)
+        .expect("server-mode follower itemize must serialize");
+
+    let mut cur = std::io::Cursor::new(buf);
+    let mut rd = create_ndx_codec(32);
+    for want_ndx in expected {
+        let ndx = rd.read_ndx(&mut cur).expect("follower NDX must decode");
+        assert_eq!(ndx, want_ndx, "followers must be itemized in flist order");
+        let iflags = ItemFlags::read(&mut cur, 32).expect("iflags must decode");
+        let (_ft, xname, _n) = iflags.read_trailing(&mut cur).expect("xname must decode");
+        assert_eq!(
+            xname.as_deref(),
+            Some(b"a.txt".as_ref()),
+            "every follower names the same shared leader",
+        );
+    }
+    assert_eq!(
+        cur.position() as usize,
+        cur.get_ref().len(),
+        "both follower records must be fully consumed",
+    );
+}
+
+/// A client-mode (pull) receiver renders follower rows locally via
+/// `create_hardlinks`; forwarding them over the wire too would double every
+/// follower against the pull's own row. The server-only emission must stay a
+/// no-op off a push.
+#[test]
+fn pull_receiver_emits_no_follower_wire_record() {
+    use protocol::codec::create_ndx_codec;
+
+    let entries = vec![
+        make_hlink_leader("leader.txt", 14, 42),
+        make_hlink_follower("follower.txt", 14, 42),
+    ];
+    let ctx = pull_receiver_with_hardlinks(entries);
+
+    let mut buf: Vec<u8> = Vec::new();
+    let mut ndx_codec = create_ndx_codec(32);
+    ctx.emit_server_hardlink_follower_itemize(&mut buf, &mut ndx_codec)
+        .expect("client-mode call must succeed as a no-op");
+    assert!(
+        buf.is_empty(),
+        "a pull renders follower rows locally; nothing crosses the wire",
+    );
+}
+
+/// With no hardlink followers in the file list, a server push must emit nothing
+/// - the emission is scoped strictly to the follower path.
+#[test]
+fn server_push_without_followers_emits_nothing() {
+    use protocol::codec::create_ndx_codec;
+
+    let entries = vec![make_hlink_leader("solo.txt", 9, 7)];
+    let ctx = receiver_with_hardlinks(entries);
+
+    let mut buf: Vec<u8> = Vec::new();
+    let mut ndx_codec = create_ndx_codec(32);
+    ctx.emit_server_hardlink_follower_itemize(&mut buf, &mut ndx_codec)
+        .expect("no-follower call must succeed");
+    assert!(
+        buf.is_empty(),
+        "a lone leader has no follower rows to forward",
     );
 }
