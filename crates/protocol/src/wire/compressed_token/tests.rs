@@ -843,35 +843,51 @@ fn recv_token_eof_reading_deflated_data() {
     assert_eq!(err.kind(), io::ErrorKind::UnexpectedEof);
 }
 
+/// Low flag bytes 0x01-0x1F must decode as absolute long tokens, not errors.
+///
+/// upstream: token.c:539-543 recv_compressed_token_num - the flag dispatch
+/// handles DEFLATED_DATA (0x40-0x7F), END_FLAG (0x00), and TOKEN_REL
+/// (0x80-0xFF); every remaining flag falls to a bare `else { rx_token =
+/// read_int(f) }`, so 0x01-0x3F all read a 4-byte absolute token with bit 0
+/// selecting the 16-bit run variant. A conforming encoder only emits
+/// TOKEN_LONG (0x20) / TOKENRUN_LONG (0x21), leaving 0x01-0x1F unreachable
+/// from a valid stream. This test pins the receiver's permissive parse:
+/// rejecting these bytes would desync us from real rsync, which accepts them.
 #[test]
-fn recv_token_invalid_flag_variants() {
-    // Test invalid flag patterns in range 0x01-0x1F
-    // These are the only truly invalid flags (reach the _ arm in recv_token)
-    // 0x00 = END_FLAG
-    // 0x20-0x3F = TOKEN_LONG/TOKENRUN_LONG area (reads more bytes)
-    // 0x40-0x7F = DEFLATED_DATA
-    // 0x80-0xBF = TOKEN_REL
-    // 0xC0-0xFF = TOKENRUN_REL
-    let invalid_flags = [0x01, 0x02, 0x0F, 0x10, 0x15, 0x1F];
-
-    for flag in invalid_flags {
+fn recv_token_low_flags_decode_as_long_tokens() {
+    // Even low flag (bit 0 clear): plain 4-byte absolute token, no run.
+    for flag in [0x02u8, 0x10, 0x1E] {
         let mut decoder = CompressedTokenDecoder::new();
-        let data = [flag];
+        let data = [flag, 0x78, 0x56, 0x34, 0x12, END_FLAG];
         let mut cursor = Cursor::new(&data[..]);
-
-        let result = decoder.recv_token(&mut cursor);
+        let token = decoder.recv_token(&mut cursor).unwrap();
         assert!(
-            result.is_err(),
-            "Expected error for flag 0x{flag:02X}, got {result:?}"
+            matches!(token, CompressedToken::BlockMatch(0x1234_5678)),
+            "flag 0x{flag:02X} should decode as an absolute long token"
         );
-        let err = result.unwrap_err();
-        assert_eq!(
-            err.kind(),
-            io::ErrorKind::InvalidData,
-            "Expected InvalidData for flag 0x{flag:02X}, got {:?}",
-            err.kind()
-        );
-        assert!(err.to_string().contains(&format!("0x{flag:02X}")));
+        assert!(matches!(
+            decoder.recv_token(&mut cursor).unwrap(),
+            CompressedToken::End
+        ));
+    }
+
+    // Odd low flag (bit 0 set): 4-byte absolute token then a 16-bit run count.
+    for flag in [0x01u8, 0x0F, 0x1F] {
+        let mut decoder = CompressedTokenDecoder::new();
+        // token=10, run=2 -> block matches 10, 11, 12 (first + 2 run tokens).
+        let data = [flag, 10, 0, 0, 0, 2, 0, END_FLAG];
+        let mut cursor = Cursor::new(&data[..]);
+        for expected in [10u32, 11, 12] {
+            let token = decoder.recv_token(&mut cursor).unwrap();
+            assert!(
+                matches!(token, CompressedToken::BlockMatch(idx) if idx == expected),
+                "flag 0x{flag:02X} run token should be {expected}"
+            );
+        }
+        assert!(matches!(
+            decoder.recv_token(&mut cursor).unwrap(),
+            CompressedToken::End
+        ));
     }
 }
 

@@ -40,8 +40,6 @@ mod incremental;
 mod intern;
 mod name_cmp;
 mod read;
-#[cfg(test)]
-mod segment;
 mod sort;
 mod state;
 mod trace;
