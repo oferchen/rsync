@@ -105,7 +105,7 @@ fn daemon_xattr_push_preserves_extended_attributes() {
 
     let client_config = core::client::ClientConfig::builder()
         .transfer_args([source_arg, OsString::from(&rsync_url)])
-        .xattrs(true)
+        .xattrs(1)
         .build();
 
     let result = core::client::run_client(client_config);

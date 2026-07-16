@@ -415,13 +415,13 @@ fn times_false_clears_flag() {
 
 #[test]
 fn atimes_sets_flag() {
-    let config = builder().atimes(true).build();
+    let config = builder().atimes(1).build();
     assert!(config.preserve_atimes());
 }
 
 #[test]
 fn atimes_false_clears_flag() {
-    let config = builder().atimes(true).atimes(false).build();
+    let config = builder().atimes(1).atimes(0).build();
     assert!(!config.preserve_atimes());
 }
 

@@ -107,6 +107,15 @@ impl ClientConfig {
     #[doc(alias = "--atimes")]
     #[doc(alias = "-U")]
     pub const fn preserve_atimes(&self) -> bool {
+        self.preserve_atimes >= 1
+    }
+
+    /// Returns the access-time preservation level (0 = off, 1 = `-U`, 2 = `-UU`).
+    ///
+    /// Level 2 doubles the compact `U` letter in the server flag string,
+    /// matching upstream `options.c:2681-2685`.
+    #[must_use]
+    pub const fn preserve_atimes_level(&self) -> u8 {
         self.preserve_atimes
     }
 
@@ -161,7 +170,7 @@ impl ClientConfig {
     #[doc(alias = "--xattrs")]
     #[doc(alias = "-X")]
     pub const fn preserve_xattrs(&self) -> bool {
-        self.preserve_xattrs
+        self.preserve_xattrs >= 1
     }
 
     /// Always returns `false` on platforms without xattr support.
@@ -169,6 +178,24 @@ impl ClientConfig {
     #[must_use]
     pub const fn preserve_xattrs(&self) -> bool {
         false
+    }
+
+    /// Returns the extended-attribute preservation level (0 = off, 1 = `-X`,
+    /// 2 = `-XX`).
+    ///
+    /// Level 2 doubles the compact `X` letter in the server flag string,
+    /// matching upstream `options.c:2698-2704`.
+    #[cfg(all(any(unix, windows), feature = "xattr"))]
+    #[must_use]
+    pub const fn preserve_xattrs_level(&self) -> u8 {
+        self.preserve_xattrs
+    }
+
+    /// Always returns `0` on platforms without xattr support.
+    #[cfg(not(all(any(unix, windows), feature = "xattr")))]
+    #[must_use]
+    pub const fn preserve_xattrs_level(&self) -> u8 {
+        0
     }
 
     /// Returns whether hard links should be preserved when copying files.

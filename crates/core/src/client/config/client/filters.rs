@@ -7,6 +7,17 @@ impl ClientConfig {
         &self.filter_rules
     }
 
+    /// Reports whether `-C` / `--cvs-exclude` was requested.
+    ///
+    /// Forwarded to the remote peer as the compact `C` letter so it runs
+    /// `get_cvs_excludes()` itself, mirroring upstream `options.c:2709`.
+    #[must_use]
+    #[doc(alias = "--cvs-exclude")]
+    #[doc(alias = "-C")]
+    pub const fn cvs_exclude(&self) -> bool {
+        self.cvs_exclude
+    }
+
     /// Returns the debug categories requested via `--debug`.
     #[must_use]
     #[doc(alias = "--debug")]

@@ -186,7 +186,7 @@ fn atimes_defaults_to_false() {
 #[test]
 fn atimes_explicit_true() {
     let mut inputs = default_inputs();
-    inputs.atimes = Some(true);
+    inputs.atimes = Some(1);
     assert!(compute_metadata_settings(inputs).unwrap().preserve_atimes);
 }
 

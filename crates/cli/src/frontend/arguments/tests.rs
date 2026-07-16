@@ -244,7 +244,24 @@ mod short_options {
     #[test]
     fn atimes_short_flag() {
         let parsed = parse_test_args(["-U", "src/", "dst/"]).expect("parse");
-        assert_eq!(parsed.atimes, Some(true));
+        assert_eq!(parsed.atimes, Some(1));
+    }
+
+    // upstream: options.c:1585 `if (++preserve_atimes > 1)` - a doubled `-UU`
+    // raises the level to 2, which server_options() forwards as `-UU`. Modelled
+    // as a count so the emitted server args match a real `rsync -UU`.
+    #[test]
+    fn atimes_double_short_flag_is_level_two() {
+        let parsed = parse_test_args(["-UU", "src/", "dst/"]).expect("parse");
+        assert_eq!(parsed.atimes, Some(2));
+    }
+
+    // upstream: options.c:1877 `preserve_xattrs++` - a doubled `-XX` raises the
+    // level to 2, forwarded as `-XX`.
+    #[test]
+    fn xattrs_double_short_flag_is_level_two() {
+        let parsed = parse_test_args(["-XX", "src/", "dst/"]).expect("parse");
+        assert_eq!(parsed.xattrs, Some(2));
     }
 
     #[test]
@@ -262,7 +279,7 @@ mod short_options {
     #[test]
     fn xattrs_short_flag() {
         let parsed = parse_test_args(["-X", "src/", "dst/"]).expect("parse");
-        assert_eq!(parsed.xattrs, Some(true));
+        assert_eq!(parsed.xattrs, Some(1));
     }
 
     #[test]
@@ -2766,7 +2783,7 @@ mod time_option_tests {
     #[test]
     fn no_atimes_flag() {
         let parsed = parse_test_args(["--no-atimes", "src/", "dst/"]).expect("parse");
-        assert_eq!(parsed.atimes, Some(false));
+        assert_eq!(parsed.atimes, Some(0));
     }
 
     #[test]
@@ -2938,7 +2955,7 @@ mod acls_xattrs_tests {
     #[test]
     fn no_xattrs_flag() {
         let parsed = parse_test_args(["--no-xattrs", "src/", "dst/"]).expect("parse");
-        assert_eq!(parsed.xattrs, Some(false));
+        assert_eq!(parsed.xattrs, Some(0));
     }
 }
 

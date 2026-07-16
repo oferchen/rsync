@@ -40,6 +40,9 @@ impl ClientConfigBuilder {
         force_replacements: bool,
         /// Enables or disables pruning of empty directories after filters apply.
         prune_empty_dirs: bool,
+        /// Requests `-C` / `--cvs-exclude`; forwarded to the peer as the compact
+        /// `C` letter (upstream options.c:2709).
+        cvs_exclude: bool,
     }
 
     /// Enables or disables creation of parent directories implied by the source path.

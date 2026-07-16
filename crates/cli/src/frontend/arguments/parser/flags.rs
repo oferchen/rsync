@@ -74,3 +74,32 @@ fn tri_state_flag_with_order(
 fn last_occurrence(matches: &clap::ArgMatches, id: &str) -> Option<usize> {
     matches.indices_of(id).and_then(Iterator::max)
 }
+
+/// Resolves a repeatable positive flag paired with a `--no-` negative into a
+/// preservation level (0, 1, or 2).
+///
+/// The positive flag must use `ArgAction::Count` and mutually `overrides_with`
+/// the negative so clap's left-to-right resolution already reflects the winner:
+/// a later `--no-foo` clears the count, and a later `-ff` clears the negation.
+/// This mirrors upstream rsync's popt processing where `--foo` does `level++`
+/// and `--no-foo` resets `level = 0` (e.g. options.c:1585 `++preserve_atimes`,
+/// options.c:1877 `preserve_xattrs++`). The level is capped at 2 because that is
+/// the highest doubled letter upstream `server_options()` emits.
+///
+/// Returns `None` when neither flag is present, so callers can distinguish
+/// "unset" from an explicit `--no-foo` (`Some(0)`).
+pub(crate) fn leveled_flag_pair(
+    matches: &clap::ArgMatches,
+    positive: &str,
+    negative: &str,
+) -> Option<u8> {
+    let count = matches.get_count(positive);
+    let negated = matches.get_flag(negative);
+    if count > 0 {
+        Some(count.min(2))
+    } else if negated {
+        Some(0)
+    } else {
+        None
+    }
+}

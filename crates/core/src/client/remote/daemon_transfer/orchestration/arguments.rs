@@ -405,6 +405,13 @@ pub(super) fn build_full_daemon_args(
         // flags::sender_super_stats_args so both transports forward the same
         // trailer on a push.
         args.extend(flags::sender_super_stats_args(config).map(str::to_owned));
+    } else if let Some(spec) = config.skip_compress_spec() {
+        // upstream: options.c:2858-2860 - `else { if (skip_compress)
+        // safe_arg("--skip-compress", skip_compress); }`. Forwarded only on a
+        // PULL (the remote sender performs the compression). Only an
+        // explicitly-set spec is sent; the built-in default list is never
+        // forwarded.
+        args.push(format!("--skip-compress={spec}"));
     }
 
     // upstream: options.c:2863-2864 - `if (max_alloc_arg && max_alloc !=

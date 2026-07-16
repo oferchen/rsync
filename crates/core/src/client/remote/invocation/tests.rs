@@ -1316,9 +1316,131 @@ fn devices_and_specials_produce_single_d_flag() {
 
 #[test]
 fn includes_atimes_flag() {
-    let config = ClientConfig::builder().atimes(true).build();
+    let config = ClientConfig::builder().atimes(1).build();
     let flags = sender_flag_string(&config);
     assert!(flags.contains('U'), "expected 'U' in flags: {flags}");
+}
+
+// upstream: options.c:2681-2685 - `if (preserve_atimes) { 'U'; if
+// (preserve_atimes > 1) 'U'; }`. Level 1 emits a single `-U`, level 2 must emit
+// the doubled `-UU` so the remote also preserves directory access times.
+// WHY: dropping the doubled letter silently downgrades `-UU` to `-U`, so the
+// peer skips directory atimes the user explicitly requested.
+#[test]
+fn atimes_level_one_emits_single_u() {
+    let config = ClientConfig::builder().atimes(1).build();
+    let flags = sender_flag_string(&config);
+    assert_eq!(
+        flags.matches('U').count(),
+        1,
+        "-U (level 1) must emit exactly one 'U': {flags}"
+    );
+}
+
+#[test]
+fn atimes_level_two_emits_doubled_uu() {
+    let config = ClientConfig::builder().atimes(2).build();
+    let flags = sender_flag_string(&config);
+    assert_eq!(
+        flags.matches('U').count(),
+        2,
+        "-UU (level 2) must emit doubled 'UU': {flags}"
+    );
+}
+
+// upstream: options.c:2698-2704 - `if (preserve_xattrs) { 'X'; if
+// (preserve_xattrs > 1) 'X'; }`. WHY: a `-XX` request that collapses to `-X`
+// tells the remote to omit xattrs in a fake-super store, diverging from the
+// user's explicit level-2 intent.
+#[cfg(all(unix, feature = "xattr"))]
+#[test]
+fn xattrs_level_one_emits_single_x() {
+    let config = ClientConfig::builder().xattrs(1).build();
+    let flags = sender_flag_string(&config);
+    assert_eq!(
+        flags.matches('X').count(),
+        1,
+        "-X (level 1) must emit exactly one 'X': {flags}"
+    );
+}
+
+#[cfg(all(unix, feature = "xattr"))]
+#[test]
+fn xattrs_level_two_emits_doubled_xx() {
+    let config = ClientConfig::builder().xattrs(2).build();
+    let flags = sender_flag_string(&config);
+    assert_eq!(
+        flags.matches('X').count(),
+        2,
+        "-XX (level 2) must emit doubled 'XX': {flags}"
+    );
+}
+
+// upstream: options.c:2709-2710 - `if (cvs_exclude) argstr[x++] = 'C';`. The
+// letter is forwarded unconditionally (outside the am_sender block) so the
+// remote peer runs get_cvs_excludes() itself. WHY: without the letter, an
+// upstream peer never activates its own CVS-ignore handling ($HOME/.cvsignore,
+// $CVSIGNORE), diverging from a real `rsync -C` invocation.
+#[test]
+fn cvs_exclude_forwards_compact_c_letter() {
+    let config = ClientConfig::builder().cvs_exclude(true).build();
+    let flags = sender_flag_string(&config);
+    assert!(
+        flags.contains('C'),
+        "-C must forward the compact 'C' letter: {flags}"
+    );
+}
+
+#[test]
+fn cvs_exclude_absent_by_default() {
+    let config = ClientConfig::builder().build();
+    let flags = sender_flag_string(&config);
+    assert!(
+        !flags.contains('C'),
+        "default config must not emit the 'C' letter: {flags}"
+    );
+}
+
+// upstream: options.c:2858-2860 - `else { if (skip_compress)
+// safe_arg("--skip-compress", skip_compress); }`. Emitted only in the
+// `!am_sender` (PULL) branch so the remote sender skips the same suffixes.
+// WHY: an explicit `--skip-compress` list that is not forwarded makes the
+// remote sender re-compress already-compressed data, wasting CPU and diverging
+// from upstream's wire output.
+#[test]
+fn skip_compress_forwarded_on_pull_when_set() {
+    let config = ClientConfig::builder()
+        .skip_compress_spec(Some("gz/zip/mp4".to_owned()))
+        .build();
+    let args = build_receiver_args(&config);
+    assert!(
+        args.iter().any(|a| a == "--skip-compress=gz/zip/mp4"),
+        "explicit --skip-compress must be forwarded on a pull: {args:?}"
+    );
+}
+
+#[test]
+fn skip_compress_not_forwarded_when_default() {
+    let config = ClientConfig::builder().build();
+    let args = build_receiver_args(&config);
+    assert!(
+        !args.iter().any(|a| a.starts_with("--skip-compress")),
+        "default (built-in) skip-compress list must not be forwarded: {args:?}"
+    );
+}
+
+#[test]
+fn skip_compress_not_forwarded_on_push() {
+    // upstream: the `--skip-compress` arg lives in the `else` (!am_sender)
+    // branch, so a PUSH (local sender) never forwards it.
+    let config = ClientConfig::builder()
+        .skip_compress_spec(Some("gz/zip".to_owned()))
+        .build();
+    let args = build_sender_args(&config);
+    assert!(
+        !args.iter().any(|a| a.starts_with("--skip-compress")),
+        "--skip-compress must not be forwarded on a push: {args:?}"
+    );
 }
 
 #[test]
@@ -1658,7 +1780,7 @@ fn includes_acl_flag() {
 #[cfg(all(unix, feature = "xattr"))]
 #[test]
 fn includes_xattr_flag() {
-    let config = ClientConfig::builder().xattrs(true).build();
+    let config = ClientConfig::builder().xattrs(1).build();
     let flags = sender_flag_string(&config);
     assert!(flags.contains('X'), "expected 'X' in flags: {flags}");
 }
@@ -2520,7 +2642,7 @@ fn all_flags_enabled_produces_valid_invocation() {
         .devices(true)
         .specials(true)
         .times(true)
-        .atimes(true)
+        .atimes(1)
         .permissions(true)
         .executability(true)
         .recursive(true)
@@ -2528,7 +2650,7 @@ fn all_flags_enabled_produces_valid_invocation() {
         .checksum(true)
         .hard_links(true)
         .acls(true)
-        .xattrs(true)
+        .xattrs(1)
         .numeric_ids(true)
         .trust_sender(true)
         .checksum_seed(Some(42))

@@ -76,7 +76,8 @@ pub(crate) struct ConfigInputs {
     /// Explicit `--super` request (upstream `am_root > 1`), forwarded on push.
     pub(crate) super_user: bool,
     pub(crate) times: bool,
-    pub(crate) atimes: bool,
+    /// Access-time preservation level (0 = off, 1 = `-U`, 2 = `-UU`).
+    pub(crate) atimes: u8,
     pub(crate) crtimes: bool,
     pub(crate) modify_window_setting: Option<i64>,
     pub(crate) omit_dir_times: bool,
@@ -155,9 +156,15 @@ pub(crate) struct ConfigInputs {
     pub(crate) link_destinations: Vec<OsString>,
     #[cfg(all(any(unix, windows), feature = "acl"))]
     pub(crate) preserve_acls: bool,
+    /// Extended-attribute preservation level (0 = off, 1 = `-X`, 2 = `-XX`).
     #[cfg(all(any(unix, windows), feature = "xattr"))]
-    pub(crate) xattrs: bool,
+    pub(crate) xattrs: u8,
     pub(crate) skip_compress_list: Option<SkipCompressList>,
+    /// Raw `--skip-compress` spec forwarded to the remote sender; `Some` only
+    /// when explicitly set.
+    pub(crate) skip_compress_spec: Option<String>,
+    /// `-C` / `--cvs-exclude` request, forwarded to the peer as the `C` letter.
+    pub(crate) cvs_exclude: bool,
     pub(crate) itemize_changes: bool,
     pub(crate) out_format_template: Option<crate::frontend::out_format::OutFormat>,
     pub(crate) log_file_template: Option<crate::frontend::out_format::OutFormat>,
@@ -396,6 +403,12 @@ pub(crate) fn build_base_config(mut inputs: ConfigInputs) -> ClientConfigBuilder
     if let Some(list) = inputs.skip_compress_list.take() {
         builder = builder.skip_compress(list);
     }
+
+    if let Some(spec) = inputs.skip_compress_spec.take() {
+        builder = builder.skip_compress_spec(Some(spec));
+    }
+
+    builder = builder.cvs_exclude(inputs.cvs_exclude);
 
     builder = match inputs.delete_mode {
         DeleteMode::Before => builder.delete_before(true),

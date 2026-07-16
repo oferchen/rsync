@@ -529,6 +529,17 @@ impl<'a> RemoteInvocationBuilder<'a> {
         if am_sender && self.config.size_only() {
             args.push(OsString::from("--size-only"));
         }
+
+        // upstream: options.c:2858-2860 - `else { if (skip_compress)
+        // safe_arg("--skip-compress", skip_compress); }`. The else is the
+        // `!am_sender` branch, so `--skip-compress` is forwarded only on a PULL
+        // (RemoteRole::Receiver): the remote sender performs the compression and
+        // must skip the same suffixes. Only an explicitly-set spec is forwarded;
+        // the built-in default suffix list is never sent (upstream's
+        // skip_compress global is NULL unless --skip-compress was given).
+        if !am_sender && let Some(spec) = self.config.skip_compress_spec() {
+            args.push(OsString::from(format!("--skip-compress={spec}")));
+        }
         // upstream: options.c:2918-2923 - --ignore-existing and --existing
         // (sent as --existing for ignore_non_existing) both sit inside the
         // `if (am_sender)` block: they steer the remote receiver's generator,
@@ -925,8 +936,10 @@ impl<'a> RemoteInvocationBuilder<'a> {
         if self.config.preserve_times() {
             flags.push('t');
         }
-        // upstream: options.c:2681-2685 - preserve_atimes.
-        if self.config.preserve_atimes() {
+        // upstream: options.c:2681-2685 - `if (preserve_atimes) { 'U'; if
+        // (preserve_atimes > 1) 'U'; }`. Level 2 (`-UU`) doubles the letter so
+        // the peer also preserves directory access times.
+        for _ in 0..self.config.preserve_atimes_level().min(2) {
             flags.push('U');
         }
         // upstream: options.c:2686-2689 - preserve_crtimes.
@@ -947,8 +960,10 @@ impl<'a> RemoteInvocationBuilder<'a> {
             flags.push('A');
         }
         #[cfg(all(unix, feature = "xattr"))]
-        if self.config.preserve_xattrs() {
-            // upstream: options.c:2698-2704 - preserve_xattrs (before r).
+        // upstream: options.c:2698-2704 - `if (preserve_xattrs) { 'X'; if
+        // (preserve_xattrs > 1) 'X'; }` (before r). Level 2 (`-XX`) doubles the
+        // letter so the peer transfers xattrs even in a fake-super store.
+        for _ in 0..self.config.preserve_xattrs_level().min(2) {
             flags.push('X');
         }
         // upstream: options.c:2705-2706 - recurse.
@@ -958,6 +973,13 @@ impl<'a> RemoteInvocationBuilder<'a> {
         // upstream: options.c:2707-2708 - always_checksum.
         if self.config.checksum() {
             flags.push('c');
+        }
+        // upstream: options.c:2709-2710 - `if (cvs_exclude) argstr[x++] = 'C';`.
+        // Forwarded so the remote peer runs get_cvs_excludes() itself (matching
+        // upstream, which also forwards the letter alongside the transmitted CVS
+        // rules); duplicate excludes are idempotent.
+        if self.config.cvs_exclude() {
+            flags.push('C');
         }
         // upstream: options.c:2711-2712 - ignore_times rides in the compact
         // flag string as `I`, NOT as a long-form `--ignore-times`. Emitting the

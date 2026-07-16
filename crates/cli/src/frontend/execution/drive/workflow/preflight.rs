@@ -224,7 +224,7 @@ where
 /// Validates that requested ACL/xattr features are available on this platform.
 pub(crate) fn validate_feature_support<Err>(
     preserve_acls: bool,
-    xattrs: Option<bool>,
+    xattrs: Option<u8>,
     stderr: &mut MessageSink<Err>,
 ) -> Result<(), i32>
 where
@@ -242,7 +242,7 @@ where
     let _ = preserve_acls;
 
     #[cfg(not(all(any(unix, windows), feature = "xattr")))]
-    if xattrs.unwrap_or(false) {
+    if xattrs.unwrap_or(0) >= 1 {
         let message = rsync_error!(1, "extended attributes are not supported on this client")
             .with_role(Role::Client);
         let fallback = "extended attributes are not supported on this client".to_string();
@@ -281,7 +281,7 @@ mod tests {
     const ACL_REJECTION: &str = "POSIX ACLs are not supported on this client";
     const XATTR_REJECTION: &str = "extended attributes are not supported on this client";
 
-    fn assert_accepted(preserve_acls: bool, xattrs: Option<bool>, context: &str) {
+    fn assert_accepted(preserve_acls: bool, xattrs: Option<u8>, context: &str) {
         let mut sink = MessageSink::new(Vec::<u8>::new());
         let result = validate_feature_support(preserve_acls, xattrs, &mut sink);
         assert!(
@@ -298,7 +298,7 @@ mod tests {
     #[allow(dead_code)]
     fn assert_rejected_with(
         preserve_acls: bool,
-        xattrs: Option<bool>,
+        xattrs: Option<u8>,
         expected: &str,
         context: &str,
     ) {
@@ -321,7 +321,7 @@ mod tests {
     #[cfg(all(target_os = "linux", feature = "xattr"))]
     #[test]
     fn xattrs_accepted_on_linux_with_feature() {
-        assert_accepted(false, Some(true), "Linux + xattr feature");
+        assert_accepted(false, Some(1), "Linux + xattr feature");
     }
 
     /// Linux + `acl` feature: `--acls` accepted, no rejection emitted.
@@ -335,7 +335,7 @@ mod tests {
     #[cfg(all(target_os = "macos", feature = "xattr"))]
     #[test]
     fn xattrs_accepted_on_macos_with_feature() {
-        assert_accepted(false, Some(true), "macOS + xattr feature");
+        assert_accepted(false, Some(1), "macOS + xattr feature");
     }
 
     /// macOS + `acl` feature: `--acls` accepted, no rejection emitted.
@@ -351,7 +351,7 @@ mod tests {
     #[cfg(all(target_os = "windows", feature = "xattr"))]
     #[test]
     fn xattrs_accepted_on_windows_with_feature() {
-        assert_accepted(false, Some(true), "Windows + xattr feature");
+        assert_accepted(false, Some(1), "Windows + xattr feature");
     }
 
     /// Windows + `acl` feature: `--acls` accepted, no rejection emitted.
@@ -369,7 +369,7 @@ mod tests {
     #[test]
     fn neither_flag_set_always_accepted() {
         assert_accepted(false, None, "neither flag set");
-        assert_accepted(false, Some(false), "xattrs=Some(false)");
+        assert_accepted(false, Some(0), "xattrs=Some(0)");
     }
 
     // --- Negative cases: feature absent, gate must reject ---
@@ -398,9 +398,9 @@ mod tests {
     fn xattrs_rejected_without_feature() {
         assert_rejected_with(
             false,
-            Some(true),
+            Some(1),
             XATTR_REJECTION,
-            "xattrs=Some(true) without xattr feature",
+            "xattrs=Some(1) without xattr feature",
         );
     }
 }

@@ -78,7 +78,8 @@ pub(crate) fn build_server_flag_string(config: &ClientConfig) -> String {
     if config.preserve_times() {
         flags.push('t');
     }
-    if config.preserve_atimes() {
+    // upstream: options.c:2681-2685 - `-UU` doubles the letter at level 2.
+    for _ in 0..config.preserve_atimes_level().min(2) {
         flags.push('U');
     }
     if config.preserve_permissions() {
@@ -100,6 +101,12 @@ pub(crate) fn build_server_flag_string(config: &ClientConfig) -> String {
     if config.checksum() {
         flags.push('c');
     }
+    // upstream: options.c:2709-2710 - `if (cvs_exclude) 'C'`. Forwarded so the
+    // remote peer runs get_cvs_excludes() itself; duplicate excludes are
+    // idempotent with the transmitted CVS filter rules.
+    if config.cvs_exclude() {
+        flags.push('C');
+    }
     if config.preserve_hard_links() {
         flags.push('H');
     }
@@ -111,7 +118,8 @@ pub(crate) fn build_server_flag_string(config: &ClientConfig) -> String {
         flags.push('A');
     }
     #[cfg(all(unix, feature = "xattr"))]
-    if config.preserve_xattrs() {
+    // upstream: options.c:2698-2704 - `-XX` doubles the letter at level 2.
+    for _ in 0..config.preserve_xattrs_level().min(2) {
         flags.push('X');
     }
     // upstream: 'n' = dry_run (!do_xfers), NOT numeric_ids.

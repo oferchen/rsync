@@ -290,7 +290,7 @@ fn archive_does_not_enable_xattrs() {
     let args = parse_args(["oc-rsync", "-a", "src", "dest"]).unwrap();
     assert_ne!(
         args.xattrs,
-        Some(true),
+        Some(1),
         "-a should NOT enable extended attributes (requires -X)"
     );
 }
@@ -346,7 +346,7 @@ fn archive_with_acls() {
 fn archive_with_xattrs() {
     let args = parse_args(["oc-rsync", "-a", "-X", "src", "dest"]).unwrap();
     assert!(args.archive);
-    assert_eq!(args.xattrs, Some(true), "-X should enable xattrs with -a");
+    assert_eq!(args.xattrs, Some(1), "-X should enable xattrs with -a");
 }
 
 #[test]

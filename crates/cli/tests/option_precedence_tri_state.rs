@@ -115,7 +115,7 @@ fn test_xattrs_last_wins_positive() {
     let args = parse_args(["oc-rsync", "--no-xattrs", "--xattrs", "src", "dest"]).unwrap();
     assert_eq!(
         args.xattrs,
-        Some(true),
+        Some(1),
         "Last --xattrs should override --no-xattrs"
     );
 }
@@ -125,7 +125,7 @@ fn test_xattrs_last_wins_negative() {
     let args = parse_args(["oc-rsync", "--xattrs", "--no-xattrs", "src", "dest"]).unwrap();
     assert_eq!(
         args.xattrs,
-        Some(false),
+        Some(0),
         "Last --no-xattrs should override --xattrs"
     );
 }

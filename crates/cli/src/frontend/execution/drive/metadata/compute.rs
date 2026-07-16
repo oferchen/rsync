@@ -93,7 +93,7 @@ pub(crate) fn compute_metadata_settings(
     };
 
     let preserve_times = times.unwrap_or(archive);
-    let preserve_atimes = atimes.unwrap_or(false);
+    let preserve_atimes = atimes.unwrap_or(0) >= 1;
     let preserve_crtimes = crtimes.unwrap_or(false);
     let omit_dir_times_setting = omit_dir_times.unwrap_or(false);
     let omit_link_times_setting = omit_link_times.unwrap_or(false);

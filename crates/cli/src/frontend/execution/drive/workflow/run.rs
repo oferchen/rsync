@@ -132,7 +132,7 @@ where
         include_from: _,
         filters: _,
         filter_order,
-        cvs_exclude: _,
+        cvs_exclude,
         apple_double_skip: _,
         rsync_filter_shortcuts: _,
         files_from,
@@ -442,6 +442,7 @@ where
         compress,
         compression_level_override,
         skip_compress_list,
+        skip_compress_spec,
         compression_setting,
         compression_algorithm,
         compress_choice_name,
@@ -878,7 +879,10 @@ where
         // --super (not by running as root). Forwarded on a push (options.c:2852).
         super_user: super_mode == Some(true),
         times: preserve_times,
-        atimes: preserve_atimes,
+        // The u8 level (0/1/2) drives the doubled `-UU` compact letter; the
+        // boolean `preserve_atimes` derived from it still governs local metadata
+        // application.
+        atimes: atimes.unwrap_or(0),
         crtimes: preserve_crtimes,
         modify_window_setting,
         omit_dir_times: omit_dir_times_setting,
@@ -950,8 +954,10 @@ where
         #[cfg(all(any(unix, windows), feature = "acl"))]
         preserve_acls,
         #[cfg(all(any(unix, windows), feature = "xattr"))]
-        xattrs: xattrs.unwrap_or(false),
+        xattrs: xattrs.unwrap_or(0),
         skip_compress_list,
+        skip_compress_spec,
+        cvs_exclude,
         itemize_changes,
         out_format_template: out_format_template.clone(),
         log_file_template,

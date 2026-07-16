@@ -843,8 +843,8 @@ pub(crate) fn add_transfer_behavior_options(command: ClapCommand) -> ClapCommand
                 Arg::new("atimes")
                     .long("atimes")
                     .short('U')
-                    .help("Preserve access times.")
-                    .action(ArgAction::SetTrue)
+                    .help("Preserve access times. Specify twice (-UU) to also preserve directory access times.")
+                    .action(ArgAction::Count)
                     .overrides_with("no-atimes"),
             )
             .arg(
@@ -891,8 +891,8 @@ pub(crate) fn add_transfer_behavior_options(command: ClapCommand) -> ClapCommand
                 Arg::new("xattrs")
                     .long("xattrs")
                     .short('X')
-                    .help("Preserve extended attributes when supported.")
-                    .action(ArgAction::SetTrue)
+                    .help("Preserve extended attributes when supported. Specify twice (-XX) to also transfer xattrs in a fake-super store.")
+                    .action(ArgAction::Count)
                     .overrides_with("no-xattrs"),
             )
             .arg(

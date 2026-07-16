@@ -158,7 +158,7 @@ pub struct ClientConfigBuilder {
     fake_super: bool,
     super_user: bool,
     preserve_times: bool,
-    preserve_atimes: bool,
+    preserve_atimes: u8,
     preserve_crtimes: bool,
     owner_override: Option<u32>,
     group_override: Option<u32>,
@@ -176,6 +176,8 @@ pub struct ClientConfigBuilder {
     compression_setting: CompressionSetting,
     compression_threads: Option<std::num::NonZeroU8>,
     skip_compress: SkipCompressList,
+    skip_compress_spec: Option<String>,
+    cvs_exclude: bool,
     open_noatime: bool,
     whole_file: Option<bool>,
     xxh64_dedup: bool,
@@ -279,7 +281,7 @@ pub struct ClientConfigBuilder {
     #[cfg(all(any(unix, windows), feature = "acl"))]
     preserve_acls: bool,
     #[cfg(all(any(unix, windows), feature = "xattr"))]
-    preserve_xattrs: bool,
+    preserve_xattrs: u8,
 }
 
 impl ClientConfigBuilder {
@@ -417,6 +419,8 @@ impl ClientConfigBuilder {
             compression_setting: self.compression_setting,
             compression_threads: self.compression_threads,
             skip_compress: self.skip_compress,
+            skip_compress_spec: self.skip_compress_spec,
+            cvs_exclude: self.cvs_exclude,
             open_noatime: self.open_noatime,
             whole_file: self.whole_file,
             xxh64_dedup: self.xxh64_dedup,
