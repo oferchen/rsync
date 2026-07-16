@@ -337,6 +337,25 @@ mod config_helpers_tests {
         assert!(result.is_err());
     }
 
+    // WHY: operators centrally manage trusted hosts via netgroups. A `@name`
+    // token must parse into the dedicated netgroup variant (upstream
+    // access.c:41-42) rather than a literal hostname, and the name must be
+    // lowercased to match upstream's `strlower(list2)` (access.c:251).
+    #[test]
+    fn host_pattern_parse_netgroup_token() {
+        let pattern = HostPattern::parse("@Trusted").unwrap();
+        assert_eq!(pattern, HostPattern::Netgroup("trusted".to_owned()));
+    }
+
+    // WHY: upstream requires `tok[1]` before treating `@` as a netgroup
+    // (access.c:41). A bare `@` is therefore not a netgroup; it falls through
+    // to an ordinary hostname token that can never match a real hostname.
+    #[test]
+    fn host_pattern_parse_bare_at_is_not_netgroup() {
+        let pattern = HostPattern::parse("@").unwrap();
+        assert!(matches!(pattern, HostPattern::Hostname(_)));
+    }
+
     #[test]
     fn host_pattern_parse_invalid_prefix() {
         let result = HostPattern::parse("192.168.1.1/abc");

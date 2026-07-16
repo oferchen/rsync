@@ -11,6 +11,9 @@ pub(crate) enum HostPattern {
     Ipv6 { network: Ipv6Addr, prefix: u8 },
     /// Matches by hostname pattern (exact, suffix, or wildcard).
     Hostname(HostnamePattern),
+    /// Matches when the client's resolved hostname is a member of a netgroup
+    /// (`@name` token). Holds the netgroup name (the text after `@`).
+    Netgroup(String),
 }
 
 /// IP address family for filtering.
@@ -53,6 +56,19 @@ impl HostPattern {
 
         if token == "*" || token.eq_ignore_ascii_case("all") {
             return Ok(Self::Any);
+        }
+
+        // upstream: access.c:41-42 - a token of the form `@name` tests the
+        // client's resolved hostname for membership in the netgroup `name`
+        // (`innetgr(tok + 1, host, NULL, NULL)`). A bare `@` (no name) is not a
+        // netgroup (`tok[1]` is required, access.c:41) and falls through to be
+        // treated as an ordinary hostname token. The name is lowercased to
+        // match upstream's `strlower(list2)` over the whole host list
+        // (access.c:251).
+        if let Some(name) = token.strip_prefix('@') {
+            if !name.is_empty() {
+                return Ok(Self::Netgroup(name.to_ascii_lowercase()));
+            }
         }
 
         let (address_str, prefix_text) = if let Some((addr, mask)) = token.split_once('/') {
@@ -157,13 +173,27 @@ impl HostPattern {
             (Self::Hostname(pattern), _) => {
                 hostname.is_some_and(|name| pattern.matches(name))
             }
+            // upstream: access.c:41-42 `innetgr(tok + 1, host, NULL, NULL)` -
+            // the client's resolved hostname is tested for netgroup membership.
+            // Like the reverse-DNS name match, this needs a resolved hostname;
+            // without one (access.c:37-38 `if (!host || !*host) return 0`) it
+            // never matches. Resolution goes through the `module_state`
+            // netgroup seam, a no-op returning false on musl/Windows.
+            (Self::Netgroup(name), _) => {
+                hostname.is_some_and(|host| module_state::netgroup_contains(name, host))
+            }
             _ => false,
         }
     }
 
     /// Returns whether this pattern requires a resolved hostname.
+    ///
+    /// Both hostname-pattern and `@netgroup` tokens are evaluated against the
+    /// client's resolved hostname (upstream access.c:37-38, 46), so a deny rule
+    /// of either kind must fail closed when no hostname is available
+    /// (GHSA-rjfm-3w2m-jf4f).
     const fn requires_hostname(&self) -> bool {
-        matches!(self, Self::Hostname(_))
+        matches!(self, Self::Hostname(_) | Self::Netgroup(_))
     }
 
     /// Forward-resolves a config-specified hostname token and matches the
