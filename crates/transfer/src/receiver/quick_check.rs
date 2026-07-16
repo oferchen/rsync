@@ -14,7 +14,9 @@ use protocol::flist::FileEntry;
 use crate::config::{ReferenceDirectory, ReferenceDirectoryKind};
 use crate::delta_apply::ChecksumVerifier;
 
-use metadata::{AclIdMapper, MetadataOptions, ModifyWindow, apply_metadata_with_cached_stat};
+use metadata::{
+    AclIdMapper, MetadataOptions, ModifyWindow, apply_metadata_with_cached_stat, metadata_unchanged,
+};
 use protocol::acl::AclCache;
 
 use super::apply_acls_from_receiver_cache;
@@ -197,35 +199,157 @@ fn mode_from_metadata(meta: &fs::Metadata) -> u32 {
     }
 }
 
-/// Checks reference directories for a file that matches the source entry.
+/// The strength of an alternate-basis match, mirroring upstream's `match_level`.
 ///
-/// When the destination file does not exist, this function iterates through
-/// configured reference directories (`--compare-dest`, `--copy-dest`,
-/// `--link-dest`) and performs the appropriate action based on kind:
+/// Upstream `try_dests_reg` (generator.c:960) tracks a `match_level` while
+/// scanning `basis_dir[]`. Levels 0 (nothing found) and 1 (a regular file that
+/// fails `quick_check_ok`, usable only as a delta basis) are not handled
+/// locally by oc, so this enum models only the two levels that produce a
+/// finished destination file:
 ///
-/// - `Compare`: skip transfer entirely (file is up-to-date in reference)
-/// - `Link`: create a hard link from the reference file to the destination
-/// - `Copy`: copy the reference file to the destination
+/// - [`MatchLevel::Content`] = upstream match_level 2: the basis passes
+///   `quick_check_ok` (size + mtime, or checksum) but at least one preserved
+///   attribute differs.
+/// - [`MatchLevel::Exact`] = upstream match_level 3: the basis passes
+///   `quick_check_ok` *and* `unchanged_attrs()` - every preserved attribute
+///   matches.
 ///
-/// Returns `true` if the entry was handled and should not be transferred.
-///
-/// The basis-dir entry is stat'd with `lstat` by default to mirror upstream
-/// `link_stat(cmpbuf, &sxp->st, 0)` in `try_dests_reg`. When `copy_links` is
-/// true (`-L` / `--copy-links`), the entry is stat'd with `stat` so a basis-dir
-/// symlink to a regular file is accepted as a regular-file basis. This matches
-/// upstream `link_stat()` (`flist.c:234`) which dispatches to `x_stat` when
-/// `copy_links` is set and `x_lstat` otherwise. Without this distinction, a
-/// basis-dir symlink would be silently consumed under `--copy-dest`, diverging
-/// from upstream which skips it via `!S_ISREG(sxp->st.st_mode)` at line 953.
+/// `Exact > Content` so the scan can keep the strongest match.
 ///
 /// # Upstream Reference
 ///
-/// - `generator.c:942` - `try_dests_reg()` iterates `basis_dir[]`
-/// - `generator.c:953` - `link_stat(cmpbuf, &sxp->st, 0)` + `!S_ISREG` filter
-/// - `flist.c:234` - `link_stat()` uses `x_stat` if `copy_links`, else `x_lstat`
-/// - `generator.c:983` - match_level 3 with `COMPARE_DEST` returns -2 (skip)
-/// - `generator.c:991` - match_level 3 with `LINK_DEST` calls `hard_link_one()`
-/// - `generator.c:1021` - match_level >= 2 with `COPY_DEST` copies locally
+/// - `generator.c:960-983` - the `match_level` state machine and `best_match`
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+enum MatchLevel {
+    /// upstream match_level 2: quick-check passes, preserved attrs differ.
+    Content,
+    /// upstream match_level 3: quick-check passes and `unchanged_attrs()`.
+    Exact,
+}
+
+/// The best alternate-basis match found across all `basis_dir[]` entries.
+struct ReferenceMatch<'a> {
+    /// The reference directory whose basis file was selected (`best_match`).
+    ref_dir: &'a ReferenceDirectory,
+    /// Resolved path of the basis file inside [`ReferenceMatch::ref_dir`].
+    ref_path: PathBuf,
+    /// The match strength, driving the local action (skip / hard-link / copy).
+    level: MatchLevel,
+}
+
+/// Scans every reference directory and returns the strongest basis match,
+/// mirroring upstream's `best_match` selection in `try_dests_reg`.
+///
+/// Upstream keeps the FIRST directory that reaches the highest `match_level`: a
+/// later directory only wins by strictly exceeding the current level, and a
+/// level-3 (attrs-exact) match ends the scan immediately (generator.c:967-983).
+/// Directories whose basis file is missing, non-regular, or fails
+/// `quick_check_ok` contribute at most match_level 1 and are ignored here.
+///
+/// The basis-dir entry is stat'd with `lstat` by default to mirror upstream
+/// `link_stat(cmpbuf, &sxp->st, 0)`. When `copy_links` is set (`-L`), it is
+/// stat'd with `stat` so a basis-dir symlink to a regular file is accepted,
+/// matching `link_stat()`'s dispatch to `x_stat` (flist.c:234).
+///
+/// # Upstream Reference
+///
+/// - `generator.c:963-983` - the `do { ... } while (basis_dir[++j])` scan
+/// - `generator.c:965` - `link_stat` + `!S_ISREG` filter
+/// - `generator.c:971` - `quick_check_ok` gate (below it stays match_level 1)
+/// - `generator.c:977` - `unchanged_attrs()` promotes to match_level 3
+#[allow(clippy::too_many_arguments)]
+fn best_reference_match<'a>(
+    entry: &FileEntry,
+    relative_path: &Path,
+    reference_directories: &'a [ReferenceDirectory],
+    preserve_times: bool,
+    size_only: bool,
+    always_checksum: Option<protocol::ChecksumAlgorithm>,
+    modify_window: ModifyWindow,
+    copy_links: bool,
+    metadata_opts: &MetadataOptions,
+) -> Option<ReferenceMatch<'a>> {
+    let mut best: Option<ReferenceMatch<'a>> = None;
+    for ref_dir in reference_directories {
+        let ref_path = ref_dir.path.join(relative_path);
+        let stat_result = if copy_links {
+            fs::metadata(&ref_path)
+        } else {
+            fs::symlink_metadata(&ref_path)
+        };
+        let ref_meta = match stat_result {
+            Ok(m) if m.file_type().is_file() => m,
+            _ => continue,
+        };
+
+        // upstream: generator.c:971 - a basis that fails quick_check_ok is at
+        // most match_level 1 (a delta basis), which oc does not consume locally.
+        if !quick_check_matches(
+            entry,
+            &ref_path,
+            &ref_meta,
+            preserve_times,
+            size_only,
+            always_checksum,
+            modify_window,
+        ) {
+            continue;
+        }
+
+        // upstream: generator.c:977 - unchanged_attrs() distinguishes level 3
+        // (every preserved attr equal) from level 2 (content matches, attrs
+        // differ). `metadata_unchanged` is oc's `unchanged_attrs` equivalent.
+        let level = if metadata_unchanged(entry, metadata_opts, &ref_meta) {
+            MatchLevel::Exact
+        } else {
+            MatchLevel::Content
+        };
+
+        // upstream: generator.c:967-981 - best_match keeps the first dir at the
+        // highest level; only a strictly higher level replaces it.
+        if best.as_ref().is_none_or(|b| level > b.level) {
+            let exact = level == MatchLevel::Exact;
+            best = Some(ReferenceMatch {
+                ref_dir,
+                ref_path,
+                level,
+            });
+            // upstream: generator.c:980 - break as soon as a level-3 match is found.
+            if exact {
+                break;
+            }
+        }
+    }
+    best
+}
+
+/// Checks reference directories for a file that matches the source entry.
+///
+/// When the destination file does not exist, this function scans all configured
+/// reference directories (`--compare-dest`, `--copy-dest`, `--link-dest`),
+/// keeps the strongest [`MatchLevel`] found (upstream's `best_match`), and then
+/// performs the action dictated by upstream's `try_dests_reg` matrix:
+///
+/// - `--link-dest`, [`MatchLevel::Exact`]: hard-link the shared inode; on a
+///   hard-link failure, fall back to copying (`goto try_a_copy`).
+/// - `--link-dest`, [`MatchLevel::Content`]: attrs differ, so COPY the basis
+///   file rather than hard-linking. Hard-linking here would apply the source's
+///   attributes onto the shared read-only reference inode, corrupting it.
+/// - `--copy-dest`, either level: copy the basis file into the destination.
+/// - `--compare-dest`, [`MatchLevel::Exact`]: the file is already correct in
+///   the reference tree, so nothing is written to the destination (skip).
+/// - `--compare-dest`, [`MatchLevel::Content`]: copy the basis file in so the
+///   destination reflects the source's attributes.
+///
+/// Returns `true` if the entry was handled and should not be transferred.
+///
+/// # Upstream Reference
+///
+/// - `generator.c:954` - `try_dests_reg()` iterates `basis_dir[]`
+/// - `generator.c:995` - match_level 3 (non-`COPY_DEST`): link-dest hard-links,
+///   compare-dest skips; `COPY_DEST` falls through to the copy path
+/// - `generator.c:1004-1005` - hard-link failure does `goto try_a_copy`
+/// - `generator.c:1029-1051` - match_level >= 2 copies via `copy_altdest_file()`
 #[allow(clippy::too_many_arguments)]
 pub(super) fn try_reference_dest(
     entry: &FileEntry,
@@ -246,118 +370,197 @@ pub(super) fn try_reference_dest(
     }
 
     let relative_path = entry.path();
-    for ref_dir in reference_directories {
-        let ref_path = ref_dir.path.join(relative_path);
-        // upstream: generator.c:953 - `link_stat(cmpbuf, &sxp->st, 0)` then
-        // `!S_ISREG(sxp->st.st_mode)` filters out symlinks and other non-regular
-        // entries unless `copy_links` is set, in which case `link_stat()` falls
-        // through to `x_stat()` (flist.c:234) and follows the symlink.
-        let stat_result = if copy_links {
-            fs::metadata(&ref_path)
-        } else {
-            fs::symlink_metadata(&ref_path)
-        };
-        let ref_meta = match stat_result {
-            Ok(m) if m.file_type().is_file() => m,
-            _ => continue,
-        };
+    let Some(best) = best_reference_match(
+        entry,
+        relative_path,
+        reference_directories,
+        preserve_times,
+        size_only,
+        always_checksum,
+        modify_window,
+        copy_links,
+        metadata_opts,
+    ) else {
+        return false;
+    };
 
-        // upstream: generator.c:959 - quick_check_ok against reference file
-        if !quick_check_matches(
-            entry,
-            &ref_path,
-            &ref_meta,
-            preserve_times,
-            size_only,
-            always_checksum,
-            modify_window,
-        ) {
-            continue;
+    let dest_path = dest_dir.join(relative_path);
+    match best.ref_dir.kind {
+        ReferenceDirectoryKind::Compare => {
+            // upstream: generator.c:995-1023 - a COMPARE_DEST match at level 3 is
+            // already correct, so the file finishes with no local copy and the
+            // destination stays absent. At level 2 (attrs differ) it falls
+            // through to copy_altdest_file so the destination reflects the
+            // source's attributes.
+            if best.level == MatchLevel::Exact {
+                true
+            } else {
+                copy_reference_file(
+                    entry,
+                    &best.ref_path,
+                    &dest_path,
+                    metadata_opts,
+                    metadata_errors,
+                    acl_cache,
+                    acl_id_map,
+                )
+            }
         }
-
-        let dest_path = dest_dir.join(relative_path);
-        match ref_dir.kind {
-            ReferenceDirectoryKind::Compare => {
-                // upstream: generator.c:1007 - return -2 (file is up-to-date)
-                return true;
+        ReferenceDirectoryKind::Link => {
+            // upstream: generator.c:995-1014 - LINK_DEST hard-links only at
+            // level 3 (unchanged_attrs). A level-2 match, or a hard-link that
+            // fails, copies instead (generator.c:1004-1005 `goto try_a_copy`),
+            // leaving the read-only reference inode untouched.
+            if best.level == MatchLevel::Exact
+                && link_reference_file(
+                    entry,
+                    &best.ref_path,
+                    &dest_path,
+                    metadata_opts,
+                    metadata_errors,
+                    acl_cache,
+                    acl_id_map,
+                )
+            {
+                true
+            } else {
+                copy_reference_file(
+                    entry,
+                    &best.ref_path,
+                    &dest_path,
+                    metadata_opts,
+                    metadata_errors,
+                    acl_cache,
+                    acl_id_map,
+                )
             }
-            ReferenceDirectoryKind::Link => {
-                // upstream: generator.c:991 - hard_link_one()
-                if let Some(parent) = dest_path.parent() {
-                    let _ = fs::create_dir_all(parent);
-                }
-                // Try io_uring LINKAT on Linux 5.15+, fall back to std::fs::hard_link.
-                if fast_io::hard_link(&ref_path, &dest_path).is_ok() {
-                    // Skip the stat syscall inside apply_metadata_from_file_entry:
-                    // the hard link shares the reference file's inode, and we
-                    // unconditionally apply the desired ownership/permissions.
-                    if let Err(e) =
-                        apply_metadata_with_cached_stat(&dest_path, entry, metadata_opts, None)
-                    {
-                        metadata_errors.push((dest_path.clone(), e.to_string()));
-                    }
-                    if let Err(e) = apply_acls_from_receiver_cache(
-                        &dest_path,
-                        entry,
-                        acl_cache,
-                        acl_id_map,
-                        !entry.is_symlink(),
-                    ) {
-                        metadata_errors.push((dest_path, e.to_string()));
-                    }
-                    return true;
-                }
-            }
-            ReferenceDirectoryKind::Copy => {
-                // upstream: generator.c:1021 - copy_altdest_file()
-                if let Some(parent) = dest_path.parent() {
-                    let _ = fs::create_dir_all(parent);
-                }
-                match fs::copy(&ref_path, &dest_path) {
-                    Ok(_) => {
-                        // Skip the stat inside apply_metadata_from_file_entry:
-                        // we just created this file, so its metadata does not
-                        // match the desired entry yet. Pass None to apply
-                        // unconditionally without a redundant stat.
-                        if let Err(e) =
-                            apply_metadata_with_cached_stat(&dest_path, entry, metadata_opts, None)
-                        {
-                            metadata_errors.push((dest_path.clone(), e.to_string()));
-                        }
-                        if let Err(e) = apply_acls_from_receiver_cache(
-                            &dest_path,
-                            entry,
-                            acl_cache,
-                            acl_id_map,
-                            !entry.is_symlink(),
-                        ) {
-                            metadata_errors.push((dest_path, e.to_string()));
-                        }
-                        return true;
-                    }
-                    Err(error) => {
-                        // upstream: generator.c:919 - rsyserr(FINFO, errno,
-                        // "copy_file %s => %s", full_fname(src), copy_to)
-                        // under INFO_GTE(COPY, 1). The flag is part of
-                        // info_verbosity[1] (options.c:241) so this fires at
-                        // `-v` or `--info=COPY`. Wording mirrors upstream's
-                        // rsyserr format: `copy_file SRC => DST: ERRSTR (ERRNO)`.
-                        let errno = error.raw_os_error().unwrap_or(0);
-                        info_log!(
-                            Copy,
-                            1,
-                            "copy_file {} => {}: {} ({})",
-                            ref_path.display(),
-                            dest_path.display(),
-                            io_error_message(&error),
-                            errno
-                        );
-                    }
-                }
-            }
+        }
+        ReferenceDirectoryKind::Copy => {
+            // upstream: generator.c:995 (COPY_DEST bypasses the level-3 skip)
+            // + 1029 - COPY_DEST copies the basis file at both level 2 and 3.
+            copy_reference_file(
+                entry,
+                &best.ref_path,
+                &dest_path,
+                metadata_opts,
+                metadata_errors,
+                acl_cache,
+                acl_id_map,
+            )
         }
     }
-    false
+}
+
+/// Applies the source entry's metadata and ACLs onto a freshly materialised
+/// destination (hard link or copy), recording any failures in `metadata_errors`.
+///
+/// The cached stat is deliberately `None`: the destination was just created, so
+/// its on-disk metadata does not yet match the entry and an extra stat would be
+/// wasted.
+fn apply_altdest_metadata(
+    entry: &FileEntry,
+    dest_path: &Path,
+    metadata_opts: &MetadataOptions,
+    metadata_errors: &mut Vec<(PathBuf, String)>,
+    acl_cache: Option<&AclCache>,
+    acl_id_map: Option<&AclIdMapper>,
+) {
+    if let Err(e) = apply_metadata_with_cached_stat(dest_path, entry, metadata_opts, None) {
+        metadata_errors.push((dest_path.to_path_buf(), e.to_string()));
+    }
+    if let Err(e) =
+        apply_acls_from_receiver_cache(dest_path, entry, acl_cache, acl_id_map, !entry.is_symlink())
+    {
+        metadata_errors.push((dest_path.to_path_buf(), e.to_string()));
+    }
+}
+
+/// Hard-links `ref_path` (a `--link-dest` basis) into `dest_path`, then applies
+/// the source entry's metadata. Returns `true` on a successful link.
+///
+/// Only called at [`MatchLevel::Exact`], where every preserved attribute
+/// already matches, so applying metadata onto the shared inode is a no-op that
+/// cannot corrupt the reference tree. A failed link returns `false` so the
+/// caller can fall back to copying (upstream `goto try_a_copy`).
+///
+/// upstream: generator.c:1003-1014 - `hard_link_one()` then `set_file_attrs()`
+fn link_reference_file(
+    entry: &FileEntry,
+    ref_path: &Path,
+    dest_path: &Path,
+    metadata_opts: &MetadataOptions,
+    metadata_errors: &mut Vec<(PathBuf, String)>,
+    acl_cache: Option<&AclCache>,
+    acl_id_map: Option<&AclIdMapper>,
+) -> bool {
+    if let Some(parent) = dest_path.parent() {
+        let _ = fs::create_dir_all(parent);
+    }
+    // Try io_uring LINKAT on Linux 5.15+, fall back to std::fs::hard_link.
+    if fast_io::hard_link(ref_path, dest_path).is_err() {
+        return false;
+    }
+    apply_altdest_metadata(
+        entry,
+        dest_path,
+        metadata_opts,
+        metadata_errors,
+        acl_cache,
+        acl_id_map,
+    );
+    true
+}
+
+/// Copies `ref_path` (an alternate-basis file) into `dest_path` and applies the
+/// source entry's metadata. Returns `true` when the copy succeeds.
+///
+/// On failure it emits the upstream `INFO_GTE(COPY, 1)` notice and returns
+/// `false` so the caller requests a normal transfer.
+///
+/// upstream: generator.c:912-946 - `copy_altdest_file()`
+fn copy_reference_file(
+    entry: &FileEntry,
+    ref_path: &Path,
+    dest_path: &Path,
+    metadata_opts: &MetadataOptions,
+    metadata_errors: &mut Vec<(PathBuf, String)>,
+    acl_cache: Option<&AclCache>,
+    acl_id_map: Option<&AclIdMapper>,
+) -> bool {
+    if let Some(parent) = dest_path.parent() {
+        let _ = fs::create_dir_all(parent);
+    }
+    match fs::copy(ref_path, dest_path) {
+        Ok(_) => {
+            apply_altdest_metadata(
+                entry,
+                dest_path,
+                metadata_opts,
+                metadata_errors,
+                acl_cache,
+                acl_id_map,
+            );
+            true
+        }
+        Err(error) => {
+            // upstream: generator.c:919 - rsyserr(FINFO, errno,
+            // "copy_file %s => %s", full_fname(src), copy_to) under
+            // INFO_GTE(COPY, 1). The flag is part of info_verbosity[1]
+            // (options.c:241) so this fires at `-v` or `--info=COPY`. Wording
+            // mirrors upstream's rsyserr format: `copy_file SRC => DST: ERRSTR (ERRNO)`.
+            let errno = error.raw_os_error().unwrap_or(0);
+            info_log!(
+                Copy,
+                1,
+                "copy_file {} => {}: {} ({})",
+                ref_path.display(),
+                dest_path.display(),
+                io_error_message(&error),
+                errno
+            );
+            false
+        }
+    }
 }
 
 /// Strips the trailing `" (os error N)"` suffix that `std::io::Error::Display`
@@ -1007,6 +1210,286 @@ mod modify_window_tests {
         assert!(
             run_window_nsec(base, 500_000_000, base, 0, ModifyWindow::from_secs(0)),
             "sub-second drift is ignored at window 0"
+        );
+    }
+}
+
+/// Regression tests pinning upstream's `try_dests_reg` match-level matrix for
+/// regular files (`generator.c:954-1054`).
+///
+/// The core data-integrity invariant: `--link-dest` may only hard-link a basis
+/// file when EVERY preserved attribute matches (match_level 3). When the content
+/// matches but an attribute differs (match_level 2), upstream copies the basis
+/// into the destination via `copy_altdest_file` rather than hard-linking, so it
+/// never mutates the shared read-only reference inode. `--compare-dest`
+/// similarly only treats a basis as up-to-date at level 3; at level 2 it copies
+/// the file in so the destination is not left absent. These tests encode WHY:
+/// a naive "hard-link on any quick-check match" corrupts the reference tree's
+/// attributes through the shared inode, and a naive "compare-dest skips on any
+/// match" silently drops attrs-differing files from the destination.
+#[cfg(unix)]
+#[cfg(test)]
+mod alt_dest_match_level_tests {
+    use std::fs;
+    use std::os::unix::fs::{MetadataExt, PermissionsExt};
+    use std::path::{Path, PathBuf};
+
+    use filetime::{FileTime, set_file_mtime};
+    use metadata::MetadataOptions;
+    use protocol::flist::FileEntry;
+
+    use super::{ModifyWindow, try_reference_dest};
+    use crate::config::{ReferenceDirectory, ReferenceDirectoryKind};
+
+    /// A fixed mtime shared by basis files and source entries so the quick-check
+    /// mtime comparison passes; level differences come from perms, not time,
+    /// unless a test opts into `size_only`.
+    const MTIME: i64 = 1_700_000_000;
+
+    /// Writes a basis file with explicit content, permissions, and mtime.
+    fn write_basis(dir: &Path, name: &str, content: &[u8], mode: u32, mtime: i64) -> PathBuf {
+        let path = dir.join(name);
+        fs::write(&path, content).expect("write basis file");
+        fs::set_permissions(&path, PermissionsExt::from_mode(mode)).expect("chmod basis");
+        set_file_mtime(&path, FileTime::from_unix_time(mtime, 0)).expect("set basis mtime");
+        path
+    }
+
+    /// Builds a source entry with a matching size, perms, and mtime.
+    fn source_entry(name: &str, size: u64, mode: u32, mtime: i64) -> FileEntry {
+        let mut entry = FileEntry::new_file(PathBuf::from(name), size, mode);
+        entry.set_mtime(mtime, 0);
+        entry
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn run(
+        entry: &FileEntry,
+        dest_dir: &Path,
+        refs: &[ReferenceDirectory],
+        preserve_times: bool,
+        size_only: bool,
+    ) -> bool {
+        let opts = MetadataOptions::default();
+        let mut errs = Vec::new();
+        try_reference_dest(
+            entry,
+            dest_dir,
+            refs,
+            preserve_times,
+            size_only,
+            None,
+            ModifyWindow::from_secs(0),
+            false,
+            &opts,
+            &mut errs,
+            None,
+            None,
+        )
+    }
+
+    fn nlink(path: &Path) -> u64 {
+        fs::symlink_metadata(path).expect("stat").nlink()
+    }
+
+    fn ino(path: &Path) -> u64 {
+        fs::symlink_metadata(path).expect("stat").ino()
+    }
+
+    /// (a) `--link-dest` at match_level 2 (content matches, mtime differs under
+    /// `--size-only`) must COPY the basis into the destination, NOT hard-link it.
+    /// Hard-linking would then apply the source's mtime onto the shared reference
+    /// inode, corrupting the read-only `--link-dest` tree. The reference file's
+    /// link count must stay 1 and the destination must be a distinct inode.
+    #[test]
+    fn link_dest_level2_copies_and_leaves_reference_inode_untouched() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let ref_dir = tmp.path().join("link");
+        let dest_dir = tmp.path().join("dest");
+        fs::create_dir_all(&ref_dir).expect("mk ref");
+        fs::create_dir_all(&dest_dir).expect("mk dest");
+
+        // Basis and source share size + content, but the source claims a newer
+        // mtime. Under --size-only the quick-check passes on size alone, so this
+        // is a match_level 2 (content matches, attrs differ) case.
+        let ref_path = write_basis(&ref_dir, "payload.bin", b"hello", 0o644, MTIME);
+        let entry = source_entry("payload.bin", 5, 0o644, MTIME + 10_000);
+
+        let refs = [ReferenceDirectory {
+            kind: ReferenceDirectoryKind::Link,
+            path: ref_dir.clone(),
+        }];
+
+        let handled = run(&entry, &dest_dir, &refs, true, true);
+        let dest_path = dest_dir.join("payload.bin");
+
+        assert!(handled, "a matching basis must be handled locally");
+        assert!(dest_path.exists(), "level-2 link-dest must copy into dest");
+        assert_eq!(fs::read(&dest_path).expect("dest"), b"hello");
+        assert_eq!(
+            nlink(&ref_path),
+            1,
+            "reference inode must NOT be hard-linked at level 2 (no shared inode)"
+        );
+        assert_ne!(
+            ino(&dest_path),
+            ino(&ref_path),
+            "level-2 dest must be an independent inode, not the reference's"
+        );
+    }
+
+    /// (b) `--link-dest` at match_level 3 (fully identical: content, perms, and
+    /// mtime all match) must hard-link. The reference inode's link count rises to
+    /// 2 and the destination shares its inode - the space-saving contract of
+    /// `--link-dest`.
+    #[test]
+    fn link_dest_level3_hard_links_shared_inode() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let ref_dir = tmp.path().join("link");
+        let dest_dir = tmp.path().join("dest");
+        fs::create_dir_all(&ref_dir).expect("mk ref");
+        fs::create_dir_all(&dest_dir).expect("mk dest");
+
+        let ref_path = write_basis(&ref_dir, "payload.bin", b"world", 0o644, MTIME);
+        let entry = source_entry("payload.bin", 5, 0o644, MTIME);
+
+        let refs = [ReferenceDirectory {
+            kind: ReferenceDirectoryKind::Link,
+            path: ref_dir.clone(),
+        }];
+
+        let handled = run(&entry, &dest_dir, &refs, true, false);
+        let dest_path = dest_dir.join("payload.bin");
+
+        assert!(handled, "identical basis must be handled locally");
+        assert_eq!(
+            nlink(&ref_path),
+            2,
+            "level-3 link-dest must hard-link (reference link count == 2)"
+        );
+        assert_eq!(
+            ino(&dest_path),
+            ino(&ref_path),
+            "hard-linked dest must share the reference inode"
+        );
+    }
+
+    /// (c) `--compare-dest` at match_level 2 (content matches, perms differ) must
+    /// COPY the basis into the destination so the file is PRESENT there with the
+    /// source's attributes. Skipping (as a naive "any match" would) leaves the
+    /// destination missing a file the user expects to receive.
+    #[test]
+    fn compare_dest_level2_copies_into_destination() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let ref_dir = tmp.path().join("compare");
+        let dest_dir = tmp.path().join("dest");
+        fs::create_dir_all(&ref_dir).expect("mk ref");
+        fs::create_dir_all(&dest_dir).expect("mk dest");
+
+        // Same content + mtime (quick-check passes) but a differing mode makes
+        // this match_level 2.
+        write_basis(&ref_dir, "payload.bin", b"abc", 0o600, MTIME);
+        let entry = source_entry("payload.bin", 3, 0o644, MTIME);
+
+        let refs = [ReferenceDirectory {
+            kind: ReferenceDirectoryKind::Compare,
+            path: ref_dir.clone(),
+        }];
+
+        let handled = run(&entry, &dest_dir, &refs, true, false);
+        let dest_path = dest_dir.join("payload.bin");
+
+        assert!(handled, "level-2 compare-dest must handle the file locally");
+        assert!(
+            dest_path.exists(),
+            "level-2 compare-dest must copy the file into the destination"
+        );
+        assert_eq!(fs::read(&dest_path).expect("dest"), b"abc");
+    }
+
+    /// (d) `--compare-dest` at match_level 3 (fully identical) must SKIP: the
+    /// file is already correct in the reference tree, so upstream writes nothing
+    /// to the destination. The destination file must be absent.
+    #[test]
+    fn compare_dest_level3_skips_and_leaves_destination_absent() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let ref_dir = tmp.path().join("compare");
+        let dest_dir = tmp.path().join("dest");
+        fs::create_dir_all(&ref_dir).expect("mk ref");
+        fs::create_dir_all(&dest_dir).expect("mk dest");
+
+        write_basis(&ref_dir, "payload.bin", b"abc", 0o644, MTIME);
+        let entry = source_entry("payload.bin", 3, 0o644, MTIME);
+
+        let refs = [ReferenceDirectory {
+            kind: ReferenceDirectoryKind::Compare,
+            path: ref_dir.clone(),
+        }];
+
+        let handled = run(&entry, &dest_dir, &refs, true, false);
+        let dest_path = dest_dir.join("payload.bin");
+
+        assert!(
+            handled,
+            "an up-to-date compare-dest match must suppress the transfer"
+        );
+        assert!(
+            !dest_path.exists(),
+            "level-3 compare-dest must NOT create the destination file"
+        );
+    }
+
+    /// (e) With two `--link-dest` directories where the EARLIER one is only a
+    /// quick-check match (level 2, perms differ) and the LATER one is fully
+    /// identical (level 3), upstream's `best_match` scan keeps the strongest
+    /// match and picks the later, level-3 directory. The later reference is
+    /// hard-linked (link count 2) while the earlier reference is untouched
+    /// (link count 1).
+    #[test]
+    fn best_match_prefers_later_level3_over_earlier_level2() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let early = tmp.path().join("early");
+        let late = tmp.path().join("late");
+        let dest_dir = tmp.path().join("dest");
+        fs::create_dir_all(&early).expect("mk early");
+        fs::create_dir_all(&late).expect("mk late");
+        fs::create_dir_all(&dest_dir).expect("mk dest");
+
+        // Earlier dir: content matches but perms differ -> level 2.
+        let early_path = write_basis(&early, "payload.bin", b"same", 0o600, MTIME);
+        // Later dir: content, perms, and mtime all match -> level 3.
+        let late_path = write_basis(&late, "payload.bin", b"same", 0o644, MTIME);
+        let entry = source_entry("payload.bin", 4, 0o644, MTIME);
+
+        let refs = [
+            ReferenceDirectory {
+                kind: ReferenceDirectoryKind::Link,
+                path: early.clone(),
+            },
+            ReferenceDirectory {
+                kind: ReferenceDirectoryKind::Link,
+                path: late.clone(),
+            },
+        ];
+
+        let handled = run(&entry, &dest_dir, &refs, true, false);
+        let dest_path = dest_dir.join("payload.bin");
+
+        assert!(handled, "a level-3 basis in a later dir must be handled");
+        assert_eq!(
+            nlink(&late_path),
+            2,
+            "the later level-3 reference must be the one hard-linked"
+        );
+        assert_eq!(
+            ino(&dest_path),
+            ino(&late_path),
+            "dest must share the later (level-3) reference inode"
+        );
+        assert_eq!(
+            nlink(&early_path),
+            1,
+            "the earlier level-2 reference must be left untouched"
         );
     }
 }
