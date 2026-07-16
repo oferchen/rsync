@@ -43,7 +43,7 @@ pub fn recv_ida_entries<R: Read + ?Sized>(reader: &mut R) -> io::Result<(IdaEntr
         let id = read_varint(reader)? as u32;
         let encoded = read_varint(reader)? as u32;
 
-        let (access, name_follows) = decode_access(encoded, true);
+        let (access, name_follows) = decode_access(encoded, true)?;
 
         // upstream: acls.c recv_ida_entries() reads name bytes after access
         let name = if name_follows {
@@ -62,6 +62,22 @@ pub fn recv_ida_entries<R: Read + ?Sized>(reader: &mut R) -> io::Result<(IdaEntr
     }
 
     Ok((entries, computed_mask & !NO_ENTRY))
+}
+
+/// Reads and validates a single object-entry access value from the wire.
+///
+/// Object entries (`user_obj`, `group_obj`, `mask_obj`, `other_obj`) carry a
+/// raw permission mask that must fall within the valid range; an out-of-range
+/// peer value surfaces `RERR_STREAMIO` (exit 12) rather than being silently
+/// truncated to `u8`.
+///
+/// # Upstream Reference
+///
+/// Mirrors the `recv_acl_access(f, NULL)` calls in `acls.c` lines 753-760.
+fn recv_obj_access<R: Read + ?Sized>(reader: &mut R) -> io::Result<u8> {
+    let encoded = read_varint(reader)? as u32;
+    let (access, _) = decode_access(encoded, false)?;
+    Ok(access as u8)
 }
 
 /// Receives an rsync ACL from the wire.
@@ -99,16 +115,16 @@ pub fn recv_rsync_acl<R: Read + ?Sized>(
     let mut acl = RsyncAcl::new();
 
     if flags & XMIT_USER_OBJ != 0 {
-        acl.user_obj = read_varint(reader)? as u8;
+        acl.user_obj = recv_obj_access(reader)?;
     }
     if flags & XMIT_GROUP_OBJ != 0 {
-        acl.group_obj = read_varint(reader)? as u8;
+        acl.group_obj = recv_obj_access(reader)?;
     }
     if flags & XMIT_MASK_OBJ != 0 {
-        acl.mask_obj = read_varint(reader)? as u8;
+        acl.mask_obj = recv_obj_access(reader)?;
     }
     if flags & XMIT_OTHER_OBJ != 0 {
-        acl.other_obj = read_varint(reader)? as u8;
+        acl.other_obj = recv_obj_access(reader)?;
     }
     if flags & XMIT_NAME_LIST != 0 {
         let (entries, computed_mask) = recv_ida_entries(reader)?;
