@@ -306,7 +306,8 @@ fn serve_connections(
         }
 
         if daemon_uid.is_some() || daemon_gid.is_some() {
-            drop_privileges(daemon_uid, daemon_gid, sink).map_err(|error| {
+            let daemon_gids: Vec<u32> = daemon_gid.into_iter().collect();
+            drop_privileges(daemon_uid, &daemon_gids, sink).map_err(|error| {
                 DaemonError::new(
                     FEATURE_UNAVAILABLE_EXIT_CODE,
                     rsync_error!(

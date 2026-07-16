@@ -293,7 +293,12 @@ impl ModuleDefinitionBuilder {
         Ok(())
     }
 
-    fn set_gid(&mut self, gid: u32, config_path: &Path, line: usize) -> Result<(), DaemonError> {
+    fn set_gid(
+        &mut self,
+        gid: GidSetting,
+        config_path: &Path,
+        line: usize,
+    ) -> Result<(), DaemonError> {
         if self.gid.is_some() {
             return Err(config_parse_error(
                 config_path,

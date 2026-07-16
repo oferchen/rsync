@@ -294,15 +294,19 @@ fn set_uid_rejects_duplicate() {
 #[test]
 fn set_gid_stores_value() {
     let mut builder = ModuleDefinitionBuilder::new("mod".to_owned(), 1);
-    builder.set_gid(100, &test_config_path(), 5).unwrap();
-    assert_eq!(builder.gid, Some(100));
+    builder
+        .set_gid(GidSetting::List(vec![100]), &test_config_path(), 5)
+        .unwrap();
+    assert_eq!(builder.gid, Some(GidSetting::List(vec![100])));
 }
 
 #[test]
 fn set_gid_rejects_duplicate() {
     let mut builder = ModuleDefinitionBuilder::new("mod".to_owned(), 1);
-    builder.set_gid(100, &test_config_path(), 5).unwrap();
-    let result = builder.set_gid(200, &test_config_path(), 10);
+    builder
+        .set_gid(GidSetting::List(vec![100]), &test_config_path(), 5)
+        .unwrap();
+    let result = builder.set_gid(GidSetting::List(vec![200]), &test_config_path(), 10);
     assert!(result.is_err());
 }
 
@@ -672,7 +676,9 @@ fn finish_transfers_all_set_values() {
     builder.set_numeric_ids(true, &test_config_path(), 6).unwrap();
     builder.set_listable(false, &test_config_path(), 7).unwrap();
     builder.set_uid(1000, &test_config_path(), 8).unwrap();
-    builder.set_gid(100, &test_config_path(), 9).unwrap();
+    builder
+        .set_gid(GidSetting::List(vec![100]), &test_config_path(), 9)
+        .unwrap();
     builder.set_timeout(NonZeroU64::new(300), &test_config_path(), 10).unwrap();
     builder.set_max_connections(NonZeroU32::new(5), &test_config_path(), 11).unwrap();
     builder.set_bandwidth_limit(
@@ -695,7 +701,7 @@ fn finish_transfers_all_set_values() {
     assert!(def.numeric_ids);
     assert!(!def.listable);
     assert_eq!(def.uid, Some(1000));
-    assert_eq!(def.gid, Some(100));
+    assert_eq!(def.gid, Some(GidSetting::List(vec![100])));
     assert_eq!(def.timeout, NonZeroU64::new(300));
     assert_eq!(def.max_connections, NonZeroU32::new(5));
     assert_eq!(def.bandwidth_limit, NonZeroU64::new(1000));

@@ -5,6 +5,28 @@ use super::AuthUser;
 // HostPattern is defined in the parent daemon module (via include!() of config_helpers.rs).
 use crate::daemon::HostPattern;
 
+/// Resolved `gid` directive for a daemon module's privilege drop.
+///
+/// upstream: clientserver.c:791-822 `rsync_module()` parses `lp_gid()` as a
+/// whitespace/comma-separated list via `conf_strtok`. A leading `*` requests
+/// all groups the target user belongs to (`getgrouplist`, clientserver.c:797
+/// `want_all_groups`); any remaining tokens are explicit groups added with
+/// `add_a_group`. The first concrete gid becomes the process primary group via
+/// `setgid` (clientserver.c:1022), and the whole list is installed with
+/// `setgroups` (clientserver.c:1029), clearing inherited supplementary groups.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) enum GidSetting {
+    /// An explicit, non-empty list of numeric gids. The first entry is the
+    /// primary group.
+    List(Vec<u32>),
+    /// `gid = *` - every group of the target uid, followed by `extra` explicit
+    /// gids listed after the `*`.
+    AllUserGroups {
+        /// Explicit gids that follow the leading `*` token.
+        extra: Vec<u32>,
+    },
+}
+
 /// Configuration for a single rsync module.
 ///
 /// A module represents a named filesystem path that can be accessed via rsync daemon.
@@ -32,10 +54,20 @@ pub(crate) struct ModuleDefinition {
     pub(crate) write_only: bool,
     pub(crate) numeric_ids: bool,
     pub(crate) uid: Option<u32>,
-    pub(crate) gid: Option<u32>,
+    pub(crate) gid: Option<GidSetting>,
     pub(crate) timeout: Option<NonZeroU64>,
     pub(crate) listable: bool,
     pub(crate) use_chroot: bool,
+    /// Whether `use chroot` was set explicitly (module or global section), as
+    /// opposed to defaulting.
+    ///
+    /// upstream tracks this as the tri-state `use_chroot < 0` (unset). When
+    /// unset and the runtime `chroot()` probe fails (the rootless-daemon case)
+    /// the daemon falls back to no-chroot with a notice instead of refusing the
+    /// connection.
+    ///
+    /// upstream: clientserver.c:831-838 `rsync_module()`.
+    pub(crate) use_chroot_explicit: bool,
     pub(crate) max_connections: Option<NonZeroU32>,
     pub(crate) incoming_chmod: Option<String>,
     pub(crate) outgoing_chmod: Option<String>,
@@ -456,9 +488,15 @@ impl ModuleDefinition {
         self.uid
     }
 
-    /// Returns the configured GID override.
+    /// Returns the primary GID of the configured override, if any.
+    ///
+    /// For a `gid = *` directive the primary group is only known after
+    /// resolving the target uid at drop time, so this returns `None`.
     pub(crate) fn gid(&self) -> Option<u32> {
-        self.gid
+        match self.gid.as_ref() {
+            Some(GidSetting::List(list)) => list.first().copied(),
+            Some(GidSetting::AllUserGroups { .. }) | None => None,
+        }
     }
 
     /// Returns the configured timeout in seconds.

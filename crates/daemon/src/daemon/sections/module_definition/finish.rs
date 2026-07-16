@@ -34,6 +34,10 @@ impl ModuleDefinitionBuilder {
         })?;
 
         let use_chroot = self.use_chroot.or(default_use_chroot).unwrap_or(true);
+        // upstream: clientserver.c:831 - `use_chroot < 0` means unset. Track
+        // explicitness so a runtime chroot() failure can fall back to
+        // no-chroot only when the operator did not demand it.
+        let use_chroot_explicit = self.use_chroot.is_some() || default_use_chroot.is_some();
 
         // Windows has no chroot(2), so the absolute-path enforcement gated on
         // `use chroot` does not apply there. The check uses `Path::is_absolute()`
@@ -133,6 +137,7 @@ impl ModuleDefinitionBuilder {
             timeout: self.timeout.or(defaults.timeout).unwrap_or(None),
             listable: self.listable.or(defaults.listable).unwrap_or(true),
             use_chroot,
+            use_chroot_explicit,
             max_connections: self.max_connections.or(defaults.max_connections).unwrap_or(None),
             incoming_chmod: self
                 .incoming_chmod

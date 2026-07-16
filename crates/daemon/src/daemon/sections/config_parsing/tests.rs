@@ -334,7 +334,7 @@ mod config_parsing_tests {
         let file = write_config(&config);
         let result = parse_config_modules(file.path()).expect("parse succeeds");
         assert_eq!(result.modules[0].uid, Some(1000));
-        assert_eq!(result.modules[0].gid, Some(1000));
+        assert_eq!(result.modules[0].gid, Some(GidSetting::List(vec![1000])));
     }
 
     #[test]

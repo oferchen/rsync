@@ -173,8 +173,8 @@ fn apply_module_directive(
             builder.set_uid(uid, path, line_number)?;
         }
         "gid" => {
-            let gid = parse_numeric_identifier(value).ok_or_else(|| {
-                config_parse_error(path, line_number, format!("invalid gid '{value}'"))
+            let gid = parse_gid_setting(value).map_err(|reason| {
+                config_parse_error(path, line_number, format!("invalid gid '{value}': {reason}"))
             })?;
             builder.set_gid(gid, path, line_number)?;
         }
