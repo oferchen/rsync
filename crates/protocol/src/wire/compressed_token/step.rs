@@ -41,33 +41,83 @@ pub(super) enum TokenStep {
 /// chunking, and the deflated-length header reads). It defers only the parts
 /// that differ per algorithm:
 ///
-/// - whether consecutive DEFLATED_DATA blocks are accumulated before
-///   decompression (zlib) or decompressed one block at a time (zstd, lz4);
-/// - how a completed compressed buffer is turned into decompressed output.
+/// - whether a consecutive DEFLATED_DATA run is one continuous stream fed block
+///   by block through a persistent inflate state (zlib) or a series of
+///   independently decompressible blocks (zstd, lz4);
+/// - how compressed input is turned into decompressed output.
 ///
-/// Implementors own the persistent decompression context and the accumulation
-/// buffer; the core owns the run index, saved flag, and output buffer.
+/// Two decode paths exist, selected by [`accumulates`](Self::accumulates):
+///
+/// - Non-streaming (zstd/lz4): each DEFLATED_DATA block is a complete unit. The
+///   core calls [`begin_block`](Self::begin_block) then
+///   [`decompress_into`](Self::decompress_into) once per block.
+/// - Streaming (zlib): a consecutive DEFLATED_DATA run is one deflate stream
+///   split across wire blocks. The core feeds each block via
+///   [`begin_block`](Self::begin_block) (first) or [`push_block`](Self::push_block)
+///   (follow-on), pulls bounded output with [`stream_step`](Self::stream_step)
+///   between and within blocks, and, when the run ends, restores the stripped
+///   `Z_SYNC_FLUSH` trailer via [`finish_run`](Self::finish_run). This mirrors
+///   upstream token.c:recv_deflated_token()'s r_inflating/r_inflated states:
+///   O(CHUNK_SIZE) memory for a multi-GB transfer, no accumulation, no cap.
+///
+/// Implementors own the persistent decompression context; the core owns the run
+/// index, saved flag, and output buffer.
 pub(super) trait DeflateSink {
-    /// Whether this algorithm accumulates consecutive DEFLATED_DATA blocks into
-    /// one compressed buffer before decompressing (zlib does; zstd/lz4 do not).
+    /// Whether a consecutive DEFLATED_DATA run is one continuous inflate stream
+    /// fed block by block (zlib) rather than a series of independent blocks
+    /// (zstd/lz4). Streaming sinks use [`stream_step`](Self::stream_step) and
+    /// [`finish_run`](Self::finish_run); non-streaming sinks use
+    /// [`decompress_into`](Self::decompress_into).
     fn accumulates(&self) -> bool;
 
-    /// Starts a new DEFLATED_DATA sequence with its first block payload.
+    /// Presents the first block of a DEFLATED_DATA run.
     ///
-    /// Resets the accumulation buffer and stores `payload`. The first block is
-    /// never subject to the accumulation cap (upstream applies the cap only to
-    /// the consecutive follow-on blocks).
+    /// Non-streaming sinks store `payload` for [`decompress_into`](Self::decompress_into);
+    /// streaming sinks feed it into the persistent inflate stream for
+    /// [`stream_step`](Self::stream_step).
     fn begin_block(&mut self, payload: &[u8]);
 
-    /// Appends one consecutive follow-on DEFLATED_DATA payload (zlib only).
+    /// Presents a consecutive follow-on block of the same DEFLATED_DATA run.
     ///
-    /// Returns an error if the accumulation cap would be exceeded.
+    /// Only called on streaming sinks; feeds `payload` into the persistent
+    /// inflate stream. Non-streaming sinks never receive follow-on blocks.
     fn push_block(&mut self, payload: &[u8]) -> io::Result<()>;
 
-    /// Decompresses the accumulated compressed input into `output`, which the
-    /// caller has already cleared. Returns the produced bytes appended to
-    /// `output`.
-    fn decompress_into(&mut self, output: &mut Vec<u8>) -> io::Result<()>;
+    /// Decompresses one complete block into `output` (non-streaming sinks).
+    ///
+    /// The caller has already cleared `output`. Streaming sinks leave this
+    /// defaulted and produce output through [`stream_step`](Self::stream_step)
+    /// instead.
+    fn decompress_into(&mut self, _output: &mut Vec<u8>) -> io::Result<()> {
+        Ok(())
+    }
+
+    /// Inflates the current block incrementally into `output`, appending at most
+    /// one CHUNK_SIZE worth (streaming sinks).
+    ///
+    /// Returns `true` once the current block's input is fully consumed with no
+    /// further pending output. When output is produced it returns `false`, so
+    /// the core emits that chunk and re-enters to drain the rest of the block.
+    /// The default (non-streaming sinks) reports the block already exhausted.
+    ///
+    /// upstream: token.c recv_deflated_token() r_inflating (Z_NO_FLUSH into a
+    /// fixed CHUNK_SIZE dbuf, emitting output incrementally).
+    fn stream_step(&mut self, _output: &mut Vec<u8>) -> io::Result<bool> {
+        Ok(true)
+    }
+
+    /// Ends a consecutive DEFLATED_DATA run (streaming sinks).
+    ///
+    /// Restores the `Z_SYNC_FLUSH` trailer (`00 00 FF FF`) the sender stripped,
+    /// feeds it through the persistent inflate stream, and drains any residual
+    /// output into `output` (which the caller has cleared). The default is a
+    /// no-op for non-streaming sinks.
+    ///
+    /// upstream: token.c recv_deflated_token() r_inflated (feeds the 4-byte sync
+    /// trailer with Z_SYNC_FLUSH).
+    fn finish_run(&mut self, _output: &mut Vec<u8>) -> io::Result<()> {
+        Ok(())
+    }
 }
 
 /// Resumable, reader-free state of a common token decoder.
@@ -107,12 +157,17 @@ enum Phase {
     DeflatedLen { flag: u8 },
     /// Have the full deflated length; needs the `len`-byte payload.
     DeflatedPayload { len: usize },
-    /// (zlib accumulation) peeking the flag byte after a DEFLATED_DATA block.
+    /// (zlib streaming) inflating the current block into bounded output; needs
+    /// no wire bytes. Re-entered until the block's input is fully consumed.
+    Inflating,
+    /// (zlib streaming) peeking the flag byte after a DEFLATED_DATA block: a
+    /// follow-on DEFLATED_DATA continues the same inflate stream, anything else
+    /// ends the run and triggers the sync-trailer restore.
     AccumPeek,
-    /// (zlib accumulation) read a follow-on DEFLATED_DATA flag; needs its low
+    /// (zlib streaming) read a follow-on DEFLATED_DATA flag; needs its low
     /// length byte.
     AccumLen { flag: u8 },
-    /// (zlib accumulation) needs the follow-on `len`-byte payload.
+    /// (zlib streaming) needs the follow-on `len`-byte payload.
     AccumPayload { len: usize },
     /// Parsed a TOKEN_REL/TOKEN_LONG flag that carries a 2-byte run count.
     RunCount { token: i32 },
@@ -205,118 +260,146 @@ impl TokenDecodeCore {
             self.initialized = true;
         }
 
-        // Each arm returns; the phase encodes exactly which read is resuming, so
-        // there is no need to iterate within a single step.
-        match self.phase {
-            Phase::Idle => {
-                // Drain any buffered decompressed output first.
-                if let Some(tok) = self.emit_pending_output() {
-                    return Ok(TokenStep::Emit(tok));
-                }
-                // Emit pending run tokens.
-                if self.rx_run > 0 {
-                    return Ok(TokenStep::Emit(self.next_run_token()?));
-                }
-                // Read the next flag byte, unless one was saved.
-                let flag = if let Some(f) = self.saved_flag.take() {
-                    f
-                } else if input.is_empty() {
-                    return Ok(TokenStep::Need(1));
-                } else {
-                    input[0]
-                };
-                self.dispatch_flag(flag)
-            }
-            Phase::DeflatedLen { flag } => {
-                // input holds the 1 low length byte.
-                let high = (flag & 0x3F) as usize;
-                let len = (high << 8) | (input[0] as usize);
-                if len == 0 {
-                    // Zero-length payload: no wire read needed. Process an
-                    // empty first block directly, matching the original
-                    // read_exact(&mut buf[..0]) no-op.
-                    sink.begin_block(&[]);
-                    if sink.accumulates() {
-                        self.phase = Phase::AccumPeek;
+        // Most arms return; the phase encodes exactly which read is resuming. A
+        // few streaming transitions (feed a block, then inflate it) need no wire
+        // bytes, so they `continue` into `Phase::Inflating` within this call.
+        // The `input` slice is only ever consumed by the arm that requested it;
+        // the `continue` targets (`Inflating`) never read `input`.
+        loop {
+            match self.phase {
+                Phase::Idle => {
+                    // Drain any buffered decompressed output first.
+                    if let Some(tok) = self.emit_pending_output() {
+                        return Ok(TokenStep::Emit(tok));
+                    }
+                    // Emit pending run tokens.
+                    if self.rx_run > 0 {
+                        return Ok(TokenStep::Emit(self.next_run_token()?));
+                    }
+                    // Read the next flag byte, unless one was saved.
+                    let flag = if let Some(f) = self.saved_flag.take() {
+                        f
+                    } else if input.is_empty() {
                         return Ok(TokenStep::Need(1));
+                    } else {
+                        input[0]
+                    };
+                    return self.dispatch_flag(flag);
+                }
+                Phase::DeflatedLen { flag } => {
+                    // input holds the 1 low length byte.
+                    let high = (flag & 0x3F) as usize;
+                    let len = (high << 8) | (input[0] as usize);
+                    if len == 0 {
+                        // Zero-length payload: no wire read needed. Process an
+                        // empty first block directly, matching the original
+                        // read_exact(&mut buf[..0]) no-op.
+                        sink.begin_block(&[]);
+                        if sink.accumulates() {
+                            self.phase = Phase::Inflating;
+                            continue;
+                        }
+                        return self.finish_deflate(sink);
+                    }
+                    self.phase = Phase::DeflatedPayload { len };
+                    return Ok(TokenStep::Need(len));
+                }
+                Phase::DeflatedPayload { len } => {
+                    debug_assert_eq!(input.len(), len);
+                    sink.begin_block(input);
+                    if sink.accumulates() {
+                        self.phase = Phase::Inflating;
+                        continue;
                     }
                     return self.finish_deflate(sink);
                 }
-                self.phase = Phase::DeflatedPayload { len };
-                Ok(TokenStep::Need(len))
-            }
-            Phase::DeflatedPayload { len } => {
-                debug_assert_eq!(input.len(), len);
-                sink.begin_block(input);
-                if sink.accumulates() {
+                Phase::Inflating => {
+                    // Inflate the current block into a bounded (<= CHUNK_SIZE)
+                    // output chunk and emit it, or advance to peek the next flag
+                    // once the block's input is exhausted. This is upstream's
+                    // r_inflating loop: no accumulation, O(CHUNK_SIZE) memory.
+                    self.decompress_buf.clear();
+                    let exhausted = sink.stream_step(&mut self.decompress_buf)?;
+                    if let Some(tok) = self.take_first_output() {
+                        // Stay in Inflating to drain the rest of this block.
+                        return Ok(TokenStep::Emit(tok));
+                    }
+                    debug_assert!(exhausted);
                     self.phase = Phase::AccumPeek;
                     return Ok(TokenStep::Need(1));
                 }
-                self.finish_deflate(sink)
-            }
-            Phase::AccumPeek => {
-                let next_flag = input[0];
-                if (next_flag & 0xC0) == DEFLATED_DATA {
-                    self.phase = Phase::AccumLen { flag: next_flag };
-                    return Ok(TokenStep::Need(1));
-                }
-                self.saved_flag = Some(next_flag);
-                self.finish_deflate(sink)
-            }
-            Phase::AccumLen { flag } => {
-                let high = (flag & 0x3F) as usize;
-                let len = (high << 8) | (input[0] as usize);
-                if len == 0 {
-                    sink.push_block(&[])?;
-                    self.phase = Phase::AccumPeek;
-                    return Ok(TokenStep::Need(1));
-                }
-                self.phase = Phase::AccumPayload { len };
-                Ok(TokenStep::Need(len))
-            }
-            Phase::AccumPayload { len } => {
-                debug_assert_eq!(input.len(), len);
-                sink.push_block(input)?;
-                self.phase = Phase::AccumPeek;
-                Ok(TokenStep::Need(1))
-            }
-            Phase::RunCount { token } => {
-                self.rx_token = token;
-                self.rx_run = u16::from_le_bytes([input[0], input[1]]) as i32;
-                self.phase = Phase::Idle;
-                Ok(TokenStep::Emit(CompressedToken::BlockMatch(
-                    self.rx_token as u32,
-                )))
-            }
-            Phase::LongToken { has_run } => {
-                let token = i32::from_le_bytes([input[0], input[1], input[2], input[3]]);
-                if token < 0 {
+                Phase::AccumPeek => {
+                    let next_flag = input[0];
+                    if (next_flag & 0xC0) == DEFLATED_DATA {
+                        self.phase = Phase::AccumLen { flag: next_flag };
+                        return Ok(TokenStep::Need(1));
+                    }
+                    // Run ended: restore the sync trailer and drain, then
+                    // dispatch the flag that ended the run.
+                    self.saved_flag = Some(next_flag);
+                    self.decompress_buf.clear();
+                    sink.finish_run(&mut self.decompress_buf)?;
                     self.phase = Phase::Idle;
-                    // upstream: token.c:528 invalid_compressed_token() ->
-                    // exit_cleanup(RERR_PROTOCOL) (exit 2). Tag the error so the
-                    // core exit-code mapper yields RERR_PROTOCOL, not
-                    // RERR_STREAMIO(12).
-                    return Err(crate::protocol_violation::protocol_violation(
-                        "invalid token number in compressed stream",
-                    ));
+                    if let Some(tok) = self.take_first_output() {
+                        return Ok(TokenStep::Emit(tok));
+                    }
+                    return self.step_idle_after_zero_output();
                 }
-                if has_run {
-                    self.phase = Phase::LongRunCount { token };
-                    return Ok(TokenStep::Need(2));
+                Phase::AccumLen { flag } => {
+                    let high = (flag & 0x3F) as usize;
+                    let len = (high << 8) | (input[0] as usize);
+                    if len == 0 {
+                        // Empty follow-on block contributes nothing; peek again.
+                        self.phase = Phase::AccumPeek;
+                        return Ok(TokenStep::Need(1));
+                    }
+                    self.phase = Phase::AccumPayload { len };
+                    return Ok(TokenStep::Need(len));
                 }
-                self.rx_token = token;
-                self.phase = Phase::Idle;
-                Ok(TokenStep::Emit(CompressedToken::BlockMatch(
-                    self.rx_token as u32,
-                )))
-            }
-            Phase::LongRunCount { token } => {
-                self.rx_token = token;
-                self.rx_run = u16::from_le_bytes([input[0], input[1]]) as i32;
-                self.phase = Phase::Idle;
-                Ok(TokenStep::Emit(CompressedToken::BlockMatch(
-                    self.rx_token as u32,
-                )))
+                Phase::AccumPayload { len } => {
+                    debug_assert_eq!(input.len(), len);
+                    sink.push_block(input)?;
+                    self.phase = Phase::Inflating;
+                    continue;
+                }
+                Phase::RunCount { token } => {
+                    self.rx_token = token;
+                    self.rx_run = u16::from_le_bytes([input[0], input[1]]) as i32;
+                    self.phase = Phase::Idle;
+                    return Ok(TokenStep::Emit(CompressedToken::BlockMatch(
+                        self.rx_token as u32,
+                    )));
+                }
+                Phase::LongToken { has_run } => {
+                    let token = i32::from_le_bytes([input[0], input[1], input[2], input[3]]);
+                    if token < 0 {
+                        self.phase = Phase::Idle;
+                        // upstream: token.c:528 invalid_compressed_token() ->
+                        // exit_cleanup(RERR_PROTOCOL) (exit 2). Tag the error so
+                        // the core exit-code mapper yields RERR_PROTOCOL, not
+                        // RERR_STREAMIO(12).
+                        return Err(crate::protocol_violation::protocol_violation(
+                            "invalid token number in compressed stream",
+                        ));
+                    }
+                    if has_run {
+                        self.phase = Phase::LongRunCount { token };
+                        return Ok(TokenStep::Need(2));
+                    }
+                    self.rx_token = token;
+                    self.phase = Phase::Idle;
+                    return Ok(TokenStep::Emit(CompressedToken::BlockMatch(
+                        self.rx_token as u32,
+                    )));
+                }
+                Phase::LongRunCount { token } => {
+                    self.rx_token = token;
+                    self.rx_run = u16::from_le_bytes([input[0], input[1]]) as i32;
+                    self.phase = Phase::Idle;
+                    return Ok(TokenStep::Emit(CompressedToken::BlockMatch(
+                        self.rx_token as u32,
+                    )));
+                }
             }
         }
     }
@@ -365,14 +448,13 @@ impl TokenDecodeCore {
         }
     }
 
-    /// Runs decompression on the accumulated block(s) and sets up output.
+    /// Decompresses one complete block (non-streaming sinks) and sets up output.
     ///
     /// Returns the first output chunk, or resumes the idle state when the block
-    /// produced no output. This replaces the original zero-output recursive
+    /// produced no output. The zero-output case replaces the original recursive
     /// re-read (`self.recv_token`) with an in-place state-machine transition:
-    /// when a flag was already saved during accumulation it is dispatched
-    /// without asking the driver for bytes, otherwise a fresh `Need(1)` is
-    /// returned - exactly the reads the recursion would have performed.
+    /// a fresh `Need(1)` for the next flag - exactly the read the recursion
+    /// would have performed.
     fn finish_deflate<S: DeflateSink>(&mut self, sink: &mut S) -> io::Result<TokenStep> {
         self.decompress_buf.clear();
         sink.decompress_into(&mut self.decompress_buf)?;

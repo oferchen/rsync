@@ -19,18 +19,6 @@ use super::{
     TOKENRUN_REL, write_deflated_data_pieces,
 };
 
-/// Maximum aggregate size of accumulated compressed data in a single
-/// DEFLATED_DATA sequence before decompression (64 MiB).
-///
-/// Defence-in-depth: bounds the memory a peer can force the decoder to
-/// allocate by sending an unbounded chain of consecutive DEFLATED_DATA
-/// blocks. Rust's `usize` arithmetic prevents the integer-overflow CVE
-/// that affected upstream C, but an explicit cap prevents OOM from
-/// crafted input.
-///
-/// upstream: token.c defence-in-depth - bound accumulated compressed data (3.4.3)
-pub(super) const MAX_ACCUMULATED_COMPRESSED_BYTES: usize = 64 * 1024 * 1024;
-
 /// Zlib encoder state for sending compressed tokens.
 ///
 /// Manages a persistent deflate stream for compressing literal data.
@@ -303,25 +291,39 @@ impl ZlibTokenEncoder {
 
 /// Zlib decompression sink: the algorithm-specific half of the sans-io decoder.
 ///
-/// Owns the persistent inflate stream, the reusable output scratch, and the
-/// consecutive-DEFLATED_DATA accumulation buffer. The shared
-/// [`TokenDecodeCore`] drives all wire framing and delegates only block
-/// accumulation and decompression here.
+/// Owns the persistent inflate stream and a fixed CHUNK_SIZE output scratch, and
+/// holds only the current DEFLATED_DATA block being inflated. Consecutive blocks
+/// of a run form one deflate stream, fed block by block and inflated
+/// incrementally: O(CHUNK_SIZE) memory for a multi-GB literal, matching upstream.
 ///
-/// Reference: upstream token.c:recv_deflated_token()
+/// Reference: upstream token.c:recv_deflated_token() r_inflating/r_inflated
 struct ZlibDeflate {
     decompressor: Decompress,
     output_buf: Vec<u8>,
-    compressed_input_buf: Vec<u8>,
+    /// The current block payload being inflated.
+    pending: Vec<u8>,
+    /// Read cursor into `pending`.
+    pending_pos: usize,
 }
 
 impl ZlibDeflate {
     fn new() -> Self {
         Self {
             decompressor: Decompress::new(false),
-            output_buf: vec![0u8; CHUNK_SIZE * 2],
-            compressed_input_buf: Vec::with_capacity(MAX_DATA_COUNT + 4),
+            output_buf: vec![0u8; CHUNK_SIZE],
+            pending: Vec::with_capacity(MAX_DATA_COUNT),
+            pending_pos: 0,
         }
+    }
+
+    /// Feeds one DEFLATED_DATA block into the persistent inflate stream.
+    ///
+    /// The bytes must persist across the multiple `stream_step` calls that drain
+    /// this block, so they are copied into `pending` (bounded by MAX_DATA_COUNT).
+    fn feed(&mut self, payload: &[u8]) {
+        self.pending.clear();
+        self.pending.extend_from_slice(payload);
+        self.pending_pos = 0;
     }
 }
 
@@ -331,32 +333,58 @@ impl DeflateSink for ZlibDeflate {
     }
 
     fn begin_block(&mut self, payload: &[u8]) {
-        self.compressed_input_buf.clear();
-        self.compressed_input_buf.extend_from_slice(payload);
+        self.feed(payload);
     }
 
     fn push_block(&mut self, payload: &[u8]) -> io::Result<()> {
-        // upstream: token.c defence-in-depth - bound accumulated compressed
-        // data (3.4.3). The cap guards the consecutive follow-on blocks; the
-        // first block (begin_block) is not capped, matching upstream.
-        if self.compressed_input_buf.len() + payload.len() > MAX_ACCUMULATED_COMPRESSED_BYTES {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidData,
-                format!(
-                    "accumulated compressed data exceeds {MAX_ACCUMULATED_COMPRESSED_BYTES} byte cap",
-                ),
-            ));
-        }
-        self.compressed_input_buf.extend_from_slice(payload);
+        self.feed(payload);
         Ok(())
     }
 
-    fn decompress_into(&mut self, output: &mut Vec<u8>) -> io::Result<()> {
-        // Restore sync marker stripped by encoder.
-        self.compressed_input_buf
-            .extend_from_slice(&[0x00, 0x00, 0xFF, 0xFF]);
+    fn stream_step(&mut self, output: &mut Vec<u8>) -> io::Result<bool> {
+        // upstream: token.c recv_deflated_token() r_inflating - inflate the block
+        // with Z_NO_FLUSH into a fixed dbuf, emitting each CHUNK_SIZE increment.
+        loop {
+            let before_in = self.decompressor.total_in();
+            let before_out = self.decompressor.total_out();
 
-        let mut input = &self.compressed_input_buf[..];
+            self.decompressor
+                .decompress(
+                    &self.pending[self.pending_pos..],
+                    &mut self.output_buf,
+                    FlushDecompress::None,
+                )
+                .map_err(|e| io::Error::other(e.to_string()))?;
+
+            let consumed = (self.decompressor.total_in() - before_in) as usize;
+            let produced = (self.decompressor.total_out() - before_out) as usize;
+            self.pending_pos += consumed;
+
+            if produced > 0 {
+                // At most CHUNK_SIZE (output_buf length); the block may hold
+                // more, so report not-yet-exhausted and let the core re-enter.
+                output.extend_from_slice(&self.output_buf[..produced]);
+                return Ok(false);
+            }
+            if self.pending_pos >= self.pending.len() {
+                // Block fully consumed, decoder drained.
+                return Ok(true);
+            }
+            if consumed == 0 {
+                // No forward progress with input still pending: treat the block
+                // as done to avoid a spin. A valid deflate stream never hits
+                // this - the sender only splits at MAX_DATA_COUNT boundaries.
+                return Ok(true);
+            }
+        }
+    }
+
+    fn finish_run(&mut self, output: &mut Vec<u8>) -> io::Result<()> {
+        // upstream: token.c recv_deflated_token() r_inflated - restore the
+        // Z_SYNC_FLUSH trailer the sender stripped and feed it through the
+        // persistent inflate stream, draining any residual output.
+        let marker = [0x00u8, 0x00, 0xFF, 0xFF];
+        let mut input = &marker[..];
 
         loop {
             let before_in = self.decompressor.total_in();
@@ -369,15 +397,14 @@ impl DeflateSink for ZlibDeflate {
             let consumed = (self.decompressor.total_in() - before_in) as usize;
             let produced = (self.decompressor.total_out() - before_out) as usize;
 
+            if consumed > 0 {
+                input = &input[consumed..];
+            }
             if produced > 0 {
                 output.extend_from_slice(&self.output_buf[..produced]);
             }
 
-            if consumed > 0 {
-                input = &input[consumed..];
-            }
-
-            if input.is_empty() || (consumed == 0 && produced == 0) {
+            if input.is_empty() && produced == 0 {
                 break;
             }
         }
@@ -423,7 +450,8 @@ impl ZlibTokenDecoder {
         self.core.reset();
         self.core.initialized = false;
         self.deflate.decompressor.reset(false);
-        self.deflate.compressed_input_buf.clear();
+        self.deflate.pending.clear();
+        self.deflate.pending_pos = 0;
     }
 
     pub(super) fn recv_token<R: Read>(&mut self, reader: &mut R) -> io::Result<CompressedToken> {
