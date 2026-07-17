@@ -508,14 +508,14 @@ fn reload_config_sighup_flag_triggers_reload() {
 
 #[test]
 fn parse_socket_options_tcp_nodelay() {
-    let opts = parse_socket_options("TCP_NODELAY").expect("parse succeeds");
+    let opts = parse_socket_options("TCP_NODELAY", None).expect("parse succeeds");
     assert_eq!(opts.len(), 1);
     assert_eq!(opts[0], SocketOption::TcpNoDelay(true));
 }
 
 #[test]
 fn parse_socket_options_so_keepalive() {
-    let opts = parse_socket_options("SO_KEEPALIVE").expect("parse succeeds");
+    let opts = parse_socket_options("SO_KEEPALIVE", None).expect("parse succeeds");
     assert_eq!(opts.len(), 1);
     assert_eq!(opts[0], SocketOption::SoKeepAlive(true));
 }
@@ -523,7 +523,7 @@ fn parse_socket_options_so_keepalive() {
 #[test]
 fn parse_socket_options_buffer_sizes() {
     let opts =
-        parse_socket_options("SO_SNDBUF=65536, SO_RCVBUF=32768").expect("parse succeeds");
+        parse_socket_options("SO_SNDBUF=65536, SO_RCVBUF=32768", None).expect("parse succeeds");
     assert_eq!(opts.len(), 2);
     assert_eq!(opts[0], SocketOption::SoSndBuf(65536));
     assert_eq!(opts[1], SocketOption::SoRcvBuf(32768));
@@ -531,7 +531,7 @@ fn parse_socket_options_buffer_sizes() {
 
 #[test]
 fn parse_socket_options_multiple_mixed() {
-    let opts = parse_socket_options("TCP_NODELAY, SO_KEEPALIVE, SO_SNDBUF=65536")
+    let opts = parse_socket_options("TCP_NODELAY, SO_KEEPALIVE, SO_SNDBUF=65536", None)
         .expect("parse succeeds");
     assert_eq!(opts.len(), 3);
     assert_eq!(opts[0], SocketOption::TcpNoDelay(true));
@@ -541,7 +541,7 @@ fn parse_socket_options_multiple_mixed() {
 
 #[test]
 fn parse_socket_options_bool_explicit_values() {
-    let opts = parse_socket_options("TCP_NODELAY=1, SO_KEEPALIVE=0").expect("parse succeeds");
+    let opts = parse_socket_options("TCP_NODELAY=1, SO_KEEPALIVE=0", None).expect("parse succeeds");
     assert_eq!(opts[0], SocketOption::TcpNoDelay(true));
     assert_eq!(opts[1], SocketOption::SoKeepAlive(false));
 }
@@ -549,38 +549,94 @@ fn parse_socket_options_bool_explicit_values() {
 #[test]
 fn parse_socket_options_bool_text_values() {
     let opts =
-        parse_socket_options("TCP_NODELAY=true, SO_KEEPALIVE=false").expect("parse succeeds");
+        parse_socket_options("TCP_NODELAY=true, SO_KEEPALIVE=false", None).expect("parse succeeds");
     assert_eq!(opts[0], SocketOption::TcpNoDelay(true));
     assert_eq!(opts[1], SocketOption::SoKeepAlive(false));
 }
 
 #[test]
 fn parse_socket_options_empty_string() {
-    let opts = parse_socket_options("").expect("parse succeeds");
+    let opts = parse_socket_options("", None).expect("parse succeeds");
     assert!(opts.is_empty());
 }
 
+/// upstream: socket.c:704-707 - an unknown option name warns (`Unknown socket
+/// option %s`) and `continue`s; `set_socket_options()` is `void`, so the daemon
+/// must not treat a bogus `socket options =` entry as a fatal config error. A
+/// following valid entry in the same string must still parse, proving the loop
+/// skipped only the unknown token.
 #[test]
-fn parse_socket_options_unknown_option_rejected() {
-    let err = parse_socket_options("UNKNOWN_OPT").expect_err("should fail");
-    assert!(err.contains("unknown socket option"), "{err}");
+fn parse_socket_options_unknown_option_warns_and_continues() {
+    let opts = parse_socket_options("UNKNOWN_OPT, TCP_NODELAY", None)
+        .expect("unknown option must not be fatal");
+    assert_eq!(opts, vec![SocketOption::TcpNoDelay(true)]);
+}
+
+/// The unknown-option warning is delivered through the daemon log sink at
+/// warning level with upstream's exact text, and the daemon keeps running.
+#[test]
+fn parse_socket_options_unknown_option_logs_warning() {
+    let log_dir = tempfile::tempdir().expect("log dir");
+    let log_path = log_dir.path().join("daemon.log");
+    let log_sink: Option<SharedLogSink> =
+        Some(open_log_sink(&log_path, Brand::Oc).expect("open log"));
+
+    let opts = parse_socket_options("SO_BOGUS", log_sink.as_ref()).expect("not fatal");
+    assert!(opts.is_empty());
+
+    drop(log_sink);
+    let contents = std::fs::read_to_string(&log_path).expect("read log");
+    assert!(
+        contents.starts_with("oc-rsync warning:"),
+        "expected warning level, got: {contents}"
+    );
+    assert!(
+        contents.contains("Unknown socket option SO_BOGUS"),
+        "missing upstream unknown-option text: {contents}"
+    );
+}
+
+/// upstream: socket.c:717-727 - an `OPT_ON` preset given a value logs `syntax
+/// error -- %s does not take a value` at warning level but still yields the
+/// preset, so the daemon keeps the option instead of aborting.
+#[cfg(not(target_family = "windows"))]
+#[test]
+fn parse_socket_options_opt_on_value_warns_and_applies() {
+    let log_dir = tempfile::tempdir().expect("log dir");
+    let log_path = log_dir.path().join("daemon.log");
+    let log_sink: Option<SharedLogSink> =
+        Some(open_log_sink(&log_path, Brand::Oc).expect("open log"));
+
+    let opts = parse_socket_options("IPTOS_LOWDELAY=5", log_sink.as_ref()).expect("not fatal");
+    assert_eq!(opts, vec![SocketOption::IpTos(0x10)]);
+
+    drop(log_sink);
+    let contents = std::fs::read_to_string(&log_path).expect("read log");
+    assert!(
+        contents.starts_with("oc-rsync warning:"),
+        "expected warning level, got: {contents}"
+    );
+    assert!(
+        contents.contains("syntax error -- IPTOS_LOWDELAY does not take a value"),
+        "missing upstream OPT_ON value warning: {contents}"
+    );
 }
 
 #[test]
 fn parse_socket_options_sndbuf_missing_value_rejected() {
-    let err = parse_socket_options("SO_SNDBUF").expect_err("should fail");
+    let err = parse_socket_options("SO_SNDBUF", None).expect_err("should fail");
     assert!(err.contains("requires a numeric value"), "{err}");
 }
 
 #[test]
 fn parse_socket_options_sndbuf_invalid_value_rejected() {
-    let err = parse_socket_options("SO_SNDBUF=abc").expect_err("should fail");
+    let err = parse_socket_options("SO_SNDBUF=abc", None).expect_err("should fail");
     assert!(err.contains("invalid numeric value"), "{err}");
 }
 
 #[test]
 fn parse_socket_options_case_insensitive() {
-    let opts = parse_socket_options("tcp_nodelay, so_keepalive").expect("parse succeeds");
+    let opts = parse_socket_options("tcp_nodelay, so_keepalive", None).expect("parse succeeds");
     assert_eq!(opts.len(), 2);
     assert_eq!(opts[0], SocketOption::TcpNoDelay(true));
     assert_eq!(opts[1], SocketOption::SoKeepAlive(true));
@@ -588,7 +644,7 @@ fn parse_socket_options_case_insensitive() {
 
 #[test]
 fn parse_socket_options_trailing_comma_ignored() {
-    let opts = parse_socket_options("TCP_NODELAY,").expect("parse succeeds");
+    let opts = parse_socket_options("TCP_NODELAY,", None).expect("parse succeeds");
     assert_eq!(opts.len(), 1);
     assert_eq!(opts[0], SocketOption::TcpNoDelay(true));
 }
@@ -596,7 +652,7 @@ fn parse_socket_options_trailing_comma_ignored() {
 #[test]
 fn parse_socket_options_whitespace_around_values() {
     let opts =
-        parse_socket_options("  TCP_NODELAY , SO_SNDBUF = 4096  ").expect("parse succeeds");
+        parse_socket_options("  TCP_NODELAY , SO_SNDBUF = 4096  ", None).expect("parse succeeds");
     assert_eq!(opts.len(), 2);
     assert_eq!(opts[0], SocketOption::TcpNoDelay(true));
     assert_eq!(opts[1], SocketOption::SoSndBuf(4096));
@@ -658,27 +714,27 @@ fn apply_stream_socket_options_buffer_sizes() {
 
 #[test]
 fn parse_socket_options_ip_tos_hex() {
-    let opts = parse_socket_options("IP_TOS=0x10").expect("parse succeeds");
+    let opts = parse_socket_options("IP_TOS=0x10", None).expect("parse succeeds");
     assert_eq!(opts.len(), 1);
     assert_eq!(opts[0], SocketOption::IpTos(0x10));
 }
 
 #[test]
 fn parse_socket_options_ip_tos_decimal() {
-    let opts = parse_socket_options("IP_TOS=16").expect("parse succeeds");
+    let opts = parse_socket_options("IP_TOS=16", None).expect("parse succeeds");
     assert_eq!(opts.len(), 1);
     assert_eq!(opts[0], SocketOption::IpTos(16));
 }
 
 #[test]
 fn parse_socket_options_ip_tos_requires_value() {
-    let err = parse_socket_options("IP_TOS").expect_err("should fail");
+    let err = parse_socket_options("IP_TOS", None).expect_err("should fail");
     assert!(err.contains("requires a numeric value"), "{err}");
 }
 
 #[test]
 fn parse_socket_options_combined_with_ip_tos() {
-    let opts = parse_socket_options("TCP_NODELAY, IP_TOS=0x08, SO_SNDBUF=65536")
+    let opts = parse_socket_options("TCP_NODELAY, IP_TOS=0x08, SO_SNDBUF=65536", None)
         .expect("parse succeeds");
     assert_eq!(opts.len(), 3);
     assert_eq!(opts[0], SocketOption::TcpNoDelay(true));
@@ -755,48 +811,51 @@ fn parse_socket_options_accepts_all_upstream_options() {
 
     // Available across every daemon target platform.
     assert_eq!(
-        parse_socket_options("SO_KEEPALIVE").expect("parse"),
+        parse_socket_options("SO_KEEPALIVE", None).expect("parse"),
         vec![SoKeepAlive(true)]
     );
     assert_eq!(
-        parse_socket_options("TCP_NODELAY").expect("parse"),
+        parse_socket_options("TCP_NODELAY", None).expect("parse"),
         vec![TcpNoDelay(true)]
     );
     assert_eq!(
-        parse_socket_options("SO_BROADCAST").expect("parse"),
+        parse_socket_options("SO_BROADCAST", None).expect("parse"),
         vec![SoBroadcast(true)]
     );
     assert_eq!(
-        parse_socket_options("SO_SNDBUF=65536, SO_RCVBUF=32768").expect("parse"),
+        parse_socket_options("SO_SNDBUF=65536, SO_RCVBUF=32768", None).expect("parse"),
         vec![SoSndBuf(65536), SoRcvBuf(32768)]
     );
 
     // upstream: IPTOS_LOWDELAY / IPTOS_THROUGHPUT are OPT_ON presets that map
-    // to a fixed IP_TOS byte and must reject an `=value` suffix.
+    // to a fixed IP_TOS byte.
     #[cfg(not(target_family = "windows"))]
     {
         assert_eq!(
-            parse_socket_options("IPTOS_LOWDELAY").expect("parse"),
+            parse_socket_options("IPTOS_LOWDELAY", None).expect("parse"),
             vec![SocketOption::IpTos(0x10)]
         );
         assert_eq!(
-            parse_socket_options("IPTOS_THROUGHPUT").expect("parse"),
+            parse_socket_options("IPTOS_THROUGHPUT", None).expect("parse"),
             vec![SocketOption::IpTos(0x08)]
         );
-        let err =
-            parse_socket_options("IPTOS_LOWDELAY=5").expect_err("preset must reject a value");
-        assert!(err.contains("does not take a value"), "{err}");
+        // upstream: socket.c:717-727 - an OPT_ON preset given a value warns but
+        // still applies its fixed byte; it is not a fatal error.
+        assert_eq!(
+            parse_socket_options("IPTOS_LOWDELAY=5", None).expect("value warns, still applies"),
+            vec![SocketOption::IpTos(0x10)]
+        );
     }
 
     // SO_SNDTIMEO / SO_RCVTIMEO are written as a plain int on all Unix targets.
     #[cfg(unix)]
     {
         assert_eq!(
-            parse_socket_options("SO_SNDTIMEO=30").expect("parse"),
+            parse_socket_options("SO_SNDTIMEO=30", None).expect("parse"),
             vec![SocketOption::SoSndTimeo(30)]
         );
         assert_eq!(
-            parse_socket_options("SO_RCVTIMEO=30").expect("parse"),
+            parse_socket_options("SO_RCVTIMEO=30", None).expect("parse"),
             vec![SocketOption::SoRcvTimeo(30)]
         );
     }
@@ -805,11 +864,11 @@ fn parse_socket_options_accepts_all_upstream_options() {
     #[cfg(all(unix, not(any(target_os = "linux", target_os = "android"))))]
     {
         assert_eq!(
-            parse_socket_options("SO_SNDLOWAT=1").expect("parse"),
+            parse_socket_options("SO_SNDLOWAT=1", None).expect("parse"),
             vec![SocketOption::SoSndLoWat(1)]
         );
         assert_eq!(
-            parse_socket_options("SO_RCVLOWAT=1").expect("parse"),
+            parse_socket_options("SO_RCVLOWAT=1", None).expect("parse"),
             vec![SocketOption::SoRcvLoWat(1)]
         );
     }
