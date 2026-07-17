@@ -12,6 +12,7 @@ use rsync_io::ssh::{SshCommand, SshConnection};
 
 use super::super::super::config::ClientConfig;
 use super::super::super::error::{ClientError, invalid_argument_error};
+use super::super::ssh_address_family;
 
 /// Builds and spawns an SSH connection with the remote rsync invocation.
 ///
@@ -50,6 +51,10 @@ pub(super) fn build_ssh_connection(
     if let Some(bind_addr) = config.bind_address() {
         ssh.set_bind_address(Some(bind_addr.socket().ip()));
     }
+
+    // upstream: main.c:587-594 do_cmd() - forward --ipv4/--ipv6 to the ssh
+    // child as -4/-6 (only honoured when the remote shell is `ssh`).
+    ssh.set_address_family(ssh_address_family(config.address_mode()));
 
     ssh.set_prefer_aes_gcm(config.prefer_aes_gcm());
     ssh.set_jump_hosts(config.jump_hosts().map(OsString::from));

@@ -212,6 +212,7 @@ pub fn run_module_list_with_password_and_options(
             bind_address: options.bind_address().map(|addr| addr.ip()),
             jump_hosts: None,
             connect_timeout: connect_duration,
+            address_mode,
         })?
     } else {
         open_daemon_stream(

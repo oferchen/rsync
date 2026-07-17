@@ -107,7 +107,7 @@ mod stall;
 pub use async_stderr_drain::{ASYNC_STDERR_BUFFER_CAP, AsyncStderrDrain, RingBuffer};
 #[cfg(feature = "async-ssh")]
 pub use async_transport::AsyncSshTransport;
-pub use builder::SshCommand;
+pub use builder::{SshAddressFamily, SshCommand};
 pub use connect::{
     DEFAULT_CONNECT_TIMEOUT, DEFAULT_KEEPALIVE_INTERVAL, DEFAULT_KEEPALIVE_MAX_FAILURES,
     KeepAliveConfig, SshConnectConfig,
