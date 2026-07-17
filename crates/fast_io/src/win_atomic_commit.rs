@@ -11,12 +11,12 @@
 //!
 //! Windows has no `openat`/`renameat`, but the same guarantee is available via:
 //!
-//! - [`create_new_no_follow`] - `CreateFileW`-equivalent open with
+//! - `create_new_no_follow` - `CreateFileW`-equivalent open with
 //!   `CREATE_NEW` + `FILE_FLAG_OPEN_REPARSE_POINT`, so a reparse point planted
 //!   at the temp leaf is opened as the reparse point itself (and `CREATE_NEW`
 //!   then fails) rather than traversed. This is the analog of `O_EXCL |
 //!   O_NOFOLLOW`.
-//! - [`rename_no_follow`] - a handle-based commit rename. The destination
+//! - `rename_no_follow` - a handle-based commit rename. The destination
 //!   parent is opened no-follow, validated as a real directory (not a reparse
 //!   point), and *pinned* (shared without `FILE_SHARE_DELETE`) so it cannot be
 //!   renamed/removed/replaced with a junction while the rename runs; the temp
