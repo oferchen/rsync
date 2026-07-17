@@ -339,17 +339,18 @@ fn transfer_request_with_exclude_from_bang_preserves_parent_cli_rule() {
     assert!(!copied_root.join("skip.log").exists());
 }
 
-/// upstream: exclude.c:1393-1402 - `!` inside `~/.cvsignore` (or `$CVSIGNORE`)
-/// clears only that scope. The default CVS_EXCLUDE_PATTERNS already collected
-/// in the parent accumulator survive.
+/// upstream: exclude.c:1399 pop_filter_list - a bare `!` inside `$CVSIGNORE`
+/// (or `~/.cvsignore`) keeps FILTRULE_CLEAR_LIST and clears the ENTIRE shared
+/// cvs_filter_list, so the built-in CVS_EXCLUDE_PATTERNS collected before it
+/// (e.g. `core`) are wiped too. Only patterns added after the `!` survive.
 #[test]
-fn transfer_request_with_cvsignore_bang_preserves_default_cvs_patterns() {
+fn transfer_request_with_cvsignore_bang_wipes_default_cvs_patterns() {
     use tempfile::tempdir;
 
     let _env_lock = ENV_LOCK.lock().expect("env lock");
     let _home_guard = EnvGuard::set("HOME", OsStr::new(""));
-    // `$CVSIGNORE` is treated as a per-source scope just like ~/.cvsignore,
-    // so a leading `!` must not wipe the built-in CVS_EXCLUDE_PATTERNS.
+    // A leading bare `!` clears the whole shared CVS list, then `*.skip` is the
+    // only surviving exclude.
     let _cvs_guard = EnvGuard::set("CVSIGNORE", OsStr::new("! *.skip"));
 
     let tmp = tempdir().expect("tempdir");
@@ -358,7 +359,8 @@ fn transfer_request_with_cvsignore_bang_preserves_default_cvs_patterns() {
     std::fs::create_dir_all(&source_root).expect("create source root");
     std::fs::create_dir_all(&dest_root).expect("create dest root");
     std::fs::write(source_root.join("keep.txt"), b"keep").expect("write keep");
-    // `core` is one of the built-in CVS_EXCLUDE_PATTERNS and must remain excluded.
+    // `core` is a built-in CVS_EXCLUDE_PATTERN, but the bare `!` wipes it, so it
+    // must now be transferred.
     std::fs::write(source_root.join("core"), b"core dump").expect("write core");
     std::fs::write(source_root.join("drop.skip"), b"drop").expect("write skip");
 
@@ -378,8 +380,8 @@ fn transfer_request_with_cvsignore_bang_preserves_default_cvs_patterns() {
 
     let copied_root = dest_root.join("source");
     assert!(copied_root.join("keep.txt").exists());
-    // Default CVS pattern survived the `$CVSIGNORE` scope-local `!`.
-    assert!(!copied_root.join("core").exists());
+    // The built-in `core` pattern was wiped by the `$CVSIGNORE` bare `!`.
+    assert!(copied_root.join("core").exists());
     // `$CVSIGNORE`'s own pattern (after the `!`) still excludes `*.skip`.
     assert!(!copied_root.join("drop.skip").exists());
 }

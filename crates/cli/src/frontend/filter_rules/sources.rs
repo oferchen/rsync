@@ -14,6 +14,7 @@ pub(crate) fn append_filter_rules_from_files(
     destination: &mut Vec<FilterRuleSpec>,
     files: &[OsString],
     kind: FilterRuleKind,
+    eol_nulls: bool,
 ) -> Result<(), Message> {
     if matches!(kind, FilterRuleKind::DirMerge) {
         let message = rsync_error!(
@@ -37,7 +38,7 @@ pub(crate) fn append_filter_rules_from_files(
     // file's rules locally so a `!` inside the file clears only that scope
     // and parent CLI rules survive.
     for path in files {
-        let patterns = load_filter_file_patterns(Path::new(path.as_os_str()))?;
+        let patterns = load_filter_file_patterns(Path::new(path.as_os_str()), eol_nulls)?;
         let mut local: Vec<FilterRuleSpec> = Vec::new();
         for pattern in patterns {
             if honor_old_prefixes {
@@ -69,9 +70,12 @@ pub(crate) fn append_filter_rules_from_files(
     Ok(())
 }
 
-pub(crate) fn load_filter_file_patterns(path: &Path) -> Result<Vec<String>, Message> {
+pub(crate) fn load_filter_file_patterns(
+    path: &Path,
+    eol_nulls: bool,
+) -> Result<Vec<String>, Message> {
     if path == Path::new("-") {
-        return read_filter_patterns_from_standard_input();
+        return read_filter_patterns_from_standard_input(eol_nulls);
     }
 
     let path_display = path.display().to_string();
@@ -81,7 +85,7 @@ pub(crate) fn load_filter_file_patterns(path: &Path) -> Result<Vec<String>, Mess
     })?;
 
     let mut reader = BufReader::new(file);
-    read_filter_patterns(&mut reader).map_err(|error| {
+    read_filter_patterns(&mut reader, eol_nulls).map_err(|error| {
         let text = format!("failed to read filter file '{path_display}': {error}");
         rsync_error!(1, text).with_role(Role::Client)
     })
@@ -112,11 +116,13 @@ pub(super) fn read_merge_from_standard_input() -> Result<String, Message> {
     Ok(buffer)
 }
 
-pub(crate) fn read_filter_patterns_from_standard_input() -> Result<Vec<String>, Message> {
+pub(crate) fn read_filter_patterns_from_standard_input(
+    eol_nulls: bool,
+) -> Result<Vec<String>, Message> {
     #[cfg(test)]
     if let Some(data) = take_filter_stdin_input() {
         let mut cursor = io::Cursor::new(data);
-        return read_filter_patterns(&mut cursor).map_err(|error| {
+        return read_filter_patterns(&mut cursor, eol_nulls).map_err(|error| {
             let text = format!("failed to read filter patterns from standard input: {error}");
             rsync_error!(1, text).with_role(Role::Client)
         });
@@ -124,28 +130,37 @@ pub(crate) fn read_filter_patterns_from_standard_input() -> Result<Vec<String>, 
 
     let stdin = io::stdin();
     let mut reader = stdin.lock();
-    read_filter_patterns(&mut reader).map_err(|error| {
+    read_filter_patterns(&mut reader, eol_nulls).map_err(|error| {
         let text = format!("failed to read filter patterns from standard input: {error}");
         rsync_error!(1, text).with_role(Role::Client)
     })
 }
 
-pub(super) fn read_filter_patterns<R: BufRead>(reader: &mut R) -> io::Result<Vec<String>> {
+pub(super) fn read_filter_patterns<R: BufRead>(
+    reader: &mut R,
+    eol_nulls: bool,
+) -> io::Result<Vec<String>> {
     let mut buffer = Vec::new();
     let mut patterns = Vec::new();
 
+    // upstream: exclude.c:1501 parse_filter_file - `if (eol_nulls? !ch : (ch ==
+    // '\n' || ch == '\r'))` splits records on NUL when --from0/-0 is set, so an
+    // exclude-from/include-from file becomes NUL-delimited and embedded newlines
+    // are literal pattern bytes (never stripped).
+    let delimiter = if eol_nulls { b'\0' } else { b'\n' };
+
     loop {
         buffer.clear();
-        let bytes_read = reader.read_until(b'\n', &mut buffer)?;
+        let bytes_read = reader.read_until(delimiter, &mut buffer)?;
 
         if bytes_read == 0 {
             break;
         }
 
-        if buffer.last() == Some(&b'\n') {
+        if buffer.last() == Some(&delimiter) {
             buffer.pop();
         }
-        if buffer.last() == Some(&b'\r') {
+        if !eol_nulls && buffer.last() == Some(&b'\r') {
             buffer.pop();
         }
 
@@ -188,7 +203,7 @@ mod tests {
     fn read_filter_patterns_parses_simple_lines() {
         let input = b"pattern1\npattern2\npattern3\n";
         let mut reader = Cursor::new(input.to_vec());
-        let result = read_filter_patterns(&mut reader).expect("read");
+        let result = read_filter_patterns(&mut reader, false).expect("read");
         assert_eq!(result, vec!["pattern1", "pattern2", "pattern3"]);
     }
 
@@ -196,7 +211,7 @@ mod tests {
     fn read_filter_patterns_skips_empty_lines() {
         let input = b"pattern1\n\npattern2\n";
         let mut reader = Cursor::new(input.to_vec());
-        let result = read_filter_patterns(&mut reader).expect("read");
+        let result = read_filter_patterns(&mut reader, false).expect("read");
         assert_eq!(result, vec!["pattern1", "pattern2"]);
     }
 
@@ -204,7 +219,7 @@ mod tests {
     fn read_filter_patterns_skips_hash_comments() {
         let input = b"pattern1\n# this is a comment\npattern2\n";
         let mut reader = Cursor::new(input.to_vec());
-        let result = read_filter_patterns(&mut reader).expect("read");
+        let result = read_filter_patterns(&mut reader, false).expect("read");
         assert_eq!(result, vec!["pattern1", "pattern2"]);
     }
 
@@ -212,7 +227,7 @@ mod tests {
     fn read_filter_patterns_skips_semicolon_comments() {
         let input = b"pattern1\n; this is a comment\npattern2\n";
         let mut reader = Cursor::new(input.to_vec());
-        let result = read_filter_patterns(&mut reader).expect("read");
+        let result = read_filter_patterns(&mut reader, false).expect("read");
         assert_eq!(result, vec!["pattern1", "pattern2"]);
     }
 
@@ -220,7 +235,7 @@ mod tests {
     fn read_filter_patterns_handles_crlf_line_endings() {
         let input = b"pattern1\r\npattern2\r\npattern3\r\n";
         let mut reader = Cursor::new(input.to_vec());
-        let result = read_filter_patterns(&mut reader).expect("read");
+        let result = read_filter_patterns(&mut reader, false).expect("read");
         assert_eq!(result, vec!["pattern1", "pattern2", "pattern3"]);
     }
 
@@ -228,7 +243,7 @@ mod tests {
     fn read_filter_patterns_handles_no_trailing_newline() {
         let input = b"pattern1\npattern2";
         let mut reader = Cursor::new(input.to_vec());
-        let result = read_filter_patterns(&mut reader).expect("read");
+        let result = read_filter_patterns(&mut reader, false).expect("read");
         assert_eq!(result, vec!["pattern1", "pattern2"]);
     }
 
@@ -236,7 +251,7 @@ mod tests {
     fn read_filter_patterns_handles_empty_input() {
         let input = b"";
         let mut reader = Cursor::new(input.to_vec());
-        let result = read_filter_patterns(&mut reader).expect("read");
+        let result = read_filter_patterns(&mut reader, false).expect("read");
         assert!(result.is_empty());
     }
 
@@ -244,7 +259,7 @@ mod tests {
     fn read_filter_patterns_handles_only_comments() {
         let input = b"# comment 1\n; comment 2\n";
         let mut reader = Cursor::new(input.to_vec());
-        let result = read_filter_patterns(&mut reader).expect("read");
+        let result = read_filter_patterns(&mut reader, false).expect("read");
         assert!(result.is_empty());
     }
 
@@ -252,7 +267,7 @@ mod tests {
     fn read_filter_patterns_handles_whitespace_only_lines() {
         let input = b"pattern1\n   \n\t\npattern2\n";
         let mut reader = Cursor::new(input.to_vec());
-        let result = read_filter_patterns(&mut reader).expect("read");
+        let result = read_filter_patterns(&mut reader, false).expect("read");
         assert_eq!(result, vec!["pattern1", "pattern2"]);
     }
 
@@ -260,7 +275,7 @@ mod tests {
     fn read_filter_patterns_preserves_leading_whitespace() {
         let input = b"  pattern_with_leading_space\n";
         let mut reader = Cursor::new(input.to_vec());
-        let result = read_filter_patterns(&mut reader).expect("read");
+        let result = read_filter_patterns(&mut reader, false).expect("read");
         assert_eq!(result, vec!["  pattern_with_leading_space"]);
     }
 
@@ -269,7 +284,7 @@ mod tests {
         let temp = tempdir().expect("tempdir");
         let path = temp.path().join("filter.txt");
         std::fs::write(&path, "pattern1\npattern2\n").expect("write");
-        let result = load_filter_file_patterns(&path).expect("load");
+        let result = load_filter_file_patterns(&path, false).expect("load");
         assert_eq!(result, vec!["pattern1", "pattern2"]);
     }
 
@@ -277,7 +292,7 @@ mod tests {
     fn load_filter_file_patterns_fails_for_missing_file() {
         let temp = tempdir().expect("tempdir");
         let path = temp.path().join("nonexistent.txt");
-        let result = load_filter_file_patterns(&path);
+        let result = load_filter_file_patterns(&path, false);
         assert!(result.is_err());
     }
 
@@ -301,7 +316,7 @@ mod tests {
     #[test]
     fn read_filter_patterns_from_stdin_uses_test_input() {
         set_filter_stdin_input(b"stdin_pattern1\nstdin_pattern2\n".to_vec());
-        let result = read_filter_patterns_from_standard_input().expect("read");
+        let result = read_filter_patterns_from_standard_input(false).expect("read");
         assert_eq!(result, vec!["stdin_pattern1", "stdin_pattern2"]);
     }
 
@@ -315,7 +330,7 @@ mod tests {
     #[test]
     fn load_filter_file_patterns_handles_dash_path() {
         set_filter_stdin_input(b"stdin_pattern\n".to_vec());
-        let result = load_filter_file_patterns(Path::new("-")).expect("load");
+        let result = load_filter_file_patterns(Path::new("-"), false).expect("load");
         assert_eq!(result, vec!["stdin_pattern"]);
     }
 
@@ -329,6 +344,7 @@ mod tests {
             &mut rules,
             &[OsString::from(path)],
             FilterRuleKind::Include,
+            false,
         )
         .expect("append");
         assert_eq!(rules.len(), 2);
@@ -348,6 +364,7 @@ mod tests {
             &mut rules,
             &[OsString::from(path)],
             FilterRuleKind::Exclude,
+            false,
         )
         .expect("append");
         assert_eq!(rules.len(), 1);
@@ -358,7 +375,8 @@ mod tests {
     #[test]
     fn append_filter_rules_from_files_rejects_dir_merge() {
         let mut rules = Vec::new();
-        let result = append_filter_rules_from_files(&mut rules, &[], FilterRuleKind::DirMerge);
+        let result =
+            append_filter_rules_from_files(&mut rules, &[], FilterRuleKind::DirMerge, false);
         assert!(result.is_err());
     }
 
@@ -374,8 +392,51 @@ mod tests {
             &mut rules,
             &[OsString::from(path1), OsString::from(path2)],
             FilterRuleKind::Include,
+            false,
         )
         .expect("append");
         assert_eq!(rules.len(), 2);
+    }
+
+    #[test]
+    fn read_filter_patterns_splits_on_nul_when_eol_nulls() {
+        // upstream: exclude.c:1501 parse_filter_file - with eol_nulls (set by
+        // --from0/-0) records are split on NUL, so embedded newlines are literal
+        // pattern bytes and a NUL-delimited --exclude-from parses one rule per
+        // NUL-separated record rather than one per line.
+        let input = b"*.log\nwith space\0*.tmp\0";
+        let mut reader = Cursor::new(input.to_vec());
+        let result = read_filter_patterns(&mut reader, true).expect("read");
+        assert_eq!(result, vec!["*.log\nwith space", "*.tmp"]);
+    }
+
+    #[test]
+    fn read_filter_patterns_nul_mode_handles_no_trailing_nul() {
+        // upstream: exclude.c:1516-1517 - the final record before EOF is parsed
+        // even without a trailing delimiter.
+        let input = b"only\0last";
+        let mut reader = Cursor::new(input.to_vec());
+        let result = read_filter_patterns(&mut reader, true).expect("read");
+        assert_eq!(result, vec!["only", "last"]);
+    }
+
+    #[test]
+    fn append_filter_rules_from_files_honors_from0_nul_split() {
+        // upstream: exclude.c:1501 parse_filter_file - --exclude-from with
+        // --from0 reads NUL-delimited records; "a\nb" is one literal pattern.
+        let temp = tempdir().expect("tempdir");
+        let path = temp.path().join("exclude0.txt");
+        std::fs::write(&path, b"a\nb\0*.bak\0").expect("write");
+        let mut rules = Vec::new();
+        append_filter_rules_from_files(
+            &mut rules,
+            &[OsString::from(path)],
+            FilterRuleKind::Exclude,
+            true,
+        )
+        .expect("append");
+        assert_eq!(rules.len(), 2);
+        assert_eq!(rules[0].pattern(), "a\nb");
+        assert_eq!(rules[1].pattern(), "*.bak");
     }
 }

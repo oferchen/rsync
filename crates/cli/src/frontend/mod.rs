@@ -161,7 +161,7 @@ pub(crate) use std::num::NonZeroU64;
 
 #[cfg(test)]
 pub(crate) fn load_filter_file_patterns(path: &Path) -> Result<Vec<String>, Message> {
-    filter_rules::load_filter_file_patterns(path)
+    filter_rules::load_filter_file_patterns(path, false)
 }
 
 #[cfg(test)]

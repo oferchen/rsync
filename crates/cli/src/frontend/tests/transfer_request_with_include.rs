@@ -28,6 +28,7 @@ fn transfer_request_with_include_from_reinstate_patterns() {
         &mut expected_rules,
         &[include_file.as_os_str().to_os_string()],
         FilterRuleKind::Include,
+        false,
     )
     .expect("load include patterns");
     expected_rules.push(FilterRuleSpec::exclude("*".to_owned()));
