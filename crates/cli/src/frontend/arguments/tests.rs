@@ -1190,7 +1190,8 @@ mod option_values {
     fn suffix_with_equals() {
         let parsed = parse_test_args(["--suffix=.bak", "src/", "dst/"]).expect("parse");
         assert_eq!(parsed.backup_suffix, Some(OsString::from(".bak")));
-        assert!(parsed.backup); // suffix implies backup
+        // upstream: options.c:2296-2307 - a bare --suffix does not enable backups.
+        assert!(!parsed.backup);
     }
 
     #[test]
@@ -1314,7 +1315,8 @@ mod option_values {
     fn max_delete_with_equals() {
         let parsed = parse_test_args(["-r", "--max-delete=100", "src/", "dst/"]).expect("parse");
         assert_eq!(parsed.max_delete, Some(OsString::from("100")));
-        assert!(parsed.delete_mode.is_enabled()); // max-delete implies delete
+        // upstream: options.c:2215-2217 - --max-delete never enables deletion.
+        assert!(!parsed.delete_mode.is_enabled());
     }
 
     #[test]
@@ -1774,7 +1776,11 @@ mod delete_modes {
         let result = parse_test_args(["-r", "--delete-before", "--delete-after", "src/", "dst/"]);
         assert!(result.is_err());
         let err = result.unwrap_err();
-        assert!(err.to_string().contains("mutually exclusive"));
+        // upstream: options.c:2211-2212 exact wording.
+        assert!(
+            err.to_string()
+                .contains("You may not combine multiple --delete-WHEN options.")
+        );
     }
 
     #[test]

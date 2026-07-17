@@ -100,8 +100,11 @@ mod tests {
     }
 
     #[test]
-    fn parse_max_delete_argument_negative() {
-        assert!(parse_max_delete_argument(&os("-10")).is_err());
+    fn parse_max_delete_argument_negative_clamps_to_zero() {
+        // upstream: options.c:2182-2185 - a negative `--max-delete` is clamped to
+        // a 0 cap ("no deletions") and parsing continues; it is not an error.
+        assert_eq!(parse_max_delete_argument(&os("-10")).unwrap(), 0);
+        assert_eq!(parse_max_delete_argument(&os("-1")).unwrap(), 0);
     }
 
     #[test]

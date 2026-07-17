@@ -246,11 +246,10 @@ pub(crate) fn build_base_config(mut inputs: ConfigInputs) -> ClientConfigBuilder
         } else {
             inputs.dirs.unwrap_or(inputs.list_only)
         })
-        .delete(
-            inputs.delete_mode.is_enabled()
-                || inputs.delete_excluded
-                || inputs.max_delete_limit.is_some(),
-        )
+        // upstream: options.c:2215-2217 - delete mode is enabled only by an
+        // explicit `--delete*` or `--delete-excluded`. `--max-delete` merely caps
+        // the count (options.c:2182-2185) and must never enable deletion.
+        .delete(inputs.delete_mode.is_enabled() || inputs.delete_excluded)
         .delete_excluded(inputs.delete_excluded)
         .delete_missing_args(inputs.delete_missing_args)
         .ignore_errors(inputs.ignore_errors)
