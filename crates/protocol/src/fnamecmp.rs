@@ -87,14 +87,18 @@ pub enum FnameCmpType {
     ///
     /// When `--fuzzy` is enabled and no exact basis exists, the generator
     /// searches for a similarly-named file to use as a delta basis. The
-    /// wire value encodes `FNAMECMP_FUZZY + fuzzy_basis_index` for multi-level
-    /// fuzzy matching.
+    /// wire value encodes `FNAMECMP_FUZZY + i`, where `i` is the fuzzy-dir
+    /// index: `0` for the destination directory, `1..=basis_dir_cnt` for the
+    /// reference directories (`--compare-dest`, `--copy-dest`, `--link-dest`).
+    /// The wrapped `u8` is that offset `i`, so `Fuzzy(0)` is `0x83`.
     ///
     /// # Upstream Reference
     ///
     /// - `rsync.h` - `FNAMECMP_FUZZY` (0x83)
-    /// - `generator.c` - Set by `find_fuzzy()` when a match is found
-    Fuzzy,
+    /// - `generator.c:861,903` - `*fnamecmp_type_ptr = FNAMECMP_FUZZY + i`
+    /// - `receiver.c:844-845` - `fnamecmp_type - (FNAMECMP_FUZZY + 1)` recovers
+    ///   the basis-dir index for the reference-directory range.
+    Fuzzy(u8),
 }
 
 impl FnameCmpType {
@@ -132,22 +136,27 @@ impl FnameCmpType {
 
     /// Decodes a wire byte into a typed `FnameCmpType`.
     ///
-    /// Values 0x00-0x7F map to `BasisDir(index)`. Values 0x80-0x83 map
-    /// to the corresponding named variants. Values 0x84-0xFF are invalid
-    /// per the upstream protocol.
+    /// Values 0x00-0x7F map to `BasisDir(index)`, 0x80-0x82 to the corresponding
+    /// named variants, and 0x83-0xFF to `Fuzzy(byte - 0x83)` (the
+    /// `FNAMECMP_FUZZY + i` range). Upstream reads this byte with a bare
+    /// `read_byte()` and validates the fuzzy offset contextually against
+    /// `basis_dir_cnt` in `receiver.c`, so every byte decodes; there is no
+    /// decode-time rejection.
     ///
-    /// # Errors
+    /// Returns `Option` for call-site ergonomics and forward compatibility; the
+    /// current mapping is total and never yields `None`.
     ///
-    /// Returns `None` for wire values 0x84-0xFF, which are undefined in
-    /// upstream rsync.
+    /// # Upstream Reference
+    ///
+    /// - `rsync.c:404` - `fnamecmp_type = read_byte(f_in)` (no range check)
+    /// - `receiver.c:844-857` - contextual validation of the fuzzy/basis-dir range
     pub const fn from_wire(byte: u8) -> Option<Self> {
         match byte {
             Self::BASIS_DIR_LOW..=Self::BASIS_DIR_HIGH => Some(Self::BasisDir(byte)),
             Self::FNAME => Some(Self::Fname),
             Self::PARTIAL_DIR => Some(Self::PartialDir),
             Self::BACKUP => Some(Self::Backup),
-            Self::FUZZY => Some(Self::Fuzzy),
-            _ => None,
+            _ => Some(Self::Fuzzy(byte - Self::FUZZY)),
         }
     }
 
@@ -159,8 +168,16 @@ impl FnameCmpType {
             Self::Fname => Self::FNAME,
             Self::PartialDir => Self::PARTIAL_DIR,
             Self::Backup => Self::BACKUP,
-            Self::Fuzzy => Self::FUZZY,
+            Self::Fuzzy(offset) => Self::FUZZY.wrapping_add(offset),
         }
+    }
+
+    /// Returns true if this is a fuzzy-matched basis (the `FNAMECMP_FUZZY + i`
+    /// range). Upstream gates `ITEM_XNAME_FOLLOWS` on `fnamecmp_type >=
+    /// FNAMECMP_FUZZY` (`generator.c:1945`).
+    #[must_use]
+    pub const fn is_fuzzy(&self) -> bool {
+        matches!(self, Self::Fuzzy(_))
     }
 
     /// Returns true if this is a basis directory reference.
@@ -185,7 +202,8 @@ impl fmt::Display for FnameCmpType {
             Self::Fname => write!(f, "fname"),
             Self::PartialDir => write!(f, "partial_dir"),
             Self::Backup => write!(f, "backup"),
-            Self::Fuzzy => write!(f, "fuzzy"),
+            Self::Fuzzy(0) => write!(f, "fuzzy"),
+            Self::Fuzzy(offset) => write!(f, "fuzzy+{offset}"),
         }
     }
 }
@@ -248,7 +266,7 @@ mod tests {
             (FnameCmpType::Fname, 0x80),
             (FnameCmpType::PartialDir, 0x81),
             (FnameCmpType::Backup, 0x82),
-            (FnameCmpType::Fuzzy, 0x83),
+            (FnameCmpType::Fuzzy(0), 0x83),
         ];
         for (variant, expected_wire) in cases {
             assert_eq!(variant.to_wire(), expected_wire);
@@ -266,9 +284,22 @@ mod tests {
     }
 
     #[test]
-    fn from_wire_rejects_undefined_values() {
-        for byte in 0x84..=0xFF_u8 {
-            assert_eq!(FnameCmpType::from_wire(byte), None);
+    fn from_wire_maps_fuzzy_range() {
+        // upstream: rsync.c:404 reads the byte unconditionally and validates the
+        // fuzzy/basis-dir range contextually in receiver.c:844-857. The
+        // FNAMECMP_FUZZY + i range (0x83..=0xFF) therefore decodes to Fuzzy(i)
+        // rather than being rejected at decode time.
+        assert_eq!(FnameCmpType::from_wire(0x83), Some(FnameCmpType::Fuzzy(0)));
+        assert_eq!(FnameCmpType::from_wire(0x84), Some(FnameCmpType::Fuzzy(1)));
+        assert_eq!(
+            FnameCmpType::from_wire(0xFF),
+            Some(FnameCmpType::Fuzzy(0x7C))
+        );
+        // Every fuzzy byte round-trips back to the same wire value.
+        for byte in 0x83..=0xFF_u8 {
+            let t = FnameCmpType::from_wire(byte).expect("fuzzy range decodes");
+            assert!(t.is_fuzzy());
+            assert_eq!(t.to_wire(), byte);
         }
     }
 
@@ -280,12 +311,7 @@ mod tests {
             FnameCmpType::try_from(0x7F),
             Ok(FnameCmpType::BasisDir(0x7F))
         );
-    }
-
-    #[test]
-    fn try_from_u8_invalid() {
-        assert_eq!(FnameCmpType::try_from(0x84), Err(InvalidFnameCmpType(0x84)));
-        assert_eq!(FnameCmpType::try_from(0xFF), Err(InvalidFnameCmpType(0xFF)));
+        assert_eq!(FnameCmpType::try_from(0x84), Ok(FnameCmpType::Fuzzy(1)));
     }
 
     #[test]
@@ -303,7 +329,20 @@ mod tests {
         assert!(!FnameCmpType::Fname.is_basis_dir());
         assert!(!FnameCmpType::PartialDir.is_basis_dir());
         assert!(!FnameCmpType::Backup.is_basis_dir());
-        assert!(!FnameCmpType::Fuzzy.is_basis_dir());
+        assert!(!FnameCmpType::Fuzzy(0).is_basis_dir());
+    }
+
+    #[test]
+    fn is_fuzzy_only_for_fuzzy_range() {
+        // upstream: generator.c:1945 gates ITEM_XNAME_FOLLOWS on
+        // fnamecmp_type >= FNAMECMP_FUZZY, so is_fuzzy must be true across the
+        // whole 0x83..=0xFF range and false for every other type.
+        assert!(FnameCmpType::Fuzzy(0).is_fuzzy());
+        assert!(FnameCmpType::Fuzzy(5).is_fuzzy());
+        assert!(!FnameCmpType::Fname.is_fuzzy());
+        assert!(!FnameCmpType::PartialDir.is_fuzzy());
+        assert!(!FnameCmpType::Backup.is_fuzzy());
+        assert!(!FnameCmpType::BasisDir(0).is_fuzzy());
     }
 
     #[test]
@@ -319,7 +358,8 @@ mod tests {
         assert_eq!(FnameCmpType::Fname.to_string(), "fname");
         assert_eq!(FnameCmpType::PartialDir.to_string(), "partial_dir");
         assert_eq!(FnameCmpType::Backup.to_string(), "backup");
-        assert_eq!(FnameCmpType::Fuzzy.to_string(), "fuzzy");
+        assert_eq!(FnameCmpType::Fuzzy(0).to_string(), "fuzzy");
+        assert_eq!(FnameCmpType::Fuzzy(1).to_string(), "fuzzy+1");
     }
 
     #[test]

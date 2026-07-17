@@ -210,7 +210,7 @@ pub use stats::{CreatedStats, DeleteStats, TransferStats};
 pub use varint::{
     decode_varint, encode_varint_to_vec, read_int, read_longint, read_varint, read_varint_bounded,
     read_varint_size, read_varint30_int, read_varlong, read_varlong30, write_int, write_longint,
-    write_varint, write_varint30_int, write_varlong, write_varlong30,
+    write_varint, write_varint30_int, write_varlong, write_varlong30, write_vstring,
 };
 #[cfg(feature = "tokio-transfer")]
 pub use varint::{read_int_async, read_longint_async, read_varint_async, read_varlong_async};

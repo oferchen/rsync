@@ -50,5 +50,5 @@ pub use decode::{
 pub use decode_async::{read_int_async, read_longint_async, read_varint_async, read_varlong_async};
 pub use encode::{
     encode_varint_to_vec, write_int, write_longint, write_varint, write_varint30_int,
-    write_varlong, write_varlong30,
+    write_varlong, write_varlong30, write_vstring,
 };

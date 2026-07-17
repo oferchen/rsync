@@ -196,19 +196,34 @@ impl ReceiverContext {
             let signature_opt = basis_result.signature;
             let basis_path_opt = basis_result.basis_path;
             let fnamecmp_type = basis_result.fnamecmp_type;
+            let xname = basis_result.xname;
 
             // upstream: protocol >= 29 sender expects iflags after NDX.
-            // upstream: generator.c:1942-1943 - a non-FNAME basis sets
-            // ITEM_BASIS_TYPE_FOLLOWS followed by the fnamecmp_type byte.
+            // upstream: generator.c:1942-1948 - a non-FNAME basis sets
+            // ITEM_BASIS_TYPE_FOLLOWS followed by the fnamecmp_type byte, and a
+            // fuzzy basis additionally sets ITEM_XNAME_FOLLOWS followed by the
+            // basis basename as a vstring.
             if self.protocol.supports_iflags() {
                 let mut iflags = SenderAttrs::ITEM_TRANSFER;
                 let emit_basis_type = fnamecmp_type != protocol::FnameCmpType::Fname;
                 if emit_basis_type {
                     iflags |= SenderAttrs::ITEM_BASIS_TYPE_FOLLOWS;
                 }
+                // upstream: generator.c:1945 - ITEM_XNAME_FOLLOWS iff
+                // fnamecmp_type >= FNAMECMP_FUZZY. Only fuzzy carries an xname.
+                let emit_xname = fnamecmp_type.is_fuzzy() && xname.is_some();
+                if emit_xname {
+                    iflags |= SenderAttrs::ITEM_XNAME_FOLLOWS;
+                }
                 writer.write_all(&iflags.to_le_bytes())?;
                 if emit_basis_type {
                     writer.write_all(&[u8::from(fnamecmp_type)])?;
+                }
+                if emit_xname {
+                    // upstream: generator.c:591,1948 write_vstring(sock_f_out,
+                    // xname, strlen(xname)) - a 1- or 2-byte length prefix then
+                    // the basename bytes (io.c:2297), not a varint.
+                    protocol::write_vstring(&mut *writer, xname.as_deref().unwrap_or(&[]))?;
                 }
             }
 
