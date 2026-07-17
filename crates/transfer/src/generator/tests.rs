@@ -5301,3 +5301,89 @@ fn remove_source_files_defers_until_msg_success() {
         "the genuine pending entry must remain until its own confirmation"
     );
 }
+
+/// A mid-commit connection drop must leave every not-yet-confirmed source in
+/// place while removing only the sources the peer already confirmed.
+///
+/// This models the adversarial mid-commit-kill: the receiver committed and
+/// acked the first file with `MSG_SUCCESS`, then the connection dropped before
+/// it could commit and ack the rest. The sender's deferred-unlink loop
+/// (orchestrator.rs `for wire_ndx in reader.take_success_indices()`) runs
+/// [`confirm_source_removal`](GeneratorContext::confirm_source_removal) only for
+/// the indices that actually arrived; every index whose `MSG_SUCCESS` never
+/// crossed the wire stays pending, so its source survives. Encodes the
+/// upstream crash-safety contract (sender.c:131-182 `successful_send()`): an
+/// interrupted transfer never deletes a source that did not safely land at the
+/// destination. The kill point is forced by choosing which confirmations are
+/// delivered - no sleeps, no race, fully deterministic.
+#[test]
+fn remove_source_files_mid_commit_teardown_retains_unconfirmed_sources() {
+    let temp = create_test_files(&[
+        ("a.txt", b"alpha"),
+        ("b.txt", b"bravo"),
+        ("c.txt", b"charlie"),
+    ]);
+    let a = temp.path().join("a.txt");
+    let b = temp.path().join("b.txt");
+    let c = temp.path().join("c.txt");
+
+    let (_h, mut ctx) = test_generator_for_path(&a, false);
+    ctx.config.args = vec![OsString::from(&a), OsString::from(&b), OsString::from(&c)];
+    ctx.config.flags.remove_source_files = true;
+    // Build the file list from the three real sources so each entry records the
+    // on-disk size+mtime that the successful_send changed-file guard re-checks.
+    ctx.build_file_list(&[a.clone(), b.clone(), c.clone()])
+        .expect("building the file list for three real files must succeed");
+
+    let file_flats: Vec<usize> = (0..ctx.file_list.len())
+        .filter(|&i| ctx.file_list[i].is_file())
+        .collect();
+    assert_eq!(
+        file_flats.len(),
+        3,
+        "three positional file sources produce three file entries"
+    );
+
+    // Confirm the harness maps each entry back to its real source path before
+    // asserting on removal, so a reconstruction fault can never masquerade as a
+    // benign vanished-source no-op.
+    let sources: Vec<PathBuf> = file_flats
+        .iter()
+        .map(|&flat| ctx.reconstruct_source_path(flat))
+        .collect();
+    for src in &sources {
+        assert!(src.exists(), "each source must exist before the transfer");
+    }
+
+    // The sender finished transmitting all three: every unlink is deferred.
+    for &flat in &file_flats {
+        ctx.pending_source_removals.mark_pending(flat);
+    }
+
+    // The receiver committed and acked only the first file, then the connection
+    // dropped: exactly one MSG_SUCCESS is consumed.
+    let wire_first = ctx.flat_to_wire_ndx(file_flats[0]);
+    assert_eq!(
+        ctx.confirm_source_removal(wire_first),
+        0,
+        "a clean removal sets no io_error bits"
+    );
+
+    assert!(
+        !sources[0].exists(),
+        "the confirmed source must be unlinked once its MSG_SUCCESS arrives"
+    );
+    assert!(
+        sources[1].exists(),
+        "a source whose commit was never confirmed must survive the teardown"
+    );
+    assert!(
+        sources[2].exists(),
+        "every unconfirmed source must survive the teardown"
+    );
+    assert_eq!(
+        ctx.pending_source_removals.len(),
+        2,
+        "the two unconfirmed removals stay pending after the drop"
+    );
+}
