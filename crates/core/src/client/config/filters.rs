@@ -30,6 +30,12 @@ pub struct FilterRuleSpec {
     perishable: bool,
     xattr_only: bool,
     negate: bool,
+    /// Marks a rule produced by the `-C`/`--cvs-exclude` built-in expansion so
+    /// the wire projection can reproduce upstream's CVS send gating (local on a
+    /// receiving client; `:C` only on protocol >= 29).
+    ///
+    /// upstream: exclude.c:1652-1668 send_filter_list().
+    cvs_origin: bool,
 }
 
 impl FilterRuleSpec {
@@ -46,6 +52,7 @@ impl FilterRuleSpec {
             perishable: false,
             xattr_only: false,
             negate: false,
+            cvs_origin: false,
         }
     }
 
@@ -62,6 +69,7 @@ impl FilterRuleSpec {
             perishable: false,
             xattr_only: false,
             negate: false,
+            cvs_origin: false,
         }
     }
 
@@ -77,6 +85,7 @@ impl FilterRuleSpec {
             perishable: false,
             xattr_only: false,
             negate: false,
+            cvs_origin: false,
         }
     }
 
@@ -92,6 +101,7 @@ impl FilterRuleSpec {
             perishable: false,
             xattr_only: false,
             negate: false,
+            cvs_origin: false,
         }
     }
 
@@ -107,6 +117,7 @@ impl FilterRuleSpec {
             perishable: false,
             xattr_only: false,
             negate: false,
+            cvs_origin: false,
         }
     }
 
@@ -123,6 +134,7 @@ impl FilterRuleSpec {
             perishable: false,
             xattr_only: false,
             negate: false,
+            cvs_origin: false,
         }
     }
 
@@ -139,6 +151,7 @@ impl FilterRuleSpec {
             perishable: false,
             xattr_only: false,
             negate: false,
+            cvs_origin: false,
         }
     }
 
@@ -154,6 +167,7 @@ impl FilterRuleSpec {
             perishable: false,
             xattr_only: false,
             negate: false,
+            cvs_origin: false,
         }
     }
 
@@ -169,6 +183,7 @@ impl FilterRuleSpec {
             perishable: false,
             xattr_only: false,
             negate: false,
+            cvs_origin: false,
         }
     }
 
@@ -322,6 +337,24 @@ impl FilterRuleSpec {
     #[must_use]
     pub const fn is_negated(&self) -> bool {
         self.negate
+    }
+
+    /// Marks the rule as originating from the `-C`/`--cvs-exclude` built-in
+    /// expansion.
+    ///
+    /// upstream: exclude.c:1652-1668 send_filter_list() - CVS rules follow a
+    /// distinct wire-vs-local send path keyed on the sending role and protocol
+    /// version.
+    #[must_use]
+    pub const fn with_cvs_origin(mut self, cvs_origin: bool) -> Self {
+        self.cvs_origin = cvs_origin;
+        self
+    }
+
+    /// Reports whether the rule came from the `-C`/`--cvs-exclude` expansion.
+    #[must_use]
+    pub const fn is_cvs_origin(&self) -> bool {
+        self.cvs_origin
     }
 
     /// Anchors the pattern to the root of the transfer when requested.

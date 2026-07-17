@@ -99,7 +99,12 @@ fn dir_merge(no_prefixes: bool) -> FilterRuleWireFormat {
 #[test]
 fn no_prefix_dir_merge_elided_on_push_under_delete_excluded() {
     let rule = dir_merge(true);
-    assert!(!wire_rule_crosses_wire(&rule, true, true));
+    assert!(!wire_rule_crosses_wire(
+        &rule,
+        true,
+        true,
+        ProtocolVersion::V32
+    ));
 }
 
 /// On a PULL the same rule is REMOTE_RULE and still crosses the wire, WITHOUT a
@@ -109,7 +114,12 @@ fn no_prefix_dir_merge_elided_on_push_under_delete_excluded() {
 #[test]
 fn no_prefix_dir_merge_transmitted_on_pull_under_delete_excluded() {
     let rule = dir_merge(true);
-    assert!(wire_rule_crosses_wire(&rule, false, true));
+    assert!(wire_rule_crosses_wire(
+        &rule,
+        false,
+        true,
+        ProtocolVersion::V32
+    ));
 }
 
 /// A prefixed `:` merge (has prefixes) is never elided - only no-prefix merges
@@ -117,7 +127,12 @@ fn no_prefix_dir_merge_transmitted_on_pull_under_delete_excluded() {
 #[test]
 fn prefixed_dir_merge_not_elided_under_delete_excluded() {
     let rule = dir_merge(false);
-    assert!(wire_rule_crosses_wire(&rule, true, true));
+    assert!(wire_rule_crosses_wire(
+        &rule,
+        true,
+        true,
+        ProtocolVersion::V32
+    ));
 }
 
 /// Without `--delete-excluded`, a no-prefix dir-merge is transmitted normally on
@@ -125,8 +140,18 @@ fn prefixed_dir_merge_not_elided_under_delete_excluded() {
 #[test]
 fn no_prefix_dir_merge_transmitted_without_delete_excluded() {
     let rule = dir_merge(true);
-    assert!(wire_rule_crosses_wire(&rule, true, false));
-    assert!(wire_rule_crosses_wire(&rule, false, false));
+    assert!(wire_rule_crosses_wire(
+        &rule,
+        true,
+        false,
+        ProtocolVersion::V32
+    ));
+    assert!(wire_rule_crosses_wire(
+        &rule,
+        false,
+        false,
+        ProtocolVersion::V32
+    ));
 }
 
 /// Side-local rules are always elided toward the peer regardless of
@@ -139,16 +164,36 @@ fn side_local_rules_are_elided() {
         sender_side: true,
         ..FilterRuleWireFormat::default()
     };
-    assert!(!wire_rule_crosses_wire(&sender_side, true, false));
-    assert!(wire_rule_crosses_wire(&sender_side, false, false));
+    assert!(!wire_rule_crosses_wire(
+        &sender_side,
+        true,
+        false,
+        ProtocolVersion::V32
+    ));
+    assert!(wire_rule_crosses_wire(
+        &sender_side,
+        false,
+        false,
+        ProtocolVersion::V32
+    ));
 
     let receiver_side = FilterRuleWireFormat {
         rule_type: RuleType::Exclude,
         receiver_side: true,
         ..FilterRuleWireFormat::default()
     };
-    assert!(wire_rule_crosses_wire(&receiver_side, true, false));
-    assert!(!wire_rule_crosses_wire(&receiver_side, false, false));
+    assert!(wire_rule_crosses_wire(
+        &receiver_side,
+        true,
+        false,
+        ProtocolVersion::V32
+    ));
+    assert!(!wire_rule_crosses_wire(
+        &receiver_side,
+        false,
+        false,
+        ProtocolVersion::V32
+    ));
 }
 
 /// An explicitly sender-sided no-prefix merge (`:s-`) is handled by the
@@ -163,7 +208,128 @@ fn explicitly_sided_no_prefix_merge_uses_side_check() {
         ..FilterRuleWireFormat::default()
     };
     // Push: elided via the side-local check.
-    assert!(!wire_rule_crosses_wire(&rule, true, true));
+    assert!(!wire_rule_crosses_wire(
+        &rule,
+        true,
+        true,
+        ProtocolVersion::V32
+    ));
     // Pull: sender-side rule still crosses to the remote sender.
-    assert!(wire_rule_crosses_wire(&rule, false, true));
+    assert!(wire_rule_crosses_wire(
+        &rule,
+        false,
+        true,
+        ProtocolVersion::V32
+    ));
+}
+
+// -- CVS-origin send gate (exclude.c:1652-1668 send_filter_list) --
+
+/// A built-in `-C` exclude (e.g. `- *.o`) carries no side flag, so before the
+/// CVS gate it crossed the wire on both directions. Upstream only adds the `-C`
+/// rules to the transmitted list on a sending client (`am_sender`); a receiving
+/// client appends them after `send_rules()` (exclude.c:1663-1668), so they must
+/// stay local on a pull. The `-C` flag is forwarded to the peer in argv, which
+/// regenerates the excludes itself, so transmitting them would be redundant and
+/// non-upstream bytes on the wire.
+#[test]
+fn cvs_origin_exclude_local_on_pull_transmitted_on_push() {
+    let rule = FilterRuleWireFormat {
+        rule_type: RuleType::Exclude,
+        pattern: "*.o".to_owned(),
+        cvs_origin: true,
+        ..FilterRuleWireFormat::default()
+    };
+    // Pull (receiving client): kept local, never transmitted.
+    assert!(!wire_rule_crosses_wire(
+        &rule,
+        false,
+        false,
+        ProtocolVersion::V32
+    ));
+    // Push (sending client): the built-in list crosses at any protocol.
+    assert!(wire_rule_crosses_wire(
+        &rule,
+        true,
+        false,
+        ProtocolVersion::V32
+    ));
+    assert!(wire_rule_crosses_wire(
+        &rule,
+        true,
+        false,
+        ProtocolVersion::V28
+    ));
+}
+
+/// The `:C` per-directory merge is a protocol >= 29 wire feature: upstream adds
+/// it to the transmitted list only when `protocol_version >= 29`
+/// (exclude.c:1653), and keeps it local on a legacy peer (exclude.c:1664).
+/// Emitting it on a pre-29 peer would abort with "filter rules are too modern"
+/// because `get_rule_prefix()` cannot encode a per-directory merge there.
+#[test]
+fn cvs_origin_dir_merge_gated_on_protocol_29() {
+    let rule = FilterRuleWireFormat {
+        rule_type: RuleType::DirMerge,
+        pattern: ".cvsignore".to_owned(),
+        cvs_exclude: true,
+        cvs_origin: true,
+        ..FilterRuleWireFormat::default()
+    };
+    // Push, protocol >= 29: `:C` crosses the wire.
+    assert!(wire_rule_crosses_wire(
+        &rule,
+        true,
+        false,
+        ProtocolVersion::V29
+    ));
+    assert!(wire_rule_crosses_wire(
+        &rule,
+        true,
+        false,
+        ProtocolVersion::V32
+    ));
+    // Push, protocol < 29: `:C` is unsendable and kept local instead.
+    assert!(!wire_rule_crosses_wire(
+        &rule,
+        true,
+        false,
+        ProtocolVersion::V28
+    ));
+    // Pull: kept local at every protocol (receiving client).
+    assert!(!wire_rule_crosses_wire(
+        &rule,
+        false,
+        false,
+        ProtocolVersion::V32
+    ));
+    assert!(!wire_rule_crosses_wire(
+        &rule,
+        false,
+        false,
+        ProtocolVersion::V28
+    ));
+}
+
+/// A manually specified `:C` filter directive (NOT from the `-C` flag) has no
+/// CVS origin marker, so the pull-local / pre-29 gate does not fire for it: it
+/// follows the ordinary send path, matching upstream where such a rule is a
+/// literal filter-list entry that errors on a legacy peer rather than being
+/// silently kept local.
+#[test]
+fn manual_dir_merge_without_cvs_origin_not_gated() {
+    let rule = FilterRuleWireFormat {
+        rule_type: RuleType::DirMerge,
+        pattern: ".cvsignore".to_owned(),
+        cvs_exclude: true,
+        cvs_origin: false,
+        ..FilterRuleWireFormat::default()
+    };
+    // No CVS origin: crosses on a pull (ordinary send path).
+    assert!(wire_rule_crosses_wire(
+        &rule,
+        false,
+        false,
+        ProtocolVersion::V32
+    ));
 }
