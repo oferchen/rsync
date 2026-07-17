@@ -315,11 +315,13 @@ impl GeneratorContext {
             }
         }
         if iflags.has_xname() {
-            // write_vstring: varint length prefix then the raw bytes. An empty
-            // xname (xlen == 0) still emits the 0-length varint.
-            let name = xname.unwrap_or(&[]);
-            protocol::write_varint(writer, name.len() as i32)?;
-            writer.write_all(name)?;
+            // upstream: sender.c:189 write_vstring(f_out, xname, strlen(xname)).
+            // The xname length prefix is a 1- or 2-byte vstring (io.c:2297), NOT
+            // a varint: the two encodings only agree for len <= 0x7F, so a longer
+            // fuzzy basename or hard-link leader name would desync the receiver's
+            // read_vstring (io.c:2004). An empty xname still emits its 0 length
+            // byte.
+            protocol::write_vstring(writer, xname.unwrap_or(&[]))?;
         }
         // upstream: sender.c:192-196 - send_xattr_request(fname, file, f_out)
         // is invoked from inside write_ndx_and_attrs() when ITEM_REPORT_XATTR

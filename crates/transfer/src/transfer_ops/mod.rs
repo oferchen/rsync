@@ -376,6 +376,7 @@ mod tests {
             None,
             None,
             protocol::FnameCmpType::Fname,
+            None,
             0,
             base_iflags,
             &config,
@@ -428,6 +429,74 @@ mod tests {
         assert!(
             bytes.windows(2).any(|w| w == [0x00, 0x80]),
             "masked request keeps ITEM_TRANSFER only: {bytes:02x?}"
+        );
+    }
+
+    /// Encodes a bare (no-signature) file request with the given basis type and
+    /// optional xname, returning the wire bytes.
+    fn request_bytes_basis(fnamecmp_type: protocol::FnameCmpType, xname: Option<&[u8]>) -> Vec<u8> {
+        use protocol::codec::MonotonicNdxWriter;
+        let config = iflags_request_config();
+        let mut ndx_codec = MonotonicNdxWriter::new(config.protocol.as_u8());
+        let mut buf: Vec<u8> = Vec::new();
+        send_file_request(
+            &mut buf,
+            &mut ndx_codec,
+            0,
+            std::path::PathBuf::from("data.txt"),
+            None,
+            None,
+            fnamecmp_type,
+            xname,
+            0,
+            u32::from(SenderAttrs::ITEM_TRANSFER),
+            &config,
+        )
+        .expect("request encodes");
+        buf
+    }
+
+    /// A fuzzy-matched basis must be advertised to the sender byte-for-byte like
+    /// upstream: iflags with ITEM_TRANSFER|ITEM_BASIS_TYPE_FOLLOWS|
+    /// ITEM_XNAME_FOLLOWS (0x9800), then the FNAMECMP_FUZZY byte (0x83), then the
+    /// basename as a vstring. Without this the sender/receiver never learn the
+    /// fuzzy basis over the wire, diverging from a real rsync generator.
+    /// upstream: generator.c:1944-1948 (iflags + fnamecmp_type + write_vstring),
+    /// io.c:2297 (vstring length prefix).
+    #[test]
+    fn fuzzy_request_emits_fnamecmp_fuzzy_and_xname_vstring() {
+        let bytes = request_bytes_basis(protocol::FnameCmpType::Fuzzy(0), Some(b"old.txt"));
+        // iflags 0x9800 (LE 00 98), then 0x83, then vstring(7, "old.txt").
+        let expected: &[u8] = &[
+            0x00, 0x98, 0x83, 0x07, b'o', b'l', b'd', b'.', b't', b'x', b't',
+        ];
+        assert!(
+            bytes.windows(expected.len()).any(|w| w == expected),
+            "fuzzy request must carry iflags|0x83|vstring(basename): {bytes:02x?}"
+        );
+    }
+
+    /// With `--fuzzy` off (an ordinary FNAME basis) the request must be
+    /// unchanged: bare ITEM_TRANSFER (0x8000, LE 00 80), no basis-type byte and
+    /// no xname vstring. Guards against the fuzzy path leaking into the common
+    /// case.
+    #[test]
+    fn fname_request_has_no_basis_byte_or_xname() {
+        let bytes = request_bytes_basis(protocol::FnameCmpType::Fname, None);
+        assert!(
+            bytes.windows(2).any(|w| w == [0x00, 0x80]),
+            "FNAME request carries bare ITEM_TRANSFER: {bytes:02x?}"
+        );
+        assert!(
+            !bytes.contains(&0x83),
+            "FNAME request must not emit the FNAMECMP_FUZZY byte: {bytes:02x?}"
+        );
+        // No ITEM_XNAME_FOLLOWS in the shortint (0x9000 / 0x9800 would set it).
+        assert!(
+            !bytes
+                .windows(2)
+                .any(|w| w == [0x00, 0x98] || w == [0x00, 0x90]),
+            "FNAME request must not set ITEM_XNAME_FOLLOWS: {bytes:02x?}"
         );
     }
 }

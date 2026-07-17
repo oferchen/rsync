@@ -60,6 +60,7 @@ pub fn send_file_request<W: Write + ?Sized>(
     signature: Option<FileSignature>,
     basis_path: Option<PathBuf>,
     fnamecmp_type: protocol::FnameCmpType,
+    xname: Option<&[u8]>,
     target_size: u64,
     base_iflags: u32,
     config: &RequestConfig<'_>,
@@ -72,6 +73,7 @@ pub fn send_file_request<W: Write + ?Sized>(
         signature,
         basis_path,
         fnamecmp_type,
+        xname,
         target_size,
         base_iflags,
         config,
@@ -98,6 +100,7 @@ pub fn send_file_request_xattr<W: Write + ?Sized>(
     signature: Option<FileSignature>,
     basis_path: Option<PathBuf>,
     fnamecmp_type: protocol::FnameCmpType,
+    xname: Option<&[u8]>,
     target_size: u64,
     base_iflags: u32,
     config: &RequestConfig<'_>,
@@ -138,12 +141,24 @@ pub fn send_file_request_xattr<W: Write + ?Sized>(
         if emit_basis_type {
             iflags |= SenderAttrs::ITEM_BASIS_TYPE_FOLLOWS;
         }
+        // upstream: generator.c:1945-1946 - a fuzzy basis also sets
+        // ITEM_XNAME_FOLLOWS and sends the basis basename as a vstring so the
+        // peer's receiver can open the same file.
+        let emit_xname = fnamecmp_type.is_fuzzy() && xname.is_some();
+        if emit_xname {
+            iflags |= SenderAttrs::ITEM_XNAME_FOLLOWS;
+        }
         writer.write_all(&iflags.to_le_bytes())?;
 
-        // upstream: sender.c:186-187 - the basis-type byte precedes the xname
-        // and any xattr-request payload.
+        // upstream: sender.c:186-189 - the basis-type byte precedes the xname
+        // vstring, which precedes any xattr-request payload.
         if emit_basis_type {
             writer.write_all(&[u8::from(fnamecmp_type)])?;
+        }
+        if emit_xname {
+            // upstream: generator.c:591,1948 write_vstring() - 1- or 2-byte
+            // length prefix then the basename bytes (io.c:2297), not a varint.
+            protocol::write_vstring(writer, xname.unwrap_or(&[]))?;
         }
 
         // upstream: sender.c:193-196 - write xattr request data after iflags

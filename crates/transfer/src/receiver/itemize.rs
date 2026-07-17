@@ -301,7 +301,7 @@ impl ReceiverContext {
                 | crate::generator::ItemFlags::ITEM_IS_NEW) as u16;
             writer.write_all(&iflags.to_le_bytes())?;
             // upstream: generator.c:591 write_vstring(sock_f_out, xname, len)
-            write_itemize_vstring(writer, leader_name.as_bytes())?;
+            protocol::write_vstring(writer, leader_name.as_bytes())?;
             emitted += 1;
         }
 
@@ -392,26 +392,4 @@ impl ReceiverContext {
         }
         Ok(())
     }
-}
-
-/// Writes an itemize xname as an upstream `io.c:write_vstring()` length-prefixed
-/// string: a single length byte for `len <= 0x7F`, otherwise a two-byte prefix
-/// (`0x80 | len >> 8`, then `len & 0xFF`). Mirrors the reader in
-/// `generator::item_flags::ItemFlags::read_trailing` so a peer's sender decodes
-/// the exact bytes it emitted.
-fn write_itemize_vstring<W: std::io::Write + ?Sized>(
-    writer: &mut W,
-    bytes: &[u8],
-) -> std::io::Result<()> {
-    let len = bytes.len();
-    debug_assert!(len <= 0x7FFF, "itemize xname exceeds vstring capacity");
-    if len > 0x7F {
-        writer.write_all(&[((len >> 8) as u8) | 0x80, (len & 0xFF) as u8])?;
-    } else {
-        writer.write_all(&[len as u8])?;
-    }
-    if len > 0 {
-        writer.write_all(bytes)?;
-    }
-    Ok(())
 }

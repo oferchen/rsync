@@ -33,10 +33,17 @@ pub struct BasisFileResult {
     /// Which basis the generator selected, sent to the sender as the
     /// `fnamecmp_type` byte behind `ITEM_BASIS_TYPE_FOLLOWS`.
     ///
-    /// [`protocol::FnameCmpType::Fname`] for the ordinary destination basis (no wire byte)
-    /// and [`protocol::FnameCmpType::PartialDir`] (`0x81`) when the basis was recovered
-    /// from `--partial-dir` on a resume. upstream: generator.c:1759-1765,1853.
+    /// [`protocol::FnameCmpType::Fname`] for the ordinary destination basis (no wire byte),
+    /// [`protocol::FnameCmpType::PartialDir`] (`0x81`) when the basis was recovered
+    /// from `--partial-dir` on a resume (upstream: generator.c:1759-1765,1853), and
+    /// `FnameCmpType::Fuzzy(0)` (`0x83`) for a `--fuzzy` match found in the
+    /// destination directory (upstream: generator.c:1785,1945).
     pub fnamecmp_type: protocol::FnameCmpType,
+    /// The alternate-basis name sent as an `ITEM_XNAME_FOLLOWS` vstring, present
+    /// only for a fuzzy match. Upstream sends `fuzzy_file->basename` - the bare
+    /// basename, resolved by the receiver relative to the target's directory
+    /// (upstream: generator.c:1948, receiver.c:838-841).
+    pub xname: Option<Vec<u8>>,
 }
 
 impl BasisFileResult {
@@ -45,6 +52,7 @@ impl BasisFileResult {
         signature: None,
         basis_path: None,
         fnamecmp_type: protocol::FnameCmpType::Fname,
+        xname: None,
     };
 
     /// Returns true if no basis file was found.
@@ -177,15 +185,39 @@ fn try_open_file(path: &std::path::Path) -> Option<(fs::File, u64, PathBuf)> {
     Some((file, size, path.to_path_buf()))
 }
 
+/// A fuzzy basis the generator selected, ready to be signed and advertised.
+struct FuzzyBasis {
+    /// The opened basis file, its size, and path (for signature generation).
+    file: fs::File,
+    size: u64,
+    path: PathBuf,
+    /// The `fnamecmp_type` to advertise on the wire (upstream: generator.c:1785).
+    fnamecmp_type: protocol::FnameCmpType,
+    /// The `ITEM_XNAME_FOLLOWS` basename, present only when `fnamecmp_type` is
+    /// fuzzy (upstream: generator.c:1948 `fuzzy_file->basename`).
+    xname: Option<Vec<u8>>,
+}
+
 /// Attempts fuzzy matching to find a similar basis file.
 ///
 /// For level 1, searches only the destination directory. For level 2,
 /// also searches reference directories (`--compare-dest`, `--copy-dest`,
 /// `--link-dest`) by passing them as fuzzy basis dirs to the matcher.
 ///
+/// A match found in the destination directory is advertised as
+/// `FnameCmpType::Fuzzy(0)` (`0x83`) with the basis basename as the
+/// `ITEM_XNAME_FOLLOWS` vstring, byte-for-byte with upstream. A match sourced
+/// from a level-2 reference directory would be `FNAMECMP_FUZZY + i`, but oc's
+/// reference-directory list is filtered by existence before the search, so its
+/// index cannot be mapped back to the peer's `basis_dir[]` slot reliably; such a
+/// match is therefore advertised conservatively as `FNAMECMP_FNAME` (no wire
+/// byte). Either way the basis is reconstructed in-process from `basis_path`, so
+/// the choice only affects the wire advertisement, never correctness.
+///
 /// # Upstream Reference
 ///
-/// - `generator.c:1580` - Fuzzy matching via `find_fuzzy_basis()`
+/// - `generator.c:831` - `find_fuzzy()`; `*fnamecmp_type_ptr = FNAMECMP_FUZZY + i`
+/// - `generator.c:1945-1948` - `ITEM_XNAME_FOLLOWS` + `fuzzy_file->basename`
 /// - `options.c:2120` - `fuzzy_basis = basis_dir_cnt + 1` for level 2
 fn try_fuzzy_match(
     relative_path: &std::path::Path,
@@ -194,7 +226,7 @@ fn try_fuzzy_match(
     target_mtime: i64,
     fuzzy_level: u8,
     reference_directories: &[ReferenceDirectory],
-) -> Option<(fs::File, u64, PathBuf)> {
+) -> Option<FuzzyBasis> {
     let target_name = relative_path.file_name()?;
 
     // Build the search directory for reference dirs: join each reference
@@ -223,7 +255,47 @@ fn try_fuzzy_match(
         &relative_path.display().to_string(),
         &fuzzy_match.path.display().to_string(),
     );
-    try_open_file(&fuzzy_match.path)
+    let (file, size, path) = try_open_file(&fuzzy_match.path)?;
+
+    // A candidate the matcher found in the destination directory is the
+    // upstream `FNAMECMP_FUZZY + 0` case: advertise 0x83 plus the basename.
+    // Anything else (a level-2 reference-directory hit) stays FNAMECMP_FNAME.
+    let from_dest_dir = path.parent() == Some(dest_dir);
+    let (fnamecmp_type, xname) = if from_dest_dir {
+        let basename = path
+            .file_name()
+            .map(basename_wire_bytes)
+            .unwrap_or_default();
+        (protocol::FnameCmpType::Fuzzy(0), Some(basename))
+    } else {
+        (protocol::FnameCmpType::Fname, None)
+    };
+
+    Some(FuzzyBasis {
+        file,
+        size,
+        path,
+        fnamecmp_type,
+        xname,
+    })
+}
+
+/// Encodes a basis basename as the raw bytes upstream puts in the xname vstring.
+///
+/// On Unix the on-disk bytes are used verbatim (`fuzzy_file->basename` is a raw
+/// byte string). On other platforms the name is UTF-8 encoded, matching how oc
+/// serialises file names elsewhere; the receiver reconstructs from the
+/// in-process basis path regardless, so this only affects the wire byte form.
+fn basename_wire_bytes(name: &std::ffi::OsStr) -> Vec<u8> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::ffi::OsStrExt;
+        name.as_bytes().to_vec()
+    }
+    #[cfg(not(unix))]
+    {
+        name.to_string_lossy().into_owned().into_bytes()
+    }
 }
 
 /// Generates a signature for the given basis file.
@@ -243,6 +315,7 @@ fn generate_basis_signature(
     basis_size: u64,
     basis_path: PathBuf,
     fnamecmp_type: protocol::FnameCmpType,
+    xname: Option<Vec<u8>>,
     config: SignatureGenerationConfig,
 ) -> BasisFileResult {
     // Cap the per-file strong-sum length by the negotiated transfer checksum's
@@ -357,6 +430,7 @@ fn generate_basis_signature(
             signature: Some(sig),
             basis_path: Some(basis_path),
             fnamecmp_type,
+            xname,
         },
         Err(_) => BasisFileResult::EMPTY,
     }
@@ -491,48 +565,66 @@ pub fn find_basis_file_with_config(config: &BasisFileConfig<'_>) -> BasisFileRes
         return BasisFileResult::EMPTY;
     }
 
-    // Try sources in priority order: exact match -> reference dirs -> fuzzy.
-    // The ordinary destination / reference-dir / fuzzy basis is reported to the
-    // sender as FNAMECMP_FNAME (no basis-type byte), matching the pre-existing
-    // wire encoding for those cases.
-    let basis = try_open_file(config.file_path)
-        .or_else(|| try_reference_directories(config.relative_path, config.reference_directories))
-        .or_else(|| {
-            if config.fuzzy_level > 0 {
-                try_fuzzy_match(
-                    config.relative_path,
-                    config.dest_dir,
-                    config.target_size,
-                    config.target_mtime,
-                    config.fuzzy_level,
-                    config.reference_directories,
-                )
-            } else {
-                None
-            }
-        });
-
-    let (fnamecmp_type, basis) = match basis {
-        Some(found) => (protocol::FnameCmpType::Fname, Some(found)),
-        // upstream: generator.c:1759-1765 - when the destination stat fails and
-        // --partial-dir is set, fall back to the same-named regular file inside
-        // the partial directory as the delta basis and tag it
-        // FNAMECMP_PARTIAL_DIR (prepare_to_open at generator.c:1850-1855).
-        None => match config.partial_dir {
-            Some(dir) => match crate::temp_guard::partial_dir_fname(config.file_path, dir) {
-                Some(partial) => (protocol::FnameCmpType::PartialDir, try_open_file(&partial)),
-                None => (protocol::FnameCmpType::Fname, None),
-            },
-            None => (protocol::FnameCmpType::Fname, None),
-        },
-    };
-
-    let Some((file, size, path)) = basis else {
-        return BasisFileResult::EMPTY;
-    };
-
     let sig_config = SignatureGenerationConfig::from_basis_config(config);
-    generate_basis_signature(file, size, path, fnamecmp_type, sig_config)
+
+    // Try sources in priority order: exact match -> reference dirs -> fuzzy ->
+    // partial-dir. The exact destination and reference-dir basis are reported to
+    // the sender as FNAMECMP_FNAME (no basis-type byte).
+    if let Some((file, size, path)) = try_open_file(config.file_path)
+        .or_else(|| try_reference_directories(config.relative_path, config.reference_directories))
+    {
+        return generate_basis_signature(
+            file,
+            size,
+            path,
+            protocol::FnameCmpType::Fname,
+            None,
+            sig_config,
+        );
+    }
+
+    // upstream: generator.c:1785,1945-1948 - a fuzzy match is tagged
+    // FNAMECMP_FUZZY (0x83) and its basename is sent as the ITEM_XNAME_FOLLOWS
+    // vstring so the peer's receiver can open the same basis.
+    if config.fuzzy_level > 0
+        && let Some(fuzzy) = try_fuzzy_match(
+            config.relative_path,
+            config.dest_dir,
+            config.target_size,
+            config.target_mtime,
+            config.fuzzy_level,
+            config.reference_directories,
+        )
+    {
+        return generate_basis_signature(
+            fuzzy.file,
+            fuzzy.size,
+            fuzzy.path,
+            fuzzy.fnamecmp_type,
+            fuzzy.xname,
+            sig_config,
+        );
+    }
+
+    // upstream: generator.c:1759-1765 - when the destination stat fails and
+    // --partial-dir is set, fall back to the same-named regular file inside
+    // the partial directory as the delta basis and tag it FNAMECMP_PARTIAL_DIR
+    // (prepare_to_open at generator.c:1850-1855).
+    if let Some(dir) = config.partial_dir
+        && let Some(partial) = crate::temp_guard::partial_dir_fname(config.file_path, dir)
+        && let Some((file, size, path)) = try_open_file(&partial)
+    {
+        return generate_basis_signature(
+            file,
+            size,
+            path,
+            protocol::FnameCmpType::PartialDir,
+            None,
+            sig_config,
+        );
+    }
+
+    BasisFileResult::EMPTY
 }
 
 #[cfg(test)]
@@ -833,6 +925,7 @@ mod tests {
             size as u64,
             path.clone(),
             protocol::FnameCmpType::Fname,
+            None,
             cfg,
         );
 
@@ -960,6 +1053,107 @@ mod tests {
         assert_eq!(result.fnamecmp_type, protocol::FnameCmpType::Fname);
     }
 
+    /// A `--fuzzy` match found in the destination directory must be selected as
+    /// a delta basis (not a whole-file send) AND advertised as FNAMECMP_FUZZY
+    /// (0x83) with the basis basename as the xname, so a remote peer opens the
+    /// same basis. upstream: generator.c:1785,1945-1948.
+    #[test]
+    fn fuzzy_match_tagged_fuzzy_with_basename_xname() {
+        use std::io::Write;
+
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let dest_dir = tmp.path();
+        // Target "data.txt" is absent; a same-suffix candidate "data2.txt" sits
+        // beside it. The shared ".txt" suffix keeps the fuzzy distance under the
+        // cap (upstream weights suffix mismatches x10, generator.c:894).
+        let data: Vec<u8> = (0..8192u32).map(|i| (i % 251) as u8).collect();
+        {
+            let mut f = fs::File::create(dest_dir.join("data2.txt")).expect("create candidate");
+            f.write_all(&data).expect("write candidate");
+            f.flush().expect("flush");
+        }
+
+        let dest_file = dest_dir.join("data.txt");
+        let config = BasisFileConfig {
+            file_path: &dest_file,
+            dest_dir,
+            relative_path: std::path::Path::new("data.txt"),
+            target_size: data.len() as u64,
+            target_mtime: 0,
+            fuzzy_level: 1,
+            reference_directories: &[],
+            partial_dir: None,
+            protocol: ProtocolVersion::NEWEST,
+            checksum_length: NonZeroU8::new(16).unwrap(),
+            checksum_algorithm: SignatureAlgorithm::Md4,
+            whole_file: false,
+            compat_flags: None,
+        };
+
+        let result = find_basis_file_with_config(&config);
+        assert!(
+            result.signature.is_some(),
+            "a fuzzy basis must yield a signature (delta transfer), not EMPTY"
+        );
+        assert_eq!(
+            result.basis_path.as_deref(),
+            Some(dest_dir.join("data2.txt").as_path()),
+            "the basis path must point at the fuzzy candidate"
+        );
+        assert_eq!(
+            result.fnamecmp_type,
+            protocol::FnameCmpType::Fuzzy(0),
+            "a dest-dir fuzzy match is FNAMECMP_FUZZY + 0 (0x83)"
+        );
+        assert_eq!(
+            result.xname.as_deref(),
+            Some(b"data2.txt".as_slice()),
+            "the xname is the basis basename only, not a path"
+        );
+    }
+
+    /// With `--fuzzy` off, the same layout finds no basis: the fuzzy candidate is
+    /// never consulted, so the result is EMPTY (whole-file send) with no
+    /// FNAMECMP_FUZZY advertisement. Guards the strict no-op when fuzzy is off.
+    #[test]
+    fn fuzzy_off_ignores_candidate() {
+        use std::io::Write;
+
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let dest_dir = tmp.path();
+        let data: Vec<u8> = (0..4096u32).map(|i| (i % 251) as u8).collect();
+        {
+            let mut f = fs::File::create(dest_dir.join("data.bak")).expect("create candidate");
+            f.write_all(&data).expect("write candidate");
+            f.flush().expect("flush");
+        }
+
+        let dest_file = dest_dir.join("data.txt");
+        let config = BasisFileConfig {
+            file_path: &dest_file,
+            dest_dir,
+            relative_path: std::path::Path::new("data.txt"),
+            target_size: data.len() as u64,
+            target_mtime: 0,
+            fuzzy_level: 0,
+            reference_directories: &[],
+            partial_dir: None,
+            protocol: ProtocolVersion::NEWEST,
+            checksum_length: NonZeroU8::new(16).unwrap(),
+            checksum_algorithm: SignatureAlgorithm::Md4,
+            whole_file: false,
+            compat_flags: None,
+        };
+
+        let result = find_basis_file_with_config(&config);
+        assert!(
+            result.is_empty(),
+            "fuzzy-off must not consult the candidate; result is a whole-file send"
+        );
+        assert_eq!(result.fnamecmp_type, protocol::FnameCmpType::Fname);
+        assert!(result.xname.is_none());
+    }
+
     /// Phase-2 redo must still send a checksum-based delta against the basis,
     /// not a whole-file literal resend. When a file fails its whole-file
     /// verification in phase 1, upstream re-queues it and regenerates the block
@@ -1068,6 +1262,7 @@ mod tests {
                 data.len() as u64,
                 path.clone(),
                 protocol::FnameCmpType::Fname,
+                None,
                 cfg,
             )
             .signature
@@ -1162,6 +1357,7 @@ mod tests {
                 file_size,
                 path.clone(),
                 protocol::FnameCmpType::Fname,
+                None,
                 cfg,
             )
             .signature
