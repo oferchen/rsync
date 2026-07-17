@@ -612,18 +612,13 @@ where
         flags.bits() as i32
     };
 
-    // upstream: compat.c:750 - checksum_seed = (int32)time(NULL) ^ (getpid() << 6)
-    // Batch files record the seed so the receiver can verify checksums during
-    // replay. Without a proper seed, upstream's --read-batch rejects the file.
-    let batch_checksum_seed = {
-        use std::time::{SystemTime, UNIX_EPOCH};
-        let timestamp = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_secs() as i32;
-        let pid = std::process::id() as i32;
-        timestamp ^ (pid << 6)
-    };
+    // upstream: compat.c:811-814 setup_protocol() -
+    //   if (!checksum_seed) checksum_seed = time(NULL) ^ (getpid() << 6);
+    //   write_int(f_out, checksum_seed);
+    // The finalised seed is what io.c:2524 start_write_batch() records in the
+    // batch header, so an explicit --checksum-seed=N (options.c:847) must flow
+    // through unchanged and only an unset seed is derived from time/pid.
+    let batch_checksum_seed = explicit_batch_seed(checksum_seed).unwrap_or_else(derive_batch_seed);
 
     // upstream: batch.c:259 - write_arg(raw_argv[0]) writes the exact binary
     // path the user invoked into the generated BATCH.sh. Mirror that by
@@ -1125,6 +1120,36 @@ fn resolve_old_args(explicit: Option<bool>, protect_args: Option<bool>) -> Optio
     }
 }
 
+/// Returns the explicit checksum seed to record in a batch header, or `None`
+/// when the seed must be derived from time/pid.
+///
+/// upstream: compat.c:811-812 `if (!checksum_seed) checksum_seed = ...` - the
+/// parsed `--checksum-seed=N` (options.c:847, an `int` defaulting to 0) is only
+/// treated as user-supplied when it is non-zero. An explicit `--checksum-seed=0`
+/// is indistinguishable from an unset seed and therefore derives a fresh one,
+/// exactly like omitting the flag. The bit pattern of `N` is preserved across
+/// the `u32 -> i32` cast so that seeds above `i32::MAX` round-trip through the
+/// batch header verbatim.
+fn explicit_batch_seed(parsed: Option<u32>) -> Option<i32> {
+    match parsed {
+        Some(n) if n != 0 => Some(n as i32),
+        _ => None,
+    }
+}
+
+/// Derives a checksum seed from the current time and pid.
+///
+/// upstream: compat.c:812 `checksum_seed = time(NULL) ^ (getpid() << 6)`.
+fn derive_batch_seed() -> i32 {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    let timestamp = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs() as i32;
+    let pid = std::process::id() as i32;
+    timestamp ^ (pid << 6)
+}
+
 /// Opens a log file for appending, creating it if it does not exist.
 fn open_log_file(path: &PathBuf) -> io::Result<File> {
     let mut options = OpenOptions::new();
@@ -1134,4 +1159,48 @@ fn open_log_file(path: &PathBuf) -> io::Result<File> {
         options.mode(0o666);
     }
     options.open(path)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{derive_batch_seed, explicit_batch_seed};
+
+    /// An explicit non-zero `--checksum-seed=N` must be recorded in the batch
+    /// header verbatim so `--read-batch` replays with the identical seed.
+    /// upstream: compat.c:813-814 writes the parsed seed unchanged; io.c:2524
+    /// tees that same value into the header. Regressing this (e.g. always
+    /// deriving a fresh seed) makes upstream `--read-batch` compute mismatched
+    /// checksums against a batch oc-rsync wrote.
+    #[test]
+    fn explicit_nonzero_seed_flows_through() {
+        assert_eq!(explicit_batch_seed(Some(12345)), Some(12345));
+    }
+
+    /// Seeds above `i32::MAX` must round-trip by bit pattern, matching upstream's
+    /// `int checksum_seed` storage.
+    #[test]
+    fn explicit_large_seed_preserves_bit_pattern() {
+        assert_eq!(
+            explicit_batch_seed(Some(0xDEAD_BEEF)),
+            Some(0xDEAD_BEEFu32 as i32)
+        );
+    }
+
+    /// upstream: compat.c:811 `if (!checksum_seed)` treats an explicit
+    /// `--checksum-seed=0` as unset, so it derives a fresh seed just like
+    /// omitting the flag. Both must return `None` from the explicit-seed
+    /// selector so the caller falls back to derivation.
+    #[test]
+    fn zero_and_unset_seed_derive() {
+        assert_eq!(explicit_batch_seed(Some(0)), None);
+        assert_eq!(explicit_batch_seed(None), None);
+    }
+
+    /// The derivation is `time ^ (pid << 6)`; the pid term is non-zero for any
+    /// real process, so the derived seed is a defined value the header can
+    /// carry. This guards the fallback path from panicking.
+    #[test]
+    fn derive_seed_is_defined() {
+        let _ = derive_batch_seed();
+    }
 }

@@ -42,6 +42,14 @@ use super::{
 /// `#define MAX_BASIS_DIRS 20`.
 const MAX_BASIS_DIRS: usize = 20;
 
+/// Maximum length of a `--write-batch`/`--only-write-batch`/`--read-batch`
+/// file name. upstream: options.c:225 `#define MAX_BATCH_NAME_LEN 256`
+/// ("Must be less than MAXPATHLEN-13"). A longer name is rejected by
+/// `parse_arguments()` with `RERR_SYNTAX` (1). All three batch options write
+/// the same upstream `batch_name` variable, so the cap applies to whichever
+/// one is present.
+pub(super) const MAX_BATCH_NAME_LEN: usize = 256;
+
 /// Enforces upstream's [`MAX_BASIS_DIRS`] cap on alt-dest directories.
 ///
 /// upstream: options.c:1749-1754 rejects the arg that would push the shared
@@ -922,6 +930,23 @@ where
                 format!("--read-batch cannot be used with --remove-{which}-files\n"),
             ));
         }
+    }
+
+    // upstream: options.c:2169-2174 - the shared `batch_name` (set by
+    // --write-batch, --only-write-batch, or --read-batch) must be at most
+    // MAX_BATCH_NAME_LEN bytes, else parse_arguments() aborts with
+    // RERR_SYNTAX (1). Length is measured in bytes (strlen), matching
+    // upstream's `strlen(batch_name) > MAX_BATCH_NAME_LEN`.
+    if let Some(name) = write_batch
+        .as_ref()
+        .or(only_write_batch.as_ref())
+        .or(read_batch.as_ref())
+        && name.len() > MAX_BATCH_NAME_LEN
+    {
+        return Err(clap::Error::raw(
+            clap::error::ErrorKind::ValueValidation,
+            format!("the batch-file name must be {MAX_BATCH_NAME_LEN} characters or less.\n"),
+        ));
     }
 
     // upstream: options.c:2299-2304 - a `--suffix` containing a slash is rejected

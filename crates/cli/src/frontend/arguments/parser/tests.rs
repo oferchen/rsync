@@ -1,3 +1,4 @@
+use super::entry::MAX_BATCH_NAME_LEN;
 use super::*;
 use core::client::HumanReadableMode;
 
@@ -1034,4 +1035,75 @@ fn alt_dest_types_cannot_be_mixed() {
         err.to_string().contains("cannot be used with"),
         "expected a conflict diagnostic, got: {err}"
     );
+}
+
+/// upstream: options.c:2169 uses `strlen(batch_name) > MAX_BATCH_NAME_LEN`, so a
+/// name of exactly MAX_BATCH_NAME_LEN (256) bytes is the boundary and must be
+/// accepted. This is observable behaviour a drop-in must not regress: rejecting
+/// a legal name would break scripts that upstream rsync accepts.
+#[test]
+fn batch_name_at_max_len_accepted() {
+    let name = "a".repeat(MAX_BATCH_NAME_LEN);
+    let result = parse_test_args([
+        format!("--write-batch={name}"),
+        "src/".into(),
+        "dst/".into(),
+    ]);
+    assert!(
+        result.is_ok(),
+        "batch name of exactly {MAX_BATCH_NAME_LEN} bytes must be accepted"
+    );
+}
+
+/// upstream: options.c:2169-2174 rejects a batch name longer than
+/// MAX_BATCH_NAME_LEN with the verbatim message
+/// `the batch-file name must be 256 characters or less.` and exits
+/// `RERR_SYNTAX` (1). The exact wording and the syntax exit code are both
+/// observable output a drop-in must mirror byte-for-byte, so this test asserts
+/// the message text and the `ValueValidation` kind (which
+/// `clap_parse_error_exit_code` maps to 1, unlike the `--checksum-choice`
+/// special case that maps to 4).
+#[test]
+fn batch_name_over_max_len_rejected_with_exact_message() {
+    let name = "a".repeat(MAX_BATCH_NAME_LEN + 1);
+    let err = parse_test_args([
+        format!("--write-batch={name}"),
+        "src/".into(),
+        "dst/".into(),
+    ])
+    .expect_err("batch name over the cap must be rejected");
+    assert_eq!(err.kind(), clap::error::ErrorKind::ValueValidation);
+    assert!(
+        err.to_string()
+            .contains("the batch-file name must be 256 characters or less."),
+        "unexpected message: {err}"
+    );
+}
+
+/// upstream: options.c:796-798 - `--write-batch`, `--only-write-batch`, and
+/// `--read-batch` all set the same `batch_name`, so the length cap fires for
+/// whichever one is present. `--read-batch` takes a dest-only operand.
+#[test]
+fn batch_name_cap_enforced_for_each_option() {
+    let over = "a".repeat(MAX_BATCH_NAME_LEN + 1);
+    let at = "a".repeat(MAX_BATCH_NAME_LEN);
+    for (flag, extra) in [
+        ("--write-batch", vec!["src/", "dst/"]),
+        ("--only-write-batch", vec!["src/", "dst/"]),
+        ("--read-batch", vec!["dst/"]),
+    ] {
+        let build = |name: &str| {
+            let mut args = vec![format!("{flag}={name}")];
+            args.extend(extra.iter().map(|s| (*s).to_string()));
+            args
+        };
+        assert!(
+            parse_test_args(build(&over)).is_err(),
+            "{flag} name over the cap must be rejected"
+        );
+        assert!(
+            parse_test_args(build(&at)).is_ok(),
+            "{flag} name of exactly {MAX_BATCH_NAME_LEN} bytes must be accepted"
+        );
+    }
 }
