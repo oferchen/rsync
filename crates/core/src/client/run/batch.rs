@@ -400,6 +400,14 @@ fn replay_batch(
         total_size,
         0,
         protocol::DeleteStats::new(),
+        // The --read-batch replay engine does not reconstruct a per-type
+        // ITEM_IS_NEW breakdown, so carry every replayed entry as a created
+        // regular file (reg = files_transferred, the pre-existing behaviour):
+        // `regular()` derives it from `files` with the typed sub-counts at zero.
+        protocol::CreatedStats {
+            files: files_transferred as u64,
+            ..protocol::CreatedStats::new()
+        },
     );
     Ok(ClientSummary::from_summary(summary))
 }

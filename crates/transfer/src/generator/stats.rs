@@ -8,7 +8,7 @@
 use std::time::Duration;
 
 use protocol::codec::{MonotonicNdxWriter, NdxCodecEnum};
-use protocol::stats::DeleteStats;
+use protocol::stats::{CreatedStats, DeleteStats};
 
 /// Result from the transfer loop phase of the generator.
 ///
@@ -29,6 +29,10 @@ pub(crate) struct TransferLoopResult {
     pub(crate) matched_data: u64,
     /// Bytes sent as literal data across all files (upstream: literal_data).
     pub(crate) literal_data: u64,
+    /// Per-type tally of entries the receiver reported as created via
+    /// `ITEM_IS_NEW` iflags on the wire (upstream: `stats.created_*` in
+    /// `sender.c:295-308`). Reconstructed locally, never sent over the wire.
+    pub(crate) created_stats: CreatedStats,
     /// NDX read codec state carried over for the goodbye handshake.
     pub(crate) ndx_read_codec: NdxCodecEnum,
     /// NDX write codec state carried over for the goodbye handshake.
@@ -74,6 +78,15 @@ pub struct GeneratorStats {
     pub flist_first_byte_latency: Option<Duration>,
     /// Accumulated deletion statistics from the receiver via `NDX_DEL_STATS`.
     pub delete_stats: DeleteStats,
+    /// Per-type tally of entries created at the destination, reconstructed on
+    /// the local sender from the `ITEM_IS_NEW` iflags read off the wire. Never
+    /// sent over the wire - upstream recomputes the "Number of created files"
+    /// breakdown on the client (here, the sender) from its own itemize pass.
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `sender.c:295-308` - `stats.created_*++` under `iflags & ITEM_IS_NEW`.
+    pub created_stats: CreatedStats,
     /// Accumulated I/O error flags from file list building and transfer.
     ///
     /// Uses [`crate::generator::io_error_flags`] constants. When `IOERR_VANISHED`

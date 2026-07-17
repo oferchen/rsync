@@ -308,6 +308,20 @@ impl ReceiverContext {
             }
         }
 
+        // upstream: receiver.c:736-738 - every newly created directory
+        // (ITEM_IS_NEW) bumps stats.created_dirs, independent of itemize
+        // visibility, so the "Number of created files" dir sub-count is correct
+        // even without -i. Runs before (and separate from) the itemize gate
+        // below, which is skipped when the client did not request itemize output.
+        for ((idx, _, dir_path), is_new) in dir_entries.iter().zip(dir_was_new.iter()) {
+            if *is_new
+                && !failed_dir_paths.contains(dir_path)
+                && !skipped_existing_dirs.contains(dir_path)
+            {
+                self.record_created(self.file_list[*idx].mode());
+            }
+        }
+
         // upstream: generator.c:1480-1483 - emit per-directory itemize rows
         // after the mkdir pass and before metadata application, so the row
         // ordering matches upstream's recv_generator() pass over the flist.

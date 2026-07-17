@@ -98,7 +98,17 @@ impl ReceiverContext {
             // only its metadata is refreshed.
             let up_to_date = existing_special_matches(&node_path, entry, is_device);
 
+            // Whether the destination already existed before this create. Only a
+            // truly absent destination is ITEM_IS_NEW and bumps
+            // stats.created_devices / stats.created_specials; a same-type
+            // up-to-date node or a replaced wrong-type obstacle is not a
+            // creation (upstream generator.c:1651-1670, `statret < 0`). Probed
+            // before the obstacle unlink below so a replacement is not
+            // misclassified as new.
+            let mut dest_existed = up_to_date;
+
             if !up_to_date {
+                dest_existed = fs::symlink_metadata(&node_path).is_ok();
                 // upstream: generator.c:1667 - `else if (basis_dir[0] != NULL)`
                 // is reached only when the destination is absent (`statret !=
                 // 0`). An identical node in a `--compare-dest` basis leaves the
@@ -246,6 +256,12 @@ impl ReceiverContext {
                 let iflags =
                     ItemFlags::from_raw(ItemFlags::ITEM_LOCAL_CHANGE | ItemFlags::ITEM_IS_NEW);
                 let _ = self.emit_itemize(writer, &iflags, entry);
+                if !dest_existed {
+                    // upstream: receiver.c:743-746 - a newly created device
+                    // (created_devices) or FIFO/socket (created_specials),
+                    // classified by mode.
+                    self.record_created(entry.mode());
+                }
             }
         }
         Ok(())

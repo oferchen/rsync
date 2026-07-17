@@ -584,6 +584,10 @@ impl ReceiverContext {
             directories_failed: 0,
             files_skipped: 0,
             delete_stats: DeleteStats::new(),
+            // Fold the per-type created tally reconstructed from ITEM_IS_NEW so
+            // the client renders the "Number of created files" breakdown.
+            // upstream: receiver.c:733-746.
+            created_stats: self.created_stats.get(),
             delete_limit_exceeded: false,
             literal_data: 0,
             matched_data: 0,

@@ -6,6 +6,7 @@
 //! - Protocol 29: adds flist build/transfer time fields
 //! - Protocol < 29: basic byte counts only
 
+mod created;
 mod delete;
 mod display;
 mod transfer;
@@ -13,5 +14,6 @@ mod transfer;
 #[cfg(test)]
 mod tests;
 
+pub use created::CreatedStats;
 pub use delete::DeleteStats;
 pub use transfer::TransferStats;

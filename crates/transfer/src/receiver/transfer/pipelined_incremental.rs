@@ -82,6 +82,11 @@ impl ReceiverContext {
                     Some((is_new, iflags_raw)) => {
                         if is_new {
                             stats.directories_created += 1;
+                            // upstream: receiver.c:736-738 - a new directory
+                            // (ITEM_IS_NEW) bumps stats.created_dirs. Counts the
+                            // pre-flight-mkdir'd transfer root too, so the
+                            // "Number of created files" dir sub-count matches.
+                            self.record_created(file_entry.mode());
                         }
                         // upstream: generator.c:1480-1483 - itemize each dir with
                         // the flags computed against its pre-apply stat. A new dir
@@ -282,6 +287,11 @@ impl ReceiverContext {
         }
         stats.metadata_errors = metadata_errors;
         stats.redo_count = redo_count;
+        // Fold the per-type created tally accumulated across the directory,
+        // symlink, special, and file-transfer passes into the returned stats so
+        // the client reconstructs the "Number of created files" breakdown.
+        // upstream: receiver.c:733-746 - stats.created_* accumulated locally.
+        stats.created_stats = self.created_stats.get();
 
         // Drain the deferred itemize rows in flist-index order before the
         // goodbye handshake, matching upstream's single-pass emission ordering.

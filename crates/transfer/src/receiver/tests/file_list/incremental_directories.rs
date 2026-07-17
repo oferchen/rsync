@@ -168,6 +168,7 @@ fn transfer_stats_has_incremental_fields() {
         directories_failed: 2,
         files_skipped: 5,
         delete_stats: DeleteStats::new(),
+        created_stats: protocol::stats::CreatedStats::new(),
         delete_limit_exceeded: false,
         literal_data: 0,
         matched_data: 0,

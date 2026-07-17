@@ -291,6 +291,11 @@ impl ReceiverContext {
         }
         stats.metadata_errors = metadata_errors;
         stats.redo_count = redo_count;
+        // Fold the per-type created tally (dirs, symlinks, specials, and new
+        // regular files) accumulated across the creation and transfer passes
+        // into the returned stats so the client reconstructs the "Number of
+        // created files" breakdown. upstream: receiver.c:733-746.
+        stats.created_stats = self.created_stats.get();
 
         Ok(stats)
     }
