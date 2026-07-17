@@ -55,3 +55,26 @@ pub use invocation::{
     determine_transfer_role, operand_is_remote,
 };
 pub use ssh_transfer::run_ssh_transfer;
+
+use rsync_io::ssh::SshAddressFamily;
+
+use super::config::AddressMode;
+
+/// Maps the negotiated [`AddressMode`] onto the SSH `-4`/`-6` hint shared by
+/// every `do_cmd()`-equivalent SSH spawn (single-host and remote-to-remote).
+///
+/// [`AddressMode::Default`] yields `None`, leaving the ssh child free to pick
+/// whichever family resolves first; the forced modes map to the matching flag.
+///
+/// upstream: main.c:587-594 `do_cmd()` gates the `-4`/`-6` append on
+/// `default_af_hint` being set (and the remote-shell basename being `ssh`,
+/// which the builder enforces).
+pub(in crate::client::remote) const fn ssh_address_family(
+    mode: AddressMode,
+) -> Option<SshAddressFamily> {
+    match mode {
+        AddressMode::Default => None,
+        AddressMode::Ipv4 => Some(SshAddressFamily::V4),
+        AddressMode::Ipv6 => Some(SshAddressFamily::V6),
+    }
+}
