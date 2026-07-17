@@ -31,38 +31,64 @@ use crate::xattr_unix as backend;
 #[cfg(windows)]
 use crate::xattr_windows as backend;
 
-/// Checks whether an xattr name is permitted for the current privilege level.
-///
-/// Mirrors upstream rsync `xattrs.c:64-68, 254-257`:
-/// - Non-root on Linux: only `user.*` xattrs are accessible.
-/// - Root on Linux: all namespaces except `system.*`.
-/// - On non-Linux platforms (macOS, FreeBSD, Windows): no namespace
-///   filtering, since those systems use a single flat namespace (NTFS ADS,
-///   `com.apple.*`, FreeBSD `user`-only, etc.).
+/// Caches the euid check since it does not change during a transfer.
 #[cfg(target_os = "linux")]
-fn is_xattr_permitted(name: &str) -> bool {
+fn is_root() -> bool {
+    use std::sync::OnceLock;
+    static IS_ROOT: OnceLock<bool> = OnceLock::new();
+    *IS_ROOT.get_or_init(|| rustix::process::geteuid().is_root())
+}
+
+/// Returns upstream's `user_only` value for the receiver/local xattr paths.
+///
+/// upstream: xattrs.c:237 `int user_only = am_sender ? 0 : !am_root;` - the
+/// sender never restricts to the user namespace (see [`read_xattrs_for_wire`],
+/// which passes `user_only = false`); every receiver-side or local-copy path
+/// restricts a non-root process to the `user.*` namespace, matching upstream's
+/// non-root receiver behaviour (`xattrs.c:830` allows a non-root process to
+/// store only the user namespace).
+fn receiver_user_only() -> bool {
+    #[cfg(target_os = "linux")]
+    {
+        !is_root()
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        false
+    }
+}
+
+/// Checks whether an xattr name is permitted for the given `user_only` mode.
+///
+/// Mirrors upstream rsync `xattrs.c:256` in `rsync_xal_get()`:
+/// `user_only ? !HAS_PREFIX(name, USER_PREFIX) : HAS_PREFIX(name, SYSTEM_PREFIX)`.
+/// - `user_only == false` (the sender, root or not; and root receivers): keep
+///   every namespace except `system.*`, so `user.*`, `security.*` (e.g. SELinux
+///   labels), and `trusted.*` are all transmitted.
+/// - `user_only == true` (a non-root receiver): keep only the `user.*` namespace,
+///   matching the non-root store restriction at `xattrs.c:830`.
+/// - On non-Linux platforms (macOS, FreeBSD, Windows): no namespace filtering,
+///   since those systems use a single flat namespace (NTFS ADS, `com.apple.*`,
+///   FreeBSD `user`-only, etc.).
+#[cfg(target_os = "linux")]
+fn is_xattr_permitted(name: &str, user_only: bool) -> bool {
     const USER_PREFIX: &str = "user.";
     const SYSTEM_PREFIX: &str = "system.";
 
-    /// Caches the euid check since it does not change during a transfer.
-    fn is_root() -> bool {
-        use std::sync::OnceLock;
-        static IS_ROOT: OnceLock<bool> = OnceLock::new();
-        *IS_ROOT.get_or_init(|| rustix::process::geteuid().is_root())
-    }
-
-    if is_root() {
-        // upstream: root skips system.* namespace
-        !name.starts_with(SYSTEM_PREFIX)
-    } else {
-        // upstream: non-root only sees user.* namespace
+    // upstream: xattrs.c:256 rsync_xal_get() - the sender (user_only == false)
+    // skips only the system.* namespace, so a non-root sender still transmits
+    // user.*, security.*, and trusted.*; a non-root receiver (user_only == true)
+    // keeps only user.*.
+    if user_only {
         name.starts_with(USER_PREFIX)
+    } else {
+        !name.starts_with(SYSTEM_PREFIX)
     }
 }
 
 /// On non-Linux platforms (macOS, FreeBSD, Windows), all xattr names are permitted.
 #[cfg(not(target_os = "linux"))]
-fn is_xattr_permitted(_name: &str) -> bool {
+fn is_xattr_permitted(_name: &str, _user_only: bool) -> bool {
     true
 }
 
@@ -72,13 +98,17 @@ fn map_xattr_error(context: &'static str, path: &Path, error: io::Error) -> Meta
 
 /// Returns the byte-encoded xattr names present on `path`, filtered by
 /// [`is_xattr_permitted`].
-fn list_attributes(path: &Path, follow_symlinks: bool) -> Result<Vec<Vec<u8>>, MetadataError> {
+fn list_attributes(
+    path: &Path,
+    follow_symlinks: bool,
+    user_only: bool,
+) -> Result<Vec<Vec<u8>>, MetadataError> {
     let attrs = backend::list_attributes(path, follow_symlinks)
         .map_err(|error| map_xattr_error("list extended attributes", path, error))?;
     Ok(attrs
         .into_iter()
         .map(|name| backend::os_name_to_bytes(&name))
-        .filter(|bytes| is_xattr_permitted(&String::from_utf8_lossy(bytes)))
+        .filter(|bytes| is_xattr_permitted(&String::from_utf8_lossy(bytes), user_only))
         .collect())
 }
 
@@ -126,7 +156,10 @@ pub fn read_xattrs_for_wire(
 ) -> Result<XattrList, MetadataError> {
     use protocol::xattr::{XattrEntry, local_to_wire};
 
-    let attrs = list_attributes(path, follow_symlinks)?;
+    // upstream: xattrs.c:237 rsync_xal_get() - the sender sets user_only=0, so a
+    // non-root sender skips only the system.* namespace and still transmits
+    // user.*, security.* (e.g. SELinux labels), and trusted.* xattrs.
+    let attrs = list_attributes(path, follow_symlinks, false)?;
     let mut entries = Vec::with_capacity(attrs.len());
 
     for name in &attrs {
@@ -179,13 +212,13 @@ pub fn strip_source_xattrs(
     destination: &Path,
     follow_symlinks: bool,
 ) -> Result<(), MetadataError> {
-    let source_attrs = list_attributes(source, follow_symlinks)?;
+    let source_attrs = list_attributes(source, follow_symlinks, receiver_user_only())?;
     if source_attrs.is_empty() {
         return Ok(());
     }
     let source_names: HashSet<Vec<u8>> = source_attrs.into_iter().collect();
 
-    for name in list_attributes(destination, follow_symlinks)? {
+    for name in list_attributes(destination, follow_symlinks, receiver_user_only())? {
         if source_names.contains(&name) {
             remove_attribute(destination, &name, follow_symlinks)?;
         }
@@ -204,7 +237,7 @@ pub fn strip_source_xattrs(
 // upstream: xattrs.c xattrs_differ() via generator.c:468 unchanged_attrs()
 pub fn xattrs_match(a: &Path, b: &Path, follow_symlinks: bool) -> Result<bool, MetadataError> {
     let mut a_map: std::collections::BTreeMap<Vec<u8>, Vec<u8>> = std::collections::BTreeMap::new();
-    for name in list_attributes(a, follow_symlinks)? {
+    for name in list_attributes(a, follow_symlinks, receiver_user_only())? {
         if protocol::xattr::is_rsync_internal(&String::from_utf8_lossy(&name)) {
             continue;
         }
@@ -214,7 +247,7 @@ pub fn xattrs_match(a: &Path, b: &Path, follow_symlinks: bool) -> Result<bool, M
     }
 
     let mut b_count = 0usize;
-    for name in list_attributes(b, follow_symlinks)? {
+    for name in list_attributes(b, follow_symlinks, receiver_user_only())? {
         if protocol::xattr::is_rsync_internal(&String::from_utf8_lossy(&name)) {
             continue;
         }
@@ -245,7 +278,7 @@ pub fn sync_xattrs(
     follow_symlinks: bool,
     filter: Option<&dyn Fn(&str) -> bool>,
 ) -> Result<(), MetadataError> {
-    let source_attrs = list_attributes(source, follow_symlinks)?;
+    let source_attrs = list_attributes(source, follow_symlinks, receiver_user_only())?;
     let mut retained: HashSet<Vec<u8>> = HashSet::with_capacity(source_attrs.len());
 
     for name in &source_attrs {
@@ -269,7 +302,7 @@ pub fn sync_xattrs(
         }
     }
 
-    let destination_attrs = list_attributes(destination, follow_symlinks)?;
+    let destination_attrs = list_attributes(destination, follow_symlinks, receiver_user_only())?;
     for name in &destination_attrs {
         if retained.contains(name) {
             continue;
@@ -349,7 +382,7 @@ pub fn apply_xattrs_from_list(
         }
 
         let name_str = entry.name_str();
-        if !is_xattr_permitted(&name_str) {
+        if !is_xattr_permitted(&name_str, receiver_user_only()) {
             continue;
         }
 
@@ -375,14 +408,15 @@ pub fn apply_xattrs_from_list(
     }
 
     // Remove destination xattrs not in the source list
-    let dest_attrs = list_attributes(destination, follow_symlinks)?;
+    let dest_attrs = list_attributes(destination, follow_symlinks, receiver_user_only())?;
     for name in &dest_attrs {
         if !applied_names.contains(name) {
             let name_str = String::from_utf8_lossy(name);
             // upstream: xattrs.c:1026 rsync_xal_set() skips the removal of a
             // destination xattr whose name is excluded by an `x`-modifier
             // filter rule, leaving the pre-existing value in place.
-            if is_xattr_permitted(&name_str) && filter.is_none_or(|predicate| predicate(&name_str))
+            if is_xattr_permitted(&name_str, receiver_user_only())
+                && filter.is_none_or(|predicate| predicate(&name_str))
             {
                 remove_attribute(destination, name, follow_symlinks)?;
             }
@@ -450,7 +484,7 @@ mod tests {
             return;
         }
 
-        let attrs = list_attributes(&file, false).expect("list attrs");
+        let attrs = list_attributes(&file, false, receiver_user_only()).expect("list attrs");
         // May have system attributes, but should not error
         assert!(
             attrs
@@ -522,7 +556,7 @@ mod tests {
 
         strip_source_xattrs(&source, &dest, false).expect("strip");
 
-        let dest_attrs = list_attributes(&dest, false).expect("list dest");
+        let dest_attrs = list_attributes(&dest, false, receiver_user_only()).expect("list dest");
         assert!(
             !dest_attrs.contains(&shared),
             "source-originated attribute must be stripped from the destination"
@@ -532,7 +566,8 @@ mod tests {
             "filesystem-applied (dest-only) attribute must be preserved"
         );
         // The source is read-only input to the strip and must be untouched.
-        let source_attrs = list_attributes(&source, false).expect("list source");
+        let source_attrs =
+            list_attributes(&source, false, receiver_user_only()).expect("list source");
         assert!(source_attrs.contains(&shared), "source must be untouched");
     }
 
@@ -554,7 +589,7 @@ mod tests {
 
         strip_source_xattrs(&source, &dest, false).expect("strip with empty source");
 
-        let dest_attrs = list_attributes(&dest, false).expect("list dest");
+        let dest_attrs = list_attributes(&dest, false, receiver_user_only()).expect("list dest");
         assert!(
             dest_attrs.contains(&dest_only),
             "with no source attributes the destination is left untouched"
@@ -833,36 +868,60 @@ mod tests {
 
     #[test]
     fn is_xattr_permitted_allows_user_namespace() {
-        // user.* should always be permitted regardless of platform
-        assert!(is_xattr_permitted("user.test"));
-        assert!(is_xattr_permitted("user.rsync.%stat"));
+        // user.* should always be permitted regardless of platform or mode.
+        assert!(is_xattr_permitted("user.test", false));
+        assert!(is_xattr_permitted("user.rsync.%stat", false));
+        assert!(is_xattr_permitted("user.test", true));
     }
 
+    /// A non-root sender (upstream `user_only == false`) must transmit every
+    /// namespace except `system.*`. This regresses a fidelity gap where oc
+    /// restricted a non-root sender to the `user.*` namespace and silently
+    /// dropped `security.*` xattrs (e.g. SELinux labels) and `trusted.*`, which
+    /// upstream `rsync_xal_get()` sends because `user_only = am_sender ? 0 :
+    /// !am_root` is always 0 on the sender. The decision is exercised directly
+    /// with representative names so it runs deterministically as an ordinary
+    /// user - setting real `security.*` xattrs would require privilege.
     #[test]
     #[cfg(target_os = "linux")]
-    fn is_xattr_permitted_filters_namespaces_on_linux() {
-        if rustix::process::geteuid().is_root() {
-            // Root: all namespaces except system.*
-            assert!(is_xattr_permitted("user.test"));
-            assert!(is_xattr_permitted("security.selinux"));
-            assert!(is_xattr_permitted("trusted.test"));
-            assert!(!is_xattr_permitted("system.posix_acl_access"));
-        } else {
-            // Non-root: only user.* namespace
-            assert!(is_xattr_permitted("user.test"));
-            assert!(!is_xattr_permitted("security.selinux"));
-            assert!(!is_xattr_permitted("trusted.test"));
-            assert!(!is_xattr_permitted("system.posix_acl_access"));
-        }
+    fn is_xattr_permitted_sender_skips_only_system_namespace() {
+        // upstream: xattrs.c:256 rsync_xal_get() with user_only == false takes
+        // the `HAS_PREFIX(name, SYSTEM_PREFIX)` branch: skip only system.*.
+        assert!(is_xattr_permitted("user.foo", false));
+        assert!(
+            is_xattr_permitted("security.selinux", false),
+            "a non-root sender must transmit security.* xattrs (SELinux labels)"
+        );
+        assert!(is_xattr_permitted("trusted.test", false));
+        assert!(
+            !is_xattr_permitted("system.posix_acl_access", false),
+            "the system.* namespace is never sent"
+        );
+    }
+
+    /// A non-root receiver (upstream `user_only == true`) keeps only the
+    /// `user.*` namespace, matching upstream's non-root store restriction at
+    /// `xattrs.c:830`.
+    #[test]
+    #[cfg(target_os = "linux")]
+    fn is_xattr_permitted_receiver_user_only_keeps_only_user_namespace() {
+        // upstream: xattrs.c:256 rsync_xal_get() with user_only == true takes
+        // the `!HAS_PREFIX(name, USER_PREFIX)` branch: keep only user.*.
+        assert!(is_xattr_permitted("user.foo", true));
+        assert!(!is_xattr_permitted("security.selinux", true));
+        assert!(!is_xattr_permitted("trusted.test", true));
+        assert!(!is_xattr_permitted("system.posix_acl_access", true));
     }
 
     #[test]
     #[cfg(not(target_os = "linux"))]
     fn is_xattr_permitted_allows_all_on_non_linux() {
-        assert!(is_xattr_permitted("user.test"));
-        assert!(is_xattr_permitted("com.apple.quarantine"));
-        assert!(is_xattr_permitted("security.selinux"));
-        assert!(is_xattr_permitted("system.posix_acl_access"));
+        for user_only in [false, true] {
+            assert!(is_xattr_permitted("user.test", user_only));
+            assert!(is_xattr_permitted("com.apple.quarantine", user_only));
+            assert!(is_xattr_permitted("security.selinux", user_only));
+            assert!(is_xattr_permitted("system.posix_acl_access", user_only));
+        }
     }
 
     #[test]
