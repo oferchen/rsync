@@ -56,6 +56,7 @@ mod perms;
 mod read;
 mod reconstruct;
 mod reset;
+mod special;
 mod sync;
 
 #[cfg(test)]

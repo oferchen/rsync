@@ -16,6 +16,7 @@ use super::reconstruct::{reconstruct_acl, rsync_acl_to_entries};
 #[cfg(any(target_os = "linux", target_os = "freebsd"))]
 use super::reset::clear_default_acl;
 use super::reset::reset_acl_from_mode;
+use super::special::restore_special_mode_bits;
 
 /// Applies parsed ACLs from an [`AclCache`] to a destination file.
 ///
@@ -77,6 +78,15 @@ pub fn apply_acls_from_cache(
             }
         } else {
             reset_acl_from_mode(destination)?;
+        }
+
+        // upstream: acls.c:924-932 + rsync.c:659-660 - applying the access ACL
+        // re-derives the permission bits and clears setuid/setgid/sticky, which
+        // are not representable in a POSIX ACL. Restore them from the
+        // transferred mode so setgid/setuid binaries and sticky dirs survive an
+        // ACL transfer.
+        if let Some(mode) = mode {
+            restore_special_mode_bits(destination, mode)?;
         }
     }
 
