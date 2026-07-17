@@ -29,6 +29,20 @@ impl UserMapping {
         self.0.map_uid(uid, numeric_ids)
     }
 
+    /// Applies the mapping to `uid` keyed on the sender-transmitted `name`.
+    ///
+    /// See [`NameMapping::map_uid_named`]: name/wildcard rules match against the
+    /// wire name rather than a receiver-local reverse lookup of the raw id,
+    /// mirroring upstream `recv_add_id` (uidlist.c:255-268).
+    pub fn map_uid_named(
+        &self,
+        uid: RawUid,
+        name: Option<&[u8]>,
+        numeric_ids: bool,
+    ) -> io::Result<Option<RawUid>> {
+        self.0.map_uid_named(uid, name, numeric_ids)
+    }
+
     /// Reports whether the mapping contains any rules.
     #[must_use]
     pub const fn is_empty(&self) -> bool {
@@ -60,6 +74,20 @@ impl GroupMapping {
     /// Applies the mapping to the supplied GID.
     pub(crate) fn map_gid(&self, gid: RawGid, numeric_ids: bool) -> io::Result<Option<RawGid>> {
         self.0.map_gid(gid, numeric_ids)
+    }
+
+    /// Applies the mapping to `gid` keyed on the sender-transmitted `name`.
+    ///
+    /// See [`NameMapping::map_gid_named`]: name/wildcard rules match against the
+    /// wire name rather than a receiver-local reverse lookup of the raw id,
+    /// mirroring upstream `recv_add_id` (uidlist.c:255-268).
+    pub fn map_gid_named(
+        &self,
+        gid: RawGid,
+        name: Option<&[u8]>,
+        numeric_ids: bool,
+    ) -> io::Result<Option<RawGid>> {
+        self.0.map_gid_named(gid, name, numeric_ids)
     }
 
     /// Reports whether the mapping contains any rules.

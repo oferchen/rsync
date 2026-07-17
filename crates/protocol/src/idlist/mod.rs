@@ -165,6 +165,21 @@ impl IdList {
             .collect()
     }
 
+    /// Returns an owned `remote id -> transmitted name` snapshot.
+    ///
+    /// Only ids that carried a name on the wire are included. Used by the
+    /// receiver to key `--usermap`/`--groupmap` rules on the sender-transmitted
+    /// name while it rewrites the file list, mirroring upstream `recv_add_id`'s
+    /// use of the wire `name` (uidlist.c:255-268) rather than a receiver-local
+    /// reverse lookup of the raw id.
+    #[must_use]
+    pub fn names_snapshot(&self) -> HashMap<u32, Vec<u8>> {
+        self.entries
+            .iter()
+            .filter_map(|(id, entry)| entry.name.as_ref().map(|name| (*id, name.clone())))
+            .collect()
+    }
+
     /// Writes the ID list to the wire.
     ///
     /// # Wire Format

@@ -131,18 +131,24 @@ impl ReceiverContext {
     }
 
     /// Remaps every file-list entry's uid/gid from the sender's raw ids to the
-    /// local ids resolved from the transmitted name lists.
+    /// local ids chosen by upstream `match_uid`/`match_gid`.
     ///
-    /// Mirrors upstream `recv_id_list()`, which rewrites `F_OWNER`/`F_GROUP` for
-    /// every flist entry via `match_uid`/`match_gid` after the name lists are
-    /// read. Without this the receiver would chown files to the raw sender id,
-    /// which is wrong when that id is absent locally or bound to a different
-    /// name than on the sender - the very purpose of the non-numeric name list
-    /// is that ownership follows the *name* across hosts with different id
-    /// namespaces. Ids not present in the sent list keep their raw value,
-    /// matching `match_uid`'s `recv_add_id(..., NULL)` fallback (`--usermap`,
-    /// which upstream folds into `match_uid`, is applied later in
-    /// `metadata::apply`).
+    /// Mirrors upstream `recv_id_list()` (uidlist.c:483-494), which rewrites
+    /// `F_OWNER`/`F_GROUP` for every flist entry after the name lists are read.
+    /// For each entry this applies `recv_add_id`'s precedence (uidlist.c:255-282)
+    /// on the RAW sender id and its transmitted name:
+    ///
+    /// 1. Scan the `--usermap`/`--groupmap` rules FIRST - numeric rules keyed on
+    ///    the raw sender id, name/wildcard rules on the transmitted wire name
+    ///    (uidlist.c:255-268). The map result wins.
+    /// 2. Otherwise fall back to `user_to_uid(name)` - the id-list's
+    ///    name-resolved local id (uidlist.c:273-280).
+    /// 3. Otherwise keep the raw id (uidlist.c:281-282 / `recv_add_id(.., NULL)`).
+    ///
+    /// The map is keyed on the raw sender id and the wire name here, before
+    /// `F_OWNER` is overwritten: a numeric rule (`--usermap=1000:5000`) keys on
+    /// the raw id and a name/wildcard rule (`--usermap=deploy:www-data`) on the
+    /// sender name, neither of which survives a premature local-name rewrite.
     ///
     /// Only applied for `numeric_ids == 0` (upstream's `!numeric_ids` gate): an
     /// explicit or daemon-forced numeric transfer keeps the raw ids. Non-root
@@ -153,30 +159,45 @@ impl ReceiverContext {
     /// # Upstream Reference
     ///
     /// - `uidlist.c:483-494` - `recv_id_list()` remap loop
+    /// - `uidlist.c:255-282` - `recv_add_id()` map-then-name precedence
     pub(crate) fn remap_flist_ownership_from_id_lists(&mut self) {
         if !self.config.flags.numeric_ids.is_off() {
             return;
         }
         if self.config.flags.owner {
+            let mapping = self.config.user_mapping.clone();
             let uid_map = self.uid_list.resolved_map();
-            if !uid_map.is_empty() {
+            let names = self.uid_list.names_snapshot();
+            let has_rules = mapping.as_ref().is_some_and(|m| !m.is_empty());
+            if !uid_map.is_empty() || has_rules {
                 for entry in self.file_list.iter_mut() {
-                    if let Some(uid) = entry.uid()
-                        && let Some(&local) = uid_map.get(&uid)
-                    {
-                        entry.set_uid(local);
+                    if let Some(uid) = entry.uid() {
+                        let mapped = mapping.as_ref().and_then(|m| {
+                            m.map_uid_named(uid, names.get(&uid).map(Vec::as_slice), false)
+                                .ok()
+                                .flatten()
+                        });
+                        let resolved = mapped.unwrap_or_else(|| *uid_map.get(&uid).unwrap_or(&uid));
+                        entry.set_uid(resolved);
                     }
                 }
             }
         }
         if self.config.flags.group {
+            let mapping = self.config.group_mapping.clone();
             let gid_map = self.gid_list.resolved_map();
-            if !gid_map.is_empty() {
+            let names = self.gid_list.names_snapshot();
+            let has_rules = mapping.as_ref().is_some_and(|m| !m.is_empty());
+            if !gid_map.is_empty() || has_rules {
                 for entry in self.file_list.iter_mut() {
-                    if let Some(gid) = entry.gid()
-                        && let Some(&local) = gid_map.get(&gid)
-                    {
-                        entry.set_gid(local);
+                    if let Some(gid) = entry.gid() {
+                        let mapped = mapping.as_ref().and_then(|m| {
+                            m.map_gid_named(gid, names.get(&gid).map(Vec::as_slice), false)
+                                .ok()
+                                .flatten()
+                        });
+                        let resolved = mapped.unwrap_or_else(|| *gid_map.get(&gid).unwrap_or(&gid));
+                        entry.set_gid(resolved);
                     }
                 }
             }

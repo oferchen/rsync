@@ -743,3 +743,162 @@ fn parse_target_empty_fails() {
     let error = parse_target(MappingKind::User, "", "x:").unwrap_err();
     assert!(error.to_string().contains("No name found after colon"));
 }
+
+// --- Sender-name-keyed resolution (upstream recv_add_id, uidlist.c:255-268) ---
+
+#[test]
+fn map_uid_named_matches_sender_name_not_receiver_lookup() {
+    // upstream: uidlist.c:257-261 - a NAME/WILD rule is compared against the
+    // name the SENDER transmitted, not a name re-derived from the raw id on the
+    // receiver. The raw sender uid (1500) need not exist locally; the rule keys
+    // on "deploy". Target 0 is numeric so the assertion needs no /etc/passwd.
+    let mapping = UserMapping::parse("deploy:0").unwrap();
+    assert_eq!(
+        mapping.map_uid_named(1500, Some(b"deploy"), false).unwrap(),
+        Some(0),
+        "a name usermap must map by the sender-transmitted name"
+    );
+    // A different transmitted name does not match, and there is no receiver-local
+    // reverse-lookup fallback inside the matcher.
+    assert_eq!(
+        mapping
+            .map_uid_named(1500, Some(b"someone-else"), false)
+            .unwrap(),
+        None,
+        "the rule must not match a non-matching sender name"
+    );
+}
+
+#[test]
+fn map_uid_named_wildcard_matches_sender_name() {
+    // upstream: uidlist.c:256-258 - NFLAGS_WILD_NAME_MATCH uses wildmatch on the
+    // transmitted name. `dep*` matches "deploy".
+    let mapping = UserMapping::parse("dep*:0").unwrap();
+    assert_eq!(
+        mapping.map_uid_named(1500, Some(b"deploy"), false).unwrap(),
+        Some(0)
+    );
+    assert_eq!(
+        mapping.map_uid_named(1500, Some(b"other"), false).unwrap(),
+        None
+    );
+}
+
+#[test]
+fn map_uid_named_numeric_rule_keys_on_raw_id_regardless_of_name() {
+    // upstream: uidlist.c:262-267 - a numeric (max_id / exact-id) rule matches on
+    // the raw sender id, independent of the transmitted name. This is the case a
+    // premature local-name F_OWNER rewrite would break (the id would no longer be
+    // 1500 by the time the map ran).
+    let mapping = UserMapping::parse("1500:5000").unwrap();
+    assert_eq!(
+        mapping.map_uid_named(1500, Some(b"deploy"), false).unwrap(),
+        Some(5000)
+    );
+    // Name is irrelevant to a numeric rule.
+    assert_eq!(
+        mapping.map_uid_named(1500, None, false).unwrap(),
+        Some(5000)
+    );
+    assert_eq!(
+        mapping.map_uid_named(1499, Some(b"deploy"), false).unwrap(),
+        None
+    );
+}
+
+#[test]
+fn map_uid_named_numeric_ids_drops_name_but_keeps_numeric_rules() {
+    // upstream: uidlist.c - under --numeric-ids the sender omits names, so
+    // recv_add_id sees name="": NAME/WILD rules cannot match, numeric rules still can.
+    let name_rule = UserMapping::parse("deploy:0").unwrap();
+    assert_eq!(
+        name_rule
+            .map_uid_named(1500, Some(b"deploy"), true)
+            .unwrap(),
+        None,
+        "name rules must not match under numeric-ids (name dropped)"
+    );
+    let numeric_rule = UserMapping::parse("1500:5000").unwrap();
+    assert_eq!(
+        numeric_rule
+            .map_uid_named(1500, Some(b"deploy"), true)
+            .unwrap(),
+        Some(5000),
+        "numeric rules still key on the raw id under numeric-ids"
+    );
+}
+
+#[test]
+fn map_gid_named_matches_sender_name_symmetric() {
+    // Group counterpart: `--groupmap` keys on the sender-transmitted group name.
+    let mapping = GroupMapping::parse("build:0").unwrap();
+    assert_eq!(
+        mapping.map_gid_named(2500, Some(b"build"), false).unwrap(),
+        Some(0)
+    );
+    assert_eq!(
+        mapping.map_gid_named(2500, Some(b"nope"), false).unwrap(),
+        None
+    );
+    let numeric = GroupMapping::parse("2500:6000").unwrap();
+    assert_eq!(
+        numeric.map_gid_named(2500, None, false).unwrap(),
+        Some(6000)
+    );
+}
+
+#[test]
+fn map_uid_named_empty_name_matcher_matches_nameless_id() {
+    // upstream: uidlist.c:252-253 + 259-261 - `if (!name) name = ""`, so an
+    // empty-name matcher (`:7`) matches a nameless id and remaps it.
+    let mapping = UserMapping::parse(":7").unwrap();
+    assert_eq!(mapping.map_uid_named(4242, None, false).unwrap(), Some(7));
+    assert_eq!(
+        mapping.map_uid_named(4242, Some(b""), false).unwrap(),
+        Some(7)
+    );
+    // A non-empty transmitted name does not match the empty-name matcher.
+    assert_eq!(
+        mapping.map_uid_named(4242, Some(b"joe"), false).unwrap(),
+        None
+    );
+}
+
+#[test]
+fn map_uid_named_first_match_wins() {
+    // upstream: uidlist.c:255-269 - recv_add_id breaks on the first matching
+    // node; rules are stored in declaration order.
+    let mapping = UserMapping::parse("dep*:1,deploy:2").unwrap();
+    assert_eq!(
+        mapping.map_uid_named(1500, Some(b"deploy"), false).unwrap(),
+        Some(1),
+        "the earlier wildcard rule wins over a later exact rule"
+    );
+}
+
+// --- wildmatch parity (upstream lib/wildmatch.c) for the cases --usermap uses ---
+
+#[test]
+fn wildmatch_parity_common_cases() {
+    // upstream: lib/wildmatch.c dowild - the patterns actually reachable from a
+    // `--usermap`/`--groupmap` source. Names contain no '/', so `*` and `**`
+    // behave identically (both span the whole remaining name).
+    assert!(wildcard_matches("dep*", "deploy"));
+    assert!(wildcard_matches("**", "anything"));
+    assert!(wildcard_matches("*", "anything"));
+    assert!(wildcard_matches("w?w-data", "www-data"));
+    assert!(wildcard_matches("[a-z]ww-data", "www-data"));
+    assert!(wildcard_matches("[!x]ww-data", "www-data"));
+    assert!(!wildcard_matches("dep?", "deploy"));
+    assert!(!wildcard_matches("adm*", "deploy"));
+    assert!(!wildcard_matches("[a-z]ww", "1ww"));
+}
+
+#[test]
+fn wildmatch_parity_star_spans_multiple_chars() {
+    // upstream: lib/wildmatch.c - `*` backtracks to span any run of characters.
+    assert!(wildcard_matches("a*z", "abcxyz"));
+    assert!(wildcard_matches("*data", "www-data"));
+    assert!(wildcard_matches("www-*", "www-data"));
+    assert!(!wildcard_matches("a*z", "abcxy"));
+}

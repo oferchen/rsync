@@ -68,6 +68,31 @@ impl UserMapping {
     pub fn spec(&self) -> &str {
         ""
     }
+
+    /// Reports whether the mapping contains any rules.
+    ///
+    /// Always `true` on Windows: the type cannot be constructed, so this is
+    /// only provided to keep the cross-platform API surface uniform.
+    #[must_use]
+    pub const fn is_empty(&self) -> bool {
+        true
+    }
+
+    /// Never maps on Windows (no POSIX user database).
+    ///
+    /// Provided so the receiver's id-list remap compiles cross-platform; the
+    /// value can never be constructed, so this is never actually called.
+    ///
+    /// # Errors
+    /// Never returns an error.
+    pub fn map_uid_named(
+        &self,
+        _uid: u32,
+        _name: Option<&[u8]>,
+        _numeric_ids: bool,
+    ) -> std::io::Result<Option<u32>> {
+        Ok(None)
+    }
 }
 
 /// Group mapping placeholder for Windows.
@@ -92,6 +117,31 @@ impl GroupMapping {
     #[must_use]
     pub fn spec(&self) -> &str {
         ""
+    }
+
+    /// Reports whether the mapping contains any rules.
+    ///
+    /// Always `true` on Windows: the type cannot be constructed, so this is
+    /// only provided to keep the cross-platform API surface uniform.
+    #[must_use]
+    pub const fn is_empty(&self) -> bool {
+        true
+    }
+
+    /// Never maps on Windows (no POSIX group database).
+    ///
+    /// Provided so the receiver's id-list remap compiles cross-platform; the
+    /// value can never be constructed, so this is never actually called.
+    ///
+    /// # Errors
+    /// Never returns an error.
+    pub fn map_gid_named(
+        &self,
+        _gid: u32,
+        _name: Option<&[u8]>,
+        _numeric_ids: bool,
+    ) -> std::io::Result<Option<u32>> {
+        Ok(None)
     }
 }
 

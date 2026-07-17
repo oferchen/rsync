@@ -186,3 +186,94 @@ fn remap_keeps_raw_uid_under_numeric_ids() {
         "--numeric-ids must keep the raw sender id"
     );
 }
+
+/// Builds a receiver context whose uid list carries `(id, name)` and applies the
+/// remap with the supplied `--usermap`, returning the entry's resolved uid.
+#[cfg(unix)]
+fn remap_uid_with_usermap(sender_uid: u32, sender_name: &[u8], usermap: &str) -> Option<u32> {
+    use protocol::flist::FileEntry;
+    use protocol::idlist::IdList;
+
+    let handshake = test_handshake();
+    let mut config = config_with_flags(true, false, NumericIds::Off);
+    config.user_mapping = Some(metadata::UserMapping::parse(usermap).unwrap());
+    let mut ctx = ReceiverContext::new_for_test(&handshake, config);
+    let proto = ctx.protocol().as_u8();
+
+    let mut sender = IdList::new();
+    sender.add_id(sender_uid, Some(sender_name.to_vec()));
+    let mut wire = Vec::new();
+    sender
+        .write(&mut wire, false, proto)
+        .expect("write uid list");
+
+    let mut cursor = Cursor::new(wire);
+    ctx.receive_id_lists(&mut cursor).expect("read uid list");
+
+    let mut entry = FileEntry::new_file("f".into(), 0, 0o644);
+    entry.set_uid(sender_uid);
+    ctx.file_list.push(entry);
+
+    ctx.remap_flist_ownership_from_id_lists();
+    ctx.file_list[0].uid()
+}
+
+/// Bug #1 (name keying): a NAME `--usermap` rule must match the sender's
+/// transmitted name, not a name re-derived from the raw id on the receiver.
+///
+/// upstream: uidlist.c:257-261 recv_add_id - `strcmp(node->u.name, name)` where
+/// `name` is the transmitted wire name. Sender uid 1500 need not exist locally.
+#[test]
+#[cfg(unix)]
+fn remap_usermap_name_rule_matches_sender_name() {
+    assert_eq!(
+        remap_uid_with_usermap(1500, b"deploy", "deploy:0"),
+        Some(0),
+        "usermap must map by the sender-transmitted name 'deploy'"
+    );
+}
+
+/// Bug #1 (wildcard keying): a WILD `--usermap` rule matches the sender name.
+///
+/// upstream: uidlist.c:256-258 - `wildmatch(node->u.name, name)`.
+#[test]
+#[cfg(unix)]
+fn remap_usermap_wildcard_rule_matches_sender_name() {
+    assert_eq!(
+        remap_uid_with_usermap(1500, b"deploy", "dep*:0"),
+        Some(0),
+        "wildcard usermap must map by the sender name 'deploy'"
+    );
+}
+
+/// Bug #2 (ordering): a NUMERIC `--usermap` rule keys on the RAW sender id and
+/// must win over the id-list's local-name resolution. Here the sender name
+/// "root" resolves locally to uid 0, so a premature F_OWNER rewrite to 0 (the
+/// old behaviour) would make the numeric rule `1500:5000` miss. The map must be
+/// applied on the raw id 1500 first.
+///
+/// upstream: uidlist.c:262-267 + 483-494 - the uidmap scan runs on the raw id
+/// inside match_uid before F_OWNER is rewritten.
+#[test]
+#[cfg(unix)]
+fn remap_usermap_numeric_rule_wins_over_local_name_resolution() {
+    assert_eq!(
+        remap_uid_with_usermap(1500, b"root", "1500:5000"),
+        Some(5000),
+        "numeric usermap on the raw id must win over name resolution"
+    );
+}
+
+/// No `--usermap` rule matches: fall back to the id-list's name-resolved local
+/// id (upstream user_to_uid(name)). Sender name "root" resolves to local uid 0.
+///
+/// upstream: uidlist.c:273-280 recv_add_id fallback.
+#[test]
+#[cfg(unix)]
+fn remap_falls_back_to_local_name_resolution_when_no_rule_matches() {
+    assert_eq!(
+        remap_uid_with_usermap(1500, b"root", "nomatch:9"),
+        Some(0),
+        "with no matching rule, ownership follows the local getpwnam(name)"
+    );
+}
