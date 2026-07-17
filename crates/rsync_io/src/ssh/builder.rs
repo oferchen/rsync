@@ -55,6 +55,19 @@ pub enum SshAddressFamily {
     V6,
 }
 
+/// Returns whether a remote-shell program basename is one upstream forces
+/// blocking I/O for when `--blocking-io`/`--no-blocking-io` was left unset:
+/// `rsh` or `remsh`, which mishandle a non-blocking child stdout.
+///
+/// The comparison is exact (like upstream `strcmp`), so ssh-family wrappers or
+/// paths embedding those names are not matched.
+///
+/// upstream: main.c:600 `do_cmd()` - `strcmp(t, "rsh") == 0 || strcmp(t,
+/// "remsh") == 0`.
+fn program_forces_blocking_io(basename: &str) -> bool {
+    matches!(basename, "rsh" | "remsh")
+}
+
 /// Builder used to configure and spawn an SSH subprocess.
 #[derive(Clone, Debug)]
 pub struct SshCommand {
@@ -65,6 +78,7 @@ pub struct SshCommand {
     batch_mode: bool,
     bind_address: Option<IpAddr>,
     address_family: Option<SshAddressFamily>,
+    blocking_io: Option<bool>,
     keepalive: bool,
     options: Vec<OsString>,
     connect_timeout: Option<Duration>,
@@ -88,6 +102,7 @@ impl SshCommand {
             batch_mode: true,
             bind_address: None,
             address_family: None,
+            blocking_io: None,
             keepalive: true,
             connect_timeout: Some(Duration::from_secs(DEFAULT_CONNECT_TIMEOUT_SECS)),
             io_timeout: None,
@@ -142,6 +157,19 @@ impl SshCommand {
     /// counterpart).
     pub const fn set_address_family(&mut self, family: Option<SshAddressFamily>) -> &mut Self {
         self.address_family = family;
+        self
+    }
+
+    /// Records rsync's tri-state `--blocking-io`/`--no-blocking-io` preference
+    /// for the remote-shell child: `Some(true)` forces blocking I/O,
+    /// `Some(false)` forces non-blocking, and `None` (the default) leaves it
+    /// unset so [`SshCommand::resolved_blocking_io`] can apply upstream's
+    /// `rsh`/`remsh` auto-enable.
+    ///
+    /// upstream: options.c:144,842-843 - `blocking_io` defaults to `-1` (unset)
+    /// and is set to `1`/`0` by `--blocking-io`/`--no-blocking-io`.
+    pub const fn set_blocking_io(&mut self, blocking: Option<bool>) -> &mut Self {
+        self.blocking_io = blocking;
         self
     }
 
@@ -412,6 +440,19 @@ impl SshCommand {
             trace_cmd_argv(&full_argv);
         }
 
+        // upstream: main.c:600-601 do_cmd() forces blocking_io for rsh/remsh
+        // when unset; pipe.c:80-82 then sets the child stdout blocking. Our
+        // `Stdio::piped()` child descriptors are already unconditionally
+        // blocking, so this only records the resolved mode for diagnostics.
+        if logging::debug_gte(logging::DebugFlag::Cmd, 2) {
+            debug_log!(
+                Connect,
+                2,
+                "remote-shell blocking_io resolved to {}",
+                self.resolved_blocking_io()
+            );
+        }
+
         let mut command = Command::new(&program);
         command.stdin(Stdio::piped());
         command.stdout(Stdio::piped());
@@ -617,19 +658,53 @@ impl SshCommand {
         has_hardware_aes() && self.is_ssh_program() && !self.options_contain_cipher_flag()
     }
 
+    /// Returns the configured program's basename (`t` in upstream `do_cmd()`),
+    /// stripped of any directory prefix. Uses case-folding on Windows where
+    /// `SSH.EXE` or `Ssh.exe` are common depending on how the path is resolved.
+    ///
+    /// upstream: main.c:564-567 `do_cmd()` - `if ((t = strrchr(cmd, '/')) !=
+    /// NULL) t++; else t = cmd;`.
+    fn program_basename(&self) -> String {
+        let program = self.program.to_string_lossy();
+        // Handle both forward slash (Unix) and backslash (Windows) path separators.
+        let basename = program.rsplit(['/', '\\']).next().unwrap_or(&program);
+        if cfg!(windows) {
+            basename.to_ascii_lowercase()
+        } else {
+            basename.to_string()
+        }
+    }
+
     /// Checks whether the configured program appears to be an SSH client.
     ///
     /// Uses case-insensitive comparison on Windows where `SSH.EXE` or
     /// `Ssh.exe` are common depending on how the path is resolved.
     fn is_ssh_program(&self) -> bool {
-        let program = self.program.to_string_lossy();
-        // Handle both forward slash (Unix) and backslash (Windows) path separators.
-        let basename = program.rsplit(['/', '\\']).next().unwrap_or(&program);
-        if cfg!(windows) {
-            let lower = basename.to_ascii_lowercase();
-            lower == "ssh" || lower == "ssh.exe"
-        } else {
-            basename == "ssh" || basename == "ssh.exe"
+        let basename = self.program_basename();
+        basename == "ssh" || basename == "ssh.exe"
+    }
+
+    /// Resolves rsync's tri-state blocking-I/O preference for the remote-shell
+    /// child, mirroring upstream `do_cmd()`. An explicit `--blocking-io`
+    /// (`Some(true)`) or `--no-blocking-io` (`Some(false)`) always wins; when
+    /// the user left it unset (`None`), upstream forces blocking I/O for the
+    /// `rsh`/`remsh` shells - which mishandle a non-blocking child stdout - and
+    /// leaves every other program (`ssh`, custom `-e` wrappers) non-blocking.
+    ///
+    /// oc-rsync spawns the remote shell with `std::process::Command` and
+    /// `Stdio::piped()`, whose child pipe descriptors are unconditionally
+    /// blocking on every platform, so the forced-blocking outcome already holds
+    /// by construction; this resolution keeps the semantic state faithful to
+    /// upstream. `blocking_io` is a purely local child-fd concern and is never
+    /// forwarded on the wire (upstream `server_options()` does not emit it).
+    ///
+    /// upstream: main.c:600-601 `do_cmd()` - `if (blocking_io < 0 && (strcmp(t,
+    /// "rsh") == 0 || strcmp(t, "remsh") == 0)) blocking_io = 1;` and
+    /// pipe.c:80-82 where `blocking_io > 0` sets the child stdout blocking.
+    pub(crate) fn resolved_blocking_io(&self) -> bool {
+        match self.blocking_io {
+            Some(explicit) => explicit,
+            None => program_forces_blocking_io(&self.program_basename()),
         }
     }
 
