@@ -23,6 +23,9 @@ use crate::frontend::filter_rules::{
 /// order, mirroring upstream options.c.
 pub(crate) struct FilterInputs {
     pub(crate) order: Vec<FilterOrderToken>,
+    /// `--from0`/`-0`: makes `--exclude-from`/`--include-from` files
+    /// NUL-delimited (upstream exclude.c:1501 parse_filter_file eol_nulls).
+    pub(crate) from0: bool,
 }
 
 /// Applies CLI-provided filter rules to the [`ClientConfigBuilder`].
@@ -43,6 +46,7 @@ where
     let mut filter_rules = Vec::new();
     let mut merge_stack = HashSet::new();
     let merge_base = env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+    let from0 = inputs.from0;
 
     for token in inputs.order {
         let result = match token {
@@ -56,11 +60,13 @@ where
                 &mut filter_rules,
                 std::slice::from_ref(&file),
                 FilterRuleKind::Include,
+                from0,
             ),
             FilterOrderToken::ExcludeFrom(file) => append_filter_rules_from_files(
                 &mut filter_rules,
                 std::slice::from_ref(&file),
                 FilterRuleKind::Exclude,
+                from0,
             ),
             FilterOrderToken::Filter(rule) => push_filter_directive(
                 &mut filter_rules,

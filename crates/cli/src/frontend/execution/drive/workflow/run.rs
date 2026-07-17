@@ -1015,6 +1015,7 @@ where
 
     let filter_inputs = filters::FilterInputs {
         order: filter_order,
+        from0,
     };
 
     let builder = match filters::apply_filters(builder, filter_inputs, stderr) {
