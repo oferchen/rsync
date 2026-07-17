@@ -11,7 +11,10 @@
 use protocol::ProtocolVersion;
 use protocol::filters::{FilterRuleWireFormat, RuleType};
 
-use crate::{receiver_wants_filter_list, wire_rule_crosses_wire};
+use crate::{
+    TOO_MODERN_FILTER_RULES_MSG, perishable_rules_too_modern, receiver_wants_filter_list,
+    wire_rule_crosses_wire,
+};
 
 // -- receiver_wants_list truth table (exclude.c:1647-1648, 1676-1677) --
 
@@ -332,4 +335,99 @@ fn manual_dir_merge_without_cvs_origin_not_gated() {
         false,
         ProtocolVersion::V32
     ));
+}
+
+// -- perishable "too modern" abort (exclude.c:1573-1577 / 1624-1628) --
+
+fn perishable_exclude() -> FilterRuleWireFormat {
+    FilterRuleWireFormat::exclude("*.tmp".to_owned()).with_perishable(true)
+}
+
+/// (a) A sending client at a pre-30 protocol with a perishable rule must abort.
+/// upstream `get_rule_prefix()` returns NULL for the rule (the pre-30 wire has no
+/// `p` modifier) and `send_rules()` turns that into a fatal RERR_PROTOCOL rather
+/// than silently dropping it - oc previously accepted the transfer, an
+/// observable-fidelity divergence (exit code + stderr), so this asserts the
+/// predicate fires at both legacy protocols the sender can negotiate.
+#[test]
+fn perishable_rule_aborts_on_push_pre_protocol_30() {
+    let rules = [perishable_exclude()];
+    assert!(perishable_rules_too_modern(
+        &rules,
+        true,
+        ProtocolVersion::V28
+    ));
+    assert!(perishable_rules_too_modern(
+        &rules,
+        true,
+        ProtocolVersion::V29
+    ));
+}
+
+/// (b) At protocol >= 30 the `p` modifier is encodable, so the same rule is sent
+/// (with `p`, verified by the prefix builder tests) and never aborts.
+#[test]
+fn perishable_rule_sent_at_protocol_30_and_above() {
+    let rules = [perishable_exclude()];
+    assert!(!perishable_rules_too_modern(
+        &rules,
+        true,
+        ProtocolVersion::V30
+    ));
+    assert!(!perishable_rules_too_modern(
+        &rules,
+        true,
+        ProtocolVersion::V32
+    ));
+}
+
+/// (c) A receiver (pull) at a pre-30 protocol keeps the rule and merely omits the
+/// `p` char (upstream's `else if (am_sender)` guard does not fire), so it must
+/// NOT abort - only the sender direction is fatal.
+#[test]
+fn perishable_rule_kept_on_pull_pre_protocol_30() {
+    let rules = [perishable_exclude()];
+    assert!(!perishable_rules_too_modern(
+        &rules,
+        false,
+        ProtocolVersion::V28
+    ));
+    assert!(!perishable_rules_too_modern(
+        &rules,
+        false,
+        ProtocolVersion::V29
+    ));
+}
+
+/// (d) A non-perishable rule is representable on every wire, so a pre-30 push is
+/// unaffected - the abort is scoped strictly to the perishable flag.
+#[test]
+fn non_perishable_rule_unaffected_pre_protocol_30() {
+    let rules = [FilterRuleWireFormat::exclude("*.tmp".to_owned())];
+    assert!(!perishable_rules_too_modern(
+        &rules,
+        true,
+        ProtocolVersion::V28
+    ));
+}
+
+/// The abort maps to upstream's exact observable outcome: the stderr diagnostic
+/// text is byte-for-byte `filter rules are too modern for remote rsync.`
+/// (exclude.c:1625) and it is tagged as a protocol violation, which the core
+/// exit-code mapper renders as RERR_PROTOCOL (exit code 2) - the same class as
+/// upstream's `exit_cleanup(RERR_PROTOCOL)`.
+#[test]
+fn too_modern_abort_message_and_exit_class() {
+    assert_eq!(
+        TOO_MODERN_FILTER_RULES_MSG,
+        "filter rules are too modern for remote rsync."
+    );
+    let err = protocol::protocol_violation(TOO_MODERN_FILTER_RULES_MSG);
+    assert_eq!(err.to_string(), TOO_MODERN_FILTER_RULES_MSG);
+    assert!(
+        err.get_ref()
+            .and_then(|inner| inner.downcast_ref::<protocol::ProtocolViolation>())
+            .is_some(),
+        "abort must be tagged ProtocolViolation so it maps to RERR_PROTOCOL (2)"
+    );
 }
