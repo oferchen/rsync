@@ -64,11 +64,18 @@ impl ClientConfigBuilder {
     ///
     /// An absolute partial directory is left untouched, matching upstream's
     /// `*partial_dir != '/'` guard.
+    ///
+    /// A bare `--delay-updates` (with no explicit `--partial-dir`) uses the
+    /// implicit `.~tmp~` staging directory, so the same protective exclude is
+    /// injected for it. upstream: options.c:2421 `if (delay_updates &&
+    /// !partial_dir) partial_dir = tmp_partialdir;` (`tmp_partialdir[] =
+    /// ".~tmp~"`), consumed by the compat.c:791 filter injection.
     pub(super) fn push_implicit_partial_dir_filter(&mut self) {
-        let Some(dir) = self.partial_dir.as_ref() else {
-            return;
+        let mut pattern = match self.partial_dir.as_ref() {
+            Some(dir) => dir.to_string_lossy().into_owned(),
+            None if self.delay_updates => ".~tmp~".to_owned(),
+            None => return,
         };
-        let mut pattern = dir.to_string_lossy().into_owned();
         if pattern.is_empty() {
             return;
         }

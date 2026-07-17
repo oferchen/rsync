@@ -968,6 +968,40 @@ fn implicit_partial_dir_filter_excludes_and_protects() {
     assert!(rule.applies_to_receiver());
 }
 
+/// upstream: options.c:2421 `if (delay_updates && !partial_dir) partial_dir =
+/// tmp_partialdir;` (`tmp_partialdir[] = ".~tmp~"`) - a bare `--delay-updates`
+/// uses the implicit `.~tmp~` staging dir, which then gets the same protective
+/// perishable exclude via compat.c:791. Without this the staging directory
+/// would leak into the transfer and be deleted by `--delete`.
+#[test]
+fn delay_updates_injects_tmp_partial_dir_filter() {
+    let config = builder().delay_updates(true).build();
+    let rules = config.filter_rules();
+    let rule = rules
+        .last()
+        .expect("delay-updates must inject the implicit .~tmp~ rule");
+    assert_eq!(rule.kind(), FilterRuleKind::Exclude);
+    assert_eq!(rule.pattern(), ".~tmp~/");
+    assert!(rule.is_perishable());
+    assert!(rule.applies_to_sender());
+    assert!(rule.applies_to_receiver());
+}
+
+/// An explicit `--partial-dir` alongside `--delay-updates` uses the given
+/// directory, not the implicit `.~tmp~` staging fallback.
+#[test]
+fn delay_updates_with_explicit_partial_dir_uses_that_dir() {
+    let config = builder()
+        .delay_updates(true)
+        .partial_directory(Some(".rsync-partial"))
+        .build();
+    let rule = config
+        .filter_rules()
+        .last()
+        .expect("explicit partial-dir must inject an implicit rule");
+    assert_eq!(rule.pattern(), ".rsync-partial/");
+}
+
 /// upstream: compat.c:791 guard `*partial_dir != '/'` - an absolute partial
 /// directory must not inject any implicit rule.
 #[test]
