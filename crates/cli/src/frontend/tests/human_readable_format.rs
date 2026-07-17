@@ -571,15 +571,18 @@ fn stats_counts_for_level(flag: Option<&str>) -> String {
 
 #[test]
 fn stats_counts_raw_digits_under_no_h() {
-    // upstream real binary: `Number of files: 1501 (reg: 1500, dir: 1)`.
+    // upstream real binary, fresh dest: both the total and the created count
+    // (every entry incl. the top dir is new, so created == total) render raw.
+    //   Number of files:         1501 (reg: 1500, dir: 1)
+    //   Number of created files: 1501 (reg: 1500, dir: 1)
     let rendered = stats_counts_for_level(Some("--no-h"));
     assert!(
         rendered.contains("Number of files: 1501 (reg: 1500, dir: 1)"),
         "level 0 counts must be raw digits, got: {rendered}"
     );
     assert!(
-        rendered.contains("Number of created files: 1500"),
-        "level 0 created count must be raw, got: {rendered}"
+        rendered.contains("Number of created files: 1501 (reg: 1500, dir: 1)"),
+        "level 0 created count must be raw and == total, got: {rendered}"
     );
     assert!(
         !rendered.contains("1,50"),
@@ -589,31 +592,39 @@ fn stats_counts_raw_digits_under_no_h() {
 
 #[test]
 fn stats_counts_grouped_at_default_level() {
-    // upstream real binary: `Number of files: 1,501 (reg: 1,500, dir: 1)`.
+    // upstream real binary, fresh dest: created == total (all entries new), both
+    // comma-grouped: `Number of {files,created files}: 1,501 (reg: 1,500, dir: 1)`.
     let rendered = stats_counts_for_level(None);
     assert!(
         rendered.contains("Number of files: 1,501 (reg: 1,500, dir: 1)"),
         "default level counts must be comma-grouped, got: {rendered}"
     );
     assert!(
-        rendered.contains("Number of created files: 1,500"),
-        "default created count must be grouped, got: {rendered}"
+        rendered.contains("Number of created files: 1,501 (reg: 1,500, dir: 1)"),
+        "default created count must be grouped and == total, got: {rendered}"
     );
 }
 
 #[test]
 fn stats_counts_grouped_not_humanised_at_hh() {
-    // upstream real binary: `-hh` groups counts (comma_num passes flag 1) but
-    // never humanises them: `Number of files: 1,501 (reg: 1,500, dir: 1)`, no
-    // `1.50K` on any count field.
+    // upstream real binary, fresh dest: `-hh` comma-groups counts (comma_num
+    // passes human_readable != 0 == 1) but NEVER humanises them to K/M/G units,
+    // while byte sizes (human_num) ARE humanised at the same level. That
+    // size-vs-count split is exactly what #171 verifies.
     let rendered = stats_counts_for_level(Some("-hh"));
     assert!(
         rendered.contains("Number of files: 1,501 (reg: 1,500, dir: 1)"),
-        "-hh counts must be comma-grouped, got: {rendered}"
+        "-hh counts must be comma-grouped, not humanised, got: {rendered}"
     );
     assert!(
-        !rendered.contains("1.50K") && !rendered.contains("1.46K"),
-        "-hh must not humanise counts to K/M/G units, got: {rendered}"
+        rendered.contains("Number of created files: 1,501 (reg: 1,500, dir: 1)"),
+        "-hh created count must be comma-grouped, not humanised, got: {rendered}"
+    );
+    // Byte sizes ARE humanised at -hh: 1500 bytes / 1024 = 1.46K. Its presence
+    // confirms the level is active and only counts are exempt from unit suffixes.
+    assert!(
+        rendered.contains("Total file size: 1.46K bytes"),
+        "-hh must humanise byte sizes (proving counts are the exception), got: {rendered}"
     );
 }
 
