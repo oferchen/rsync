@@ -31,23 +31,31 @@ pub(super) fn reconstruct_acl(acl: &RsyncAcl, mode: Option<u32>) -> RsyncAcl {
         None => return acl.clone(),
     };
 
+    // upstream: acls.c:931-932 change_sacl_perms() returns
+    // `(old_mode & ~ACCESSPERMS) | (mode & ACCESSPERMS)`, so only the low 0o777
+    // permission bits ever feed the ACL's USER_OBJ/GROUP_OBJ/MASK/OTHER
+    // entries. Mask off setuid/setgid/sticky here so those special bits can
+    // never leak into an ACL entry; they are not representable in a POSIX ACL
+    // and are restored separately via chmod after the ACL is applied.
+    let perm_mode = mode & 0o777;
+
     let mut result = acl.clone();
 
     // upstream: acls.c:892 - user_obj from mode bits 8-6
     if result.user_obj == NO_ENTRY {
-        result.user_obj = ((mode >> 6) & 7) as u8;
+        result.user_obj = ((perm_mode >> 6) & 7) as u8;
     }
     // upstream: acls.c:898 - group_obj from mode bits 5-3
     if result.group_obj == NO_ENTRY {
-        result.group_obj = ((mode >> 3) & 7) as u8;
+        result.group_obj = ((perm_mode >> 3) & 7) as u8;
     }
     // upstream: acls.c:911 - other_obj from mode bits 2-0
     if result.other_obj == NO_ENTRY {
-        result.other_obj = (mode & 7) as u8;
+        result.other_obj = (perm_mode & 7) as u8;
     }
     // upstream: acls.c:900-908 - mask from mode bits 5-3 when needed
     if !result.names.is_empty() && result.mask_obj == NO_ENTRY {
-        result.mask_obj = ((mode >> 3) & 7) as u8;
+        result.mask_obj = ((perm_mode >> 3) & 7) as u8;
     }
 
     result

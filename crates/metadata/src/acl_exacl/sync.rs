@@ -1,6 +1,5 @@
 //! Source-to-destination ACL replication (filesystem read, filesystem write).
 
-#[cfg(any(target_os = "linux", target_os = "freebsd"))]
 use std::fs;
 use std::io;
 use std::path::Path;
@@ -15,6 +14,7 @@ use super::error::is_unsupported_error;
 #[cfg(any(target_os = "linux", target_os = "freebsd"))]
 use super::reset::clear_default_acl;
 use super::reset::reset_acl_from_mode;
+use super::special::restore_special_mode_bits;
 
 /// Synchronizes ACLs from `source` to `destination`.
 ///
@@ -106,6 +106,19 @@ pub fn sync_acls(
         }
     } else {
         reset_acl_from_mode(destination)?;
+    }
+
+    // upstream: acls.c:924-932 + rsync.c:659-660 - applying the access ACL
+    // clears setuid/setgid/sticky, which are not representable in a POSIX ACL.
+    // Restore them from the source mode so setgid/setuid binaries and sticky
+    // dirs survive a local copy.
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let source_mode = fs::metadata(source)
+            .map_err(|e| MetadataError::new("stat", source, e))?
+            .permissions()
+            .mode();
+        restore_special_mode_bits(destination, source_mode)?;
     }
 
     #[cfg(any(target_os = "linux", target_os = "freebsd"))]
