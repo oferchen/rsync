@@ -1412,6 +1412,60 @@ mod module_access_tests {
         assert!(!dont_compress_is_match_all(""));
     }
 
+    #[test]
+    fn reopen_module_log_sink_targets_each_modules_log_file() {
+        // upstream: log.c:169-204 `log_init(1)` at clientserver.c:897 - selecting
+        // a module reopens the daemon log to that module's `log file`, so two
+        // modules with distinct `log file` directives write their diagnostics to
+        // distinct files rather than sharing one sink.
+        let dir = tempfile::tempdir().expect("temp dir");
+        let path_a = dir.path().join("a.log");
+        let path_b = dir.path().join("b.log");
+
+        let module_a = ModuleDefinition {
+            log_file: Some(path_a.clone()),
+            ..Default::default()
+        };
+        let module_b = ModuleDefinition {
+            log_file: Some(path_b.clone()),
+            ..Default::default()
+        };
+
+        let sink_a = reopen_module_log_sink(&module_a, None).expect("module a sink");
+        let sink_b = reopen_module_log_sink(&module_b, None).expect("module b sink");
+        log_message(&sink_a, &rsync_info!("entry-for-module-a"));
+        log_message(&sink_b, &rsync_info!("entry-for-module-b"));
+        drop(sink_a);
+        drop(sink_b);
+
+        let a = std::fs::read_to_string(&path_a).expect("read a.log");
+        let b = std::fs::read_to_string(&path_b).expect("read b.log");
+        assert!(a.contains("entry-for-module-a"), "a.log: {a}");
+        assert!(!a.contains("entry-for-module-b"), "a.log leaked b: {a}");
+        assert!(b.contains("entry-for-module-b"), "b.log: {b}");
+        assert!(!b.contains("entry-for-module-a"), "b.log leaked a: {b}");
+    }
+
+    #[test]
+    fn reopen_module_log_sink_none_without_log_file() {
+        // A module with no `log file` leaves the startup sink in place: upstream's
+        // `lp_log_file(module_id)` is empty, so `log_init(1)` keeps the current
+        // log rather than reopening.
+        let module = ModuleDefinition::default();
+        assert!(reopen_module_log_sink(&module, None).is_none());
+    }
+
+    #[test]
+    fn builtin_dont_compress_default_does_not_collapse_stream() {
+        // upstream: token.c:206-211 - only a bare `*` in `dont compress`
+        // collapses the whole compression stream to store level; the per-suffix
+        // lookup in set_compression is compiled out (`#if 0`, token.c:227). The
+        // built-in DEFAULT_DONT_COMPRESS list therefore never matches-all, so a
+        // module that inherits it still compresses a `.gz` exactly as upstream
+        // 3.4.4 does. Seeding the default is config fidelity, not a wire change.
+        assert!(!dont_compress_is_match_all(DEFAULT_DONT_COMPRESS));
+    }
+
 
     fn test_module_with_defaults() -> ModuleRuntime {
         ModuleRuntime::from(ModuleDefinition::default())
