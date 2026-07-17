@@ -101,6 +101,7 @@ include!("tests/chunks/clap_parse_error_is_reported_via_message.rs");
 include!("tests/chunks/connection_limiter_enforces_limits_across_guards.rs");
 include!("tests/chunks/connection_limiter_open_preserves_existing_counts.rs");
 include!("tests/chunks/connection_limiter_propagates_io_errors.rs");
+include!("tests/chunks/connection_limiter_reclaims_slot_on_close_without_decrement.rs");
 include!("tests/chunks/connection_status_messages_describe_active_sessions.rs");
 include!("tests/chunks/default_config_candidates_prefer_legacy_for_upstream_brand.rs");
 include!("tests/chunks/default_config_candidates_prefer_oc_branding.rs");
