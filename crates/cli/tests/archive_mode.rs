@@ -106,37 +106,36 @@ fn test_no_recursive_overrides_archive() {
 }
 
 #[test]
-fn test_no_perms_before_archive_stays_disabled() {
+fn test_no_perms_before_archive_is_reenabled() {
+    // upstream: options.c:1546 `case 'a'` sets `preserve_perms = 1` in argv
+    // order, so a `--no-perms` that precedes `-a` is overridden by the later
+    // `-a`. At the parser layer that clears the explicit setting to None, and
+    // the archive default (compute.rs `unwrap_or(archive)`) preserves perms.
     let args = parse_args(["oc-rsync", "--no-perms", "-a", "src", "dest"]).unwrap();
-    // -a doesn't re-enable perms if --no-perms was already set
-    // The archive flag is set, but perms stays explicitly disabled
     assert!(args.archive, "-a should set archive flag");
     assert_eq!(
-        args.perms,
-        Some(false),
-        "--no-perms should remain disabled even with -a"
+        args.perms, None,
+        "--no-perms before -a is overridden by the later -a"
     );
 }
 
 #[test]
-fn test_no_owner_before_archive_stays_disabled() {
+fn test_no_owner_before_archive_is_reenabled() {
     let args = parse_args(["oc-rsync", "--no-owner", "-a", "src", "dest"]).unwrap();
     assert!(args.archive);
     assert_eq!(
-        args.owner,
-        Some(false),
-        "--no-owner should remain disabled even with -a"
+        args.owner, None,
+        "--no-owner before -a is overridden by the later -a"
     );
 }
 
 #[test]
-fn test_no_group_before_archive_stays_disabled() {
+fn test_no_group_before_archive_is_reenabled() {
     let args = parse_args(["oc-rsync", "--no-group", "-a", "src", "dest"]).unwrap();
     assert!(args.archive);
     assert_eq!(
-        args.group,
-        Some(false),
-        "--no-group should remain disabled even with -a"
+        args.group, None,
+        "--no-group before -a is overridden by the later -a"
     );
 }
 

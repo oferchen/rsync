@@ -230,48 +230,61 @@ fn no_d_after_archive_disables_devices_and_specials() {
     );
 }
 
+// upstream: options.c:1546 `case 'a'` sets `preserve_* = 1` in argv order, so a
+// `--no-X` that PRECEDES `-a` is overridden by the later `-a`. At the parser
+// layer that override clears the explicit setting to `None`, and the archive
+// default (`unwrap_or(archive)` in compute.rs) then re-enables preservation.
+// A `--no-X` that FOLLOWS `-a` still wins (see the `*_after_archive_*` tests).
 #[test]
-fn no_perms_before_archive_stays_disabled() {
+fn no_perms_before_archive_is_reenabled() {
     let args = parse_args(["oc-rsync", "--no-perms", "-a", "src", "dest"]).unwrap();
     assert!(args.archive);
-    // Even with -a, --no-perms specified before should remain
     assert_eq!(
-        args.perms,
-        Some(false),
-        "--no-perms before -a should stay disabled"
+        args.perms, None,
+        "--no-perms before -a is overridden by the later -a (archive default preserves perms)"
     );
 }
 
 #[test]
-fn no_times_before_archive_stays_disabled() {
+fn no_times_before_archive_is_reenabled() {
     let args = parse_args(["oc-rsync", "--no-times", "-a", "src", "dest"]).unwrap();
     assert!(args.archive);
     assert_eq!(
-        args.times,
-        Some(false),
-        "--no-times before -a should stay disabled"
+        args.times, None,
+        "--no-times before -a is overridden by the later -a (archive default preserves times)"
     );
 }
 
 #[test]
-fn no_owner_before_archive_stays_disabled() {
+fn no_owner_before_archive_is_reenabled() {
     let args = parse_args(["oc-rsync", "--no-owner", "-a", "src", "dest"]).unwrap();
     assert!(args.archive);
     assert_eq!(
-        args.owner,
-        Some(false),
-        "--no-owner before -a should stay disabled"
+        args.owner, None,
+        "--no-owner before -a is overridden by the later -a (archive default preserves owner)"
     );
 }
 
 #[test]
-fn no_group_before_archive_stays_disabled() {
+fn no_group_before_archive_is_reenabled() {
     let args = parse_args(["oc-rsync", "--no-group", "-a", "src", "dest"]).unwrap();
     assert!(args.archive);
     assert_eq!(
-        args.group,
-        Some(false),
-        "--no-group before -a should stay disabled"
+        args.group, None,
+        "--no-group before -a is overridden by the later -a (archive default preserves group)"
+    );
+}
+
+#[test]
+fn no_recursive_before_archive_is_reenabled() {
+    // upstream: options.c:1546 `if (!recurse) recurse = 1` re-enables recursion
+    // when `-a` follows `--no-recursive`; the parser resolves the effective
+    // `recursive` flag directly (there is no separate archive default here).
+    let args = parse_args(["oc-rsync", "--no-recursive", "-a", "src", "dest"]).unwrap();
+    assert!(args.archive);
+    assert!(
+        args.recursive,
+        "--no-recursive before -a is overridden by the later -a (recursion stays on)"
     );
 }
 
@@ -644,16 +657,19 @@ fn archive_with_checksum() {
 }
 
 #[test]
-fn archive_preserves_correct_order_of_operations() {
-    // Verify that the order of flags produces correct results
+fn archive_respects_command_line_order() {
+    // upstream: options.c:1546 `case 'a'` expands `-a` in place during the argv
+    // scan, so `-a --no-perms` and `--no-perms -a` are NOT equivalent: the flag
+    // that appears last wins.
     let args1 = parse_args(["oc-rsync", "-a", "--no-perms", "src", "dest"]).unwrap();
     let args2 = parse_args(["oc-rsync", "--no-perms", "-a", "src", "dest"]).unwrap();
 
-    // Both should have archive=true
     assert!(args1.archive);
     assert!(args2.archive);
 
-    // Both should have perms=Some(false) because explicit --no-perms was specified
+    // `-a --no-perms`: the trailing --no-perms wins -> perms explicitly disabled.
     assert_eq!(args1.perms, Some(false));
-    assert_eq!(args2.perms, Some(false));
+    // `--no-perms -a`: the trailing -a overrides --no-perms -> None, so the
+    // archive default (compute.rs `unwrap_or(archive)`) preserves perms.
+    assert_eq!(args2.perms, None);
 }

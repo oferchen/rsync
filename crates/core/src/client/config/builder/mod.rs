@@ -17,6 +17,12 @@ pub struct ConfigConflict {
 
 impl fmt::Display for ConfigConflict {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        // upstream: options.c:1977 - the secluded/old-args conflict has a
+        // dedicated phrasing (and operand order) distinct from the generic
+        // "--X cannot be used with --Y" template used for other conflicts.
+        if matches!((self.option1, self.option2), ("old-args", "secluded-args")) {
+            return write!(f, "--secluded-args conflicts with --old-args.");
+        }
         write!(
             f,
             "--{} cannot be used with --{}",
