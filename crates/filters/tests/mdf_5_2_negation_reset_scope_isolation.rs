@@ -1,17 +1,26 @@
 //! MDF-5.2 gap-cell coverage: a `!` (FILTRULE_CLEAR_LIST) inside a
-//! per-directory merge file must clear only that scope's rules, not rules
-//! inherited from outer merge files. Closes the row .2 x MDF-5 cell from
-//! FIL-AUD-2 (`docs/design/fil-aud-exclude-vs-mdf-matrix.md`).
+//! per-directory merge file clears the WHOLE mergelist, including the rules
+//! inherited from outer directories' merge files. Closes the row .2 x MDF-5
+//! cell from FIL-AUD-2 (`docs/design/fil-aud-exclude-vs-mdf-matrix.md`).
 //!
-//! UTS-DD-exclude.2 root cause: the receiver previously allowed a `!` line
-//! in a nested `.rsync-filter` to wipe rules from the outer scope's list,
-//! diverging from upstream `exclude.c::parse_rule_tok` around the
-//! `FILTRULE_CLEAR_LIST` handler (upstream 3.4.1: `exclude.c:1393-1402` in
-//! the FIL-AUD-3 spec; see the existing oc-rsync comment at
-//! `crates/filters/src/merge/read.rs:87` and the implementation at
-//! `crates/filters/src/set.rs::apply_clear_rule`). `pop_filter_list(listp)`
-//! only touches the local-scope rules between `head` and `tail` and leaves
-//! the inherited list alone.
+//! Upstream mechanism (rsync 3.4.4 `exclude.c`): `push_local_filters()` at
+//! `exclude.c:801` sets `lp->tail = NULL` when entering a directory, which
+//! reclassifies the parent directory's rules as the INHERITED tail of the
+//! same mergelist `lp`. The `FILTRULE_CLEAR_LIST` handler
+//! (`exclude.c:1399-1400`) then runs `pop_filter_list(listp)` - which
+//! early-returns at `exclude.c:579` when `!` is the file's first line because
+//! `listp->tail` is NULL - and, crucially, ALSO runs `listp->head = NULL`.
+//! That final `head = NULL` drops the inherited parent rules, so a nested `!`
+//! resets the entire list, not just the current file's own section. Verified
+//! against the real rsync 3.4.4 binary: with `src/.rsync-filter` = `- *.outer`
+//! and `src/inner/.rsync-filter` = `!` + `- *.inner`, `rsync -n -r -i -F`
+//! transfers `inner/f.outer` (the inherited exclude was cleared) while still
+//! excluding `src/top.outer`.
+//!
+//! (The `.`-style single-shot `merge` path is a distinct mechanism whose `!`
+//! is scope-local - see `crates/filters/src/set.rs::apply_clear_rule`; this
+//! test covers the per-directory `dir-merge` traversal path in
+//! `crates/filters/src/chain/mod.rs`.)
 //!
 //! FIL-AUD-3 spec section 2.2.
 
@@ -21,15 +30,16 @@ use std::path::Path;
 use filters::{DirMergeConfig, FilterChain, FilterRule, FilterSet};
 use tempfile::TempDir;
 
-/// `!` inside `inner/.rsync-filter` must only clear rules accumulated within
-/// that file's scope. The outer `.rsync-filter` exclude of `*.outer` survives
-/// while the new exclude `- *.inner` (parsed after the clear) takes effect
-/// alongside the still-active outer rule.
+/// `!` inside `inner/.rsync-filter` clears the whole mergelist for that
+/// directory and its descendants, so the inherited outer exclude of `*.outer`
+/// no longer fires. The new exclude `- *.inner` (parsed after the clear) still
+/// takes effect. When `inner` is left, the outer rule is restored for the rest
+/// of `src` (and its siblings), mirroring `exclude.c:pop_local_filters()`.
 ///
-/// upstream: exclude.c:1393-1402 - FILTRULE_CLEAR_LIST in parse_rule_tok
-/// runs pop_filter_list on the local list only.
+/// upstream: exclude.c:801 push_local_filters (parent rules become inherited)
+/// + exclude.c:1399-1400 FILTRULE_CLEAR_LIST (pop_filter_list then head=NULL).
 #[test]
-fn inner_bang_clear_does_not_wipe_outer_scope() {
+fn inner_bang_clear_wipes_inherited_outer_scope() {
     let root = TempDir::new().unwrap();
     let src = root.path().join("src");
     let inner = src.join("inner");
@@ -49,14 +59,15 @@ fn inner_bang_clear_does_not_wipe_outer_scope() {
         "inner's `- *.inner` (parsed after the clear) must fire",
     );
     assert!(
-        !chain.allows(Path::new("f.outer"), false),
-        "outer scope's `- *.outer` must survive inner's local `!`",
+        chain.allows(Path::new("f.outer"), false),
+        "inner's `!` clears the inherited `- *.outer`, so f.outer transfers \
+         (real rsync 3.4.4 emits `>f+++++++++ inner/f.outer`)",
     );
 
     chain.leave_directory(inner_guard);
     assert!(
         !chain.allows(Path::new("f.outer"), false),
-        "after popping inner, outer scope's rule still applies in src",
+        "after popping inner, the outer scope's rule is restored in src",
     );
 
     chain.leave_directory(src_guard);

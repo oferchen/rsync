@@ -722,6 +722,7 @@ fn filter_chain_non_inheriting_scope_falls_through_to_outer_inherited() {
         depth: inner_depth,
         filter_set: inner_set,
         inherits: false,
+        config_index: None,
     });
 
     // At depth 2 with a no-inherit inner scope that does not match
@@ -1037,4 +1038,130 @@ fn anchored_root_exclude_does_not_match_nested_basename() {
     // Nested `sub/drop.txt` is NOT excluded by the anchored rule.
     assert!(chain.allows(Path::new("sub/drop.txt"), false));
     assert!(chain.allows(Path::new("keep.txt"), false));
+}
+
+// upstream: exclude.c:1393-1401 parse_filter_str() - a `!` (FILTRULE_CLEAR_LIST)
+// in a per-directory merge file runs `pop_filter_list(listp)` and THEN sets
+// `listp->head = NULL`, so it drops the mergelist's INHERITED ancestor rules,
+// not just the current directory's own section. Here a parent `.rsync-filter`
+// excludes `secret.txt`; a child `.rsync-filter` clears the list with `!` and
+// re-includes `secret.txt`. On the protocol FilterChain path the inherited
+// parent exclude must be gone so the file transfers - matching the engine
+// local-copy path (context_impl/transfer.rs, which clears `layers[index]` on a
+// `clear_inherited` directive). The two oc paths must agree on this outcome.
+#[test]
+fn dir_merge_bang_clears_inherited_ancestor_rules() {
+    let root = TempDir::new().unwrap();
+    let parent = root.path().join("parent");
+    fs::create_dir(&parent).unwrap();
+    fs::write(parent.join(".rsync-filter"), "- secret.txt\n").unwrap();
+
+    let child = parent.join("child");
+    fs::create_dir(&child).unwrap();
+    // `!` clears the inherited parent exclude; `+ secret.txt` re-includes it.
+    fs::write(child.join(".rsync-filter"), "!\n+ secret.txt\n").unwrap();
+
+    let mut chain = FilterChain::empty();
+    chain.add_merge_config(DirMergeConfig::new(".rsync-filter"));
+
+    let parent_guard = chain.enter_directory(&parent).unwrap();
+    // In the parent, the inherited exclude applies.
+    assert!(
+        !chain.allows(Path::new("secret.txt"), false),
+        "parent .rsync-filter must exclude secret.txt",
+    );
+
+    let child_guard = chain.enter_directory(&child).unwrap();
+    // In the child, `!` cleared the inherited parent exclude, so the child's
+    // `+ secret.txt` (and the absence of any surviving exclude) lets it through.
+    assert!(
+        chain.allows(Path::new("secret.txt"), false),
+        "child `!` must clear the inherited parent exclude so secret.txt transfers",
+    );
+
+    chain.leave_directory(child_guard);
+    chain.leave_directory(parent_guard);
+}
+
+// upstream: exclude.c:pop_local_filters() - leaving a directory restores the
+// pre-descent mergelist, so a `!` in one child must NOT permanently destroy the
+// parent's inherited rules for a SIBLING child that has no clear. This guards
+// against over-broadening the clear (it is scoped to the clearing directory and
+// its descendants only).
+#[test]
+fn dir_merge_bang_clear_is_restored_for_sibling() {
+    let root = TempDir::new().unwrap();
+    let parent = root.path().join("parent");
+    fs::create_dir(&parent).unwrap();
+    fs::write(parent.join(".rsync-filter"), "- secret.txt\n").unwrap();
+
+    // clearing_child clears the inherited exclude with a lone `!`.
+    let clearing = parent.join("clearing");
+    fs::create_dir(&clearing).unwrap();
+    fs::write(clearing.join(".rsync-filter"), "!\n").unwrap();
+
+    // plain_child has no .rsync-filter and must still see the parent exclude.
+    let plain = parent.join("plain");
+    fs::create_dir(&plain).unwrap();
+
+    let mut chain = FilterChain::empty();
+    chain.add_merge_config(DirMergeConfig::new(".rsync-filter"));
+
+    let parent_guard = chain.enter_directory(&parent).unwrap();
+
+    let clearing_guard = chain.enter_directory(&clearing).unwrap();
+    assert!(
+        chain.allows(Path::new("secret.txt"), false),
+        "lone `!` in clearing child must drop the inherited parent exclude",
+    );
+    chain.leave_directory(clearing_guard);
+
+    // Sibling with no clear: the parent exclude must be back in force.
+    let plain_guard = chain.enter_directory(&plain).unwrap();
+    assert!(
+        !chain.allows(Path::new("secret.txt"), false),
+        "sibling child without `!` must still inherit the parent exclude",
+    );
+    chain.leave_directory(plain_guard);
+
+    // Back in the parent proper, the exclude also still applies.
+    assert!(!chain.allows(Path::new("secret.txt"), false));
+    chain.leave_directory(parent_guard);
+}
+
+// A `!` in one per-directory mergelist must NOT clear a DIFFERENT mergelist's
+// inherited rules. upstream: exclude.c:pop_filter_list() operates on a single
+// `listp`, so `!` in `.rsync-filter` leaves a separate `.cvsignore`-style list
+// untouched. Encodes the precise (per-config) scope of the clear.
+#[test]
+fn dir_merge_bang_only_clears_its_own_mergelist() {
+    let root = TempDir::new().unwrap();
+    let parent = root.path().join("parent");
+    fs::create_dir(&parent).unwrap();
+    fs::write(parent.join(".rsync-filter"), "- from_rf.txt\n").unwrap();
+    fs::write(parent.join(".extra-filter"), "- from_extra.txt\n").unwrap();
+
+    let child = parent.join("child");
+    fs::create_dir(&child).unwrap();
+    // `!` in .rsync-filter clears only the .rsync-filter mergelist.
+    fs::write(child.join(".rsync-filter"), "!\n").unwrap();
+
+    let mut chain = FilterChain::empty();
+    chain.add_merge_config(DirMergeConfig::new(".rsync-filter"));
+    chain.add_merge_config(DirMergeConfig::new(".extra-filter"));
+
+    let parent_guard = chain.enter_directory(&parent).unwrap();
+    let child_guard = chain.enter_directory(&child).unwrap();
+    // The .rsync-filter exclude is cleared...
+    assert!(
+        chain.allows(Path::new("from_rf.txt"), false),
+        "`!` in .rsync-filter must clear its own inherited exclude",
+    );
+    // ...but the separate .extra-filter mergelist is untouched.
+    assert!(
+        !chain.allows(Path::new("from_extra.txt"), false),
+        "`!` in .rsync-filter must NOT clear the separate .extra-filter list",
+    );
+    chain.leave_directory(child_guard);
+    chain.leave_directory(parent_guard);
 }
