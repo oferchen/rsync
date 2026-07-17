@@ -2080,6 +2080,27 @@ fn dirs_sets_flag() {
     assert!(config.dirs());
 }
 
+// upstream: options.c:2190-2191 - `if (files_from) { if (xfer_dirs < 0)
+// xfer_dirs = 1; }`. A files-from run must resolve xfer_dirs on even when
+// `-d` was never passed, otherwise the bare directories named in the list hit
+// the `!xfer_dirs` guard (flist.c:2451) and are silently skipped.
+#[test]
+fn dirs_folds_in_files_from_when_flag_unset() {
+    let config = builder()
+        .files_from(FilesFromSource::LocalFile(PathBuf::from("/tmp/list")))
+        .build();
+    assert!(!config.recursive());
+    assert!(config.dirs());
+}
+
+// Absent a files-from source and without `-d`, xfer_dirs stays off, so the
+// fold-in must not leak into the default case.
+#[test]
+fn dirs_stays_off_without_files_from_or_flag() {
+    let config = builder().build();
+    assert!(!config.dirs());
+}
+
 #[test]
 fn one_file_system_sets_flag() {
     let config = builder().one_file_system(1).build();
