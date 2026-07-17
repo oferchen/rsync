@@ -21,7 +21,7 @@
 //! # Example
 //!
 //! ```ignore
-//! use flist::batched_stat::{BatchedStatCache, StatBatch};
+//! use flist::batched_stat::BatchedStatCache;
 //! use std::path::Path;
 //!
 //! let mut cache = BatchedStatCache::new();
@@ -32,7 +32,7 @@
 //! ];
 //!
 //! // Fetch metadata in parallel
-//! let results = cache.stat_batch(&paths);
+//! let results = cache.stat_batch(&paths, false);
 //! for (path, result) in paths.iter().zip(results) {
 //!     if let Ok(metadata) = result {
 //!         println!("{}: {} bytes", path.display(), metadata.len());
