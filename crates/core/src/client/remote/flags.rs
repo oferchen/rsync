@@ -302,6 +302,10 @@ pub(crate) fn build_wire_format_rules(
             receiver_side: wire_receiver_side(spec),
             perishable: spec.is_perishable(),
             negate: spec.is_negated(),
+            // upstream: exclude.c:1652-1668 send_filter_list() gates `-C` rules
+            // on the sending role and protocol; carry the origin so the wire
+            // projection (transfer::wire_rule_crosses_wire) can reproduce it.
+            cvs_origin: spec.is_cvs_origin(),
             ..FilterRuleWireFormat::default()
         };
 
@@ -1034,6 +1038,25 @@ mod tests {
         assert!(rules[0].cvs_exclude);
         assert!(rules[0].no_inherit);
         assert!(rules[0].word_split);
+    }
+
+    /// upstream: exclude.c:1652-1668 send_filter_list() - `-C` rules are gated by
+    /// the sending role and protocol. build_wire_format_rules must forward the
+    /// spec's cvs-origin marker onto the wire rule so transfer::wire_rule_crosses_wire
+    /// can keep them local on a receiving client (and gate `:C` on protocol >= 29).
+    #[test]
+    fn cvs_origin_marker_propagates_to_wire_rule() {
+        let plain = FilterRuleSpec::exclude("*.o").with_cvs_origin(true);
+        let normal = FilterRuleSpec::exclude("*.tmp");
+        let rules = build_wire_format_rules(&[plain, normal], false)
+            .expect("should forward cvs_origin to wire format");
+
+        assert_eq!(rules.len(), 2);
+        assert!(rules[0].cvs_origin, "cvs-origin exclude must be marked");
+        assert!(
+            !rules[1].cvs_origin,
+            "an ordinary --exclude must not be marked cvs-origin"
+        );
     }
 
     /// upstream: exclude.c:1330-1332 - --delete-excluded applies an implicit

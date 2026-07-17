@@ -23,7 +23,14 @@ pub(crate) fn append_cvs_exclude_rules(
         .allow_list_clearing(true);
     cvs_rules.push(FilterRuleSpec::dir_merge(".cvsignore".to_owned(), options));
 
-    destination.extend(cvs_rules);
+    // upstream: exclude.c:1652-1668 send_filter_list() - the `-C` built-in
+    // excludes and the `:C` per-directory merge stay local on a receiving client
+    // and (for `:C`) only cross the wire on protocol >= 29. Tag every rule this
+    // path produces so the wire projection can honor that gating; the `-C` flag
+    // is independently forwarded to the peer in argv (remote::flags), which runs
+    // its own get_cvs_excludes(), so transmitting these rules on a pull would be
+    // both redundant and non-upstream.
+    destination.extend(cvs_rules.into_iter().map(|rule| rule.with_cvs_origin(true)));
     Ok(())
 }
 
@@ -115,6 +122,40 @@ where
 mod tests {
     use super::*;
     use core::client::FilterRuleKind;
+
+    #[test]
+    fn append_cvs_exclude_rules_marks_every_rule_cvs_origin() {
+        // upstream: exclude.c:1652-1668 send_filter_list() - the `-C` built-in
+        // excludes and the `:C` per-directory merge follow the CVS send gate
+        // (local on a receiving client, `:C` only on protocol >= 29). Every rule
+        // this path produces must carry the origin marker so build_wire_format_rules
+        // can forward it to the wire projection.
+        let mut rules = Vec::new();
+        append_cvs_exclude_rules(&mut rules).expect("cvs rules build");
+        assert!(!rules.is_empty());
+        assert!(
+            rules.iter().all(FilterRuleSpec::is_cvs_origin),
+            "every -C rule must be tagged cvs_origin"
+        );
+        // The trailing `:C` per-directory merge is present and tagged.
+        let dir_merge = rules
+            .iter()
+            .find(|r| r.kind() == FilterRuleKind::DirMerge)
+            .expect(":C dir-merge present");
+        assert!(dir_merge.is_cvs_origin());
+        assert_eq!(dir_merge.pattern(), ".cvsignore");
+    }
+
+    #[test]
+    fn cvs_default_exclude_rules_are_not_cvs_origin() {
+        // The `--filter` CVS convenience path (FilterDirective::CvsDefaults) uses
+        // cvs_default_exclude_rules() directly and does NOT forward `-C` in argv,
+        // so upstream transmits those rules on the wire; they must not be tagged
+        // cvs_origin (which would wrongly keep them local on a pull).
+        let rules = cvs_default_exclude_rules().expect("cvs defaults build");
+        assert!(!rules.is_empty());
+        assert!(rules.iter().all(|r| !r.is_cvs_origin()));
+    }
 
     #[test]
     fn append_cvsignore_tokens_adds_basic_pattern() {

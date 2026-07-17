@@ -100,6 +100,19 @@ pub struct FilterRuleWireFormat {
     /// When `no_prefixes && no_prefixes_include`, the merge file's per-dir
     /// rules are treated as include-only; otherwise they are exclude-only.
     pub no_prefixes_include: bool,
+    /// Marks a rule produced by the `-C`/`--cvs-exclude` built-in expansion.
+    ///
+    /// This is transfer-decision metadata, NOT part of the wire encoding: it is
+    /// never serialized and always parses back as `false`. It exists so the
+    /// send path can reproduce upstream's `send_filter_list()` role/protocol
+    /// gating for CVS rules - kept local on a receiving client, and (for the
+    /// `:C` per-directory merge) only crossing the wire on protocol >= 29.
+    ///
+    /// upstream: exclude.c:1652-1668 send_filter_list() - the `-C` rules are
+    /// added to the transmitted list only when `am_sender`, and `:C` only when
+    /// `protocol_version >= 29`; otherwise they are appended after `send_rules()`
+    /// and stay local.
+    pub cvs_origin: bool,
 }
 
 impl FilterRuleWireFormat {
@@ -121,6 +134,7 @@ impl FilterRuleWireFormat {
             negate: false,
             no_prefixes: false,
             no_prefixes_include: false,
+            cvs_origin: false,
         }
     }
 
@@ -142,6 +156,7 @@ impl FilterRuleWireFormat {
             negate: false,
             no_prefixes: false,
             no_prefixes_include: false,
+            cvs_origin: false,
         }
     }
 
