@@ -172,10 +172,15 @@ pub fn process_file_response<R: Read>(
                 reader.read_exact(&mut expected[..checksum_len])?;
 
                 let algo = checksum_verifier.algorithm();
-                // upstream: checksum.c:sum_init() prepends seed for legacy MD4.
+                // upstream: checksum.c:600-611 sum_init() prepends the seed only
+                // for the legacy MD4 variants (protocol < 30).
                 let old_verifier = std::mem::replace(
                     checksum_verifier,
-                    ChecksumVerifier::for_algorithm_seeded(algo, ctx.config.checksum_seed),
+                    ChecksumVerifier::for_algorithm_seeded(
+                        algo,
+                        ctx.config.checksum_seed,
+                        ctx.config.protocol,
+                    ),
                 );
                 let mut computed = [0u8; ChecksumVerifier::MAX_DIGEST_LEN];
                 let computed_len = old_verifier.finalize_into(&mut computed);

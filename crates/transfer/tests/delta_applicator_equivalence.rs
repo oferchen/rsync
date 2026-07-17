@@ -119,9 +119,16 @@ fn encode_compressed(ops: &[Op], payload: &[u8], block_len: usize) -> Vec<u8> {
     wire
 }
 
+/// Protocol version for the equivalence helpers. These tests only exercise
+/// MD5, which is never seeded, so any protocol >= 30 leaves the digest
+/// unchanged; the reference and applicator paths stay symmetric.
+fn proto32() -> protocol::ProtocolVersion {
+    protocol::ProtocolVersion::try_from(32u8).expect("protocol 32")
+}
+
 /// Appends the trailing per-file checksum the receiver expects.
 fn append_checksum(wire: &mut Vec<u8>, algo: ChecksumAlgorithm, seed: i32, output: &[u8]) {
-    let mut verifier = ChecksumVerifier::for_algorithm_seeded(algo, seed);
+    let mut verifier = ChecksumVerifier::for_algorithm_seeded(algo, seed, proto32());
     verifier.update(output);
     let mut digest = [0u8; ChecksumVerifier::MAX_DIGEST_LEN];
     let len = verifier.finalize_into(&mut digest);
@@ -180,7 +187,7 @@ fn reference_apply<R: Read>(
         Some(p) => Some(MapFile::open(p)?),
         None => None,
     };
-    let mut verifier = ChecksumVerifier::for_algorithm_seeded(algo, seed);
+    let mut verifier = ChecksumVerifier::for_algorithm_seeded(algo, seed, proto32());
     let mut literal_bytes: u64 = 0;
 
     let write_chunk = |out: &mut std::io::BufWriter<File>,
@@ -326,7 +333,7 @@ fn applicator_apply(
         sparse,
         ..Default::default()
     };
-    let verifier = ChecksumVerifier::for_algorithm_seeded(algo, seed);
+    let verifier = ChecksumVerifier::for_algorithm_seeded(algo, seed, proto32());
     let mut applicator = DeltaApplicator::new(out, &config, verifier, signature, basis_path)?;
     let mut cursor = Cursor::new(wire.to_vec());
     apply_delta_stream(&mut cursor, &mut applicator, token_reader)?;
