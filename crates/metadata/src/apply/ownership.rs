@@ -264,25 +264,34 @@ fn resolve_owner_uid(
 ) -> Option<unix_fs::Uid> {
     entry.uid().and_then(|uid| {
         let numeric = options.numeric_ids_enabled();
-        let mut base = uid as RawUid;
-        let mut mapped = false;
-        if let Some(mapping) = options.user_mapping()
-            && let Ok(Some(target)) = mapping.map_uid(base, numeric)
+        let raw = uid as RawUid;
+        let name = entry.user_name();
+        // upstream: uidlist.c:255-280 recv_add_id - a `--usermap` rule is scanned
+        // FIRST, keyed on the sender-transmitted name (name/wildcard rules) or
+        // the raw sender id (numeric rules), before any receiver-local name
+        // resolution. The name-list path (non-INC_RECURSE) resolves entries in
+        // `remap_flist_ownership_from_id_lists`; this per-entry path serves the
+        // INC_RECURSE inline-name case, so the map is consulted only when the
+        // sender transmitted an inline name here.
+        if let Some(name) = name
+            && let Some(mapping) = options.user_mapping()
+            && let Ok(Some(target)) = mapping.map_uid_named(raw, Some(name.as_bytes()), numeric)
         {
-            base = target;
-            mapped = true;
+            return Some(ownership::uid_from_raw(target));
         }
-        if !mapped
-            && !numeric
-            && let Some(name) = entry.user_name()
-        {
+        // upstream: uidlist.c:273-280 - no map rule matched; fall back to
+        // user_to_uid(name), i.e. resolve the sender name against the receiver's
+        // user database so ownership follows the name across differing id
+        // namespaces. Skipped under --numeric-ids (the sender omits names).
+        if !numeric && let Some(name) = name {
             let local = lookup_user_by_name(name.as_bytes())
                 .ok()
                 .flatten()
-                .unwrap_or(base);
+                .unwrap_or(raw);
             return Some(ownership::uid_from_raw(local));
         }
-        map_uid(base, numeric)
+        // No transmitted name: receiver-local resolution of the raw id.
+        map_uid(raw, numeric)
     })
 }
 
@@ -299,25 +308,28 @@ fn resolve_group_gid(
 ) -> Option<unix_fs::Gid> {
     entry.gid().and_then(|gid| {
         let numeric = options.numeric_ids_enabled();
-        let mut base = gid as RawGid;
-        let mut mapped = false;
-        if let Some(mapping) = options.group_mapping()
-            && let Ok(Some(target)) = mapping.map_gid(base, numeric)
+        let raw = gid as RawGid;
+        let name = entry.group_name();
+        // upstream: uidlist.c:255-280 recv_add_id - see `resolve_owner_uid`; the
+        // group `--groupmap` scan is keyed on the sender-transmitted group name
+        // (or the raw sender gid for numeric rules) before receiver-local
+        // resolution. Consulted per-entry only for the INC_RECURSE inline-name
+        // case; the id-list path resolves in
+        // `remap_flist_ownership_from_id_lists`.
+        if let Some(name) = name
+            && let Some(mapping) = options.group_mapping()
+            && let Ok(Some(target)) = mapping.map_gid_named(raw, Some(name.as_bytes()), numeric)
         {
-            base = target;
-            mapped = true;
+            return Some(ownership::gid_from_raw(target));
         }
-        if !mapped
-            && !numeric
-            && let Some(name) = entry.group_name()
-        {
+        if !numeric && let Some(name) = name {
             let local = lookup_group_by_name(name.as_bytes())
                 .ok()
                 .flatten()
-                .unwrap_or(base);
+                .unwrap_or(raw);
             return Some(ownership::gid_from_raw(local));
         }
-        map_gid(base, numeric)
+        map_gid(raw, numeric)
     })
 }
 
@@ -954,6 +966,97 @@ mod own_debug_tests {
             resolve_owner_uid(&entry, &opts_num).map(|u| u.as_raw()),
             Some(4_000_123),
             "--numeric-ids must keep the raw sender id"
+        );
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn usermap_matches_sender_inline_name_not_raw_id() {
+        // upstream: uidlist.c:255-268 recv_add_id - a `--usermap` NAME rule is
+        // keyed on the sender-transmitted (inline, INC_RECURSE) name, not a name
+        // re-derived from the raw sender id on the receiver. Sender uid 1500 does
+        // not exist locally; the inline name "deploy" drives the rule. Target 0
+        // is numeric so the assertion needs no /etc/passwd entry.
+        use protocol::flist::FileEntry;
+
+        let mut entry = FileEntry::new_file("f".into(), 0, 0o644);
+        entry.set_uid(1500);
+        entry.set_user_name("deploy".to_string());
+
+        let opts = MetadataOptions::new()
+            .preserve_owner(true)
+            .numeric_ids(false)
+            .with_user_mapping(Some(crate::UserMapping::parse("deploy:0").unwrap()));
+        assert_eq!(
+            resolve_owner_uid(&entry, &opts).map(|u| u.as_raw()),
+            Some(0),
+            "usermap must match the sender name 'deploy', not the local uid 1500"
+        );
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn usermap_numeric_rule_keys_on_raw_sender_id() {
+        // upstream: uidlist.c:262-267 - a numeric `--usermap` rule matches the
+        // raw sender id regardless of the transmitted name.
+        use protocol::flist::FileEntry;
+
+        let mut entry = FileEntry::new_file("f".into(), 0, 0o644);
+        entry.set_uid(1500);
+        entry.set_user_name("deploy".to_string());
+
+        let opts = MetadataOptions::new()
+            .preserve_owner(true)
+            .numeric_ids(false)
+            .with_user_mapping(Some(crate::UserMapping::parse("1500:5000").unwrap()));
+        assert_eq!(
+            resolve_owner_uid(&entry, &opts).map(|u| u.as_raw()),
+            Some(5000),
+            "numeric usermap must map the raw sender id 1500 to 5000"
+        );
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn usermap_wildcard_matches_sender_inline_name() {
+        // upstream: uidlist.c:256-258 - NFLAGS_WILD_NAME_MATCH wildmatch on the
+        // transmitted name.
+        use protocol::flist::FileEntry;
+
+        let mut entry = FileEntry::new_file("f".into(), 0, 0o644);
+        entry.set_uid(1500);
+        entry.set_user_name("deploy".to_string());
+
+        let opts = MetadataOptions::new()
+            .preserve_owner(true)
+            .numeric_ids(false)
+            .with_user_mapping(Some(crate::UserMapping::parse("dep*:0").unwrap()));
+        assert_eq!(
+            resolve_owner_uid(&entry, &opts).map(|u| u.as_raw()),
+            Some(0),
+            "wildcard usermap must match the sender name 'deploy'"
+        );
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn groupmap_matches_sender_inline_name_symmetric() {
+        // upstream: uidlist.c:317-337 match_gid - group counterpart keyed on the
+        // sender-transmitted group name.
+        use protocol::flist::FileEntry;
+
+        let mut entry = FileEntry::new_file("f".into(), 0, 0o644);
+        entry.set_gid(2500);
+        entry.set_group_name("build".to_string());
+
+        let opts = MetadataOptions::new()
+            .preserve_group(true)
+            .numeric_ids(false)
+            .with_group_mapping(Some(crate::GroupMapping::parse("build:0").unwrap()));
+        assert_eq!(
+            resolve_group_gid(&entry, &opts).map(|g| g.as_raw()),
+            Some(0),
+            "groupmap must match the sender name 'build', not the local gid 2500"
         );
     }
 }
