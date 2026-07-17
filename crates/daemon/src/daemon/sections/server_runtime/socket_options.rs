@@ -81,8 +81,15 @@ impl SocketOption {
 /// optional `=value` suffixes. Boolean options default to `true` when no value
 /// is given, and accept `0`/`1` or `true`/`false` as values.
 ///
-/// upstream: socket.c - `set_socket_options()` supports a similar format.
-fn parse_socket_options(options: &str) -> Result<Vec<SocketOption>, String> {
+/// upstream: socket.c:set_socket_options() is `void`. An unknown option name
+/// (socket.c:704-707) warns and `continue`s; an `OPT_ON` preset given a value
+/// (socket.c:717-727) warns but is still applied. Neither aborts the daemon, so
+/// those cases warn through `log_sink` and keep parsing rather than returning an
+/// error. Malformed numeric values remain a local (non-upstream) hard error.
+fn parse_socket_options(
+    options: &str,
+    log_sink: Option<&SharedLogSink>,
+) -> Result<Vec<SocketOption>, String> {
     let mut result = Vec::new();
 
     for part in options.split(',') {
@@ -127,12 +134,12 @@ fn parse_socket_options(options: &str) -> Result<Vec<SocketOption>, String> {
             // and resolve to fixed IP_TOS bytes (0x10 / 0x08).
             #[cfg(not(target_family = "windows"))]
             "IPTOS_LOWDELAY" => {
-                reject_value_for_preset(value, "IPTOS_LOWDELAY")?;
+                warn_opt_on_value(value, "IPTOS_LOWDELAY", log_sink);
                 result.push(SocketOption::IpTos(0x10));
             }
             #[cfg(not(target_family = "windows"))]
             "IPTOS_THROUGHPUT" => {
-                reject_value_for_preset(value, "IPTOS_THROUGHPUT")?;
+                warn_opt_on_value(value, "IPTOS_THROUGHPUT", log_sink);
                 result.push(SocketOption::IpTos(0x08));
             }
             "SO_BROADCAST" => {
@@ -160,7 +167,9 @@ fn parse_socket_options(options: &str) -> Result<Vec<SocketOption>, String> {
                 result.push(SocketOption::SoRcvTimeo(n));
             }
             _ => {
-                return Err(format!("unknown socket option '{name}'"));
+                // upstream: socket.c:704-707 - `rprintf(FERROR,"Unknown socket
+                // option %s\n",tok)` then `continue`; never fatal.
+                warn_socket_option(log_sink, format!("Unknown socket option {name}"));
             }
         }
     }
@@ -208,15 +217,32 @@ fn parse_int_option_value(value: Option<&str>, name: &str) -> Result<i32, String
     }
 }
 
-/// Rejects an `=value` suffix on an `OPT_ON` preset option.
+/// Warns when an `OPT_ON` preset option is given an `=value` suffix, then lets
+/// the caller apply the preset anyway.
 ///
-/// upstream: socket.c:set_socket_options() prints "syntax error -- %s does not
-/// take a value" for `OPT_ON` entries such as `IPTOS_LOWDELAY`.
+/// upstream: socket.c:717-727 - an `OPT_ON` entry such as `IPTOS_LOWDELAY` that
+/// receives a value prints `syntax error -- %s does not take a value` but still
+/// runs the `setsockopt(2)` with its fixed value. The warning is advisory, not
+/// fatal.
 #[cfg(not(target_family = "windows"))]
-fn reject_value_for_preset(value: Option<&str>, name: &str) -> Result<(), String> {
-    match value {
-        None => Ok(()),
-        Some(_) => Err(format!("{name} does not take a value")),
+fn warn_opt_on_value(value: Option<&str>, name: &str, log_sink: Option<&SharedLogSink>) {
+    if value.is_some() {
+        warn_socket_option(
+            log_sink,
+            format!("syntax error -- {name} does not take a value"),
+        );
+    }
+}
+
+/// Emits a non-fatal socket-option warning through the daemon log sink.
+///
+/// upstream: socket.c:set_socket_options() reports parse and `setsockopt(2)`
+/// problems via `rprintf(FERROR, ...)` / `rsyserr(FERROR, ...)` and continues.
+/// The daemon routes those through its log sink at warning level.
+fn warn_socket_option(log_sink: Option<&SharedLogSink>, text: String) {
+    if let Some(log) = log_sink {
+        let message = rsync_warning!(text).with_role(Role::Daemon);
+        log_message(log, &message);
     }
 }
 
@@ -305,11 +331,10 @@ fn apply_socket_options_impl(
 
         if let Err(error) = result {
             // upstream: socket.c:730-733 - warn and keep applying the rest.
-            if let Some(log) = log_sink {
-                let text = format!("failed to set socket option {}: {error}", opt.name());
-                let message = rsync_warning!(text).with_role(Role::Daemon);
-                log_message(log, &message);
-            }
+            warn_socket_option(
+                log_sink,
+                format!("failed to set socket option {}: {error}", opt.name()),
+            );
         }
     }
 }
