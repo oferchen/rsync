@@ -321,6 +321,7 @@ impl GeneratorContext {
         Ok(GeneratorStats {
             files_listed: file_count,
             files_transferred: transfer_result.files_transferred,
+            transferred_file_size: transfer_result.transferred_file_size,
             bytes_sent: transfer_result.bytes_sent,
             bytes_read: self.timing.total_bytes_read,
             matched_data: transfer_result.matched_data,

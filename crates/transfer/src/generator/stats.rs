@@ -23,6 +23,11 @@ use protocol::stats::{CreatedStats, DeleteStats};
 pub(crate) struct TransferLoopResult {
     /// Number of files actually transferred.
     pub(crate) files_transferred: usize,
+    /// Summed length of every transferred file (upstream: `total_transferred_size`).
+    ///
+    /// Mirrors `sender.c:343` `stats.total_transferred_size += F_LENGTH(file)`,
+    /// accumulated at the same point as `files_transferred`.
+    pub(crate) transferred_file_size: u64,
     /// Total bytes sent during transfer.
     pub(crate) bytes_sent: u64,
     /// Bytes covered by block matches across all files (upstream: matched_data).
@@ -55,6 +60,12 @@ pub struct GeneratorStats {
     pub files_listed: usize,
     /// Number of files actually transferred (delta or whole-file).
     pub files_transferred: usize,
+    /// Summed length of every transferred file (upstream: `total_transferred_size`).
+    ///
+    /// On a push the local sender computes this itself (`sender.c:343`); upstream
+    /// never sends it over the wire in `handle_stats()`, so the pushing client
+    /// reports it straight from this locally accumulated total.
+    pub transferred_file_size: u64,
     /// Total bytes sent to the receiver (delta data + literals).
     pub bytes_sent: u64,
     /// Total bytes read from the receiver (signatures, NDX requests).

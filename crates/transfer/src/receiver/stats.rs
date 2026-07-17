@@ -68,6 +68,13 @@ pub struct TransferStats {
     pub files_listed: usize,
     /// Number of files actually transferred.
     pub files_transferred: usize,
+    /// Summed length of every transferred file (upstream: `total_transferred_size`).
+    ///
+    /// On a pull the local receiver computes this itself (`receiver.c:784`
+    /// `stats.total_transferred_size += F_LENGTH(file)`); upstream never sends
+    /// it over the wire in `handle_stats()`, so the pulling client reports it
+    /// straight from this locally accumulated total.
+    pub transferred_file_size: u64,
     /// Total bytes received from the sender (file data, deltas, etc.).
     pub bytes_received: u64,
     /// Total bytes sent to the sender (signatures, file indices, etc.).
