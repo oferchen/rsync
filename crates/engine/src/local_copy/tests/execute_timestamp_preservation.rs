@@ -129,7 +129,7 @@ fn times_flag_preserves_mtime_on_multiple_files() {
 }
 
 #[test]
-fn times_flag_preserves_atime_on_copied_file() {
+fn times_without_u_flag_omits_atime_on_copied_file() {
     let temp = tempdir().expect("tempdir");
     let source = temp.path().join("source.txt");
     let destination = temp.path().join("dest.txt");
@@ -157,7 +157,12 @@ fn times_flag_preserves_atime_on_copied_file() {
     let dest_atime = FileTime::from_last_access_time(&dest_metadata);
     let dest_mtime = FileTime::from_last_modification_time(&dest_metadata);
 
-    assert_eq!(dest_atime, atime, "atime should be preserved");
+    // upstream: rsync.c:588-589 - `--times` alone sets ATTRS_SKIP_ATIME, so the
+    // destination access time is left unchanged rather than copied from source.
+    assert_ne!(
+        dest_atime, atime,
+        "atime must not be preserved without --atimes/-U"
+    );
     assert_eq!(dest_mtime, mtime, "mtime should be preserved");
 }
 
@@ -186,9 +191,12 @@ fn atime_and_mtime_can_differ() {
     ];
     let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
 
+    // Preserving the atime as a distinct value requires --atimes/-U; --times
+    // alone would leave it unchanged (upstream: rsync.c:588-589). The atime nsec
+    // lands as 0 upstream (rsync.c:609), so compare seconds only.
     plan.execute_with_options(
         LocalCopyExecution::Apply,
-        LocalCopyOptions::default().times(true),
+        LocalCopyOptions::default().times(true).atimes(true),
     )
     .expect("copy succeeds");
 
@@ -196,7 +204,11 @@ fn atime_and_mtime_can_differ() {
     let dest_atime = FileTime::from_last_access_time(&dest_metadata);
     let dest_mtime = FileTime::from_last_modification_time(&dest_metadata);
 
-    assert_eq!(dest_atime, atime, "atime should be preserved as distinct value");
+    assert_eq!(
+        dest_atime.unix_seconds(),
+        atime.unix_seconds(),
+        "atime seconds should be preserved with --atimes"
+    );
     assert_eq!(dest_mtime, mtime, "mtime should be preserved as distinct value");
     assert_ne!(dest_atime, dest_mtime, "atime and mtime should remain different");
 }
@@ -361,7 +373,13 @@ fn times_flag_with_archive_mode() {
     let dest_atime = FileTime::from_last_access_time(&dest_metadata);
     let dest_mtime = FileTime::from_last_modification_time(&dest_metadata);
 
-    assert_eq!(dest_atime, atime);
+    // upstream: archive mode (-a = -rlptgoD) does NOT include --atimes/-U, so
+    // the destination access time is left unchanged (rsync.c:588-589); only the
+    // mtime is preserved.
+    assert_ne!(
+        dest_atime, atime,
+        "archive mode must not preserve atime (no -U)"
+    );
     assert_eq!(dest_mtime, mtime);
 }
 
@@ -424,7 +442,12 @@ fn times_flag_on_symlink() {
     let dest_atime = FileTime::from_last_access_time(&dest_meta);
     let dest_mtime = FileTime::from_last_modification_time(&dest_meta);
 
-    assert_eq!(dest_atime, link_atime, "symlink atime should be preserved");
+    // upstream: rsync.c:588-589 - default options preserve times but not atimes,
+    // so the symlink's access time is left unchanged; only its mtime is written.
+    assert_ne!(
+        dest_atime, link_atime,
+        "symlink atime must not be preserved without --atimes"
+    );
     assert_eq!(dest_mtime, link_mtime, "symlink mtime should be preserved");
 }
 

@@ -65,9 +65,11 @@ fn file_metadata_preserves_timestamp_at_2038_boundary() {
     let dest_atime = FileTime::from_last_access_time(&dest_meta);
     let dest_mtime = FileTime::from_last_modification_time(&dest_meta);
 
-    assert_eq!(
+    // upstream: rsync.c:588-589 - without --atimes the access time is left
+    // unchanged (ATTRS_SKIP_ATIME); the 2038-boundary overflow test is on mtime.
+    assert_ne!(
         dest_atime, atime,
-        "atime should be preserved at 2038 boundary"
+        "atime must not be preserved without --atimes"
     );
     assert_eq!(
         dest_mtime, mtime,
@@ -96,7 +98,11 @@ fn file_metadata_preserves_timestamp_before_2038() {
     let dest_atime = FileTime::from_last_access_time(&dest_meta);
     let dest_mtime = FileTime::from_last_modification_time(&dest_meta);
 
-    assert_eq!(dest_atime, atime, "atime should be preserved before 2038");
+    // upstream: rsync.c:588-589 - atime not written without --atimes.
+    assert_ne!(
+        dest_atime, atime,
+        "atime must not be preserved without --atimes"
+    );
     assert_eq!(dest_mtime, mtime, "mtime should be preserved before 2038");
 }
 
@@ -121,7 +127,11 @@ fn file_metadata_preserves_timestamp_after_2038() {
     let dest_atime = FileTime::from_last_access_time(&dest_meta);
     let dest_mtime = FileTime::from_last_modification_time(&dest_meta);
 
-    assert_eq!(dest_atime, atime, "atime should be preserved after 2038");
+    // upstream: rsync.c:588-589 - atime not written without --atimes.
+    assert_ne!(
+        dest_atime, atime,
+        "atime must not be preserved without --atimes"
+    );
     assert_eq!(dest_mtime, mtime, "mtime should be preserved after 2038");
 }
 
@@ -146,7 +156,11 @@ fn file_metadata_preserves_timestamp_year_2100() {
     let dest_atime = FileTime::from_last_access_time(&dest_meta);
     let dest_mtime = FileTime::from_last_modification_time(&dest_meta);
 
-    assert_eq!(dest_atime, atime, "atime should be preserved for year 2100");
+    // upstream: rsync.c:588-589 - atime not written without --atimes.
+    assert_ne!(
+        dest_atime, atime,
+        "atime must not be preserved without --atimes"
+    );
     assert_eq!(dest_mtime, mtime, "mtime should be preserved for year 2100");
 }
 
@@ -182,7 +196,11 @@ fn file_metadata_preserves_timestamp_year_3000() {
     let dest_atime = FileTime::from_last_access_time(&dest_meta);
     let dest_mtime = FileTime::from_last_modification_time(&dest_meta);
 
-    assert_eq!(dest_atime, atime, "atime should be preserved for year 3000");
+    // upstream: rsync.c:588-589 - atime not written without --atimes.
+    assert_ne!(
+        dest_atime, atime,
+        "atime must not be preserved without --atimes"
+    );
     assert_eq!(dest_mtime, mtime, "mtime should be preserved for year 3000");
 }
 
@@ -207,10 +225,8 @@ fn directory_metadata_preserves_timestamp_beyond_2038() {
     let dest_atime = FileTime::from_last_access_time(&dest_meta);
     let dest_mtime = FileTime::from_last_modification_time(&dest_meta);
 
-    assert_eq!(
-        dest_atime, atime,
-        "directory atime should be preserved beyond 2038"
-    );
+    // upstream: rsync.c:588-589 - directories always skip atime (S_ISDIR).
+    assert_ne!(dest_atime, atime, "directory atime must never be preserved");
     assert_eq!(
         dest_mtime, mtime,
         "directory mtime should be preserved beyond 2038"
@@ -241,9 +257,10 @@ fn symlink_metadata_preserves_timestamp_beyond_2038() {
     let dest_atime = FileTime::from_last_access_time(&dest_meta);
     let dest_mtime = FileTime::from_last_modification_time(&dest_meta);
 
-    assert_eq!(
+    // upstream: rsync.c:588-589 - symlink atime not written without --atimes.
+    assert_ne!(
         dest_atime, atime,
-        "symlink atime should be preserved beyond 2038"
+        "symlink atime must not be preserved without --atimes"
     );
     assert_eq!(
         dest_mtime, mtime,
