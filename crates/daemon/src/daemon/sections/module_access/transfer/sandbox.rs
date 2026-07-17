@@ -67,11 +67,16 @@ fn apply_privilege_restrictions_with_upstream_errors(
         let target = match resolve_drop_target(module, am_root) {
             Ok(target) => target,
             Err(err) => {
-                // upstream: clientserver.c:784-786 - `@ERROR: invalid uid`.
-                let message = rsync_error!(1, format!("privilege drop resolution failed: {err}"))
-                    .with_role(Role::Daemon);
+                // A uid/gid NAME that fails to resolve (here the `nobody`
+                // default) is a distinct failure point from the setgid/setuid
+                // SYSCALL failures handled below: it yields `@ERROR: invalid
+                // uid <name>` / `@ERROR: invalid gid <name>` with a matching
+                // FLOG `Invalid uid/gid <name>`.
+                // upstream: clientserver.c:784-786 (uid) / 656-658 (gid).
+                let (flog, payload) = err.upstream_reply();
+                let message = rsync_error!(1, flog).with_role(Role::Daemon);
                 log_message(log_sink, &message);
-                send_error(ctx.reader.get_mut(), ctx.limiter, SETUID_FAILED_PAYLOAD)?;
+                send_error(ctx.reader.get_mut(), ctx.limiter, &payload)?;
                 return Ok(None);
             }
         };
