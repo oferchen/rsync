@@ -18,5 +18,6 @@ pub(crate) use self::rate::{
 };
 pub(crate) use self::remaining::RemainingTimeEstimator;
 pub(crate) use self::size::{
-    format_decimal_bytes, format_human_bytes, format_list_size, format_progress_bytes, format_size,
+    format_count, format_decimal_bytes, format_human_bytes, format_list_size,
+    format_progress_bytes, format_size,
 };

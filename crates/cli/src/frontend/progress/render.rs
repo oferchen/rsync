@@ -43,7 +43,7 @@ fn display_without_trailing_separators(path: &Path, allow_8bit: bool) -> Vec<u8>
 }
 
 use super::format::{
-    event_matches_name_level, format_decimal_bytes, format_list_permissions, format_list_size,
+    event_matches_name_level, format_count, format_list_permissions, format_list_size,
     format_list_timestamp, format_progress_bytes, format_progress_elapsed, format_progress_percent,
     format_progress_rate, format_size, format_stat_categories, format_summary_rate,
     is_progress_event, list_only_event,
@@ -532,13 +532,16 @@ fn emit_stats_detail_block<W: Write + ?Sized>(
     // upstream: main.c output_itemized_counts("Number of deleted files", ...)
     // prints the total plus a per-type breakdown (reg/dir/link/dev/special),
     // where reg = total - (dir + link + dev + special).
-    let deleted_breakdown = format_stat_categories(&[
-        ("reg", summary.deleted_regular_files()),
-        ("dir", summary.deleted_dirs()),
-        ("link", summary.deleted_symlinks()),
-        ("dev", summary.deleted_devices()),
-        ("special", summary.deleted_specials()),
-    ]);
+    let deleted_breakdown = format_stat_categories(
+        &[
+            ("reg", summary.deleted_regular_files()),
+            ("dir", summary.deleted_dirs()),
+            ("link", summary.deleted_symlinks()),
+            ("dev", summary.deleted_devices()),
+            ("special", summary.deleted_specials()),
+        ],
+        human_readable,
+    );
     let literal_bytes = summary.bytes_copied();
     let transferred_size = summary.transferred_file_size();
     let bytes_sent = summary.bytes_sent();
@@ -576,22 +579,28 @@ fn emit_stats_detail_block<W: Write + ?Sized>(
     // upstream: main.c:388 output_itemized_counts labels[] =
     // {reg, dir, link, dev, special} - devices ('dev') are counted separately
     // from other specials (fifos/sockets), never folded together.
-    let files_breakdown = format_stat_categories(&files_count_categories(
-        files_total,
-        directories_total,
-        symlinks_total,
-        devices_total,
-        fifos_total,
-    ));
+    let files_breakdown = format_stat_categories(
+        &files_count_categories(
+            files_total,
+            directories_total,
+            symlinks_total,
+            devices_total,
+            fifos_total,
+        ),
+        human_readable,
+    );
     // upstream: main.c output_itemized_counts labels the created breakdown
     // reg/dir/link/dev/special, with devices ('dev') split from other specials.
-    let created_breakdown = format_stat_categories(&[
-        ("reg", created_reg),
-        ("dir", directories),
-        ("link", created_symlinks),
-        ("dev", created_devices),
-        ("special", created_specials),
-    ]);
+    let created_breakdown = format_stat_categories(
+        &[
+            ("reg", created_reg),
+            ("dir", directories),
+            ("link", created_symlinks),
+            ("dev", created_devices),
+            ("special", created_specials),
+        ],
+        human_readable,
+    );
 
     let total_size_display = format_size(total_size, human_readable);
     let transferred_size_display = format_size(transferred_size, human_readable);
@@ -601,22 +610,23 @@ fn emit_stats_detail_block<W: Write + ?Sized>(
     let bytes_sent_display = format_size(bytes_sent, human_readable);
     let bytes_received_display = format_size(bytes_received, human_readable);
 
-    // upstream: main.c output_summary() - every count is wrapped in
-    // comma_num(), e.g. `rprintf(FINFO, "Number of files: %s%s\n",
-    // comma_num(stats.num_files), ...)`. comma_num inserts thousands
-    // separators unconditionally (independent of -h), so a count >= 1000
-    // renders as `1,500`, not `1500`.
+    // upstream: main.c output_summary() - every count is wrapped in comma_num(),
+    // e.g. `rprintf(FINFO, "Number of files: %s%s\n",
+    // comma_num(stats.num_files), ...)`. comma_num = do_big_num(num,
+    // human_readable != 0, NULL) (inums.h), so a count is comma-grouped at every
+    // enabled level (`1,500`) but rendered as raw digits under --no-h (`1500`);
+    // counts are never humanised to K/M/G units, even at -hh.
     writeln!(
         stdout,
         "Number of files: {}{files_breakdown}",
-        format_decimal_bytes(total_entries)
+        format_count(total_entries, human_readable)
     )?;
     // upstream: main.c:429 - `if (protocol_version >= 29)`
     if summary.protocol_version() >= 29 {
         writeln!(
             stdout,
             "Number of created files: {}{created_breakdown}",
-            format_decimal_bytes(created_total)
+            format_count(created_total, human_readable)
         )?;
     }
     // upstream: main.c:431 - `if (protocol_version >= 31)`
@@ -624,13 +634,13 @@ fn emit_stats_detail_block<W: Write + ?Sized>(
         writeln!(
             stdout,
             "Number of deleted files: {}{deleted_breakdown}",
-            format_decimal_bytes(deleted)
+            format_count(deleted, human_readable)
         )?;
     }
     writeln!(
         stdout,
         "Number of regular files transferred: {}",
-        format_decimal_bytes(files)
+        format_count(files, human_readable)
     )?;
     writeln!(stdout, "Total file size: {total_size_display} bytes")?;
     writeln!(
@@ -1482,7 +1492,7 @@ mod tests {
             ]
         );
         assert_eq!(
-            format_stat_categories(&cats),
+            format_stat_categories(&cats, HumanReadableMode::Grouped),
             " (reg: 3, dir: 2, link: 1, dev: 4, special: 5)"
         );
     }
