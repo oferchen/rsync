@@ -1,5 +1,6 @@
 //! Progress bar display helpers - percentages, elapsed time, and stat categories.
 
+use core::client::HumanReadableMode;
 use std::time::Duration;
 
 /// Formats a progress percentage.
@@ -30,13 +31,22 @@ pub(crate) fn format_progress_elapsed(elapsed: Duration) -> String {
     format!("{hours}:{minutes:02}:{seconds:02}")
 }
 
-pub(crate) fn format_stat_categories(categories: &[(&str, u64)]) -> String {
-    // upstream: main.c output_summary() comma_num()s each breakdown sub-count
-    // too, e.g. `(reg: 1,500, dir: 1)`.
+pub(crate) fn format_stat_categories(
+    categories: &[(&str, u64)],
+    human_readable: HumanReadableMode,
+) -> String {
+    // upstream: main.c output_itemized_counts comma_num()s each breakdown
+    // sub-count too, e.g. `(reg: 1,500, dir: 1)` at level >= 1, `(reg: 1500,
+    // dir: 1)` under --no-h (level 0).
     let parts: Vec<String> = categories
         .iter()
         .filter(|(_, count)| *count > 0)
-        .map(|(label, count)| format!("{label}: {}", super::size::format_decimal_bytes(*count)))
+        .map(|(label, count)| {
+            format!(
+                "{label}: {}",
+                super::size::format_count(*count, human_readable)
+            )
+        })
         .collect();
     if parts.is_empty() {
         String::new()
@@ -100,20 +110,26 @@ mod tests {
     #[test]
     fn format_stat_categories_empty() {
         let categories: &[(&str, u64)] = &[];
-        assert_eq!(format_stat_categories(categories), "");
+        assert_eq!(
+            format_stat_categories(categories, HumanReadableMode::Grouped),
+            ""
+        );
     }
 
     #[test]
     fn format_stat_categories_all_zero() {
         let categories: &[(&str, u64)] = &[("files", 0), ("dirs", 0)];
-        assert_eq!(format_stat_categories(categories), "");
+        assert_eq!(
+            format_stat_categories(categories, HumanReadableMode::Grouped),
+            ""
+        );
     }
 
     #[test]
     fn format_stat_categories_some_nonzero() {
         let categories: &[(&str, u64)] = &[("files", 5), ("dirs", 0), ("symlinks", 3)];
         assert_eq!(
-            format_stat_categories(categories),
+            format_stat_categories(categories, HumanReadableMode::Grouped),
             " (files: 5, symlinks: 3)"
         );
     }
@@ -122,6 +138,31 @@ mod tests {
     fn format_stat_categories_groups_thousands_like_upstream() {
         // upstream comma_num()s each sub-count: `(reg: 1,500, dir: 1)`.
         let categories: &[(&str, u64)] = &[("reg", 1500), ("dir", 1)];
-        assert_eq!(format_stat_categories(categories), " (reg: 1,500, dir: 1)");
+        assert_eq!(
+            format_stat_categories(categories, HumanReadableMode::Grouped),
+            " (reg: 1,500, dir: 1)"
+        );
+    }
+
+    #[test]
+    fn format_stat_categories_raw_level_zero_no_separators() {
+        // upstream: --no-h => comma_num = do_big_num(x, 0, NULL) emits raw
+        // digits in the breakdown too: `(reg: 1500, dir: 1)`, not `1,500`.
+        let categories: &[(&str, u64)] = &[("reg", 1500), ("dir", 1)];
+        assert_eq!(
+            format_stat_categories(categories, HumanReadableMode::Raw),
+            " (reg: 1500, dir: 1)"
+        );
+    }
+
+    #[test]
+    fn format_stat_categories_hh_groups_not_humanised() {
+        // upstream: -hh keeps counts comma-grouped (comma_num passes
+        // human_readable != 0 == 1), never K/M/G units: `(reg: 1,500)`.
+        let categories: &[(&str, u64)] = &[("reg", 1500)];
+        assert_eq!(
+            format_stat_categories(categories, HumanReadableMode::BinaryUnits),
+            " (reg: 1,500)"
+        );
     }
 }
