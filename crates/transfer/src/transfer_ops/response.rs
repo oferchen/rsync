@@ -380,7 +380,15 @@ pub fn process_file_response<R: Read>(
                     true,
                 )?;
             }
-            #[cfg(not(unix))]
+            #[cfg(windows)]
+            {
+                // SEC-1.j (Windows): reparse-point-anchored handle rename, the
+                // counterpart to the Unix `renameat` anchoring above, so a
+                // junction swap on the commit parent cannot redirect the
+                // committed file (CVE-2024-12747 residual).
+                crate::temp_guard::commit_rename_no_follow(cleanup_guard.path(), &file_path)?;
+            }
+            #[cfg(all(not(unix), not(windows)))]
             {
                 fs::rename(cleanup_guard.path(), &file_path)?;
             }

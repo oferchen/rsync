@@ -236,10 +236,18 @@ fn try_create_new(
             }
         }
     }
-    fs::OpenOptions::new()
+    // SEC-1.r (Windows): create the temp file without following a reparse
+    // point at the leaf - the analog of the Unix `O_EXCL | O_NOFOLLOW` open -
+    // so a symlink/junction pre-planted at the temp name cannot redirect the
+    // create outside the destination tree (CVE-2024-12747 residual).
+    #[cfg(windows)]
+    let opened = fast_io::create_new_no_follow(concrete_path);
+    #[cfg(not(windows))]
+    let opened = fs::OpenOptions::new()
         .write(true)
         .create_new(true)
-        .open(concrete_path)
+        .open(concrete_path);
+    opened
 }
 
 /// Replaces the trailing `XXXXXX` in a template string with random alphanumeric
@@ -477,6 +485,34 @@ fn is_cross_device_error(e: &io::Error) -> bool {
         #[cfg(not(any(unix, windows)))]
         Some(_) => false,
         None => false,
+    }
+}
+
+/// Commits a temp file to its final destination on Windows with a
+/// reparse-point-anchored rename, falling back to copy+remove across volumes.
+///
+/// This is the Windows counterpart to the Unix
+/// `fast_io::renameat_via_sandbox_or_fallback` commit: it routes through
+/// [`fast_io::rename_no_follow`], which validates the destination parent is a
+/// real directory (not a junction/mount-point swap) and renames the temp file
+/// by handle relative to that validated directory handle, so a concurrent
+/// reparse-point swap between temp-create and rename cannot redirect the
+/// committed file outside the destination tree (CVE-2024-12747 residual).
+///
+/// Returns `Ok(false)` for an in-place rename and `Ok(true)` when a
+/// cross-volume `--temp-dir` forces the `EXDEV` copy+remove fallback
+/// (upstream `util1.c:robust_rename()`).
+#[cfg(windows)]
+pub fn commit_rename_no_follow(old_path: &Path, new_path: &Path) -> io::Result<bool> {
+    match fast_io::rename_no_follow(old_path, new_path, true) {
+        Ok(()) => Ok(false),
+        Err(ref e) if is_cross_device_error(e) => {
+            // upstream: util1.c:robust_rename() - copy_file + do_unlink on EXDEV.
+            fs::copy(old_path, new_path)?;
+            fs::remove_file(old_path)?;
+            Ok(true)
+        }
+        Err(e) => Err(e),
     }
 }
 
