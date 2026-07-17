@@ -71,9 +71,15 @@ on `chain.allows(...)` rather than on the deletion-pass walker.
 
 MDF-1 enumerates the `!` modifier in the upstream `add_rule()` audit
 and MDF-5 exercises per-directory rule scoping, but no MDF test
-asserts that a `!` inside an inner merge file does NOT clear rules
-parsed by an outer merge file. The cross-scope leak that PR #5898
-closed was untested.
+asserts how a `!` inside an inner per-directory merge file interacts
+with rules inherited from an outer directory's merge file. Per upstream
+`exclude.c` (3.4.4), a per-directory `!` clears the WHOLE mergelist,
+inherited outer rules included: `push_local_filters()` (`exclude.c:801`)
+reclassifies the parent's rules as the inherited tail of the same list,
+and the `FILTRULE_CLEAR_LIST` handler (`exclude.c:1399-1400`) runs
+`pop_filter_list()` then `listp->head = NULL`, dropping that inherited
+tail. Verified against the real rsync 3.4.4 binary (`rsync -n -r -i -F`
+transfers `inner/f.outer` after `inner/.rsync-filter` = `!`).
 
 ### Row .3 - directory-only unanchored `/**` synthesis
 
@@ -106,8 +112,9 @@ file (`uts_dd_exclude_5_no_double_recursive_wildcard.rs`).
   `DecisionContext::Deletion` does not see synthetic descendants from
   a sibling per-directory merge file (closes .1).
 - `MDF-5.2 negation_reset_scope_isolation`: assert `!` inside an inner
-  merge file does NOT clear an exclude introduced by the outer merge
-  file (closes .2).
+  per-directory merge file DOES clear the inherited exclude introduced
+  by the outer merge file (whole-mergelist reset), matching upstream
+  `exclude.c:1399-1400` and the real 3.4.4 binary (closes .2).
 - `MDF-2.1 dir_only_unanchored_no_descendants`: assert wire-byte
   parity for `- foo/*/` against upstream `--debug=FILTER` output,
   including the absence of a synthesised descendant rule (closes .3).
