@@ -417,6 +417,25 @@ pub(crate) fn socket_error(
     ClientError::with_code(code, message)
 }
 
+/// Builds the diagnostic for a `--contimeout` expiry during `connect(2)`.
+///
+/// Upstream's `open_socket_out()` calls `exit_cleanup(RERR_CONTIMEOUT)` (exit
+/// code 35) when the `SIGALRM` armed by `--contimeout` fires mid-connect, rather
+/// than the generic socket-I/O code 10. This mirrors that, and matches the SSH
+/// path which already maps a connect-watchdog expiry to `ConnectionTimeout`.
+///
+/// upstream: socket.c:280-282 - `if (connect_timeout < 0) exit_cleanup(RERR_CONTIMEOUT);`
+#[cold]
+pub(crate) fn connect_timeout_error(target: impl fmt::Display, error: io::Error) -> ClientError {
+    let code = ExitCode::ConnectionTimeout;
+    let text = format!(
+        "failed to connect to {target}: {}",
+        upstream_io_error(&error)
+    );
+    let message = rsync_error!(code.as_i32(), text).with_role(Role::Client);
+    ClientError::with_code(code, message)
+}
+
 /// Builds the canonical "connection unexpectedly closed" diagnostic that
 /// upstream rsync emits when the protocol stream reaches EOF mid-transfer.
 ///

@@ -135,13 +135,15 @@ use std::time::Duration;
 
 #[allow(unused_imports)] // REASON: convenience re-export; not all items used in every module
 pub(crate) use self::error::{
-    daemon_access_denied_error, daemon_authentication_failed_error,
+    connect_timeout_error, daemon_access_denied_error, daemon_authentication_failed_error,
     daemon_authentication_required_error, daemon_error, daemon_listing_unavailable_error,
     daemon_protocol_error, socket_error,
 };
-/// Default socket timeout for daemon connections.
+/// Default per-read/write socket I/O timeout for the daemon handshake when
+/// `--timeout` is unset.
 ///
-/// Mirrors the connect timeout applied in upstream
-/// `clientserver.c:start_daemon_client()` when no explicit `--contimeout`
-/// is provided.
+/// This governs only I/O on an established stream (the `@RSYNCD:` handshake
+/// reads/writes), never the connect phase. Upstream bounds `connect(2)` solely
+/// via `--contimeout` (socket.c:274-277), with a default of `0` (no bound); the
+/// connect phase is left to the OS SYN timeout unless `--contimeout` is set.
 pub(crate) const DAEMON_SOCKET_TIMEOUT: Duration = Duration::from_secs(10);

@@ -256,19 +256,24 @@ pub(crate) fn open_daemon_stream(
     Ok(DaemonStream::tcp(stream))
 }
 
-pub(crate) const fn resolve_connect_timeout(
-    connect_timeout: TransferTimeout,
-    fallback: TransferTimeout,
-    default: Duration,
-) -> Option<Duration> {
+/// Resolves the connect-phase timeout for a daemon TCP connection.
+///
+/// Upstream arms a `SIGALRM` around `connect(2)` only when `--contimeout` is set
+/// to a positive value; the default `connect_timeout` is `0`, in which case the
+/// connect blocks for the OS SYN timeout. `--timeout` never bounds the connect
+/// phase - it only governs per-read/write I/O on an established stream. Hence a
+/// connect is bounded only when `--contimeout=N` (`N > 0`) was given.
+///
+/// upstream: socket.c:274-277 `open_socket_out()` installs `alarm(connect_timeout)`
+/// solely for `connect_timeout > 0`; options.c:125 defaults `connect_timeout = 0`.
+pub(crate) const fn resolve_connect_timeout(connect_timeout: TransferTimeout) -> Option<Duration> {
     match connect_timeout {
-        TransferTimeout::Default => match fallback {
-            TransferTimeout::Default => Some(default),
-            TransferTimeout::Disabled => None,
-            TransferTimeout::Seconds(value) => Some(Duration::from_secs(value.get())),
-        },
-        TransferTimeout::Disabled => None,
+        // --contimeout=N (N > 0): bound the connect phase.
         TransferTimeout::Seconds(value) => Some(Duration::from_secs(value.get())),
+        // Unset (Default) or --contimeout=0 (Disabled): leave the connect
+        // unbounded, matching upstream's default connect_timeout=0. --timeout
+        // must not leak into the connect phase.
+        TransferTimeout::Default | TransferTimeout::Disabled => None,
     }
 }
 
