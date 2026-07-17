@@ -287,6 +287,16 @@ impl ReceiverContext {
         }
         stats.metadata_errors = metadata_errors;
         stats.redo_count = redo_count;
+        // upstream: main.c:794-796 - the pre-flight mkdir of the destination
+        // root sets FLAG_DIR_CREATED on flist[0], so the generator itemizes it
+        // with ITEM_IS_NEW and receiver.c:736-738 counts created_dirs for it.
+        // oc creates the root out-of-band (ensure_dest_root_exists), so the root
+        // entry is seen as "existing" in the dir loop above and not counted
+        // there; count it here so the created-dir total includes the synthesized
+        // root (dir:N+1 for a pull into a fresh directory), matching upstream.
+        if self.dest_root_created {
+            self.record_created(protocol::flist::FileType::Directory.to_mode_bits());
+        }
         // Fold the per-type created tally accumulated across the directory,
         // symlink, special, and file-transfer passes into the returned stats so
         // the client reconstructs the "Number of created files" breakdown.
