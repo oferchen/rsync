@@ -86,7 +86,7 @@ pub struct FilesFromPlan {
 impl FilesFromSource {
     /// Returns `true` when a `--files-from` source has been configured.
     #[must_use]
-    pub fn is_active(&self) -> bool {
+    pub const fn is_active(&self) -> bool {
         !matches!(self, Self::None)
     }
 

@@ -528,11 +528,20 @@ impl ClientConfig {
     }
 
     /// Reports whether directory entries should be copied when recursion is disabled.
+    ///
+    /// Folds in `--files-from`: upstream forces `xfer_dirs = 1` whenever a
+    /// files-from source is active and `--dirs`/`--no-dirs` was left unset, so
+    /// the bare directories named in the list are transferred rather than
+    /// skipped by the `!xfer_dirs` guard in `flist.c:2451`.
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `options.c:2190-2191` - `if (files_from) { if (xfer_dirs < 0) xfer_dirs = 1; }`
     #[must_use]
     #[doc(alias = "--dirs")]
     #[doc(alias = "-d")]
     pub const fn dirs(&self) -> bool {
-        self.dirs
+        self.dirs || self.files_from.is_active()
     }
 }
 
