@@ -393,6 +393,9 @@ fn replay_batch(
     let summary = LocalCopySummary::from_receiver_stats(
         files_listed,
         files_transferred,
+        // upstream: receiver.c:784 total_transferred_size - the replay materialises
+        // every flist entry, so the summed transferred-file length is total_size.
+        total_size,
         total_size,
         total_size,
         total_size,

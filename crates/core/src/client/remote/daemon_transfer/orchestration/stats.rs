@@ -55,6 +55,7 @@ pub(super) fn convert_server_stats_to_summary(
             let s = LocalCopySummary::from_receiver_stats(
                 transfer_stats.files_listed,
                 transfer_stats.files_transferred,
+                transfer_stats.transferred_file_size,
                 transfer_stats.bytes_received,
                 transfer_stats.bytes_sent,
                 transfer_stats.total_source_bytes,
@@ -74,6 +75,7 @@ pub(super) fn convert_server_stats_to_summary(
             let s = LocalCopySummary::from_generator_stats(
                 generator_stats.files_listed,
                 generator_stats.files_transferred,
+                generator_stats.transferred_file_size,
                 generator_stats.bytes_read,
                 generator_stats.bytes_sent,
                 generator_stats.total_size,

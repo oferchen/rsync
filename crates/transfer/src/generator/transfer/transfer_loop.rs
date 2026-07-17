@@ -119,6 +119,10 @@ impl GeneratorContext {
         let deadline = TransferDeadline::from_system_time(self.config.stop_at);
 
         let mut files_transferred = 0;
+        // upstream: sender.c:343 - stats.total_transferred_size += F_LENGTH(file),
+        // accumulated at the same point as xferred_files (dry-run included, since
+        // the increment precedes the `if (!do_xfers)` continue at sender.c:346).
+        let mut transferred_file_size = 0u64;
         // upstream: sender.c:319-335,480 - FLAG_FILE_SENT per file. A resend of
         // an already-sent entry (the redo pass) is a full-content transfer, not
         // another append delta, so track which entries have been sent once.
@@ -497,6 +501,7 @@ impl GeneratorContext {
                     cb.on_itemize(&format!("{name}\n"));
                 }
                 files_transferred += 1;
+                transferred_file_size += file_entry.size();
                 flush_with_count(writer)?;
                 continue;
             }
@@ -848,6 +853,7 @@ impl GeneratorContext {
                 literal_data += file_size;
             }
             files_transferred += 1;
+            transferred_file_size += file_size;
             // upstream: sender.c:480 - `file->flags |= FLAG_FILE_SENT` once the
             // entry has actually been transferred, so a later redo request for
             // it clears append_mode/make_backups above. Skipped items
@@ -974,6 +980,7 @@ impl GeneratorContext {
 
         Ok(TransferLoopResult {
             files_transferred,
+            transferred_file_size,
             bytes_sent,
             matched_data,
             literal_data,
@@ -1617,15 +1624,19 @@ mod append_redo_tests {
     }
 
     /// Drives the sender loop over a crafted receiver stream, returning
-    /// `(files_transferred, bytes_consumed_from_reader)`.
-    fn drive(ctx: &mut GeneratorContext, incoming: Vec<u8>) -> io::Result<(usize, u64)> {
+    /// `(files_transferred, transferred_file_size, bytes_consumed_from_reader)`.
+    fn drive(ctx: &mut GeneratorContext, incoming: Vec<u8>) -> io::Result<(usize, u64, u64)> {
         let mut reader = Cursor::new(incoming);
         let mut writer = ServerWriter::new_plain(Vec::new());
         let mut progress: Option<&mut dyn crate::TransferProgressCallback> = None;
         let mut itemize: Option<&mut dyn crate::ItemizeCallback> = None;
         let result =
             ctx.run_transfer_loop(&mut reader, &mut writer, &mut progress, &mut itemize)?;
-        Ok((result.files_transferred, reader.position()))
+        Ok((
+            result.files_transferred,
+            result.transferred_file_size,
+            reader.position(),
+        ))
     }
 
     /// A file first sent as an append delta and then re-requested on the redo
@@ -1672,12 +1683,22 @@ mod append_redo_tests {
         rx.write_ndx_done(&mut wire).unwrap();
         let total = wire.len() as u64;
 
-        let (files, consumed) = drive(&mut ctx, wire).expect("append redo must not desync");
+        let (files, transferred_file_size, consumed) =
+            drive(&mut ctx, wire).expect("append redo must not desync");
 
         // Both the append send and the full-content redo completed.
         assert_eq!(
             files, 2,
             "append send + redo resend both count as transfers"
+        );
+        // #178: total_transferred_size accumulates F_LENGTH at each transfer
+        // point (sender.c:343), in lockstep with files_transferred. Both sends
+        // of the 100-byte file count, so the sender-side total is 2 * 100 = 200.
+        // A generator that never summed the length reports 0 here, which is what
+        // made every remote push print `Total transferred file size: 0`.
+        assert_eq!(
+            transferred_file_size, 200,
+            "sender must sum F_LENGTH for every transfer (append send + redo)"
         );
         // Every crafted byte was consumed: the resend read the full block
         // signature instead of leaving it on the wire. The static-append bug

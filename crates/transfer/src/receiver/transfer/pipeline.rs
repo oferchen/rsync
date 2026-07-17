@@ -29,8 +29,19 @@ use crate::transfer_ops::{
 };
 
 /// Result type for the pipelined transfer closure:
-/// `(files_transferred, bytes, literal, matched, redo_indices, delayed_updates)`.
-type PipelineResult = (usize, u64, u64, u64, Vec<usize>, Vec<(PathBuf, PathBuf)>);
+/// `(files_transferred, transferred_file_size, bytes, literal, matched, redo_indices,
+/// delayed_updates)`. `transferred_file_size` mirrors upstream `receiver.c:784`
+/// `stats.total_transferred_size += F_LENGTH(file)`, summed at the same point as
+/// `files_transferred`.
+type PipelineResult = (
+    usize,
+    u64,
+    u64,
+    u64,
+    u64,
+    Vec<usize>,
+    Vec<(PathBuf, PathBuf)>,
+);
 
 impl ReceiverContext {
     /// Emits `MSG_SUCCESS(ndx)` to the sender for every file whose commit was
@@ -96,7 +107,7 @@ impl ReceiverContext {
         // upstream: generator.c sends itemize immediately per-file via rwrite()
         if files_to_transfer.is_empty() {
             writer.flush()?;
-            return Ok((0, 0, 0, 0, Vec::new(), Vec::new()));
+            return Ok((0, 0, 0, 0, 0, Vec::new(), Vec::new()));
         }
 
         let deadline = TransferDeadline::from_system_time(self.config.stop_at);
@@ -143,6 +154,9 @@ impl ReceiverContext {
         let mut pending_files_info: VecDeque<(usize, PathBuf, &FileEntry, u32)> =
             VecDeque::with_capacity(pipeline.window_size());
         let mut files_transferred = 0usize;
+        // upstream: receiver.c:784 stats.total_transferred_size += F_LENGTH(file),
+        // summed at the same point as files_transferred.
+        let mut transferred_file_size = 0u64;
         let mut bytes_received = 0u64;
         let mut total_literal_bytes = 0u64;
         let mut total_matched_bytes = 0u64;
@@ -421,6 +435,7 @@ impl ReceiverContext {
                 total_literal_bytes += result.literal_bytes;
                 total_matched_bytes += result.matched_bytes;
                 files_transferred += 1;
+                transferred_file_size += file_entry.size();
 
                 // upstream: receiver.c:950 - log_item() after successful file transfer
                 {
@@ -497,6 +512,7 @@ impl ReceiverContext {
 
             Ok((
                 files_transferred,
+                transferred_file_size,
                 bytes_received,
                 total_literal_bytes,
                 total_matched_bytes,

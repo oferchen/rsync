@@ -19,6 +19,7 @@ fn transfer_stats_incremental_fields_exist() {
     let stats = TransferStats {
         files_listed: 10,
         files_transferred: 5,
+        transferred_file_size: 5000,
         bytes_received: 1000,
         bytes_sent: 100,
         total_source_bytes: 5000,
