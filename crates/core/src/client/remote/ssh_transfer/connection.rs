@@ -56,6 +56,11 @@ pub(super) fn build_ssh_connection(
     // child as -4/-6 (only honoured when the remote shell is `ssh`).
     ssh.set_address_family(ssh_address_family(config.address_mode()));
 
+    // upstream: main.c:600-601 do_cmd() - force blocking_io for the rsh/remsh
+    // remote shells when the user left --blocking-io/--no-blocking-io unset. The
+    // builder applies the auto-enable from the resolved program basename.
+    ssh.set_blocking_io(config.blocking_io());
+
     ssh.set_prefer_aes_gcm(config.prefer_aes_gcm());
     ssh.set_jump_hosts(config.jump_hosts().map(OsString::from));
 

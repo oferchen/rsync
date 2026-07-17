@@ -2391,3 +2391,64 @@ fn does_not_force_address_family_for_non_ssh_shell() {
         "unexpected -6 in {rendered:?}"
     );
 }
+
+#[test]
+fn blocking_io_auto_enabled_for_rsh_when_unset() {
+    // WHY: rsh mishandles a non-blocking child stdout, so upstream forces
+    // blocking I/O for it whenever the user left the flag unset. Regressing to
+    // non-blocking would corrupt the stream over a real rsh transport.
+    // upstream: main.c:600-601 do_cmd() - blocking_io = 1 for rsh when unset.
+    let mut command = SshCommand::new("example.com");
+    command.set_program("rsh");
+    assert!(command.resolved_blocking_io());
+}
+
+#[test]
+fn blocking_io_auto_enabled_for_remsh_when_unset() {
+    // WHY: remsh (HP-UX) shares rsh's non-blocking-stdout defect, so upstream
+    // forces blocking I/O for it too when the flag is unset.
+    // upstream: main.c:600-601 do_cmd() - `strcmp(t, "remsh") == 0`.
+    let mut command = SshCommand::new("example.com");
+    command.set_program("remsh");
+    assert!(command.resolved_blocking_io());
+}
+
+#[test]
+fn blocking_io_auto_enabled_for_path_qualified_rsh() {
+    // WHY: upstream compares the command basename (`t`), so `/usr/bin/rsh`
+    // triggers the same forced-blocking rule.
+    // upstream: main.c:564-567 do_cmd() strips the directory before the strcmp.
+    let mut command = SshCommand::new("example.com");
+    command.set_program("/usr/bin/rsh");
+    assert!(command.resolved_blocking_io());
+}
+
+#[test]
+fn blocking_io_stays_disabled_for_ssh_when_unset() {
+    // WHY: ssh relies on a non-blocking child stdout, so upstream leaves
+    // blocking_io off for it when the user did not request it.
+    // upstream: main.c:600 do_cmd() - only rsh/remsh match the auto-enable.
+    let command = SshCommand::new("example.com");
+    assert!(!command.resolved_blocking_io());
+}
+
+#[test]
+fn explicit_no_blocking_io_wins_over_rsh_auto_enable() {
+    // WHY: an explicit `--no-blocking-io` is a user override that must beat the
+    // rsh/remsh auto-enable; upstream only auto-enables when `blocking_io < 0`
+    // (still unset). upstream: main.c:600 do_cmd() gate `blocking_io < 0`.
+    let mut command = SshCommand::new("example.com");
+    command.set_program("rsh");
+    command.set_blocking_io(Some(false));
+    assert!(!command.resolved_blocking_io());
+}
+
+#[test]
+fn explicit_blocking_io_forces_for_ssh() {
+    // WHY: `--blocking-io` forces blocking pipes even for ssh, matching
+    // upstream where the explicit value is retained.
+    // upstream: options.c:842 `--blocking-io` sets blocking_io = 1.
+    let mut command = SshCommand::new("example.com");
+    command.set_blocking_io(Some(true));
+    assert!(command.resolved_blocking_io());
+}
