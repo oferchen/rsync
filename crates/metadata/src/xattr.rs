@@ -751,11 +751,11 @@ mod tests {
     // abbreviated (>MAX_FULL_DATUM) value request round-trip keys on num, so the
     // sender's assignment MUST be ascending: a descending assignment makes the
     // sender resolve a request for the first entry (num 1) to the last entry and
-    // return a different xattr's value. Guards against that data-corruption bug.
+    // return a different xattr's value. The num is assigned identically for every
+    // entry regardless of value size, so small values suffice to pin the order
+    // (large-value round-trip fidelity varies across xattr backends).
     #[test]
     fn read_xattrs_for_wire_num_is_ascending_like_the_receiver() {
-        use protocol::xattr::MAX_FULL_DATUM;
-
         let dir = tempdir().expect("create temp dir");
         let file = dir.path().join("multi.txt");
         fs::write(&file, "content").expect("write file");
@@ -765,10 +765,8 @@ mod tests {
             return;
         }
 
-        // Three attrs; the alphabetically-first carries a value larger than
-        // MAX_FULL_DATUM so it abbreviates and drives a request keyed on num 1.
-        let big = vec![b'A'; MAX_FULL_DATUM + 8];
-        write_attribute(&file, &test_xattr_name("aaa"), &big, false).expect("write aaa");
+        // Three attrs with distinct names so the sorted order is unambiguous.
+        write_attribute(&file, &test_xattr_name("aaa"), b"a", false).expect("write aaa");
         write_attribute(&file, &test_xattr_name("mmm"), b"m", false).expect("write mmm");
         write_attribute(&file, &test_xattr_name("zzz"), b"z", false).expect("write zzz");
 
@@ -778,6 +776,8 @@ mod tests {
 
         // num is 1-based ascending over the name-sorted order - identical to the
         // receiver's `1..=count`, so a num request resolves to the same entry.
+        // The old descending assignment (count - i) gives entries[0].num() ==
+        // count != 1 and fails here.
         for (i, entry) in entries.iter().enumerate() {
             assert_eq!(
                 entry.num(),
@@ -792,18 +792,6 @@ mod tests {
                 );
             }
         }
-
-        // The large value abbreviates and its num must be 1 (first sorted
-        // position) so the sender returns aaa's value for the receiver's request.
-        let aaa = entries
-            .iter()
-            .find(|e| e.name_str().ends_with("aaa"))
-            .expect("aaa entry present");
-        assert!(
-            aaa.is_abbreviated(),
-            "value over MAX_FULL_DATUM must abbreviate"
-        );
-        assert_eq!(aaa.num(), 1, "first sorted xattr must be num 1");
     }
 
     #[test]
