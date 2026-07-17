@@ -699,6 +699,39 @@ fn apply_stream_socket_options_nodelay_keepalive() {
     assert!(sock.keepalive().expect("query keepalive"));
 }
 
+/// upstream: clientserver.c:1396 - `start_daemon()` unconditionally enables
+/// SO_KEEPALIVE on the freshly accepted client socket, independent of any
+/// `socket options` config. This matters because idle daemon connections that
+/// traverse NAT or stateful firewalls are silently dropped without keepalive
+/// probes, so the option must be set even when the operator configured no
+/// `socket options` at all. Accept a real loopback connection (the same path
+/// the accept engines feed) and assert keepalive is on with an empty option
+/// set - proving the enablement is unconditional and not a side effect of
+/// parsing a `SO_KEEPALIVE` directive.
+#[test]
+fn enable_accepted_stream_keepalive_is_unconditional() {
+    let listener = TcpListener::bind("127.0.0.1:0").expect("bind");
+    let addr = listener.local_addr().expect("local addr");
+    let _client = TcpStream::connect(addr).expect("connect");
+    let (accepted, _peer) = listener.accept().expect("accept");
+
+    let sock = socket2::SockRef::from(&accepted);
+    assert!(
+        !sock.keepalive().expect("query keepalive"),
+        "a freshly accepted socket must start without keepalive so the test \
+         proves the helper is what enables it",
+    );
+
+    enable_accepted_stream_keepalive(&accepted, None);
+
+    assert!(
+        socket2::SockRef::from(&accepted)
+            .keepalive()
+            .expect("query keepalive"),
+        "SO_KEEPALIVE must be enabled unconditionally on the accepted socket",
+    );
+}
+
 #[test]
 fn apply_stream_socket_options_buffer_sizes() {
     let listener = TcpListener::bind("127.0.0.1:0").expect("bind");

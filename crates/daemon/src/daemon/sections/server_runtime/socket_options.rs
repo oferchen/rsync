@@ -291,6 +291,25 @@ fn apply_socket_options_to_stream(
     apply_socket_options_impl(socket2::SockRef::from(stream), options, log_sink);
 }
 
+/// Unconditionally enables `SO_KEEPALIVE` on a freshly accepted client stream.
+///
+/// upstream: clientserver.c:1396 - daemon unconditionally enables SO_KEEPALIVE
+/// on the accepted client socket via `set_socket_options(f_in, "SO_KEEPALIVE")`
+/// in `start_daemon()`, before the protocol handshake and independent of the
+/// per-module `socket options` config (which is a separate concern applied via
+/// `lp_socket_options()`). Without it, idle daemon connections can be silently
+/// dropped by NAT/firewall timeouts. Best-effort: a failed `setsockopt(2)`
+/// warns and the session still proceeds, mirroring upstream's warn-and-continue
+/// in socket.c:730-733.
+fn enable_accepted_stream_keepalive(stream: &TcpStream, log_sink: Option<&SharedLogSink>) {
+    if let Err(error) = socket2::SockRef::from(stream).set_keepalive(true) {
+        warn_socket_option(
+            log_sink,
+            format!("failed to set socket option SO_KEEPALIVE: {error}"),
+        );
+    }
+}
+
 /// Shared implementation for applying socket options to any socket reference.
 ///
 /// upstream: socket.c:730-733 - `set_socket_options()` applies each option
