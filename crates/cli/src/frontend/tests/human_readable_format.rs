@@ -532,6 +532,102 @@ fn no_human_readable_shows_raw_digits() {
     );
 }
 
+/// Renders `--stats` over a >1000-file tree at each human-readable level and
+/// pins the COUNT fields (not byte sizes). upstream: main.c output_summary wraps
+/// every count in comma_num = do_big_num(num, human_readable != 0, NULL)
+/// (inums.h): raw digits under --no-h (level 0), comma-grouped at every enabled
+/// level (1/2/3), and never humanised to K/M/G units - so -hh groups counts but
+/// keeps `1,501`, unlike byte sizes. oc previously grouped counts
+/// unconditionally, mis-rendering `--no-h` counts as `1,501`.
+fn stats_counts_for_level(flag: Option<&str>) -> String {
+    use tempfile::tempdir;
+
+    let tmp = tempdir().expect("tempdir");
+    let source = tmp.path().join("tree");
+    std::fs::create_dir(&source).expect("mkdir source");
+    for i in 0..1_500 {
+        std::fs::write(source.join(format!("f{i}")), b"x").expect("write file");
+    }
+
+    let dest = tmp.path().join("out");
+    let mut args = vec![
+        OsString::from(RSYNC),
+        OsString::from("--stats"),
+        OsString::from("-r"),
+    ];
+    if let Some(flag) = flag {
+        args.push(OsString::from(flag));
+    }
+    let mut src = source.into_os_string();
+    src.push("/");
+    args.push(src);
+    args.push(dest.into_os_string());
+
+    let (code, stdout, stderr) = run_with_args(args);
+    assert_eq!(code, 0, "stderr: {}", String::from_utf8_lossy(&stderr));
+    assert!(stderr.is_empty());
+    String::from_utf8(stdout).expect("stats output utf8")
+}
+
+#[test]
+fn stats_counts_raw_digits_under_no_h() {
+    // upstream real binary, fresh dest: both the total and the created count
+    // (every entry incl. the top dir is new, so created == total) render raw.
+    //   Number of files:         1501 (reg: 1500, dir: 1)
+    //   Number of created files: 1501 (reg: 1500, dir: 1)
+    let rendered = stats_counts_for_level(Some("--no-h"));
+    assert!(
+        rendered.contains("Number of files: 1501 (reg: 1500, dir: 1)"),
+        "level 0 counts must be raw digits, got: {rendered}"
+    );
+    assert!(
+        rendered.contains("Number of created files: 1501 (reg: 1500, dir: 1)"),
+        "level 0 created count must be raw and == total, got: {rendered}"
+    );
+    assert!(
+        !rendered.contains("1,50"),
+        "level 0 must not group any count, got: {rendered}"
+    );
+}
+
+#[test]
+fn stats_counts_grouped_at_default_level() {
+    // upstream real binary, fresh dest: created == total (all entries new), both
+    // comma-grouped: `Number of {files,created files}: 1,501 (reg: 1,500, dir: 1)`.
+    let rendered = stats_counts_for_level(None);
+    assert!(
+        rendered.contains("Number of files: 1,501 (reg: 1,500, dir: 1)"),
+        "default level counts must be comma-grouped, got: {rendered}"
+    );
+    assert!(
+        rendered.contains("Number of created files: 1,501 (reg: 1,500, dir: 1)"),
+        "default created count must be grouped and == total, got: {rendered}"
+    );
+}
+
+#[test]
+fn stats_counts_grouped_not_humanised_at_hh() {
+    // upstream real binary, fresh dest: `-hh` comma-groups counts (comma_num
+    // passes human_readable != 0 == 1) but NEVER humanises them to K/M/G units,
+    // while byte sizes (human_num) ARE humanised at the same level. That
+    // size-vs-count split is exactly what #171 verifies.
+    let rendered = stats_counts_for_level(Some("-hh"));
+    assert!(
+        rendered.contains("Number of files: 1,501 (reg: 1,500, dir: 1)"),
+        "-hh counts must be comma-grouped, not humanised, got: {rendered}"
+    );
+    assert!(
+        rendered.contains("Number of created files: 1,501 (reg: 1,500, dir: 1)"),
+        "-hh created count must be comma-grouped, not humanised, got: {rendered}"
+    );
+    // Byte sizes ARE humanised at -hh: 1500 bytes / 1024 = 1.46K. Its presence
+    // confirms the level is active and only counts are exempt from unit suffixes.
+    assert!(
+        rendered.contains("Total file size: 1.46K bytes"),
+        "-hh must humanise byte sizes (proving counts are the exception), got: {rendered}"
+    );
+}
+
 #[test]
 fn human_readable_format_consistency_across_stats() {
     use tempfile::tempdir;

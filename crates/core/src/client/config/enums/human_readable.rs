@@ -88,6 +88,19 @@ impl HumanReadableMode {
         matches!(self, Self::Grouped)
     }
 
+    /// Reports whether COUNT fields (not byte sizes) are comma-grouped.
+    ///
+    /// Mirrors upstream `inums.h:comma_num`, defined as `do_big_num(num,
+    /// human_readable != 0, NULL)`. The human flag passed for counts is always
+    /// 0 or 1, so counts are grouped at every enabled level ([`Self::Grouped`],
+    /// [`Self::DecimalUnits`], [`Self::BinaryUnits`]) and are never humanised to
+    /// K/M/G unit suffixes; only level 0 ([`Self::Raw`], `--no-h`) emits raw
+    /// digits.
+    #[must_use]
+    pub const fn groups_counts(self) -> bool {
+        !matches!(self, Self::Raw)
+    }
+
     /// The `--list-only` size-column width for this level.
     ///
     /// Mirrors `generator.c:1159`: `size_width = human_readable ? 14 : 11`, so
@@ -246,6 +259,17 @@ mod tests {
         assert!(HumanReadableMode::Grouped.uses_separators());
         assert!(!HumanReadableMode::DecimalUnits.uses_separators());
         assert!(!HumanReadableMode::BinaryUnits.uses_separators());
+    }
+
+    #[test]
+    fn groups_counts_every_level_except_raw() {
+        // upstream: inums.h comma_num = do_big_num(num, human_readable != 0,
+        // NULL) - counts group at every enabled level (1/2/3) and never gain
+        // K/M/G units; only level 0 emits raw digits.
+        assert!(!HumanReadableMode::Raw.groups_counts());
+        assert!(HumanReadableMode::Grouped.groups_counts());
+        assert!(HumanReadableMode::DecimalUnits.groups_counts());
+        assert!(HumanReadableMode::BinaryUnits.groups_counts());
     }
 
     #[test]

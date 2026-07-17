@@ -28,6 +28,20 @@ pub(crate) fn format_size(bytes: u64, human_readable: HumanReadableMode) -> Stri
     }
 }
 
+/// Formats a COUNT field (file/dir/link tallies), not a byte size, mirroring
+/// upstream `inums.h:comma_num` = `do_big_num(num, human_readable != 0, NULL)`.
+///
+/// The human flag for counts is always 0 or 1, so a count is comma-grouped at
+/// every enabled level (1/2/3) and never humanised to K/M/G units; only level 0
+/// ([`HumanReadableMode::Raw`], `--no-h`) emits raw digits without separators.
+pub(crate) fn format_count(count: u64, human_readable: HumanReadableMode) -> String {
+    if human_readable.groups_counts() {
+        format_decimal_bytes(count)
+    } else {
+        count.to_string()
+    }
+}
+
 pub(crate) fn format_decimal_bytes(bytes: u64) -> String {
     if bytes == 0 {
         return String::from("0");
@@ -108,6 +122,32 @@ mod tests {
     fn format_decimal_bytes_millions() {
         assert_eq!(format_decimal_bytes(1_000_000), "1,000,000");
         assert_eq!(format_decimal_bytes(123_456_789), "123,456,789");
+    }
+
+    // upstream: inums.h comma_num = do_big_num(num, human_readable != 0, NULL).
+    // Counts group at every enabled level and never gain K/M/G units, unlike
+    // byte sizes (human_num), so a regression that humanised -hh counts or
+    // grouped --no-h counts is caught here.
+
+    #[test]
+    fn format_count_raw_level_zero_no_separators() {
+        assert_eq!(format_count(1_501, HumanReadableMode::Raw), "1501");
+        assert_eq!(format_count(1_234_567, HumanReadableMode::Raw), "1234567");
+    }
+
+    #[test]
+    fn format_count_grouped_level_one() {
+        assert_eq!(format_count(1_501, HumanReadableMode::Grouped), "1,501");
+    }
+
+    #[test]
+    fn format_count_h_and_hh_group_but_never_humanise() {
+        // -h (level 2) and -hh (level 3) still comma-group counts, no units.
+        assert_eq!(
+            format_count(1_500, HumanReadableMode::DecimalUnits),
+            "1,500"
+        );
+        assert_eq!(format_count(1_500, HumanReadableMode::BinaryUnits), "1,500");
     }
 
     #[test]
