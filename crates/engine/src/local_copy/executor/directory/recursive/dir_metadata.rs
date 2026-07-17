@@ -115,6 +115,17 @@ pub(super) fn enforce_transfer_root_self_lock(
 ) -> Result<Option<LocalCopyError>, LocalCopyError> {
     use std::os::unix::fs::PermissionsExt;
 
+    // upstream: generator.c:1512 - the transfer-root owner-rwx re-add (whose
+    // failure is the self-lock) is guarded by `!am_root`. Under --fake-super
+    // upstream sets am_root = -1, so `!am_root` is false and the strict tweaked
+    // mode is never applied to the real inode: set_stat_xattr() (rsync.c:577-578)
+    // forces the directory to 0700 and stashes the intended mode in the
+    // `user.rsync.%stat` xattr. The root therefore cannot self-lock, so skip the
+    // check entirely and let the fake-super permission apply do its work.
+    if context.options().fake_super_enabled() {
+        return Ok(None);
+    }
+
     let existing = fs::symlink_metadata(destination).ok();
     let Some(existing_meta) = existing.as_ref().filter(|meta| meta.is_dir()) else {
         return Ok(None);
