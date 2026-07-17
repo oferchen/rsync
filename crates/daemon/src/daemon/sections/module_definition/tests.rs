@@ -698,7 +698,7 @@ fn finish_transfers_all_set_values() {
     assert_eq!(def.comment.as_deref(), Some("Full test"));
     assert!(!def.read_only);
     assert!(def.write_only);
-    assert!(def.numeric_ids);
+    assert_eq!(def.numeric_ids, Some(true));
     assert!(!def.listable);
     assert_eq!(def.uid, Some(1000));
     assert_eq!(def.gid, Some(GidSetting::List(vec![100])));
@@ -722,7 +722,7 @@ fn finish_uses_default_values_for_unset_fields() {
 
     assert!(def.read_only); // default true
     assert!(!def.write_only); // default false
-    assert!(!def.numeric_ids); // default false
+    assert_eq!(def.numeric_ids, None); // default unset (BOOL3)
     assert!(def.listable); // default true
     assert!(def.use_chroot); // default true
     assert!(def.hosts_allow.is_empty());

@@ -131,7 +131,11 @@ impl ModuleDefinitionBuilder {
             refuse_options: self.refuse_options.unwrap_or_default(),
             read_only: self.read_only.or(defaults.read_only).unwrap_or(true),
             write_only: self.write_only.or(defaults.write_only).unwrap_or(false),
-            numeric_ids: self.numeric_ids.or(defaults.numeric_ids).unwrap_or(false),
+            // upstream: clientserver.c:1201-1204 - `numeric ids` is a BOOL3
+            // tri-state. Preserve the unset third state (`None`) so a chrooted
+            // module with the directive unset can still be forced to numeric
+            // ids at session setup; collapsing to `false` here loses that.
+            numeric_ids: self.numeric_ids.or(defaults.numeric_ids),
             // upstream: clientserver.c:781,790 read the per-module `lp_uid`/
             // `lp_gid`, which inherit the global-section default when the module
             // sets no explicit value (daemon-parm.txt marks both P_LOCAL).

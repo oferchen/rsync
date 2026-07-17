@@ -3091,7 +3091,7 @@ mod module_access_tests {
     #[test]
     fn module_numeric_ids_forces_daemon_forced_state() {
         let module = ModuleDefinition {
-            numeric_ids: true,
+            numeric_ids: Some(true),
             use_chroot: false,
             ..Default::default()
         };
@@ -3115,7 +3115,7 @@ mod module_access_tests {
     #[test]
     fn client_explicit_numeric_ids_not_downgraded_by_module() {
         let module = ModuleDefinition {
-            numeric_ids: true,
+            numeric_ids: Some(true),
             use_chroot: false,
             ..Default::default()
         };
@@ -3131,7 +3131,7 @@ mod module_access_tests {
         // upstream: under chroot, a configured name converter means names can
         // still be mapped, so numeric ids is NOT forced on.
         let module = ModuleDefinition {
-            numeric_ids: true,
+            numeric_ids: Some(true),
             use_chroot: true,
             name_converter: Some("/usr/bin/nc".to_owned()),
             ..Default::default()
@@ -3144,7 +3144,7 @@ mod module_access_tests {
     #[test]
     fn module_numeric_ids_forced_under_chroot_without_name_converter() {
         let module = ModuleDefinition {
-            numeric_ids: true,
+            numeric_ids: Some(true),
             use_chroot: true,
             name_converter: None,
             ..Default::default()
@@ -3160,7 +3160,62 @@ mod module_access_tests {
     #[test]
     fn module_without_numeric_ids_leaves_config_untouched() {
         let module = ModuleDefinition {
-            numeric_ids: false,
+            numeric_ids: Some(false),
+            ..Default::default()
+        };
+        let mut cfg = ServerConfig::default();
+        apply_module_transfer_directives(&module, &mut cfg);
+        assert!(cfg.flags.numeric_ids.is_off());
+    }
+
+    // upstream: clientserver.c:1201-1204 - under chroot the BOOL3 test is
+    // `lp_numeric_ids(module_id) != False`, so an UNSET `numeric ids`
+    // (`None`, the daemon default) forces numeric ids on. Inside the chroot
+    // there is no `/etc/passwd`, so name<->id resolution is impossible and the
+    // transfer must fall back to numeric ids. A default-config chrooted module
+    // must therefore behave as `numeric ids = yes`, not do name-based mapping.
+    #[test]
+    fn module_unset_numeric_ids_forced_under_chroot() {
+        let module = ModuleDefinition {
+            numeric_ids: None,
+            use_chroot: true,
+            name_converter: None,
+            ..Default::default()
+        };
+        let mut cfg = ServerConfig::default();
+        assert!(cfg.flags.numeric_ids.is_off());
+        apply_module_transfer_directives(&module, &mut cfg);
+        assert_eq!(
+            cfg.flags.numeric_ids,
+            core::server::NumericIds::DaemonForced
+        );
+    }
+
+    // upstream: clientserver.c:1201-1204 - an explicit `numeric ids = no`
+    // (BOOL3 `False`) is NOT overridden even under chroot, because
+    // `lp_numeric_ids(module_id) != False` is false for an explicit `False`.
+    #[test]
+    fn module_explicit_false_numeric_ids_not_forced_under_chroot() {
+        let module = ModuleDefinition {
+            numeric_ids: Some(false),
+            use_chroot: true,
+            name_converter: None,
+            ..Default::default()
+        };
+        let mut cfg = ServerConfig::default();
+        apply_module_transfer_directives(&module, &mut cfg);
+        assert!(cfg.flags.numeric_ids.is_off());
+    }
+
+    // upstream: clientserver.c:1201-1204 - without chroot the BOOL3 test is
+    // `lp_numeric_ids(module_id) == True`, so an UNSET `numeric ids` stays at
+    // the client's default and is NOT forced on.
+    #[test]
+    fn module_unset_numeric_ids_not_forced_without_chroot() {
+        let module = ModuleDefinition {
+            numeric_ids: None,
+            use_chroot: false,
+            name_converter: None,
             ..Default::default()
         };
         let mut cfg = ServerConfig::default();
