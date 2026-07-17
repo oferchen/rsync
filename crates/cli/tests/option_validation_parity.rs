@@ -168,6 +168,26 @@ fn read_batch_conflicts_with_remove_source_files() {
     );
 }
 
+// upstream: options.c:2169-2174 - a batch-file name longer than
+// MAX_BATCH_NAME_LEN (rsync.h/options.c:225 = 256) is rejected verbatim and
+// exits RERR_SYNTAX (1). A name of exactly 256 bytes is the boundary and must
+// be accepted (the check is `strlen(batch_name) > MAX_BATCH_NAME_LEN`).
+#[test]
+fn write_batch_name_length_cap_matches_upstream() {
+    let at = "a".repeat(256);
+    parse_args(["oc-rsync", &format!("--write-batch={at}"), "src", "dest"])
+        .expect("256-byte batch name must be accepted");
+
+    let over = "a".repeat(257);
+    let err =
+        parse_args(["oc-rsync", &format!("--write-batch={over}"), "src", "dest"]).unwrap_err();
+    assert!(
+        err.to_string()
+            .contains("the batch-file name must be 256 characters or less."),
+        "wrong wording: {err}"
+    );
+}
+
 // upstream: options.c:2299-2304 - a `--suffix` containing a slash is rejected.
 #[test]
 fn suffix_with_slash_is_rejected() {
