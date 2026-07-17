@@ -175,15 +175,19 @@ pub(crate) const SETGID_FAILED_PAYLOAD: &str = "@ERROR: setgid failed";
 ///
 /// upstream: clientserver.c:1017 - `@ERROR: setgroups failed\n`
 pub(crate) const SETGROUPS_FAILED_PAYLOAD: &str = "@ERROR: setgroups failed";
-/// Error payload returned when a module's uid directive is invalid.
+/// Error payload template returned when a module's uid NAME cannot be resolved
+/// at connection time. `{uid}` is replaced with the offending name. This is a
+/// distinct wire string from `SETUID_FAILED_PAYLOAD`, which reports a later
+/// `setuid(2)` SYSCALL failure.
 ///
-/// upstream: clientserver.c:783 - `@ERROR: invalid uid %s\n`
-#[cfg(test)]
+/// upstream: clientserver.c:785 - `io_printf(f_out, "@ERROR: invalid uid %s\n", p)`
 pub(crate) const INVALID_UID_PAYLOAD: &str = "@ERROR: invalid uid {uid}";
-/// Error payload returned when a module's gid directive is invalid.
+/// Error payload template returned when a module's gid NAME cannot be resolved
+/// at connection time. `{gid}` is replaced with the offending name. Distinct
+/// from `SETGID_FAILED_PAYLOAD`, which reports a later `setgid(2)` SYSCALL
+/// failure.
 ///
-/// upstream: clientserver.c:656 - `@ERROR: invalid gid %s\n`
-#[cfg(test)]
+/// upstream: clientserver.c:658 - `io_printf(f_out, "@ERROR: invalid gid %s\n", gname)`
 pub(crate) const INVALID_GID_PAYLOAD: &str = "@ERROR: invalid gid {gid}";
 /// Error payload returned when a module is read-only and the client pushes.
 ///
