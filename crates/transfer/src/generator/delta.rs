@@ -948,6 +948,84 @@ mod tests {
         );
     }
 
+    // WHY: token framing is a session-level concern, not a per-file one. Once a
+    // codec is negotiated (`-z`), EVERY file is framed with that codec on the
+    // wire - upstream token.c:1065 send_token() dispatches purely on the global
+    // `do_compression`, and token.c:225 set_compression()'s per-file suffix
+    // lookup is compiled out under `#if 0`. A `--skip-compress` suffix must NOT
+    // switch a file to plain 4-byte-LE tokens: the receiver builds one
+    // session-level token reader from the negotiated codec and always expects
+    // deflated framing, so plain tokens desync the stream. This pins that a
+    // present encoder emits deflated framing while an absent encoder (no `-z`)
+    // emits plain tokens, for byte-identical input.
+    #[test]
+    fn present_encoder_emits_deflated_framing_not_plain_tokens() {
+        let data: Vec<u8> = (0..64u8).collect();
+        // A single literal chunk in plain framing is a 4-byte little-endian
+        // length prefix followed by the verbatim data (upstream
+        // simple_send_token / match.c send_token()).
+        let plain_prefix = (data.len() as i32).to_le_bytes();
+
+        // No codec negotiated: the correct non-`-z` path emits plain tokens.
+        let mut plain = Vec::new();
+        let mut buf = Vec::new();
+        let plain_res = stream_whole_file_transfer(
+            &mut plain,
+            &data[..],
+            data.len() as u64,
+            ChecksumAlgorithm::MD5,
+            0,
+            None,
+            &mut buf,
+            None,
+        )
+        .expect("plain stream");
+        assert!(
+            plain.starts_with(&plain_prefix) && plain[4..4 + data.len()] == data[..],
+            "no-codec path must emit plain 4-byte-LE tokens carrying verbatim data"
+        );
+
+        // Codec negotiated (as under `-z`, regardless of any skip-compress
+        // suffix): the wire must be deflated framing, never plain tokens with
+        // the literal on the wire verbatim.
+        let mut enc =
+            create_token_encoder(CompressionAlgorithm::Zlib, CompressionLevel::Best, None)
+                .expect("zlib encoder creation should succeed")
+                .expect("zlib produces an encoder");
+        let mut deflated = Vec::new();
+        let mut buf2 = Vec::new();
+        let deflated_res = stream_whole_file_transfer(
+            &mut deflated,
+            &data[..],
+            data.len() as u64,
+            ChecksumAlgorithm::MD5,
+            0,
+            Some(&mut enc),
+            &mut buf2,
+            None,
+        )
+        .expect("deflated stream");
+
+        assert_ne!(
+            deflated, plain,
+            "codec framing must differ from plain token framing"
+        );
+        let emits_plain_verbatim = deflated.len() >= 4 + data.len()
+            && deflated.starts_with(&plain_prefix)
+            && deflated[4..4 + data.len()] == data[..];
+        assert!(
+            !emits_plain_verbatim,
+            "codec path must not fall back to plain tokens (the skip-compress desync bug)"
+        );
+        // Framing changed; the reconstructed data (and its whole-file checksum)
+        // did not.
+        assert_eq!(
+            &plain_res.checksum_buf[..plain_res.checksum_len],
+            &deflated_res.checksum_buf[..deflated_res.checksum_len],
+            "whole-file checksum is codec-independent"
+        );
+    }
+
     #[cfg(feature = "zstd")]
     #[test]
     fn create_token_encoder_zstd_no_workers() {

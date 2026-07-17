@@ -160,6 +160,18 @@ impl GeneratorContext {
             .transpose()?
             .flatten();
 
+        // upstream: token.c:1065 send_token() / token.c:1097 recv_token() dispatch
+        // purely on the global `do_compression` codec, and token.c:225
+        // set_compression()'s per-file suffix lookup is compiled out under `#if 0`
+        // ("No compression algorithms currently allow mid-stream changing of the
+        // level."). So once a codec is negotiated (`-z`), EVERY file is framed with
+        // that codec on the wire; `--skip-compress`/`dont compress` suffix lists
+        // never switch framing per file. A bare `*` is the only live effect and is
+        // handled session-wide above via `dont_compress_match_all` (whole zlib
+        // stream stored at level 0, still deflated framing). The framing decision is
+        // therefore one session-level constant, not a per-file boolean.
+        let use_compression = token_encoder.is_some();
+
         // upstream: io.c:2244-2245 - separate read/write NDX state
         let mut ndx_read_codec = create_ndx_codec(self.protocol.as_u8());
         let mut ndx_write_codec = MonotonicNdxWriter::new(self.protocol.as_u8());
@@ -598,7 +610,6 @@ impl GeneratorContext {
                 )?;
 
                 let checksum_algorithm = self.get_checksum_algorithm();
-                let use_compression = self.file_compression(&source_path).is_some();
                 let flength = sum_head.flength().min(file_size);
                 let append_verify = self.config.flags.append_verify;
                 let wire_bytes = {
@@ -717,7 +728,6 @@ impl GeneratorContext {
                 let checksum_algorithm = self.get_checksum_algorithm();
                 let use_noatime = self.config.write.open_noatime;
                 let wire_ops = script_to_wire_delta(delta_script, block_length);
-                let use_compression = self.file_compression(&source_path).is_some();
                 let is_zlib = matches!(
                     negotiated_compression,
                     Some(protocol::CompressionAlgorithm::Zlib)
@@ -786,7 +796,6 @@ impl GeneratorContext {
                 )?;
 
                 let checksum_algorithm = self.get_checksum_algorithm();
-                let use_compression = self.file_compression(&source_path).is_some();
                 // upstream: io.c:859 - stats.total_written counts actual wire
                 // bytes after each write() syscall, not the source file size.
                 // Wrap the whole-file stream in a CountingWriter so the summary

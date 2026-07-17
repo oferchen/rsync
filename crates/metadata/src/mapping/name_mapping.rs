@@ -176,6 +176,79 @@ impl NameMapping {
         Ok(None)
     }
 
+    /// Finds the first matching rule keyed on the sender-transmitted name.
+    ///
+    /// Unlike [`Self::resolve_rule`], name and wildcard matchers are tested
+    /// against `name` - the user/group name the sender carried on the id-list
+    /// wire (or inline under INC_RECURSE) - rather than a name re-derived from
+    /// the raw id via the receiver's `getpwuid`/`getgrgid`. This mirrors
+    /// upstream `recv_add_id` (uidlist.c:255-268), whose `uidmap`/`gidmap` scan
+    /// does `wildmatch(node->u.name, name)` / `strcmp(node->u.name, name)`
+    /// against the transmitted `name`, not a receiver-local reverse lookup. A
+    /// missing name is normalized to `""` (upstream: `if (!name) name = ""`), so
+    /// an empty-name matcher matches a nameless id while named/wildcard matchers
+    /// do not. Under `numeric_ids` the sender omits names, so the presented name
+    /// is empty and only numeric rules can match.
+    fn resolve_rule_named(
+        &self,
+        identifier: u32,
+        name: Option<&[u8]>,
+        numeric_ids: bool,
+    ) -> io::Result<Option<&MappingRule>> {
+        if self.rules.is_empty() {
+            return Ok(None);
+        }
+
+        let wire_name = if numeric_ids {
+            String::new()
+        } else {
+            String::from_utf8_lossy(name.unwrap_or(b"")).into_owned()
+        };
+
+        for rule in &self.rules {
+            if rule
+                .matcher
+                .matches(identifier, || Ok(Some(wire_name.clone())))?
+            {
+                return Ok(Some(rule));
+            }
+        }
+
+        Ok(None)
+    }
+
+    /// Applies the mapping to a UID keyed on the sender-transmitted `name`.
+    ///
+    /// See [`Self::resolve_rule_named`]: numeric rules match on the raw sender
+    /// id, name/wildcard rules on the wire name. Used by the receiver's id-list
+    /// remap and per-entry ownership resolution, mirroring upstream `match_uid`
+    /// (uidlist.c:297-315) which folds the `--usermap` scan into `recv_add_id`.
+    pub(crate) fn map_uid_named(
+        &self,
+        uid: RawUid,
+        name: Option<&[u8]>,
+        numeric_ids: bool,
+    ) -> io::Result<Option<RawUid>> {
+        self.resolve_rule_named(uid, name, numeric_ids)?
+            .map(|rule| rule.target.resolve_uid())
+            .transpose()
+    }
+
+    /// Applies the mapping to a GID keyed on the sender-transmitted `name`.
+    ///
+    /// Group counterpart of [`Self::map_uid_named`], mirroring upstream
+    /// `match_gid` (uidlist.c:317-337).
+    pub(crate) fn map_gid_named(
+        &self,
+        gid: RawGid,
+        name: Option<&[u8]>,
+        numeric_ids: bool,
+    ) -> io::Result<Option<RawGid>> {
+        self.resolve_rule_named(gid, name, numeric_ids)?
+            .map(|rule| rule.target.resolve_gid())
+            .transpose()
+    }
+
     /// Resolves an identifier to a name using the appropriate system lookup.
     fn lookup_name(&self, identifier: u32) -> io::Result<Option<String>> {
         match self.kind {
