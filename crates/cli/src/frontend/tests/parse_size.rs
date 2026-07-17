@@ -32,22 +32,27 @@ fn parse_size_limit_argument_rejects_invalid_suffix() {
 
 #[test]
 fn parse_block_size_argument_accepts_valid_value() {
-    let parsed = parse_block_size_argument(OsStr::new("4096")).expect("block-size parses");
+    let parsed = parse_block_size_argument(OsStr::new("4096"))
+        .expect("block-size parses")
+        .expect("non-zero override");
     assert_eq!(parsed.get(), 4096);
 }
 
 #[test]
-fn parse_block_size_argument_rejects_zero() {
-    let error = parse_block_size_argument(OsStr::new("0")).expect_err("zero rejected");
-    assert!(error.to_string().contains("size must be positive"));
+fn parse_block_size_argument_zero_falls_back_to_default() {
+    // upstream: options.c:1692-1695 - `--block-size=0` is accepted (min_value 0)
+    // and falls back to the default block size, represented here as `None`.
+    let parsed = parse_block_size_argument(OsStr::new("0")).expect("zero accepted");
+    assert_eq!(parsed, None);
 }
 
 #[test]
 fn parse_block_size_argument_rejects_large_value() {
+    // upstream: options.c:1692-1695 - a value above MAX_BLOCK_SIZE (131072) is
+    // "too large (max: 128.00K)".
     let error = parse_block_size_argument(OsStr::new("5000000000")).expect_err("overflow rejected");
     assert!(
-        error
-            .to_string()
-            .contains("size exceeds the supported 32-bit range")
+        error.to_string().contains("is too large (max: 128.00K)"),
+        "got: {error}"
     );
 }

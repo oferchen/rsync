@@ -447,6 +447,13 @@ fn apply_max_alloc(config: &ClientConfig) {
     let Some(limit) = config.max_alloc() else {
         return;
     };
+    // upstream: options.c:1966 `if (!max_alloc) max_alloc = SIZE_MAX;` - a
+    // configured value of 0 means unlimited, so the ceiling becomes the
+    // platform maximum and the buffer pool retains no explicit byte budget.
+    if limit == 0 {
+        protocol::set_max_alloc(usize::MAX);
+        return;
+    }
     let Ok(limit_usize) = usize::try_from(limit) else {
         // Configurations parsed via the CLI are bounded by `MAX_ALLOC_CEILING`
         // (u64::MAX / 4) so this branch is only reachable on 32-bit targets
@@ -455,9 +462,6 @@ fn apply_max_alloc(config: &ClientConfig) {
         // simply remains uncapped.
         return;
     };
-    if limit_usize == 0 {
-        return;
-    }
     // upstream: options.c:1959-1965 rewrites the `max_alloc` global, which then
     // bounds every attacker-controlled wire allocation (util2.c:75), including
     // the xattr datum decoders. Publish it before any transfer decodes xattrs.

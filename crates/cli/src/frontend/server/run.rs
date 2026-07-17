@@ -668,9 +668,11 @@ fn apply_value_flags<Err: Write>(
     if let Some(alloc_str) = &long_flags.max_alloc {
         match super::super::execution::parse_max_alloc_argument(std::ffi::OsStr::new(alloc_str)) {
             Ok(limit) => {
-                if let Ok(limit_usize) = usize::try_from(limit)
-                    && limit_usize > 0
-                {
+                if limit == 0 {
+                    // upstream: options.c:1966 `if (!max_alloc) max_alloc =
+                    // SIZE_MAX;` - a forwarded `--max-alloc=0` means unlimited.
+                    protocol::set_max_alloc(usize::MAX);
+                } else if let Ok(limit_usize) = usize::try_from(limit) {
                     // upstream: options.c:1959-1965 - the server rewrites its own
                     // `max_alloc` global from the forwarded `--max-alloc`, which
                     // bounds the xattr datum decoders on the receive path

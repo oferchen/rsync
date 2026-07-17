@@ -174,24 +174,32 @@ fn test_no_rsync_rsh_env() {
 
 #[test]
 #[serial]
-fn test_rsync_partial_dir_env_sets_partial_dir() {
+fn test_rsync_partial_dir_env_sets_partial_dir_with_partial() {
+    // upstream: options.c:2448-2451 - RSYNC_PARTIAL_DIR is consulted only when
+    // keep_partial is active (--partial/-P) and no explicit --partial-dir given.
     let _guard = EnvGuard::set("RSYNC_PARTIAL_DIR", "/tmp/.rsync-partial");
-    let args = parse_args(["oc-rsync", "src", "dest"]).unwrap();
+    let args = parse_args(["oc-rsync", "--partial", "src", "dest"]).unwrap();
     assert_eq!(
         args.partial_dir,
         Some("/tmp/.rsync-partial".into()),
-        "RSYNC_PARTIAL_DIR should set partial_dir default"
+        "RSYNC_PARTIAL_DIR should set partial_dir when --partial is active"
     );
 }
 
 #[test]
 #[serial]
-fn test_rsync_partial_dir_env_enables_partial() {
+fn test_rsync_partial_dir_env_ignored_without_partial() {
+    // upstream: options.c:2448 `if (keep_partial && !partial_dir && !am_server)`
+    // - without --partial/-P the env var is ignored and does not enable partial.
     let _guard = EnvGuard::set("RSYNC_PARTIAL_DIR", "/tmp/.rsync-partial");
     let args = parse_args(["oc-rsync", "src", "dest"]).unwrap();
     assert!(
-        args.partial,
-        "RSYNC_PARTIAL_DIR should implicitly enable partial mode"
+        !args.partial,
+        "RSYNC_PARTIAL_DIR must not enable partial without --partial"
+    );
+    assert_eq!(
+        args.partial_dir, None,
+        "RSYNC_PARTIAL_DIR must be ignored without --partial"
     );
 }
 
@@ -248,7 +256,10 @@ fn test_multiple_env_vars_together() {
     let _guard2 = EnvGuard::set("RSYNC_RSH", "ssh");
     let _guard3 = EnvGuard::set("RSYNC_PARTIAL_DIR", "/tmp");
 
-    let args = parse_args(["oc-rsync", "src", "dest"]).unwrap();
+    // upstream: options.c:2448-2456 - RSYNC_PARTIAL_DIR is consulted only when
+    // keep_partial is active (--partial/-P) and no explicit --partial-dir was
+    // given, so --partial is supplied for the env dir to take effect.
+    let args = parse_args(["oc-rsync", "--partial", "src", "dest"]).unwrap();
 
     assert_eq!(args.protect_args, Some(true));
     assert_eq!(args.remote_shell, Some("ssh".into()));

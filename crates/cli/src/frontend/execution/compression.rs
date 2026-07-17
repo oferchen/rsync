@@ -15,6 +15,23 @@ pub(crate) enum CompressLevelArg {
     Level(CompressionLevel),
 }
 
+/// Outcome of parsing `--compress-choice=NAME`.
+///
+/// upstream: options.c:2013-2016 `if (compress_choice && strcasecmp(...,
+/// "auto") != 0) parse_compress_choice(0); else compress_choice = NULL;` -
+/// the literal `auto` is nulled out so normal codec negotiation runs, distinct
+/// from `none` (which disables compression) and an explicit codec.
+#[derive(Debug)]
+pub(crate) enum CompressChoice {
+    /// `--compress-choice=none` disables compression.
+    Disabled,
+    /// `--compress-choice=auto` nulls the choice; negotiation proceeds as if
+    /// `--compress-choice` had not been supplied.
+    Auto,
+    /// An explicit codec selection.
+    Codec(CompressionAlgorithm),
+}
+
 enum CompressionLevelParseError {
     Empty { original: String },
     Invalid { original: String, trimmed: String },
@@ -82,9 +99,7 @@ pub(crate) fn parse_compress_level(
         .map_err(CompressionLevelParseError::into_flag_message)
 }
 
-pub(crate) fn parse_compress_choice(
-    argument: &OsStr,
-) -> Result<Option<CompressionAlgorithm>, Message> {
+pub(crate) fn parse_compress_choice(argument: &OsStr) -> Result<CompressChoice, Message> {
     let original = argument.to_string_lossy().into_owned();
     let trimmed = original.trim();
 
@@ -96,12 +111,19 @@ pub(crate) fn parse_compress_choice(
         );
     }
 
+    // upstream: options.c:2013 - only the literal `auto` (case-insensitive) is
+    // nulled; anything else, including `auto,auto`, is passed to
+    // parse_compress_choice and rejected if unknown.
+    if trimmed.eq_ignore_ascii_case("auto") {
+        return Ok(CompressChoice::Auto);
+    }
+
     if trimmed.eq_ignore_ascii_case("none") {
-        return Ok(None);
+        return Ok(CompressChoice::Disabled);
     }
 
     match trimmed.parse::<CompressionAlgorithm>() {
-        Ok(algorithm) => Ok(Some(algorithm)),
+        Ok(algorithm) => Ok(CompressChoice::Codec(algorithm)),
         Err(err) => Err(render_compress_choice_error(err, trimmed)),
     }
 }
@@ -218,32 +240,87 @@ mod tests {
     use std::ffi::OsStr;
 
     #[test]
+    fn compress_level_zero_is_codec_dependent() {
+        // upstream: token.c:55-104 init_compression_level() - `--compress-level=0`
+        // is codec-dependent, NOT unconditionally disabled: for zlib the
+        // off_level is Z_NO_COMPRESSION (0), so level 0 turns compression off
+        // (CPRES_NONE); for zstd off_level is CLVL_NOT_SPECIFIED and a literal 0
+        // maps to the default level, so compression stays on. The clamp is
+        // applied against the resolved codec, mirroring upstream exactly.
+        assert!(matches!(
+            parse_compress_level(OsStr::new("0"), CompressionAlgorithm::Zlib),
+            Ok(CompressLevelArg::Disable)
+        ));
+        #[cfg(feature = "zstd")]
+        assert!(matches!(
+            parse_compress_level(OsStr::new("0"), CompressionAlgorithm::Zstd),
+            Ok(CompressLevelArg::Level(_))
+        ));
+    }
+
+    #[test]
     fn parse_compress_choice_none_disables_compression() {
         let parsed = parse_compress_choice(OsStr::new("none"));
-        assert!(matches!(parsed, Ok(None)));
+        assert!(matches!(parsed, Ok(CompressChoice::Disabled)));
+    }
+
+    #[test]
+    fn parse_compress_choice_auto_is_nulled() {
+        // upstream: options.c:2013-2016 - the literal `auto` (case-insensitive)
+        // is nulled so normal codec negotiation runs; it is neither a disable
+        // nor an explicit codec.
+        assert!(matches!(
+            parse_compress_choice(OsStr::new("auto")),
+            Ok(CompressChoice::Auto)
+        ));
+        assert!(matches!(
+            parse_compress_choice(OsStr::new("AUTO")),
+            Ok(CompressChoice::Auto)
+        ));
+    }
+
+    #[test]
+    fn parse_compress_choice_auto_auto_is_rejected() {
+        // upstream: options.c:2013 only special-cases the exact token `auto`;
+        // `auto,auto` falls through to parse_compress_choice and is rejected
+        // as an unknown compress name (RERR_UNSUPPORTED, exit 4).
+        let error = parse_compress_choice(OsStr::new("auto,auto")).expect_err("auto,auto rejected");
+        assert_eq!(error.code(), Some(4));
     }
 
     #[test]
     fn parse_compress_choice_accepts_zlib_aliases() {
         let parsed = parse_compress_choice(OsStr::new("zlib"));
-        assert!(matches!(parsed, Ok(Some(CompressionAlgorithm::Zlib))));
+        assert!(matches!(
+            parsed,
+            Ok(CompressChoice::Codec(CompressionAlgorithm::Zlib))
+        ));
 
         let alias = parse_compress_choice(OsStr::new(" zlibx "));
-        assert!(matches!(alias, Ok(Some(CompressionAlgorithm::Zlib))));
+        assert!(matches!(
+            alias,
+            Ok(CompressChoice::Codec(CompressionAlgorithm::Zlib))
+        ));
     }
 
     #[cfg(feature = "zstd")]
     #[test]
     fn parse_compress_choice_accepts_zstd() {
         let parsed = parse_compress_choice(OsStr::new("zstd"));
-        assert!(matches!(parsed, Ok(Some(CompressionAlgorithm::Zstd))));
+        assert!(matches!(
+            parsed,
+            Ok(CompressChoice::Codec(CompressionAlgorithm::Zstd))
+        ));
     }
 
     #[cfg(feature = "lz4")]
     #[test]
     fn parse_compress_choice_accepts_lz4() {
         let parsed = parse_compress_choice(OsStr::new("lz4"));
-        assert!(matches!(parsed, Ok(Some(CompressionAlgorithm::Lz4))));
+        assert!(matches!(
+            parsed,
+            Ok(CompressChoice::Codec(CompressionAlgorithm::Lz4))
+        ));
     }
 
     #[test]
