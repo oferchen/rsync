@@ -112,9 +112,10 @@ fn try_reference_directories_finds_file_in_first_directory() {
     let result = try_reference_directories(relative_path, &ref_dirs);
 
     assert!(result.is_some());
-    let (_, size, path) = result.unwrap();
+    let (_, size, path, index) = result.unwrap();
     assert_eq!(size, 22);
     assert_eq!(path, test_file);
+    assert_eq!(index, 0, "a first-directory hit is basis_dir index 0");
 }
 
 #[test]
@@ -143,9 +144,10 @@ fn try_reference_directories_finds_file_in_second_directory() {
     let result = try_reference_directories(relative_path, &ref_dirs);
 
     assert!(result.is_some());
-    let (_, size, path) = result.unwrap();
+    let (_, size, path, index) = result.unwrap();
     assert_eq!(size, 22);
     assert_eq!(path, test_file);
+    assert_eq!(index, 1, "a second-directory hit is basis_dir index 1");
 }
 
 #[test]

@@ -34,10 +34,14 @@ pub struct BasisFileResult {
     /// `fnamecmp_type` byte behind `ITEM_BASIS_TYPE_FOLLOWS`.
     ///
     /// [`protocol::FnameCmpType::Fname`] for the ordinary destination basis (no wire byte),
+    /// `FnameCmpType::BasisDir(j)` (`FNAMECMP_BASIS_DIR_LOW + j`) when the basis
+    /// came from reference dir `j` (`--compare-dest`/`--copy-dest`/`--link-dest`)
+    /// while the destination was absent (upstream: generator.c:1054),
     /// [`protocol::FnameCmpType::PartialDir`] (`0x81`) when the basis was recovered
     /// from `--partial-dir` on a resume (upstream: generator.c:1759-1765,1853), and
-    /// `FnameCmpType::Fuzzy(0)` (`0x83`) for a `--fuzzy` match found in the
-    /// destination directory (upstream: generator.c:1785,1945).
+    /// `FnameCmpType::Fuzzy(i)` (`FNAMECMP_FUZZY + i`) for a `--fuzzy` match, where
+    /// `i` is 0 for the destination directory and `k + 1` for reference dir `k`
+    /// (upstream: generator.c:861,903,1945).
     pub fnamecmp_type: protocol::FnameCmpType,
     /// The alternate-basis name sent as an `ITEM_XNAME_FOLLOWS` vstring, present
     /// only for a fuzzy match. Upstream sends `fuzzy_file->basename` - the bare
@@ -143,32 +147,55 @@ impl SignatureGenerationConfig {
 /// Tries to find a basis file in the reference directories.
 ///
 /// Iterates through reference directories in order, checking if the relative
-/// path exists in each one. Returns the first match found. The basis open
-/// goes through [`fast_io::open_basis_nofollow`], which follows directory
+/// path exists in each one. Returns the first match found along with its index
+/// `j` in `reference_directories` - the upstream `basis_dir[j]` slot the match
+/// came from, which becomes the `FNAMECMP_BASIS_DIR_LOW + j` wire tag. The basis
+/// open goes through [`fast_io::open_basis_nofollow`], which follows directory
 /// symlinks (so `--copy-dirlinks` continues to work) but refuses to follow
 /// a symlinked leaf component, mirroring upstream `syscall.c:705`
 /// (`do_open_at`).
 ///
 /// # Upstream Reference
 ///
-/// - `generator.c:1400` - Reference directory basis file lookup
+/// - `generator.c:963-983` - `try_dests_reg()` scans `basis_dir[j]` in order;
+///   the first existing regular file sets `best_match = j` (match_level 1).
+/// - `generator.c:1054` - `return FNAMECMP_BASIS_DIR_LOW + j` when the file
+///   exists in the reference dir but its content differs (match_level 1).
 /// - `syscall.c:705` (`do_open_at`) - dirname/basename split with
 ///   `O_NOFOLLOW` on the basename.
 pub(super) fn try_reference_directories(
     relative_path: &std::path::Path,
     reference_directories: &[ReferenceDirectory],
-) -> Option<(fs::File, u64, PathBuf)> {
-    for ref_dir in reference_directories {
+) -> Option<(fs::File, u64, PathBuf, usize)> {
+    for (index, ref_dir) in reference_directories.iter().enumerate() {
         let candidate = ref_dir.path.join(relative_path);
         if let Ok(file) = fast_io::open_basis_nofollow(&candidate) {
             if let Ok(meta) = file.metadata() {
                 if meta.is_file() {
-                    return Some((file, meta.len(), candidate));
+                    return Some((file, meta.len(), candidate, index));
                 }
             }
         }
     }
     None
+}
+
+/// Maps a reference-directory index `j` to its `FNAMECMP_BASIS_DIR_LOW + j` wire
+/// tag. Upstream stores at most `MAX_BASIS_DIRS` (20) alt-dest directories and
+/// the basis-type byte spans `0x00..=0x7F` (`FNAMECMP_BASIS_DIR_HIGH`), so any
+/// realistic index fits. A pathological index beyond the range degrades to
+/// `FNAMECMP_FNAME` (no wire byte): the basis is still reconstructed in-process
+/// from `basis_path`, so only the wire advertisement is affected.
+///
+/// upstream: rsync.h `FNAMECMP_BASIS_DIR_LOW`/`FNAMECMP_BASIS_DIR_HIGH`,
+/// generator.c:1054.
+fn basis_dir_fnamecmp_type(index: usize) -> protocol::FnameCmpType {
+    match u8::try_from(index) {
+        Ok(byte) if byte <= protocol::FnameCmpType::BASIS_DIR_HIGH => {
+            protocol::FnameCmpType::BasisDir(byte)
+        }
+        _ => protocol::FnameCmpType::Fname,
+    }
 }
 
 /// Opens a basis file and returns it with metadata.
@@ -191,10 +218,12 @@ struct FuzzyBasis {
     file: fs::File,
     size: u64,
     path: PathBuf,
-    /// The `fnamecmp_type` to advertise on the wire (upstream: generator.c:1785).
+    /// The `fnamecmp_type` to advertise on the wire; `Fuzzy(i)` for a fuzzy
+    /// basis, where `i` names the dest dir (0) or reference dir `k` (`k + 1`).
+    /// upstream: generator.c:861,903.
     fnamecmp_type: protocol::FnameCmpType,
-    /// The `ITEM_XNAME_FOLLOWS` basename, present only when `fnamecmp_type` is
-    /// fuzzy (upstream: generator.c:1948 `fuzzy_file->basename`).
+    /// The `ITEM_XNAME_FOLLOWS` basename, always present for a fuzzy basis
+    /// (upstream: generator.c:1948 `fuzzy_file->basename`).
     xname: Option<Vec<u8>>,
 }
 
@@ -205,18 +234,20 @@ struct FuzzyBasis {
 /// `--link-dest`) by passing them as fuzzy basis dirs to the matcher.
 ///
 /// A match found in the destination directory is advertised as
-/// `FnameCmpType::Fuzzy(0)` (`0x83`) with the basis basename as the
-/// `ITEM_XNAME_FOLLOWS` vstring, byte-for-byte with upstream. A match sourced
-/// from a level-2 reference directory would be `FNAMECMP_FUZZY + i`, but oc's
-/// reference-directory list is filtered by existence before the search, so its
-/// index cannot be mapped back to the peer's `basis_dir[]` slot reliably; such a
-/// match is therefore advertised conservatively as `FNAMECMP_FNAME` (no wire
-/// byte). Either way the basis is reconstructed in-process from `basis_path`, so
-/// the choice only affects the wire advertisement, never correctness.
+/// `FnameCmpType::Fuzzy(0)` (`0x83`); a match sourced from a level-2 reference
+/// directory `k` is advertised as `FnameCmpType::Fuzzy(k + 1)`
+/// (`FNAMECMP_FUZZY + i`, where the dest dir is fuzzy-index 0 and reference dir
+/// `k` is fuzzy-index `k + 1`). Either carries the basis basename as the
+/// `ITEM_XNAME_FOLLOWS` vstring, byte-for-byte with upstream. The reference-dir
+/// index is recovered by mapping the matched file's parent directory back to the
+/// original `reference_directories` slot, so it names the peer's `basis_dir[]`
+/// entry even when earlier reference dirs did not exist on disk. The basis is
+/// reconstructed in-process from `basis_path`, so the tag only affects the wire
+/// advertisement, never correctness.
 ///
 /// # Upstream Reference
 ///
-/// - `generator.c:831` - `find_fuzzy()`; `*fnamecmp_type_ptr = FNAMECMP_FUZZY + i`
+/// - `generator.c:861,903` - `find_fuzzy()`; `*fnamecmp_type_ptr = FNAMECMP_FUZZY + i`
 /// - `generator.c:1945-1948` - `ITEM_XNAME_FOLLOWS` + `fuzzy_file->basename`
 /// - `options.c:2120` - `fuzzy_basis = basis_dir_cnt + 1` for level 2
 fn try_fuzzy_match(
@@ -235,15 +266,22 @@ fn try_fuzzy_match(
     let parent_dir = relative_path
         .parent()
         .unwrap_or_else(|| std::path::Path::new(""));
-    let basis_dirs: Vec<PathBuf> = if fuzzy_level >= 2 {
+    // Keep the joined path for each reference dir so a match can be mapped back
+    // to its original index (upstream fuzzy-index `i` = basis_dir slot + 1),
+    // even though non-existent dirs are skipped from the actual search.
+    let ref_search_dirs: Vec<PathBuf> = if fuzzy_level >= 2 {
         reference_directories
             .iter()
             .map(|rd| rd.path.join(parent_dir))
-            .filter(|p| p.is_dir())
             .collect()
     } else {
         Vec::new()
     };
+    let basis_dirs: Vec<PathBuf> = ref_search_dirs
+        .iter()
+        .filter(|p| p.is_dir())
+        .cloned()
+        .collect();
 
     let fuzzy_matcher = FuzzyMatcher::with_level(fuzzy_level).with_fuzzy_basis_dirs(basis_dirs);
     let fuzzy_match =
@@ -257,27 +295,49 @@ fn try_fuzzy_match(
     );
     let (file, size, path) = try_open_file(&fuzzy_match.path)?;
 
-    // A candidate the matcher found in the destination directory is the
-    // upstream `FNAMECMP_FUZZY + 0` case: advertise 0x83 plus the basename.
-    // Anything else (a level-2 reference-directory hit) stays FNAMECMP_FNAME.
-    let from_dest_dir = path.parent() == Some(dest_dir);
-    let (fnamecmp_type, xname) = if from_dest_dir {
-        let basename = path
-            .file_name()
-            .map(basename_wire_bytes)
-            .unwrap_or_default();
-        (protocol::FnameCmpType::Fuzzy(0), Some(basename))
-    } else {
-        (protocol::FnameCmpType::Fname, None)
-    };
+    // Map the matched candidate back to its fuzzy-index and advertise the
+    // matching FNAMECMP_FUZZY + i tag with the basis basename as the xname.
+    // upstream: generator.c:843/868 iterate dirlist_array[0] (dest dir, index 0)
+    // then basis_dir[i-1] (reference dir k -> index k + 1).
+    let fnamecmp_type = fuzzy_index(&path, dest_dir, &ref_search_dirs)?;
+    let basename = path
+        .file_name()
+        .map(basename_wire_bytes)
+        .unwrap_or_default();
 
     Some(FuzzyBasis {
         file,
         size,
         path,
         fnamecmp_type,
-        xname,
+        xname: Some(basename),
     })
+}
+
+/// Resolves the `FNAMECMP_FUZZY + i` tag for a fuzzy match at `path`.
+///
+/// Upstream indexes the fuzzy search over `dirlist_array[0..fuzzy_basis]`: index
+/// 0 is the destination directory, index `k + 1` is reference dir `k`
+/// (`basis_dir[k]`). The candidate's parent directory is compared against the
+/// destination directory and then each reference dir's joined search path (in
+/// original order, so a skipped non-existent earlier dir does not shift the
+/// index). Returns `None` if the parent matches no known search directory - the
+/// caller then falls back to a whole-file transfer rather than emit a wrong tag.
+///
+/// upstream: generator.c:843,868 (`dirlist_array[i]`), generator.c:861,903
+/// (`FNAMECMP_FUZZY + i`).
+fn fuzzy_index(
+    path: &std::path::Path,
+    dest_dir: &std::path::Path,
+    ref_search_dirs: &[PathBuf],
+) -> Option<protocol::FnameCmpType> {
+    let parent = path.parent()?;
+    if parent == dest_dir {
+        return Some(protocol::FnameCmpType::Fuzzy(0));
+    }
+    let k = ref_search_dirs.iter().position(|dir| dir == parent)?;
+    let offset = u8::try_from(k + 1).ok()?;
+    Some(protocol::FnameCmpType::Fuzzy(offset))
 }
 
 /// Encodes a basis basename as the raw bytes upstream puts in the xname vstring.
@@ -568,11 +628,9 @@ pub fn find_basis_file_with_config(config: &BasisFileConfig<'_>) -> BasisFileRes
     let sig_config = SignatureGenerationConfig::from_basis_config(config);
 
     // Try sources in priority order: exact match -> reference dirs -> fuzzy ->
-    // partial-dir. The exact destination and reference-dir basis are reported to
-    // the sender as FNAMECMP_FNAME (no basis-type byte).
-    if let Some((file, size, path)) = try_open_file(config.file_path)
-        .or_else(|| try_reference_directories(config.relative_path, config.reference_directories))
-    {
+    // partial-dir. The exact destination basis is reported to the sender as
+    // FNAMECMP_FNAME (no basis-type byte).
+    if let Some((file, size, path)) = try_open_file(config.file_path) {
         return generate_basis_signature(
             file,
             size,
@@ -583,9 +641,29 @@ pub fn find_basis_file_with_config(config: &BasisFileConfig<'_>) -> BasisFileRes
         );
     }
 
-    // upstream: generator.c:1785,1945-1948 - a fuzzy match is tagged
-    // FNAMECMP_FUZZY (0x83) and its basename is sent as the ITEM_XNAME_FOLLOWS
-    // vstring so the peer's receiver can open the same basis.
+    // upstream: generator.c:1054 - when the destination is absent, a basis found
+    // in reference dir j (`--compare-dest`/`--copy-dest`/`--link-dest`) whose
+    // content differs is tagged FNAMECMP_BASIS_DIR_LOW + j. That sets
+    // ITEM_BASIS_TYPE_FOLLOWS (generator.c:1943) so the peer reads the trailing
+    // basis-dir index byte; no xname follows (a basis-dir tag is below
+    // FNAMECMP_FUZZY, generator.c:1945).
+    if let Some((file, size, path, index)) =
+        try_reference_directories(config.relative_path, config.reference_directories)
+    {
+        return generate_basis_signature(
+            file,
+            size,
+            path,
+            basis_dir_fnamecmp_type(index),
+            None,
+            sig_config,
+        );
+    }
+
+    // upstream: generator.c:861,903,1945-1948 - a fuzzy match is tagged
+    // FNAMECMP_FUZZY + i (0x83 for the dest dir, 0x83 + k + 1 for reference dir
+    // k) and its basename is sent as the ITEM_XNAME_FOLLOWS vstring so the peer's
+    // receiver can open the same basis.
     if config.fuzzy_level > 0
         && let Some(fuzzy) = try_fuzzy_match(
             config.relative_path,
@@ -1104,6 +1182,158 @@ mod tests {
             result.fnamecmp_type,
             protocol::FnameCmpType::Fuzzy(0),
             "a dest-dir fuzzy match is FNAMECMP_FUZZY + 0 (0x83)"
+        );
+        assert_eq!(
+            result.xname.as_deref(),
+            Some(b"data2.txt".as_slice()),
+            "the xname is the basis basename only, not a path"
+        );
+    }
+
+    /// #204: with the destination absent, a basis found in reference dir `j`
+    /// (`--compare-dest`/`--copy-dest`/`--link-dest`) whose content differs is
+    /// selected as a delta basis and tagged FNAMECMP_BASIS_DIR_LOW + j
+    /// (`BasisDir(j)`), so ITEM_BASIS_TYPE_FOLLOWS + the index byte go on the
+    /// wire - matching a real upstream generator - and NO xname follows.
+    /// upstream: generator.c:1054, generator.c:1943-1945.
+    #[test]
+    fn reference_dir_basis_tagged_basis_dir_index() {
+        use std::io::Write;
+
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let dest_dir = tmp.path().join("dest");
+        std::fs::create_dir(&dest_dir).expect("mkdir dest");
+        // Two reference dirs; the target lives only in the SECOND one, so the
+        // emitted tag must be BasisDir(1), proving the index is threaded through
+        // rather than hard-coded to 0.
+        let ref0 = tmp.path().join("ref0");
+        let ref1 = tmp.path().join("ref1");
+        std::fs::create_dir(&ref0).expect("mkdir ref0");
+        std::fs::create_dir(&ref1).expect("mkdir ref1");
+        let data: Vec<u8> = (0..8192u32).map(|i| (i % 251) as u8).collect();
+        {
+            let mut f = fs::File::create(ref1.join("file.bin")).expect("create ref basis");
+            f.write_all(&data).expect("write ref basis");
+            f.flush().expect("flush");
+        }
+
+        let dest_file = dest_dir.join("file.bin");
+        let reference_directories = vec![
+            crate::config::ReferenceDirectory {
+                kind: crate::config::ReferenceDirectoryKind::Compare,
+                path: ref0.clone(),
+            },
+            crate::config::ReferenceDirectory {
+                kind: crate::config::ReferenceDirectoryKind::Compare,
+                path: ref1.clone(),
+            },
+        ];
+        let config = BasisFileConfig {
+            file_path: &dest_file,
+            dest_dir: &dest_dir,
+            relative_path: std::path::Path::new("file.bin"),
+            target_size: data.len() as u64,
+            target_mtime: 0,
+            fuzzy_level: 0,
+            reference_directories: &reference_directories,
+            partial_dir: None,
+            protocol: ProtocolVersion::NEWEST,
+            checksum_length: NonZeroU8::new(16).unwrap(),
+            checksum_algorithm: SignatureAlgorithm::Md4,
+            whole_file: false,
+            compat_flags: None,
+        };
+
+        let result = find_basis_file_with_config(&config);
+        assert!(
+            result.signature.is_some(),
+            "a reference-dir basis must yield a delta signature, not EMPTY"
+        );
+        assert_eq!(
+            result.basis_path.as_deref(),
+            Some(ref1.join("file.bin").as_path()),
+            "the basis path must point at the reference-dir file"
+        );
+        assert_eq!(
+            result.fnamecmp_type,
+            protocol::FnameCmpType::BasisDir(1),
+            "reference dir index 1 must be tagged FNAMECMP_BASIS_DIR_LOW + 1"
+        );
+        assert_eq!(
+            result.fnamecmp_type.to_wire(),
+            0x01,
+            "BasisDir(1) encodes to the wire byte 0x01"
+        );
+        assert!(
+            result.xname.is_none(),
+            "a basis-dir tag is below FNAMECMP_FUZZY, so no xname follows"
+        );
+    }
+
+    /// #205: a `-yy` fuzzy hit sourced from reference dir `k` must be tagged
+    /// FNAMECMP_FUZZY + (k + 1) (`Fuzzy(k + 1)`; the dest dir is fuzzy-index 0)
+    /// with the basis basename as the xname, so a real upstream peer reads the
+    /// 0x84 tag plus the vstring. upstream: generator.c:861,903,1945-1948.
+    #[test]
+    fn reference_dir_fuzzy_tagged_fuzzy_index_with_xname() {
+        use std::io::Write;
+
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let dest_dir = tmp.path().join("dest");
+        std::fs::create_dir(&dest_dir).expect("mkdir dest");
+        // Target "data.txt" is absent from dest and from the reference dir (so
+        // the exact reference-dir basis does not fire); a same-suffix sibling
+        // "data2.txt" sits in the single reference dir, making it the fuzzy hit
+        // at fuzzy-index 1 (dest dir is 0).
+        let ref_dir = tmp.path().join("ref");
+        std::fs::create_dir(&ref_dir).expect("mkdir ref");
+        let data: Vec<u8> = (0..8192u32).map(|i| (i % 251) as u8).collect();
+        {
+            let mut f = fs::File::create(ref_dir.join("data2.txt")).expect("create candidate");
+            f.write_all(&data).expect("write candidate");
+            f.flush().expect("flush");
+        }
+
+        let dest_file = dest_dir.join("data.txt");
+        let reference_directories = vec![crate::config::ReferenceDirectory {
+            kind: crate::config::ReferenceDirectoryKind::Compare,
+            path: ref_dir.clone(),
+        }];
+        let config = BasisFileConfig {
+            file_path: &dest_file,
+            dest_dir: &dest_dir,
+            relative_path: std::path::Path::new("data.txt"),
+            target_size: data.len() as u64,
+            target_mtime: 0,
+            fuzzy_level: 2,
+            reference_directories: &reference_directories,
+            partial_dir: None,
+            protocol: ProtocolVersion::NEWEST,
+            checksum_length: NonZeroU8::new(16).unwrap(),
+            checksum_algorithm: SignatureAlgorithm::Md4,
+            whole_file: false,
+            compat_flags: None,
+        };
+
+        let result = find_basis_file_with_config(&config);
+        assert!(
+            result.signature.is_some(),
+            "a reference-dir fuzzy basis must yield a delta signature, not EMPTY"
+        );
+        assert_eq!(
+            result.basis_path.as_deref(),
+            Some(ref_dir.join("data2.txt").as_path()),
+            "the basis path must point at the reference-dir fuzzy candidate"
+        );
+        assert_eq!(
+            result.fnamecmp_type,
+            protocol::FnameCmpType::Fuzzy(1),
+            "a reference-dir (index 0) fuzzy match is FNAMECMP_FUZZY + 1"
+        );
+        assert_eq!(
+            result.fnamecmp_type.to_wire(),
+            0x84,
+            "Fuzzy(1) encodes to the wire byte 0x84"
         );
         assert_eq!(
             result.xname.as_deref(),
