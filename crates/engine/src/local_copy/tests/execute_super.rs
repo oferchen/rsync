@@ -423,6 +423,84 @@ fn fake_super_with_directory_tree() {
     }
 }
 
+/// Regression: `--fake-super` with a `--chmod` that strips the transfer-root
+/// directory's owner-execute bit must NOT self-lock the root.
+///
+/// upstream: generator.c:1512 gates the transfer-root owner-`rwx` re-add (whose
+/// failure is the self-lock, exit 23) on `!am_root`. Under `--fake-super`
+/// upstream sets `am_root = -1`, so that block is skipped: `set_stat_xattr()`
+/// (rsync.c:577-578, xattrs.c:1219) forces the real directory mode to `0700`
+/// and stashes the intended `a=` (`0000`) mode in the `user.rsync.%stat` xattr.
+/// Verified against upstream rsync 3.4.4: `--fake-super --chmod=a=` on a
+/// directory tree exits 0 with the root left at `0700` (`drwx------`), whereas
+/// the plain `--chmod=a=` self-lock (see `uts_chmod_option.rs`) exits 23. A
+/// prior oc regression ran the self-lock unconditionally, applied the strict
+/// `0000` mode to the real inode, and failed with EACCES on `dst/.`.
+#[cfg(unix)]
+#[test]
+fn fake_super_chmod_all_clear_does_not_self_lock_root() {
+    use std::os::unix::fs::PermissionsExt;
+
+    // The self-lock is a non-root phenomenon: root traverses any directory
+    // regardless of mode, so upstream's `!am_root` gate is moot.
+    if rustix::process::geteuid().is_root() {
+        return;
+    }
+
+    let temp = tempdir().expect("tempdir");
+    let source = temp.path().join("src");
+    let dest = temp.path().join("to");
+    fs::create_dir_all(source.join("sub")).expect("mkdir src/sub");
+    fs::write(source.join("file0"), b"hi\n").expect("write file0");
+    fs::write(source.join("sub/file5"), b"deep\n").expect("write file5");
+    fs::set_permissions(&source, fs::Permissions::from_mode(0o755)).expect("chmod src");
+
+    let mut source_operand = source.into_os_string();
+    source_operand.push(std::path::MAIN_SEPARATOR.to_string());
+    let operands = vec![source_operand, dest.clone().into_os_string()];
+    let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
+
+    let result = plan.execute_with_options(
+        LocalCopyExecution::Apply,
+        LocalCopyOptions::default()
+            .fake_super(true)
+            .owner(true)
+            .group(true)
+            .permissions(true)
+            .with_chmod(Some(ChmodModifiers::parse("a=").expect("parse chmod"))),
+    );
+
+    match result {
+        Ok(summary) => {
+            // The root is forced owner-accessible (0700), never the strict 0000
+            // that would lock the owner out - proving the self-lock was skipped.
+            assert_eq!(
+                fs::symlink_metadata(&dest)
+                    .expect("dest metadata")
+                    .permissions()
+                    .mode()
+                    & 0o7777,
+                0o700,
+                "fake-super forces the transfer root to 0700, not the strict a= mode",
+            );
+            assert_eq!(summary.files_copied(), 2);
+            test_helpers::assert_file_content(&dest.join("file0"), b"hi\n");
+            test_helpers::assert_file_content(&dest.join("sub/file5"), b"deep\n");
+        }
+        Err(error) => {
+            // A filesystem without user-xattr support (e.g. tmpfs) can fail the
+            // %stat write; that is acceptable. What must NEVER recur is the
+            // transfer-root self-lock, whose signature is a permission-modify
+            // error on the destination root.
+            let message = error.to_string();
+            assert!(
+                !message.contains("modify permissions"),
+                "fake-super must not self-lock the transfer root, got: {message}",
+            );
+        }
+    }
+}
+
 #[test]
 fn fake_super_copies_file_without_xattr_feature() {
     // Even without xattr feature enabled at the test level, fake_super should
