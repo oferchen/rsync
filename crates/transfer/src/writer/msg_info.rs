@@ -81,6 +81,29 @@ pub trait MsgInfoSender {
     fn send_msg_success(&mut self, _ndx: i32) -> io::Result<()> {
         Ok(())
     }
+
+    /// Emits a lull keepalive if a `--timeout` is configured and the keepalive
+    /// interval has elapsed with no output, returning `true` when an empty
+    /// `MSG_DATA` frame was written.
+    ///
+    /// The generator/receiver calls this while it is busy with local disk work
+    /// (the delete scan, the final directory-metadata retouch, and the per-file
+    /// generate loop) so a remote sender does not trip its `--timeout` during a
+    /// long silent stretch. The default implementation is a strict no-op,
+    /// matching [`Self::send_msg_info`]; concrete multiplex writers override it
+    /// to forward to the lull-gated emitter. It is a no-op unless `--timeout`
+    /// is set (`allowed_lull` is `None`), so the default transfer path stays
+    /// byte-for-byte identical.
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `io.c:maybe_send_keepalive()` - the lull-gated empty-`MSG_DATA` emitter.
+    /// - `generator.c:296` `delete_in_dir()`, `generator.c:2138-2144`
+    ///   `touch_up_dirs()`, `generator.c:2348-2353` `generate_files()` - the
+    ///   three generator sites that poke it during local disk work.
+    fn maybe_send_keepalive(&mut self) -> io::Result<bool> {
+        Ok(false)
+    }
 }
 
 impl<W: Write> MsgInfoSender for ServerWriter<W> {
@@ -122,6 +145,17 @@ impl<W: Write> MsgInfoSender for ServerWriter<W> {
             Ok(())
         }
     }
+
+    fn maybe_send_keepalive(&mut self) -> io::Result<bool> {
+        // Delegate to the lull-gated emitter. Duplicating the tiny variant match
+        // (rather than calling the inherent method of the same name) keeps the
+        // call unambiguous with this trait method.
+        match self {
+            Self::Multiplex(mux) => mux.maybe_send_keepalive(),
+            Self::Compressed(compressed) => compressed.inner_mut().maybe_send_keepalive(),
+            Self::Plain(_) | Self::Taken => Ok(false),
+        }
+    }
 }
 
 impl<T: MsgInfoSender + ?Sized> MsgInfoSender for &mut T {
@@ -140,6 +174,10 @@ impl<T: MsgInfoSender + ?Sized> MsgInfoSender for &mut T {
     fn send_msg_success(&mut self, ndx: i32) -> io::Result<()> {
         (**self).send_msg_success(ndx)
     }
+
+    fn maybe_send_keepalive(&mut self) -> io::Result<bool> {
+        (**self).maybe_send_keepalive()
+    }
 }
 
 impl<W: MsgInfoSender> MsgInfoSender for CountingWriter<W> {
@@ -157,5 +195,9 @@ impl<W: MsgInfoSender> MsgInfoSender for CountingWriter<W> {
 
     fn send_msg_success(&mut self, ndx: i32) -> io::Result<()> {
         self.inner_ref_mut().send_msg_success(ndx)
+    }
+
+    fn maybe_send_keepalive(&mut self) -> io::Result<bool> {
+        self.inner_ref_mut().maybe_send_keepalive()
     }
 }

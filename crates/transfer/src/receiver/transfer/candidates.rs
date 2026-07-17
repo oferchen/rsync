@@ -237,6 +237,13 @@ impl ReceiverContext {
         let needs_metadata_apply = metadata_opts.requires_apply();
         let mut files_to_transfer = Vec::with_capacity(stat_results.len() / 4 + 1);
         for (idx, file_path, dest_meta) in stat_results {
+            // upstream: generator.c:2348-2353 generate_files() - the per-file
+            // generate loop pokes maybe_send_keepalive once the I/O lull has
+            // elapsed so a remote sender's --timeout does not fire while the
+            // generator quick-checks a long run of up-to-date files without
+            // writing any NDX request. A strict no-op unless --timeout is set
+            // (allowed_lull None), keeping the default path wire-identical.
+            let _ = writer.maybe_send_keepalive();
             let entry = &self.file_list[idx];
             if let Some(ref meta) = dest_meta {
                 if ignore_existing {

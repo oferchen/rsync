@@ -264,7 +264,7 @@ impl ReceiverContext {
 
         // upstream: generator.c:2080-2133 - touch_up_dirs() re-applies
         // directory mtimes after file writes clobber them.
-        self.touch_up_dirs(&setup.dest_dir);
+        self.touch_up_dirs(&setup.dest_dir, writer);
 
         // Drain the deferred itemize rows in flist-index order before the
         // goodbye handshake, matching upstream's single-pass emission ordering.

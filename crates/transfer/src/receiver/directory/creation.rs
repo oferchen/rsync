@@ -792,7 +792,15 @@ impl ReceiverContext {
     ///   S_IWUSR)` restores the real directory mode.
     /// - `generator.c:2398-2399` - `need_retouch_dir_times` gating:
     ///   `preserve_mtimes && !omit_dir_times`.
-    pub(in crate::receiver) fn touch_up_dirs(&self, dest_dir: &Path) {
+    /// - `generator.c:2138-2144` - the retouch loop pokes `maybe_send_keepalive`
+    ///   every `loopchk_limit` iterations so a remote sender's `--timeout` does
+    ///   not fire while the generator re-sets directory mtimes/perms across a
+    ///   large tree without writing anything to the socket.
+    pub(in crate::receiver) fn touch_up_dirs<W: crate::writer::MsgInfoSender + ?Sized>(
+        &self,
+        dest_dir: &Path,
+        writer: &mut W,
+    ) {
         if self.config.flags.skip_dest_writes() {
             return;
         }
@@ -819,6 +827,11 @@ impl ReceiverContext {
         // Iterate in reverse so deepest directories are touched first.
         // upstream: generator.c:2083 - for (i = dir_flist->used - 1; i >= 0; i--)
         for entry in self.file_list.iter().rev() {
+            // upstream: generator.c:2138-2144 - poke a keepalive once the I/O
+            // lull has elapsed so a remote sender does not time out while this
+            // final metadata pass walks a large directory tree. A strict no-op
+            // unless --timeout is set (allowed_lull None).
+            let _ = writer.maybe_send_keepalive();
             if !entry.is_dir() {
                 continue;
             }
@@ -1028,7 +1041,10 @@ mod touch_up_dirs_tests {
         let mut ctx = ReceiverContext::new_for_test(&hs, config);
         ctx.file_list = vec![entry];
 
-        ctx.touch_up_dirs(dir.path());
+        ctx.touch_up_dirs(
+            dir.path(),
+            &mut crate::writer::ServerWriter::new_plain(Vec::new()),
+        );
 
         let meta = fs::metadata(&sub).unwrap();
         let actual = FileTime::from_last_modification_time(&meta);
@@ -1106,7 +1122,10 @@ mod touch_up_dirs_tests {
 
         // After the transfer the restrictive mode must be reinstated (skipped
         // under root / --fake-super, matching upstream fix_dir_perms).
-        ctx.touch_up_dirs(dest);
+        ctx.touch_up_dirs(
+            dest,
+            &mut crate::writer::ServerWriter::new_plain(Vec::new()),
+        );
         if !metadata::am_root() {
             let mode = fs::metadata(&sub).unwrap().permissions().mode() & 0o777;
             assert_eq!(
@@ -1135,7 +1154,10 @@ mod touch_up_dirs_tests {
         let mut ctx = ReceiverContext::new_for_test(&hs, config);
         ctx.file_list = vec![entry];
 
-        ctx.touch_up_dirs(dir.path());
+        ctx.touch_up_dirs(
+            dir.path(),
+            &mut crate::writer::ServerWriter::new_plain(Vec::new()),
+        );
 
         let after = FileTime::from_last_modification_time(&fs::metadata(&sub).unwrap());
         assert_eq!(
@@ -1171,7 +1193,10 @@ mod touch_up_dirs_tests {
         // Parent comes first in file list (natural order).
         ctx.file_list = vec![parent_entry, child_entry];
 
-        ctx.touch_up_dirs(dir.path());
+        ctx.touch_up_dirs(
+            dir.path(),
+            &mut crate::writer::ServerWriter::new_plain(Vec::new()),
+        );
 
         let parent_actual = FileTime::from_last_modification_time(&fs::metadata(&parent).unwrap());
         let child_actual = FileTime::from_last_modification_time(&fs::metadata(&child).unwrap());
@@ -1202,7 +1227,10 @@ mod touch_up_dirs_tests {
         let mut ctx = ReceiverContext::new_for_test(&hs, config);
         ctx.file_list = vec![entry];
 
-        ctx.touch_up_dirs(dir.path());
+        ctx.touch_up_dirs(
+            dir.path(),
+            &mut crate::writer::ServerWriter::new_plain(Vec::new()),
+        );
 
         let actual = FileTime::from_last_modification_time(&fs::metadata(dir.path()).unwrap());
         let expected = FileTime::from_unix_time(desired_secs, 0);
@@ -1228,7 +1256,10 @@ mod touch_up_dirs_tests {
         let mut ctx = ReceiverContext::new_for_test(&hs, config);
         ctx.file_list = vec![file_entry];
 
-        ctx.touch_up_dirs(dir.path());
+        ctx.touch_up_dirs(
+            dir.path(),
+            &mut crate::writer::ServerWriter::new_plain(Vec::new()),
+        );
 
         let actual = FileTime::from_last_modification_time(&fs::metadata(&file_path).unwrap());
         assert_eq!(

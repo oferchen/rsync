@@ -275,7 +275,7 @@ impl ReceiverContext {
 
         // upstream: generator.c:2080-2133 - touch_up_dirs() re-applies
         // directory mtimes after file writes clobber them.
-        self.touch_up_dirs(&setup.dest_dir);
+        self.touch_up_dirs(&setup.dest_dir, writer);
 
         stats.files_transferred = files_transferred;
         stats.bytes_received = bytes_received;
