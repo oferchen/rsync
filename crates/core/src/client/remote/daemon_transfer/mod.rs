@@ -119,12 +119,9 @@ pub fn run_daemon_transfer(
         DaemonTransferRequest::parse_double_colon(&daemon_operand_str)?
     };
 
-    // upstream: clientserver.c - start_daemon_client() applies io_timeout to connect.
-    let connect_duration = resolve_connect_timeout(
-        config.connect_timeout(),
-        config.timeout(),
-        DAEMON_SOCKET_TIMEOUT,
-    );
+    // upstream: socket.c:274-277 - open_socket_out() bounds connect(2) only when
+    // --contimeout is set; --timeout never bounds the connect phase.
+    let connect_duration = resolve_connect_timeout(config.connect_timeout());
     let handshake_io_timeout = config.timeout().effective(DAEMON_SOCKET_TIMEOUT);
     let stream = open_daemon_stream(
         &request.address,

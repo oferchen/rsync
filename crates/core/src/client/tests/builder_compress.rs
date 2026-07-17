@@ -463,35 +463,27 @@ fn local_copy_options_respect_one_file_system_setting() {
 
 #[test]
 fn resolve_connect_timeout_prefers_explicit_setting() {
+    // --contimeout=N bounds the connect phase (upstream: socket.c:274-277).
     let explicit = TransferTimeout::Seconds(NonZeroU64::new(5).unwrap());
-    let resolved =
-        resolve_connect_timeout(explicit, TransferTimeout::Default, Duration::from_secs(30));
-    assert_eq!(resolved, Some(Duration::from_secs(5)));
+    assert_eq!(
+        resolve_connect_timeout(explicit),
+        Some(Duration::from_secs(5))
+    );
 }
 
 #[test]
-fn resolve_connect_timeout_uses_transfer_timeout_when_default() {
-    let transfer = TransferTimeout::Seconds(NonZeroU64::new(8).unwrap());
-    let resolved =
-        resolve_connect_timeout(TransferTimeout::Default, transfer, Duration::from_secs(30));
-    assert_eq!(resolved, Some(Duration::from_secs(8)));
+fn resolve_connect_timeout_ignores_transfer_timeout() {
+    // --timeout must never bound connect; only --contimeout does. With
+    // --contimeout unset the connect stays unbounded regardless of --timeout.
+    assert_eq!(resolve_connect_timeout(TransferTimeout::Default), None);
 }
 
 #[test]
 fn resolve_connect_timeout_disables_when_requested() {
-    let resolved = resolve_connect_timeout(
-        TransferTimeout::Disabled,
-        TransferTimeout::Seconds(NonZeroU64::new(9).unwrap()),
-        Duration::from_secs(30),
-    );
-    assert!(resolved.is_none());
-
-    let resolved_default = resolve_connect_timeout(
-        TransferTimeout::Default,
-        TransferTimeout::Disabled,
-        Duration::from_secs(30),
-    );
-    assert!(resolved_default.is_none());
+    // --contimeout=0 (Disabled) and the unset default both leave connect
+    // unbounded, matching upstream's default connect_timeout=0 (options.c:125).
+    assert!(resolve_connect_timeout(TransferTimeout::Disabled).is_none());
+    assert!(resolve_connect_timeout(TransferTimeout::Default).is_none());
 }
 
 #[test]

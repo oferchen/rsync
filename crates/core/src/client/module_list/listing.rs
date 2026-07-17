@@ -193,7 +193,7 @@ pub fn run_module_list_with_password_and_options(
     let address_mode = options.address_mode();
 
     let effective_timeout = effective_timeout(timeout, DAEMON_SOCKET_TIMEOUT);
-    let connect_duration = resolve_connect_timeout(connect_timeout, timeout, DAEMON_SOCKET_TIMEOUT);
+    let connect_duration = resolve_connect_timeout(connect_timeout);
 
     // Precedence mirrors upstream `main.c`: an explicit `-e`/`--rsh` for a
     // `host::` listing reaches the daemon through the remote shell
@@ -563,6 +563,40 @@ mod tests {
         let custom = NonZeroU64::new(60).unwrap();
         let result = effective_timeout(TransferTimeout::Seconds(custom), default);
         assert_eq!(result, Some(Duration::from_secs(60)));
+    }
+
+    // upstream: socket.c:274-277, options.c:125 - connect(2) is alarm-guarded
+    // only when --contimeout > 0; the default connect_timeout is 0. --timeout
+    // governs per-read I/O on an established stream and must never bound the
+    // connect phase. Without --contimeout, a slow connect must NOT be capped.
+    #[test]
+    fn connect_timeout_unset_leaves_connect_unbounded_even_with_timeout() {
+        // --timeout=8 set, --contimeout unset -> connect stays unbounded (None).
+        assert_eq!(resolve_connect_timeout(TransferTimeout::Default), None);
+    }
+
+    // --contimeout=N (N>0) is the sole trigger for bounding connect(2), matching
+    // the alarm(connect_timeout) upstream installs for connect_timeout > 0.
+    #[test]
+    fn connect_timeout_set_bounds_connect() {
+        let contimeout = TransferTimeout::Seconds(NonZeroU64::new(5).unwrap());
+        assert_eq!(
+            resolve_connect_timeout(contimeout),
+            Some(Duration::from_secs(5))
+        );
+    }
+
+    // --contimeout=0 parses to Disabled and, like upstream's connect_timeout=0
+    // default, means "no connect bound", never "expire immediately".
+    #[test]
+    fn connect_timeout_zero_disables_bound() {
+        assert_eq!(resolve_connect_timeout(TransferTimeout::Disabled), None);
+    }
+
+    // Default (neither --timeout nor --contimeout) leaves connect unbounded.
+    #[test]
+    fn connect_timeout_default_is_unbounded() {
+        assert_eq!(resolve_connect_timeout(TransferTimeout::Default), None);
     }
 
     fn greeting(
