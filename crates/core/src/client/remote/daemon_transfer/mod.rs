@@ -326,6 +326,7 @@ pub fn run_daemon_over_remote_shell(
         bind_address: config.bind_address().map(|addr| addr.socket().ip()),
         jump_hosts: config.jump_hosts(),
         connect_timeout: config.connect_timeout().effective(Duration::from_secs(30)),
+        address_mode: config.address_mode(),
     })?;
 
     let transfer_timeout = config
