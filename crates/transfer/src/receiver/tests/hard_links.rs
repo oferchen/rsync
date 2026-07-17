@@ -143,6 +143,92 @@ fn create_hardlinks_multiple_groups() {
     );
 }
 
+/// When a `-H` group's leader is absent on disk (its own transfer errored or
+/// was skipped) but another group member did materialize, upstream promotes
+/// that present member to a "virtual first" and links the rest to it rather
+/// than aborting. This mirrors upstream `hlink.c`: `skip_hard_link()`
+/// (hlink.c:546-565) flags the absent leader `FLAG_SKIP_HLINK`, `check_prior()`
+/// (hlink.c:246-282) walks past it to the next present member, and
+/// `hard_link_check()` (hlink.c:299-310) promotes it. Before this fix the
+/// receiver recorded the absent leader unconditionally and `fast_io::hard_link`
+/// returned ENOENT, which propagated as a fatal receiver abort.
+#[test]
+fn create_hardlinks_promotes_present_member_when_leader_absent() {
+    let temp_dir = tempfile::TempDir::new().unwrap();
+    let dest = temp_dir.path();
+
+    // The leader's transfer errored: its file is absent. A later group member
+    // ("present.txt") did land on disk and must become the promoted leader.
+    std::fs::write(dest.join("present.txt"), "promoted payload").unwrap();
+
+    let entries = vec![
+        make_hlink_leader("leader.txt", 16, 91),
+        make_hlink_follower("present.txt", 16, 91),
+        make_hlink_follower("orphan.txt", 16, 91),
+    ];
+
+    let mut ctx = receiver_with_hardlinks(entries);
+    let mut writer = TestDeletionWriter;
+    // Must NOT abort: create_hardlinks returns Ok even though leader.txt is gone.
+    call_create_hardlinks(&mut ctx, dest, &mut writer);
+
+    assert!(
+        !dest.join("leader.txt").exists(),
+        "absent leader must not be resurrected"
+    );
+    let orphan = dest.join("orphan.txt");
+    assert!(
+        orphan.exists(),
+        "remaining follower must be linked to the promoted member"
+    );
+    assert_eq!(
+        std::fs::read_to_string(&orphan).unwrap(),
+        "promoted payload"
+    );
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        let present_ino = std::fs::metadata(dest.join("present.txt")).unwrap().ino();
+        let orphan_ino = std::fs::metadata(&orphan).unwrap().ino();
+        assert_eq!(
+            present_ino, orphan_ino,
+            "orphan must hard-link to the promoted member's inode"
+        );
+    }
+}
+
+/// When a `-H` group's leader is absent and no other member materialized, the
+/// group has no data to link. Upstream leaves it unlinked (the earlier transfer
+/// error already set io_error); the receiver must record a soft error and keep
+/// going, never abort with a fatal ENOENT. upstream: hlink.c:299-310 virtual
+/// first with no present member; `maybe_hard_link()` failure is non-fatal.
+#[test]
+fn create_hardlinks_leader_absent_no_members_is_non_fatal() {
+    let temp_dir = tempfile::TempDir::new().unwrap();
+    let dest = temp_dir.path();
+
+    // Nothing on disk: the whole group failed to transfer.
+    let entries = vec![
+        make_hlink_leader("leader.txt", 8, 55),
+        make_hlink_follower("follower.txt", 8, 55),
+    ];
+
+    let mut ctx = receiver_with_hardlinks(entries);
+    let mut writer = TestDeletionWriter;
+    // Must NOT abort.
+    call_create_hardlinks(&mut ctx, dest, &mut writer);
+
+    assert!(
+        !dest.join("follower.txt").exists(),
+        "follower must not be created when no group member has data"
+    );
+    assert_ne!(
+        ctx.flist_io_error, 0,
+        "an unlinkable hardlink group must set a soft I/O error (RERR_PARTIAL)"
+    );
+}
+
 #[cfg(unix)]
 #[test]
 fn create_hardlinks_skips_already_linked() {
