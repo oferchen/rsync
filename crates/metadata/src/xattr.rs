@@ -147,10 +147,16 @@ pub fn read_xattrs_for_wire(
     // upstream: xattrs.c:296-297 - qsort by name
     entries.sort_unstable_by(|a, b| a.name().cmp(b.name()));
 
-    // upstream: xattrs.c:298-299 - assign 1-based num in reverse order
-    let count = entries.len();
+    // upstream: xattrs.c:297-299 - after the ascending qsort, upstream walks the
+    // array backwards assigning `rxa->num = count` down to 1, which lands
+    // num = sorted_position + 1 (first name gets 1, last gets count). The
+    // receiver re-derives the same 1-based ascending num in receive order
+    // (protocol::xattr::cache `for num in 1..=count`), and the abbreviated
+    // (>MAX_FULL_DATUM) value request round-trip keys on num. This MUST be
+    // ascending: a descending assignment makes the sender resolve a request
+    // for num N to a different entry and return the wrong xattr's value.
     for (i, entry) in entries.iter_mut().enumerate() {
-        entry.set_num((count - i) as u32);
+        entry.set_num((i + 1) as u32);
     }
 
     Ok(XattrList::with_entries(entries))
@@ -737,6 +743,67 @@ mod tests {
                 .expect("dest %stat survives"),
             b"100000 0,0 2:2",
         );
+    }
+
+    // upstream: xattrs.c:297-299 assigns each xattr num = sorted_position + 1
+    // (ascending). The receiver re-derives the identical 1-based ascending num
+    // in receive order (protocol::xattr::cache `for num in 1..=count`). The
+    // abbreviated (>MAX_FULL_DATUM) value request round-trip keys on num, so the
+    // sender's assignment MUST be ascending: a descending assignment makes the
+    // sender resolve a request for the first entry (num 1) to the last entry and
+    // return a different xattr's value. Guards against that data-corruption bug.
+    #[test]
+    fn read_xattrs_for_wire_num_is_ascending_like_the_receiver() {
+        use protocol::xattr::MAX_FULL_DATUM;
+
+        let dir = tempdir().expect("create temp dir");
+        let file = dir.path().join("multi.txt");
+        fs::write(&file, "content").expect("write file");
+
+        if !xattrs_supported(&file) {
+            eprintln!("xattrs not supported, skipping test");
+            return;
+        }
+
+        // Three attrs; the alphabetically-first carries a value larger than
+        // MAX_FULL_DATUM so it abbreviates and drives a request keyed on num 1.
+        let big = vec![b'A'; MAX_FULL_DATUM + 8];
+        write_attribute(&file, &test_xattr_name("aaa"), &big, false).expect("write aaa");
+        write_attribute(&file, &test_xattr_name("mmm"), b"m", false).expect("write mmm");
+        write_attribute(&file, &test_xattr_name("zzz"), b"z", false).expect("write zzz");
+
+        let list = read_xattrs_for_wire(&file, false, false, 0).expect("read xattrs");
+        let entries = list.entries();
+        assert!(entries.len() >= 3, "expected at least our three xattrs");
+
+        // num is 1-based ascending over the name-sorted order - identical to the
+        // receiver's `1..=count`, so a num request resolves to the same entry.
+        for (i, entry) in entries.iter().enumerate() {
+            assert_eq!(
+                entry.num(),
+                (i + 1) as u32,
+                "entry {i} ({}) must carry ascending 1-based num to match the receiver",
+                entry.name_str(),
+            );
+            if i > 0 {
+                assert!(
+                    entries[i - 1].name() <= entry.name(),
+                    "entries must be sorted ascending by wire name",
+                );
+            }
+        }
+
+        // The large value abbreviates and its num must be 1 (first sorted
+        // position) so the sender returns aaa's value for the receiver's request.
+        let aaa = entries
+            .iter()
+            .find(|e| e.name_str().ends_with("aaa"))
+            .expect("aaa entry present");
+        assert!(
+            aaa.is_abbreviated(),
+            "value over MAX_FULL_DATUM must abbreviate"
+        );
+        assert_eq!(aaa.num(), 1, "first sorted xattr must be num 1");
     }
 
     #[test]
