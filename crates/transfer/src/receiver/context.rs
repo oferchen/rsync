@@ -298,6 +298,17 @@ pub struct ReceiverContext {
     /// before [`Self::read_expected_ndx_done`] expects the sender's NDX_DONE.
     /// `Cell` because the emit site runs behind a `&self` pipeline closure.
     pub(in crate::receiver) hardlink_follower_echoes: std::cell::Cell<usize>,
+    /// Per-type tally of entries this receiver created (destination absent
+    /// before the transfer), keyed by `ITEM_IS_NEW`. Reconstructs the
+    /// `--stats` "Number of created files" breakdown locally, exactly as
+    /// upstream's receiver does - the counts never cross the wire. Bumped at
+    /// each new-entry site (directory, symlink, device/FIFO, regular file, and
+    /// new hardlink followers) via [`Self::record_created`], then folded into
+    /// the returned `TransferStats`. `Cell` because most creation sites run
+    /// behind a `&self` receiver method.
+    ///
+    /// upstream: receiver.c:733-746 - `stats.created_*++` under `ITEM_IS_NEW`.
+    pub(in crate::receiver) created_stats: std::cell::Cell<protocol::stats::CreatedStats>,
     /// Extraneous-entry victims decided during the transfer walk for a
     /// `--delete-delay` run, awaiting execution after the transfer completes.
     ///
@@ -387,6 +398,7 @@ impl ReceiverContext {
             defer_itemize: false,
             itemize_rows: RefCell::new(BTreeMap::new()),
             hardlink_follower_echoes: std::cell::Cell::new(0),
+            created_stats: std::cell::Cell::new(protocol::stats::CreatedStats::new()),
             delayed_delete_victims: Vec::new(),
         }
     }

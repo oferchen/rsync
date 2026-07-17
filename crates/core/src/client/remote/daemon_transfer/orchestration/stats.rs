@@ -62,6 +62,7 @@ pub(super) fn convert_server_stats_to_summary(
                 transfer_stats.literal_data,
                 transfer_stats.matched_data,
                 transfer_stats.delete_stats,
+                transfer_stats.created_stats,
             );
             (s, transfer_stats.io_error, transfer_stats.error_count)
         }
@@ -80,6 +81,7 @@ pub(super) fn convert_server_stats_to_summary(
                 generator_stats.literal_data,
                 generator_stats.matched_data,
                 generator_stats.delete_stats,
+                generator_stats.created_stats,
             );
             (s, generator_stats.io_error, 0u32)
         }

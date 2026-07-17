@@ -522,16 +522,23 @@ impl LocalCopySummary {
         literal_data: u64,
         matched_data: u64,
         delete_stats: protocol::DeleteStats,
+        created_stats: protocol::CreatedStats,
     ) -> Self {
         Self {
             regular_files_total: files_listed as u64,
             files_copied: files_transferred as u64,
-            // Remote transfers do not carry a per-entry new/updated breakdown
-            // (upstream never sends `stats.created_*` over the wire - the client
-            // recomputes it locally from its own itemize pass). Absent that
-            // stream, mirror the historical reg-created figure so remote
-            // `--stats` output is unchanged by the local-copy accounting fix.
-            created_regular_files: files_transferred as u64,
+            // upstream never sends `stats.created_*` over the wire - the client
+            // recomputes the "Number of created files" breakdown locally from
+            // its own itemize pass (receiver.c:733-746). For a remote pull the
+            // receiver reconstructs it into `created_stats`; map each per-type
+            // count through so the breakdown matches upstream (reg is the
+            // derived remainder, distinct from `files_copied`, which also counts
+            // in-place updates of pre-existing files).
+            created_regular_files: created_stats.regular(),
+            directories_created: created_stats.dirs,
+            created_symlinks: created_stats.symlinks,
+            created_devices: created_stats.devices,
+            created_specials: created_stats.specials,
             bytes_received,
             bytes_sent,
             bytes_copied: literal_data,
@@ -566,14 +573,19 @@ impl LocalCopySummary {
         literal_data: u64,
         matched_data: u64,
         delete_stats: protocol::DeleteStats,
+        created_stats: protocol::CreatedStats,
     ) -> Self {
         Self {
             regular_files_total: files_listed as u64,
             files_copied: files_transferred as u64,
-            // See `from_receiver_stats`: no per-entry new/updated breakdown is
-            // available for remote transfers, so preserve the historical
-            // reg-created figure.
-            created_regular_files: files_transferred as u64,
+            // See `from_receiver_stats`: on a push the local sender reconstructs
+            // the created breakdown from the `ITEM_IS_NEW` iflags it reads off
+            // the wire (sender.c:295-308), so map each per-type count through.
+            created_regular_files: created_stats.regular(),
+            directories_created: created_stats.dirs,
+            created_symlinks: created_stats.symlinks,
+            created_devices: created_stats.devices,
+            created_specials: created_stats.specials,
             bytes_received,
             bytes_sent,
             bytes_copied: literal_data,
@@ -822,6 +834,7 @@ mod tests {
             0,
             0,
             protocol::DeleteStats::new(),
+            protocol::CreatedStats::new(),
         );
         assert_eq!(summary.regular_files_total(), 100);
         assert_eq!(summary.files_copied(), 50);
@@ -843,6 +856,7 @@ mod tests {
             800,
             1200,
             protocol::DeleteStats::new(),
+            protocol::CreatedStats::new(),
         );
         assert_eq!(summary.bytes_copied(), 800);
         assert_eq!(summary.matched_bytes(), 1200);
@@ -874,6 +888,7 @@ mod tests {
             0,
             0,
             delete_stats,
+            protocol::CreatedStats::new(),
         );
         assert_eq!(summary.items_deleted(), 7);
         // reg is derived as total - (dir+link+dev+special), mirroring upstream
@@ -905,10 +920,83 @@ mod tests {
             0,
             0,
             delete_stats,
+            protocol::CreatedStats::new(),
         );
         assert_eq!(summary.items_deleted(), 3);
         assert_eq!(summary.deleted_regular_files(), 2);
         assert_eq!(summary.deleted_dirs(), 1);
+    }
+
+    /// A remote transfer (ssh or daemon) reconstructs the "Number of created
+    /// files" breakdown on the client from the `ITEM_IS_NEW` itemize flags and
+    /// threads it in as a `CreatedStats`. The summary must surface each per-type
+    /// count - and derive `reg` as the remainder - so `--stats` matches upstream
+    /// instead of reporting the old over-count (`files_transferred`) with the
+    /// dir/link/dev/special sub-counts stuck at zero.
+    ///
+    /// upstream: receiver.c:733-746 / sender.c:295-308 - `stats.created_*`.
+    #[test]
+    fn from_receiver_stats_maps_created_breakdown() {
+        let created_stats = protocol::CreatedStats {
+            // 8 total: 3 dirs, 2 symlinks, 1 device, 1 special => 1 reg.
+            files: 8,
+            dirs: 3,
+            symlinks: 2,
+            devices: 1,
+            specials: 1,
+        };
+        let summary = LocalCopySummary::from_receiver_stats(
+            20,
+            // files_transferred is 5 (includes in-place updates); the created
+            // reg count must NOT come from this - it is derived from created_stats.
+            5,
+            4096,
+            256,
+            8192,
+            Duration::from_secs(1),
+            0,
+            0,
+            protocol::DeleteStats::new(),
+            created_stats,
+        );
+        assert_eq!(summary.created_regular_files(), 1);
+        assert_eq!(summary.directories_created(), 3);
+        assert_eq!(summary.created_symlinks(), 2);
+        assert_eq!(summary.created_devices(), 1);
+        assert_eq!(summary.created_specials(), 1);
+        // files_copied still tracks all transferred files, updates included.
+        assert_eq!(summary.files_copied(), 5);
+    }
+
+    /// The push twin of [`from_receiver_stats_maps_created_breakdown`]: a client
+    /// sender reconstructs the same breakdown from the wire iflags.
+    #[test]
+    fn from_generator_stats_maps_created_breakdown() {
+        let created_stats = protocol::CreatedStats {
+            files: 4,
+            dirs: 1,
+            symlinks: 1,
+            devices: 0,
+            specials: 0,
+        };
+        let summary = LocalCopySummary::from_generator_stats(
+            10,
+            3,
+            0,
+            2048,
+            0,
+            Duration::from_secs(1),
+            0,
+            0,
+            protocol::DeleteStats::new(),
+            created_stats,
+        );
+        // reg = 4 - (1 dir + 1 link) = 2.
+        assert_eq!(summary.created_regular_files(), 2);
+        assert_eq!(summary.directories_created(), 1);
+        assert_eq!(summary.created_symlinks(), 1);
+        assert_eq!(summary.created_devices(), 0);
+        assert_eq!(summary.created_specials(), 0);
     }
 
     #[test]
@@ -923,6 +1011,7 @@ mod tests {
             2800,
             202_000,
             protocol::DeleteStats::new(),
+            protocol::CreatedStats::new(),
         );
         assert_eq!(summary.regular_files_total(), 200);
         assert_eq!(summary.files_copied(), 75);

@@ -89,8 +89,17 @@ impl ReceiverContext {
 
             let link_path = dest_dir.join(relative_path);
 
+            // Track whether the destination already existed (symlink or
+            // obstacle) before this create. Upstream only sets ITEM_IS_NEW - and
+            // thus only bumps stats.created_symlinks - when recv_generator's
+            // link_stat finds the destination absent (generator.c:1561,
+            // `statret < 0`); a re-pointed link or a replaced obstacle is a
+            // change, not a creation.
+            let mut dest_existed = false;
+
             // upstream: generator.c:1561 - quick_check_ok(FT_SYMLINK, ...)
             if let Ok(existing_target) = std::fs::read_link(&link_path) {
+                dest_existed = true;
                 if existing_target == *target {
                     // upstream: generator.c:1563 - even on the up-to-date branch
                     // `set_file_attrs(fname, file, &sx, NULL, maybe_ATTRS_REPORT)`
@@ -165,6 +174,7 @@ impl ReceiverContext {
             )
             .is_ok()
             {
+                dest_existed = true;
                 // SEC-1.f: when the sandbox is plumbed and the destination
                 // parent is the sandbox root, the obstacle stat goes through
                 // `fstatat(AT_SYMLINK_NOFOLLOW)` so a TOCTOU symlink swap on
@@ -299,6 +309,11 @@ impl ReceiverContext {
             // upstream: generator.c:1594 - itemize new symlink after creation
             let iflags = ItemFlags::from_raw(ItemFlags::ITEM_LOCAL_CHANGE | ItemFlags::ITEM_IS_NEW);
             let _ = self.emit_itemize(writer, &iflags, entry);
+            if !dest_existed {
+                // upstream: receiver.c:740-741 - a newly created symlink
+                // (destination was absent) bumps stats.created_symlinks.
+                self.record_created(entry.mode());
+            }
         }
         Ok(())
     }
@@ -376,8 +391,14 @@ impl ReceiverContext {
 
             let link_path = dest_dir.join(relative_path);
 
+            // Track whether the destination already existed before this create;
+            // only a truly absent destination is ITEM_IS_NEW and bumps
+            // stats.created_symlinks (upstream generator.c:1561, `statret < 0`).
+            let mut dest_existed = false;
+
             // upstream: generator.c:1561 - quick_check_ok(FT_SYMLINK, ...)
             if let Ok(existing_target) = std::fs::read_link(&link_path) {
+                dest_existed = true;
                 if existing_target == *target {
                     // upstream: generator.c:1563 - refresh metadata even when the
                     // link is already up-to-date so a stale mtime is corrected.
@@ -425,6 +446,7 @@ impl ReceiverContext {
                     }
                 }
             } else if fs::symlink_metadata(&link_path).is_ok() {
+                dest_existed = true;
                 // upstream: generator.c:2018-2020 atomic_create - back the old
                 // obstacle up before removal when --backup is set.
                 match self.backup_existing_before_replace(&link_path, relative_path, dest_dir) {
@@ -504,6 +526,11 @@ impl ReceiverContext {
             // upstream: generator.c:1594 - itemize new symlink after creation
             let iflags = ItemFlags::from_raw(ItemFlags::ITEM_LOCAL_CHANGE | ItemFlags::ITEM_IS_NEW);
             let _ = self.emit_itemize(writer, &iflags, entry);
+            if !dest_existed {
+                // upstream: receiver.c:740-741 - a newly created symlink
+                // (destination was absent) bumps stats.created_symlinks.
+                self.record_created(entry.mode());
+            }
         }
 
         if unsupported_skip {

@@ -380,6 +380,14 @@ impl ReceiverContext {
                         | crate::generator::ItemFlags::ITEM_IS_NEW
                 }
             };
+            if base_iflags & crate::generator::ItemFlags::ITEM_IS_NEW != 0 {
+                // upstream: receiver.c:777-778 - a regular file being received
+                // whose destination was absent (ITEM_IS_NEW) bumps
+                // stats.created_files; reg is the implicit remainder of the
+                // "Number of created files" breakdown. Counts a new empty file
+                // too, since it is still requested and materialised.
+                self.record_created(entry.mode());
+            }
             // upstream: generator.c:1925-1937 - the generator emits the transfer
             // itemize right after write_ndx(ndx), in flist order. With
             // log_before_transfer (`!am_server`, i.e. client mode) the row is

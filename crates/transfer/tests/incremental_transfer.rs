@@ -7,7 +7,7 @@
 
 mod wire_format_generator;
 
-use protocol::stats::DeleteStats;
+use protocol::stats::{CreatedStats, DeleteStats};
 use transfer::receiver::TransferStats;
 use wire_format_generator::{
     generate_flat_directory, generate_nested_directories, generate_out_of_order_entries,
@@ -30,6 +30,7 @@ fn transfer_stats_incremental_fields_exist() {
         directories_failed: 1,
         files_skipped: 2,
         delete_stats: DeleteStats::new(),
+        created_stats: CreatedStats::new(),
         delete_limit_exceeded: false,
         literal_data: 0,
         matched_data: 0,

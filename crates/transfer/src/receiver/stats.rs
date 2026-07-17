@@ -5,7 +5,7 @@
 
 use std::path::PathBuf;
 
-use protocol::stats::DeleteStats;
+use protocol::stats::{CreatedStats, DeleteStats};
 
 /// A single file-list entry captured for `--list-only` rendering.
 ///
@@ -112,6 +112,17 @@ pub struct TransferStats {
 
     /// Breakdown of extraneous items deleted at the destination (`--delete`).
     pub delete_stats: DeleteStats,
+
+    /// Per-type tally of entries created at the destination (destination absent
+    /// before the transfer), reconstructed locally from the `ITEM_IS_NEW`
+    /// itemize flags. Never sent over the wire - upstream recomputes the
+    /// "Number of created files" breakdown on the client from its own itemize
+    /// pass, and this mirrors that for a remote pull.
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `receiver.c:733-746` - `stats.created_*++` under `ITEM_IS_NEW`.
+    pub created_stats: CreatedStats,
 
     /// Whether deletion was stopped due to `--max-delete` limit.
     ///

@@ -128,6 +128,10 @@ impl GeneratorContext {
         // per token as the sender emits the delta stream.
         let mut matched_data = 0u64;
         let mut literal_data = 0u64;
+        // upstream: sender.c:295-308,333-334 - the sender reconstructs
+        // stats.created_* from the ITEM_IS_NEW iflags the receiver's generator
+        // sends per file, keyed by the entry's mode. Never crosses the wire.
+        let mut created_stats = protocol::stats::CreatedStats::new();
         // upstream: io.c IO_BUFFER_SIZE (32KB)
         let mut stream_buf = Vec::with_capacity(32 * 1024);
 
@@ -404,6 +408,14 @@ impl GeneratorContext {
             }
 
             if !iflags.needs_transfer() {
+                // upstream: sender.c:293-309 - a non-transfer item that is new
+                // (ITEM_IS_NEW) bumps stats.created_files plus the per-type
+                // counter for its mode. This is how a pushed new directory,
+                // symlink, device, or FIFO reaches the "Number of created files"
+                // breakdown even though it carries no file data.
+                if iflags.raw() & ItemFlags::ITEM_IS_NEW != 0 && ndx < self.file_list.len() {
+                    created_stats.record(self.file_list[ndx].mode());
+                }
                 // upstream: sender.c:286-292 - non-transfer items still echo
                 // NDX + iflags + (optional xattr response) via write_ndx_and_attrs
                 // so the receiver can pair the response with its outstanding
@@ -459,6 +471,14 @@ impl GeneratorContext {
                     },
                     pending_xattr_response.as_mut(),
                 )?;
+                // upstream: sender.c:332-334 - the created_files++ for a new
+                // transfer item sits in the else (first-send) branch BEFORE the
+                // `if (!do_xfers)` dry-run continue, so a dry run counts created
+                // files too. A dry run never redoes a file, so every entry here
+                // is a first send.
+                if iflags.raw() & ItemFlags::ITEM_IS_NEW != 0 {
+                    created_stats.record(file_entry.mode());
+                }
                 // upstream: sender.c:395 - log_item(FCLIENT, file, iflags, NULL)
                 if let Some(cb) = itemize {
                     let name = file_entry.path().to_string_lossy();
@@ -493,6 +513,14 @@ impl GeneratorContext {
             // Honouring append here would skip reading those block sums and
             // desync the wire.
             let is_resend = sent_files.is_resend(ndx);
+
+            // upstream: sender.c:327-334 - the created_files++ lives in the
+            // `else` (first-send, not FLAG_FILE_SENT) branch, so a redo-pass
+            // resend never double-counts. A transferred file is always a
+            // regular file, so `record` classifies it as the derived reg count.
+            if !is_resend && iflags.raw() & ItemFlags::ITEM_IS_NEW != 0 {
+                created_stats.record(file_entry.mode());
+            }
 
             // upstream: sender.c:89-95 receive_sums() - in append mode the
             // receiver's generator writes only the sum_head, not the block
@@ -937,6 +965,7 @@ impl GeneratorContext {
             bytes_sent,
             matched_data,
             literal_data,
+            created_stats,
             ndx_read_codec,
             ndx_write_codec,
         })
