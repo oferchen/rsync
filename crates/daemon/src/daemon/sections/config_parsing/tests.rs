@@ -285,7 +285,7 @@ mod config_parsing_tests {
         let config = format!("[mod]\npath = {}\nnumeric ids = true\n", path.display());
         let file = write_config(&config);
         let result = parse_config_modules(file.path()).expect("parse succeeds");
-        assert!(result.modules[0].numeric_ids);
+        assert_eq!(result.modules[0].numeric_ids, Some(true));
     }
 
     #[test]
@@ -1332,7 +1332,7 @@ mod config_parsing_tests {
         let mod_a = &result.modules[0];
         assert!(!mod_a.read_only);
         assert!(!mod_a.use_chroot);
-        assert!(mod_a.numeric_ids);
+        assert_eq!(mod_a.numeric_ids, Some(true));
         assert!(mod_a.fake_super);
         assert_eq!(mod_a.timeout.map(|t| t.get()), Some(300));
         assert_eq!(mod_a.max_verbosity, 5);
@@ -1343,7 +1343,7 @@ mod config_parsing_tests {
         let mod_b = &result.modules[1];
         assert!(mod_b.read_only); // default true
         assert!(mod_b.use_chroot); // default true
-        assert!(!mod_b.numeric_ids); // default false
+        assert_eq!(mod_b.numeric_ids, None); // default unset (BOOL3)
         assert!(!mod_b.fake_super); // default false
         assert!(mod_b.timeout.is_none()); // default None
         assert_eq!(mod_b.max_verbosity, 1); // default 1

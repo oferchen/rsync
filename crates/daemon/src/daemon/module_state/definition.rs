@@ -52,7 +52,13 @@ pub(crate) struct ModuleDefinition {
     pub(crate) refuse_options: Vec<String>,
     pub(crate) read_only: bool,
     pub(crate) write_only: bool,
-    pub(crate) numeric_ids: bool,
+    /// Tri-state `numeric ids` directive (upstream BOOL3): `None` = unset,
+    /// `Some(true)` = yes, `Some(false)` = no. The unset third state is
+    /// load-bearing: under chroot, upstream (clientserver.c:1201-1204) treats
+    /// an unset value as enabled because there is no `/etc/passwd` inside the
+    /// chroot for name<->id resolution. Collapsing it to `false` would make a
+    /// default-config chrooted module wrongly perform name-based id mapping.
+    pub(crate) numeric_ids: Option<bool>,
     pub(crate) uid: Option<u32>,
     pub(crate) gid: Option<GidSetting>,
     pub(crate) timeout: Option<NonZeroU64>,
@@ -478,9 +484,13 @@ impl ModuleDefinition {
         self.write_only
     }
 
-    /// Returns whether numeric IDs are enabled.
+    /// Returns whether the `numeric ids` directive was explicitly enabled.
+    ///
+    /// An unset directive reports `false` here; the chroot-defaulting that can
+    /// still force numeric ids on for the session lives in
+    /// `apply_module_transfer_directives`, which reads the raw tri-state field.
     pub(crate) fn numeric_ids(&self) -> bool {
-        self.numeric_ids
+        self.numeric_ids.unwrap_or(false)
     }
 
     /// Returns the configured UID override.
