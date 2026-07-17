@@ -6,7 +6,6 @@
 
 mod apply;
 mod consts;
-mod errors;
 mod lookup;
 mod types;
 

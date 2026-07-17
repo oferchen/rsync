@@ -468,7 +468,7 @@ fn configure_daemon_stream(
 ) -> Result<(), ClientError> {
     if let super::connect::DaemonStream::Tcp(socket) = stream {
         if let Some(values) = options.sockopts() {
-            apply_socket_options(socket, values)?;
+            apply_socket_options(socket, values);
         }
 
         // Module listing has no transfer, so no bwlimit pacing applies.

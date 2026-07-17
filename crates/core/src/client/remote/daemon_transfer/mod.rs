@@ -138,7 +138,7 @@ pub fn run_daemon_transfer(
     // not connect programs.
     if let Some(sockopts) = config.sockopts() {
         if let Some(tcp) = stream.as_tcp_stream() {
-            apply_socket_options(tcp, sockopts)?;
+            apply_socket_options(tcp, sockopts);
         }
     }
 

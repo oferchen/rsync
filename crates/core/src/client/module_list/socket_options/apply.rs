@@ -7,15 +7,10 @@
 use std::ffi::OsStr;
 use std::net::TcpStream;
 
-use super::errors::{socket_option_error, unknown_option};
 use super::lookup::{intern_name, lookup_socket_option, parse_socket_option_value};
 use super::types::ParsedSocketOption;
 #[cfg(not(target_family = "windows"))]
 use super::types::SocketOptionKind;
-use crate::client::ClientError;
-
-#[cfg(not(target_family = "windows"))]
-use super::errors::option_disallows_value;
 
 /// Applies caller-provided socket options to the supplied TCP stream.
 ///
@@ -26,11 +21,16 @@ use super::errors::option_disallows_value;
 /// - `SO_SNDBUF=65536`
 /// - `TCP_NODELAY`
 /// - `IPTOS_LOWDELAY` (Unix only)
-pub(crate) fn apply_socket_options(stream: &TcpStream, options: &OsStr) -> Result<(), ClientError> {
+///
+/// upstream: socket.c:set_socket_options() is `void` - every parse or
+/// `setsockopt(2)` failure warns to stderr and `continue`s the loop, so a bad
+/// option never aborts the connection. We mirror that warn-and-continue
+/// contract rather than propagating a fatal error.
+pub(crate) fn apply_socket_options(stream: &TcpStream, options: &OsStr) {
     let list = options.to_string_lossy();
 
     if list.trim().is_empty() {
-        return Ok(());
+        return;
     }
 
     let mut parsed = Vec::new();
@@ -44,15 +44,23 @@ pub(crate) fn apply_socket_options(stream: &TcpStream, options: &OsStr) -> Resul
             None => (token, None),
         };
 
-        let kind = lookup_socket_option(name).ok_or_else(|| unknown_option(name))?;
+        let Some(kind) = lookup_socket_option(name) else {
+            // upstream: socket.c:704-707 - an unknown option name reports
+            // `rprintf(FERROR,"Unknown socket option %s\n",tok)` and `continue`s.
+            eprintln!("Unknown socket option {name}");
+            continue;
+        };
 
         #[cfg(not(target_family = "windows"))]
         {
             match kind {
-                SocketOptionKind::On { .. } if value_str.is_some() => {
-                    return Err(option_disallows_value(name));
-                }
                 SocketOptionKind::On { .. } => {
+                    // upstream: socket.c:717-727 - an OPT_ON option given a
+                    // value warns (`syntax error -- %s does not take a value`)
+                    // but still applies its fixed value.
+                    if value_str.is_some() {
+                        eprintln!("syntax error -- {name} does not take a value");
+                    }
                     parsed.push(ParsedSocketOption {
                         kind,
                         explicit_value: None,
@@ -84,10 +92,11 @@ pub(crate) fn apply_socket_options(stream: &TcpStream, options: &OsStr) -> Resul
     }
 
     for option in parsed {
-        option
-            .apply(stream)
-            .map_err(|error| socket_option_error(option.name(), error))?;
+        if let Err(error) = option.apply(stream) {
+            // upstream: socket.c:730-733 - a failed `setsockopt(2)` reports
+            // `rsyserr(FERROR, errno, "failed to set socket option %s")` and
+            // keeps applying the remaining options.
+            eprintln!("failed to set socket option {}: {error}", option.name());
+        }
     }
-
-    Ok(())
 }

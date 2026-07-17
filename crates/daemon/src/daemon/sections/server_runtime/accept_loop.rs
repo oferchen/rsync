@@ -235,7 +235,7 @@ fn serve_connections(
     let client_socket_options: Arc<Vec<SocketOption>> = if let Some(ref opts_str) =
         socket_options_str
     {
-        let parsed = parse_socket_options(opts_str).map_err(|msg| {
+        let parsed = parse_socket_options(opts_str, log_sink.as_ref()).map_err(|msg| {
             DaemonError::new(
                 FEATURE_UNAVAILABLE_EXIT_CODE,
                 rsync_error!(
