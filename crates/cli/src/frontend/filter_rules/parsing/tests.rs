@@ -786,3 +786,87 @@ fn parse_literal_dash_pattern_is_not_cvs() {
         other => panic!("expected exclude Rule, got {other:?}"),
     }
 }
+
+// The following tests pin the single-char prefix / modifier case-sensitivity and
+// the side-bound keyword guard to upstream rsync 3.4.4 (protocol 32). Every
+// expectation was ground-truthed against the `rsync --filter=...` binary; the
+// cited exit codes are RERR_SYNTAX (1). upstream: exclude.c:1137-1287.
+
+#[test]
+fn short_prefix_uppercase_modifier_is_rejected() {
+    // upstream: `+S` / `-R` -> "invalid modifier 'S'/'R'" (exclude.c:1226). The
+    // byte after a `+`/`-` prefix is a modifier, matched case-sensitively, so the
+    // uppercase form is not silently remapped to a sender/receiver rule.
+    let _ = parse_filter_directive(OsStr::new("+S")).expect_err("+S must be rejected");
+    let _ = parse_filter_directive(OsStr::new("-R")).expect_err("-R must be rejected");
+}
+
+#[test]
+fn merge_prefix_lowercase_c_modifier_is_rejected() {
+    // upstream: `:c` -> "invalid modifier 'c'" (exclude.c:1226). The cvs-ignore
+    // merge modifier is the uppercase `C`; the lowercase `c` is invalid.
+    let _ = parse_filter_directive(OsStr::new(":c")).expect_err(":c must be rejected");
+}
+
+#[test]
+fn lowercase_single_char_side_prefix_is_unknown_rule() {
+    // upstream: `s foo` / `h foo` -> "Unknown filter rule" (exclude.c:1213). The
+    // single-char side prefixes are the uppercase S/H/P/R; a lowercase spelling
+    // is only ever the first byte of a long keyword, so a bare `s`/`h` is not a
+    // rule and must be rejected rather than treated as show/hide.
+    let _ = parse_filter_directive(OsStr::new("s foo")).expect_err("s foo must be rejected");
+    let _ = parse_filter_directive(OsStr::new("h foo")).expect_err("h foo must be rejected");
+}
+
+#[test]
+fn keyword_uppercase_modifier_is_rejected() {
+    // upstream: `include,X foo` / `exclude,S foo` -> "invalid modifier 'X'/'S'"
+    // (exclude.c:1226). Keyword modifiers are case-sensitive too.
+    let _ = parse_filter_directive(OsStr::new("include,X foo"))
+        .expect_err("include,X must be rejected");
+    let _ = parse_filter_directive(OsStr::new("exclude,S foo"))
+        .expect_err("exclude,S must be rejected");
+}
+
+#[test]
+fn side_keyword_rejects_s_and_r_modifiers() {
+    // upstream: exclude.c:1269-1277 - show/hide/protect/risk set
+    // prefix_specifies_side, so the `s`/`r` modifiers are invalid there
+    // ("invalid modifier", exclude.c:1226). These were previously accepted as a
+    // silent side-flip.
+    let _ = parse_filter_directive(OsStr::new("show,r foo")).expect_err("show,r must be rejected");
+    let _ = parse_filter_directive(OsStr::new("protect,s foo"))
+        .expect_err("protect,s must be rejected");
+    let _ = parse_filter_directive(OsStr::new("hide,s foo")).expect_err("hide,s must be rejected");
+    let _ = parse_filter_directive(OsStr::new("risk,r foo")).expect_err("risk,r must be rejected");
+}
+
+#[test]
+fn side_keyword_accepts_perishable_modifier() {
+    // upstream: exclude.c:1265-1267 - `p` (perishable) carries no side guard, so
+    // it is valid on protect/show/etc. (upstream `protect,p foo` exits 0). This
+    // was previously rejected as an unsupported modifier.
+    match parse_filter_directive(OsStr::new("protect,p foo")).expect("protect,p foo must parse") {
+        FilterDirective::Rule(spec) => assert_eq!(spec.kind(), FilterRuleKind::Protect),
+        other => panic!("expected protect Rule, got {other:?}"),
+    }
+    parse_filter_directive(OsStr::new("show,p foo")).expect("show,p foo must parse");
+}
+
+#[test]
+fn lowercase_modifiers_and_uppercase_prefixes_still_parse() {
+    // Regression guard: the case-sensitivity fix must not reject the forms that
+    // upstream accepts. Lowercase `s`/`x` modifiers on include/exclude, and the
+    // uppercase single-char S/P prefixes, all remain valid (upstream exit 0).
+    parse_filter_directive(OsStr::new("+s foo")).expect("+s foo must parse");
+    parse_filter_directive(OsStr::new("include,s foo")).expect("include,s foo must parse");
+    parse_filter_directive(OsStr::new("include,x foo")).expect("include,x foo must parse");
+    match parse_filter_directive(OsStr::new("S public/**")).expect("S shorthand must parse") {
+        FilterDirective::Rule(spec) => assert_eq!(spec.kind(), FilterRuleKind::Include),
+        other => panic!("expected show(include) Rule, got {other:?}"),
+    }
+    match parse_filter_directive(OsStr::new("P backups/**")).expect("P shorthand must parse") {
+        FilterDirective::Rule(spec) => assert_eq!(spec.kind(), FilterRuleKind::Protect),
+        other => panic!("expected protect Rule, got {other:?}"),
+    }
+}

@@ -73,7 +73,9 @@ pub(super) fn parse_short_include_rule(
 ) -> Option<Result<FilterDirective, Message>> {
     let remainder = trimmed.strip_prefix(prefix)?;
     let (modifier_text, remainder) = split_short_rule_modifiers(remainder);
-    let modifiers = match parse_rule_modifiers(modifier_text, trimmed, true, true) {
+    // `+`/`-` rules never bind a side via their prefix, so the `s`/`r` modifiers
+    // stay valid (prefix_specifies_side = false). upstream: exclude.c:1186-1190.
+    let modifiers = match parse_rule_modifiers(modifier_text, trimmed, true, true, false) {
         Ok(state) => state,
         Err(error) => return Some(Err(error)),
     };
@@ -107,7 +109,8 @@ pub(super) fn parse_keyword_rule(trimmed: &str) -> Result<FilterDirective, Messa
 
     let build_rule = |builder: fn(String) -> FilterRuleSpec,
                       allow_perishable: bool,
-                      allow_xattr: bool|
+                      allow_xattr: bool,
+                      prefix_specifies_side: bool|
      -> Result<FilterDirective, Message> {
         if pattern.is_empty() {
             let text = format!("filter rule '{trimmed}' is missing a pattern after '{keyword}'");
@@ -115,8 +118,13 @@ pub(super) fn parse_keyword_rule(trimmed: &str) -> Result<FilterDirective, Messa
             return Err(message);
         }
 
-        let modifiers =
-            parse_rule_modifiers(keyword_modifiers, trimmed, allow_perishable, allow_xattr)?;
+        let modifiers = parse_rule_modifiers(
+            keyword_modifiers,
+            trimmed,
+            allow_perishable,
+            allow_xattr,
+            prefix_specifies_side,
+        )?;
         let rule = builder(pattern.to_owned());
         let rule = apply_rule_modifiers(rule, modifiers, trimmed)?;
         Ok(FilterDirective::Rule(rule))
@@ -128,28 +136,33 @@ pub(super) fn parse_keyword_rule(trimmed: &str) -> Result<FilterDirective, Messa
     // `EXCLUDE`/`Include` therefore never matches; it reaches the inner switch
     // default and raises "Unknown filter rule" (RERR_SYNTAX). Compare exactly so
     // this parser mirrors that behaviour rather than silently coercing the case.
+    // upstream: exclude.c:1155-1177 - include/exclude do not bind a side, so
+    // `s`/`r`/`p` modifiers are all valid (prefix_specifies_side = false).
     if keyword == "include" {
-        return build_rule(FilterRuleSpec::include, true, true);
+        return build_rule(FilterRuleSpec::include, true, true, false);
     }
 
     if keyword == "exclude" {
-        return build_rule(FilterRuleSpec::exclude, true, true);
+        return build_rule(FilterRuleSpec::exclude, true, true, false);
     }
 
+    // upstream: exclude.c:1163-1206 - show/hide/protect/risk map to the S/H/R/P
+    // prefixes that set prefix_specifies_side, so `s`/`r` are invalid while `p`
+    // (perishable) stays valid.
     if keyword == "show" {
-        return build_rule(FilterRuleSpec::show, false, false);
+        return build_rule(FilterRuleSpec::show, true, false, true);
     }
 
     if keyword == "hide" {
-        return build_rule(FilterRuleSpec::hide, false, false);
+        return build_rule(FilterRuleSpec::hide, true, false, true);
     }
 
     if keyword == "protect" {
-        return build_rule(FilterRuleSpec::protect, false, false);
+        return build_rule(FilterRuleSpec::protect, true, false, true);
     }
 
     if keyword == "risk" {
-        return build_rule(FilterRuleSpec::risk, false, false);
+        return build_rule(FilterRuleSpec::risk, true, false, true);
     }
 
     let message = rsync_error!(

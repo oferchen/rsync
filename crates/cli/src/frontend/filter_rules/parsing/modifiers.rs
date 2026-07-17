@@ -12,27 +12,58 @@ pub(super) struct RuleModifierState {
     negate: bool,
 }
 
+fn unsupported_modifier(directive: &str, modifier: char) -> Message {
+    rsync_error!(
+        1,
+        format!("filter rule '{directive}' uses unsupported modifier '{modifier}'")
+    )
+    .with_role(Role::Client)
+}
+
+/// Parses the modifier characters that may trail a rule prefix or keyword.
+///
+/// upstream: exclude.c:1214-1287 parse_rule_tok - the modifier loop switches on
+/// the literal byte, so modifiers are strictly case-sensitive. An uppercase or
+/// otherwise unknown character reaches the `default:` arm and raises
+/// "invalid modifier" (RERR_SYNTAX). We mirror that by matching the char
+/// verbatim rather than lower-casing it first.
+///
+/// `prefix_specifies_side` is set for the `H`/`S`/`P`/`R` (hide/show/protect/
+/// risk) rules, whose prefix already binds the rule to a side. Upstream then
+/// rejects the `s`/`r` modifiers as invalid on those rules
+/// (exclude.c:1269-1277); `p` (perishable) carries no such guard and stays
+/// valid everywhere (exclude.c:1265-1267).
 pub(super) fn parse_rule_modifiers(
     modifiers: &str,
     directive: &str,
     allow_perishable: bool,
     allow_xattr: bool,
+    prefix_specifies_side: bool,
 ) -> Result<RuleModifierState, Message> {
     let mut state = RuleModifierState::default();
 
     for modifier in modifiers.chars() {
-        let lower = modifier.to_ascii_lowercase();
-        match lower {
+        match modifier {
             '/' => {
                 state.anchor_root = true;
             }
             's' => {
+                // upstream: exclude.c:1275-1276 - `s` is invalid once the prefix
+                // has already fixed the rule's side.
+                if prefix_specifies_side {
+                    return Err(unsupported_modifier(directive, modifier));
+                }
                 state.sender = Some(true);
                 if state.receiver.is_none() {
                     state.receiver = Some(false);
                 }
             }
             'r' => {
+                // upstream: exclude.c:1270-1271 - `r` is invalid once the prefix
+                // has already fixed the rule's side.
+                if prefix_specifies_side {
+                    return Err(unsupported_modifier(directive, modifier));
+                }
                 state.receiver = Some(true);
                 if state.sender.is_none() {
                     state.sender = Some(false);
@@ -47,42 +78,18 @@ pub(super) fn parse_rule_modifiers(
                 if allow_perishable {
                     state.perishable = true;
                 } else {
-                    let message = rsync_error!(
-                        1,
-                        format!(
-                            "filter rule '{directive}' uses unsupported modifier '{}'",
-                            modifier
-                        )
-                    )
-                    .with_role(Role::Client);
-                    return Err(message);
+                    return Err(unsupported_modifier(directive, modifier));
                 }
             }
             'x' => {
                 if allow_xattr {
                     state.xattr_only = true;
                 } else {
-                    let message = rsync_error!(
-                        1,
-                        format!(
-                            "filter rule '{directive}' uses unsupported modifier '{}'",
-                            modifier
-                        )
-                    )
-                    .with_role(Role::Client);
-                    return Err(message);
+                    return Err(unsupported_modifier(directive, modifier));
                 }
             }
             _ => {
-                let message = rsync_error!(
-                    1,
-                    format!(
-                        "filter rule '{directive}' uses unsupported modifier '{}'",
-                        modifier
-                    )
-                )
-                .with_role(Role::Client);
-                return Err(message);
+                return Err(unsupported_modifier(directive, modifier));
             }
         }
     }
@@ -154,7 +161,7 @@ mod tests {
 
     #[test]
     fn parse_rule_modifiers_empty_string() {
-        let result = parse_rule_modifiers("", "+", true, true).expect("parse");
+        let result = parse_rule_modifiers("", "+", true, true, false).expect("parse");
         assert!(!result.anchor_root);
         assert!(result.sender.is_none());
         assert!(result.receiver.is_none());
@@ -162,64 +169,64 @@ mod tests {
 
     #[test]
     fn parse_rule_modifiers_anchor_root() {
-        let result = parse_rule_modifiers("/", "+", true, true).expect("parse");
+        let result = parse_rule_modifiers("/", "+", true, true, false).expect("parse");
         assert!(result.anchor_root);
     }
 
     #[test]
     fn parse_rule_modifiers_sender_only() {
-        let result = parse_rule_modifiers("s", "+", true, true).expect("parse");
+        let result = parse_rule_modifiers("s", "+", true, true, false).expect("parse");
         assert_eq!(result.sender, Some(true));
         assert_eq!(result.receiver, Some(false));
     }
 
     #[test]
     fn parse_rule_modifiers_receiver_only() {
-        let result = parse_rule_modifiers("r", "+", true, true).expect("parse");
+        let result = parse_rule_modifiers("r", "+", true, true, false).expect("parse");
         assert_eq!(result.receiver, Some(true));
         assert_eq!(result.sender, Some(false));
     }
 
     #[test]
     fn parse_rule_modifiers_sender_and_receiver() {
-        let result = parse_rule_modifiers("sr", "+", true, true).expect("parse");
+        let result = parse_rule_modifiers("sr", "+", true, true, false).expect("parse");
         assert_eq!(result.sender, Some(true));
         assert_eq!(result.receiver, Some(true));
     }
 
     #[test]
     fn parse_rule_modifiers_perishable_when_allowed() {
-        let result = parse_rule_modifiers("p", "+", true, true).expect("parse");
+        let result = parse_rule_modifiers("p", "+", true, true, false).expect("parse");
         assert!(result.perishable);
     }
 
     #[test]
     fn parse_rule_modifiers_perishable_when_disallowed() {
-        let result = parse_rule_modifiers("p", "+", false, true);
+        let result = parse_rule_modifiers("p", "+", false, true, false);
         assert!(result.is_err());
     }
 
     #[test]
     fn parse_rule_modifiers_xattr_when_allowed() {
-        let result = parse_rule_modifiers("x", "+", true, true).expect("parse");
+        let result = parse_rule_modifiers("x", "+", true, true, false).expect("parse");
         assert!(result.xattr_only);
     }
 
     #[test]
     fn parse_rule_modifiers_xattr_when_disallowed() {
-        let result = parse_rule_modifiers("x", "+", true, false);
+        let result = parse_rule_modifiers("x", "+", true, false, false);
         assert!(result.is_err());
     }
 
     #[test]
     fn parse_rule_modifiers_negate() {
-        let result = parse_rule_modifiers("!", "-", true, true).expect("parse");
+        let result = parse_rule_modifiers("!", "-", true, true, false).expect("parse");
         assert!(result.negate);
     }
 
     #[test]
     fn parse_rule_modifiers_negate_with_others() {
-        let result = parse_rule_modifiers("!s", "-", true, true).expect("parse");
+        let result = parse_rule_modifiers("!s", "-", true, true, false).expect("parse");
         assert!(result.negate);
         assert_eq!(result.sender, Some(true));
         assert_eq!(result.receiver, Some(false));
@@ -227,20 +234,39 @@ mod tests {
 
     #[test]
     fn parse_rule_modifiers_unknown_modifier() {
-        let result = parse_rule_modifiers("z", "+", true, true);
+        let result = parse_rule_modifiers("z", "+", true, true, false);
         assert!(result.is_err());
     }
 
     #[test]
-    fn parse_rule_modifiers_case_insensitive() {
-        let result = parse_rule_modifiers("SR", "+", true, true).expect("parse");
-        assert_eq!(result.sender, Some(true));
-        assert_eq!(result.receiver, Some(true));
+    fn parse_rule_modifiers_case_sensitive_rejects_upper() {
+        // upstream: exclude.c:1214-1287 - modifiers are matched by literal byte,
+        // so the uppercase `S`/`R` reach the `default:` arm and are rejected as
+        // invalid modifiers (RERR_SYNTAX). Their lowercase forms remain valid.
+        assert!(parse_rule_modifiers("S", "+", true, true, false).is_err());
+        assert!(parse_rule_modifiers("R", "+", true, true, false).is_err());
+        assert!(parse_rule_modifiers("X", "+", true, true, false).is_err());
+    }
+
+    #[test]
+    fn parse_rule_modifiers_side_prefix_rejects_s_and_r() {
+        // upstream: exclude.c:1269-1277 - when the prefix already fixes the side
+        // (hide/show/protect/risk), the `s`/`r` modifiers are invalid.
+        assert!(parse_rule_modifiers("s", "protect", false, false, true).is_err());
+        assert!(parse_rule_modifiers("r", "show", false, false, true).is_err());
+    }
+
+    #[test]
+    fn parse_rule_modifiers_side_prefix_allows_perishable() {
+        // upstream: exclude.c:1265-1267 - `p` (perishable) is valid on every
+        // rule kind, including the side-bound hide/show/protect/risk rules.
+        let result = parse_rule_modifiers("p", "protect", true, false, true).expect("parse");
+        assert!(result.perishable);
     }
 
     #[test]
     fn parse_rule_modifiers_complex_combination() {
-        let result = parse_rule_modifiers("/srp", "+", true, true).expect("parse");
+        let result = parse_rule_modifiers("/srp", "+", true, true, false).expect("parse");
         assert!(result.anchor_root);
         assert_eq!(result.sender, Some(true));
         assert_eq!(result.receiver, Some(true));

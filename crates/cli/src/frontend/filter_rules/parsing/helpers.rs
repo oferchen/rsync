@@ -42,7 +42,11 @@ pub(super) fn split_short_rule_modifiers(text: &str) -> (&str, &str) {
         }
     }
 
-    ("", text)
+    // upstream: exclude.c:1214-1287 - after a `+`/`-` prefix, every byte up to the
+    // first ` `/`_` separator is a modifier. With no separator at all the whole
+    // remainder is modifiers (and the pattern is empty), so `+foo`/`+S` are
+    // rejected as invalid modifiers rather than silently treated as a pattern.
+    (text, "")
 }
 
 pub(super) fn split_short_merge_modifiers(text: &str, allow_extended: bool) -> (&str, &str) {
@@ -134,8 +138,11 @@ mod tests {
     }
 
     #[test]
-    fn split_short_rule_modifiers_no_modifiers() {
-        assert_eq!(split_short_rule_modifiers("pattern"), ("", "pattern"));
+    fn split_short_rule_modifiers_no_separator_is_all_modifiers() {
+        // upstream: exclude.c:1214-1287 - with no ` `/`_` separator after the
+        // prefix, every byte is a modifier and the pattern is empty. The caller
+        // then rejects the unknown modifier bytes (e.g. `+foo` -> invalid 'f').
+        assert_eq!(split_short_rule_modifiers("pattern"), ("pattern", ""));
     }
 
     #[test]

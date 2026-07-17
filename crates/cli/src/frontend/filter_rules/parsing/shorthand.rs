@@ -13,7 +13,12 @@ pub(super) fn parse_filter_shorthand(
 ) -> Option<Result<FilterDirective, Message>> {
     let mut chars = trimmed.chars();
     let first = chars.next()?;
-    if !first.eq_ignore_ascii_case(&short) {
+    // upstream: exclude.c:1137-1178 - the single-char rule prefixes H/S/P/R are
+    // matched case-sensitively (they reach the `switch (*s)` default arm). A
+    // lowercase `h`/`s`/`p`/`r` is instead the first byte of a long keyword and,
+    // when it is not one, raises "Unknown filter rule". Match the prefix exactly
+    // so `s foo`/`h foo` are rejected rather than treated as show/hide.
+    if first != short {
         return None;
     }
 
@@ -91,9 +96,12 @@ mod tests {
     }
 
     #[test]
-    fn case_insensitive_matching() {
+    fn case_sensitive_no_match_on_wrong_case() {
+        // upstream: exclude.c:1137-1178 - single-char rule prefixes are
+        // case-sensitive, so an uppercase char never matches a lowercase prefix
+        // (and vice versa). This parser must return None so the caller can reject
+        // the line as an unknown rule.
         let result = parse_filter_shorthand("E pattern", 'e', "exclude", mock_builder);
-        assert!(result.is_some());
-        assert!(result.unwrap().is_ok());
+        assert!(result.is_none());
     }
 }
