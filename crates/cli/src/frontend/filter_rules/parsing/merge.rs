@@ -22,9 +22,13 @@ pub(crate) fn parse_merge_modifiers(
     let mut saw_exclude = false;
     let mut assume_cvsignore = false;
 
+    // upstream: exclude.c:1214-1287 parse_rule_tok - merge-file modifiers switch
+    // on the literal byte, so they are strictly case-sensitive. The cvs-ignore
+    // modifier is the uppercase `C`; a lowercase `c` (and any uppercased form of
+    // the other modifiers) reaches the `default:` arm and is rejected as an
+    // invalid modifier (RERR_SYNTAX). Match each byte verbatim.
     for modifier in modifiers.chars() {
-        let lower = modifier.to_ascii_lowercase();
-        match lower {
+        match modifier {
             '-' => {
                 if saw_include {
                     let message = rsync_error!(
@@ -49,7 +53,7 @@ pub(crate) fn parse_merge_modifiers(
                 saw_include = true;
                 enforced = Some(DirMergeEnforcedKind::Include);
             }
-            'c' => {
+            'C' => {
                 if saw_include {
                     let message = rsync_error!(
                         1,
