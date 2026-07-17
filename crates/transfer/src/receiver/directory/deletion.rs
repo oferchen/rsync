@@ -407,6 +407,16 @@ impl ReceiverContext {
         use std::sync::Arc;
         use std::sync::atomic::{AtomicU64, Ordering};
 
+        // upstream: generator.c:295-296 - delete_in_dir() pokes a keepalive
+        // (`if (allowed_lull) maybe_send_keepalive(...)`) as it begins scanning a
+        // directory, so a remote sender does not time out while the generator is
+        // busy sweeping the destination tree without writing to the socket. oc
+        // scans directories in parallel workers that cannot reach the writer, so
+        // the poke is emitted at the pass boundaries here (entry, and again after
+        // the parallel scan) plus per-directory in the serial capped executor.
+        // A strict no-op unless --timeout is set (allowed_lull None).
+        writer.maybe_send_keepalive()?;
+
         let max_delete = self.config.deletion.max_delete;
 
         // --one-file-system boundary device. When `-x` is active the transfer
@@ -948,6 +958,12 @@ impl ReceiverContext {
                 },
             );
 
+        // upstream: generator.c:295-296 - the parallel scan above ran the
+        // per-directory delete_in_dir work with no writer access, so poke the
+        // keepalive here at the far edge of that silent window before the serial
+        // emission loop. A strict no-op unless --timeout is set.
+        writer.maybe_send_keepalive()?;
+
         let mut combined = DeleteStats::new();
         // UTS-16.b: any worker that hit a fail-loud sandbox class (ELOOP /
         // EOPNOTSUPP / ENOTDIR / EPERM) surfaces IOERR_GENERAL here so the
@@ -1063,6 +1079,10 @@ impl ReceiverContext {
         };
 
         for dir_relative in dirs_to_scan {
+            // upstream: generator.c:295-296 - poke a keepalive at the start of
+            // each per-directory scan, matching delete_in_dir()'s cadence
+            // exactly on this serial path. A strict no-op unless --timeout is set.
+            state.writer.maybe_send_keepalive()?;
             // Stop scanning once the cap is exhausted: every further candidate
             // would only add to the skipped count, and upstream stops issuing
             // deletions the moment the limit is reached.

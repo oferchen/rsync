@@ -20,6 +20,7 @@ mod create_specials;
 mod delta_apply;
 mod errors_and_timeouts;
 mod file_list;
+mod generator_keepalive;
 mod hard_links;
 #[cfg(unix)]
 mod munge_symlinks;
