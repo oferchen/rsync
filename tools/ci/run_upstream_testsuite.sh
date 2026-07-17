@@ -64,6 +64,12 @@ known_failures_conf="${workspace_root}/tools/ci/upstream_testsuite_known_failure
 log_root="${workspace_root}/target/interop/upstream-testsuite"
 testrun_timeout="${TESTRUN_TIMEOUT:-300}"
 
+# State for the xattr-capable loop-mounted scratch filesystem (see
+# setup_scratch_fs). Empty until a loop mount succeeds; the EXIT trap reads
+# these to unmount and delete the image.
+xattr_fs_image=""
+xattr_fs_mount=""
+
 KNOWN_FAILURES=()
 if [[ -f "$known_failures_conf" ]]; then
     # shellcheck source=/dev/null
@@ -248,6 +254,145 @@ prep_scratch() {
     $setfacl_nodef "$sd" 2>/dev/null || true
     chmod g-s "$sd" 2>/dev/null || true
     ln -sfn "$srcdir" "$sd/src"
+}
+
+# Run a command with root privilege: directly when already root, else via
+# passwordless sudo. Returns non-zero (without prompting) when neither is
+# available, so callers can fall back cleanly.
+priv() {
+    if [[ "${EUID:-$(id -u)}" -eq 0 ]]; then
+        "$@"
+    elif command -v sudo >/dev/null 2>&1 && sudo -n true 2>/dev/null; then
+        sudo -n "$@"
+    else
+        return 1
+    fi
+}
+
+# True (0) iff $mp is a mount point. Prefers mountpoint(1); falls back to
+# /proc/mounts so the check works even where util-linux is trimmed.
+is_mounted() {
+    local mp=$1
+    if command -v mountpoint >/dev/null 2>&1; then
+        mountpoint -q "$mp" 2>/dev/null
+        return
+    fi
+    grep -qF " $mp " /proc/mounts 2>/dev/null
+}
+
+# True (0) iff $dir's filesystem honours user.* extended attributes. Probes by
+# actually setting one on a throwaway file, since a mount can advertise support
+# yet reject it (overlay/tmpfs/some CI runners).
+fs_supports_user_xattr() {
+    local dir=$1 probe rc=1
+    [[ -d "$dir" && -w "$dir" ]] || return 1
+    probe=$(mktemp "${dir}/.xattr-probe.XXXXXX" 2>/dev/null) || return 1
+    if setfattr -n user.ocprobe -v 1 "$probe" 2>/dev/null; then
+        rc=0
+    fi
+    rm -f "$probe" 2>/dev/null || true
+    return $rc
+}
+
+# Set $scratchbase to a directory backed by a filesystem that supports user.*
+# xattrs. xattrs.test (and hlink-xattrs) probe user.* support and self-SKIP
+# when it is missing, so on a runner whose workspace filesystem rejects user.*
+# xattrs their coverage is silently lost. We loop-mount a small ext4 image
+# (ext4 enables user_xattr by default) and host the scratch tree there.
+#
+# Works for both legs: the harness runs as root on the sudo leg (priv() runs
+# mount directly) and as the unprivileged runner on the non-root leg (priv()
+# uses passwordless sudo, then chowns the mount so the unprivileged suite can
+# write to it).
+#
+# Falls back to the given base (current behaviour) when a loop mount cannot be
+# built. The fallback is always logged - never a silent skip - and warns
+# explicitly when the fallback filesystem also lacks user.* xattr support.
+setup_scratch_fs() {
+    local default_base=$1
+    scratchbase="$default_base"
+
+    local img="${log_root}/xattr-scratch.img"
+    local mnt="${log_root}/xattr-scratch"
+
+    if ! command -v mkfs.ext4 >/dev/null 2>&1; then
+        scratch_fs_fallback "$default_base" "mkfs.ext4 not found"
+        return 0
+    fi
+    if ! priv true 2>/dev/null; then
+        scratch_fs_fallback "$default_base" "no root/passwordless-sudo for loop mount"
+        return 0
+    fi
+
+    mkdir -p "$mnt"
+    rm -f "$img"
+    # 1 GiB is ample for the whole suite's scratch trees (passing tests are
+    # cleaned immediately; only preserved failures accumulate).
+    if ! { fallocate -l 1024M "$img" 2>/dev/null || \
+           dd if=/dev/zero of="$img" bs=1M count=1024 status=none 2>/dev/null; }; then
+        scratch_fs_fallback "$default_base" "could not allocate loop image"
+        rm -f "$img"
+        return 0
+    fi
+    # -O ^has_journal keeps the throwaway image small and fast; user_xattr is
+    # an ext4 default but we mount it explicitly for clarity.
+    if ! mkfs.ext4 -q -F -O ^has_journal "$img" >/dev/null 2>&1; then
+        scratch_fs_fallback "$default_base" "mkfs.ext4 failed"
+        rm -f "$img"
+        return 0
+    fi
+    if ! priv mount -o loop,user_xattr "$img" "$mnt" 2>/dev/null; then
+        scratch_fs_fallback "$default_base" "loop mount failed"
+        rm -f "$img"
+        return 0
+    fi
+    # Hand ownership to the current euid so the suite (unprivileged on the
+    # non-root leg) can create its per-test scratch trees.
+    priv chown "$(id -u):$(id -g)" "$mnt" 2>/dev/null || true
+    priv chmod 0755 "$mnt" 2>/dev/null || true
+
+    if ! fs_supports_user_xattr "$mnt"; then
+        scratch_fs_fallback "$default_base" "mounted ext4 rejected user.* xattr"
+        priv umount "$mnt" 2>/dev/null || priv umount -l "$mnt" 2>/dev/null || true
+        rm -f "$img"
+        return 0
+    fi
+
+    xattr_fs_image="$img"
+    xattr_fs_mount="$mnt"
+    scratchbase="${mnt}/scratch"
+    mkdir -p "$scratchbase"
+    echo "==> xattr-capable scratch fs: loop-ext4 at ${mnt} (user_xattr verified)" >&2
+    return 0
+}
+
+# Fall back to the workspace scratch base, logging why. Warns loudly when that
+# filesystem cannot set user.* xattrs, so xattrs.test's skip is never silent.
+scratch_fs_fallback() {
+    local default_base=$1 reason=$2
+    scratchbase="$default_base"
+    mkdir -p "$scratchbase"
+    if fs_supports_user_xattr "$scratchbase"; then
+        echo "==> loop-ext4 scratch unavailable (${reason}); native FS supports user.* xattrs, using ${scratchbase}" >&2
+    else
+        echo "==> WARNING: loop-ext4 scratch unavailable (${reason}) and native FS lacks user.* xattr support; xattrs.test will SKIP" >&2
+    fi
+}
+
+# Unmount and delete the loop-ext4 scratch image. Idempotent; safe to call from
+# the EXIT trap and again at the top of a re-run.
+cleanup_scratch_fs() {
+    [[ -n "$xattr_fs_mount" ]] || return 0
+    # Restore owner traversal so cleanup can descend any mode-0 dir a test left.
+    priv chmod -R u+rwX "$xattr_fs_mount" 2>/dev/null || true
+    if is_mounted "$xattr_fs_mount"; then
+        priv umount "$xattr_fs_mount" 2>/dev/null || \
+            priv umount -l "$xattr_fs_mount" 2>/dev/null || true
+    fi
+    rmdir "$xattr_fs_mount" 2>/dev/null || true
+    rm -f "$xattr_fs_image" 2>/dev/null || true
+    xattr_fs_mount=""
+    xattr_fs_image=""
 }
 
 run_one_test() {
@@ -620,10 +765,18 @@ main() {
     setup_test_env
     stabilize_srcroot_mtime
 
+    # Tear down a stale loop mount from a prior run killed mid-flight before
+    # wiping $log_root, so rm -rf never recurses into a live mount.
+    if is_mounted "${log_root}/xattr-scratch"; then
+        priv umount "${log_root}/xattr-scratch" 2>/dev/null || \
+            priv umount -l "${log_root}/xattr-scratch" 2>/dev/null || true
+    fi
     rm -rf "$log_root"
     mkdir -p "$log_root"
-    scratchbase="${log_root}/scratch"
-    mkdir -p "$scratchbase"
+    # Host the scratch tree on a user.*-xattr-capable filesystem so xattrs.test
+    # runs instead of self-skipping. Falls back to $log_root/scratch (logged)
+    # when a loop mount is unavailable.
+    setup_scratch_fs "${log_root}/scratch"
 
     # upstream: runtests.sh:205-217 - detect and export setfacl_nodef so
     # ACL tests can clear default ACLs from directories.
@@ -659,5 +812,10 @@ main() {
         exit 1
     fi
 }
+
+# Ensure the loop-ext4 scratch image is always unmounted and removed, even on
+# an early exit or failure. No-op when no image was mounted (git-ref mode,
+# fallback path, or local dev).
+trap cleanup_scratch_fs EXIT
 
 main "$@"
