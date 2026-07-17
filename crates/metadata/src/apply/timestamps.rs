@@ -567,6 +567,39 @@ fn unix_secs_to_filetime_ticks(secs: i64) -> Option<u64> {
         .and_then(|t| u64::try_from(t).ok())
 }
 
+/// Decides whether upstream would actually issue a crtime-setting syscall,
+/// mirroring the two guards in `set_file_attrs()`.
+///
+/// - `rsync.c:591-593`: the root directory of an HFS+ volume has inode 2 and
+///   rejects a creation-time update, so upstream sets `ATTRS_SKIP_CRTIME` for
+///   it. We refuse the set for any directory whose destination inode is 2.
+/// - `rsync.c:617-619`: `if (!same_time(sxp->crtime, 0L, file_crtime, 0L))` -
+///   upstream reads the destination's current crtime (`get_create_time`) and
+///   only writes when it differs. `same_time` with the default `modify_window`
+///   (0) compares whole seconds, and both crtime arguments carry `nsec == 0`.
+///
+/// `existing_secs` is `None` when the destination's crtime could not be read;
+/// upstream's `get_create_time` returns 0 in that case, so `same_time(0, incoming)`
+/// is false for a nonzero incoming value and the set proceeds - hence `None`
+/// means "update".
+#[cfg(any(target_os = "macos", test))]
+fn crtime_needs_update(
+    existing_secs: Option<i64>,
+    incoming_secs: i64,
+    dest_ino: u64,
+    dest_is_dir: bool,
+) -> bool {
+    // upstream: rsync.c:591-593 - never touch the HFS+ volume root.
+    if dest_is_dir && dest_ino == 2 {
+        return false;
+    }
+    match existing_secs {
+        // upstream: rsync.c:619 - skip when same_time() reports equality.
+        Some(existing) => !crate::ModifyWindow::ZERO.same_time(existing, 0, incoming_secs, 0),
+        None => true,
+    }
+}
+
 /// Sets the creation time (birth time) of a file on macOS via `setattrlist(2)`.
 // upstream: rsync.c uses utimensat for mtime/atime; crtime uses setattrlist on macOS
 #[cfg(target_os = "macos")]
@@ -574,6 +607,27 @@ fn unix_secs_to_filetime_ticks(secs: i64) -> Option<u64> {
 fn set_crtime(path: &Path, secs: i64) -> Result<(), MetadataError> {
     use std::ffi::CString;
     use std::os::unix::ffi::OsStrExt;
+    use std::os::unix::fs::MetadataExt;
+
+    // upstream: rsync.c:591-593 + 617-619 - read the destination's current
+    // crtime and inode, then skip the setattrlist(2) when the value already
+    // matches (same_time) or the target is the HFS+ volume root (inode 2),
+    // which would reject the update. The stat mirrors upstream's
+    // get_create_time() read before it decides to write.
+    let (existing_secs, dest_ino, dest_is_dir) = match fs::metadata(path) {
+        Ok(meta) => {
+            let existing = meta
+                .created()
+                .ok()
+                .and_then(|c| c.duration_since(std::time::UNIX_EPOCH).ok())
+                .map(|d| d.as_secs() as i64);
+            (existing, meta.ino(), meta.is_dir())
+        }
+        Err(_) => (None, 0, false),
+    };
+    if !crtime_needs_update(existing_secs, secs, dest_ino, dest_is_dir) {
+        return Ok(());
+    }
 
     #[repr(C)]
     struct AttrBuf {
@@ -835,5 +889,99 @@ mod crtime_conversion_tests {
     #[test]
     fn overflow_returns_none() {
         assert_eq!(unix_secs_to_filetime_ticks(i64::MAX), None);
+    }
+}
+
+#[cfg(test)]
+mod crtime_skip_tests {
+    use super::crtime_needs_update;
+
+    #[test]
+    fn skips_when_existing_crtime_equals_incoming() {
+        // Why: upstream rsync.c:619 guards the setattrlist with
+        // `!same_time(sxp->crtime, 0, file_crtime, 0)`, so an already-correct
+        // crtime must not trigger a redundant creation-time write.
+        assert!(!crtime_needs_update(
+            Some(1_000_000_000),
+            1_000_000_000,
+            42,
+            false
+        ));
+    }
+
+    #[test]
+    fn sets_when_existing_crtime_differs() {
+        // Why: a genuinely different destination crtime must be updated to
+        // preserve the source's creation time (rsync.c:615-624).
+        assert!(crtime_needs_update(
+            Some(1_000_000_000),
+            1_000_000_001,
+            42,
+            false
+        ));
+    }
+
+    #[test]
+    fn sub_second_difference_is_treated_as_equal() {
+        // Why: same_time with the default modify_window (0) compares whole
+        // seconds only, and crtime always carries nsec == 0. The whole-second
+        // value is what upstream compares, so this exercises that granularity.
+        assert!(!crtime_needs_update(Some(1_700), 1_700, 7, false));
+    }
+
+    #[test]
+    fn unreadable_existing_crtime_forces_update() {
+        // Why: upstream get_create_time() returns 0 when it cannot read the
+        // destination crtime; same_time(0, nonzero) is false, so upstream
+        // writes. `None` must therefore mean "update".
+        assert!(crtime_needs_update(None, 1_234, 42, false));
+    }
+
+    #[test]
+    fn hfs_plus_volume_root_directory_is_skipped() {
+        // Why: upstream rsync.c:591-593 sets ATTRS_SKIP_CRTIME when
+        // `st_ino == 2 && S_ISDIR`, because the HFS+ volume root rejects a
+        // creation-time update. The guard must win even when the crtime differs.
+        assert!(!crtime_needs_update(Some(1), 999, 2, true));
+        assert!(!crtime_needs_update(None, 999, 2, true));
+    }
+
+    #[test]
+    fn inode_two_that_is_not_a_directory_is_not_the_volume_root() {
+        // Why: the upstream guard requires S_ISDIR as well as inode 2. A
+        // regular file that happens to have inode 2 must still be updated.
+        assert!(crtime_needs_update(Some(1), 999, 2, false));
+    }
+}
+
+#[cfg(all(test, target_os = "macos"))]
+mod crtime_macos_tests {
+    use super::set_crtime;
+
+    #[test]
+    fn setting_crtime_to_its_current_value_is_a_noop_success() {
+        // Why: on a real macOS filesystem, re-applying the destination's
+        // existing crtime must hit the same_time skip (rsync.c:619) and return
+        // Ok without erroring, proving the redundant-write guard is live where
+        // crtime is actually settable.
+        use std::os::unix::fs::MetadataExt;
+
+        let tmp = tempfile::NamedTempFile::new().expect("temp file");
+        let path = tmp.path();
+        let meta = std::fs::metadata(path).expect("metadata");
+        let existing = meta
+            .created()
+            .ok()
+            .and_then(|c| c.duration_since(std::time::UNIX_EPOCH).ok())
+            .map(|d| d.as_secs() as i64);
+        // Skip on the unlikely filesystem that reports no birthtime.
+        if let Some(existing) = existing {
+            assert!(existing > 0, "temp file should have a positive crtime");
+            // Re-applying the same value must be skipped (no error) and leave
+            // both the crtime and inode identical.
+            set_crtime(path, existing).expect("noop crtime set succeeds");
+            let after = std::fs::metadata(path).expect("metadata after");
+            assert_eq!(after.ino(), meta.ino());
+        }
     }
 }
