@@ -59,6 +59,48 @@ pub fn write_varint<W: Write + ?Sized>(writer: &mut W, value: i32) -> io::Result
     writer.write_all(&bytes[..len])
 }
 
+/// Maximum vstring payload length. Upstream `io.c:2301-2307` aborts with
+/// `RERR_PROTOCOL` for a length above `0x7FFF`.
+const VSTRING_MAX_LEN: usize = 0x7FFF;
+
+/// Writes a length-prefixed variable-length string (rsync's `vstring`).
+///
+/// This is **not** a varint: the length prefix is one byte for `len <= 0x7F`,
+/// otherwise two bytes (`len / 0x100 + 0x80`, then `len & 0xFF`), followed by
+/// the raw payload. It is the encoding used for the itemize xname (the fuzzy
+/// basis basename and the hard-link leader name) and for the negotiated
+/// checksum/compression lists.
+///
+/// # Errors
+///
+/// Returns [`io::ErrorKind::InvalidInput`] when `bytes.len() > 0x7FFF` (upstream
+/// aborts the transfer in the same case) and propagates any writer error.
+///
+/// # Upstream Reference
+///
+/// - `io.c:2297-2315` - `write_vstring()`
+#[inline]
+pub fn write_vstring<W: Write + ?Sized>(writer: &mut W, bytes: &[u8]) -> io::Result<()> {
+    let len = bytes.len();
+    if len > VSTRING_MAX_LEN {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            format!("attempting to send over-long vstring ({len} > {VSTRING_MAX_LEN})"),
+        ));
+    }
+    // upstream: io.c:2299-2312 - one length byte for len <= 0x7F, else the high
+    // byte carries `len / 0x100 + 0x80` followed by the low byte.
+    if len > 0x7F {
+        writer.write_all(&[(len / 0x100 + 0x80) as u8, (len & 0xFF) as u8])?;
+    } else {
+        writer.write_all(&[len as u8])?;
+    }
+    if len > 0 {
+        writer.write_all(bytes)?;
+    }
+    Ok(())
+}
+
 /// Writes a variable-length 64-bit integer using rsync's varlong format.
 ///
 /// This mirrors upstream's `write_varlong(int f, int64 x, uchar min_bytes)` from io.c.
@@ -160,4 +202,65 @@ pub fn write_varint30_int<W: Write + ?Sized>(
 pub fn encode_varint_to_vec(value: i32, out: &mut Vec<u8>) {
     let (len, bytes) = encode_bytes(value);
     out.extend_from_slice(&bytes[..len]);
+}
+
+#[cfg(test)]
+mod vstring_tests {
+    use super::write_vstring;
+
+    /// Golden bytes for the vstring length prefix. WHY: the itemize xname (fuzzy
+    /// basis basename, hard-link leader name) is framed with this exact encoding,
+    /// and the receiver decodes it as a 1-or-2-byte prefix (`io.c:2004`
+    /// `read_vstring`). A varint prefix would agree only for `len <= 0x7F` and
+    /// silently desync the wire for any longer name, so these cases pin the
+    /// boundary bytes upstream `io.c:2297` emits.
+    #[test]
+    fn write_vstring_golden_bytes() {
+        let mut buf = Vec::new();
+        write_vstring(&mut buf, b"").unwrap();
+        assert_eq!(
+            buf,
+            vec![0x00],
+            "empty vstring is a single zero length byte"
+        );
+
+        buf.clear();
+        write_vstring(&mut buf, b"basis.txt").unwrap();
+        let mut expected = vec![9u8];
+        expected.extend_from_slice(b"basis.txt");
+        assert_eq!(buf, expected, "short name: single length byte then payload");
+
+        // len == 0x7F: still a single length byte (the boundary before the high
+        // bit turns on).
+        buf.clear();
+        let name = vec![b'a'; 0x7F];
+        write_vstring(&mut buf, &name).unwrap();
+        assert_eq!(buf[0], 0x7F);
+        assert_eq!(buf.len(), 1 + 0x7F);
+
+        // len == 0x80: two-byte prefix `len/0x100 + 0x80`, then `len & 0xFF`.
+        buf.clear();
+        let name = vec![b'b'; 0x80];
+        write_vstring(&mut buf, &name).unwrap();
+        // high byte = 0x80/0x100 + 0x80 = 0x80; low byte = 0x80 & 0xFF = 0x80.
+        assert_eq!(&buf[..2], &[0x80, 0x80]);
+        assert_eq!(buf.len(), 2 + 0x80);
+
+        // len == 0x1234: high byte = 0x12 | 0x80 = 0x92, low byte = 0x34.
+        buf.clear();
+        let name = vec![b'c'; 0x1234];
+        write_vstring(&mut buf, &name).unwrap();
+        assert_eq!(&buf[..2], &[0x92, 0x34]);
+        assert_eq!(buf.len(), 2 + 0x1234);
+    }
+
+    /// upstream: io.c:2301-2307 aborts with RERR_PROTOCOL for len > 0x7FFF; oc
+    /// surfaces the same over-long case as an error rather than emitting a
+    /// truncated prefix that would desync the reader.
+    #[test]
+    fn write_vstring_rejects_overlong() {
+        let mut buf = Vec::new();
+        let name = vec![0u8; 0x8000];
+        assert!(write_vstring(&mut buf, &name).is_err());
+    }
 }
