@@ -59,32 +59,47 @@ fn clamped_verbose_level(flag_string: &str) -> u8 {
 /// - `ignore errors = yes` forces error-tolerant deletion regardless of the
 ///   client's flags. upstream: clientserver.c:1111-1112 -
 ///   `if (lp_ignore_errors(module_id)) ignore_errors = 1;`.
-/// - `numeric ids = yes` forces `numeric_ids = -1` for the session. upstream:
+/// - `numeric ids` forces `numeric_ids = -1` for the session. upstream:
 ///   clientserver.c:1201-1204 -
 ///   `if (!numeric_ids && (use_chroot ? lp_numeric_ids(module_id) != False &&
 ///   !*lp_name_converter(module_id) : lp_numeric_ids(module_id) == True))
-///   numeric_ids = -1;`. The option is forced on only when the client did not
-///   already request it and, under chroot, only when no `name converter` is
-///   configured (the converter maps names inside the chroot). Upstream sets the
-///   sentinel `-1` (not `1`) so the uid/gid name-list stays on the wire; oc
-///   mirrors that with `NumericIds::DaemonForced`, distinct from the client's
-///   explicit `NumericIds::Explicit` which also drops the wire list.
+///   numeric_ids = -1;`. The directive is a BOOL3 tri-state: under chroot an
+///   unset OR yes value forces it on (unless a `name converter` maps names
+///   inside the chroot), because there is no `/etc/passwd` in the chroot;
+///   without chroot only an explicit yes forces it, and an explicit no is
+///   never overridden. It is forced only when the client did not already
+///   request it. Upstream sets the sentinel `-1` (not `1`) so the uid/gid
+///   name-list stays on the wire; oc mirrors that with
+///   `NumericIds::DaemonForced`, distinct from the client's explicit
+///   `NumericIds::Explicit` which also drops the wire list.
 fn apply_module_transfer_directives(module: &ModuleDefinition, cfg: &mut ServerConfig) {
     // upstream: clientserver.c:1111-1112
     if module.ignore_errors {
         cfg.deletion.ignore_errors = true;
     }
 
-    // upstream: clientserver.c:1201-1204 - force `numeric_ids = -1` (daemon-
-    // forced) when the client did not already pass --numeric-ids and, under
-    // chroot, only when no `name converter` maps names inside the chroot. The
+    // upstream: clientserver.c:1201-1204
+    //   if (!numeric_ids
+    //    && (use_chroot ? lp_numeric_ids(module_id) != False
+    //                       && !*lp_name_converter(module_id)
+    //                   : lp_numeric_ids(module_id) == True))
+    //       numeric_ids = -1;
+    //
+    // `numeric ids` is a BOOL3: `None` = unset, `Some(true)` = True,
+    // `Some(false)` = False. Under chroot an unset OR yes value (`!= False`)
+    // forces numeric ids on - inside the chroot there is no `/etc/passwd`, so
+    // name<->id resolution is impossible - unless a `name converter` maps names
+    // inside the chroot. Without chroot only an explicit yes (`== True`) forces
+    // it. An explicit no (`Some(false)`) is never overridden. The daemon-forced
     // `-1` state suppresses local name resolution but keeps the uid/gid name-
     // list on the wire (`numeric_ids <= 0`), so a real upstream client whose
     // own `numeric_ids` is `0` still has its transmitted list consumed.
-    if cfg.flags.numeric_ids.is_off()
-        && module.numeric_ids
-        && !(module.use_chroot && module.name_converter.is_some())
-    {
+    let module_forces_numeric_ids = if module.use_chroot {
+        module.numeric_ids != Some(false) && module.name_converter.is_none()
+    } else {
+        module.numeric_ids == Some(true)
+    };
+    if cfg.flags.numeric_ids.is_off() && module_forces_numeric_ids {
         cfg.flags.numeric_ids = core::server::NumericIds::DaemonForced;
     }
 }

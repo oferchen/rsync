@@ -124,7 +124,7 @@ fn parse_module_definition(
         refuse_options: Vec::new(),
         read_only: true,
         write_only: false,
-        numeric_ids: false,
+        numeric_ids: None,
         uid: None,
         gid: None,
         timeout: None,
@@ -339,7 +339,7 @@ fn apply_inline_module_options(
                 let parsed = parse_boolean_directive(value).ok_or_else(|| {
                     config_error(format!("invalid boolean value '{value}' for 'numeric ids'"))
                 })?;
-                module.numeric_ids = parsed;
+                module.numeric_ids = Some(parsed);
             }
             "use chroot" | "use-chroot" => {
                 let parsed = parse_boolean_directive(value).ok_or_else(|| {
@@ -490,7 +490,7 @@ fn apply_daemon_param_overrides(
                 let parsed = parse_boolean_directive(value).ok_or_else(|| {
                     config_error(format!("invalid boolean value '{value}' for 'numeric ids'"))
                 })?;
-                module.numeric_ids = parsed;
+                module.numeric_ids = Some(parsed);
             }
             "use chroot" | "use-chroot" => {
                 let parsed = parse_boolean_directive(value).ok_or_else(|| {
