@@ -111,16 +111,22 @@ impl ConnectionLimiter {
 
         for slot in 0..limit.get() {
             let lock = slot_lock(i64::from(slot) * SLOT_LEN);
-            match nix::fcntl::fcntl(&file, setlk_arg(&lock)) {
-                Ok(_) => return Ok(ConnectionLockGuard { _file: file }),
-                // The range is held by another connection or process; try the
-                // next slot. upstream: util1.c:642 - `fcntl` returns non-zero
-                // with EACCES/EAGAIN when the lock is contended.
-                Err(nix::errno::Errno::EACCES | nix::errno::Errno::EAGAIN) => continue,
-                Err(err) => {
-                    return Err(ModuleConnectionError::io(io::Error::from_raw_os_error(
-                        err as i32,
-                    )));
+            loop {
+                match nix::fcntl::fcntl(&file, setlk_arg(&lock)) {
+                    Ok(_) => return Ok(ConnectionLockGuard { _file: file }),
+                    // The range is held by another connection or process; try the
+                    // next slot. upstream: util1.c:642 - `fcntl` returns non-zero
+                    // with EACCES/EAGAIN when the lock is contended.
+                    Err(nix::errno::Errno::EACCES | nix::errno::Errno::EAGAIN) => break,
+                    // A signal interrupted the lock request before it resolved;
+                    // retry the same slot rather than treating it as an error or
+                    // as spurious capacity.
+                    Err(nix::errno::Errno::EINTR) => continue,
+                    Err(err) => {
+                        return Err(ModuleConnectionError::io(io::Error::from_raw_os_error(
+                            err as i32,
+                        )));
+                    }
                 }
             }
         }
