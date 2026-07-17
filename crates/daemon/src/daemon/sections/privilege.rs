@@ -127,6 +127,73 @@ struct DropTarget {
     gids: Vec<u32>,
 }
 
+/// A module identity that could not be resolved during connection setup,
+/// tagged with the exact upstream `@ERROR` wording and the offending NAME.
+///
+/// Upstream distinguishes two failure points with two different strings: a
+/// `user_to_uid()`/`group_to_gid()` NAME lookup that returns no match yields
+/// `@ERROR: invalid uid <name>` / `@ERROR: invalid gid <name>`
+/// (clientserver.c:783-786 / 656-658), which is separate from the later
+/// `setuid`/`setgid` SYSCALL failures (clientserver.c:1053 / 1024). oc-rsync
+/// resolves configured `uid`/`gid` names at parse time, so the only NAME that
+/// reaches connection-time resolution is the `nobody` default a root daemon
+/// falls back to when the module sets no explicit identity.
+#[derive(Debug)]
+enum DropResolutionError {
+    /// A user NAME (the `nobody` default) failed to resolve.
+    /// upstream: clientserver.c:785 `@ERROR: invalid uid %s`.
+    InvalidUid(String),
+    /// A group NAME (the `nobody` default) failed to resolve.
+    /// upstream: clientserver.c:658 `@ERROR: invalid gid %s`.
+    InvalidGid(String),
+    /// A `gid = *` group enumeration failed - not a name lookup.
+    /// upstream: clientserver.c:797 `want_all_groups`.
+    GroupEnumeration(io::Error),
+}
+
+impl DropResolutionError {
+    /// Maps the resolution failure to upstream's FLOG log text and the exact
+    /// `@ERROR:` payload sent to the client, keeping both byte-identical to
+    /// upstream so the client sees the same greeting-phase reply. This is the
+    /// single point that decides resolution-vs-syscall wording, so the
+    /// `invalid uid/gid` and `setuid/setgid failed` strings can never be
+    /// collapsed again.
+    ///
+    /// upstream: clientserver.c:784-786 (`Invalid uid %s` / `@ERROR: invalid
+    /// uid %s`) and clientserver.c:657-658 (`Invalid gid %s` / `@ERROR: invalid
+    /// gid %s`).
+    fn upstream_reply(&self) -> (String, String) {
+        match self {
+            Self::InvalidUid(name) => (
+                format!("Invalid uid {name}"),
+                INVALID_UID_PAYLOAD.replace("{uid}", name),
+            ),
+            Self::InvalidGid(name) => (
+                format!("Invalid gid {name}"),
+                INVALID_GID_PAYLOAD.replace("{gid}", name),
+            ),
+            Self::GroupEnumeration(err) => (
+                format!("group enumeration failed: {err}"),
+                SETUID_FAILED_PAYLOAD.to_owned(),
+            ),
+        }
+    }
+}
+
+impl From<DropResolutionError> for io::Error {
+    fn from(err: DropResolutionError) -> Self {
+        match err {
+            DropResolutionError::GroupEnumeration(inner) => inner,
+            DropResolutionError::InvalidUid(name) => {
+                io::Error::new(io::ErrorKind::NotFound, format!("invalid uid {name}"))
+            }
+            DropResolutionError::InvalidGid(name) => {
+                io::Error::new(io::ErrorKind::NotFound, format!("invalid gid {name}"))
+            }
+        }
+    }
+}
+
 /// Returns whether the daemon process currently has an effective uid of 0.
 ///
 /// Delegates to the `platform` crate, which owns the `nix` dependency on every
@@ -151,17 +218,24 @@ fn daemon_is_root() -> bool {
 ///   dropped, matching `set_uid = 0` with an empty `gid_list`.
 ///
 /// upstream: clientserver.c:779-822 `rsync_module()`.
-fn resolve_drop_target(module: &ModuleDefinition, am_root: bool) -> io::Result<DropTarget> {
+fn resolve_drop_target(
+    module: &ModuleDefinition,
+    am_root: bool,
+) -> Result<DropTarget, DropResolutionError> {
     let uid = match module.uid {
         Some(explicit) => Some(explicit),
-        None if am_root => Some(resolve_nobody_uid()?),
+        None if am_root => Some(
+            resolve_nobody_uid()
+                .map_err(|_| DropResolutionError::InvalidUid("nobody".to_owned()))?,
+        ),
         None => None,
     };
 
     let gids = match module.gid.as_ref() {
         Some(GidSetting::List(list)) => list.clone(),
         Some(GidSetting::AllUserGroups { extra }) => {
-            let mut all = resolve_all_user_groups(uid)?;
+            let mut all =
+                resolve_all_user_groups(uid).map_err(DropResolutionError::GroupEnumeration)?;
             for gid in extra {
                 if !all.contains(gid) {
                     all.push(*gid);
@@ -169,7 +243,10 @@ fn resolve_drop_target(module: &ModuleDefinition, am_root: bool) -> io::Result<D
             }
             all
         }
-        None if am_root => vec![resolve_nobody_gid()?],
+        None if am_root => vec![
+            resolve_nobody_gid()
+                .map_err(|_| DropResolutionError::InvalidGid("nobody".to_owned()))?,
+        ],
         None => Vec::new(),
     };
 
@@ -455,6 +532,60 @@ mod privilege_tests {
         let applied = chroot_or_fallback(&module, &sink)
             .expect("unset use chroot must fall back, not error");
         assert!(!applied, "rootless fallback must report chroot NOT applied");
+    }
+
+    /// WHY: upstream clientserver.c:656-658 / 783-786 - a uid/gid NAME that
+    /// fails to resolve is a DISTINCT failure point from the setgid/setuid
+    /// SYSCALL failures (clientserver.c:1024 / 1053). The resolution failure
+    /// must reply `@ERROR: invalid uid/gid <name>` (FLOG `Invalid uid/gid
+    /// <name>`), never `@ERROR: setuid failed`. Collapsing the two hides which
+    /// stage failed from the operator and diverges from upstream's wire output.
+    /// Pins both strings so they can never be merged again.
+    #[test]
+    fn drop_resolution_error_maps_to_upstream_invalid_strings() {
+        let (flog, payload) = DropResolutionError::InvalidUid("nobody".to_owned()).upstream_reply();
+        assert_eq!(flog, "Invalid uid nobody");
+        assert_eq!(payload, "@ERROR: invalid uid nobody");
+        assert_ne!(
+            payload, SETUID_FAILED_PAYLOAD,
+            "resolution failure must not reuse the setuid syscall string"
+        );
+
+        let (flog, payload) = DropResolutionError::InvalidGid("nobody".to_owned()).upstream_reply();
+        assert_eq!(flog, "Invalid gid nobody");
+        assert_eq!(payload, "@ERROR: invalid gid nobody");
+        assert_ne!(
+            payload, SETGID_FAILED_PAYLOAD,
+            "resolution failure must not reuse the setgid syscall string"
+        );
+    }
+
+    /// WHY: upstream clientserver.c:781-786 - when a root daemon's `nobody`
+    /// default user does not resolve, `user_to_uid()` fails and the daemon
+    /// replies `@ERROR: invalid uid nobody`. This drives the real
+    /// `resolve_drop_target` path (not just the mapping helper) on hosts that
+    /// lack a `nobody` account; hosts that have one skip, since the resolution
+    /// then legitimately succeeds.
+    #[cfg(unix)]
+    #[test]
+    fn resolve_drop_target_missing_nobody_maps_to_invalid_uid() {
+        if metadata::id_lookup::lookup_user_by_name(b"nobody")
+            .ok()
+            .flatten()
+            .is_some()
+        {
+            return;
+        }
+        let module = ModuleDefinition {
+            uid: None,
+            gid: None,
+            ..Default::default()
+        };
+        let err = resolve_drop_target(&module, true).expect_err("missing nobody must fail");
+        let (flog, payload) = err.upstream_reply();
+        assert_eq!(payload, "@ERROR: invalid uid nobody");
+        assert_eq!(flog, "Invalid uid nobody");
+        assert_ne!(payload, SETUID_FAILED_PAYLOAD);
     }
 
     /// WHY: upstream clientserver.c:831 - an EXPLICIT `use chroot = yes` has no
