@@ -320,7 +320,10 @@ fn engage_landlock_sandbox(
     module: &ModuleRuntime,
     extra_allowed_paths: &[&Path],
 ) -> io::Result<bool> {
-    use fast_io::landlock::{LandlockOutcome, is_supported, restrict_to_module_paths};
+    use fast_io::landlock::{
+        EnforcementStatus, LandlockOutcome, best_effort_fs_downgrade, is_supported,
+        restrict_to_module_paths,
+    };
 
     if module.pre_xfer_exec.is_some() || module.post_xfer_exec.is_some() {
         if let Some(log) = ctx.log_sink {
@@ -362,12 +365,43 @@ fn engage_landlock_sandbox(
     match restrict_to_module_paths(&roots) {
         LandlockOutcome::Enforced(status) => {
             if let Some(log) = ctx.log_sink {
-                let text = format!(
-                    "module '{}': landlock engaged ({status:?}) over {} root(s)",
-                    ctx.request,
-                    roots.len(),
-                );
-                let message = rsync_info!(text).with_role(Role::Daemon);
+                let message = match status {
+                    // Full confinement: routine, log at info.
+                    EnforcementStatus::FullyEnforced => {
+                        let text = format!(
+                            "module '{}': landlock fully enforced over {} root(s)",
+                            ctx.request,
+                            roots.len(),
+                        );
+                        rsync_info!(text).with_role(Role::Daemon)
+                    }
+                    // Best-effort downgrade silently dropped rights because the
+                    // kernel is too old. Do NOT bury this at info: name exactly
+                    // what is missing so the operator understands the sandbox is
+                    // weaker than intended - the lost `refer` right breaks
+                    // cross-directory renames (--delay-updates / --backup-dir).
+                    EnforcementStatus::PartiallyEnforced => {
+                        let dropped = best_effort_fs_downgrade()
+                            .unwrap_or_else(|| "some requested access rights".to_owned());
+                        let text = format!(
+                            "module '{}': landlock PARTIALLY enforced over {} root(s) - this kernel's Landlock ABI is missing {}. The sandbox is weaker than requested; upgrade to Linux 5.19+ (6.2+ for truncate, 6.10+ for ioctl_dev) for the full allowlist.",
+                            ctx.request,
+                            roots.len(),
+                            dropped,
+                        );
+                        rsync_warning!(text).with_role(Role::Daemon)
+                    }
+                    // The kernel accepted the ruleset but applied nothing:
+                    // equivalent to no sandbox. Warn - SEC-1 *at* helpers are
+                    // now the only defense.
+                    EnforcementStatus::NotEnforced => {
+                        let text = format!(
+                            "module '{}': landlock NOT enforced - the kernel accepted the ruleset but applied no confinement; SEC-1 *at* helpers remain the sole defense.",
+                            ctx.request,
+                        );
+                        rsync_warning!(text).with_role(Role::Daemon)
+                    }
+                };
                 log_message(log, &message);
             }
             Ok(true)
