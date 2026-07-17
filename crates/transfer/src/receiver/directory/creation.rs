@@ -11,7 +11,7 @@ use std::io;
 use std::path::{Path, PathBuf};
 
 use logging::{debug_log, info_log};
-use metadata::{AclIdMapper, MetadataOptions, apply_metadata_with_cached_stat};
+use metadata::{AclIdMapper, MetadataOptions, apply_metadata_with_pre_transfer_stat};
 use protocol::acl::AclCache;
 use protocol::flist::FileEntry;
 use protocol::xattr::XattrList;
@@ -374,26 +374,43 @@ impl ReceiverContext {
         let preserve_perms = metadata_opts.permissions();
         #[cfg(unix)]
         let fake_super = metadata_opts.fake_super_enabled();
-        let entry_snapshots: Vec<(PathBuf, FileEntry, Option<XattrList>)> = dir_entries
-            .into_iter()
-            .filter(|(_, _, dir_path)| {
-                !failed_dir_paths.contains(dir_path) && !skipped_existing_dirs.contains(dir_path)
-            })
-            .map(|(idx, _, dir_path)| {
-                let entry = &self.file_list[idx];
-                let xattr_list = self.resolve_xattr_list(entry);
-                // `mut` is only exercised by the Unix transient-writable-mode
-                // grant below; on other platforms the clone is never mutated.
-                #[cfg_attr(not(unix), allow(unused_mut))]
-                let mut entry = entry.clone();
-                #[cfg(unix)]
-                if dir_needs_writable_transfer_mode(preserve_perms, fake_super, entry.permissions())
-                {
-                    entry.set_mode(entry.mode() | 0o700);
-                }
-                (dir_path, entry, xattr_list)
-            })
-            .collect();
+        let entry_snapshots: Vec<(PathBuf, FileEntry, Option<XattrList>, Option<fs::Metadata>)> =
+            dir_entries
+                .into_iter()
+                .zip(dir_was_new.iter().copied())
+                .filter(|((_, _, dir_path), _)| {
+                    !failed_dir_paths.contains(dir_path)
+                        && !skipped_existing_dirs.contains(dir_path)
+                })
+                .map(|((idx, _, dir_path), is_new)| {
+                    let entry = &self.file_list[idx];
+                    let xattr_list = self.resolve_xattr_list(entry);
+                    // `mut` is only exercised by the Unix transient-writable-mode
+                    // grant below; on other platforms the clone is never mutated.
+                    #[cfg_attr(not(unix), allow(unused_mut))]
+                    let mut entry = entry.clone();
+                    #[cfg(unix)]
+                    if dir_needs_writable_transfer_mode(
+                        preserve_perms,
+                        fake_super,
+                        entry.permissions(),
+                    ) {
+                        entry.set_mode(entry.mode() | 0o700);
+                    }
+                    // upstream: generator.c:1465 dest_mode(..., statret == 0) -
+                    // an existing dir keeps its own perms (exists=true), a new
+                    // dir gets the source mode masked by dflt_perms
+                    // (exists=false). Supply the pre-transfer stat only for a
+                    // dir that already existed so the !perms dest_mode() apply
+                    // takes the exists=true branch and never rewrites its bits.
+                    let pre_transfer = if is_new {
+                        None
+                    } else {
+                        fs::metadata(&dir_path).ok()
+                    };
+                    (dir_path, entry, xattr_list, pre_transfer)
+                })
+                .collect();
         let dir_creation_errors: Vec<(PathBuf, String)> = failed_dir_paths
             .into_iter()
             .map(|p| {
@@ -412,10 +429,14 @@ impl ReceiverContext {
             entry_snapshots,
             self.parallel_thresholds
                 .for_op(crate::parallel_io::ParallelOp::Metadata),
-            move |(dir_path, entry, xattr_list)| {
-                if let Err(e) =
-                    apply_metadata_with_cached_stat(&dir_path, &entry, &metadata_opts_clone, None)
-                {
+            move |(dir_path, entry, xattr_list, pre_transfer)| {
+                if let Err(e) = apply_metadata_with_pre_transfer_stat(
+                    &dir_path,
+                    &entry,
+                    &metadata_opts_clone,
+                    None,
+                    pre_transfer,
+                ) {
                     return Some((dir_path, e.to_string()));
                 }
                 // Apply cached ACLs after metadata
@@ -631,7 +652,7 @@ impl ReceiverContext {
         // (`cd+++++++++`); an existing dir reports the attribute-diff flags
         // (ITEM_REPORT_{TIME,PERMS,OWNER,GROUP}) so a differing root `.` mtime
         // emits `.d..t......`. For an existing dir the stat must be read now,
-        // before apply_metadata_with_cached_stat below overwrites the mtime.
+        // before apply_metadata_with_pre_transfer_stat below overwrites the mtime.
         let iflags: u32 = if is_new {
             crate::generator::ItemFlags::ITEM_LOCAL_CHANGE
                 | crate::generator::ItemFlags::ITEM_IS_NEW
@@ -705,8 +726,22 @@ impl ReceiverContext {
         let apply_entry = tweaked_entry.as_ref().unwrap_or(entry);
         #[cfg(not(unix))]
         let apply_entry = entry;
-        if let Err(e) = apply_metadata_with_cached_stat(&dir_path, apply_entry, metadata_opts, None)
-        {
+        // upstream: generator.c:1465 dest_mode(..., statret == 0) - supply the
+        // pre-transfer stat only for a dir that already existed so the !perms
+        // dest_mode() apply keeps its own permission bits (exists=true) instead
+        // of rewriting them; a freshly created dir (is_new) uses exists=false.
+        let pre_transfer = if is_new {
+            None
+        } else {
+            fs::metadata(&dir_path).ok()
+        };
+        if let Err(e) = apply_metadata_with_pre_transfer_stat(
+            &dir_path,
+            apply_entry,
+            metadata_opts,
+            None,
+            pre_transfer,
+        ) {
             if self.config.flags.verbose && self.config.connection.client_mode {
                 info_log!(
                     Misc,

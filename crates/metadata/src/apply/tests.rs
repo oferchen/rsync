@@ -42,7 +42,13 @@ fn file_permissions_and_times_are_preserved() {
     let dest_meta = fs::metadata(&dest).expect("dest metadata");
     let dest_atime = FileTime::from_last_access_time(&dest_meta);
     let dest_mtime = FileTime::from_last_modification_time(&dest_meta);
-    assert_eq!(dest_atime, atime);
+    // upstream: rsync.c:588-589 - without --atimes the destination access time
+    // is left unchanged (ATTRS_SKIP_ATIME); it must NOT be clobbered with the
+    // source atime. The default options preserve times but not atimes.
+    assert_ne!(
+        dest_atime, atime,
+        "atime must not be written to the source value without --atimes"
+    );
     assert_eq!(dest_mtime, mtime);
 
     #[cfg(unix)]
@@ -256,7 +262,13 @@ fn directory_permissions_and_times_are_preserved() {
     let dest_meta = fs::metadata(&dest).expect("dest metadata");
     let dest_atime = FileTime::from_last_access_time(&dest_meta);
     let dest_mtime = FileTime::from_last_modification_time(&dest_meta);
-    assert_eq!(dest_atime, atime);
+    // upstream: rsync.c:588-589 - `!atimes_ndx || S_ISDIR` always sets
+    // ATTRS_SKIP_ATIME for directories, so a directory's access time is never
+    // written (not even under --atimes).
+    assert_ne!(
+        dest_atime, atime,
+        "directory atime must never be written (ATTRS_SKIP_ATIME for S_ISDIR)"
+    );
     assert_eq!(dest_mtime, mtime);
 
     #[cfg(unix)]
@@ -288,9 +300,10 @@ fn symlink_times_are_preserved_without_following_target() {
     apply_symlink_metadata(&dest_link, &metadata).expect("apply symlink metadata");
 
     let dest_meta = fs::symlink_metadata(&dest_link).expect("dest metadata");
-    let dest_atime = FileTime::from_last_access_time(&dest_meta);
     let dest_mtime = FileTime::from_last_modification_time(&dest_meta);
-    assert_eq!(dest_atime, atime);
+    // upstream: rsync.c:588-589 - without --atimes the symlink's access time is
+    // left unchanged; only its mtime is written (via lutimes, without following
+    // the target).
     assert_eq!(dest_mtime, mtime);
 
     let dest_target = fs::read_link(&dest_link).expect("read dest link");
@@ -588,7 +601,12 @@ fn epoch_timestamp_zero_seconds_is_preserved() {
     let dest_atime = FileTime::from_last_access_time(&dest_meta);
     let dest_mtime = FileTime::from_last_modification_time(&dest_meta);
 
-    assert_eq!(dest_atime, epoch_time, "atime should be preserved at epoch");
+    // upstream: rsync.c:588-589 - without --atimes the access time is left
+    // unchanged; only the epoch mtime must round-trip.
+    assert_ne!(
+        dest_atime, epoch_time,
+        "atime must not be written without --atimes"
+    );
     assert_eq!(dest_mtime, epoch_time, "mtime should be preserved at epoch");
 }
 
@@ -1772,5 +1790,177 @@ fn non_root_ownership_gate_drops_owner_keeps_member_group() {
     assert!(
         gated_group.is_some(),
         "non-root may set the group to its own effective gid"
+    );
+}
+
+// Task #168 regression coverage: directory permissions without -p over the
+// entry/network path, atime omission without --atimes, directory atime skip,
+// inherited setgid preservation, and zeroed atime nanoseconds under --atimes.
+
+#[cfg(unix)]
+#[test]
+fn dir_without_perms_over_entry_path_lands_source_mode() {
+    use protocol::flist::FileEntry;
+    use std::os::unix::fs::PermissionsExt;
+
+    let temp = tempdir().expect("tempdir");
+    let dir = temp.path().join("d");
+    fs::create_dir(&dir).expect("create dir");
+    // Simulate the receiver's mkdirat(0o777) umask-default result.
+    fs::set_permissions(&dir, PermissionsExt::from_mode(0o755)).expect("chmod 0755");
+
+    let entry = FileEntry::new_directory("d".into(), 0o700);
+    let opts = MetadataOptions::new()
+        .preserve_permissions(false)
+        .preserve_times(false);
+    apply_metadata_from_file_entry(&dir, &entry, &opts).expect("apply dir entry");
+
+    // upstream: generator.c:1465-1466 + rsync.c:659-660 - a new directory
+    // without -p lands the source mode masked by dflt_perms, so a 0700 source
+    // dir stays 0700 rather than the mkdir umask default 0755.
+    assert_eq!(
+        current_mode(&dir) & 0o777,
+        0o700,
+        "new directory without -p must land the source mode, not 0755"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn dir_without_perms_over_entry_path_keeps_existing_dir_mode() {
+    use protocol::flist::FileEntry;
+    use std::os::unix::fs::PermissionsExt;
+
+    let temp = tempdir().expect("tempdir");
+    let dir = temp.path().join("d");
+    fs::create_dir(&dir).expect("create dir");
+    fs::set_permissions(&dir, PermissionsExt::from_mode(0o700)).expect("chmod 0700");
+    let pre_transfer = fs::metadata(&dir).expect("pre-transfer stat");
+
+    let entry = FileEntry::new_directory("d".into(), 0o777);
+    let opts = MetadataOptions::new()
+        .preserve_permissions(false)
+        .preserve_times(false);
+    // pre_transfer = Some means the dir already existed: upstream keeps its own
+    // permission bits (dest_mode exists=true), never rewriting them.
+    apply_metadata_with_pre_transfer_stat(&dir, &entry, &opts, None, Some(pre_transfer))
+        .expect("apply dir entry");
+
+    assert_eq!(
+        current_mode(&dir) & 0o777,
+        0o700,
+        "an existing directory without -p must keep its own permission bits"
+    );
+}
+
+#[test]
+fn entry_path_omits_atime_without_atimes() {
+    use protocol::flist::FileEntry;
+
+    let temp = tempdir().expect("tempdir");
+    let dest = temp.path().join("f.txt");
+    fs::write(&dest, b"data").expect("write dest");
+    let before = FileTime::from_last_access_time(&fs::metadata(&dest).expect("pre meta"));
+
+    let mut entry = FileEntry::new_file("f.txt".into(), 4, 0o644);
+    entry.set_mtime(1_600_000_000, 0);
+    entry.set_atime(1_650_000_000);
+
+    let opts = MetadataOptions::new().preserve_times(true);
+    apply_metadata_from_file_entry(&dest, &entry, &opts).expect("apply entry");
+
+    let dest_meta = fs::metadata(&dest).expect("dest metadata");
+    let dest_atime = FileTime::from_last_access_time(&dest_meta);
+    let dest_mtime = FileTime::from_last_modification_time(&dest_meta);
+    // upstream: rsync.c:588-589 - without --atimes the access time is left
+    // unchanged (UTIME_OMIT); only the mtime is written.
+    assert_eq!(
+        dest_mtime,
+        FileTime::from_unix_time(1_600_000_000, 0),
+        "mtime must be written from the entry"
+    );
+    assert_eq!(
+        dest_atime, before,
+        "atime must be left unchanged without --atimes"
+    );
+    assert_ne!(
+        dest_atime.unix_seconds(),
+        1_650_000_000,
+        "atime must not be clobbered with the entry atime without --atimes"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn setgid_parent_new_dir_keeps_inherited_sgid() {
+    use protocol::flist::FileEntry;
+    use std::os::unix::fs::PermissionsExt;
+
+    let temp = tempdir().expect("tempdir");
+    let parent = temp.path().join("sgid-parent");
+    fs::create_dir(&parent).expect("create parent");
+    // Mark the parent setgid so a child directory inherits S_ISGID at mkdir.
+    fs::set_permissions(&parent, PermissionsExt::from_mode(0o2755)).expect("chmod g+s parent");
+
+    let child = parent.join("child");
+    fs::create_dir(&child).expect("create child");
+
+    // Only meaningful when the filesystem propagated the setgid bit at mkdir.
+    let inherited = fs::metadata(&child)
+        .expect("stat child")
+        .permissions()
+        .mode()
+        & 0o2000
+        != 0;
+    if !inherited {
+        return;
+    }
+
+    let entry = FileEntry::new_directory("child".into(), 0o755);
+    let opts = MetadataOptions::new()
+        .preserve_permissions(false)
+        .preserve_times(false);
+    apply_metadata_from_file_entry(&child, &entry, &opts).expect("apply dir entry");
+
+    // upstream: rsync.c:512-516 - a freshly-created dir keeps an inherited
+    // S_ISGID even though dest_mode() strips it from the non-preserved mode.
+    assert_ne!(
+        current_mode(&child) & 0o2000,
+        0,
+        "inherited setgid must be preserved on a new directory without -p"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn local_atimes_zeroes_atime_nsec() {
+    let temp = tempdir().expect("tempdir");
+    let source = temp.path().join("src.txt");
+    let dest = temp.path().join("dst.txt");
+    fs::write(&source, b"data").expect("write source");
+    fs::write(&dest, b"data").expect("write dest");
+
+    let atime = FileTime::from_unix_time(1_700_000_000, 123_456_789);
+    let mtime = FileTime::from_unix_time(1_700_000_100, 0);
+    set_file_times(&source, atime, mtime).expect("set source times");
+
+    let metadata = fs::metadata(&source).expect("metadata");
+    let opts = MetadataOptions::new()
+        .preserve_times(true)
+        .preserve_atimes(true);
+    apply_file_metadata_with_options(&dest, &metadata, &opts).expect("apply metadata");
+
+    let dest_meta = fs::metadata(&dest).expect("dest metadata");
+    let dest_atime = FileTime::from_last_access_time(&dest_meta);
+    // upstream: rsync.c:609 - the applied access time's nanosecond field is 0.
+    assert_eq!(
+        dest_atime.unix_seconds(),
+        1_700_000_000,
+        "atime seconds preserved"
+    );
+    assert_eq!(
+        dest_atime.nanoseconds(),
+        0,
+        "upstream zeroes the atime nanosecond field"
     );
 }

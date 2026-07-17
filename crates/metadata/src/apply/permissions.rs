@@ -143,9 +143,16 @@ fn compute_dest_mode(
         // upstream: dest_mode() for new files:
         // new_mode = flist_mode & (~CHMOD_BITS | dflt_perms)
         let dflt_perms = default_perms_seed(dest_parent);
-        let new_mode = source_mode & (!0o7777 | dflt_perms);
-        // Skip the chmod if the mode already matches
+        let mut new_mode = source_mode & (!0o7777 | dflt_perms);
         if let Some(existing) = existing {
+            // upstream: rsync.c:512-516 - a freshly-created directory that
+            // inherited S_ISGID from a setgid parent keeps that bit even when
+            // !preserve_perms strips it out of the dest_mode() result:
+            // `if (inherit && S_ISDIR(new_mode) && sxp->st.st_mode & S_ISGID)`.
+            if existing.file_type().is_dir() && (existing.permissions().mode() & 0o2000) != 0 {
+                new_mode |= 0o2000;
+            }
+            // Skip the chmod if the mode already matches
             if (existing.permissions().mode() & 0o7777) == (new_mode & 0o7777) {
                 return None;
             }
@@ -872,6 +879,48 @@ pub(super) fn apply_permissions_from_entry(
                     &fresh_meta
                 };
                 if (current_meta.permissions().mode() & 0o7777) != (new_mode & 0o7777) {
+                    chmod_path_honoring_keep_dirlinks(
+                        destination,
+                        new_mode,
+                        options,
+                        "apply dest_mode",
+                    )?;
+                }
+            } else if entry.file_type().is_dir() {
+                // upstream: generator.c:1465-1466 - even when !preserve_perms
+                // the generator runs `file->mode = dest_mode(...)` for
+                // directories, and set_file_attrs() (rsync.c:659-660) chmods
+                // the dir to it. A new dir therefore lands the source mode
+                // masked by dflt_perms (so a source 0700 dir stays 0700 rather
+                // than the mkdir umask default); an existing dir keeps its own
+                // permission bits (pre_transfer_meta = Some -> the exists=true
+                // branch). Without this, a network-received dir was created
+                // `mkdirat(0o777)` and never re-chmod'd, landing 0o755.
+                let mut new_mode = dest_mode_for_existing_or_new(entry, pre_transfer_meta);
+                let fresh_meta;
+                let current_meta = if let Some(meta) = cached_meta {
+                    meta
+                } else {
+                    fresh_meta = fs::metadata(destination).map_err(|error| {
+                        MetadataError::new("inspect destination permissions", destination, error)
+                    })?;
+                    &fresh_meta
+                };
+                let current_mode = current_meta.permissions().mode();
+                // upstream: rsync.c:512-516 - a freshly-created dir (no
+                // pre-transfer stat) that inherited S_ISGID from a setgid
+                // parent keeps that bit even though dest_mode() dropped it.
+                if pre_transfer_meta.is_none() && (current_mode & 0o2000) != 0 {
+                    new_mode |= 0o2000;
+                }
+                // A directory whose target mode lacks owner rwx would block the
+                // receiver from writing its contents. Upstream keeps it
+                // writable during the transfer via the dir_tweaking u+rwx grant
+                // (generator.c:1512) and restores the strict mode in
+                // touch_up_dirs; that grant is gated on --perms here, so in the
+                // !perms path leave such a directory at its umask default
+                // (owner-writable) rather than chmod'ing it non-writable.
+                if (new_mode & 0o700) == 0o700 && (current_mode & 0o7777) != (new_mode & 0o7777) {
                     chmod_path_honoring_keep_dirlinks(
                         destination,
                         new_mode,
