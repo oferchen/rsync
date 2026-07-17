@@ -739,14 +739,27 @@ impl ReceiverContext {
 
     /// Determines if filter list should be read from sender.
     ///
-    /// For a daemon receiver, the filter list is only read when:
-    /// - `prune_empty_dirs` is enabled, OR
-    /// - `delete_mode` is enabled
+    /// For a daemon receiver, the filter list is only read when
+    /// `--prune-empty-dirs` is active, or `--delete` is active and either
+    /// `--delete-excluded` is off or the negotiated protocol is >= 29. This
+    /// mirrors upstream `recv_filter_list()`'s `receiver_wants_list` and must
+    /// stay in lockstep with the sender's `send_filter_list()` gate so both ends
+    /// agree on whether a list crosses the wire.
     ///
     /// In client mode, skip reading because the client already sent filters to the daemon.
+    ///
+    /// # Upstream Reference
+    ///
+    /// `exclude.c:1676-1677` -
+    /// `receiver_wants_list = prune_empty_dirs || (delete_mode && (!delete_excluded || protocol_version >= 29))`
     #[must_use]
     pub(in crate::receiver) const fn should_read_filter_list(&self) -> bool {
-        let receiver_wants_list = self.config.flags.delete || self.config.flags.prune_empty_dirs;
+        let receiver_wants_list = crate::receiver_wants_filter_list(
+            self.config.flags.prune_empty_dirs,
+            self.config.flags.delete,
+            self.config.deletion.delete_excluded,
+            self.protocol,
+        );
         !self.config.connection.client_mode && receiver_wants_list
     }
 

@@ -1,0 +1,169 @@
+//! Tests for the filter-list wire gate and per-rule send elision.
+//!
+//! These encode upstream's `send_filter_list()` / `recv_filter_list()` contract
+//! from `exclude.c`: the `receiver_wants_list` predicate that decides whether a
+//! filter list crosses the wire at all, and the `send_rules()` elision that
+//! drops rules the peer must never see. The value of matching upstream here is
+//! wire fidelity - a mismatched gate makes one end send (or read) a list the
+//! other end does not, corrupting the stream, and a leaked rule wrongly protects
+//! or drops files during `--delete`.
+
+use protocol::ProtocolVersion;
+use protocol::filters::{FilterRuleWireFormat, RuleType};
+
+use crate::{receiver_wants_filter_list, wire_rule_crosses_wire};
+
+// -- receiver_wants_list truth table (exclude.c:1647-1648, 1676-1677) --
+
+/// `--prune-empty-dirs` always needs the list, independent of delete flags and
+/// protocol, because the sender cannot prune empty dirs without the receiver's
+/// rules. upstream: `prune_empty_dirs ||` short-circuits the whole expression.
+#[test]
+fn prune_empty_dirs_always_wants_list() {
+    for proto in [ProtocolVersion::V28, ProtocolVersion::V32] {
+        assert!(receiver_wants_filter_list(true, false, false, proto));
+        assert!(receiver_wants_filter_list(true, true, true, proto));
+    }
+}
+
+/// With neither `--delete` nor `--prune-empty-dirs`, no list is wanted: push
+/// mode applies excludes locally in the generator.
+#[test]
+fn no_delete_no_prune_wants_no_list() {
+    assert!(!receiver_wants_filter_list(
+        false,
+        false,
+        false,
+        ProtocolVersion::V32
+    ));
+}
+
+/// `--delete` without `--delete-excluded` always wants the list so the receiver
+/// can honour the same excludes during its deletion pass.
+#[test]
+fn delete_without_excluded_wants_list_every_protocol() {
+    for proto in [
+        ProtocolVersion::V28,
+        ProtocolVersion::V29,
+        ProtocolVersion::V32,
+    ] {
+        assert!(receiver_wants_filter_list(false, true, false, proto));
+    }
+}
+
+/// The regression this restores: `--delete --delete-excluded` on protocol >= 29
+/// still wants the list (the sender-side modifier is encodable), but on a legacy
+/// protocol < 29 peer it must NOT - the pre-29 wire cannot carry the `s`
+/// modifier, so upstream neither sends nor reads the list. Dropping the
+/// `(!delete_excluded || protocol_version >= 29)` gate made oc send/read an extra
+/// list against a legacy peer, desyncing the stream.
+#[test]
+fn delete_excluded_gates_on_protocol_29() {
+    // protocol >= 29: list still wanted.
+    assert!(receiver_wants_filter_list(
+        false,
+        true,
+        true,
+        ProtocolVersion::V29
+    ));
+    assert!(receiver_wants_filter_list(
+        false,
+        true,
+        true,
+        ProtocolVersion::V32
+    ));
+    // protocol < 29: list suppressed.
+    assert!(!receiver_wants_filter_list(
+        false,
+        true,
+        true,
+        ProtocolVersion::V28
+    ));
+}
+
+// -- send_rules per-rule elision (exclude.c:1605-1612) --
+
+fn dir_merge(no_prefixes: bool) -> FilterRuleWireFormat {
+    FilterRuleWireFormat {
+        rule_type: RuleType::DirMerge,
+        no_prefixes,
+        ..FilterRuleWireFormat::default()
+    }
+}
+
+/// A both-sided no-prefix per-directory merge (`:-`) is elided from a PUSH under
+/// `--delete-excluded` (upstream `elide = am_sender ? LOCAL_RULE`), because the
+/// sender applies it locally. Before the fix, oc converted the implicit
+/// sender-side flag only for include/exclude rules, so this merge still crossed
+/// the wire on a push.
+#[test]
+fn no_prefix_dir_merge_elided_on_push_under_delete_excluded() {
+    let rule = dir_merge(true);
+    assert!(!wire_rule_crosses_wire(&rule, true, true));
+}
+
+/// On a PULL the same rule is REMOTE_RULE and still crosses the wire, WITHOUT a
+/// side modifier - the remote sender needs it. upstream `add_rule` spares
+/// per-directory merges from the implicit sender-side flip, so the pull encoding
+/// must stay both-sided (this is why the fix elides rather than marking `s`).
+#[test]
+fn no_prefix_dir_merge_transmitted_on_pull_under_delete_excluded() {
+    let rule = dir_merge(true);
+    assert!(wire_rule_crosses_wire(&rule, false, true));
+}
+
+/// A prefixed `:` merge (has prefixes) is never elided - only no-prefix merges
+/// can be reduced to bare include/excludes and applied locally.
+#[test]
+fn prefixed_dir_merge_not_elided_under_delete_excluded() {
+    let rule = dir_merge(false);
+    assert!(wire_rule_crosses_wire(&rule, true, true));
+}
+
+/// Without `--delete-excluded`, a no-prefix dir-merge is transmitted normally on
+/// both directions.
+#[test]
+fn no_prefix_dir_merge_transmitted_without_delete_excluded() {
+    let rule = dir_merge(true);
+    assert!(wire_rule_crosses_wire(&rule, true, false));
+    assert!(wire_rule_crosses_wire(&rule, false, false));
+}
+
+/// Side-local rules are always elided toward the peer regardless of
+/// `--delete-excluded`: a sender-side rule is dropped on a push, a receiver-side
+/// rule on a pull (upstream `elide == LOCAL_RULE -> continue`).
+#[test]
+fn side_local_rules_are_elided() {
+    let sender_side = FilterRuleWireFormat {
+        rule_type: RuleType::Exclude,
+        sender_side: true,
+        ..FilterRuleWireFormat::default()
+    };
+    assert!(!wire_rule_crosses_wire(&sender_side, true, false));
+    assert!(wire_rule_crosses_wire(&sender_side, false, false));
+
+    let receiver_side = FilterRuleWireFormat {
+        rule_type: RuleType::Exclude,
+        receiver_side: true,
+        ..FilterRuleWireFormat::default()
+    };
+    assert!(wire_rule_crosses_wire(&receiver_side, true, false));
+    assert!(!wire_rule_crosses_wire(&receiver_side, false, false));
+}
+
+/// An explicitly sender-sided no-prefix merge (`:s-`) is handled by the
+/// side-local check on a push, and the no-prefix branch must not also fire (it
+/// requires neither side flag), so no spurious `s` doubling occurs.
+#[test]
+fn explicitly_sided_no_prefix_merge_uses_side_check() {
+    let rule = FilterRuleWireFormat {
+        rule_type: RuleType::DirMerge,
+        no_prefixes: true,
+        sender_side: true,
+        ..FilterRuleWireFormat::default()
+    };
+    // Push: elided via the side-local check.
+    assert!(!wire_rule_crosses_wire(&rule, true, true));
+    // Pull: sender-side rule still crosses to the remote sender.
+    assert!(wire_rule_crosses_wire(&rule, false, true));
+}
