@@ -77,6 +77,138 @@ pub fn compute_backup_path(
     base
 }
 
+/// Creates the intermediate directories leading to a backup path, mirroring
+/// upstream's `copy_valid_path` (backup.c:61-154).
+///
+/// For each path element that does not yet exist, a directory is created and -
+/// when `--backup-dir` is in use - the corresponding destination directory's
+/// mode/owner/mtime is copied onto it, exactly as upstream does after each
+/// `do_mkdir_at` via `x_stat` + `make_file` + `set_file_attrs`
+/// (backup.c:101-142). Pre-existing directories are left untouched, matching
+/// upstream's `EEXIST`/`validate_backup_dir` skip (backup.c:102-105).
+///
+/// A path element that exists but is not a directory is cleared before the
+/// directory is created, mirroring `validate_backup_dir` (backup.c:48-53),
+/// where a non-directory triggers `delete_item(...DEL_FOR_BACKUP|DEL_RECURSE)`
+/// so the element can be recreated as a directory.
+///
+/// When `--backup-dir` is not set the backup lands alongside the destination
+/// and every element already exists, so no directory is created and no
+/// attribute copy is performed (upstream only runs `copy_valid_path` when
+/// `backup_dir` is set - backup.c:159).
+pub(crate) fn create_backup_parents(
+    destination_root: &Path,
+    backup_dir: Option<&Path>,
+    parent: &Path,
+    metadata_options: &::metadata::MetadataOptions,
+) -> Result<(), LocalCopyError> {
+    if parent.as_os_str().is_empty() {
+        return Ok(());
+    }
+
+    // Without --backup-dir the backup lands alongside the destination and its
+    // parent already exists; upstream runs no copy_valid_path here (backup.c:159
+    // vs :179), so a plain create_dir_all suffices with no attribute copy.
+    let Some(backup_dir) = backup_dir else {
+        return fs::create_dir_all(parent)
+            .map_err(|error| LocalCopyError::io("create backup directory", parent, error));
+    };
+
+    // Root of the backup tree. Only the relative portion *below* this root is
+    // validated and created element-by-element - mirroring upstream, which
+    // walks `rel = backup_dir_buf + backup_dir_len` (backup.c:67) and never
+    // re-validates the pre-existing path above backup_dir. Walking from the
+    // filesystem root instead would misread symlinked ancestors (e.g. macOS
+    // `/var` -> `/private/var`) as obstructions.
+    let backup_root = if backup_dir.is_absolute() {
+        backup_dir.to_path_buf()
+    } else {
+        destination_root.join(backup_dir)
+    };
+
+    // upstream: backup.c:165 make_path(backup_dir_buf, 0) - ensure the backup
+    // directory root exists (with default perms) before validating subdirs.
+    fs::create_dir_all(&backup_root)
+        .map_err(|error| LocalCopyError::io("create backup directory", &backup_root, error))?;
+
+    let Ok(rel) = parent.strip_prefix(&backup_root) else {
+        // parent is not under backup_root (unexpected path shape); fall back to
+        // a plain create so the backup still lands somewhere valid.
+        return fs::create_dir_all(parent)
+            .map_err(|error| LocalCopyError::io("create backup directory", parent, error));
+    };
+
+    let mut current = backup_root.clone();
+    for component in rel.components() {
+        current.push(component.as_os_str());
+        match fs::symlink_metadata(&current) {
+            Ok(meta) if meta.is_dir() => continue,
+            // upstream: backup.c:48-53 - a non-directory (including a symlink) in
+            // the way is removed so it can be recreated as a directory.
+            Ok(_) => remove_backup_obstruction(&current)?,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => {
+                return Err(LocalCopyError::io(
+                    "stat backup directory",
+                    current.as_path(),
+                    error,
+                ));
+            }
+        }
+
+        fs::create_dir(&current).map_err(|error| {
+            LocalCopyError::io("create backup directory", current.as_path(), error)
+        })?;
+
+        apply_backup_dir_attrs(destination_root, &backup_root, &current, metadata_options);
+    }
+
+    Ok(())
+}
+
+/// Removes a non-directory that obstructs a backup directory element.
+///
+/// A non-directory is never a recursive tree, so a plain unlink mirrors
+/// upstream's `delete_item` for this case (backup.c:50). `remove_file` also
+/// removes a symlink without following it, matching the `lstat`-based check.
+fn remove_backup_obstruction(path: &Path) -> Result<(), LocalCopyError> {
+    fs::remove_file(path)
+        .map_err(|error| LocalCopyError::io("remove backup directory obstruction", path, error))
+}
+
+/// Copies a freshly-created backup subdirectory's attributes from the
+/// corresponding destination directory, mirroring backup.c:115-138.
+///
+/// The backup subdirectory at `<backup_root>/<rel>` inherits from the
+/// destination directory at `<destination_root>/<rel>`, matching upstream's
+/// `x_stat(rel, ...)` where `rel` is the relative path under the transfer's
+/// destination cwd (backup.c:67,117).
+///
+/// Best-effort: upstream logs and continues when the source stat or attribute
+/// application fails (backup.c:117-118, 121-122), so a missing or unreadable
+/// destination directory simply leaves the backup subdirectory with default
+/// permissions rather than aborting the transfer.
+fn apply_backup_dir_attrs(
+    destination_root: &Path,
+    backup_root: &Path,
+    created: &Path,
+    metadata_options: &::metadata::MetadataOptions,
+) {
+    let Ok(rel) = created.strip_prefix(backup_root) else {
+        return;
+    };
+    if rel.as_os_str().is_empty() {
+        return;
+    }
+
+    let source_dir = destination_root.join(rel);
+    if let Ok(meta) = fs::symlink_metadata(&source_dir)
+        && meta.is_dir()
+    {
+        let _ = ::metadata::apply_file_metadata_with_options(created, &meta, metadata_options);
+    }
+}
+
 /// Copies a regular file, recreates a symlink, or re-materialises a
 /// device/FIFO/socket node at the backup path.
 ///

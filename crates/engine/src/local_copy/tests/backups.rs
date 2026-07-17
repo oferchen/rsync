@@ -2461,3 +2461,107 @@ fn backup_delete_skips_already_suffixed_extraneous_file() {
         "already-suffixed file must be unlinked, not re-backed-up to stale~~"
     );
 }
+
+/// #229: a nested `--backup-dir` must copy the corresponding destination
+/// directory's attributes onto each freshly-created backup subdirectory.
+///
+/// upstream: backup.c:copy_valid_path() (101-142) - after each `do_mkdir_at`
+/// upstream runs `x_stat` + `make_file` + `set_file_attrs(backup_dir_buf, ...)`
+/// so the backup subdirectory inherits mode/owner/mtime from the source-tree
+/// directory instead of defaulting to `0755 & ~umask`. Without the fix the
+/// created intermediate lands at the umask default, not the source dir's mode.
+#[test]
+#[cfg(unix)]
+fn backup_dir_intermediate_inherits_source_dir_permissions() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let temp = tempdir().expect("tempdir");
+    let source = temp.path().join("source");
+    let dest = temp.path().join("dest");
+    fs::create_dir_all(&source).expect("create source");
+    fs::create_dir_all(&dest).expect("create dest");
+
+    let source_dir = source.join("dir");
+    fs::create_dir_all(&source_dir).expect("create nested source");
+    fs::set_permissions(&source_dir, fs::Permissions::from_mode(0o700)).expect("chmod source dir");
+    fs::write(source_dir.join("file.txt"), b"new contents").expect("write source");
+
+    let dest_root = dest.join("source");
+    let dest_dir = dest_root.join("dir");
+    fs::create_dir_all(&dest_dir).expect("create dest dir");
+    fs::write(dest_dir.join("file.txt"), b"old contents").expect("write dest");
+    // The backup subdirectory must inherit *this* mode, proving it mirrors the
+    // destination-tree directory rather than the umask default.
+    fs::set_permissions(&dest_dir, fs::Permissions::from_mode(0o700)).expect("chmod dest dir");
+
+    let operands = vec![source.into_os_string(), dest.clone().into_os_string()];
+    let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
+    let options = LocalCopyOptions::default()
+        .permissions(true)
+        .with_backup_directory(Some(PathBuf::from("backups")));
+
+    plan.execute_with_options(LocalCopyExecution::Apply, options)
+        .expect("copy succeeds");
+
+    let backup = dest.join("backups").join("source").join("dir").join("file.txt~");
+    assert!(backup.exists(), "backup missing at {}", backup.display());
+    assert_eq!(fs::read(&backup).expect("read backup"), b"old contents");
+
+    let backup_intermediate = dest.join("backups").join("source").join("dir");
+    let mode = fs::symlink_metadata(&backup_intermediate)
+        .expect("stat backup intermediate")
+        .permissions()
+        .mode()
+        & 0o777;
+    assert_eq!(
+        mode, 0o700,
+        "backup intermediate must inherit the source dir's 0700, got {mode:o}"
+    );
+}
+
+/// #230: a non-directory obstructing a `--backup-dir` path element must be
+/// cleared so the element can be recreated as a directory.
+///
+/// upstream: backup.c:validate_backup_dir() (48-53) - when a backup path
+/// element exists but is not a directory, `delete_item(...DEL_FOR_BACKUP|
+/// DEL_RECURSE)` removes it before it is recreated. Without the fix
+/// `create_dir_all` fails with `NotADirectory` and the transfer aborts.
+#[test]
+fn backup_dir_clears_nondir_obstruction() {
+    let temp = tempdir().expect("tempdir");
+    let source = temp.path().join("source");
+    let dest = temp.path().join("dest");
+    fs::create_dir_all(&source).expect("create source");
+    fs::create_dir_all(&dest).expect("create dest");
+
+    let source_dir = source.join("dir");
+    fs::create_dir_all(&source_dir).expect("create nested source");
+    fs::write(source_dir.join("file.txt"), b"new contents").expect("write source");
+
+    let dest_root = dest.join("source");
+    let dest_dir = dest_root.join("dir");
+    fs::create_dir_all(&dest_dir).expect("create dest dir");
+    fs::write(dest_dir.join("file.txt"), b"old contents").expect("write dest");
+
+    // Stale non-directory exactly where the backup tree needs a directory
+    // (backup path is dest/backups/source/dir/file.txt~).
+    let backups = dest.join("backups");
+    fs::create_dir_all(&backups).expect("create backups root");
+    let obstruction = backups.join("source");
+    fs::write(&obstruction, b"stale file").expect("write obstruction");
+
+    let operands = vec![source.into_os_string(), dest.clone().into_os_string()];
+    let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
+    let options = LocalCopyOptions::default().with_backup_directory(Some(PathBuf::from("backups")));
+
+    plan.execute_with_options(LocalCopyExecution::Apply, options)
+        .expect("transfer must succeed after clearing the obstruction");
+
+    assert!(
+        obstruction.is_dir(),
+        "obstructing file must be replaced by a directory"
+    );
+    let backup = backups.join("source").join("dir").join("file.txt~");
+    assert!(backup.exists(), "backup missing at {}", backup.display());
+    assert_eq!(fs::read(&backup).expect("read backup"), b"old contents");
+}

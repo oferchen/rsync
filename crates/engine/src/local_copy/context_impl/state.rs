@@ -842,8 +842,15 @@ impl<'a> CopyContext<'a> {
         if let Some(parent) = backup_path.parent()
             && !parent.as_os_str().is_empty()
         {
-            fs::create_dir_all(parent)
-                .map_err(|error| LocalCopyError::io("create backup directory", parent, error))?;
+            // upstream: backup.c:copy_valid_path() - create any new backup
+            // subdirectories, mirroring the source dir attrs onto each and
+            // clearing non-directory obstructions.
+            create_backup_parents(
+                self.destination_root(),
+                self.options.backup_directory(),
+                parent,
+                &self.metadata_options(),
+            )?;
         }
 
         // Track which backup strategy succeeded so we can emit the matching
@@ -1048,8 +1055,15 @@ impl<'a> CopyContext<'a> {
         if let Some(parent) = backup_path.parent()
             && !parent.as_os_str().is_empty()
         {
-            fs::create_dir_all(parent)
-                .map_err(|error| LocalCopyError::io("create backup directory", parent, error))?;
+            // upstream: backup.c:copy_valid_path() - create any new backup
+            // subdirectories, mirroring the source dir attrs onto each and
+            // clearing non-directory obstructions.
+            create_backup_parents(
+                self.destination_root(),
+                self.options.backup_directory(),
+                parent,
+                &self.metadata_options(),
+            )?;
         }
 
         // upstream: generator.c:1866 copy_file() - duplicate the pre-image; the
