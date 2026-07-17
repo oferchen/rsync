@@ -239,14 +239,26 @@ fn max_alloc_rejects_non_numeric() {
 }
 
 #[test]
-fn max_alloc_argument_resolution_rejects_zero() {
+fn max_alloc_argument_resolution_accepts_zero_as_unlimited() {
+    // upstream: options.c:1966 `if (!max_alloc) max_alloc = SIZE_MAX;` - a zero
+    // value is accepted and resolves to unlimited, not an error.
     use crate::frontend::execution::parse_max_alloc_argument;
-    let error =
-        parse_max_alloc_argument(OsStr::new("0")).expect_err("zero should fail at the cap layer");
+    assert_eq!(
+        parse_max_alloc_argument(OsStr::new("0")).expect("zero accepted"),
+        0
+    );
+}
+
+#[test]
+fn max_alloc_argument_resolution_rejects_below_one_mib() {
+    // upstream: options.c:1960 - parse_size_arg min value is 1 MiB, so "512K"
+    // (below the minimum) is rejected as "too small".
+    use crate::frontend::execution::parse_max_alloc_argument;
+    let error = parse_max_alloc_argument(OsStr::new("512K")).expect_err("below 1 MiB rejected");
     let rendered = error.to_string();
     assert!(
-        rendered.contains("greater than zero"),
-        "expected zero-rejection error, got: {rendered}"
+        rendered.contains("is too small (min: 1.00M or 0 for unlimited)"),
+        "expected too-small error, got: {rendered}"
     );
 }
 
@@ -261,13 +273,10 @@ fn max_alloc_argument_resolution_accepts_typical_values() {
         parse_max_alloc_argument(OsStr::new("512M")).expect("512M accepted"),
         512 * 1024 * 1024
     );
+    // 1024K == 1 MiB, exactly the upstream minimum.
     assert_eq!(
         parse_max_alloc_argument(OsStr::new("1024K")).expect("1024K accepted"),
         1024 * 1024
-    );
-    assert_eq!(
-        parse_max_alloc_argument(OsStr::new("4096")).expect("plain bytes accepted"),
-        4096
     );
 }
 
@@ -293,19 +302,40 @@ fn max_alloc_argument_resolution_rejects_excessive_value() {
 }
 
 #[test]
-fn max_alloc_zero_value_produces_error_exit() {
+fn max_alloc_zero_value_is_accepted_as_unlimited() {
+    // upstream: options.c:1966 - `--max-alloc=0` is accepted (unlimited), so it
+    // never triggers a max-alloc syntax error. Any exit here comes from the
+    // missing "source"/"dest" operands, not from option validation.
     let _guard = clear_rsync_rsh();
-    let (code, _stdout, stderr) = run_with_args([
+    let (_code, _stdout, stderr) = run_with_args([
         OsString::from(RSYNC),
         OsString::from("--max-alloc=0"),
         OsString::from("source"),
         OsString::from("dest"),
     ]);
     let stderr_text = String::from_utf8_lossy(&stderr);
-    assert_ne!(code, 0, "should exit with error for zero --max-alloc");
     assert!(
-        stderr_text.contains("greater than zero"),
-        "error should mention greater-than-zero, got: {stderr_text}"
+        !stderr_text.contains("--max-alloc"),
+        "zero --max-alloc must not raise a max-alloc error, got: {stderr_text}"
+    );
+}
+
+#[test]
+fn max_alloc_below_one_mib_produces_error_exit() {
+    // upstream: options.c:1960 - a non-zero `--max-alloc` below 1 MiB is a
+    // syntax error (exit 1).
+    let _guard = clear_rsync_rsh();
+    let (code, _stdout, stderr) = run_with_args([
+        OsString::from(RSYNC),
+        OsString::from("--max-alloc=512K"),
+        OsString::from("source"),
+        OsString::from("dest"),
+    ]);
+    let stderr_text = String::from_utf8_lossy(&stderr);
+    assert_eq!(code, 1, "below-minimum --max-alloc should exit 1");
+    assert!(
+        stderr_text.contains("is too small (min: 1.00M or 0 for unlimited)"),
+        "error should mention the 1 MiB minimum, got: {stderr_text}"
     );
 }
 

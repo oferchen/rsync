@@ -2575,6 +2575,25 @@ mod open_noatime_tests {
             .expect("parse");
         assert!(!parsed.open_noatime);
     }
+
+    #[test]
+    fn double_short_u_enables_open_noatime() {
+        // upstream: options.c:1584-1586 `case 'U': if (++preserve_atimes > 1)
+        // open_noatime = 1;` - a doubled `-U` (atimes level 2) implies
+        // `--open-noatime`, while a single `-U` does not.
+        let single = parse_test_args(["-U", "src/", "dst/"]).expect("parse");
+        assert!(!single.open_noatime, "single -U must not set open_noatime");
+
+        let doubled = parse_test_args(["-UU", "src/", "dst/"]).expect("parse");
+        assert!(doubled.open_noatime, "-UU must set open_noatime");
+    }
+
+    #[test]
+    fn double_short_u_open_noatime_yields_to_explicit_negation() {
+        // `--no-open-noatime` still wins over the implicit `-UU` enable.
+        let parsed = parse_test_args(["-UU", "--no-open-noatime", "src/", "dst/"]).expect("parse");
+        assert!(!parsed.open_noatime);
+    }
 }
 
 mod super_mode_tests {

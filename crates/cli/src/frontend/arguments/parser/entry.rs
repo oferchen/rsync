@@ -343,7 +343,10 @@ where
     let open_noatime = if no_open_noatime {
         false
     } else {
-        open_noatime_flag
+        // upstream: options.c:1584-1586 `case 'U': if (++preserve_atimes > 1)
+        // open_noatime = 1;` - a doubled `-U` (`-UU`, atimes level 2) implies
+        // `--open-noatime`.
+        open_noatime_flag || atimes == Some(2)
     };
     let prefer_aes_gcm = if matches.get_flag("no-aes") {
         Some(false)
@@ -636,10 +639,15 @@ where
         None
     } else if let Some(dir) = partial_dir_cli {
         Some(dir)
-    } else {
+    } else if partial_flag {
+        // upstream: options.c:2448-2454 - RSYNC_PARTIAL_DIR is consulted only
+        // when keep_partial is set (--partial/-P) and no explicit --partial-dir
+        // was given. An empty value or a literal "." is treated as unset.
         env::var_os("RSYNC_PARTIAL_DIR")
-            .filter(|value| !value.is_empty())
+            .filter(|value| !value.is_empty() && value.as_os_str() != std::ffi::OsStr::new("."))
             .map(PathBuf::from)
+    } else {
+        None
     };
     let partial = if no_partial {
         false

@@ -22,12 +22,18 @@ fn files_from_reports_read_failures() {
     let _lock = ENV_LOCK.lock().expect("env mutex poisoned");
     let tmp = test_support::create_tempdir();
     let missing = tmp.path().join("missing.list");
+    let src_dir = tmp.path().join("files-from-error-src");
+    std::fs::create_dir(&src_dir).expect("create src");
     let dest_dir = tmp.path().join("files-from-error-dest");
     std::fs::create_dir(&dest_dir).expect("create dest");
 
+    // upstream: options.c:2465-2471 requires a source and destination operand
+    // with --files-from (argc == 2); the list is only read afterwards
+    // (main.c:1806), so both operands are supplied to reach the read failure.
     let (code, stdout, stderr) = run_with_args([
         OsString::from(RSYNC),
         OsString::from(format!("--files-from={}", missing.display())),
+        src_dir.into_os_string(),
         dest_dir.into_os_string(),
     ]);
 
@@ -823,12 +829,17 @@ fn files_from_reports_permission_error() {
     perms.set_mode(0o000);
     std::fs::set_permissions(&list_path, perms).expect("set permissions");
 
+    let src_dir = tmp.path().join("src");
+    std::fs::create_dir(&src_dir).expect("create src");
     let dest_dir = tmp.path().join("dest");
     std::fs::create_dir(&dest_dir).expect("create dest");
 
+    // upstream: options.c:2465-2471 - --files-from requires src + dest operands
+    // (argc == 2) before the list is read, so both are supplied here.
     let (code, stdout, stderr) = run_with_args([
         OsString::from(RSYNC),
         OsString::from(format!("--files-from={}", list_path.display())),
+        src_dir.into_os_string(),
         dest_dir.into_os_string(),
     ]);
 

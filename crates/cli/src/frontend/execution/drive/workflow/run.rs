@@ -378,6 +378,20 @@ where
         Err(unsupported) => return fail_with_message(unsupported.to_message(), stderr),
     };
 
+    // upstream: options.c:2465-2471 - with `--files-from` the transferred file
+    // set comes from the list, so a client may name exactly one source root and
+    // one destination. More than two operands, or a lone operand (a missing
+    // destination), is a syntax error (`usage(FERROR); exit RERR_SYNTAX`, exit
+    // 1).
+    if !files_from.is_empty() && (remainder.len() > 2 || remainder.len() == 1) {
+        let message = rsync_error!(
+            1,
+            "--files-from requires a single source and a single destination argument"
+        )
+        .with_role(Role::Client);
+        return fail_with_message(message, stderr);
+    }
+
     // `--protocol` is resolved once operands are known: upstream accepts it on a
     // local copy (setup_protocol runs there too) but this build only speaks the
     // wire for a remote transfer, so the value is ignored locally and validated
@@ -821,7 +835,10 @@ where
 
     let prune_empty_dirs_flag = prune_empty_dirs.unwrap_or(false);
     let fsync_flag = fsync_option.unwrap_or(false);
-    let inplace_enabled = inplace.unwrap_or(false);
+    // upstream: options.c:2413-2419 - `--write-devices` forces the global
+    // inplace flag on, so device targets are written in place rather than via a
+    // temp file.
+    let inplace_enabled = inplace.unwrap_or(false) || write_devices.unwrap_or(false);
     let append_enabled = append.unwrap_or(false);
     let whole_file_enabled = whole_file_option;
 

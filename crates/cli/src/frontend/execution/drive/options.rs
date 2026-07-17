@@ -21,7 +21,7 @@ use super::messages::fail_with_message;
 use crate::frontend::{
     arguments::BandwidthArgument,
     defaults::ITEMIZE_CHANGES_FORMAT,
-    execution::{CompressLevelArg, DEBUG_HELP_TEXT, INFO_HELP_TEXT},
+    execution::{CompressChoice, CompressLevelArg, DEBUG_HELP_TEXT, INFO_HELP_TEXT},
     out_format::{OutFormat, parse_out_format},
     progress::{NameOutputLevel, ProgressMode, ProgressSetting},
 };
@@ -339,9 +339,12 @@ where
         None => None,
     };
 
+    // upstream: options.c:1692-1695 - `--block-size=0` yields no override and
+    // falls back to the default, so a `None` here covers both "unset" and
+    // "explicit 0".
     let block_size_override = match inputs.block_size.as_ref() {
         Some(value) => match parse_block_size_argument(value.as_os_str()) {
-            Ok(size) => Some(size),
+            Ok(size) => size,
             Err(message) => return Err(fail_with_message(message, stderr)),
         },
         None => None,
@@ -422,13 +425,17 @@ where
     // `token.c:init_compression_level()` runs once `do_compression` is known.
     if let Some(choice) = compress_choice.as_ref() {
         match parse_compress_choice(choice.as_os_str()) {
-            Ok(None) => {
+            Ok(CompressChoice::Disabled) => {
                 compress = false;
                 compression_level_override = None;
                 compress_level_setting = Some(CompressLevelArg::Disable);
                 compress_disabled_by_choice = true;
             }
-            Ok(Some(algorithm)) => {
+            // upstream: options.c:2013-2016 - `--compress-choice=auto` is nulled
+            // out, so it behaves as if `--compress-choice` had not been given:
+            // no forced codec, no disable, normal negotiation.
+            Ok(CompressChoice::Auto) => {}
+            Ok(CompressChoice::Codec(algorithm)) => {
                 compression_algorithm = Some(algorithm);
                 // upstream: compat.c:216-219 prints the user's verbatim
                 // compress_choice; retain the trimmed/lowercased token so
