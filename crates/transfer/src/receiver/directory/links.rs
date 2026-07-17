@@ -6,7 +6,7 @@
 //! reception, so this module handles both protocol versions uniformly.
 
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use logging::{debug_log, info_log};
 #[cfg(any(unix, windows))]
@@ -551,6 +551,57 @@ impl ReceiverContext {
         Ok(())
     }
 
+    /// Resolves the on-disk hard-link target for a group, promoting the next
+    /// present member when the recorded leader never materialized on disk.
+    ///
+    /// The receiver only transfers a group's leader (`hlink_first`); followers
+    /// are hard-linked to it afterwards. When the leader's own transfer is
+    /// skipped or errors, its destination is absent and it must not be used as
+    /// a link source. This mirrors upstream `hlink.c` exactly:
+    ///
+    /// - `skip_hard_link()` (hlink.c:546-565) sets `FLAG_SKIP_HLINK` on a
+    ///   member that was not transferred.
+    /// - `check_prior()` (hlink.c:246-282) walks the group's `F_HL_PREV` chain
+    ///   past every `FLAG_SKIP_HLINK` member to find the next still-present one.
+    /// - `hard_link_check()` (hlink.c:299-310) promotes that member to the
+    ///   group's "virtual first" link source.
+    ///
+    /// Returns the promoted leader's path - recording it in the tracker so the
+    /// remaining followers reuse it - or `None` when no member of the group
+    /// materialized on disk.
+    fn promote_hardlink_leader(
+        file_list: &[protocol::flist::FileEntry],
+        tracker: &mut engine::HardlinkApplyTracker,
+        gnum: u32,
+        dest_dir: &Path,
+    ) -> Option<PathBuf> {
+        // A previously recorded leader is only valid while its file is still
+        // present (its transfer may have errored after we recorded it).
+        if let Some(recorded) = tracker.leader_path(gnum) {
+            if recorded.symlink_metadata().is_ok() {
+                return Some(recorded.to_path_buf());
+            }
+        }
+        // upstream: hlink.c:253-265 - walk the group in list (ndx) order and
+        // promote the first member whose file materialized on disk.
+        for member in file_list {
+            if member.hardlink_idx() != Some(gnum) {
+                continue;
+            }
+            let relative_path = member.path();
+            let candidate = if relative_path.as_os_str() == "." {
+                dest_dir.to_path_buf()
+            } else {
+                dest_dir.join(relative_path)
+            };
+            if candidate.symlink_metadata().is_ok() {
+                tracker.record_leader(gnum, candidate.clone());
+                return Some(candidate);
+            }
+        }
+        None
+    }
+
     /// Creates hard links for hardlink follower entries after the leader has been transferred.
     ///
     /// Hardlinked files are grouped by a shared `hardlink_idx`. The first file in
@@ -607,6 +658,18 @@ impl ReceiverContext {
                     } else {
                         dest_dir.join(relative_path)
                     };
+                    // upstream: hlink.c:546-565 skip_hard_link() sets
+                    // FLAG_SKIP_HLINK on a group member that was not transferred
+                    // (e.g. its own transfer errored), and check_prior()
+                    // (hlink.c:246-282) then refuses it as a link source. Only
+                    // record a leader whose file actually materialized on disk;
+                    // an absent leader is left unrecorded so the second pass can
+                    // promote the next present group member (hlink.c:299-310
+                    // "virtual first") instead of hard-linking to a path that
+                    // does not exist (ENOENT -> fatal abort).
+                    if dest_path.symlink_metadata().is_err() {
+                        continue;
+                    }
                     // No deferred followers expected here since we process
                     // followers in the second pass below.
                     let _ = tracker.record_leader(gnum, dest_path);
@@ -624,20 +687,32 @@ impl ReceiverContext {
                 };
 
                 let entry_name = entry.path().display().to_string();
-                let leader_path = match tracker.leader_path(leader_idx) {
-                    Some(p) => p.to_path_buf(),
+                let leader_path = match Self::promote_hardlink_leader(
+                    &self.file_list,
+                    &mut tracker,
+                    leader_idx,
+                    dest_dir,
+                ) {
+                    Some(p) => p,
                     None => {
-                        // upstream: hlink.c HLINK debug emissions
-                        // No leader recorded: matches `virtual first` in upstream
-                        // when a prior file in the group was skipped.
+                        // upstream: hlink.c:299-310 - when every prior member of
+                        // the group carries FLAG_SKIP_HLINK (their transfers were
+                        // skipped or errored) check_prior() returns no leader and
+                        // hard_link_check() treats the member as a "virtual
+                        // first" that upstream would transfer anew. In this
+                        // post-transfer apply pass there is no data left to link,
+                        // so the group is left unlinked with a soft I/O error
+                        // (IOERR_GENERAL -> RERR_PARTIAL, exit 23) - never a fatal
+                        // receiver abort.
                         trace_virtual_first(follower_ndx as i32, &entry_name, leader_idx as i32);
                         debug_log!(
                             Recv,
                             1,
-                            "hardlink follower {} references unknown leader index {}",
-                            entry.name(),
-                            leader_idx
+                            "hardlink group {} has no leader materialized on disk; leaving follower {} unlinked",
+                            leader_idx,
+                            entry.name()
                         );
+                        self.flist_io_error |= crate::generator::io_error_flags::IOERR_GENERAL;
                         continue;
                     }
                 };
@@ -766,6 +841,17 @@ impl ReceiverContext {
                     // the follower silently missing. ELOOP / EOPNOTSUPP
                     // from sandbox-anchored refusals are also fail-loud.
                     if e.kind() == std::io::ErrorKind::PermissionDenied {
+                        continue;
+                    }
+                    // upstream: hlink.c:246-282 check_prior() re-derives a group
+                    // whose prior member has gone away rather than aborting. A
+                    // NotFound here means the resolved leader's file vanished
+                    // after we stat'd it (its transfer errored, or a concurrent
+                    // unlink): leave this follower unlinked with a soft error
+                    // (IOERR_GENERAL -> RERR_PARTIAL, exit 23) instead of a fatal
+                    // receiver desync (exit 12).
+                    if e.kind() == std::io::ErrorKind::NotFound {
+                        self.flist_io_error |= crate::generator::io_error_flags::IOERR_GENERAL;
                         continue;
                     }
                     // Restore the tracker before propagating so the
