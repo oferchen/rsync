@@ -256,6 +256,68 @@ fn compression_level_to_i32(level: compress::zlib::CompressionLevel) -> i32 {
     }
 }
 
+/// Reports whether the receiver wants the transfer's filter list on the wire.
+///
+/// Upstream computes this identical predicate in both `send_filter_list()` (the
+/// client that transmits the list) and `recv_filter_list()` (the peer that reads
+/// it); keeping it in one place guarantees the two ends stay in lockstep, so a
+/// list is never half-sent. `--prune-empty-dirs` always needs the list;
+/// otherwise it is needed only for `--delete`, and then suppressed under
+/// `--delete-excluded` on a legacy peer because protocol < 29 cannot encode the
+/// sender-side modifier that keeps excluded entries deletable.
+///
+/// # Upstream Reference
+///
+/// `exclude.c:1647-1648` / `exclude.c:1676-1677` -
+/// `receiver_wants_list = prune_empty_dirs || (delete_mode && (!delete_excluded || protocol_version >= 29))`
+pub(crate) const fn receiver_wants_filter_list(
+    prune_empty_dirs: bool,
+    delete_mode: bool,
+    delete_excluded: bool,
+    protocol: protocol::ProtocolVersion,
+) -> bool {
+    prune_empty_dirs || (delete_mode && (!delete_excluded || protocol.as_u8() >= 29))
+}
+
+/// Reports whether a single wire filter rule is transmitted to the peer.
+///
+/// Mirrors the elision performed by upstream `send_rules()`: a rule restricted to
+/// the local side is applied here and never reaches the peer, and under
+/// `--delete-excluded` a no-prefixes per-directory merge (`:-`/`:+`) is elided
+/// from a push (the sender applies it locally) while still crossing the wire on a
+/// pull. Explicitly-sided merges (`:s-`/`:r-`) carry their side flag and are
+/// handled by the side-local check, so the no-prefix branch never adds a spurious
+/// `s` modifier - upstream `add_rule()` deliberately spares per-directory merges
+/// from the implicit sender-side flip.
+///
+/// # Upstream Reference
+///
+/// `exclude.c:1605-1612` (`send_rules`); `exclude.c:1330-1332` (`add_rule`).
+fn wire_rule_crosses_wire(
+    rule: &protocol::filters::FilterRuleWireFormat,
+    client_is_sender: bool,
+    delete_excluded: bool,
+) -> bool {
+    let side_local = if client_is_sender {
+        rule.sender_side
+    } else {
+        rule.receiver_side
+    };
+    if side_local {
+        return false;
+    }
+    if client_is_sender
+        && delete_excluded
+        && matches!(rule.rule_type, protocol::filters::RuleType::DirMerge)
+        && rule.no_prefixes
+        && !rule.sender_side
+        && !rule.receiver_side
+    {
+        return false;
+    }
+    true
+}
+
 /// Determines whether the output stream should use multiplexed framing.
 ///
 /// Upstream rsync activates multiplex output differently depending on
@@ -660,10 +722,20 @@ pub fn run_server_with_handshake_adopting<W: Write>(
         writer.set_allowed_lull(Some(allowed_lull));
     }
 
-    // upstream: exclude.c:1650 - am_sender && !receiver_wants_list skips sending.
-    // Push mode applies exclusion locally in the generator; only delete/prune
-    // needs the filter list on the wire.
-    let receiver_wants_filter_list = config.flags.delete || config.flags.prune_empty_dirs;
+    // upstream: exclude.c:1647-1648 send_filter_list() -
+    //   receiver_wants_list = prune_empty_dirs
+    //       || (delete_mode && (!delete_excluded || protocol_version >= 29));
+    // Push mode applies exclusion locally in the generator; the receiver only
+    // needs the filter list for --prune-empty-dirs or --delete. Under
+    // --delete-excluded on a legacy peer (protocol < 29) the list is suppressed:
+    // the pre-29 wire cannot encode the sender-side modifier that keeps excluded
+    // entries deletable, so upstream neither sends nor reads it there.
+    let receiver_wants_filter_list = receiver_wants_filter_list(
+        config.flags.prune_empty_dirs,
+        config.flags.delete,
+        config.deletion.delete_excluded,
+        handshake.protocol,
+    );
 
     // upstream: main.c:1258 - daemon sender always calls recv_filter_list(f_in).
     let should_send_filter_list = if config.connection.client_mode {
@@ -677,28 +749,18 @@ pub fn run_server_with_handshake_adopting<W: Write>(
 
     if should_send_filter_list {
         // upstream: exclude.c:1605-1614 send_rules() elides any rule that applies
-        // to the local side only, so the peer never sees it. On a pull (client is
-        // the receiver) a receiver-side (`r`) rule is applied locally in the
-        // deletion pass and must NOT reach the sender - otherwise the sender would
-        // wrongly drop the matching file from the transfer (this is exactly the
-        // upstream `elide == LOCAL_RULE -> continue` case). Symmetrically, on a
-        // push (client is the sender) a sender-side (`s`) rule is applied locally
-        // by the generator and must not reach the remote receiver, where it would
-        // wrongly protect a matching destination file from --delete. A both-sided
-        // rule (neither flag set) is always sent. The local deletion chain reads
-        // `config.connection.filter_rules` directly (receiver/transfer/setup),
-        // so this elision changes only the bytes placed on the wire.
+        // to the local side only (and, under --delete-excluded, any no-prefix
+        // per-directory merge on a push) so the peer never sees it - see
+        // wire_rule_crosses_wire(). The local deletion chain reads
+        // `config.connection.filter_rules` directly (receiver/transfer/setup), so
+        // this elision changes only the bytes placed on the wire.
         let client_is_sender = config.role == ServerRole::Generator;
         let wire_rules: Vec<protocol::filters::FilterRuleWireFormat> = config
             .connection
             .filter_rules
             .iter()
             .filter(|rule| {
-                if client_is_sender {
-                    !rule.sender_side
-                } else {
-                    !rule.receiver_side
-                }
+                wire_rule_crosses_wire(rule, client_is_sender, config.deletion.delete_excluded)
             })
             .cloned()
             .collect();
