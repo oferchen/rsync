@@ -256,7 +256,10 @@ fn test_multiple_env_vars_together() {
     let _guard2 = EnvGuard::set("RSYNC_RSH", "ssh");
     let _guard3 = EnvGuard::set("RSYNC_PARTIAL_DIR", "/tmp");
 
-    let args = parse_args(["oc-rsync", "src", "dest"]).unwrap();
+    // upstream: options.c:2448-2456 - RSYNC_PARTIAL_DIR is consulted only when
+    // keep_partial is active (--partial/-P) and no explicit --partial-dir was
+    // given, so --partial is supplied for the env dir to take effect.
+    let args = parse_args(["oc-rsync", "--partial", "src", "dest"]).unwrap();
 
     assert_eq!(args.protect_args, Some(true));
     assert_eq!(args.remote_shell, Some("ssh".into()));
