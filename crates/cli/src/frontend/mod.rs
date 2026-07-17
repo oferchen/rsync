@@ -297,8 +297,34 @@ where
     install_client_signal_handling();
 
     let mut stderr_sink = MessageSink::with_brand(stderr, brand);
+    // Raw command-line token count (including argv[0]); `== 2` means a single
+    // option token was supplied, mirroring upstream's `argc == 2` test below.
+    let raw_token_count = args.len();
     let exit_code = match parse_args(args) {
         Ok(parsed) => {
+            // upstream: options.c:2005 - `human_readable > 1 && argc == 2 &&
+            // !am_server` preserves the historic meaning of a lone `-h` as
+            // `--help`. When the only command-line token increments the
+            // human-readable counter (`-h`, `-hh`, `-avh`, `--human-readable`),
+            // rsync prints usage to stdout and exits 0 instead of treating it as
+            // a number-formatting request. The server/daemon paths returned
+            // above, so `!am_server` holds here.
+            if raw_token_count == 2
+                && matches!(
+                    parsed.human_readable,
+                    Some(
+                        core::client::HumanReadableMode::DecimalUnits
+                            | core::client::HumanReadableMode::BinaryUnits
+                    )
+                )
+            {
+                let help = render_help(parsed.program_name);
+                if stdout.write_all(help.as_bytes()).is_err() {
+                    let _ = writeln!(stdout, "{help}");
+                }
+                return 0;
+            }
+
             let outbuf_mode = match parsed.outbuf.as_ref() {
                 Some(value) => match parse_outbuf_mode(value.as_os_str()) {
                     Ok(mode) => Some(mode),

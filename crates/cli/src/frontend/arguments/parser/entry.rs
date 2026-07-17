@@ -24,7 +24,8 @@ use core::client::{
 use super::coerce::{parse_checksum_threads, parse_spill_threshold_bytes, parse_thread_count};
 use super::cow::{last_occurrence, parse_reflink_mode, resolve_cow_policy};
 use super::flags::{
-    leveled_flag_pair, tri_state_flag_negative_first, tri_state_flag_positive_first,
+    archive_aware_flag, leveled_flag_pair, tri_state_flag_negative_first,
+    tri_state_flag_positive_first,
 };
 use super::values::join_os_values;
 use super::{
@@ -199,20 +200,29 @@ where
     };
     let blocking_io = tri_state_flag_positive_first(&matches, "blocking-io", "no-blocking-io");
     let archive = matches.get_flag("archive");
+    // Last command-line index of `-a`, used to resolve every archive-implied
+    // dimension in argv order (upstream: options.c:1546 `case 'a'`). Gated on
+    // `archive` because clap's `SetTrue` args carry an implicit default whose
+    // synthetic index `indices_of` reports even when `-a` was never supplied.
+    let archive_index = if archive {
+        matches.indices_of("archive").and_then(Iterator::max)
+    } else {
+        None
+    };
     // upstream: options.c:631-632 - `--old-dirs`/`--old-d` set xfer_dirs=4, and
     // options.c:2197-2199 resolves that to `recurse = xfer_dirs = 1`
     // unconditionally (after the argv scan), so it forces recursion on even over
     // a `--no-recursive`, and appends the `- /*/*` filter rule (injected below).
     let old_dirs = matches.get_flag("old-dirs");
     let recursive_override = tri_state_flag_negative_first(&matches, "recursive", "no-recursive");
+    // upstream: options.c:1546 `case 'a'` runs `if (!recurse) recurse = 1` in
+    // argv order, so a `--no-recursive` that precedes `-a` is re-enabled by the
+    // later `-a`, while one that follows it wins.
     let recursive = if old_dirs {
         true
-    } else if recursive_override == Some(false) {
-        false
-    } else if archive {
-        true
     } else {
-        recursive_override.unwrap_or(false)
+        archive_aware_flag(&matches, "recursive", "no-recursive", archive_index, false)
+            .unwrap_or(archive)
     };
     let inc_recursive =
         tri_state_flag_positive_first(&matches, "inc-recursive", "no-inc-recursive");
@@ -418,8 +428,8 @@ where
             env_iconv_default()
         }
     });
-    let owner = tri_state_flag_positive_first(&matches, "owner", "no-owner");
-    let group = tri_state_flag_positive_first(&matches, "group", "no-group");
+    let owner = archive_aware_flag(&matches, "owner", "no-owner", archive_index, true);
+    let group = archive_aware_flag(&matches, "group", "no-group", archive_index, true);
     let usermap = join_os_values(matches.remove_many::<OsString>("usermap"));
     let groupmap = join_os_values(matches.remove_many::<OsString>("groupmap"));
     let chown = matches.remove_one::<OsString>("chown");
@@ -428,7 +438,7 @@ where
         .remove_many::<OsString>("chmod")
         .map(Iterator::collect)
         .unwrap_or_default();
-    let perms = tri_state_flag_positive_first(&matches, "perms", "no-perms");
+    let perms = archive_aware_flag(&matches, "perms", "no-perms", archive_index, true);
     let executability = if matches.get_flag("executability") {
         Some(true)
     } else {
@@ -436,14 +446,14 @@ where
     };
     let super_mode = tri_state_flag_positive_first(&matches, "super", "no-super");
     let fake_super = tri_state_flag_positive_first(&matches, "fake-super", "no-fake-super");
-    let times = tri_state_flag_positive_first(&matches, "times", "no-times");
+    let times = archive_aware_flag(&matches, "times", "no-times", archive_index, true);
     let omit_dir_times =
         tri_state_flag_positive_first(&matches, "omit-dir-times", "no-omit-dir-times");
     let acls = tri_state_flag_positive_first(&matches, "acls", "no-acls");
     let xattrs = leveled_flag_pair(&matches, "xattrs", "no-xattrs");
     let numeric_ids = tri_state_flag_positive_first(&matches, "numeric-ids", "no-numeric-ids");
     let hard_links = tri_state_flag_positive_first(&matches, "hard-links", "no-hard-links");
-    let links = tri_state_flag_positive_first(&matches, "links", "no-links");
+    let links = archive_aware_flag(&matches, "links", "no-links", archive_index, true);
     let sparse = tri_state_flag_positive_first(&matches, "sparse", "no-sparse");
     let sparse_detect = match matches.remove_one::<OsString>("sparse-detect") {
         Some(value) => {
@@ -504,10 +514,10 @@ where
     let copy_devices = matches.get_flag("copy-devices");
     let archive_devices =
         tri_state_flag_positive_first(&matches, "archive-devices", "no-archive-devices");
-    let devices =
-        tri_state_flag_positive_first(&matches, "devices", "no-devices").or(archive_devices);
-    let specials =
-        tri_state_flag_positive_first(&matches, "specials", "no-specials").or(archive_devices);
+    let devices = archive_aware_flag(&matches, "devices", "no-devices", archive_index, true)
+        .or(archive_devices);
+    let specials = archive_aware_flag(&matches, "specials", "no-specials", archive_index, true)
+        .or(archive_devices);
     let write_devices =
         tri_state_flag_positive_first(&matches, "write-devices", "no-write-devices");
     let relative = tri_state_flag_positive_first(&matches, "relative", "no-relative");

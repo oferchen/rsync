@@ -1214,6 +1214,22 @@ fn validate_append_with_whole_file_conflicts() {
 }
 
 #[test]
+fn validate_old_args_with_secluded_args_conflicts() {
+    // upstream: options.c:1977 - `--old-args` and `--secluded-args`
+    // (`--protect-args`) are mutually exclusive and abort with this exact
+    // wording, which differs from the generic "cannot be used with" template:
+    // the message names --secluded-args first and ends with a period.
+    let b = builder().old_args(Some(true)).protect_args(Some(true));
+    let err = b.validate().unwrap_err();
+    assert_eq!(err.option1, "old-args");
+    assert_eq!(err.option2, "secluded-args");
+    assert_eq!(
+        err.to_string(),
+        "--secluded-args conflicts with --old-args."
+    );
+}
+
+#[test]
 fn validate_append_with_no_whole_file_ok() {
     // Explicit `--no-whole-file` is the upstream-compatible companion to --append.
     let b = builder().append(true).whole_file(false);

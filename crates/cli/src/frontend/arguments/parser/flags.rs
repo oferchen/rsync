@@ -40,12 +40,34 @@ fn tri_state_flag_with_order(
     negative: &str,
     prefer_positive_on_tie: bool,
 ) -> Option<bool> {
+    tri_state_flag_indexed(matches, positive, negative, prefer_positive_on_tie)
+        .map(|(value, _)| value)
+}
+
+/// Resolves a tri-state flag pair, returning both the winning value and the
+/// command-line index that decided it.
+///
+/// Behaves exactly like [`tri_state_flag_with_order`] but exposes the deciding
+/// index so callers can compose the result with another flag in argv order
+/// (see [`archive_aware_flag`]).
+fn tri_state_flag_indexed(
+    matches: &clap::ArgMatches,
+    positive: &str,
+    negative: &str,
+    prefer_positive_on_tie: bool,
+) -> Option<(bool, usize)> {
     let positive_present = matches.get_flag(positive);
     let negative_present = matches.get_flag(negative);
 
     match (positive_present, negative_present) {
-        (true, false) => Some(true),
-        (false, true) => Some(false),
+        (true, false) => Some((
+            true,
+            last_occurrence(matches, positive).unwrap_or(usize::MAX),
+        )),
+        (false, true) => Some((
+            false,
+            last_occurrence(matches, negative).unwrap_or(usize::MAX),
+        )),
         (false, false) => None,
         (true, true) => {
             let positive_index = last_occurrence(matches, positive);
@@ -53,20 +75,45 @@ fn tri_state_flag_with_order(
             match (positive_index, negative_index) {
                 (Some(pos), Some(neg)) => {
                     if pos > neg {
-                        Some(true)
+                        Some((true, pos))
                     } else if neg > pos {
-                        Some(false)
+                        Some((false, neg))
                     } else if prefer_positive_on_tie {
-                        Some(true)
+                        Some((true, pos))
                     } else {
-                        Some(false)
+                        Some((false, neg))
                     }
                 }
-                (Some(_), None) => Some(true),
-                (None, Some(_)) => Some(false),
-                (None, None) => Some(prefer_positive_on_tie),
+                (Some(pos), None) => Some((true, pos)),
+                (None, Some(neg)) => Some((false, neg)),
+                (None, None) => Some((prefer_positive_on_tie, usize::MAX)),
             }
         }
+    }
+}
+
+/// Resolves an archive-implied flag pair honoring `-a`'s command-line position.
+///
+/// upstream: options.c:1546 `case 'a'` expands `-a` in place during the argv
+/// scan, assigning `preserve_* = 1` for every `-rlptgoD` dimension. Because that
+/// scan is left-to-right and last-wins, a later individual `--no-X` overrides the
+/// archive default and a later `-a` re-enables the dimension (`-a --no-perms`
+/// clears perms; `--no-perms -a` keeps them). clap collapses repeated flags, so
+/// the last index of `-a` (`archive_index`) is compared against the explicit
+/// flag's deciding index: when `-a` comes afterwards the explicit setting is
+/// discarded (returns `None`) so the archive default applies downstream via
+/// `unwrap_or(archive)`; otherwise the explicit value stands.
+pub(crate) fn archive_aware_flag(
+    matches: &clap::ArgMatches,
+    positive: &str,
+    negative: &str,
+    archive_index: Option<usize>,
+    prefer_positive_on_tie: bool,
+) -> Option<bool> {
+    match tri_state_flag_indexed(matches, positive, negative, prefer_positive_on_tie) {
+        Some((_, explicit_index)) if archive_index.is_some_and(|a| a > explicit_index) => None,
+        Some((value, _)) => Some(value),
+        None => None,
     }
 }
 

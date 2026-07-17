@@ -261,6 +261,28 @@ fn test_append_and_whole_file_rejected() {
 }
 
 #[test]
+fn test_old_args_and_secluded_args_rejected() {
+    // upstream: options.c:1977 - `--old-args` and `--secluded-args` are mutually
+    // exclusive and abort with exit 1. Unlike most conflicts, upstream phrases
+    // this one as "--secluded-args conflicts with --old-args." (secluded-args
+    // named first, trailing period), which oc must reproduce verbatim.
+    let mut stdout = Vec::new();
+    let mut stderr = Vec::new();
+    let code = cli::run(
+        ["oc-rsync", "--old-args", "--secluded-args", "src", "dest"],
+        &mut stdout,
+        &mut stderr,
+    );
+
+    assert_eq!(code, 1, "expected RERR_SYNTAX (exit code 1)");
+    let stderr_text = String::from_utf8_lossy(&stderr);
+    assert!(
+        stderr_text.contains("--secluded-args conflicts with --old-args."),
+        "stderr must use upstream's exact phrasing, got: {stderr_text}"
+    );
+}
+
+#[test]
 fn test_append_and_no_whole_file_accepted() {
     // The companion `--no-whole-file` form must remain accepted.
     let result = parse_args(["oc-rsync", "--append", "--no-whole-file", "src", "dest"]);
