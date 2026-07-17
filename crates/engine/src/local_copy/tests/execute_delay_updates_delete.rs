@@ -159,3 +159,150 @@ fn delay_updates_delete_during_removes_extraneous_in_subdirs() {
     }
     assert_no_staging(&dest);
 }
+
+/// A local `-a --delete-after` copy into a destination directory whose real
+/// mode is read-only (0555) must still delete an extraneous child inside it and
+/// then leave the directory at 0555.
+///
+/// This encodes WHY the restricted directory mode must be deferred: upstream
+/// keeps such a directory writable throughout the transfer and restores the
+/// restricted mode LAST, in touch_up_dirs, only after the deletion phase runs
+/// (generator.c:1508-1521 grants `mode | S_IRWXU` during the transfer;
+/// generator.c:2122-2127 `fix_dir_perms` reinstates the real mode;
+/// generator.c:2449-2451 runs touch_up_dirs after the delete phase). Applying
+/// 0555 during traversal - before the deferred unlink - makes the unlink fail
+/// EACCES, so this test fails on that ordering and passes once the mode is
+/// deferred.
+///
+/// Runs as non-root only: root bypasses directory write permission and would
+/// mask the bug.
+#[cfg(unix)]
+#[test]
+fn delete_after_into_readonly_dir_deletes_child_and_restores_mode() {
+    use std::os::unix::fs::PermissionsExt;
+
+    if rustix::process::geteuid().as_raw() == 0 {
+        return;
+    }
+
+    let temp = tempdir().expect("tempdir");
+    let source = temp.path().join("source");
+    let dest = temp.path().join("dest");
+    fs::create_dir_all(source.join("ro")).expect("create source/ro");
+    fs::create_dir_all(dest.join("ro")).expect("create dest/ro");
+
+    // Source ro/ keeps one file; make the directory read-only afterward.
+    fs::write(source.join("ro").join("keep.txt"), b"keep").expect("write keep");
+    // Dest ro/ mirrors the kept file and adds an extraneous file to delete.
+    fs::write(dest.join("ro").join("keep.txt"), b"keep").expect("write dest keep");
+    fs::write(dest.join("ro").join("stale.txt"), b"stale").expect("write stale");
+
+    fs::set_permissions(source.join("ro"), PermissionsExt::from_mode(0o555))
+        .expect("chmod source/ro to 0555");
+
+    let mut source_operand = source.clone().into_os_string();
+    source_operand.push(std::path::MAIN_SEPARATOR.to_string());
+    let operands = vec![source_operand, dest.clone().into_os_string()];
+    let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
+
+    let summary = plan
+        .execute_with_options(
+            LocalCopyExecution::Apply,
+            LocalCopyOptions::default()
+                .recursive(true)
+                .permissions(true)
+                .times(true)
+                .delete_after(true),
+        )
+        .expect("--delete-after into a read-only dir must succeed, not fail EACCES");
+
+    assert!(
+        !dest.join("ro").join("stale.txt").exists(),
+        "stale.txt must be deleted from the read-only directory"
+    );
+    assert!(
+        dest.join("ro").join("keep.txt").exists(),
+        "keep.txt must remain"
+    );
+    assert_eq!(summary.items_deleted(), 1, "expected exactly one deletion");
+
+    let mode = fs::symlink_metadata(dest.join("ro"))
+        .expect("stat dest/ro")
+        .permissions()
+        .mode()
+        & 0o777;
+    assert_eq!(mode, 0o555, "read-only dir mode must be restored to 0555");
+
+    // Restore write so the tempdir can be cleaned up.
+    let _ = fs::set_permissions(dest.join("ro"), PermissionsExt::from_mode(0o755));
+    let _ = fs::set_permissions(source.join("ro"), PermissionsExt::from_mode(0o755));
+}
+
+/// A local `-a --delay-updates` copy into a destination directory whose real
+/// mode is read-only (0555) must still rename the staged child update into it
+/// and then leave the directory at 0555.
+///
+/// Same upstream ordering as the delete-after case: the directory is kept
+/// writable until touch_up_dirs restores 0555 after the delayed-update rename
+/// sweep (generator.c:1508-1521, 2122-2127, 2449-2451). Applying 0555 during
+/// traversal makes the staged rename into the directory fail EACCES.
+///
+/// Runs as non-root only.
+#[cfg(unix)]
+#[test]
+fn delay_updates_into_readonly_dir_renames_child_and_restores_mode() {
+    use std::os::unix::fs::PermissionsExt;
+
+    if rustix::process::geteuid().as_raw() == 0 {
+        return;
+    }
+
+    let temp = tempdir().expect("tempdir");
+    let source = temp.path().join("source");
+    let dest = temp.path().join("dest");
+    fs::create_dir_all(source.join("ro")).expect("create source/ro");
+    fs::create_dir_all(dest.join("ro")).expect("create dest/ro");
+
+    // The child differs so a real update (staged rename) is required.
+    fs::write(source.join("ro").join("data.txt"), b"new content").expect("write src data");
+    fs::write(dest.join("ro").join("data.txt"), b"old").expect("write dst data");
+
+    fs::set_permissions(source.join("ro"), PermissionsExt::from_mode(0o555))
+        .expect("chmod source/ro to 0555");
+
+    let mut source_operand = source.clone().into_os_string();
+    source_operand.push(std::path::MAIN_SEPARATOR.to_string());
+    let operands = vec![source_operand, dest.clone().into_os_string()];
+    let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
+
+    plan.execute_with_options(
+        LocalCopyExecution::Apply,
+        LocalCopyOptions::default()
+            .recursive(true)
+            .permissions(true)
+            .times(true)
+            .delay_updates(true),
+    )
+    .expect("--delay-updates rename into a read-only dir must succeed, not fail EACCES");
+
+    assert_eq!(
+        fs::read(dest.join("ro").join("data.txt")).expect("read data"),
+        b"new content",
+        "the delayed update must be renamed into the read-only directory"
+    );
+    assert!(
+        !dest.join("ro").join(".~tmp~").exists(),
+        ".~tmp~ staging directory must not remain in the read-only directory"
+    );
+
+    let mode = fs::symlink_metadata(dest.join("ro"))
+        .expect("stat dest/ro")
+        .permissions()
+        .mode()
+        & 0o777;
+    assert_eq!(mode, 0o555, "read-only dir mode must be restored to 0555");
+
+    // Restore write so the tempdir can be cleaned up.
+    let _ = fs::set_permissions(dest.join("ro"), PermissionsExt::from_mode(0o755));
+    let _ = fs::set_permissions(source.join("ro"), PermissionsExt::from_mode(0o755));
+}

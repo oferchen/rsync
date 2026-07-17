@@ -412,15 +412,36 @@ pub(crate) struct DeferredOperationQueue {
     pub(crate) delay_staging_dirs: HashSet<PathBuf>,
     /// Newly created paths tracked for rollback on timeout errors.
     pub(crate) created_entries: Vec<CreatedEntry>,
-    /// Transferred directories and their source mtimes, recorded when
-    /// `apply_final_directory_metadata` runs. A single final pass
-    /// (`touch_up_dirs`) re-applies these after all late in-directory mutations
-    /// (delayed-update renames, deletions, backups) so directory timestamps
-    /// survive the wall-clock bump those operations cause.
+    /// Transferred directories with the metadata a single final pass
+    /// (`touch_up_dirs`) re-applies after every late in-directory mutation
+    /// (delayed-update renames, deletions, backups) has run.
     ///
-    /// upstream: generator.c:2093 `touch_up_dirs()` / generator.c:2271
-    /// `need_retouch_dir_times`.
-    pub(crate) finalized_dirs: Vec<(PathBuf, filetime::FileTime)>,
+    /// Each entry carries the source mtime (so directory timestamps survive the
+    /// wall-clock bump those mutations cause) and, for directories whose real
+    /// mode lacks owner write, the restricted mode to reinstate last. The
+    /// directory is kept temporarily writable during the transfer so the
+    /// deferred deletions/updates can still write into it.
+    ///
+    /// upstream: generator.c:2093 `touch_up_dirs()`; generator.c:2271
+    /// `need_retouch_dir_times`; generator.c:2122-2127 `fix_dir_perms`.
+    pub(crate) finalized_dirs: Vec<FinalizedDir>,
+}
+
+/// A directory recorded during traversal for the final `touch_up_dirs` pass.
+///
+/// upstream: generator.c:2089-2136 `touch_up_dirs()` restores the real mode
+/// (`fix_dir_perms`) and re-sets tweaked mtimes after the delayed-update and
+/// deletion phases complete.
+pub(crate) struct FinalizedDir {
+    /// Destination directory path.
+    pub(crate) path: PathBuf,
+    /// Source mtime to re-apply when times are preserved; `None` otherwise.
+    pub(crate) mtime: Option<filetime::FileTime>,
+    /// Real (restricted) mode to reinstate last for a directory that was kept
+    /// writable during the transfer; `None` when no restore is needed. Only
+    /// populated on Unix, where directory-execute traversal semantics apply.
+    #[cfg_attr(not(unix), allow(dead_code))]
+    pub(crate) restore_mode: Option<u32>,
 }
 
 /// A directory deletion deferred until after the transfer phase completes.
