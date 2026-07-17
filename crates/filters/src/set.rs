@@ -380,7 +380,7 @@ impl FilterSet {
     /// read and its rules are inlined at that position. This process is
     /// recursive up to `max_depth` levels to prevent infinite loops.
     ///
-    /// Dir-merge rules (`, FILE`) are skipped since they're processed
+    /// Dir-merge rules (`: FILE`) are skipped since they're processed
     /// per-directory during traversal, not at compilation time.
     ///
     /// # Arguments
