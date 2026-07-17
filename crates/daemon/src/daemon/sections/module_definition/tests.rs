@@ -746,7 +746,10 @@ fn finish_uses_default_values_for_unset_fields() {
         def.log_format.as_deref(),
         Some("%o %h [%a] %m (%u) %f %l")
     ); // default format
-    assert!(def.dont_compress.is_none());
+    // upstream: loadparm.c:46 - `dont compress` defaults to the built-in
+    // DEFAULT_DONT_COMPRESS suffix list, so a resolved module inherits it when
+    // neither the module nor the global section sets the directive.
+    assert_eq!(def.dont_compress.as_deref(), Some(DEFAULT_DONT_COMPRESS));
     assert!(def.early_exec.is_none());
     assert!(def.pre_xfer_exec.is_none());
     assert!(def.post_xfer_exec.is_none());

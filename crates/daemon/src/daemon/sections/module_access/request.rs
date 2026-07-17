@@ -547,6 +547,14 @@ fn respond_with_module_request(
         );
     };
 
+    // upstream: clientserver.c:897 `log_init(1)` reopens the daemon log to
+    // `lp_log_file(module_id)` once the module is selected, so every subsequent
+    // diagnostic for this connection lands in the module's `log file`. Keep the
+    // reopened sink alive for the rest of the request; shadow `log_sink` so the
+    // bandwidth-change log, refusal path, and transfer all use it.
+    let module_log_sink = reopen_module_log_sink(module, log_sink);
+    let log_sink = module_log_sink.as_ref().or(log_sink);
+
     let change = apply_module_bandwidth_limit(
         limiter,
         module.bandwidth_limit(),

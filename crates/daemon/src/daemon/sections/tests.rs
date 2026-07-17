@@ -1,5 +1,13 @@
 use super::*;
 
+/// Builds a module whose only non-default field is its `refuse options` list.
+fn module_with_refuse(refuse_options: Vec<String>) -> ModuleDefinition {
+    ModuleDefinition {
+        refuse_options,
+        ..Default::default()
+    }
+}
+
 #[test]
 fn parse_daemon_option_extracts_option_payload() {
     assert_eq!(parse_daemon_option("OPTION --list"), Some("--list"));
@@ -250,18 +258,18 @@ fn refused_option_returns_first_refused() {
 
 #[test]
 fn is_option_refused_last_rule_wins() {
-    let refuse = vec!["delete".to_owned(), "!delete".to_owned()];
-    assert!(!is_option_refused(&refuse, "delete", None));
+    let module = module_with_refuse(vec!["delete".to_owned(), "!delete".to_owned()]);
+    assert!(!is_option_refused(&module, "delete", None));
 }
 
 #[test]
 fn is_option_refused_re_refuse_after_negation() {
-    let refuse = vec![
+    let module = module_with_refuse(vec![
         "delete*".to_owned(),
         "!delete-during".to_owned(),
         "delete-during".to_owned(),
-    ];
-    assert!(is_option_refused(&refuse, "delete-during", None));
+    ]);
+    assert!(is_option_refused(&module, "delete-during", None));
 }
 
 #[test]
@@ -271,9 +279,9 @@ fn is_option_refused_short_letter_rule_matches_long_option() {
     // un-refuse the same option that `!verbose` would, so allow-list
     // configurations that use short-letter shorthands behave the same as
     // long-name shorthands.
-    let allow_list = vec!["*".to_owned(), "!v".to_owned(), "!a".to_owned()];
-    assert!(!is_option_refused(&allow_list, "verbose", Some('v')));
-    assert!(!is_option_refused(&allow_list, "archive", Some('a')));
+    let module = module_with_refuse(vec!["*".to_owned(), "!v".to_owned(), "!a".to_owned()]);
+    assert!(!is_option_refused(&module, "verbose", Some('v')));
+    assert!(!is_option_refused(&module, "archive", Some('a')));
 }
 
 #[test]
@@ -281,11 +289,11 @@ fn is_option_refused_archive_rule_expands_to_short_letter_set() {
     // upstream: options.c:904-906 - the `archive` (and `a`) rules expand to
     // the character class `[ardlptgoD]` and so refuse every short letter that
     // `-a` implies, not just the `--archive` long name.
-    let refuse = vec!["archive".to_owned()];
-    assert!(is_option_refused(&refuse, "recursive", Some('r')));
-    assert!(is_option_refused(&refuse, "links", Some('l')));
-    assert!(is_option_refused(&refuse, "devices", Some('D')));
-    assert!(!is_option_refused(&refuse, "compress", Some('z')));
+    let module = module_with_refuse(vec!["archive".to_owned()]);
+    assert!(is_option_refused(&module, "recursive", Some('r')));
+    assert!(is_option_refused(&module, "links", Some('l')));
+    assert!(is_option_refused(&module, "devices", Some('D')));
+    assert!(!is_option_refused(&module, "compress", Some('z')));
 }
 
 #[test]
@@ -293,11 +301,11 @@ fn is_option_refused_pure_allowlist_does_not_refuse_anything() {
     // upstream: options.c:947-968 - every option starts marked as accepted
     // (`a*` or `a=`). A refuse list of only negations therefore touches
     // nothing - no option flips to refused. Sanity-check the obvious cases.
-    let allow_list = vec!["!verbose".to_owned(), "!archive".to_owned()];
-    assert!(!is_option_refused(&allow_list, "verbose", Some('v')));
-    assert!(!is_option_refused(&allow_list, "archive", Some('a')));
-    assert!(!is_option_refused(&allow_list, "compress", Some('z')));
-    assert!(!is_option_refused(&allow_list, "delete", None));
+    let module = module_with_refuse(vec!["!verbose".to_owned(), "!archive".to_owned()]);
+    assert!(!is_option_refused(&module, "verbose", Some('v')));
+    assert!(!is_option_refused(&module, "archive", Some('a')));
+    assert!(!is_option_refused(&module, "compress", Some('z')));
+    assert!(!is_option_refused(&module, "delete", None));
 }
 
 #[test]
@@ -305,6 +313,81 @@ fn is_vital_option_recognises_all_vitals() {
     for &vital in VITAL_OPTIONS {
         assert!(is_vital_option(vital), "expected '{vital}' to be vital");
     }
+}
+
+#[test]
+fn default_refuses_client_log_file_options() {
+    // upstream: options.c:1010 - a daemon always appends `log-file*` to the
+    // refuse list after the module's own rules, refusing both `--log-file` and
+    // `--log-file-format` so a client cannot redirect the server's logging.
+    let module = ModuleDefinition::default();
+    assert_eq!(
+        refused_option(&module, &["--log-file".to_owned()]),
+        Some("--log-file")
+    );
+    assert_eq!(
+        refused_option(&module, &["--log-file-format".to_owned()]),
+        Some("--log-file-format")
+    );
+}
+
+#[test]
+fn default_log_file_refusal_survives_negation() {
+    // upstream: options.c:1005-1011 - the `log-file*` refusal is applied AFTER
+    // the module's `refuse options` rules, so a `!log-file` negation cannot
+    // re-enable it.
+    let module = module_with_refuse(vec!["!log-file".to_owned()]);
+    assert_eq!(
+        refused_option(&module, &["--log-file".to_owned()]),
+        Some("--log-file")
+    );
+}
+
+#[test]
+fn iconv_refused_when_module_has_no_charset() {
+    // upstream: options.c:1007-1008 - `if (!*lp_charset(module_id))
+    // parse_one_refuse_match(0, "iconv", ...)`: a daemon module with no
+    // `charset` configured refuses client `--iconv`.
+    let module = ModuleDefinition::default();
+    assert_eq!(
+        refused_option(&module, &["--iconv".to_owned()]),
+        Some("--iconv")
+    );
+}
+
+#[test]
+fn iconv_allowed_when_module_configures_charset() {
+    // upstream: options.c:1006-1009 - the iconv refusal is skipped when the
+    // module sets a `charset`, so the client may negotiate `--iconv`.
+    let module = ModuleDefinition {
+        charset: Some("LATIN1".to_owned()),
+        ..Default::default()
+    };
+    assert_eq!(refused_option(&module, &["--iconv".to_owned()]), None);
+}
+
+#[test]
+fn wildcard_all_spares_vital_log_format_but_refuses_out_format() {
+    // upstream: options.c:975 - the `log-format` long_options[] entry is
+    // exact-match only (vital), so `refuse options = *` cannot refuse it, while
+    // the wildcard-able `out-format` alias is refused by the same `*`.
+    let module = module_with_refuse(vec!["*".to_owned()]);
+    assert_eq!(refused_option(&module, &["--log-format".to_owned()]), None);
+    assert_eq!(
+        refused_option(&module, &["--out-format".to_owned()]),
+        Some("--out-format")
+    );
+}
+
+#[test]
+fn exact_rule_refuses_vital_log_format() {
+    // upstream: options.c:909-940 - a non-wild exact rule still marks a vital
+    // option refused, so `refuse options = log-format` rejects `--log-format`.
+    let module = module_with_refuse(vec!["log-format".to_owned()]);
+    assert_eq!(
+        refused_option(&module, &["--log-format".to_owned()]),
+        Some("--log-format")
+    );
 }
 
 #[test]

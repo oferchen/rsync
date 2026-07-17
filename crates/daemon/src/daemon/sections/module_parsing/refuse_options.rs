@@ -30,7 +30,11 @@ const VITAL_OPTIONS: &[&str] = &[
     "server",
     "rsh",
     "e",
-    "out-format",
+    // upstream: options.c:975 marks the `log-format` long_options[] entry (the
+    // deprecated alias of `out-format`) exact-match only - "aka out-format (NOT
+    // log-file-format)". The wildcard-able `out-format` entry is left refusable,
+    // so `log-format` is the vital name a `refuse options = *` cannot touch.
+    "log-format",
     "sender",
     "dry-run",
     "n",
@@ -75,7 +79,7 @@ fn refused_option<'a>(module: &ModuleDefinition, options: &'a [String]) -> Optio
     options.iter().find_map(|candidate| {
         let canonical = canonical_option(candidate);
         let short = long_option_short_letter(&canonical);
-        if is_option_refused(&module.refuse_options, &canonical, short) {
+        if is_option_refused(module, &canonical, short) {
             Some(candidate.as_str())
         } else {
             None
@@ -235,7 +239,7 @@ fn refused_client_arg(module: &ModuleDefinition, client_args: &[String]) -> Opti
     // pass catches the timing variants the client actually sends on the wire
     // (oc emits `--delete-during` for a plain `-a --delete`). The reported
     // option is always `--delete`, matching `create_refuse_error(refused_delete)`.
-    if is_option_refused(&module.refuse_options, "delete", None)
+    if is_option_refused(module, "delete", None)
         && client_args.iter().any(|arg| enables_delete_mode(arg))
     {
         return Some("--delete".to_owned());
@@ -249,7 +253,7 @@ fn refused_client_arg(module: &ModuleDefinition, client_args: &[String]) -> Opti
                 continue;
             }
             let short = long_option_short_letter(&canonical);
-            if is_option_refused(&module.refuse_options, &canonical, short) {
+            if is_option_refused(module, &canonical, short) {
                 return Some(format!("--{canonical}"));
             }
             continue;
@@ -269,7 +273,7 @@ fn refused_client_arg(module: &ModuleDefinition, client_args: &[String]) -> Opti
                     long.to_owned()
                 };
                 let short_letter = if long.is_empty() { None } else { Some(letter) };
-                if is_option_refused(&module.refuse_options, &long_canonical, short_letter) {
+                if is_option_refused(module, &long_canonical, short_letter) {
                     return Some(if long.is_empty() {
                         format!("-{letter}")
                     } else {
@@ -326,7 +330,11 @@ fn enables_delete_mode(arg: &str) -> bool {
 /// When a rule is a wildcard (`*`, `?`, `[`), it cannot affect vital options
 /// (`--server`, `--sender`, `--dry-run`, `-e`, `-s`, ...). Non-wild rules
 /// can refuse or un-refuse vital options when named explicitly.
-fn is_option_refused(refuse_list: &[String], long_name: &str, short_letter: Option<char>) -> bool {
+fn is_option_refused(
+    module: &ModuleDefinition,
+    long_name: &str,
+    short_letter: Option<char>,
+) -> bool {
     let vital = is_option_vital(long_name, short_letter);
     // upstream: options.c:984-987 - a daemon seeds `copy-devices`/`write-devices`
     // as refused before applying the module's rules. Start from that default so
@@ -334,7 +342,7 @@ fn is_option_refused(refuse_list: &[String], long_name: &str, short_letter: Opti
     let mut refused = DEFAULT_REFUSED_OPTIONS.contains(&long_name);
     let short_lower = short_letter.map(|c| c.to_ascii_lowercase().to_string());
 
-    for rule in refuse_list {
+    for rule in &module.refuse_options {
         let (negated, pattern_raw) = if let Some(rest) = rule.strip_prefix('!') {
             (true, rest)
         } else {
@@ -383,6 +391,29 @@ fn is_option_refused(refuse_list: &[String], long_name: &str, short_letter: Opti
             refused = !negated;
         }
     }
+
+    // upstream: options.c:1005-1011 - once the module's own `refuse options`
+    // rules have been applied, a daemon appends these refusals unconditionally,
+    // so no `!log-file` / `!iconv` negation above can re-enable them:
+    //   - `log-file*` (options.c:1010) refuses both `--log-file` and
+    //     `--log-file-format`, keeping clients from redirecting the daemon's
+    //     server-side logging.
+    //   - `iconv` (options.c:1007-1008) is refused only when the module has no
+    //     `charset` configured (`!*lp_charset(module_id)`).
+    if long_name.starts_with("log-file") {
+        return true;
+    }
+    if long_name == "iconv"
+        && module
+            .charset
+            .as_deref()
+            .map(str::trim)
+            .unwrap_or("")
+            .is_empty()
+    {
+        return true;
+    }
+
     refused
 }
 

@@ -63,6 +63,32 @@ pub(crate) fn open_log_sink(path: &Path, brand: Brand) -> Result<SharedLogSink, 
     Ok(Arc::new(Mutex::new(MessageSink::with_brand(file, brand))))
 }
 
+/// Reopens the connection's log sink to the selected module's `log file`.
+///
+/// upstream: log.c:169-204 `log_init(1)` reopens the daemon logfile to
+/// `lp_log_file(module_id)` at module selection (clientserver.c:897). A module's
+/// resolved `log file` already inherits the global-section default (finish.rs),
+/// so [`ModuleDefinition::module_log_file`] is exactly upstream's
+/// `lp_log_file(module_id)`.
+///
+/// oc opens the startup sink once (from `--log-file`) and shares it across
+/// connection threads, so rather than mutate the shared sink this returns a
+/// fresh per-connection sink pointing at the module's log file; the caller uses
+/// it for the remainder of the connection. A module with no `log file` returns
+/// `None`, keeping the startup sink. A failed reopen is non-fatal - upstream
+/// (log.c:158-166) logs the failure and keeps serving rather than dropping the
+/// connection - so this returns `None` and the caller retains the startup sink.
+fn reopen_module_log_sink(
+    module: &ModuleDefinition,
+    startup_sink: Option<&SharedLogSink>,
+) -> Option<SharedLogSink> {
+    let path = module.module_log_file()?;
+    let brand = startup_sink
+        .and_then(|sink| sink.lock().ok().map(|guard| guard.brand()))
+        .unwrap_or(Brand::Oc);
+    open_log_sink(path, brand).ok()
+}
+
 /// Creates a [`DaemonError`] for log file open failures.
 ///
 /// upstream: log.c:163 - log-open failures produce RERR_MESSAGEIO (13).

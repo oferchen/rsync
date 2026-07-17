@@ -4,6 +4,26 @@
 // applying defaults for unset fields and enforcing cross-field constraints
 // (e.g., `auth users` requires `secrets file`).
 
+/// Built-in `dont compress` suffix list a daemon module inherits when neither
+/// the module nor the global section sets the directive.
+///
+/// Copied verbatim from upstream's generated `default-dont-compress.h`
+/// (`#define DEFAULT_DONT_COMPRESS`), which loadparm.c:46 includes and installs
+/// as the default value of the `dont compress` parameter (`lp_dont_compress`).
+/// The list itself is authored in `rsync.1.md` and extracted by
+/// `define-from-md.awk`. Only a bare `*` collapses the whole compression stream
+/// (token.c:206-211); the per-suffix lookup in `set_compression` is compiled
+/// out (`#if 0`, token.c:227), so this default list is a config-fidelity value
+/// with no per-file wire effect - a daemon still compresses a `.gz` exactly as
+/// upstream 3.4.4 does.
+const DEFAULT_DONT_COMPRESS: &str = "*.3g2 *.3gp *.7z *.aac *.ace *.apk *.avi *.bz2 *.deb \
+*.dmg *.ear *.f4v *.flac *.flv *.gpg *.gz *.iso *.jar *.jpeg *.jpg *.lrz *.lz *.lz4 *.lzma \
+*.lzo *.m1a *.m1v *.m2a *.m2ts *.m2v *.m4a *.m4b *.m4p *.m4r *.m4v *.mka *.mkv *.mov *.mp1 \
+*.mp2 *.mp3 *.mp4 *.mpa *.mpeg *.mpg *.mpv *.mts *.odb *.odf *.odg *.odi *.odm *.odp *.ods \
+*.odt *.oga *.ogg *.ogm *.ogv *.ogx *.opus *.otg *.oth *.otp *.ots *.ott *.oxt *.png *.qt \
+*.rar *.rpm *.rz *.rzip *.spx *.squashfs *.sxc *.sxd *.sxg *.sxm *.sxw *.sz *.tbz *.tbz2 \
+*.tgz *.tlz *.ts *.txz *.tzo *.vob *.war *.webm *.webp *.xz *.z *.zip *.zst";
+
 impl ModuleDefinitionBuilder {
     /// Converts the accumulated builder state into a validated `ModuleDefinition`.
     ///
@@ -165,7 +185,13 @@ impl ModuleDefinitionBuilder {
                         .or_else(|| Some("%o %h [%a] %m (%u) %f %l".to_owned()))
                 }),
             log_file: self.log_file.or_else(|| defaults.log_file.clone()),
-            dont_compress: self.dont_compress.unwrap_or_else(|| defaults.dont_compress.clone()),
+            // upstream: loadparm.c:46 seeds `dont compress` with the built-in
+            // DEFAULT_DONT_COMPRESS list when neither the module nor the global
+            // section sets it, so `lp_dont_compress(module_id)` is never empty.
+            dont_compress: self
+                .dont_compress
+                .unwrap_or_else(|| defaults.dont_compress.clone())
+                .or_else(|| Some(DEFAULT_DONT_COMPRESS.to_owned())),
             early_exec: self.early_exec.unwrap_or_else(|| defaults.early_exec.clone()),
             pre_xfer_exec: self.pre_xfer_exec.unwrap_or_else(|| defaults.pre_xfer_exec.clone()),
             post_xfer_exec: self.post_xfer_exec.unwrap_or_else(|| defaults.post_xfer_exec.clone()),
