@@ -33,6 +33,10 @@ pub struct AimdLimiter {
     alpha: u32,
     beta_num: u32,
     beta_den: u32,
+    // Monotonic nanosecond clock. Production wires this to `now_nanos`; tests
+    // may inject a deterministic clock so debounce windows are timed against a
+    // controllable virtual clock rather than real wall-clock elapsed time.
+    now: fn() -> u64,
 }
 
 impl AimdLimiter {
@@ -60,7 +64,19 @@ impl AimdLimiter {
             alpha,
             beta_num,
             beta_den,
+            now: Self::now_nanos,
         }
+    }
+
+    /// Constructs a limiter that reads time from `now` instead of the default
+    /// monotonic clock. Test-only: lets debounce/decay behaviour be exercised
+    /// against a deterministic virtual clock. Production always uses
+    /// [`AimdLimiter::new`], which wires `now` to [`AimdLimiter::now_nanos`].
+    #[cfg(test)]
+    pub(super) fn with_clock(config: LimiterConfig, now: fn() -> u64) -> Self {
+        let mut limiter = Self::new(config);
+        limiter.now = now;
+        limiter
     }
 
     /// Returns the current concurrency target.
@@ -95,7 +111,7 @@ impl AimdLimiter {
                 Ordering::Acquire,
             ) {
                 Ok(_) => {
-                    return Some(Ticket::new(self, Self::now_nanos()));
+                    return Some(Ticket::new(self, (self.now)()));
                 }
                 Err(observed) => current = observed,
             }
@@ -104,7 +120,7 @@ impl AimdLimiter {
 
     /// Releases a ticket as a success. Updates RTT EMA and may grow `target`.
     pub(super) fn release_success(&self, acquired_at: u64) {
-        let now = Self::now_nanos();
+        let now = (self.now)();
         let sample = now.saturating_sub(acquired_at);
         self.update_rtt(sample);
         self.in_flight.fetch_sub(1, Ordering::AcqRel);
@@ -130,7 +146,7 @@ impl AimdLimiter {
     /// Releases a ticket as an overload signal. Halves `target` subject to
     /// the `2 * rtt_ema` debounce window.
     pub(super) fn release_overload(&self, acquired_at: u64, _reason: OverloadReason) {
-        let now = Self::now_nanos();
+        let now = (self.now)();
         // Still update the RTT EMA from this sample; the latency carries useful
         // information even on the overload path.
         let sample = now.saturating_sub(acquired_at);
