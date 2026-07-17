@@ -122,6 +122,10 @@ impl ConnectionContext {
         raw_peer_addr: SocketAddr,
     ) -> io::Result<()> {
         apply_accepted_stream_tcp_notsent_lowat(&tcp_stream);
+        // upstream: clientserver.c:1396 - daemon unconditionally enables
+        // SO_KEEPALIVE on the accepted client socket, independent of the
+        // per-module `socket options` config applied below.
+        enable_accepted_stream_keepalive(&tcp_stream, self.log_sink.as_ref());
         let stream = DaemonStream::plain(tcp_stream);
         apply_client_options(&stream, &self.client_socket_options, self.log_sink.as_ref());
         self.serve_session(stream, raw_peer_addr)

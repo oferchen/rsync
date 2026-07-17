@@ -271,6 +271,10 @@ fn handle_accepted_connection(
     state: &mut AcceptLoopState<'_>,
 ) -> bool {
     apply_accepted_stream_tcp_notsent_lowat(&tcp_stream);
+    // upstream: clientserver.c:1396 - the daemon unconditionally enables
+    // SO_KEEPALIVE on the accepted client socket, independent of the per-module
+    // `socket options` config applied below.
+    enable_accepted_stream_keepalive(&tcp_stream, state.log_sink.as_ref());
 
     let Some(mut stream) = wrap_accepted_stream(tcp_stream, state) else {
         return false;
