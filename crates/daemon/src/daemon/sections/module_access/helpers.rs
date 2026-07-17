@@ -190,43 +190,6 @@ fn dont_compress_is_match_all(value: &str) -> bool {
     value.split_whitespace().any(|token| token == "*")
 }
 
-/// Parses the daemon `dont compress` parameter into a `SkipCompressList`.
-///
-/// The daemon format uses space-separated glob-style suffixes (e.g., `"*.gz *.zip *.jpg"`).
-/// Each suffix is stripped of its `*.` prefix and converted to the slash-separated
-/// format that `SkipCompressList::parse` expects. Bare suffixes without `*.` prefix
-/// are also accepted.
-///
-/// Returns `None` if the input is empty or contains no valid suffixes.
-///
-/// # Upstream Reference
-///
-/// - `loadparm.c` - `dont compress` parameter, space-separated globs
-/// - `exclude.c:set_dont_compress_re()` - converts to regex for per-file matching
-fn parse_daemon_dont_compress(value: &str) -> Option<SkipCompressList> {
-    let suffixes: Vec<&str> = value
-        .split_whitespace()
-        .filter_map(|token| {
-            // Strip `*.` prefix used in daemon config notation
-            if let Some(suffix) = token.strip_prefix("*.") {
-                if !suffix.is_empty() {
-                    return Some(suffix);
-                }
-            }
-            // Accept bare suffixes without glob prefix
-            let bare = token.trim_start_matches('.');
-            if !bare.is_empty() { Some(bare) } else { None }
-        })
-        .collect();
-
-    if suffixes.is_empty() {
-        return None;
-    }
-
-    let spec = suffixes.join("/");
-    SkipCompressList::parse(&spec).ok()
-}
-
 /// Builds daemon-side filter rules from the module's filter configuration.
 ///
 /// Upstream rsync's `clientserver.c:rsync_module()` builds `daemon_filter_list` from:

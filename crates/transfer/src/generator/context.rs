@@ -553,28 +553,6 @@ impl GeneratorContext {
         }
     }
 
-    /// Returns the per-file compression algorithm, respecting the skip-compress list.
-    ///
-    /// When compression is negotiated but the file's extension matches the
-    /// skip-compress list, returns `None` to send the file uncompressed.
-    ///
-    /// # Upstream Reference
-    ///
-    /// - `token.c:do_compression` - checks `dont_compress_re` regex per file
-    /// - `loadparm.c` - `dont compress` daemon parameter populates the regex
-    pub(crate) fn file_compression(
-        &self,
-        path: &std::path::Path,
-    ) -> Option<protocol::CompressionAlgorithm> {
-        let algo = self.negotiated_algorithms.map(|n| n.compression)?;
-        if let Some(ref skip_list) = self.config.skip_compress {
-            if skip_list.matches_path(path) {
-                return None;
-            }
-        }
-        Some(algo)
-    }
-
     /// Opens a source file for reading with `BufReader` buffering.
     ///
     /// Suitable for callers that perform many small or random reads (e.g., the

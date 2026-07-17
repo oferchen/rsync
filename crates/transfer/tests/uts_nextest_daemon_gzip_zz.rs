@@ -769,3 +769,112 @@ fn concurrent_fixtures_get_distinct_ports_and_do_not_cross_talk() {
         "every concurrent fixture must bind a distinct port (no reuse collision)"
     );
 }
+
+/// UTS-NEXTEST-EDGE.e.6 - a daemon module's `dont compress = <suffix>` must keep
+/// codec framing on a `-z` transfer.
+///
+/// Regression for the per-file token-framing desync: the daemon sender used to
+/// switch to plain (uncompressed) 4-byte-LE tokens for any file whose suffix
+/// matched the module's `dont compress` list, while the receiver builds one
+/// session-level token reader from the negotiated codec and always expects
+/// deflated framing. A `.gz` file pulled under `-z` from a module with
+/// `dont compress = gz` therefore desynced the token stream and aborted the
+/// transfer with a `protocol incompatibility` / out-of-range file-list index.
+///
+/// Upstream never does this: `token.c:1065 send_token()` dispatches purely on
+/// the global `do_compression` codec, and `token.c:225 set_compression()`'s
+/// per-file suffix lookup is compiled out under `#if 0` ("No compression
+/// algorithms currently allow mid-stream changing of the level."). The daemon's
+/// `dont compress` suffix list builds a suffix tree (`init_set_compression()`)
+/// that `set_compression()` never consults, so it has no per-file wire effect;
+/// only a bare `*` matters (whole-stream store, still deflated framing).
+///
+/// The `dont compress = gz` module directive is the runtime-reachable trigger
+/// for the daemon-sender path (a bare client `--skip-compress` on a push never
+/// reaches the wire token path). This scenario failed on the pre-fix sender
+/// against both oc and a real upstream receiver; after the fix the daemon keeps
+/// codec framing and the pull round-trips byte-identically.
+#[test]
+fn daemon_dont_compress_suffix_keeps_codec_framing() {
+    let Some(bin) = locate_oc_rsync() else {
+        eprintln!("skip: oc-rsync binary not located");
+        return;
+    };
+
+    let workdir = tempdir().expect("workdir");
+    let module_root = workdir.path().join("module");
+    fs::create_dir_all(&module_root).expect("module root");
+
+    // A `.gz`-suffixed file matching the module's `dont compress = gz`.
+    // Compressible content so the codec is non-trivially engaged; the NAME is
+    // what used to trip the per-file framing switch on the daemon sender.
+    let source = build_compressible(256 * 1024);
+    let src_path = module_root.join("archive.gz");
+    fs::write(&src_path, &source).expect("write daemon-side .gz source");
+
+    // A daemon module whose `dont compress = gz` selects the skip-matched
+    // suffix. `use chroot = false` / `read only = false` keep the unprivileged
+    // test process able to serve the pull.
+    let config_path = workdir.path().join("rsyncd.conf");
+    let body = format!(
+        "pid file = {pid}\n\
+         log file = {log}\n\
+         use chroot = false\n\
+         max connections = 4\n\
+         \n\
+         [gzipmod]\n\
+         path = {module}\n\
+         read only = false\n\
+         dont compress = gz\n\
+         list = true\n",
+        pid = workdir.path().join("rsyncd.pid").display(),
+        log = workdir.path().join("rsyncd.log").display(),
+        module = module_root.display(),
+    );
+    fs::write(&config_path, body).expect("write daemon config");
+
+    let (_daemon, port) = match spawn_oc_rsync_daemon(&bin, &config_path) {
+        Ok(pair) => pair,
+        Err(e) => {
+            eprintln!("skip: could not start oc-rsync daemon: {e}");
+            return;
+        }
+    };
+
+    // Pull the skip-matched `.gz` with `-z`. The module's `dont compress = gz`
+    // drives the daemon sender; no client `--skip-compress` is needed.
+    let dest_dir = tempdir().expect("dest tempdir");
+    let url = std::ffi::OsString::from(format!("rsync://127.0.0.1:{port}/gzipmod/archive.gz"));
+    let dest = dest_dir.path().as_os_str().to_owned();
+    let output = run_client(&[
+        "-a".as_ref(),
+        "-z".as_ref(),
+        "--timeout=30".as_ref(),
+        url.as_ref(),
+        dest.as_ref(),
+    ])
+    .expect("spawn oc-rsync pull client");
+
+    let stdout = String::from_utf8_lossy(&output.stdout).into_owned();
+    let stderr = String::from_utf8_lossy(&output.stderr).into_owned();
+
+    assert!(
+        output.status.success(),
+        "-z pull from `dont compress = gz` module must exit 0; status={:?}\nstdout:\n{stdout}\nstderr:\n{stderr}",
+        output.status.code(),
+    );
+    // The desync surfaced as a truncated stream (UTS-9 signature) or a corrupt
+    // file-list index / protocol incompatibility once plain tokens were parsed
+    // as deflated framing. Fail loud on either.
+    assert!(
+        !stderr.contains("connection unexpectedly closed")
+            && !stderr.contains("protocol incompatibility")
+            && !stderr.contains("read_ndx_and_attrs"),
+        "-z pull from `dont compress = gz` module desynced the token stream; stderr:\n{stderr}"
+    );
+    assert_eq!(
+        read_all(&dest_dir.path().join("archive.gz")),
+        source,
+        "pulled .gz must be byte-identical when the module sets `dont compress = gz`"
+    );
+}

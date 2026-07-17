@@ -242,15 +242,16 @@ fn build_server_config(
             }
 
             // upstream: loadparm.c - `dont compress` parameter specifies suffixes
-            // that should skip per-file compression during transfer.
+            // that should skip per-file compression during transfer. However,
+            // token.c:225 set_compression()'s per-file suffix lookup is compiled
+            // out under `#if 0` ("No compression algorithms currently allow
+            // mid-stream changing of the level."), so a non-`*` suffix list has no
+            // per-file wire effect. The only live case is a bare `*`, which
+            // collapses the whole zlib stream to store (level 0) at init
+            // (token.c:206-211) - still deflated framing, never plain tokens.
             if let Some(dont_compress) = module.dont_compress.as_deref() {
                 if dont_compress_is_match_all(dont_compress) {
-                    // upstream: token.c:206-211 - a bare `*` collapses the match
-                    // list to a whole-stream store (zlib level 0) and clears the
-                    // per-file suffix tree, so no `skip_compress` list is built.
                     cfg.connection.dont_compress_match_all = true;
-                } else if let Some(list) = parse_daemon_dont_compress(dont_compress) {
-                    cfg.skip_compress = Some(list);
                 }
             }
 

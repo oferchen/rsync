@@ -201,7 +201,6 @@ mod defaults {
         assert!(config.daemon_filter_rules.is_empty());
         assert!(!config.do_stats);
         assert!(config.temp_dir.is_none());
-        assert!(config.skip_compress.is_none());
         assert!(!config.fake_super);
     }
 
