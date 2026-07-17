@@ -195,7 +195,9 @@ fn execute_preserves_metadata_when_requested() {
     assert_eq!(metadata.permissions().mode() & 0o777, 0o640);
     let dest_atime = FileTime::from_last_access_time(&metadata);
     let dest_mtime = FileTime::from_last_modification_time(&metadata);
-    assert_eq!(dest_atime, atime);
+    // upstream: rsync.c:588-589 - --times alone leaves the access time unchanged
+    // (ATTRS_SKIP_ATIME); only --atimes/-U would preserve it.
+    assert_ne!(dest_atime, atime, "atime must not be preserved without -U");
     assert_eq!(dest_mtime, mtime);
     assert_eq!(summary.files_copied(), 1);
 }
@@ -367,7 +369,8 @@ fn execute_mode_0000_with_times_preservation() {
     assert_eq!(metadata.permissions().mode() & 0o777, 0o000);
     let dest_atime = FileTime::from_last_access_time(&metadata);
     let dest_mtime = FileTime::from_last_modification_time(&metadata);
-    assert_eq!(dest_atime, atime);
+    // upstream: rsync.c:588-589 - --times alone leaves the access time unchanged.
+    assert_ne!(dest_atime, atime, "atime must not be preserved without -U");
     assert_eq!(dest_mtime, mtime);
     assert_eq!(summary.files_copied(), 1);
 }
@@ -706,7 +709,9 @@ fn execute_round_trip_preserves_all_bits() {
 
     let final_atime = FileTime::from_last_access_time(&final_metadata);
     let final_mtime = FileTime::from_last_modification_time(&final_metadata);
-    assert_eq!(final_atime, atime, "atime should be preserved");
+    // upstream: rsync.c:588-589 - --times alone leaves the access time unchanged;
+    // the round trip preserves permission bits and mtime, not atime.
+    assert_ne!(final_atime, atime, "atime must not be preserved without -U");
     assert_eq!(final_mtime, mtime, "mtime should be preserved");
 }
 

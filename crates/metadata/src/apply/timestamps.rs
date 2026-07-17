@@ -33,17 +33,25 @@ pub(super) fn set_timestamp_like(
     existing: Option<&fs::Metadata>,
     options: Option<&MetadataOptions>,
 ) -> Result<(), MetadataError> {
-    let accessed = FileTime::from_last_access_time(metadata);
     let modified = FileTime::from_last_modification_time(metadata);
+
+    // upstream: rsync.c:588-589 - atime is written only when `--atimes`/`-U`
+    // is active AND the node is not a directory (`!atimes_ndx || S_ISDIR`
+    // sets ATTRS_SKIP_ATIME). Otherwise the destination's access time is left
+    // unchanged. upstream: rsync.c:609 - when atime IS applied its nanosecond
+    // field is forced to zero.
+    let apply_atime = options.is_some_and(|o| o.atimes()) && !metadata.file_type().is_dir();
+    let accessed = apply_atime.then(|| {
+        FileTime::from_unix_time(FileTime::from_last_access_time(metadata).unix_seconds(), 0)
+    });
 
     // upstream: rsync.c:597-612 - mtime and atime are checked independently;
     // the utimensat is only skipped when ALL relevant timestamps match.
     if let Some(existing) = existing {
         let mtime_matches = FileTime::from_last_modification_time(existing) == modified;
-        let atime_matches = if options.is_some_and(|o| o.atimes()) {
-            FileTime::from_last_access_time(existing) == accessed
-        } else {
-            true
+        let atime_matches = match accessed {
+            Some(accessed) => FileTime::from_last_access_time(existing) == accessed,
+            None => true,
         };
         if mtime_matches && atime_matches {
             return Ok(());
@@ -63,10 +71,15 @@ pub(super) fn set_timestamp_like(
     #[cfg(not(unix))]
     let open_free_path = !follow_symlinks;
 
-    let result = if open_free_path {
-        set_symlink_file_times(destination, accessed, modified)
-    } else {
-        set_file_times(destination, accessed, modified)
+    let result = match accessed {
+        Some(accessed) => {
+            if open_free_path {
+                set_symlink_file_times(destination, accessed, modified)
+            } else {
+                set_file_times(destination, accessed, modified)
+            }
+        }
+        None => set_mtime_omit_atime(destination, modified, open_free_path),
     };
 
     if let Err(error) = result {
@@ -110,6 +123,50 @@ fn is_tolerable_special_time_error(error: &io::Error) -> bool {
     )
 }
 
+/// Sets only the mtime on a path node, leaving the access time unchanged.
+///
+/// Mirrors upstream's `ATTRS_SKIP_ATIME` behaviour (`rsync.c:588-589`): when
+/// `--atimes`/`-U` is off, or for any directory, the access time is left
+/// untouched rather than being written to the mtime value. On Unix this uses
+/// `utimensat` with `UTIME_OMIT` for the access-time slot so no access-time
+/// syscall side effect leaks in; `open_free` selects the
+/// `AT_SYMLINK_NOFOLLOW` variant used for symlinks and special files
+/// (device/FIFO/socket), which updates the node's own mtime without opening
+/// it (a peerless FIFO would otherwise block `File::open`). On non-Unix
+/// targets `filetime::set_file_mtime` provides the equivalent mtime-only
+/// update.
+// upstream: rsync.c:588-589 - `!atimes_ndx || S_ISDIR` sets ATTRS_SKIP_ATIME
+fn set_mtime_omit_atime(
+    destination: &Path,
+    mtime: FileTime,
+    open_free: bool,
+) -> std::io::Result<()> {
+    #[cfg(unix)]
+    {
+        let times = rustix::fs::Timestamps {
+            last_access: rustix::fs::Timespec {
+                tv_sec: 0,
+                tv_nsec: rustix::fs::UTIME_OMIT,
+            },
+            last_modification: rustix::fs::Timespec {
+                tv_sec: mtime.unix_seconds(),
+                tv_nsec: mtime.nanoseconds().into(),
+            },
+        };
+        let flags = if open_free {
+            rustix::fs::AtFlags::SYMLINK_NOFOLLOW
+        } else {
+            rustix::fs::AtFlags::empty()
+        };
+        rustix::fs::utimensat(rustix::fs::CWD, destination, &times, flags).map_err(io::Error::from)
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = open_free;
+        filetime::set_file_mtime(destination, mtime)
+    }
+}
+
 /// fd-based variant of [`set_timestamp_like`] that uses `futimens` on the open fd.
 ///
 /// Avoids a path lookup by operating directly on the file descriptor.
@@ -126,27 +183,41 @@ pub(super) fn set_timestamp_with_fd(
     existing: Option<&fs::Metadata>,
     options: Option<&MetadataOptions>,
 ) -> Result<(), MetadataError> {
-    let accessed = FileTime::from_last_access_time(metadata);
     let modified = FileTime::from_last_modification_time(metadata);
+
+    // upstream: rsync.c:588-589 - atime is written only under `--atimes`/`-U`
+    // and never for directories; rsync.c:609 - the applied atime nsec is 0.
+    let apply_atime = options.is_some_and(|o| o.atimes()) && !metadata.file_type().is_dir();
+    let accessed = apply_atime.then(|| {
+        FileTime::from_unix_time(FileTime::from_last_access_time(metadata).unix_seconds(), 0)
+    });
 
     // upstream: rsync.c:597-612 - mtime and atime are checked independently
     if let Some(existing) = existing {
         let mtime_matches = FileTime::from_last_modification_time(existing) == modified;
-        let atime_matches = if options.is_some_and(|o| o.atimes()) {
-            FileTime::from_last_access_time(existing) == accessed
-        } else {
-            true
+        let atime_matches = match accessed {
+            Some(accessed) => FileTime::from_last_access_time(existing) == accessed,
+            None => true,
         };
         if mtime_matches && atime_matches {
             return Ok(());
         }
     }
 
-    let timestamps = rustix::fs::Timestamps {
-        last_access: rustix::fs::Timespec {
+    // upstream: rsync.c:588-589,609 - omit the access time (UTIME_OMIT) when
+    // it must not be written; otherwise set it with a zeroed nanosecond field.
+    let last_access = match accessed {
+        Some(accessed) => rustix::fs::Timespec {
             tv_sec: accessed.unix_seconds(),
-            tv_nsec: accessed.nanoseconds().into(),
+            tv_nsec: 0,
         },
+        None => rustix::fs::Timespec {
+            tv_sec: 0,
+            tv_nsec: rustix::fs::UTIME_OMIT,
+        },
+    };
+    let timestamps = rustix::fs::Timestamps {
+        last_access,
         last_modification: rustix::fs::Timespec {
             tv_sec: modified.unix_seconds(),
             tv_nsec: modified.nanoseconds().into(),
@@ -172,7 +243,9 @@ pub(super) fn apply_atime_only_from_metadata(
     destination: &Path,
     existing: Option<&fs::Metadata>,
 ) -> Result<(), MetadataError> {
-    let source_atime = FileTime::from_last_access_time(metadata);
+    // upstream: rsync.c:609 - the applied access time's nanosecond field is 0.
+    let source_atime =
+        FileTime::from_unix_time(FileTime::from_last_access_time(metadata).unix_seconds(), 0);
 
     if let Some(existing) = existing {
         if FileTime::from_last_access_time(existing) == source_atime {
@@ -209,7 +282,9 @@ pub(super) fn apply_atime_only_from_metadata_with_fd(
     fd: BorrowedFd<'_>,
     existing: Option<&fs::Metadata>,
 ) -> Result<(), MetadataError> {
-    let source_atime = FileTime::from_last_access_time(metadata);
+    // upstream: rsync.c:609 - the applied access time's nanosecond field is 0.
+    let source_atime =
+        FileTime::from_unix_time(FileTime::from_last_access_time(metadata).unix_seconds(), 0);
 
     if let Some(existing) = existing {
         if FileTime::from_last_access_time(existing) == source_atime {
@@ -260,11 +335,14 @@ pub(super) fn apply_timestamps_from_entry(
 ) -> Result<(), MetadataError> {
     let mtime = FileTime::from_unix_time(entry.mtime(), entry.mtime_nsec());
 
-    // upstream: rsync.c:600-603 - preserves source atime with --atimes, else mtime for both
-    let atime = if options.atimes() && entry.atime() != 0 {
-        FileTime::from_unix_time(entry.atime(), 0)
+    // upstream: rsync.c:588-589 - the access time is written only under
+    // `--atimes`/`-U` and never for directories (`!atimes_ndx || S_ISDIR`
+    // sets ATTRS_SKIP_ATIME); otherwise it is left unchanged (UTIME_OMIT)
+    // rather than being clobbered with the mtime value.
+    let atime = if options.atimes() && !entry.file_type().is_dir() && entry.atime() != 0 {
+        Some(FileTime::from_unix_time(entry.atime(), 0))
     } else {
-        mtime
+        None
     };
 
     // upstream: rsync.c:set_file_attrs() - skips utimensat when timestamps match
@@ -273,9 +351,8 @@ pub(super) fn apply_timestamps_from_entry(
             let current_mtime = FileTime::from_last_modification_time(meta);
             if current_mtime != mtime {
                 true
-            } else if options.atimes() {
-                let current_atime = FileTime::from_last_access_time(meta);
-                current_atime != atime
+            } else if let Some(atime) = atime {
+                FileTime::from_last_access_time(meta) != atime
             } else {
                 false
             }
@@ -306,15 +383,22 @@ pub(super) fn apply_timestamps_from_entry(
 fn set_entry_times(
     destination: &Path,
     entry: &protocol::flist::FileEntry,
-    atime: FileTime,
+    atime: Option<FileTime>,
     mtime: FileTime,
     context: &'static str,
 ) -> Result<(), MetadataError> {
     let is_special = entry.is_device() || entry.is_special();
-    let result = if is_special {
-        set_symlink_file_times(destination, atime, mtime)
-    } else {
-        set_file_times(destination, atime, mtime)
+    // upstream: rsync.c:588-589 - `atime = None` reproduces ATTRS_SKIP_ATIME,
+    // leaving the destination's access time untouched (UTIME_OMIT).
+    let result = match atime {
+        Some(atime) => {
+            if is_special {
+                set_symlink_file_times(destination, atime, mtime)
+            } else {
+                set_file_times(destination, atime, mtime)
+            }
+        }
+        None => set_mtime_omit_atime(destination, mtime, is_special),
     };
 
     if let Err(error) = result {
@@ -344,11 +428,13 @@ pub(super) fn apply_symlink_timestamps_from_entry(
 ) -> Result<(), MetadataError> {
     let mtime = FileTime::from_unix_time(entry.mtime(), entry.mtime_nsec());
 
-    // upstream: rsync.c:600-603 - preserves source atime with --atimes, else mtime for both
+    // upstream: rsync.c:588-589 - a symlink is never a directory, so its atime
+    // is written only under `--atimes`/`-U`; otherwise it is left unchanged
+    // (UTIME_OMIT) rather than being clobbered with the mtime value.
     let atime = if options.atimes() && entry.atime() != 0 {
-        FileTime::from_unix_time(entry.atime(), 0)
+        Some(FileTime::from_unix_time(entry.atime(), 0))
     } else {
-        mtime
+        None
     };
 
     // upstream: rsync.c:set_file_attrs() - skips utimensat when timestamps match
@@ -357,9 +443,8 @@ pub(super) fn apply_symlink_timestamps_from_entry(
             let current_mtime = FileTime::from_last_modification_time(meta);
             if current_mtime != mtime {
                 true
-            } else if options.atimes() {
-                let current_atime = FileTime::from_last_access_time(meta);
-                current_atime != atime
+            } else if let Some(atime) = atime {
+                FileTime::from_last_access_time(meta) != atime
             } else {
                 false
             }
@@ -368,8 +453,14 @@ pub(super) fn apply_symlink_timestamps_from_entry(
     };
 
     if needs_utime {
-        set_symlink_file_times(destination, atime, mtime)
-            .map_err(|error| MetadataError::new("preserve timestamps", destination, error))?;
+        // upstream: rsync.c:set_times() uses lutimes/utimensat(AT_SYMLINK_NOFOLLOW)
+        // on the symlink itself. `open_free = true` selects that NOFOLLOW variant.
+        match atime {
+            Some(atime) => set_symlink_file_times(destination, atime, mtime)
+                .map_err(|error| MetadataError::new("preserve timestamps", destination, error))?,
+            None => set_mtime_omit_atime(destination, mtime, true)
+                .map_err(|error| MetadataError::new("preserve timestamps", destination, error))?,
+        }
     }
 
     Ok(())
@@ -413,7 +504,13 @@ pub(super) fn apply_atime_only_from_entry(
                 FileTime::from_last_modification_time(&meta)
             }
         };
-        set_entry_times(destination, entry, atime, mtime, "preserve access time")?;
+        set_entry_times(
+            destination,
+            entry,
+            Some(atime),
+            mtime,
+            "preserve access time",
+        )?;
     }
 
     Ok(())
