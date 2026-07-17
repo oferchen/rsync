@@ -2,8 +2,13 @@
 
 use std::time::Duration;
 
-/// Formats a progress percentage, producing the upstream `??%` placeholder when totals are
-/// unavailable.
+/// Formats a progress percentage.
+///
+/// upstream: progress.c:128 rprint_progress computes `pct = ofs == size ? 100 :
+/// (int)(100.0 * ofs / size)` and never emits a `??` placeholder for the
+/// percent field (unlike the ETA field, which does). oc emits one progress line
+/// per file at completion (`ofs == size`), so an unknown total resolves to
+/// 100% rather than a sentinel.
 pub(crate) fn format_progress_percent(bytes: u64, total: Option<u64>) -> String {
     match total {
         Some(total_bytes) if total_bytes > 0 => {
@@ -11,8 +16,8 @@ pub(crate) fn format_progress_percent(bytes: u64, total: Option<u64>) -> String 
             let percent = (capped.saturating_mul(100)) / total_bytes;
             format!("{percent}%")
         }
-        Some(_) => "100%".to_owned(),
-        None => "??%".to_owned(),
+        // total 0 (empty file, ofs == size) or unknown: upstream prints 100%.
+        Some(_) | None => "100%".to_owned(),
     }
 }
 
@@ -58,7 +63,10 @@ mod tests {
 
     #[test]
     fn format_progress_percent_no_total() {
-        assert_eq!(format_progress_percent(50, None), "??%");
+        // upstream progress.c:128 never emits `??` for the percent field; an
+        // unknown total resolves to the completion value 100%, not a sentinel.
+        assert_eq!(format_progress_percent(50, None), "100%");
+        assert!(!format_progress_percent(50, None).contains("??"));
     }
 
     #[test]

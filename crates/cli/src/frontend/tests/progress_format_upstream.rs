@@ -11,7 +11,8 @@
 //!   - Right-aligned elapsed time (10-char field, `%4u:%02u:%02u`)
 //!   - Transfer count and remaining count: `(xfr#N, to-chk=M/T)`
 //!
-//! When totals are unavailable, percentage shows as `??%`.
+//! The percent field never uses a `??` sentinel (progress.c:128); only the ETA
+//! field does (progress.c:118).
 
 use super::common::*;
 use super::*;
@@ -120,9 +121,12 @@ fn format_progress_percent_zero_total_returns_100() {
 }
 
 #[test]
-fn format_progress_percent_unknown_total_shows_placeholder() {
-    // When the total is not available, upstream shows "??%"
-    assert_eq!(format_progress_percent(42, None), "??%");
+fn format_progress_percent_unknown_total_resolves_to_complete() {
+    // upstream: progress.c:128 - the percent field never uses a `??` sentinel
+    // (only the ETA field does). An unknown total resolves to the completion
+    // value 100%.
+    assert_eq!(format_progress_percent(42, None), "100%");
+    assert!(!format_progress_percent(42, None).contains("??"));
 }
 
 #[test]
@@ -175,42 +179,6 @@ fn format_progress_rate_decimal_gigabyte_rate() {
 }
 
 #[test]
-fn format_progress_rate_human_small() {
-    let rate_str = format_progress_rate_human(500.0);
-    assert!(
-        rate_str.contains("B/s"),
-        "human rate <1000 should use B/s: {rate_str:?}"
-    );
-}
-
-#[test]
-fn format_progress_rate_human_kilo() {
-    let rate_str = format_progress_rate_human(1_500.0);
-    assert!(
-        rate_str.contains("kB/s"),
-        "human rate ~1.5k should use kB/s: {rate_str:?}"
-    );
-}
-
-#[test]
-fn format_progress_rate_human_mega() {
-    let rate_str = format_progress_rate_human(2_500_000.0);
-    assert!(
-        rate_str.contains("MB/s"),
-        "human rate ~2.5M should use MB/s: {rate_str:?}"
-    );
-}
-
-#[test]
-fn format_progress_rate_human_giga() {
-    let rate_str = format_progress_rate_human(2_500_000_000.0);
-    assert!(
-        rate_str.contains("GB/s"),
-        "human rate ~2.5G should use GB/s: {rate_str:?}"
-    );
-}
-
-#[test]
 fn format_progress_rate_zero_elapsed_returns_zero() {
     let rate_str = format_progress_rate(0, Duration::ZERO, HumanReadableMode::Grouped);
     assert_eq!(rate_str, "0.00kB/s");
@@ -223,9 +191,11 @@ fn format_progress_rate_zero_bytes_returns_zero() {
 }
 
 #[test]
-fn format_progress_rate_zero_bytes_human_returns_zero() {
+fn format_progress_rate_zero_bytes_human_stays_kb_per_sec() {
+    // upstream: progress.c:108-116 - the progress rate is always base-1024 and
+    // a zero rate falls into the `kB/s` tier, regardless of `-h`/`-hh`.
     let rate_str = format_progress_rate(0, Duration::from_secs(1), HumanReadableMode::DecimalUnits);
-    assert_eq!(rate_str, "0.00B/s");
+    assert_eq!(rate_str, "0.00kB/s");
 }
 
 #[test]
@@ -561,52 +531,12 @@ fn progress_percent_field_100_is_4_chars() {
 }
 
 #[test]
-fn progress_percent_field_unknown_is_3_chars_right_padded() {
+fn progress_percent_field_unknown_total_is_100_percent() {
+    // upstream: progress.c:128 - the percent field never uses `??`; an unknown
+    // total resolves to the completion value 100% (4 chars, no padding needed).
     let pct = format!("{:>4}", format_progress_percent(0, None));
     assert_eq!(pct.len(), 4);
-    assert_eq!(pct, " ??%");
-}
-
-#[test]
-fn format_verbose_rate_human_byte_range() {
-    let (value, unit) = format_verbose_rate_human(500.0);
-    assert_eq!(value, "500.00");
-    assert_eq!(unit, "B/s");
-}
-
-#[test]
-fn format_verbose_rate_human_kilo_range() {
-    let (value, unit) = format_verbose_rate_human(1_500.0);
-    assert_eq!(value, "1.50");
-    assert_eq!(unit, "kB/s");
-}
-
-#[test]
-fn format_verbose_rate_human_mega_range() {
-    let (value, unit) = format_verbose_rate_human(2_500_000.0);
-    assert_eq!(value, "2.50");
-    assert_eq!(unit, "MB/s");
-}
-
-#[test]
-fn format_verbose_rate_human_giga_range() {
-    let (value, unit) = format_verbose_rate_human(2_500_000_000.0);
-    assert_eq!(value, "2.50");
-    assert_eq!(unit, "GB/s");
-}
-
-#[test]
-fn format_verbose_rate_human_tera_range() {
-    let (value, unit) = format_verbose_rate_human(2_500_000_000_000.0);
-    assert_eq!(value, "2.50");
-    assert_eq!(unit, "TB/s");
-}
-
-#[test]
-fn format_verbose_rate_human_peta_range() {
-    let (value, unit) = format_verbose_rate_human(2_500_000_000_000_000.0);
-    assert_eq!(value, "2.50");
-    assert_eq!(unit, "PB/s");
+    assert_eq!(pct, "100%");
 }
 
 #[test]

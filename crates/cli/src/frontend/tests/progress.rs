@@ -159,8 +159,12 @@ fn progress_transfer_routes_messages_to_stderr_when_requested() {
 }
 
 #[test]
-fn progress_percent_placeholder_used_for_unknown_totals() {
-    assert_eq!(format_progress_percent(42, None), "??%");
+fn progress_percent_unknown_total_resolves_to_complete() {
+    // upstream: progress.c:128 - `pct = ofs == size ? 100 : ...` never emits a
+    // `??` sentinel for the percent field. oc emits one progress line per file
+    // at completion, so an unknown total resolves to 100%, not `??%`.
+    assert_eq!(format_progress_percent(42, None), "100%");
+    assert!(!format_progress_percent(42, None).contains("??"));
     assert_eq!(format_progress_percent(0, Some(0)), "100%");
     assert_eq!(format_progress_percent(50, Some(200)), "25%");
 }

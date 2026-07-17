@@ -64,6 +64,7 @@ fn render_stats_at_level(
         false, // progress_already_rendered
         false, // list_only
         false, // dry_run
+        false, // only_write_batch
         None,
         &OutFormatContext::default(),
         NameOutputLevel::Disabled,
@@ -91,6 +92,7 @@ fn render_verbose(summary: &ClientSummary, verbosity: u8) -> String {
         false, // progress_already_rendered
         false, // list_only
         false, // dry_run
+        false, // only_write_batch
         None,
         &OutFormatContext::default(),
         NameOutputLevel::UpdatedAndUnchanged,
@@ -134,6 +136,7 @@ fn info_name_only_suppresses_stats_footer() {
         false, // progress_already_rendered
         false, // list_only
         false, // dry_run
+        false, // only_write_batch
         None,
         &OutFormatContext::default(),
         NameOutputLevel::UpdatedAndUnchanged, // --info=name2-style name output
@@ -529,6 +532,7 @@ fn parity_totals_only_without_stats_flag() {
         false,
         false, // list_only
         false, // dry_run
+        false, // only_write_batch
         None,
         &OutFormatContext::default(),
         NameOutputLevel::UpdatedAndUnchanged,
@@ -799,6 +803,7 @@ fn parity_verbose_v2_emits_bare_name_per_upstream() {
         false,
         false, // list_only
         false, // dry_run
+        false, // only_write_batch
         None,
         &OutFormatContext::default(),
         NameOutputLevel::UpdatedAndUnchanged,
