@@ -476,6 +476,52 @@ mod tests {
         );
     }
 
+    /// #204: an alt-dest content-differ basis found in reference dir `j` (the
+    /// destination is absent) must be advertised like a real upstream generator:
+    /// iflags ITEM_TRANSFER|ITEM_BASIS_TYPE_FOLLOWS (0x8800, LE 00 88), then the
+    /// FNAMECMP_BASIS_DIR_LOW + j byte (0x00 for j=0), and NO xname vstring - a
+    /// basis-dir tag is below FNAMECMP_FUZZY so ITEM_XNAME_FOLLOWS stays clear.
+    /// Without the basis-type byte a real upstream peer sees a bare FNAME request
+    /// and the wire diverges. upstream: generator.c:1054 returns
+    /// FNAMECMP_BASIS_DIR_LOW + j; generator.c:1943 sets ITEM_BASIS_TYPE_FOLLOWS;
+    /// generator.c:1945 gates ITEM_XNAME_FOLLOWS on fnamecmp_type >= FNAMECMP_FUZZY.
+    #[test]
+    fn basis_dir_request_emits_basis_type_byte_no_xname() {
+        let bytes = request_bytes_basis(protocol::FnameCmpType::BasisDir(0), None);
+        // iflags 0x8800 (LE 00 88) then the basis-dir index byte 0x00.
+        let expected: &[u8] = &[0x00, 0x88, 0x00];
+        assert!(
+            bytes.windows(expected.len()).any(|w| w == expected),
+            "basis-dir request must carry iflags 0x8800 then the index byte: {bytes:02x?}"
+        );
+        // ITEM_XNAME_FOLLOWS (0x9800 / 0x9000) must stay clear for a basis dir.
+        assert!(
+            !bytes
+                .windows(2)
+                .any(|w| w == [0x00, 0x98] || w == [0x00, 0x90]),
+            "basis-dir request must NOT set ITEM_XNAME_FOLLOWS: {bytes:02x?}"
+        );
+    }
+
+    /// #205: a `-yy` fuzzy hit from reference dir `k` is advertised as
+    /// FNAMECMP_FUZZY + (k + 1) (the dest dir is fuzzy-index 0), so reference dir
+    /// 0 emits byte 0x84. iflags carry ITEM_TRANSFER|ITEM_BASIS_TYPE_FOLLOWS|
+    /// ITEM_XNAME_FOLLOWS (0x9800, LE 00 98), then the 0x84 tag, then the basis
+    /// basename as a vstring. upstream: generator.c:861,903 (FNAMECMP_FUZZY + i),
+    /// generator.c:1944-1948 (iflags + fnamecmp_type + write_vstring).
+    #[test]
+    fn ref_dir_fuzzy_request_emits_fnamecmp_fuzzy_plus_index() {
+        let bytes = request_bytes_basis(protocol::FnameCmpType::Fuzzy(1), Some(b"old.txt"));
+        // iflags 0x9800 (LE 00 98), then 0x84, then vstring(7, "old.txt").
+        let expected: &[u8] = &[
+            0x00, 0x98, 0x84, 0x07, b'o', b'l', b'd', b'.', b't', b'x', b't',
+        ];
+        assert!(
+            bytes.windows(expected.len()).any(|w| w == expected),
+            "ref-dir fuzzy request must carry iflags|0x84|vstring(basename): {bytes:02x?}"
+        );
+    }
+
     /// With `--fuzzy` off (an ordinary FNAME basis) the request must be
     /// unchanged: bare ITEM_TRANSFER (0x8000, LE 00 80), no basis-type byte and
     /// no xname vstring. Guards against the fuzzy path leaking into the common
