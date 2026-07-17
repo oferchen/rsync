@@ -104,7 +104,11 @@ impl ReceiverContext {
             } else {
                 None
             };
-            handle_delayed_updates(all_delayed_updates, backup_cfg);
+            // A delayed rename that fails (e.g. EACCES under a Landlock
+            // sandbox without ACCESS_FS_REFER on kernels 5.13-5.18) sets
+            // IOERR_GENERAL so the transfer exits 23 (RERR_PARTIAL) instead
+            // of reporting success while the file was never updated.
+            self.flist_io_error |= handle_delayed_updates(all_delayed_updates, backup_cfg);
         }
 
         #[cfg(unix)]
@@ -302,16 +306,34 @@ pub(in crate::receiver) enum DeletePassPhase {
 /// When `backup_config` is `Some`, backs up the existing destination file
 /// before the rename (upstream: `receiver.c:431 make_backup(fname, False)`).
 ///
-/// Rename failures are logged but do not abort the transfer, matching
-/// upstream which calls `rsyserr(FERROR_XFER, ...)` and continues.
+/// A failed rename (or backup) is logged and does not abort the sweep -
+/// remaining files are still renamed, matching upstream which calls
+/// `rsyserr(FERROR_XFER, ...)` and continues. The failure is NOT silently
+/// swallowed, though: this returns the accumulated `io_error` bitfield
+/// (`IOERR_GENERAL` when any rename/backup failed, else 0) so the caller can
+/// fold it into the transfer's `io_error` and surface exit code 23
+/// (`RERR_PARTIAL`). Upstream achieves the same via the
+/// `FERROR_XFER -> got_xfer_error -> RERR_PARTIAL` side channel
+/// (log.c:309-316, cleanup.c:210-218, main.c:1630-1631).
+///
+/// This matters on Linux kernels 5.13-5.18: those have Landlock but lack
+/// `LANDLOCK_ACCESS_FS_REFER` (added in 5.19), so the cross-directory rename
+/// out of the `.~tmp~` staging dir is denied with `EACCES` under a sandbox.
+/// Without the returned io_error bit the file would silently not be updated
+/// while the process still exited 0 - silent data loss.
 pub(in crate::receiver) fn handle_delayed_updates(
     delayed: &[(PathBuf, PathBuf)],
     backup_config: Option<crate::disk_commit::BackupConfig>,
-) {
+) -> i32 {
     use std::collections::HashSet;
     use std::fs;
 
+    use crate::generator::io_error_flags::IOERR_GENERAL;
+
     let mut staging_dirs: HashSet<PathBuf> = HashSet::new();
+    // Mirrors upstream's got_xfer_error: any rename/backup failure here is a
+    // transfer error that must yield exit 23 (RERR_PARTIAL), not a silent 0.
+    let mut io_error = 0;
 
     for (staging_path, final_path) in delayed {
         // upstream: receiver.c:431-432 - make_backup(fname, False)
@@ -356,7 +378,10 @@ pub(in crate::receiver) fn handle_delayed_updates(
                         );
                     }
                     Err(e) => {
+                        // upstream: make_backup() -> rsyserr(FERROR_XFER, ...)
+                        // sets got_xfer_error -> RERR_PARTIAL.
                         eprintln!("rsync: backup failed for {}: {e}", final_path.display());
+                        io_error |= IOERR_GENERAL;
                     }
                 }
             }
@@ -373,11 +398,17 @@ pub(in crate::receiver) fn handle_delayed_updates(
 
         // upstream: receiver.c:439 - do_rename(partialptr, fname)
         if let Err(e) = fs::rename(staging_path, final_path) {
+            // upstream: rsyserr(FERROR_XFER, ...) sets got_xfer_error ->
+            // RERR_PARTIAL (exit 23). On kernels 5.13-5.18 the Landlock
+            // sandbox lacks ACCESS_FS_REFER, so this cross-dir rename is
+            // denied with EACCES; flag it so the file's absence is visible
+            // via a non-zero exit rather than silently skipped.
             eprintln!(
                 "rsync: rename failed for {} (from {}): {e}",
                 final_path.display(),
                 staging_path.display()
             );
+            io_error |= IOERR_GENERAL;
             continue;
         }
 
@@ -392,6 +423,8 @@ pub(in crate::receiver) fn handle_delayed_updates(
     for dir in &staging_dirs {
         let _ = fs::remove_dir(dir);
     }
+
+    io_error
 }
 
 #[cfg(test)]
@@ -473,10 +506,19 @@ mod tests {
         assert!(!tmp2.exists());
     }
 
-    /// Verifies the sweep continues past rename failures (matching upstream
-    /// which logs errors but does not abort).
+    /// Verifies the sweep continues past a rename failure (matching upstream
+    /// which logs the error but does not abort) AND flags the failure so the
+    /// transfer exits 23 rather than silently reporting success.
+    ///
+    /// WHY: on kernels 5.13-5.18 the Landlock sandbox lacks
+    /// `ACCESS_FS_REFER`, so the cross-directory rename out of `.~tmp~` is
+    /// denied with `EACCES`. A rename returning any error models that case;
+    /// swallowing it (no io_error, exit 0) would be silent data loss - the
+    /// file the user asked to update would simply not be updated.
     #[test]
-    fn handle_delayed_updates_continues_on_rename_failure() {
+    fn handle_delayed_updates_flags_error_on_rename_failure() {
+        use crate::generator::io_error_flags::IOERR_GENERAL;
+
         let dir = test_support::create_tempdir();
         let staging_dir = dir.path().join(".~tmp~");
         fs::create_dir(&staging_dir).unwrap();
@@ -494,18 +536,46 @@ mod tests {
             (staged_good.clone(), final_good.clone()),
         ];
 
-        // Should not panic or abort.
-        handle_delayed_updates(&delayed, None);
+        // Should not panic or abort, but must report the failed rename.
+        let io_error = handle_delayed_updates(&delayed, None);
 
-        // The good file should still be renamed successfully.
+        assert_eq!(
+            io_error & IOERR_GENERAL,
+            IOERR_GENERAL,
+            "a failed delayed rename must set IOERR_GENERAL so the transfer \
+             exits 23 (RERR_PARTIAL) instead of silently reporting success"
+        );
+
+        // The good file should still be renamed successfully (sweep continues).
         assert_eq!(fs::read_to_string(&final_good).unwrap(), "good");
         assert!(!staged_good.exists());
     }
 
-    /// Verifies the sweep handles an empty delayed list gracefully.
+    /// Verifies a fully successful sweep returns 0, so a clean
+    /// `--delay-updates` finalization leaves the exit code untouched.
+    #[test]
+    fn handle_delayed_updates_success_returns_zero() {
+        let dir = test_support::create_tempdir();
+        let staging_dir = dir.path().join(".~tmp~");
+        fs::create_dir(&staging_dir).unwrap();
+
+        let staged = staging_dir.join("a.txt");
+        fs::write(&staged, b"content").unwrap();
+        let final_path = dir.path().join("a.txt");
+
+        let io_error = handle_delayed_updates(&[(staged, final_path)], None);
+
+        assert_eq!(
+            io_error, 0,
+            "a successful sweep must not flag any I/O error"
+        );
+    }
+
+    /// Verifies the sweep handles an empty delayed list gracefully and
+    /// reports no error.
     #[test]
     fn handle_delayed_updates_empty_is_noop() {
-        handle_delayed_updates(&[], None);
+        assert_eq!(handle_delayed_updates(&[], None), 0);
     }
 
     /// Verifies that `handle_delayed_updates` backs up a pre-existing
