@@ -64,9 +64,13 @@ pub(crate) fn parse_timeout_argument(value: &OsStr) -> Result<TransferTimeout, M
     }
 }
 
-/// Parses the `--max-delete` argument as a non-negative `u64` deletion limit.
+/// Parses the `--max-delete` argument into a non-negative deletion cap.
 ///
-/// A leading `+` prefix is permitted and ignored.
+/// A leading `+` prefix is permitted and ignored. Mirroring upstream
+/// (`options.c:2182-2185`), a negative value is not an error: it is clamped to
+/// `0` ("no deletions") and parsing continues. Deletion itself is still gated on
+/// an explicit `--delete*`, so a clamped cap of `0` only takes effect when
+/// deletion is already enabled.
 pub(crate) fn parse_max_delete_argument(value: &OsStr) -> Result<u64, Message> {
     let text = value.to_string_lossy();
     let trimmed = text.trim_matches(|ch: char| ch.is_ascii_whitespace());
@@ -80,24 +84,16 @@ pub(crate) fn parse_max_delete_argument(value: &OsStr) -> Result<u64, Message> {
         return Err(rsync_error!(1, "--max-delete value must not be empty").with_role(Role::Client));
     }
 
-    if trimmed.starts_with('-') {
-        return Err(rsync_error!(
-            1,
-            format!(
-                "invalid --max-delete '{}': deletion limit must be non-negative",
-                display
-            )
-        )
-        .with_role(Role::Client));
-    }
-
     let normalized = trimmed.strip_prefix('+').unwrap_or(trimmed);
 
-    match normalized.parse::<u64>() {
-        Ok(value) => Ok(value),
+    // upstream stores `--max-delete` as a signed int and clamps any negative
+    // value (other than the INT_MIN "unlimited" sentinel, which oc models as an
+    // absent limit) to 0. Parse as `i64` so negatives round-trip to a 0 cap.
+    match normalized.parse::<i64>() {
+        Ok(parsed) => Ok(parsed.max(0) as u64),
         Err(error) => {
             let detail = match error.kind() {
-                IntErrorKind::InvalidDigit => "deletion limit must be an unsigned integer",
+                IntErrorKind::InvalidDigit => "deletion limit must be an integer",
                 IntErrorKind::PosOverflow | IntErrorKind::NegOverflow => {
                     "deletion limit exceeds the supported range"
                 }
