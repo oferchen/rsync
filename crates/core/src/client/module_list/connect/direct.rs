@@ -6,7 +6,8 @@ use socket2::{Domain, Protocol, SockAddr, Socket, Type};
 
 use super::super::DaemonAddress;
 use crate::client::{
-    AddressMode, ClientError, SOCKET_IO_EXIT_CODE, TcpFastOpenMode, daemon_error, socket_error,
+    AddressMode, ClientError, SOCKET_IO_EXIT_CODE, TcpFastOpenMode, connect_timeout_error,
+    daemon_error, socket_error,
 };
 
 /// Establishes a direct TCP connection to an rsync daemon.
@@ -44,7 +45,28 @@ pub(crate) fn connect_direct(
     }
 
     let (candidate, error) = last_error.expect("no addresses available for daemon connection");
-    Err(socket_error("connect to", candidate, error))
+    Err(map_connect_failure(connect_timeout, candidate, error))
+}
+
+/// Maps a final `connect(2)` failure to a [`ClientError`] with the correct exit
+/// code.
+///
+/// A `--contimeout` expiry (`connect_timeout` was `Some`, and `socket2` surfaces
+/// the alarm as [`io::ErrorKind::TimedOut`]) maps to `RERR_CONTIMEOUT` (35),
+/// matching upstream and the SSH path. Every other failure - including a bare
+/// OS SYN timeout when no `--contimeout` was requested - keeps the generic
+/// socket-I/O code (10).
+///
+/// upstream: socket.c:280-282 - `if (connect_timeout < 0) exit_cleanup(RERR_CONTIMEOUT);`
+fn map_connect_failure(
+    connect_timeout: Option<Duration>,
+    candidate: SocketAddr,
+    error: io::Error,
+) -> ClientError {
+    if connect_timeout.is_some() && error.kind() == io::ErrorKind::TimedOut {
+        return connect_timeout_error(candidate, error);
+    }
+    socket_error("connect to", candidate, error)
 }
 
 /// Resolves a [`DaemonAddress`] to a list of [`SocketAddr`]s, filtered by address family.
@@ -213,5 +235,44 @@ fn try_connectx_fastopen(socket: &Socket, target: SocketAddr, tfo: TcpFastOpenMo
     {
         let _ = (socket, target);
         false
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::net::{IpAddr, Ipv4Addr, SocketAddr};
+
+    fn candidate() -> SocketAddr {
+        SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 873)
+    }
+
+    // upstream: socket.c:280-282 - a --contimeout expiry mid-connect exits with
+    // RERR_CONTIMEOUT (35). When a connect bound was requested and connect(2)
+    // times out, oc must report 35, not the generic socket-I/O code 10.
+    #[test]
+    fn connect_timeout_expiry_maps_to_contimeout_exit_code() {
+        let error = io::Error::new(io::ErrorKind::TimedOut, "connection timed out");
+        let mapped = map_connect_failure(Some(Duration::from_secs(5)), candidate(), error);
+        assert_eq!(mapped.exit_code(), 35);
+    }
+
+    // Without --contimeout (connect_timeout is None), an OS-level SYN timeout is
+    // an ordinary socket failure: upstream never arms the contimeout alarm, so
+    // the exit code stays RERR_SOCKETIO (10), not RERR_CONTIMEOUT.
+    #[test]
+    fn os_timeout_without_contimeout_stays_socket_io() {
+        let error = io::Error::new(io::ErrorKind::TimedOut, "connection timed out");
+        let mapped = map_connect_failure(None, candidate(), error);
+        assert_eq!(mapped.exit_code(), 10);
+    }
+
+    // A non-timeout failure (e.g. connection refused) is never a contimeout even
+    // when --contimeout was set; only ErrorKind::TimedOut is the alarm.
+    #[test]
+    fn non_timeout_failure_with_contimeout_stays_socket_io() {
+        let error = io::Error::new(io::ErrorKind::ConnectionRefused, "refused");
+        let mapped = map_connect_failure(Some(Duration::from_secs(5)), candidate(), error);
+        assert_eq!(mapped.exit_code(), 10);
     }
 }
