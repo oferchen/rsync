@@ -345,6 +345,45 @@ fn wire_rule_crosses_wire(
     true
 }
 
+/// Fatal diagnostic emitted when a filter rule cannot be represented on a
+/// pre-30 peer's wire, matching upstream `send_rules()` byte-for-byte
+/// (exclude.c:1625). oc's error layer appends the standard `(code 2) at ...`
+/// trailer, mirroring upstream's `exclude.c(1627) [sender=<ver>]`.
+pub(crate) const TOO_MODERN_FILTER_RULES_MSG: &str =
+    "filter rules are too modern for remote rsync.";
+
+/// Reports whether the transmitted filter list is too modern for the peer and
+/// the transfer must abort, mirroring upstream `send_rules()`.
+///
+/// Upstream `get_rule_prefix()` (exclude.c:1573-1577) returns NULL for a
+/// perishable rule when building the wire form (`for_xfer`) at a protocol below
+/// 30 **and** the local side is the sender: the pre-30 wire has no `p` modifier,
+/// so the rule cannot be represented. `send_rules()` (exclude.c:1624-1628)
+/// treats that NULL as fatal - it prints "filter rules are too modern for remote
+/// rsync." and calls `exit_cleanup(RERR_PROTOCOL)` (exit code 2) rather than
+/// silently dropping the rule. A receiver at a pre-30 protocol instead omits the
+/// `p` char and keeps the rule (the `else if (am_sender)` guard at
+/// exclude.c:1576 does not fire), so this predicate never aborts on a pull.
+///
+/// The check runs over `wire_rules` - the rules that survive
+/// [`wire_rule_crosses_wire`] - because those are exactly the rules that reach
+/// `get_rule_prefix()` in upstream's loop; a rule elided as local (LOCAL_RULE)
+/// never triggers the NULL return.
+///
+/// # Upstream Reference
+///
+/// `exclude.c:1573-1577` (`get_rule_prefix`, the NULL return); `exclude.c:1624-1628`
+/// (`send_rules`, the fatal abort).
+fn perishable_rules_too_modern(
+    wire_rules: &[protocol::filters::FilterRuleWireFormat],
+    client_is_sender: bool,
+    protocol: protocol::ProtocolVersion,
+) -> bool {
+    client_is_sender
+        && !protocol.supports_perishable_modifier()
+        && wire_rules.iter().any(|rule| rule.perishable)
+}
+
 /// Determines whether the output stream should use multiplexed framing.
 ///
 /// Upstream rsync activates multiplex output differently depending on
@@ -796,6 +835,10 @@ pub fn run_server_with_handshake_adopting<W: Write>(
             })
             .cloned()
             .collect();
+        if perishable_rules_too_modern(&wire_rules, client_is_sender, handshake.protocol) {
+            // upstream: exclude.c:1624-1628 send_rules() aborts the transfer here.
+            return Err(protocol::protocol_violation(TOO_MODERN_FILTER_RULES_MSG));
+        }
         protocol::filters::write_filter_list(&mut writer, &wire_rules, handshake.protocol)?;
         writer.flush()?;
     }
