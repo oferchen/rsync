@@ -17,12 +17,15 @@
 //!   then fails) rather than traversed. This is the analog of `O_EXCL |
 //!   O_NOFOLLOW`.
 //! - [`rename_no_follow`] - a handle-based commit rename. The destination
-//!   parent is opened and validated as a real directory (not a reparse point),
-//!   and the rename is issued through
-//!   `SetFileInformationByHandle(FileRenameInfo)` with `FILE_RENAME_INFO`'s
-//!   `RootDirectory` set to that validated directory handle, so the new name
-//!   resolves relative to the pinned handle instead of by re-walking the path.
-//!   This is the analog of `renameat` anchored on a dirfd.
+//!   parent is opened no-follow, validated as a real directory (not a reparse
+//!   point), and *pinned* (shared without `FILE_SHARE_DELETE`) so it cannot be
+//!   renamed/removed/replaced with a junction while the rename runs; the temp
+//!   handle is then renamed via `SetFileInformationByHandle(FileRenameInfo)`.
+//!   The Win32 `SetFileInformationByHandle` rejects a non-NULL
+//!   `FILE_RENAME_INFO::RootDirectory` (`ERROR_INVALID_PARAMETER`), so the
+//!   anchoring is provided by the pinned, validated parent handle rather than a
+//!   handle-relative name. This closes the same reparse-point redirect that the
+//!   Unix `renameat`-on-a-dirfd closes for the final directory component.
 //!
 //! All Win32 FFI lives here in `fast_io` (a permitted-unsafe crate); the
 //! `transfer` receiver calls the safe functions.
@@ -81,27 +84,33 @@ mod imp {
     /// Commits `temp_path` to `dest_path` with a handle-anchored rename that a
     /// concurrent reparse-point swap on the destination parent cannot redirect.
     ///
-    /// Steps (mirroring the Unix `renameat` anchoring):
+    /// Steps (the Windows analog of pinning the destination dirfd on Unix):
     ///
-    /// 1. Open `temp_path` with `FILE_FLAG_OPEN_REPARSE_POINT` + `DELETE`
-    ///    access and reject it if it resolved to a reparse point - closing a
-    ///    swap of the temp leaf on the source side.
-    /// 2. Open `dest_path`'s parent directory with `FILE_FLAG_BACKUP_SEMANTICS
-    ///    | FILE_FLAG_OPEN_REPARSE_POINT` and reject it unless it is a real
-    ///    directory (not a reparse point) - closing a junction/mount-point swap
-    ///    on the commit parent.
-    /// 3. Rename the temp handle via `SetFileInformationByHandle(FileRenameInfo)`
-    ///    with `RootDirectory` set to the validated directory handle and
-    ///    `FileName` the single destination leaf, so the target name resolves
-    ///    relative to the pinned handle rather than by re-walking the path.
+    /// 1. Open, validate, and *pin* the destination parent directory. The
+    ///    no-follow open (`FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_
+    ///    POINT`) yields the directory itself rather than traversing a
+    ///    junction/mount-point planted at that path, and is rejected unless it
+    ///    is a real directory (not a reparse point). Sharing omits
+    ///    `FILE_SHARE_DELETE`, so the directory cannot be renamed, removed, or
+    ///    replaced while the handle is held - it cannot be swapped for a reparse
+    ///    point in the check-to-use window before the rename.
+    /// 2. Open `temp_path` with `FILE_FLAG_OPEN_REPARSE_POINT` + `DELETE` access
+    ///    (required by `FileRenameInfo`) and reject it if it resolved to a
+    ///    reparse point - closing a swap of the temp leaf on the source side.
+    /// 3. Rename the temp handle via `SetFileInformationByHandle(FileRenameInfo)`.
+    ///    `RootDirectory` is `NULL` - the Win32 `SetFileInformationByHandle`
+    ///    rejects a non-NULL `RootDirectory` with `ERROR_INVALID_PARAMETER` - so
+    ///    `FileName` carries the full destination path. The redirect protection
+    ///    comes from the pinned, validated parent handle held open across the
+    ///    call (step 1), not from a handle-relative name.
     ///
     /// `replace_existing` maps to `FILE_RENAME_INFO::ReplaceIfExists` (upstream
     /// `do_rename` overwrites the destination).
     ///
     /// # Errors
     ///
-    /// - [`io::ErrorKind::InvalidInput`] if `dest_path` lacks a parent or file
-    ///   name.
+    /// - [`io::ErrorKind::InvalidInput`] if `dest_path` lacks a parent
+    ///   directory.
     /// - An error whose `raw_os_error()` is `ERROR_NOT_SAME_DEVICE` (17) when
     ///   the temp file is on another volume; callers fall back to copy+remove
     ///   (upstream `util1.c:robust_rename()`).
@@ -119,34 +128,16 @@ mod imp {
                 "destination path has no parent directory",
             )
         })?;
-        let leaf = dest_path.file_name().ok_or_else(|| {
-            io::Error::new(
-                io::ErrorKind::InvalidInput,
-                "destination path has no file name",
-            )
-        })?;
 
-        // (1) Source handle: no-follow open with DELETE access (required by
-        // FileRenameInfo). Reject a reparse point at the temp leaf.
-        let src = OpenOptions::new()
-            .access_mode(DELETE | FILE_GENERIC_READ)
-            .share_mode(SHARE_ALL)
-            .custom_flags(FILE_FLAG_OPEN_REPARSE_POINT)
-            .open(temp_path)?;
-        if file_attributes(&src)? & FILE_ATTRIBUTE_REPARSE_POINT != 0 {
-            return Err(io::Error::new(
-                io::ErrorKind::PermissionDenied,
-                "refusing to commit: temp file resolved to a reparse point",
-            ));
-        }
-
-        // (2) Destination parent handle: no-follow open (BACKUP_SEMANTICS is
-        // required to obtain a directory handle). Reject a reparse point so a
-        // junction swap on the parent cannot redirect the rename, and confirm
-        // it is a directory.
+        // (1) Open, validate, and pin the destination parent. The missing
+        // FILE_SHARE_DELETE keeps the directory from being renamed/removed/
+        // replaced (swapped for a junction) while this handle is held across
+        // the rename below; FILE_FLAG_OPEN_REPARSE_POINT means a junction
+        // already planted at the path opens as the reparse point itself and is
+        // rejected here rather than traversed.
         let dir = OpenOptions::new()
             .access_mode(FILE_GENERIC_READ)
-            .share_mode(SHARE_ALL)
+            .share_mode(FILE_SHARE_READ | FILE_SHARE_WRITE)
             .custom_flags(FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT)
             .open(dest_dir)?;
         let dir_attrs = file_attributes(&dir)?;
@@ -163,8 +154,26 @@ mod imp {
             ));
         }
 
-        // (3) Handle-anchored rename relative to the validated directory handle.
-        set_rename_info(&src, dir.as_raw_handle() as HANDLE, leaf, replace_existing)
+        // (2) Source handle: no-follow open with DELETE access (required by
+        // FileRenameInfo). Reject a reparse point swapped in at the temp leaf.
+        let src = OpenOptions::new()
+            .access_mode(DELETE | FILE_GENERIC_READ)
+            .share_mode(SHARE_ALL)
+            .custom_flags(FILE_FLAG_OPEN_REPARSE_POINT)
+            .open(temp_path)?;
+        if file_attributes(&src)? & FILE_ATTRIBUTE_REPARSE_POINT != 0 {
+            return Err(io::Error::new(
+                io::ErrorKind::PermissionDenied,
+                "refusing to commit: temp file resolved to a reparse point",
+            ));
+        }
+
+        // (3) Handle-based rename. RootDirectory=NULL + full destination path;
+        // the pinned parent handle (`dir`) is held open across the call so the
+        // final directory component cannot be swapped for a reparse point.
+        let result = set_rename_info(&src, dest_path.as_os_str(), replace_existing);
+        drop(dir);
+        result
     }
 
     /// Returns the file attribute bitmask of an open handle.
@@ -187,20 +196,18 @@ mod imp {
         }
     }
 
-    /// Issues `SetFileInformationByHandle(FileRenameInfo)` on `src`, resolving
-    /// `leaf` relative to the `root_dir` directory handle.
+    /// Issues `SetFileInformationByHandle(FileRenameInfo)` on `src` to rename it
+    /// to the full path `dest_name`.
     ///
-    /// `FILE_RENAME_INFO` is a variable-length struct whose trailing
-    /// `FileName[1]` field is a flexible array; the buffer is allocated as a
-    /// `Vec<u64>` so it is large enough for the leaf and aligned to the
-    /// struct's 8-byte (HANDLE) alignment.
-    fn set_rename_info(
-        src: &File,
-        root_dir: HANDLE,
-        leaf: &OsStr,
-        replace_existing: bool,
-    ) -> io::Result<()> {
-        let name: Vec<u16> = leaf.encode_wide().collect();
+    /// `RootDirectory` is `NULL` (the only form the Win32
+    /// `SetFileInformationByHandle` accepts) and `FileName` is the complete
+    /// destination path. `FILE_RENAME_INFO` is a variable-length struct whose
+    /// trailing `FileName[1]` field is a flexible array; the buffer is
+    /// allocated as a `Vec<u64>` so it is large enough for the path and aligned
+    /// to the struct's 8-byte (HANDLE) alignment. `FileNameLength` is the path
+    /// length in bytes (not UTF-16 code units).
+    fn set_rename_info(src: &File, dest_name: &OsStr, replace_existing: bool) -> io::Result<()> {
+        let name: Vec<u16> = dest_name.encode_wide().collect();
         let name_bytes = name.len() * size_of::<u16>();
         // size_of::<FILE_RENAME_INFO>() already includes the 2-byte FileName[1]
         // stub, so header + name_bytes slightly over-allocates - harmless.
@@ -220,7 +227,7 @@ mod imp {
         unsafe {
             let info = base.cast::<FILE_RENAME_INFO>();
             (*info).Anonymous.ReplaceIfExists = replace_existing;
-            (*info).RootDirectory = root_dir;
+            (*info).RootDirectory = std::ptr::null_mut();
             (*info).FileNameLength = name_bytes as u32;
             let name_dst = std::ptr::addr_of_mut!((*info).FileName).cast::<u16>();
             std::ptr::copy_nonoverlapping(name.as_ptr(), name_dst, name.len());
