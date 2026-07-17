@@ -7,7 +7,7 @@ use std::thread;
 use std::time::Duration;
 
 use super::super::{AimdLimiter, OverloadReason};
-use super::limiter_with;
+use super::{limiter_with, limiter_with_clock};
 
 #[test]
 fn additive_increase_after_target_successes() {
@@ -60,15 +60,18 @@ fn increase_clamped_to_max_limit() {
 
 #[test]
 fn debounce_suppresses_back_to_back_decreases() {
-    let limiter = limiter_with(8, 1, 16);
-    // Seed a non-trivial RTT EMA so the debounce window has length.
+    // Driven by a virtual clock so "back to back" is guaranteed inside the
+    // debounce window regardless of runner load.
+    let (limiter, _clock) = limiter_with_clock(8, 1, 16);
+    // Seed a non-trivial RTT EMA so the debounce window has length (20 ms).
     limiter.update_rtt(10_000_000); // 10 ms
     // First overload: decreases.
     let t1 = limiter.try_acquire().unwrap();
     t1.record_overload(OverloadReason::RttSpike);
     let after_first = limiter.target();
     assert!(after_first < 8);
-    // Second overload immediately after: suppressed.
+    // Second overload with the clock unadvanced: strictly inside the window,
+    // so the decrease is suppressed.
     let t2 = limiter.try_acquire().unwrap();
     t2.record_overload(OverloadReason::RttSpike);
     assert_eq!(
@@ -237,7 +240,9 @@ fn max_limit_reached_during_slow_start() {
 
 #[test]
 fn debounce_expires_after_twice_rtt_ema() {
-    let limiter = limiter_with(16, 1, 64);
+    // Virtual clock: the window is crossed by advancing the clock explicitly,
+    // never by sleeping, so the assertion cannot race runner scheduling.
+    let (limiter, clock) = limiter_with_clock(16, 1, 64);
     // Seed RTT EMA to 5ms so debounce window = 10ms.
     for _ in 0..16 {
         limiter.update_rtt(5_000_000);
@@ -247,13 +252,13 @@ fn debounce_expires_after_twice_rtt_ema() {
     let after_first = limiter.target();
     assert_eq!(after_first, 8);
 
-    // Immediate second overload: debounce suppresses.
+    // Second overload with the clock unadvanced: debounce suppresses.
     let t = limiter.try_acquire().unwrap();
     t.record_overload(OverloadReason::ErrorRate);
     assert_eq!(limiter.target(), 8, "suppressed within debounce window");
 
-    // Wait past 2 * rtt_ema (~10ms), then overload again.
-    thread::sleep(Duration::from_millis(15));
+    // Advance past 2 * rtt_ema (10ms), then overload again.
+    clock.advance(11_000_000);
     let t = limiter.try_acquire().unwrap();
     t.record_overload(OverloadReason::ErrorRate);
     assert_eq!(
@@ -294,9 +299,12 @@ fn mixed_transient_and_deterministic_errors() {
 fn debounce_prevents_cascading_collapse() {
     // Without debounce, N back-to-back overloads would collapse
     // target to min_limit. With debounce, only the first should
-    // take effect within the window.
-    let limiter = limiter_with(64, 4, 256);
-    // Seed a 5ms RTT so debounce window is ~10ms.
+    // take effect within the window. A virtual clock makes the burst
+    // provably land inside the window regardless of runner scheduling:
+    // the flake was a real-time debounce window expiring mid-burst on a
+    // loaded runner.
+    let (limiter, clock) = limiter_with_clock(64, 4, 256);
+    // Seed a 5ms RTT so debounce window is 10ms.
     for _ in 0..16 {
         limiter.update_rtt(5_000_000);
     }
@@ -307,8 +315,8 @@ fn debounce_prevents_cascading_collapse() {
     let after_first = limiter.target();
     assert_eq!(after_first, 32);
 
-    // Rapid burst of 10 overloads within the debounce window (~10ms).
-    // None should decrease further.
+    // Rapid burst of 10 overloads with the clock unadvanced: every one lands
+    // strictly inside the debounce window, so none may decrease further.
     for _ in 0..10 {
         let t = limiter.try_acquire().unwrap();
         t.record_overload(OverloadReason::QueueSaturated);
@@ -319,8 +327,8 @@ fn debounce_prevents_cascading_collapse() {
         "debounce must prevent cascading collapse from rapid burst",
     );
 
-    // After debounce expires, next overload should take effect.
-    thread::sleep(Duration::from_millis(15));
+    // Advance past the 10ms window; the next overload should take effect.
+    clock.advance(11_000_000);
     let t = limiter.try_acquire().unwrap();
     t.record_overload(OverloadReason::DiskCommitPressure);
     assert_eq!(
