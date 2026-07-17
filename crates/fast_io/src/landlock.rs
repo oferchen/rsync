@@ -36,19 +36,46 @@ use landlock::{
 /// distributions without turning into a hard error.
 const READONLY_SYSTEM_PATHS: &[&str] = &["/etc", "/lib", "/lib64", "/usr", "/proc", "/run", "/var"];
 
+/// Filesystem-access enforcement tier of an engaged Landlock ruleset.
+///
+/// Mirrors the `landlock` crate's `RulesetStatus` without leaking that type
+/// into fast_io's public API, so the same variants are matchable on every
+/// target (the non-Linux stub carries a structurally identical enum).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum EnforcementStatus {
+    /// Every requested access right was honoured by the kernel.
+    FullyEnforced,
+    /// Best-effort downgrade dropped some requested rights: the running
+    /// kernel's Landlock ABI is older than the one requested, so the sandbox
+    /// is weaker than intended. Call [`best_effort_fs_downgrade`] for the list
+    /// of rights this kernel is missing.
+    PartiallyEnforced,
+    /// The kernel accepted the ruleset but applied no restrictions at all -
+    /// equivalent to running without a sandbox.
+    NotEnforced,
+}
+
+impl From<RulesetStatus> for EnforcementStatus {
+    fn from(status: RulesetStatus) -> Self {
+        match status {
+            RulesetStatus::FullyEnforced => Self::FullyEnforced,
+            RulesetStatus::PartiallyEnforced => Self::PartiallyEnforced,
+            RulesetStatus::NotEnforced => Self::NotEnforced,
+        }
+    }
+}
+
 /// Outcome of a [`crate::landlock::restrict_to_module_paths`] call.
 ///
 /// Carries enough detail for the daemon to log the actual enforcement level
 /// without leaking the `landlock` crate's types into the public API.
 #[derive(Debug)]
 pub enum LandlockOutcome {
-    /// The ruleset was created and applied. The carried [`RulesetStatus`]
-    /// distinguishes `FullyEnforced` (every requested right was honoured),
-    /// `PartiallyEnforced` (best-effort downgrade dropped some rights -
-    /// typically REFER on 5.13-5.18 and TRUNCATE on 5.13-6.1), and
-    /// `NotEnforced` (the kernel accepted the ruleset but applied nothing,
-    /// equivalent to no sandbox).
-    Enforced(RulesetStatus),
+    /// The ruleset was created and applied. The carried [`EnforcementStatus`]
+    /// distinguishes fully enforced, a best-effort partial downgrade (some
+    /// rights dropped - see [`best_effort_fs_downgrade`]), and a no-op ruleset
+    /// the kernel accepted but did not apply.
+    Enforced(EnforcementStatus),
     /// The kernel does not expose Landlock at all (pre-5.13, or the LSM is
     /// not enabled at boot). SEC-1 `*at` helpers remain the only defense.
     Unavailable,
@@ -89,7 +116,8 @@ pub fn is_supported() -> bool {
 /// subset it supports and silently drops the rest. ABI::V5 lands on Linux
 /// 6.7+ and adds the IPC scoping surface; older kernels degrade to V4/V3
 /// without surfacing as an error. The returned [`LandlockOutcome`] carries
-/// the [`RulesetStatus`] so callers can log the actual enforcement level.
+/// the [`EnforcementStatus`] so callers can log the actual enforcement level
+/// (and call [`best_effort_fs_downgrade`] to name the dropped rights).
 ///
 /// Call exactly once per daemon connection, after privilege drop and any
 /// chroot have completed, before any user-controlled file operation begins.
@@ -166,8 +194,56 @@ pub fn restrict_to_module_paths(allowed_roots: &[&Path]) -> LandlockOutcome {
     }
 
     match created.restrict_self() {
-        Ok(status) => LandlockOutcome::Enforced(status.ruleset),
+        Ok(status) => LandlockOutcome::Enforced(EnforcementStatus::from(status.ruleset)),
         Err(err) => LandlockOutcome::Error(io::Error::other(err.to_string())),
+    }
+}
+
+/// Names the filesystem access rights the running kernel's Landlock ABI lacks
+/// relative to the `ABI::V5` set that [`restrict_to_module_paths`] requests.
+///
+/// A [`EnforcementStatus::PartiallyEnforced`] outcome means best-effort
+/// downgrade silently dropped one or more requested rights because the kernel
+/// is too old. This turns that opaque tier into an actionable message so the
+/// operator learns exactly what the sandbox is missing rather than discovering
+/// it as a mysterious `EACCES` at transfer time.
+///
+/// Returns `None` when the kernel honours the full requested set (nothing was
+/// dropped). Otherwise returns a human-readable summary naming each missing
+/// right and the operations it gates - most importantly `refer`
+/// (cross-directory rename), which `--delay-updates` and `--backup-dir`
+/// staging renames depend on and which the kernel omits before Linux 5.19.
+#[must_use]
+pub fn best_effort_fs_downgrade() -> Option<String> {
+    describe_fs_downgrade(ABI::new_current())
+}
+
+/// Pure core of [`best_effort_fs_downgrade`]: given the highest Landlock ABI
+/// the running kernel supports, lists the filesystem rights dropped from the
+/// requested `ABI::V5` set. Factored out so the ABI-to-right mapping is
+/// unit-testable without a specific kernel.
+///
+/// Boundaries follow the `landlock` crate's ABI table: `refer` arrives in
+/// `ABI::V2` (Linux 5.19), `truncate` in `ABI::V3` (Linux 6.2), and
+/// `ioctl_dev` in `ABI::V5` (Linux 6.10); `ABI::V4` adds only network scopes,
+/// so it introduces no new filesystem right over `V3`.
+fn describe_fs_downgrade(current: ABI) -> Option<String> {
+    let mut missing: Vec<&str> = Vec::new();
+    if current < ABI::V2 {
+        missing.push(
+            "refer (cross-directory rename; --delay-updates and --backup-dir staging renames fail, added in Linux 5.19)",
+        );
+    }
+    if current < ABI::V3 {
+        missing.push("truncate (open-handle truncation, added in Linux 6.2)");
+    }
+    if current < ABI::V5 {
+        missing.push("ioctl_dev (device ioctls, added in Linux 6.10)");
+    }
+    if missing.is_empty() {
+        None
+    } else {
+        Some(missing.join("; "))
     }
 }
 
@@ -257,7 +333,7 @@ mod tests {
         run_isolated(move || {
             let outcome = restrict_to_module_paths(&[allowed_path.as_path()]);
             match outcome {
-                LandlockOutcome::Enforced(RulesetStatus::NotEnforced) => return Ok(()),
+                LandlockOutcome::Enforced(EnforcementStatus::NotEnforced) => return Ok(()),
                 LandlockOutcome::Enforced(_) => {}
                 LandlockOutcome::Unavailable => return Ok(()),
                 LandlockOutcome::Error(err) => return Err(format!("setup: {err}")),
@@ -290,7 +366,7 @@ mod tests {
         run_isolated(move || {
             let outcome = restrict_to_module_paths(&[module_path.as_path(), extra_path.as_path()]);
             match outcome {
-                LandlockOutcome::Enforced(RulesetStatus::NotEnforced) => return Ok(()),
+                LandlockOutcome::Enforced(EnforcementStatus::NotEnforced) => return Ok(()),
                 LandlockOutcome::Enforced(_) => {}
                 LandlockOutcome::Unavailable => return Ok(()),
                 LandlockOutcome::Error(err) => return Err(format!("setup: {err}")),
@@ -324,7 +400,7 @@ mod tests {
         run_isolated(move || {
             let outcome = restrict_to_module_paths(&[module_path.as_path(), extra_path.as_path()]);
             match outcome {
-                LandlockOutcome::Enforced(RulesetStatus::NotEnforced) => return Ok(()),
+                LandlockOutcome::Enforced(EnforcementStatus::NotEnforced) => return Ok(()),
                 LandlockOutcome::Enforced(_) => {}
                 LandlockOutcome::Unavailable => return Ok(()),
                 LandlockOutcome::Error(err) => return Err(format!("setup: {err}")),
@@ -351,7 +427,7 @@ mod tests {
         run_isolated(move || {
             let outcome = restrict_to_module_paths(&[]);
             match outcome {
-                LandlockOutcome::Enforced(RulesetStatus::NotEnforced) => return Ok(()),
+                LandlockOutcome::Enforced(EnforcementStatus::NotEnforced) => return Ok(()),
                 LandlockOutcome::Enforced(_) => {}
                 LandlockOutcome::Unavailable => return Ok(()),
                 LandlockOutcome::Error(err) => return Err(format!("setup: {err}")),
@@ -386,7 +462,7 @@ mod tests {
             assert!(is_supported(), "probe must remain idempotent");
             let outcome = restrict_to_module_paths(&[allowed_path.as_path()]);
             match outcome {
-                LandlockOutcome::Enforced(RulesetStatus::NotEnforced) => return Ok(()),
+                LandlockOutcome::Enforced(EnforcementStatus::NotEnforced) => return Ok(()),
                 LandlockOutcome::Enforced(_) => {}
                 LandlockOutcome::Unavailable => return Ok(()),
                 LandlockOutcome::Error(err) => return Err(format!("setup: {err}")),
@@ -409,7 +485,7 @@ mod tests {
         run_isolated(move || {
             let first = restrict_to_module_paths(&[allowed_path.as_path()]);
             match first {
-                LandlockOutcome::Enforced(RulesetStatus::NotEnforced) => return Ok(()),
+                LandlockOutcome::Enforced(EnforcementStatus::NotEnforced) => return Ok(()),
                 LandlockOutcome::Enforced(_) => {}
                 LandlockOutcome::Unavailable => return Ok(()),
                 LandlockOutcome::Error(err) => return Err(format!("first call: {err}")),
@@ -449,7 +525,7 @@ mod tests {
         run_isolated(move || {
             let outcome = restrict_to_module_paths(&[module_path.as_path()]);
             match outcome {
-                LandlockOutcome::Enforced(RulesetStatus::NotEnforced) => return Ok(()),
+                LandlockOutcome::Enforced(EnforcementStatus::NotEnforced) => return Ok(()),
                 LandlockOutcome::Enforced(_) => {}
                 LandlockOutcome::Unavailable => return Ok(()),
                 LandlockOutcome::Error(err) => return Err(format!("setup: {err}")),
@@ -478,7 +554,7 @@ mod tests {
         run_isolated(move || {
             let outcome = restrict_to_module_paths(&[module_path.as_path()]);
             match outcome {
-                LandlockOutcome::Enforced(RulesetStatus::NotEnforced) => return Ok(()),
+                LandlockOutcome::Enforced(EnforcementStatus::NotEnforced) => return Ok(()),
                 LandlockOutcome::Enforced(_) => {}
                 LandlockOutcome::Unavailable => return Ok(()),
                 LandlockOutcome::Error(err) => return Err(format!("setup: {err}")),
@@ -494,5 +570,51 @@ mod tests {
         })
         .expect("readonly-system-path scenario");
         drop(module);
+    }
+
+    #[test]
+    fn downgrade_on_v1_names_every_dropped_right() {
+        // A 5.13-5.18 kernel (ABI::V1) drops refer, truncate, and ioctl_dev
+        // from the requested V5 set. The operator must be told each one - the
+        // refer loss silently breaks --delay-updates / --backup-dir renames,
+        // which is the whole reason this message exists.
+        let msg = describe_fs_downgrade(ABI::V1).expect("V1 must report a downgrade");
+        assert!(msg.contains("refer"), "V1 must name refer: {msg}");
+        assert!(msg.contains("truncate"), "V1 must name truncate: {msg}");
+        assert!(msg.contains("ioctl_dev"), "V1 must name ioctl_dev: {msg}");
+        assert!(
+            msg.contains("--delay-updates"),
+            "refer loss must spell out the --delay-updates consequence: {msg}"
+        );
+    }
+
+    #[test]
+    fn downgrade_tiers_track_the_abi_boundaries() {
+        // refer arrives at V2 (5.19), truncate at V3 (6.2), ioctl_dev at V5
+        // (6.10); V4 (6.7) adds only network scopes, so it still lacks
+        // ioctl_dev but nothing else on the filesystem axis.
+        let v2 = describe_fs_downgrade(ABI::V2).expect("V2 still misses truncate + ioctl_dev");
+        assert!(!v2.contains("refer"), "V2 has refer: {v2}");
+        assert!(v2.contains("truncate") && v2.contains("ioctl_dev"), "{v2}");
+
+        let v3 = describe_fs_downgrade(ABI::V3).expect("V3 still misses ioctl_dev");
+        assert!(!v3.contains("refer") && !v3.contains("truncate"), "{v3}");
+        assert!(v3.contains("ioctl_dev"), "{v3}");
+
+        let v4 = describe_fs_downgrade(ABI::V4).expect("V4 still misses ioctl_dev");
+        assert_eq!(v3, v4, "V4 adds no new filesystem right over V3");
+    }
+
+    #[test]
+    fn full_v5_reports_no_downgrade() {
+        // A kernel honouring the full requested set has nothing to warn about.
+        assert!(describe_fs_downgrade(ABI::V5).is_none());
+    }
+
+    #[test]
+    fn best_effort_downgrade_matches_current_abi() {
+        // The public probe must agree with the pure mapping for whatever ABI
+        // this host exposes, and must never panic.
+        assert_eq!(best_effort_fs_downgrade(), describe_fs_downgrade(ABI::new_current()));
     }
 }
