@@ -325,14 +325,15 @@ where
     {
         config.group_mapping = Some(mapping);
     }
-    // upstream: options.c:2859-2860 - `--skip-compress=LIST` is emitted when the
-    // client is the receiver (this process is the server sender); the sender
-    // skips compression for matching suffixes.
-    if let Some(spec) = &long_flags.skip_compress
-        && let Ok(list) = engine::SkipCompressList::parse(spec)
-    {
-        config.skip_compress = Some(list);
-    }
+    // upstream: options.c:2859-2860 - `--skip-compress=LIST` is forwarded to the
+    // server sender, but token.c:225 set_compression()'s per-file suffix lookup
+    // is compiled out under `#if 0` ("No compression algorithms currently allow
+    // mid-stream changing of the level."). So a negotiated codec frames EVERY
+    // file (token.c:1065 send_token() dispatches on the global do_compression);
+    // the suffix list never switches framing per file. Applying it here would
+    // emit plain tokens for a skip-matched file and desync the client-receiver's
+    // session-level codec reader. The arg is accepted for compatibility but has
+    // no per-file wire effect.
     // upstream: options.c:2886-2890 - `--partial-dir DIR` forwarded by the
     // sender. The server-side receiver moves interrupted temp files into this
     // directory and looks for resume basis files there. Without applying this
