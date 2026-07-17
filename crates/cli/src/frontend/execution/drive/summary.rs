@@ -45,6 +45,9 @@ pub(crate) struct TransferExecutionInputs<'a> {
     pub(crate) verbosity: u8,
     pub(crate) list_only: bool,
     pub(crate) dry_run: bool,
+    /// `--only-write-batch` (upstream `write_batch < 0`): appends the
+    /// `" (BATCH ONLY)"` speedup suffix in the summary trailer.
+    pub(crate) only_write_batch: bool,
     /// `--info=copy`: opt-in to the oc-rsync `Copy method` line that reports
     /// which local-copy I/O acceleration (clonefile/reflink/io_uring) ran.
     pub(crate) show_copy_method: bool,
@@ -87,6 +90,7 @@ where
         verbosity,
         list_only,
         dry_run,
+        only_write_batch,
         show_copy_method,
         show_atimes,
         show_crtimes,
@@ -170,6 +174,7 @@ where
                     progress_rendered_live,
                     list_only,
                     dry_run,
+                    only_write_batch,
                     out_format_template,
                     &out_format_context,
                     name_level,
@@ -307,7 +312,8 @@ fn emit_log_output(params: EmitLogOutputParams<'_>) -> io::Result<()> {
         stats_level,
         false,
         list_only,
-        false,
+        false, // dry_run
+        false, // only_write_batch
         Some(&log.format),
         &context,
         name_level,

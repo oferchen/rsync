@@ -1063,6 +1063,9 @@ where
             verbosity,
             list_only,
             dry_run,
+            // `--only-write-batch` (upstream `write_batch < 0`) drives the
+            // `" (BATCH ONLY)"` speedup suffix in the summary trailer.
+            only_write_batch: only_write_batch.is_some(),
             // `--info=copy` opts into the oc-rsync `Copy method` stats line.
             show_copy_method,
             // `-U`/`--atimes` and `--crtimes` add the ATIME/CRTIME columns to

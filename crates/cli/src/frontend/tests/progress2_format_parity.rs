@@ -10,7 +10,7 @@
 //!
 //! The format string `"\r%15s %3d%% %7.2f%s %s%s"` produces:
 //!   - Right-aligned bytes (15-char field, thousands-separated)
-//!   - Right-aligned percentage (4-char field: ` N%`, `NN%`, `100%`, `??%`)
+//!   - Right-aligned percentage (4-char field: ` N%`, `NN%`, `100%`; never `??%`)
 //!   - Right-aligned transfer rate (11-char field: value + unit suffix kB/s, MB/s, GB/s)
 //!   - Right-aligned time (10-char field: H:MM:SS or ??:??:??)
 //!   - Final tick: `(xfr#N, to-chk=M/T)` or `(xfr#N, ir-chk=M/T)` trailer
@@ -48,7 +48,8 @@ fn validate_final_tick(line: &str) -> Result<(), String> {
         ));
     }
 
-    // Must contain a percentage (digits followed by % or ??%)
+    // Must contain a percentage (digits followed by %; the percent field never
+    // uses a `??` sentinel - progress.c:128).
     if !trimmed.contains('%') {
         return Err(format!("final tick missing percentage: {trimmed:?}"));
     }
@@ -443,7 +444,8 @@ fn progress2_percentage_field_width_4_chars() {
         (0, Some(100), "  0%"),
         (50, Some(100), " 50%"),
         (100, Some(100), "100%"),
-        (0, None, " ??%"),
+        // upstream progress.c:128 - unknown total resolves to 100%, never `??%`.
+        (0, None, "100%"),
     ];
 
     for (bytes, total, expected) in test_cases {

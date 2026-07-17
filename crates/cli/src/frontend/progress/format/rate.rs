@@ -41,54 +41,24 @@ pub(crate) fn format_human_rate(rate: f64, base: f64) -> String {
     format!("{rate:.2}")
 }
 
-pub(crate) fn format_verbose_rate_human(rate: f64) -> (String, &'static str) {
-    const UNITS: &[(&str, f64)] = &[
-        ("PB/s", 1_000_000_000_000_000.0),
-        ("TB/s", 1_000_000_000_000.0),
-        ("GB/s", 1_000_000_000.0),
-        ("MB/s", 1_000_000.0),
-        ("kB/s", 1_000.0),
-    ];
-
-    for (unit, threshold) in UNITS {
-        if rate >= *threshold {
-            let value = rate / *threshold;
-            return (format!("{value:.2}"), *unit);
-        }
-    }
-
-    (format!("{rate:.2}"), "B/s")
-}
-
 /// Formats a transfer rate in the `kB/s`, `MB/s`, or `GB/s` ranges.
+///
+/// upstream: progress.c:108-116 rprint_progress - the progress rate column is
+/// always scaled with base-1024 divisors (kB/s / MB/s / GB/s) and never honours
+/// `-h`/`-hh`; the human-readable modes affect only the byte counters, so the
+/// mode is intentionally ignored here.
 pub(crate) fn format_progress_rate(
     bytes: u64,
     elapsed: Duration,
-    human_readable: HumanReadableMode,
+    _human_readable: HumanReadableMode,
 ) -> String {
-    if bytes == 0 || elapsed.is_zero() {
-        return if human_readable.is_enabled() {
-            "0.00B/s".to_owned()
-        } else {
-            "0.00kB/s".to_owned()
-        };
-    }
-
     let seconds = elapsed.as_secs_f64();
-    if seconds <= 0.0 {
-        return if human_readable.is_enabled() {
-            "0.00B/s".to_owned()
-        } else {
-            "0.00kB/s".to_owned()
-        };
-    }
-
-    let rate = bytes as f64 / seconds;
-    if !human_readable.is_enabled() {
-        return format_progress_rate_decimal(rate);
-    }
-
-    format_progress_rate_human(rate)
+    let rate = if bytes == 0 || seconds <= 0.0 {
+        0.0
+    } else {
+        bytes as f64 / seconds
+    };
+    format_progress_rate_decimal(rate)
 }
 
 pub(crate) fn format_progress_rate_decimal(rate: f64) -> String {
@@ -105,11 +75,6 @@ pub(crate) fn format_progress_rate_decimal(rate: f64) -> String {
     }
 }
 
-pub(crate) fn format_progress_rate_human(rate: f64) -> String {
-    let display = format_verbose_rate_human(rate);
-    format!("{}{}", display.0, display.1)
-}
-
 /// Formats a pre-computed transfer rate (bytes/sec) for the progress line.
 ///
 /// Unlike [`format_progress_rate`] which computes the rate from cumulative
@@ -121,21 +86,10 @@ pub(crate) fn format_progress_rate_human(rate: f64) -> String {
 /// upstream: progress.c:108-116 rprint_progress - rate unit selection
 pub(crate) fn format_progress_rate_from_value(
     rate: f64,
-    human_readable: HumanReadableMode,
+    _human_readable: HumanReadableMode,
 ) -> String {
-    if rate <= 0.0 {
-        return if human_readable.is_enabled() {
-            "0.00B/s".to_owned()
-        } else {
-            "0.00kB/s".to_owned()
-        };
-    }
-
-    if !human_readable.is_enabled() {
-        return format_progress_rate_decimal(rate);
-    }
-
-    format_progress_rate_human(rate)
+    // upstream: progress.c:108-116 - always base-1024, never `-h`/`-hh`.
+    format_progress_rate_decimal(rate.max(0.0))
 }
 
 #[cfg(test)]
@@ -178,25 +132,46 @@ mod tests {
         assert_eq!(format_human_rate(1_048_576.0, 1024.0), "1.00M");
     }
 
+    /// Progress rate always uses base-1024 units regardless of `-h`/`-hh`.
+    /// upstream: progress.c:108-116 rprint_progress never consults human_num.
     #[test]
-    fn format_verbose_rate_human_small() {
-        let (value, unit) = format_verbose_rate_human(500.0);
-        assert_eq!(value, "500.00");
-        assert_eq!(unit, "B/s");
+    fn progress_rate_ignores_human_readable_mode() {
+        // 2 MiB/s must render as `2.00MB/s` in every human-readable mode -
+        // never the base-1000 `2.10MB/s` or a `B/s`/`TB/s` unit.
+        let bytes = 2 * 1024 * 1024;
+        for mode in [
+            HumanReadableMode::Grouped,
+            HumanReadableMode::DecimalUnits,
+            HumanReadableMode::BinaryUnits,
+        ] {
+            assert_eq!(
+                format_progress_rate(bytes, Duration::from_secs(1), mode),
+                "2.00MB/s",
+                "progress rate must stay base-1024 under {mode:?}"
+            );
+            assert_eq!(
+                format_progress_rate_from_value(bytes as f64, mode),
+                "2.00MB/s",
+                "from_value progress rate must stay base-1024 under {mode:?}"
+            );
+        }
     }
 
+    /// A zero rate always renders `0.00kB/s`, never `0.00B/s`.
+    /// upstream: progress.c:113-116 - a zero rate falls into the `kB/s` tier.
     #[test]
-    fn format_verbose_rate_human_kilo() {
-        let (value, unit) = format_verbose_rate_human(1_500.0);
-        assert_eq!(value, "1.50");
-        assert_eq!(unit, "kB/s");
-    }
-
-    #[test]
-    fn format_verbose_rate_human_mega() {
-        let (value, unit) = format_verbose_rate_human(2_500_000.0);
-        assert_eq!(value, "2.50");
-        assert_eq!(unit, "MB/s");
+    fn progress_rate_zero_is_kb_per_sec_in_every_mode() {
+        for mode in [
+            HumanReadableMode::Grouped,
+            HumanReadableMode::DecimalUnits,
+            HumanReadableMode::BinaryUnits,
+        ] {
+            assert_eq!(
+                format_progress_rate(0, Duration::from_secs(1), mode),
+                "0.00kB/s"
+            );
+            assert_eq!(format_progress_rate_from_value(0.0, mode), "0.00kB/s");
+        }
     }
 
     /// Upstream `rprint_progress` (progress.c:108-116) caps its unit scaling
