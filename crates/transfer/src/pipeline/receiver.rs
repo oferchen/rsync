@@ -731,6 +731,126 @@ mod tests {
         drop(pr);
     }
 
+    /// A cleanly committed file is recorded for `MSG_SUCCESS` emission, and only
+    /// once, so the sender is told to unlink the source exactly one time.
+    ///
+    /// This is the receiver half of the `--remove-source-files` crash-safety
+    /// contract: `success_indices` is populated only inside `verify_checksum`
+    /// while draining a post-rename `CommitResult`, so recording an index here
+    /// means the file has durably landed at the destination. A refactor that
+    /// confirmed a source before the commit completed - the data-loss bug this
+    /// mechanism prevents - would have to add a second producer, which this test
+    /// would expose as an out-of-band success.
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `receiver.c:1063-1069` - `send_msg_success(fname, ndx)` on `recv_ok == 1`.
+    #[test]
+    fn clean_commit_records_msg_success_once() {
+        use crate::pipeline::messages::ComputedChecksum;
+
+        let mut pr = PipelinedReceiver::new(DiskCommitConfig::default()).unwrap();
+
+        let mut expected = [0u8; ChecksumVerifier::MAX_DIGEST_LEN];
+        expected[0] = 0xAA;
+        expected[1] = 0xBB;
+
+        pr.expected_checksums.push_back(PendingChecksum {
+            expected,
+            len: 4,
+            file_path: PathBuf::from("/dest/ok.txt"),
+            file_index: 9,
+        });
+
+        // A matching checksum on a committed (post-rename) result confirms the file.
+        let result = CommitResult {
+            bytes_written: 64,
+            file_entry_index: 0,
+            metadata_error: None,
+            computed_checksum: Some(ComputedChecksum {
+                bytes: expected,
+                len: 4,
+            }),
+            delayed_path: None,
+            backup_notice: None,
+        };
+
+        pr.verify_checksum(&result).unwrap();
+
+        // The confirmed index is queued so the caller emits MSG_SUCCESS(ndx).
+        assert_eq!(
+            pr.drain_new_success_indices(),
+            vec![9],
+            "a durably committed file must be confirmed for MSG_SUCCESS"
+        );
+        // Draining clears it, so the sender is never told to unlink twice.
+        assert!(
+            pr.drain_new_success_indices().is_empty(),
+            "a confirmation must not be replayed on a second drain"
+        );
+
+        drop(pr);
+    }
+
+    /// A file that fails checksum verification (a would-be-corrupt commit that is
+    /// discarded and queued for redo) must NOT be confirmed, so no `MSG_SUCCESS`
+    /// reaches the sender and it keeps the source for the retry.
+    ///
+    /// This is the receiver-side guard against data loss on a failed commit: the
+    /// mismatch branch of `verify_checksum` returns before the
+    /// `success_indices.push`, so an interrupted or corrupt transfer never
+    /// tells the sender its source landed safely. Without this assertion a
+    /// refactor could push the success before the checksum check and silently
+    /// re-introduce the inline-unlink data-loss bug.
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `receiver.c:965-968` - checksum failure discards the update and redoes it.
+    /// - `receiver.c:1063-1069` - `send_msg_success` runs only on `recv_ok == 1`.
+    #[test]
+    fn checksum_mismatch_withholds_msg_success() {
+        use crate::pipeline::messages::ComputedChecksum;
+
+        let mut pr = PipelinedReceiver::new(DiskCommitConfig::default()).unwrap();
+
+        let mut expected = [0u8; ChecksumVerifier::MAX_DIGEST_LEN];
+        expected[0] = 0xAA;
+
+        pr.expected_checksums.push_back(PendingChecksum {
+            expected,
+            len: 4,
+            file_path: PathBuf::from("/dest/corrupt.txt"),
+            file_index: 4,
+        });
+
+        // A different computed checksum: the update is discarded and queued for redo.
+        let mut computed_bytes = [0u8; ChecksumVerifier::MAX_DIGEST_LEN];
+        computed_bytes[0] = 0xBB;
+        let result = CommitResult {
+            bytes_written: 100,
+            file_entry_index: 0,
+            metadata_error: None,
+            computed_checksum: Some(ComputedChecksum {
+                bytes: computed_bytes,
+                len: 4,
+            }),
+            delayed_path: None,
+            backup_notice: None,
+        };
+
+        pr.verify_checksum(&result).unwrap();
+
+        // The file is redone, not confirmed: the sender receives no MSG_SUCCESS
+        // and therefore never unlinks the source of a discarded update.
+        assert_eq!(pr.redo_count(), 1, "a failed verification queues a redo");
+        assert!(
+            pr.drain_new_success_indices().is_empty(),
+            "a discarded update must never confirm a source removal"
+        );
+
+        drop(pr);
+    }
+
     #[cfg(unix)]
     #[test]
     fn permission_denied_on_output_is_recoverable() {
