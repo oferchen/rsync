@@ -119,6 +119,8 @@ impl ReceiverContext {
         );
 
         let mut files_transferred: usize = 0;
+        // upstream: receiver.c:784 total_transferred_size, summed with files_transferred.
+        let mut transferred_file_size: u64 = 0;
         let mut bytes_received: u64 = 0;
         let mut literal_data: u64 = 0;
         let mut matched_data: u64 = 0;
@@ -151,6 +153,7 @@ impl ReceiverContext {
             let delayed;
             (
                 files_transferred,
+                transferred_file_size,
                 bytes_received,
                 literal_data,
                 matched_data,
@@ -196,20 +199,28 @@ impl ReceiverContext {
                     })
                     .collect();
 
-                let (redo_transferred, redo_bytes, redo_literal, redo_matched, _, redo_delayed) =
-                    self.run_pipeline_loop_decoupled(
-                        reader,
-                        writer,
-                        redo_config,
-                        &setup,
-                        redo_files,
-                        &mut metadata_errors,
-                        true,
-                        total_files,
-                        &mut no_progress,
-                    )?;
+                let (
+                    redo_transferred,
+                    redo_transferred_size,
+                    redo_bytes,
+                    redo_literal,
+                    redo_matched,
+                    _,
+                    redo_delayed,
+                ) = self.run_pipeline_loop_decoupled(
+                    reader,
+                    writer,
+                    redo_config,
+                    &setup,
+                    redo_files,
+                    &mut metadata_errors,
+                    true,
+                    total_files,
+                    &mut no_progress,
+                )?;
 
                 files_transferred += redo_transferred;
+                transferred_file_size += redo_transferred_size;
                 bytes_received += redo_bytes;
                 literal_data += redo_literal;
                 matched_data += redo_matched;
@@ -282,6 +293,7 @@ impl ReceiverContext {
         let total_source_bytes: u64 = self.file_list.iter().map(|e| e.size()).sum();
 
         stats.files_transferred = files_transferred;
+        stats.transferred_file_size = transferred_file_size;
         stats.bytes_received = bytes_received;
         stats.literal_data = literal_data;
         stats.matched_data = matched_data;

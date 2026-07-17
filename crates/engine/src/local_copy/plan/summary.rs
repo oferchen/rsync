@@ -515,6 +515,7 @@ impl LocalCopySummary {
     pub fn from_receiver_stats(
         files_listed: usize,
         files_transferred: usize,
+        transferred_file_size: u64,
         bytes_received: u64,
         bytes_sent: u64,
         total_source_bytes: u64,
@@ -527,6 +528,9 @@ impl LocalCopySummary {
         Self {
             regular_files_total: files_listed as u64,
             files_copied: files_transferred as u64,
+            // upstream: receiver.c:784 stats.total_transferred_size, computed
+            // locally by the pulling client's receiver (never sent on the wire).
+            transferred_file_size,
             // upstream never sends `stats.created_*` over the wire - the client
             // recomputes the "Number of created files" breakdown locally from
             // its own itemize pass (receiver.c:733-746). For a remote pull the
@@ -566,6 +570,7 @@ impl LocalCopySummary {
     pub fn from_generator_stats(
         files_listed: usize,
         files_transferred: usize,
+        transferred_file_size: u64,
         bytes_received: u64,
         bytes_sent: u64,
         total_source_bytes: u64,
@@ -578,6 +583,9 @@ impl LocalCopySummary {
         Self {
             regular_files_total: files_listed as u64,
             files_copied: files_transferred as u64,
+            // upstream: sender.c:343 stats.total_transferred_size, computed
+            // locally by the pushing client's sender (never sent on the wire).
+            transferred_file_size,
             // See `from_receiver_stats`: on a push the local sender reconstructs
             // the created breakdown from the `ITEM_IS_NEW` iflags it reads off
             // the wire (sender.c:295-308), so map each per-type count through.
@@ -827,6 +835,7 @@ mod tests {
         let summary = LocalCopySummary::from_receiver_stats(
             100,
             50,
+            7000,
             1024,
             256,
             8192,
@@ -838,6 +847,10 @@ mod tests {
         );
         assert_eq!(summary.regular_files_total(), 100);
         assert_eq!(summary.files_copied(), 50);
+        // #178: the receiver-accumulated total_transferred_size (sum of F_LENGTH
+        // over transferred files) must reach the summary; a pulling client that
+        // dropped it printed "Total transferred file size: 0" on all remote pulls.
+        assert_eq!(summary.transferred_file_size(), 7000);
         assert_eq!(summary.bytes_received(), 1024);
         assert_eq!(summary.bytes_sent(), 256);
         assert_eq!(summary.total_source_bytes(), 8192);
@@ -849,6 +862,7 @@ mod tests {
         let summary = LocalCopySummary::from_receiver_stats(
             10,
             5,
+            2000,
             2048,
             512,
             4096,
@@ -860,6 +874,9 @@ mod tests {
         );
         assert_eq!(summary.bytes_copied(), 800);
         assert_eq!(summary.matched_bytes(), 1200);
+        // literal + matched of a fully received file equals its F_LENGTH; the
+        // summed transferred-file size is threaded through independently.
+        assert_eq!(summary.transferred_file_size(), 2000);
         assert_eq!(summary.files_copied(), 5);
         assert_eq!(summary.bytes_received(), 2048);
     }
@@ -881,6 +898,7 @@ mod tests {
         let summary = LocalCopySummary::from_generator_stats(
             10,
             5,
+            0,
             0,
             2048,
             0,
@@ -913,6 +931,7 @@ mod tests {
         let summary = LocalCopySummary::from_receiver_stats(
             10,
             5,
+            2000,
             2048,
             512,
             4096,
@@ -950,6 +969,7 @@ mod tests {
             // files_transferred is 5 (includes in-place updates); the created
             // reg count must NOT come from this - it is derived from created_stats.
             5,
+            8192,
             4096,
             256,
             8192,
@@ -983,6 +1003,7 @@ mod tests {
             10,
             3,
             0,
+            0,
             2048,
             0,
             Duration::from_secs(1),
@@ -1004,6 +1025,7 @@ mod tests {
         let summary = LocalCopySummary::from_generator_stats(
             200,
             75,
+            204_800,
             1793,
             2048,
             204_800,
@@ -1019,6 +1041,10 @@ mod tests {
         // #477: the sender-accumulated literal_data must reach the summary
         // (previously dropped, so daemon/ssh-push --stats printed 0).
         assert_eq!(summary.bytes_copied(), 2800);
+        // #178: the sender-accumulated total_transferred_size must reach the
+        // summary too (previously dropped, so daemon/ssh-push --stats printed
+        // "Total transferred file size: 0").
+        assert_eq!(summary.transferred_file_size(), 204_800);
         assert_eq!(summary.total_elapsed(), Duration::from_secs(3));
     }
 

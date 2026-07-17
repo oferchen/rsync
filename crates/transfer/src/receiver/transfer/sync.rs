@@ -62,6 +62,8 @@ impl ReceiverContext {
         debug_log!(Recv, 1, "recv_files({}) starting", file_count);
 
         let mut files_transferred = 0;
+        // upstream: receiver.c:784 total_transferred_size, summed with files_transferred.
+        let mut transferred_file_size = 0u64;
         let mut bytes_received = 0u64;
 
         // First pass: create directories and symlinks from file list.
@@ -563,6 +565,7 @@ impl ReceiverContext {
             // read fd, so exclude them from bytes_received.
             bytes_received += literal_bytes;
             files_transferred += 1;
+            transferred_file_size += file_entry.size();
         }
 
         // upstream: generator.c:2169 finish_hard_link() itemizes every follower
@@ -601,6 +604,7 @@ impl ReceiverContext {
         Ok(TransferStats {
             files_listed: file_count,
             files_transferred,
+            transferred_file_size,
             bytes_received,
             bytes_sent: 0,
             total_source_bytes,

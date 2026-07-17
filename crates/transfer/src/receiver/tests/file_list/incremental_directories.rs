@@ -157,6 +157,7 @@ fn transfer_stats_has_incremental_fields() {
     let stats = TransferStats {
         files_listed: 0,
         files_transferred: 0,
+        transferred_file_size: 0,
         bytes_received: 0,
         bytes_sent: 0,
         total_source_bytes: 0,
