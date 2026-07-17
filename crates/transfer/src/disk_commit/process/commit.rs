@@ -379,15 +379,27 @@ pub(super) fn rename_config_sandboxed(
     rename_with_io_uring_fallback(old_path, new_path)
 }
 
-/// Non-Unix: the `*at` sandbox helpers do not exist, so the commit rename keeps
-/// the path-based [`rename_with_io_uring_fallback`] with no behavior change.
+/// Non-Unix: the `*at` sandbox helpers do not exist. On Windows the commit
+/// rename routes through the reparse-point-anchored handle rename
+/// ([`crate::temp_guard::commit_rename_no_follow`]), the counterpart to the
+/// Unix `renameat` anchoring, so a junction/mount-point swap on the commit
+/// parent between temp-create and rename cannot redirect the committed file
+/// (CVE-2024-12747 residual). Other non-Unix targets keep the path-based
+/// [`rename_with_io_uring_fallback`] with no behavior change.
 #[cfg(not(unix))]
 pub(super) fn rename_config_sandboxed(
     _config: &DiskCommitConfig,
     old_path: &Path,
     new_path: &Path,
 ) -> io::Result<bool> {
-    rename_with_io_uring_fallback(old_path, new_path)
+    #[cfg(windows)]
+    {
+        crate::temp_guard::commit_rename_no_follow(old_path, new_path)
+    }
+    #[cfg(not(windows))]
+    {
+        rename_with_io_uring_fallback(old_path, new_path)
+    }
 }
 
 /// Returns `true` when an I/O error represents a cross-device link (EXDEV).

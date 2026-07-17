@@ -192,6 +192,9 @@ pub mod stdio_shutdown;
 pub mod syscall_batch;
 /// Zero-copy file writer that pushes literal chunks via `vmsplice` + `splice`.
 pub mod vmsplice_writer;
+/// No-follow temp-create and handle-anchored commit rename for the Windows
+/// receiver (reparse-point TOCTOU hardening, CVE-2024-12747 residual).
+pub mod win_atomic_commit;
 /// Windows extended-length path (`\\?\`) prefixing helper.
 pub mod win_path;
 /// NTFS sparse-file marking (`FSCTL_SET_SPARSE`) with a non-Windows no-op stub.
@@ -417,6 +420,8 @@ pub use temp_file_strategy::WindowsTempFileStrategy;
 pub use temp_file_strategy::{
     DefaultTempFileStrategy, NamedTempFileStrategy, TempFileHandle, TempFileKind, TempFileStrategy,
 };
+#[cfg(windows)]
+pub use win_atomic_commit::{create_new_no_follow, rename_no_follow};
 pub use win_path::to_extended_path;
 pub use win_sparse::mark_file_sparse;
 pub use win_symlink::{
