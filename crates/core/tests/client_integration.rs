@@ -299,7 +299,14 @@ fn test_atimes_preservation() {
         let subdir_atime = FileTime::from_last_access_time(&subdir_meta);
         let subdir_mtime = FileTime::from_last_modification_time(&subdir_meta);
 
-        assert_time_close(subdir_atime, src_dir_atime, "subdir atime");
+        // upstream: rsync.c:588-589 - `!atimes_ndx || S_ISDIR` always sets
+        // ATTRS_SKIP_ATIME for directories, so a directory's access time is
+        // never written even under --atimes; only its mtime is preserved.
+        assert_ne!(
+            subdir_atime.unix_seconds(),
+            src_dir_atime.unix_seconds(),
+            "directory atime must not be preserved even under --atimes"
+        );
         assert_time_close(subdir_mtime, src_dir_mtime, "subdir mtime");
     });
 }

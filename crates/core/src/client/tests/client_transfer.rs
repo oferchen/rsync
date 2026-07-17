@@ -250,7 +250,9 @@ fn run_client_preserves_file_metadata() {
     assert_eq!(dest_metadata.permissions().mode() & 0o777, mode);
     let dest_atime = FileTime::from_last_access_time(&dest_metadata);
     let dest_mtime = FileTime::from_last_modification_time(&dest_metadata);
-    assert_eq!(dest_atime, atime);
+    // upstream: rsync.c:588-589 - without --atimes/-U the access time is left
+    // unchanged (ATTRS_SKIP_ATIME); permissions and mtime are preserved.
+    assert_ne!(dest_atime, atime, "atime must not be preserved without -U");
     assert_eq!(dest_mtime, mtime);
     assert_eq!(summary.files_copied(), 1);
 }
@@ -289,7 +291,9 @@ fn run_client_preserves_directory_metadata() {
     assert_eq!(dest_metadata.permissions().mode() & 0o777, mode);
     let dest_atime = FileTime::from_last_access_time(&dest_metadata);
     let dest_mtime = FileTime::from_last_modification_time(&dest_metadata);
-    assert_eq!(dest_atime, atime);
+    // upstream: rsync.c:588-589 - directories always skip atime (S_ISDIR sets
+    // ATTRS_SKIP_ATIME); permissions and mtime are preserved.
+    assert_ne!(dest_atime, atime, "directory atime must never be preserved");
     assert_eq!(dest_mtime, mtime);
     assert!(summary.directories_created() >= 1);
 }
@@ -343,7 +347,12 @@ fn run_client_updates_existing_directory_metadata() {
     assert_eq!(copied_metadata.permissions().mode() & 0o777, source_mode);
     let copied_atime = FileTime::from_last_access_time(&copied_metadata);
     let copied_mtime = FileTime::from_last_modification_time(&copied_metadata);
-    assert_eq!(copied_atime, source_atime);
+    // upstream: rsync.c:588-589 - directories always skip atime; the existing
+    // directory's permissions and mtime are updated to the source values.
+    assert_ne!(
+        copied_atime, source_atime,
+        "directory atime must never be preserved"
+    );
     assert_eq!(copied_mtime, source_mtime);
 }
 

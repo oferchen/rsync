@@ -251,7 +251,8 @@ pub(super) fn try_clone(
 /// produce, so the finalize step works identically for both paths.
 ///
 /// - Permissions: reset to `source_mode & ~umask` (matching `open()` behavior)
-/// - Timestamps: reset mtime to current time (matching newly created files)
+/// - Timestamps: reset mtime to current time when `--times` is off, and atime to
+///   current time when `--atimes`/`-U` is off (matching newly created files)
 fn normalize_cloned_metadata(
     destination: &Path,
     source_metadata: &fs::Metadata,
@@ -276,19 +277,41 @@ fn normalize_cloned_metadata(
             .map_err(|e| LocalCopyError::io("normalize cloned permissions", destination, e))?;
     }
 
-    // When timestamps are being preserved, finalize will apply source mtime.
-    // When NOT preserving, reset to current time (what a newly created file has).
-    // Use utimensat via rustix to set mtime without needing write access -
-    // clonefile may produce a read-only destination (e.g. source mode 0o444).
-    if !options.times() {
+    // clonefile() copies the source's mtime AND atime verbatim, but an
+    // open()-created file carries fresh (current-time) timestamps that upstream
+    // only overwrites from the source when the matching flag is set: mtime under
+    // --times, atime under --atimes/-U. Reset each timestamp the corresponding
+    // flag leaves alone to "now" so a clone never leaks the source value; the
+    // subsequent finalize metadata apply re-sets the source mtime (under --times)
+    // and source atime (under --atimes) as needed.
+    //
+    // Without the atime reset, a `--no-atimes` copy (the default, including `-a`)
+    // would keep the clonefile-inherited source atime instead of the fresh
+    // access time upstream produces (rsync opens a new file; atime is the write
+    // time). upstream: rsync.c:588-589 - atime is written from source only when
+    // atimes_ndx is set; otherwise the destination keeps its own (fresh) atime.
+    //
+    // Use utimensat via rustix so a read-only clone (e.g. source mode 0o444)
+    // still accepts the timestamp update without needing write access.
+    let reset_mtime = !options.times();
+    let reset_atime = !options.atimes();
+    if reset_mtime || reset_atime {
         let now = rustix::fs::Timestamps {
             last_access: rustix::fs::Timespec {
                 tv_sec: 0,
-                tv_nsec: rustix::fs::UTIME_OMIT,
+                tv_nsec: if reset_atime {
+                    rustix::fs::UTIME_NOW
+                } else {
+                    rustix::fs::UTIME_OMIT
+                },
             },
             last_modification: rustix::fs::Timespec {
                 tv_sec: 0,
-                tv_nsec: rustix::fs::UTIME_NOW,
+                tv_nsec: if reset_mtime {
+                    rustix::fs::UTIME_NOW
+                } else {
+                    rustix::fs::UTIME_OMIT
+                },
             },
         };
         rustix::fs::utimensat(
@@ -299,7 +322,7 @@ fn normalize_cloned_metadata(
         )
         .map_err(|e| {
             LocalCopyError::io(
-                "normalize cloned mtime",
+                "normalize cloned timestamps",
                 destination,
                 std::io::Error::from_raw_os_error(e.raw_os_error()),
             )
