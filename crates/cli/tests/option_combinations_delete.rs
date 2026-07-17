@@ -18,17 +18,20 @@ fn test_delete_excluded_enables_delete_during() {
 }
 
 #[test]
-fn test_max_delete_enables_delete_during() {
+fn test_max_delete_does_not_enable_delete_mode() {
+    // upstream: options.c:2182-2185,2215-2217 - `--max-delete` only sets the cap
+    // and never enables deletion. Promoting it to a delete mode would silently
+    // delete extraneous destination files, which is a data-loss bug.
     let args = parse_args(["oc-rsync", "--max-delete=100", "--dirs", "src", "dest"]).unwrap();
     assert_eq!(
         args.delete_mode,
-        DeleteMode::DuringDefault,
-        "--max-delete should implicitly enable delete mode (DuringDefault)"
+        DeleteMode::Disabled,
+        "--max-delete alone must NOT enable delete mode"
     );
     assert_eq!(
         args.max_delete,
         Some("100".into()),
-        "--max-delete value should be captured"
+        "--max-delete value should still be captured"
     );
 }
 
@@ -80,11 +83,13 @@ fn test_delete_excluded_without_delete_mode() {
 }
 
 #[test]
-fn test_max_delete_without_delete_mode() {
+fn test_max_delete_alone_leaves_delete_disabled() {
+    // upstream: options.c:2215-2217 - deletion is enabled only by an explicit
+    // `--delete*`/`--delete-excluded`, never by `--max-delete`.
     let args = parse_args(["oc-rsync", "--max-delete=10", "--dirs", "src", "dest"]).unwrap();
     assert!(
-        args.delete_mode.is_enabled(),
-        "--max-delete alone should enable delete mode"
+        !args.delete_mode.is_enabled(),
+        "--max-delete alone must leave delete mode disabled"
     );
 }
 

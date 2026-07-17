@@ -119,9 +119,12 @@ fn backup_suffix_flag_overrides_default_suffix() {
     );
     filetime::set_file_mtime(dest_root.join("file.txt"), one_hour_ago).expect("backdate dest");
 
+    // upstream: options.c:2296-2307 - `--suffix` sets the suffix string but does
+    // NOT enable backups on its own; `--backup` must be given explicitly.
     let (code, stdout, stderr) = run_with_args([
         OsString::from(RSYNC),
         OsString::from("-r"),
+        OsString::from("--backup"),
         OsString::from("--suffix"),
         OsString::from(".bak"),
         source_dir.into_os_string(),

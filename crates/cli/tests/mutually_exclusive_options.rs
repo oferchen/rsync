@@ -74,20 +74,23 @@ fn test_delete_during_and_after_conflict() {
 }
 
 #[test]
-fn test_delete_during_and_delay_conflict() {
+fn test_delete_during_and_delay_are_same_when_term() {
+    // upstream: options.c:724-725,2210 - `--delete-during` and `--delete-delay`
+    // both write the single `delete_during` counter, so combining them selects
+    // one "during" WHEN term and is NOT a conflict (`!!delete_during` == 1).
     let result = parse_args([
         "oc-rsync",
+        "--dirs",
         "--delete-during",
         "--delete-delay",
         "src",
         "dest",
     ]);
     assert!(
-        result.is_err(),
-        "--delete-during and --delete-delay should be mutually exclusive"
+        result.is_ok(),
+        "--delete-during and --delete-delay share the 'during' WHEN term: {:?}",
+        result.err()
     );
-    let err = result.unwrap_err();
-    assert_eq!(err.kind(), clap::error::ErrorKind::ArgumentConflict);
 }
 
 #[test]

@@ -1347,9 +1347,11 @@ fn backup_suffix_sets_value() {
 }
 
 #[test]
-fn backup_suffix_enables_backup() {
+fn backup_suffix_does_not_enable_backup() {
+    // upstream: options.c:2296-2307 - only `--backup-dir` implies `--backup`.
+    // A suffix alone stores the string without enabling backups.
     let config = builder().backup_suffix(Some(".bak")).build();
-    assert!(config.backup());
+    assert!(!config.backup());
 }
 
 #[test]

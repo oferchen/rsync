@@ -282,10 +282,15 @@ where
         None => None,
     };
 
+    // upstream: options.c:2210 - the multiple-delete-WHEN check counts
+    // `delete_before + !!delete_during + delete_after`, where both
+    // `--delete-during`/`--del` and `--delete-delay` write the single
+    // `delete_during` counter (options.c:724-725). Combining `--del` with
+    // `--delete-delay` therefore selects one "during" term and is NOT an error;
+    // only distinct WHEN phases (before/during/after) conflict.
     let delete_mode_conflicts = [
         delete_before_flag,
-        delete_during_flag,
-        delete_delay_flag,
+        delete_during_flag || delete_delay_flag,
         delete_after_flag,
     ]
     .into_iter()
@@ -295,10 +300,13 @@ where
     if delete_mode_conflicts > 1 {
         return Err(clap::Error::raw(
             clap::error::ErrorKind::ArgumentConflict,
-            "--delete-before, --delete-during, --delete-delay, and --delete-after are mutually exclusive",
+            "You may not combine multiple --delete-WHEN options.\n",
         ));
     }
 
+    // upstream: options.c:2182-2185,2215-2217 - a negative `--max-delete` is
+    // clamped to 0 ("no deletions") but NEVER enables deletion; delete mode is
+    // turned on only by an explicit `--delete*`/`--delete-excluded`.
     let mut delete_mode = if delete_before_flag {
         DeleteMode::Before
     } else if delete_delay_flag {
@@ -316,22 +324,14 @@ where
     if delete_excluded && !delete_mode.is_enabled() {
         delete_mode = DeleteMode::DuringDefault;
     }
-    if max_delete.is_some() && !delete_mode.is_enabled() {
-        delete_mode = DeleteMode::DuringDefault;
-    }
-
-    // Mirror upstream: --delete requires --recursive or --dirs
-    if delete_mode.is_enabled() && !recursive && dirs != Some(true) {
-        return Err(clap::Error::raw(
-            clap::error::ErrorKind::MissingRequiredArgument,
-            "--delete does not work without --recursive (-r) or --dirs (-d).\n",
-        ));
-    }
 
     let mut backup = matches.get_flag("backup");
     let backup_dir = matches.remove_one::<OsString>("backup-dir");
     let backup_suffix = matches.remove_one::<OsString>("suffix");
-    if backup_dir.is_some() || backup_suffix.is_some() {
+    // upstream: options.c:2305-2307 - only `--backup-dir` implies `--backup`
+    // (`make_backups = 1`). `--suffix` alone merely sets the suffix string and
+    // never enables backups, so it must not flip `backup` on here.
+    if backup_dir.is_some() {
         backup = true;
     }
     let compress_count = matches.get_count("compress");
@@ -820,7 +820,7 @@ where
     }
     let cvs_exclude = matches.get_flag("cvs-exclude");
     let apple_double_skip = matches.get_flag("apple-double-skip");
-    let files_from = matches
+    let files_from: Vec<OsString> = matches
         .remove_many::<OsString>("files-from")
         .map(Iterator::collect)
         .unwrap_or_default();
@@ -887,6 +887,82 @@ where
     let mut no_motd = matches.get_flag("no-motd");
     if matches.get_flag("motd") {
         no_motd = false;
+    }
+
+    // upstream: options.c:2126-2130 - `--fake-super` (am_root < 0) conflicts with
+    // `-XX` (preserve_xattrs > 1); `-X`/`-XX` map to xattr levels 1/2 here.
+    if fake_super == Some(true) && xattrs == Some(2) {
+        return Err(clap::Error::raw(
+            clap::error::ErrorKind::ArgumentConflict,
+            "--fake-super conflicts with -XX\n",
+        ));
+    }
+
+    // upstream: options.c:2158-2167 - `--read-batch` cannot be combined with
+    // `--files-from` or `--remove-source-files`/`--remove-sent-files`.
+    if read_batch.is_some() {
+        if !files_from.is_empty() {
+            return Err(clap::Error::raw(
+                clap::error::ErrorKind::ArgumentConflict,
+                "--read-batch cannot be used with --files-from\n",
+            ));
+        }
+        if remove_source_files {
+            let which = if remove_sent_files { "sent" } else { "source" };
+            return Err(clap::Error::raw(
+                clap::error::ErrorKind::ArgumentConflict,
+                format!("--read-batch cannot be used with --remove-{which}-files\n"),
+            ));
+        }
+    }
+
+    // upstream: options.c:2299-2304 - a `--suffix` containing a slash is rejected
+    // regardless of `--backup-dir`.
+    if let Some(suffix) = backup_suffix.as_ref()
+        && suffix.to_string_lossy().contains('/')
+    {
+        return Err(clap::Error::raw(
+            clap::error::ErrorKind::ValueValidation,
+            format!(
+                "--suffix cannot contain slashes: {}\n",
+                suffix.to_string_lossy()
+            ),
+        ));
+    }
+
+    // upstream: options.c:2328-2335 - an empty `--suffix` is only valid together
+    // with a `--backup-dir`; otherwise it is rejected.
+    if backup_dir.is_none()
+        && backup_suffix
+            .as_ref()
+            .is_some_and(|suffix| suffix.is_empty())
+    {
+        return Err(clap::Error::raw(
+            clap::error::ErrorKind::ValueValidation,
+            "--suffix cannot be empty without a --backup-dir\n",
+        ));
+    }
+
+    // upstream: options.c:2187-2203,2230-2234 - `--delete` needs `--recursive`
+    // (-r) or `--dirs` (-d), gated on the RESOLVED xfer_dirs. When neither -r nor
+    // an explicit -d is given, `--files-from` (options.c:2190-2191) and
+    // `--list-only` (options.c:2203) still set xfer_dirs, so `--delete` is
+    // permitted in those cases.
+    if delete_mode.is_enabled() {
+        let xfer_dirs = if recursive || old_dirs {
+            true
+        } else {
+            match dirs {
+                Some(value) => value,
+                None => !files_from.is_empty() || list_only,
+            }
+        };
+        if !xfer_dirs {
+            return Err(clap::Error::raw(
+                clap::error::ErrorKind::MissingRequiredArgument,
+                "--delete does not work without --recursive (-r) or --dirs (-d).\n",
+            ));
+        }
     }
 
     Ok(ParsedArgs {

@@ -17,7 +17,11 @@ fn delete_modes_are_mutually_exclusive_two_flags() {
     let result = parse_test_args(["-r", "--delete-before", "--delete-after", "src/", "dst/"]);
     assert!(result.is_err());
     let err = result.unwrap_err();
-    assert!(err.to_string().contains("mutually exclusive"));
+    // upstream: options.c:2211-2212 exact wording.
+    assert!(
+        err.to_string()
+            .contains("You may not combine multiple --delete-WHEN options.")
+    );
 }
 
 #[test]
@@ -66,11 +70,13 @@ fn delete_excluded_activates_delete_mode() {
 }
 
 #[test]
-fn max_delete_activates_delete_mode() {
+fn max_delete_does_not_activate_delete_mode() {
+    // upstream: options.c:2215-2217 - `--max-delete` never enables deletion; it
+    // only caps the count once an explicit `--delete*` has enabled it.
     let result = parse_test_args(["-r", "--max-delete=10", "src/", "dst/"]);
     assert!(result.is_ok());
     let parsed = result.unwrap();
-    assert!(parsed.delete_mode.is_enabled());
+    assert!(!parsed.delete_mode.is_enabled());
 }
 
 #[test]
@@ -199,11 +205,13 @@ fn backup_dir_implies_backup() {
 }
 
 #[test]
-fn backup_suffix_implies_backup() {
+fn backup_suffix_does_not_imply_backup() {
+    // upstream: options.c:2296-2307 - only `--backup-dir` implies `--backup`; a
+    // bare `--suffix` sets the suffix string without enabling backups.
     let result = parse_test_args(["--suffix=.bak", "src/", "dst/"]);
     assert!(result.is_ok());
     let parsed = result.unwrap();
-    assert!(parsed.backup);
+    assert!(!parsed.backup);
 }
 
 #[test]
