@@ -46,7 +46,7 @@ pub use config::DirMergeConfig;
 pub use error::FilterChainError;
 pub use scope::DirFilterGuard;
 
-use scope::{DirScope, scope_has_deletion_match, scope_has_transfer_match};
+use scope::{ClearedScope, DirScope, scope_has_deletion_match, scope_has_transfer_match};
 
 /// Per-directory scoped filter chain with push/pop semantics.
 ///
@@ -82,6 +82,11 @@ pub struct FilterChain {
     merge_configs: Vec<DirMergeConfig>,
     /// Ordered from outermost to innermost; evaluation iterates in reverse.
     scopes: Vec<DirScope>,
+    /// Ancestor scopes removed by a `!` (clear-list) rule, tagged with the
+    /// depth at which the clear fired so they can be restored when that
+    /// directory is left. Mirrors upstream `exclude.c:pop_local_filters()`,
+    /// which rebuilds the pre-descent mergelist for sibling directories.
+    cleared_scopes: Vec<ClearedScope>,
     current_depth: usize,
     /// Mirrors upstream's `delete_excluded` global. When `true`, per-token
     /// rules expanded from merge files acquire an implicit FILTRULE_SENDER_SIDE
@@ -115,6 +120,7 @@ impl FilterChain {
             global,
             merge_configs: Vec::new(),
             scopes: Vec::new(),
+            cleared_scopes: Vec::new(),
             current_depth: 0,
             delete_excluded: false,
             transfer_root: None,
@@ -409,6 +415,20 @@ impl FilterChain {
             // its tokens into this scope.
             let (rules, mut dir_merge_descriptors) = split_dir_merge_rules(rules);
 
+            // upstream: exclude.c:1393-1401 parse_filter_str() - a `!`
+            // (FILTRULE_CLEAR_LIST) in a per-directory merge file runs
+            // `pop_filter_list(listp)` and THEN `listp->head = NULL`, so it
+            // drops the mergelist's inherited ancestor rules, not just this
+            // directory's own section. Only an inheriting config accumulates
+            // ancestor rules to clear (a non-inheriting `:C`-style list is
+            // re-read fresh per directory), so gate on `config.inherits()` to
+            // match the engine local-copy path (context_impl/transfer.rs, which
+            // clears `layers[index]` only when `rule.options().inherit_rules()`).
+            let clears_inherited = config.inherits()
+                && rules
+                    .iter()
+                    .any(|r| matches!(r.action(), FilterAction::Clear));
+
             if rules.is_empty() && dir_merge_descriptors.is_empty() && !config.excludes_self() {
                 continue;
             }
@@ -453,6 +473,10 @@ impl FilterChain {
                 modified_rules.push(FilterRule::exclude(config.filename().to_owned()));
             }
 
+            // Capture before the mutable-borrow clear below drops the `config`
+            // reference into `self.merge_configs`.
+            let config_inherits = config.inherits();
+
             let filter_set = match FilterSet::from_rules(modified_rules) {
                 Ok(set) => set,
                 Err(e) => {
@@ -462,11 +486,25 @@ impl FilterChain {
                 }
             };
 
+            // upstream: exclude.c:1393-1401 - drop the inherited ancestor rules
+            // of THIS mergelist (same `config_index`) before the current
+            // directory's own section is pushed. The removed scopes are stashed
+            // in `cleared_scopes` and restored when this directory is left, so a
+            // sibling directory without a `!` still sees the parent rules
+            // (exclude.c:pop_local_filters rebuilds the pre-descent mergelist).
+            // Runs even when `filter_set` is empty (a lone `!`), so the clear is
+            // never a no-op. FilterSet::from_rules already applied the
+            // within-file clear (rules before `!` in this same file).
+            if clears_inherited {
+                self.clear_inherited_scopes(config_index, depth);
+            }
+
             if !filter_set.is_empty() {
                 self.scopes.push(DirScope {
                     depth,
                     filter_set,
-                    inherits: config.inherits(),
+                    inherits: config_inherits,
+                    config_index: Some(config_index),
                 });
                 pushed_count += 1;
             }
@@ -617,6 +655,16 @@ impl FilterChain {
             return Ok(0);
         }
 
+        // An inheriting `:` dir-merge is also registered as a persistent config
+        // (see enter_directory), so descendant loads run through the main loop
+        // under that config's index. Tag this one-shot scope with the same
+        // index so a descendant `!` clears it as one mergelist; unregistered
+        // (no-inherit) variants have no cross-directory identity.
+        let config_index = self
+            .merge_configs
+            .iter()
+            .position(|c| c.filename() == descriptor.filename);
+
         // upstream: exclude.c:1248-1254 - `:C` implies FILTRULE_NO_INHERIT,
         // so the loaded rules apply only to the directory containing the
         // outer merge file, not to descendants. Other dir-merge variants
@@ -625,6 +673,7 @@ impl FilterChain {
             depth,
             filter_set,
             inherits: !descriptor.no_inherit,
+            config_index,
         });
         Ok(1)
     }
@@ -639,6 +688,7 @@ impl FilterChain {
     /// state from before entering the directory.
     pub fn leave_directory(&mut self, guard: DirFilterGuard) {
         self.pop_scopes_at_depth(guard.depth);
+        self.restore_cleared_scopes(guard.depth);
         self.current_depth = self.current_depth.saturating_sub(1);
     }
 
@@ -682,6 +732,51 @@ impl FilterChain {
         self.scopes.retain(|scope| scope.depth != depth);
     }
 
+    /// Removes the inherited ancestor scopes of the given merge config,
+    /// stashing them for restoration when the clearing directory is left.
+    ///
+    /// Mirrors upstream `exclude.c:1393-1401`, where a per-directory `!`
+    /// clears the mergelist's inherited head. Only scopes with the same
+    /// `config_index` are removed, matching `pop_filter_list(listp)` operating
+    /// on a single list; scopes belonging to other per-directory merge files
+    /// (a different `listp`) are left untouched.
+    fn clear_inherited_scopes(&mut self, config_index: usize, depth: usize) {
+        let mut i = 0;
+        while i < self.scopes.len() {
+            if self.scopes[i].config_index == Some(config_index) {
+                let scope = self.scopes.remove(i);
+                self.cleared_scopes.push(ClearedScope { depth, scope });
+            } else {
+                i += 1;
+            }
+        }
+    }
+
+    /// Restores scopes cleared by a `!` at the given depth, re-establishing the
+    /// pre-descent mergelist for sibling directories.
+    ///
+    /// Mirrors upstream `exclude.c:pop_local_filters()`. Restored scopes are
+    /// re-inserted in stack order (by depth, then config index) so evaluation
+    /// still walks innermost-to-outermost correctly.
+    fn restore_cleared_scopes(&mut self, depth: usize) {
+        if !self.cleared_scopes.iter().any(|c| c.depth == depth) {
+            return;
+        }
+        let mut i = 0;
+        while i < self.cleared_scopes.len() {
+            if self.cleared_scopes[i].depth == depth {
+                let restored = self.cleared_scopes.remove(i).scope;
+                self.scopes.push(restored);
+            } else {
+                i += 1;
+            }
+        }
+        self.scopes.sort_by(|a, b| {
+            (a.depth, a.config_index.unwrap_or(usize::MAX))
+                .cmp(&(b.depth, b.config_index.unwrap_or(usize::MAX)))
+        });
+    }
+
     /// Pushes a pre-built filter set as a per-directory scope.
     ///
     /// This is useful for testing or when rules are obtained from sources
@@ -696,6 +791,7 @@ impl FilterChain {
                 depth,
                 filter_set,
                 inherits: true,
+                config_index: None,
             });
         }
         DirFilterGuard {
