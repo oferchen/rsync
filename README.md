@@ -1,5 +1,8 @@
 [![CI](https://github.com/oferchen/rsync/actions/workflows/ci.yml/badge.svg)](https://github.com/oferchen/rsync/actions/workflows/ci.yml)
 [![Interop Validation](https://github.com/oferchen/rsync/actions/workflows/interop-validation.yml/badge.svg)](https://github.com/oferchen/rsync/actions/workflows/interop-validation.yml)
+[![Upstream Testsuite (rsync 3.4.4)](https://github.com/oferchen/rsync/actions/workflows/upstream-testsuite.yml/badge.svg)](https://github.com/oferchen/rsync/actions/workflows/upstream-testsuite.yml)
+[![Upstream Testsuite root (rsync 3.4.4)](https://github.com/oferchen/rsync/actions/workflows/upstream-testsuite-root.yml/badge.svg)](https://github.com/oferchen/rsync/actions/workflows/upstream-testsuite-root.yml)
+[![Track 3.5.0dev Testsuite (RsyncProject master)](https://github.com/oferchen/rsync/actions/workflows/track-3.5.0dev-testsuite.yml/badge.svg)](https://github.com/oferchen/rsync/actions/workflows/track-3.5.0dev-testsuite.yml)
 [![Release](https://img.shields.io/github/v/release/oferchen/rsync?include_prereleases)](https://github.com/oferchen/rsync/releases)
 
 # oc-rsync

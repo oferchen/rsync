@@ -11,6 +11,10 @@ on:
         description: 'Upstream rsync version for cache key'
         type: string
         default: '3.4.4'
+      variant:
+        description: 'Which variant(s) to run: all | nonroot | root'
+        type: string
+        default: 'all'
 
 permissions:
   contents: read
@@ -18,6 +22,7 @@ permissions:
 jobs:
   upstream-testsuite:
     name: upstream testsuite
+    if: ${{ inputs.variant == 'all' || inputs.variant == 'nonroot' }}
     runs-on: ubuntu-latest
     timeout-minutes: 45
 
@@ -170,6 +175,7 @@ jobs:
   # ===========================================================================
   upstream-testsuite-root:
     name: upstream testsuite (root)
+    if: ${{ inputs.variant == 'all' || inputs.variant == 'root' }}
     runs-on: ubuntu-latest
     timeout-minutes: 45
 

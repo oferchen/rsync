@@ -1,0 +1,24 @@
+name: Upstream Testsuite (rsync 3.4.4)
+
+# Standalone entry point for the NON-ROOT upstream rsync testsuite so its
+# pass/fail status is visible as a README badge. This is the same suite that
+# CI gates on as the required "upstream testsuite" check, run against upstream
+# rsync 3.4.4's own testsuite/*.test corpus. Scheduled daily plus on-demand.
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '0 6 * * *'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: upstream-testsuite-nonroot-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  upstream-testsuite:
+    uses: ./.github/workflows/_upstream-testsuite.yml
+    with:
+      upstream_rsync_version: '3.4.4'
+      variant: 'nonroot'
