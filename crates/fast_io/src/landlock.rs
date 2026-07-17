@@ -215,7 +215,43 @@ pub fn restrict_to_module_paths(allowed_roots: &[&Path]) -> LandlockOutcome {
 /// staging renames depend on and which the kernel omits before Linux 5.19.
 #[must_use]
 pub fn best_effort_fs_downgrade() -> Option<String> {
-    describe_fs_downgrade(ABI::new_current())
+    describe_fs_downgrade(current_fs_abi())
+}
+
+/// Queries the running kernel's highest supported Landlock filesystem ABI.
+///
+/// Issues the version-probe form of `landlock_create_ruleset(2)` (NULL attr,
+/// zero size, `LANDLOCK_CREATE_RULESET_VERSION`), which returns the supported
+/// ABI number without creating a ruleset or restricting the calling thread.
+/// The `landlock` crate runs the identical probe in its private
+/// `LandlockStatus::current()` but does not expose the effective ABI publicly,
+/// so it is replicated here for the informational downgrade summary. Returns
+/// [`ABI::Unsupported`] when the syscall fails (pre-5.13 kernel or Landlock
+/// disabled at boot), which [`describe_fs_downgrade`] then reports as the full
+/// set of filesystem rights dropped.
+fn current_fs_abi() -> ABI {
+    // Version-query flag, identical to the landlock crate's private uapi
+    // `LANDLOCK_CREATE_RULESET_VERSION` constant.
+    const LANDLOCK_CREATE_RULESET_VERSION: u32 = 1;
+    // SAFETY: the version-probe form of landlock_create_ruleset - a NULL attr
+    // pointer with zero size and the version flag. The kernel reads no user
+    // memory and creates no ruleset, so the call has no side effects beyond
+    // returning the ABI number (or -errno) and is sound to invoke from any
+    // thread at any time.
+    #[allow(unsafe_code)]
+    let raw = unsafe {
+        libc::syscall(
+            libc::SYS_landlock_create_ruleset,
+            std::ptr::null::<libc::c_void>(),
+            0_usize,
+            LANDLOCK_CREATE_RULESET_VERSION,
+        )
+    };
+    if raw < 0 {
+        ABI::Unsupported
+    } else {
+        ABI::from(raw as i32)
+    }
 }
 
 /// Pure core of [`best_effort_fs_downgrade`]: given the highest Landlock ABI
@@ -615,6 +651,9 @@ mod tests {
     fn best_effort_downgrade_matches_current_abi() {
         // The public probe must agree with the pure mapping for whatever ABI
         // this host exposes, and must never panic.
-        assert_eq!(best_effort_fs_downgrade(), describe_fs_downgrade(ABI::new_current()));
+        assert_eq!(
+            best_effort_fs_downgrade(),
+            describe_fs_downgrade(current_fs_abi())
+        );
     }
 }
