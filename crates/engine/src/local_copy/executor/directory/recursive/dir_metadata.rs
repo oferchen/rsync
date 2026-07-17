@@ -51,14 +51,31 @@ pub(super) fn apply_final_directory_metadata(
     apply_directory_metadata_with_options(destination, metadata, metadata_options.clone())
         .map_err(map_metadata_error)?;
 
-    // Record the directory and its source mtime for the final touch-up pass.
-    // Late in-directory mutations (delayed-update renames, deletions, backups)
-    // bump this directory's mtime after we set it here, so a single final pass
-    // re-applies the recorded source mtime once everything else is done.
-    // upstream: generator.c:2093 touch_up_dirs() re-touches directory mtimes
-    // after the delayed-update phase completes.
-    if metadata_options.times() {
-        context.record_finalized_directory(destination, metadata);
+    // upstream: generator.c:1508-1521 - a directory whose real mode lacks owner
+    // rwx is kept writable during the transfer so its contents, and the deferred
+    // deletions/updates that run in the final flush, can still write into it;
+    // the real (restricted) mode is reinstated LAST in touch_up_dirs
+    // (generator.c:2122-2127 fix_dir_perms). Applying the restricted mode (e.g.
+    // 0555) now, before the deferred flush, makes a local --delete-after /
+    // --delay-updates / in-place --backup copy fail EACCES when the deferred
+    // rename/unlink tries to write into the now read-only directory.
+    #[cfg(unix)]
+    let restore_mode = keep_directory_writable(destination, &metadata_options)?;
+    #[cfg(not(unix))]
+    let restore_mode: Option<u32> = None;
+
+    // Record the directory for the final touch-up pass. Late in-directory
+    // mutations (delayed-update renames, deletions, backups) bump this
+    // directory's mtime after we set it here, so a single final pass re-applies
+    // the recorded source mtime and reinstates the restricted mode once
+    // everything else is done.
+    // upstream: generator.c:2089 touch_up_dirs() re-touches directory perms and
+    // mtimes after the delayed-update and deletion phases complete.
+    let mtime = metadata_options
+        .times()
+        .then(|| filetime::FileTime::from_last_modification_time(metadata));
+    if mtime.is_some() || restore_mode.is_some() {
+        context.record_finalized_directory(destination, mtime, restore_mode);
     }
 
     // upstream: generator.c:1410 - implied parent dirs are finalized via
@@ -87,6 +104,49 @@ pub(super) fn apply_final_directory_metadata(
     let _ = source;
 
     Ok(())
+}
+
+/// Keeps a directory whose applied mode lacks full owner `rwx` temporarily
+/// writable so the deferred deletions/updates in the final flush can still
+/// write into it, returning the restricted mode for `touch_up_dirs` to
+/// reinstate last (or `None` when no tweak is needed).
+///
+/// Mirrors upstream `generator.c:1508-1521`: when not root, not `--fake-super`,
+/// preserving perms, and the applied mode lacks full owner `rwx`
+/// (`(file->mode & S_IRWXU) != S_IRWXU`), the generator chmods the directory to
+/// `mode | S_IRWXU` and sets `need_retouch_dir_perms` so the real mode is
+/// restored (`generator.c:2122-2127` `fix_dir_perms`) after the delayed-update
+/// and deletion phases. The applied mode is read back from the destination so a
+/// `--chmod` tweak is reflected exactly.
+#[cfg(unix)]
+fn keep_directory_writable(
+    destination: &Path,
+    metadata_options: &::metadata::MetadataOptions,
+) -> Result<Option<u32>, LocalCopyError> {
+    use std::os::unix::fs::PermissionsExt;
+
+    // upstream: generator.c:1512 gate - !am_root && ... && dir_tweaking, plus we
+    // only manage the mode when preserving perms and not under --fake-super
+    // (which stashes the intended mode in an xattr instead of the inode).
+    if !metadata_options.permissions()
+        || metadata_options.fake_super_enabled()
+        || ::metadata::am_root()
+    {
+        return Ok(None);
+    }
+
+    let applied = fs::symlink_metadata(destination)
+        .map_err(|error| LocalCopyError::io("stat", destination, error))?;
+    let mode = applied.permissions().mode() & 0o7777;
+    // upstream: generator.c:1512 - (file->mode & S_IRWXU) != S_IRWXU.
+    if mode & 0o700 == 0o700 {
+        return Ok(None);
+    }
+
+    // upstream: generator.c:1513-1514 - do_chmod_at(fname, mode | S_IRWXU).
+    fs::set_permissions(destination, fs::Permissions::from_mode(mode | 0o700))
+        .map_err(|error| LocalCopyError::io("modify permissions on", destination, error))?;
+    Ok(Some(mode))
 }
 
 /// Reproduces upstream's transfer-root self-lock when a `--chmod` strips the

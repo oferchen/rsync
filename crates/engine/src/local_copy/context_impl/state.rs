@@ -719,22 +719,29 @@ impl<'a> CopyContext<'a> {
         self.destination_metadata_cache.clear();
     }
 
-    /// Records a finalized directory and its source mtime for the final
+    /// Records a finalized directory for the final
     /// [`touch_up_dirs`](Self::touch_up_dirs) pass.
     ///
-    /// Called by `apply_final_directory_metadata` right after it applies the
-    /// source mtime during the traversal. Late in-directory mutations (the
-    /// delayed-update rename sweep, deferred deletions, backup file creation)
-    /// bump this mtime again, so the final pass re-applies the recorded value.
+    /// Called by `apply_final_directory_metadata` during the traversal. Late
+    /// in-directory mutations (the delayed-update rename sweep, deferred
+    /// deletions, backup file creation) bump the directory mtime and require the
+    /// directory to stay writable, so the final pass re-applies the recorded
+    /// source mtime and reinstates the restricted mode last.
+    ///
+    /// `mtime` is the source mtime to re-apply (when times are preserved) and
+    /// `restore_mode` is the restricted mode to reinstate for a directory that
+    /// was kept writable during the transfer.
     pub(super) fn record_finalized_directory(
         &mut self,
         destination: &Path,
-        metadata: &fs::Metadata,
+        mtime: Option<filetime::FileTime>,
+        restore_mode: Option<u32>,
     ) {
-        let mtime = filetime::FileTime::from_last_modification_time(metadata);
-        self.deferred_ops
-            .finalized_dirs
-            .push((destination.to_path_buf(), mtime));
+        self.deferred_ops.finalized_dirs.push(FinalizedDir {
+            path: destination.to_path_buf(),
+            mtime,
+            restore_mode,
+        });
     }
 
     /// Queues a deferred update for `--delay-updates` and records the hard-link

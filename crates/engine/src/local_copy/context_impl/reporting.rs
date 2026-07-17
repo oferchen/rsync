@@ -205,55 +205,81 @@ impl<'a> CopyContext<'a> {
         }
     }
 
-    /// Re-applies each transferred directory's source mtime after all late
-    /// in-directory mutations complete - the single final directory touch-up
-    /// pass, run once from the executor finalize after the delayed-update,
-    /// deletion, and sync flushes.
+    /// Restores each transferred directory's real mode and source mtime after
+    /// all late in-directory mutations complete - the single final directory
+    /// touch-up pass, run once from the executor finalize after the
+    /// delayed-update, deletion, and sync flushes.
     ///
-    /// The delayed-update rename sweep, deferred deletions, and backup file
-    /// creation each bump the mtime of the directory they act in, clobbering
-    /// the value `apply_final_directory_metadata` set during the traversal.
-    /// Rather than have every late operation carry its own capture/restore
-    /// guard, this consolidates the "directory mtime survives late in-dir
-    /// mutations" invariant into one pass, mirroring both upstream and the
-    /// receiver driver's `touch_up_dirs`.
+    /// Two repairs happen here, both undoing side effects of keeping the
+    /// directory usable during the transfer:
     ///
-    /// Directories are re-touched deepest-first so setting a child's mtime
-    /// cannot re-clobber a parent processed earlier (utimensat on a directory
-    /// does not disturb its own parent, but the ordering keeps the pass robust
-    /// and matches the receiver's reverse iteration).
+    /// - **Permissions.** A directory whose real mode lacks owner write was
+    ///   kept temporarily writable during the traversal (see
+    ///   `apply_final_directory_metadata`) so the deferred deletions/updates
+    ///   could still write into it. The real, restricted mode is reinstated
+    ///   here - LAST, after those mutations ran - matching upstream, where a
+    ///   `--delete-after` / `--delay-updates` copy into a `0555` directory that
+    ///   needs a child deletion/update would otherwise fail `EACCES`.
+    /// - **Mtimes.** The delayed-update rename sweep, deferred deletions, and
+    ///   backup file creation each bump the mtime of the directory they act in,
+    ///   clobbering the value `apply_final_directory_metadata` set during the
+    ///   traversal. Each directory's mtime is re-set from the source here.
     ///
-    /// Gated identically to `apply_final_directory_metadata` and upstream's
-    /// `need_retouch_dir_times`: only when times are preserved and
-    /// `--omit-dir-times` is off. Skipped when `--backup` is active without a
+    /// Directories are re-touched deepest-first so a child's perm/mtime change
+    /// cannot re-clobber a parent processed earlier, matching the receiver's
+    /// reverse iteration.
+    ///
+    /// The mtime repair is gated on `need_retouch_dir_times` (times preserved,
+    /// `--omit-dir-times` off) and skipped when `--backup` is active without a
     /// backup directory, because backup file creation legitimately changes the
-    /// destination directory mtimes.
+    /// destination directory mtimes. The perm repair is independent of that
+    /// gating and always runs for the directories that were kept writable.
     ///
     /// upstream: generator.c:2449-2451 - touch_up_dirs(dir_flist, -1) runs
-    /// after the receiver's handle_delayed_updates(); generator.c:2093
-    /// touch_up_dirs(); generator.c:2271 need_retouch_dir_times =
-    /// preserve_mtimes && !omit_dir_times.
+    /// after handle_delayed_updates() and the delete phase; generator.c:2089
+    /// touch_up_dirs(); generator.c:2122-2127 fix_dir_perms restores the real
+    /// mode; generator.c:2271 need_retouch_dir_times = preserve_mtimes &&
+    /// !omit_dir_times.
     pub(super) fn touch_up_dirs(&mut self) {
-        let dirs = std::mem::take(&mut self.deferred_ops.finalized_dirs);
+        let mut dirs = std::mem::take(&mut self.deferred_ops.finalized_dirs);
         let preserve_times = self.metadata_options().times() && !self.omit_dir_times_enabled();
-        // upstream: generator.c - skip retouching when make_backups && !backup_dir,
-        // since in-place backup file creation changes directory mtimes on purpose.
+        // upstream: generator.c - skip retouching mtimes when make_backups &&
+        // !backup_dir, since in-place backup file creation changes directory
+        // mtimes on purpose. The perm restore is unaffected by backups.
         let backup_without_dir =
             self.options.backup_enabled() && self.options.backup_directory().is_none();
-        if !preserve_times || backup_without_dir {
-            return;
-        }
-        let mut dirs = dirs;
-        dirs.sort_by(|a, b| b.0.components().count().cmp(&a.0.components().count()));
-        for (dir, mtime) in dirs {
+        let do_times = preserve_times && !backup_without_dir;
+
+        // Deepest-first, mirroring upstream's reverse flist walk, so a child's
+        // perm/mtime change cannot re-clobber a parent handled earlier.
+        // upstream: generator.c:2083 for (i = dir_flist->used - 1; i >= 0; i--).
+        dirs.sort_by(|a, b| b.path.components().count().cmp(&a.path.components().count()));
+        for dir in dirs {
+            // Reinstate the real (restricted) directory mode last, after every
+            // deferred deletion/update ran while the directory was kept
+            // writable. This runs regardless of the mtime gating above.
+            // upstream: generator.c:2124-2126 - fix_dir_perms does
+            // do_chmod_at(fname, file->mode) before the mtime repair.
+            #[cfg(unix)]
+            if let Some(mode) = dir.restore_mode {
+                use std::os::unix::fs::PermissionsExt;
+                let _ = fs::set_permissions(&dir.path, fs::Permissions::from_mode(mode));
+            }
+
+            if !do_times {
+                continue;
+            }
+            let Some(mtime) = dir.mtime else {
+                continue;
+            };
             // upstream: generator.c:2130 - only re-set when mtime_differs(), so
             // directories untouched by a late mutation are left alone.
-            let needs_update = match fs::metadata(&dir) {
+            let needs_update = match fs::metadata(&dir.path) {
                 Ok(meta) => filetime::FileTime::from_last_modification_time(&meta) != mtime,
                 Err(_) => false,
             };
             if needs_update {
-                let _ = filetime::set_file_mtime(&dir, mtime);
+                let _ = filetime::set_file_mtime(&dir.path, mtime);
             }
         }
     }
