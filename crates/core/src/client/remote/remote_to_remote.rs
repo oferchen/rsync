@@ -201,6 +201,10 @@ fn spawn_ssh_connection(
         ssh.set_bind_address(Some(bind_addr.socket().ip()));
     }
 
+    // upstream: main.c:587-594 do_cmd() - forward --ipv4/--ipv6 to the ssh
+    // child as -4/-6 (only honoured when the remote shell is `ssh`).
+    ssh.set_address_family(super::ssh_address_family(config.address_mode()));
+
     ssh.set_prefer_aes_gcm(config.prefer_aes_gcm());
 
     let connect_timeout = config

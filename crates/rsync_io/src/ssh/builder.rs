@@ -38,6 +38,23 @@ const DEFAULT_SERVER_ALIVE_COUNT_MAX: u32 = 3;
 /// `--contimeout` behavior.
 const DEFAULT_CONNECT_TIMEOUT_SECS: u64 = 30;
 
+/// Address family forced onto the `ssh` child via `-4`/`-6`.
+///
+/// Mirrors rsync's `--ipv4`/`--ipv6` flags. When set on an [`SshCommand`]
+/// whose program is `ssh`, the corresponding flag is appended to the spawned
+/// argv so the ssh client restricts host resolution to that family.
+///
+/// upstream: main.c:587-594 `do_cmd()` appends `-4`/`-6` when
+/// `default_af_hint` is `AF_INET`/`AF_INET6` and the remote-shell basename is
+/// `ssh`.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum SshAddressFamily {
+    /// Force IPv4 (`-4`), mirroring rsync's `--ipv4`.
+    V4,
+    /// Force IPv6 (`-6`), mirroring rsync's `--ipv6`.
+    V6,
+}
+
 /// Builder used to configure and spawn an SSH subprocess.
 #[derive(Clone, Debug)]
 pub struct SshCommand {
@@ -47,6 +64,7 @@ pub struct SshCommand {
     port: Option<u16>,
     batch_mode: bool,
     bind_address: Option<IpAddr>,
+    address_family: Option<SshAddressFamily>,
     keepalive: bool,
     options: Vec<OsString>,
     connect_timeout: Option<Duration>,
@@ -69,6 +87,7 @@ impl SshCommand {
             port: None,
             batch_mode: true,
             bind_address: None,
+            address_family: None,
             keepalive: true,
             connect_timeout: Some(Duration::from_secs(DEFAULT_CONNECT_TIMEOUT_SECS)),
             io_timeout: None,
@@ -109,6 +128,20 @@ impl SshCommand {
     /// `-o BindAddress=<addr>`.
     pub const fn set_bind_address(&mut self, addr: Option<IpAddr>) -> &mut Self {
         self.bind_address = addr;
+        self
+    }
+
+    /// Forces the address family the spawned `ssh` client uses, mirroring
+    /// rsync's `--ipv4`/`--ipv6`. When `Some`, a `-4` or `-6` flag is appended
+    /// to the argv, but only when the program basename is `ssh` (see
+    /// [`SshCommand::is_ssh_program`]); a user-supplied non-ssh `-e` wrapper is
+    /// left untouched.
+    ///
+    /// upstream: main.c:587-594 `do_cmd()` - `if (default_af_hint == AF_INET &&
+    /// strcmp(t, "ssh") == 0) args[argc++] = "-4";` (and the `AF_INET6`/`-6`
+    /// counterpart).
+    pub const fn set_address_family(&mut self, family: Option<SshAddressFamily>) -> &mut Self {
+        self.address_family = family;
         self
     }
 
@@ -497,6 +530,20 @@ impl SshCommand {
         {
             args.push(OsString::from("-J"));
             args.push(jump.clone());
+        }
+
+        // Force IPv4/IPv6 host resolution by appending `-4`/`-6` right before
+        // the destination operand, matching upstream's placement. Gated on the
+        // program basename being `ssh` so non-ssh `-e` wrappers are untouched.
+        // upstream: main.c:588-593 do_cmd() - `-4`/`-6` are only added when
+        // `default_af_hint` is set and `strcmp(t, "ssh") == 0`.
+        if self.is_ssh_program()
+            && let Some(family) = self.address_family
+        {
+            args.push(OsString::from(match family {
+                SshAddressFamily::V4 => "-4",
+                SshAddressFamily::V6 => "-6",
+            }));
         }
 
         if let Some(target) = self.target_argument()

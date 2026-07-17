@@ -1,6 +1,7 @@
 use super::SshCommand;
 #[cfg(unix)]
 use super::SshConnection;
+use super::builder::SshAddressFamily;
 use std::ffi::{OsStr, OsString};
 #[cfg(unix)]
 use std::io::{Read, Write};
@@ -2290,4 +2291,103 @@ fn has_ssh_compression_rejects_falsey_and_unrelated() {
 fn has_ssh_compression_default_is_false() {
     let command = SshCommand::new("example.com");
     assert!(!command.has_ssh_compression());
+}
+
+#[test]
+fn forces_ipv4_flag_for_ssh_program() {
+    // #227: `rsync -4 -e ssh host:path` must force IPv4 on the ssh child so it
+    // cannot connect over IPv6, matching upstream do_cmd().
+    // upstream: main.c:588-589 - `-4` is appended when default_af_hint ==
+    // AF_INET and the remote-shell basename is `ssh`.
+    let mut command = SshCommand::new("example.com");
+    command.set_prefer_aes_gcm(Some(false));
+    command.set_address_family(Some(SshAddressFamily::V4));
+
+    let (_, args) = command.command_parts_for_testing();
+    let rendered = args_to_strings(&args);
+
+    let flag_pos = rendered.iter().position(|a| a == "-4");
+    let host_pos = rendered.iter().position(|a| a == "example.com");
+    assert!(
+        rendered.contains(&"-4".to_owned()),
+        "expected -4 in {rendered:?}"
+    );
+    assert!(
+        !rendered.contains(&"-6".to_owned()),
+        "unexpected -6 in {rendered:?}"
+    );
+    // upstream appends the family flag immediately before the host operand.
+    assert!(
+        flag_pos < host_pos,
+        "-4 must precede the host: {rendered:?}"
+    );
+}
+
+#[test]
+fn forces_ipv6_flag_for_ssh_program() {
+    // upstream: main.c:592-593 - `-6` is appended when default_af_hint ==
+    // AF_INET6 and the remote-shell basename is `ssh`.
+    let mut command = SshCommand::new("example.com");
+    command.set_prefer_aes_gcm(Some(false));
+    command.set_address_family(Some(SshAddressFamily::V6));
+
+    let (_, args) = command.command_parts_for_testing();
+    let rendered = args_to_strings(&args);
+
+    assert!(
+        rendered.contains(&"-6".to_owned()),
+        "expected -6 in {rendered:?}"
+    );
+    assert!(
+        !rendered.contains(&"-4".to_owned()),
+        "unexpected -4 in {rendered:?}"
+    );
+}
+
+#[test]
+fn omits_address_family_flag_when_unset() {
+    // Default address mode leaves the ssh child free to pick a family, so no
+    // -4/-6 is injected. upstream: main.c:588/592 gate on default_af_hint
+    // being set.
+    let mut command = SshCommand::new("example.com");
+    command.set_prefer_aes_gcm(Some(false));
+    command.set_address_family(None);
+
+    let (_, args) = command.command_parts_for_testing();
+    let rendered = args_to_strings(&args);
+
+    assert!(
+        !rendered.contains(&"-4".to_owned()),
+        "unexpected -4 in {rendered:?}"
+    );
+    assert!(
+        !rendered.contains(&"-6".to_owned()),
+        "unexpected -6 in {rendered:?}"
+    );
+}
+
+#[test]
+fn does_not_force_address_family_for_non_ssh_shell() {
+    // upstream: main.c:588/592 - the `-4`/`-6` append is gated on
+    // `strcmp(t, "ssh") == 0`, so a non-ssh `-e` wrapper (here `rsh`) must
+    // never receive a family flag it cannot understand.
+    let mut command = SshCommand::new("example.com");
+    command.set_prefer_aes_gcm(Some(false));
+    command
+        .configure_remote_shell(OsStr::new("rsh"))
+        .expect("valid remote shell");
+    command.set_address_family(Some(SshAddressFamily::V4));
+
+    let (program, args) = command.command_parts_for_testing();
+    let rendered = args_to_strings(&args);
+
+    assert_eq!(program, OsString::from("rsh"));
+    assert!(
+        !rendered.contains(&"-4".to_owned()),
+        "unexpected -4 in {rendered:?}"
+    );
+    assert!(
+        !rendered.contains(&"-6".to_owned()),
+        "unexpected -6 in {rendered:?}"
+    );
 }
