@@ -730,6 +730,17 @@ impl ReceiverContext {
                 let relative_path = entry.path();
                 let link_path = dest_dir.join(relative_path);
 
+                // The promoted "virtual first" (hlink.c:299-310) can be this
+                // very follower when its own file is the only group member that
+                // materialized on disk. There is nothing to link a file to
+                // itself, and removing it to re-link would destroy the group's
+                // sole copy. The Unix quick-check below catches this via a
+                // dev/ino match, but Windows metadata exposes no inode, so guard
+                // the self-link case explicitly on every platform.
+                if link_path == leader_path {
+                    continue;
+                }
+
                 // Quick-check: if destination already hard-links to the leader, skip.
                 //
                 // SEC-1.f: the `link_path` stat goes through the sandbox
