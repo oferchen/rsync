@@ -10,7 +10,6 @@ use std::ffi::OsString;
 use std::time::SystemTime;
 
 use compress::zlib::CompressionLevel;
-use engine::SkipCompressList;
 use metadata::{ChmodModifiers, GroupMapping, ModifyWindow, UserMapping};
 use protocol::FilenameConverter;
 use protocol::ProtocolVersion;
@@ -456,17 +455,6 @@ pub struct ServerConfig {
     /// - `receiver.c:766`: `open_tmpfile()` uses `tmpdir` when set
     /// - `loadparm.c`: `temp dir` daemon module parameter
     pub temp_dir: Option<std::path::PathBuf>,
-    /// File suffixes that should skip per-file compression.
-    ///
-    /// When compression is enabled, files whose extension matches a suffix in
-    /// this list are sent uncompressed. This is populated from the daemon's
-    /// `dont compress` module parameter or the client's `--skip-compress` option.
-    ///
-    /// # Upstream Reference
-    ///
-    /// - `token.c:do_compression` - per-file compression decision
-    /// - `loadparm.c` - `dont compress` daemon parameter
-    pub skip_compress: Option<SkipCompressList>,
     /// When true, store privileged metadata (uid/gid, devices, special files) in
     /// the `user.rsync.%stat` xattr instead of applying it directly to inodes.
     ///
@@ -590,7 +578,6 @@ impl Default for ServerConfig {
             file_selection: FileSelectionConfig::default(),
             do_stats: false,
             temp_dir: None,
-            skip_compress: None,
             fake_super: false,
             daemon_incoming_chmod: None,
             daemon_outgoing_chmod: None,

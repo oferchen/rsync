@@ -1399,43 +1399,6 @@ mod module_access_tests {
         assert!(offender.is_none(), "positional paths must not flag: {offender:?}");
     }
 
-    #[test]
-    fn parse_daemon_dont_compress_glob_suffixes() {
-        let list = parse_daemon_dont_compress("*.gz *.zip *.jpg").expect("should parse");
-        assert!(list.matches_path(Path::new("archive.gz")));
-        assert!(list.matches_path(Path::new("bundle.zip")));
-        assert!(list.matches_path(Path::new("photo.jpg")));
-        assert!(!list.matches_path(Path::new("notes.txt")));
-    }
-
-    #[test]
-    fn parse_daemon_dont_compress_bare_suffixes() {
-        let list = parse_daemon_dont_compress("gz zip").expect("should parse");
-        assert!(list.matches_path(Path::new("archive.gz")));
-        assert!(list.matches_path(Path::new("bundle.zip")));
-    }
-
-    #[test]
-    fn parse_daemon_dont_compress_empty_returns_none() {
-        assert!(parse_daemon_dont_compress("").is_none());
-        assert!(parse_daemon_dont_compress("   ").is_none());
-    }
-
-    #[test]
-    fn parse_daemon_dont_compress_case_insensitive() {
-        let list = parse_daemon_dont_compress("*.GZ *.ZIP").expect("should parse");
-        assert!(list.matches_path(Path::new("archive.gz")));
-        assert!(list.matches_path(Path::new("ARCHIVE.GZ")));
-    }
-
-    #[test]
-    fn parse_daemon_dont_compress_mixed_formats() {
-        let list = parse_daemon_dont_compress("*.gz mp3 .bz2").expect("should parse");
-        assert!(list.matches_path(Path::new("file.gz")));
-        assert!(list.matches_path(Path::new("song.mp3")));
-        assert!(list.matches_path(Path::new("archive.bz2")));
-    }
-
     // WHY: upstream token.c:206-211 treats a bare `*` in the dont-compress match
     // list as the whole-stream store signal (not a per-file suffix). A normal
     // suffix list must not be mistaken for it, or ordinary transfers would lose
