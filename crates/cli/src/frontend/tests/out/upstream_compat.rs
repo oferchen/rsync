@@ -231,7 +231,8 @@ fn out_format_suppresses_verbose_listing_in_summary() {
         0, // stats_level
         false,
         false,
-        false,
+        false, // dry_run
+        false, // only_write_batch
         Some(&format),
         &OutFormatContext::default(),
         NameOutputLevel::Disabled,
@@ -255,7 +256,8 @@ fn out_format_suppresses_verbose_listing_in_summary() {
         0, // stats_level
         false,
         false,
-        false,
+        false, // dry_run
+        false, // only_write_batch
         None,
         &OutFormatContext::default(),
         NameOutputLevel::UpdatedOnly,

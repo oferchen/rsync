@@ -61,6 +61,9 @@ pub(crate) fn emit_transfer_summary(
     progress_already_rendered: bool,
     list_only: bool,
     dry_run: bool,
+    // `--only-write-batch` (upstream `write_batch < 0`): appends the
+    // `" (BATCH ONLY)"` speedup suffix, taking precedence over `--dry-run`.
+    only_write_batch: bool,
     out_format: Option<&OutFormat>,
     out_format_context: &OutFormatContext,
     name_level: NameOutputLevel,
@@ -101,6 +104,7 @@ pub(crate) fn emit_transfer_summary(
                 writer,
                 human_readable_mode,
                 dry_run,
+                only_write_batch,
                 stats_level,
                 show_copy_method,
             )?;
@@ -113,6 +117,7 @@ pub(crate) fn emit_transfer_summary(
                 writer,
                 human_readable_mode,
                 dry_run,
+                only_write_batch,
                 show_copy_method,
             )?;
         }
@@ -217,12 +222,17 @@ pub(crate) fn emit_transfer_summary(
     let _ = suppress_updated_only_totals;
     let emit_trailer_totals = !stats_on && verbosity > 0;
 
-    // upstream: main.c:461 - `output_summary()` emits a blank
-    // `rprintf(FCLIENT, "\n")` before the INFO_GTE(STATS, 1) totals so the
-    // trailer is visually separated from preceding per-file output.
+    // upstream: main.c:427/458 - `output_summary()` unconditionally emits a
+    // leading `rprintf(FCLIENT, "\n")` before both the STATS>=2 detail block and
+    // the STATS>=1 sent/received trailer, separating them from any preceding
+    // per-file output. When a per-file block (verbose listing, itemize, or
+    // progress) was rendered, its trailing separator above already supplied that
+    // blank; when nothing preceded (a plain `--stats`, or an empty `-v` run) we
+    // still emit exactly one blank so the trailer keeps its upstream framing.
     // `testsuite/itemize.test`'s `v_filt` helper relies on this empty line
     // (`sed -e '/^$/,$d'`) to strip the trailer when matching `-vv` goldens.
-    if emit_verbose_listing && (stats_on || emit_trailer_totals) {
+    let rendered_block = formatted_rendered || progress_rendered || emit_verbose_listing;
+    if (stats_on || emit_trailer_totals) && (emit_verbose_listing || !rendered_block) {
         writeln!(writer)?;
     }
 
@@ -232,6 +242,7 @@ pub(crate) fn emit_transfer_summary(
             writer,
             human_readable_mode,
             dry_run,
+            only_write_batch,
             stats_level,
             show_copy_method,
         )?;
@@ -241,6 +252,7 @@ pub(crate) fn emit_transfer_summary(
             writer,
             human_readable_mode,
             dry_run,
+            only_write_batch,
             show_copy_method,
         )?;
     }
@@ -455,6 +467,7 @@ pub(crate) fn emit_stats<W: Write + ?Sized>(
     stdout: &mut W,
     human_readable: HumanReadableMode,
     dry_run: bool,
+    only_write_batch: bool,
     level: u8,
     show_copy_method: bool,
 ) -> io::Result<()> {
@@ -467,7 +480,36 @@ pub(crate) fn emit_stats<W: Write + ?Sized>(
         writeln!(stdout)?;
     }
 
-    emit_totals(summary, stdout, human_readable, dry_run, show_copy_method)
+    emit_totals(
+        summary,
+        stdout,
+        human_readable,
+        dry_run,
+        only_write_batch,
+        show_copy_method,
+    )
+}
+
+/// Builds the five `Number of files` breakdown categories in upstream order.
+///
+/// upstream: main.c:388 `output_itemized_counts` uses `labels[] = {"reg", "dir",
+/// "link", "dev", "special"}`, keeping device nodes (`dev`) split from other
+/// specials (`special`: fifos/sockets). Folding the two together diverges from
+/// upstream's five-category line.
+fn files_count_categories(
+    reg: u64,
+    dir: u64,
+    link: u64,
+    dev: u64,
+    special: u64,
+) -> [(&'static str, u64); 5] {
+    [
+        ("reg", reg),
+        ("dir", dir),
+        ("link", link),
+        ("dev", dev),
+        ("special", special),
+    ]
 }
 
 /// Emits the level-2+ detail block: file counts, byte-breakdown, file-list
@@ -531,12 +573,16 @@ fn emit_stats_detail_block<W: Write + ?Sized>(
         .saturating_add(created_devices)
         .saturating_add(created_specials);
 
-    let files_breakdown = format_stat_categories(&[
-        ("reg", files_total),
-        ("dir", directories_total),
-        ("link", symlinks_total),
-        ("special", special_total),
-    ]);
+    // upstream: main.c:388 output_itemized_counts labels[] =
+    // {reg, dir, link, dev, special} - devices ('dev') are counted separately
+    // from other specials (fifos/sockets), never folded together.
+    let files_breakdown = format_stat_categories(&files_count_categories(
+        files_total,
+        directories_total,
+        symlinks_total,
+        devices_total,
+        fifos_total,
+    ));
     // upstream: main.c output_itemized_counts labels the created breakdown
     // reg/dir/link/dev/special, with devices ('dev') split from other specials.
     let created_breakdown = format_stat_categories(&[
@@ -618,6 +664,7 @@ pub(crate) fn emit_totals<W: Write + ?Sized>(
     stdout: &mut W,
     human_readable: HumanReadableMode,
     dry_run: bool,
+    only_write_batch: bool,
     show_copy_method: bool,
 ) -> io::Result<()> {
     let sent = summary.bytes_sent();
@@ -659,14 +706,23 @@ pub(crate) fn emit_totals<W: Write + ?Sized>(
         stdout,
         "sent {sent_display} bytes  received {received_display} bytes  {rate_display} bytes/sec"
     )?;
-    let dry_run_suffix = if dry_run { " (DRY RUN)" } else { "" };
+    // upstream: main.c:469 - `write_batch < 0 ? " (BATCH ONLY)" : dry_run ?
+    // " (DRY RUN)" : ""`. `--only-write-batch` sets `write_batch < 0` and takes
+    // precedence over `--dry-run`.
+    let speedup_suffix = if only_write_batch {
+        " (BATCH ONLY)"
+    } else if dry_run {
+        " (DRY RUN)"
+    } else {
+        ""
+    };
     // upstream: main.c:466-468 - speedup uses comma_dnum(_, 2), i.e. thousands
     // grouping. Reuse the same helper the --stats path uses (stats_format.rs)
     // so both summary paths group identically.
     let speedup_display = crate::stats_format::format_speedup(speedup);
     writeln!(
         stdout,
-        "total size is {total_size_display}  speedup is {speedup_display}{dry_run_suffix}"
+        "total size is {total_size_display}  speedup is {speedup_display}{speedup_suffix}"
     )
 }
 
@@ -1319,5 +1375,115 @@ mod tests {
         // name with no surrounding quotes and no "(no recursion)" suffix. Byte
         // fidelity with upstream requires exactly this form.
         assert_eq!(render_verbose(event), "skipping directory subdir\n");
+    }
+
+    /// Renders the summary trailer for an empty (default) transfer at the given
+    /// stats level with the requested `--dry-run` / `--only-write-batch` flags.
+    fn render_summary(level: u8, dry_run: bool, only_write_batch: bool) -> String {
+        let summary = ClientSummary::default();
+        let mut out = Vec::new();
+        emit_transfer_summary(
+            &summary,
+            0,     // verbosity
+            None,  // progress_mode
+            level, // stats_level
+            false, // progress_already_rendered
+            false, // list_only
+            dry_run,
+            only_write_batch,
+            None, // out_format
+            &OutFormatContext::default(),
+            NameOutputLevel::Disabled,
+            false, // name_overridden
+            HumanReadableMode::Grouped,
+            false, // suppress_updated_only_totals
+            false, // emit_flist_banner
+            false, // show_copy_method
+            false, // show_atimes
+            false, // show_crtimes
+            false, // eight_bit_output
+            &mut out,
+        )
+        .expect("emit_transfer_summary writes to an in-memory buffer");
+        String::from_utf8(out).expect("output is valid UTF-8")
+    }
+
+    #[test]
+    fn plain_stats_trailer_starts_with_blank_line() {
+        // upstream: main.c:458 - output_summary() emits an unconditional leading
+        // `rprintf(FCLIENT, "\n")` before the STATS>=1 sent/received trailer,
+        // even when no per-file output preceded it (a plain `--stats` run). oc
+        // previously emitted the trailer with no leading blank.
+        let out = render_summary(1, false, false);
+        assert!(
+            out.starts_with('\n'),
+            "plain --stats trailer must start with a blank line:\n{out:?}"
+        );
+        assert!(out.contains("sent "));
+        assert!(out.contains("total size is"));
+        // Exactly one leading blank - not a doubled empty line.
+        assert!(
+            !out.starts_with("\n\n"),
+            "leading blank must not double:\n{out:?}"
+        );
+    }
+
+    #[test]
+    fn stats_detail_block_starts_with_blank_line() {
+        // upstream: main.c:427 - the STATS>=2 detail block is also preceded by an
+        // unconditional leading blank.
+        let out = render_summary(2, false, false);
+        assert!(
+            out.starts_with('\n'),
+            "stats block must start blank:\n{out:?}"
+        );
+        assert!(
+            !out.starts_with("\n\n"),
+            "leading blank must not double:\n{out:?}"
+        );
+        assert!(out.contains("Number of files:"));
+    }
+
+    #[test]
+    fn speedup_suffix_matches_upstream_precedence() {
+        // upstream: main.c:469 - `write_batch < 0 ? " (BATCH ONLY)" : dry_run ?
+        // " (DRY RUN)" : ""`. --only-write-batch wins over --dry-run.
+        assert!(render_summary(1, false, false).contains("speedup is"));
+        assert!(!render_summary(1, false, false).contains("(DRY RUN)"));
+        assert!(!render_summary(1, false, false).contains("(BATCH ONLY)"));
+
+        assert!(render_summary(1, true, false).contains(" (DRY RUN)"));
+
+        let batch = render_summary(1, false, true);
+        assert!(batch.contains(" (BATCH ONLY)"), "{batch:?}");
+        assert!(!batch.contains("(DRY RUN)"), "{batch:?}");
+
+        // Precedence: batch beats dry-run when both are set.
+        let both = render_summary(1, true, true);
+        assert!(both.contains(" (BATCH ONLY)"), "{both:?}");
+        assert!(!both.contains("(DRY RUN)"), "{both:?}");
+    }
+
+    #[test]
+    fn files_count_categories_split_dev_from_special() {
+        // upstream: main.c:388 output_itemized_counts labels[] =
+        // {reg, dir, link, dev, special}. Device nodes ('dev') must be counted
+        // separately from other specials (fifos/sockets); folding them into a
+        // single 'special' count diverges from upstream's five-category line.
+        let cats = files_count_categories(3, 2, 1, 4, 5);
+        assert_eq!(
+            cats,
+            [
+                ("reg", 3),
+                ("dir", 2),
+                ("link", 1),
+                ("dev", 4),
+                ("special", 5)
+            ]
+        );
+        assert_eq!(
+            format_stat_categories(&cats),
+            " (reg: 3, dir: 2, link: 1, dev: 4, special: 5)"
+        );
     }
 }

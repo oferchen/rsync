@@ -47,7 +47,8 @@ fn emit_transfer_summary_list_only_emits_listing_and_stats() {
         2, // stats_level
         false,
         true,
-        false,
+        false, // dry_run
+        false, // only_write_batch
         None,
         &OutFormatContext::default(),
         NameOutputLevel::UpdatedAndUnchanged,
@@ -82,7 +83,8 @@ fn emit_transfer_summary_with_progress_and_verbose_listing() {
         0, // stats_level
         false,
         false,
-        false,
+        false, // dry_run
+        false, // only_write_batch
         None,
         &OutFormatContext::default(),
         NameOutputLevel::UpdatedAndUnchanged,
@@ -125,7 +127,8 @@ fn emit_transfer_summary_out_format_adds_separator_before_stats() {
         2, // stats_level
         false,
         false,
-        false,
+        false, // dry_run
+        false, // only_write_batch
         Some(&format),
         &OutFormatContext::default(),
         NameOutputLevel::Disabled,

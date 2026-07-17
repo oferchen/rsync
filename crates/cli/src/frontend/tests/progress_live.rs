@@ -778,7 +778,9 @@ fn format_progress_rate_large_bytes_short_duration() {
 }
 
 #[test]
-fn format_progress_rate_human_nonzero() {
+fn format_progress_rate_small_stays_kb_per_sec_in_human_mode() {
+    // upstream: progress.c:108-116 - the progress rate is always base-1024,
+    // never `-h`/`-hh`; a small rate stays in the `kB/s` tier.
     let rate = format_progress_rate(
         5_000,
         Duration::from_secs(1),
@@ -786,7 +788,7 @@ fn format_progress_rate_human_nonzero() {
     );
     assert!(
         rate.contains("kB/s"),
-        "5000 B/s in human mode should show kB/s: {rate:?}"
+        "5000 B/s should show kB/s regardless of mode: {rate:?}"
     );
 }
 
