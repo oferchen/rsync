@@ -401,7 +401,11 @@ impl ModuleDefinition {
     }
 
     /// Returns the per-module log file path, if configured.
-    #[allow(dead_code)] // REASON: wired when per-module log files are opened at connection time
+    ///
+    /// This is upstream's `lp_log_file(module_id)`: the value already carries the
+    /// global-section default inherited at resolution time (finish.rs). The
+    /// daemon reopens its per-connection log sink to this path at module select
+    /// (`reopen_module_log_sink`, mirroring `log_init(1)` at clientserver.c:897).
     pub(crate) fn module_log_file(&self) -> Option<&Path> {
         self.log_file.as_deref()
     }

@@ -1095,12 +1095,12 @@ fn accept_loop_recovers_after_disconnect() {
 }
 
 #[test]
-fn default_listen_backlog_is_128() {
-    // The default backlog must be high enough for production workloads.
-    // A value of 5 (upstream's historical default) causes connection drops
-    // under moderate concurrency. 128 matches SOMAXCONN on most Linux
-    // systems and is the standard default for production TCP servers.
-    assert_eq!(DEFAULT_LISTEN_BACKLOG, 128);
+fn default_listen_backlog_matches_upstream() {
+    // upstream: daemon-parm.txt declares `INTEGER listen_backlog 5` and
+    // socket.c:554 passes `lp_listen_backlog()` to listen(2). The absent-
+    // directive default must match upstream's 5 so a drop-in daemon presents
+    // the same accept-queue depth; operators raise it via `listen backlog`.
+    assert_eq!(DEFAULT_LISTEN_BACKLOG, 5);
 }
 
 #[test]
