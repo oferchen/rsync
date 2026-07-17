@@ -8,6 +8,7 @@
 //!   error bursts.
 //! - `concurrent`: multi-threaded contention and panic-path safety.
 
+use std::cell::Cell;
 use std::thread;
 use std::time::Duration;
 
@@ -24,6 +25,45 @@ fn limiter_with(initial: usize, min: usize, max: usize) -> AimdLimiter {
         .min_limit(min)
         .max_limit(max)
         .build()
+}
+
+thread_local! {
+    /// Virtual nanosecond clock for debounce/decay tests. Thread-local so each
+    /// test (which runs on its own thread) drives an independent clock with no
+    /// cross-test interference.
+    static FAKE_CLOCK: Cell<u64> = const { Cell::new(0) };
+}
+
+/// Reads the thread-local virtual clock. Passed to [`AimdLimiter::with_clock`]
+/// as a plain function pointer so the limiter's hot path stays allocation-free.
+fn fake_now() -> u64 {
+    FAKE_CLOCK.with(|c| c.get())
+}
+
+/// Handle that advances the virtual clock a limiter reads via [`fake_now`].
+///
+/// Debounce windows are measured against this clock instead of real elapsed
+/// wall-clock time, so tests are immune to runner load: "within the window"
+/// means the clock is not advanced, and "after the window" means the clock is
+/// advanced explicitly past the debounce span.
+struct TestClock;
+
+impl TestClock {
+    /// Advances the virtual clock by `nanos`.
+    fn advance(&self, nanos: u64) {
+        FAKE_CLOCK.with(|c| c.set(c.get().saturating_add(nanos)));
+    }
+}
+
+/// Builds a limiter driven by the deterministic thread-local virtual clock,
+/// returning the limiter and a handle to advance that clock.
+fn limiter_with_clock(initial: usize, min: usize, max: usize) -> (AimdLimiter, TestClock) {
+    FAKE_CLOCK.with(|c| c.set(1));
+    let limiter = AimdLimiter::with_clock(
+        LimiterConfig::new(initial).min_limit(min).max_limit(max),
+        fake_now,
+    );
+    (limiter, TestClock)
 }
 
 /// Completes one full success window (target consecutive successes).
