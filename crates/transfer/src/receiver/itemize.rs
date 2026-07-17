@@ -50,6 +50,28 @@ impl ReceiverContext {
         }
     }
 
+    /// Records one newly created entry (destination absent before the transfer)
+    /// against the receiver's per-type created tally, classifying it by the
+    /// entry's Unix mode bits.
+    ///
+    /// Call once per `ITEM_IS_NEW` entry - a new directory, symlink, device,
+    /// FIFO, or regular file - regardless of whether any file data moved and
+    /// regardless of `--itemize-changes` visibility. Upstream counts these in
+    /// the receiver independent of the `-i` gate, so the `--stats` breakdown is
+    /// correct even without itemize output. The tally is folded into the
+    /// returned `TransferStats` and never crosses the wire.
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `receiver.c:733-746` - `stats.created_files++` plus the per-mode
+    ///   `created_dirs`/`created_symlinks`/`created_devices`/`created_specials`
+    ///   cascade under the `iflags & ITEM_IS_NEW` guard.
+    pub(in crate::receiver) fn record_created(&self, mode: u32) {
+        let mut stats = self.created_stats.get();
+        stats.record(mode);
+        self.created_stats.set(stats);
+    }
+
     /// Routes an already-formatted info line (itemize, skip notice) to the
     /// correct sink: a server receiver multiplexes it as `MSG_INFO`; a client
     /// receiver (pull) writes it directly to stdout.

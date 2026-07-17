@@ -330,6 +330,7 @@ impl GeneratorContext {
             flist_xfertime_ms: flist_xfertime,
             flist_first_byte_latency: self.timing.flist_first_byte_latency,
             delete_stats: self.delete_stats,
+            created_stats: transfer_result.created_stats,
             io_error: self.io_error,
         })
     }
