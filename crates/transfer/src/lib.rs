@@ -290,14 +290,41 @@ pub(crate) const fn receiver_wants_filter_list(
 /// `s` modifier - upstream `add_rule()` deliberately spares per-directory merges
 /// from the implicit sender-side flip.
 ///
+/// CVS rules produced by `-C`/`--cvs-exclude` follow a separate gate: upstream's
+/// `send_filter_list()` adds them to the transmitted list only on a sending
+/// client (`am_sender`), and adds the `:C` per-directory merge only when the
+/// negotiated protocol is >= 29; on a receiving client they are appended after
+/// `send_rules()` and never cross the wire. The `-C` flag is forwarded to the
+/// peer in argv, so the peer regenerates them locally - transmitting them on a
+/// pull would be redundant and non-upstream, and emitting `:C` on a legacy peer
+/// would abort with "filter rules are too modern".
+///
 /// # Upstream Reference
 ///
-/// `exclude.c:1605-1612` (`send_rules`); `exclude.c:1330-1332` (`add_rule`).
+/// `exclude.c:1605-1612` (`send_rules`); `exclude.c:1330-1332` (`add_rule`);
+/// `exclude.c:1652-1668` (`send_filter_list`, the CVS role/protocol gate).
 fn wire_rule_crosses_wire(
     rule: &protocol::filters::FilterRuleWireFormat,
     client_is_sender: bool,
     delete_excluded: bool,
+    protocol: protocol::ProtocolVersion,
 ) -> bool {
+    if rule.cvs_origin {
+        // upstream: exclude.c:1652 send_filter_list() - `if (cvs_exclude && am_sender)`
+        // adds the `-C` rules before send_rules(); a receiving client adds them
+        // only afterwards (exclude.c:1663-1668), so they never cross the wire.
+        if !client_is_sender {
+            return false;
+        }
+        // upstream: exclude.c:1653 send_filter_list() - the `:C` per-directory
+        // merge is added to the transmitted list only when protocol_version >= 29;
+        // on a legacy peer it is kept local (exclude.c:1664) instead.
+        if matches!(rule.rule_type, protocol::filters::RuleType::DirMerge)
+            && protocol.uses_old_prefixes()
+        {
+            return false;
+        }
+    }
     let side_local = if client_is_sender {
         rule.sender_side
     } else {
@@ -760,7 +787,12 @@ pub fn run_server_with_handshake_adopting<W: Write>(
             .filter_rules
             .iter()
             .filter(|rule| {
-                wire_rule_crosses_wire(rule, client_is_sender, config.deletion.delete_excluded)
+                wire_rule_crosses_wire(
+                    rule,
+                    client_is_sender,
+                    config.deletion.delete_excluded,
+                    handshake.protocol,
+                )
             })
             .cloned()
             .collect();
