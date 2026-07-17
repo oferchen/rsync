@@ -482,6 +482,82 @@ fn apply_acls_from_cache_missing_index_is_noop() {
 }
 
 #[test]
+fn reconstruct_acl_masks_special_bits_from_mode() {
+    // WHY: setuid/setgid/sticky are not representable in a POSIX ACL. When the
+    // receiver rebuilds stripped base entries from the mode it must use only
+    // the low 0o777 bits, so the special bits never leak into an ACL entry -
+    // they are restored separately via chmod after the ACL is applied.
+    // upstream: acls.c:931-932 change_sacl_perms() returns
+    // `(old_mode & ~ACCESSPERMS) | (mode & ACCESSPERMS)`.
+    use protocol::acl::{IdAccess, NO_ENTRY};
+
+    let mut wire = RsyncAcl::new();
+    // A named entry forces the mask to be reconstructed from the mode too.
+    wire.names.push(IdAccess::user(1000, 0x07));
+    assert_eq!(wire.user_obj, NO_ENTRY);
+
+    // 0o6755 carries setuid+setgid on top of 0o755; the reconstructed base
+    // entries must be identical to plain 0o755.
+    let plain = reconstruct_acl(&wire, Some(0o755));
+    let setid = reconstruct_acl(&wire, Some(0o6755));
+
+    assert_eq!(setid.user_obj, plain.user_obj);
+    assert_eq!(setid.group_obj, plain.group_obj);
+    assert_eq!(setid.other_obj, plain.other_obj);
+    assert_eq!(setid.mask_obj, plain.mask_obj);
+    // Pin the values so a regression that let a high bit bleed into rwx fails.
+    assert_eq!(setid.user_obj, 0x07);
+    assert_eq!(setid.group_obj, 0x05);
+    assert_eq!(setid.other_obj, 0x05);
+    assert_eq!(setid.mask_obj, 0x05);
+}
+
+#[test]
+fn apply_acls_from_cache_preserves_setgid_and_sticky() {
+    // WHY: applying a POSIX access ACL via setfacl re-derives the permission
+    // bits from the ACL's base entries and clears setuid/setgid/sticky, which
+    // are not representable in the ACL. Upstream restores them after set_acl
+    // (acls.c:924-932, rsync.c:659-660). Dropping setgid silently downgrades a
+    // setgid binary or directory - a metadata-fidelity and security regression
+    // (#213). This must hold for an ordinary (non-root) user.
+    use protocol::acl::IdAccess;
+    use std::os::unix::fs::PermissionsExt;
+
+    let dir = tempdir().expect("tempdir");
+    let file = dir.path().join("setgid_sticky");
+    File::create(&file).expect("create file");
+
+    // setgid + sticky on a user-owned file are settable without root.
+    let mode = 0o3755u32;
+    std::fs::set_permissions(&file, std::fs::Permissions::from_mode(mode))
+        .expect("chmod special bits");
+
+    // Only assert survival of the bits the filesystem actually accepted, so the
+    // test is robust across filesystems with differing special-bit support.
+    let precondition = std::fs::metadata(&file).expect("stat").permissions().mode() & 0o7000;
+    assert_ne!(
+        precondition, 0,
+        "filesystem must accept at least one special bit for this test to be meaningful"
+    );
+
+    // A named-user entry forces setfacl to write an extended ACL that
+    // re-derives (and, on POSIX-ACL filesystems, clears) the special bits.
+    let mut acl = RsyncAcl::from_mode(mode & 0o777);
+    acl.names.push(IdAccess::user(0, 0x04));
+    let mut cache = AclCache::new();
+    let ndx = cache.store_access(acl);
+
+    apply_acls_from_cache(&file, &cache, ndx, None, true, Some(mode), None)
+        .expect("apply ACL from cache");
+
+    let after = std::fs::metadata(&file).expect("stat").permissions().mode() & 0o7000;
+    assert_eq!(
+        after, precondition,
+        "setuid/setgid/sticky must survive ACL application (upstream restores them)"
+    );
+}
+
+#[test]
 fn default_perms_for_dir_no_acl_returns_umask_default() {
     // No default ACL: upstream returns ACCESSPERMS & ~orig_umask without
     // emitting `DEBUG_GTE(ACL, 1)`.
