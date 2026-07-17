@@ -47,34 +47,43 @@ impl ChecksumVerifier {
         _compat_flags: Option<&CompatibilityFlags>,
     ) -> Self {
         negotiated
-            .map(|n| Self::for_algorithm_seeded(n.checksum, seed))
+            .map(|n| Self::for_algorithm_seeded(n.checksum, seed, protocol))
             .unwrap_or_else(|| {
                 if protocol.uses_varint_encoding() {
                     Self::Md5(Md5::new())
                 } else {
                     // upstream: checksum.c:125 - protocol >= 27 uses CSUM_MD4_OLD
                     // which prepends the 4-byte seed before file data.
-                    let mut verifier = Self::Md4(Md4::new());
-                    verifier.update(&seed.to_le_bytes());
-                    verifier
+                    Self::for_algorithm_seeded(ChecksumAlgorithm::MD4, seed, protocol)
                 }
             })
     }
 
-    /// Creates a verifier for a specific algorithm with seed prepended.
+    /// Creates a verifier for a specific algorithm, gating the seed prepend on
+    /// the protocol version to match upstream's whole-file `sum_init()`.
     ///
-    /// For legacy MD4 (protocol < 30), the seed must be prepended to match
-    /// upstream `CSUM_MD4_OLD`. For all other algorithms, the seed is not
-    /// prepended - matching upstream `sum_init()` which only seeds the
-    /// legacy MD4 variants.
+    /// The whole-file end-of-file digest prepends the 4-byte LE seed before the
+    /// file data ONLY for the legacy MD4 variants (`CSUM_MD4_OLD`/`BUSTED`/
+    /// `ARCHAIC`, protocol below 30). The modern `CSUM_MD4` negotiated at
+    /// protocol 30 or newer (e.g. `--checksum-choice=md4`) is unseeded, as are
+    /// MD5, SHA1, and the XXH variants. This is distinct from the per-block
+    /// `get_checksum2()` path, which appends the seed after the data for all MD4
+    /// variants.
     ///
     /// # Upstream Reference
     ///
-    /// - `checksum.c:605-612` - only `CSUM_MD4_OLD`/`BUSTED`/`ARCHAIC` prepend seed
+    /// - `checksum.c:600-611` `sum_init()` - only `CSUM_MD4_OLD`/`BUSTED`/
+    ///   `ARCHAIC` (the protocol < 30 forms) call `sum_update(seed, 4)`; the
+    ///   modern `CSUM_MD4` and `CSUM_MD5` cases seed nothing.
     #[must_use]
-    pub fn for_algorithm_seeded(algorithm: ChecksumAlgorithm, seed: i32) -> Self {
+    pub fn for_algorithm_seeded(
+        algorithm: ChecksumAlgorithm,
+        seed: i32,
+        protocol: ProtocolVersion,
+    ) -> Self {
         let mut verifier = Self::for_algorithm(algorithm);
-        if algorithm == ChecksumAlgorithm::MD4 {
+        // Only the legacy protocol < 30 MD4 whole-file sum prepends the seed.
+        if algorithm == ChecksumAlgorithm::MD4 && !protocol.uses_varint_encoding() {
             verifier.update(&seed.to_le_bytes());
         }
         verifier
@@ -262,6 +271,74 @@ mod tests {
         v.update(b"test");
         let mut buf = [0u8; ChecksumVerifier::MAX_DIGEST_LEN];
         assert_eq!(v.finalize_into(&mut buf), 16);
+    }
+
+    fn proto(v: u8) -> ProtocolVersion {
+        ProtocolVersion::try_from(v).expect("protocol version")
+    }
+
+    fn digest(mut v: ChecksumVerifier, data: &[u8]) -> Vec<u8> {
+        v.update(data);
+        let mut buf = [0u8; ChecksumVerifier::MAX_DIGEST_LEN];
+        let len = v.finalize_into(&mut buf);
+        buf[..len].to_vec()
+    }
+
+    /// WHY: the whole-file end-of-file digest must be byte-compatible with a real
+    /// upstream 3.4.4 binary. Upstream `checksum.c:600-611` `sum_init()` prepends
+    /// the 4-byte LE seed ONLY for the legacy MD4 variants (CSUM_MD4_OLD/BUSTED/
+    /// ARCHAIC, protocol < 30). The modern CSUM_MD4 negotiated at protocol >= 30
+    /// (e.g. `--checksum-choice=md4`) is unseeded. Seeding it would corrupt the
+    /// digest and make every MD4 transfer fail verification against upstream.
+    #[test]
+    fn md4_seed_prepend_is_gated_on_protocol() {
+        let data = b"the quick brown fox";
+        let seed: i32 = 0x1234_5678;
+
+        // Reference digests computed with the base (unseeded) verifier.
+        let unseeded = digest(
+            ChecksumVerifier::for_algorithm(ChecksumAlgorithm::MD4),
+            data,
+        );
+        let seeded = {
+            let mut v = ChecksumVerifier::for_algorithm(ChecksumAlgorithm::MD4);
+            v.update(&seed.to_le_bytes());
+            digest(v, data)
+        };
+        assert_ne!(
+            unseeded, seeded,
+            "a non-zero seed must change the MD4 digest"
+        );
+
+        // protocol >= 30: modern CSUM_MD4, no seed prepend (upstream sum_init).
+        let p32 = ChecksumVerifier::for_algorithm_seeded(ChecksumAlgorithm::MD4, seed, proto(32));
+        assert_eq!(
+            digest(p32, data),
+            unseeded,
+            "MD4 at protocol >= 30 must NOT prepend the seed (upstream checksum.c:600)"
+        );
+
+        // protocol < 30: legacy CSUM_MD4_OLD, seed prepended before file data.
+        let p29 = ChecksumVerifier::for_algorithm_seeded(ChecksumAlgorithm::MD4, seed, proto(29));
+        assert_eq!(
+            digest(p29, data),
+            seeded,
+            "MD4 at protocol < 30 must prepend the seed (upstream checksum.c:604-611)"
+        );
+
+        // MD5 never seeds via this path, regardless of protocol version.
+        let md5_ref = digest(
+            ChecksumVerifier::for_algorithm(ChecksumAlgorithm::MD5),
+            data,
+        );
+        for v in [29u8, 32u8] {
+            let m = ChecksumVerifier::for_algorithm_seeded(ChecksumAlgorithm::MD5, seed, proto(v));
+            assert_eq!(
+                digest(m, data),
+                md5_ref,
+                "MD5 must never be seeded by for_algorithm_seeded (proto {v})"
+            );
+        }
     }
 
     #[test]

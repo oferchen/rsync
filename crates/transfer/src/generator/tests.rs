@@ -901,6 +901,7 @@ fn stream_whole_file_produces_correct_wire_format() {
         data.len() as u64,
         ChecksumAlgorithm::MD5,
         0,
+        ProtocolVersion::try_from(31u8).unwrap(),
         None,
         &mut buf,
         None,
@@ -929,6 +930,7 @@ fn stream_whole_file_handles_empty_file() {
         0,
         ChecksumAlgorithm::MD5,
         0,
+        ProtocolVersion::try_from(31u8).unwrap(),
         None,
         &mut buf,
         None,
@@ -960,6 +962,7 @@ fn stream_whole_file_computes_correct_checksum() {
         data.len() as u64,
         ChecksumAlgorithm::MD5,
         0,
+        ProtocolVersion::try_from(31u8).unwrap(),
         None,
         &mut buf,
         None,
@@ -1005,14 +1008,20 @@ fn stream_whole_file_md4_prepends_seed_for_proto29() {
         data.len() as u64,
         ChecksumAlgorithm::MD4,
         seed,
+        ProtocolVersion::try_from(29u8).unwrap(),
         None,
         &mut buf,
         None,
     )
     .unwrap();
 
-    // Receiver-side expectation: seeded MD4 over the reconstructed file.
-    let mut expected = ChecksumVerifier::for_algorithm_seeded(ChecksumAlgorithm::MD4, seed);
+    // Receiver-side expectation: seeded MD4 over the reconstructed file at
+    // protocol 29 (legacy CSUM_MD4_OLD, which prepends the seed).
+    let mut expected = ChecksumVerifier::for_algorithm_seeded(
+        ChecksumAlgorithm::MD4,
+        seed,
+        ProtocolVersion::try_from(29u8).unwrap(),
+    );
     expected.update(data);
     let mut expected_buf = [0u8; ChecksumVerifier::MAX_DIGEST_LEN];
     let expected_len = expected.finalize_into(&mut expected_buf);
@@ -1057,6 +1066,7 @@ fn stream_whole_file_reuses_buffer() {
         512,
         ChecksumAlgorithm::None,
         0,
+        ProtocolVersion::try_from(31u8).unwrap(),
         None,
         &mut buf,
         None,
@@ -1076,6 +1086,7 @@ fn stream_whole_file_reuses_buffer() {
         2048,
         ChecksumAlgorithm::None,
         0,
+        ProtocolVersion::try_from(31u8).unwrap(),
         None,
         &mut buf,
         None,
@@ -1106,6 +1117,7 @@ fn stream_whole_file_none_checksum() {
         data.len() as u64,
         ChecksumAlgorithm::None,
         0,
+        ProtocolVersion::try_from(31u8).unwrap(),
         None,
         &mut buf,
         None,

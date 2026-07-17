@@ -622,6 +622,7 @@ impl GeneratorContext {
                         append_verify,
                         checksum_algorithm,
                         self.checksum_seed,
+                        self.protocol,
                         if use_compression {
                             token_encoder.as_mut()
                         } else {
@@ -758,6 +759,7 @@ impl GeneratorContext {
                         use_noatime,
                         checksum_algorithm,
                         self.checksum_seed,
+                        self.protocol,
                     )?;
                     cw.write_all(&result.checksum_buf[..result.checksum_len])?;
                     matched_data += result.matched_data;
@@ -827,6 +829,7 @@ impl GeneratorContext {
                         file_size,
                         checksum_algorithm,
                         self.checksum_seed,
+                        self.protocol,
                         if use_compression {
                             token_encoder.as_mut()
                         } else {

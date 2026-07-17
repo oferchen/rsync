@@ -439,12 +439,14 @@ pub(crate) fn updating_basis_file(
 ///
 /// Mirrors upstream `match.c` interleaved pattern where `sum_update()` and
 /// `send_token()` happen on the same data pass.
+#[allow(clippy::too_many_arguments)]
 pub(super) fn stream_whole_file_transfer<R: Read, W: Write>(
     writer: &mut W,
     mut source: R,
     file_size: u64,
     checksum_algorithm: ChecksumAlgorithm,
     checksum_seed: i32,
+    protocol: protocol::ProtocolVersion,
     encoder: Option<&mut CompressedTokenEncoder>,
     buf: &mut Vec<u8>,
     serve_fds: Option<ServeFds>,
@@ -473,7 +475,8 @@ pub(super) fn stream_whole_file_transfer<R: Read, W: Write>(
     // (CSUM_MD4_OLD, proto 27-29) prepends the 4-byte LE seed before file
     // data; MD5 and the modern algorithms do not. Mirror the receiver's
     // ChecksumVerifier::new so both sides agree at protocol < 30.
-    let mut verifier = ChecksumVerifier::for_algorithm_seeded(checksum_algorithm, checksum_seed);
+    let mut verifier =
+        ChecksumVerifier::for_algorithm_seeded(checksum_algorithm, checksum_seed, protocol);
 
     // Read buffer sized for fewer syscalls (up to 256KB per read).
     // Buffer is reused across files - no allocation after the first large file.
@@ -551,10 +554,12 @@ pub(super) fn stream_append_transfer<R: Read, W: Write>(
     append_verify: bool,
     checksum_algorithm: ChecksumAlgorithm,
     checksum_seed: i32,
+    protocol: protocol::ProtocolVersion,
     encoder: Option<&mut CompressedTokenEncoder>,
     buf: &mut Vec<u8>,
 ) -> io::Result<StreamResult> {
-    let mut verifier = ChecksumVerifier::for_algorithm_seeded(checksum_algorithm, checksum_seed);
+    let mut verifier =
+        ChecksumVerifier::for_algorithm_seeded(checksum_algorithm, checksum_seed, protocol);
 
     const MAX_READ_SIZE: usize = 256 * 1024;
 
@@ -762,6 +767,7 @@ pub(super) struct InlineChecksumResult {
 /// operate on the same `map_ptr()` data in a single pass, and
 /// `token.c:send_deflated_token()` feeds the same data to the compressor
 /// dictionary.
+#[allow(clippy::too_many_arguments)]
 pub(super) fn write_delta_with_inline_checksum<W: Write>(
     writer: &mut W,
     ops: &[DeltaOp],
@@ -771,12 +777,14 @@ pub(super) fn write_delta_with_inline_checksum<W: Write>(
     use_noatime: bool,
     checksum_algorithm: ChecksumAlgorithm,
     checksum_seed: i32,
+    protocol: protocol::ProtocolVersion,
 ) -> io::Result<InlineChecksumResult> {
     // upstream: checksum.c:558 sum_init() - prepend the 4-byte LE seed for the
     // legacy MD4 whole-file sum (CSUM_MD4_OLD, proto 27-29); MD5 and modern
     // algorithms are unseeded. Keeps the sender symmetric with the receiver's
     // ChecksumVerifier so protocol < 30 peers accept the reconstructed file.
-    let mut verifier = ChecksumVerifier::for_algorithm_seeded(checksum_algorithm, checksum_seed);
+    let mut verifier =
+        ChecksumVerifier::for_algorithm_seeded(checksum_algorithm, checksum_seed, protocol);
 
     // Lazily open source file only when Copy tokens are present.
     // A single file handle serves both checksum and dictionary sync.
@@ -967,6 +975,7 @@ mod tests {
             data.len() as u64,
             ChecksumAlgorithm::MD5,
             0,
+            protocol::ProtocolVersion::NEWEST,
             None,
             &mut buf,
             None,
@@ -992,6 +1001,7 @@ mod tests {
             data.len() as u64,
             ChecksumAlgorithm::MD5,
             0,
+            protocol::ProtocolVersion::NEWEST,
             Some(&mut enc),
             &mut buf2,
             None,
@@ -1168,6 +1178,7 @@ mod tests {
             false,
             ChecksumAlgorithm::MD5,
             0,
+            proto(31),
         )
         .expect("write_delta_with_inline_checksum");
 
@@ -1212,6 +1223,7 @@ mod tests {
             false,
             ChecksumAlgorithm::MD5,
             0,
+            proto(31),
             None,
             &mut buf,
         )
@@ -1238,6 +1250,7 @@ mod tests {
             true,
             ChecksumAlgorithm::MD5,
             0,
+            proto(31),
             None,
             &mut buf,
         )
