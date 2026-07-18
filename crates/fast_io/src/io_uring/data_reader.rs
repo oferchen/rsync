@@ -1,7 +1,7 @@
 //! Sender/reader-side io_uring slurp wrapper (IUD-6 #2366).
 //!
-//! `IoUringFileReader` is a thin, opt-in entry point that mirrors the
-//! `RegisteredBufferPool`-backed `READ_FIXED` path already implemented by
+//! `IoUringFileReader` is a thin, opt-in entry point that delegates to the
+//! batched `IORING_OP_READ` slurp path already implemented by
 //! [`super::file_reader::IoUringReader`], but exposes a focused
 //! `open` / `read_into` / `read_to_end` surface for the engine's basis-file
 //! slurp dispatch.
@@ -20,9 +20,10 @@
 //!
 //! # Reuse, never duplicate
 //!
-//! All buffer registration and `READ_FIXED` submission goes through
-//! [`super::registered_buffers::RegisteredBufferGroup`] via the existing
-//! [`IoUringReader::read_all_batched`] pipeline. This module adds no new
+//! All submissions go through the existing
+//! [`IoUringReader::read_all_batched`] pipeline, which currently issues plain
+//! `IORING_OP_READ` SQEs against the per-thread ring (the `READ_FIXED`
+//! registered-buffer fast path returns with IUR-3.e). This module adds no new
 //! unsafe code.
 
 use std::io;
@@ -35,10 +36,9 @@ use super::file_reader::IoUringReader;
 
 /// Sender/reader-side io_uring file reader (IUD-6).
 ///
-/// Opens a file read-only and submits `IORING_OP_READ_FIXED` against a
-/// registered buffer pool via the shared [`IoUringReader`] machinery.
-/// Single-purpose API for basis-file slurp paths; for sender-source
-/// streaming through the `Read` trait, use
+/// Opens a file read-only and submits batched `IORING_OP_READ` SQEs via the
+/// shared [`IoUringReader`] machinery. Single-purpose API for basis-file
+/// slurp paths; for sender-source streaming through the `Read` trait, use
 /// [`super::file_reader::IoUringReader`] directly.
 pub struct IoUringFileReader {
     inner: IoUringReader,
@@ -47,23 +47,24 @@ pub struct IoUringFileReader {
 }
 
 impl IoUringFileReader {
-    /// Opens `path` read-only and prepares a registered-buffer io_uring ring.
+    /// Opens `path` read-only through the calling thread's per-thread io_uring
+    /// ring.
     ///
-    /// The ring is configured with `register_buffers = true` so the slurp path
-    /// uses `READ_FIXED` against the shared
-    /// [`RegisteredBufferGroup`](super::registered_buffers::RegisteredBufferGroup)
-    /// when the kernel honours registration. Registration failure transparently
-    /// falls back to plain `IORING_OP_READ` (still io_uring, just without the
-    /// pinned-page fast path) inside [`IoUringReader::read_all_batched`].
+    /// The default config still requests buffer registration, but the
+    /// per-thread [`IoUringReader`] honours that knob for sizing only: the
+    /// slurp path issues plain `IORING_OP_READ` SQEs inside
+    /// [`IoUringReader::read_all_batched`] until IUR-3.e re-introduces the
+    /// `READ_FIXED` fast path via the per-thread bgid lease.
     ///
     /// # Errors
     ///
     /// Returns an error if the file cannot be opened or the io_uring instance
     /// cannot be constructed (e.g. seccomp-blocked, out of memory).
     pub fn open<P: AsRef<Path>>(path: P) -> io::Result<Self> {
-        // Default config already requests buffer registration; we surface the
-        // wrapper at this level so future tuning (page-aligned slurp sizing,
-        // SQPOLL opt-in) lives in one place.
+        // Default config requests buffer registration (currently inert on the
+        // per-thread ring; honoured for sizing only until IUR-3.e). We surface
+        // the wrapper at this level so future tuning (page-aligned slurp
+        // sizing, SQPOLL opt-in) lives in one place.
         let config = IoUringConfig::default();
         let inner = IoUringReader::open(path, &config)?;
         let size = inner.size();
@@ -86,9 +87,9 @@ impl IoUringFileReader {
         self.size == 0
     }
 
-    /// Reads up to `dst.len()` bytes at the current cursor position via
-    /// `IORING_OP_READ_FIXED` (registered buffer) when available, advancing
-    /// the cursor by the number of bytes read.
+    /// Reads up to `dst.len()` bytes at the current cursor position via a
+    /// single `IORING_OP_READ` SQE, advancing the cursor by the number of
+    /// bytes read.
     ///
     /// Returns `Ok(0)` at end of file.
     ///
@@ -105,13 +106,13 @@ impl IoUringFileReader {
     }
 
     /// Reads the entire file into a fresh `Vec<u8>` using the batched
-    /// `READ_FIXED` slurp path.
+    /// `IORING_OP_READ` slurp path.
     ///
     /// Internally delegates to
     /// [`IoUringReader::read_all_batched`](super::file_reader::IoUringReader::read_all_batched),
-    /// which submits up to `sq_entries` registered-buffer reads per
-    /// `submit_and_wait` and falls back to plain `IORING_OP_READ` when the
-    /// kernel rejects buffer registration.
+    /// which submits up to `sq_entries` reads per `submit_and_wait` against the
+    /// per-thread ring (the `READ_FIXED` registered-buffer fast path returns
+    /// with IUR-3.e).
     ///
     /// # Errors
     ///
