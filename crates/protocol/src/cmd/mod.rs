@@ -1,6 +1,6 @@
 //! `--debug=CMD` producer emissions for command and option construction.
 //!
-//! Hosts the trace helpers that mirror upstream rsync 3.4.1's `DEBUG_GTE(CMD, N)`
+//! Hosts the trace helpers that mirror upstream rsync 3.4.4's `DEBUG_GTE(CMD, N)`
 //! diagnostics emitted from `pipe.c`, `rsync.c`, `clientserver.c`, and `main.c`
 //! during remote command construction, secluded-args transmission, and daemon
 //! argument forwarding.

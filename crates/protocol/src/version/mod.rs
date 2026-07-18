@@ -5,7 +5,7 @@
 //! highest mutually supported version ([`select_highest_mutual`]) and iterating
 //! over the supported set.
 //!
-//! The supported versions (28 through 32) match upstream rsync 3.4.1. Version
+//! The supported versions (28 through 32) match upstream rsync 3.4.4. Version
 //! 30 is the boundary between the legacy ASCII negotiation and the modern
 //! binary handshake.
 

@@ -3,19 +3,19 @@
 
 use ::core::ops::RangeInclusive;
 
-/// Lowest protocol version supported by upstream rsync 3.4.1.
+/// Lowest protocol version supported by upstream rsync 3.4.4.
 pub(crate) const OLDEST_SUPPORTED_PROTOCOL: u8 = 28;
-/// Newest protocol version supported by upstream rsync 3.4.1.
+/// Newest protocol version supported by upstream rsync 3.4.4.
 pub(crate) const NEWEST_SUPPORTED_PROTOCOL: u8 = 32;
 /// Protocol revision that introduced the binary negotiation handshake.
 pub(crate) const FIRST_BINARY_NEGOTIATION_PROTOCOL: u8 = 30;
-/// Highest protocol version upstream rsync 3.4.1 tolerates from a peer advertisement.
+/// Highest protocol version upstream rsync 3.4.4 tolerates from a peer advertisement.
 ///
 /// Mirrors `MAX_PROTOCOL_VERSION` from `rsync.h` so future protocol announcements that fall
 /// within upstream's guard range are accepted and clamped to the newest supported revision.
 pub const MAXIMUM_PROTOCOL_ADVERTISEMENT: u8 = 40;
 
-/// Inclusive range of protocol versions that upstream rsync 3.4.1 understands.
+/// Inclusive range of protocol versions that upstream rsync 3.4.4 understands.
 pub(crate) const UPSTREAM_PROTOCOL_RANGE: RangeInclusive<u8> =
     OLDEST_SUPPORTED_PROTOCOL..=NEWEST_SUPPORTED_PROTOCOL;
 

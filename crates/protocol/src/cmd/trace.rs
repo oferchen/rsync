@@ -1,6 +1,6 @@
 //! `--debug=CMD` producer emissions for remote command construction.
 //!
-//! Mirrors upstream rsync 3.4.1's `DEBUG_GTE(CMD, N)` output so wire-comparable
+//! Mirrors upstream rsync 3.4.4's `DEBUG_GTE(CMD, N)` output so wire-comparable
 //! diagnostics align across implementations. All emissions use the upstream
 //! quoting rules from `util1.c:print_child_argv` so that the printed argv
 //! matches what upstream would write to `FCLIENT` byte-for-byte (modulo the

@@ -24,7 +24,7 @@ use super::iter::{SupportedProtocolNumbersIter, SupportedVersionsIter};
 /// This type wraps a non-zero byte that identifies which revision of the rsync
 /// wire protocol a session has agreed to use. The supported range is
 /// [`V28`](Self::V28) through [`V32`](Self::V32), matching upstream rsync
-/// 3.4.1. Protocol version 30 marks the boundary between the legacy ASCII
+/// 3.4.4. Protocol version 30 marks the boundary between the legacy ASCII
 /// negotiation (`@RSYNCD:`) and the modern binary handshake.
 ///
 /// # Constructing a Version
@@ -124,10 +124,10 @@ impl ProtocolVersion {
         }
     }
 
-    /// The newest protocol version supported by upstream rsync 3.4.1.
+    /// The newest protocol version supported by upstream rsync 3.4.4.
     pub const NEWEST: ProtocolVersion = ProtocolVersion::new_const(NEWEST_SUPPORTED_PROTOCOL);
 
-    /// The oldest protocol version supported by upstream rsync 3.4.1.
+    /// The oldest protocol version supported by upstream rsync 3.4.4.
     pub const OLDEST: ProtocolVersion = ProtocolVersion::new_const(OLDEST_SUPPORTED_PROTOCOL);
 
     /// Protocol version at which rsync switched from the legacy ASCII
@@ -136,7 +136,7 @@ impl ProtocolVersion {
         ProtocolVersion::new_const(FIRST_BINARY_NEGOTIATION_PROTOCOL);
 
     /// Protocol version 32, the newest revision advertised by upstream rsync
-    /// 3.4.1.
+    /// 3.4.4.
     pub const V32: ProtocolVersion = ProtocolVersion::NEWEST;
 
     /// Protocol version 31, used by upstream rsync 3.1.x releases.

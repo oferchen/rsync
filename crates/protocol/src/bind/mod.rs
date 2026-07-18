@@ -1,6 +1,6 @@
 //! `--debug=BIND` producer emissions for socket bind diagnostics.
 //!
-//! Hosts the trace helpers that mirror upstream rsync 3.4.1's
+//! Hosts the trace helpers that mirror upstream rsync 3.4.4's
 //! `DEBUG_GTE(BIND, 1)` diagnostics emitted from `socket.c::open_socket_in`
 //! while iterating per-address-family during daemon listener setup.
 //!
