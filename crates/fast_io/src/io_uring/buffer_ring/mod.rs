@@ -552,14 +552,12 @@ impl Drop for BufferRing {
             );
         }
 
-        // Unmap the ring descriptor region.
         // Safety: ring_ptr was returned by a successful mmap call and
         // ring_mmap_size is the same size passed to mmap.
         unsafe {
             libc::munmap(self.ring_ptr.cast(), self.ring_mmap_size);
         }
 
-        // Free the buffer memory.
         // Safety: buffers_ptr was allocated with buffers_layout and has
         // not been freed yet. The kernel no longer references these buffers
         // after unregister completes.
