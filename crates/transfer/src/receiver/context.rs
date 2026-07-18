@@ -289,6 +289,24 @@ pub struct ReceiverContext {
     /// redo re-itemizing an entry. `RefCell` suffices: every emit site runs on
     /// the main driver thread (rayon workers never touch this).
     pub(in crate::receiver) itemize_rows: RefCell<BTreeMap<usize, Vec<String>>>,
+    /// When set, plain `-v` (name-only, no `-i`) client-mode file names are
+    /// emitted in flist-index order as each file is reached in the transfer
+    /// loop - interleaved with `--progress` - instead of being buffered in the
+    /// logging event queue and rendered as a block at end of run. This restores
+    /// upstream's `log_before_transfer` behaviour (`receiver.c:1008-1012`, name
+    /// printed per file just before its data). Only [`Self::run_pipelined`]
+    /// opts in; `-i`/`-vi` itemize output is unaffected and still flows through
+    /// [`Self::itemize_rows`].
+    pub(in crate::receiver) interleave_names: bool,
+    /// Directory (and other pre-transfer) `-v` name lines buffered under their
+    /// flist index while [`Self::interleave_names`] is set, released in
+    /// ascending index order just before each child file is reached (and any
+    /// trailing entries flushed at end) so a directory name precedes its
+    /// children exactly as upstream's single flist-order walk emits them.
+    pub(in crate::receiver) name_rows: RefCell<BTreeMap<usize, Vec<String>>>,
+    /// True when `-v` name output should be routed to stderr rather than stdout
+    /// (`--msgs2stderr`). Mirrors upstream's `msgs2stderr` FINFO routing.
+    pub(in crate::receiver) names_to_stderr: bool,
     /// Count of server-mode hardlink-follower itemize records emitted this phase
     /// that the peer's sender will echo back (upstream `sender.c:286-292` echoes
     /// every non-transfer item). The pipeline response loop is request-count
@@ -396,6 +414,9 @@ impl ReceiverContext {
             hardlink_lookahead_target: 500,
             defer_itemize: false,
             itemize_rows: RefCell::new(BTreeMap::new()),
+            interleave_names: false,
+            name_rows: RefCell::new(BTreeMap::new()),
+            names_to_stderr: false,
             hardlink_follower_echoes: std::cell::Cell::new(0),
             created_stats: std::cell::Cell::new(protocol::stats::CreatedStats::new()),
             delayed_delete_victims: Vec::new(),

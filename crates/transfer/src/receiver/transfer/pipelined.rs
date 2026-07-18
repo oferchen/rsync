@@ -42,6 +42,19 @@ impl ReceiverContext {
         // (upstream's single flist-index-order walk, generator.c:2329-2344)
         // rather than oc's two-phase "all dirs, then all files" emission.
         self.defer_itemize = true;
+        // Interleave plain `-v` (name-only, no `-i`) client-mode file names
+        // with --progress in flist order, matching upstream log_before_transfer
+        // (receiver.c:1008-1012). `-i`/`-vi` itemize output is unaffected (it
+        // flows through the deferred itemize_rows path). Skips the non-transfer
+        // dispatches (list-only, dry-run, only-write-batch) so their existing
+        // emission order is untouched.
+        self.interleave_names = self.config.flags.verbose
+            && self.config.connection.client_mode
+            && !self.should_emit_itemize()
+            && !self.config.flags.list_only
+            && !self.config.flags.dry_run
+            && !self.config.flags.only_write_batch;
+        self.names_to_stderr = self.config.flags.msgs_to_stderr;
         let (mut reader, file_count, mut setup) = self.setup_transfer(reader, writer)?;
         let reader = &mut reader;
 
@@ -126,6 +139,32 @@ impl ReceiverContext {
         let mut matched_data: u64 = 0;
         let mut redo_count: usize = 0;
         let mut all_delayed_updates: Vec<(PathBuf, PathBuf)> = Vec::new();
+
+        // Buffer directory `-v` names under their flist index so each is
+        // released immediately before its first child is reached in the
+        // transfer loop below (upstream emits the directory row as its flist
+        // entry is reached, so a directory precedes its children). Trailing
+        // directories with no transferred child flush at end of run.
+        if self.interleave_names {
+            let dir_names: Vec<(usize, String)> = self
+                .file_list
+                .iter()
+                .enumerate()
+                .filter(|(_, entry)| entry.is_dir())
+                .map(|(idx, entry)| {
+                    let rel = entry.path();
+                    let line = if rel.as_os_str() == "." {
+                        "./\n".to_string()
+                    } else {
+                        format!("{}/\n", rel.display())
+                    };
+                    (idx, line)
+                })
+                .collect();
+            for (idx, line) in dir_names {
+                self.buffer_deferred_name(idx, line);
+            }
+        }
 
         // upstream: generator.c:1249 - list-only renders every flist entry via
         // list_file_entry() and sends NO per-file NDX request. Only the existing
@@ -228,7 +267,12 @@ impl ReceiverContext {
             }
         }
 
-        if self.config.flags.verbose && self.config.connection.client_mode {
+        // When interleaving `-v` names (the plain `-v` client pull), directory
+        // names were buffered up front and released in flist order alongside
+        // their children in the transfer loop above, so skip this end-of-run
+        // block; any trailing directories flush just below via flush_names_all.
+        if self.config.flags.verbose && self.config.connection.client_mode && !self.interleave_names
+        {
             for file_entry in &self.file_list {
                 if file_entry.is_dir() {
                     let relative_path = file_entry.path();
@@ -277,8 +321,11 @@ impl ReceiverContext {
         // directory mtimes after file writes clobber them.
         self.touch_up_dirs(&setup.dest_dir, writer);
 
-        // Drain the deferred itemize rows in flist-index order before the
-        // goodbye handshake, matching upstream's single-pass emission ordering.
+        // Flush any trailing buffered `-v` directory names (those with no
+        // transferred child to release them mid-loop), then drain the deferred
+        // itemize rows in flist-index order before the goodbye handshake,
+        // matching upstream's single-pass emission ordering.
+        self.flush_names_all()?;
         self.flush_itemize_rows(writer)?;
 
         self.finalize_transfer(reader, writer)?;
