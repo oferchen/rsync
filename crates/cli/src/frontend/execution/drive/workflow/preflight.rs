@@ -16,8 +16,8 @@
 //!
 //! | CLI flag | Cargo feature | Check site | Error string |
 //! |----------|---------------|------------|--------------|
-//! | `--acls`, `-A` | `acl` (CLI) -> `core/acl` | `preflight.rs:216` ([`validate_feature_support`]) | `POSIX ACLs are not supported on this client` |
-//! | `--xattrs`, `-X` | `xattr` (CLI) -> `core/xattr` | `preflight.rs:226` ([`validate_feature_support`]) | `extended attributes are not supported on this client` |
+//! | `--acls`, `-A` | `acl` (CLI) -> `core/acl` | `preflight.rs:234` ([`validate_feature_support`]) | `POSIX ACLs are not supported on this client` |
+//! | `--xattrs`, `-X` | `xattr` (CLI) -> `core/xattr` | `preflight.rs:245` ([`validate_feature_support`]) | `extended attributes are not supported on this client` |
 //!
 //! Cfg expression for both gates: `not(all(any(unix, windows), feature = "<feat>"))`.
 //! The gate fires only when the user explicitly opts in to the flag

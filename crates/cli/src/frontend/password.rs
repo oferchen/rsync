@@ -1,7 +1,7 @@
 //! Password and authentication helpers for the CLI front-end.
 //!
-//! This module centralises password loading logic so the sprawling argument
-//! parser in `lib.rs` can delegate to cohesive helpers. The functions here keep
+//! This module centralises password loading logic so the CLI's argument
+//! parser can delegate to cohesive helpers. The functions here keep
 //! responsibility focused on reading passwords from standard input, from
 //! filesystem paths, or from external commands while enforcing upstream rsync's
 //! permission checks.
