@@ -103,6 +103,80 @@ impl ReceiverContext {
         }
     }
 
+    /// Whether upstream would print the transfer root's plain-`-v` NAME line
+    /// (`./`) for this run.
+    ///
+    /// Upstream emits a directory's `-v` name only when `set_file_attrs()`
+    /// changed it (`generator.c:1503-1505`). For the implied root `.` that is
+    /// true when oc created the destination root (`FLAG_DIR_CREATED`,
+    /// `main.c:794-796`) or when the root's pre-transfer attributes differ from
+    /// the source entry. Must be consulted BEFORE `create_directories` applies
+    /// the root's metadata (and before child mkdirs bump the root mtime), so the
+    /// stat reflects the pre-transfer state - the same pre-mkdir gate the `-i`
+    /// root row uses (see `existing_dir_iflags`).
+    pub(in crate::receiver) fn root_verbose_name_emit(&self, dest_dir: &std::path::Path) -> bool {
+        if self.dest_root_created {
+            return true;
+        }
+        self.file_list
+            .iter()
+            .find(|entry| entry.is_dir() && entry.path().as_os_str() == ".")
+            .is_some_and(|entry| {
+                crate::generator::ItemFlags::from_raw(self.existing_dir_iflags(entry, dest_dir))
+                    .has_significant_flags()
+            })
+    }
+
+    /// Builds the plain-`-v` directory NAME lines (bare `path/`, no newline)
+    /// keyed by flist index, gated exactly as upstream gates the directory name
+    /// output at `generator.c:1503-1505`: a directory prints only when
+    /// `set_file_attrs()` changed it - i.e. it was newly created or its
+    /// pre-transfer attributes differ from the source entry.
+    ///
+    /// Must be called BEFORE `create_directories` applies the directories'
+    /// metadata (and before child mkdirs bump a parent's mtime), so each stat
+    /// reflects the pre-transfer state - the same pre-mkdir gate the `-i` rows
+    /// use (see [`Self::existing_dir_iflags`]). A destination directory that is
+    /// absent pre-transfer (a fresh transfer, `--list-only`, or a dry run) is
+    /// treated as newly created and always named, preserving the prior output
+    /// for those cases; only an unchanged re-sync now correctly stays silent.
+    pub(in crate::receiver) fn verbose_dir_name_lines(
+        &self,
+        dest_dir: &std::path::Path,
+    ) -> Vec<(usize, String)> {
+        self.file_list
+            .iter()
+            .enumerate()
+            .filter_map(|(idx, entry)| {
+                if !entry.is_dir() {
+                    return None;
+                }
+                let rel = entry.path();
+                if rel.as_os_str() == "." {
+                    return self
+                        .root_verbose_name_emit(dest_dir)
+                        .then(|| (idx, "./".to_string()));
+                }
+                let dir_path = dest_dir.join(rel);
+                let emit = match std::fs::symlink_metadata(&dir_path) {
+                    // upstream: itemize() compares an existing dir's pre-apply
+                    // stat and prints its name only when an attribute differs.
+                    Ok(meta) if meta.is_dir() => crate::generator::ItemFlags::from_raw(
+                        self.itemize_existing_flags(entry, &meta, 0),
+                    )
+                    .has_significant_flags(),
+                    // Present but not a directory: upstream deletes it and
+                    // creates the dir (ITEM_IS_NEW), so it is named.
+                    Ok(_) => true,
+                    // Absent pre-transfer: the dir will be created (named), or
+                    // this is a list-only/dry-run with no destination tree.
+                    Err(_) => true,
+                };
+                emit.then(|| (idx, format!("{}/", rel.display())))
+            })
+            .collect()
+    }
+
     /// Records one newly created entry (destination absent before the transfer)
     /// against the receiver's per-type created tally, classifying it by the
     /// entry's Unix mode bits.
