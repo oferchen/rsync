@@ -6,9 +6,11 @@
 /// automatically decrements the counter when dropped.
 ///
 /// The counter is wrapped in an `Arc` so it can be shared between the main
-/// accept loop and spawned worker threads. This enables future max-connections
-/// enforcement at the daemon level (as opposed to the per-module limits
-/// already tracked by `ModuleRuntime::active_connections`).
+/// accept loop and spawned worker threads. The accept loop consults
+/// `ConnectionCounter::active` before spawning a worker and refuses the
+/// connection once `--max-connections` is reached, enforcing the daemon-level
+/// limit (as opposed to the per-module limits already tracked by
+/// `ModuleRuntime::active_connections`).
 ///
 /// upstream: clientserver.c - `count_connections()` tracks active children
 /// for the `max connections` global directive.
