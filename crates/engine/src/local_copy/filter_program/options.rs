@@ -388,7 +388,6 @@ mod tests {
     #[test]
     fn dir_merge_parser_whitespace_no_comments() {
         let parser = DirMergeParser::Whitespace { enforce_kind: None };
-        // Whitespace parser never allows comments
         assert!(!parser.allows_comments());
     }
 
@@ -485,7 +484,6 @@ mod tests {
     fn dir_merge_options_use_whitespace() {
         let opts = DirMergeOptions::new().use_whitespace();
         assert!(opts.uses_whitespace());
-        // Comments should be disabled with whitespace parser
         assert!(!opts.allows_comments());
     }
 
@@ -515,7 +513,6 @@ mod tests {
     #[test]
     fn dir_merge_options_allow_comments_ignored_for_whitespace() {
         let opts = DirMergeOptions::new().use_whitespace().allow_comments(true);
-        // allow_comments should have no effect on whitespace parser
         assert!(!opts.allows_comments());
     }
 

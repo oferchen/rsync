@@ -23,7 +23,6 @@ fn many_hardlink_groups() {
         let dest = PathBuf::from(format!("/dest/group{group}_a.txt"));
         tracker.record(&meta1, &dest);
 
-        // Second file should find the destination
         let meta2 = std::fs::metadata(&file2).unwrap();
         let existing = tracker.existing_target(&meta2);
         assert_eq!(existing, Some(dest.clone()));
@@ -51,7 +50,6 @@ fn many_links_to_same_file() {
     let dest = PathBuf::from("/dest/original.txt");
     tracker.record(&original_meta, &dest);
 
-    // All links should resolve to the same destination
     for (i, link) in links.iter().enumerate() {
         let meta = std::fs::metadata(link).unwrap();
         let existing = tracker.existing_target(&meta);

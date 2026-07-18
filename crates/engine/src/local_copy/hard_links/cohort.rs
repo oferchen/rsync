@@ -81,7 +81,6 @@ impl HardlinkApplyTracker {
         follower_dest: &Path,
     ) -> std::io::Result<HardlinkApplyResult> {
         if let Some(leader_path) = self.leaders.get(&gnum) {
-            // Ensure parent directory exists for the follower.
             if let Some(parent) = follower_dest.parent() {
                 fs::create_dir_all(parent)?;
             }
