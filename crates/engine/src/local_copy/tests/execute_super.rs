@@ -368,11 +368,9 @@ fn fake_super_stores_ownership_in_xattrs() {
             let dest_file = ctx.dest.join("file.txt");
             test_helpers::assert_file_content(&dest_file, b"fake super ownership");
 
-            // Check for the fake-super xattr
             let stat_xattr = xattr::get(&dest_file, "user.rsync.%stat");
             match stat_xattr {
                 Ok(Some(value)) => {
-                    // The xattr should contain encoded metadata
                     assert!(!value.is_empty(), "fake-super xattr should not be empty");
                 }
                 Ok(None) => {
@@ -672,7 +670,6 @@ fn super_true_with_owner_preserves_uid_when_root() {
     use std::os::unix::fs::MetadataExt;
 
     if rustix::process::geteuid().as_raw() != 0 {
-        // Skip when not running as root
         return;
     }
 
@@ -826,7 +823,6 @@ fn super_mode_with_collect_events_records_actions() {
         .expect("copy executes");
 
     assert_eq!(report.summary().files_copied(), 1);
-    // Verify events were recorded
     assert!(!report.records().is_empty());
 }
 
@@ -913,7 +909,6 @@ fn super_mode_with_update_skips_newer_destination() {
     ctx.write_source("file.txt", b"older");
     ctx.write_dest("file.txt", b"newer");
 
-    // Make destination newer than source
     let old_time = filetime::FileTime::from_unix_time(1_000_000_000, 0);
     let new_time = filetime::FileTime::from_unix_time(2_000_000_000, 0);
     filetime::set_file_mtime(ctx.source.join("file.txt"), old_time).expect("set source mtime");

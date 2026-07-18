@@ -29,7 +29,6 @@ fn dry_run_single_file_lists_but_does_not_copy() {
     // Summary reports what *would* happen.
     assert_eq!(summary.files_copied(), 1);
     assert_eq!(summary.bytes_copied(), 7); // "payload" is 7 bytes
-    // Destination must not be created.
     assert!(!destination.exists(), "dry run must not create destination file");
 }
 
@@ -72,7 +71,6 @@ fn dry_run_preserves_source_unmodified() {
     plan.execute_with_options(LocalCopyExecution::DryRun, LocalCopyOptions::default())
         .expect("dry run succeeds");
 
-    // Source must remain identical.
     assert_eq!(
         fs::read(&source).expect("read source"),
         original_content,
@@ -197,9 +195,7 @@ fn dry_run_with_delete_reports_deletions_but_preserves_files() {
     fs::create_dir_all(&source).expect("create source");
     fs::create_dir_all(&dest).expect("create dest");
 
-    // Source has only keep.txt
     fs::write(source.join("keep.txt"), b"keep").expect("write keep");
-    // Destination has keep.txt and extra.txt
     fs::write(dest.join("keep.txt"), b"old keep").expect("write old keep");
     fs::write(dest.join("extra.txt"), b"to be deleted").expect("write extra");
 
@@ -214,9 +210,7 @@ fn dry_run_with_delete_reports_deletions_but_preserves_files() {
         .execute_with_options(LocalCopyExecution::DryRun, options)
         .expect("dry run succeeds");
 
-    // Summary should report the deletion.
     assert_eq!(summary.items_deleted(), 1);
-    // But the file must still exist on disk.
     assert!(
         dest.join("extra.txt").exists(),
         "dry run must not actually delete files"
@@ -225,7 +219,6 @@ fn dry_run_with_delete_reports_deletions_but_preserves_files() {
         fs::read(dest.join("extra.txt")).expect("read extra"),
         b"to be deleted"
     );
-    // Original destination content must also be preserved.
     assert_eq!(
         fs::read(dest.join("keep.txt")).expect("read keep"),
         b"old keep"
@@ -305,7 +298,6 @@ fn dry_run_with_delete_during_reports_interleaved_events() {
     assert_eq!(summary.items_deleted(), 1);
     assert_eq!(summary.files_copied(), 1);
 
-    // Verify that records report both a copy and a deletion.
     let records = report.records();
     let has_copy = records
         .iter()
@@ -316,7 +308,6 @@ fn dry_run_with_delete_during_reports_interleaved_events() {
     assert!(has_copy, "should have a DataCopied record");
     assert!(has_delete, "should have an EntryDeleted record");
 
-    // Filesystem must be untouched.
     assert!(dest.join("stale.txt").exists());
     assert_eq!(fs::read(dest.join("keep.txt")).expect("read"), b"old");
 }
@@ -344,7 +335,6 @@ fn dry_run_with_exclude_filter_omits_excluded_files() {
         .expect("dry run succeeds");
 
     let summary = report.summary();
-    // Only the .txt files should be reported.
     assert_eq!(summary.files_copied(), 2);
 
     let records = report.records();
@@ -529,7 +519,6 @@ fn dry_run_statistics_match_apply_mode_statistics() {
         .execute_with_options(LocalCopyExecution::Apply, LocalCopyOptions::default())
         .expect("apply succeeds");
 
-    // Statistics must match.
     assert_eq!(
         summary_dry.files_copied(),
         summary_apply.files_copied(),
@@ -551,7 +540,6 @@ fn dry_run_statistics_match_apply_mode_statistics() {
         "total_source_bytes should match between dry-run and apply"
     );
 
-    // Filesystem state must differ.
     assert!(!dry_dest.exists(), "dry run destination should not exist");
     assert!(apply_dest.exists(), "apply destination should exist");
 }
@@ -807,7 +795,6 @@ fn dry_run_delete_respects_exclude_filters() {
     // extra.txt should be reported as deleted, excluded.log should be
     // protected by the exclude filter.
     assert_eq!(summary.items_deleted(), 1);
-    // Everything still on disk.
     assert!(dest.join("excluded.log").exists());
     assert!(dest.join("extra.txt").exists());
     assert!(dest.join("keep.txt").exists());
@@ -965,7 +952,6 @@ fn dry_run_with_backup_does_not_create_backup_files() {
         .expect("dry run succeeds");
 
     assert_eq!(summary.files_copied(), 1);
-    // The backup file (dest.txt~) must not exist.
     assert!(
         !temp.path().join("dest.txt~").exists(),
         "dry run must not create backup files"
@@ -1101,7 +1087,6 @@ fn dry_run_with_no_implied_dirs_and_missing_parent_succeeds() {
 
     assert_eq!(summary.files_copied(), 1);
     assert_eq!(summary.bytes_copied(), 5);
-    // Destination must not be created in dry-run mode.
     assert!(
         !dest_root.join("sub").exists(),
         "dry run must not create directories"

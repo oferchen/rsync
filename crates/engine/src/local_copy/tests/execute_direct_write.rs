@@ -169,7 +169,6 @@ fn direct_write_handles_multiple_files_in_directory() {
         b"gamma content"
     );
 
-    // Verify no temp files linger
     let entries: Vec<_> = fs::read_dir(&dest_dir)
         .expect("read dest dir")
         .filter_map(|e| e.ok())
@@ -360,7 +359,6 @@ fn temp_dir_option_does_not_use_direct_write() {
         b"temp dir content"
     );
 
-    // Staging directory should be clean after successful transfer
     let staging_files: Vec<_> = fs::read_dir(&staging)
         .expect("read staging")
         .filter_map(|e| e.ok())

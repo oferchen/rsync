@@ -98,7 +98,6 @@ fn partial_file_manager_finds_keep_mode_partial() {
     let dest = dir.path().join("file.txt");
     let partial = dir.path().join(".rsync-partial-file.txt");
 
-    // Create a partial file
     fs::write(&partial, b"partial content").expect("write partial");
 
     let manager = PartialFileManager::new(PartialMode::Keep);
@@ -116,7 +115,6 @@ fn partial_file_manager_finds_partial_dir_mode_partial() {
     let dest = dir.path().join("file.txt");
     let partial = partial_dir.join("file.txt");
 
-    // Create a partial file in the partial directory
     fs::write(&partial, b"partial content").expect("write partial");
 
     let manager = PartialFileManager::new(PartialMode::PartialDir(partial_dir));
@@ -142,7 +140,6 @@ fn partial_file_manager_cleanup_removes_keep_mode_partial() {
     let dest = dir.path().join("file.txt");
     let partial = dir.path().join(".rsync-partial-file.txt");
 
-    // Create a partial file
     fs::write(&partial, b"partial content").expect("write partial");
     assert!(partial.exists());
 
@@ -161,7 +158,6 @@ fn partial_file_manager_cleanup_removes_partial_dir_mode_partial() {
     let dest = dir.path().join("file.txt");
     let partial = partial_dir.join("file.txt");
 
-    // Create a partial file
     fs::write(&partial, b"partial content").expect("write partial");
     assert!(partial.exists());
 
@@ -186,19 +182,16 @@ fn partial_file_manager_cleanup_succeeds_when_no_partial() {
 fn partial_dir_relative_path_resolved_per_destination() {
     let base = tempdir().expect("tempdir");
 
-    // Create two different destination directories
     let dest1_dir = base.path().join("dest1");
     let dest2_dir = base.path().join("dest2");
     fs::create_dir(&dest1_dir).expect("create dest1");
     fs::create_dir(&dest2_dir).expect("create dest2");
 
-    // Create partial directories relative to each destination
     let partial1_dir = dest1_dir.join(".partial");
     let partial2_dir = dest2_dir.join(".partial");
     fs::create_dir(&partial1_dir).expect("create partial1");
     fs::create_dir(&partial2_dir).expect("create partial2");
 
-    // Create partial files in each
     let dest1 = dest1_dir.join("file.txt");
     let dest2 = dest2_dir.join("file.txt");
     let partial1 = partial1_dir.join("file.txt");
@@ -207,10 +200,8 @@ fn partial_dir_relative_path_resolved_per_destination() {
     fs::write(&partial1, b"partial1").expect("write partial1");
     fs::write(&partial2, b"partial2").expect("write partial2");
 
-    // Use relative partial dir
     let manager = PartialFileManager::new(PartialMode::PartialDir(".partial".into()));
 
-    // Should find correct partial for each destination
     let found1 = manager.find_basis(&dest1).expect("find_basis 1");
     let found2 = manager.find_basis(&dest2).expect("find_basis 2");
 
@@ -224,7 +215,6 @@ fn partial_dir_absolute_path_is_global() {
     let global_partial = base.path().join("global-partial");
     fs::create_dir(&global_partial).expect("create global partial");
 
-    // Create destination directories
     let dest1_dir = base.path().join("dest1");
     let dest2_dir = base.path().join("dest2");
     fs::create_dir(&dest1_dir).expect("create dest1");
@@ -233,7 +223,6 @@ fn partial_dir_absolute_path_is_global() {
     let dest1 = dest1_dir.join("file.txt");
     let dest2 = dest2_dir.join("file.txt");
 
-    // Both should use the same global partial file
     let partial = global_partial.join("file.txt");
     fs::write(&partial, b"global partial").expect("write partial");
 
@@ -242,7 +231,6 @@ fn partial_dir_absolute_path_is_global() {
     let found1 = manager.find_basis(&dest1).expect("find_basis 1");
     let found2 = manager.find_basis(&dest2).expect("find_basis 2");
 
-    // Both should find the same global partial file
     assert_eq!(found1, Some(partial.clone()));
     assert_eq!(found2, Some(partial));
 }
@@ -253,11 +241,9 @@ fn partial_dir_handles_nested_directory_structures() {
     let partial_dir = base.path().join(".partial");
     fs::create_dir(&partial_dir).expect("create partial dir");
 
-    // Nested destination
     let nested_dest = base.path().join("a").join("b").join("c").join("file.txt");
     fs::create_dir_all(nested_dest.parent().unwrap()).expect("create nested dirs");
 
-    // Partial should be in the relative partial dir
     let nested_partial_dir = base.path().join("a").join("b").join("c").join(".partial");
     fs::create_dir(&nested_partial_dir).expect("create nested partial dir");
     let partial = nested_partial_dir.join("file.txt");
@@ -302,20 +288,15 @@ fn partial_file_transfer_workflow() {
     let dest = dir.path().join("file.txt");
     let partial = dir.path().join(".rsync-partial-file.txt");
 
-    // Simulate a partial transfer
     fs::write(&partial, b"partial content from interrupted transfer").expect("write partial");
 
     let manager = PartialFileManager::new(PartialMode::Keep);
 
-    // Step 1: Find basis file for resume
     let basis = manager.find_basis(&dest).expect("find_basis");
     assert_eq!(basis, Some(partial.clone()));
 
-    // Step 2: Transfer would complete here...
-    // Simulate by creating the final file
     fs::write(&dest, b"complete content").expect("write dest");
 
-    // Step 3: Clean up partial file after success
     manager.cleanup_partial(&dest).expect("cleanup");
     assert!(!partial.exists());
     assert!(dest.exists());
@@ -330,19 +311,15 @@ fn partial_dir_transfer_workflow() {
     let dest = dir.path().join("file.txt");
     let partial = partial_dir.join("file.txt");
 
-    // Simulate a partial transfer in partial dir
     fs::write(&partial, b"partial content").expect("write partial");
 
     let manager = PartialFileManager::new(PartialMode::PartialDir(partial_dir.clone()));
 
-    // Step 1: Find basis file
     let basis = manager.find_basis(&dest).expect("find_basis");
     assert_eq!(basis, Some(partial.clone()));
 
-    // Step 2: Transfer completes
     fs::write(&dest, b"complete content").expect("write dest");
 
-    // Step 3: Clean up partial dir file
     manager.cleanup_partial(&dest).expect("cleanup");
     assert!(!partial.exists());
     assert!(dest.exists());
@@ -357,10 +334,8 @@ fn integration_test_partial_mode_with_local_copy() {
     let source = dir.path().join("source.txt");
     let dest = dir.path().join("dest.txt");
 
-    // Create source file
     fs::write(&source, b"source content").expect("write source");
 
-    // Execute copy with partial mode enabled
     let opts = LocalCopyOptions::new().partial(true);
     let operands = vec![source.into_os_string(), dest.clone().into_os_string()];
     let plan = LocalCopyPlan::from_operands(&operands).expect("create plan");
@@ -369,7 +344,6 @@ fn integration_test_partial_mode_with_local_copy() {
     assert!(result.is_ok());
     assert!(dest.exists());
 
-    // Verify content
     let content = fs::read_to_string(&dest).expect("read dest");
     assert_eq!(content, "source content");
 }
@@ -383,10 +357,8 @@ fn integration_test_partial_dir_mode_with_local_copy() {
     let source = dir.path().join("source.txt");
     let dest = dir.path().join("dest.txt");
 
-    // Create source file
     fs::write(&source, b"source content").expect("write source");
 
-    // Execute copy with partial-dir mode
     let opts = LocalCopyOptions::new().with_partial_directory(Some(partial_dir));
     let operands = vec![source.into_os_string(), dest.clone().into_os_string()];
     let plan = LocalCopyPlan::from_operands(&operands).expect("create plan");
@@ -395,7 +367,6 @@ fn integration_test_partial_dir_mode_with_local_copy() {
     assert!(result.is_ok());
     assert!(dest.exists());
 
-    // Verify content
     let content = fs::read_to_string(&dest).expect("read dest");
     assert_eq!(content, "source content");
 }

@@ -114,7 +114,6 @@ fn owner_flag_with_root_uid() {
     let destination = temp.path().join("dest.txt");
     fs::write(&source, b"root owner test").expect("write source");
 
-    // Set source to root (UID 0)
     chownat(
         rustix::fs::CWD,
         &source,
@@ -243,7 +242,6 @@ fn group_flag_with_root_gid() {
     let destination = temp.path().join("dest.txt");
     fs::write(&source, b"root group test").expect("write source");
 
-    // Set source to root group (GID 0)
     chownat(
         rustix::fs::CWD,
         &source,
@@ -508,7 +506,6 @@ fn owner_preserved_recursively_in_directory_tree() {
         )
         .expect("copy succeeds");
 
-    // Verify all entries have the preserved ownership
     let dest_file1 = dest_dir.join("source").join("file1.txt");
     let dest_subdir = dest_dir.join("source").join("subdir");
     let dest_file2 = dest_subdir.join("file2.txt");
@@ -975,7 +972,6 @@ fn owner_preserved_on_multiple_files() {
     fs::create_dir(&source_dir).expect("create source dir");
     fs::create_dir(&dest_dir).expect("create dest dir");
 
-    // Create multiple files with different ownerships
     let file1 = source_dir.join("file1.txt");
     let file2 = source_dir.join("file2.txt");
     let file3 = source_dir.join("file3.txt");
@@ -1051,7 +1047,6 @@ fn ownership_default_behavior_without_flags() {
     ];
     let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
 
-    // Execute without any ownership flags
     let summary = plan.execute().expect("copy succeeds");
 
     let metadata = fs::metadata(&destination).expect("dest metadata");
@@ -1078,7 +1073,6 @@ fn ownership_preserved_with_zero_ids() {
     let destination = temp.path().join("dest.txt");
     fs::write(&source, b"root ownership test").expect("write source");
 
-    // Set ownership to root (UID 0, GID 0)
     chownat(
         rustix::fs::CWD,
         &source,
@@ -1193,7 +1187,7 @@ fn no_owner_overrides_archive_mode_owner() {
                 .links(true)
                 .permissions(true)
                 .times(true)
-                .owner(false) // --no-owner
+                .owner(false)
                 .group(true),
         )
         .expect("copy succeeds");
@@ -1249,7 +1243,7 @@ fn no_group_overrides_archive_mode_group() {
                 .permissions(true)
                 .times(true)
                 .owner(true)
-                .group(false), // --no-group
+                .group(false),
         )
         .expect("copy succeeds");
 

@@ -283,7 +283,6 @@ fn timeout_error_debug_format() {
     let error = LocalCopyError::timeout(Duration::from_secs(30));
     let debug = format!("{error:?}");
 
-    // Debug format should include relevant information
     assert!(debug.contains("Timeout"));
     assert!(debug.contains("30"));
 }

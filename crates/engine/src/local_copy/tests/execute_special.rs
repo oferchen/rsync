@@ -745,15 +745,12 @@ fn execute_copies_mixed_special_files() {
     let source_root = temp.path().join("source");
     fs::create_dir_all(&source_root).expect("create source");
 
-    // Create regular file
     fs::write(source_root.join("regular.txt"), b"regular").expect("write regular");
 
-    // Create symlink
     let target = source_root.join("target.txt");
     fs::write(&target, b"target").expect("write target");
     symlink(Path::new("target.txt"), source_root.join("link")).expect("create symlink");
 
-    // Create FIFO
     let fifo = source_root.join("fifo");
     mkfifo_for_tests(&fifo, 0o600).expect("mkfifo");
 
@@ -799,7 +796,6 @@ fn execute_symlink_pointing_to_fifo_preserved_as_symlink() {
     let source_root = temp.path().join("source");
     fs::create_dir_all(&source_root).expect("create source");
 
-    // Create a FIFO and a symlink pointing to it
     let fifo = source_root.join("real.pipe");
     mkfifo_for_tests(&fifo, 0o600).expect("mkfifo");
 
@@ -857,7 +853,6 @@ fn execute_symlink_pointing_to_socket_preserved_as_symlink() {
     let source_root = temp.path().join("source");
     fs::create_dir_all(&source_root).expect("create source");
 
-    // Create a socket and a symlink pointing to it
     let socket = source_root.join("real.sock");
     mksocket_for_tests(&socket).expect("mksocket");
 
@@ -1259,7 +1254,6 @@ fn execute_copy_links_follows_symlink_to_fifo_specials_disabled_skips() {
         )
         .expect("copy succeeds");
 
-    // The regular file should be copied
     assert_eq!(
         fs::read(dest.join("source").join("regular.txt")).expect("read regular"),
         b"regular file"
@@ -1320,7 +1314,6 @@ fn execute_copy_dirlinks_follows_dir_symlink_but_preserves_file_symlink_in_tree(
     let source_root = temp.path().join("source");
     fs::create_dir_all(&source_root).expect("create source");
 
-    // Create a real target directory with a file
     let target_dir = temp.path().join("target_dir");
     fs::create_dir(&target_dir).expect("create target dir");
     fs::write(target_dir.join("inner.txt"), b"dir data").expect("write inner");
@@ -1329,7 +1322,6 @@ fn execute_copy_dirlinks_follows_dir_symlink_but_preserves_file_symlink_in_tree(
     let dir_link = source_root.join("dir_link");
     symlink(&target_dir, &dir_link).expect("create dir symlink");
 
-    // Create a regular file and a symlink to it
     let target_file = source_root.join("target.txt");
     fs::write(&target_file, b"payload").expect("write target");
     let file_link = source_root.join("file_link");
@@ -1389,7 +1381,6 @@ fn execute_safe_links_with_copy_dirlinks_follows_unsafe_dir_symlink() {
     let source_root = temp.path().join("source");
     fs::create_dir_all(&source_root).expect("create source");
 
-    // Create an outside directory
     let outside_dir = temp.path().join("outside_dir");
     fs::create_dir(&outside_dir).expect("create outside dir");
     fs::write(outside_dir.join("file.txt"), b"outside").expect("write outside file");
@@ -1559,7 +1550,6 @@ fn execute_copy_links_follows_nested_symlink_chain_to_regular_file() {
         )
         .expect("copy succeeds");
 
-    // All entries should be dereferenced to regular files
     for name in &["link_a", "link_b", "real.txt"] {
         let dest_file = dest_dir.join("source").join(name);
         let meta = fs::symlink_metadata(&dest_file).expect("metadata");
@@ -1578,7 +1568,6 @@ fn execute_copy_links_follows_nested_symlink_chain_to_regular_file() {
         );
     }
 
-    // All three entries should count as files, not symlinks
     assert_eq!(summary.symlinks_copied(), 0);
     assert_eq!(summary.files_copied(), 3);
 }
@@ -1663,7 +1652,7 @@ fn execute_without_links_skips_symlink_records_event() {
 
     let summary = report.summary();
     assert_eq!(summary.symlinks_copied(), 0);
-    assert_eq!(summary.files_copied(), 1); // only target.txt
+    assert_eq!(summary.files_copied(), 1);
     assert!(!dest_root.join("source").join("link").exists(), "symlink should not be copied");
     assert!(dest_root.join("source").join("target.txt").exists(), "regular file should be copied");
     assert!(report.records().iter().any(|record| {
@@ -1736,7 +1725,7 @@ fn execute_fifo_with_archive_options_preserves_all_metadata() {
         b"archive"
     );
 
-    assert_eq!(summary.fifos_created(), 2); // FIFO + socket
+    assert_eq!(summary.fifos_created(), 2);
     assert_eq!(summary.files_copied(), 1);
 }
 
@@ -1751,7 +1740,6 @@ fn execute_copy_unsafe_links_in_tree_preserves_safe_and_dereferences_unsafe() {
     let subdir = source_root.join("sub");
     fs::create_dir_all(&subdir).expect("create subdir");
 
-    // Create targets
     let inside_file = source_root.join("inside.txt");
     fs::write(&inside_file, b"inside").expect("write inside");
 
@@ -1803,7 +1791,7 @@ fn execute_copy_unsafe_links_in_tree_preserves_safe_and_dereferences_unsafe() {
     assert!(!unsafe_meta.file_type().is_symlink());
     assert_eq!(fs::read(&dest_unsafe).expect("read"), b"outside");
 
-    assert_eq!(summary.files_copied(), 2); // inside.txt + dereferenced unsafe
+    assert_eq!(summary.files_copied(), 2);
 }
 
 /// Verifies that the `--copy-unsafe-links` dereference path emits the
@@ -1951,7 +1939,6 @@ fn execute_keep_dirlinks_multiple_symlink_subdirs_all_preserved() {
     let dest_root = temp.path().join("dest");
     fs::create_dir_all(&dest_root).expect("create dest");
 
-    // Create real target directories and symlinks
     let real_alpha = temp.path().join("real_alpha");
     fs::create_dir(&real_alpha).expect("create real alpha");
     symlink(&real_alpha, dest_root.join("alpha")).expect("symlink alpha");
@@ -1971,7 +1958,6 @@ fn execute_keep_dirlinks_multiple_symlink_subdirs_all_preserved() {
     )
     .expect("copy succeeds");
 
-    // Both symlinks should be preserved
     assert!(
         fs::symlink_metadata(dest_root.join("alpha"))
             .expect("meta")
@@ -2008,15 +1994,12 @@ fn execute_dry_run_mixed_specials_and_symlinks_no_side_effects() {
     let source_root = temp.path().join("source");
     fs::create_dir_all(&source_root).expect("create source");
 
-    // Create FIFO
     let fifo = source_root.join("my.pipe");
     mkfifo_for_tests(&fifo, 0o600).expect("mkfifo");
 
-    // Create socket
     let socket = source_root.join("my.sock");
     mksocket_for_tests(&socket).expect("mksocket");
 
-    // Create symlink
     let target = source_root.join("target.txt");
     fs::write(&target, b"target").expect("write target");
     symlink(Path::new("target.txt"), source_root.join("link")).expect("create symlink");
@@ -2039,7 +2022,7 @@ fn execute_dry_run_mixed_specials_and_symlinks_no_side_effects() {
 
     // Statistics should reflect what would happen
     assert_eq!(summary.symlinks_copied(), 1);
-    assert_eq!(summary.fifos_created(), 2); // FIFO + socket
+    assert_eq!(summary.fifos_created(), 2);
 
     // But nothing should be created
     assert!(!dest_root.exists(), "dry run should not create destination");

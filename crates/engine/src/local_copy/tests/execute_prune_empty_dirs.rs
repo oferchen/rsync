@@ -3,7 +3,6 @@
 fn prune_empty_dirs_does_not_create_empty_directories() {
     let ctx = test_helpers::setup_copy_test();
 
-    // Create source with empty directory
     test_helpers::create_test_tree(
         &ctx.source,
         &[
@@ -27,7 +26,6 @@ fn prune_empty_dirs_does_not_create_empty_directories() {
 fn prune_empty_dirs_creates_directories_with_files() {
     let ctx = test_helpers::setup_copy_test();
 
-    // Create source with directory containing files
     test_helpers::create_test_tree(
         &ctx.source,
         &[
@@ -52,7 +50,6 @@ fn prune_empty_dirs_creates_directories_with_files() {
 fn prune_empty_dirs_prunes_nested_empty_directories() {
     let ctx = test_helpers::setup_copy_test();
 
-    // Create source with nested empty directories
     test_helpers::create_test_tree(
         &ctx.source,
         &[
@@ -78,7 +75,6 @@ fn prune_empty_dirs_prunes_nested_empty_directories() {
 fn prune_empty_dirs_with_filter_excluding_all_files() {
     let ctx = test_helpers::setup_copy_test();
 
-    // Create source with directory containing only .tmp files
     test_helpers::create_test_tree(
         &ctx.source,
         &[
@@ -115,7 +111,6 @@ fn prune_empty_dirs_with_filter_excluding_all_files() {
 fn prune_empty_dirs_preserves_non_empty_parent_of_empty_child() {
     let ctx = test_helpers::setup_copy_test();
 
-    // Create parent with a file and an empty child directory
     test_helpers::create_test_tree(
         &ctx.source,
         &[
@@ -140,7 +135,6 @@ fn prune_empty_dirs_preserves_non_empty_parent_of_empty_child() {
 fn prune_empty_dirs_with_multiple_branches() {
     let ctx = test_helpers::setup_copy_test();
 
-    // Create tree with multiple branches, some empty, some not
     test_helpers::create_test_tree(
         &ctx.source,
         &[
@@ -187,7 +181,6 @@ fn prune_empty_dirs_respects_dry_run() {
         .expect("dry-run succeeds");
 
     assert!(!ctx.dest.exists(), "destination should not exist in dry-run");
-    // In dry-run, the summary should report what would be created
     assert!(summary.directories_created() >= 1, "should report non-empty dir creation");
 }
 
@@ -203,7 +196,6 @@ fn prune_empty_dirs_with_trailing_separator() {
         ],
     );
 
-    // Use trailing separator to copy contents
     let mut source_operand = ctx.source.into_os_string();
     source_operand.push(std::path::MAIN_SEPARATOR.to_string());
     let operands = vec![source_operand, ctx.dest.clone().into_os_string()];
@@ -222,7 +214,6 @@ fn prune_empty_dirs_with_trailing_separator() {
 fn prune_empty_dirs_with_min_size_filter() {
     let ctx = test_helpers::setup_copy_test();
 
-    // Create files of different sizes
     test_helpers::create_test_tree(
         &ctx.source,
         &[
@@ -255,7 +246,6 @@ fn prune_empty_dirs_with_min_size_filter() {
 fn prune_empty_dirs_with_max_size_filter() {
     let ctx = test_helpers::setup_copy_test();
 
-    // Create files of different sizes
     test_helpers::create_test_tree(
         &ctx.source,
         &[
@@ -342,7 +332,6 @@ fn prune_empty_dirs_with_collect_events_reports_pruning() {
         .filter(|r| r.action() == &LocalCopyAction::DirectoryCreated)
         .count();
 
-    // Should only create the non-empty directory
     assert!(dir_created >= 1, "should report directory creation for non-empty dir");
 }
 
@@ -359,7 +348,6 @@ fn prune_empty_dirs_with_symlink_in_directory() {
         ],
     );
 
-    // Create a symlink in dir_with_link
     #[cfg(unix)]
     {
         use std::os::unix::fs as unix_fs;
@@ -394,14 +382,12 @@ fn prune_empty_dirs_with_symlink_in_directory() {
         ctx.dest.join("source").join("dir_with_link").is_dir(),
         "directory with symlink should exist"
     );
-    // The symlink should exist (implementation may vary)
 }
 
 #[test]
 fn prune_empty_dirs_deep_hierarchy_partial_pruning() {
     let ctx = test_helpers::setup_copy_test();
 
-    // Create a deep hierarchy with a file at the bottom
     test_helpers::create_test_tree(
         &ctx.source,
         &[
@@ -418,7 +404,6 @@ fn prune_empty_dirs_deep_hierarchy_partial_pruning() {
     plan.execute_with_options(LocalCopyExecution::Apply, options)
         .expect("copy succeeds");
 
-    // Path to file should be preserved
     assert!(ctx.dest.join("source").join("a").is_dir());
     assert!(ctx.dest.join("source").join("a/b").is_dir());
     assert!(ctx.dest.join("source").join("a/b/c").is_dir());
@@ -426,7 +411,6 @@ fn prune_empty_dirs_deep_hierarchy_partial_pruning() {
     assert!(ctx.dest.join("source").join("a/b/c/d/e").is_dir());
     assert!(ctx.dest.join("source").join("a/b/c/d/e/file.txt").exists());
 
-    // Empty branches should be pruned
     assert!(!ctx.dest.join("source").join("a/b/empty").exists());
     assert!(!ctx.dest.join("source").join("a/x").exists());
 }
@@ -443,7 +427,6 @@ fn prune_empty_dirs_with_existing_only_option() {
         ],
     );
 
-    // Pre-create destination (empty)
     fs::create_dir_all(&ctx.dest).expect("create dest");
 
     let operands = vec![ctx.source.into_os_string(), ctx.dest.clone().into_os_string()];
@@ -478,7 +461,6 @@ fn prune_empty_dirs_with_include_exclude_filters() {
     let operands = vec![ctx.source.into_os_string(), ctx.dest.clone().into_os_string()];
     let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
 
-    // Include only .txt files
     let filters = FilterSet::from_rules([
         FilterRule::include("*.txt"),
         FilterRule::exclude("*"),
@@ -629,7 +611,6 @@ fn prune_empty_dirs_deeply_nested_single_file() {
     plan.execute_with_options(LocalCopyExecution::Apply, options)
         .expect("copy succeeds");
 
-    // All directories along the path should be created
     assert!(ctx.dest.join("source").join("a/b/c/d/e/f/g/h/i/j").is_dir());
     assert!(ctx.dest.join("source").join("a/b/c/d/e/f/g/h/i/j/leaf.txt").exists());
 }
@@ -708,7 +689,6 @@ fn prune_empty_dirs_with_delete_option() {
 
 #[test]
 fn prune_empty_dirs_option_setter_and_getter() {
-    // Verify the option can be set and read back
     let opts = LocalCopyOptions::default();
     assert!(!opts.prune_empty_dirs_enabled(), "default should be false");
 
@@ -732,7 +712,6 @@ fn prune_empty_dirs_idempotent_run() {
         ],
     );
 
-    // First run
     let operands = vec![
         ctx.source.clone().into_os_string(),
         ctx.dest.clone().into_os_string(),

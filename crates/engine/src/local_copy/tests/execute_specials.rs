@@ -295,15 +295,12 @@ fn execute_copies_mixed_fifos_and_sockets() {
     let source_root = temp.path().join("source");
     fs::create_dir_all(&source_root).expect("create source");
 
-    // Create a FIFO
     let fifo = source_root.join("pipe");
     mkfifo_for_tests(&fifo, 0o600).expect("mkfifo");
 
-    // Create a socket
     let socket = source_root.join("sock");
     mksocket_for_tests(&socket).expect("mksocket");
 
-    // Create a regular file
     fs::write(source_root.join("regular.txt"), b"content").expect("write regular");
 
     let dest_root = temp.path().join("dest");
@@ -320,7 +317,6 @@ fn execute_copies_mixed_fifos_and_sockets() {
         )
         .expect("copy succeeds");
 
-    // Both FIFO and socket should be created
     let dest_fifo = dest_root.join("source").join("pipe");
     let dest_socket = dest_root.join("source").join("sock");
     let dest_regular = dest_root.join("source").join("regular.txt");
@@ -870,11 +866,9 @@ fn execute_copies_socket_and_symlink_together() {
     let source_root = temp.path().join("source");
     fs::create_dir_all(&source_root).expect("create source");
 
-    // Create a socket
     let socket = source_root.join("my.sock");
     mksocket_for_tests(&socket).expect("mksocket");
 
-    // Create a regular file and a symlink
     let target = source_root.join("target.txt");
     fs::write(&target, b"target").expect("write target");
     symlink(Path::new("target.txt"), source_root.join("link")).expect("create symlink");

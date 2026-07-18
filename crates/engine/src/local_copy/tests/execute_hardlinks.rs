@@ -879,7 +879,6 @@ fn execute_hardlink_nlink_changes_during_operation() {
     let dest_meta_a = fs::metadata(&dest_a).expect("dest meta a");
     let dest_meta_b = fs::metadata(&dest_b).expect("dest meta b");
 
-    // Both should be hardlinked
     assert_eq!(dest_meta_a.ino(), dest_meta_b.ino(), "files should share inode");
     assert_eq!(dest_meta_a.nlink(), 2);
     assert!(summary.hard_links_created() >= 1);
@@ -942,7 +941,6 @@ fn execute_hardlink_mixed_with_symlinks() {
     let source_root = temp.path().join("source");
     fs::create_dir_all(&source_root).expect("create source root");
 
-    // Create a regular file
     let regular = source_root.join("regular.txt");
     fs::write(&regular, b"regular content").expect("write regular");
 
@@ -973,7 +971,6 @@ fn execute_hardlink_mixed_with_symlinks() {
     let dest_hardlink = dest_root.join("source").join("hardlink.txt");
     let dest_symlink = dest_root.join("source").join("symlink.txt");
 
-    // Verify hardlink is preserved
     let dest_meta_regular = fs::metadata(&dest_regular).expect("dest meta regular");
     let dest_meta_hardlink = fs::metadata(&dest_hardlink).expect("dest meta hardlink");
     assert_eq!(dest_meta_regular.ino(), dest_meta_hardlink.ino(), "hardlink should be preserved");

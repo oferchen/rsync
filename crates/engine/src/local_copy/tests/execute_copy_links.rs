@@ -22,15 +22,12 @@ fn copy_links_follows_file_symlink_and_copies_content() {
         .execute_with_options(LocalCopyExecution::Apply, options)
         .expect("copy succeeds");
 
-    // Destination should be a regular file, not a symlink
     let metadata = fs::symlink_metadata(&dest).expect("dest metadata");
     assert!(metadata.file_type().is_file());
     assert!(!metadata.file_type().is_symlink());
 
-    // Content should match target
     assert_eq!(fs::read(&dest).expect("read dest"), b"target content");
 
-    // Should not count as a symlink copy
     assert_eq!(summary.symlinks_copied(), 0);
 }
 
@@ -63,12 +60,10 @@ fn copy_links_follows_directory_symlink_recursively() {
     plan.execute_with_options(LocalCopyExecution::Apply, options)
         .expect("copy succeeds");
 
-    // Destination should be a regular directory, not a symlink
     let metadata = fs::symlink_metadata(&dest).expect("dest metadata");
     assert!(metadata.file_type().is_dir());
     assert!(!metadata.file_type().is_symlink());
 
-    // All files should be copied
     assert_eq!(fs::read(dest.join("file1.txt")).expect("read file1"), b"content1");
     assert_eq!(fs::read(dest.join("file2.txt")).expect("read file2"), b"content2");
     assert_eq!(
@@ -96,10 +91,8 @@ fn copy_links_handles_dangling_symlink_with_error() {
     let options = LocalCopyOptions::default().copy_links(true);
     let result = plan.execute_with_options(LocalCopyExecution::Apply, options);
 
-    // Should fail because the symlink target doesn't exist
     assert!(result.is_err());
 
-    // Destination should not be created
     assert!(!dest.exists());
 }
 
@@ -112,15 +105,12 @@ fn copy_links_skips_dangling_symlink_in_directory_tree() {
     let source_dir = temp.path().join("source");
     fs::create_dir(&source_dir).expect("create source");
 
-    // Create a good file
     fs::write(source_dir.join("good.txt"), b"good content").expect("write good");
 
-    // Create a dangling symlink
     let nonexistent = temp.path().join("nonexistent");
     let dangling = source_dir.join("dangling");
     symlink(&nonexistent, &dangling).expect("create dangling");
 
-    // Create another good file
     fs::write(source_dir.join("also_good.txt"), b"also good").expect("write also_good");
 
     let dest = temp.path().join("dest");
@@ -136,7 +126,6 @@ fn copy_links_skips_dangling_symlink_in_directory_tree() {
         .recursive(true);
     let result = plan.execute_with_options(LocalCopyExecution::Apply, options);
 
-    // The operation should fail when encountering the dangling symlink
     assert!(result.is_err());
 }
 
@@ -148,7 +137,6 @@ fn copy_links_detects_direct_symlink_loop() {
     let temp = tempdir().expect("tempdir");
     let link = temp.path().join("self_link");
 
-    // Create a symlink that points to itself
     symlink(&link, &link).expect("create self-referencing symlink");
 
     let dest = temp.path().join("dest");
@@ -159,10 +147,8 @@ fn copy_links_detects_direct_symlink_loop() {
     let options = LocalCopyOptions::default().copy_links(true);
     let result = plan.execute_with_options(LocalCopyExecution::Apply, options);
 
-    // Should fail because following the symlink creates a loop
     assert!(result.is_err());
 
-    // Destination should not be created
     assert!(!dest.exists());
 }
 
@@ -187,10 +173,8 @@ fn copy_links_detects_indirect_symlink_loop() {
     let options = LocalCopyOptions::default().copy_links(true);
     let result = plan.execute_with_options(LocalCopyExecution::Apply, options);
 
-    // Should fail because following the symlink chain creates a loop
     assert!(result.is_err());
 
-    // Destination should not be created
     assert!(!dest.exists());
 }
 
@@ -234,7 +218,6 @@ fn copy_links_follows_chain_of_symlinks() {
 
     let temp = tempdir().expect("tempdir");
 
-    // Create the actual target
     let target = temp.path().join("target.txt");
     fs::write(&target, b"final content").expect("write target");
 
@@ -254,7 +237,6 @@ fn copy_links_follows_chain_of_symlinks() {
     plan.execute_with_options(LocalCopyExecution::Apply, options)
         .expect("copy succeeds");
 
-    // Should follow the entire chain and copy the final target
     let metadata = fs::symlink_metadata(&dest).expect("dest metadata");
     assert!(metadata.file_type().is_file());
     assert_eq!(fs::read(&dest).expect("read dest"), b"final content");
@@ -272,7 +254,6 @@ fn copy_links_works_with_relative_symlinks() {
     let target = dir.join("target.txt");
     fs::write(&target, b"relative target").expect("write target");
 
-    // Create a relative symlink
     let link = dir.join("link");
     symlink(Path::new("target.txt"), &link).expect("create relative symlink");
 
@@ -285,7 +266,6 @@ fn copy_links_works_with_relative_symlinks() {
     plan.execute_with_options(LocalCopyExecution::Apply, options)
         .expect("copy succeeds");
 
-    // Should resolve the relative symlink and copy the target content
     let metadata = fs::symlink_metadata(&dest).expect("dest metadata");
     assert!(metadata.file_type().is_file());
     assert_eq!(fs::read(&dest).expect("read dest"), b"relative target");
@@ -301,7 +281,6 @@ fn copy_links_follows_absolute_symlinks() {
     let target = temp.path().join("target.txt");
     fs::write(&target, b"absolute target").expect("write target");
 
-    // Create an absolute symlink
     let link = temp.path().join("link");
     symlink(&target, &link).expect("create absolute symlink");
 
@@ -314,7 +293,6 @@ fn copy_links_follows_absolute_symlinks() {
     plan.execute_with_options(LocalCopyExecution::Apply, options)
         .expect("copy succeeds");
 
-    // Should follow the absolute symlink and copy the target content
     let metadata = fs::symlink_metadata(&dest).expect("dest metadata");
     assert!(metadata.file_type().is_file());
     assert_eq!(fs::read(&dest).expect("read dest"), b"absolute target");
@@ -329,16 +307,13 @@ fn copy_links_with_mixed_files_and_symlinks() {
     let source_dir = temp.path().join("source");
     fs::create_dir(&source_dir).expect("create source");
 
-    // Create a regular file
     fs::write(source_dir.join("regular.txt"), b"regular").expect("write regular");
 
-    // Create a target and symlink to it
     let target = temp.path().join("target.txt");
     fs::write(&target, b"linked").expect("write target");
     let link = source_dir.join("link.txt");
     symlink(&target, &link).expect("create symlink");
 
-    // Create a subdirectory
     let subdir = source_dir.join("subdir");
     fs::create_dir(&subdir).expect("create subdir");
     fs::write(subdir.join("nested.txt"), b"nested").expect("write nested");
@@ -357,18 +332,15 @@ fn copy_links_with_mixed_files_and_symlinks() {
     plan.execute_with_options(LocalCopyExecution::Apply, options)
         .expect("copy succeeds");
 
-    // Regular file should be copied normally
     let regular_meta = fs::symlink_metadata(dest.join("source").join("regular.txt")).expect("regular meta");
     assert!(regular_meta.file_type().is_file());
     assert_eq!(fs::read(dest.join("source").join("regular.txt")).expect("read"), b"regular");
 
-    // Symlink should be followed and copied as a regular file
     let link_meta = fs::symlink_metadata(dest.join("source").join("link.txt")).expect("link meta");
     assert!(link_meta.file_type().is_file());
     assert!(!link_meta.file_type().is_symlink());
     assert_eq!(fs::read(dest.join("source").join("link.txt")).expect("read"), b"linked");
 
-    // Nested file should be copied
     assert_eq!(
         fs::read(dest.join("source").join("subdir/nested.txt")).expect("read"),
         b"nested"
@@ -472,7 +444,6 @@ fn copy_links_does_not_follow_symlinks_in_tree_when_disabled() {
         .execute_with_options(LocalCopyExecution::Apply, options)
         .expect("copy succeeds");
 
-    // Should be copied as a symlink
     let link_meta = fs::symlink_metadata(dest.join("source").join("link")).expect("link meta");
     assert!(link_meta.file_type().is_symlink());
     assert_eq!(summary.symlinks_copied(), 1);
@@ -501,12 +472,10 @@ fn copy_links_with_symlink_to_empty_directory() {
     plan.execute_with_options(LocalCopyExecution::Apply, options)
         .expect("copy succeeds");
 
-    // Should create an empty directory, not a symlink
     let metadata = fs::symlink_metadata(&dest).expect("dest metadata");
     assert!(metadata.file_type().is_dir());
     assert!(!metadata.file_type().is_symlink());
 
-    // Should be empty
     let entries: Vec<_> = fs::read_dir(&dest).expect("read dir").collect();
     assert_eq!(entries.len(), 0);
 }
@@ -532,7 +501,6 @@ fn copy_links_dry_run_does_not_create_files() {
     plan.execute_with_options(LocalCopyExecution::DryRun, options)
         .expect("dry run succeeds");
 
-    // Destination should not exist in dry-run mode
     assert!(!dest.exists());
 }
 
@@ -562,7 +530,6 @@ fn copy_links_overwrites_existing_destination_file() {
     plan.execute_with_options(LocalCopyExecution::Apply, options)
         .expect("copy succeeds");
 
-    // Destination should have the new content from the symlink target
     let metadata = fs::symlink_metadata(&dest).expect("dest metadata");
     assert!(metadata.file_type().is_file());
     assert!(!metadata.file_type().is_symlink());
@@ -578,7 +545,6 @@ fn copy_links_nested_symlinks_in_directory_tree() {
     let source_dir = temp.path().join("source");
     fs::create_dir(&source_dir).expect("create source");
 
-    // Create a real file
     let real_file = temp.path().join("real.txt");
     fs::write(&real_file, b"real content").expect("write real");
 
@@ -608,7 +574,6 @@ fn copy_links_nested_symlinks_in_directory_tree() {
     plan.execute_with_options(LocalCopyExecution::Apply, options)
         .expect("copy succeeds");
 
-    // inner_link should be dereferenced to a regular file
     let inner_meta = fs::symlink_metadata(dest.join("source").join("inner_link")).expect("inner meta");
     assert!(inner_meta.file_type().is_file());
     assert!(!inner_meta.file_type().is_symlink());
@@ -617,12 +582,10 @@ fn copy_links_nested_symlinks_in_directory_tree() {
         b"real content"
     );
 
-    // dir_link should be dereferenced to a real directory
     let dir_meta = fs::symlink_metadata(dest.join("source").join("dir_link")).expect("dir meta");
     assert!(dir_meta.file_type().is_dir());
     assert!(!dir_meta.file_type().is_symlink());
 
-    // The contents of the external directory should be present
     assert_eq!(
         fs::read(dest.join("source").join("dir_link/ext.txt")).expect("read ext"),
         b"external"
@@ -638,7 +601,6 @@ fn copy_links_preserves_timestamps_from_referent() {
     let target = temp.path().join("target.txt");
     fs::write(&target, b"timestamp test").expect("write target");
 
-    // Set a specific mtime on the target
     let fixed_time = FileTime::from_unix_time(1_700_000_000, 0);
     set_file_mtime(&target, fixed_time).expect("set target mtime");
 
@@ -681,11 +643,9 @@ fn copy_links_follows_symlink_to_fifo_in_directory() {
     let source_dir = temp.path().join("source");
     fs::create_dir(&source_dir).expect("create source");
 
-    // Create a real FIFO
     let real_fifo = temp.path().join("real_fifo");
     mkfifo_for_tests(&real_fifo, 0o644).expect("create fifo");
 
-    // Create a symlink inside source that points to the FIFO
     let fifo_link = source_dir.join("fifo_link");
     symlink(&real_fifo, &fifo_link).expect("create symlink to fifo");
 
@@ -707,7 +667,6 @@ fn copy_links_follows_symlink_to_fifo_in_directory() {
     plan.execute_with_options(LocalCopyExecution::Apply, options)
         .expect("copy succeeds");
 
-    // The regular file should be copied
     assert_eq!(
         fs::read(dest.join("source").join("regular.txt")).expect("read regular"),
         b"regular file"
@@ -744,11 +703,9 @@ fn copy_links_follows_symlink_to_fifo_in_directory() {
     let source_dir = temp.path().join("source");
     fs::create_dir(&source_dir).expect("create source");
 
-    // Create a real FIFO
     let real_fifo = temp.path().join("real_fifo");
     mkfifo_for_tests(&real_fifo, 0o644).expect("create fifo");
 
-    // Create a symlink inside source that points to the FIFO
     let fifo_link = source_dir.join("fifo_link");
     symlink(&real_fifo, &fifo_link).expect("create symlink to fifo");
 
@@ -770,7 +727,6 @@ fn copy_links_follows_symlink_to_fifo_in_directory() {
     plan.execute_with_options(LocalCopyExecution::Apply, options)
         .expect("copy succeeds");
 
-    // The regular file should be copied
     assert_eq!(
         fs::read(dest.join("source").join("regular.txt")).expect("read regular"),
         b"regular file"
@@ -796,7 +752,6 @@ fn copy_links_replaces_existing_symlink_with_file() {
 
     let temp = tempdir().expect("tempdir");
 
-    // Source: symlink to a regular file
     let target = temp.path().join("target.txt");
     fs::write(&target, b"replacement content").expect("write target");
 
@@ -816,7 +771,6 @@ fn copy_links_replaces_existing_symlink_with_file() {
     plan.execute_with_options(LocalCopyExecution::Apply, options)
         .expect("copy succeeds");
 
-    // Destination should now be a regular file, not a symlink
     let metadata = fs::symlink_metadata(&dest).expect("dest metadata");
     assert!(metadata.file_type().is_file());
     assert!(!metadata.file_type().is_symlink());
@@ -835,7 +789,6 @@ fn copy_links_with_symlink_chain_in_directory_tree() {
     let source_dir = temp.path().join("source");
     fs::create_dir(&source_dir).expect("create source");
 
-    // Create a real file
     let real_file = source_dir.join("real.txt");
     fs::write(&real_file, b"real data").expect("write real");
 
@@ -861,7 +814,6 @@ fn copy_links_with_symlink_chain_in_directory_tree() {
     plan.execute_with_options(LocalCopyExecution::Apply, options)
         .expect("copy succeeds");
 
-    // Both symlinks should be dereferenced to regular files with the same content
     for name in &["link_a", "link_b"] {
         let meta = fs::symlink_metadata(dest.join("source").join(name)).expect("meta");
         assert!(meta.file_type().is_file(), "{name} should be a regular file");
@@ -873,7 +825,6 @@ fn copy_links_with_symlink_chain_in_directory_tree() {
         );
     }
 
-    // The real file should also be present
     assert_eq!(
         fs::read(dest.join("source").join("real.txt")).expect("read real"),
         b"real data"

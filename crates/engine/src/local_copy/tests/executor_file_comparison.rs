@@ -41,7 +41,6 @@ mod file_comparison_tests {
         fs::write(&source, b"content").expect("write source");
         fs::write(&dest, b"content").expect("write dest");
 
-        // Set same mtime
         let source_meta = fs::metadata(&source).expect("source metadata");
         let mtime = FileTime::from_system_time(source_meta.modified().expect("source mtime"));
         set_file_mtime(&dest, mtime).expect("set dest mtime");
@@ -77,7 +76,6 @@ mod file_comparison_tests {
         let source_meta = fs::metadata(&source).expect("source metadata");
         let dest_meta = fs::metadata(&dest).expect("dest metadata");
 
-        // Use a large modify window
         let comparison = CopyComparison {
             source_path: &source,
             source: &source_meta,
@@ -87,7 +85,7 @@ mod file_comparison_tests {
             ignore_times: false,
             checksum: false,
             checksum_algorithm: SignatureAlgorithm::Md4,
-            modify_window: ModifyWindow::from_secs(3600), // 1 hour window
+            modify_window: ModifyWindow::from_secs(3600),
             prefetched_match: None,
         };
 
@@ -233,7 +231,7 @@ mod file_comparison_tests {
             checksum: true,
             checksum_algorithm: SignatureAlgorithm::Md4,
             modify_window: ModifyWindow::ZERO,
-            prefetched_match: Some(true), // Prefetched indicates match
+            prefetched_match: Some(true),
         };
 
         assert!(should_skip_copy(comparison));
@@ -261,7 +259,7 @@ mod file_comparison_tests {
             checksum: true,
             checksum_algorithm: SignatureAlgorithm::Md4,
             modify_window: ModifyWindow::ZERO,
-            prefetched_match: Some(false), // Prefetched indicates no match
+            prefetched_match: Some(false),
         };
 
         assert!(!should_skip_copy(comparison));

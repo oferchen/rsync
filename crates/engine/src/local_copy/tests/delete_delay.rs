@@ -19,11 +19,9 @@ fn delete_delay_removes_extraneous_files_after_transfer() {
     let ctx = test_helpers::setup_copy_test();
     fs::create_dir_all(&ctx.dest).expect("create dest");
 
-    // Create source with two files
     fs::write(ctx.source.join("file1.txt"), b"file1").expect("write file1");
     fs::write(ctx.source.join("file2.txt"), b"file2").expect("write file2");
 
-    // Create destination with source files plus extra files
     let target_root = ctx.dest.join("source");
     fs::create_dir_all(&target_root).expect("create target root");
     fs::write(target_root.join("file1.txt"), b"old1").expect("write old1");
@@ -42,7 +40,6 @@ fn delete_delay_removes_extraneous_files_after_transfer() {
         .execute_with_options(LocalCopyExecution::Apply, options)
         .expect("copy succeeds");
 
-    // Verify correct files remain and extras are deleted
     assert!(target_root.join("file1.txt").exists());
     assert!(target_root.join("file2.txt").exists());
     assert!(!target_root.join("extra1.txt").exists());
@@ -56,12 +53,10 @@ fn delete_delay_defers_directory_deletions_until_end() {
     let ctx = test_helpers::setup_copy_test();
     fs::create_dir_all(&ctx.dest).expect("create dest");
 
-    // Create source structure: dir1/file.txt
     let source_dir = ctx.source.join("dir1");
     fs::create_dir_all(&source_dir).expect("create source dir");
     fs::write(source_dir.join("file.txt"), b"content").expect("write file");
 
-    // Create destination with extra directory
     let target_root = ctx.dest.join("source");
     fs::create_dir_all(&target_root).expect("create target root");
     fs::create_dir_all(target_root.join("dir1")).expect("create target dir1");
@@ -82,12 +77,11 @@ fn delete_delay_defers_directory_deletions_until_end() {
         .execute_with_options(LocalCopyExecution::Apply, options)
         .expect("copy succeeds");
 
-    // Verify extra directory is deleted
     assert!(target_root.join("dir1").exists());
     assert!(target_root.join("dir1/file.txt").exists());
     assert!(!extra_dir.exists());
     assert_eq!(summary.files_copied(), 1);
-    assert!(summary.items_deleted() >= 1); // At least the directory
+    assert!(summary.items_deleted() >= 1);
 }
 
 
@@ -113,7 +107,6 @@ fn delete_delay_differs_from_delete_during_timing() {
         ctx.dest.clone().into_os_string(),
     ];
 
-    // Test with delete-delay
     let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
     let options_delay = LocalCopyOptions::default().delete_delay(true);
     assert!(options_delay.delete_delay_enabled());
@@ -123,7 +116,6 @@ fn delete_delay_differs_from_delete_during_timing() {
         .execute_with_options(LocalCopyExecution::Apply, options_delay)
         .expect("copy succeeds with delay");
 
-    // Create new destination for delete-during test
     let ctx2 = test_helpers::setup_copy_test();
     fs::create_dir_all(&ctx2.dest).expect("create dest2");
     fs::write(ctx2.source.join("keep.txt"), b"keep").expect("write keep2");
@@ -138,7 +130,6 @@ fn delete_delay_differs_from_delete_during_timing() {
         ctx2.dest.clone().into_os_string(),
     ];
 
-    // Test with delete-during
     let plan2 = LocalCopyPlan::from_operands(&operands2).expect("plan2");
     let options_during = LocalCopyOptions::default().delete_during();
     assert!(!options_during.delete_delay_enabled());
@@ -174,14 +165,12 @@ fn delete_delay_works_with_recursive_traversal() {
     let ctx = test_helpers::setup_copy_test();
     fs::create_dir_all(&ctx.dest).expect("create dest");
 
-    // Create nested source structure
     test_helpers::create_test_tree(&ctx.source, &[
         ("level1/level2/level3/file.txt", Some(b"deep")),
         ("level1/keep.txt", Some(b"keep1")),
         ("top.txt", Some(b"top")),
     ]);
 
-    // Create destination with extra files at various levels.
     // Use shorter content than source to ensure different sizes, avoiding
     // quick-check (same mtime+size) skipping the transfer.
     let target_root = ctx.dest.join("source");
@@ -208,12 +197,10 @@ fn delete_delay_works_with_recursive_traversal() {
         .execute_with_options(LocalCopyExecution::Apply, options)
         .expect("copy succeeds");
 
-    // Verify kept files exist
     assert!(target_root.join("top.txt").exists());
     assert!(target_root.join("level1/keep.txt").exists());
     assert!(target_root.join("level1/level2/level3/file.txt").exists());
 
-    // Verify extra files at all levels are deleted
     assert!(!target_root.join("extra_top.txt").exists());
     assert!(!target_root.join("level1/extra_shallow.txt").exists());
     assert!(!target_root.join("level1/level2/extra_mid.txt").exists());
@@ -228,18 +215,15 @@ fn delete_delay_handles_nested_empty_directories() {
     let ctx = test_helpers::setup_copy_test();
     fs::create_dir_all(&ctx.dest).expect("create dest");
 
-    // Source has a directory with a file
     let source_dir = ctx.source.join("data");
     fs::create_dir_all(&source_dir).expect("create source dir");
     fs::write(source_dir.join("file.txt"), b"content").expect("write file");
 
-    // Destination has nested empty directories that should be deleted
     let target_root = ctx.dest.join("source");
     fs::create_dir_all(&target_root).expect("create target root");
     fs::create_dir_all(target_root.join("data")).expect("create data dir");
     fs::write(target_root.join("data/file.txt"), b"old").expect("write old file");
 
-    // Create extra nested empty directories
     fs::create_dir_all(target_root.join("empty1/empty2/empty3"))
         .expect("create nested empties");
 
@@ -254,7 +238,6 @@ fn delete_delay_handles_nested_empty_directories() {
         .execute_with_options(LocalCopyExecution::Apply, options)
         .expect("copy succeeds");
 
-    // Verify data directory remains but empty directories are deleted
     assert!(target_root.join("data").exists());
     assert!(target_root.join("data/file.txt").exists());
     assert!(!target_root.join("empty1").exists());
@@ -271,7 +254,6 @@ fn delete_delay_with_max_deletions_limit() {
 
     fs::write(ctx.source.join("keep.txt"), b"keep").expect("write keep");
 
-    // Create destination with multiple extra files
     let target_root = ctx.dest.join("source");
     fs::create_dir_all(&target_root).expect("create target root");
     fs::write(target_root.join("keep.txt"), b"old").expect("write old");
@@ -297,7 +279,6 @@ fn delete_delay_with_max_deletions_limit() {
         other => panic!("unexpected error kind: {other:?}"),
     }
 
-    // Verify keep file exists and was updated
     assert!(target_root.join("keep.txt").exists());
     assert_eq!(
         fs::read(target_root.join("keep.txt")).expect("read keep"),
@@ -348,13 +329,11 @@ fn delete_delay_processes_deletions_even_after_successful_transfer() {
         .execute_with_options(LocalCopyExecution::Apply, options)
         .expect("copy succeeds");
 
-    // Verify file was updated
     assert_eq!(
         fs::read(target_root.join("file.txt")).expect("read file"),
         b"new content"
     );
 
-    // Verify deferred deletion was processed
     assert!(!target_root.join("delete_me.txt").exists());
     assert_eq!(summary.files_copied(), 1);
     assert_eq!(summary.items_deleted(), 1);
@@ -366,17 +345,14 @@ fn delete_delay_batches_multiple_directory_deletions() {
     let ctx = test_helpers::setup_copy_test();
     fs::create_dir_all(&ctx.dest).expect("create dest");
 
-    // Create source with single directory
     fs::create_dir_all(ctx.source.join("keep_dir")).expect("create keep dir");
     fs::write(ctx.source.join("keep_dir/file.txt"), b"keep").expect("write keep");
 
-    // Create destination with multiple extra directories
     let target_root = ctx.dest.join("source");
     fs::create_dir_all(&target_root).expect("create target root");
     fs::create_dir_all(target_root.join("keep_dir")).expect("create target keep dir");
     fs::write(target_root.join("keep_dir/file.txt"), b"old").expect("write old");
 
-    // Extra directories to be deleted
     fs::create_dir_all(target_root.join("extra1")).expect("create extra1");
     fs::write(target_root.join("extra1/file1.txt"), b"extra1").expect("write extra1 file");
     fs::create_dir_all(target_root.join("extra2")).expect("create extra2");
@@ -395,11 +371,9 @@ fn delete_delay_batches_multiple_directory_deletions() {
         .execute_with_options(LocalCopyExecution::Apply, options)
         .expect("copy succeeds");
 
-    // Verify keep directory remains
     assert!(target_root.join("keep_dir").exists());
     assert!(target_root.join("keep_dir/file.txt").exists());
 
-    // Verify all extra directories are deleted (batched deletions)
     assert!(!target_root.join("extra1").exists());
     assert!(!target_root.join("extra2").exists());
     assert!(!target_root.join("extra3").exists());
@@ -417,7 +391,6 @@ fn delete_delay_respects_exclude_filters() {
 
     fs::write(ctx.source.join("keep.txt"), b"keep").expect("write keep");
 
-    // Create destination with files matching filter patterns
     let target_root = ctx.dest.join("source");
     fs::create_dir_all(&target_root).expect("create target root");
     fs::write(target_root.join("keep.txt"), b"old").expect("write old");
@@ -439,7 +412,6 @@ fn delete_delay_respects_exclude_filters() {
         .execute_with_options(LocalCopyExecution::Apply, options)
         .expect("copy succeeds");
 
-    // Verify keep file updated
     assert!(target_root.join("keep.txt").exists());
     assert_eq!(
         fs::read(target_root.join("keep.txt")).expect("read keep"),
@@ -465,7 +437,6 @@ fn delete_delay_with_delete_excluded_removes_filtered_files() {
 
     fs::write(ctx.source.join("keep.txt"), b"keep").expect("write keep");
 
-    // Create destination with files matching filter patterns
     let target_root = ctx.dest.join("source");
     fs::create_dir_all(&target_root).expect("create target root");
     fs::write(target_root.join("keep.txt"), b"old").expect("write old");
@@ -487,7 +458,6 @@ fn delete_delay_with_delete_excluded_removes_filtered_files() {
         .execute_with_options(LocalCopyExecution::Apply, options)
         .expect("copy succeeds");
 
-    // Verify keep file exists
     assert!(target_root.join("keep.txt").exists());
 
     // Verify excluded file is deleted when delete_excluded is enabled
@@ -503,7 +473,6 @@ fn delete_delay_with_no_files_to_delete() {
     let ctx = test_helpers::setup_copy_test();
     fs::create_dir_all(&ctx.dest).expect("create dest");
 
-    // Source and destination have identical structure
     fs::write(ctx.source.join("file.txt"), b"content").expect("write source");
 
     let target_root = ctx.dest.join("source");
@@ -521,7 +490,6 @@ fn delete_delay_with_no_files_to_delete() {
         .execute_with_options(LocalCopyExecution::Apply, options)
         .expect("copy succeeds");
 
-    // Verify file exists and was updated
     assert!(target_root.join("file.txt").exists());
     assert_eq!(
         fs::read(target_root.join("file.txt")).expect("read file"),
@@ -540,7 +508,6 @@ fn delete_delay_with_only_deletions_no_transfers() {
     // Empty source directory
     // (source directory already exists from setup_copy_test)
 
-    // Destination has files to delete
     let target_root = ctx.dest.join("source");
     fs::create_dir_all(&target_root).expect("create target root");
     fs::write(target_root.join("delete1.txt"), b"delete1").expect("write delete1");
@@ -557,7 +524,6 @@ fn delete_delay_with_only_deletions_no_transfers() {
         .execute_with_options(LocalCopyExecution::Apply, options)
         .expect("copy succeeds");
 
-    // Verify all files are deleted
     assert!(!target_root.join("delete1.txt").exists());
     assert!(!target_root.join("delete2.txt").exists());
 
@@ -588,20 +554,17 @@ fn delete_delay_with_dry_run_reports_but_does_not_delete() {
         .execute_with_options(LocalCopyExecution::DryRun, options)
         .expect("dry run succeeds");
 
-    // In dry-run, extra file should still exist
     assert!(target_root.join("extra.txt").exists());
     assert_eq!(
         fs::read(target_root.join("extra.txt")).expect("read extra"),
         b"extra"
     );
 
-    // Old content should still exist (not updated in dry-run)
     assert_eq!(
         fs::read(target_root.join("keep.txt")).expect("read keep"),
         b"old"
     );
 
-    // Summary should still report what would be deleted
     assert_eq!(summary.items_deleted(), 1);
 }
 

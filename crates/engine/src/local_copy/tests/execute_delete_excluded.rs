@@ -21,7 +21,6 @@ fn delete_preserves_excluded_log_files_at_dest() {
     fs::create_dir_all(&source).expect("create source");
     fs::create_dir_all(&dest).expect("create dest");
 
-    // Source has a.txt and b.log.
     fs::write(source.join("a.txt"), b"content a").expect("write a.txt");
     fs::write(source.join("b.log"), b"log b").expect("write b.log");
 
@@ -80,7 +79,6 @@ fn delete_excluded_removes_log_files_matching_exclude_pattern() {
     fs::create_dir_all(&source).expect("create source");
     fs::create_dir_all(&dest).expect("create dest");
 
-    // Source has a.txt and b.log.
     fs::write(source.join("a.txt"), b"content a").expect("write a.txt");
     fs::write(source.join("b.log"), b"log b source").expect("write b.log");
 
