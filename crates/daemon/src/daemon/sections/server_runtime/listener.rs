@@ -359,6 +359,36 @@ fn warn_per_family_accept_failure(
     }
 }
 
+/// Emits a warning when `accept(2)` fails with a transient, per-connection
+/// error that the accept loop deliberately survives.
+///
+/// upstream: `socket.c:593` - `if (fd < 0) continue;`. The daemon accept loop
+/// ignores every `accept(2)` failure and keeps serving. Errors such as
+/// `ECONNABORTED` (a client reset between the TCP handshake and `accept`) or
+/// `EMFILE`/`ENFILE` (a transient descriptor shortage under a connection
+/// burst) are per-connection: the affected client is dropped, but the listener
+/// stays up. Prior to this the single-listener engine escalated any such error
+/// to a fatal daemon exit, so one aborted connection under load could tear the
+/// whole daemon down. Surfacing the error at warning level keeps operator
+/// visibility into the churn without implying the daemon is degraded.
+fn warn_transient_accept_failure(
+    log: Option<&SharedLogSink>,
+    local_addr: SocketAddr,
+    error: &io::Error,
+) {
+    let payload = format!(
+        "accept on {local_addr} failed: {error}; \
+         dropping the connection and continuing to serve"
+    );
+    let message = rsync_warning!(payload).with_role(Role::Daemon);
+
+    if let Some(sink) = log {
+        log_message(sink, &message);
+    } else {
+        eprintln!("{message}");
+    }
+}
+
 /// Binds one TCP listener per entry in `bind_addresses`, tolerating per-family
 /// failures while at least one family still binds successfully.
 ///
