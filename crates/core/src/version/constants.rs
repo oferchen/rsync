@@ -51,7 +51,7 @@ pub const BUILD_TOOLCHAIN: &str = branding_build_toolchain();
 pub const SUBPROTOCOL_VERSION: u8 = 0;
 
 /// Upstream base version that the Rust implementation tracks.
-#[doc(alias = "3.4.1")]
+#[doc(alias = "3.4.4")]
 pub const UPSTREAM_BASE_VERSION: &str = workspace::UPSTREAM_VERSION;
 
 /// Full version string rendered by user-visible banners.
