@@ -59,8 +59,12 @@ impl ReceiverContext {
         }
         #[cfg(not(feature = "incremental-flist"))]
         {
-            let _ = progress;
-            self.run_pipelined(reader, writer, crate::pipeline::PipelineConfig::default())
+            self.run_pipelined(
+                reader,
+                writer,
+                crate::pipeline::PipelineConfig::default(),
+                progress,
+            )
         }
     }
 

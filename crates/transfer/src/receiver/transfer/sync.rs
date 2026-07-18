@@ -155,6 +155,7 @@ impl ReceiverContext {
                 if file_entry.is_dir()
                     && self.config.flags.verbose
                     && self.config.connection.client_mode
+                    && !self.should_emit_itemize()
                 {
                     if relative_path.as_os_str() == "." {
                         info_log!(Name, 1, "./");
@@ -555,8 +556,12 @@ impl ReceiverContext {
             // enters the delta loop when the generator selected the file
             // for transfer), so emit the upstream "updated" line. Uptodate
             // files are routed through the event-stream MetadataReused path
-            // and never reach this point.
-            if self.config.flags.verbose && self.config.connection.client_mode {
+            // and never reach this point. Under `-i`/`-vi` the itemize row
+            // already carries the name, so the bare name is suppressed.
+            if self.config.flags.verbose
+                && self.config.connection.client_mode
+                && !self.should_emit_itemize()
+            {
                 info_log!(Name, 1, "{}", relative_path.display());
             }
 
@@ -592,7 +597,7 @@ impl ReceiverContext {
         // alone only skips the file and carries no exit-code bits.
         let sender_io_error = reader.take_io_error();
 
-        let total_source_bytes: u64 = self.file_list.iter().map(|e| e.size()).sum();
+        let total_source_bytes: u64 = self.total_source_size();
 
         // upstream: main.c:794-796 - count the pre-flight-created destination
         // root as a created dir (FLAG_DIR_CREATED -> ITEM_IS_NEW). See the

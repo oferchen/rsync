@@ -122,12 +122,16 @@ where
     // direction arrow (upstream: log.c:701-704 - `<` for sender, `>` otherwise).
     let is_sender = config.is_local_sender();
     // upstream: flist.c:2251 emits "sending incremental file list" only when
-    // `inc_recurse && INFO_GTE(FLIST, 1) && !am_server`. compat.c:172 disables
-    // inc_recurse when `!recurse`, so mirror the recursion gate (single-file
-    // `-v` transfers get no banner); additionally require the FLIST info
-    // category so `--info=flist0` suppresses the banner even at `-v`, matching
-    // upstream's per-category gate rather than a raw verbose-level check.
-    let emit_flist_banner = config.recursive() && info_gte(InfoFlag::Flist, 1);
+    // `inc_recurse && INFO_GTE(FLIST, 1) && !am_server`. Mirror each gate:
+    // - compat.c:172 disables inc_recurse when `!recurse`, so a single-file
+    //   `-v` transfer gets no banner (`config.recursive()`);
+    // - the FLIST info category gate lets `--info=flist0` suppress it even at
+    //   `-v` (`info_gte(Flist, 1)`);
+    // - `!am_server` means the sender prints it: the client is the sender on a
+    //   push and a local copy, and the receiver on a pull (which separately
+    //   prints "receiving incremental file list"), so suppress it on a pull
+    //   (`!config.is_pull()`) to avoid printing both banners.
+    let emit_flist_banner = config.recursive() && info_gte(InfoFlag::Flist, 1) && !config.is_pull();
     // Capture the preserve-links state before `config` is consumed so the
     // `--list-only` renderer knows whether to append the ` -> <target>` arrow
     // to symlink rows (upstream: generator.c:1183 gates it on preserve_links).

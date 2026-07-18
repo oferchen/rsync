@@ -20,6 +20,28 @@ impl ReceiverContext {
         self.config.flags.info_flags.itemize
     }
 
+    /// Sum of source sizes counted toward the `--stats` "total size".
+    ///
+    /// Only regular files and symlinks contribute, never directories, devices,
+    /// or FIFOs - directory `st_size` in particular would inflate the total.
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `flist.c:690-691` / `flist.c:1242-1243` - `stats.total_size +=
+    ///   F_LENGTH(file)` guarded by `S_ISREG(mode) || S_ISLNK(mode)`.
+    pub(in crate::receiver) fn total_source_size(&self) -> u64 {
+        self.file_list
+            .iter()
+            .filter(|entry| {
+                matches!(
+                    entry.file_type(),
+                    protocol::flist::FileType::Regular | protocol::flist::FileType::Symlink
+                )
+            })
+            .map(|entry| entry.size())
+            .sum()
+    }
+
     /// Computes the itemize flags for an existing (already-present) directory
     /// by comparing its current on-disk metadata against the sender's file-list
     /// entry, mirroring upstream `generator.c:1480-1483` -> `itemize()` for the
@@ -389,5 +411,137 @@ impl ReceiverContext {
             }
         }
         Ok(())
+    }
+
+    /// Writes one `-v` name line to the client's own output stream, honouring
+    /// `--msgs2stderr` (upstream FINFO routes to stderr when set, else stdout).
+    ///
+    /// Client-mode only: this is the local-pull equivalent of upstream
+    /// `log_item(FCLIENT, ...)`. A server receiver's names travel as wire
+    /// itemize and are printed by the peer's sender, so this is never called
+    /// off the client.
+    fn emit_name_line(&self, line: &str) -> std::io::Result<()> {
+        use std::io::Write as _;
+        if self.names_to_stderr {
+            std::io::stderr().write_all(line.as_bytes())
+        } else {
+            std::io::stdout().write_all(line.as_bytes())
+        }
+    }
+
+    /// Buffers a pre-transfer `-v` name (a directory reached in phase 1) under
+    /// its flist index, to be released in order just before its first child is
+    /// reached in the phase-2 transfer loop.
+    pub(in crate::receiver) fn buffer_deferred_name(&self, flist_idx: usize, line: String) {
+        self.name_rows
+            .borrow_mut()
+            .entry(flist_idx)
+            .or_default()
+            .push(line);
+    }
+
+    /// Records a transferred file's `-v` name at its flist index and flushes
+    /// every buffered name up to and including that index, in ascending order,
+    /// so any directories that precede the file print immediately before it -
+    /// interleaved with `--progress`. Mirrors upstream `log_before_transfer`
+    /// (`receiver.c:1008-1012`, name printed per file just before its data).
+    pub(in crate::receiver) fn emit_name_in_order(
+        &self,
+        flist_idx: usize,
+        line: String,
+    ) -> std::io::Result<()> {
+        self.name_rows
+            .borrow_mut()
+            .entry(flist_idx)
+            .or_default()
+            .push(line);
+        self.flush_names_through(flist_idx)
+    }
+
+    /// Drains buffered `-v` name lines with a flist index `<= upto`, in
+    /// ascending index order, writing each to the client stream. Also used on
+    /// the `--progress` path to release directory names in order without
+    /// emitting the file name (the progress renderer prints that).
+    pub(in crate::receiver) fn flush_names_through(&self, upto: usize) -> std::io::Result<()> {
+        let ready = take_names_through(&mut self.name_rows.borrow_mut(), upto);
+        for line in ready {
+            self.emit_name_line(&line)?;
+        }
+        Ok(())
+    }
+
+    /// Flushes any remaining buffered `-v` names (trailing directories with no
+    /// following transferred child) in ascending flist-index order. Called once
+    /// by the driver after the transfer loop, before finalization.
+    pub(in crate::receiver) fn flush_names_all(&self) -> std::io::Result<()> {
+        let all = take_names_through(&mut self.name_rows.borrow_mut(), usize::MAX);
+        for line in all {
+            self.emit_name_line(&line)?;
+        }
+        Ok(())
+    }
+}
+
+/// Removes every buffered name line whose flist index is `<= upto` and returns
+/// them flattened in ascending index order (and, within an index, in insertion
+/// order). Entries with an index above `upto` stay buffered for a later flush.
+///
+/// This is the watermark that interleaves `-v` directory names with their
+/// children: the transfer loop calls it with each transferred file's index, so
+/// the directories that precede that file drain out immediately before it.
+fn take_names_through(
+    rows: &mut std::collections::BTreeMap<usize, Vec<String>>,
+    upto: usize,
+) -> Vec<String> {
+    let keys: Vec<usize> = rows.range(..=upto).map(|(k, _)| *k).collect();
+    keys.into_iter()
+        .filter_map(|k| rows.remove(&k))
+        .flatten()
+        .collect()
+}
+
+#[cfg(test)]
+mod name_reorder_tests {
+    use super::take_names_through;
+    use std::collections::BTreeMap;
+
+    fn buf(pairs: &[(usize, &str)]) -> BTreeMap<usize, Vec<String>> {
+        let mut m: BTreeMap<usize, Vec<String>> = BTreeMap::new();
+        for (idx, line) in pairs {
+            m.entry(*idx).or_default().push((*line).to_string());
+        }
+        m
+    }
+
+    #[test]
+    fn drains_prefix_in_flist_order_and_retains_the_rest() {
+        // Dirs buffered up front at their flist indices; files reached in order.
+        let mut rows = buf(&[(0, "a/"), (2, "a/b/"), (5, "c/")]);
+
+        // Reaching file at index 1 releases only dir 0 (a/), before the file.
+        assert_eq!(take_names_through(&mut rows, 1), vec!["a/".to_string()]);
+        // File at index 3 releases dir 2 (a/b/) - which precedes it - not dir 5.
+        assert_eq!(take_names_through(&mut rows, 3), vec!["a/b/".to_string()]);
+        // The trailing dir at index 5 flushes only at end (usize::MAX).
+        assert!(take_names_through(&mut rows, 4).is_empty());
+        assert_eq!(
+            take_names_through(&mut rows, usize::MAX),
+            vec!["c/".to_string()]
+        );
+        assert!(rows.is_empty());
+    }
+
+    #[test]
+    fn same_index_preserves_insertion_order() {
+        let mut rows = buf(&[(2, "first"), (2, "second"), (1, "dir/")]);
+        // Ascending index, then insertion order within an index.
+        assert_eq!(
+            take_names_through(&mut rows, 2),
+            vec![
+                "dir/".to_string(),
+                "first".to_string(),
+                "second".to_string()
+            ],
+        );
     }
 }
