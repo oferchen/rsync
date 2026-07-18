@@ -1,9 +1,17 @@
+/// Bundles the sparse-write toggle and rolling zero-run state for a single
+/// call to `copy_matched_block`.
 pub(super) struct SparseCopy<'state> {
     enabled: bool,
     state: &'state mut SparseWriteState,
 }
 
 impl<'a> CopyContext<'a> {
+    /// Copies `source`'s content to `writer` by matching blocks against
+    /// `index` and writing literal bytes for the unmatched runs in between.
+    ///
+    /// Handles inplace mode, sparse writing, compression, and batch delta
+    /// capture. In inplace or sparse mode the destination is truncated to
+    /// its final length once the loop completes.
     #[allow(clippy::too_many_arguments)]
     pub(super) fn copy_file_contents_with_delta(
         &mut self,
@@ -403,6 +411,12 @@ impl<'a> CopyContext<'a> {
         Ok(outcome)
     }
 
+    /// Writes a literal (unmatched) chunk to `writer`, applying sparse
+    /// zero-run detection, compression, and bandwidth-limiter accounting.
+    ///
+    /// Captures the chunk as a batch delta literal token when batch mode is
+    /// active. Returns the number of bytes physically written, which is
+    /// less than `chunk.len()` when sparse writing elides a zero run.
     #[allow(clippy::too_many_arguments)]
     pub(super) fn flush_literal_chunk(
         &mut self,
@@ -495,6 +509,11 @@ impl<'a> CopyContext<'a> {
         Ok(())
     }
 
+    /// Copies a matched basis block from `existing` to `writer` at the
+    /// block's output position.
+    ///
+    /// Prefers a same-filesystem reflink clone (REFLINK-3/4) over the
+    /// byte-copy loop when available and not writing sparsely.
     pub(super) fn copy_matched_block(
         &mut self,
         existing: &mut fs::File,

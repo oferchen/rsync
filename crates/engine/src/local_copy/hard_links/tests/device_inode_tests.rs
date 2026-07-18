@@ -77,7 +77,6 @@ fn hash_collision_resistance() {
         assert_ne!(key1, key2, "keys should not be equal");
         // Hashes might collide but it's acceptable; we just verify equality works
         if hash_key(&key1) == hash_key(&key2) {
-            // Even with hash collision, equality should distinguish them
             assert_ne!(
                 key1, key2,
                 "equal hash but unequal keys should be distinguished"

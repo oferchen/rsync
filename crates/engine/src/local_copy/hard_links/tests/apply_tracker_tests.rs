@@ -87,7 +87,6 @@ fn follower_deferred_when_leader_missing() {
 fn record_leader_returns_deferred_followers() {
     let mut tracker = HardlinkApplyTracker::new();
 
-    // Defer two followers
     tracker
         .apply_follower(10, Path::new("/dest/f1.txt"))
         .unwrap();
@@ -234,11 +233,9 @@ fn resolve_deferred_creates_links() {
 
     let mut tracker = HardlinkApplyTracker::new();
 
-    // Defer followers
     tracker.apply_follower(70, &follower1).unwrap();
     tracker.apply_follower(70, &follower2).unwrap();
 
-    // Write and record leader
     std::fs::write(&leader, "resolved content").unwrap();
     // Re-insert deferred into tracker for resolve_deferred to handle
     let deferred_list = tracker.record_leader(70, leader.clone());
