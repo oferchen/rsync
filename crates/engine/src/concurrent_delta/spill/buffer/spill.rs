@@ -387,8 +387,12 @@ impl<T: SpillCodec> SpillableReorderBuffer<T> {
         }
     }
 
-    /// Writes a tag-prefixed length-prefixed record to the spill file, opening
-    /// it lazily.
+    /// Writes the caller-supplied `header` followed by `payload` to the spill
+    /// file, opening it lazily.
+    ///
+    /// The header is opaque here: the per-item path passes a tag+length header
+    /// (`build_header`) while the whole-batch path passes a length-only
+    /// header, so this writer stays agnostic to the record framing.
     ///
     /// Returns the number of bytes written (always `header.len() + payload.len()`
     /// on success). All `write_all` calls obey the standard library contract
