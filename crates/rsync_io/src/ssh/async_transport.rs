@@ -15,10 +15,12 @@
 //! `(AsyncRead, AsyncWrite)` split. The downstream
 //! `ChannelReader`/`ChannelWriter` adapters that bridge these halves into
 //! the multiplex framing layer are tracked separately as task #1797.
-//! Likewise, an async stderr drain and async connect-watchdog are deferred:
-//! stderr is currently inherited from the parent, and connect timeouts are
+//! The async connect-watchdog is likewise deferred: connect timeouts are
 //! enforced by the `-o ConnectTimeout=N` option that the shared builder
-//! already injects.
+//! already injects. An async stderr drain has since landed (SSE-4, #2373):
+//! under the `ssh-socketpair-stderr` feature on Unix a socketpair is
+//! installed and drained by `AsyncStderrDrain`, so only default builds
+//! (feature off, or non-Unix) still inherit stderr from the parent.
 //!
 //! # Feature gate
 //!
