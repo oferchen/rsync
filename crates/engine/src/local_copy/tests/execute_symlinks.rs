@@ -21,7 +21,6 @@ fn execute_copies_symbolic_link() {
         .expect("copy succeeds");
     let copied = fs::read_link(dest_link).expect("read copied link");
     assert_eq!(copied, target);
-    // assert_eq!(summary.symlinks_copied(), 1);  // Depends on safe_links behavior
 }
 
 #[cfg(unix)]
@@ -154,7 +153,6 @@ fn execute_with_copy_dirlinks_preserves_file_symlink() {
         .execute_with_options(LocalCopyExecution::Apply, options)
         .expect("copy succeeds");
 
-    // assert_eq!(summary.symlinks_copied(), 1);  // Depends on safe_links behavior
     let copied = fs::read_link(&dest).expect("read link");
     assert_eq!(copied, target_file);
 }
@@ -191,7 +189,6 @@ fn execute_with_safe_links_allows_relative_symlink() {
         )
         .expect("copy succeeds");
 
-    // assert_eq!(summary.symlinks_copied(), 1);  // Depends on safe_links behavior
     let copied = fs::read_link(&destination_link).expect("read link");
     assert_eq!(copied, Path::new("nested/file.txt"));
 }
@@ -634,7 +631,6 @@ fn safe_links_preserves_symlink_to_directory_when_safe() {
         )
         .expect("copy succeeds");
 
-    // assert_eq!(summary.symlinks_copied(), 1);  // Depends on safe_links behavior
 
     let dest_link = dest_root.join("source").join("link_to_dir");
     assert!(fs::symlink_metadata(&dest_link).expect("meta").file_type().is_symlink());
@@ -1015,7 +1011,6 @@ fn copy_unsafe_links_preserves_safe_symlink() {
     assert!(metadata.file_type().is_symlink());
     let target = fs::read_link(&destination_link).expect("read symlink");
     assert_eq!(target, Path::new("inside.txt"));
-    // assert_eq!(summary.symlinks_copied(), 1);  // Depends on safe_links behavior
 }
 
 #[cfg(unix)]
@@ -1127,8 +1122,6 @@ fn copy_unsafe_links_in_recursive_copy() {
         b"unsafe"
     );
 
-    // Summary should show both types
-    // assert_eq!(summary.symlinks_copied(), 1);  // Depends on safe_links behavior // only the safe link
     assert_eq!(summary.files_copied(), 2); // original file + dereferenced unsafe link
 }
 
@@ -1376,8 +1369,6 @@ fn copy_unsafe_links_with_mixed_safe_and_unsafe_in_tree() {
         b"outside data"
     );
 
-    // Check summary
-    // assert_eq!(summary.symlinks_copied(), 1);  // Depends on safe_links behavior // only safe link
     assert_eq!(summary.files_copied(), 3); // safe_target.txt + 2 dereferenced unsafe links
 }
 

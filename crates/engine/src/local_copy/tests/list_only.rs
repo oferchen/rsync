@@ -47,12 +47,8 @@ fn list_only_enumerates_files_without_transfer() {
         )
         .expect("dry run succeeds");
 
-    // In dry run mode, files_copied() shows what would be copied, not what was actually copied
-    // The important check is that destination remains empty
-    // assert_eq!(summary.files_copied(), 0);
-    // assert_eq!(summary.bytes_copied(), 0);
-
-    // Verify files were enumerated
+    // In dry run mode files_copied() reports what would be copied, not what was
+    // actually copied; the meaningful check is that files were enumerated.
     assert!(!collector.records.is_empty());
 
     let paths: Vec<_> = collector.records
