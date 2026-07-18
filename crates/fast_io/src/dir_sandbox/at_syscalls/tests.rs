@@ -1186,9 +1186,7 @@ fn readlinkat_via_sandbox_falls_back_for_multi_component() {
     assert_eq!(got, target);
 }
 
-// ========================================================
 // recursive_unlinkat_via_sandbox_or_fallback tests (SEC-1.s)
-// ========================================================
 
 fn build_three_deep_tree(root: &Path, leaf: &str) {
     let l1 = root.join(leaf);
@@ -1398,9 +1396,7 @@ fn recursive_unlinkat_via_sandbox_or_fallback_with_no_sandbox_removes_tree() {
     assert!(!target.exists());
 }
 
-// ========================================================
 // read_dir_via_sandbox_or_fallback tests (SEC-1.q2)
-// ========================================================
 
 fn collect_names(outcome: ReadDirOutcome) -> Vec<std::ffi::OsString> {
     outcome
@@ -1536,7 +1532,6 @@ fn read_dir_view_via_sandbox_matches_std_for_subdir_listing() {
     assert_eq!(at_names, std_names, "sandbox and std listings must agree");
 }
 
-// ---------------------------------------------------------------------
 // SEC nested-path parent anchoring (RESOLVE_BENEATH) tests.
 //
 // These cover the interior-directory TOCTOU gap the single-component
