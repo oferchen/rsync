@@ -36,11 +36,9 @@ fn daemon_negotiation_error_host_allow_blocks_unlisted() {
     let (mut stream, handle) = start_daemon(config, port, held_listener);
     let mut reader = BufReader::new(stream.try_clone().expect("clone"));
 
-    // Read greeting
     let mut line = String::new();
     reader.read_line(&mut line).expect("greeting");
 
-    // Send version
     stream
         .write_all(b"@RSYNCD: 32.0 sha512 sha256 sha1 md5 md4\n")
         .expect("send version");

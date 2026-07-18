@@ -37,7 +37,6 @@ fn daemon_copy_links_push_resolves_symlinks() {
 
     fs::write(source_dir.join("real_file.txt"), b"real content\n").expect("write real_file");
 
-    // Create symlink to real_file.txt
     std::os::unix::fs::symlink("real_file.txt", source_dir.join("link_to_file.txt"))
         .expect("create symlink link_to_file.txt");
 

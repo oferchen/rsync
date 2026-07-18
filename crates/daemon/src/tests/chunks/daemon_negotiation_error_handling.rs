@@ -24,17 +24,14 @@ fn daemon_negotiation_error_unknown_module() {
     let (mut stream, handle) = start_daemon(config, port, held_listener);
     let mut reader = BufReader::new(stream.try_clone().expect("clone"));
 
-    // Read greeting
     let mut line = String::new();
     reader.read_line(&mut line).expect("greeting");
 
-    // Send version
     stream
         .write_all(b"@RSYNCD: 32.0 sha512 sha256 sha1 md5 md4\n")
         .expect("send version");
     stream.flush().expect("flush");
 
-    // Request non-existent module
     stream
         .write_all(b"nonexistent_module\n")
         .expect("send module");
@@ -81,17 +78,14 @@ fn daemon_negotiation_error_empty_module_request() {
     let (mut stream, handle) = start_daemon(config, port, held_listener);
     let mut reader = BufReader::new(stream.try_clone().expect("clone"));
 
-    // Read greeting
     let mut line = String::new();
     reader.read_line(&mut line).expect("greeting");
 
-    // Send version
     stream
         .write_all(b"@RSYNCD: 32.0 sha512 sha256 sha1 md5 md4\n")
         .expect("send version");
     stream.flush().expect("flush");
 
-    // Send empty module request (just newline)
     stream.write_all(b"\n").expect("send empty");
     stream.flush().expect("flush");
 
@@ -145,17 +139,14 @@ fn daemon_negotiation_error_host_denied() {
     let (mut stream, handle) = start_daemon(config, port, held_listener);
     let mut reader = BufReader::new(stream.try_clone().expect("clone"));
 
-    // Read greeting
     let mut line = String::new();
     reader.read_line(&mut line).expect("greeting");
 
-    // Send version
     stream
         .write_all(b"@RSYNCD: 32.0 sha512 sha256 sha1 md5 md4\n")
         .expect("send version");
     stream.flush().expect("flush");
 
-    // Request restricted module
     stream.write_all(b"restricted\n").expect("send module");
     stream.flush().expect("flush");
 
@@ -212,11 +203,9 @@ fn daemon_negotiation_error_refused_options() {
     let (mut stream, handle) = start_daemon(config, port, held_listener);
     let mut reader = BufReader::new(stream.try_clone().expect("clone"));
 
-    // Read greeting
     let mut line = String::new();
     reader.read_line(&mut line).expect("greeting");
 
-    // Send version
     stream
         .write_all(b"@RSYNCD: 32.0 sha512 sha256 sha1 md5 md4\n")
         .expect("send version");
@@ -227,7 +216,6 @@ fn daemon_negotiation_error_refused_options() {
     stream.write_all(b"#delete\n").expect("send option");
     stream.flush().expect("flush");
 
-    // Request module
     stream.write_all(b"secure\n").expect("send module");
     stream.flush().expect("flush");
 
@@ -373,17 +361,14 @@ fn daemon_negotiation_error_sanitizes_module_name_in_response() {
     let (mut stream, handle) = start_daemon(config, port, held_listener);
     let mut reader = BufReader::new(stream.try_clone().expect("clone"));
 
-    // Read greeting
     let mut line = String::new();
     reader.read_line(&mut line).expect("greeting");
 
-    // Send version
     stream
         .write_all(b"@RSYNCD: 32.0 sha512 sha256 sha1 md5 md4\n")
         .expect("send version");
     stream.flush().expect("flush");
 
-    // Request module with control characters
     stream
         .write_all(b"module\x00with\x1bcontrol\n")
         .expect("send malicious module");
@@ -430,17 +415,14 @@ fn daemon_negotiation_error_no_exit_after_error() {
     let (mut stream, handle) = start_daemon(config, port, held_listener);
     let mut reader = BufReader::new(stream.try_clone().expect("clone"));
 
-    // Read greeting
     let mut line = String::new();
     reader.read_line(&mut line).expect("greeting");
 
-    // Send version
     stream
         .write_all(b"@RSYNCD: 32.0 sha512 sha256 sha1 md5 md4\n")
         .expect("send version");
     stream.flush().expect("flush");
 
-    // Request non-existent module
     stream.write_all(b"fake_module\n").expect("send module");
     stream.flush().expect("flush");
 
@@ -488,7 +470,6 @@ fn daemon_negotiation_error_connection_closed_early() {
     let (stream, handle) = start_daemon(config, port, held_listener);
     let mut reader = BufReader::new(stream.try_clone().expect("clone"));
 
-    // Read greeting
     let mut line = String::new();
     reader.read_line(&mut line).expect("greeting");
 
@@ -523,7 +504,6 @@ fn daemon_negotiation_error_invalid_greeting_response() {
     let (mut stream, handle) = start_daemon(config, port, held_listener);
     let mut reader = BufReader::new(stream.try_clone().expect("clone"));
 
-    // Read greeting
     let mut line = String::new();
     reader.read_line(&mut line).expect("greeting");
 

@@ -31,12 +31,10 @@ fn daemon_negotiation_module_list_sends_listing_directly() {
     let (mut stream, handle) = start_daemon(config, port, held_listener);
     let mut reader = BufReader::new(stream.try_clone().expect("clone stream"));
 
-    // Read greeting
     let mut line = String::new();
     reader.read_line(&mut line).expect("greeting");
     assert!(line.starts_with("@RSYNCD:"), "Expected greeting, got: {line}");
 
-    // Send list request
     stream.write_all(b"#list\n").expect("send list request");
     stream.flush().expect("flush");
 
@@ -46,7 +44,6 @@ fn daemon_negotiation_module_list_sends_listing_directly() {
     reader.read_line(&mut line).expect("module listing");
     assert_eq!(line, "test           \t\n", "Expected %-15s aligned module, got: {line}");
 
-    // Read exit
     line.clear();
     reader.read_line(&mut line).expect("exit");
     assert_eq!(line, "@RSYNCD: EXIT\n");
@@ -96,11 +93,9 @@ fn daemon_negotiation_module_list_respects_listable_flag() {
     let (mut stream, handle) = start_daemon(config, port, held_listener);
     let mut reader = BufReader::new(stream.try_clone().expect("clone stream"));
 
-    // Read greeting
     let mut line = String::new();
     reader.read_line(&mut line).expect("greeting");
 
-    // Send list request
     stream.write_all(b"#list\n").expect("send list request");
     stream.flush().expect("flush");
 
@@ -160,17 +155,14 @@ fn daemon_negotiation_module_list_includes_comments() {
     let (mut stream, handle) = start_daemon(config, port, held_listener);
     let mut reader = BufReader::new(stream.try_clone().expect("clone stream"));
 
-    // Read greeting
     let mut line = String::new();
     reader.read_line(&mut line).expect("greeting");
 
-    // Send list request
     stream.write_all(b"#list\n").expect("send list request");
     stream.flush().expect("flush");
 
     // upstream: no @RSYNCD: OK or CAP lines before module listing
 
-    // Read module line
     line.clear();
     reader.read_line(&mut line).expect("module");
 
@@ -205,11 +197,9 @@ fn daemon_negotiation_module_list_empty_when_no_modules() {
     let (mut stream, handle) = start_daemon(config, port, held_listener);
     let mut reader = BufReader::new(stream.try_clone().expect("clone stream"));
 
-    // Read greeting
     let mut line = String::new();
     reader.read_line(&mut line).expect("greeting");
 
-    // Send list request
     stream.write_all(b"#list\n").expect("send list request");
     stream.flush().expect("flush");
 
