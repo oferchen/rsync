@@ -437,8 +437,10 @@ impl ReceiverContext {
     }
 
     /// Drains buffered `-v` name lines with a flist index `<= upto`, in
-    /// ascending index order, writing each to the client stream.
-    fn flush_names_through(&self, upto: usize) -> std::io::Result<()> {
+    /// ascending index order, writing each to the client stream. Also used on
+    /// the `--progress` path to release directory names in order without
+    /// emitting the file name (the progress renderer prints that).
+    pub(in crate::receiver) fn flush_names_through(&self, upto: usize) -> std::io::Result<()> {
         let ready = take_names_through(&mut self.name_rows.borrow_mut(), upto);
         for line in ready {
             self.emit_name_line(&line)?;

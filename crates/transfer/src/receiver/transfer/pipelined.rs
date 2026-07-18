@@ -56,6 +56,7 @@ impl ReceiverContext {
             && !self.config.flags.dry_run
             && !self.config.flags.only_write_batch;
         self.names_to_stderr = self.config.flags.msgs_to_stderr;
+        self.progress_active = progress.is_some();
         let (mut reader, file_count, mut setup) = self.setup_transfer(reader, writer)?;
         let reader = &mut reader;
 

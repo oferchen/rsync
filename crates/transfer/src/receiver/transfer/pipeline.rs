@@ -443,15 +443,22 @@ impl ReceiverContext {
                         if self.interleave_names && !is_redo_pass {
                             // upstream: receiver.c:1008-1012 - the client prints
                             // each file's name per file (log_before_transfer),
-                            // in flist order, interleaved with --progress. Emit
-                            // it in order (flushing any preceding directory
-                            // names) instead of buffering for an end-of-run
-                            // block. The phase-2 redo re-transfers already-named
-                            // files, so it must not re-emit.
-                            let _ = self.emit_name_in_order(
-                                file_idx,
-                                format!("{}\n", file_entry.path().display()),
-                            );
+                            // in flist order, interleaved with --progress,
+                            // instead of buffering for an end-of-run block. The
+                            // phase-2 redo re-transfers already-named files, so
+                            // it must not re-emit.
+                            if self.progress_active {
+                                // The live --progress renderer already prints
+                                // this file's name before its bar; only release
+                                // the directory names that precede it (the
+                                // renderer never sees directory entries).
+                                let _ = self.flush_names_through(file_idx);
+                            } else {
+                                let _ = self.emit_name_in_order(
+                                    file_idx,
+                                    format!("{}\n", file_entry.path().display()),
+                                );
+                            }
                         } else {
                             info_log!(Name, 1, "{}", file_entry.path().display());
                         }

@@ -307,6 +307,12 @@ pub struct ReceiverContext {
     /// True when `-v` name output should be routed to stderr rather than stdout
     /// (`--msgs2stderr`). Mirrors upstream's `msgs2stderr` FINFO routing.
     pub(in crate::receiver) names_to_stderr: bool,
+    /// True when a live `--progress` renderer is active on the client. The
+    /// renderer already prints each transferred file's name before its bar, so
+    /// while it runs the receiver only releases buffered directory names in
+    /// order (the renderer never sees directory entries) and leaves the file
+    /// names to it, avoiding a duplicate name per file.
+    pub(in crate::receiver) progress_active: bool,
     /// Count of server-mode hardlink-follower itemize records emitted this phase
     /// that the peer's sender will echo back (upstream `sender.c:286-292` echoes
     /// every non-transfer item). The pipeline response loop is request-count
@@ -417,6 +423,7 @@ impl ReceiverContext {
             interleave_names: false,
             name_rows: RefCell::new(BTreeMap::new()),
             names_to_stderr: false,
+            progress_active: false,
             hardlink_follower_echoes: std::cell::Cell::new(0),
             created_stats: std::cell::Cell::new(protocol::stats::CreatedStats::new()),
             delayed_delete_victims: Vec::new(),
