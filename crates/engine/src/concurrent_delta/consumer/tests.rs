@@ -10,7 +10,7 @@ use super::*;
 use crate::concurrent_delta::DeltaWork;
 use crate::concurrent_delta::work_queue;
 
-/// Helper: sends `count` whole-file work items with sequential sequence numbers.
+/// Helper: creates a bounded work queue sized to hold `count` items.
 fn spawn_producer(count: u32) -> (work_queue::WorkQueueSender, work_queue::WorkQueueReceiver) {
     work_queue::bounded_with_capacity(count.max(1) as usize)
 }

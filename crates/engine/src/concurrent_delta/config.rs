@@ -17,10 +17,11 @@
 //! # Backwards compatibility
 //!
 //! The legacy fields `spill_threshold_bytes` and `spill_dir` were collapsed
-//! into [`SpillPolicy`]. The matching `with_spill_threshold` / `with_spill_dir`
-//! constructors plus the [`spill_threshold_bytes`](ConcurrentDeltaConfig::spill_threshold_bytes)
+//! into [`SpillPolicy`]. The [`spill_threshold_bytes`](ConcurrentDeltaConfig::spill_threshold_bytes)
 //! and [`spill_dir`](ConcurrentDeltaConfig::spill_dir) accessors are kept as
 //! deprecated shims that forward to [`spill_policy`](ConcurrentDeltaConfig::spill_policy).
+//! The `with_spill_threshold` / `with_spill_dir` constructors are not
+//! deprecated; they remain the supported way to populate the policy.
 
 use std::path::{Path, PathBuf};
 

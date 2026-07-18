@@ -66,9 +66,9 @@ impl ParallelDeltaApplier {
         // Drop the BarrierState Arc before try_unwrap so DecrementGuard
         // clones are the only remaining strong references. After the
         // DG-3 split (BarrierState/SlotData), struct field drop order
-        // guarantees SlotHandle's barrier drops before its _decrement
-        // guard fires the Condvar notify - so by the time flush_workers
-        // returns, no worker holds a SlotData clone.
+        // guarantees SlotHandle's `data` payload clone drops before its
+        // _decrement guard fires the Condvar notify - so by the time
+        // flush_workers returns, no worker holds a SlotData clone.
         let SlotEntry { data, barrier } = entry;
         drop(barrier);
         let slot_data = Arc::try_unwrap(data).map_err(|still_shared| {
