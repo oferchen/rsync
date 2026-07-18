@@ -9,21 +9,331 @@ tags are mirrored on GitHub at <https://github.com/oferchen/rsync/releases>.
 
 ## [0.6.4] - 2026-07-18
 
+This release rolls up every change merged since v0.6.3 (roughly 1,200 pull
+requests). The entries below are grouped by area and highlight the notable,
+user-facing work; consult the linked PRs for full detail.
+
+### Added
+
+**Daemon**
+- Support `@netgroup` tokens and forward-resolve hostnames in `hosts allow`/`hosts deny` (#6640, #6595)
+- Add per-module syslog tag and facility parameters (#6637)
+- Wire per-connection verbosity into daemon log filtering (#6081)
+- Replicate the listener across `N` acceptor threads via `SO_REUSEPORT` (#6166)
+- Add a macOS `kqueue` accept engine with blocking fallback (#6217)
+- Harden worker startup: drop unnecessary capabilities, set `PR_SET_NO_NEW_PRIVS`, log active LSMs, and add an opt-in seccomp BPF syscall filter
+
+**Transfer & SSH**
+- Honor `--timeout` with SSH stall detection (#6636)
+- Compile the embedded SSH (`russh`) transport in by default (#6271)
+- Implement `--copy-dirlinks` and correct `--keep-dirlinks` receiver behavior (#6499)
+- Apply alt-dest handling to symlinks, devices, and specials (#6652)
+- Copy to backup under `--inplace` to preserve the destination inode, with a basis-offset guard in the delta generator (#6630, #6629)
+- Preallocate destination files on the receiver (#6620)
+- Support `--only-write-batch` on the server receiver (#6535)
+- Match upstream `--partial` temp naming and finalize partial files on interrupt (#6411)
+- Deduplicate `INC_RECURSE` sub-lists and the received file list, with path-belongs validation (#6632, #6631)
+- Perform implied recursive `--list-only` listing for a daemon source (#6160)
+- Materialize symlinks on the Windows network receiver (#6489)
+- Add `-vvv` receiver/flist trace messages and a `-vv` delta-transmission status line matching upstream (#6353, #6110)
+- Add an experimental, default-off async receiver/sender pipeline (`tokio-transfer`) (#6460)
+
+**Delta & matching**
+- Emit `FNAMECMP_FUZZY` and basis xname for `--fuzzy` transfers (#6692)
+- Add an opt-in parallel delta scan for large basis files (#6486)
+- Wire `DeltaApplicator` into the receiver apply path with compressed-token and sparse-size support (#6212, #6211)
+- Enable adaptive work-queue depth by default in the delta pipeline, with an opt-in AIMD grow/shrink controller (#6391, #6348)
+
+**Compression**
+- Thread signed compression levels so negative `zstd` levels reach the encoder (#6654)
+- Advertise the `lz4` codec after wire-format validation (#6503)
+- Honor `RSYNC_CHECKSUM_LIST`/`RSYNC_COMPRESS_LIST` and refuse env-excluded `--checksum`/`--compress-choice` (#6590, #6599)
+
+**Metadata (ACL/xattr/ownership)**
+- Preserve creation time on Windows via `SetFileTime` (#6157)
+- Classify NTFS reparse points (symlink/junction/mount-point/cloud) and parse their target names into `FileEntry` generation
+- Fall back to junctions for unprivileged Windows directory symlinks (#6484)
+- Audit-trail unmappable SIDs on Windows DACL apply (#6466)
+- Honor `--max-alloc` for xattr datum length (#6680)
+- Add Windows long-path support via `to_extended_path` across ACL/xattr and reparse FFI boundaries
+
+**Filters & deletion**
+- Wire `MSG_DELETED` for server-side `--delete` output (#6622)
+- Emit upstream non-empty-dir and IO-error skip notices during deletion (#6362)
+
+**I/O (fast_io / io_uring)**
+- Reflink basis ranges via `FICLONE`/`FICLONERANGE` in the local-copy executor and delta-apply COPY tokens, gated on same-fs (#5836, #5824, #6237, #6101)
+- Take a `clonefile` fast path for plain `-a` on macOS, stripping cloned xattrs (#6099)
+- Add runtime CoW filesystem detection on Linux (#5832)
+- Create NTFS sparse files via `FSCTL_SET_SPARSE` (#6236)
+- Dispatch Windows file reads through IOCP with std fallback (#6475)
+- Add an `RWF_DONTCACHE` uncached bulk file writer and wire it into the receiver (#6148, #6149)
+- Add TCP Fast Open on client connect and daemon accept, plus `TCP_NOTSENT_LOWAT`, `TCP_QUICKACK`, congestion/cork/`SO_REUSEPORT`, and `SO_BUSY_POLL` socket tuning (#6151, #6142, #6124, #6141, #6216)
+- Mirror `--bwlimit` as an `SO_MAX_PACING_RATE` kernel hint (#6128)
+- Wire io_uring `SEND_ZC` into the daemon sender behind opt-in `--zero-copy` (#6349)
+- Add an opt-in Windows Registered I/O socket path (#5821)
+- Make the buffer-pool memory cap and block size runtime-configurable via env (#6548, #6509)
+- Anchor sandbox operations on the full parent path via `RESOLVE_BENEATH` to close a TOCTOU window (#6343)
+
+**CLI & options**
+- Add `--reflink=auto|always|never` mirroring upstream (#5823)
+- Add `--checksum-threads` to activate parallel signature hashing (#6227)
+- Add `--io-uring=sqpoll-off` (#131) and `--lsm-status` with an EACCES audit hint (#128)
+- Port upstream filename octal escaping for output (#6355)
+- Render `--list-only` atime/crtime columns with `-U`/`--crtimes` (#6162)
+- Produce meaningful local-copy `--stats` (file-list size in sent bytes, I/O acceleration report) (#6096)
+- Honor negative `--modify-window` for nsec-exact mtime comparison (#6517)
+
+**Protocol**
+- Forward out-format `%o` and `--remove-sent-files` in server args (#6677)
+
+**Other**
+- Emit per-directory itemize rows on receiver creation (#6007)
+
 ### Fixed
 
-- Survive transient `accept(2)` errors (`ECONNABORTED` / `EMFILE`) under connection load instead of exiting the daemon, matching upstream `socket.c` (#6763)
-- Lone `-h` prints help, resolve `--old-args` / secluded-args conflict, correct `-a` flag ordering (#6729)
-- Thread human-readable mode into `--stats` count fields (#6727)
-- Drop dead `--compress-level` help text and correct the stale `E` (exa) size-suffix documentation (#6778)
+**Daemon**
+- Survive transient `accept(2)` errors (`ECONNABORTED`/`EMFILE`) under load instead of treating them as fatal (#6763)
+- Enable `SO_KEEPALIVE` on accepted client sockets and align listener socket options with upstream (`SO_REUSEADDR` only by default, honor `--port 0`) (#6720, #6562)
+- Hold `max-connections` slots with `fcntl` record locks and honor per-module reverse-lookup and lock-file directives (#6712, #6610)
+- Resolve uid/gid names in `rsyncd.conf` (not just numeric) and emit `@ERROR: invalid uid` on resolution failure (#6675, #6691)
+- Force numeric ids for an unset directive under `chroot`, and keep the uid/gid name-list on the wire for daemon-forced `numeric-ids` (#6699, #6468)
+- Match upstream `rsyncd.conf` parsing: whitespace-insensitive param names, bool/int values, backslash continuation, `&include` scoping, and `path = /` modules (#6596, #6579, #6584, #5517)
+- Apply previously-unhandled module directives (auth access-level, ignore-errors, numeric-ids, incoming/outgoing `chmod`) at transfer time (#6464, #6603)
+- Enforce `refuse options` against client requests and expand the compress alias to all `-z` variants (#6270, #6529)
+- Match upstream `secrets-file` handling: group-readable permission mask, `@group`/wildmatch auth-user matching, and reject strict-modes secrets with `@ERROR` (#6251, #6392, #6409)
+- Refuse device options by default and reject out-of-module `--link-dest`/`--copy-dest` paths, confining alt-basis paths to the module root (#6463, #5778, #5540)
+- Do not send `@RSYNCD: EXIT` after `@ERROR`; echo the `@ERROR` line verbatim before the structured error and emit MOTD with the correct trailing newline (#6381, #6372)
+- Drain to peer EOF after half-close to avoid an abortive RST mid-download, and retry `EINTR`/`EWOULDBLOCK` in the teardown goodbye drain (#6556, #6564, #5718)
+- Run `post-xfer exec` on refused transfers and scope `RSYNC_ARG*`/`RSYNC_REQUEST`/`RSYNC_RAW_STATUS` to match upstream (#6482, #6481, #6476)
+- List all daemon modules regardless of host access, and forward-confirm reverse DNS for `hosts allow`/`deny` (#6616, #6339)
+- Surface Landlock best-effort downgrade instead of hiding it, and widen the Landlock allowlist to validated `ref_dirs`/`temp_dir`/`partial_dir` (#6686, #6600)
+- Emit deletions and `NDX_DEL_STATS` on daemon-receive uploads even without `--stats` (#6588, #6543)
+- Default listener behavior corrected to upstream IPv4-only with per-family bind fallback (#5908, #5885, #5875)
+
+**Transfer & receiver**
+- Do not delete an `--inplace` destination on mid-transfer abort, preventing data loss (#6340)
+- Verify the whole-file checksum before committing on the receiver (#6626)
+- Defer `--remove-source-files` unlink until `MSG_SUCCESS`, and guard the sender-side unlink (#6668, #6580)
+- Defer `--delete-delay`/`--delete-after` unlink until after transfer so per-directory filters protect at delete time (#6618, #6519)
+- Back up existing specials/symlinks before the receiver replaces them, and create fifo/device specials on protocol receive (#6614, #6469)
+- Dirfd-anchor receiver commit/backup rename and anchor Windows temp-create + rename against reparse-point TOCTOU (#6336, #6688)
+- Drain the delta stream when a pipelined receiver temp-create fails (exit 23, no desync) (#6249, #6253)
+- Resolve sent uid/gid names to local ids for file ownership, and honor `--numeric-ids` in name matching (#6500, #6296)
+- Match upstream sparse hole granularity and `sparse_end` for network sparse writes (#6501, #6442)
+- Gate receiver dest-path creation on `--mkpath` and auto-create the destination root only for multi-file transfers (#6257)
+- `--update` transfers when the destination type differs from the source, and honors `--modify-window` in the quick-check (#6255, #6252)
+- Full-content resend on the `--append` redo pass; verify the append-prefix checksum for protocol < 30 and skip a source shrunk below flist length (#6662, #6497, #6589)
+- Validate received flist names against implied includes and re-filter them on the receiver (#6627, #6624)
+- Fail-closed `INC_RECURSE` sub-list `dir_ndx` validation, and honor negotiated `CF_INC_RECURSE` on the receiver (#6619, #6495)
+- Report the real "Total transferred file size" and reconstruct the `created_*` `--stats` breakdown on remote transfers (#6723, #6687, #6681)
+- Surface delay-updates rename failure instead of silently skipping, and link hardlink followers after the delayed-updates rename (#6728, #6645)
+- Handle receiver data-discard without panicking, and turn a buffered `map_file` out-of-range read into an `Err` (#6272, #6586)
+- Grant transient `u+rwx` to read-only dirs during transfer and retry inplace open without `O_CREAT` on `EACCES` (#6494, #6104)
+- Report signal aborts as `RERR_SIGNAL`, not a per-file partial (#6413)
+- Protect mount points in the `--one-file-system` delete pass and scope the receiver root delete to content dirs (#6571, #6527)
+- Use a partial-dir file as the delta basis on resume (`FNAMECMP_PARTIAL_DIR`) (#6506)
+- Implement `--copy-devices` in the protocol sender and gate device server-args on sender direction (#6473, #6467)
+
+**SSH transport**
+- Thread `--timeout` into the SSH stall watchdog end-to-end and connect-timeout via `--contimeout` (expiry exit 35) (#6649, #6704)
+- Auto-enable `blocking_io` for `rsh`/`remsh` remote shells and forward `--ipv4`/`--ipv6` to the ssh child as `-4`/`-6` (#6724, #6715)
+- Surface async-runtime death on the sync bridge instead of hanging (#6278)
+- Keep server stdio blocking and retry `WouldBlock` in the write loop; half-close/drain stdout in both server roles to break shutdown deadlocks (#5733, #5781, #5792)
+
+**Delta & matching**
+- Enforce inplace basis offset-monotonicity in the matcher and seek past in-place matched blocks at the same offset (#6625, #6603)
+- Avoid read-after-write basis corruption with `--inplace` + delta and mirror upstream inplace matched-block copy for re-ordered content (#5889, #5862)
+- Produce wire-identical parallel delta via spatial-split overlap merge and reset the consumed bitset before a chunked parallel scan (#6546, #6187)
+- Match the trailing partial block in local-copy delta (#6333)
+- Port upstream `fuzzy_distance` and compare fuzzy candidate names by raw bytes for `--fuzzy` basis selection (#6439, #6646)
+- Select the best-match reference basis by `match_level`; copy a `link-dest` match-level-2 basis instead of hard-linking (#6441, #6401)
+- Compute per-file flist checksums on the sender under `--checksum`, and use `xxh128` for local `--checksum` to match negotiation (#6520, #6415)
+
+**Filters & exclude/delete**
+- Per-dir `!` clears inherited ancestor merge rules, and scope `!` clears to the local merge context (#6701, #5905)
+- Inherit ancestor per-dir-merge rules into subdirs for delete-protection timing, and gate dir-exclude descendants by ancestor first-match (#6513, #6559)
+- Evaluate CLI filter rules in true command-line order, and protect excluded-dir children on the delete pass (#6405, #6034)
+- First-match-wins for protect/risk rules, and honor receiver-side, exclude, and perishable rules in `--delete` (#6274, #6414)
+- Isolate destination-deletion merge load from source filters and drop excluded entries from the keep-set when deletable (#6066, #6064)
+- Port upstream `wildmatch dowild`, eliminating `**` divergences and normalizing bare interior `**` (#6079, #5751)
+- Abort on a perishable rule sent to a proto<30 peer, and gate the `:C` CVS modifier per protocol (#6726, #6718)
+- CVS handling: keep `-C` CVS rules local on the receiver, emit only `C` on the wire, and apply `no-inherit` per upstream (#6718, #6428, #5869)
+- Case-sensitive long-form filter directive keywords and correct rule-separator/whitespace handling (#6588, #6576, #6448)
+- Match upstream unknown-rule error text and exit code, and reject the `e` modifier on non-merge rules (#6352, #6292)
+- Order the local delete plan by upstream traversal order, not a byte sort (#6446)
+- Auto-exclude `--partial-dir` from transfer and deletion (#6505)
+- Carry dir-merge `:s`/`:r` side onto the wire for delete-pass parity and inherit parent side flags in nested merges (#6075, #6065)
+
+**Metadata (perms/ACL/xattr/ownership/times)**
+- Restore setuid/setgid/sticky bits after applying ACLs and after `chown` (#6721, #6581)
+- Preserve the transmitted ACL mask on the receiver (no narrowing to a named entry) and remap ACL user/group ids via id-list for cross-host `-A` (#6493, #6346)
+- Resolve ACL named-entry id/name instead of dropping to root, and inherit the default ACL when computing destination file mode (#6127, #5841)
+- Non-root `-X` sender transmits `security.*` xattrs; filter received xattrs on apply via `xattr_name_allowed` and drop non-user xattrs on a non-root receiver (#6722, #6682, #6591)
+- Number wire xattrs ascending to match the receiver, and unseed the xattr-abbreviation checksum to match upstream (#6698, #6375)
+- `--usermap`/`--groupmap` must match the sender-transmitted name; mirror upstream numeric-range parsing and warn-and-continue on unknown targets (#6696, #6574, #6344)
+- Apply dir perms/setgid without `-p`, omit atime unless requested, and reject `--chmod` copy-syntax clauses like upstream (#6694, #6561)
+- Match upstream `chmod.c` parse/apply semantics exactly, including permission-copy specs (#6373, #6265)
+- Skip a `crtime` set when unchanged, tolerate the HFS+ root, and tolerate `ENXIO`/`EROFS`/`EOPNOTSUPP` when setting times on special files (#6725, #6113)
+- Symmetric `--modify-window` mtime comparison matching upstream `same_time` (#6247)
+- Read macOS resource forks past the 64 MiB `getxattr` ceiling (#6433)
+- Correct `--fake-super` `%stat` xattr encode/decode and treat `ENODATA`/`ENOATTR` as success when removing fake-super metadata (#6268, #6487)
+- Gate non-root `chown` by privilege to match upstream (#6067)
+- Chmod through a dirfd to block a parent-symlink escape (#5732)
+
+**Compression**
+- `-z --skip-compress` keeps codec framing, and use the upstream `DEFAULT_DONT_COMPRESS` skip-compress suffix list (#6697, #6285)
+- Stream compressed-token inflate to match upstream, fixing explicit-choice vstring desync and an all-literal pipeline deadlock (#6657, #6471)
+- Clamp `--compress-level` to the codec range, allowing negative zstd levels down to `ZSTD_minCLevel` (#6403, #6648)
+- Apply the negotiated compress level to the token encoder and honor daemon `dont-compress '*'` whole-stream store (#6578, #6602)
+
+**Protocol & wire**
+- Map bounded wire-read overruns and protocol violations to `RERR_PROTOCOL` (exit 2), with correct RERR codes for xattr/acl/nsec/multiplex overruns (#6633, #6594, #6635)
+- Reject out-of-range ACL access bits, out-of-range hardlink reference index, and flist entries with invalid mode-type bits (#6661, #6644, #6575)
+- Tombstone flist duplicates to keep `NDX` aligned, and gate `XMIT_*_NAME_FOLLOWS` on `inc_recurse` (#6670, #6498)
+- Match upstream ACL/xattr wire caps and cap del-stat; gate xattr name-abbreviation encoding on protocol version (#6669, #6496)
+- Preserve invalid bytes verbatim in iconv include-bad and honor negotiated symlink-target iconv gating with strict-failure semantics (#6674, #6641)
+- Reject a 256-byte negotiation vstring and decode the sender xname as a vstring (not a varint) (#6299, #6298)
+- Legacy rdev-major reset for proto 28-30 specials and legacy longint end-of-run stats for protocol < 30 (#6388, #6438)
+- Proto-29 sender checksum seed and hardlink flist encoding, plus MD4 whole-file seed gated on protocol < 30 (#6434, #6700)
+- Honor `--checksum-choice` during binary negotiation and clamp `s2length` to the negotiated digest width (#6421, #6660)
+- Checked arithmetic on wire-derived indices, and guard `read_varint`/flist-name decode against integer/length overflow (#6085, #5874, #5764)
+- Send `--delete` instead of `--delete-during` for bare delete mode (#6358)
+- Add defense-in-depth wire bounds for flist names, ID lists, and timestamps, and bound the compressed-token decoder counters against overflow (#5511, #5509)
+
+**CLI & options**
+- Options after operands (popt order parity) and lone `-h` help / `--old`/`--secluded` conflict / `-a` flag ordering (#6474, #6729)
+- Match upstream `--stats`/`--progress` output formatting, `progress2` TTY framing with 1s throttle, and thread human-readable mode into count fields (#6693, #6544, #6727)
+- Honor upstream's 4 human-readable levels, `-hh` base-1024, and thousands-grouping of counts/rates/speedup (#6371, #6107, #6135, #6119)
+- Transfer rate uses the wall-clock span, not summed per-file durations (#6123)
+- Match upstream `parse_size_arg` for `--max-size`/`--min-size` and reject scientific notation in `--bwlimit` (#6389, #6404)
+- `--max-delete` must not enable deletion, with option-validation parity (#6695)
+- Forward the correct server-args over SSH: `-C`, `--skip-compress`, `-XX`/`-UU`, `--append`/`--append-verify`, `--debug=`, negation flags, and more `server_options()` long flags (#6667, #6492, #6587, #6524, #6528)
+- Honor `--protocol=NUM` over ssh/remote-shell and align choice/protocol/empty-filter exit codes with upstream (#6514, #6526)
+- Pass 8-bit filename bytes raw under `--8-bit-output`, and render listing/out-format dates in local time via `localtime_r` (#6384, #6130)
+- Distinguish `%b`/`%c` transfer-byte direction and match upstream `%L` width, `%G` default, and skipping-directory output (#6293, #6363)
+- `--progress` implies `--info=name` and silences per-file progress for up-to-date entries; normalize progress path separators to `/` on Windows (#6118, #6095, #6138)
+- List symlinks and specials in `--list-only`, exit 0 for a successful local `--list-only`, and list a directory entry without a trailing slash (#6369, #6193, #6198)
+- Reject invalid `--chmod` specs to match `parse_chmod`, accept copy-from-category and empty perm sets (#6256, #6408)
+- Default recursive to false when neither `-r`, `-a`, nor `--files-from` is set, and only send `-W` when whole-file is explicitly requested (#5739)
+- `--files-from` fixes: flatten under `--no-relative`, gate implied-dirs emission to protocol >= 30, and resolve a `localhost:` prefix as hybrid local-open + wire-forward (#6530, #6512, #5982)
+
+**Batch**
+- Honor `--checksum-seed` and enforce `MAX_BATCH_NAME_LEN`, and gate batch-file stats encoding on protocol version (#6717, #6453)
+- Enforce iconv batch-flag match and honor `--from0` in the `.sh` wrapper; include pass-through options in `--write-batch .sh` (#6577, #6387)
+- Never open a non-regular replay entry as a delta basis and preserve regular-file mode through symlink replay (#6031, #5881)
+- Skip destination writes in `--only-write-batch` local-copy mode (#6598, #6027)
+
+**Core / misc**
+- Propagate raw child/remote exit codes like upstream and match upstream error role trailers (`[sender]`/`[generator]`) and text (#6378, #6341)
+- Propagate the daemon rejection exit code instead of a fixed 23 (#6477)
+- Match upstream `errno` suffix `(N)` in I/O error messages and align exit-code description strings with `rerr_names` (#6146, #6059)
+- Validate `--temp-dir` exists before transferring, and exit 23 for a missing source while continuing the rest (#6523, #6132)
+- Fold `--files-from` into the config `dirs()` resolver and honor `--delay-updates` on a daemon-pull receiver (#6710, #6647)
+- Match upstream `server_options` arg forwarding on the SSH path and forward `--delete`/`--ignore-missing-args` to the daemon server (#6656, #6269)
+- Stream the whole-file checksum via a read window rather than mmap (#6709)
+- Unregister the temp path from the cleanup registry on guard drop to fix a leak (#6342)
+- Validate sum-header wire fields to reject malformed input (DoS) and audit CVE-2026-43617 hostname ACL bypass with a regression test (#6338, #5508)
+- Bound recursive copy depth to prevent stack overflow (#6048)
+- Windows fast-copy: drain in-flight IOCP ops on mid-batch error (data-loss/UAF), honor `-X` and xattr filters, and correct the `COPY_FILE_NO_BUFFERING` flag value (#6331, #6325, #6121)
+
+### Performance
+
+- **Engine/delta**: small-transfer fast path for the delete pass (`DML-4`) (#6550) and incremental destination filter stack for the delete pass (#6213)
+- **Engine/delta**: gate spill zstd on compressibility to cut round-trip CPU (#6537)
+- **Engine/delta**: parallelize local-copy delta basis-signature generation (#6182) with bounded-memory parallel signature generation (#6176)
+- **Engine/delta**: eliminate per-file copy-buffer churn in local copy (#6312)
+- **Engine/delta**: dedupe redundant destination `statx` in `--checksum` local copy (#6424); cache parent device id to drop redundant per-file `statx` (#6416)
+- **Transfer & SSH**: track sparse offset in a variable, one `lseek` per hole (#6665)
+- **Transfer & SSH**: default `mmap` for large-basis signature reads, byte-transparent (#6347)
+- **Transfer & SSH**: intern per-source base instead of per-file full path (#6427)
+- **Transfer & SSH**: cork around mux flush burst to coalesce delta-stream segments (`NBUF-2`) (#6235)
+- **Transfer & SSH**: opt-in parallel basis signature generation (#6177)
+- **fast_io / io_uring**: `RWF_DONTCACHE` basis-window reads (`UNCACHE-5`) (#6164) with version-gated writer selection (#6154)
+- **fast_io / io_uring**: shared same-device helper, gate whole-file `FICLONE` on `st_dev` (#6163); skip `FICLONE` on cross-filesystem local copies (#6152)
+- **fast_io / io_uring**: gate partial-range `FICLONERANGE` on same filesystem (#6153)
+- **fast_io / io_uring**: apply `FILE_FLAG_SEQUENTIAL_SCAN` to basis reads on Windows (#6156)
+- **Matching**: drop discarded per-block copies in the gated delta scan (#6658)
+- **Matching**: chunked parallel sender-scan delta generator (#6183)
+- **Daemon**: honor max connections in the async accept-loop worker cap (#6540)
+- **Daemon**: `kqueue` socket-readiness for the macOS daemon accept path, default-off (#6329)
+- **Protocol**: stream zstd token literals per `CHUNK_SIZE` (#6592)
+- **Memory/RSS**: return freed pages promptly via jemalloc to bound RSS at scale (#6313)
+- **Memory/RSS**: memoize uid/gid name lookups during flist build (#6422)
+- **Other**: `kqueue` `EVFILT_TIMER` for sub-ms bandwidth sleeps on macOS (#5818)
 
 ### Changed
 
-- Remove validated orphan (never-compiled) source files (#6749)
+- Removed the dormant async-pipeline and ack-batcher from the transfer path (#6676)
+- Removed non-upstream in-binary TLS: the client-tls scaffold and deps (#6301) and the `daemon-tls` native TLS feature (#6139)
+- Unified `rsyncd.conf` parsing on a single path (#6672); consolidated daemon config parsing into submodules (#6207, #6203)
+- Decomposed the receiver and transfer setup into submodules (#6210, #6206), with lazy on-demand flist-segment fetch in the receiver, no behavior change (#6479)
+- Split the client remote `ssh_transfer` (#6209) and `disk_commit` (#6208) into submodules
+- Split CLI frontend argument and filter-rule parsing into submodules (#6195, #6202)
+- Split engine `local_copy` buffer pool (#6199) and `concurrent_delta` parallel-apply (#6196) into submodules; collapsed the transitional `SlotBarrier` adapter (#6430)
+- Split `fast_io` `at_syscalls` per syscall (#6189) and retired the dead `send_zc` `from_shared_ring` constructor (`IUC-4`) (#6200)
+- Introduced sans-io compressed-token decoding, byte-identical and async-driver ready (#6226), and split the wire `zstd_codec` into submodules (#6204)
+- Added the `AcceptEngine` trait to abstract accept-loop polling (#6165) and encapsulated generator sort behind a `DualFileList` API (#5782)
+- Removed the flat-flist dead-weight dual path (#6137)
+- Consolidated default sources: skip-compress suffixes (#6383) and CVS-ignore patterns (#6374)
 
 ### Documentation
 
-- Systematic rustdoc and comment cleanup across every workspace crate: stale doc claims corrected against the code, restatement/banner comments removed, missing `///` added, and every `// upstream:` source reference preserved (45 PRs)
-- Pin every upstream-comparison reference to rsync 3.4.4 across the docs and the release benchmark; the benchmark report now leads with oc-rsync's widest wins (#6779)
+- Systematic rustdoc and comment-cleanup campaign across every workspace crate: `filters`, `compress`, `checksums`, `metadata`, `protocol`, `daemon`, `engine`, `transfer`, `fast_io`, `rsync_io`, `xtask`, plus a batch of smaller crates (#6731, #6732, #6737, #6741, #6760)
+- Per-submodule rustdoc tidy for hot paths: `local_copy` executor, `concurrent_delta`, `delete/`, generator, receiver, `disk_commit`, `io_uring` (#6776, #6743, #6738, #6745, #6744)
+- Dropped decorative dividers, banners, debug-narration and restatement comments from tests and root modules while preserving upstream-reference notes (#6759, #6756, #6753, #6386)
+- Corrected stale doc claims against actual code: buffer-pool clamp and memory cap, temp-file naming, `walk` default crate (`jwalk`), `statx`/`io_uring` behaviour, `InvalidFnameCmpType` (#6765, #6764, #6750, #6757, #6752)
+- Fixed daemon stale connection-limit and Windows gid docs, and CLI out-format token / filter / progress rustdoc (#6771, #6768, #6767)
+- Repaired unresolved rustdoc intra-doc links breaking the Pages build across the workspace (#6671, #6558, #6420, #6418, #5872, #5616, #5621)
+- Refreshed the tracked upstream reference to rsync 3.4.4 in prose, comparisons and benchmarks (#6779, #6770)
+- Aligned status docs with shipped code: incremental-recursion default-on, ACL interop receiver gap resolved, Windows symlink support in README (#6402, #6547, #6508)
+- Upstream-fidelity and security audits: `.unwrap()` panic surface in hot paths, bare-slice indexing on attacker inputs, per-dir `:C` merge-modifier parse gap, non-trailing-slash sub-path behaviour (#5580, #5708, #142)
+- UTS root-cause synthesis and audit trail: exclude-lsh deep audit, files-from hang, reverse-daemon-delta varint overflow, goodbye-flush regression, cross-cutting UTS-X triage (#5977, #5976, #5975, #5974, #5546)
+- Windows Tier-2 support-matrix disclosure and stub inventory reconciled against shipped-vs-design audits (#5595, #5584, #5999)
+- I/O-acceleration design and platform-parity docs: reflink dispatch, `TCP_NOTSENT_LOWAT`, TCP Fast Open, RIO, kqueue, io_uring buffer-ring sizing, cross-platform acceleration matrix (#5997, #5996, #5993, #5964, #5965, #6170)
+- Design and roadmap records for delete/exclude parallelism (DECIDE/EXECUTE seam), ReorderBuffer ring sizing, async receiver scoping, flat-flist flip decision (#6089, #6051, #5987, #6231, #5827)
+- Removed daemon-tls and flat-flist design/audit docs and scrubbed native TLS references after feature removal (#6143, #6140)
+- Packaging and operator guidance: AppArmor profile and SELinux policy templates for `oc-rsyncd`, landlock build guidance, `rust-landlock` as preferred sandboxing primitive (#5602, #6215, #5549)
+- Environment and infra notes: GHA IPv6 dual-stack listener quirk, SQPOLL in rootless containers, `Cargo.lock` maintenance discipline (#5956, #5896, #5753)
+
+### Testing
+
+- Ported upstream testsuite edge cases to nextest in successive rounds, covering hardlinks INC_RECURSE, atimes/crtimes round-trip, delete-missing sentinels, chdir-symlink-race, compress-zlib-insert overflow (#6335, #6330, #6324, #5950, #5895)
+- Added an upstream CLI-argument fidelity suite and pinned exclude-lsh six-leg sub-transfer and files-from dotdir-walk matrices (#6516, #5979, #5883)
+- Interop-validated filter `protect`/`risk`/`hide`/`show` modifiers and `:C` bare-modifier wire bytes against upstream (#6273, #5980)
+- Fuzz and differential coverage: seeded under-provisioned corpora, ancestor-directory exclusion in filter harnesses, `buffered_map` fuzz target plus UTS-18 regression corpus (#6429, #6023, #89)
+- Property and bound tests: `bithash` false-positive bound and block-skip iteration count, zlib/zstd/lz4 decoder panic-freedom, zlib size monotonicity replacing a flaky speed check (#6488, #96, #6364)
+- Determinism and stress hardening: reorder disk-reassembly under adversarial arrival, parallel-apply write/verify overlap, FICLONE concurrent same-fs clones, deterministic AIMD and adaptive-pool clocks (#6443, #6478, #6100, #6719, #6555)
+- Deflaked and serialized global-state tests: buffer-pool singleton, `disk_commit` cleanup registry, reorder backpressure, Windows daemon-spawn negotiation (#6368, #6444, #6628, #6307)
+- Platform-gated tests for cross-platform CI: Unix-only timestamp and POSIX-absolute reference cells, Windows-incompatible platform tests, SQPOLL integration gated to Linux (#5766, #5762, #5777, #5695)
+- Windows metadata coverage: symlink/junction and ADS round-trips, reparse-point RAII fixtures, NTFS-path assertions (#94, #95, #85)
+- Daemon and goodbye-phase regression coverage: daemon-gzip `-zz` goodbye flush, `path=/` with `use chroot=no`, goodbye timeout/disconnect, `NDX_DONE` contract (#6002, #5532, #5707, #93)
+- Added shared test-support harnesses: `DirDiff` tree comparison, `OcRsyncCliRunner` + `LshRunnerStub`, self-skip prerequisite helpers (#6279, #6288, #6282)
+- Security-focused coverage: hostname ACL resolution before chroot (GHSA-rjfm-3w2m-jf4f), `security.selinux` xattr round-trip, DirSandbox error contract (#5533, #98, #97)
+
+### CI
+
+- Made the upstream rsync testsuite a required check with reusable real+skip legs, and added root and non-root testsuite legs for the 3.4.4 gate (#6233, #6245)
+- Added a standalone Upstream Testsuite workflow with README badge and surfaced per-test FAIL via annotations, summaries and XFAIL log detail (#6683, #6006, #5850, #6161)
+- Added a one-shot validation workflow that re-runs a failing testsuite test against the upstream rsync binary (#5851)
+- Pinned upstream rsync 3.4.4 across interop and remaining workflow matrices; promoted proto-29 RP28 legs to blocking (#5539, #5545, #6449)
+- Introduced a fast PR gate against `--locked` removal from cargo invocations and shell helpers, auditing all workflow YAMLs (#5816, #5754, #5750)
+- Added a suite of Windows nightly test cells: IOCP high-IOPS, daemon-crate, OpenSSH/`rsync_io`, NTFS ACL, reparse/symlink, ADS xattr, long-path `\\?\`, case-insensitive collision (#6323, #43, #45, #47, #49)
+- Published workspace rustdoc to GitHub Pages and dropped `--cfg docsrs` from Pages RUSTDOCFLAGS to compile on stable (#5560, #5562)
+- Benchmark workflows: published zsync matching benchmarks and pointed `benchmark.py` at upstream rsync 3.4.4 (#6542, #6043)
+- Cargo.lock automation: auto-sync on Cargo.toml PRs, weekly `cargo-update` cron, regen-at-job-start, fork-PR diff comments (#5706, #5701, #5699, #6011)
+- Reliability fixes for flaky infra: free disk space on Linux jobs, retry musl rustup fetch timeouts, retry interop smoke on daemon max-connections, tolerate cold-cache offline `cargo update` (#6201, #6300, #6309, #5729)
+- Pinned the nightly toolchain around a `rustc_ast` ICE and tracked a non-required nightly 3.5.0dev testsuite cell (#6585, #6240)
+- Grouped dependency bumps via the actions group and DRY'd release-binary builds into a composite action (#6320, #6186, #5797, #6035)
+
+### Maintenance
+
+- Removed validated orphan and never-compiled source files, plus orphaned `set_tcp_congestion` helper and dead non-unix `sendfile`/`recv_fd` re-exports (#6749, #6144, #99)
+- Dependency bumps: `russh` 0.62.1, `tikv-jemallocator` 0.7.0, `zlib-rs` 0.6.6, `cargo_metadata` 0.23.1, plus grouped minor-and-patch batches (#6321, #6322, #6419, #5512, #6551)
+- Security advisory bump for `crossbeam-epoch` 0.9.20 (RUSTSEC-2026-0204) (#6328)
+- Lockfile housekeeping: regenerate for upstream drift, pin `cargo-platform` 0.3.2 for rustc 1.88 compat, sync compress proptest dev-dep (#100, #101, #90)
+- Formatting and hygiene: `cargo fmt --all` on master, import ordering in `filters/set.rs`, `inspect_err().ok()` for charset parse, master fmt+clippy hygiene (#5700, #5744, #6532, #5728)
+- Version and template housekeeping: pin upstream rsync 3.4.4 (closes #4965), release-notes template reference, Homebrew formulas for v0.6.3 (#5538, #5776, #5506)
 
 ## [0.6.3] - 2026-06-05
 
