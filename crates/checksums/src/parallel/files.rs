@@ -3,7 +3,7 @@
 //! Provides concurrent file I/O with digest computation using rayon.
 //! On Unix, files above the mmap threshold are zero-copy hashed from a
 //! `MmapReader` mapping; on Windows the equivalent path streams through
-//! [`WindowsChunkedReader`] so peak RSS stays bounded by the configured
+//! `WindowsChunkedReader` so peak RSS stays bounded by the configured
 //! chunk size (default 4 MiB) rather than the file size, mirroring the
 //! WIN-S.LAND.1.b bounded-RSS contract.
 

@@ -100,7 +100,7 @@ impl RollingDigest {
     ///
     /// This convenience wrapper allocates a
     /// [`RollingChecksum::DEFAULT_READER_BUFFER_LEN`] scratch buffer on the
-    /// stack and delegates to [`from_reader_with_buffer`](Self::from_reader_with_buffer).
+    /// heap and streams the reader through [`RollingChecksum::update_reader`].
     /// It is ideal for tests and simple call sites that do not manage their own
     /// workspace for streaming checksums.
     ///
