@@ -146,6 +146,8 @@
 //! - [`BatchError::Io`] - File system or I/O errors
 //! - [`BatchError::InvalidFormat`] - Malformed or incompatible batch files
 //! - [`BatchError::Unsupported`] - Features not yet implemented
+//! - [`BatchError::FlagMismatch`] - A batch stream flag cannot be reconciled
+//!   with the active options (a fatal `--iconv` mismatch)
 //!
 //! # Thread Safety
 //!

@@ -7,20 +7,18 @@
 //!
 //! # Overview
 //!
-//! Replay proceeds in three phases:
+//! Replay first reads the batch header and reconciles its stream flags against
+//! the active options, then decodes the file list from the protocol flist wire
+//! format (matching the encoding produced during batch write). It then applies
+//! the entries in three phases:
 //!
-//! 1. **Header validation**: The batch header is read and the stream flags
-//!    bitmap is verified against the protocol version.
-//! 2. **File list decoding**: The protocol flist wire format is decoded using
-//!    [`protocol::flist::FileListReader`], matching the encoding produced by
-//!    [`protocol::flist::FileListWriter`] during batch write.
-//! 3. **Directory and metadata application**: Parent directories are created,
-//!    symlinks are materialized, and metadata (permissions, timestamps) is
-//!    applied to all entries.
-//!
-//! Delta replay for regular files is a separate concern - the batch body
-//! after the flist contains delta operations that reference basis files at
-//! the destination.
+//! 1. **Directories and symlinks**: Directories are created and symlinks are
+//!    materialized, and parent directories are ensured for regular files.
+//! 2. **Delta application**: Per-file delta operations from the batch body are
+//!    applied against the basis files at the destination.
+//! 3. **Metadata**: Permissions, timestamps, and ownership are applied to all
+//!    entries, with directories updated last so earlier file writes do not
+//!    disturb their directory timestamps.
 //!
 //! # Submodules
 //!

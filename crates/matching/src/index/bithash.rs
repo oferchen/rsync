@@ -15,7 +15,7 @@
 //!
 //! - Bucket count `2^i` is chosen so that `2^i >= 4 * N` for `N` blocks,
 //!   clamped at a `2^7` minimum to keep the mask stable for tiny basis files.
-//! - Bit count is `2^(i + 1 + BITHASH_BITS)`, i.e. 8 times the bucket count
+//! - Bit count is `2^(i + BITHASH_BITS)`, i.e. 8 times the bucket count
 //!   (zsync's `BITHASHBITS = 3`), giving the canonical 1/8 set-bit density
 //!   and the matching 7/8 reject rate on uniform misses.
 //! - The bit count is capped at `2^28` (32 MiB of bits, 4 MiB of bytes) to
@@ -24,8 +24,8 @@
 /// Logarithm of the per-bucket bit budget.
 ///
 /// Mirrors zsync's `BITHASHBITS` macro from `librcksum/internal.h:83`.
-/// Each `2^i` bucket of the rsum hash table is paired with `2^(BITHASH_BITS+1)
-/// = 16` bithash bits, giving a 1/8 set-bit density at saturation.
+/// Each `2^i` bucket of the rsum hash table is paired with `2^BITHASH_BITS
+/// = 8` bithash bits, giving a 1/8 set-bit density at saturation.
 pub(super) const BITHASH_BITS: u32 = 3;
 
 /// Minimum bithash size in bits, expressed as a power-of-two exponent.
