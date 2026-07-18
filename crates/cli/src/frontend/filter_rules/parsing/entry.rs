@@ -17,6 +17,9 @@ use super::rules::{
     parse_exclude_if_present, parse_keyword_rule, parse_short_include_rule, parse_shorthand_rules,
 };
 
+/// Parses a top-level `--filter` argument into a `FilterDirective`, trying the
+/// short and long merge forms before the general rule dispatcher. Leading
+/// whitespace is preserved to mirror upstream's non-word-split behaviour.
 pub(crate) fn parse_filter_directive(argument: &OsStr) -> Result<FilterDirective, Message> {
     let text = argument.to_string_lossy();
     // upstream: exclude.c:1100-1213 parse_rule_tok - leading whitespace is only
@@ -97,6 +100,9 @@ pub(crate) fn parse_old_prefix_rule(
     Ok(FilterDirective::Rule(rule))
 }
 
+/// Dispatches a trimmed rule line (no merge prefix) to the matching parser:
+/// `!`/`clear`, CVS convenience, shorthands, `exclude-if-present`, `+`/`-`
+/// short rules, then the long keyword rules.
 pub(super) fn parse_rule_directive(text: &str) -> Result<FilterDirective, Message> {
     // upstream: exclude.c:1313 parse_rule_tok - the pattern length is strlen, so
     // trailing whitespace is part of the pattern and is never stripped. A rule

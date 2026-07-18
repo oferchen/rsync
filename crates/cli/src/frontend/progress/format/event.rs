@@ -9,6 +9,9 @@ pub(crate) const fn is_progress_event(kind: &ClientEventKind) -> bool {
     kind.is_progress()
 }
 
+/// Reports whether an event should print its name at the given output level:
+/// `UpdatedOnly` (`-v`) lists changed entries, `UpdatedAndUnchanged` (`-vv`)
+/// also lists reused ones, and `Disabled` lists none.
 pub(crate) const fn event_matches_name_level(event: &ClientEvent, level: NameOutputLevel) -> bool {
     match level {
         NameOutputLevel::Disabled => false,

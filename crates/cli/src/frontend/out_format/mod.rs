@@ -1,5 +1,7 @@
 #![deny(unsafe_code)]
 
+//! Parsing and rendering of `--out-format` / `--log-format` specifications.
+
 mod parser;
 mod render;
 mod tokens;

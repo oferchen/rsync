@@ -29,9 +29,12 @@ impl OutFormat {
     }
 }
 
+/// A single element of a parsed `--out-format` specification.
 #[derive(Clone, Debug)]
 pub(super) enum OutFormatToken {
+    /// Literal text copied to the output verbatim.
     Literal(String),
+    /// A `%`-placeholder resolved at render time.
     Placeholder(PlaceholderToken),
 }
 

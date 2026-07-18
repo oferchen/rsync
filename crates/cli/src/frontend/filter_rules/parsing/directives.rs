@@ -13,6 +13,8 @@ use core::rsync_error;
 use super::super::directive::{FilterDirective, MergeDirective};
 use super::merge::parse_merge_modifiers;
 
+/// Parses a long-form `merge[,MODS] FILE` directive. Returns `None` when the
+/// text does not start with `merge`, or an error when the file path is missing.
 pub(super) fn parse_long_merge_directive(text: &str) -> Option<Result<FilterDirective, Message>> {
     let remainder = text.strip_prefix("merge")?;
     let mut remainder =
@@ -56,6 +58,9 @@ pub(super) fn parse_long_merge_directive(text: &str) -> Option<Result<FilterDire
     Some(Ok(FilterDirective::Merge(directive)))
 }
 
+/// Parses a long-form `dir-merge[,MODS] FILE` directive (and the `per-dir`
+/// alias). Returns `None` when neither alias matches, or an error when the file
+/// name is missing.
 pub(super) fn parse_dir_merge_alias(trimmed: &str) -> Option<Result<FilterDirective, Message>> {
     const DIR_MERGE_ALIASES: [&str; 2] = ["dir-merge", "per-dir"];
 

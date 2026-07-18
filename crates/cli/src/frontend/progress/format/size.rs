@@ -14,6 +14,8 @@ pub(crate) fn format_progress_bytes(bytes: u64, human_readable: HumanReadableMod
     format_size(bytes, human_readable)
 }
 
+/// Formats a byte count for the active human-readable level: unit-suffixed for
+/// `-h`/`-hh`, comma-grouped at the default level, raw digits under `--no-h`.
 pub(crate) fn format_size(bytes: u64, human_readable: HumanReadableMode) -> String {
     if human_readable.is_enabled() {
         return format_human_bytes(bytes, human_readable.unit_base());
@@ -42,6 +44,7 @@ pub(crate) fn format_count(count: u64, human_readable: HumanReadableMode) -> Str
     }
 }
 
+/// Formats an integer with comma thousands separators (`1,234,567`).
 pub(crate) fn format_decimal_bytes(bytes: u64) -> String {
     if bytes == 0 {
         return String::from("0");
@@ -69,6 +72,9 @@ pub(crate) fn format_decimal_bytes(bytes: u64) -> String {
     String::from(std::str::from_utf8(&buf[pos..]).expect("ASCII-only content"))
 }
 
+/// Formats a byte count with a `K`/`M`/`G`/`T`/`P` suffix and two fractional
+/// digits. `base` is 1000 for `-h` or 1024 for `-hh`; values below `base` render
+/// as plain digits.
 pub(crate) fn format_human_bytes(bytes: u64, base: f64) -> String {
     // upstream: lib/compat.c:do_big_num - values below the multiplier are
     // printed without a unit suffix; otherwise K/M/G/T/P with two fractional
@@ -96,6 +102,8 @@ pub(crate) fn format_human_bytes(bytes: u64, base: f64) -> String {
     bytes.to_string()
 }
 
+/// Formats a file size for `--list-only` output, right-aligned to the level's
+/// fixed size column width.
 pub(crate) fn format_list_size(size: u64, human_readable: HumanReadableMode) -> String {
     let value = format_size(size, human_readable);
     let width = human_readable.size_width();

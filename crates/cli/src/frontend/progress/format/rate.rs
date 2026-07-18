@@ -4,6 +4,8 @@ use std::time::Duration;
 
 use core::client::HumanReadableMode;
 
+/// Formats the bytes/sec field of the transfer summary trailer: thousands-
+/// grouped with two decimals by default, or unit-suffixed under `-h`/`-hh`.
 pub(crate) fn format_summary_rate(rate: f64, human_readable: HumanReadableMode) -> String {
     if !human_readable.is_enabled() {
         // upstream: main.c output_summary() prints the bytes/sec field with
@@ -18,6 +20,8 @@ pub(crate) fn format_summary_rate(rate: f64, human_readable: HumanReadableMode) 
     format_human_rate(rate, human_readable.unit_base())
 }
 
+/// Formats a rate with a `K`/`M`/`G`/`T`/`P` suffix and two decimals. `base` is
+/// 1000 for `-h` or 1024 for `-hh`; rates below `base` render as plain decimals.
 pub(crate) fn format_human_rate(rate: f64, base: f64) -> String {
     if rate < base {
         return format!("{rate:.2}");
@@ -61,6 +65,8 @@ pub(crate) fn format_progress_rate(
     format_progress_rate_decimal(rate)
 }
 
+/// Formats a bytes/sec rate for the progress line into `kB/s`, `MB/s`, or
+/// `GB/s`, using base-1024 divisors and capping at the `GB/s` tier.
 pub(crate) fn format_progress_rate_decimal(rate: f64) -> String {
     const KIB: f64 = 1024.0;
     const MIB: f64 = KIB * 1024.0;

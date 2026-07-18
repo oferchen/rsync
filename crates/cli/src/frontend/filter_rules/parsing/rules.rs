@@ -14,6 +14,8 @@ use super::helpers::{split_keyword_modifiers, split_short_rule_modifiers};
 use super::modifiers::{apply_rule_modifiers, parse_rule_modifiers};
 use super::shorthand::parse_filter_shorthand;
 
+/// Parses the `P`/`H`/`S`/`R` single-letter shorthand rules (protect, hide,
+/// show, risk). Returns `None` when the text is not one of these forms.
 pub(super) fn parse_shorthand_rules(trimmed: &str) -> Option<Result<FilterDirective, Message>> {
     if let Some(result) = parse_filter_shorthand(trimmed, 'P', "P", FilterRuleSpec::protect) {
         return Some(result);
@@ -34,6 +36,9 @@ pub(super) fn parse_shorthand_rules(trimmed: &str) -> Option<Result<FilterDirect
     None
 }
 
+/// Parses an `exclude-if-present=MARKER` directive. Returns `None` when the
+/// text does not start with the `exclude-if-present` keyword, or an error when
+/// the marker file name is missing.
 pub(super) fn parse_exclude_if_present(trimmed: &str) -> Option<Result<FilterDirective, Message>> {
     const EXCLUDE_IF_PRESENT_PREFIX: &str = "exclude-if-present";
     if trimmed.len() < EXCLUDE_IF_PRESENT_PREFIX.len() {
@@ -66,6 +71,9 @@ pub(super) fn parse_exclude_if_present(trimmed: &str) -> Option<Result<FilterDir
     )))
 }
 
+/// Parses a `+`/`-` short rule (include/exclude) identified by `prefix`,
+/// applying any rule modifiers to the pattern via `builder`. Returns `None`
+/// when the text does not begin with `prefix`.
 pub(super) fn parse_short_include_rule(
     trimmed: &str,
     prefix: char,
@@ -97,6 +105,9 @@ pub(super) fn parse_short_include_rule(
     Some(Ok(FilterDirective::Rule(rule)))
 }
 
+/// Parses a long-form keyword rule (`include`/`exclude`/`show`/`hide`/
+/// `protect`/`risk` plus pattern). Keywords are matched case-sensitively to
+/// mirror upstream; an unknown keyword yields a syntax error.
 pub(super) fn parse_keyword_rule(trimmed: &str) -> Result<FilterDirective, Message> {
     let mut parts = trimmed.splitn(2, |ch: char| ch.is_ascii_whitespace());
     let keyword = parts.next().expect("split always yields at least one part");

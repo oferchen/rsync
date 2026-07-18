@@ -10,6 +10,10 @@ use protocol::SUPPORTED_PROTOCOL_BOUNDS;
 
 use crate::frontend::defaults::CVS_EXCLUDE_PATTERNS;
 
+/// Appends the full `-C`/`--cvs-exclude` rule set to `destination`: the global
+/// CVS default excludes plus the per-directory `.cvsignore` dir-merge. Each rule
+/// is tagged with a CVS origin so the wire projection can honor upstream's
+/// local-only / protocol-gated forwarding.
 pub(crate) fn append_cvs_exclude_rules(
     destination: &mut Vec<FilterRuleSpec>,
 ) -> Result<(), Message> {

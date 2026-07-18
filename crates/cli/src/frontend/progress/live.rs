@@ -119,6 +119,8 @@ impl<'a> LiveProgress<'a> {
         )
     }
 
+    /// Builds a live progress renderer bound to `writer`, using the given
+    /// progress mode, human-readable level, and terminal/buffering config.
     pub(crate) fn with_output_config(
         writer: &'a mut dyn Write,
         mode: ProgressMode,
@@ -142,6 +144,7 @@ impl<'a> LiveProgress<'a> {
         }
     }
 
+    /// Returns whether at least one progress line has been rendered.
     pub(crate) const fn rendered(&self) -> bool {
         self.rendered
     }
@@ -152,6 +155,8 @@ impl<'a> LiveProgress<'a> {
         }
     }
 
+    /// Finalizes progress output, terminating any active line with a newline
+    /// and surfacing the first I/O error recorded during rendering.
     pub(crate) fn finish(self) -> io::Result<()> {
         if let Some(error) = self.error {
             return Err(error);

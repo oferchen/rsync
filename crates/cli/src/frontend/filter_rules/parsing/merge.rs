@@ -7,6 +7,10 @@ use core::rsync_error;
 use super::super::directive::{FilterDirective, MergeDirective};
 use super::helpers::split_short_merge_modifiers;
 
+/// Parses the modifier characters that follow a `.`/`:` merge directive into
+/// `DirMergeOptions`. `allow_extended` enables the dir-merge-only modifiers
+/// (`e`, `n`). Returns the options and whether `C` implied `.cvsignore`.
+/// Modifiers are matched case-sensitively to mirror upstream.
 pub(crate) fn parse_merge_modifiers(
     modifiers: &str,
     directive: &str,
@@ -140,6 +144,9 @@ pub(crate) fn parse_merge_modifiers(
     Ok((options, assume_cvsignore))
 }
 
+/// Parses a short merge directive: `. FILE` (merge) or `: FILE` (dir-merge),
+/// including inline modifiers. Returns `None` when the text starts with neither
+/// `.` nor `:`.
 pub(super) fn parse_short_merge_directive(text: &str) -> Option<Result<FilterDirective, Message>> {
     let mut chars = text.chars();
     let first = chars.next()?;
