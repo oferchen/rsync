@@ -4,6 +4,7 @@ use crate::workspace::WorkspaceBranding;
 use serde_json::json;
 use std::collections::BTreeMap;
 
+/// Renders the workspace branding summary as plain text or JSON per `format`.
 pub fn render_branding(
     branding: &WorkspaceBranding,
     format: BrandingOutputFormat,

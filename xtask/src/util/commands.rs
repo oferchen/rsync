@@ -182,6 +182,8 @@ pub fn run_cargo_tool(
     run_cargo_tool_with_env(workspace, args, &[], display, install_hint)
 }
 
+/// Runs `cargo` with the supplied arguments and environment overrides, mapping
+/// failures to `TaskError` and surfacing captured stdout/stderr on error.
 pub fn run_cargo_tool_with_env(
     workspace: &Path,
     args: Vec<OsString>,

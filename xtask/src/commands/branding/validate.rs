@@ -2,6 +2,10 @@ use crate::error::{TaskError, TaskResult};
 use crate::workspace::WorkspaceBranding;
 use std::path::Path;
 
+/// Validates workspace branding invariants: a non-empty brand, a protocol
+/// version within the supported 28-32 range, well-formed client and daemon
+/// binary names that resolve to a single executable, and named daemon config
+/// and secrets files.
 pub fn validate_branding(branding: &WorkspaceBranding) -> TaskResult<()> {
     if branding.brand.trim().is_empty() {
         return Err(TaskError::Validation(String::from(
