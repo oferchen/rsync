@@ -17,7 +17,6 @@ fn ignore_existing_skips_file_with_different_content() {
     let source = temp.path().join("source.txt");
     let destination = temp.path().join("dest.txt");
 
-    // Different content, but destination exists
     fs::write(&source, b"new updated content").expect("write source");
     fs::write(&destination, b"old original content").expect("write dest");
 
@@ -54,7 +53,6 @@ fn ignore_existing_skips_file_with_different_timestamps() {
     fs::write(&source, b"content").expect("write source");
     fs::write(&destination, b"content").expect("write dest");
 
-    // Set different timestamps
     let newer_time = FileTime::from_unix_time(1_700_000_100, 0);
     let older_time = FileTime::from_unix_time(1_700_000_000, 0);
     set_file_times(&source, newer_time, newer_time).expect("set source times");
@@ -77,7 +75,6 @@ fn ignore_existing_skips_file_with_different_timestamps() {
     assert_eq!(summary.files_copied(), 0);
     assert_eq!(summary.regular_files_ignored_existing(), 1);
 
-    // Verify timestamp is preserved (not updated)
     let dest_metadata = fs::metadata(&destination).expect("dest metadata");
     let dest_mtime = FileTime::from_last_modification_time(&dest_metadata);
     assert_eq!(dest_mtime, older_time);
@@ -109,7 +106,6 @@ fn ignore_existing_copies_when_destination_missing() {
     assert_eq!(summary.files_copied(), 1);
     assert_eq!(summary.regular_files_total(), 1);
     assert_eq!(summary.regular_files_ignored_existing(), 0);
-    // Destination should have content
     assert_eq!(
         fs::read(&destination).expect("read dest"),
         b"new file content"
@@ -126,7 +122,6 @@ fn ignore_existing_skips_identical_files() {
     fs::write(&source, content).expect("write source");
     fs::write(&destination, content).expect("write dest");
 
-    // Set identical timestamps
     let same_time = FileTime::from_unix_time(1_700_000_000, 0);
     set_file_times(&source, same_time, same_time).expect("set source times");
     set_file_times(&destination, same_time, same_time).expect("set dest times");
@@ -192,22 +187,21 @@ fn ignore_existing_recursive_mixed_scenarios() {
     assert_eq!(summary.regular_files_total(), 4);
     assert_eq!(summary.regular_files_ignored_existing(), 3);
 
-    // Verify file contents
     assert_eq!(
         fs::read(dest_root.join("exists.txt")).expect("read exists"),
-        b"dest version" // preserved
+        b"dest version"
     );
     assert_eq!(
         fs::read(dest_root.join("new.txt")).expect("read new"),
-        b"brand new" // copied
+        b"brand new"
     );
     assert_eq!(
         fs::read(dest_root.join("same.txt")).expect("read same"),
-        b"same" // preserved (not rewritten)
+        b"same"
     );
     assert_eq!(
         fs::read(dest_root.join("old_dest.txt")).expect("read old_dest"),
-        b"older dest" // preserved
+        b"older dest"
     );
 }
 
@@ -217,7 +211,6 @@ fn ignore_existing_nested_directories() {
     let source_root = temp.path().join("source");
     let dest_root = temp.path().join("dest");
 
-    // Create nested directory structure
     fs::create_dir_all(source_root.join("level1/level2")).expect("create source dirs");
     fs::create_dir_all(dest_root.join("level1/level2")).expect("create dest dirs");
 
@@ -255,7 +248,6 @@ fn ignore_existing_nested_directories() {
     assert_eq!(summary.files_copied(), 2);
     assert_eq!(summary.regular_files_ignored_existing(), 3);
 
-    // Verify content preservation
     assert_eq!(
         fs::read(dest_root.join("root.txt")).expect("read root"),
         b"root dest"
@@ -284,15 +276,12 @@ fn ignore_existing_handles_directories_correctly() {
     let source_root = temp.path().join("source");
     let dest_root = temp.path().join("dest");
 
-    // Create directory structure
     fs::create_dir_all(source_root.join("subdir")).expect("create source subdir");
     fs::create_dir_all(dest_root.join("subdir")).expect("create dest subdir");
 
-    // Add file in subdirectory that already exists at destination
     fs::write(source_root.join("subdir/file.txt"), b"source content").expect("write source file");
     fs::write(dest_root.join("subdir/file.txt"), b"dest content").expect("write dest file");
 
-    // Add new file in subdirectory
     fs::write(source_root.join("subdir/new_file.txt"), b"new").expect("write new file");
 
     let mut source_operand = source_root.into_os_string();
@@ -312,15 +301,14 @@ fn ignore_existing_handles_directories_correctly() {
     assert_eq!(summary.files_copied(), 1);
     assert_eq!(summary.regular_files_ignored_existing(), 1);
 
-    // Verify directory exists and contains both files
     assert!(dest_root.join("subdir").is_dir());
     assert_eq!(
         fs::read(dest_root.join("subdir/file.txt")).expect("read file"),
-        b"dest content" // preserved
+        b"dest content"
     );
     assert_eq!(
         fs::read(dest_root.join("subdir/new_file.txt")).expect("read new file"),
-        b"new" // copied
+        b"new"
     );
 }
 
@@ -333,7 +321,6 @@ fn ignore_existing_with_update_skips_all_existing() {
     fs::write(&source, b"newer content").expect("write source");
     fs::write(&destination, b"older content").expect("write dest");
 
-    // Source is newer than dest
     let newer_time = FileTime::from_unix_time(1_700_000_100, 0);
     let older_time = FileTime::from_unix_time(1_700_000_000, 0);
     set_file_times(&source, newer_time, newer_time).expect("set source times");
@@ -415,18 +402,17 @@ fn ignore_existing_with_update_copies_new_files() {
         summary.regular_files_ignored_existing()
     );
 
-    // Verify contents
     assert_eq!(
         fs::read(dest_root.join("exists_newer.txt")).expect("read exists_newer"),
-        b"older_content" // preserved
+        b"older_content"
     );
     assert_eq!(
         fs::read(dest_root.join("exists_older.txt")).expect("read exists_older"),
-        b"newer_value" // preserved
+        b"newer_value"
     );
     assert_eq!(
         fs::read(dest_root.join("new.txt")).expect("read new"),
-        b"new content" // copied
+        b"new content"
     );
 }
 
@@ -436,7 +422,6 @@ fn ignore_existing_with_checksum() {
     let source = temp.path().join("source.txt");
     let destination = temp.path().join("dest.txt");
 
-    // Different content (different checksums)
     fs::write(&source, b"source content").expect("write source");
     fs::write(&destination, b"dest content").expect("write dest");
 
@@ -471,7 +456,6 @@ fn ignore_existing_with_size_only() {
     let source = temp.path().join("source.txt");
     let destination = temp.path().join("dest.txt");
 
-    // Different content, same size
     fs::write(&source, b"abc").expect("write source");
     fs::write(&destination, b"xyz").expect("write dest");
 
@@ -505,7 +489,6 @@ fn ignore_existing_with_ignore_times() {
     fs::write(&source, b"content").expect("write source");
     fs::write(&destination, b"content").expect("write dest");
 
-    // Set same timestamps
     let same_time = FileTime::from_unix_time(1_700_000_000, 0);
     set_file_times(&source, same_time, same_time).expect("set source times");
     set_file_times(&destination, same_time, same_time).expect("set dest times");
@@ -537,7 +520,6 @@ fn ignore_existing_empty_files() {
     let source = temp.path().join("source.txt");
     let destination = temp.path().join("dest.txt");
 
-    // Both files are empty
     fs::write(&source, b"").expect("write empty source");
     fs::write(&destination, b"").expect("write empty dest");
 
@@ -554,7 +536,6 @@ fn ignore_existing_empty_files() {
         )
         .expect("copy succeeds");
 
-    // File should be skipped
     assert_eq!(summary.files_copied(), 0);
     assert_eq!(summary.regular_files_ignored_existing(), 1);
 }
@@ -565,7 +546,6 @@ fn ignore_existing_empty_to_nonempty() {
     let source = temp.path().join("source.txt");
     let destination = temp.path().join("dest.txt");
 
-    // Source has content, dest is empty (but exists)
     fs::write(&source, b"source has content").expect("write source");
     fs::write(&destination, b"").expect("write empty dest");
 
@@ -594,7 +574,6 @@ fn ignore_existing_large_size_difference() {
     let source = temp.path().join("source.txt");
     let destination = temp.path().join("dest.txt");
 
-    // Large size difference
     fs::write(&source, vec![b'x'; 10000]).expect("write large source");
     fs::write(&destination, b"tiny").expect("write small dest");
 
@@ -626,7 +605,6 @@ fn ignore_existing_with_permissions_difference() {
     fs::write(&source, b"content").expect("write source");
     fs::write(&destination, b"content").expect("write dest");
 
-    // Set different permissions
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
@@ -675,11 +653,9 @@ fn ignore_existing_dry_run() {
     fs::create_dir_all(&source_root).expect("create source root");
     fs::create_dir_all(&dest_root).expect("create dest root");
 
-    // Existing file
     fs::write(source_root.join("exists.txt"), b"source").expect("write exists source");
     fs::write(dest_root.join("exists.txt"), b"dest").expect("write exists dest");
 
-    // New file
     fs::write(source_root.join("new.txt"), b"new").expect("write new source");
 
     let mut source_operand = source_root.into_os_string();
@@ -697,7 +673,6 @@ fn ignore_existing_dry_run() {
     // Dry run should report what would happen
     assert_eq!(summary.regular_files_ignored_existing(), 1);
 
-    // Verify no actual changes were made
     assert_eq!(
         fs::read(dest_root.join("exists.txt")).expect("read exists"),
         b"dest"

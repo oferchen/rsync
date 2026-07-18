@@ -62,12 +62,10 @@ fn delay_updates_applies_all_changes_atomically() {
     fs::create_dir_all(&source_root).expect("create source");
     fs::create_dir_all(&dest_root).expect("create dest");
 
-    // Create multiple source files
     fs::write(source_root.join("file1.txt"), b"content1").expect("write file1");
     fs::write(source_root.join("file2.txt"), b"content2").expect("write file2");
     fs::write(source_root.join("file3.txt"), b"content3").expect("write file3");
 
-    // Create existing destination files with old content
     fs::write(dest_root.join("file1.txt"), b"old1").expect("write old file1");
     fs::write(dest_root.join("file2.txt"), b"old2").expect("write old file2");
     fs::write(dest_root.join("file3.txt"), b"old3").expect("write old file3");
@@ -87,7 +85,6 @@ fn delay_updates_applies_all_changes_atomically() {
 
     assert_eq!(summary.files_copied(), 3);
 
-    // Verify all files were updated atomically
     assert_eq!(
         fs::read(dest_root.join("file1.txt")).expect("read file1"),
         b"content1"
@@ -183,7 +180,6 @@ fn delay_updates_works_with_temp_dir() {
         b"delay + temp-dir"
     );
 
-    // Verify staging directory is empty
     let staging_files: Vec<_> = fs::read_dir(&temp_staging)
         .expect("read staging")
         .filter_map(|e| e.ok())
@@ -233,7 +229,6 @@ fn delay_updates_with_temp_dir_multiple_files() {
         b"content c"
     );
 
-    // All temp files should be gone
     let staging_files: Vec<_> = fs::read_dir(&temp_staging)
         .expect("read staging")
         .filter_map(|e| e.ok())
@@ -722,7 +717,6 @@ fn delay_updates_differs_from_immediate_mode() {
 
     fs::write(source_root.join("file.txt"), b"content").expect("write source");
 
-    // Test with delay_updates
     let mut source_operand1 = source_root.clone().into_os_string();
     source_operand1.push(std::path::MAIN_SEPARATOR.to_string());
     let operands1 = vec![source_operand1, dest1.clone().into_os_string()];
@@ -735,7 +729,6 @@ fn delay_updates_differs_from_immediate_mode() {
         )
         .expect("copy with delay succeeds");
 
-    // Test without delay_updates
     let mut source_operand2 = source_root.into_os_string();
     source_operand2.push(std::path::MAIN_SEPARATOR.to_string());
     let operands2 = vec![source_operand2, dest2.clone().into_os_string()];
@@ -884,7 +877,6 @@ fn delay_updates_handles_multiple_subdirectories() {
     let source_root = temp.path().join("source");
     let dest_root = temp.path().join("dest");
 
-    // Create files in multiple subdirectories
     fs::create_dir_all(source_root.join("dir_a")).expect("create dir_a");
     fs::create_dir_all(source_root.join("dir_b")).expect("create dir_b");
     fs::create_dir_all(source_root.join("dir_c")).expect("create dir_c");
@@ -910,7 +902,6 @@ fn delay_updates_handles_multiple_subdirectories() {
 
     assert_eq!(summary.files_copied(), 5);
 
-    // Verify all files in all subdirectories
     assert_eq!(
         fs::read(dest_root.join("dir_a").join("file1.txt")).expect("read"),
         b"a1"
@@ -982,7 +973,6 @@ fn delay_updates_with_backup_creates_backup_files() {
 
     assert_eq!(summary.files_copied(), 1);
 
-    // Updated file should be in place
     assert_eq!(
         fs::read(dest_root.join("file.txt")).expect("read dest"),
         b"new content here"
@@ -1123,7 +1113,6 @@ fn delay_updates_preserves_symlinks() {
     let dest_root = temp.path().join("dest");
     fs::create_dir_all(&source_root).expect("create source");
 
-    // Create a file and a symlink to it
     fs::write(source_root.join("target.txt"), b"target content").expect("write target");
     std::os::unix::fs::symlink("target.txt", source_root.join("link.txt"))
         .expect("create symlink");
@@ -1146,13 +1135,11 @@ fn delay_updates_preserves_symlinks() {
     assert_eq!(summary.files_copied(), 1);
     assert_eq!(summary.symlinks_copied(), 1);
 
-    // Verify target file
     assert_eq!(
         fs::read(dest_root.join("target.txt")).expect("read target"),
         b"target content"
     );
 
-    // Verify symlink is preserved
     let link_path = dest_root.join("link.txt");
     let link_meta = fs::symlink_metadata(&link_path).expect("link metadata");
     assert!(link_meta.file_type().is_symlink());
@@ -1317,7 +1304,6 @@ fn delay_updates_handles_unicode_filenames() {
     let dest_root = temp.path().join("dest");
     fs::create_dir_all(&source_root).expect("create source");
 
-    // Files with various Unicode characters
     fs::write(source_root.join("caf\u{00e9}.txt"), b"coffee").expect("write");
     fs::write(source_root.join("\u{00fc}ber.txt"), b"above").expect("write");
     fs::write(source_root.join("\u{4e16}\u{754c}.txt"), b"world").expect("write");
@@ -1460,7 +1446,6 @@ fn delay_updates_handles_many_files() {
 
     assert_eq!(summary.files_copied(), file_count);
 
-    // Verify all files are present and correct
     for i in 0..file_count {
         let expected = format!("content of file {i}");
         assert_eq!(
@@ -1488,7 +1473,6 @@ fn delay_updates_handles_deeply_nested_structure() {
     let source_root = temp.path().join("source");
     let dest_root = temp.path().join("dest");
 
-    // Create a deeply nested path with files at each level
     let mut nested = source_root.clone();
     for depth in 0..8 {
         nested = nested.join(format!("level{depth}"));
@@ -1511,7 +1495,6 @@ fn delay_updates_handles_deeply_nested_structure() {
 
     assert_eq!(summary.files_copied(), 8);
 
-    // Verify each level
     let mut check = dest_root.join("source");
     for depth in 0..8 {
         check = check.join(format!("level{depth}"));
@@ -1584,7 +1567,6 @@ fn delay_updates_is_idempotent_on_second_run() {
     // No files should be copied on second run because size+mtime match
     assert_eq!(summary2.files_copied(), 0);
 
-    // Content should still be correct
     assert_eq!(
         fs::read(dest_root.join("a.txt")).expect("read a"),
         b"content a"
@@ -1672,13 +1654,11 @@ fn delay_updates_with_remove_source_files() {
 
     assert_eq!(summary.files_copied(), 1);
 
-    // File should be at destination
     assert_eq!(
         fs::read(dest_root.join("transfer_me.txt")).expect("read dest"),
         b"payload"
     );
 
-    // Source file should have been removed
     assert!(
         !source_root.join("transfer_me.txt").exists(),
         "source file should be removed after transfer"
@@ -1795,7 +1775,6 @@ fn delay_updates_handles_binary_content() {
     let source = temp.path().join("source.bin");
     let destination = temp.path().join("dest.bin");
 
-    // Create a file with all byte values
     let binary_content: Vec<u8> = (0..=255).collect();
     fs::write(&source, &binary_content).expect("write binary source");
 
@@ -1885,7 +1864,6 @@ fn delay_updates_dry_run_with_nested_tree_no_changes() {
     let source_root = temp.path().join("source");
     let dest_root = temp.path().join("dest");
 
-    // Create complex tree
     fs::create_dir_all(source_root.join("a").join("b")).expect("create dirs");
     fs::write(source_root.join("top.txt"), b"top").expect("write");
     fs::write(source_root.join("a").join("mid.txt"), b"mid").expect("write");
@@ -1906,7 +1884,6 @@ fn delay_updates_dry_run_with_nested_tree_no_changes() {
 
     assert_eq!(summary.files_copied(), 3);
 
-    // Nothing should exist on disk
     assert!(!dest_root.exists(), "dest should not be created in dry run");
 }
 

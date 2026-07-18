@@ -133,7 +133,6 @@ fn skip_compress_custom_list_via_builder() {
     fs::create_dir_all(&source_dir).expect("create source dir");
     let dest_dir = temp.path().join("dest");
 
-    // Create a .xyz file (custom suffix) and a .txt file.
     let custom_content = vec![0xCD; 8 * 1024];
     let text_content = vec![b'B'; 16 * 1024];
     fs::write(source_dir.join("data.xyz"), &custom_content).expect("write .xyz");
@@ -243,7 +242,6 @@ fn skip_compress_mixed_directory_transfer() {
     fs::create_dir_all(&source_dir).expect("create source dir");
     let dest_dir = temp.path().join("dest");
 
-    // Create files of different types.
     let gz_content = vec![0x1F; 4 * 1024]; // .gz should be skipped
     let png_content = vec![0x89; 4 * 1024]; // .png should be skipped
     let txt_content = vec![b'X'; 16 * 1024]; // .txt should be compressed
@@ -266,7 +264,6 @@ fn skip_compress_mixed_directory_transfer() {
         )
         .expect("copy succeeds");
 
-    // All four files should be present in the destination.
     assert_eq!(fs::read(dest_dir.join("archive.gz")).expect("read .gz"), gz_content);
     assert_eq!(fs::read(dest_dir.join("image.png")).expect("read .png"), png_content);
     assert_eq!(fs::read(dest_dir.join("readme.txt")).expect("read .txt"), txt_content);
@@ -343,13 +340,11 @@ fn skip_compress_default_list_covers_common_formats() {
 fn skip_compress_options_should_skip_compress_method() {
     use crate::local_copy::SkipCompressList;
 
-    // Default options use the default skip list.
     let opts = LocalCopyOptions::default();
     assert!(opts.should_skip_compress(Path::new("archive.gz")));
     assert!(opts.should_skip_compress(Path::new("photo.PNG")));
     assert!(!opts.should_skip_compress(Path::new("notes.txt")));
 
-    // Custom list.
     let custom = SkipCompressList::parse("dat/bin").expect("parse");
     let opts = LocalCopyOptions::default().with_skip_compress(custom);
     assert!(opts.should_skip_compress(Path::new("data.dat")));

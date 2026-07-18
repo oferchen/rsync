@@ -1,7 +1,7 @@
-//! Integration tests demonstrating the builder pattern for LocalCopyOptions.
-//!
-//! These tests show how the builder pattern makes test setup cleaner compared
-//! to the direct fluent API approach.
+// Integration tests demonstrating the builder pattern for LocalCopyOptions.
+//
+// These tests show how the builder pattern makes test setup cleaner compared
+// to the direct fluent API approach.
 
 use std::path::PathBuf;
 
@@ -11,8 +11,6 @@ use crate::local_copy::{
 };
 use tempfile::tempdir;
 use std::fs;
-
-// These tests show the previous pattern (still valid, but more verbose)
 
 #[test]
 fn fluent_api_basic_copy() {
@@ -32,8 +30,6 @@ fn fluent_api_basic_copy() {
 
     assert_eq!(fs::read(&dest).expect("read"), b"hello");
 }
-
-// These tests demonstrate cleaner setup with the builder
 
 #[test]
 fn builder_basic_copy() {
@@ -323,11 +319,9 @@ fn builder_chaining_modifies_preset() {
         .build()
         .expect("valid options");
 
-    // Archive settings
     assert!(options.recursive_enabled());
     assert!(options.links_enabled());
 
-    // Additional customizations
     assert!(options.compress_enabled());
     assert!(options.partial_enabled());
     assert!(options.fsync_enabled());
@@ -350,7 +344,6 @@ fn builder_default_values_match_local_copy_options_default() {
     let from_builder = LocalCopyOptions::builder().build().expect("valid options");
     let from_default = LocalCopyOptions::default();
 
-    // Key defaults should match
     assert_eq!(
         from_builder.recursive_enabled(),
         from_default.recursive_enabled()

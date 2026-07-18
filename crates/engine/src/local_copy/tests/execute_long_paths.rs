@@ -56,7 +56,6 @@ fn execute_copies_file_in_deep_directory() {
     let source_root = temp.path().join("source");
     let dest_root = temp.path().join("dest");
 
-    // Create 50 levels deep
     let deep_path = create_deep_structure(&source_root, 50, 15);
     fs::write(deep_path.join("deep.txt"), b"deep content").expect("write deep file");
 
@@ -73,7 +72,6 @@ fn execute_copies_file_in_deep_directory() {
     assert_eq!(summary.files_copied(), 1);
     assert!(summary.directories_created() >= 50);
 
-    // Verify deep file was copied
     let mut dest_deep = dest_root.join("source");
     for i in 0..50 {
         dest_deep = dest_deep.join(format!("d{i:014}"));
@@ -118,7 +116,6 @@ fn execute_copies_directory_with_long_name() {
     let dest = temp.path().join("dest");
     fs::create_dir(&source).expect("create source");
 
-    // Create directory with long name (220 bytes)
     let long_dirname = create_filename_of_length(220, "_dir");
     let source_dir = source.join(&long_dirname);
     fs::create_dir(&source_dir).expect("create long dir");
@@ -175,7 +172,6 @@ fn execute_copies_file_near_path_max() {
 
     assert_eq!(summary.files_copied(), 1);
 
-    // Verify file was copied to correct location
     let mut dest_file = dest_root.join("source");
     for i in 0..levels {
         dest_file = dest_file.join(format!("d{:0width$}", i, width = dir_name_len - 1));
@@ -198,10 +194,8 @@ fn execute_copies_combined_long_path_and_long_filename() {
     let source = temp.path().join("source");
     let dest = temp.path().join("dest");
 
-    // Create moderately deep structure
     let deep_path = create_deep_structure(&source, 15, 50);
 
-    // Add file with long name (200 chars)
     let long_filename = create_filename_of_length(200, ".txt");
     fs::write(deep_path.join(&long_filename), b"combo").expect("write file");
 
@@ -214,7 +208,6 @@ fn execute_copies_combined_long_path_and_long_filename() {
 
     assert_eq!(summary.files_copied(), 1);
 
-    // Verify file was copied
     let mut dest_path = dest.join("source");
     for i in 0..15 {
         dest_path = dest_path.join(format!("d{i:049}"));
@@ -231,7 +224,6 @@ fn execute_copies_multiple_files_in_deep_tree() {
     let source = temp.path().join("source");
     let dest = temp.path().join("dest");
 
-    // Create structure with files at various depths
     let levels = [5, 10, 15, 20, 25];
     for &level in &levels {
         let path = create_deep_structure(&source.join(format!("branch{level}")), level, 20);
@@ -247,7 +239,6 @@ fn execute_copies_multiple_files_in_deep_tree() {
 
     assert_eq!(summary.files_copied(), 5);
 
-    // Verify all files were copied
     for &level in &levels {
         let mut path = dest.join("source").join(format!("branch{level}"));
         for i in 0..level {
@@ -267,7 +258,6 @@ fn execute_copies_many_files_with_long_names() {
     let dest = temp.path().join("dest");
     fs::create_dir(&source).expect("create source");
 
-    // Create 10 files with long names (200 bytes, differentiated by suffix)
     for i in 0..10 {
         let filename = create_filename_of_length(200, &format!("{i}.txt"));
         fs::write(source.join(&filename), format!("content {i}").as_bytes()).expect("write");
@@ -293,12 +283,10 @@ fn execute_copies_symlink_to_deep_target() {
     let dest = temp.path().join("dest");
     fs::create_dir(&source).expect("create source");
 
-    // Create deep target outside source
     let target_root = temp.path().join("target");
     let deep_target = create_deep_structure(&target_root, 20, 40);
     fs::write(deep_target.join("target.txt"), b"target content").expect("write target");
 
-    // Create symlink in source pointing to deep target
     let link_path = source.join("link_to_deep");
     symlink(&deep_target, &link_path).expect("create symlink");
 
@@ -328,12 +316,10 @@ fn execute_copies_symlink_with_long_target_name() {
     let dest = temp.path().join("dest");
     fs::create_dir(&source).expect("create source");
 
-    // Create target with long name (200 bytes)
     let long_target_name = create_filename_of_length(200, "_target");
     let target_path = temp.path().join(&long_target_name);
     fs::write(&target_path, b"target content").expect("write target");
 
-    // Create symlink to it
     let link_path = source.join("link");
     symlink(&target_path, &link_path).expect("create symlink");
 
@@ -347,7 +333,6 @@ fn execute_copies_symlink_with_long_target_name() {
 
     assert_eq!(summary.symlinks_copied(), 1);
 
-    // Verify symlink target is preserved
     let copied_target = fs::read_link(dest.join("source").join("link")).expect("read link");
     assert_eq!(copied_target, target_path);
 }
@@ -362,13 +347,11 @@ fn execute_follows_symlink_to_deep_directory() {
     let dest = temp.path().join("dest");
     fs::create_dir(&source).expect("create source");
 
-    // Create deep target directory with files
     let target_root = temp.path().join("target");
     let deep_target = create_deep_structure(&target_root, 15, 30);
     fs::write(deep_target.join("file1.txt"), b"file1").expect("write file1");
     fs::write(deep_target.join("file2.txt"), b"file2").expect("write file2");
 
-    // Create symlink to deep target
     let link_path = source.join("linked_dir");
     symlink(&deep_target, &link_path).expect("create symlink");
 
@@ -396,7 +379,6 @@ fn execute_with_relative_and_deep_structure() {
     let dest_root = temp.path().join("dest");
     fs::create_dir_all(&dest_root).expect("create dest");
 
-    // Create deep structure
     let deep_path = create_deep_structure(&source_root, 20, 25);
     fs::write(deep_path.join("relative.txt"), b"relative content").expect("write file");
 
@@ -469,7 +451,6 @@ fn execute_preserves_mtime_for_files_with_long_paths() {
     let source_file = deep_path.join("timed.txt");
     fs::write(&source_file, b"timed").expect("write file");
 
-    // Set specific mtime
     let past_time = FileTime::from_unix_time(1_600_000_000, 0);
     set_file_mtime(&source_file, past_time).expect("set mtime");
 
@@ -483,7 +464,6 @@ fn execute_preserves_mtime_for_files_with_long_paths() {
 
     assert_eq!(summary.files_copied(), 1);
 
-    // Find and verify destination file mtime
     let mut dest_file = dest.join("source");
     for i in 0..20 {
         dest_file = dest_file.join(format!("d{i:029}"));
@@ -507,7 +487,6 @@ fn execute_preserves_permissions_for_files_with_long_paths() {
     let source_file = deep_path.join("permed.txt");
     fs::write(&source_file, b"permed").expect("write file");
 
-    // Set specific permissions
     let mut perms = fs::metadata(&source_file).expect("meta").permissions();
     perms.set_mode(0o640);
     fs::set_permissions(&source_file, perms).expect("set perms");
@@ -522,7 +501,6 @@ fn execute_preserves_permissions_for_files_with_long_paths() {
 
     assert_eq!(summary.files_copied(), 1);
 
-    // Find and verify destination file permissions
     let mut dest_file = dest.join("source");
     for i in 0..15 {
         dest_file = dest_file.join(format!("d{i:039}"));
@@ -552,7 +530,6 @@ fn execute_dry_run_with_deep_structure() {
     assert_eq!(summary.files_copied(), 1);
     assert!(summary.directories_created() >= 30);
 
-    // Destination should not exist
     assert!(!dest.exists(), "dry run should not create destination");
 }
 
@@ -563,11 +540,9 @@ fn execute_delete_removes_deep_structure() {
     let dest = temp.path().join("dest");
     fs::create_dir(&source).expect("create source");
 
-    // Pre-create deep structure in destination
     let deep_dest = create_deep_structure(&dest, 25, 25);
     fs::write(deep_dest.join("to_delete.txt"), b"delete me").expect("write dest file");
 
-    // Source has a file at root level only
     fs::write(source.join("keep.txt"), b"keep").expect("write source");
 
     let mut source_operand = source.into_os_string();
@@ -583,13 +558,9 @@ fn execute_delete_removes_deep_structure() {
     assert_eq!(summary.files_copied(), 1);
     assert!(summary.items_deleted() > 0);
 
-    // Deep structure should be gone
     assert!(!deep_dest.exists(), "deep structure should be deleted");
     assert!(dest.join("keep.txt").exists(), "kept file should exist");
 }
-
-// Removed complex backup test - backup behavior is thoroughly tested in backups.rs
-// This file focuses on basic long path copying functionality
 
 #[cfg(unix)]
 #[test]
@@ -600,7 +571,6 @@ fn execute_hardlinks_in_deep_structure() {
     let source = temp.path().join("source");
     let dest = temp.path().join("dest");
 
-    // Create deep structure with hardlinked files
     let deep_path = create_deep_structure(&source, 15, 25);
     let file1 = deep_path.join("file1.txt");
     let file2 = deep_path.join("file2.txt");
@@ -608,7 +578,6 @@ fn execute_hardlinks_in_deep_structure() {
     fs::write(&file1, b"hardlinked content").expect("write file1");
     fs::hard_link(&file1, &file2).expect("create hardlink");
 
-    // Verify source hardlinks
     let src_meta1 = fs::metadata(&file1).expect("meta1");
     let src_meta2 = fs::metadata(&file2).expect("meta2");
     assert_eq!(src_meta1.ino(), src_meta2.ino());
@@ -623,7 +592,6 @@ fn execute_hardlinks_in_deep_structure() {
 
     assert!(summary.hard_links_created() >= 1);
 
-    // Verify destination hardlinks
     let mut dest_path = dest.join("source");
     for i in 0..15 {
         dest_path = dest_path.join(format!("d{i:024}"));
@@ -640,16 +608,13 @@ fn execute_checksum_mode_works_with_long_paths() {
     let source = temp.path().join("source");
     let dest = temp.path().join("dest");
 
-    // Create deep structure
     let deep_source = create_deep_structure(&source, 20, 20);
 
-    // Create a file that needs to be transferred
     fs::write(deep_source.join("checksum.txt"), b"checksum test content").expect("write source");
 
     let operands = vec![source.into_os_string(), dest.clone().into_os_string()];
     let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
 
-    // Use checksum mode and verify it succeeds with long paths
     let options = LocalCopyOptions::default()
         .checksum(true)
         .with_checksum_algorithm(SignatureAlgorithm::Md4);
@@ -657,10 +622,8 @@ fn execute_checksum_mode_works_with_long_paths() {
         .execute_with_options(LocalCopyExecution::Apply, options)
         .expect("copy succeeds");
 
-    // File should be copied (new file transfer)
     assert_eq!(summary.files_copied(), 1);
 
-    // Verify content
     let mut dest_path = dest.join("source");
     for i in 0..20 {
         dest_path = dest_path.join(format!("d{i:019}"));
@@ -677,14 +640,12 @@ fn execute_inplace_with_long_paths() {
     let source = temp.path().join("source");
     let dest = temp.path().join("dest");
 
-    // Create deep structure only in source
     let deep_source = create_deep_structure(&source, 15, 35);
     fs::write(deep_source.join("inplace.txt"), b"content for inplace").expect("write source");
 
     let operands = vec![source.into_os_string(), dest.clone().into_os_string()];
     let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
 
-    // Test that inplace mode works for new files in deep paths
     let options = LocalCopyOptions::default().inplace(true);
     let summary = plan
         .execute_with_options(LocalCopyExecution::Apply, options)
@@ -692,7 +653,6 @@ fn execute_inplace_with_long_paths() {
 
     assert_eq!(summary.files_copied(), 1);
 
-    // Verify content
     let mut dest_file = dest.join("source");
     for i in 0..15 {
         dest_file = dest_file.join(format!("d{i:034}"));
@@ -709,9 +669,7 @@ fn execute_copies_empty_directories_in_deep_structure() {
     let source = temp.path().join("source");
     let dest = temp.path().join("dest");
 
-    // Create deep structure with empty directories
     let deep_path = create_deep_structure(&source, 25, 30);
-    // Create some empty subdirectories at the deepest level
     for name in ["empty1", "empty2", "empty3"] {
         fs::create_dir(deep_path.join(name)).expect("create empty dir");
     }
@@ -723,10 +681,8 @@ fn execute_copies_empty_directories_in_deep_structure() {
         .execute_with_options(LocalCopyExecution::Apply, LocalCopyOptions::default())
         .expect("copy succeeds");
 
-    // Should have created all directories including empty ones
     assert!(summary.directories_created() >= 28); // 25 + 3 empty
 
-    // Verify empty directories exist
     let mut dest_path = dest.join("source");
     for i in 0..25 {
         dest_path = dest_path.join(format!("d{i:029}"));
@@ -745,11 +701,9 @@ fn execute_update_with_long_paths() {
     let source = temp.path().join("source");
     let dest = temp.path().join("dest");
 
-    // Create deep structures
     let deep_source = create_deep_structure(&source, 18, 25);
     let deep_dest = create_deep_structure(&dest.join("source"), 18, 25);
 
-    // Create files with different mtimes
     let source_file = deep_source.join("update.txt");
     let dest_file = deep_dest.join("update.txt");
     fs::write(&source_file, b"updated content").expect("write source");
@@ -772,7 +726,3 @@ fn execute_update_with_long_paths() {
     // File should be updated because source is newer
     assert_eq!(summary.files_copied(), 1);
 }
-
-// Removed test: execute_update_skips_older_source_with_long_paths
-// The update skip behavior with directory transfers has complex semantics
-// that are better tested in execute_update.rs. Here we focus on basic long path handling.

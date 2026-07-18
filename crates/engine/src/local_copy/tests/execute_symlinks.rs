@@ -327,13 +327,11 @@ fn safe_links_skips_symlink_pointing_outside_transfer_tree() {
 
     let summary = report.summary();
 
-    // Both unsafe symlinks should be skipped
     assert_eq!(summary.symlinks_copied(), 0);
     assert_eq!(summary.symlinks_total(), 2);
     assert!(!dest_root.join("source").join("unsafe_absolute_link").exists());
     assert!(!dest_root.join("source").join("source/escape_link").exists());
 
-    // Verify we got SkippedUnsafeSymlink records
     let skip_count = report
         .records()
         .iter()
@@ -382,10 +380,8 @@ fn safe_links_preserves_symlink_pointing_inside_transfer_tree() {
         )
         .expect("copy succeeds");
 
-    // All safe symlinks should be preserved
     assert_eq!(summary.symlinks_copied(), 3);
 
-    // Verify all symlinks exist and have correct targets
     let dest_link1 = dest_root.join("source").join("link_to_subdir");
     assert!(fs::symlink_metadata(&dest_link1).expect("meta").file_type().is_symlink());
     assert_eq!(
@@ -460,11 +456,9 @@ fn safe_links_evaluates_relative_symlinks_correctly() {
     assert_eq!(summary.symlinks_copied(), 2);
     assert_eq!(summary.symlinks_total(), 3);
 
-    // Verify safe links exist
     assert!(dest_root.join("source").join("level1/level2/level3/link_to_level1").exists());
     assert!(dest_root.join("source").join("root_link").exists());
 
-    // Verify unsafe link was skipped
     assert!(!dest_root.join("source").join("level1/escape_link").exists());
 
     let skip_count = report
@@ -812,15 +806,12 @@ fn safe_links_trailing_slash_vs_no_trailing_slash() {
     assert_eq!(summary2.symlinks_copied(), 1, "trailing-slash: 1 safe link");
     assert_eq!(summary2.symlinks_total(), 2, "trailing-slash: 2 total links");
 
-    // Verify safe link exists and unsafe link is skipped (no trailing slash)
     assert!(dest1.join("source").join("sub/safe").exists());
     assert!(!dest1.join("source").join("sub/unsafe").exists());
 
-    // Verify safe link exists and unsafe link is skipped (trailing slash)
     assert!(dest2.join("sub/safe").exists());
     assert!(!dest2.join("sub/unsafe").exists());
 
-    // Verify SkippedUnsafeSymlink records
     let skips1 = report1
         .records()
         .iter()

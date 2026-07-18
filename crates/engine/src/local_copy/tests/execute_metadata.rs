@@ -330,7 +330,6 @@ fn execute_preserves_mode_0000_on_destination_file() {
         .execute_with_options(LocalCopyExecution::Apply, options)
         .expect("copy succeeds");
 
-    // Verify destination has mode 0000
     let dest_metadata = fs::metadata(&destination).expect("dest metadata");
     assert_eq!(dest_metadata.permissions().mode() & 0o777, 0o000);
     assert_eq!(summary.files_copied(), 1);
@@ -398,7 +397,6 @@ fn execute_mode_0000_without_permissions_option() {
     let summary = plan.execute().expect("copy succeeds");
 
     let metadata = fs::metadata(&destination).expect("dest metadata");
-    // Destination should NOT have mode 0000
     assert_ne!(metadata.permissions().mode() & 0o777, 0o000);
     assert_eq!(summary.files_copied(), 1);
 }
@@ -548,19 +546,10 @@ fn execute_preserves_all_permission_bits_including_special() {
     let metadata = fs::metadata(&destination).expect("dest metadata");
     let dest_mode = metadata.permissions().mode();
 
-    // Verify all permission bits are preserved
     assert_eq!(dest_mode & 0o7777, 0o7777, "all permission bits should be preserved");
-
-    // Verify setuid bit
     assert_eq!(dest_mode & 0o4000, 0o4000, "setuid bit should be set");
-
-    // Verify setgid bit
     assert_eq!(dest_mode & 0o2000, 0o2000, "setgid bit should be set");
-
-    // Verify sticky bit
     assert_eq!(dest_mode & 0o1000, 0o1000, "sticky bit should be set");
-
-    // Verify standard permission bits
     assert_eq!(dest_mode & 0o777, 0o777, "all rwx bits should be set");
 
     assert_eq!(summary.files_copied(), 1);
@@ -697,7 +686,6 @@ fn execute_round_trip_preserves_all_bits() {
     plan.execute_with_options(LocalCopyExecution::Apply, options)
         .expect("second copy succeeds");
 
-    // Verify all bits are preserved through round trip
     let src_metadata = fs::metadata(&source).expect("source metadata");
     let final_metadata = fs::metadata(&final_dest).expect("final metadata");
 
@@ -740,7 +728,6 @@ fn execute_special_bits_not_preserved_without_perms_flag() {
     let metadata = fs::metadata(&destination).expect("dest metadata");
     let dest_mode = metadata.permissions().mode();
 
-    // Special bits should NOT be preserved without --perms flag
     assert_eq!(dest_mode & 0o7000, 0, "special bits should not be preserved without --perms");
     assert_eq!(summary.files_copied(), 1);
 }
@@ -771,7 +758,6 @@ fn execute_combined_special_bits_with_restrictive_perms() {
     let metadata = fs::metadata(&destination).expect("dest metadata");
     let dest_mode = metadata.permissions().mode();
 
-    // Verify all special bits are preserved even with restrictive base permissions
     assert_eq!(dest_mode & 0o7000, 0o7000, "all special bits should be preserved");
     assert_eq!(dest_mode & 0o777, 0o600, "restrictive permissions should be preserved");
     assert_eq!(dest_mode & 0o7777, 0o7600, "combined mode should match exactly");
@@ -808,7 +794,6 @@ fn execute_directory_with_special_bits() {
     let dest_metadata = fs::metadata(dest_dir.join("source")).expect("dest dir metadata");
     let dest_mode = dest_metadata.permissions().mode();
 
-    // Verify directory special bits are preserved
     assert_eq!(dest_mode & 0o2000, 0o2000, "setgid bit should be preserved on directory");
     assert_eq!(dest_mode & 0o1000, 0o1000, "sticky bit should be preserved on directory");
     assert_eq!(dest_mode & 0o777, 0o775, "directory permissions should match");
@@ -828,7 +813,6 @@ fn execute_multiple_files_with_different_special_bits() {
     fs::create_dir(&source_dir).expect("create source dir");
     fs::create_dir(&dest_dir).expect("create dest dir");
 
-    // Create files with different special permission combinations
     let setuid_file = source_dir.join("setuid.txt");
     fs::write(&setuid_file, b"setuid").expect("write setuid file");
     fs::set_permissions(&setuid_file, PermissionsExt::from_mode(0o4755)).expect("set setuid");
@@ -855,7 +839,6 @@ fn execute_multiple_files_with_different_special_bits() {
         .execute_with_options(LocalCopyExecution::Apply, options)
         .expect("copy succeeds");
 
-    // Verify each file's special bits
     let setuid_dest = dest_dir.join("source").join("setuid.txt");
     let setuid_mode = fs::metadata(&setuid_dest).expect("setuid metadata").permissions().mode();
     assert_eq!(setuid_mode & 0o4000, 0o4000, "setuid bit preserved");

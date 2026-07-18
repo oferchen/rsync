@@ -6,7 +6,6 @@ fn one_file_system_traverses_same_filesystem_directories() {
     let temp = tempdir().expect("tempdir");
     let source_root = temp.path().join("source");
 
-    // Create a tree with multiple nested directories
     let dir1 = source_root.join("dir1");
     let dir2 = source_root.join("dir2");
     let nested = dir1.join("nested").join("deep");
@@ -107,7 +106,6 @@ fn one_file_system_transfers_files_on_same_filesystem() {
     let temp = tempdir().expect("tempdir");
     let source_root = temp.path().join("source");
 
-    // Create multiple levels with files at each level
     let level1 = source_root.join("level1");
     let level2 = level1.join("level2");
     let level3 = level2.join("level3");
@@ -150,7 +148,6 @@ fn one_file_system_respects_flag_during_directory_walking() {
     let temp = tempdir().expect("tempdir");
     let source_root = temp.path().join("source");
 
-    // Create a complex tree with multiple potential mount points
     let dir_a = source_root.join("dir_a");
     let dir_b = source_root.join("dir_b");
     let mount1 = dir_a.join("mount1");

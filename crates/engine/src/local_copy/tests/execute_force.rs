@@ -277,7 +277,6 @@ fn force_dry_run_does_not_modify_directory() {
     )
     .expect("dry-run succeeds");
 
-    // Destination should remain a directory in dry-run mode
     assert!(destination.is_dir(), "directory should not be modified in dry-run");
     assert_eq!(
         fs::read(destination.join("inner/keep.txt")).expect("read"),
@@ -476,7 +475,6 @@ fn force_handles_multiple_type_conflicts_in_one_copy() {
     )
     .expect("forced replacement with multiple conflicts succeeds");
 
-    // "alpha" should now be a file
     assert!(
         dest_root.join("alpha").is_file(),
         "alpha: directory should become file"
@@ -486,7 +484,6 @@ fn force_handles_multiple_type_conflicts_in_one_copy() {
         b"alpha-file"
     );
 
-    // "beta" should now be a directory
     assert!(
         dest_root.join("beta").is_dir(),
         "beta: file should become directory"

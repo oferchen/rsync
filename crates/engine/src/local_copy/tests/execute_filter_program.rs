@@ -1072,7 +1072,6 @@ fn filter_program_exclude_if_present_with_marker() {
     let temp = tempfile::tempdir().expect("tempdir");
     let dir = temp.path();
 
-    // Create the marker file.
     std::fs::write(dir.join(".nobackup"), b"").expect("write marker");
 
     let program = FilterProgram::new([FilterProgramEntry::ExcludeIfPresent(

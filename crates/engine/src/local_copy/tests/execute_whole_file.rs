@@ -5,7 +5,6 @@ fn execute_whole_file_transfers_complete_file_without_delta() {
     let source = temp.path().join("source.txt");
     let destination = temp.path().join("dest.txt");
 
-    // Create source file with known content
     let source_content = b"complete file transfer without delta matching";
     fs::write(&source, source_content).expect("write source");
 
@@ -27,7 +26,6 @@ fn execute_whole_file_transfers_complete_file_without_delta() {
         )
         .expect("whole file copy succeeds");
 
-    // Verify complete file transfer
     assert_eq!(summary.files_copied(), 1);
     assert_eq!(summary.bytes_copied(), source_content.len() as u64);
     assert_eq!(summary.matched_bytes(), 0, "whole file should not match any blocks");
@@ -70,7 +68,6 @@ fn execute_whole_file_ignores_basis_file() {
         )
         .expect("whole file copy succeeds");
 
-    // Verify that no delta matching occurred despite common prefix
     assert_eq!(summary.files_copied(), 1);
     assert_eq!(summary.bytes_copied(), source_content.len() as u64);
     assert_eq!(summary.matched_bytes(), 0, "basis file should be ignored");
@@ -90,7 +87,6 @@ fn execute_whole_file_transfers_large_file_completely() {
     let large_content: Vec<u8> = (0..=255).cycle().take(1024 * 1024).collect();
     fs::write(&source, &large_content).expect("write large source");
 
-    // Create destination with partially matching content
     let partial_content: Vec<u8> = (0..=255).cycle().take(512 * 1024).collect();
     fs::write(&destination, &partial_content).expect("write destination");
     set_file_mtime(&destination, FileTime::from_unix_time(1, 0)).expect("set dest mtime");
@@ -109,7 +105,6 @@ fn execute_whole_file_transfers_large_file_completely() {
         )
         .expect("large file copy succeeds");
 
-    // Verify complete transfer of large file
     assert_eq!(summary.files_copied(), 1);
     assert_eq!(summary.bytes_copied(), 1024 * 1024);
     assert_eq!(summary.matched_bytes(), 0, "large file should not use basis");
@@ -127,7 +122,6 @@ fn execute_whole_file_works_for_new_files() {
 
     let content = b"new file content";
     fs::write(&source, content).expect("write source");
-    // Destination does not exist
 
     let operands = vec![
         source.into_os_string(),
@@ -157,7 +151,6 @@ fn execute_whole_file_in_recursive_directory_copy() {
     fs::create_dir_all(&source_root).expect("create source root");
     fs::create_dir_all(&dest_root).expect("create dest root");
 
-    // Create multiple files in source
     fs::write(source_root.join("file1.txt"), b"first file").expect("write file1");
     fs::write(source_root.join("file2.txt"), b"second file").expect("write file2");
 
@@ -165,7 +158,6 @@ fn execute_whole_file_in_recursive_directory_copy() {
     fs::create_dir_all(&subdir).expect("create subdir");
     fs::write(subdir.join("file3.txt"), b"third file").expect("write file3");
 
-    // Create corresponding destination directory structure
     let dest_source = dest_root.join("source");
     fs::create_dir_all(&dest_source).expect("create dest source dir");
     fs::write(dest_source.join("file1.txt"), b"old content 1").expect("write dest file1");
@@ -184,11 +176,9 @@ fn execute_whole_file_in_recursive_directory_copy() {
         )
         .expect("recursive whole file copy succeeds");
 
-    // All files should be transferred completely
     assert!(summary.files_copied() >= 3);
     assert_eq!(summary.matched_bytes(), 0, "recursive copy should not use delta");
 
-    // Verify content
     assert_eq!(
         fs::read(dest_root.join("source").join("file1.txt")).expect("read file1"),
         b"first file"
@@ -241,7 +231,6 @@ fn execute_no_whole_file_forces_delta_transfer() {
         )
         .expect("delta transfer succeeds");
 
-    // Verify delta transfer was used
     assert_eq!(summary.files_copied(), 1);
     assert!(
         summary.matched_bytes() > 0,
@@ -465,7 +454,6 @@ fn execute_whole_file_with_checksum_comparison() {
         )
         .expect("checksum copy succeeds");
 
-    // File should be skipped because content is identical
     assert_eq!(
         summary.files_copied(),
         0,
@@ -505,11 +493,9 @@ fn execute_whole_file_empty_file() {
 fn execute_whole_file_vs_delta_transfer_comparison() {
     let temp = tempdir().expect("tempdir");
 
-    // Setup for whole file mode
     let source_whole = temp.path().join("source_whole.bin");
     let dest_whole = temp.path().join("dest_whole.bin");
 
-    // Setup for delta mode
     let source_delta = temp.path().join("source_delta.bin");
     let dest_delta = temp.path().join("dest_delta.bin");
 
@@ -531,7 +517,6 @@ fn execute_whole_file_vs_delta_transfer_comparison() {
     set_file_mtime(&source_whole, FileTime::from_unix_time(2, 0)).expect("set source whole mtime");
     set_file_mtime(&source_delta, FileTime::from_unix_time(2, 0)).expect("set source delta mtime");
 
-    // Execute with whole file mode
     let operands_whole = vec![
         source_whole.into_os_string(),
         dest_whole.clone().into_os_string(),
@@ -544,7 +529,6 @@ fn execute_whole_file_vs_delta_transfer_comparison() {
         )
         .expect("whole file copy succeeds");
 
-    // Execute with delta mode
     let operands_delta = vec![
         source_delta.into_os_string(),
         dest_delta.clone().into_os_string(),
@@ -557,14 +541,12 @@ fn execute_whole_file_vs_delta_transfer_comparison() {
         )
         .expect("delta copy succeeds");
 
-    // Compare results
     assert_eq!(summary_whole.matched_bytes(), 0, "whole file should not match");
     assert_eq!(summary_whole.bytes_copied(), source_len, "whole file copies everything");
 
     assert!(summary_delta.matched_bytes() > 0, "delta should match common blocks");
     assert!(summary_delta.bytes_copied() < source_len, "delta copies less data");
 
-    // Both should produce identical results
     assert_eq!(
         fs::read(&dest_whole).expect("read dest whole"),
         fs::read(&dest_delta).expect("read dest delta")
@@ -675,7 +657,6 @@ fn whole_file_option_none_preserves_auto_detection() {
     let options = LocalCopyOptions::default();
     assert!(options.whole_file_raw().is_none());
 
-    // Setting to None explicitly should keep auto mode
     let options = options.whole_file_option(None);
     assert!(options.whole_file_raw().is_none());
     assert!(options.whole_file_enabled());
@@ -697,11 +678,9 @@ fn whole_file_option_some_false_forces_delta() {
 
 #[test]
 fn whole_file_auto_restores_none() {
-    // Start with explicitly set whole_file
     let options = LocalCopyOptions::default().whole_file(true);
     assert_eq!(options.whole_file_raw(), Some(true));
 
-    // Restore auto mode
     let options = options.whole_file_auto();
     assert!(options.whole_file_raw().is_none());
     assert!(options.whole_file_enabled());
@@ -716,7 +695,6 @@ fn whole_file_setter_overrides_auto() {
     let options = options.whole_file(true);
     assert_eq!(options.whole_file_raw(), Some(true));
 
-    // .whole_file(false) should set Some(false)
     let options = options.whole_file(false);
     assert_eq!(options.whole_file_raw(), Some(false));
     assert!(!options.whole_file_enabled());
@@ -724,7 +702,6 @@ fn whole_file_setter_overrides_auto() {
 
 #[test]
 fn execute_whole_file_auto_mode_copies_correctly() {
-    // Verify that auto mode (None) produces correct file content
     let temp = tempdir().expect("tempdir");
     let source = temp.path().join("src.bin");
     let destination = temp.path().join("dst.bin");
@@ -738,7 +715,6 @@ fn execute_whole_file_auto_mode_copies_correctly() {
     ];
     let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
 
-    // Use default (auto) mode
     let summary = plan
         .execute_with_options(LocalCopyExecution::Apply, LocalCopyOptions::default())
         .expect("auto mode copy succeeds");

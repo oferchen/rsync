@@ -139,10 +139,8 @@ fn delete_works_normally_without_io_errors() {
     fs::create_dir_all(&source).expect("create source");
     fs::create_dir_all(&dest).expect("create dest");
 
-    // Source has one file
     fs::write(source.join("keep.txt"), b"keep").expect("write keep");
 
-    // Dest has an extra file that should be deleted
     fs::write(dest.join("keep.txt"), b"old keep").expect("write old keep");
     fs::write(dest.join("extra.txt"), b"extra").expect("write extra");
 
@@ -281,10 +279,8 @@ fn delete_suppressed_when_io_errors_and_ignore_errors_not_set() {
     let operands = vec![source_operand, dest.clone().into_os_string()];
     let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
 
-    // --delete WITHOUT --ignore-errors
     let options = LocalCopyOptions::default().recursive(true).delete(true);
 
-    // The copy should fail due to the I/O error.
     let result = plan.execute_with_options(LocalCopyExecution::Apply, options);
 
     // Restore permissions for cleanup.
@@ -297,7 +293,6 @@ fn delete_suppressed_when_io_errors_and_ignore_errors_not_set() {
         "zsub/extra.txt must survive when a directory-read IO error suppresses deletion"
     );
 
-    // The operation should have reported an error.
     assert!(result.is_err(), "copy should report I/O error");
 }
 
@@ -443,7 +438,6 @@ fn delete_proceeds_when_io_errors_and_ignore_errors_set() {
     fs::create_dir_all(&source).expect("create source");
     fs::create_dir_all(&dest).expect("create dest");
 
-    // Create a readable source file
     fs::write(source.join("good.txt"), b"good").expect("write good");
     // Create an unreadable source file to trigger I/O error
     fs::write(source.join("bad.txt"), b"bad").expect("write bad");
@@ -453,7 +447,6 @@ fn delete_proceeds_when_io_errors_and_ignore_errors_set() {
     )
     .expect("make unreadable");
 
-    // Dest has extra files that should be deleted with --ignore-errors
     fs::write(dest.join("good.txt"), b"old good").expect("write old good");
     fs::write(dest.join("extra.txt"), b"should be deleted").expect("write extra");
 
@@ -462,7 +455,6 @@ fn delete_proceeds_when_io_errors_and_ignore_errors_set() {
     let operands = vec![source_operand, dest.clone().into_os_string()];
     let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
 
-    // --delete WITH --ignore-errors
     let options = LocalCopyOptions::default()
         .delete(true)
         .ignore_errors(true);
@@ -475,21 +467,17 @@ fn delete_proceeds_when_io_errors_and_ignore_errors_set() {
         fs::Permissions::from_mode(0o644),
     );
 
-    // With --ignore-errors, the extra file should be deleted even though
-    // the transfer had errors
     assert!(
         !dest.join("extra.txt").exists(),
         "extra.txt should be deleted when --ignore-errors is set"
     );
 
-    // The operation should still report an error for the failed file
     assert!(result.is_err(), "copy should report I/O error");
 }
 
 #[cfg(unix)]
 #[test]
 fn ignore_errors_with_delete_after_timing() {
-    // Test --ignore-errors with --delete-after timing
     use std::os::unix::fs::PermissionsExt;
 
     let temp = tempdir().expect("tempdir");
@@ -535,7 +523,6 @@ fn ignore_errors_with_delete_after_timing() {
 #[cfg(unix)]
 #[test]
 fn no_ignore_errors_with_delete_after_suppresses_deletions() {
-    // Test that --delete-after suppresses deletions on I/O error without --ignore-errors
     use std::os::unix::fs::PermissionsExt;
 
     let temp = tempdir().expect("tempdir");
@@ -606,10 +593,8 @@ fn ignore_errors_with_dry_run_reports_deletions() {
 
     let summary = report.summary();
 
-    // In dry-run mode nothing should be modified on disk
     assert!(dest.join("extra.txt").exists(), "file should exist in dry-run");
 
-    // But the summary should report what would happen
     assert_eq!(summary.items_deleted(), 1, "should report 1 deletion in dry-run");
 }
 
@@ -623,7 +608,6 @@ fn ignore_errors_preserves_good_files_during_transfer() {
     fs::create_dir_all(&source).expect("create source");
     fs::create_dir_all(&dest).expect("create dest");
 
-    // Create multiple source files - all readable
     fs::write(source.join("file1.txt"), b"content1").expect("write file1");
     fs::write(source.join("file2.txt"), b"content2").expect("write file2");
     fs::write(source.join("file3.txt"), b"content3").expect("write file3");
@@ -641,7 +625,6 @@ fn ignore_errors_preserves_good_files_during_transfer() {
         .execute_with_options(LocalCopyExecution::Apply, options)
         .expect("copy succeeds");
 
-    // All files should be transferred
     assert!(dest.join("file1.txt").exists());
     assert!(dest.join("file2.txt").exists());
     assert!(dest.join("file3.txt").exists());
@@ -650,7 +633,6 @@ fn ignore_errors_preserves_good_files_during_transfer() {
 
 #[test]
 fn ignore_errors_with_nested_directories() {
-    // Test --ignore-errors with nested directory structures
     let temp = tempdir().expect("tempdir");
     let source = temp.path().join("source");
     let dest = temp.path().join("dest");
@@ -687,7 +669,6 @@ fn ignore_errors_with_nested_directories() {
 
 #[test]
 fn ignore_errors_combined_with_max_delete() {
-    // --ignore-errors should work alongside --max-delete
     let temp = tempdir().expect("tempdir");
     let source = temp.path().join("source");
     let dest = temp.path().join("dest");
@@ -719,7 +700,6 @@ fn ignore_errors_combined_with_max_delete() {
 
 #[test]
 fn ignore_errors_combined_with_delete_excluded() {
-    // --ignore-errors + --delete-excluded should work together
     let temp = tempdir().expect("tempdir");
     let source = temp.path().join("source");
     let dest = temp.path().join("dest");
@@ -755,7 +735,6 @@ fn ignore_errors_combined_with_delete_excluded() {
 
 #[test]
 fn ignore_errors_without_delete_no_deletions() {
-    // --ignore-errors without --delete should not cause any deletions
     let temp = tempdir().expect("tempdir");
     let source = temp.path().join("source");
     let dest = temp.path().join("dest");
@@ -777,7 +756,6 @@ fn ignore_errors_without_delete_no_deletions() {
         .execute_with_options(LocalCopyExecution::Apply, options)
         .expect("copy succeeds");
 
-    // Extra file should remain since --delete is not enabled
     assert!(dest.join("extra.txt").exists(), "extra file should remain without --delete");
     assert_eq!(summary.items_deleted(), 0, "no deletions should occur without --delete");
 }

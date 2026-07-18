@@ -769,7 +769,6 @@ fn archive_no_links_copies_symlink_targets_instead() {
     plan.execute_with_options(LocalCopyExecution::Apply, options)
         .expect("copy");
 
-    // sym.txt should be a regular file, not a symlink
     let dest_sym = ctx.dest.join("sym.txt");
     assert!(dest_sym.exists(), "sym.txt should exist");
     let meta = fs::symlink_metadata(&dest_sym).expect("metadata");

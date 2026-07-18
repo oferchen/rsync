@@ -40,11 +40,9 @@ fn update_skips_file_when_destination_is_newer() {
         )
         .expect("copy succeeds");
 
-    // File should be skipped because destination is newer
     assert_eq!(summary.files_copied(), 0);
     assert_eq!(summary.regular_files_total(), 1);
     assert_eq!(summary.regular_files_skipped_newer(), 1);
-    // Destination content should be preserved
     assert_eq!(
         fs::read(&destination).expect("read dest"),
         b"dest content"
@@ -80,11 +78,9 @@ fn update_copies_file_when_destination_is_older() {
         )
         .expect("copy succeeds");
 
-    // File should be copied because destination is older
     assert_eq!(summary.files_copied(), 1);
     assert_eq!(summary.regular_files_total(), 1);
     assert_eq!(summary.regular_files_skipped_newer(), 0);
-    // Destination should have new content
     assert_eq!(
         fs::read(&destination).expect("read dest"),
         b"updated content"
@@ -113,11 +109,9 @@ fn update_copies_file_when_destination_missing() {
         )
         .expect("copy succeeds");
 
-    // File should be copied because destination doesn't exist
     assert_eq!(summary.files_copied(), 1);
     assert_eq!(summary.regular_files_total(), 1);
     assert_eq!(summary.regular_files_skipped_newer(), 0);
-    // Destination should have content
     assert_eq!(
         fs::read(&destination).expect("read dest"),
         b"new file content"
@@ -156,7 +150,6 @@ fn update_skips_file_when_mtime_is_equal() {
     // With equal mtime and same size, file is skipped but may not be counted in skipped_newer
     assert_eq!(summary.files_copied(), 0);
     assert_eq!(summary.regular_files_total(), 1);
-    // Destination content should be preserved
     assert_eq!(
         fs::read(&destination).expect("read dest"),
         b"dest_content_xyx"
@@ -217,7 +210,6 @@ fn update_recursive_mixed_timestamps() {
     // Only skip_me.txt is counted as skipped_newer; same_time.txt with equal mtime+same size is skipped differently
     assert_eq!(summary.regular_files_skipped_newer(), 1);
 
-    // Verify file contents
     assert_eq!(
         fs::read(dest_root.join("copy_me.txt")).expect("read copy_me"),
         b"newer_source_"
@@ -242,7 +234,6 @@ fn update_nested_directories_selective_copy() {
     let source_root = temp.path().join("source");
     let dest_root = temp.path().join("dest");
 
-    // Create nested directory structure
     fs::create_dir_all(source_root.join("level1/level2")).expect("create source dirs");
     fs::create_dir_all(dest_root.join("level1/level2")).expect("create dest dirs");
 
@@ -280,7 +271,6 @@ fn update_nested_directories_selective_copy() {
     assert_eq!(summary.files_copied(), 2);
     assert_eq!(summary.regular_files_skipped_newer(), 1);
 
-    // Verify content preservation
     assert_eq!(
         fs::read(dest_root.join("root.txt")).expect("read root"),
         b"root dest"
@@ -345,7 +335,6 @@ fn update_handles_epoch_boundary() {
     fs::write(&source, b"source").expect("write source");
     fs::write(&destination, b"dest").expect("write dest");
 
-    // Use times near Unix epoch
     let epoch_time = FileTime::from_unix_time(1, 0);
     let later_time = FileTime::from_unix_time(2, 0);
     set_file_times(&source, epoch_time, epoch_time).expect("set source times");
@@ -364,7 +353,6 @@ fn update_handles_epoch_boundary() {
         )
         .expect("copy succeeds");
 
-    // Destination is newer, should skip
     assert_eq!(summary.files_copied(), 0);
     assert_eq!(summary.regular_files_skipped_newer(), 1);
 }
@@ -397,7 +385,6 @@ fn update_handles_far_future_timestamp() {
         )
         .expect("copy succeeds");
 
-    // Destination has future timestamp, should skip
     assert_eq!(summary.files_copied(), 0);
     assert_eq!(summary.regular_files_skipped_newer(), 1);
 }
@@ -430,7 +417,6 @@ fn update_one_second_difference_copies_when_source_newer() {
         )
         .expect("copy succeeds");
 
-    // Source is newer by 1 second, should copy
     assert_eq!(summary.files_copied(), 1);
     assert_eq!(summary.regular_files_skipped_newer(), 0);
     assert_eq!(fs::read(&destination).expect("read"), b"newer");
@@ -460,10 +446,8 @@ fn update_combined_with_times_preserves_mtime() {
         )
         .expect("copy succeeds");
 
-    // File should be copied (no dest exists)
     assert_eq!(summary.files_copied(), 1);
 
-    // Verify mtime is preserved
     let dest_mtime = FileTime::from_last_modification_time(
         &fs::metadata(&destination).expect("dest metadata")
     );
@@ -524,7 +508,6 @@ fn update_without_flag_copies_even_when_dest_newer() {
     ];
     let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
 
-    // WITHOUT update flag
     let summary = plan
         .execute_with_options(
             LocalCopyExecution::Apply,
@@ -565,9 +548,7 @@ fn update_dry_run_reports_but_preserves_files() {
         )
         .expect("dry run succeeds");
 
-    // Dry run should report that it would copy
     assert_eq!(summary.files_copied(), 1);
-    // But destination should remain unchanged
     assert_eq!(fs::read(&destination).expect("read"), b"older dest");
 }
 
@@ -598,10 +579,8 @@ fn update_dry_run_reports_skipped_files() {
         )
         .expect("dry run succeeds");
 
-    // Dry run should report that file would be skipped
     assert_eq!(summary.files_copied(), 0);
     assert_eq!(summary.regular_files_skipped_newer(), 1);
-    // Destination unchanged
     assert_eq!(fs::read(&destination).expect("read"), b"newer dest");
 }
 
@@ -736,7 +715,6 @@ fn update_matches_upstream_rsync_semantics() {
     assert_eq!(summary.regular_files_skipped_newer(), 1, "should skip case1 (newer)");
     // Note: case2 with equal mtime + same size is skipped, but may not increment skipped_newer counter
 
-    // Verify specific file states
     assert_eq!(
         fs::read(dest_root.join("case1.txt")).expect("case1"),
         b"destin1",

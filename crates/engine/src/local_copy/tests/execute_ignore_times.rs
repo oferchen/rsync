@@ -22,7 +22,6 @@ fn ignore_times_transfers_file_with_matching_timestamps() {
     fs::write(&source, b"source content").expect("write source");
     fs::write(&destination, b"dest content").expect("write dest");
 
-    // Set identical timestamps
     let timestamp = FileTime::from_unix_time(1_700_000_000, 0);
     set_file_times(&source, timestamp, timestamp).expect("set source times");
     set_file_times(&destination, timestamp, timestamp).expect("set dest times");
@@ -40,7 +39,6 @@ fn ignore_times_transfers_file_with_matching_timestamps() {
         )
         .expect("copy succeeds");
 
-    // File should be copied even though timestamps match
     assert_eq!(summary.files_copied(), 1);
     assert_eq!(summary.regular_files_total(), 1);
     assert_eq!(
@@ -55,7 +53,6 @@ fn ignore_times_transfers_identical_content() {
     let source = temp.path().join("source.txt");
     let destination = temp.path().join("dest.txt");
 
-    // Both files have identical content
     let content = b"identical content in both files";
     fs::write(&source, content).expect("write source");
     fs::write(&destination, content).expect("write dest");
@@ -78,11 +75,9 @@ fn ignore_times_transfers_identical_content() {
         )
         .expect("copy succeeds");
 
-    // File should be copied even though content is identical
     assert_eq!(summary.files_copied(), 1);
     assert_eq!(summary.regular_files_total(), 1);
     assert_eq!(summary.regular_files_matched(), 0);
-    // Content remains the same but file was transferred
     assert_eq!(fs::read(&destination).expect("read dest"), content);
 }
 
@@ -114,7 +109,6 @@ fn ignore_times_updates_newer_destination() {
         )
         .expect("copy succeeds");
 
-    // File should be copied even though destination is newer
     assert_eq!(summary.files_copied(), 1);
     assert_eq!(summary.regular_files_total(), 1);
     assert_eq!(
@@ -129,7 +123,6 @@ fn ignore_times_with_checksum_skips_identical_content() {
     let source = temp.path().join("source.txt");
     let destination = temp.path().join("dest.txt");
 
-    // Both files have identical content
     let content = b"identical content for checksum test";
     fs::write(&source, content).expect("write source");
     fs::write(&destination, content).expect("write dest");
@@ -155,7 +148,6 @@ fn ignore_times_with_checksum_skips_identical_content() {
         )
         .expect("copy succeeds");
 
-    // File should be skipped because checksums match
     assert_eq!(summary.files_copied(), 0);
     assert_eq!(summary.regular_files_total(), 1);
     assert_eq!(summary.regular_files_matched(), 1);
@@ -172,7 +164,6 @@ fn ignore_times_with_checksum_copies_different_content() {
     fs::write(&source, b"source!").expect("write source");
     fs::write(&destination, b"dest!!!").expect("write dest");
 
-    // Set identical timestamps
     let timestamp = FileTime::from_unix_time(1_700_000_000, 0);
     set_file_times(&source, timestamp, timestamp).expect("set source times");
     set_file_times(&destination, timestamp, timestamp).expect("set dest times");
@@ -192,7 +183,6 @@ fn ignore_times_with_checksum_copies_different_content() {
         )
         .expect("copy succeeds");
 
-    // File should be copied because checksums differ
     assert_eq!(summary.files_copied(), 1);
     assert_eq!(summary.regular_files_total(), 1);
     assert_eq!(summary.regular_files_matched(), 0);
@@ -247,7 +237,6 @@ fn ignore_times_with_checksum_handles_multiple_files() {
     assert_eq!(summary.regular_files_total(), 3);
     assert_eq!(summary.regular_files_matched(), 1);
 
-    // Verify content
     assert_eq!(
         fs::read(dest_root.join("same.txt")).expect("read same"),
         content1
@@ -274,12 +263,10 @@ fn ignore_times_with_size_only_skips_same_size() {
     fs::write(&source, b"source!").expect("write source");
     fs::write(&destination, b"dest!!!").expect("write dest");
 
-    // Verify sizes match
     let source_meta = fs::metadata(&source).expect("source metadata");
     let dest_meta = fs::metadata(&destination).expect("dest metadata");
     assert_eq!(source_meta.len(), dest_meta.len());
 
-    // Set identical timestamps
     let timestamp = FileTime::from_unix_time(1_700_000_000, 0);
     set_file_times(&source, timestamp, timestamp).expect("set source times");
     set_file_times(&destination, timestamp, timestamp).expect("set dest times");
@@ -321,7 +308,6 @@ fn size_only_wins_over_ignore_times_with_same_content() {
     fs::write(&source, content).expect("write source");
     fs::write(&destination, content).expect("write dest");
 
-    // Set matching timestamps
     let timestamp = FileTime::from_unix_time(1_700_000_000, 0);
     set_file_times(&source, timestamp, timestamp).expect("set source times");
     set_file_times(&destination, timestamp, timestamp).expect("set dest times");
@@ -367,7 +353,6 @@ fn ignore_times_allows_delta_transfer() {
     source_content.append(&mut suffix_new.clone());
     fs::write(&source, &source_content).expect("write source");
 
-    // Set identical timestamps
     let timestamp = FileTime::from_unix_time(1_700_000_000, 0);
     set_file_times(&source, timestamp, timestamp).expect("set source times");
     set_file_times(&destination, timestamp, timestamp).expect("set dest times");
@@ -383,11 +368,10 @@ fn ignore_times_allows_delta_transfer() {
             LocalCopyExecution::Apply,
             LocalCopyOptions::default()
                 .ignore_times(true)
-                .whole_file(false), // Enable delta transfer
+                .whole_file(false),
         )
         .expect("copy succeeds");
 
-    // File should be copied using delta transfer
     assert_eq!(summary.files_copied(), 1);
     assert_eq!(summary.regular_files_total(), 1);
 
@@ -396,10 +380,8 @@ fn ignore_times_allows_delta_transfer() {
     assert!(summary.matched_bytes() >= 700, "should match at least 700 bytes of shared prefix");
     assert!(summary.matched_bytes() <= 1000, "should not match more than the shared prefix");
 
-    // Should have transferred the changed portion
     assert!(summary.bytes_copied() >= 500, "should transfer at least the changed 500 bytes");
 
-    // Verify final content is correct
     assert_eq!(fs::read(&destination).expect("read dest"), source_content);
 }
 
@@ -409,12 +391,10 @@ fn ignore_times_delta_transfer_with_matching_content() {
     let source = temp.path().join("source.bin");
     let destination = temp.path().join("dest.bin");
 
-    // Create identical files
     let content = vec![b'X'; 2000];
     fs::write(&source, &content).expect("write source");
     fs::write(&destination, &content).expect("write dest");
 
-    // Set matching timestamps
     let timestamp = FileTime::from_unix_time(1_700_000_000, 0);
     set_file_times(&source, timestamp, timestamp).expect("set source times");
     set_file_times(&destination, timestamp, timestamp).expect("set dest times");
@@ -430,21 +410,18 @@ fn ignore_times_delta_transfer_with_matching_content() {
             LocalCopyExecution::Apply,
             LocalCopyOptions::default()
                 .ignore_times(true)
-                .whole_file(false), // Enable delta transfer
+                .whole_file(false),
         )
         .expect("copy succeeds");
 
-    // File should be "copied" but with most/all bytes matched via delta
     assert_eq!(summary.files_copied(), 1);
     assert_eq!(summary.regular_files_total(), 1);
 
     // Most bytes should be matched via delta (block alignment may not be perfect)
     assert!(summary.matched_bytes() >= 1400, "should match most content via delta");
 
-    // Very few or no new bytes should be transferred
     assert!(summary.bytes_copied() <= 600, "should transfer minimal bytes for identical content");
 
-    // Verify content unchanged
     assert_eq!(fs::read(&destination).expect("read dest"), content);
 }
 
@@ -454,13 +431,11 @@ fn ignore_times_whole_file_mode_transfers_entirely() {
     let source = temp.path().join("source.bin");
     let destination = temp.path().join("dest.bin");
 
-    // Create files with some shared content
     let content_source = vec![b'S'; 1500];
     let content_dest = vec![b'D'; 1500];
     fs::write(&source, &content_source).expect("write source");
     fs::write(&destination, &content_dest).expect("write dest");
 
-    // Set matching timestamps
     let timestamp = FileTime::from_unix_time(1_700_000_000, 0);
     set_file_times(&source, timestamp, timestamp).expect("set source times");
     set_file_times(&destination, timestamp, timestamp).expect("set dest times");
@@ -476,21 +451,18 @@ fn ignore_times_whole_file_mode_transfers_entirely() {
             LocalCopyExecution::Apply,
             LocalCopyOptions::default()
                 .ignore_times(true)
-                .whole_file(true), // Force whole file transfer
+                .whole_file(true),
         )
         .expect("copy succeeds");
 
-    // File should be copied entirely
     assert_eq!(summary.files_copied(), 1);
     assert_eq!(summary.regular_files_total(), 1);
 
     // In whole-file mode, no bytes are matched
     assert_eq!(summary.matched_bytes(), 0);
 
-    // All bytes transferred
     assert_eq!(summary.bytes_copied(), 1500);
 
-    // Verify final content
     assert_eq!(fs::read(&destination).expect("read dest"), content_source);
 }
 
@@ -535,7 +507,7 @@ fn ignore_times_overrides_update_skip() {
     assert_eq!(summary_with.regular_files_skipped_newer(), 1);
     assert_eq!(
         fs::read(&destination).expect("read dest"),
-        b"dest content"  // preserved
+        b"dest content"
     );
 }
 
@@ -578,12 +550,10 @@ fn ignore_times_recursive_transfers_all_files() {
         )
         .expect("copy succeeds");
 
-    // All 5 files should be copied
     assert_eq!(summary.files_copied(), 5);
     assert_eq!(summary.regular_files_total(), 5);
     assert_eq!(summary.regular_files_matched(), 0);
 
-    // Verify all files have source content
     for i in 1..=5 {
         let filename = format!("file{i}.txt");
         let expected = format!("source content {i}");
@@ -600,7 +570,6 @@ fn ignore_times_with_nested_directories() {
     let source_root = temp.path().join("source");
     let dest_root = temp.path().join("dest");
 
-    // Create nested directory structure
     let nested_source = source_root.join("dir1/dir2");
     let nested_dest = dest_root.join("dir1/dir2");
     fs::create_dir_all(&nested_source).expect("create nested source");
@@ -608,7 +577,6 @@ fn ignore_times_with_nested_directories() {
 
     let timestamp = FileTime::from_unix_time(1_700_000_000, 0);
 
-    // Create files at different levels
     fs::write(source_root.join("root.txt"), b"root source")
         .expect("write root source");
     fs::write(dest_root.join("root.txt"), b"root dest!!")
@@ -648,11 +616,9 @@ fn ignore_times_with_nested_directories() {
         )
         .expect("copy succeeds");
 
-    // All 3 files should be copied
     assert_eq!(summary.files_copied(), 3);
     assert_eq!(summary.regular_files_total(), 3);
 
-    // Verify all files have source content
     assert_eq!(
         fs::read(dest_root.join("root.txt")).expect("read root"),
         b"root source"
@@ -673,11 +639,9 @@ fn ignore_times_with_empty_files() {
     let source = temp.path().join("source.txt");
     let destination = temp.path().join("dest.txt");
 
-    // Both files are empty
     fs::write(&source, b"").expect("write empty source");
     fs::write(&destination, b"").expect("write empty dest");
 
-    // Set matching timestamps
     let timestamp = FileTime::from_unix_time(1_700_000_000, 0);
     set_file_times(&source, timestamp, timestamp).expect("set source times");
     set_file_times(&destination, timestamp, timestamp).expect("set dest times");
@@ -695,7 +659,6 @@ fn ignore_times_with_empty_files() {
         )
         .expect("copy succeeds");
 
-    // Even empty files should be "copied"
     assert_eq!(summary.files_copied(), 1);
     assert_eq!(summary.regular_files_total(), 1);
     assert_eq!(summary.bytes_copied(), 0);
@@ -709,7 +672,6 @@ fn ignore_times_creates_missing_destination() {
     let destination = temp.path().join("dest.txt");
 
     fs::write(&source, b"new file content").expect("write source");
-    // No destination file exists
 
     let operands = vec![
         source.into_os_string(),
@@ -724,7 +686,6 @@ fn ignore_times_creates_missing_destination() {
         )
         .expect("copy succeeds");
 
-    // File should be created
     assert_eq!(summary.files_copied(), 1);
     assert_eq!(summary.regular_files_total(), 1);
     assert_eq!(
@@ -745,7 +706,6 @@ fn ignore_times_with_large_files() {
     fs::write(&source, &source_content).expect("write source");
     fs::write(&destination, &dest_content).expect("write dest");
 
-    // Set matching timestamps
     let timestamp = FileTime::from_unix_time(1_700_000_000, 0);
     set_file_times(&source, timestamp, timestamp).expect("set source times");
     set_file_times(&destination, timestamp, timestamp).expect("set dest times");
@@ -763,7 +723,6 @@ fn ignore_times_with_large_files() {
         )
         .expect("copy succeeds");
 
-    // File should be copied
     assert_eq!(summary.files_copied(), 1);
     assert_eq!(summary.regular_files_total(), 1);
     assert_eq!(summary.bytes_copied(), 150_000);
@@ -782,7 +741,6 @@ fn ignore_times_dry_run_reports_correctly() {
     fs::write(&source, b"source content").expect("write source");
     fs::write(&destination, b"dest content").expect("write dest");
 
-    // Set matching timestamps
     let timestamp = FileTime::from_unix_time(1_700_000_000, 0);
     set_file_times(&source, timestamp, timestamp).expect("set source times");
     set_file_times(&destination, timestamp, timestamp).expect("set dest times");
@@ -800,11 +758,9 @@ fn ignore_times_dry_run_reports_correctly() {
         )
         .expect("dry run succeeds");
 
-    // Dry run should report the file would be copied
     assert_eq!(summary.files_copied(), 1);
     assert_eq!(summary.regular_files_total(), 1);
 
-    // Destination should remain unchanged
     assert_eq!(
         fs::read(&destination).expect("read dest"),
         b"dest content"
@@ -820,7 +776,6 @@ fn ignore_times_with_permissions_and_times_preserves_metadata() {
     fs::write(&source, b"source content").expect("write source");
     fs::write(&destination, b"dest content").expect("write dest");
 
-    // Set source timestamp and permissions
     let source_time = FileTime::from_unix_time(1_700_000_500, 0);
     set_file_times(&source, source_time, source_time).expect("set source times");
 
@@ -832,7 +787,6 @@ fn ignore_times_with_permissions_and_times_preserves_metadata() {
         fs::set_permissions(&source, perms).expect("set source perms");
     }
 
-    // Set different destination timestamp
     let dest_time = FileTime::from_unix_time(1_700_000_000, 0);
     set_file_times(&destination, dest_time, dest_time).expect("set dest times");
 
@@ -852,16 +806,13 @@ fn ignore_times_with_permissions_and_times_preserves_metadata() {
         )
         .expect("copy succeeds");
 
-    // File should be copied
     assert_eq!(summary.files_copied(), 1);
 
-    // Verify content
     assert_eq!(
         fs::read(&destination).expect("read dest"),
         b"source content"
     );
 
-    // Verify timestamp was preserved (when --times is set)
     let dest_meta = fs::metadata(&destination).expect("dest metadata");
     let dest_final_time = FileTime::from_last_modification_time(&dest_meta);
     assert_eq!(dest_final_time, source_time);

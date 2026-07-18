@@ -23,7 +23,6 @@ fn update_transfers_file_when_dest_has_epoch_mtime() {
     fs::write(&source, full_content).expect("write source");
     fs::write(&destination, partial_content).expect("write partial dest");
 
-    // Source has a realistic recent timestamp.
     let source_time = FileTime::from_unix_time(1_700_000_000, 0);
     set_file_times(&source, source_time, source_time).expect("set source times");
 
@@ -76,11 +75,9 @@ fn update_skips_file_when_dest_has_future_mtime() {
     fs::write(&source, full_content).expect("write source");
     fs::write(&destination, partial_content).expect("write dest");
 
-    // Source has a normal timestamp.
     let source_time = FileTime::from_unix_time(1_700_000_000, 0);
     set_file_times(&source, source_time, source_time).expect("set source times");
 
-    // Destination has a far-future timestamp (year 2100).
     let future_time = FileTime::from_unix_time(4_102_444_800, 0);
     set_file_times(&destination, future_time, future_time).expect("set dest future mtime");
 

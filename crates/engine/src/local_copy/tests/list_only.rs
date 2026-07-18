@@ -1,4 +1,3 @@
-// Helper struct to collect records during execution
 struct RecordCollector {
     records: Vec<LocalCopyRecord>,
 }
@@ -60,7 +59,6 @@ fn list_only_enumerates_files_without_transfer() {
     assert!(paths.iter().any(|p| p == "file2.txt"));
     assert!(paths.iter().any(|p| p.contains("subdir")));
 
-    // Verify destination is empty
     let dest_entries: Vec<_> = fs::read_dir(&dest)
         .expect("read dest")
         .collect();
@@ -111,15 +109,12 @@ fn list_only_provides_file_metadata() {
 
     let metadata = file_record.metadata().expect("metadata present");
 
-    // Verify size is correct
     assert_eq!(metadata.len(), 1234);
 
-    // Verify modified time is present
     assert!(metadata.modified().is_some());
 
     #[cfg(unix)]
     {
-        // Verify permissions are captured
         assert!(metadata.mode().is_some());
         let mode = metadata.mode().unwrap();
         assert_eq!(mode & 0o777, 0o644);
@@ -171,14 +166,12 @@ fn list_only_shows_symlinks_correctly() {
         let metadata = link_record.metadata().expect("metadata present");
         assert_eq!(metadata.kind(), LocalCopyFileKind::Symlink);
 
-        // Verify symlink target is captured
         assert!(metadata.symlink_target().is_some());
         assert_eq!(
             metadata.symlink_target().unwrap().to_string_lossy(),
             "target.txt"
         );
 
-        // Verify destination is empty
         assert!(!dest.join("link.txt").exists());
     }
 }
@@ -231,18 +224,15 @@ fn list_only_shows_directories_with_metadata() {
     let metadata = dir_record.metadata().expect("metadata present");
     assert_eq!(metadata.kind(), LocalCopyFileKind::Directory);
 
-    // Verify timestamp is captured
     assert!(metadata.modified().is_some());
 
     #[cfg(unix)]
     {
-        // Verify directory permissions
         assert!(metadata.mode().is_some());
         let mode = metadata.mode().unwrap();
         assert_eq!(mode & 0o777, 0o755);
     }
 
-    // Verify directory was not actually created
     assert!(!dest.join("testdir").exists());
 }
 
@@ -265,7 +255,6 @@ fn list_only_respects_filter_rules() {
     let operands = vec![source_operand, dest.into_os_string()];
     let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
 
-    // Filter out *.log files
     let filters = FilterSet::from_rules([FilterRule::exclude("*.log")])
         .expect("create filter");
 
@@ -307,7 +296,6 @@ fn list_only_with_include_filter() {
     let operands = vec![source_operand, dest.into_os_string()];
     let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
 
-    // Include only *.txt files
     let filters = FilterSet::from_rules([
         FilterRule::include("*.txt"),
         FilterRule::exclude("*"),
@@ -382,7 +370,6 @@ fn list_only_shows_special_permission_bits() {
         )
         .expect("dry run succeeds");
 
-        // Verify setuid bit
         let setuid_record = collector.records
             .iter()
             .find(|r| r.relative_path().to_string_lossy() == "setuid")
@@ -390,7 +377,6 @@ fn list_only_shows_special_permission_bits() {
         let setuid_mode = setuid_record.metadata().unwrap().mode().unwrap();
         assert_ne!(setuid_mode & 0o4000, 0, "setuid bit should be set");
 
-        // Verify setgid bit
         let setgid_record = collector.records
             .iter()
             .find(|r| r.relative_path().to_string_lossy() == "setgid")
@@ -398,7 +384,6 @@ fn list_only_shows_special_permission_bits() {
         let setgid_mode = setgid_record.metadata().unwrap().mode().unwrap();
         assert_ne!(setgid_mode & 0o2000, 0, "setgid bit should be set");
 
-        // Verify sticky bit
         let sticky_record = collector.records
             .iter()
             .find(|r| r.relative_path().to_string_lossy() == "sticky")
@@ -488,7 +473,6 @@ fn list_only_with_recursive_shows_nested_structure() {
     assert!(paths.iter().any(|p| p.contains("file1.txt")));
     assert!(paths.iter().any(|p| p.contains("file2.txt")));
 
-    // Verify nested files were not transferred
     assert!(!dest.join("level1").join("file1.txt").exists());
     assert!(!dest.join("level1").join("level2").join("file2.txt").exists());
 }
@@ -528,7 +512,6 @@ fn list_only_without_recursive_shows_only_top_level() {
         .collect();
 
     assert!(paths.iter().any(|p| p == "top.txt"));
-    // Without recursive, nested files should not be listed
     assert!(!paths.iter().any(|p| p.contains("nested.txt")));
 }
 
@@ -563,7 +546,6 @@ fn list_only_shows_device_nodes_when_enabled() {
     )
     .expect("dry run succeeds");
 
-    // Verify records were collected
     assert!(!collector.records.is_empty());
 }
 
@@ -799,7 +781,6 @@ fn list_only_handles_size_zero_files() {
     let metadata = empty_record.metadata().expect("metadata present");
     assert_eq!(metadata.len(), 0);
 
-    // Verify file was not transferred
     assert!(!dest.join("empty.txt").exists());
 }
 
