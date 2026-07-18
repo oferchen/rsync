@@ -196,6 +196,25 @@ mod tests {
     }
 
     #[test]
+    fn is_pull_true_only_when_a_source_is_remote() {
+        // Pull: a source operand is remote -> local client is the receiver.
+        let pull = ClientConfig::builder()
+            .transfer_args([OsString::from("host:src/"), OsString::from("dst/")])
+            .build();
+        assert!(pull.is_pull());
+        // Push: remote dest, local source -> client is the sender, not a pull.
+        let push = ClientConfig::builder()
+            .transfer_args([OsString::from("src/"), OsString::from("host:dst/")])
+            .build();
+        assert!(!push.is_pull());
+        // Local copy: no remote operand -> client is the sender, not a pull.
+        let local = ClientConfig::builder()
+            .transfer_args([OsString::from("src/"), OsString::from("dst/")])
+            .build();
+        assert!(!local.is_pull());
+    }
+
+    #[test]
     fn is_local_sender_rsync_url_pull_reports_receiver() {
         // Daemon pull via rsync:// URL.
         let config = ClientConfig::builder()
