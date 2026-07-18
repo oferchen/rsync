@@ -13,3 +13,4 @@ pub mod release;
 pub mod release_notes;
 pub mod sbom;
 pub mod test;
+pub mod validate;
