@@ -224,10 +224,6 @@ fn split_progress2_lines(output: &str) -> Vec<&str> {
         .collect()
 }
 
-// ---------------------------------------------------------------------------
-// End-to-end format validation tests
-// ---------------------------------------------------------------------------
-
 /// Upstream: progress.c:78-82 - the final tick of the last file emits
 /// `(xfr#N, to-chk=0/T)` with a trailing newline.
 #[test]
@@ -418,10 +414,6 @@ fn progress2_multiple_files_all_final_ticks_match_format() {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Field width and padding validation
-// ---------------------------------------------------------------------------
-
 /// upstream: progress.c:129 - the bytes field width is 15 chars.
 /// Verify `format_progress_bytes` + right-align produces 15-char field.
 #[test]
@@ -546,10 +538,6 @@ fn progress2_rate_from_value_matches_cumulative_tiers() {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Human-readable mode format parity
-// ---------------------------------------------------------------------------
-
 /// When `--human-readable` is active, bytes field uses K/M/G suffixes
 /// instead of thousands separators. The progress2 structure must still
 /// match the upstream field layout.
@@ -591,10 +579,6 @@ fn progress2_human_readable_structural_parity() {
         validate_progress2_line(line).unwrap_or_else(|e| panic!("{e}"));
     }
 }
-
-// ---------------------------------------------------------------------------
-// End-to-end via run_with_args (exercises the full CLI path)
-// ---------------------------------------------------------------------------
 
 /// Validate that `--info=progress2` through the full CLI path produces
 /// lines matching the upstream format.
@@ -679,10 +663,6 @@ fn progress2_cli_multiple_files_format_parity() {
         "multi-file progress2 should have xfr# final ticks: {rendered:?}"
     );
 }
-
-// ---------------------------------------------------------------------------
-// Upstream format string field composition
-// ---------------------------------------------------------------------------
 
 /// Verifies that the composed progress2 line (bytes + pct + rate + time +
 /// trailer) produces the correct field order and separators when assembled
