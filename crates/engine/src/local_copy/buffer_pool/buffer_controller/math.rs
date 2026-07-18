@@ -1,8 +1,8 @@
 //! Numerical helpers used by the PID controller loop.
 //!
 //! `compute_dt` produces a bounded sample-interval, and `clamp_f64` enforces
-//! the anti-windup window without relying on `f64::clamp` (whose NaN handling
-//! panics in debug builds when `lo > hi`).
+//! the anti-windup window without relying on `f64::clamp`, which panics
+//! (in all builds) when `lo > hi` or when either bound is NaN.
 
 use std::time::{Duration, Instant};
 
@@ -35,8 +35,8 @@ pub(super) fn compute_dt(prev: Option<Instant>, now: Instant, default_ms: u64) -
 
 /// Clamps an `f64` to `[lo, hi]`, treating NaN as `lo`.
 ///
-/// Using a free function avoids relying on `f64::clamp` semantics for NaN,
-/// which panic in debug builds when `lo > hi`.
+/// Using a free function avoids `f64::clamp`, which panics (in all builds)
+/// when `lo > hi` or when either bound is NaN.
 pub(super) fn clamp_f64(v: f64, lo: f64, hi: f64) -> f64 {
     if v.is_nan() {
         return lo;
