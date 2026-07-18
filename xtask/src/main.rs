@@ -60,7 +60,7 @@ mod workspace;
 use crate::cli::{Cli, Command, CommandExt};
 use crate::commands::{
     benchmark, branding, doc_package, docs, interop, man_page, no_binaries, no_placeholders,
-    package, preflight, readme_version, release, release_notes, sbom, test,
+    package, preflight, readme_version, release, release_notes, sbom, test, validate,
 };
 use crate::error::TaskError;
 use crate::task::TreeRenderer;
@@ -116,6 +116,7 @@ fn run_command(cli: Cli) -> Result<(), TaskError> {
         Command::ReleaseNotes(args) => release_notes::execute(&workspace, args.into()),
         Command::Sbom(args) => sbom::execute(&workspace, args.into()),
         Command::Test(args) => test::execute(&workspace, args.into()),
+        Command::Validate(args) => validate::execute(&workspace, args.into()),
     }
 }
 
