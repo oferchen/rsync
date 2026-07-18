@@ -164,7 +164,7 @@ impl FilterSegment {
 }
 
 /// Short-form action prefix used in `add_rule()` debug lines, mirroring
-/// upstream rsync's filter-rule syntax (`+`/`-`/`P`/`R`/`H`/`S`).
+/// upstream rsync's filter-rule syntax (`+`, `-`, `P`, `R`, `!`, `merge`, `dir-merge`).
 fn filter_action_prefix(action: FilterAction) -> &'static str {
     match action {
         FilterAction::Include => "+",

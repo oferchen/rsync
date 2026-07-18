@@ -402,7 +402,7 @@ mod tests {
 
     /// upstream: exclude.c:1419-1428 - the `dir-merge` keyword and the `:`
     /// short form both register a per-directory merge rule. Both forms must
-    /// produce [`ParsedFilterDirective::DirMerge`] so the runtime can defer
+    /// produce `ParsedFilterDirective::DirMerge` so the runtime can defer
     /// the file lookup to each subdirectory rather than loading it eagerly
     /// against the enclosing directory.
     #[test]

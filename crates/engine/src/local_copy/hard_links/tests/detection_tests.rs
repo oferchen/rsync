@@ -19,11 +19,9 @@ fn detects_hard_linked_files_by_nlink() {
     let metadata1 = std::fs::metadata(&file1).unwrap();
     let metadata2 = std::fs::metadata(&file2).unwrap();
 
-    // Both files should have nlink = 2
     assert_eq!(metadata1.nlink(), 2, "first file should have nlink=2");
     assert_eq!(metadata2.nlink(), 2, "second file should have nlink=2");
 
-    // The key function should return a key for both
     let key1 = HardLinkTracker::key(&metadata1);
     let key2 = HardLinkTracker::key(&metadata2);
 
@@ -73,17 +71,14 @@ fn tracker_identifies_first_and_subsequent_occurrences() {
 
     let mut tracker = HardLinkTracker::new();
 
-    // First occurrence: no existing target
     assert!(
         tracker.existing_target(&metadata1).is_none(),
         "first occurrence should not have existing target"
     );
 
-    // Record the first file
     let dest1 = PathBuf::from("/dest/first.txt");
     tracker.record(&metadata1, &dest1);
 
-    // Second occurrence: should find existing target
     let existing = tracker.existing_target(&metadata2);
     assert!(existing.is_some(), "second occurrence should find target");
     assert_eq!(
@@ -96,7 +91,6 @@ fn tracker_identifies_first_and_subsequent_occurrences() {
     let dest2 = PathBuf::from("/dest/second.txt");
     tracker.record(&metadata2, &dest2);
 
-    // Third occurrence: should find the updated target
     let existing = tracker.existing_target(&metadata3);
     assert!(existing.is_some(), "third occurrence should find target");
     assert_eq!(
@@ -166,7 +160,6 @@ fn tracks_multiple_independent_hardlink_groups() {
     let meta2a = std::fs::metadata(&file2a).unwrap();
     let meta2b = std::fs::metadata(&file2b).unwrap();
 
-    // Verify groups have different inodes
     assert_ne!(
         meta1a.ino(),
         meta2a.ino(),
@@ -175,15 +168,12 @@ fn tracks_multiple_independent_hardlink_groups() {
 
     let mut tracker = HardLinkTracker::new();
 
-    // Record first from group 1
     let dest1 = PathBuf::from("/dest/group1_a.txt");
     tracker.record(&meta1a, &dest1);
 
-    // Record first from group 2
     let dest2 = PathBuf::from("/dest/group2_a.txt");
     tracker.record(&meta2a, &dest2);
 
-    // Second from group 1 should link to group 1's destination
     let existing1 = tracker.existing_target(&meta1b);
     assert_eq!(
         existing1,
@@ -191,7 +181,6 @@ fn tracks_multiple_independent_hardlink_groups() {
         "group1 member should link to group1 destination"
     );
 
-    // Second from group 2 should link to group 2's destination
     let existing2 = tracker.existing_target(&meta2b);
     assert_eq!(
         existing2,
@@ -213,7 +202,6 @@ fn recording_standalone_file_has_no_effect() {
     let mut tracker = HardLinkTracker::new();
     tracker.record(&metadata, Path::new("/dest/standalone.txt"));
 
-    // Query should still return None since standalone files are not tracked
     assert!(
         tracker.existing_target(&metadata).is_none(),
         "standalone file should not be tracked"

@@ -73,6 +73,9 @@ impl<'a> CopyContext<'a> {
         }
     }
 
+    /// Loads per-dir-merge filter files for a source directory, pushing this
+    /// directory's rules onto the shared source-side filter stacks. Returns a
+    /// guard that pops them on drop.
     pub(super) fn enter_directory(
         &self,
         source: &Path,
@@ -461,6 +464,9 @@ impl<'a> CopyContext<'a> {
         }))
     }
 
+    /// Returns whether `directory` is excluded by an active per-dir filter
+    /// program, either directly or via an `exclude-if-present` marker file at
+    /// any layer (persistent, ephemeral, or dynamic dir-merge).
     pub(super) fn directory_excluded(
         &self,
         directory: &Path,
@@ -502,14 +508,19 @@ impl<'a> CopyContext<'a> {
         Ok(false)
     }
 
+    /// Returns a mutable reference to the running transfer summary.
     pub(super) const fn summary_mut(&mut self) -> &mut LocalCopySummary {
         &mut self.summary
     }
 
+    /// Returns a reference to the running transfer summary.
     pub(super) const fn summary(&self) -> &LocalCopySummary {
         &self.summary
     }
 
+    /// Records a completed copy action: updates the `--stats` created-entry
+    /// counters, forwards the record to the observer, and appends it to the
+    /// event log when event collection is enabled.
     pub(super) fn record(&mut self, record: LocalCopyRecord) {
         // upstream: receiver.c:733-746 / sender.c:295-308 - every ITEM_IS_NEW
         // entry bumps `stats.created_*` for its type, whether or not file data
@@ -538,6 +549,8 @@ impl<'a> CopyContext<'a> {
         }
     }
 
+    /// Records progress and, if an observer is registered, reports the
+    /// current transfer position for `relative`.
     pub(super) fn notify_progress(
         &mut self,
         relative: &Path,
@@ -560,6 +573,10 @@ impl<'a> CopyContext<'a> {
         }
     }
 
+    /// Copies file contents from `reader` to `writer`, dispatching to a delta,
+    /// sparse, or plain streaming path depending on the arguments. Reports
+    /// progress to the observer and enforces the bandwidth limiter and
+    /// inactivity timeout along the way.
     #[allow(clippy::too_many_arguments)]
     pub(super) fn copy_file_contents(
         &mut self,
