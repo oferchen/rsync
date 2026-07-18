@@ -247,7 +247,7 @@ mod tests {
 
     #[test]
     fn slug_is_filesystem_safe() {
-        assert_eq!(slug("-a --sparse", "local"), "local--a___sparse");
+        assert_eq!(slug("-a --sparse", "local"), "local-_a___sparse");
         assert!(
             slug("--exclude=*.log", "russh")
                 .chars()
