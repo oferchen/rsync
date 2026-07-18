@@ -796,7 +796,12 @@ jobs:
         with:
           tag_name: ${{ github.ref_name }}
           body_path: release_body.md
-          generate_release_notes: true
+          # Do NOT auto-generate the full per-PR changelog: a release spanning
+          # ~1000+ PRs overflows GitHub's 125000-char release-body limit, which
+          # truncates the notes mid-entry and makes later body edits (the
+          # benchmark/criterion append steps) fail with HTTP 422. The curated
+          # CHANGELOG.md link in the template body covers the full change list.
+          generate_release_notes: false
           files: |
             dist/**/*.tar.gz
             dist/**/*.deb

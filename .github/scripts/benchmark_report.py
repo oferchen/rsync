@@ -92,8 +92,12 @@ def highlight_lines(summary):
     lines = ["### Highlights\n"]
     avg = summary.get("avg_ratio")
     if avg is not None:
+        phrase = speedup_phrase(avg)
+        # "at parity" reads "at parity with upstream"; a speedup reads
+        # "Nx faster/slower than upstream".
+        connector = "with" if phrase == "at parity" else "than"
         lines.append(
-            f"- **Overall:** oc-rsync is {speedup_phrase(avg)} than upstream "
+            f"- **Overall:** oc-rsync is {phrase} {connector} upstream "
             f"on average across transfer modes."
         )
     wins = [(m, r) for m, r in ranked if r < 0.95][:3]
