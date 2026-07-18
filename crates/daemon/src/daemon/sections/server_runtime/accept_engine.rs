@@ -93,7 +93,19 @@ impl AcceptEngine for SingleListenerEngine {
                 Ok(AcceptOutcome::Idle)
             }
             Err(error) if error.kind() == io::ErrorKind::Interrupted => Ok(AcceptOutcome::Idle),
-            Err(error) => Err(accept_error(self.local_addr, error)),
+            Err(error) => {
+                // upstream: socket.c:593 `if (fd < 0) continue;` - the accept
+                // loop ignores every accept(2) failure and keeps serving. A
+                // transient per-connection error (ECONNABORTED when a client
+                // resets between the handshake and accept, or EMFILE/ENFILE
+                // under a connection burst) must never tear the daemon down.
+                // Log it, back off briefly so a persistent error cannot
+                // hot-spin the accept thread, then treat the poll as idle so
+                // the loop re-checks signal flags and retries.
+                warn_transient_accept_failure(self.log_sink.as_ref(), self.local_addr, &error);
+                thread::sleep(Duration::from_millis(50));
+                Ok(AcceptOutcome::Idle)
+            }
         }
     }
 
@@ -179,11 +191,13 @@ impl MultiListenerEngine {
         let total_acceptors = listeners.len();
         let mut acceptor_handles: Vec<thread::JoinHandle<()>> =
             Vec::with_capacity(total_acceptors);
+        let log_sink = state.log_sink.clone();
 
         for (listener, local_addr) in listeners.into_iter().zip(bound_addresses.iter().copied()) {
             let tx = tx.clone();
             let shutdown = Arc::clone(&shutdown);
             let graceful_exit = Arc::clone(&graceful_exit);
+            let log_sink = log_sink.clone();
 
             // Set non-blocking so acceptor threads can check the shutdown flag
             // without getting stuck in a blocking accept() call.
@@ -221,13 +235,21 @@ impl MultiListenerEngine {
                             continue;
                         }
                         Err(error) => {
-                            let _ = relay_accept_item(
-                                &tx,
-                                Err((local_addr, error)),
-                                &shutdown,
-                                &graceful_exit,
+                            // upstream: socket.c:593 `if (fd < 0) continue;` -
+                            // a raw accept(2) failure (ECONNABORTED, EMFILE,
+                            // ...) is per-connection and must not kill this
+                            // family's acceptor. Log, back off briefly, and
+                            // keep accepting, mirroring the single-listener
+                            // engine. The relay-and-escalate path below stays
+                            // reserved for a genuinely unusable accepted
+                            // socket (set_nonblocking failure above).
+                            warn_transient_accept_failure(
+                                log_sink.as_ref(),
+                                local_addr,
+                                &error,
                             );
-                            break;
+                            thread::sleep(Duration::from_millis(50));
+                            continue;
                         }
                     }
                 }

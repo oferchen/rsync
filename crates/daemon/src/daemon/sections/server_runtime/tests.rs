@@ -1640,6 +1640,63 @@ fn single_listener_engine_poll_returns_connection_with_blocking_reset() {
 }
 
 #[test]
+#[cfg(unix)]
+fn single_listener_engine_poll_survives_transient_accept_error() {
+    // Regression: a transient per-connection accept(2) failure (EMFILE under a
+    // descriptor shortage, or ECONNABORTED when a client resets during the
+    // accept window) must NOT tear the daemon down. Upstream socket.c:593
+    // `if (fd < 0) continue;` ignores every accept failure and keeps serving.
+    // Before the fix, SingleListenerEngine::poll escalated such errors to a
+    // fatal DaemonError, so one aborted connection under a burst killed the
+    // whole daemon - the concurrency soak bench saw mass connection-refused
+    // pulls and a peak RSS of 0 (the daemon had already exited).
+    //
+    // Force a real EMFILE: queue a pending connection, exhaust the process
+    // descriptor table so accept(2) cannot allocate a socket, then poll once.
+    // The fixed engine maps the error to a non-fatal Ok; the pre-fix engine
+    // returned Err and the accept loop exited.
+    use std::fs::File;
+
+    let listener = TcpListener::bind("127.0.0.1:0").expect("bind");
+    let local = listener.local_addr().expect("local addr");
+    let mut engine = SingleListenerEngine::new(listener, local, None).expect("engine");
+
+    // Queue a connection so the next accept(2) has work to extract.
+    let _client = TcpStream::connect(local).expect("connect");
+    // Let the kernel finish the loopback handshake and queue the connection.
+    thread::sleep(Duration::from_millis(20));
+
+    // Exhaust the descriptor table so accept(2) fails with EMFILE. The first
+    // File::open error is the exhaustion signal (EMFILE/ENFILE); the bound is
+    // a runaway guard only.
+    let mut hogs: Vec<File> = Vec::new();
+    while hogs.len() < 200_000 {
+        match File::open("/dev/null") {
+            Ok(file) => hogs.push(file),
+            Err(_) => break,
+        }
+    }
+    assert!(
+        !hogs.is_empty(),
+        "test precondition: at least one descriptor opened before exhaustion"
+    );
+
+    // accept(2) now fails with EMFILE because a connection is pending but no
+    // descriptor can be allocated. The fix returns Ok (non-fatal); a fatal
+    // Err here would mean the daemon exits on a transient accept error.
+    let outcome = engine.poll();
+
+    // Release the descriptors before asserting so failure reporting has fds.
+    drop(hogs);
+
+    assert!(
+        outcome.is_ok(),
+        "a transient accept(2) error (EMFILE) must be non-fatal - the daemon \
+         must keep serving instead of exiting"
+    );
+}
+
+#[test]
 fn relay_accept_item_delivers_when_capacity_available() {
     let (tx, rx) = std::sync::mpsc::sync_channel::<AcceptItem>(1);
     let shutdown = AtomicBool::new(false);
