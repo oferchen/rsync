@@ -459,10 +459,6 @@ impl PipelinedReceiver {
         self.redo_indices.len()
     }
 
-    /// Sends `Shutdown` and joins the disk thread.
-    ///
-    /// Implicitly drains remaining results. Returns the final accumulated
-    /// (bytes_written, metadata_errors).
     /// Drains accumulated warning/error messages from checksum verification and
     /// permission failures. Each is paired with the upstream `rwrite()` message
     /// code so the caller routes it through the matching multiplex frame:

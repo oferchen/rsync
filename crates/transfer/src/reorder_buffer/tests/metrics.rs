@@ -141,9 +141,7 @@ fn queue_depth_tracks_buffered_count() {
     buf.insert(4, "e").unwrap();
     assert_eq!(buf.metrics().current_depth, 3);
 
-    // Insert head - drains 0 items since 0 is missing, but seq 3 is
-    // head-adjacent. Actually next_expected is 0, so inserting 3,5,4
-    // leaves the head at 0. Nothing drains.
+    // Head (0) never arrived, so nothing drains; depth stays at 3.
     assert_eq!(buf.metrics().current_depth, 3);
     assert_eq!(buf.metrics().current_depth, buf.buffered_count() as u64);
 }
