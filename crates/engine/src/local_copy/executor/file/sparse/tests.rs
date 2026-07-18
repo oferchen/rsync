@@ -2558,9 +2558,7 @@ fn sparse_reader_with_none_strategy_handles_empty_file() {
     assert!(regions.is_empty());
 }
 
-// ---------------------------------------------------------------------------
 // SparseWriter decorator tests
-// ---------------------------------------------------------------------------
 
 #[test]
 fn sparse_writer_all_zero_buffer_produces_only_seeks() {

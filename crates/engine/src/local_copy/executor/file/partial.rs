@@ -13,7 +13,7 @@
 //! # Behavior
 //!
 //! Without `--partial`:
-//! - Temp files use `.rsync-tmp-*` naming
+//! - Temp files use `.~tmp~*` naming
 //! - Deleted on transfer failure or interruption
 //!
 //! With `--partial`:
