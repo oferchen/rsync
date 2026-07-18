@@ -18,12 +18,10 @@ use crate::pipeline::PipelineConfig;
 
 #[test]
 fn incremental_receiver_reads_entries() {
-    // Create test data with a simple file list
     let protocol = ProtocolVersion::try_from(32u8).unwrap();
     let mut data = Vec::new();
     let mut writer = protocol::flist::FileListWriter::new(protocol);
 
-    // Add a directory and a file
     let dir = FileEntry::new_directory("testdir".into(), 0o755);
     let file = FileEntry::new_file("testdir/file.txt".into(), 100, 0o644);
 
@@ -31,25 +29,22 @@ fn incremental_receiver_reads_entries() {
     writer.write_entry(&mut data, &file).unwrap();
     writer.write_end(&mut data, None).unwrap();
 
-    // Create handshake and config
     let handshake = test_handshake();
     let config = test_config();
     let ctx = ReceiverContext::new_for_test(&handshake, config);
 
-    // Create incremental receiver
     let mut receiver = ctx.incremental_file_list_receiver(Cursor::new(&data[..]));
 
-    // First entry should be the directory (it has no parent dependency)
+    // The directory has no parent dependency, so it is ready first.
     let entry1 = receiver.next_ready().unwrap().unwrap();
     assert!(entry1.is_dir());
     assert_eq!(entry1.name(), "testdir");
 
-    // Second entry should be the file (parent dir now exists)
+    // The file is released once its parent dir exists.
     let entry2 = receiver.next_ready().unwrap().unwrap();
     assert!(entry2.is_file());
     assert_eq!(entry2.name(), "testdir/file.txt");
 
-    // No more entries
     assert!(receiver.next_ready().unwrap().is_none());
     assert!(receiver.is_empty());
     assert_eq!(receiver.entries_read(), 2);
@@ -79,7 +74,7 @@ fn incremental_receiver_collect_sorted() {
     let mut data = Vec::new();
     let mut writer = protocol::flist::FileListWriter::new(protocol);
 
-    // Add entries in random order
+    // Entries are supplied out of order to exercise the sort.
     let file1 = FileEntry::new_file("z_file.txt".into(), 50, 0o644);
     let file2 = FileEntry::new_file("a_file.txt".into(), 100, 0o644);
     let dir = FileEntry::new_directory("m_dir".into(), 0o755);
@@ -95,7 +90,6 @@ fn incremental_receiver_collect_sorted() {
 
     let receiver = ctx.incremental_file_list_receiver(Cursor::new(&data[..]));
 
-    // collect_sorted should return entries in sorted order
     let entries = receiver.collect_sorted().unwrap();
     assert_eq!(entries.len(), 3);
 
@@ -121,7 +115,6 @@ fn incremental_receiver_iterator_interface() {
 
     let receiver = ctx.incremental_file_list_receiver(Cursor::new(&data[..]));
 
-    // Use iterator interface
     let entries: Vec<_> = receiver.collect::<Result<Vec<_>, _>>().unwrap();
     assert_eq!(entries.len(), 1);
     assert_eq!(entries[0].name(), "test.txt");
@@ -695,7 +688,6 @@ mod incremental_mode_tests {
         let temp = TempDir::new().unwrap();
         let dest = temp.path();
 
-        // Create nested directory
         let entry = FileEntry::new_directory("a/b/c".into(), 0o755);
         let opts = metadata::MetadataOptions::default();
         let mut failed = FailedDirectories::new();
