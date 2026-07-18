@@ -2,13 +2,13 @@
 //!
 //! This module provides a [`DirectoryWalker`] trait that abstracts directory
 //! traversal, enabling different implementations (walkdir-based, custom, etc.)
-//! to be used interchangeably. The default implementation uses the `walkdir`
-//! crate for efficient, configurable directory walking.
+//! to be used interchangeably. The default implementation uses the `jwalk`
+//! crate for efficient, parallel directory walking.
 //!
 //! # Components
 //!
 //! - [`DirectoryWalker`]: Trait for directory traversal implementations
-//! - [`WalkdirWalker`]: Default implementation using the `walkdir` crate
+//! - [`WalkdirWalker`]: Default implementation using the `jwalk` crate
 //! - [`FilteredWalker`]: Decorator that applies filter rules with early pruning
 //! - [`WalkConfig`]: Builder for traversal configuration options
 //! - [`WalkEntry`]: Represents a single entry yielded during traversal
@@ -63,7 +63,7 @@ use std::path::Path;
 ///
 /// # Implementors
 ///
-/// - [`WalkdirWalker`]: Default implementation using the `walkdir` crate
+/// - [`WalkdirWalker`]: Default implementation using the `jwalk` crate
 pub trait DirectoryWalker: Iterator<Item = Result<WalkEntry, WalkError>> {
     /// Returns the root path being traversed.
     fn root(&self) -> &Path;
