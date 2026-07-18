@@ -319,7 +319,6 @@ fn file_grows_between_syncs_transfers_updated_content() {
 
     std::fs::create_dir(&src).expect("create src");
 
-    // Initial content
     let original = b"original content here";
     std::fs::write(src.join("growing.txt"), original).expect("write original");
 
@@ -390,14 +389,12 @@ fn file_shrinks_between_syncs_transfers_updated_content() {
 
     std::fs::create_dir(&src).expect("create src");
 
-    // Initial large content
     let large = b"this is a substantially longer piece of content that will later be replaced by something much shorter to test shrink handling";
     std::fs::write(src.join("shrinking.txt"), large).expect("write large");
 
     let mut src_trailing = src.clone().into_os_string();
     src_trailing.push("/");
 
-    // First sync
     let (code, _stdout, stderr) = run_with_args([
         OsString::from(RSYNC),
         OsString::from("-r"),
@@ -421,7 +418,6 @@ fn file_shrinks_between_syncs_transfers_updated_content() {
     let new_mtime = FileTime::from_unix_time(1_800_000_000, 0);
     set_file_times(src.join("shrinking.txt"), new_mtime, new_mtime).expect("set shrunk mtime");
 
-    // Re-sync
     let (code, _stdout, stderr) = run_with_args([
         OsString::from(RSYNC),
         OsString::from("-r"),
@@ -528,7 +524,6 @@ fn vanished_source_directory_yields_error_remaining_files_transfer() {
     std::fs::write(src.join("keep/kept.txt"), b"kept").expect("write kept");
     std::fs::write(src.join("gone/lost.txt"), b"lost").expect("write lost");
 
-    // Initial full sync
     let mut src_trailing = src.clone().into_os_string();
     src_trailing.push("/");
 
