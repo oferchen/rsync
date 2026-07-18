@@ -503,6 +503,15 @@ fn build_server_config_for_receiver(
     server_config.flags.numeric_ids = crate::server::NumericIds::from_client(config.numeric_ids());
     server_config.flags.delete = config.delete_mode().is_enabled() || config.delete_excluded();
     server_config.file_selection.size_only = config.size_only();
+    // upstream: options.c:2911-2934 - the alt-dest args (--compare-dest,
+    // --copy-dest, --link-dest) live inside the `if (am_sender)` server_options
+    // block, so on a pull they are never sent over the wire to the remote
+    // sender; the local client IS the receiver and applies them itself in
+    // try_dests_reg() (generator.c:954). Carry them onto the local receiver
+    // config here so the receiver hard-links / copies / skips unchanged files
+    // against the reference dirs. Without this the russh pull transferred every
+    // file whole, while the daemon pull hard-linked.
+    server_config.reference_directories = config.reference_directories().to_vec();
     // upstream: build_server_flag_string no longer packs the compact 'P' letter,
     // and 'D' now tracks devices only, so carry keep_partial and specials onto
     // the local half here (mirrors --partial / --specials|--no-specials which the
@@ -578,6 +587,42 @@ mod tests {
         assert!(is_ssh_url("ssh://host/path"));
         assert!(is_ssh_url("ssh://user@host/path"));
         assert!(is_ssh_url("ssh://user:pass@host:2222/path"));
+    }
+
+    /// The embedded (russh) pull receiver must carry the alt-dest reference
+    /// directories onto its ServerConfig, exactly like the subprocess ssh and
+    /// daemon receiver builders. On a pull the args are never forwarded to the
+    /// remote sender (upstream options.c:2911-2934 gates them on am_sender), so
+    /// the local receiver applies them itself in try_dests_reg()
+    /// (generator.c:954). Regression guard for the `ssh://` pull that hard-linked
+    /// nothing because reference_directories was empty.
+    #[test]
+    fn embedded_receiver_config_propagates_reference_directories() {
+        use crate::client::config::ReferenceDirectoryKind;
+
+        let config = ClientConfig::builder()
+            .compare_destination("/tmp/compare")
+            .link_destination("/prev")
+            .build();
+        let server_config =
+            build_server_config_for_receiver(&config, &["dest".to_owned()]).unwrap();
+
+        assert_eq!(server_config.reference_directories.len(), 2);
+        assert_eq!(
+            server_config.reference_directories[0].kind(),
+            ReferenceDirectoryKind::Compare
+        );
+        assert_eq!(
+            server_config.reference_directories[1].kind(),
+            ReferenceDirectoryKind::Link
+        );
+        assert_eq!(
+            server_config.reference_directories[1]
+                .path()
+                .to_str()
+                .unwrap(),
+            "/prev"
+        );
     }
 
     #[test]
