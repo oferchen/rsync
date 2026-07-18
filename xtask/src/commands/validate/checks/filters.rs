@@ -213,7 +213,7 @@ fn build_fixture(src: &Path) -> Result<(), String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{build_fixture, exclusion_violation};
+    use super::exclusion_violation;
     use std::fs;
 
     #[test]
@@ -260,6 +260,7 @@ mod tests {
     #[cfg(target_os = "linux")]
     #[test]
     fn build_fixture_is_idempotent_and_populates_the_tree() {
+        use super::build_fixture;
         let dir = tempfile::tempdir().unwrap();
         let src = dir.path().join("src");
         build_fixture(&src).unwrap();

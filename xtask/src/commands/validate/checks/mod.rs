@@ -12,6 +12,9 @@ mod filters;
 mod itemize;
 mod metadata;
 mod progress;
+mod prune_empty_dirs;
+mod relative;
+mod remove_source_files;
 mod rsync_path;
 mod special_bits;
 mod stats;
@@ -28,13 +31,16 @@ pub fn all() -> Vec<Box<dyn Check>> {
         Box::new(chmod::Chmod),
         Box::new(chown::Chown),
         Box::new(acl_xattr::AclXattr),
+        Box::new(relative::Relative),
         Box::new(progress::Progress),
         Box::new(verbosity::Verbosity),
         Box::new(itemize::Itemize),
         Box::new(dry_run::DryRun),
         Box::new(banner::Banner),
         Box::new(filters::Filters),
+        Box::new(prune_empty_dirs::PruneEmptyDirs),
         Box::new(delete::Delete),
+        Box::new(remove_source_files::RemoveSourceFiles),
         Box::new(compress::Compress),
         Box::new(checksum::Checksum),
         Box::new(stats::Stats),
