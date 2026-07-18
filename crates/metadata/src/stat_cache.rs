@@ -30,7 +30,7 @@ pub struct MetadataCache {
     misses: usize,
 }
 
-/// Cached metadata fields extracted from a stat or statx call.
+/// Cached metadata fields extracted from a stat call.
 ///
 /// Contains only the fields needed for permission and ownership checks,
 /// keeping the struct small and cheap to clone.

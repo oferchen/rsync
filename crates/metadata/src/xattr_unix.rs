@@ -28,7 +28,7 @@ pub fn list_attributes(path: &Path, follow_symlinks: bool) -> io::Result<Vec<OsS
 
 /// Reads a single xattr value as raw bytes, or `Ok(None)` if missing.
 ///
-/// On macOS the read is routed through [`read_attribute_macos`] so resource
+/// On macOS the read is routed through the macOS variant so resource
 /// forks larger than the kernel's 64 MiB single-call ceiling are fetched in
 /// full via positioned `getxattr(2)` calls, matching upstream rsync's
 /// `sys_lgetxattr` (`lib/sysxattrs.c:60-80`). On other Unix platforms the
