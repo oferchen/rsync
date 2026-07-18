@@ -35,7 +35,7 @@ All transfer modes (local, SSH, daemon), delta algorithm, metadata preservation,
 | **Reference dirs** | `--compare-dest`, `--link-dest`, `--copy-dest` |
 | **Options** | `--delay-updates`, `--inplace`, `--partial`, `--iconv`, fuzzy matching |
 | **I/O** | io_uring (Linux 5.6+), `copy_file_range`, `clonefile` (macOS), adaptive buffers |
-| **Memory** | Flat file list with arena allocation for efficient scaling at high file counts |
+| **Memory** | Flat file list (contiguous `Vec<FileEntry>`) for efficient scaling at high file counts |
 | **Platforms** | Linux, macOS (full); Windows (NTFS DACL partial, xattrs via NTFS ADS, IOCP file + socket I/O, symlinks with junction fallback; no POSIX device nodes) |
 
 ### Platform Support
@@ -81,11 +81,11 @@ oc-rsync negotiates `protocol_version` per upstream, defaults to 32, and support
 
 | Protocol | Upstream rsync version | Status in oc-rsync | Notes |
 |----------|------------------------|--------------------|-------|
-| 32       | 3.4.x (current)        | Full support        | Primary target; all features negotiated |
-| 31       | 3.2.x - 3.3.x          | Full support        | Verified via interop matrix |
-| 30       | 3.1.x                  | Full support        | Verified via interop matrix |
-| 29       | 3.0.x                  | Full support        | Verified via interop matrix; sort.rs t_PATH/t_ITEM gate (RP28.h) |
-| 28       | 2.6.x                  | Wire-level support  | Validated via wire-byte regression tests (RP28.g, RP28.h); full interop with upstream 2.6.9 daemon/client tracked under RP28 series |
+| 32       | 3.4.x (current)        | Full support        | Primary target; all features negotiated. Protocol 32 was introduced in rsync 3.4.0 |
+| 31       | 3.1.x - 3.3.x          | Full support        | Verified via interop matrix (3.1.3); introduced in rsync 3.1.0 and used through the 3.2.x/3.3.x series |
+| 30       | 3.0.x                  | Full support        | Verified via interop matrix (3.0.9) |
+| 29       | 2.6.9                  | Full support        | Non-blocking interop against upstream 2.6.9 (RP28.c/RP28.d); sort.rs t_PATH/t_ITEM gate (RP28.h) |
+| 28       | 2.6.0 - 2.6.8          | Wire-level support  | Validated via wire-byte regression tests (RP28.g, RP28.h) |
 | <= 27    | <= 2.5.x               | Not supported       | Pre-dates protocol cleanup; not tested |
 
 Per-version dispatch is implemented as `protocol_version` gates in the wire codecs. See [`crates/protocol/src/wire/compressed_token/zlib_codec.rs`](./crates/protocol/src/wire/compressed_token/zlib_codec.rs) and the sibling [`zstd_codec.rs`](./crates/protocol/src/wire/compressed_token/zstd_codec.rs) / [`lz4_codec.rs`](./crates/protocol/src/wire/compressed_token/lz4_codec.rs) for representative examples of the gates that switch on `protocol_version`.
@@ -119,7 +119,7 @@ The full tier requires Linux 6.0+ together with the `iouring-send-zc` cargo feat
 
 ### SSH transport (russh)
 
-oc-rsync uses the Rust [`russh`](https://crates.io/crates/russh) crate for SSH transport, embedded directly in the binary. The default code path does not spawn an external `ssh` subprocess. Authentication uses key-based (RSA, ED25519, ECDSA) and password methods compatible with OpenSSH, and per-host settings are read from `~/.ssh/config` via the [`ssh2-config`](https://crates.io/crates/ssh2-config) integration (SSC-3 series).
+oc-rsync uses the Rust [`russh`](https://crates.io/crates/russh) crate for SSH transport, embedded directly in the binary. The default code path does not spawn an external `ssh` subprocess. Authentication uses key-based (RSA, ED25519, ECDSA) and password methods compatible with OpenSSH, and per-host settings are read from `~/.ssh/config` (and `/etc/ssh/ssh_config`) by an in-house parser (`rsync_io::ssh::ssh_config`, on by default via the `ssh-config-parse` feature), not an external SSH-config crate.
 
 What this changes versus upstream rsync, which shells out to the system `ssh` binary:
 
@@ -141,7 +141,7 @@ See also the `SSH TRANSPORT` section of `oc-rsync(1)` for the man-page summary.
 
 Benchmarked against upstream rsync 3.4.4 on each tagged release across local, SSH, and daemon transfer modes; the chart and a per-mode breakdown are attached to every [GitHub release](https://github.com/oferchen/rsync/releases/latest).
 
-Threaded architecture replaces upstream's fork-based pipeline while keeping full protocol compatibility, reducing syscall overhead and context switches. Adaptive I/O buffers scale from 8KB to 1MB based on file size. Optional io_uring on Linux 5.6+ with three policies: *auto* (default; probe kernel and fall back to standard I/O), `--io-uring` (require io_uring; error if unavailable), `--no-io-uring` (always use standard buffered I/O). The active backend is reported by `--version` and `-vv` output. See `oc-rsync(1)` for details.
+Threaded architecture replaces upstream's fork-based pipeline while keeping full protocol compatibility, reducing syscall overhead and context switches. Adaptive I/O buffers scale from 8KB to 1MB based on file size. Optional io_uring on Linux 5.6+ with three policies: *auto* (default; probe kernel and fall back to standard I/O), `--io-uring` (require io_uring; error if unavailable), `--no-io-uring` (always use standard buffered I/O). The active backend is reported in `--version` output. See `oc-rsync(1)` for details.
 
 ### Performance tuning
 
@@ -159,13 +159,13 @@ oc-rsync -avz user@host:/src/ /dst/
 oc-rsync -avz -e 'ssh -C' user@host:/src/ /dst/
 ```
 
-`oc-rsync` emits a one-line warning when it spots `-C` (or `-o Compression=yes`) in the `--rsh` / `-e` argv it builds for the SSH child, but it does **not** parse `~/.ssh/config` or `/etc/ssh/ssh_config`, so a `Compression yes` directive set there is invisible to the warning. If throughput looks CPU-bound on an SSH transfer, check those files as well.
+`oc-rsync` warns when it spots `-C` (or `-o Compression=yes`) in the `--rsh` / `-e` argv it builds for the SSH child, and - with the default `ssh-config-parse` feature - also when a `Compression yes` directive applies via `~/.ssh/config`, the `-F` config file, or `/etc/ssh/ssh_config` (honouring `Host` and `Match` blocks). It warns but does not auto-disable either layer, so if throughput looks CPU-bound on an SSH transfer, drop `-z` or the SSH compression yourself.
 
 #### `--zero-copy` and io_uring `SEND_ZC`
 
-`--zero-copy` advertises io_uring `SEND_ZC` as one of the zero-copy primitives it may dispatch on Linux, alongside `sendfile`, `splice`, and `copy_file_range`. The `SEND_ZC` dispatch itself is gated behind the `iouring-send-zc` cargo feature, which is **not** in the default feature set; the gate is documented as "Disabled by default pending kernel/workload benchmarks" in `crates/fast_io/Cargo.toml`. Default distro builds therefore use plain io_uring `SEND` even when `--zero-copy` is set; the other zero-copy primitives still kick in where the kernel supports them.
+`--zero-copy` advertises io_uring `SEND_ZC` as one of the zero-copy primitives it may dispatch on Linux, alongside `sendfile`, `splice`, and `copy_file_range`. The `SEND_ZC` dispatch itself is gated behind the `iouring-send-zc` cargo feature, which is **not** in the default feature set (it is kept opt-in in `crates/fast_io/Cargo.toml` pending multi-kernel benchmark numbers). Default distro builds therefore use plain io_uring `SEND` even when `--zero-copy` is set; the other zero-copy primitives still kick in where the kernel supports them.
 
-To get `SEND_ZC` dispatch, build with `cargo build --features iouring-send-zc` (requires Linux 5.16+). See [`docs/design/iouring-send-zc.md`](./docs/design/iouring-send-zc.md) for the full rationale and the path to flipping this default on.
+To get `SEND_ZC` dispatch, build with `cargo build --features iouring-send-zc` (requires Linux 6.0+). See [`docs/design/iouring-send-zc.md`](./docs/design/iouring-send-zc.md) for the full rationale and the path to flipping this default on.
 
 #### SSH stderr socketpair channel
 
@@ -195,7 +195,7 @@ oc-rsync is wire-compatible with upstream rsync 3.4.4, but a few architectural c
 - **io_uring buffer pool.** The registered buffer pool defaults to 1024 × 4 KiB = 4 MiB and does not auto-adapt under sustained I/O pressure, though its slot count, memory cap, and block size are tunable at runtime via the `OC_RSYNC_BUFFER_POOL_SIZE`, `OC_RSYNC_BUFFER_POOL_MEMORY_CAP`, and `OC_BUFFER_POOL_BLOCK_SIZE` environment variables. Workloads with very high concurrent file fan-out may still see throughput plateau before saturating the device.
 - **bgid namespace.** io_uring buffer-group IDs are a 16-bit namespace; the buffer ring helpers cap at this bound. Long-running daemons that recycle thousands of distinct ring groups should monitor for exhaustion.
 - **Delta computation is single-threaded per file by default.** The delta sender is sequential per file. Large-file delta scanning can be parallelised opt-in with `--parallel-delta-scan`, and basis-signature hashing with `--checksum-threads=N`; without those flags a large-file transfer uses one CPU for delta work.
-- **SSH compression interaction.** When the SSH transport already compresses the stream (e.g., `Compression yes` in `ssh_config`), running `oc-rsync -z` compresses payloads twice. oc-rsync emits a one-line warning when it detects `-C` / `-o Compression=yes` in the SSH argv it builds, but it does not parse `~/.ssh/config` and does not auto-disable either layer; operators should pick one.
+- **SSH compression interaction.** When the SSH transport already compresses the stream (e.g., `Compression yes` in `ssh_config`), running `oc-rsync -z` compresses payloads twice. oc-rsync warns when it detects `-C` / `-o Compression=yes` in the SSH argv it builds, and - with the default `ssh-config-parse` feature - when a `Compression yes` directive applies via `~/.ssh/config` / `-F` / `/etc/ssh/ssh_config`; it does not auto-disable either layer, so operators should pick one.
 - **Daemon encryption.** The daemon protocol is plaintext, matching upstream rsync (authentication only, no encryption). oc-rsync has no built-in TLS client - the former `--ssl` / `client-tls` path was removed to match upstream. Encrypt with the SSH transport, or place the daemon behind a TLS-terminating proxy (`stunnel`, HAProxy, nginx) and reach it through an external wrapper such as `rsync-ssl` or `stunnel`, the same model as upstream.
 - **Windows IOCP scope.** IOCP is wired for socket I/O (daemon and SSH transports) and for the receive-side disk-write pipeline (`transfer::disk_commit` dispatches `Writer::Iocp` when the IOCP backend is selected on Windows). An IOCP file *reader* also exists, but the per-file dispatch that would select it is behind the experimental, non-default `adaptive-basis-dispatch` feature, so default builds still read files via standard buffered I/O.
 - **`.rsync-filter` per-directory inheritance.** Per-directory merge inheritance passes upstream's `testsuite/*.test` filter corpus (the known-failures roster is empty), including nested merges and `!`-clear semantics; the deepest anchored-vs-unanchored corner cases remain an area of ongoing hardening.
@@ -259,12 +259,12 @@ release binary on modern Linux/macOS/Windows hosts; everything marked
 | `io_uring` | workspace, `transfer`, `fast_io` | yes | Linux 5.6+ batched async I/O with runtime fallback. | stable |
 | `iocp` | workspace, `transfer`, `fast_io` | yes | Windows I/O Completion Ports for overlapped file and socket I/O. | stable |
 | `copy_file_range` | workspace, `fast_io` | yes | Compat alias; the `copy_file_range` syscall is now always compiled with runtime detection. | stable |
-| `async` | workspace, `core`, `engine`, `transfer`, `daemon` | yes | Brings in tokio for async I/O paths across the orchestrator stack. | stable |
+| `async` | workspace, `core`, `engine`, `daemon` | yes | Brings in tokio for async I/O paths across the orchestrator stack. | stable |
 | `openssl` | workspace, `checksums` | no | Routes MD4/MD5 through the system OpenSSL build. | stable |
 | `openssl-vendored` | workspace, `checksums` | no | Same as `openssl` but statically links a vendored OpenSSL. | stable |
-| `embedded-ssh` | workspace, `core`, `rsync_io` | no | Pure-Rust SSH client via `russh`; removes the runtime dependency on system `ssh`. | stable |
+| `embedded-ssh` | workspace, `core`, `rsync_io` | yes | Pure-Rust SSH client via `russh`; removes the runtime dependency on system `ssh`. | stable |
 | `sd-notify` | workspace, `core`, `daemon` | no | systemd `sd-notify` integration for the daemon. | stable |
-| `incremental-flist` | `transfer` | yes | Incremental file-list processing with failed-directory tracking. | stable |
+| `incremental-flist` | `transfer` | no | Incremental file-list processing with failed-directory tracking (a `transfer` crate feature, not forwarded into the default `oc-rsync` build). | stable |
 | `lazy-metadata` | `engine` | yes | Defers `stat()` calls until metadata is needed. | stable |
 | `multi-producer` | `engine` | no | Relaxes the single-producer compile-time invariant on `WorkQueueSender`. | experimental |
 | `thread-slab-pool` | `engine` | no | Per-thread bounded LIFO slab in front of `BufferPool`; pays off above ~32 workers (#1271, #1370). | experimental |
@@ -365,7 +365,7 @@ For supported options: `oc-rsync --help`
 
 ```bash
 cargo fmt --all -- --check
-cargo clippy --workspace --all-targets --all-features --no-deps -D warnings
+cargo clippy --workspace --all-targets --all-features --no-deps -- -D warnings
 cargo nextest run --workspace --all-features
 ```
 
@@ -426,12 +426,12 @@ All crates enforce `#![deny(unsafe_code)]`. Targeted `#[allow(unsafe_code)]` is 
 - **protocol** - One isolated allow in `multiplex::helpers` for frame parsing
 - **windows-gnu-eh** - Windows GNU exception handling shims
 
-Not vulnerable to known upstream rsync CVEs (CVE-2024-12084 through CVE-2024-12088, CVE-2024-12747). All CVE mitigations complete (SEC-1, SEC-2, SEC-3, SEC-MK series). TOCTOU path-based syscalls replaced with `*at` variants throughout.
+Not vulnerable to (or mitigated against) known upstream rsync CVEs (CVE-2024-12084 through CVE-2024-12088, CVE-2024-12747) - see `SECURITY.md` for the per-CVE status. All CVE mitigations complete (SEC-1, SEC-2, SEC-3, SEC-MK series). TOCTOU path-based syscalls replaced with `*at` variants throughout.
 
 ### Upstream rsync 3.4.3 hardening
 
 - **TOCTOU mitigation for path-based daemon syscalls** (CVE-2026-29518, CVE-2026-43619): the receiver routes every mutating filesystem call through a `DirSandbox` carrier anchored on an `O_DIRECTORY | O_NOFOLLOW` root dirfd, with `openat2(RESOLVE_BENEATH | RESOLVE_NO_SYMLINKS)` runtime detection. Coverage spans the full `*at` syscall family: `unlinkat`, `mkdirat`, `symlinkat`, `linkat`, `fchmodat`, `fchownat`, `utimensat`, `renameat`, and `fstatat`. macOS provides the same `*at` semantics and is verified; Windows uses NTFS handle-based APIs, where the path TOCTOU window does not apply.
-- **Defense-in-depth (Linux only, cargo feature `landlock`)**: the daemon engages a kernel-side allowlist over the resolved module root via the Landlock LSM. A per-connection `restrict_self()` runs immediately after `apply_module_privilege_restrictions` returns, so any filesystem syscall that resolves a path outside the module root is rejected with `EACCES` regardless of which syscall the userspace code chose. Requires Linux 5.13+ (ABI v1), 5.19+ (v2 adds `REFER` for cross-directory renames), or 6.2+ (v3 adds `TRUNCATE`). Best-effort ABI downgrade picks the highest level the running kernel exposes; on pre-5.13 kernels the `*at` helpers remain the sole defense. See [`docs/design/sec-1-p-landlock-defense-in-depth-2026-05-22.md`](./docs/design/sec-1-p-landlock-defense-in-depth-2026-05-22.md).
+- **Defense-in-depth (Linux only, cargo feature `landlock`)**: the daemon engages a kernel-side allowlist over the resolved module root via the Landlock LSM. A per-connection `restrict_self()` runs immediately after `apply_module_privilege_restrictions` returns, so any filesystem syscall that resolves a path outside the module root is rejected with `EACCES` regardless of which syscall the userspace code chose. The helper requests the highest Landlock ABI (up to v5) and best-effort downgrades to whatever the running kernel supports: v1 on Linux 5.13+, v2 (adds `REFER` for cross-directory renames) on 5.19+, v3 (adds `TRUNCATE`) on 6.2+, up to v5 on recent kernels. On pre-5.13 kernels the `*at` helpers remain the sole defense. See [`docs/design/sec-1-p-landlock-defense-in-depth-2026-05-22.md`](./docs/design/sec-1-p-landlock-defense-in-depth-2026-05-22.md).
 - **CONNECT proxy bounded-read** (CVE-2026-45232): the HTTP CONNECT response-line parser caps line length at the upstream-aligned ceiling, so the C off-by-one stack write is structurally impossible against a heap `Vec<u8>` push path.
 - **Hyphen-prefixed remote-shell hostname rejection** (rsync 3.4.3 hardening): the SSH operand parser rejects hostnames that begin with `-`, blocking the `-oProxyCommand=`-style argument-injection class.
 
