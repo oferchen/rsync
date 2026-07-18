@@ -1,3 +1,17 @@
+//! Buffered sniffer that reads from a transport until the negotiation style is
+//! known, owning the consumed prefix so callers can replay it into the legacy
+//! greeting parser.
+//!
+//! Wraps `NegotiationPrologueDetector` with an owned buffer and drain helpers.
+//! Split into focused submodules:
+//!
+//! - `core` - the `NegotiationPrologueSniffer` type and its accessors
+//! - `observe` - feeding transport bytes and reading until decided
+//! - `legacy` - reading and parsing the `@RSYNCD:` daemon greeting
+//! - `drain` - replaying the buffered prefix and remainder into caller storage
+//! - `util` - shared vectored-copy and capacity helpers
+//! - `async_read` - tokio `AsyncRead` support (feature `async`)
+
 mod core;
 mod drain;
 mod legacy;

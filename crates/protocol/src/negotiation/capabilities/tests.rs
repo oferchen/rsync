@@ -11,8 +11,6 @@ use crate::ProtocolVersion;
 fn test_checksum_algorithm_roundtrip() {
     for &name in &["md4", "md5", "sha1", "xxh64", "xxh128"] {
         let algo = ChecksumAlgorithm::parse(name).unwrap();
-        // Note: xxh64 wire name is "xxh64" but as_str returns "xxh64"
-        // This is correct as the parsing accepts both "xxh" and "xxh64"
         let roundtrip = algo.as_str();
         let reparsed = ChecksumAlgorithm::parse(roundtrip).unwrap();
         assert_eq!(algo, reparsed, "roundtrip failed for {name}");
@@ -2787,8 +2785,8 @@ fn capability_fallback_xxh_alias_in_list() {
     // "xxh" should be recognized as xxh64
     let remote_list = "xxh md5";
     let result = choose_checksum_algorithm(remote_list, true).unwrap();
-    // Note: "xxh" parses to XXH64, but SUPPORTED_CHECKSUMS has "xxh64" not "xxh"
-    // So this should skip "xxh" and match "md5"
+    // "xxh" parses to XXH64, whose canonical name "xxh64" is in
+    // SUPPORTED_CHECKSUMS, so it matches before "md5".
     assert_eq!(result, ChecksumAlgorithm::XXH64);
 }
 
