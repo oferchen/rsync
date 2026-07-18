@@ -1,7 +1,7 @@
 //! Parsers for simple numeric command-line arguments.
 //!
-//! Handles `--timeout`, `--max-delete`, `--checksum-seed`, `--modify-window`,
-//! and `--human-readable` options with upstream-compatible error messages.
+//! Handles `--timeout`, `--max-delete`, `--checksum-seed`, and `--modify-window`
+//! options with upstream-compatible error messages.
 
 use std::ffi::OsStr;
 use std::num::{IntErrorKind, NonZeroU64};

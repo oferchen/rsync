@@ -45,7 +45,5 @@ mod tests {
     // and implementation are straightforward write operations.
 
     #[test]
-    fn module_compiles() {
-        // This test ensures the module compiles correctly
-    }
+    fn module_compiles() {}
 }

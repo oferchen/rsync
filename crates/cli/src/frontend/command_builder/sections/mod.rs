@@ -1,3 +1,5 @@
+//! Option-group sections that extend the clap command in stages.
+
 mod build_base_command;
 mod connection_and_logging_options;
 mod transfer_behavior_options;
