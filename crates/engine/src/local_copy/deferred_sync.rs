@@ -31,7 +31,6 @@ use std::path::{Path, PathBuf};
 use std::os::unix::io::AsRawFd;
 
 /// Strategy for when to perform filesystem sync operations.
-///
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SyncStrategy {
     /// Sync immediately after each file write.
@@ -70,7 +69,6 @@ impl Default for SyncStrategy {
 ///
 /// Tracks files that need syncing and flushes them according to the
 /// configured [`SyncStrategy`].
-///
 #[derive(Debug)]
 pub struct DeferredSync {
     /// Files pending sync.
