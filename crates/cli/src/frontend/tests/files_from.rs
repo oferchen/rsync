@@ -618,7 +618,6 @@ fn files_from_integration_copies_listed_files() {
     let source_dir = tmp.path().join("source");
     std::fs::create_dir(&source_dir).expect("create source");
 
-    // Create source files
     std::fs::write(source_dir.join("file1.txt"), b"content1").expect("write file1");
     std::fs::write(source_dir.join("file2.txt"), b"content2").expect("write file2");
     std::fs::write(source_dir.join("file3.txt"), b"content3").expect("write file3");
@@ -1513,7 +1512,6 @@ fn files_from_integration_with_from0_copies_listed_files() {
     let source_dir = tmp.path().join("source");
     std::fs::create_dir(&source_dir).expect("create source");
 
-    // Create source files
     std::fs::write(source_dir.join("file1.txt"), b"content1").expect("write file1");
     std::fs::write(source_dir.join("file2.txt"), b"content2").expect("write file2");
     std::fs::write(source_dir.join("file3.txt"), b"content3").expect("write file3");
