@@ -89,8 +89,7 @@ pub fn read_active_lsms_from(path: &str) -> Option<Vec<String>> {
 }
 
 /// Returns `true` when the running kernel exposes at least one mandatory
-/// access control LSM (SELinux, AppArmor, Smack, Tomoyo, lockdown, Yama,
-/// or BPF-LSM).
+/// access control LSM (SELinux, AppArmor, Smack, or Tomoyo).
 ///
 /// The result is computed once on first call and cached for the process
 /// lifetime via [`OnceLock`]; subsequent calls are a single atomic load.

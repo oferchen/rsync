@@ -460,8 +460,6 @@ pub fn open_sequential_read(path: &Path) -> io::Result<std::fs::File> {
 /// [`MacosWriter::is_nocache_enabled`] to check the tracked state instead.
 #[cfg(target_os = "macos")]
 pub fn is_nocache_set(_file: &std::fs::File) -> bool {
-    // F_NOCACHE is a set-only fcntl on macOS; there is no corresponding
-    // query command. The MacosWriter tracks this state internally.
     false
 }
 

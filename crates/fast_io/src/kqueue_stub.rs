@@ -139,7 +139,7 @@ impl KqueueLoop {
         ))
     }
 
-    /// Stub - always returns an empty `Vec`.
+    /// Stub - always returns `Unsupported`.
     ///
     /// # Errors
     ///
@@ -151,7 +151,7 @@ impl KqueueLoop {
         ))
     }
 
-    /// Stub - always returns an empty `Vec`.
+    /// Stub - always returns `Unsupported`.
     ///
     /// # Errors
     ///
