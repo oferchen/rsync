@@ -512,6 +512,19 @@ fn build_server_config_for_receiver(
     // against the reference dirs. Without this the russh pull transferred every
     // file whole, while the daemon pull hard-linked.
     server_config.reference_directories = config.reference_directories().to_vec();
+    // upstream: backup.c:make_backup() runs on the receiver, invoked from
+    // generator.c/receiver.c. `make_backups` rides in the compact flag string as
+    // 'b' (options.c:2630-2631), so flags.backup is already set here; but
+    // --backup-dir / --suffix are long-form values finalized in the local popt
+    // parse (options.c:2285-2298) and never delivered onto the receiver config.
+    // On a pull the local client IS the receiver, so carry backup_dir/backup_suffix
+    // here - otherwise effective_backup_suffix() falls back to "~" and the backup
+    // lands beside the file instead of in --backup-dir (local/daemon pulls kept
+    // them and behaved correctly).
+    server_config.backup_dir = config.backup_directory().map(|p| p.display().to_string());
+    server_config.backup_suffix = config
+        .backup_suffix()
+        .map(|s| s.to_string_lossy().into_owned());
     // upstream: build_server_flag_string no longer packs the compact 'P' letter,
     // and 'D' now tracks devices only, so carry keep_partial and specials onto
     // the local half here (mirrors --partial / --specials|--no-specials which the
@@ -623,6 +636,40 @@ mod tests {
                 .unwrap(),
             "/prev"
         );
+    }
+
+    /// The embedded (russh) pull receiver must carry --backup-dir / --suffix onto
+    /// its ServerConfig. `make_backups` rides in the compact 'b' letter so
+    /// flags.backup is set, but the backup directory and suffix are long-form
+    /// values (upstream options.c:2285-2298) the local receiver applies itself in
+    /// backup.c:make_backup(). Regression guard for the `ssh://` pull that wrote a
+    /// "~" backup beside the file instead of into --backup-dir.
+    #[test]
+    fn embedded_receiver_config_propagates_backup_dir_and_suffix() {
+        let config = ClientConfig::builder()
+            .backup(true)
+            .backup_directory(Some("/bak"))
+            .backup_suffix(Some(".old"))
+            .build();
+        let server_config =
+            build_server_config_for_receiver(&config, &["dest".to_owned()]).unwrap();
+
+        assert!(server_config.flags.backup);
+        assert_eq!(server_config.backup_dir.as_deref(), Some("/bak"));
+        assert_eq!(server_config.backup_suffix.as_deref(), Some(".old"));
+    }
+
+    /// Without --backup the receiver config carries no backup directory or suffix,
+    /// so the backup path stays disabled.
+    #[test]
+    fn embedded_receiver_config_without_backup_has_no_backup_dir() {
+        let config = ClientConfig::builder().build();
+        let server_config =
+            build_server_config_for_receiver(&config, &["dest".to_owned()]).unwrap();
+
+        assert!(!server_config.flags.backup);
+        assert!(server_config.backup_dir.is_none());
+        assert!(server_config.backup_suffix.is_none());
     }
 
     #[test]
