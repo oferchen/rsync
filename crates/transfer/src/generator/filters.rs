@@ -264,7 +264,6 @@ impl GeneratorContext {
             combined
         };
 
-        // Convert wire format to FilterChain
         if !combined.is_empty() {
             let (filter_set, merge_configs) = self.parse_received_filters(&combined)?;
             self.filter_chain = FilterChain::new(filter_set);
@@ -434,7 +433,6 @@ impl GeneratorContext {
                 RuleType::Protect => FilterRule::protect(reconstructed_pattern),
                 RuleType::Risk => FilterRule::risk(reconstructed_pattern),
                 RuleType::Clear => {
-                    // Clear rule removes all previous rules
                     rules.push(
                         FilterRule::clear()
                             .with_sides(wire_rule.sender_side, wire_rule.receiver_side),
@@ -744,12 +742,6 @@ mod tests {
         assert_eq!(config.filename(), ".rsync-filter");
     }
 
-    /// `:C .cvsignore` (FILTRULE_CVS_IGNORE on a DirMerge) must switch the
-    /// `DirMergeConfig` into CVS-mode so the chain parses each whitespace
-    /// token in `.cvsignore` as an exclude rule. Without this, lines like
-    /// `one-in-one-out` fail standard merge parsing and abort the walk.
-    /// Upstream's `:C` does NOT exclude the merge file itself; only the
-    /// explicit `e` modifier does.
     /// A `:w .filt` dir-merge arrives over the wire with `word_split=true`.
     /// The remote sender must carry that onto the `DirMergeConfig` so the
     /// per-directory file is tokenised on whitespace, matching the local path.
@@ -776,6 +768,12 @@ mod tests {
         assert!(config.no_prefixes());
     }
 
+    /// `:C .cvsignore` (FILTRULE_CVS_IGNORE on a DirMerge) must switch the
+    /// `DirMergeConfig` into CVS-mode so the chain parses each whitespace
+    /// token in `.cvsignore` as an exclude rule. Without this, lines like
+    /// `one-in-one-out` fail standard merge parsing and abort the walk.
+    /// Upstream's `:C` does NOT exclude the merge file itself; only the
+    /// explicit `e` modifier does.
     #[test]
     fn wire_rule_to_dir_merge_config_cvs_flag_enables_cvs_mode() {
         let mut wire_rule = make_dir_merge_wire_rule(".cvsignore");
