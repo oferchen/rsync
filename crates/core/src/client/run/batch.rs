@@ -473,8 +473,6 @@ mod tests {
         );
     }
 
-    // --- serialize_filter_rules tests ---
-
     #[test]
     fn serialize_empty_rules_returns_empty_string() {
         assert_eq!(serialize_filter_rules(&[]), "");
