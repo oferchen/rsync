@@ -67,6 +67,20 @@ impl ReceiverContext {
         let mut flist_ndx_codec = create_ndx_codec(self.protocol.as_u8());
         self.ensure_all_segments_loaded(reader, &mut flist_ndx_codec)?;
 
+        // Decide the plain-`-v` directory NAME lines from the PRE-transfer
+        // state, before create_directories applies metadata or child mkdirs
+        // bump a parent's mtime. Upstream names a directory only when
+        // set_file_attrs() changed it (generator.c:1503-1505); a directory
+        // absent pre-transfer is treated as newly created and named.
+        let verbose_dir_lines = if self.config.flags.verbose
+            && self.config.connection.client_mode
+            && !self.should_emit_itemize()
+        {
+            self.verbose_dir_name_lines(&setup.dest_dir)
+        } else {
+            Vec::new()
+        };
+
         // upstream: generator.c:1317-1326 - make_path() for relative_paths
         self.ensure_relative_parents(&setup.dest_dir);
         let mut metadata_errors = self.create_directories(
@@ -157,23 +171,8 @@ impl ReceiverContext {
         // entry is reached, so a directory precedes its children). Trailing
         // directories with no transferred child flush at end of run.
         if self.interleave_names {
-            let dir_names: Vec<(usize, String)> = self
-                .file_list
-                .iter()
-                .enumerate()
-                .filter(|(_, entry)| entry.is_dir())
-                .map(|(idx, entry)| {
-                    let rel = entry.path();
-                    let line = if rel.as_os_str() == "." {
-                        "./\n".to_string()
-                    } else {
-                        format!("{}/\n", rel.display())
-                    };
-                    (idx, line)
-                })
-                .collect();
-            for (idx, line) in dir_names {
-                self.buffer_deferred_name(idx, line);
+            for (idx, name) in &verbose_dir_lines {
+                self.buffer_deferred_name(*idx, format!("{name}\n"));
             }
         }
 
@@ -293,15 +292,8 @@ impl ReceiverContext {
             && !self.interleave_names
             && !self.should_emit_itemize()
         {
-            for file_entry in &self.file_list {
-                if file_entry.is_dir() {
-                    let relative_path = file_entry.path();
-                    if relative_path.as_os_str() == "." {
-                        info_log!(Name, 1, "./");
-                    } else {
-                        info_log!(Name, 1, "{}/", relative_path.display());
-                    }
-                }
+            for (_idx, name) in &verbose_dir_lines {
+                info_log!(Name, 1, "{name}");
             }
         }
 
