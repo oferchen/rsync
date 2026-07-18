@@ -1,13 +1,11 @@
 //! Password and authentication helpers for the CLI front-end.
 //!
-//! This module centralises password loading logic so the sprawling argument
-//! parser in `lib.rs` can delegate to cohesive helpers. The functions here keep
-//! responsibility focused on reading passwords from standard input, from
-//! filesystem paths, or from external commands while enforcing upstream rsync's
-//! permission checks.
+//! This module centralises password loading logic so the CLI's argument parser
+//! can delegate to cohesive helpers. The functions here keep responsibility
+//! focused on reading passwords from standard input, from filesystem paths, or
+//! from external commands while enforcing upstream rsync's permission checks.
 //! Tests operate through the exported helpers rather than touching the
-//! implementation details directly, which keeps the core file smaller and easier
-//! to audit.
+//! implementation details directly.
 
 use core::{
     message::{Message, Role},

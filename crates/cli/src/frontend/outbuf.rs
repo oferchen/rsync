@@ -1,3 +1,4 @@
+//! Output buffering modes and writer adapter for the --outbuf option.
 #![deny(unsafe_code)]
 
 use std::ffi::OsStr;
