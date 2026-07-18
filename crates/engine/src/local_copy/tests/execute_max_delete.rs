@@ -20,10 +20,8 @@ fn max_delete_stops_after_n_deletions() {
     let ctx = test_helpers::setup_copy_test();
     fs::create_dir_all(&ctx.dest).expect("create dest");
 
-    // Create source with one file
     fs::write(ctx.source.join("keep.txt"), b"keep").expect("write keep");
 
-    // Create destination with multiple extra files
     let target_root = ctx.dest.join("source");
     fs::create_dir_all(&target_root).expect("create target root");
     fs::write(target_root.join("keep.txt"), b"old").expect("write old");
@@ -45,10 +43,8 @@ fn max_delete_stops_after_n_deletions() {
         .execute_with_options(LocalCopyExecution::Apply, options)
         .expect_err("should fail when max-delete limit reached");
 
-    // Verify the error type and exit code
     assert_eq!(error.exit_code(), MAX_DELETE_EXIT_CODE);
 
-    // Verify keep file was still updated
     assert!(target_root.join("keep.txt").exists());
     assert_eq!(
         fs::read(target_root.join("keep.txt")).expect("read keep"),
@@ -73,7 +69,6 @@ fn max_delete_reports_correct_skipped_count() {
 
     fs::write(ctx.source.join("keep.txt"), b"keep").expect("write keep");
 
-    // Create destination with 5 extra files, limit to 2 deletions
     let target_root = ctx.dest.join("source");
     fs::create_dir_all(&target_root).expect("create target root");
     fs::write(target_root.join("keep.txt"), b"old").expect("write old");
@@ -95,7 +90,6 @@ fn max_delete_reports_correct_skipped_count() {
         .execute_with_options(LocalCopyExecution::Apply, options)
         .expect_err("should fail when max-delete limit reached");
 
-    // Check the skipped count in the error
     match error.kind() {
         LocalCopyErrorKind::DeleteLimitExceeded { skipped } => {
             assert_eq!(*skipped, 3, "should report 3 skipped entries (5 total - 2 deleted)");
@@ -168,7 +162,6 @@ fn max_delete_zero_prevents_all_deletions() {
         .execute_with_options(LocalCopyExecution::Apply, options)
         .expect_err("should fail when max-delete=0 and deletions needed");
 
-    // Verify error
     assert_eq!(error.exit_code(), MAX_DELETE_EXIT_CODE);
     match error.kind() {
         LocalCopyErrorKind::DeleteLimitExceeded { skipped } => {
@@ -177,12 +170,10 @@ fn max_delete_zero_prevents_all_deletions() {
         other => panic!("unexpected error kind: {other:?}"),
     }
 
-    // Verify no deletions occurred
     assert!(
         target_root.join("extra.txt").exists(),
         "extra file should still exist with max-delete=0"
     );
-    // But keep file should still be updated
     assert_eq!(
         fs::read(target_root.join("keep.txt")).expect("read keep"),
         b"keep"
@@ -238,7 +229,6 @@ fn max_delete_exact_limit_succeeds() {
 
     fs::write(ctx.source.join("keep.txt"), b"keep").expect("write keep");
 
-    // Create destination with exactly 3 extra files, set limit to 3
     let target_root = ctx.dest.join("source");
     fs::create_dir_all(&target_root).expect("create target root");
     fs::write(target_root.join("keep.txt"), b"old").expect("write old");
@@ -255,7 +245,6 @@ fn max_delete_exact_limit_succeeds() {
         .delete(true)
         .max_deletions(Some(3));
 
-    // Should succeed when deletions exactly match limit
     let summary = plan
         .execute_with_options(LocalCopyExecution::Apply, options)
         .expect("should succeed when deletions equal limit");
@@ -273,7 +262,6 @@ fn max_delete_under_limit_succeeds() {
 
     fs::write(ctx.source.join("keep.txt"), b"keep").expect("write keep");
 
-    // Create destination with 2 extra files, set limit to 10
     let target_root = ctx.dest.join("source");
     fs::create_dir_all(&target_root).expect("create target root");
     fs::write(target_root.join("keep.txt"), b"old").expect("write old");
@@ -315,7 +303,6 @@ fn max_delete_large_value() {
         ctx.dest.clone().into_os_string(),
     ];
     let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
-    // Use a very large limit
     let options = LocalCopyOptions::default()
         .delete(true)
         .max_deletions(Some(u64::MAX));
@@ -335,7 +322,6 @@ fn max_delete_none_allows_unlimited_deletions() {
 
     fs::write(ctx.source.join("keep.txt"), b"keep").expect("write keep");
 
-    // Create destination with many extra files
     let target_root = ctx.dest.join("source");
     fs::create_dir_all(&target_root).expect("create target root");
     fs::write(target_root.join("keep.txt"), b"old").expect("write old");
@@ -349,7 +335,6 @@ fn max_delete_none_allows_unlimited_deletions() {
         ctx.dest.clone().into_os_string(),
     ];
     let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
-    // No max_deletions limit (None)
     let options = LocalCopyOptions::default()
         .delete(true)
         .max_deletions(None);
@@ -536,7 +521,6 @@ fn max_delete_with_dry_run_reports_limit_exceeded() {
         .delete(true)
         .max_deletions(Some(1));
 
-    // Dry-run should still report the error
     let error = plan
         .execute_with_options(LocalCopyExecution::DryRun, options)
         .expect_err("dry-run should report max-delete exceeded");
@@ -581,7 +565,6 @@ fn max_delete_dry_run_success_when_under_limit() {
     // Dry-run reports what would be deleted
     assert_eq!(summary.items_deleted(), 1);
 
-    // Files should still exist
     assert!(target_root.join("extra.txt").exists());
 }
 
@@ -593,7 +576,6 @@ fn max_delete_counts_directory_deletions() {
 
     fs::write(ctx.source.join("keep.txt"), b"keep").expect("write keep");
 
-    // Create destination with extra directories
     let target_root = ctx.dest.join("source");
     fs::create_dir_all(&target_root).expect("create target root");
     fs::write(target_root.join("keep.txt"), b"old").expect("write old");
@@ -630,7 +612,6 @@ fn max_delete_mixed_files_and_directories() {
 
     fs::write(ctx.source.join("keep.txt"), b"keep").expect("write keep");
 
-    // Create destination with mix of extra files and directories
     let target_root = ctx.dest.join("source");
     fs::create_dir_all(&target_root).expect("create target root");
     fs::write(target_root.join("keep.txt"), b"old").expect("write old");
@@ -714,7 +695,6 @@ fn max_delete_without_delete_flag_has_no_effect() {
         .execute_with_options(LocalCopyExecution::Apply, options)
         .expect("should succeed when delete not enabled");
 
-    // No deletions should occur
     assert_eq!(summary.items_deleted(), 0);
     assert!(
         target_root.join("extra.txt").exists(),

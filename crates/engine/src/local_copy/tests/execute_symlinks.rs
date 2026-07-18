@@ -21,7 +21,6 @@ fn execute_copies_symbolic_link() {
         .expect("copy succeeds");
     let copied = fs::read_link(dest_link).expect("read copied link");
     assert_eq!(copied, target);
-    // assert_eq!(summary.symlinks_copied(), 1);  // Depends on safe_links behavior
 }
 
 #[cfg(unix)]
@@ -154,7 +153,6 @@ fn execute_with_copy_dirlinks_preserves_file_symlink() {
         .execute_with_options(LocalCopyExecution::Apply, options)
         .expect("copy succeeds");
 
-    // assert_eq!(summary.symlinks_copied(), 1);  // Depends on safe_links behavior
     let copied = fs::read_link(&dest).expect("read link");
     assert_eq!(copied, target_file);
 }
@@ -191,7 +189,6 @@ fn execute_with_safe_links_allows_relative_symlink() {
         )
         .expect("copy succeeds");
 
-    // assert_eq!(summary.symlinks_copied(), 1);  // Depends on safe_links behavior
     let copied = fs::read_link(&destination_link).expect("read link");
     assert_eq!(copied, Path::new("nested/file.txt"));
 }
@@ -330,13 +327,11 @@ fn safe_links_skips_symlink_pointing_outside_transfer_tree() {
 
     let summary = report.summary();
 
-    // Both unsafe symlinks should be skipped
     assert_eq!(summary.symlinks_copied(), 0);
     assert_eq!(summary.symlinks_total(), 2);
     assert!(!dest_root.join("source").join("unsafe_absolute_link").exists());
     assert!(!dest_root.join("source").join("source/escape_link").exists());
 
-    // Verify we got SkippedUnsafeSymlink records
     let skip_count = report
         .records()
         .iter()
@@ -385,10 +380,8 @@ fn safe_links_preserves_symlink_pointing_inside_transfer_tree() {
         )
         .expect("copy succeeds");
 
-    // All safe symlinks should be preserved
     assert_eq!(summary.symlinks_copied(), 3);
 
-    // Verify all symlinks exist and have correct targets
     let dest_link1 = dest_root.join("source").join("link_to_subdir");
     assert!(fs::symlink_metadata(&dest_link1).expect("meta").file_type().is_symlink());
     assert_eq!(
@@ -463,11 +456,9 @@ fn safe_links_evaluates_relative_symlinks_correctly() {
     assert_eq!(summary.symlinks_copied(), 2);
     assert_eq!(summary.symlinks_total(), 3);
 
-    // Verify safe links exist
     assert!(dest_root.join("source").join("level1/level2/level3/link_to_level1").exists());
     assert!(dest_root.join("source").join("root_link").exists());
 
-    // Verify unsafe link was skipped
     assert!(!dest_root.join("source").join("level1/escape_link").exists());
 
     let skip_count = report
@@ -634,7 +625,6 @@ fn safe_links_preserves_symlink_to_directory_when_safe() {
         )
         .expect("copy succeeds");
 
-    // assert_eq!(summary.symlinks_copied(), 1);  // Depends on safe_links behavior
 
     let dest_link = dest_root.join("source").join("link_to_dir");
     assert!(fs::symlink_metadata(&dest_link).expect("meta").file_type().is_symlink());
@@ -816,15 +806,12 @@ fn safe_links_trailing_slash_vs_no_trailing_slash() {
     assert_eq!(summary2.symlinks_copied(), 1, "trailing-slash: 1 safe link");
     assert_eq!(summary2.symlinks_total(), 2, "trailing-slash: 2 total links");
 
-    // Verify safe link exists and unsafe link is skipped (no trailing slash)
     assert!(dest1.join("source").join("sub/safe").exists());
     assert!(!dest1.join("source").join("sub/unsafe").exists());
 
-    // Verify safe link exists and unsafe link is skipped (trailing slash)
     assert!(dest2.join("sub/safe").exists());
     assert!(!dest2.join("sub/unsafe").exists());
 
-    // Verify SkippedUnsafeSymlink records
     let skips1 = report1
         .records()
         .iter()
@@ -1015,7 +1002,6 @@ fn copy_unsafe_links_preserves_safe_symlink() {
     assert!(metadata.file_type().is_symlink());
     let target = fs::read_link(&destination_link).expect("read symlink");
     assert_eq!(target, Path::new("inside.txt"));
-    // assert_eq!(summary.symlinks_copied(), 1);  // Depends on safe_links behavior
 }
 
 #[cfg(unix)]
@@ -1127,8 +1113,6 @@ fn copy_unsafe_links_in_recursive_copy() {
         b"unsafe"
     );
 
-    // Summary should show both types
-    // assert_eq!(summary.symlinks_copied(), 1);  // Depends on safe_links behavior // only the safe link
     assert_eq!(summary.files_copied(), 2); // original file + dereferenced unsafe link
 }
 
@@ -1376,8 +1360,6 @@ fn copy_unsafe_links_with_mixed_safe_and_unsafe_in_tree() {
         b"outside data"
     );
 
-    // Check summary
-    // assert_eq!(summary.symlinks_copied(), 1);  // Depends on safe_links behavior // only safe link
     assert_eq!(summary.files_copied(), 3); // safe_target.txt + 2 dereferenced unsafe links
 }
 

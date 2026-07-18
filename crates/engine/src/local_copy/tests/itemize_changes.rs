@@ -64,7 +64,6 @@ fn itemize_new_file_format_matches_upstream() {
     assert_eq!(records.len(), 1);
     let record = &records[0];
 
-    // Verify record indicates creation
     assert!(record.was_created());
     assert_eq!(record.action(), &LocalCopyAction::DataCopied);
 }
@@ -75,10 +74,7 @@ fn itemize_modified_file_shows_change_indicators() {
     let source = temp.path().join("source.txt");
     let destination = temp.path().join("dest.txt");
 
-    // Create destination with old content
     fs::write(&destination, b"old").expect("write dest");
-
-    // Create source with new content
     fs::write(&source, b"new content").expect("write source");
 
     let operands = vec![
@@ -326,7 +322,6 @@ fn itemize_multiple_changes_shows_all_indicators() {
     let record = &records[0];
 
     let change_set = record.change_set();
-    // All these should have changed
     assert!(change_set.checksum_changed(), "checksum should change");
     assert!(change_set.size_changed(), "size should change");
     assert_eq!(change_set.time_change(), Some(TimeChange::Modified), "time should change");
@@ -364,7 +359,6 @@ fn itemize_new_directory_shows_creation() {
     // Should have records for directory and file
     assert!(!records.is_empty());
 
-    // Find the directory record
     let dir_record = records.iter()
         .find(|r| r.action() == &LocalCopyAction::DirectoryCreated);
     assert!(dir_record.is_some(), "should have directory creation record");
@@ -693,7 +687,6 @@ fn itemize_size_change_detected_correctly() {
     let source = temp.path().join("source.txt");
     let destination = temp.path().join("dest.txt");
 
-    // Create files with different sizes
     fs::write(&destination, b"short").expect("write dest");
     fs::write(&source, b"this is a much longer content").expect("write source");
 

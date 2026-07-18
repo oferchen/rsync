@@ -43,7 +43,6 @@ fn no_implied_dirs_creates_only_explicit_directories() {
     let temp = tempdir().expect("tempdir");
     let source_root = temp.path().join("source");
 
-    // Create a directory structure
     let dir1 = source_root.join("dir1");
     let dir2 = source_root.join("dir2");
     let nested = source_root.join("dir3").join("nested");
@@ -192,7 +191,6 @@ fn no_implied_dirs_files_in_deep_paths_still_work_with_existing_dirs() {
         .execute_with_options(LocalCopyExecution::Apply, options)
         .expect("copy succeeds with existing directories");
 
-    // File should be copied successfully
     assert!(dest_root.join("c").exists());
     assert!(dest_root.join("c").join("file.txt").exists());
     assert_eq!(
@@ -295,7 +293,6 @@ fn no_implied_dirs_recursive_copy_with_nested_structure() {
         .execute_with_options(LocalCopyExecution::Apply, options)
         .expect("recursive copy succeeds");
 
-    // Root directory and files should be copied
     assert!(dest_root.join("source").exists());
     assert!(dest_root.join("source").join("root.txt").exists());
 
@@ -363,7 +360,6 @@ fn no_implied_dirs_recursive_dry_run_into_missing_dest_succeeds() {
         .expect("recursive dry-run into missing dest must succeed");
 
     assert_eq!(summary.files_copied(), 2);
-    // Dry run must not materialise the destination directory.
     assert!(
         !dest_missing.exists(),
         "dry run must not create the destination directory"
@@ -396,7 +392,6 @@ fn no_implied_dirs_with_trailing_slash_copies_contents() {
         .execute_with_options(LocalCopyExecution::Apply, options)
         .expect("copy succeeds");
 
-    // Contents should be copied directly into dest
     assert!(dest_root.join("nested").exists());
     assert!(dest_root.join("nested").join("file.txt").exists());
     assert!(!dest_root.join("source").exists());
@@ -512,7 +507,6 @@ fn no_implied_dirs_collection_reports_correct_events() {
 
     let records = report.records();
 
-    // Should have directory creation and file copy events
     assert!(records
         .iter()
         .any(|r| r.action() == &LocalCopyAction::DirectoryCreated));

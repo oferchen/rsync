@@ -86,7 +86,6 @@ mod xattr_tests {
         assert_eq!(summary.files_copied(), 1);
         assert_eq!(fs::read(&destination).expect("read dest"), b"no xattr copy");
 
-        // Without xattrs flag, no xattrs should be copied
         let dest_xattr = xattr::get(&destination, "user.test_attr").expect("read xattr");
         assert!(dest_xattr.is_none(), "xattr should not be copied without --xattrs");
     }
@@ -104,7 +103,6 @@ mod xattr_tests {
             return;
         }
 
-        // Set multiple xattrs with different types of values
         xattr::set(&source, "user.attr1", b"value1").expect("set attr1");
         xattr::set(&source, "user.attr2", b"value2").expect("set attr2");
         xattr::set(&source, "user.attr3", b"value3").expect("set attr3");
@@ -126,7 +124,6 @@ mod xattr_tests {
 
         assert_eq!(summary.files_copied(), 1);
 
-        // Verify all xattrs were copied
         assert_eq!(
             xattr::get(&destination, "user.attr1").expect("read").expect("present"),
             b"value1"
@@ -161,7 +158,6 @@ mod xattr_tests {
             return;
         }
 
-        // Set 20 xattrs
         for i in 0..20 {
             let name = format!("user.attr_{i:02}");
             let value = format!("value_{i:02}");
@@ -183,7 +179,6 @@ mod xattr_tests {
 
         assert_eq!(summary.files_copied(), 1);
 
-        // Verify all 20 xattrs were copied
         for i in 0..20 {
             let name = format!("user.attr_{i:02}");
             let expected_value = format!("value_{i:02}");
@@ -207,7 +202,6 @@ mod xattr_tests {
             return;
         }
 
-        // Create a large xattr value (4KB)
         let large_value: Vec<u8> = (0..4096).map(|i| (i % 256) as u8).collect();
         if xattr::set(&source, "user.large_data", &large_value).is_err() {
             eprintln!("filesystem does not support large xattr values, skipping test");
@@ -284,7 +278,6 @@ mod xattr_tests {
             return;
         }
 
-        // Empty xattr value
         xattr::set(&source, "user.empty", b"").expect("set empty xattr");
 
         let operands = vec![
@@ -357,7 +350,6 @@ mod xattr_tests {
             return;
         }
 
-        // Set xattrs at different directory levels
         xattr::set(&source_root, "user.root_attr", b"root").expect("set root xattr");
         xattr::set(source_root.join("level1"), "user.level1_attr", b"level1").expect("set level1 xattr");
         xattr::set(&nested, "user.level2_attr", b"level2").expect("set level2 xattr");
@@ -379,7 +371,6 @@ mod xattr_tests {
         assert_eq!(summary.files_copied(), 1);
         assert!(summary.directories_created() >= 2);
 
-        // Verify xattrs at all levels
         assert_eq!(
             xattr::get(dest_root.join("source"), "user.root_attr")
                 .expect("read")
@@ -412,9 +403,7 @@ mod xattr_tests {
             return;
         }
 
-        // Set xattr on directory
         xattr::set(&source_root, "user.dir_metadata", b"dir_value").expect("set dir xattr");
-        // Set xattr on file
         xattr::set(source_root.join("file.txt"), "user.file_metadata", b"file_value")
             .expect("set file xattr");
 
@@ -434,14 +423,12 @@ mod xattr_tests {
 
         assert_eq!(summary.files_copied(), 1);
 
-        // Verify directory xattr
         assert_eq!(
             xattr::get(dest_root.join("source"), "user.dir_metadata")
                 .expect("read")
                 .expect("present"),
             b"dir_value"
         );
-        // Verify file xattr
         assert_eq!(
             xattr::get(dest_root.join("source").join("file.txt"), "user.file_metadata")
                 .expect("read")
@@ -482,7 +469,6 @@ mod xattr_tests {
             )
             .expect("copy succeeds");
 
-        // Verify xattr was updated
         let copied = xattr::get(&destination, "user.version")
             .expect("read xattr")
             .expect("xattr present");
@@ -521,14 +507,12 @@ mod xattr_tests {
             )
             .expect("copy succeeds");
 
-        // Verify keep xattr was synced
         assert_eq!(
             xattr::get(&destination, "user.keep")
                 .expect("read")
                 .expect("present"),
             b"keep_value"
         );
-        // Verify extra xattr was removed
         assert!(
             xattr::get(&destination, "user.extra")
                 .expect("read")
@@ -569,7 +553,6 @@ mod xattr_tests {
             )
             .expect("copy succeeds");
 
-        // Verify both xattrs are present
         assert_eq!(
             xattr::get(&destination, "user.existing")
                 .expect("read")
@@ -622,14 +605,12 @@ mod xattr_tests {
             .execute_with_options(LocalCopyExecution::Apply, options)
             .expect("copy succeeds");
 
-        // Verify included attr was copied
         assert_eq!(
             xattr::get(&destination, "user.keep")
                 .expect("read")
                 .expect("present"),
             b"keep_value"
         );
-        // Verify excluded attr is absent
         assert!(
             xattr::get(&destination, "user.skip")
                 .expect("read")
@@ -677,7 +658,6 @@ mod xattr_tests {
             .execute_with_options(LocalCopyExecution::Apply, options)
             .expect("copy succeeds");
 
-        // Verify included attrs were copied
         assert_eq!(
             xattr::get(&destination, "user.keep_one")
                 .expect("read")
@@ -690,7 +670,6 @@ mod xattr_tests {
                 .expect("present"),
             b"two"
         );
-        // Verify excluded attr is absent
         assert!(
             xattr::get(&destination, "user.skip_this")
                 .expect("read")
@@ -728,7 +707,6 @@ mod xattr_tests {
             .expect("dry run succeeds");
 
         assert_eq!(summary.files_copied(), 1);
-        // Destination should not exist
         assert!(!destination.exists(), "dry run should not create file");
     }
 
@@ -763,7 +741,6 @@ mod xattr_tests {
             )
             .expect("copy succeeds");
 
-        // Verify all special-named xattrs were copied
         assert_eq!(
             xattr::get(&destination, "user.with.dots")
                 .expect("read")
@@ -796,7 +773,6 @@ mod xattr_tests {
             return;
         }
 
-        // UTF-8 content in xattr value
         let utf8_value = "Hello, 世界! 🌍 Привет!";
         xattr::set(&source, "user.utf8_value", utf8_value.as_bytes()).expect("set utf8 xattr");
 
@@ -849,9 +825,7 @@ mod xattr_tests {
 
         assert_eq!(summary.files_copied(), 1);
 
-        // Verify file content was updated
         assert_eq!(fs::read(&destination).expect("read dest"), b"updated content");
-        // Verify xattr was preserved
         let copied = xattr::get(&destination, "user.preserved")
             .expect("read xattr")
             .expect("xattr present");
@@ -896,7 +870,6 @@ mod xattr_tests {
 
         assert_eq!(summary.files_copied(), 3);
 
-        // Verify each file has its own xattr
         assert_eq!(
             xattr::get(dest_root.join("file1.txt"), "user.file1_attr")
                 .expect("read")
@@ -957,7 +930,6 @@ mod xattr_tests {
 
         assert!(summary.files_copied() >= 1);
 
-        // Verify xattr on the copied real file
         let copied = xattr::get(dest_root.join("real_file.txt"), "user.real_file_attr")
             .expect("read xattr")
             .expect("xattr present");

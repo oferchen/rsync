@@ -1274,7 +1274,6 @@ fn copy_files_with_various_high_ascii() {
     let dest_root = temp.path().join("dest");
     fs::create_dir_all(&source_root).expect("create source");
 
-    // Test various high-byte patterns
     let byte_values: &[u8] = &[0x80, 0x90, 0xa0, 0xb0, 0xc0, 0xd0, 0xe0, 0xf0, 0xff];
     for byte in byte_values {
         let filename_bytes = [b'f', b'i', b'l', b'e', *byte, b'.', b't', b'x', b't'];
@@ -1479,7 +1478,6 @@ fn copy_deeply_nested_directories_with_special_characters() {
     let dest_root = temp.path().join("dest");
     fs::create_dir_all(&source_root).expect("create source");
 
-    // Create nested structure with special chars at each level
     let path = source_root
         .join("dir with space")
         .join("dir'quote")
@@ -1949,12 +1947,10 @@ fn update_file_with_special_characters() {
     let source = temp.path().join(format!("src_{filename}"));
     let destination = temp.path().join(filename);
 
-    // Create older destination file
     fs::write(&destination, b"old content").expect("write dest");
     let old_time = FileTime::from_unix_time(1_500_000_000, 0);
     set_file_times(&destination, old_time, old_time).expect("set old time");
 
-    // Create newer source file with different content
     fs::write(&source, b"new updated content").expect("write source");
     let new_time = FileTime::from_unix_time(1_600_000_000, 0);
     set_file_times(&source, new_time, new_time).expect("set new time");
@@ -1984,11 +1980,9 @@ fn delete_file_with_special_characters() {
     fs::create_dir_all(&source_root).expect("create source");
     fs::create_dir_all(&dest_root).expect("create dest");
 
-    // Create file with special chars only in destination (to be deleted)
     let extra_file = "extra'file\"to*delete.txt";
     fs::write(dest_root.join(extra_file), b"to delete").expect("write extra");
 
-    // Create a file in source (to be copied)
     fs::write(source_root.join("keep.txt"), b"keep").expect("write keep");
 
     let mut source_operand = source_root.into_os_string();

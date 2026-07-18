@@ -42,7 +42,6 @@ fn mode_0000_preserves_across_multiple_files() {
     let dest_dir = temp.path().join("dest");
     fs::create_dir_all(&source_dir).expect("create source");
 
-    // Create multiple files with mode 0000
     let file1 = source_dir.join("file1.txt");
     let file2 = source_dir.join("file2.txt");
     let file3 = source_dir.join("file3.txt");
@@ -72,7 +71,6 @@ fn mode_0000_preserves_across_multiple_files() {
 
     assert_eq!(summary.files_copied(), 3);
 
-    // Verify all destination files have mode 0000
     for file_name in ["file1.txt", "file2.txt", "file3.txt"] {
         let dest_file = dest_dir.join("source").join(file_name);
         let metadata = fs::metadata(&dest_file).expect("dest file metadata");
@@ -95,13 +93,11 @@ fn mode_0000_with_inplace_update() {
     let source = temp.path().join("source.txt");
     let destination = temp.path().join("dest.txt");
 
-    // Create source with mode 0000
     fs::write(&source, b"new content").expect("write source");
     fs::set_permissions(&source, PermissionsExt::from_mode(0o000)).expect("set source mode 0000");
     let source_time = FileTime::from_unix_time(1_700_000_200, 0);
     set_file_times(&source, source_time, source_time).expect("set source times");
 
-    // Create existing destination with different permissions
     fs::write(&destination, b"old").expect("write dest");
     fs::set_permissions(&destination, PermissionsExt::from_mode(0o644)).expect("set dest mode");
     let dest_time = FileTime::from_unix_time(1_700_000_100, 0);
@@ -139,11 +135,9 @@ fn mode_0000_with_backup() {
     let source = temp.path().join("source.txt");
     let destination = temp.path().join("dest.txt");
 
-    // Create source with mode 0000
     fs::write(&source, b"new data").expect("write source");
     fs::set_permissions(&source, PermissionsExt::from_mode(0o000)).expect("set source mode 0000");
 
-    // Create existing destination
     fs::write(&destination, b"old data").expect("write dest");
     fs::set_permissions(&destination, PermissionsExt::from_mode(0o644)).expect("set dest mode");
 
@@ -164,12 +158,10 @@ fn mode_0000_with_backup() {
 
     assert_eq!(summary.files_copied(), 1);
 
-    // Verify backup was created
     let backup_path = temp.path().join("dest.txt~");
     assert!(backup_path.exists());
     assert_eq!(fs::read(&backup_path).expect("read backup"), b"old data");
 
-    // Verify destination has mode 0000
     let metadata = fs::metadata(&destination).expect("dest metadata");
     assert_eq!(metadata.permissions().mode() & 0o777, 0o000);
 }
@@ -212,7 +204,6 @@ fn mode_0000_with_sparse_file() {
     let source = temp.path().join("source.txt");
     let destination = temp.path().join("dest.txt");
 
-    // Create a file with holes (sparse file)
     let mut file = fs::File::create(&source).expect("create source");
     use std::io::{Seek, SeekFrom, Write};
     file.write_all(b"start").expect("write start");
@@ -252,7 +243,6 @@ fn mode_0000_nested_directory_structure() {
     let source_root = temp.path().join("source");
     let dest_root = temp.path().join("dest");
 
-    // Create nested structure with mode 0000 files at various levels
     let level1 = source_root.join("level1");
     let level2 = level1.join("level2");
     let level3 = level2.join("level3");
@@ -286,7 +276,6 @@ fn mode_0000_nested_directory_structure() {
 
     assert_eq!(summary.files_copied(), 4);
 
-    // Verify all files have mode 0000
     let dest_files = [
         (dest_root.join("source").join("source/root.txt"), b"root" as &[u8]),
         (dest_root.join("source").join("source/level1/one.txt"), b"level1"),
@@ -313,12 +302,10 @@ fn mode_0000_with_symlink_preservation() {
     let dest_dir = temp.path().join("dest");
     fs::create_dir_all(&source_dir).expect("create source");
 
-    // Create a file with mode 0000
     let target = source_dir.join("target.txt");
     fs::write(&target, b"target content").expect("write target");
     fs::set_permissions(&target, PermissionsExt::from_mode(0o000)).expect("set target mode 0000");
 
-    // Create a symlink to the mode 0000 file
     let link = source_dir.join("link.txt");
     std::os::unix::fs::symlink(&target, &link).expect("create symlink");
 
@@ -340,12 +327,10 @@ fn mode_0000_with_symlink_preservation() {
     assert_eq!(summary.files_copied(), 1);
     assert_eq!(summary.symlinks_copied(), 1);
 
-    // Verify target has mode 0000
     let dest_target = dest_dir.join("source").join("source/target.txt");
     let metadata = fs::metadata(&dest_target).expect("target metadata");
     assert_eq!(metadata.permissions().mode() & 0o777, 0o000);
 
-    // Verify symlink was created
     let dest_link = dest_dir.join("source").join("source/link.txt");
     assert!(dest_link.exists());
     let link_metadata = fs::symlink_metadata(&dest_link).expect("link metadata");
@@ -372,12 +357,10 @@ fn mode_0000_compare_dest() {
     let content = b"matched content";
     let timestamp = FileTime::from_unix_time(1_700_000_000, 0);
 
-    // Create source with mode 0000
     fs::write(&source_file, content).expect("write source");
     fs::set_permissions(&source_file, PermissionsExt::from_mode(0o000)).expect("set source mode");
     set_file_times(&source_file, timestamp, timestamp).expect("set source times");
 
-    // Create compare with mode 0000 and matching content/time
     fs::write(&compare_file, content).expect("write compare");
     fs::set_permissions(&compare_file, PermissionsExt::from_mode(0o000)).expect("set compare mode");
     set_file_times(&compare_file, timestamp, timestamp).expect("set compare times");
@@ -419,11 +402,9 @@ fn mode_0000_size_only_comparison() {
 
     let content = b"size match";
 
-    // Create source with mode 0000
     fs::write(&source, content).expect("write source");
     fs::set_permissions(&source, PermissionsExt::from_mode(0o000)).expect("set source mode");
 
-    // Create destination with same size but different mode
     fs::write(&destination, content).expect("write dest");
     fs::set_permissions(&destination, PermissionsExt::from_mode(0o644)).expect("set dest mode");
 
@@ -444,7 +425,6 @@ fn mode_0000_size_only_comparison() {
     // With size_only, file should be skipped despite different permissions
     assert_eq!(summary.files_copied(), 0);
 
-    // Destination should keep its original mode
     let metadata = fs::metadata(&destination).expect("dest metadata");
     assert_eq!(metadata.permissions().mode() & 0o777, 0o644);
 }
@@ -462,13 +442,11 @@ fn mode_0000_checksum_comparison() {
 
     let content = b"checksum test";
 
-    // Create source with mode 0000
     fs::write(&source, content).expect("write source");
     fs::set_permissions(&source, PermissionsExt::from_mode(0o000)).expect("set source mode");
     let timestamp = FileTime::from_unix_time(1_700_000_000, 0);
     set_file_times(&source, timestamp, timestamp).expect("set source times");
 
-    // Create destination with same content and mode but different time
     fs::write(&destination, content).expect("write dest");
     fs::set_permissions(&destination, PermissionsExt::from_mode(0o000)).expect("set dest mode");
     let old_timestamp = FileTime::from_unix_time(1_600_000_000, 0);
@@ -492,7 +470,6 @@ fn mode_0000_checksum_comparison() {
     // With checksum, file should be skipped despite different mtime
     assert_eq!(summary.files_copied(), 0);
 
-    // Verify destination still has old timestamp
     let metadata = fs::metadata(&destination).expect("dest metadata");
     let dest_mtime = FileTime::from_last_modification_time(&metadata);
     assert_eq!(dest_mtime, old_timestamp);
@@ -509,19 +486,16 @@ fn mode_0000_preserve_in_existing_file_update() {
     let source = temp.path().join("source.txt");
     let destination = temp.path().join("dest.txt");
 
-    // Create source with mode 0000 and newer time
     fs::write(&source, b"new").expect("write source");
     fs::set_permissions(&source, PermissionsExt::from_mode(0o000)).expect("set source mode");
     let new_time = FileTime::from_unix_time(1_700_000_200, 0);
     set_file_times(&source, new_time, new_time).expect("set source times");
 
-    // Create existing destination with different mode and older time
     fs::write(&destination, b"old").expect("write dest");
     fs::set_permissions(&destination, PermissionsExt::from_mode(0o644)).expect("set dest mode");
     let old_time = FileTime::from_unix_time(1_700_000_100, 0);
     set_file_times(&destination, old_time, old_time).expect("set dest times");
 
-    // Verify initial state
     let initial_metadata = fs::metadata(&destination).expect("initial dest metadata");
     assert_eq!(initial_metadata.permissions().mode() & 0o777, 0o644);
 
@@ -542,7 +516,6 @@ fn mode_0000_preserve_in_existing_file_update() {
 
     assert_eq!(summary.files_copied(), 1);
 
-    // Destination should now have mode 0000
     let metadata = fs::metadata(&destination).expect("dest metadata");
     assert_eq!(metadata.permissions().mode() & 0o777, 0o000);
     assert_eq!(fs::read(&destination).expect("read dest"), b"new");
@@ -570,7 +543,6 @@ fn dir_setgid_inheritance_preserved_without_perms() {
     let parent = temp.path().join("sgid_parent");
     fs::create_dir(&parent).expect("create parent");
 
-    // Set the setgid bit on the parent directory.
     fs::set_permissions(&parent, PermissionsExt::from_mode(0o2770)).expect("chmod parent");
 
     // Probe whether the filesystem supports directory setgid inheritance.
@@ -583,7 +555,6 @@ fn dir_setgid_inheritance_preserved_without_perms() {
     }
     fs::remove_dir(&probe).expect("remove probe");
 
-    // Build a source tree: a directory containing a file and a subdirectory.
     let source = temp.path().join("src");
     let source_subdir = source.join("subdir");
     fs::create_dir_all(&source_subdir).expect("create source tree");
@@ -656,7 +627,6 @@ fn dir_no_setgid_when_parent_lacks_it() {
     // Parent does NOT have setgid - just normal 0770.
     fs::set_permissions(&parent, PermissionsExt::from_mode(0o0770)).expect("chmod parent");
 
-    // Build a simple source tree.
     let source = temp.path().join("src");
     fs::create_dir_all(&source).expect("create source");
     fs::write(source.join("file.txt"), b"hello").expect("write file");

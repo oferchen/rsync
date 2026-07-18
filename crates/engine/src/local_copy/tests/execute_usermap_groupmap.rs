@@ -8,16 +8,6 @@
 // - Pattern mappings: test*:backup
 // - Range mappings: 1000-2000:3000
 // - Multiple mappings: 1000:2000,*:nobody
-//
-// Test cases covered:
-// 1. User mapping with numeric IDs (source_uid:dest_uid)
-// 2. Group mapping with numeric IDs (source_gid:dest_gid)
-// 3. Multiple mappings specified together
-// 4. Wildcard mappings (*:nobody)
-// 5. Pattern-based mappings with wildcards
-// 6. Range-based mappings
-// 7. Combining mappings with other metadata preservation flags
-// 8. Error cases and edge conditions
 
 #[cfg(unix)]
 #[test]
@@ -35,7 +25,6 @@ fn usermap_remaps_numeric_uid() {
     let destination = temp.path().join("dest.txt");
     fs::write(&source, b"content").expect("write source");
 
-    // Set source file to UID 1000
     let source_uid = 1000;
     chownat(
         rustix::fs::CWD,
@@ -46,7 +35,6 @@ fn usermap_remaps_numeric_uid() {
     )
     .expect("set source uid");
 
-    // Map UID 1000 -> 2000
     let user_mapping = ::metadata::UserMapping::parse("1000:2000").expect("parse usermap");
 
     let operands = vec![
@@ -66,7 +54,6 @@ fn usermap_remaps_numeric_uid() {
 
     assert_eq!(summary.files_copied(), 1);
 
-    // Verify destination has mapped UID 2000
     let dest_metadata = fs::metadata(&destination).expect("dest metadata");
     assert_eq!(dest_metadata.uid(), 2000);
 }
@@ -87,7 +74,6 @@ fn usermap_wildcard_maps_all_users() {
     let destination = temp.path().join("dest.txt");
     fs::write(&source, b"content").expect("write source");
 
-    // Set source file to UID 5000
     let source_uid = 5000;
     chownat(
         rustix::fs::CWD,
@@ -98,7 +84,6 @@ fn usermap_wildcard_maps_all_users() {
     )
     .expect("set source uid");
 
-    // Map all users to UID 9999 using wildcard
     let user_mapping = ::metadata::UserMapping::parse("*:9999").expect("parse usermap");
 
     let operands = vec![
@@ -118,7 +103,6 @@ fn usermap_wildcard_maps_all_users() {
 
     assert_eq!(summary.files_copied(), 1);
 
-    // Verify destination has mapped UID 9999
     let dest_metadata = fs::metadata(&destination).expect("dest metadata");
     assert_eq!(dest_metadata.uid(), 9999);
 }
@@ -139,7 +123,6 @@ fn usermap_multiple_rules_first_match_wins() {
     let destination = temp.path().join("dest.txt");
     fs::write(&source, b"content").expect("write source");
 
-    // Set source file to UID 1000
     let source_uid = 1000;
     chownat(
         rustix::fs::CWD,
@@ -202,7 +185,6 @@ fn usermap_range_mapping() {
     )
     .expect("set source uid");
 
-    // Map range 1000-2000 -> 3000
     let user_mapping = ::metadata::UserMapping::parse("1000-2000:3000").expect("parse usermap");
 
     let operands = vec![
@@ -222,7 +204,6 @@ fn usermap_range_mapping() {
 
     assert_eq!(summary.files_copied(), 1);
 
-    // Verify destination has mapped UID 3000
     let dest_metadata = fs::metadata(&destination).expect("dest metadata");
     assert_eq!(dest_metadata.uid(), 3000);
 }
@@ -243,7 +224,6 @@ fn usermap_no_match_preserves_original_uid() {
     let destination = temp.path().join("dest.txt");
     fs::write(&source, b"content").expect("write source");
 
-    // Set source file to UID 5000
     let source_uid = 5000;
     chownat(
         rustix::fs::CWD,
@@ -274,7 +254,6 @@ fn usermap_no_match_preserves_original_uid() {
 
     assert_eq!(summary.files_copied(), 1);
 
-    // Verify destination preserves original UID 5000
     let dest_metadata = fs::metadata(&destination).expect("dest metadata");
     assert_eq!(dest_metadata.uid(), 5000);
 }
@@ -295,7 +274,6 @@ fn groupmap_remaps_numeric_gid() {
     let destination = temp.path().join("dest.txt");
     fs::write(&source, b"content").expect("write source");
 
-    // Set source file to GID 1000
     let source_gid = 1000;
     chownat(
         rustix::fs::CWD,
@@ -306,7 +284,6 @@ fn groupmap_remaps_numeric_gid() {
     )
     .expect("set source gid");
 
-    // Map GID 1000 -> 2000
     let group_mapping = ::metadata::GroupMapping::parse("1000:2000").expect("parse groupmap");
 
     let operands = vec![
@@ -326,7 +303,6 @@ fn groupmap_remaps_numeric_gid() {
 
     assert_eq!(summary.files_copied(), 1);
 
-    // Verify destination has mapped GID 2000
     let dest_metadata = fs::metadata(&destination).expect("dest metadata");
     assert_eq!(dest_metadata.gid(), 2000);
 }
@@ -347,7 +323,6 @@ fn groupmap_wildcard_maps_all_groups() {
     let destination = temp.path().join("dest.txt");
     fs::write(&source, b"content").expect("write source");
 
-    // Set source file to GID 5000
     let source_gid = 5000;
     chownat(
         rustix::fs::CWD,
@@ -358,7 +333,6 @@ fn groupmap_wildcard_maps_all_groups() {
     )
     .expect("set source gid");
 
-    // Map all groups to GID 9999 using wildcard
     let group_mapping = ::metadata::GroupMapping::parse("*:9999").expect("parse groupmap");
 
     let operands = vec![
@@ -378,7 +352,6 @@ fn groupmap_wildcard_maps_all_groups() {
 
     assert_eq!(summary.files_copied(), 1);
 
-    // Verify destination has mapped GID 9999
     let dest_metadata = fs::metadata(&destination).expect("dest metadata");
     assert_eq!(dest_metadata.gid(), 9999);
 }
@@ -402,7 +375,6 @@ fn groupmap_multiple_rules() {
     fs::write(&source1, b"content1").expect("write source1");
     fs::write(&source2, b"content2").expect("write source2");
 
-    // Set different GIDs for the source files
     chownat(
         rustix::fs::CWD,
         &source1,
@@ -421,11 +393,9 @@ fn groupmap_multiple_rules() {
     )
     .expect("set source2 gid");
 
-    // Map with multiple rules: 1000:2000, 3000:4000, *:9999
     let group_mapping =
         ::metadata::GroupMapping::parse("1000:2000,3000:4000,*:9999").expect("parse groupmap");
 
-    // Copy both files
     let operands1 = vec![
         source1.into_os_string(),
         dest_dir.join("file1.txt").into_os_string(),
@@ -454,7 +424,6 @@ fn groupmap_multiple_rules() {
         )
         .expect("copy2 succeeds");
 
-    // Verify destinations have correct mapped GIDs
     let dest1_metadata = fs::metadata(dest_dir.join("file1.txt")).expect("dest1 metadata");
     assert_eq!(dest1_metadata.gid(), 2000);
 
@@ -489,7 +458,6 @@ fn groupmap_range_mapping() {
     )
     .expect("set source gid");
 
-    // Map range 1000-2000 -> 3000
     let group_mapping = ::metadata::GroupMapping::parse("1000-2000:3000").expect("parse groupmap");
 
     let operands = vec![
@@ -509,7 +477,6 @@ fn groupmap_range_mapping() {
 
     assert_eq!(summary.files_copied(), 1);
 
-    // Verify destination has mapped GID 3000
     let dest_metadata = fs::metadata(&destination).expect("dest metadata");
     assert_eq!(dest_metadata.gid(), 3000);
 }
@@ -530,7 +497,6 @@ fn usermap_and_groupmap_work_together() {
     let destination = temp.path().join("dest.txt");
     fs::write(&source, b"content").expect("write source");
 
-    // Set source file to UID 1000, GID 1000
     chownat(
         rustix::fs::CWD,
         &source,
@@ -540,7 +506,6 @@ fn usermap_and_groupmap_work_together() {
     )
     .expect("set source ownership");
 
-    // Map UID 1000 -> 2000 and GID 1000 -> 3000
     let user_mapping = ::metadata::UserMapping::parse("1000:2000").expect("parse usermap");
     let group_mapping = ::metadata::GroupMapping::parse("1000:3000").expect("parse groupmap");
 
@@ -563,7 +528,6 @@ fn usermap_and_groupmap_work_together() {
 
     assert_eq!(summary.files_copied(), 1);
 
-    // Verify both UID and GID are mapped correctly
     let dest_metadata = fs::metadata(&destination).expect("dest metadata");
     assert_eq!(dest_metadata.uid(), 2000);
     assert_eq!(dest_metadata.gid(), 3000);
@@ -595,7 +559,6 @@ fn usermap_and_groupmap_with_wildcards() {
     )
     .expect("set source ownership");
 
-    // Map all users to 9998 and all groups to 9999
     let user_mapping = ::metadata::UserMapping::parse("*:9998").expect("parse usermap");
     let group_mapping = ::metadata::GroupMapping::parse("*:9999").expect("parse groupmap");
 
@@ -618,7 +581,6 @@ fn usermap_and_groupmap_with_wildcards() {
 
     assert_eq!(summary.files_copied(), 1);
 
-    // Verify both UID and GID are mapped to wildcard values
     let dest_metadata = fs::metadata(&destination).expect("dest metadata");
     assert_eq!(dest_metadata.uid(), 9998);
     assert_eq!(dest_metadata.gid(), 9999);
@@ -640,7 +602,6 @@ fn usermap_requires_owner_preservation_flag() {
     let destination = temp.path().join("dest.txt");
     fs::write(&source, b"content").expect("write source");
 
-    // Set source file to UID 1000
     chownat(
         rustix::fs::CWD,
         &source,
@@ -693,7 +654,6 @@ fn groupmap_requires_group_preservation_flag() {
     let destination = temp.path().join("dest.txt");
     fs::write(&source, b"content").expect("write source");
 
-    // Set source file to GID 1000
     chownat(
         rustix::fs::CWD,
         &source,
@@ -746,7 +706,6 @@ fn usermap_applies_to_directory_tree() {
     let dest_dir = temp.path().join("dest");
     fs::create_dir_all(&source_dir).expect("create source");
 
-    // Create a directory structure
     let file1 = source_dir.join("file1.txt");
     let subdir = source_dir.join("subdir");
     fs::create_dir_all(&subdir).expect("create subdir");
@@ -754,7 +713,6 @@ fn usermap_applies_to_directory_tree() {
     fs::write(&file1, b"content1").expect("write file1");
     fs::write(&file2, b"content2").expect("write file2");
 
-    // Set all files to UID 1000
     for path in [&source_dir, &file1, &subdir, &file2] {
         chownat(
             rustix::fs::CWD,
@@ -766,7 +724,6 @@ fn usermap_applies_to_directory_tree() {
         .expect("set ownership");
     }
 
-    // Map UID 1000 -> 2000
     let user_mapping = ::metadata::UserMapping::parse("1000:2000").expect("parse usermap");
 
     let operands = vec![
@@ -787,7 +744,6 @@ fn usermap_applies_to_directory_tree() {
 
     assert!(summary.files_copied() >= 2); // At least the two files
 
-    // Verify all files have mapped UID 2000
     let dest_file1 = dest_dir.join("source").join("file1.txt");
     let dest_file2 = dest_dir.join("source").join("subdir").join("file2.txt");
     let dest_subdir = dest_dir.join("source").join("subdir");
@@ -813,7 +769,6 @@ fn groupmap_applies_to_directory_tree() {
     let dest_dir = temp.path().join("dest");
     fs::create_dir_all(&source_dir).expect("create source");
 
-    // Create a directory structure
     let file1 = source_dir.join("file1.txt");
     let subdir = source_dir.join("subdir");
     fs::create_dir_all(&subdir).expect("create subdir");
@@ -821,7 +776,6 @@ fn groupmap_applies_to_directory_tree() {
     fs::write(&file1, b"content1").expect("write file1");
     fs::write(&file2, b"content2").expect("write file2");
 
-    // Set all files to GID 1000
     for path in [&source_dir, &file1, &subdir, &file2] {
         chownat(
             rustix::fs::CWD,
@@ -833,7 +787,6 @@ fn groupmap_applies_to_directory_tree() {
         .expect("set ownership");
     }
 
-    // Map GID 1000 -> 3000
     let group_mapping = ::metadata::GroupMapping::parse("1000:3000").expect("parse groupmap");
 
     let operands = vec![
@@ -854,7 +807,6 @@ fn groupmap_applies_to_directory_tree() {
 
     assert!(summary.files_copied() >= 2); // At least the two files
 
-    // Verify all files have mapped GID 3000
     let dest_file1 = dest_dir.join("source").join("file1.txt");
     let dest_file2 = dest_dir.join("source").join("subdir").join("file2.txt");
     let dest_subdir = dest_dir.join("source").join("subdir");
@@ -881,7 +833,6 @@ fn usermap_works_with_permissions_and_times() {
     let destination = temp.path().join("dest.txt");
     fs::write(&source, b"content").expect("write source");
 
-    // Set source metadata
     chownat(
         rustix::fs::CWD,
         &source,
@@ -895,7 +846,6 @@ fn usermap_works_with_permissions_and_times() {
     let mtime = FileTime::from_unix_time(1_700_000_000, 0);
     set_file_times(&source, mtime, mtime).expect("set times");
 
-    // Map UID and preserve permissions and times
     let user_mapping = ::metadata::UserMapping::parse("1000:2000").expect("parse usermap");
 
     let operands = vec![
@@ -917,7 +867,6 @@ fn usermap_works_with_permissions_and_times() {
 
     assert_eq!(summary.files_copied(), 1);
 
-    // Verify all metadata is preserved correctly
     let dest_metadata = fs::metadata(&destination).expect("dest metadata");
     assert_eq!(dest_metadata.uid(), 2000);
     assert_eq!(dest_metadata.permissions().mode() & 0o777, 0o640);

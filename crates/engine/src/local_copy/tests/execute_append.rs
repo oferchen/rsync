@@ -22,7 +22,6 @@ fn append_adds_remaining_data_to_partial_file() {
     let source = temp.path().join("source.txt");
     let destination = temp.path().join("dest.txt");
 
-    // Source has full content
     fs::write(&source, b"complete content here").expect("write source");
     // Destination has partial content (prefix of source)
     fs::write(&destination, b"complete").expect("write partial dest");
@@ -88,7 +87,6 @@ fn append_skips_when_destination_larger_than_source() {
     let source = temp.path().join("source.txt");
     let destination = temp.path().join("dest.txt");
 
-    // Destination is larger than source
     fs::write(&source, b"short content").expect("write source");
     let original_dest = b"much longer destination file content here";
     fs::write(&destination, original_dest).expect("write larger dest");
@@ -209,7 +207,6 @@ fn append_correct_offset_with_large_partial() {
     let source = temp.path().join("source.bin");
     let destination = temp.path().join("dest.bin");
 
-    // Create a large file (1MB) and partial file (500KB)
     let full_content: Vec<u8> = (0..=255).cycle().take(1024 * 1024).collect();
     let partial_size = 512 * 1024;
     let partial_content = &full_content[..partial_size];
@@ -485,7 +482,6 @@ fn append_combined_with_times_preserves_mtime() {
 
     assert_eq!(summary.files_copied(), 1);
 
-    // Verify mtime is preserved
     let dest_mtime = FileTime::from_last_modification_time(
         &fs::metadata(&destination).expect("dest metadata")
     );
@@ -670,7 +666,6 @@ fn append_binary_data() {
     let source = temp.path().join("binary.bin");
     let destination = temp.path().join("dest.bin");
 
-    // Binary content with all byte values
     let full_binary: Vec<u8> = (0..=255).cycle().take(512).collect();
     let partial_binary: Vec<u8> = (0..=255).cycle().take(256).collect();
 

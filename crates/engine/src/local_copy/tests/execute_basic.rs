@@ -279,7 +279,6 @@ fn execute_copies_file_with_acls_is_noop_on_apple() {
         )
         .expect("copy succeeds");
 
-    // Data copy still happens.
     assert_eq!(summary.files_copied(), 1);
     assert_eq!(fs::read(&destination).expect("read dest"), b"acl");
 
@@ -653,7 +652,6 @@ fn execute_file_copy_to_directory_places_file_inside() {
         .execute_with_options(LocalCopyExecution::Apply, LocalCopyOptions::default())
         .expect("copy succeeds");
 
-    // File is placed inside the destination directory
     assert_eq!(summary.files_copied(), 1);
     let target_file = destination.join("source.txt");
     assert!(target_file.exists());
@@ -921,7 +919,6 @@ fn execute_does_not_preserve_timestamps_by_default() {
         &fs::metadata(&destination).expect("dest metadata"),
     );
 
-    // The destination mtime should be recent, not the past_time
     assert_ne!(dest_mtime, past_time);
 }
 
@@ -1209,7 +1206,6 @@ fn execute_handles_various_file_sizes() {
     let source_root = temp.path().join("source");
     fs::create_dir_all(&source_root).expect("create source");
 
-    // Test various file sizes
     let sizes = vec![
         ("tiny.bin", 1),
         ("small.bin", 100),
@@ -1451,7 +1447,6 @@ fn execute_handles_deep_directory_nesting() {
 
     assert_eq!(summary.files_copied(), 1);
 
-    // Verify the deeply nested file was copied
     let mut expected_path = dest_root.join("source");
     for i in 0..10 {
         expected_path = expected_path.join(format!("level{i}"));

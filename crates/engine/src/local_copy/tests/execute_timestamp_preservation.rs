@@ -18,7 +18,6 @@ fn times_flag_preserves_mtime_on_copied_file() {
 
     fs::write(&source, b"content for mtime test").expect("write source");
 
-    // Set a specific mtime
     let mtime = FileTime::from_unix_time(1_700_000_000, 0);
     set_file_mtime(&source, mtime).expect("set source mtime");
 
@@ -50,7 +49,6 @@ fn times_flag_disabled_does_not_preserve_mtime() {
 
     fs::write(&source, b"content").expect("write source");
 
-    // Set a specific mtime in the past
     let old_mtime = FileTime::from_unix_time(1_500_000_000, 0);
     set_file_mtime(&source, old_mtime).expect("set source mtime");
 
@@ -60,7 +58,6 @@ fn times_flag_disabled_does_not_preserve_mtime() {
     ];
     let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
 
-    // Execute without times flag (default is false)
     let summary = plan
         .execute_with_options(
             LocalCopyExecution::Apply,
@@ -85,7 +82,6 @@ fn times_flag_preserves_mtime_on_multiple_files() {
     let dest_root = temp.path().join("dest");
     fs::create_dir_all(&source_root).expect("create source");
 
-    // Create files with different mtimes
     let file1 = source_root.join("file1.txt");
     let file2 = source_root.join("file2.txt");
     let file3 = source_root.join("file3.txt");
@@ -114,7 +110,6 @@ fn times_flag_preserves_mtime_on_multiple_files() {
     )
     .expect("copy succeeds");
 
-    // Verify each file has its mtime preserved
     let dest_file1 = dest_root.join("source").join("file1.txt");
     let dest_file2 = dest_root.join("source").join("file2.txt");
     let dest_file3 = dest_root.join("source").join("file3.txt");
@@ -136,7 +131,6 @@ fn times_without_u_flag_omits_atime_on_copied_file() {
 
     fs::write(&source, b"content for atime test").expect("write source");
 
-    // Set specific atime and mtime
     let atime = FileTime::from_unix_time(1_600_000_000, 123_000_000);
     let mtime = FileTime::from_unix_time(1_700_000_000, 456_000_000);
     set_file_times(&source, atime, mtime).expect("set source times");
@@ -179,7 +173,6 @@ fn atime_and_mtime_can_differ() {
     let mtime = FileTime::from_unix_time(1_800_000_000, 900_000_000);
     set_file_times(&source, atime, mtime).expect("set source times");
 
-    // Verify they're different
     let source_metadata = fs::metadata(&source).expect("source metadata");
     let source_atime = FileTime::from_last_access_time(&source_metadata);
     let source_mtime = FileTime::from_last_modification_time(&source_metadata);
@@ -223,7 +216,6 @@ fn subsecond_precision_is_preserved_full_nanoseconds() {
 
     fs::write(&source, b"nanosecond precision test").expect("write source");
 
-    // Set timestamp with full nanosecond precision
     let mtime = FileTime::from_unix_time(1_700_000_000, 123_456_789);
     set_file_mtime(&source, mtime).expect("set source mtime");
 
@@ -252,7 +244,6 @@ fn subsecond_precision_is_preserved_full_nanoseconds() {
 fn subsecond_precision_various_values() {
     let temp = tempdir().expect("tempdir");
 
-    // Test various nanosecond values
     let test_cases = vec![
         (0, "zero nanoseconds"),
         (1, "one nanosecond"),
@@ -306,11 +297,9 @@ fn subsecond_precision_round_trip() {
 
     fs::write(&file1, b"round trip content").expect("write file1");
 
-    // Set specific nanosecond value
     let original_mtime = FileTime::from_unix_time(1_700_000_000, 987_654_321);
     set_file_mtime(&file1, original_mtime).expect("set file1 mtime");
 
-    // First copy: file1 -> file2
     let operands = vec![
         file1.into_os_string(),
         file2.clone().into_os_string(),
@@ -322,7 +311,6 @@ fn subsecond_precision_round_trip() {
     )
     .expect("first copy");
 
-    // Second copy: file2 -> file3
     let operands = vec![
         file2.into_os_string(),
         file3.clone().into_os_string(),
@@ -334,7 +322,6 @@ fn subsecond_precision_round_trip() {
     )
     .expect("second copy");
 
-    // Verify final file has exact same timestamp
     let final_mtime = FileTime::from_last_modification_time(&fs::metadata(&file3).expect("file3 meta"));
     assert_eq!(
         final_mtime, original_mtime,
@@ -392,7 +379,6 @@ fn times_flag_on_directory() {
     fs::create_dir(&source_dir).expect("create source dir");
     fs::write(source_dir.join("file.txt"), b"content").expect("write file");
 
-    // Set directory mtime
     let dir_mtime = FileTime::from_unix_time(1_700_000_000, 333_000_000);
     set_file_mtime(&source_dir, dir_mtime).expect("set dir mtime");
 
@@ -428,14 +414,12 @@ fn times_flag_on_symlink() {
     symlink(&target, &source_link).expect("create source symlink");
     symlink(&target, &dest_link).expect("create dest symlink");
 
-    // Set symlink mtime
     let link_atime = FileTime::from_unix_time(1_600_000_000, 444_000_000);
     let link_mtime = FileTime::from_unix_time(1_700_000_000, 555_000_000);
     filetime::set_symlink_file_times(&source_link, link_atime, link_mtime).expect("set link times");
 
     let source_meta = fs::symlink_metadata(&source_link).expect("source link meta");
 
-    // Apply symlink metadata
     metadata::apply_symlink_metadata(&dest_link, &source_meta).expect("apply symlink metadata");
 
     let dest_meta = fs::symlink_metadata(&dest_link).expect("dest link meta");
@@ -461,7 +445,6 @@ fn skip_file_when_timestamps_match() {
     fs::write(&source, content).expect("write source");
     fs::write(&destination, content).expect("write dest");
 
-    // Set identical timestamps
     let mtime = FileTime::from_unix_time(1_700_000_000, 123_456_789);
     set_file_mtime(&source, mtime).expect("set source mtime");
     set_file_mtime(&destination, mtime).expect("set dest mtime");
@@ -494,7 +477,6 @@ fn copy_file_when_timestamps_differ() {
     fs::write(&source, content).expect("write source");
     fs::write(&destination, content).expect("write dest");
 
-    // Set different timestamps
     let source_mtime = FileTime::from_unix_time(1_700_000_100, 0);
     let dest_mtime = FileTime::from_unix_time(1_700_000_000, 0);
     set_file_mtime(&source, source_mtime).expect("set source mtime");
@@ -516,7 +498,6 @@ fn copy_file_when_timestamps_differ() {
     // File should be copied because timestamps differ
     assert_eq!(summary.files_copied(), 1, "file should be copied when timestamps differ");
 
-    // Verify destination now has source's timestamp
     let final_mtime = FileTime::from_last_modification_time(&fs::metadata(&destination).expect("dest meta"));
     assert_eq!(final_mtime, source_mtime);
 }
@@ -577,7 +558,6 @@ fn modify_window_tolerates_small_differences() {
     fs::write(&source, content).expect("write source");
     fs::write(&destination, content).expect("write dest");
 
-    // Set timestamps that differ by 0.5 seconds
     let source_mtime = FileTime::from_unix_time(1_700_000_000, 0);
     let dest_mtime = FileTime::from_unix_time(1_700_000_000, 500_000_000);
     set_file_mtime(&source, source_mtime).expect("set source mtime");
@@ -594,7 +574,7 @@ fn modify_window_tolerates_small_differences() {
             LocalCopyExecution::Apply,
             LocalCopyOptions::default()
                 .times(true)
-                .with_modify_window(ModifyWindow::from_secs(1)),  // 1 second tolerance
+                .with_modify_window(ModifyWindow::from_secs(1)),
         )
         .expect("copy succeeds");
 
@@ -785,7 +765,6 @@ fn times_with_checksum_and_matching_timestamps() {
     fs::write(&source, content).expect("write source");
     fs::write(&destination, content).expect("write dest");
 
-    // Set matching timestamps
     let mtime = FileTime::from_unix_time(1_700_000_000, 0);
     set_file_mtime(&source, mtime).expect("set source mtime");
     set_file_mtime(&destination, mtime).expect("set dest mtime");
@@ -844,7 +823,6 @@ fn times_with_update_flag() {
     assert_eq!(summary.files_copied(), 0);
     assert_eq!(summary.regular_files_skipped_newer(), 1);
 
-    // Destination should retain its newer timestamp
     let final_mtime = FileTime::from_last_modification_time(&fs::metadata(&destination).expect("dest meta"));
     assert_eq!(final_mtime, newer_mtime);
 }
@@ -876,10 +854,8 @@ fn times_flag_in_dry_run_mode() {
         )
         .expect("dry run succeeds");
 
-    // Dry run should report file would be copied
     assert_eq!(summary.files_copied(), 1);
 
-    // But destination should be unchanged
     let final_mtime = FileTime::from_last_modification_time(&fs::metadata(&destination).expect("dest meta"));
     assert_eq!(final_mtime, original_dest_mtime, "dry run should not modify destination");
     assert_eq!(fs::read(&destination).expect("read dest"), b"original");
@@ -893,7 +869,6 @@ fn nested_directory_timestamps_preserved() {
     fs::create_dir_all(&nested).expect("create nested dirs");
     fs::write(nested.join("file.txt"), b"nested content").expect("write file");
 
-    // Set specific mtimes for each directory level
     let level2_mtime = FileTime::from_unix_time(1_500_000_000, 0);
     let level1_mtime = FileTime::from_unix_time(1_600_000_000, 0);
     let root_mtime = FileTime::from_unix_time(1_700_000_000, 0);
@@ -915,7 +890,6 @@ fn nested_directory_timestamps_preserved() {
     )
     .expect("copy succeeds");
 
-    // Verify each directory level has correct mtime
     let dest_root_mtime = FileTime::from_last_modification_time(&fs::metadata(dest_root.join("source")).expect("root meta"));
     let dest_level1_mtime = FileTime::from_last_modification_time(&fs::metadata(dest_root.join("source").join("level1")).expect("level1 meta"));
     let dest_level2_mtime = FileTime::from_last_modification_time(&fs::metadata(dest_root.join("source").join("level1/level2")).expect("level2 meta"));
@@ -933,7 +907,6 @@ fn incremental_sync_skips_unchanged_files() {
     fs::create_dir_all(&source_root).expect("create source");
     fs::create_dir_all(&dest_root).expect("create dest");
 
-    // Create files with same content and timestamps
     let mtime = FileTime::from_unix_time(1_700_000_000, 0);
 
     for i in 1..=5 {
@@ -962,7 +935,6 @@ fn incremental_sync_skips_unchanged_files() {
         )
         .expect("copy succeeds");
 
-    // All files should be skipped
     assert_eq!(summary.files_copied(), 0, "unchanged files should be skipped");
     assert_eq!(summary.regular_files_total(), 5);
 }
@@ -978,7 +950,6 @@ fn incremental_sync_updates_changed_files_only() {
     let old_mtime = FileTime::from_unix_time(1_600_000_000, 0);
     let new_mtime = FileTime::from_unix_time(1_700_000_000, 0);
 
-    // Create 3 unchanged files
     for i in 1..=3 {
         let filename = format!("unchanged{i}.txt");
         let content = format!("unchanged content {i}");
@@ -993,7 +964,6 @@ fn incremental_sync_updates_changed_files_only() {
         set_file_mtime(&dest_file, old_mtime).expect("set dest mtime");
     }
 
-    // Create 2 changed files (newer source)
     for i in 1..=2 {
         let filename = format!("changed{i}.txt");
         let source_file = source_root.join(&filename);
@@ -1018,11 +988,9 @@ fn incremental_sync_updates_changed_files_only() {
         )
         .expect("copy succeeds");
 
-    // Only 2 changed files should be copied
     assert_eq!(summary.files_copied(), 2, "only changed files should be copied");
     assert_eq!(summary.regular_files_total(), 5);
 
-    // Verify changed files have new content and timestamp
     for i in 1..=2 {
         let dest_file = dest_root.join(format!("changed{i}.txt"));
         let content = fs::read(&dest_file).expect("read changed file");

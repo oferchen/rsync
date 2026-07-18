@@ -38,7 +38,6 @@ fn execute_with_temp_dir_places_temp_files_in_specified_directory() {
         b"temp dir test content"
     );
 
-    // Verify no stray temp files remain in staging directory
     let staging_contents: Vec<_> = fs::read_dir(&temp_staging)
         .expect("read staging dir")
         .collect();
@@ -76,7 +75,6 @@ fn execute_with_temp_dir_moves_file_to_destination_on_completion() {
     assert!(destination.exists(), "destination should exist");
     assert_eq!(fs::read(&destination).expect("read dest"), content);
 
-    // Verify the staging directory is empty (file was moved, not copied)
     let staging_files: Vec<_> = fs::read_dir(&temp_staging)
         .expect("read staging")
         .filter_map(|e| e.ok())
@@ -151,7 +149,6 @@ fn execute_with_temp_dir_different_filesystem_falls_back_to_copy() {
         LocalCopyOptions::default().with_temp_directory(Some(&staging_subdir)),
     );
 
-    // Clean up the staging directory
     let _ = fs::remove_dir_all(&staging_subdir);
 
     let summary = result.expect("copy should succeed even across filesystems");
@@ -272,7 +269,6 @@ fn execute_with_absolute_temp_dir_path() {
 
     fs::write(&source, b"absolute path test").expect("write source");
 
-    // Ensure we're using an absolute path
     let absolute_staging = temp_staging.canonicalize().expect("canonicalize");
 
     let operands = vec![
@@ -318,7 +314,7 @@ fn execute_with_temp_dir_replaces_existing_destination() {
             LocalCopyExecution::Apply,
             LocalCopyOptions::default()
                 .with_temp_directory(Some(&temp_staging))
-                .ignore_times(true), // Force transfer
+                .ignore_times(true),
         )
         .expect("copy succeeds");
 
@@ -650,7 +646,6 @@ fn execute_with_temp_dir_cleans_up_on_successful_multi_file_transfer() {
     fs::create_dir_all(&source_root).expect("source dir");
     fs::create_dir_all(&temp_staging).expect("staging dir");
 
-    // Create multiple files of varying sizes
     for i in 0..10 {
         let content = vec![i as u8; (i + 1) * 1024];
         fs::write(source_root.join(format!("file{i}.bin")), &content).expect("write file");
@@ -671,7 +666,6 @@ fn execute_with_temp_dir_cleans_up_on_successful_multi_file_transfer() {
 
     assert_eq!(summary.files_copied(), 10);
 
-    // Verify all files exist in destination
     for i in 0..10 {
         let dest_file = dest_root.join(format!("file{i}.bin"));
         assert!(dest_file.exists(), "file{i}.bin should exist");
@@ -679,7 +673,6 @@ fn execute_with_temp_dir_cleans_up_on_successful_multi_file_transfer() {
         assert_eq!(fs::read(&dest_file).expect("read"), expected_content);
     }
 
-    // Verify staging is completely clean
     let staging_files: Vec<_> = fs::read_dir(&temp_staging)
         .expect("read staging")
         .filter_map(|e| e.ok())
@@ -781,7 +774,6 @@ fn execute_with_temp_dir_provides_atomic_destination_update() {
 
     assert_eq!(summary.files_copied(), 1);
 
-    // The destination should have exactly the new content
     let final_content = fs::read(&destination).expect("read dest");
     assert_eq!(final_content, new_content);
 }
@@ -848,7 +840,6 @@ fn execute_without_temp_dir_creates_temps_alongside_destination() {
         fs::read(&destination).expect("read dest"),
         b"no temp dir test"
     );
-    // No stray temp files should remain in the destination directory
     let parent = destination.parent().unwrap();
     let stray_temps: Vec<_> = fs::read_dir(parent)
         .expect("read dir")
@@ -906,7 +897,6 @@ fn execute_with_temp_dir_format_in_custom_directory() {
         name.contains("file.txt"),
         "temp file should use filename only, not full subpath"
     );
-    // The temp file should be directly in temp_dir, not in a subdirectory
     assert_eq!(
         temp_path.parent().unwrap(),
         temp_dir,
@@ -1068,7 +1058,6 @@ fn execute_with_temp_dir_second_run_skips_identical_files() {
         )
         .expect("second copy succeeds");
 
-    // Files should be matched (skipped), not copied again
     assert_eq!(
         summary2.files_copied(), 0,
         "identical file should be skipped on second run"
@@ -1121,7 +1110,6 @@ fn execute_with_temp_dir_unique_temp_names_across_files() {
         temp1, temp2,
         "different destination files should get different temp paths"
     );
-    // Both should be in the temp dir
     assert!(temp1.starts_with(td));
     assert!(temp2.starts_with(td));
 }
@@ -1222,7 +1210,6 @@ fn execute_with_temp_dir_nested_source_uses_flat_staging() {
 
     assert_eq!(summary.files_copied(), 3);
 
-    // Verify all files exist at correct destinations
     assert_eq!(
         fs::read(dest_root.join("source").join("top.txt")).expect("read"),
         b"top level"
@@ -1236,7 +1223,6 @@ fn execute_with_temp_dir_nested_source_uses_flat_staging() {
         b"deep level"
     );
 
-    // Verify staging directory is clean
     let staging_files: Vec<_> = fs::read_dir(&temp_staging)
         .expect("read staging")
         .filter_map(|e| e.ok())

@@ -56,7 +56,6 @@ fn link_dest_hardlinks_identical_file() {
     let dest_meta = fs::metadata(&dest_file).expect("dest metadata");
     let link_dest_meta = fs::metadata(&link_dest_file).expect("link-dest metadata");
 
-    // Verify hard link was created
     assert_eq!(
         dest_meta.ino(),
         link_dest_meta.ino(),
@@ -104,7 +103,6 @@ fn link_dest_copies_different_file() {
     let dest_meta = fs::metadata(&dest_file).expect("dest metadata");
     let link_dest_meta = fs::metadata(&link_dest_file).expect("link-dest metadata");
 
-    // Verify files are NOT hard linked
     assert_ne!(
         dest_meta.ino(),
         link_dest_meta.ino(),
@@ -647,7 +645,6 @@ fn link_dest_preserves_file_permissions() {
     let source_file = source_dir.join("file.txt");
     fs::write(&source_file, b"content").expect("write source");
 
-    // Set specific permissions on source
     use std::os::unix::fs::PermissionsExt;
     let perms = fs::Permissions::from_mode(0o644);
     fs::set_permissions(&source_file, perms).expect("set source permissions");
@@ -686,7 +683,6 @@ fn link_dest_preserves_file_permissions() {
     let dest_meta = fs::metadata(&dest_file).expect("dest metadata");
     let link_dest_meta = fs::metadata(&link_dest_file).expect("link-dest metadata");
 
-    // Verify hard link was created
     assert_eq!(dest_meta.ino(), link_dest_meta.ino());
     assert!(summary.hard_links_created() >= 1);
 

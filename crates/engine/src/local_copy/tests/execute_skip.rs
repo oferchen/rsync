@@ -104,7 +104,6 @@ fn execute_skip_timestamp_same_mtime_same_size_different_content() {
     fs::write(&source, b"aaaaaaa").expect("write source");
     fs::write(&destination, b"bbbbbbb").expect("write dest");
 
-    // Align timestamps
     let shared_mtime = FileTime::from_unix_time(1_700_000_000, 0);
     set_file_mtime(&source, shared_mtime).expect("set source mtime");
     set_file_mtime(&destination, shared_mtime).expect("set dest mtime");
@@ -303,7 +302,6 @@ fn execute_with_checksum_skips_matching_directory_contents() {
     fs::create_dir_all(&source_root).expect("create source root");
     fs::create_dir_all(&target_root).expect("create target root");
 
-    // Create multiple files - some identical, some different
     let identical_content = b"identical content here";
     let different_source = b"different source data!";
     let different_dest = b"different dest content";
@@ -334,7 +332,6 @@ fn execute_with_checksum_skips_matching_directory_contents() {
         )
         .expect("copy succeeds");
 
-    // Verify results
     assert_eq!(summary.regular_files_total(), 4, "should process 4 files");
     assert_eq!(
         summary.regular_files_matched(),
@@ -343,7 +340,6 @@ fn execute_with_checksum_skips_matching_directory_contents() {
     );
     assert_eq!(summary.files_copied(), 2, "2 different/new files should copy");
 
-    // Verify file contents
     assert_eq!(
         fs::read(target_root.join("same1.txt")).expect("read same1"),
         identical_content
@@ -354,7 +350,7 @@ fn execute_with_checksum_skips_matching_directory_contents() {
     );
     assert_eq!(
         fs::read(target_root.join("diff.txt")).expect("read diff"),
-        different_source // source content should overwrite destination
+        different_source
     );
     assert_eq!(
         fs::read(target_root.join("new.txt")).expect("read new"),
@@ -585,7 +581,6 @@ fn execute_skip_checksum_dry_run_reports_correctly() {
     // would-be-copy; the content-identical file is matched.
     assert_eq!(summary.files_copied(), 1);
     assert_eq!(summary.regular_files_matched(), 1);
-    // Files unchanged in dry run
     assert_eq!(fs::read(dest_root.join("same.txt")).expect("read"), b"identical");
     assert_eq!(fs::read(dest_root.join("diff.txt")).expect("read"), b"dest_vvv");
 }
@@ -1027,7 +1022,6 @@ fn execute_skip_size_only_dry_run() {
     // not reported as a would-be-copy.
     assert_eq!(summary.files_copied(), 0);
     assert_eq!(summary.regular_files_matched(), 1);
-    // Content unchanged in dry run
     assert_eq!(fs::read(&destination).expect("read"), b"xyz");
 }
 
@@ -1966,7 +1960,6 @@ fn execute_dry_run_reports_skipped_files_as_matched() {
 
     // In dry run mode, identical files are counted and matched
     assert_eq!(summary.regular_files_total(), 1);
-    // File content remains unchanged since it's dry run
     assert_eq!(fs::read(&destination).expect("read"), content);
 }
 
@@ -2000,7 +1993,6 @@ fn execute_skip_dry_run_update_reports_skipped_newer() {
 
     assert_eq!(summary.files_copied(), 0);
     assert_eq!(summary.regular_files_skipped_newer(), 1);
-    // File unchanged
     assert_eq!(fs::read(&destination).expect("read"), b"newer dest");
 }
 
@@ -2057,7 +2049,6 @@ fn execute_skip_dry_run_ignore_existing_reports_skipped() {
 
     assert_eq!(summary.files_copied(), 0);
     assert_eq!(summary.regular_files_ignored_existing(), 1);
-    // File unchanged
     assert_eq!(fs::read(&destination).expect("read"), b"original");
 }
 

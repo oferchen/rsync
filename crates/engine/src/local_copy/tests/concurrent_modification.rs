@@ -67,7 +67,6 @@ fn multiple_files_with_one_deleted_continues_transfer() {
     let source_root = temp.path().join("source");
     fs::create_dir_all(&source_root).expect("create source");
 
-    // Create multiple source files
     fs::write(source_root.join("keep1.txt"), b"content 1").expect("write keep1");
     fs::write(source_root.join("vanish.txt"), b"will be deleted").expect("write vanish");
     fs::write(source_root.join("keep2.txt"), b"content 2").expect("write keep2");
@@ -75,16 +74,13 @@ fn multiple_files_with_one_deleted_continues_transfer() {
     let dest_root = temp.path().join("dest");
     fs::create_dir_all(&dest_root).expect("create dest");
 
-    // Build plan
     let mut source_operand = source_root.clone().into_os_string();
     source_operand.push(std::path::MAIN_SEPARATOR.to_string());
     let operands = vec![source_operand, dest_root.clone().into_os_string()];
     let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
 
-    // Delete one file
     fs::remove_file(source_root.join("vanish.txt")).expect("delete vanish");
 
-    // Execute
     let result = plan.execute_with_options(
         LocalCopyExecution::Apply,
         LocalCopyOptions::default().ignore_missing_args(true),
@@ -151,7 +147,6 @@ fn file_size_changed_during_transfer_is_detected() {
     let source_root = temp.path().join("source");
     fs::create_dir_all(&source_root).expect("create source");
 
-    // Create a medium-sized file
     let source_file = source_root.join("growing.txt");
     let initial_content = vec![b'A'; 1024];
     fs::write(&source_file, &initial_content).expect("write initial");
@@ -167,10 +162,9 @@ fn file_size_changed_during_transfer_is_detected() {
     let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
 
     // Modify the file before execution (simulating concurrent modification)
-    let modified_content = vec![b'B'; 2048]; // Double the size
+    let modified_content = vec![b'B'; 2048];
     fs::write(&source_file, &modified_content).expect("write modified");
 
-    // Execute
     let result = plan.execute();
 
     // Should succeed - file was modified but still exists
@@ -191,7 +185,6 @@ fn file_truncated_during_transfer_is_handled() {
     let source_root = temp.path().join("source");
     fs::create_dir_all(&source_root).expect("create source");
 
-    // Create a file
     let source_file = source_root.join("truncating.txt");
     let initial_content = vec![b'X'; 4096];
     fs::write(&source_file, &initial_content).expect("write initial");
@@ -199,7 +192,6 @@ fn file_truncated_during_transfer_is_handled() {
     let dest_root = temp.path().join("dest");
     fs::create_dir_all(&dest_root).expect("create dest");
 
-    // Build plan
     let operands = vec![
         source_file.clone().into_os_string(),
         dest_root.clone().into_os_string(),
@@ -231,14 +223,12 @@ fn file_content_changed_same_size_during_transfer() {
     let source_root = temp.path().join("source");
     fs::create_dir_all(&source_root).expect("create source");
 
-    // Create a file with specific content
     let source_file = source_root.join("content_change.txt");
     fs::write(&source_file, b"AAAAAAAAAA").expect("write initial");
 
     let dest_root = temp.path().join("dest");
     fs::create_dir_all(&dest_root).expect("create dest");
 
-    // Build plan
     let operands = vec![
         source_file.clone().into_os_string(),
         dest_root.clone().into_os_string(),
@@ -248,7 +238,6 @@ fn file_content_changed_same_size_during_transfer() {
     // Modify content (same size)
     fs::write(&source_file, b"BBBBBBBBBB").expect("modify content");
 
-    // Execute
     let result = plan.execute();
 
     // Should succeed
@@ -270,14 +259,12 @@ fn file_replaced_with_directory_during_transfer() {
     let source_root = temp.path().join("source");
     fs::create_dir_all(&source_root).expect("create source");
 
-    // Create a regular file
     let source_item = source_root.join("item");
     fs::write(&source_item, b"file content").expect("write file");
 
     let dest_root = temp.path().join("dest");
     fs::create_dir_all(&dest_root).expect("create dest");
 
-    // Build plan
     let mut source_operand = source_root.clone().into_os_string();
     source_operand.push(std::path::MAIN_SEPARATOR.to_string());
     let operands = vec![source_operand, dest_root.clone().into_os_string()];
@@ -304,18 +291,15 @@ fn file_replaced_with_symlink_during_transfer() {
     let source_root = temp.path().join("source");
     fs::create_dir_all(&source_root).expect("create source");
 
-    // Create a regular file
     let source_file = source_root.join("regular.txt");
     fs::write(&source_file, b"regular content").expect("write file");
 
-    // Create a target for the symlink
     let target = source_root.join("target.txt");
     fs::write(&target, b"target content").expect("write target");
 
     let dest_root = temp.path().join("dest");
     fs::create_dir_all(&dest_root).expect("create dest");
 
-    // Build plan
     let operands = vec![
         source_file.clone().into_os_string(),
         dest_root.clone().into_os_string(),
@@ -326,7 +310,6 @@ fn file_replaced_with_symlink_during_transfer() {
     fs::remove_file(&source_file).expect("remove file");
     symlink(&target, &source_file).expect("create symlink");
 
-    // Execute
     let result = plan.execute();
 
     // Should handle gracefully
@@ -345,7 +328,6 @@ fn file_replaced_with_different_content_during_transfer() {
     let dest_root = temp.path().join("dest");
     fs::create_dir_all(&dest_root).expect("create dest");
 
-    // Build plan
     let operands = vec![
         source_file.clone().into_os_string(),
         dest_root.clone().into_os_string(),
@@ -356,7 +338,6 @@ fn file_replaced_with_different_content_during_transfer() {
     fs::remove_file(&source_file).expect("remove");
     fs::write(&source_file, b"completely different new content").expect("write new");
 
-    // Execute
     let result = plan.execute();
 
     // Should succeed with the new content
@@ -375,7 +356,6 @@ fn new_file_added_during_scan_may_be_included() {
 
     let dest_root = temp.path().join("dest");
 
-    // Build plan
     let mut source_operand = source_root.clone().into_os_string();
     source_operand.push(std::path::MAIN_SEPARATOR.to_string());
     let operands = vec![source_operand, dest_root.clone().into_os_string()];
@@ -405,7 +385,6 @@ fn nested_directory_removed_during_recursive_scan() {
 
     let dest_root = temp.path().join("dest");
 
-    // Build plan
     let mut source_operand = source_root.clone().into_os_string();
     source_operand.push(std::path::MAIN_SEPARATOR.to_string());
     let operands = vec![source_operand, dest_root.clone().into_os_string()];
@@ -473,7 +452,6 @@ fn checksum_mode_skips_identical_content() {
     fs::create_dir_all(&dest_root).expect("create dest");
     fs::write(dest_root.join("same.txt"), content).expect("write dest");
 
-    // Build plan
     let operands = vec![
         source_file.clone().into_os_string(),
         dest_root.join("same.txt").into_os_string(),
@@ -513,7 +491,6 @@ fn checksum_mismatch_with_same_size_and_mtime() {
     set_file_mtime(&source_file, timestamp).expect("set source mtime");
     set_file_mtime(dest_root.join("sneaky.txt"), timestamp).expect("set dest mtime");
 
-    // Build plan
     let operands = vec![
         source_file.clone().into_os_string(),
         dest_root.join("sneaky.txt").into_os_string(),
@@ -534,7 +511,6 @@ fn checksum_mismatch_with_same_size_and_mtime() {
         Err(e) => panic!("unexpected error without checksum: {e}"),
     }
 
-    // Reset destination
     fs::write(dest_root.join("sneaky.txt"), b"BBBBBBBBBB").expect("reset dest");
     set_file_mtime(dest_root.join("sneaky.txt"), timestamp).expect("reset mtime");
 
@@ -572,16 +548,13 @@ fn transfer_continues_after_single_file_error() {
     let dest_root = temp.path().join("dest");
     fs::create_dir_all(&dest_root).expect("create dest");
 
-    // Build plan
     let mut source_operand = source_root.clone().into_os_string();
     source_operand.push(std::path::MAIN_SEPARATOR.to_string());
     let operands = vec![source_operand, dest_root.clone().into_os_string()];
     let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
 
-    // Delete middle file
     fs::remove_file(source_root.join("second.txt")).expect("delete second");
 
-    // Execute
     let result = plan.execute();
 
     // Check behavior
@@ -628,7 +601,6 @@ fn empty_file_becoming_non_empty_during_transfer() {
     // File grows after plan is built
     fs::write(&source_file, b"now has content").expect("write content");
 
-    // Execute
     let result = plan.execute();
 
     // Should succeed with either old or new content
@@ -654,7 +626,6 @@ fn non_empty_file_becoming_empty_during_transfer() {
     let dest_root = temp.path().join("dest");
     fs::create_dir_all(&dest_root).expect("create dest");
 
-    // Build plan
     let operands = vec![
         source_file.clone().into_os_string(),
         dest_root.clone().into_os_string(),
@@ -664,7 +635,6 @@ fn non_empty_file_becoming_empty_during_transfer() {
     // Truncate to empty
     fs::write(&source_file, b"").expect("truncate");
 
-    // Execute
     let result = plan.execute();
 
     // Should handle gracefully
@@ -683,7 +653,6 @@ fn rapid_file_modifications_are_handled() {
     let dest_root = temp.path().join("dest");
     fs::create_dir_all(&dest_root).expect("create dest");
 
-    // Build plan
     let operands = vec![
         source_file.clone().into_os_string(),
         dest_root.clone().into_os_string(),
@@ -695,7 +664,6 @@ fn rapid_file_modifications_are_handled() {
         fs::write(&source_file, format!("version {i}").as_bytes()).expect("write version");
     }
 
-    // Execute
     let result = plan.execute();
 
     // Should succeed with some version
@@ -720,7 +688,6 @@ fn file_permission_changed_during_transfer() {
         let dest_root = temp.path().join("dest");
         fs::create_dir_all(&dest_root).expect("create dest");
 
-        // Build plan
         let operands = vec![
             source_file.clone().into_os_string(),
             dest_root.clone().into_os_string(),
@@ -730,7 +697,6 @@ fn file_permission_changed_during_transfer() {
         // Change permissions
         fs::set_permissions(&source_file, PermissionsExt::from_mode(0o755)).expect("change perms");
 
-        // Execute
         let result = plan.execute_with_options(
             LocalCopyExecution::Apply,
             LocalCopyOptions::default().permissions(true),
@@ -753,7 +719,6 @@ fn file_deleted_and_recreated_during_transfer() {
     let dest_root = temp.path().join("dest");
     fs::create_dir_all(&dest_root).expect("create dest");
 
-    // Build plan
     let operands = vec![
         source_file.clone().into_os_string(),
         dest_root.clone().into_os_string(),
@@ -764,7 +729,6 @@ fn file_deleted_and_recreated_during_transfer() {
     fs::remove_file(&source_file).expect("delete");
     fs::write(&source_file, b"reborn phoenix").expect("recreate");
 
-    // Execute
     let result = plan.execute();
 
     // Should succeed with new content
@@ -784,15 +748,13 @@ fn large_file_truncated_to_zero_during_transfer() {
     let source_root = temp.path().join("source");
     fs::create_dir_all(&source_root).expect("create source");
 
-    // Create a larger file
     let source_file = source_root.join("large.bin");
-    let large_content = vec![0xAB; 64 * 1024]; // 64KB
+    let large_content = vec![0xAB; 64 * 1024];
     fs::write(&source_file, &large_content).expect("write large");
 
     let dest_root = temp.path().join("dest");
     fs::create_dir_all(&dest_root).expect("create dest");
 
-    // Build plan
     let operands = vec![
         source_file.clone().into_os_string(),
         dest_root.clone().into_os_string(),
@@ -802,7 +764,6 @@ fn large_file_truncated_to_zero_during_transfer() {
     // Truncate to zero
     fs::write(&source_file, b"").expect("truncate to zero");
 
-    // Execute
     let result = plan.execute();
 
     // Should handle gracefully
@@ -828,7 +789,6 @@ fn directory_permissions_changed_during_scan() {
 
         let dest_root = temp.path().join("dest");
 
-        // Build plan
         let mut source_operand = source_root.clone().into_os_string();
         source_operand.push(std::path::MAIN_SEPARATOR.to_string());
         let operands = vec![source_operand, dest_root.clone().into_os_string()];
@@ -837,7 +797,6 @@ fn directory_permissions_changed_during_scan() {
         // Make directory unreadable
         fs::set_permissions(&subdir, PermissionsExt::from_mode(0o000)).expect("remove perms");
 
-        // Execute
         let result = plan.execute();
 
         // Restore permissions for cleanup
@@ -862,18 +821,15 @@ fn binary_file_modified_during_transfer() {
     let dest_root = temp.path().join("dest");
     fs::create_dir_all(&dest_root).expect("create dest");
 
-    // Build plan
     let operands = vec![
         source_file.clone().into_os_string(),
         dest_root.clone().into_os_string(),
     ];
     let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
 
-    // Modify binary content
     let modified: Vec<u8> = (0..=255).rev().collect();
     fs::write(&source_file, &modified).expect("modify binary");
 
-    // Execute
     let result = plan.execute();
 
     // Should succeed
@@ -898,7 +854,6 @@ fn mtime_changed_during_transfer_detection() {
     let dest_root = temp.path().join("dest");
     fs::create_dir_all(&dest_root).expect("create dest");
 
-    // Build plan
     let operands = vec![
         source_file.clone().into_os_string(),
         dest_root.clone().into_os_string(),

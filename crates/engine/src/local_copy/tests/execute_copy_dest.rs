@@ -41,7 +41,6 @@ fn copy_dest_identical_file_is_copied_not_linked() {
     assert_eq!(fs::read(&destination_file).expect("read dest"), b"identical content");
     assert_eq!(summary.files_copied(), 1);
 
-    // Verify it's a copy, not a hard link
     #[cfg(unix)]
     {
         use std::os::unix::fs::MetadataExt;
@@ -236,7 +235,6 @@ fn copy_dest_multiple_directories_uses_first_match() {
         let copy_dest1_meta = fs::metadata(&copy_dest1_file).expect("copy_dest1 metadata");
         let copy_dest2_meta = fs::metadata(&copy_dest2_file).expect("copy_dest2 metadata");
 
-        // File should not be hard linked to either
         assert_ne!(dest_meta.ino(), copy_dest1_meta.ino());
         assert_ne!(dest_meta.ino(), copy_dest2_meta.ino());
     }
@@ -264,7 +262,6 @@ fn copy_dest_creates_file_while_compare_dest_skips() {
     set_file_mtime(&source_file, timestamp).expect("source mtime");
     set_file_mtime(&reference_file, timestamp).expect("reference mtime");
 
-    // Test Compare behavior
     let dest_compare_file = dest_compare_dir.join("file.txt");
     let operands_compare = vec![
         source_file.clone().into_os_string(),
@@ -287,7 +284,6 @@ fn copy_dest_creates_file_while_compare_dest_skips() {
     assert_eq!(summary_compare.files_copied(), 0);
     assert_eq!(summary_compare.regular_files_matched(), 1);
 
-    // Test Copy behavior
     let dest_copy_file = dest_copy_dir.join("file.txt");
     let operands_copy = vec![
         source_file.into_os_string(),
@@ -319,12 +315,10 @@ fn copy_dest_works_with_directory_trees() {
     let copy_dest_root = temp.path().join("copy_dest");
     let destination_root = temp.path().join("dest");
 
-    // Create source tree
     fs::create_dir_all(source_root.join("dir1/subdir")).expect("create source tree");
     fs::write(source_root.join("dir1/file1.txt"), b"file1").expect("write file1");
     fs::write(source_root.join("dir1/subdir/file2.txt"), b"file2").expect("write file2");
 
-    // Create matching copy_dest tree
     fs::create_dir_all(copy_dest_root.join("dir1/subdir")).expect("create copy_dest tree");
     fs::write(copy_dest_root.join("dir1/file1.txt"), b"file1").expect("write copy_dest file1");
     fs::write(copy_dest_root.join("dir1/subdir/file2.txt"), b"file2").expect("write copy_dest file2");
@@ -366,13 +360,11 @@ fn copy_dest_mixed_existing_and_new_files() {
     let copy_dest_root = temp.path().join("copy_dest");
     let destination_root = temp.path().join("dest");
 
-    // Create source tree with three files
     fs::create_dir_all(&source_root).expect("create source dir");
     fs::write(source_root.join("file1.txt"), b"content1").expect("write file1");
     fs::write(source_root.join("file2.txt"), b"content2").expect("write file2");
     fs::write(source_root.join("file3.txt"), b"content3").expect("write file3");
 
-    // Create copy_dest tree with only file1 matching
     fs::create_dir_all(&copy_dest_root).expect("create copy_dest dir");
     fs::write(copy_dest_root.join("file1.txt"), b"content1").expect("write copy_dest file1");
     // file2 exists but with different content
@@ -523,7 +515,6 @@ fn copy_dest_with_size_only_mode() {
     fs::write(&source_file, b"12345").expect("write source");
     fs::write(&copy_dest_file, b"abcde").expect("write copy_dest");
 
-    // Different timestamps
     set_file_mtime(&source_file, FileTime::from_unix_time(1_700_000_000, 0)).expect("source mtime");
     set_file_mtime(&copy_dest_file, FileTime::from_unix_time(1_600_000_000, 0)).expect("copy_dest mtime");
 
@@ -580,7 +571,6 @@ fn copy_dest_empty_reference_directory() {
         .execute_with_options(LocalCopyExecution::Apply, options)
         .expect("copy succeeds");
 
-    // Should transfer normally
     assert!(destination_file.exists());
     assert_eq!(fs::read(&destination_file).expect("read dest"), b"content");
     assert_eq!(summary.files_copied(), 1);

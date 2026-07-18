@@ -62,7 +62,6 @@ fn symlink_relative_target_stays_relative() {
     let target = source_root.join("target.txt");
     fs::write(&target, b"content").expect("write target");
 
-    // Create relative symlink
     let link = source_root.join("rel_link");
     symlink(Path::new("target.txt"), &link).expect("create relative symlink");
 
@@ -274,7 +273,6 @@ fn symlink_chain_two_levels() {
         )
         .expect("copy succeeds");
 
-    // All links and target should be copied
     assert!(dest_root.join("src").join("target.txt").is_file());
     assert!(fs::symlink_metadata(dest_root.join("src").join("link1")).expect("meta").file_type().is_symlink());
     assert!(fs::symlink_metadata(dest_root.join("src").join("link2")).expect("meta").file_type().is_symlink());
@@ -323,7 +321,6 @@ fn symlink_chain_three_levels_deep() {
     )
     .expect("copy succeeds");
 
-    // All levels should be preserved
     for link_name in ["link1", "link2", "link3"] {
         let dest_link = dest_root.join("src").join(link_name);
         assert!(

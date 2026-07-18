@@ -39,7 +39,6 @@ fn existing_skips_file_when_destination_missing() {
     assert_eq!(summary.files_copied(), 0);
     assert_eq!(summary.regular_files_total(), 1);
     assert_eq!(summary.regular_files_skipped_missing(), 1);
-    // Destination should not be created
     assert!(!destination.exists());
 }
 
@@ -69,7 +68,6 @@ fn existing_updates_file_when_destination_exists() {
     assert_eq!(summary.files_copied(), 1);
     assert_eq!(summary.regular_files_total(), 1);
     assert_eq!(summary.regular_files_skipped_missing(), 0);
-    // Destination should have new content
     assert_eq!(
         fs::read(&destination).expect("read dest"),
         b"updated content"
@@ -82,7 +80,6 @@ fn existing_updates_file_even_when_content_identical() {
     let source = temp.path().join("source.txt");
     let destination = temp.path().join("dest.txt");
 
-    // Both have identical content
     fs::write(&source, b"same content").expect("write source");
     fs::write(&destination, b"same content").expect("write dest");
 
@@ -103,7 +100,6 @@ fn existing_updates_file_even_when_content_identical() {
     // Whether it's actually skipped due to identical content depends on other flags
     assert_eq!(summary.regular_files_total(), 1);
     assert_eq!(summary.regular_files_skipped_missing(), 0);
-    // Destination still exists
     assert!(destination.exists());
 }
 
@@ -139,7 +135,6 @@ fn existing_recursive_skips_new_files() {
     assert_eq!(summary.regular_files_total(), 2);
     assert_eq!(summary.regular_files_skipped_missing(), 1);
 
-    // Verify file states
     assert_eq!(
         fs::read(dest_root.join("existing.txt")).expect("read existing"),
         b"updated"
@@ -153,11 +148,9 @@ fn existing_recursive_skips_new_directories() {
     let source_root = temp.path().join("source");
     let dest_root = temp.path().join("dest");
 
-    // Create directory structure in source
     fs::create_dir_all(source_root.join("existing_dir")).expect("create existing_dir");
     fs::create_dir_all(source_root.join("new_dir")).expect("create new_dir");
 
-    // Create files in both directories
     fs::write(
         source_root.join("existing_dir").join("file.txt"),
         b"content",
@@ -198,7 +191,6 @@ fn existing_nested_directories_mixed_states() {
     let source_root = temp.path().join("source");
     let dest_root = temp.path().join("dest");
 
-    // Create nested directory structure
     fs::create_dir_all(source_root.join("dir1/dir2")).expect("create source dirs");
     fs::create_dir_all(dest_root.join("dir1")).expect("create dest dir1");
 
@@ -235,7 +227,6 @@ fn existing_nested_directories_mixed_states() {
     assert!(summary.regular_files_skipped_missing() >= 1,
         "should skip at least new.txt, got {}", summary.regular_files_skipped_missing());
 
-    // Verify states
     assert_eq!(
         fs::read(dest_root.join("dir1/exists.txt")).expect("read exists"),
         b"updated_content"
@@ -294,14 +285,13 @@ fn existing_combined_with_update() {
     assert_eq!(summary.regular_files_skipped_newer(), 1);
     assert_eq!(summary.regular_files_skipped_missing(), 1);
 
-    // Verify content
     assert_eq!(
         fs::read(dest_root.join("copy_me.txt")).expect("read copy_me"),
         b"newer"
     );
     assert_eq!(
         fs::read(dest_root.join("skip_me.txt")).expect("read skip_me"),
-        b"newer" // preserved
+        b"newer"
     );
     assert!(!dest_root.join("new_file.txt").exists());
 }
@@ -346,7 +336,6 @@ fn existing_combined_with_checksum() {
     assert_eq!(summary.files_copied(), 1);
     assert_eq!(summary.regular_files_skipped_missing(), 1);
 
-    // Verify content
     assert_eq!(
         fs::read(dest_root.join("different.txt")).expect("read different"),
         b"updated content"
@@ -390,7 +379,6 @@ fn existing_combined_with_times_preserves_mtime() {
     // File should be copied because it exists
     assert_eq!(summary.files_copied(), 1);
 
-    // Verify mtime is preserved
     let dest_mtime =
         FileTime::from_last_modification_time(&fs::metadata(&destination).expect("dest metadata"));
     assert_eq!(dest_mtime.unix_seconds(), source_mtime.unix_seconds());
@@ -404,11 +392,9 @@ fn existing_dry_run_reports_skipped_files() {
     fs::create_dir_all(&source_root).expect("create source");
     fs::create_dir_all(&dest_root).expect("create dest");
 
-    // Existing file at destination
     fs::write(source_root.join("existing.txt"), b"updated").expect("write existing source");
     fs::write(dest_root.join("existing.txt"), b"old").expect("write existing dest");
 
-    // New file
     fs::write(source_root.join("new.txt"), b"new").expect("write new source");
 
     let mut source_operand = source_root.into_os_string();
@@ -423,11 +409,9 @@ fn existing_dry_run_reports_skipped_files() {
         )
         .expect("dry run succeeds");
 
-    // Dry run should report what would happen
     assert_eq!(summary.files_copied(), 1); // would copy existing.txt
     assert_eq!(summary.regular_files_skipped_missing(), 1); // would skip new.txt
 
-    // But files should remain unchanged
     assert_eq!(
         fs::read(dest_root.join("existing.txt")).expect("read existing"),
         b"old"
@@ -462,14 +446,12 @@ fn existing_dry_run_with_records() {
     let summary = report.summary();
     assert_eq!(summary.regular_files_skipped_missing(), 1);
 
-    // Check that the record indicates the file was skipped
     let records = report.records();
     assert!(records.iter().any(|record| {
         record.action() == &LocalCopyAction::SkippedMissingDestination
             && record.relative_path() == std::path::Path::new("source.txt")
     }));
 
-    // Destination should not be created
     assert!(!destination.exists());
 }
 
@@ -536,7 +518,6 @@ fn existing_handles_empty_files() {
 
     // Should copy because destination exists
     assert_eq!(summary.files_copied(), 1);
-    // Destination should now be empty
     assert_eq!(fs::read(&destination).expect("read dest"), b"");
 }
 
@@ -606,7 +587,6 @@ fn existing_skips_new_symlinks() {
     fs::create_dir_all(&source_root).expect("create source");
     fs::create_dir_all(&dest_root).expect("create dest");
 
-    // Create a target file
     let target = source_root.join("target.txt");
     fs::write(&target, b"target").expect("write target");
 
@@ -644,7 +624,6 @@ fn existing_updates_existing_symlinks() {
     fs::create_dir_all(&source_root).expect("create source");
     fs::create_dir_all(&dest_root).expect("create dest");
 
-    // Create targets
     let target1 = source_root.join("target1.txt");
     let target2 = source_root.join("target2.txt");
     fs::write(&target1, b"target1").expect("write target1");
@@ -674,7 +653,6 @@ fn existing_updates_existing_symlinks() {
 
     // Symlink should be updated because it exists at destination
     assert!(dest_root.join("link.txt").exists());
-    // Verify it now points to target1
     let link_target = fs::read_link(dest_root.join("link.txt")).expect("read link");
     assert!(link_target.ends_with("target1.txt"));
 }
@@ -725,14 +703,13 @@ fn existing_respects_filter_rules() {
     // Should copy include.txt only
     assert_eq!(summary.files_copied(), 1);
 
-    // Verify states
     assert_eq!(
         fs::read(dest_root.join("include.txt")).expect("read include"),
         b"include"
     );
     assert_eq!(
         fs::read(dest_root.join("exclude.txt")).expect("read exclude"),
-        b"old" // preserved due to filter
+        b"old"
     );
     assert!(!dest_root.join("new_include.txt").exists());
 }
@@ -795,7 +772,6 @@ fn existing_matches_upstream_rsync_semantics() {
         summary.regular_files_skipped_missing()
     );
 
-    // Verify file states
     assert_eq!(
         fs::read(dest_root.join("exists.txt")).expect("read exists"),
         b"updated_data",

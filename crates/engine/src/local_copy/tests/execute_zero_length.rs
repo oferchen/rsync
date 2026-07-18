@@ -296,7 +296,6 @@ fn execute_multiple_empty_files_recursive() {
 
     fs::create_dir_all(&source_root).expect("create source root");
 
-    // Create multiple empty files
     fs::write(source_root.join("empty1.txt"), b"").expect("write empty1");
     fs::write(source_root.join("empty2.txt"), b"").expect("write empty2");
     fs::write(source_root.join("empty3.txt"), b"").expect("write empty3");
@@ -352,11 +351,9 @@ fn execute_mixed_empty_and_nonempty_files() {
 
     assert_eq!(summary.files_copied(), 4, "all files should be copied");
 
-    // Verify empty files
     assert_eq!(fs::read(dest_root.join("empty.txt")).expect("read"), b"");
     assert_eq!(fs::read(dest_root.join("another_empty.txt")).expect("read"), b"");
 
-    // Verify non-empty files
     assert_eq!(fs::read(dest_root.join("content.txt")).expect("read"), b"has content");
     assert_eq!(fs::read(dest_root.join("more_content.txt")).expect("read"), b"more data");
 }

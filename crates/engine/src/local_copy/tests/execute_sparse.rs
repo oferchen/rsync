@@ -370,36 +370,29 @@ fn execute_sparse_with_multiple_hole_patterns() {
     let mut source_file = fs::File::create(&source).expect("create source");
 
     // Pattern: data-hole-data-hole-data (interleaved)
-    // Data block 1: 10KB at offset 0
     let data_block = vec![0xAA; 10 * 1024];
     source_file.write_all(&data_block).expect("write data block 1");
 
-    // Hole 1: seek to 1MB (creating ~1014KB hole)
     source_file
         .seek(SeekFrom::Start(1024 * 1024))
         .expect("seek for hole 1");
 
-    // Data block 2: 20KB at 1MB
     let data_block_2 = vec![0xBB; 20 * 1024];
     source_file.write_all(&data_block_2).expect("write data block 2");
 
-    // Hole 2: seek to 3MB (creating ~2004KB hole)
     source_file
         .seek(SeekFrom::Start(3 * 1024 * 1024))
         .expect("seek for hole 2");
 
-    // Data block 3: 10KB at 3MB
     let data_block_3 = vec![0xCC; 10 * 1024];
     source_file.write_all(&data_block_3).expect("write data block 3");
 
-    // Final hole: extend to 5MB
     source_file.set_len(5 * 1024 * 1024).expect("extend source");
     drop(source_file);
 
     let dense_dest = temp.path().join("multi-dense.bin");
     let sparse_dest = temp.path().join("multi-sparse.bin");
 
-    // Dense copy (no --sparse)
     let plan_dense = LocalCopyPlan::from_operands(&[
         source.clone().into_os_string(),
         dense_dest.clone().into_os_string(),
@@ -409,7 +402,6 @@ fn execute_sparse_with_multiple_hole_patterns() {
         .execute_with_options(LocalCopyExecution::Apply, LocalCopyOptions::default())
         .expect("dense copy succeeds");
 
-    // Sparse copy (--sparse)
     let plan_sparse = LocalCopyPlan::from_operands(&[
         source.into_os_string(),
         sparse_dest.clone().into_os_string(),
@@ -425,11 +417,9 @@ fn execute_sparse_with_multiple_hole_patterns() {
     let dense_meta = fs::metadata(&dense_dest).expect("dense metadata");
     let sparse_meta = fs::metadata(&sparse_dest).expect("sparse metadata");
 
-    // Both should have same file size
     assert_eq!(dense_meta.len(), sparse_meta.len());
     assert_eq!(dense_meta.len(), 5 * 1024 * 1024);
 
-    // Verify content is identical
     let dense_content = fs::read(&dense_dest).expect("read dense");
     let sparse_content = fs::read(&sparse_dest).expect("read sparse");
     assert_eq!(dense_content, sparse_content);
@@ -461,7 +451,6 @@ fn execute_sparse_verifies_hole_data_integrity() {
     let source = temp.path().join("hole-data.bin");
     let mut source_file = fs::File::create(&source).expect("create source");
 
-    // Specific pattern: known data at specific offsets
     source_file.write_all(b"START").expect("write start");
     source_file
         .seek(SeekFrom::Start(1024 * 1024))
@@ -487,7 +476,6 @@ fn execute_sparse_verifies_hole_data_integrity() {
     )
     .expect("sparse copy succeeds");
 
-    // Verify data regions are correct
     let mut dest_file = fs::File::open(&sparse_dest).expect("open dest");
     let mut buffer = vec![0u8; 5];
 
@@ -509,7 +497,6 @@ fn execute_sparse_verifies_hole_data_integrity() {
     dest_file.read_exact(&mut buffer_end).expect("read end");
     assert_eq!(&buffer_end, b"END");
 
-    // Verify holes are zeros
     dest_file.seek(SeekFrom::Start(5)).expect("seek after start");
     let mut hole_sample = vec![0xFF; 100];
     dest_file.read_exact(&mut hole_sample).expect("read hole");
@@ -558,7 +545,6 @@ fn execute_sparse_with_small_holes() {
     let meta = fs::metadata(&sparse_dest).expect("metadata");
     assert_eq!(meta.len(), total_size as u64);
 
-    // Verify content integrity regardless of hole detection
     let content = fs::read(&sparse_dest).expect("read dest");
     for i in 0..4 {
         let data_start = i * 1024;
@@ -591,17 +577,14 @@ fn execute_sparse_with_aligned_holes() {
     // Create holes aligned to 16-byte boundaries for SIMD fast path
     source_file.write_all(b"A").expect("write start");
 
-    // Skip to 16-byte boundary
     source_file.seek(SeekFrom::Start(16)).expect("seek 16");
     source_file.write_all(b"B").expect("write at 16");
 
-    // Create aligned hole (16-byte chunks of zeros)
     source_file
         .seek(SeekFrom::Start(1024))
         .expect("seek hole start");
     source_file.write_all(b"C").expect("write after hole");
 
-    // Another aligned hole
     source_file
         .seek(SeekFrom::Start(2048))
         .expect("seek hole 2 start");
@@ -626,14 +609,12 @@ fn execute_sparse_with_aligned_holes() {
     let meta = fs::metadata(&sparse_dest).expect("metadata");
     assert_eq!(meta.len(), 4096);
 
-    // Verify data at specific offsets
     let content = fs::read(&sparse_dest).expect("read dest");
     assert_eq!(content[0], b'A');
     assert_eq!(content[16], b'B');
     assert_eq!(content[1024], b'C');
     assert_eq!(content[2048], b'D');
 
-    // Verify holes are zeros
     assert!(content[1..16].iter().all(|&b| b == 0), "hole before B");
     assert!(content[17..1024].iter().all(|&b| b == 0), "hole before C");
     assert!(
@@ -660,7 +641,6 @@ fn execute_sparse_detects_zero_regions_at_threshold() {
     let dense_dest = temp.path().join("dense.bin");
     let sparse_dest = temp.path().join("sparse.bin");
 
-    // Dense copy
     let plan_dense = LocalCopyPlan::from_operands(&[
         source.clone().into_os_string(),
         dense_dest.clone().into_os_string(),
@@ -670,7 +650,6 @@ fn execute_sparse_detects_zero_regions_at_threshold() {
         .execute_with_options(LocalCopyExecution::Apply, LocalCopyOptions::default())
         .expect("dense copy succeeds");
 
-    // Sparse copy
     let plan_sparse = LocalCopyPlan::from_operands(&[
         source.into_os_string(),
         sparse_dest.clone().into_os_string(),
@@ -683,7 +662,6 @@ fn execute_sparse_detects_zero_regions_at_threshold() {
         )
         .expect("sparse copy succeeds");
 
-    // Verify content is identical
     let dense_content = fs::read(&dense_dest).expect("read dense");
     let sparse_content = fs::read(&sparse_dest).expect("read sparse");
     assert_eq!(dense_content, sparse_content);
@@ -738,7 +716,6 @@ fn execute_sparse_skips_zero_regions_under_threshold() {
     )
     .expect("sparse copy succeeds");
 
-    // Verify content integrity
     let content = fs::read(&sparse_dest).expect("read sparse");
     assert_eq!(&content[0..5], b"START");
     assert!(content[5..5 + under_threshold].iter().all(|&b| b == 0));
@@ -763,7 +740,6 @@ fn execute_sparse_detects_zero_regions_over_threshold() {
     let dense_dest = temp.path().join("dense.bin");
     let sparse_dest = temp.path().join("sparse.bin");
 
-    // Dense copy
     let plan_dense = LocalCopyPlan::from_operands(&[
         source.clone().into_os_string(),
         dense_dest.clone().into_os_string(),
@@ -773,7 +749,6 @@ fn execute_sparse_detects_zero_regions_over_threshold() {
         .execute_with_options(LocalCopyExecution::Apply, LocalCopyOptions::default())
         .expect("dense copy succeeds");
 
-    // Sparse copy
     let plan_sparse = LocalCopyPlan::from_operands(&[
         source.into_os_string(),
         sparse_dest.clone().into_os_string(),
@@ -786,7 +761,6 @@ fn execute_sparse_detects_zero_regions_over_threshold() {
         )
         .expect("sparse copy succeeds");
 
-    // Verify content
     let sparse_content = fs::read(&sparse_dest).expect("read sparse");
     assert_eq!(&sparse_content[0..5], b"BEGIN");
     assert!(sparse_content[5..5 + over_threshold].iter().all(|&b| b == 0));
@@ -817,7 +791,6 @@ fn execute_sparse_creates_actual_filesystem_holes() {
     let source = temp.path().join("hole-test.bin");
     let mut source_file = fs::File::create(&source).expect("create source");
 
-    // Create a file with known hole pattern
     source_file.write_all(b"DATA1").expect("write data1");
     source_file.write_all(&vec![0u8; 64 * 1024]).expect("write 64KB zeros");
     source_file.write_all(b"DATA2").expect("write data2");
@@ -865,7 +838,6 @@ fn execute_sparse_creates_actual_filesystem_holes() {
         assert!(second_data > first_hole, "should find data after first hole");
     }
 
-    // Verify content integrity
     let content = fs::read(&sparse_dest).expect("read sparse");
     assert_eq!(&content[0..5], b"DATA1");
     assert_eq!(&content[5 + 64 * 1024..5 + 64 * 1024 + 5], b"DATA2");
@@ -894,7 +866,6 @@ fn execute_sparse_detects_multiple_threshold_zero_regions() {
     let dense_dest = temp.path().join("dense-multi.bin");
     let sparse_dest = temp.path().join("sparse-multi.bin");
 
-    // Dense copy
     let plan_dense = LocalCopyPlan::from_operands(&[
         source.clone().into_os_string(),
         dense_dest.clone().into_os_string(),
@@ -904,7 +875,6 @@ fn execute_sparse_detects_multiple_threshold_zero_regions() {
         .execute_with_options(LocalCopyExecution::Apply, LocalCopyOptions::default())
         .expect("dense copy succeeds");
 
-    // Sparse copy
     let plan_sparse = LocalCopyPlan::from_operands(&[
         source.into_os_string(),
         sparse_dest.clone().into_os_string(),
@@ -917,7 +887,6 @@ fn execute_sparse_detects_multiple_threshold_zero_regions() {
         )
         .expect("sparse copy succeeds");
 
-    // Verify content
     let content = fs::read(&sparse_dest).expect("read sparse");
     let mut offset = 0;
     assert_eq!(&content[offset..offset + 6], b"BLOCK1");
@@ -951,7 +920,6 @@ fn execute_sparse_preserves_nonzero_data_integrity() {
     let source = temp.path().join("data-integrity.bin");
     let mut source_file = fs::File::create(&source).expect("create source");
 
-    // Create file with various data patterns
     let pattern1 = vec![0xAA; 1024];
     let pattern2 = vec![0x55; 2048];
     let pattern3 = vec![0xFF; 512];
@@ -979,12 +947,10 @@ fn execute_sparse_preserves_nonzero_data_integrity() {
     )
     .expect("sparse copy succeeds");
 
-    // Verify exact content match
     let source_content = fs::read(&source).expect("read source");
     let dest_content = fs::read(&sparse_dest).expect("read dest");
     assert_eq!(source_content, dest_content, "content should be identical");
 
-    // Verify specific patterns
     assert_eq!(&dest_content[0..1024], &pattern1[..]);
     let offset2 = 1024 + 64 * 1024;
     assert_eq!(&dest_content[offset2..offset2 + 2048], &pattern2[..]);
@@ -1012,7 +978,6 @@ fn execute_sparse_reduces_disk_allocation() {
     let dense_dest = temp.path().join("dense-alloc.bin");
     let sparse_dest = temp.path().join("sparse-alloc.bin");
 
-    // Dense copy
     let plan_dense = LocalCopyPlan::from_operands(&[
         source.clone().into_os_string(),
         dense_dest.clone().into_os_string(),
@@ -1022,7 +987,6 @@ fn execute_sparse_reduces_disk_allocation() {
         .execute_with_options(LocalCopyExecution::Apply, LocalCopyOptions::default())
         .expect("dense copy succeeds");
 
-    // Sparse copy
     let plan_sparse = LocalCopyPlan::from_operands(&[
         source.into_os_string(),
         sparse_dest.clone().into_os_string(),
@@ -1039,7 +1003,6 @@ fn execute_sparse_reduces_disk_allocation() {
     let dense_meta = fs::metadata(&dense_dest).expect("dense metadata");
     let sparse_meta = fs::metadata(&sparse_dest).expect("sparse metadata");
 
-    // Both should have same file size
     assert_eq!(dense_meta.len(), sparse_meta.len());
 
     // Sparse should use significantly fewer blocks (allow for filesystem differences)
@@ -1096,7 +1059,6 @@ fn execute_sparse_handles_boundary_split_zeros() {
     )
     .expect("sparse copy succeeds");
 
-    // Verify content
     let content = fs::read(&sparse_dest).expect("read sparse");
     assert_eq!(&content[0..6], b"PREFIX");
     assert!(content[6..6 + threshold * 2].iter().all(|&b| b == 0));
@@ -1209,7 +1171,6 @@ fn execute_sparse_dense_all_zeros_produces_sparse_hole() {
     let dense_dest = temp.path().join("dense-dest.bin");
     let sparse_dest = temp.path().join("sparse-dest.bin");
 
-    // Dense copy (baseline)
     let plan_dense = LocalCopyPlan::from_operands(&[
         source.clone().into_os_string(),
         dense_dest.clone().into_os_string(),
@@ -1219,7 +1180,6 @@ fn execute_sparse_dense_all_zeros_produces_sparse_hole() {
         .execute_with_options(LocalCopyExecution::Apply, LocalCopyOptions::default())
         .expect("dense copy succeeds");
 
-    // Sparse copy
     let plan_sparse = LocalCopyPlan::from_operands(&[
         source.into_os_string(),
         sparse_dest.clone().into_os_string(),
@@ -1282,14 +1242,12 @@ fn execute_sparse_all_zeros_creates_fully_sparse_file() {
     let temp = tempdir().expect("tempdir");
     let source = temp.path().join("all-zeros.bin");
     let file = fs::File::create(&source).expect("create source");
-    // Create a 1MB file of all zeros
     file.set_len(1024 * 1024).expect("set source length");
     drop(file);
 
     let dense_dest = temp.path().join("dense-zeros.bin");
     let sparse_dest = temp.path().join("sparse-zeros.bin");
 
-    // Dense copy (no sparse)
     let plan_dense = LocalCopyPlan::from_operands(&[
         source.clone().into_os_string(),
         dense_dest.clone().into_os_string(),
@@ -1299,7 +1257,6 @@ fn execute_sparse_all_zeros_creates_fully_sparse_file() {
         .execute_with_options(LocalCopyExecution::Apply, LocalCopyOptions::default())
         .expect("dense copy succeeds");
 
-    // Sparse copy
     let plan_sparse = LocalCopyPlan::from_operands(&[
         source.into_os_string(),
         sparse_dest.clone().into_os_string(),
@@ -1315,11 +1272,9 @@ fn execute_sparse_all_zeros_creates_fully_sparse_file() {
     let dense_meta = fs::metadata(&dense_dest).expect("dense metadata");
     let sparse_meta = fs::metadata(&sparse_dest).expect("sparse metadata");
 
-    // Both should have the same logical file size
     assert_eq!(dense_meta.len(), 1024 * 1024);
     assert_eq!(sparse_meta.len(), 1024 * 1024);
 
-    // Content should be identical (all zeros)
     let sparse_content = fs::read(&sparse_dest).expect("read sparse");
     assert!(
         sparse_content.iter().all(|&b| b == 0),
@@ -1368,7 +1323,6 @@ fn execute_sparse_nonzero_file_written_normally() {
     let dense_dest = temp.path().join("dense-nonzero.bin");
     let sparse_dest = temp.path().join("sparse-nonzero.bin");
 
-    // Dense copy
     let plan_dense = LocalCopyPlan::from_operands(&[
         source.clone().into_os_string(),
         dense_dest.clone().into_os_string(),
@@ -1378,7 +1332,6 @@ fn execute_sparse_nonzero_file_written_normally() {
         .execute_with_options(LocalCopyExecution::Apply, LocalCopyOptions::default())
         .expect("dense copy succeeds");
 
-    // Sparse copy
     let plan_sparse = LocalCopyPlan::from_operands(&[
         source.into_os_string(),
         sparse_dest.clone().into_os_string(),
@@ -1391,7 +1344,6 @@ fn execute_sparse_nonzero_file_written_normally() {
         )
         .expect("sparse copy succeeds");
 
-    // Content should be identical
     let dense_content = fs::read(&dense_dest).expect("read dense");
     let sparse_content = fs::read(&sparse_dest).expect("read sparse");
     assert_eq!(dense_content, sparse_content);
@@ -1436,7 +1388,6 @@ fn execute_sparse_small_file_below_threshold() {
     )
     .expect("sparse copy succeeds");
 
-    // Verify content integrity
     let content = fs::read(&sparse_dest).expect("read dest");
     assert_eq!(content.len(), 100);
     assert_eq!(content[0], b'X');
@@ -1496,7 +1447,6 @@ fn execute_sparse_hole_at_start() {
     let dense_dest = temp.path().join("dense-start.bin");
     let sparse_dest = temp.path().join("sparse-start.bin");
 
-    // Dense copy
     let plan_dense = LocalCopyPlan::from_operands(&[
         source.clone().into_os_string(),
         dense_dest.clone().into_os_string(),
@@ -1506,7 +1456,6 @@ fn execute_sparse_hole_at_start() {
         .execute_with_options(LocalCopyExecution::Apply, LocalCopyOptions::default())
         .expect("dense copy succeeds");
 
-    // Sparse copy
     let plan_sparse = LocalCopyPlan::from_operands(&[
         source.into_os_string(),
         sparse_dest.clone().into_os_string(),
@@ -1519,7 +1468,6 @@ fn execute_sparse_hole_at_start() {
         )
         .expect("sparse copy succeeds");
 
-    // Verify content
     let sparse_content = fs::read(&sparse_dest).expect("read sparse");
     let dense_content = fs::read(&dense_dest).expect("read dense");
     assert_eq!(sparse_content, dense_content);
@@ -1559,7 +1507,6 @@ fn execute_sparse_hole_at_end() {
     let dense_dest = temp.path().join("dense-end.bin");
     let sparse_dest = temp.path().join("sparse-end.bin");
 
-    // Dense copy
     let plan_dense = LocalCopyPlan::from_operands(&[
         source.clone().into_os_string(),
         dense_dest.clone().into_os_string(),
@@ -1569,7 +1516,6 @@ fn execute_sparse_hole_at_end() {
         .execute_with_options(LocalCopyExecution::Apply, LocalCopyOptions::default())
         .expect("dense copy succeeds");
 
-    // Sparse copy
     let plan_sparse = LocalCopyPlan::from_operands(&[
         source.into_os_string(),
         sparse_dest.clone().into_os_string(),
@@ -1582,7 +1528,6 @@ fn execute_sparse_hole_at_end() {
         )
         .expect("sparse copy succeeds");
 
-    // Verify content
     let sparse_content = fs::read(&sparse_dest).expect("read sparse");
     let dense_content = fs::read(&dense_dest).expect("read dense");
     assert_eq!(sparse_content, dense_content);
@@ -1625,7 +1570,6 @@ fn execute_sparse_hole_in_middle() {
     let dense_dest = temp.path().join("dense-mid.bin");
     let sparse_dest = temp.path().join("sparse-mid.bin");
 
-    // Dense copy
     let plan_dense = LocalCopyPlan::from_operands(&[
         source.clone().into_os_string(),
         dense_dest.clone().into_os_string(),
@@ -1635,7 +1579,6 @@ fn execute_sparse_hole_in_middle() {
         .execute_with_options(LocalCopyExecution::Apply, LocalCopyOptions::default())
         .expect("dense copy succeeds");
 
-    // Sparse copy
     let plan_sparse = LocalCopyPlan::from_operands(&[
         source.into_os_string(),
         sparse_dest.clone().into_os_string(),
@@ -1648,7 +1591,6 @@ fn execute_sparse_hole_in_middle() {
         )
         .expect("sparse copy succeeds");
 
-    // Verify content
     let sparse_content = fs::read(&sparse_dest).expect("read sparse");
     let dense_content = fs::read(&dense_dest).expect("read dense");
     assert_eq!(sparse_content, dense_content);
@@ -1701,7 +1643,6 @@ fn execute_preallocate_disables_sparse_writes() {
     let sparse_only_dest = temp.path().join("sparse-only.bin");
     let prealloc_sparse_dest = temp.path().join("prealloc-sparse.bin");
 
-    // Sparse-only copy (no preallocate)
     let plan_sparse = LocalCopyPlan::from_operands(&[
         source.clone().into_os_string(),
         sparse_only_dest.clone().into_os_string(),
@@ -1727,7 +1668,6 @@ fn execute_preallocate_disables_sparse_writes() {
         )
         .expect("preallocate+sparse copy succeeds");
 
-    // Both should have the same logical size and content
     let sparse_meta = fs::metadata(&sparse_only_dest).expect("sparse metadata");
     let prealloc_meta = fs::metadata(&prealloc_sparse_dest).expect("prealloc metadata");
     assert_eq!(sparse_meta.len(), prealloc_meta.len());
@@ -1769,7 +1709,6 @@ fn execute_append_disables_sparse_writes() {
     let source = temp.path().join("append-sparse.bin");
     let mut source_file = fs::File::create(&source).expect("create source");
 
-    // Create a file with zeros
     source_file.write_all(&[0xFF]).expect("write byte");
     source_file
         .write_all(&vec![0u8; 64 * 1024])
@@ -1848,7 +1787,6 @@ fn execute_sparse_large_trailing_zeros_uses_ftruncate() {
     let dense_dest = temp.path().join("dense-trailing.bin");
     let sparse_dest = temp.path().join("sparse-trailing.bin");
 
-    // Dense copy (baseline)
     let plan_dense = LocalCopyPlan::from_operands(&[
         source.clone().into_os_string(),
         dense_dest.clone().into_os_string(),
@@ -1858,7 +1796,6 @@ fn execute_sparse_large_trailing_zeros_uses_ftruncate() {
         .execute_with_options(LocalCopyExecution::Apply, LocalCopyOptions::default())
         .expect("dense copy succeeds");
 
-    // Sparse copy (should use ftruncate for trailing zeros)
     let plan_sparse = LocalCopyPlan::from_operands(&[
         source.into_os_string(),
         sparse_dest.clone().into_os_string(),

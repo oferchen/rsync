@@ -46,7 +46,6 @@ fn modify_window_skips_files_within_one_second_window() {
     // File should be skipped because timestamps are within 1-second window and sizes match
     assert_eq!(summary.files_copied(), 0);
     assert_eq!(summary.regular_files_total(), 1);
-    // Destination content should be preserved
     assert_eq!(
         fs::read(&destination).expect("read dest"),
         content
@@ -85,7 +84,6 @@ fn modify_window_copies_files_outside_one_second_window() {
     // File should be copied because timestamps differ by more than 1 second
     assert_eq!(summary.files_copied(), 1);
     assert_eq!(summary.regular_files_total(), 1);
-    // Destination should have new content
     assert_eq!(
         fs::read(&destination).expect("read dest"),
         b"updated content"
@@ -157,7 +155,6 @@ fn modify_window_sixty_seconds_for_large_tolerance() {
         )
         .expect("copy succeeds");
 
-    // File should be skipped
     assert_eq!(summary.files_copied(), 0);
     assert_eq!(summary.regular_files_total(), 1);
 }
@@ -191,7 +188,6 @@ fn modify_window_sixty_seconds_copies_when_outside() {
         )
         .expect("copy succeeds");
 
-    // File should be copied
     assert_eq!(summary.files_copied(), 1);
     assert_eq!(
         fs::read(&destination).expect("read dest"),
@@ -510,7 +506,6 @@ fn modify_window_with_update_copies_when_source_definitively_newer() {
         )
         .expect("copy succeeds");
 
-    // File should be copied
     assert_eq!(summary.files_copied(), 1);
     assert_eq!(summary.regular_files_skipped_newer(), 0);
     assert_eq!(
@@ -650,18 +645,17 @@ fn modify_window_recursive_mixed_timestamps() {
     assert_eq!(summary.files_copied(), 2);
     assert_eq!(summary.regular_files_total(), 3);
 
-    // Verify file contents
     assert_eq!(
         fs::read(dest_root.join("within.txt")).expect("read within"),
-        within_content  // Should remain unchanged
+        within_content
     );
     assert_eq!(
         fs::read(dest_root.join("outside.txt")).expect("read outside"),
-        b"outside source content"  // Should be updated
+        b"outside source content"
     );
     assert_eq!(
         fs::read(dest_root.join("new.txt")).expect("read new"),
-        b"new file"  // Should be created
+        b"new file"
     );
 }
 
@@ -834,9 +828,7 @@ fn modify_window_dry_run_reports_correctly() {
         )
         .expect("dry run succeeds");
 
-    // Dry run should report that file would be copied
     assert_eq!(summary.files_copied(), 1);
-    // But file should remain unchanged
     assert_eq!(
         fs::read(&destination).expect("read dest"),
         b"old content"
@@ -987,7 +979,6 @@ fn modify_window_matches_upstream_rsync_semantics() {
     // Only case3 should be copied (3s diff > 2s window)
     assert_eq!(summary.files_copied(), 1, "should copy only case3");
 
-    // Verify case3 was updated
     assert_eq!(
         fs::read(dest_root.join("case3.txt")).expect("case3"),
         b"new"

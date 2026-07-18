@@ -114,11 +114,9 @@ fn delete_after_files_present_during_transfer() {
     fs::create_dir_all(&source).expect("create source");
     fs::create_dir_all(&dest).expect("create dest");
 
-    // Create source files
     fs::write(source.join("keep.txt"), b"keep content").expect("write keep");
     fs::write(source.join("update.txt"), b"new version").expect("write update");
 
-    // Create destination with extra file that should be deleted
     fs::write(dest.join("keep.txt"), b"old keep").expect("write old keep");
     fs::write(dest.join("update.txt"), b"old version").expect("write old update");
     fs::write(dest.join("delete_me.txt"), b"to be deleted").expect("write delete_me");
@@ -175,14 +173,12 @@ fn delete_after_files_present_during_transfer() {
         .execute_with_options_and_handler(LocalCopyExecution::Apply, options, Some(&mut observer))
         .expect("copy succeeds");
 
-    // Verify deletions happened
     assert!(!dest.join("delete_me.txt").exists(), "delete_me.txt should be deleted");
     assert!(!dest.join("also_delete.txt").exists(), "also_delete.txt should be deleted");
     assert!(dest.join("keep.txt").exists(), "keep.txt should exist");
     assert!(dest.join("update.txt").exists(), "update.txt should exist");
     assert_eq!(summary.items_deleted(), 2);
 
-    // Verify files existed during transfer
     let seen = files_during_copy.lock().unwrap();
     assert!(seen.contains("delete_me.txt"), "delete_me.txt should have existed during transfer");
     assert!(seen.contains("also_delete.txt"), "also_delete.txt should have existed during transfer");
@@ -196,13 +192,11 @@ fn delete_after_deletes_after_all_transfers_complete() {
     fs::create_dir_all(&source).expect("create source");
     fs::create_dir_all(&dest).expect("create dest");
 
-    // Create nested directory structure in source
     let nested = source.join("subdir");
     fs::create_dir_all(&nested).expect("create nested");
     fs::write(source.join("file1.txt"), b"file1").expect("write file1");
     fs::write(nested.join("file2.txt"), b"file2").expect("write file2");
 
-    // Create destination with files to delete at root and in subdirectory
     fs::write(dest.join("root_extra.txt"), b"root extra").expect("write root_extra");
     let dest_nested = dest.join("subdir");
     fs::create_dir_all(&dest_nested).expect("create dest nested");
@@ -224,11 +218,9 @@ fn delete_after_deletes_after_all_transfers_complete() {
     let summary = report.summary();
     let records = report.records();
 
-    // Verify all transfers completed
     assert!(dest.join("file1.txt").exists());
     assert!(dest_nested.join("file2.txt").exists());
 
-    // Verify all deletions happened
     assert!(!dest.join("root_extra.txt").exists());
     assert!(!dest_nested.join("nested_extra.txt").exists());
     assert_eq!(summary.items_deleted(), 2);
@@ -271,7 +263,6 @@ fn delete_after_timing_differs_from_delete_before() {
     fs::create_dir_all(&dest_after).expect("create dest_after");
     fs::create_dir_all(&dest_before).expect("create dest_before");
 
-    // Create a file that exists in source
     fs::write(source.join("keep.txt"), b"keep").expect("write keep");
 
     // For delete-after: create extra file in destination
@@ -282,7 +273,6 @@ fn delete_after_timing_differs_from_delete_before() {
     fs::write(dest_before.join("extra.txt"), b"extra").expect("write extra_before");
     fs::write(dest_before.join("keep.txt"), b"old keep").expect("write old keep_before");
 
-    // Test delete-after
     let mut source_operand_after = source.clone().into_os_string();
     source_operand_after.push(std::path::MAIN_SEPARATOR.to_string());
     let operands_after = vec![source_operand_after, dest_after.clone().into_os_string()];
@@ -296,7 +286,6 @@ fn delete_after_timing_differs_from_delete_before() {
         .execute_with_report(LocalCopyExecution::Apply, options_after)
         .expect("copy with delete-after succeeds");
 
-    // Test delete-before
     let mut source_operand_before = source.into_os_string();
     source_operand_before.push(std::path::MAIN_SEPARATOR.to_string());
     let operands_before = vec![source_operand_before, dest_before.clone().into_os_string()];
@@ -316,7 +305,6 @@ fn delete_after_timing_differs_from_delete_before() {
     assert!(dest_after.join("keep.txt").exists());
     assert!(dest_before.join("keep.txt").exists());
 
-    // Analyze event order
     let records_after = report_after.records();
     let records_before = report_before.records();
 
@@ -350,7 +338,6 @@ fn delete_after_timing_differs_from_delete_before() {
         }
     }
 
-    // Verify timing difference
     if let (Some(after_copy), Some(after_delete)) = (after_last_copy, after_first_delete) {
         assert!(
             after_copy < after_delete,
@@ -372,13 +359,11 @@ fn delete_after_timing_differs_from_delete_during() {
     let source = temp.path().join("source");
     fs::create_dir_all(&source).expect("create source");
 
-    // Create nested structure
     let subdir = source.join("subdir");
     fs::create_dir_all(&subdir).expect("create subdir");
     fs::write(source.join("root.txt"), b"root").expect("write root");
     fs::write(subdir.join("nested.txt"), b"nested").expect("write nested");
 
-    // Test delete-after
     let dest_after = temp.path().join("dest_after");
     fs::create_dir_all(&dest_after).expect("create dest_after");
     fs::write(dest_after.join("root_extra.txt"), b"root extra").expect("write root_extra");
@@ -399,7 +384,6 @@ fn delete_after_timing_differs_from_delete_during() {
         .execute_with_report(LocalCopyExecution::Apply, options_after)
         .expect("copy with delete-after succeeds");
 
-    // Test delete-during (default)
     let dest_during = temp.path().join("dest_during");
     fs::create_dir_all(&dest_during).expect("create dest_during");
     fs::write(dest_during.join("root_extra.txt"), b"root extra").expect("write root_extra");
@@ -472,7 +456,6 @@ fn delete_after_with_multiple_directories() {
     let source = temp.path().join("source");
     fs::create_dir_all(&source).expect("create source");
 
-    // Create multiple subdirectories
     let dir1 = source.join("dir1");
     let dir2 = source.join("dir2");
     fs::create_dir_all(&dir1).expect("create dir1");
@@ -480,7 +463,6 @@ fn delete_after_with_multiple_directories() {
     fs::write(dir1.join("file1.txt"), b"file1").expect("write file1");
     fs::write(dir2.join("file2.txt"), b"file2").expect("write file2");
 
-    // Create destination with extra files in each directory
     let dest = temp.path().join("dest");
     let dest_dir1 = dest.join("dir1");
     let dest_dir2 = dest.join("dir2");
@@ -504,11 +486,9 @@ fn delete_after_with_multiple_directories() {
 
     let summary = report.summary();
 
-    // Verify all source files copied
     assert!(dest_dir1.join("file1.txt").exists());
     assert!(dest_dir2.join("file2.txt").exists());
 
-    // Verify all extra files deleted
     assert!(!dest_dir1.join("extra1.txt").exists());
     assert!(!dest_dir2.join("extra2.txt").exists());
     assert_eq!(summary.items_deleted(), 2);
@@ -565,15 +545,12 @@ fn delete_after_works_with_dry_run() {
 
     let summary = report.summary();
 
-    // In dry-run, nothing should be modified
     assert_eq!(fs::read(dest.join("keep.txt")).expect("read"), b"old keep");
     assert!(dest.join("delete_me.txt").exists(), "file should still exist in dry-run");
 
-    // But summary should report what would happen
     assert_eq!(summary.files_copied(), 1);
     assert_eq!(summary.items_deleted(), 1);
 
-    // Verify event ordering in dry-run too
     let records = report.records();
     let mut last_copy_index = None;
     let mut first_delete_index = None;

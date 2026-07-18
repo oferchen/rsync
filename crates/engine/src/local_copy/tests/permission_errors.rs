@@ -99,10 +99,8 @@ fn permission_read_denied_returns_io_error_with_multiple_files() {
     let source_root = temp.path().join("source");
     fs::create_dir_all(&source_root).expect("create source");
 
-    // Create a readable file
     fs::write(source_root.join("readable.txt"), b"can read this").expect("write readable");
 
-    // Create an unreadable file
     let unreadable = create_unreadable_file(&source_root, "unreadable.txt", b"secret");
 
     let dest_root = temp.path().join("dest");
@@ -200,7 +198,6 @@ fn permission_write_denied_destination_directory() {
     fs::create_dir_all(&source_root).expect("create source");
     fs::write(source_root.join("file.txt"), b"content").expect("write file");
 
-    // Create readonly destination
     let dest_root = create_readonly_dir(temp.path(), "dest");
 
     let operands = vec![
@@ -239,7 +236,6 @@ fn permission_write_denied_creating_directory_in_readonly_parent() {
     fs::create_dir_all(&nested).expect("create nested");
     fs::write(nested.join("file.txt"), b"content").expect("write file");
 
-    // Create destination with readonly permissions
     let dest_root = create_readonly_dir(temp.path(), "dest");
 
     let operands = vec![
@@ -394,7 +390,6 @@ fn permission_denied_returns_partial_transfer_exit_code() {
     let source_root = temp.path().join("source");
     fs::create_dir_all(&source_root).expect("create source");
 
-    // Create readable and unreadable files
     fs::write(source_root.join("readable.txt"), b"content").expect("write readable");
     let unreadable = create_unreadable_file(&source_root, "unreadable.txt", b"secret");
 
@@ -470,7 +465,6 @@ fn permission_dry_run_with_readonly_destination() {
     fs::create_dir_all(&source_root).expect("create source");
     fs::write(source_root.join("file.txt"), b"content").expect("write file");
 
-    // Create readonly destination
     let dest_root = create_readonly_dir(temp.path(), "dest");
 
     let operands = vec![

@@ -18,10 +18,8 @@ fn local_copy_error_from_disk_full_io_error() {
     let path = PathBuf::from("/tmp/test/file.txt");
     let error = LocalCopyError::io("write destination file", path.clone(), disk_full);
 
-    // Verify error type
     assert!(matches!(error.kind(), LocalCopyErrorKind::Io { .. }));
 
-    // Verify error message contains path
     let message = error.to_string();
     assert!(message.contains("/tmp/test/file.txt"));
     assert!(message.contains("write destination file"));
@@ -46,7 +44,6 @@ fn local_copy_error_disk_full_kind_provides_path_access() {
     let path = PathBuf::from("/destination/file.txt");
     let error = LocalCopyError::io("write file", path.clone(), disk_full);
 
-    // Should be able to extract path from error
     let (action, extracted_path, source) = error.kind().as_io().expect("should be Io variant");
     assert_eq!(action, "write file");
     assert_eq!(extracted_path, path.as_path());
@@ -162,12 +159,10 @@ fn guard_discard_cleans_up_temp_file_on_disk_full() {
     // Simulate disk full error during write - guard should clean up on discard
     guard.discard();
 
-    // Staging file should be removed
     assert!(
         !staging.exists(),
         "Guard should clean up staging file on discard"
     );
-    // Final destination should not exist
     assert!(
         !dest.exists(),
         "Final destination should not exist after discard"
@@ -186,7 +181,6 @@ fn guard_drop_cleans_up_temp_file_without_commit() {
         // Guard dropped without commit - simulates error during write
     }
 
-    // Staging file should be cleaned up by Drop
     assert!(!staging.exists(), "Drop should clean up staging file");
 }
 
@@ -303,7 +297,6 @@ fn disk_full_error_debug_format_includes_details() {
 
     let debug = format!("{error:?}");
 
-    // Debug format should include relevant details
     assert!(debug.contains("Io"));
     assert!(debug.contains("write file"));
 }
@@ -317,7 +310,6 @@ fn file_write_error_maps_to_local_copy_error() {
     let temp = tempdir().expect("tempdir");
     let path = temp.path().join("test.txt");
 
-    // Create a normal file to test error mapping
     fs::write(&path, b"content").expect("write");
 
     let metadata = fs::metadata(&path).expect("metadata");
@@ -519,7 +511,6 @@ fn disk_full_during_copy_removes_temp_file_in_normal_mode() {
     // Simulate disk full - in normal mode, discard should remove temp file
     guard.discard();
 
-    // Temp file should be removed
     assert!(!staging.exists(), "Temp file should be removed in normal mode");
 }
 
@@ -543,7 +534,6 @@ fn can_retry_after_disk_full_error() {
         guard.commit().expect("commit");
     }
 
-    // Verify the file exists with correct content
     assert!(dest.exists());
     assert_eq!(fs::read(&dest).expect("read"), b"success on retry");
 }
@@ -583,7 +573,6 @@ fn readonly_filesystem_error_maps_correctly() {
         super::filter_program::INVALID_OPERAND_EXIT_CODE
     );
 
-    // Error message should contain the path
     let message = error.to_string();
     assert!(message.contains("/readonly/path"));
 }
@@ -596,6 +585,5 @@ fn readonly_vs_disk_full_same_exit_code() {
     let readonly_error = LocalCopyError::io("write", PathBuf::from("/a"), readonly_err);
     let diskfull_error = LocalCopyError::io("write", PathBuf::from("/b"), diskfull_err);
 
-    // Both should have the same exit code
     assert_eq!(readonly_error.exit_code(), diskfull_error.exit_code());
 }

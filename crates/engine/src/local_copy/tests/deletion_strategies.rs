@@ -1,8 +1,8 @@
-//! Integration tests for deletion strategies.
-//!
-//! This module tests the complete deletion behavior at the integration level,
-//! verifying that delete-before, delete-during, delete-after, and delete-delay
-//! all work correctly with various options.
+// Integration tests for deletion strategies.
+//
+// This module tests the complete deletion behavior at the integration level,
+// verifying that delete-before, delete-during, delete-after, and delete-delay
+// all work correctly with various options.
 
 use super::*;
 
@@ -15,7 +15,6 @@ fn delete_before_removes_files_before_transfer() {
     fs::create_dir_all(&source).expect("create source");
     fs::create_dir_all(&dest).expect("create dest");
 
-    // Create source files
     fs::write(source.join("keep.txt"), b"keep").expect("write keep");
 
     // Create destination with extra files (no overlap to avoid confusion about deletions)
@@ -33,7 +32,6 @@ fn delete_before_removes_files_before_transfer() {
         .execute_with_options(LocalCopyExecution::Apply, options)
         .expect("copy succeeds");
 
-    // Verify extraneous files were deleted
     assert!(!dest.join("delete1.txt").exists());
     assert!(!dest.join("delete2.txt").exists());
     assert!(dest.join("keep.txt").exists());
@@ -49,7 +47,6 @@ fn delete_during_removes_files_incrementally() {
     fs::create_dir_all(&source).expect("create source");
     fs::create_dir_all(&dest).expect("create dest");
 
-    // Create nested directory structure
     fs::create_dir_all(source.join("subdir")).expect("create subdir");
     fs::write(source.join("keep.txt"), b"keep").expect("write keep");
     fs::write(source.join("subdir").join("nested.txt"), b"nested").expect("write nested");
@@ -73,7 +70,6 @@ fn delete_during_removes_files_incrementally() {
         .execute_with_options(LocalCopyExecution::Apply, options)
         .expect("copy succeeds");
 
-    // Verify files were deleted in both root and subdirectory
     assert!(!dest.join("delete_root.txt").exists());
     assert!(!dest.join("subdir").join("delete_nested.txt").exists());
     assert!(dest.join("keep.txt").exists());
@@ -139,7 +135,6 @@ fn delete_after_preserves_files_during_transfer() {
         .execute_with_options_and_handler(LocalCopyExecution::Apply, options, Some(&mut observer))
         .expect("copy succeeds");
 
-    // Verify file existed during transfer
     let seen = files_during_copy.lock().unwrap();
     assert!(
         seen.contains("delete_me.txt"),
@@ -183,7 +178,6 @@ fn delete_delay_defers_deletion_until_end() {
         .execute_with_options(LocalCopyExecution::Apply, options)
         .expect("copy succeeds");
 
-    // Verify all deletions happened
     assert!(!dest.join("dir1").join("delete1.txt").exists());
     assert!(!dest.join("dir2").join("delete2.txt").exists());
     assert!(dest.join("dir1").join("keep1.txt").exists());
@@ -221,7 +215,6 @@ fn deletion_respects_filter_rules() {
         .execute_with_options(LocalCopyExecution::Apply, options)
         .expect("copy succeeds");
 
-    // Extraneous file deleted
     assert!(!dest.join("delete_me.txt").exists());
     // Excluded file preserved (not deleted unless --delete-excluded)
     assert!(dest.join("skip.tmp").exists());
@@ -260,7 +253,6 @@ fn delete_excluded_removes_filtered_files() {
         .execute_with_options(LocalCopyExecution::Apply, options)
         .expect("copy succeeds");
 
-    // Both extraneous and excluded files deleted
     assert!(!dest.join("delete.txt").exists());
     assert!(!dest.join("dest.tmp").exists());
     assert!(dest.join("keep.txt").exists());
@@ -403,7 +395,6 @@ fn deletion_removes_directories_recursively() {
         .execute_with_options(LocalCopyExecution::Apply, options)
         .expect("copy succeeds");
 
-    // Directory and all contents should be deleted
     assert!(!dest.join("delete_dir").exists());
     assert!(dest.join("keep.txt").exists());
     // upstream: each item in the tree is counted individually:

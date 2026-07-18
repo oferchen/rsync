@@ -60,7 +60,6 @@ fn checksum_md4_transfers_different_files() {
     fs::write(&source, b"source!").expect("write source");
     fs::write(&destination, b"dest!!!").expect("write dest");
 
-    // Set identical timestamps
     let timestamp = FileTime::from_unix_time(1_700_000_000, 0);
     set_file_mtime(&source, timestamp).expect("set source time");
     set_file_mtime(&destination, timestamp).expect("set dest time");
@@ -100,7 +99,6 @@ fn checksum_md5_skips_identical_files() {
     fs::write(&source, content).expect("write source");
     fs::write(&destination, content).expect("write dest");
 
-    // Set different timestamps
     let older_time = FileTime::from_unix_time(1_700_000_000, 0);
     let newer_time = FileTime::from_unix_time(1_700_000_100, 0);
     set_file_mtime(&source, newer_time).expect("set source time");
@@ -371,7 +369,6 @@ fn checksum_xxh64_different_seeds_are_independent() {
         set_file_mtime(path, older_time).expect("set dest time");
     }
 
-    // Test with seed 0
     let operands1 = vec![
         source1.into_os_string(),
         dest1.clone().into_os_string(),
@@ -386,7 +383,6 @@ fn checksum_xxh64_different_seeds_are_independent() {
         )
         .expect("copy1 succeeds");
 
-    // Test with different seed
     let operands2 = vec![
         source2.into_os_string(),
         dest2.clone().into_os_string(),
@@ -565,7 +561,6 @@ fn checksum_ignores_mtime_when_content_matches() {
     set_file_mtime(&source, very_new).expect("set source time");
     set_file_mtime(&destination, very_old).expect("set dest time");
 
-    // Record destination mtime before sync
     let dest_mtime_before = FileTime::from_last_modification_time(
         &fs::metadata(&destination).expect("dest metadata"),
     );
@@ -587,7 +582,6 @@ fn checksum_ignores_mtime_when_content_matches() {
     assert_eq!(summary.files_copied(), 0);
     assert_eq!(summary.regular_files_matched(), 1);
 
-    // Destination mtime should be unchanged
     let dest_mtime_after = FileTime::from_last_modification_time(
         &fs::metadata(&destination).expect("dest metadata"),
     );
@@ -642,13 +636,11 @@ fn without_checksum_mtime_match_skips_even_with_different_content() {
     fs::write(&source, b"source!!").expect("write source");
     fs::write(&destination, b"dest!!!!").expect("write dest");
 
-    // Verify same size
     assert_eq!(
         fs::metadata(&source).expect("source meta").len(),
         fs::metadata(&destination).expect("dest meta").len()
     );
 
-    // Set identical timestamps
     let same_time = FileTime::from_unix_time(1_700_000_000, 0);
     set_file_mtime(&source, same_time).expect("set source time");
     set_file_mtime(&destination, same_time).expect("set dest time");
@@ -659,7 +651,6 @@ fn without_checksum_mtime_match_skips_even_with_different_content() {
     ];
     let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
 
-    // Without checksum mode
     let summary = plan
         .execute_with_options(
             LocalCopyExecution::Apply,
@@ -683,7 +674,6 @@ fn checksum_transfer_produces_correct_content() {
     let source = temp.path().join("source.bin");
     let destination = temp.path().join("dest.bin");
 
-    // Create binary content with known pattern
     let source_content: Vec<u8> = (0..=255).cycle().take(10000).collect();
     fs::write(&source, &source_content).expect("write source");
 
@@ -702,7 +692,6 @@ fn checksum_transfer_produces_correct_content() {
 
     assert_eq!(summary.files_copied(), 1);
 
-    // Verify content byte-for-byte
     let dest_content = fs::read(&destination).expect("read dest");
     assert_eq!(dest_content, source_content);
 }
@@ -907,7 +896,6 @@ fn checksum_recursive_directory_mixed_files() {
     assert_eq!(summary.regular_files_total(), 3);
     assert_eq!(summary.regular_files_matched(), 1);
 
-    // Verify content
     assert_eq!(
         fs::read(dest_root.join("same.txt")).expect("read"),
         b"identical"

@@ -188,7 +188,6 @@ fn keep_dirlinks_preserves_symlink_subdir_during_recursive_copy() {
     let dest_root = temp.path().join("dest");
     fs::create_dir_all(&dest_root).expect("create dest root");
 
-    // Create a real directory as the symlink target, then make dest/subdir a symlink to it
     let real_target = temp.path().join("real-target");
     fs::create_dir(&real_target).expect("create real target");
     symlink(&real_target, dest_root.join("subdir")).expect("create symlink subdir");
@@ -204,7 +203,6 @@ fn keep_dirlinks_preserves_symlink_subdir_during_recursive_copy() {
     )
     .expect("copy with keep_dirlinks succeeds");
 
-    // The symlink should still be a symlink
     let subdir_meta = fs::symlink_metadata(dest_root.join("subdir")).expect("subdir metadata");
     assert!(
         subdir_meta.file_type().is_symlink(),
@@ -231,7 +229,6 @@ fn without_keep_dirlinks_force_replaces_symlink_subdir_with_real_directory() {
     let dest_root = temp.path().join("dest");
     fs::create_dir_all(&dest_root).expect("create dest root");
 
-    // Create a real directory as the symlink target, then make dest/subdir a symlink to it
     let real_target = temp.path().join("real-target");
     fs::create_dir(&real_target).expect("create real target");
     symlink(&real_target, dest_root.join("subdir")).expect("create symlink subdir");
@@ -265,7 +262,6 @@ fn without_keep_dirlinks_force_replaces_symlink_subdir_with_real_directory() {
         fs::read(dest_root.join("subdir/file.txt")).expect("read file"),
         b"replaced"
     );
-    // The original symlink target should not have the file
     assert!(
         !real_target.join("file.txt").exists(),
         "file should not appear in original symlink target"
@@ -309,7 +305,6 @@ fn keep_dirlinks_with_symlink_to_file_errors() {
         )
     ));
 
-    // The symlink should remain untouched
     let meta = fs::symlink_metadata(dest_root.join("subdir")).expect("subdir metadata");
     assert!(meta.file_type().is_symlink(), "symlink should remain");
 }
@@ -345,7 +340,6 @@ fn keep_dirlinks_force_replaces_symlink_to_file_with_directory() {
     )
     .expect("copy with -K and --force succeeds");
 
-    // The symlink-to-file should be replaced by a real directory
     let meta = fs::symlink_metadata(dest_root.join("subdir")).expect("subdir metadata");
     assert!(
         meta.file_type().is_dir(),
@@ -391,7 +385,6 @@ fn keep_dirlinks_deeply_nested_parent_symlink_to_dir() {
     )
     .expect("copy with keep_dirlinks succeeds for nested structure");
 
-    // The symlink at dest/a/b should be preserved
     let b_meta = fs::symlink_metadata(dest_root.join("a/b")).expect("a/b metadata");
     assert!(
         b_meta.file_type().is_symlink(),
@@ -422,7 +415,6 @@ fn keep_dirlinks_dry_run_no_modifications() {
     let dest_root = temp.path().join("dest");
     fs::create_dir_all(&dest_root).expect("create dest root");
 
-    // Create a real directory as the symlink target
     let real_target = temp.path().join("real-target");
     fs::create_dir(&real_target).expect("create real target");
     symlink(&real_target, dest_root.join("subdir")).expect("create symlink subdir");
@@ -438,14 +430,12 @@ fn keep_dirlinks_dry_run_no_modifications() {
     )
     .expect("dry-run with keep_dirlinks succeeds");
 
-    // The symlink should still exist
     let subdir_meta = fs::symlink_metadata(dest_root.join("subdir")).expect("subdir metadata");
     assert!(
         subdir_meta.file_type().is_symlink(),
         "symlink should remain after dry-run"
     );
 
-    // No file should have been written
     assert!(
         !real_target.join("file.txt").exists(),
         "file should not be created during dry-run"
@@ -485,7 +475,6 @@ fn keep_dirlinks_delete_preserves_symlink_removes_extraneous() {
         )
         .expect("copy with -K and --delete succeeds");
 
-    // The symlink should be preserved
     let subdir_meta = fs::symlink_metadata(dest_root.join("subdir")).expect("subdir metadata");
     assert!(
         subdir_meta.file_type().is_symlink(),
@@ -498,7 +487,6 @@ fn keep_dirlinks_delete_preserves_symlink_removes_extraneous() {
         b"keep"
     );
 
-    // The extraneous file should be deleted
     assert!(
         !real_target.join("extra.txt").exists(),
         "extraneous file should be deleted"
@@ -540,7 +528,6 @@ fn keep_dirlinks_mixed_real_and_symlink_subdirs() {
     )
     .expect("copy with mixed dirs and symlinks succeeds");
 
-    // real-sub should remain a real directory with its file
     let real_meta = fs::symlink_metadata(dest_root.join("real-sub")).expect("real-sub metadata");
     assert!(
         real_meta.file_type().is_dir(),
@@ -555,7 +542,6 @@ fn keep_dirlinks_mixed_real_and_symlink_subdirs() {
         b"real-content"
     );
 
-    // link-sub should remain a symlink (preserved by -K)
     let link_meta = fs::symlink_metadata(dest_root.join("link-sub")).expect("link-sub metadata");
     assert!(
         link_meta.file_type().is_symlink(),
@@ -606,7 +592,6 @@ fn keep_dirlinks_does_not_apply_when_source_sends_file_over_symlink_to_dir() {
 
     assert_eq!(summary.files_copied(), 1);
 
-    // The symlink should have been replaced by a regular file
     let meta = fs::symlink_metadata(dest_root.join("item")).expect("item metadata");
     assert!(
         meta.file_type().is_file(),
@@ -621,7 +606,6 @@ fn keep_dirlinks_does_not_apply_when_source_sends_file_over_symlink_to_dir() {
         b"file-content"
     );
 
-    // The original symlink target directory contents should be untouched
     assert!(real_dir.join("inside.txt").exists(), "target contents should be preserved");
 }
 
@@ -648,7 +632,6 @@ fn keep_dirlinks_delta_transfer_through_symlink_succeeds() {
     let dest_root = temp.path().join("dest");
     fs::create_dir_all(&dest_root).expect("create dest root");
 
-    // Create real target directory and make dest/subdir a symlink to it
     let real_target = temp.path().join("real-target");
     fs::create_dir_all(&real_target).expect("create real target");
     symlink(&real_target, dest_root.join("subdir")).expect("create symlink subdir");
@@ -733,7 +716,6 @@ fn keep_dirlinks_delta_transfer_through_symlink_succeeds() {
         "file through symlink should match modified source"
     );
 
-    // Verify the symlink is still intact
     let subdir_meta = fs::symlink_metadata(dest_root.join("subdir")).expect("subdir metadata");
     assert!(
         subdir_meta.file_type().is_symlink(),

@@ -119,10 +119,8 @@ fn remove_source_files_does_not_remove_directories() {
 
     assert_eq!(summary.files_copied(), 2);
     assert_eq!(summary.sources_removed(), 2);
-    // Files should be removed
     assert!(!ctx.source.join("dir1/file.txt").exists());
     assert!(!ctx.source.join("dir2/file.txt").exists());
-    // But directories should remain
     assert!(ctx.source.join("dir1").is_dir(), "directory should not be removed");
     assert!(ctx.source.join("dir2").is_dir(), "directory should not be removed");
 }
@@ -156,11 +154,9 @@ fn remove_source_files_with_filter_only_removes_transferred() {
 
     assert_eq!(summary.files_copied(), 1);
     assert_eq!(summary.sources_removed(), 1);
-    // Included file should be removed
     assert!(!ctx.source.join("include.txt").exists());
     // Excluded file should remain (wasn't transferred)
     assert!(ctx.source.join("exclude.log").exists());
-    // Dest should only have included file
     assert!(ctx.dest.join("include.txt").exists());
     assert!(!ctx.dest.join("exclude.log").exists());
 }
@@ -318,15 +314,12 @@ fn remove_source_files_removes_nested_files() {
 
     assert_eq!(summary.files_copied(), 3);
     assert_eq!(summary.sources_removed(), 3);
-    // All files removed
     assert!(!ctx.source.join("a/b/c/file1.txt").exists());
     assert!(!ctx.source.join("a/b/file2.txt").exists());
     assert!(!ctx.source.join("a/file3.txt").exists());
-    // All directories remain
     assert!(ctx.source.join("a").is_dir());
     assert!(ctx.source.join("a/b").is_dir());
     assert!(ctx.source.join("a/b/c").is_dir());
-    // All files copied
     assert!(ctx.dest.join("a/b/c/file1.txt").exists());
     assert!(ctx.dest.join("a/b/file2.txt").exists());
     assert!(ctx.dest.join("a/file3.txt").exists());

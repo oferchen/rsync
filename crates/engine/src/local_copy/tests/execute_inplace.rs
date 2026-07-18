@@ -520,12 +520,10 @@ fn execute_inplace_recursive_directory() {
     let source_root = temp.path().join("source");
     let dest_root = temp.path().join("dest");
 
-    // Create source tree
     fs::create_dir_all(source_root.join("subdir")).expect("create subdir");
     fs::write(source_root.join("file1.txt"), b"content1").expect("write file1");
     fs::write(source_root.join("subdir/file2.txt"), b"content2").expect("write file2");
 
-    // Create destination tree with existing files
     fs::create_dir_all(dest_root.join("subdir")).expect("create dest subdir");
     fs::write(dest_root.join("file1.txt"), b"old1").expect("write dest file1");
     fs::write(dest_root.join("subdir/file2.txt"), b"old2").expect("write dest file2");
@@ -595,7 +593,6 @@ fn execute_inplace_in_read_only_directory() {
     assert_eq!(summary.files_copied(), 1);
     assert_eq!(fs::read(&destination).expect("read"), b"update");
 
-    // Verify inode preserved
     let updated_inode = fs::metadata(&destination)
         .expect("destination metadata")
         .ino();
@@ -639,7 +636,6 @@ fn execute_without_inplace_fails_in_read_only_directory() {
     // Expect failure due to permission denied creating temp file
     assert!(result.is_err(), "should fail without inplace in read-only dir");
 
-    // Original should be unchanged
     assert_eq!(fs::read(&destination).expect("read"), b"original");
 
     // Restore permissions for cleanup
@@ -807,7 +803,6 @@ fn execute_inplace_with_delta_transfer_skips_matched_blocks() {
     let source = temp.path().join("source.txt");
     let destination = temp.path().join("dest.txt");
 
-    // Create a destination file with some content
     let dest_content = b"Hello world! This is a test file with some content that will be partially reused.";
     fs::write(&destination, dest_content).expect("write destination");
 
@@ -867,10 +862,8 @@ fn execute_inplace_with_delta_transfer_updates_existing_file() {
         )
         .expect("copy succeeds");
 
-    // The file should be copied
     assert_eq!(summary.files_copied(), 1, "File should be copied");
 
-    // Verify the content matches
     let final_content = fs::read(&destination).expect("read dest");
     assert_eq!(final_content, source_content,
         "Content should match after inplace delta transfer");
@@ -1103,6 +1096,5 @@ fn execute_inplace_dry_run_does_not_modify() {
         .expect("dry run succeeds");
 
     assert_eq!(summary.files_copied(), 1);
-    // Original content should be preserved
     assert_eq!(fs::read(&destination).expect("read dest"), b"original");
 }

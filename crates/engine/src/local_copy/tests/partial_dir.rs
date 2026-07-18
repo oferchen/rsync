@@ -58,7 +58,6 @@ fn partial_dir_creates_directory_if_not_exists() {
     fs::create_dir_all(&dest_dir).expect("create dest dir");
     fs::write(&source, b"auto-create partial dir").expect("write source");
 
-    // Verify partial dir doesn't exist initially
     assert!(!partial_dir.exists());
 
     let destination = dest_dir.join("file.txt");
@@ -114,7 +113,6 @@ fn partial_dir_moves_file_to_destination_on_commit() {
     assert!(!staging_path.starts_with(&partial_dir));
     assert!(!destination.exists());
 
-    // Commit the file
     guard.commit().expect("commit");
 
     // After commit: file should be at destination, not in partial dir
@@ -623,7 +621,6 @@ fn partial_dir_dry_run_does_not_create_directory() {
     fs::create_dir_all(&dest_dir).expect("create dest dir");
     fs::write(&source, b"dry run test").expect("write source");
 
-    // Verify partial dir doesn't exist initially
     assert!(!partial_dir.exists());
 
     let destination = dest_dir.join("output.txt");
@@ -744,7 +741,6 @@ fn partial_dir_absolute_path_not_affected_by_delete() {
     fs::create_dir_all(&dest).expect("create dest");
     fs::create_dir_all(&abs_partial).expect("create absolute partial dir");
 
-    // Create source file
     fs::write(source.join("file.txt"), b"source data").expect("write source");
 
     // Create a partial file in the absolute partial dir
@@ -1435,7 +1431,6 @@ fn partial_dir_successful_copy_creates_and_uses_partial_dir() {
     let partial_dir_name = ".e2e-partial";
     let partial_dir_path = dest_dir.join(partial_dir_name);
 
-    // Ensure partial dir does not exist before copy
     assert!(!partial_dir_path.exists());
 
     let operands = vec![
@@ -1452,7 +1447,6 @@ fn partial_dir_successful_copy_creates_and_uses_partial_dir() {
         .expect("copy succeeds");
 
     assert_eq!(summary.files_copied(), 1);
-    // Destination should have the content
     assert_eq!(
         fs::read(&destination).expect("read dest"),
         b"end-to-end partial dir test content"

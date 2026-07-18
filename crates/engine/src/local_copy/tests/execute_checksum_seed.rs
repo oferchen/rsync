@@ -228,10 +228,6 @@ fn checksum_seed_without_checksum_mode() {
     assert_eq!(opts.checksum_seed(), Some(42));
 }
 
-//
-// These tests verify that the local copy engine works correctly when
-// checksum_seed is configured.
-
 #[test]
 fn transfer_works_with_checksum_seed_set() {
     let temp = tempdir().expect("tempdir");
@@ -411,13 +407,11 @@ fn transfer_with_checksum_seed_dry_run() {
 
     let summary = report.summary();
 
-    // File should not exist on disk (dry-run)
     assert!(
         !dest.join("dry.txt").exists(),
         "file should not exist in dry-run"
     );
 
-    // But the summary should report what would happen
     assert!(
         summary.files_copied() >= 1,
         "dry-run should report files that would be copied"

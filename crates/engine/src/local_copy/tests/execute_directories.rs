@@ -813,7 +813,6 @@ fn execute_recursive_copies_deep_hierarchy() {
     let temp = create_tempdir();
     let source_root = temp.path().join("source");
 
-    // Create a deep hierarchy: source/a/b/c/d/e
     let deep_path = source_root.join("a").join("b").join("c").join("d").join("e");
     fs::create_dir_all(&deep_path).expect("create deep hierarchy");
     fs::write(deep_path.join("deep.txt"), b"deep content").expect("write deep file");
@@ -844,7 +843,6 @@ fn execute_recursive_copies_wide_hierarchy() {
     let source_root = temp.path().join("source");
     fs::create_dir_all(&source_root).expect("create source root");
 
-    // Create many sibling directories
     for i in 0..10 {
         let dir = source_root.join(format!("dir{i:02}"));
         fs::create_dir_all(&dir).expect("create sibling dir");
@@ -964,7 +962,6 @@ fn execute_directory_fails_on_permission_denied_when_creating() {
     fs::create_dir_all(&source_root).expect("create source");
     fs::write(source_root.join("file.txt"), b"content").expect("write file");
 
-    // Create destination with no write permission
     let dest_root = temp.path().join("dest");
     fs::create_dir_all(&dest_root).expect("create dest");
     fs::set_permissions(&dest_root, PermissionsExt::from_mode(0o555)).expect("make readonly");
@@ -1005,7 +1002,6 @@ fn execute_directory_already_exists_succeeds() {
     let operands = vec![source_operand, dest_root.clone().into_os_string()];
     let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
 
-    // Copy should succeed even if destination already exists
     let summary = plan.execute().expect("copy succeeds");
 
     assert!(dest_root.join("file.txt").exists());
@@ -1032,7 +1028,6 @@ fn execute_directory_nested_already_exists_merges_content() {
 
     plan.execute().expect("copy succeeds");
 
-    // Both files should exist after merge
     assert!(dest_nested.join("new.txt").exists());
     assert!(dest_nested.join("existing.txt").exists());
     assert_eq!(fs::read(dest_nested.join("new.txt")).expect("read new"), b"new content");
@@ -1046,7 +1041,6 @@ fn execute_directory_errors_when_destination_is_file_without_force() {
     fs::create_dir_all(&source_root).expect("create source dir");
     fs::write(source_root.join("child.txt"), b"content").expect("write child");
 
-    // Destination is a file, not a directory
     let destination = temp.path().join("dest");
     fs::write(&destination, b"existing file").expect("write existing file");
 
@@ -1074,7 +1068,6 @@ fn execute_dry_run_does_not_create_directory() {
     fs::write(source_root.join("file.txt"), b"content").expect("write file");
 
     let dest_root = temp.path().join("dest");
-    // Destination does not exist
 
     let operands = vec![
         source_root.into_os_string(),
@@ -1142,9 +1135,7 @@ fn execute_dry_run_with_existing_destination_reports_no_creation() {
         .execute_with(LocalCopyExecution::DryRun)
         .expect("dry-run succeeds");
 
-    // Existing file should NOT be modified
     assert_eq!(fs::read(dest_root.join("file.txt")).expect("read"), b"old content");
-    // Should report would-be copied files
     assert_eq!(summary.files_copied(), 1);
 }
 
@@ -1362,7 +1353,6 @@ fn execute_directory_ignore_existing_skips_existing_dirs() {
     plan.execute_with_options(LocalCopyExecution::Apply, options)
         .expect("copy succeeds");
 
-    // The existing file should still be there, the new file should be added
     assert!(dest_nested.join("existing.txt").exists());
     // Note: ignore_existing affects files, not directories
     // The new.txt should be created since it didn't exist
@@ -1497,12 +1487,10 @@ fn execute_directory_update_only_copies_newer() {
     fs::create_dir_all(&dest_root).expect("create dest");
     fs::write(dest_root.join("file.txt"), b"old content").expect("write dest");
 
-    // Make source file newer
     let source_file = source_root.join("file.txt");
     let new_time = filetime::FileTime::from_unix_time(2_000_000_000, 0);
     filetime::set_file_mtime(&source_file, new_time).expect("set source mtime");
 
-    // Make dest file older
     let dest_file = dest_root.join("file.txt");
     let old_time = filetime::FileTime::from_unix_time(1_000_000_000, 0);
     filetime::set_file_mtime(&dest_file, old_time).expect("set dest mtime");
@@ -1532,12 +1520,10 @@ fn execute_directory_update_skips_older_files() {
     fs::create_dir_all(&dest_root).expect("create dest");
     fs::write(dest_root.join("file.txt"), b"new content").expect("write dest");
 
-    // Make source file older
     let source_file = source_root.join("file.txt");
     let old_time = filetime::FileTime::from_unix_time(1_000_000_000, 0);
     filetime::set_file_mtime(&source_file, old_time).expect("set source mtime");
 
-    // Make dest file newer
     let dest_file = dest_root.join("file.txt");
     let new_time = filetime::FileTime::from_unix_time(2_000_000_000, 0);
     filetime::set_file_mtime(&dest_file, new_time).expect("set dest mtime");
@@ -1599,11 +1585,9 @@ fn execute_directory_archive_mode_preserves_all() {
 
     let dest_nested = dest_root.join("source").join("nested");
 
-    // Check permissions
     assert_eq!(fs::metadata(dest_root.join("source")).expect("root").permissions().mode() & 0o777, 0o755);
     assert_eq!(fs::metadata(&dest_nested).expect("nested").permissions().mode() & 0o777, 0o750);
 
-    // Check times
     let root_mtime = FileTime::from_last_modification_time(&fs::metadata(dest_root.join("source")).expect("root"));
     let nested_mtime = FileTime::from_last_modification_time(&fs::metadata(&dest_nested).expect("nested"));
     assert_eq!(root_mtime, fixed_mtime);
@@ -1639,18 +1623,15 @@ fn execute_dry_run_with_delete_and_force_reports_all_actions() {
 
     let summary = report.summary();
 
-    // Verify nothing was actually modified
     assert_eq!(fs::read(dest_nested.join("keep.txt")).expect("read keep"), b"old");
     assert!(dest_nested.join("extra.txt").exists());
 
-    // Verify dry-run reported would-be actions
     assert_eq!(summary.files_copied(), 1);
     assert_eq!(summary.items_deleted(), 1);
 }
 
 #[test]
 fn execute_recursive_creates_mixed_content_hierarchy() {
-    // A hierarchy with files at various depths, empty dirs, and deep nesting
     let temp = create_tempdir();
     let source_root = temp.path().join("source");
     fs::create_dir_all(source_root.join("a").join("b").join("c")).expect("create deep");
@@ -1817,7 +1798,6 @@ fn execute_recursive_idempotent_second_run() {
 
 #[test]
 fn execute_trailing_separator_with_nested_empty_dirs() {
-    // Trailing separator + nested empty directories
     let temp = create_tempdir();
     let source_root = temp.path().join("source");
     fs::create_dir_all(source_root.join("empty1")).expect("create empty1");
@@ -1953,7 +1933,6 @@ fn execute_prune_empty_dirs_nested_hierarchy_file_at_bottom() {
     let deep = source_root.join("a").join("b").join("c").join("d");
     fs::create_dir_all(&deep).expect("create deep");
     fs::write(deep.join("bottom.txt"), b"bottom").expect("write bottom");
-    // Create a parallel empty branch
     fs::create_dir_all(source_root.join("a").join("empty_branch")).expect("create empty branch");
 
     let dest_root = temp.path().join("dest");
@@ -1967,9 +1946,7 @@ fn execute_prune_empty_dirs_nested_hierarchy_file_at_bottom() {
     plan.execute_with_options(LocalCopyExecution::Apply, options)
         .expect("copy succeeds");
 
-    // Full path to the bottom file should exist
     assert!(dest_root.join("source").join("a").join("b").join("c").join("d").join("bottom.txt").exists());
-    // Empty branch should be pruned
     assert!(
         !dest_root.join("source").join("a").join("empty_branch").exists(),
         "empty branch should be pruned"
@@ -2567,7 +2544,6 @@ fn execute_directory_collect_events_records_all_directory_operations() {
         dir_records.len()
     );
 
-    // Verify that file copy event is also present
     let file_records: Vec<_> = records
         .iter()
         .filter(|r| matches!(r.action(), LocalCopyAction::DataCopied))
@@ -2644,7 +2620,6 @@ fn execute_directory_archive_preserves_permissions_and_times_nested() {
     plan.execute_with_options(LocalCopyExecution::Apply, options)
         .expect("copy succeeds");
 
-    // Permissions
     assert_eq!(
         fs::metadata(dest_root.join("source")).expect("root").permissions().mode() & 0o777,
         0o755
@@ -2666,7 +2641,6 @@ fn execute_directory_archive_preserves_permissions_and_times_nested() {
         0o700
     );
 
-    // Times
     let dest_root_mtime =
         FileTime::from_last_modification_time(&fs::metadata(dest_root.join("source")).expect("root"));
     let dest_a_mtime =

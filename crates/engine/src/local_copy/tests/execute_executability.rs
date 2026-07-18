@@ -29,11 +29,9 @@ fn execute_preserves_execute_bit_when_source_has_it() {
 
     let metadata = fs::metadata(&destination).expect("dest metadata");
     let mode = metadata.permissions().mode();
-    // Execute bits should be set
     assert_ne!(mode & 0o111, 0, "execute bits should be preserved");
-    // Without --perms flag, destination gets default permissions with execute bits added
-    // The test verifies execute bits are set, but full permissions may differ
-    // assert_ne!(mode & 0o777, 0o755, "non-execute bits should not be preserved");
+    // Without --perms flag the destination gets default permissions with execute
+    // bits added, so exact non-execute bits are intentionally not asserted.
     assert_eq!(summary.files_copied(), 1);
 }
 
