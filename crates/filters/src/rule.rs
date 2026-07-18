@@ -352,7 +352,7 @@ impl FilterRule {
     ///
     /// The pattern field contains the filename to look for in each directory
     /// (e.g., `.rsync-filter`). Rules from the file are applied relative to
-    /// that directory. This corresponds to rsync's `,` prefix in filter rules.
+    /// that directory. This corresponds to rsync's `:` prefix in filter rules.
     ///
     /// # Examples
     /// ```
