@@ -51,6 +51,7 @@ fn daemon_receiver_accepts_file_push() {
     let (mut stream, handle) = start_daemon(config, port, held_listener);
     let mut reader = BufReader::new(stream.try_clone().expect("clone stream"));
 
+    // Read daemon greeting
     let mut greeting = String::new();
     reader
         .read_line(&mut greeting)
@@ -61,6 +62,7 @@ fn daemon_receiver_accepts_file_push() {
         "expected @RSYNCD: greeting, got: {greeting}"
     );
 
+    // Send client version
     stream
         .write_all(b"@RSYNCD: 31.0\n")
         .expect("send client version");
@@ -72,9 +74,11 @@ fn daemon_receiver_accepts_file_push() {
         .expect("send module request");
     stream.flush().expect("flush");
 
+    // Read auth challenge
     let mut challenge = String::new();
     reader.read_line(&mut challenge).expect("read challenge");
 
+    // Verify we got an auth challenge
     assert!(
         challenge.starts_with("@RSYNCD: AUTHREQD "),
         "expected auth challenge, got: {challenge}"

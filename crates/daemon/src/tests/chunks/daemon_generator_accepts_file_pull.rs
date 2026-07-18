@@ -36,6 +36,7 @@ fn daemon_generator_accepts_file_pull() {
     let (mut stream, handle) = start_daemon(config, port, held_listener);
     let mut reader = BufReader::new(stream.try_clone().expect("clone stream"));
 
+    // Read daemon greeting
     let mut greeting = String::new();
     reader
         .read_line(&mut greeting)
@@ -46,6 +47,7 @@ fn daemon_generator_accepts_file_pull() {
         "expected @RSYNCD: greeting, got: {greeting}"
     );
 
+    // Send client version
     stream
         .write_all(b"@RSYNCD: 31.0\n")
         .expect("send client version");
@@ -71,6 +73,7 @@ fn daemon_generator_accepts_file_pull() {
         "daemon should recognize the module, got: {response}"
     );
 
+    // Close connection
     drop(reader);
     drop(stream);
 
