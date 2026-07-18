@@ -45,7 +45,8 @@ impl IocpSocketReader {
         ))
     }
 
-    /// Override the per-socket completion key reported by the pump.
+    /// Override the per-socket completion key reported by the pump (no-op on
+    /// this platform).
     #[must_use]
     pub fn with_completion_key(self, _key: usize) -> Self {
         self
@@ -87,7 +88,8 @@ impl IocpSocketWriter {
         ))
     }
 
-    /// Override the per-socket completion key reported by the pump.
+    /// Override the per-socket completion key reported by the pump (no-op on
+    /// this platform).
     #[must_use]
     pub fn with_completion_key(self, _key: usize) -> Self {
         self

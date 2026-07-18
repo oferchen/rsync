@@ -35,7 +35,7 @@ static SHUTDOWN_REQUESTED: AtomicBool = AtomicBool::new(false);
 
 /// Marks that a graceful shutdown has been requested.
 ///
-/// Async-signal-safe: performs a single relaxed-ordering atomic store, so it
+/// Async-signal-safe: performs a single atomic store, so it
 /// is safe to call from within a signal handler.
 #[inline]
 pub fn mark_shutdown() {

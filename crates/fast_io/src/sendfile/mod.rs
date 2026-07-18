@@ -117,7 +117,9 @@ pub fn send_file_to_writer<W: Write>(
 /// This function uses the Linux `sendfile` syscall for zero-copy transfer when:
 /// - The platform is Linux
 /// - The file size is >= 64KB (threshold for efficiency)
-/// - The destination file descriptor is a socket
+///
+/// Since Linux 2.6.33 the destination fd may be any file, so no socket
+/// check is performed; the syscall is attempted whenever the threshold is met.
 ///
 /// On failure or unsupported platforms, automatically falls back to buffered read/write.
 ///
