@@ -22,11 +22,9 @@ fn empty_file_sparse_write_produces_zero_position() {
     let mut state = SparseWriteState::new();
     let mut cursor = Cursor::new(Vec::new());
 
-    // Write empty data
     let result = state.write(&mut cursor, &[]).unwrap();
     assert_eq!(result, 0);
 
-    // Finish should produce position 0
     let pos = state.finish(&mut cursor).unwrap();
     assert_eq!(pos, 0);
 }
@@ -35,7 +33,6 @@ fn empty_file_sparse_write_produces_zero_position() {
 fn empty_file_checksum_verification_md5() {
     let mut verifier = ChecksumVerifier::for_algorithm(protocol::ChecksumAlgorithm::MD5);
 
-    // Update with empty data
     verifier.update(&[]);
 
     // Finalize should produce valid MD5 of empty string
@@ -55,7 +52,6 @@ fn empty_file_checksum_verification_md5() {
 fn empty_file_checksum_verification_xxh64() {
     let mut verifier = ChecksumVerifier::for_algorithm(protocol::ChecksumAlgorithm::XXH64);
 
-    // Update with empty data
     verifier.update(&[]);
 
     // Finalize should produce valid XXH64 of empty input
@@ -67,7 +63,6 @@ fn empty_file_checksum_verification_xxh64() {
 fn empty_file_checksum_verification_xxh3() {
     let mut verifier = ChecksumVerifier::for_algorithm(protocol::ChecksumAlgorithm::XXH3);
 
-    // Update with empty data
     verifier.update(&[]);
 
     let mut buf = [0u8; ChecksumVerifier::MAX_DIGEST_LEN];
@@ -78,7 +73,6 @@ fn empty_file_checksum_verification_xxh3() {
 fn empty_file_checksum_verification_sha1() {
     let mut verifier = ChecksumVerifier::for_algorithm(protocol::ChecksumAlgorithm::SHA1);
 
-    // Update with empty data
     verifier.update(&[]);
 
     let mut buf = [0u8; ChecksumVerifier::MAX_DIGEST_LEN];
@@ -98,10 +92,8 @@ fn sparse_state_empty_write_then_finish() {
     let mut state = SparseWriteState::new();
     let mut cursor = Cursor::new(vec![0u8; 100]);
 
-    // Write nothing
     state.write(&mut cursor, &[]).unwrap();
 
-    // Finish
     let pos = state.finish(&mut cursor).unwrap();
     assert_eq!(pos, 0, "empty write should result in position 0");
 }
@@ -111,7 +103,6 @@ fn sparse_state_multiple_empty_writes() {
     let mut state = SparseWriteState::new();
     let mut cursor = Cursor::new(vec![0u8; 100]);
 
-    // Multiple empty writes
     for _ in 0..10 {
         state.write(&mut cursor, &[]).unwrap();
     }
@@ -125,13 +116,10 @@ fn sparse_state_empty_then_data_then_empty() {
     let mut state = SparseWriteState::new();
     let mut cursor = Cursor::new(vec![0u8; 100]);
 
-    // Empty write
     state.write(&mut cursor, &[]).unwrap();
 
-    // Write some data
     state.write(&mut cursor, b"hello").unwrap();
 
-    // Another empty write
     state.write(&mut cursor, &[]).unwrap();
 
     let pos = state.finish(&mut cursor).unwrap();
@@ -143,19 +131,16 @@ fn empty_file_creation_via_sparse_state() {
     let temp = tempdir().expect("tempdir");
     let file_path = temp.path().join("empty.txt");
 
-    // Create file through sparse state
     let file = File::create(&file_path).expect("create file");
     let mut state = SparseWriteState::new();
 
     // Use BufWriter to get a seekable writer
     let mut writer = std::io::BufWriter::new(file);
 
-    // Write empty content
     state.write(&mut writer, &[]).expect("write empty");
     state.finish(&mut writer).expect("finish");
     writer.flush().expect("flush");
 
-    // Verify file exists and is empty
     let metadata = fs::metadata(&file_path).expect("metadata");
     assert_eq!(metadata.len(), 0, "file should be empty");
 }
@@ -311,7 +296,6 @@ fn simulate_empty_to_nonempty_transfer() {
     let mut state = SparseWriteState::new();
     let mut writer = std::io::BufWriter::new(file);
 
-    // Write empty content
     state.write(&mut writer, &[]).expect("write empty");
     state.finish(&mut writer).expect("finish");
     writer.flush().expect("flush");

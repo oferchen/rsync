@@ -118,10 +118,8 @@ mod tests {
     fn decompress_round_trip_zlib() {
         let original = b"test data that should be compressed and decompressed";
 
-        // Compress the data first
         let compressed = compress_to_vec(original, CompressionLevel::Default).unwrap();
 
-        // Now decompress using CompressedReader
         let cursor = Cursor::new(compressed);
         let mut reader = CompressedReader::new(cursor, CompressionAlgorithm::Zlib).unwrap();
 
@@ -134,10 +132,8 @@ mod tests {
     fn decompress_multiple_reads() {
         let original = b"first chunk second chunk third chunk";
 
-        // Compress the data first
         let compressed = compress_to_vec(original, CompressionLevel::Default).unwrap();
 
-        // Decompress using multiple read calls
         let cursor = Cursor::new(compressed);
         let mut reader = CompressedReader::new(cursor, CompressionAlgorithm::Zlib).unwrap();
 
@@ -156,13 +152,10 @@ mod tests {
 
     #[test]
     fn decompress_large_data() {
-        // Create large data that will require multiple internal reads
         let original = vec![b'x'; 8192];
 
-        // Compress the data first
         let compressed = compress_to_vec(&original, CompressionLevel::Fast).unwrap();
 
-        // Decompress
         let cursor = Cursor::new(compressed);
         let mut reader = CompressedReader::new(cursor, CompressionAlgorithm::Zlib).unwrap();
 

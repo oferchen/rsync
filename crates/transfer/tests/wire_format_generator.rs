@@ -191,7 +191,6 @@ impl WireFormatGenerator {
             self.buffer.write_all(&[primary_flags])?;
         }
 
-        // Write name
         if same_len > 0 {
             self.buffer.write_all(&[same_len as u8])?;
         }
@@ -204,15 +203,12 @@ impl WireFormatGenerator {
 
         self.buffer.write_all(suffix)?;
 
-        // Write size (varint30)
         self.write_varint30(entry.size as u32)?;
 
-        // Write mtime if different
         if entry.mtime != self.prev_mtime {
             self.write_varlong4(entry.mtime)?;
         }
 
-        // Write mode if different
         if entry.mode != self.prev_mode {
             if self.config.protocol.0 >= 30 {
                 self.write_varint(entry.mode as i32)?;
@@ -221,14 +217,12 @@ impl WireFormatGenerator {
             }
         }
 
-        // Write symlink target if present
         if let Some(ref target) = entry.link_target {
             let target_bytes = target.as_bytes();
             self.write_varint30(target_bytes.len() as u32)?;
             self.buffer.write_all(target_bytes)?;
         }
 
-        // Update state for next entry
         self.prev_name = name_bytes.to_vec();
         self.prev_mode = entry.mode;
         self.prev_mtime = entry.mtime;
@@ -321,7 +315,6 @@ pub fn generate_nested_directories(depth: usize, files_per_dir: usize) -> Vec<u8
     let mut path = String::new();
 
     for d in 0..depth {
-        // Write directory entry
         if d > 0 {
             path.push('/');
         }
@@ -330,7 +323,6 @@ pub fn generate_nested_directories(depth: usize, files_per_dir: usize) -> Vec<u8
         let dir_entry = TestFileEntry::dir(&path);
         writer.write_entry(&dir_entry).expect("write dir");
 
-        // Write files in this directory
         for f in 0..files_per_dir {
             let file_path = format!("{path}/file{f}.txt");
             let file_entry = TestFileEntry::file(file_path, 100);

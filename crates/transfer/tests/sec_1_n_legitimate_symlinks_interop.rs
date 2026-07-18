@@ -126,12 +126,10 @@ fn assert_outcome_is_symlink(outcome: &LstatOutcome, ctx: &str) {
     }
 }
 
-// ----------------------------------------------------------------------
 // Scenario 1: Plain relative symlink.
 // SAFETY invariant: a relative-target symlink lands on disk with its
 // target text preserved verbatim, and the sandbox-anchored stat reports
 // the symlink itself (not the file it points at).
-// ----------------------------------------------------------------------
 
 #[test]
 fn scenario_1_plain_relative_symlink_preserved_verbatim() {
@@ -163,14 +161,12 @@ fn scenario_1_plain_relative_symlink_preserved_verbatim() {
     );
 }
 
-// ----------------------------------------------------------------------
 // Scenario 2: Absolute symlink.
 // SAFETY invariant: an absolute-target symlink lands on disk verbatim,
 // even when the target points outside the destination tree. Without
 // `--copy-unsafe-links`, rsync preserves the symlink rather than
 // dereferencing it; the sandbox-anchored stat reports the symlink
 // itself.
-// ----------------------------------------------------------------------
 
 #[test]
 fn scenario_2_absolute_symlink_preserved_verbatim() {
@@ -196,12 +192,10 @@ fn scenario_2_absolute_symlink_preserved_verbatim() {
     );
 }
 
-// ----------------------------------------------------------------------
 // Scenario 3: Symlink to directory.
 // SAFETY invariant: a symlink to a directory lands as a symlink and
 // the underlying directory contents land once as regular files - the
 // receiver does not duplicate them through the symlink.
-// ----------------------------------------------------------------------
 
 #[test]
 fn scenario_3_symlink_to_directory_preserved_with_unique_contents() {
@@ -246,12 +240,10 @@ fn scenario_3_symlink_to_directory_preserved_with_unique_contents() {
     );
 }
 
-// ----------------------------------------------------------------------
 // Scenario 4: Broken symlink.
 // SAFETY invariant: a symlink whose target does not exist lands as a
 // symlink. The sandbox-anchored stat reports the symlink (not ENOENT
 // from following it) and the receiver does not fail.
-// ----------------------------------------------------------------------
 
 #[test]
 fn scenario_4_broken_symlink_preserved_without_follow_error() {
@@ -289,12 +281,10 @@ fn scenario_4_broken_symlink_preserved_without_follow_error() {
     );
 }
 
-// ----------------------------------------------------------------------
 // Scenario 5: Symlink chain `a -> b -> c -> file.txt`.
 // SAFETY invariant: every link in the chain lands verbatim. The
 // receiver does not flatten the chain or resolve any link to its
 // terminal target.
-// ----------------------------------------------------------------------
 
 #[test]
 fn scenario_5_symlink_chain_preserved_link_by_link() {
@@ -342,14 +332,12 @@ fn scenario_5_symlink_chain_preserved_link_by_link() {
     );
 }
 
-// ----------------------------------------------------------------------
 // Scenario 6: Hardlink siblings plus a symlink pointing at one of them.
 // SAFETY invariant: with `-aH`, the hardlink relationship between
 // `hl1`/`hl2` is preserved (same dev/ino) AND the symlink `sl -> hl1`
 // is preserved as a symlink. The sandbox-anchored stat used by the
 // receiver's hardlink quick-check correctly distinguishes the symlink
 // leaf from its target inode.
-// ----------------------------------------------------------------------
 
 #[test]
 fn scenario_6_hardlink_pair_with_symlink_preserved() {
