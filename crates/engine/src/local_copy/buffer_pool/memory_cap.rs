@@ -11,7 +11,7 @@ use std::sync::{Condvar, Mutex};
 /// scenarios.
 #[derive(Debug)]
 pub(super) struct MemoryCap {
-    /// Maximum allowed bytes across all outstanding and pooled buffers.
+    /// Maximum allowed bytes of outstanding (checked-out) buffers.
     limit: usize,
     /// Current outstanding bytes (buffers checked out by callers, not in pool).
     outstanding: AtomicUsize,
