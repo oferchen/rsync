@@ -7,7 +7,7 @@
 //!
 //! - `generator.c:1775` - `"fuzzy basis selected for %s: %s"` (level 1).
 //! - `generator.c:847`  - `"fuzzy size/modtime match for %s"` (level 2).
-//! - `generator.c:884`  - `"fuzzy distance for %s = %d.%05d"` (level 2).
+//! - `generator.c:897`  - `"fuzzy distance for %s = %d.%05d"` (level 2).
 
 use logging::debug_log;
 
