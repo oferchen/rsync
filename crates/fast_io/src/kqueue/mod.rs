@@ -194,13 +194,11 @@ impl KqueueLoop {
 
     /// Removes a previously-registered event for the given fd/filter.
     ///
-    /// Idempotent on `ENOENT` (returns `Ok(())` if the event was not
-    /// registered) so callers can deregister unconditionally on
-    /// shutdown.
-    ///
     /// # Errors
     ///
-    /// Returns an `io::Error` for any failure other than `ENOENT`.
+    /// Returns an `io::Error` if `kevent(2)` rejects the removal. Removing
+    /// a filter that was never registered surfaces the kernel's `ENOENT`;
+    /// `EV_DELETE` of an absent filter is not treated as a no-op.
     pub fn remove(&self, fd: RawFd, filter: KEventFilter) -> io::Result<()> {
         let change = make_kevent(fd, filter.as_raw(), libc::EV_DELETE, 0);
         let rc = self.kevent_call(Some(&change), None, None)?;

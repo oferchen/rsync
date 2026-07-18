@@ -23,11 +23,13 @@ pub struct CqeResult {
 }
 
 impl CqeResult {
-    /// Maps the stub result to an [`io::Result`].
+    /// Maps the raw kernel `result` to an [`io::Result`]: a negative value
+    /// becomes an `Err` built from the OS error code, a non-negative value
+    /// becomes `Ok(result as u32)`.
     ///
-    /// Always succeeds with `0` because the stub cannot run a chain;
-    /// callers that need real error mapping must be on Linux with the
-    /// `io_uring` feature.
+    /// The stub never produces a `CqeResult` itself (`submit_and_wait`
+    /// returns `Unsupported`), but the mapping still runs when callers
+    /// construct one directly.
     pub fn into_io_result(self) -> io::Result<u32> {
         if self.result < 0 {
             Err(io::Error::from_raw_os_error(-self.result))
