@@ -74,7 +74,7 @@ fn daemon_checksum_push_detects_content_change_despite_matching_mtime() {
     let (probe_stream, daemon_handle) = start_daemon(daemon_config, port, held_listener);
     drop(probe_stream);
 
-    // === Phase 1: Initial push (seeds destination with original content) ===
+    // Phase 1: Initial push (seeds destination with original content)
     {
         let mut source_arg = source_dir.clone().into_os_string();
         source_arg.push("/");
@@ -113,7 +113,7 @@ fn daemon_checksum_push_detects_content_change_despite_matching_mtime() {
         "beta.txt content mismatch after initial push"
     );
 
-    // === Phase 2: Rewrite source with different content of the same size ===
+    // Phase 2: Rewrite source with different content of the same size
     fs::write(source_dir.join("alpha.txt"), modified_content).expect("rewrite alpha.txt");
     fs::write(source_dir.join("beta.txt"), modified_content).expect("rewrite beta.txt");
 
@@ -136,7 +136,7 @@ fn daemon_checksum_push_detects_content_change_despite_matching_mtime() {
         "destination must still have original content before checksum push"
     );
 
-    // === Phase 3: Push with checksum mode - must detect content difference ===
+    // Phase 3: Push with checksum mode - must detect content difference
     {
         let mut source_arg = source_dir.clone().into_os_string();
         source_arg.push("/");
@@ -164,7 +164,7 @@ fn daemon_checksum_push_detects_content_change_despite_matching_mtime() {
         }
     }
 
-    // === Verify destination now has the modified content ===
+    // Verify destination now has the modified content
     let dest_alpha = fs::read(dest_dir.join("alpha.txt")).expect("read dest alpha.txt after checksum push");
     assert_eq!(
         dest_alpha, modified_content,

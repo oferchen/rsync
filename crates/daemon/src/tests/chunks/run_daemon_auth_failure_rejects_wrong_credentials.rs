@@ -44,18 +44,15 @@ fn run_daemon_auth_failure_rejects_wrong_credentials() {
     let (mut stream, handle) = start_daemon(config, port, held_listener);
     let mut reader = BufReader::new(stream.try_clone().expect("clone stream"));
 
-    // Read daemon greeting
     let mut line = String::new();
     reader.read_line(&mut line).expect("greeting");
     assert!(line.starts_with("@RSYNCD:"), "expected greeting, got: {line}");
 
-    // Send client version
     stream
         .write_all(b"@RSYNCD: 32.0 sha512 sha256 sha1 md5 md4\n")
         .expect("send handshake response");
     stream.flush().expect("flush handshake response");
 
-    // Request the authenticated module
     stream
         .write_all(b"protected\n")
         .expect("send module request");

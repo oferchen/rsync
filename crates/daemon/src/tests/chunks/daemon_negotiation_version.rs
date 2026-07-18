@@ -31,7 +31,6 @@ fn daemon_negotiation_version_sends_greeting_first() {
     let mut line = String::new();
     reader.read_line(&mut line).expect("greeting");
 
-    // Daemon should send greeting first
     assert!(
         line.starts_with("@RSYNCD:"),
         "Daemon should send greeting first, got: {line}"
@@ -114,7 +113,6 @@ fn daemon_negotiation_version_accepts_older_client_version() {
     let (mut stream, handle) = start_daemon(config, port, held_listener);
     let mut reader = BufReader::new(stream.try_clone().expect("clone"));
 
-    // Read greeting
     let mut line = String::new();
     reader.read_line(&mut line).expect("greeting");
 
@@ -225,7 +223,6 @@ fn daemon_negotiation_version_echoes_client_digests() {
     let (mut stream, handle) = start_daemon(config, port, held_listener);
     let mut reader = BufReader::new(stream.try_clone().expect("clone"));
 
-    // Read greeting
     let mut line = String::new();
     reader.read_line(&mut line).expect("greeting");
 
@@ -272,7 +269,6 @@ fn daemon_negotiation_version_handles_whitespace_variations() {
     let (mut stream, handle) = start_daemon(config, port, held_listener);
     let mut reader = BufReader::new(stream.try_clone().expect("clone"));
 
-    // Read greeting
     let mut line = String::new();
     reader.read_line(&mut line).expect("greeting");
 
@@ -282,7 +278,6 @@ fn daemon_negotiation_version_handles_whitespace_variations() {
         .expect("send version with whitespace");
     stream.flush().expect("flush");
 
-    // Request list
     stream.write_all(b"#list\n").expect("send list");
     stream.flush().expect("flush");
 
@@ -322,7 +317,6 @@ fn daemon_negotiation_version_greeting_ends_with_newline() {
     let mut line = String::new();
     reader.read_line(&mut line).expect("greeting");
 
-    // Greeting must end with newline
     assert!(
         line.ends_with('\n'),
         "Greeting should end with newline: {line:?}"

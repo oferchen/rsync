@@ -67,7 +67,7 @@ fn daemon_push_then_pull_roundtrip_preserves_content() {
     let (probe_stream, daemon_handle) = start_daemon(daemon_config, port, held_listener);
     drop(probe_stream);
 
-    // === Phase 1: Push files to daemon module ===
+    // Phase 1: Push files to daemon module
     {
         let mut source_arg = source_dir.clone().into_os_string();
         source_arg.push("/");
@@ -111,7 +111,7 @@ fn daemon_push_then_pull_roundtrip_preserves_content() {
         "nested.txt content mismatch in module after push"
     );
 
-    // === Phase 2: Pull files back from daemon module ===
+    // Phase 2: Pull files back from daemon module
     {
         let rsync_url = format!("rsync://127.0.0.1:{port}/lifecycle/");
 
@@ -136,7 +136,7 @@ fn daemon_push_then_pull_roundtrip_preserves_content() {
         }
     }
 
-    // === Verify roundtrip: pulled content matches original source ===
+    // Verify roundtrip: pulled content matches original source
     assert_eq!(
         fs::read(pull_dest.join("readme.txt")).expect("read pulled readme"),
         b"project readme\n",
@@ -215,7 +215,7 @@ fn daemon_push_incremental_update_lifecycle() {
     let (probe_stream, daemon_handle) = start_daemon(daemon_config, port, held_listener);
     drop(probe_stream);
 
-    // === Phase 1: Initial push ===
+    // Phase 1: Initial push
     {
         let mut source_arg = source_dir.clone().into_os_string();
         source_arg.push("/");
@@ -245,12 +245,12 @@ fn daemon_push_incremental_update_lifecycle() {
     filetime::set_file_mtime(module_dir.join("stable.txt"), old_time)
         .expect("backdate stable.txt");
 
-    // === Modify source: update config.txt, add new file ===
+    // Modify source: update config.txt, add new file
     fs::write(source_dir.join("config.txt"), b"version=2\nupdated=true\n")
         .expect("write config v2");
     fs::write(source_dir.join("new_file.txt"), b"brand new\n").expect("write new_file");
 
-    // === Phase 2: Incremental push ===
+    // Phase 2: Incremental push
     {
         let mut source_arg = source_dir.clone().into_os_string();
         source_arg.push("/");
@@ -267,7 +267,6 @@ fn daemon_push_incremental_update_lifecycle() {
         }
     }
 
-    // Verify updated content
     assert_eq!(
         fs::read(module_dir.join("config.txt")).expect("read module config v2"),
         b"version=2\nupdated=true\n",

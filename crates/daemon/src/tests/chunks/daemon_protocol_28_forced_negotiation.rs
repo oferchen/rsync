@@ -427,7 +427,7 @@ fn daemon_protocol_28_forced_push_then_pull_roundtrip() {
     let (probe_stream, daemon_handle) = start_daemon(daemon_config, port, held_listener);
     drop(probe_stream);
 
-    // === Phase 1: Push at forced protocol 28 ===
+    // Phase 1: Push at forced protocol 28
     {
         let mut source_arg = source_dir.clone().into_os_string();
         source_arg.push("/");
@@ -470,7 +470,7 @@ fn daemon_protocol_28_forced_push_then_pull_roundtrip() {
         "subdir/nested.txt must arrive in module after protocol 28 push"
     );
 
-    // === Phase 2: Pull at forced protocol 28 ===
+    // Phase 2: Pull at forced protocol 28
     {
         let rsync_url = format!("rsync://127.0.0.1:{port}/lifecycle28/");
 
@@ -555,17 +555,14 @@ fn daemon_protocol_28_forced_module_listing_works() {
     let (mut stream, handle) = start_daemon(config, port, held_listener);
     let mut reader = BufReader::new(stream.try_clone().expect("clone"));
 
-    // Read daemon greeting
     let mut line = String::new();
     reader.read_line(&mut line).expect("greeting");
 
-    // Client forces protocol 28
     stream
         .write_all(b"@RSYNCD: 28.0\n")
         .expect("send v28 greeting");
     stream.flush().expect("flush");
 
-    // Request module listing
     stream.write_all(b"#list\n").expect("send list");
     stream.flush().expect("flush");
 
