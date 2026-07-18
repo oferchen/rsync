@@ -26,9 +26,13 @@
 //! - `n` - No-inherit (merge rules only: don't inherit parent rules)
 //! - `w` - Word-split (merge rules only: split the merge file at whitespace)
 //! - `C` - CVS mode (add CVS exclusion patterns)
+//! - `/` - Anchor merged rules to the transfer root (merge rules only)
+//! - `-` - Merged lines are literal excludes, prefixes not honoured (merge rules only)
+//! - `+` - Merged lines are literal includes, prefixes not honoured (merge rules only)
 //!
-//! The `e`, `n`, and `w` modifiers are valid only on a merge / dir-merge rule
-//! (upstream `FILTRULE_MERGE_FILE`); on any other rule they are a syntax error.
+//! The `e`, `n`, `w`, `/`, `-`, and `+` modifiers are valid only on a merge /
+//! dir-merge rule (upstream `FILTRULE_MERGE_FILE`); on any other rule they are a
+//! syntax error.
 //!
 //! Example: `-!p *.tmp` excludes files NOT matching `*.tmp`, marked perishable.
 //!
