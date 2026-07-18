@@ -68,6 +68,34 @@ pub enum Command {
 
     /// Run the workspace test suite (prefers cargo-nextest).
     Test(TestArgs),
+
+    /// Validate drop-in fidelity vs upstream rsync across all client transports.
+    Validate(ValidateMatrixArgs),
+}
+
+/// Arguments for the `validate` command.
+#[derive(Parser, Debug, Default)]
+pub struct ValidateMatrixArgs {
+    /// Transports to exercise (repeatable). Default: all.
+    #[arg(long = "transport", value_name = "NAME")]
+    pub transports: Vec<String>,
+
+    /// Run the many-small-files benchmark after the correctness matrix.
+    #[arg(long)]
+    pub bench: bool,
+
+    /// Enrich fixtures with edge cases (empty files, spaces/unicode names, deep
+    /// nesting, dangling symlinks). Off by default for a fast, lean matrix.
+    #[arg(long)]
+    pub edge_cases: bool,
+
+    /// File count for the benchmark workload.
+    #[arg(long, value_name = "N")]
+    pub bench_files: Option<usize>,
+
+    /// Print each transfer's command and stdout on failure.
+    #[arg(long)]
+    pub verbose: bool,
 }
 
 /// Benchmark mode.
@@ -434,6 +462,7 @@ impl CommandExt for Command {
             Command::ReleaseNotes(_) => Box::new(ReleaseNotesTask),
             Command::Sbom(_) => Box::new(SbomTask),
             Command::Test(args) => args.as_task(),
+            Command::Validate(_) => Box::new(ValidateTask),
         }
     }
 }
@@ -553,6 +582,23 @@ impl Task for ManPageTask {
 
     fn explicit_duration(&self) -> Option<Duration> {
         Some(Duration::from_secs(5))
+    }
+}
+
+/// Task for drop-in fidelity validation.
+struct ValidateTask;
+
+impl Task for ValidateTask {
+    fn name(&self) -> &'static str {
+        "validate"
+    }
+
+    fn description(&self) -> &'static str {
+        "Validate drop-in fidelity vs upstream rsync across all transports"
+    }
+
+    fn explicit_duration(&self) -> Option<Duration> {
+        Some(Duration::from_secs(60))
     }
 }
 
