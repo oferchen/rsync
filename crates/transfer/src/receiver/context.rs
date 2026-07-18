@@ -1,9 +1,8 @@
 //! [`ReceiverContext`] state and the bulk of its method surface.
 //!
-//! Extracted verbatim from the receiver hub. Holds protocol state, the
-//! received file list, and the predicates/builders that drive the receive
-//! loop. The itemize/info-line emission methods live in the sibling
-//! [`super::itemize`] module.
+//! Holds protocol state, the received file list, and the predicates/builders
+//! that drive the receive loop. The itemize/info-line emission methods live in
+//! the sibling [`super::itemize`] module.
 
 use std::cell::RefCell;
 use std::collections::{BTreeMap, HashMap, HashSet};

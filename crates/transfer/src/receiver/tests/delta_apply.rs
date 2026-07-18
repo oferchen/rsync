@@ -215,7 +215,6 @@ fn checksum_verifier_md4_for_legacy_protocol() {
     verifier.update(b"test data");
     let mut buf = [0u8; ChecksumVerifier::MAX_DIGEST_LEN];
 
-    // MD4 produces 16 bytes
     assert_eq!(verifier.finalize_into(&mut buf), 16);
 }
 
@@ -228,7 +227,6 @@ fn checksum_verifier_md5_for_modern_protocol() {
     verifier.update(b"test data");
     let mut buf = [0u8; ChecksumVerifier::MAX_DIGEST_LEN];
 
-    // MD5 produces 16 bytes
     assert_eq!(verifier.finalize_into(&mut buf), 16);
 }
 
