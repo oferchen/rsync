@@ -22,6 +22,8 @@ use crate::error::TaskResult;
 pub struct ValidateOptions {
     /// Transport labels to exercise; empty means all transports.
     pub transports: Vec<String>,
+    /// Ad-hoc rsync flag sets to validate for parity (each is one scenario).
+    pub flags: Vec<String>,
     /// Run the 10k-file performance benchmark after the correctness matrix.
     pub bench: bool,
     /// File count for the benchmark workload.
@@ -38,6 +40,7 @@ impl From<crate::cli::ValidateMatrixArgs> for ValidateOptions {
     fn from(args: crate::cli::ValidateMatrixArgs) -> Self {
         ValidateOptions {
             transports: args.transports,
+            flags: args.flags,
             bench: args.bench,
             bench_files: args.bench_files.unwrap_or(10_000),
             edge_cases: args.edge_cases,
@@ -135,6 +138,8 @@ mod unix_impl {
         pub work: &'a Path,
         /// Transports to exercise.
         pub transports: &'a [Transport],
+        /// Ad-hoc rsync flag sets to validate for parity (each is one scenario).
+        pub flags: &'a [String],
         /// Enrich fixtures with edge cases (opt-in).
         pub edge_cases: bool,
         /// Run root-only validations when the process is actually root.
@@ -197,6 +202,7 @@ mod unix_impl {
             upstream: &upstream,
             work: &work,
             transports: &transports,
+            flags: &options.flags,
             edge_cases: options.edge_cases,
             root: options.root,
             verbose: options.verbose,
@@ -291,6 +297,7 @@ pub fn execute(_workspace: &Path, options: ValidateOptions) -> TaskResult<()> {
     // not reported as dead on non-Unix targets, then decline the command.
     let ValidateOptions {
         transports: _,
+        flags: _,
         bench: _,
         bench_files: _,
         edge_cases: _,

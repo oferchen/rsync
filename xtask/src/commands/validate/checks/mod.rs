@@ -1,6 +1,7 @@
 //! Registry of fidelity checks. Each check is an independent [`Check`] strategy.
 
 mod acl_xattr;
+mod adhoc_flags;
 mod append_inplace;
 mod backup;
 mod banner;
@@ -40,6 +41,8 @@ use super::Check;
 /// All checks, in report order.
 pub fn all() -> Vec<Box<dyn Check>> {
     vec![
+        // Ad-hoc arbitrary-flags parity (only runs when --flags is given).
+        Box::new(adhoc_flags::AdHocFlags),
         // Metadata and attributes.
         Box::new(metadata::Metadata),
         Box::new(hard_links::HardLinks),

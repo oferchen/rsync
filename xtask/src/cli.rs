@@ -80,6 +80,12 @@ pub struct ValidateMatrixArgs {
     #[arg(long = "transport", value_name = "NAME")]
     pub transports: Vec<String>,
 
+    /// Ad-hoc rsync flag set to validate for oc-vs-upstream content and metadata
+    /// parity across every transport (repeatable, whitespace-separated), e.g.
+    /// `--flags "-a --sparse"`. Lets any option be checked without new code.
+    #[arg(long = "flags", value_name = "FLAGS")]
+    pub flags: Vec<String>,
+
     /// Run the many-small-files benchmark after the correctness matrix.
     #[arg(long)]
     pub bench: bool,
