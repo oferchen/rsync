@@ -4,7 +4,7 @@
 
 | Version | Supported          |
 | ------- | ------------------ |
-| 0.6.x   | :white_check_mark: (current: 0.6.3) |
+| 0.6.x   | :white_check_mark: (current: 0.6.4) |
 | 0.5.x   | :warning: critical fixes only |
 | < 0.5   | :x:                |
 
