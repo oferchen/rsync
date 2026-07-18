@@ -149,6 +149,10 @@ fn incremental_receiver_mark_directory_created() {
 fn transfer_stats_has_incremental_fields() {
     let stats = TransferStats {
         files_listed: 0,
+        num_dirs: 0,
+        num_symlinks: 0,
+        num_devices: 0,
+        num_specials: 0,
         files_transferred: 0,
         transferred_file_size: 0,
         bytes_received: 0,

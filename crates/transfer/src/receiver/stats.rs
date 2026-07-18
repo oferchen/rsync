@@ -66,6 +66,29 @@ pub struct ListOnlyEntry {
 pub struct TransferStats {
     /// Number of files in the received file list.
     pub files_listed: usize,
+    /// Directories in the received file list.
+    ///
+    /// Per-type tallies classified from the file list so the pulling client can
+    /// reconstruct the `--stats` "Number of files" breakdown
+    /// (`reg: R, dir: D, link: L, dev: V, special: S`). Upstream counts each
+    /// type as the file list is transmitted/received and derives `reg` as the
+    /// remainder; `files_listed` is the total, and `reg = files_listed - (dirs +
+    /// symlinks + devices + specials)`.
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `flist.c:422-438` / `flist.c:2699-2712` - `stats.num_dirs++` etc.
+    /// - `main.c:387-411` - `output_itemized_counts()` derives `reg` as the
+    ///   total minus the other four categories.
+    pub num_dirs: u64,
+    /// Symbolic links in the received file list (upstream `stats.num_symlinks`).
+    pub num_symlinks: u64,
+    /// Device nodes (block + character) in the received file list
+    /// (upstream `stats.num_devices`).
+    pub num_devices: u64,
+    /// FIFOs and sockets in the received file list
+    /// (upstream `stats.num_specials`).
+    pub num_specials: u64,
     /// Number of files actually transferred.
     pub files_transferred: usize,
     /// Summed length of every transferred file (upstream: `total_transferred_size`).

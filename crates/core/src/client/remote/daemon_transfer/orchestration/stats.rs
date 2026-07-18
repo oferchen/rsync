@@ -64,6 +64,12 @@ pub(super) fn convert_server_stats_to_summary(
                 transfer_stats.matched_data,
                 transfer_stats.delete_stats,
                 transfer_stats.created_stats,
+                engine::local_copy::FileTypeTotals {
+                    dirs: transfer_stats.num_dirs,
+                    symlinks: transfer_stats.num_symlinks,
+                    devices: transfer_stats.num_devices,
+                    specials: transfer_stats.num_specials,
+                },
             );
             (s, transfer_stats.io_error, transfer_stats.error_count)
         }

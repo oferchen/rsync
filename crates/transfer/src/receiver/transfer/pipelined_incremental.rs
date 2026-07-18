@@ -294,6 +294,16 @@ impl ReceiverContext {
         stats.literal_data = literal_data;
         stats.matched_data = matched_data;
         stats.total_source_bytes = self.total_source_size();
+        // upstream: flist.c:2699-2712 - classify the (now fully materialized,
+        // including any INC_RECURSE sub-lists) file list into per-type tallies so
+        // the `--stats` "Number of files" breakdown matches upstream. Computed
+        // after the loop because incremental recursion appends sub-list segments
+        // as the transfer proceeds.
+        let (num_dirs, num_symlinks, num_devices, num_specials) = self.file_type_counts();
+        stats.num_dirs = num_dirs;
+        stats.num_symlinks = num_symlinks;
+        stats.num_devices = num_devices;
+        stats.num_specials = num_specials;
         if !metadata_errors.is_empty() || stats.directories_failed > 0 || stats.files_skipped > 0 {
             stats.io_error |= crate::generator::io_error_flags::IOERR_GENERAL;
         }
