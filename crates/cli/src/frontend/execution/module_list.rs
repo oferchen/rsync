@@ -1,7 +1,12 @@
+//! Renders a daemon module listing to stdout, matching upstream's layout.
+
 use std::io::{self, Write};
 
 use core::client::ModuleList;
 
+/// Writes a daemon module listing: warnings to stderr, then the MOTD (unless
+/// suppressed) and one tab-separated `name<pad>\tcomment` row per module to
+/// stdout.
 pub(crate) fn render_module_list<W: Write, E: Write>(
     stdout: &mut W,
     stderr: &mut E,

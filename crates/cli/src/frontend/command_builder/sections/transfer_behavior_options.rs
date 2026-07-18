@@ -1,5 +1,9 @@
+//! Clap definitions for transfer-behaviour options: partial/temp/batch handling,
+//! delta and I/O tuning, deletion, filters, metadata preservation, and limits.
+
 use super::super::{Arg, ArgAction, ClapCommand, OsStringValueParser};
 
+/// Adds the transfer-behaviour argument group to the command.
 pub(crate) fn add_transfer_behavior_options(command: ClapCommand) -> ClapCommand {
     command
             .arg(

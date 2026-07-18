@@ -1,3 +1,6 @@
+//! Parsing for the compression-related flags: `--compress-level`,
+//! `--compress-choice`, `--compress-threads`, and `--bwlimit`.
+
 use std::ffi::OsStr;
 use std::num::NonZeroU8;
 
@@ -10,8 +13,11 @@ use core::{
     rsync_error,
 };
 
+/// A resolved `--compress-level` value after clamping into the codec's range.
 pub(crate) enum CompressLevelArg {
+    /// The level resolved to "no compression" for the selected codec.
     Disable,
+    /// A concrete compression level to apply.
     Level(CompressionLevel),
 }
 
@@ -90,6 +96,10 @@ fn clamp_level(codec: CompressionAlgorithm, raw: i32) -> CompressLevelArg {
     }
 }
 
+/// Parses `--compress-level=N` and clamps it into `codec`'s range.
+///
+/// Any integer is accepted; an out-of-range value is clamped rather than
+/// rejected. Empty or non-numeric input yields a `--compress-level` error.
 pub(crate) fn parse_compress_level(
     argument: &OsStr,
     codec: CompressionAlgorithm,
@@ -99,6 +109,11 @@ pub(crate) fn parse_compress_level(
         .map_err(CompressionLevelParseError::into_flag_message)
 }
 
+/// Parses `--compress-choice=NAME` into a `CompressChoice`.
+///
+/// `auto` yields `CompressChoice::Auto`, `none` yields
+/// `CompressChoice::Disabled`, and any other value is parsed as a codec name.
+/// An empty or unknown name is rejected with exit code 4 (`RERR_UNSUPPORTED`).
 pub(crate) fn parse_compress_choice(argument: &OsStr) -> Result<CompressChoice, Message> {
     let original = argument.to_string_lossy().into_owned();
     let trimmed = original.trim();
@@ -153,6 +168,10 @@ fn render_compress_choice_error(err: CompressionAlgorithmParseError, trimmed: &s
     rsync_error!(4, rendered).with_role(Role::Client)
 }
 
+/// Parses `--bwlimit=RATE[:BURST]` into an optional bandwidth limit.
+///
+/// Returns `Ok(None)` when the value disables the limit. Invalid, too-small,
+/// and too-large values are rejected with a `--bwlimit` error.
 pub(crate) fn parse_bandwidth_limit(argument: &OsStr) -> Result<Option<BandwidthLimit>, Message> {
     let text = argument.to_string_lossy();
     match BandwidthLimit::parse(&text) {
@@ -223,6 +242,10 @@ pub(crate) fn parse_compress_threads(argument: &OsStr) -> Result<Option<NonZeroU
     }
 }
 
+/// Parses `--compress-level` directly into a `CompressionSetting`.
+///
+/// Like `parse_compress_level` but folds the clamped result into an
+/// enabled/disabled compression setting, with argument-style error messages.
 pub(crate) fn parse_compress_level_argument(
     value: &OsStr,
     codec: CompressionAlgorithm,

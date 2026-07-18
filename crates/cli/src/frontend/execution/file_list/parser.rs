@@ -187,6 +187,11 @@ fn operand_has_windows_prefix(path: &OsStr) -> bool {
     false
 }
 
+/// Returns `true` when an operand references a remote path.
+///
+/// Recognises `rsync://`/`ssh://` URLs, daemon module specs (`host::module`),
+/// and SSH hostspecs (`host:path`). Local paths, including Windows drive letters
+/// (`C:\...`) and UNC prefixes, return `false`.
 pub(crate) fn operand_is_remote(path: &OsStr) -> bool {
     let text = path.to_string_lossy();
 

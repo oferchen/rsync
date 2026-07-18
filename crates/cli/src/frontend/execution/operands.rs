@@ -1,3 +1,5 @@
+//! Positional operand extraction and `--address` bind-address parsing.
+
 use std::ffi::{OsStr, OsString};
 use std::io::{self, ErrorKind};
 use std::net::{IpAddr, SocketAddr, ToSocketAddrs};
@@ -10,16 +12,21 @@ use core::{
 
 use super::super::defaults::SUPPORTED_OPTIONS_LIST;
 
+/// An option token this build does not recognise, captured so the caller can
+/// render a branded "unknown option" diagnostic.
 #[derive(Debug)]
 pub(crate) struct UnsupportedOption {
     option: OsString,
 }
 
 impl UnsupportedOption {
+    /// Wraps the offending option token.
     pub(crate) const fn new(option: OsString) -> Self {
         Self { option }
     }
 
+    /// Renders the diagnostic listing the currently supported options, with
+    /// exit code 1 and the client role trailer.
     pub(crate) fn to_message(&self) -> Message {
         let option = self.option.to_string_lossy();
         let text = format!(
@@ -37,6 +44,10 @@ fn is_option(argument: &OsStr) -> bool {
     matches!(chars.next(), Some('-')) && chars.next().is_some()
 }
 
+/// Splits transfer operands from options, rejecting any unrecognised option.
+///
+/// Tokens after a `--` terminator are always treated as operands, even when
+/// they start with `-`. A lone `-` is an operand (stdin/stdout), not an option.
 pub(crate) fn extract_operands(
     arguments: Vec<OsString>,
 ) -> Result<Vec<OsString>, UnsupportedOption> {
@@ -61,6 +72,9 @@ pub(crate) fn extract_operands(
     Ok(operands)
 }
 
+/// Parses the `--address` value into a `BindAddress`, resolving a hostname
+/// when the value is not already a literal IP. The resolved socket keeps the
+/// user's raw text and uses port 0 (the client picks the port later).
 pub(crate) fn parse_bind_address_argument(value: &OsStr) -> Result<BindAddress, Message> {
     if value.is_empty() {
         return Err(rsync_error!(1, "--address requires a non-empty value").with_role(Role::Client));

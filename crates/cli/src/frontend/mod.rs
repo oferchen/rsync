@@ -399,14 +399,6 @@ where
     }
 }
 
-/// Maps a `clap` argument-parse failure to an rsync exit code.
-///
-/// Most usage errors map to `RERR_SYNTAX` (1). An unusable `--checksum-choice`
-/// name is the exception: upstream `checksum.c:139 parse_checksum_choice()`
-/// exits with `RERR_UNSUPPORTED` (4, errcode.h:28). `--checksum-choice` is
-/// validated inside the `clap` value flow (unlike `--compress-choice`, which is
-/// validated later in the pipeline where the message code survives), so its
-/// intended exit code is reconstructed here from the diagnostic text we emit.
 /// Renders a `clap` parse failure into the detail text used to compose an
 /// rsync-style diagnostic, stripping clap's own leading `error: ` header.
 ///
@@ -426,6 +418,14 @@ fn clap_error_detail(error: &clap::Error) -> String {
     }
 }
 
+/// Maps a `clap` argument-parse failure to an rsync exit code.
+///
+/// Most usage errors map to `RERR_SYNTAX` (1). An unusable `--checksum-choice`
+/// name is the exception: upstream `checksum.c:139 parse_checksum_choice()`
+/// exits with `RERR_UNSUPPORTED` (4, errcode.h:28). `--checksum-choice` is
+/// validated inside the `clap` value flow (unlike `--compress-choice`, which is
+/// validated later in the pipeline where the message code survives), so its
+/// intended exit code is reconstructed here from the diagnostic text we emit.
 fn clap_parse_error_exit_code(error: &clap::Error) -> i32 {
     if error.kind() == clap::error::ErrorKind::ValueValidation
         && error.to_string().contains("--checksum-choice")
