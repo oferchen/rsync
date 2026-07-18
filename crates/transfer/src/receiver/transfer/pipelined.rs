@@ -98,8 +98,17 @@ impl ReceiverContext {
         // upstream: receiver.c:653-654 DEBUG_GTE(RECV, 1)
         debug_log!(Recv, 1, "recv_files({}) starting", file_count);
 
+        // upstream: flist.c:2699-2712 - classify the received file list into the
+        // per-type tallies so the pulling client reconstructs the `--stats`
+        // "Number of files" breakdown (`reg: R, dir: D, link: L, ...`). Without
+        // this the client counted every entry as a regular file.
+        let (num_dirs, num_symlinks, num_devices, num_specials) = self.file_type_counts();
         let mut stats = TransferStats {
             files_listed: file_count,
+            num_dirs,
+            num_symlinks,
+            num_devices,
+            num_specials,
             entries_received: file_count as u64,
             io_error: self.flist_reader_cache.as_ref().map_or(0, |r| r.io_error())
                 | self.flist_io_error,
@@ -185,6 +194,13 @@ impl ReceiverContext {
             // because only-write-batch sets both flags.
             self.run_only_write_batch_loop(reader, writer, &files_to_transfer, &setup)?;
         } else if self.config.flags.dry_run {
+            // upstream: recv_generator() itemizes every entry even under
+            // --dry-run (only the data transfer and filesystem mutation are
+            // skipped). The directory-creation and candidate passes above
+            // early-return under skip_dest_writes(), so record the deferred
+            // itemize rows here in flist-index order; flush_itemize_rows below
+            // drains them. Read-only: nothing is written to the destination.
+            self.record_dry_run_itemize(&setup.dest_dir);
             self.run_dry_run_loop(reader, writer, &files_to_transfer)?;
         } else {
             let total_files = files_to_transfer.len();
