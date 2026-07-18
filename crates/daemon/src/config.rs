@@ -171,7 +171,7 @@ impl DaemonConfigBuilder {
         self
     }
 
-    /// Supplies the arguments that should be forwarded to the daemon loop once implemented.
+    /// Supplies the arguments that should be forwarded to the daemon loop.
     #[must_use]
     pub fn arguments<I, S>(mut self, arguments: I) -> Self
     where
