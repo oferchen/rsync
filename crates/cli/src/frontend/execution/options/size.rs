@@ -1,7 +1,7 @@
 //! Size specification parsing for arguments with optional unit suffixes.
 //!
 //! Handles `--block-size`, `--max-size`, `--min-size`, and `--max-alloc` arguments.
-//! Supports binary (K/M/G/T/P/E = powers of 1024) and decimal (KB/MB/GB = powers of 1000)
+//! Supports binary (K/M/G/T/P = powers of 1024) and decimal (KB/MB/GB = powers of 1000)
 //! suffixes, as well as explicit binary suffixes (KiB/MiB/GiB).
 //! Mirrors upstream rsync's size parsing behavior.
 

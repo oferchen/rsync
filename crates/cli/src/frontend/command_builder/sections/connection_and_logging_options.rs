@@ -88,7 +88,6 @@ pub(crate) fn add_connection_and_logging_options(command: ClapCommand) -> ClapCo
                 .long("compress-level")
                 .visible_alias("zl")
                 .value_name("LEVEL")
-                .help("Set compression level (0 disables compression).")
                 .help("Set compression level (0-9). 0 disables compression.")
                 .value_parser(OsStringValueParser::new()),
         )
