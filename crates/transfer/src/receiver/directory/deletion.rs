@@ -73,8 +73,15 @@ fn emit_delete_notification<W: crate::writer::MsgInfoSender + ?Sized>(
     }
     if emit_itemize {
         // upstream: log.c:log_delete() emits the "*deleting" itemize row when
-        // --itemize-changes is active.
-        let line = format!("*deleting   {}\n", rel.display());
+        // --itemize-changes is active. The name is rendered through `%n`
+        // (log.c:633-641), which appends a trailing slash for a directory, so
+        // the itemize row carries the same slash the plain "deleting %n" line
+        // above does.
+        let line = if is_dir {
+            format!("*deleting   {}/\n", rel.display())
+        } else {
+            format!("*deleting   {}\n", rel.display())
+        };
         let _ = writer.send_msg_info(line.as_bytes());
     }
 }
@@ -114,53 +121,210 @@ pub(in crate::receiver) struct DeletedEntry {
 /// Orders deleted entries to match upstream's observable delete stream.
 ///
 /// Upstream's generator walks the file list ascending by `f_name_cmp` and
-/// calls `generator.c:delete_in_dir()` once per directory in that order.
-/// Each `delete_in_dir()` scans its directory's dirlist - sorted ascending
-/// by `f_name_cmp` (files before dirs at a given level) - and iterates it in
-/// reverse (`for (i = dirlist->used; i--; )`), so a directory's own
-/// extraneous entries are emitted in descending order.
+/// calls `generator.c:delete_in_dir()` once per scanned directory in that
+/// order. Each `delete_in_dir()` scans its directory's dirlist - sorted
+/// ascending by `f_name_cmp` (files before dirs at a given level) - and
+/// iterates it in reverse (`for (j = dirlist->used; j--; )`). An extraneous
+/// subdirectory is removed by `delete.c:delete_item()`, which recurses through
+/// `delete_dir_contents()` and logs every descendant (in the same
+/// reverse-dirlist order) *before* the directory's own `rmdir`/`log_delete`.
+/// The observable stream is therefore a depth-first, post-order walk:
 ///
-/// This deletion pass scans each file-list directory as its own worker and
-/// removes immediate extraneous entries (doomed subdirectories are removed
-/// whole via `recursive_unlinkat`, which emits only the subdirectory's own
-/// line). The observable stream is therefore: directories (the parent of
-/// each deleted entry) processed in ascending `f_name_cmp` order, and within
-/// each directory the entries emitted in descending `f_name_cmp` order.
-/// Deriving the order from the flat deleted set here makes the emitted
-/// sequence deterministic and upstream-matching regardless of the parallel
-/// scan/unlink order.
+/// - scanned directories in ascending `f_name_cmp` order,
+/// - within each, entries in descending `f_name_cmp` order,
+/// - each extraneous directory expanded to its recorded descendants (same
+///   rules, recursively) immediately before the directory's own line.
+///
+/// The parallel scan records a flat, unordered set (each doomed directory plus
+/// every descendant enumerated in `record_doomed_dir_descendants`). This
+/// reconstructs the tree from the recorded rel paths (a subtree root is an
+/// entry whose parent is a scanned directory, absent from the set; a descendant
+/// is an entry whose parent is itself a recorded doomed directory) and emits it
+/// in the depth-first order above, so the result is upstream-matching
+/// regardless of the parallel scan/unlink order.
 ///
 /// # Upstream Reference
 ///
 /// - `generator.c:delete_in_dir()` - sorted dirlist, reverse iteration
+/// - `delete.c:80-109 delete_dir_contents()` - recurse into a doomed dir,
+///   logging each descendant before the enclosing directory
 /// - `generator.c:2328` generate_files loop - one delete_in_dir() per
 ///   directory, in ascending file-list order
 /// - `flist.c:fsort()` / `f_name_cmp()` - the ascending comparator
 fn order_deletions_upstream(entries: Vec<DeletedEntry>) -> Vec<DeletedEntry> {
-    use std::collections::BTreeMap;
+    use std::collections::{BTreeMap, HashMap, HashSet};
 
-    // Group entries by parent directory (the directory that was scanned).
-    // A BTreeMap keyed on the f_name_cmp order of the parent directory keeps
-    // the groups in the ascending order upstream's generator visits them.
-    let mut groups: BTreeMap<DirKey, Vec<DeletedEntry>> = BTreeMap::new();
-    for entry in entries {
-        let parent = entry
-            .rel
-            .parent()
-            .map(Path::to_path_buf)
-            .unwrap_or_default();
-        groups.entry(DirKey(parent)).or_default().push(entry);
+    if entries.len() < 2 {
+        return entries;
     }
 
-    let mut ordered = Vec::new();
-    for (_dir, mut group) in groups {
-        // Ascending f_name_cmp, then reverse: descending within the
-        // directory, matching upstream's reverse dirlist iteration.
-        group.sort_by(|a, b| f_name_cmp_full(&a.rel, a.is_dir, &b.rel, b.is_dir));
-        group.reverse();
-        ordered.extend(group);
+    // Every recorded rel path, so a descendant recorded during a recursive
+    // directory removal (parent in the set) can be told apart from a subtree
+    // root (parent is a scanned directory, absent from the set).
+    let deleted: HashSet<PathBuf> = entries.iter().map(|e| e.rel.clone()).collect();
+
+    let nodes = entries;
+    // A BTreeMap keyed on the f_name_cmp order of the scanned (parent)
+    // directory keeps the subtree roots in the ascending order upstream's
+    // generator visits them; children_of maps a doomed directory to the
+    // descendants recorded under it.
+    let mut children_of: HashMap<PathBuf, Vec<usize>> = HashMap::new();
+    let mut roots: BTreeMap<DirKey, Vec<usize>> = BTreeMap::new();
+    for (i, e) in nodes.iter().enumerate() {
+        let parent = e.rel.parent().map(Path::to_path_buf).unwrap_or_default();
+        if deleted.contains(&parent) {
+            children_of.entry(parent).or_default().push(i);
+        } else {
+            roots.entry(DirKey(parent)).or_default().push(i);
+        }
     }
-    ordered
+
+    let mut order: Vec<usize> = Vec::with_capacity(nodes.len());
+    for (_scan_dir, mut group) in roots {
+        sort_reverse_dirlist(&mut group, &nodes);
+        for idx in group {
+            push_post_order(idx, &nodes, &children_of, &mut order);
+        }
+    }
+
+    let mut slots: Vec<Option<DeletedEntry>> = nodes.into_iter().map(Some).collect();
+    order
+        .into_iter()
+        .map(|i| slots[i].take().expect("each index is visited exactly once"))
+        .collect()
+}
+
+/// Sorts entry indices into upstream's reverse-dirlist order: ascending
+/// `f_name_cmp` (files before dirs at a level) then reversed, so a directory's
+/// siblings are visited highest-first, matching `delete_in_dir()` iterating its
+/// sorted dirlist with `for (j = dirlist->used; j--; )`.
+fn sort_reverse_dirlist(idxs: &mut [usize], nodes: &[DeletedEntry]) {
+    idxs.sort_by(|&a, &b| {
+        f_name_cmp_full(
+            &nodes[a].rel,
+            nodes[a].is_dir,
+            &nodes[b].rel,
+            nodes[b].is_dir,
+        )
+    });
+    idxs.reverse();
+}
+
+/// Appends one entry and its subtree in upstream emission order: a directory's
+/// recorded descendants (reverse-dirlist order, recursively) come out before
+/// the directory itself, mirroring `delete.c:delete_dir_contents()` which logs
+/// each child via `delete_item()` before the enclosing directory's own line.
+fn push_post_order(
+    idx: usize,
+    nodes: &[DeletedEntry],
+    children_of: &std::collections::HashMap<PathBuf, Vec<usize>>,
+    out: &mut Vec<usize>,
+) {
+    if let Some(children) = children_of.get(&nodes[idx].rel) {
+        let mut children = children.clone();
+        sort_reverse_dirlist(&mut children, nodes);
+        for child in children {
+            push_post_order(child, nodes, children_of, out);
+        }
+    }
+    out.push(idx);
+}
+
+/// Records every descendant of a doomed directory as its own [`DeletedEntry`]
+/// so the parallel delete pass itemizes each removed child, not just the
+/// directory. Read-only: the caller performs the actual (wholesale) removal.
+/// Entries may be pushed in any order - [`order_deletions_upstream`] re-derives
+/// upstream's children-before-directory emission order from the rel paths.
+///
+/// # Upstream Reference
+///
+/// - `delete.c:80-109 delete_dir_contents()` - recurses into a doomed
+///   directory; a subdirectory is expanded before it is itself deleted.
+/// - `delete.c:178-181 delete_item()` -> `log.c:845 log_delete()` - one
+///   `deleting` line per removed entry.
+fn record_doomed_dir_descendants(
+    #[cfg(unix)] sandbox: Option<&fast_io::DirSandbox>,
+    dest_dir: &Path,
+    rel: &Path,
+    path: &Path,
+    out: &mut Vec<DeletedEntry>,
+) {
+    let children = match read_dir_children(
+        #[cfg(unix)]
+        sandbox,
+        dest_dir,
+        rel,
+        path,
+    ) {
+        Ok(children) => children,
+        // A read failure leaves the itemize list short but never blocks the
+        // wholesale removal below; upstream likewise only logs what
+        // get_dirlist() could enumerate.
+        Err(_) => return,
+    };
+    for (name, is_dir, is_symlink) in children {
+        let child_rel = rel.join(&name);
+        let child_path = path.join(&name);
+        if is_dir && !is_symlink {
+            record_doomed_dir_descendants(
+                #[cfg(unix)]
+                sandbox,
+                dest_dir,
+                &child_rel,
+                &child_path,
+                out,
+            );
+        }
+        out.push(DeletedEntry {
+            rel: child_rel,
+            is_dir,
+            is_symlink,
+        });
+    }
+}
+
+/// Lists the immediate children of a directory as `(name, is_dir, is_symlink)`,
+/// routing through the sandbox-anchored listing on Unix (SEC-1.q2 audit row #5)
+/// and falling back to `std::fs::read_dir` otherwise. `dest_dir`/`rel` are the
+/// sandbox base and the base-relative path of `path`; `rel == "."` lists the
+/// base itself.
+fn read_dir_children(
+    #[cfg(unix)] sandbox: Option<&fast_io::DirSandbox>,
+    dest_dir: &Path,
+    rel: &Path,
+    path: &Path,
+) -> io::Result<Vec<(std::ffi::OsString, bool, bool)>> {
+    let mut out = Vec::new();
+    #[cfg(unix)]
+    {
+        let scan_rel: &Path = if rel.as_os_str() == "." {
+            Path::new("")
+        } else {
+            rel
+        };
+        let iter = fast_io::read_dir_via_sandbox_or_fallback(sandbox, dest_dir, scan_rel, path)?;
+        for view in iter.flatten() {
+            let kind = view.file_type();
+            out.push((
+                view.file_name().to_os_string(),
+                kind.is_some_and(fast_io::EntryKind::is_dir),
+                kind.is_some_and(fast_io::EntryKind::is_symlink),
+            ));
+        }
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = (dest_dir, rel);
+        for entry in std::fs::read_dir(path)?.flatten() {
+            let ft = entry.file_type().ok();
+            out.push((
+                entry.file_name(),
+                ft.as_ref().is_some_and(std::fs::FileType::is_dir),
+                ft.as_ref().is_some_and(std::fs::FileType::is_symlink),
+            ));
+        }
+    }
+    Ok(out)
 }
 
 /// A scanned-directory key ordered by upstream `f_name_cmp` so the parent
@@ -833,22 +997,38 @@ impl ReceiverContext {
                         }
 
                         let path = dest_path.join(&name);
-                        // SEC-1.q2: the unlink/rmdir-all also routes through
-                        // the sandbox helpers so the deletion is anchored on
-                        // the same parent the scan observed. The relative
-                        // path passed here is rooted at the receiver's
-                        // sandbox base (`dest_dir_owned`); top-level
-                        // entries take the sandbox-anchored fast path and
-                        // deeper entries fall back to the path-based
-                        // `std::fs::remove_*` helpers via the same
-                        // `single_component_leaf` precondition the existing
-                        // SEC-1.f-j helpers use.
-                        #[cfg(unix)]
-                        let rel_for_unlink = if dir_relative.as_os_str() == "." {
-                            std::path::PathBuf::from(&name)
+                        // Deletion-root-relative path of this entry, rooted at
+                        // the receiver's sandbox base (`dest_dir_owned`). Top-
+                        // level entries are bare names ("delete.txt"), not
+                        // "./delete.txt" (upstream log_delete, delete.c:180).
+                        let entry_rel: PathBuf = if dir_relative.as_os_str() == "." {
+                            PathBuf::from(&name)
                         } else {
                             dir_relative.join(&name)
                         };
+
+                        // upstream: delete.c:80-109 delete_dir_contents() logs
+                        // (via delete_item()->log_delete()) every descendant of
+                        // a doomed directory, children first, before the
+                        // directory's own line. The parallel fast path removes
+                        // the subtree wholesale below, so enumerate the
+                        // descendants here (read-only) and record each as its
+                        // own deletion; order_deletions_upstream re-derives the
+                        // children-before-directory emission order. Only a real
+                        // directory is walked - a symlink (even to a directory)
+                        // is a leaf. Empty for files, so the common path is
+                        // unchanged.
+                        let mut subtree: Vec<DeletedEntry> = Vec::new();
+                        if is_dir && !is_symlink {
+                            record_doomed_dir_descendants(
+                                #[cfg(unix)]
+                                sandbox_ref,
+                                &dest_dir_owned,
+                                &entry_rel,
+                                &path,
+                                &mut subtree,
+                            );
+                        }
 
                         // upstream: delete.c:delete_item() emits this at
                         // `DEBUG_GTE(DEL, 2)` just before removing the entry. The
@@ -882,7 +1062,7 @@ impl ReceiverContext {
                                 fast_io::recursive_unlinkat_via_sandbox_or_fallback(
                                     sandbox_ref,
                                     &dest_dir_owned,
-                                    &rel_for_unlink,
+                                    &entry_rel,
                                     &path,
                                 )
                             }
@@ -897,7 +1077,7 @@ impl ReceiverContext {
                                 fast_io::unlink_via_sandbox_or_fallback(
                                     sandbox_ref,
                                     &dest_dir_owned,
-                                    &rel_for_unlink,
+                                    &entry_rel,
                                     &path,
                                     fast_io::UnlinkFlags::File,
                                 )
@@ -910,16 +1090,20 @@ impl ReceiverContext {
 
                         match result {
                             Ok(()) => {
-                                // Compute relative path for itemize output.
-                                // upstream: delete.c:180 - log_delete(fbuf) emits the
-                                // filename relative to the deletion root. Top-level
-                                // entries are emitted as bare names ("delete.txt"),
-                                // not "./delete.txt", matching upstream output.
-                                let rel = if dir_relative.as_os_str() == "." {
-                                    PathBuf::from(&name)
-                                } else {
-                                    dir_relative.join(&name)
-                                };
+                                // Count and record every enumerated descendant
+                                // (empty unless this entry is a doomed dir),
+                                // then the entry itself. upstream: delete_item()
+                                // bumps stats.deleted_* once per removed entry.
+                                for descendant in &subtree {
+                                    if descendant.is_dir {
+                                        stats.dirs += 1;
+                                    } else if descendant.is_symlink {
+                                        stats.symlinks += 1;
+                                    } else {
+                                        stats.files += 1;
+                                    }
+                                }
+                                deleted_paths.extend(subtree);
                                 if is_dir {
                                     stats.dirs += 1;
                                 } else if is_symlink {
@@ -934,7 +1118,7 @@ impl ReceiverContext {
                                 // record what was deleted so the unlinks stay
                                 // parallel.
                                 deleted_paths.push(DeletedEntry {
-                                    rel,
+                                    rel: entry_rel,
                                     is_dir,
                                     is_symlink,
                                 });
@@ -1600,6 +1784,31 @@ mod emit_notification_tests {
         );
     }
 
+    /// The `-i` itemize row (`*deleting`) renders the name through upstream
+    /// `%n`, so a directory carries a trailing slash exactly like the plain
+    /// `deleting %n` line. Regression for the remote-pull `*deleting` rows,
+    /// which dropped the directory slash (`*deleting   d` vs `*deleting   d/`).
+    #[test]
+    fn itemize_row_appends_directory_trailing_slash() {
+        let mut cfg = VerbosityConfig::default();
+        cfg.info.del = 1;
+        init(cfg);
+        let _ = drain_events();
+
+        let mut w = RecordingWriter::default();
+        // Client receiver, itemize active: file has no slash, dir has one.
+        emit_delete_notification(&mut w, Path::new("stale.txt"), false, false, 32, true);
+        emit_delete_notification(&mut w, Path::new("stale_dir"), true, false, 32, true);
+
+        assert_eq!(
+            w.info,
+            vec![
+                b"*deleting   stale.txt\n".to_vec(),
+                b"*deleting   stale_dir/\n".to_vec(),
+            ],
+        );
+    }
+
     #[test]
     fn protocol_below_29_falls_back_to_local_render() {
         let mut cfg = VerbosityConfig::default();
@@ -1774,13 +1983,12 @@ mod tests {
 
     /// #517: directories are processed in ascending `f_name_cmp` order (the
     /// generator visits the file list ascending, one `delete_in_dir()` per
-    /// directory), and within each the entries descend. A doomed subdir in
-    /// the root's group is emitted (as a whole, one line) in the root scan.
+    /// directory), and within each the entries descend. An *empty* doomed
+    /// subdir in the root's group is a single line in the root scan.
     /// Models the `rsync 3.4.4 -rii --delete` layout:
-    ///   root: `root_extra.txt`, doomed dir `doomed`, kept dir `keep`
+    ///   root: `root_extra.txt`, empty doomed dir `doomed`, kept dir `keep`
     ///   keep/: `extra1.txt`, `extra2.txt`
-    /// which upstream emits (minus the doomed subtree lines this pass folds
-    /// into the whole-dir removal) as:
+    /// which upstream emits as:
     ///   doomed/, root_extra.txt, keep/extra2.txt, keep/extra1.txt
     #[test]
     fn order_deletions_dirs_ascending_entries_descending() {
@@ -1800,6 +2008,104 @@ mod tests {
                 "keep/extra1.txt",
             ],
         );
+    }
+
+    /// A non-empty doomed directory recorded with its descendants (as the
+    /// parallel worker now does via `record_doomed_dir_descendants`) is
+    /// emitted depth-first: each child before the directory itself, with the
+    /// directory processed before a lexically-earlier top-level file.
+    /// Mirrors `rsync 3.4.4 -ri --delete` on a dest holding `stale.txt` plus
+    /// `stale_dir/inner.txt`, which emits:
+    ///   deleting stale_dir/inner.txt
+    ///   deleting stale_dir/
+    ///   deleting stale.txt
+    /// upstream: delete.c:80-109 delete_dir_contents() logs each child before
+    /// the enclosing directory (delete.c:178-181 delete_item->log_delete).
+    #[test]
+    fn order_deletions_recurses_children_before_directory() {
+        let entries = vec![
+            entry("stale.txt", false),
+            entry("stale_dir", true),
+            entry("stale_dir/inner.txt", false),
+        ];
+        let ordered = order_deletions_upstream(entries);
+        assert_eq!(
+            rels(&ordered),
+            vec!["stale_dir/inner.txt", "stale_dir", "stale.txt"],
+        );
+    }
+
+    /// Nested doomed subdirectories recurse depth-first: the deepest entries
+    /// drain first, each directory after its own contents. upstream:
+    /// delete.c:98-101 recurses `delete_dir_contents()` into a child dir
+    /// before `delete_item()` removes and logs it.
+    #[test]
+    fn order_deletions_recurses_nested_subdirs_depth_first() {
+        let entries = vec![
+            entry("stale_dir", true),
+            entry("stale_dir/mid.txt", false),
+            entry("stale_dir/sub", true),
+            entry("stale_dir/sub/deep.txt", false),
+        ];
+        let ordered = order_deletions_upstream(entries);
+        // Within stale_dir the reverse-dirlist walk visits `sub` (a dir, so it
+        // sorts after the file) before `mid.txt`; `sub` expands to `deep.txt`
+        // then itself; finally the top directory.
+        assert_eq!(
+            rels(&ordered),
+            vec![
+                "stale_dir/sub/deep.txt",
+                "stale_dir/sub",
+                "stale_dir/mid.txt",
+                "stale_dir",
+            ],
+        );
+    }
+
+    /// `record_doomed_dir_descendants` records every descendant of a doomed
+    /// directory (files and nested subdirs), flagging directories, so the
+    /// parallel delete pass can itemize each removed child. The directory
+    /// itself is recorded by the caller, not here.
+    #[test]
+    fn record_doomed_dir_descendants_records_the_whole_subtree() {
+        let tmp = tempfile::tempdir().unwrap();
+        let base = tmp.path();
+        let stale = base.join("stale_dir");
+        std::fs::create_dir(&stale).unwrap();
+        std::fs::write(stale.join("inner.txt"), b"x").unwrap();
+        let sub = stale.join("sub");
+        std::fs::create_dir(&sub).unwrap();
+        std::fs::write(sub.join("deep.txt"), b"y").unwrap();
+
+        let mut out = Vec::new();
+        record_doomed_dir_descendants(None, base, Path::new("stale_dir"), &stale, &mut out);
+
+        let mut got: Vec<String> = out
+            .iter()
+            .map(|e| e.rel.to_string_lossy().into_owned())
+            .collect();
+        got.sort();
+        assert_eq!(
+            got,
+            vec![
+                "stale_dir/inner.txt".to_string(),
+                "stale_dir/sub".to_string(),
+                "stale_dir/sub/deep.txt".to_string(),
+            ],
+        );
+        let sub_entry = out
+            .iter()
+            .find(|e| e.rel == Path::new("stale_dir/sub"))
+            .expect("subdir recorded");
+        assert!(
+            sub_entry.is_dir,
+            "a nested directory must be flagged is_dir"
+        );
+        let inner = out
+            .iter()
+            .find(|e| e.rel == Path::new("stale_dir/inner.txt"))
+            .expect("file recorded");
+        assert!(!inner.is_dir, "a file must not be flagged is_dir");
     }
 
     /// The ordering is deterministic: two independently shuffled inputs
