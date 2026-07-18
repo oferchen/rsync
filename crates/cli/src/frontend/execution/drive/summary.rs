@@ -127,7 +127,13 @@ where
     // `-v` transfers get no banner); additionally require the FLIST info
     // category so `--info=flist0` suppresses the banner even at `-v`, matching
     // upstream's per-category gate rather than a raw verbose-level check.
-    let emit_flist_banner = config.recursive() && info_gte(InfoFlag::Flist, 1);
+    // upstream: flist.c:2251 emits "sending incremental file list" only on the
+    // sender (`!am_server`). The client is the sender on a push and a local
+    // copy, and the receiver on a pull - where the receiver separately prints
+    // "receiving incremental file list" - so suppress the "sending" banner for
+    // a pull to avoid printing both.
+    let emit_flist_banner =
+        config.recursive() && info_gte(InfoFlag::Flist, 1) && !config.is_pull();
     // Capture the preserve-links state before `config` is consumed so the
     // `--list-only` renderer knows whether to append the ` -> <target>` arrow
     // to symlink rows (upstream: generator.c:1183 gates it on preserve_links).
