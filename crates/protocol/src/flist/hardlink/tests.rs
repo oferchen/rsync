@@ -119,7 +119,7 @@ mod basic {
 /// Tests for collision handling in the hardlink lookup table.
 ///
 /// These tests verify correct behavior when:
-/// - Multiple files have the same dev/ino pair (from different systems)
+/// - Multiple files share the same dev/ino pair on one filesystem (true hardlinks)
 /// - Hash collisions occur in the underlying FxHashMap
 /// - Large numbers of hardlinks stress the table
 #[cfg(test)]
@@ -128,7 +128,7 @@ mod collision {
     use std::collections::hash_map::DefaultHasher;
     use std::hash::{Hash, Hasher};
 
-    /// Test that files from different systems with same dev/ino are correctly linked.
+    /// Test that files on the same system with the same dev/ino are correctly linked.
     ///
     /// When syncing from the same source filesystem, files with identical
     /// (dev, ino) pairs are true hardlinks and should be linked together.

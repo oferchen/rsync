@@ -1,3 +1,5 @@
+//! Assembles the clap `Command` from staged option-group sections.
+
 mod sections;
 
 pub(super) use clap::{Arg, ArgAction, Command as ClapCommand, builder::OsStringValueParser};

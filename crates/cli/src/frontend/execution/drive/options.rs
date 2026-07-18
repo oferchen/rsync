@@ -195,14 +195,10 @@ where
                 name_overridden = true;
             }
 
-            // Apply all resolved info flag levels to the thread-local
-            // VerbosityConfig. This replaces the prior token-by-token loop
-            // which could not handle composite tokens like "all", "none",
-            // or bare numeric levels (those tokens silently failed in
-            // logging::apply_info_flag). The resolved InfoFlagSettings
-            // already handles all token forms correctly, so applying the
-            // fully-resolved per-flag levels ensures the thread-local
-            // config matches what the user requested.
+            // Apply the fully-resolved per-flag levels to the thread-local
+            // VerbosityConfig. Resolving first is what lets composite tokens
+            // like "all", "none", and bare numeric levels take effect; a
+            // token-by-token apply cannot decode them.
             // upstream: options.c set_output_verbosity / parse_output_words
             settings.apply_to_thread_local();
 
