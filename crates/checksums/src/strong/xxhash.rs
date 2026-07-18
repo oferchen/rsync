@@ -174,8 +174,7 @@ impl StrongDigest for Xxh64 {
 /// runtime SIMD detection (AVX2/NEON) and automatic scalar fallback.
 /// Streaming operations use `xxhash-rust` as the `xxh3` crate lacks streaming support.
 ///
-/// Note: `Xxh3` does not implement `Clone` because the underlying `xxhash_rust::xxh3::Xxh3`
-/// hasher does not support cloning.
+/// Note: `Xxh3` does not implement `Clone`.
 ///
 /// # Examples
 ///
