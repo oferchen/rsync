@@ -5,7 +5,7 @@
 ///
 /// # Upstream Reference
 ///
-/// Source: `errcode.h` in rsync 3.4.1
+/// Source: `errcode.h` in rsync 3.4.4
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 #[repr(i32)]
 pub enum ExitCode {

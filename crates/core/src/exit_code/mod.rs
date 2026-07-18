@@ -7,7 +7,7 @@
 //! # Upstream Reference
 //!
 //! Exit codes are defined in `errcode.h` and their string mappings are in `log.c`.
-//! This implementation maintains exact compatibility with rsync 3.4.1.
+//! This implementation maintains exact compatibility with rsync 3.4.4.
 //!
 //! # Examples
 //!
