@@ -74,7 +74,6 @@ impl DeflateSink for ZstdDeflate {
     }
 
     fn decompress_into(&mut self, output: &mut Vec<u8>) -> io::Result<()> {
-        // Decompress the block.
         // upstream: token.c lines 846-863 (r_inflating state)
         let mut input_pos = 0;
 
@@ -121,6 +120,10 @@ impl DeflateSink for ZstdDeflate {
 }
 
 impl ZstdTokenDecoder {
+    /// Creates a zstd decoder with a fresh persistent decompression context.
+    ///
+    /// The `ZSTD_DCtx` lives for the whole transfer session and is never reset
+    /// between files; see the type-level documentation.
     pub(in crate::wire::compressed_token) fn new() -> io::Result<Self> {
         let decoder = ZstdRawDecoder::new()?;
         // upstream: token.c line 795 - out_buffer_size = ZSTD_DStreamOutSize() * 2
@@ -135,6 +138,7 @@ impl ZstdTokenDecoder {
         })
     }
 
+    /// Returns whether the decoder has received its first token.
     pub(in crate::wire::compressed_token) fn initialized(&self) -> bool {
         self.core.initialized
     }
