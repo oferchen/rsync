@@ -18,6 +18,10 @@ use wire_format_generator::{
 fn transfer_stats_incremental_fields_exist() {
     let stats = TransferStats {
         files_listed: 10,
+        num_dirs: 0,
+        num_symlinks: 0,
+        num_devices: 0,
+        num_specials: 0,
         files_transferred: 5,
         transferred_file_size: 5000,
         bytes_received: 1000,
