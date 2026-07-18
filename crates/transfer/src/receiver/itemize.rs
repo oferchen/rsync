@@ -20,6 +20,28 @@ impl ReceiverContext {
         self.config.flags.info_flags.itemize
     }
 
+    /// Sum of source sizes counted toward the `--stats` "total size".
+    ///
+    /// Only regular files and symlinks contribute, never directories, devices,
+    /// or FIFOs - directory `st_size` in particular would inflate the total.
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `flist.c:690-691` / `flist.c:1242-1243` - `stats.total_size +=
+    ///   F_LENGTH(file)` guarded by `S_ISREG(mode) || S_ISLNK(mode)`.
+    pub(in crate::receiver) fn total_source_size(&self) -> u64 {
+        self.file_list
+            .iter()
+            .filter(|entry| {
+                matches!(
+                    entry.file_type(),
+                    protocol::flist::FileType::Regular | protocol::flist::FileType::Symlink
+                )
+            })
+            .map(|entry| entry.size())
+            .sum()
+    }
+
     /// Computes the itemize flags for an existing (already-present) directory
     /// by comparing its current on-disk metadata against the sender's file-list
     /// entry, mirroring upstream `generator.c:1480-1483` -> `itemize()` for the
