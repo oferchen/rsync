@@ -67,24 +67,9 @@ The primary platform is Linux. macOS is well-supported with parity for all metad
 
 Legend: ✓ supported, ⚠ partial or not yet wired, ✗ not implemented.
 
-### What's New (v0.6.4)
+### Release Notes
 
-**Reliability**
-- Daemon survives transient `accept(2)` errors (`ECONNABORTED` / `EMFILE`) under connection bursts instead of exiting, matching upstream `socket.c` (#6763)
-
-**CLI fixes**
-- Lone `-h` prints help; `--old-args` / secluded-args conflict resolved; `-a` flag ordering corrected (#6729)
-- Human-readable mode threaded into `--stats` count fields (#6727)
-- Dropped dead `--compress-level` help text and corrected the stale `E` (exa) size-suffix documentation (#6778)
-
-**Documentation**
-- Systematic rustdoc and comment cleanup across every workspace crate: stale claims corrected against the code, restatement/banner comments removed, missing `///` added, and all `// upstream:` references preserved (45 PRs)
-- Upstream comparison pinned to rsync 3.4.4 across the docs and release benchmark; the benchmark report now leads with oc-rsync's widest wins (#6779)
-
-**Housekeeping**
-- Removed validated orphan (never-compiled) source files (#6749)
-
-For earlier releases, see the [CHANGELOG](./CHANGELOG.md).
+See the [CHANGELOG](./CHANGELOG.md) for the full, per-release change history.
 
 ### Interop Testing
 
