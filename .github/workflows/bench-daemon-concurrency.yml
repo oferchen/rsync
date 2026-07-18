@@ -120,15 +120,31 @@ jobs:
             "$OC_RSYNC" --daemon --no-detach \
               --config "$WORK/oc-rsyncd.conf" \
               </dev/null > "$WORK/oc-rsyncd.stdout" 2> "$WORK/oc-rsyncd.stderr" &
+          # PID of the /usr/bin/time wrapper; used only to stop the daemon.
           echo $! > "$WORK/oc-rsyncd.runpid"
 
-          # Wait for the listener to bind before issuing pulls.
-          for _ in $(seq 1 50); do
+          # Deterministic readiness gate: poll the listener until it accepts a
+          # TCP connection, and fail loud if the daemon never comes up (or
+          # exits early). Without this the pulls could race the bind window and
+          # log spurious connection-refused failures. Bail immediately if the
+          # daemon process has already died so we surface its stderr/log.
+          ready=0
+          for _ in $(seq 1 100); do
             if (echo > "/dev/tcp/127.0.0.1/$OC_PORT") >/dev/null 2>&1; then
+              ready=1
+              break
+            fi
+            if ! kill -0 "$(cat "$WORK/oc-rsyncd.runpid")" 2>/dev/null; then
               break
             fi
             sleep 0.1
           done
+          if [ "$ready" -ne 1 ]; then
+            echo "::error::oc-rsync daemon never became ready on 127.0.0.1:$OC_PORT (D10K-7)"
+            echo "----- daemon stderr -----"; cat "$WORK/oc-rsyncd.stderr" 2>/dev/null || true
+            echo "----- daemon log -----"; cat "$WORK/oc-rsyncd.log" 2>/dev/null || true
+            exit 1
+          fi
 
       - name: Run concurrency soak
         env:
@@ -137,8 +153,10 @@ jobs:
         run: |
           set -euo pipefail
           RESULTS="$WORK/results"
-          PULL_LOG="$RESULTS/pull-failures.log"
+          PULL_LOG="$RESULTS/pull-stderr.log"
+          FAIL_LOG="$RESULTS/pull-failures.log"
           : > "$PULL_LOG"
+          : > "$FAIL_LOG"
 
           one_pull() {
             local idx="$1"
@@ -146,36 +164,48 @@ jobs:
             mkdir -p "$out"
             if ! rsync -q "rsync://127.0.0.1:${OC_PORT}/soak/fixture.bin" "$out/" \
                  2>> "$PULL_LOG"; then
-              printf 'pull %s failed\n' "$idx" >> "$PULL_LOG"
+              # Sentinel goes to a dedicated log so the failure count is exactly
+              # the number of failed pulls; rsync's own stderr (which may itself
+              # contain the word "failed") never inflates it.
+              printf 'pull %s failed\n' "$idx" >> "$FAIL_LOG"
               return 1
             fi
           }
           export -f one_pull
-          export WORK OC_PORT PULL_LOG
+          export WORK OC_PORT PULL_LOG FAIL_LOG
           export SOAK_CONNECTIONS SOAK_PARALLELISM
 
           run_soak() {
             local run_idx="$1"
             rm -rf "$WORK/dst"
             mkdir -p "$WORK/dst"
-            : > "$PULL_LOG"
+            : > "$FAIL_LOG"
 
             local start end
             start=$(date +%s.%N)
-            local failures=0
+            # `timeout` returns 124 on a real wall-clock timeout; xargs returns
+            # 123 when one or more pulls exited non-zero. Only a genuine 124 is
+            # recorded as a timeout - failed pulls are counted separately below,
+            # so the two invariants never double-report the same event.
+            local rc=0
             timeout "${SOAK_TIMEOUT_SECONDS}" bash -c '
               seq 1 "${SOAK_CONNECTIONS}" \
                 | xargs -P "${SOAK_PARALLELISM}" -I {} bash -c "one_pull {}"
-            ' || failures=$?
+            ' || rc=$?
             end=$(date +%s.%N)
+
+            local timeout_hit=0
+            if [ "$rc" -eq 124 ]; then
+              timeout_hit=1
+            fi
 
             local wall
             wall=$(python3 -c "print($end - $start)")
             local fail_count
-            fail_count=$(grep -c 'failed' "$PULL_LOG" || true)
+            fail_count=$(grep -c '^pull ' "$FAIL_LOG" || true)
 
             printf '{"run":%s,"wall":%s,"failures":%s,"timeout_exit":%s}\n' \
-              "$run_idx" "$wall" "$fail_count" "$failures" \
+              "$run_idx" "$wall" "$fail_count" "$timeout_hit" \
               >> "$RESULTS/soak-runs.jsonl"
           }
 
@@ -184,11 +214,24 @@ jobs:
             run_soak "$run_idx"
           done
 
-          # Sample daemon peak RSS (VmHWM, kB) while it is still alive;
-          # /usr/bin/time -v only writes its summary on process exit.
-          PID=$(cat "$WORK/oc-rsyncd.runpid")
-          if kill -0 "$PID" 2>/dev/null; then
-            PEAK_RSS_KB=$(awk '/VmHWM/ {print $2}' "/proc/$PID/status")
+          # Sample peak RSS (VmHWM, kB) from the real daemon process while it is
+          # still alive - the pid file records oc-rsync's own PID (written after
+          # bind, under --no-detach), not the /usr/bin/time wrapper in runpid.
+          # Reading the wrapper would measure the wrong process.
+          DAEMON_PID=""
+          if [ -r "$WORK/oc-rsyncd.pid" ]; then
+            DAEMON_PID=$(cat "$WORK/oc-rsyncd.pid")
+          fi
+          if [ -z "$DAEMON_PID" ]; then
+            DAEMON_PID=$(cat "$WORK/oc-rsyncd.runpid")
+          fi
+          if kill -0 "$DAEMON_PID" 2>/dev/null; then
+            echo 1 > "$RESULTS/daemon-alive"
+          else
+            echo 0 > "$RESULTS/daemon-alive"
+          fi
+          if kill -0 "$DAEMON_PID" 2>/dev/null && [ -r "/proc/$DAEMON_PID/status" ]; then
+            PEAK_RSS_KB=$(awk '/VmHWM/ {print $2}' "/proc/$DAEMON_PID/status")
           else
             PEAK_RSS_KB="0"
           fi
@@ -205,6 +248,7 @@ jobs:
           TOTAL_FAIL=$(jq -s '[.[].failures] | add' "$RESULTS/soak-runs.jsonl")
           MAX_TIMEOUT=$(jq -s '[.[].timeout_exit] | max' "$RESULTS/soak-runs.jsonl")
           PEAK_RSS_KB=$(cat "$RESULTS/daemon-peak-rss-kb")
+          DAEMON_ALIVE=$(cat "$RESULTS/daemon-alive")
 
           printf 'soak runs        : %s\n' "${SOAK_RUNS}"
           printf 'connections/run  : %s\n' "${SOAK_CONNECTIONS}"
@@ -212,6 +256,7 @@ jobs:
           printf 'mean wall (s)    : %s\n' "$MEAN_WALL"
           printf 'total failures   : %s\n' "$TOTAL_FAIL"
           printf 'max timeout exit : %s\n' "$MAX_TIMEOUT"
+          printf 'daemon alive     : %s\n' "$DAEMON_ALIVE"
           printf 'daemon peak RSS  : %s kB (limit %s kB)\n' \
             "$PEAK_RSS_KB" "${SOAK_RSS_LIMIT_KB}"
 
@@ -225,10 +270,14 @@ jobs:
             printf '| soak runs | %s |\n' "${SOAK_RUNS}"
             printf '| mean wall (s) | %s |\n' "$MEAN_WALL"
             printf '| total failed pulls | %s |\n' "$TOTAL_FAIL"
+            printf '| daemon survived soak | %s |\n' "$DAEMON_ALIVE"
             printf '| daemon peak RSS (kB) | %s |\n' "$PEAK_RSS_KB"
             printf '| RSS limit (kB) | %s |\n' "${SOAK_RSS_LIMIT_KB}"
           } >> "$GITHUB_STEP_SUMMARY"
 
+          if [ "$DAEMON_ALIVE" -ne 1 ]; then
+            echo "::error::daemon exited during the concurrency soak (D10K-7)"; exit 1
+          fi
           if [ "$TOTAL_FAIL" -ne 0 ]; then
             echo "::error::soak saw $TOTAL_FAIL failed pulls (D10K-7)"; exit 1
           fi
@@ -264,7 +313,9 @@ jobs:
           path: |
             ${{ steps.prep.outputs.WORK }}/results/soak-runs.jsonl
             ${{ steps.prep.outputs.WORK }}/results/daemon-peak-rss-kb
+            ${{ steps.prep.outputs.WORK }}/results/daemon-alive
             ${{ steps.prep.outputs.WORK }}/results/pull-failures.log
+            ${{ steps.prep.outputs.WORK }}/results/pull-stderr.log
             ${{ steps.prep.outputs.WORK }}/oc-rsyncd.log
             ${{ steps.prep.outputs.WORK }}/oc-rsyncd.stderr
             ${{ steps.prep.outputs.WORK }}/oc-rsyncd.time
