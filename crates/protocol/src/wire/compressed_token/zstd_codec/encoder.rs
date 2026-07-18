@@ -169,6 +169,11 @@ impl ZstdTokenEncoder {
         Ok(())
     }
 
+    /// Emits a block match token, flushing any pending literal data first.
+    ///
+    /// A literal region's run was already written by `send_literal`; the
+    /// remaining branches output the previous token run for the cases not
+    /// triggered by literals.
     pub(in crate::wire::compressed_token) fn send_block_match<W: Write>(
         &mut self,
         writer: &mut W,
