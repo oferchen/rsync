@@ -1,6 +1,6 @@
 //! `--debug=BIND` producer emissions for daemon listener setup.
 //!
-//! Mirrors upstream rsync 3.4.1's `DEBUG_GTE(BIND, 1)` output byte-for-byte
+//! Mirrors upstream rsync 3.4.4's `DEBUG_GTE(BIND, 1)` output byte-for-byte
 //! so wire-comparable diagnostics align across implementations. Upstream
 //! accumulates per-address-family error messages while iterating
 //! `getaddrinfo` results inside `open_socket_in` and flushes them through

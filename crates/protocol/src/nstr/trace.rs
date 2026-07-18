@@ -1,6 +1,6 @@
 //! `--debug=NSTR` producer emissions for the algorithm-negotiation strings.
 //!
-//! Mirrors upstream rsync 3.4.1's `compat.c` and `checksum.c`
+//! Mirrors upstream rsync 3.4.4's `compat.c` and `checksum.c`
 //! `DEBUG_GTE(NSTR, N)` output byte-for-byte so wire-comparable diagnostics
 //! line up across implementations. NSTR ("name string") covers the
 //! checksum, compression, and daemon-auth-checksum vstring exchanges that

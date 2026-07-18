@@ -1,6 +1,6 @@
 //! `--debug=CHDIR` producer emissions for current-directory changes.
 //!
-//! Hosts the trace helper that mirrors upstream rsync 3.4.1's single
+//! Hosts the trace helper that mirrors upstream rsync 3.4.4's single
 //! `DEBUG_GTE(CHDIR, 1)` emission from `util1.c::change_dir`. Upstream
 //! routes every successful `chdir()` syscall through `change_dir`, so the
 //! single helper here is the wire-equivalent of `[<who>] change_dir(<cwd>)`.

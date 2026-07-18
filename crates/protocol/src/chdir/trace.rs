@@ -1,6 +1,6 @@
 //! `--debug=CHDIR` producer emissions for the current-directory change path.
 //!
-//! Mirrors upstream rsync 3.4.1's `util1.c::change_dir` `DEBUG_GTE(CHDIR, 1)`
+//! Mirrors upstream rsync 3.4.4's `util1.c::change_dir` `DEBUG_GTE(CHDIR, 1)`
 //! output byte-for-byte so wire-comparable diagnostics align across
 //! implementations. Upstream funnels every `chdir()` syscall through
 //! `change_dir`, which prints `"[%s] change_dir(%s)\n"` (`util1.c:1168-1169`)
