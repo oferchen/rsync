@@ -35,17 +35,23 @@ The `-beta` / `-nightly` suffix denotes the **Rust toolchain** the artifact was 
 
 ### Highlights
 
-<!-- Per-release: write 1-2 sentence summaries per category. Delete categories with no changes. -->
+See the [CHANGELOG](https://github.com/oferchen/rsync/blob/master/CHANGELOG.md) for the full, per-category list of changes in this release.
 
-**Daemon features.** <!-- e.g. new directives, auth changes, config parsing -->
+<!-- Optional per-release: add 1-2 sentence summaries per category above the
+     CHANGELOG link. Delete any category with no changes. Keep the CHANGELOG
+     link so the Highlights section is never empty.
+**Daemon features.** e.g. new directives, auth changes, config parsing
+**Transfer options.** e.g. new CLI flags, option wiring, batch mode
+**Performance.** e.g. hot-path optimizations, memory reductions, I/O changes
+**Bug fixes.** e.g. count + notable fixes
+**Testing.** e.g. new test coverage, interop additions
+-->
 
-**Transfer options.** <!-- e.g. new CLI flags, option wiring, batch mode -->
+<!-- Note: the release workflow sets generate_release_notes=false to avoid
+     overflowing GitHub's 125000-char release-body limit on large releases;
+     the CHANGELOG link above is the canonical full change list. -->
 
-**Performance.** <!-- e.g. hot-path optimizations, memory reductions, I/O changes -->
 
-**Bug fixes.** <!-- e.g. count + notable fixes -->
-
-**Testing.** <!-- e.g. new test coverage, interop additions -->
 
 ---
 

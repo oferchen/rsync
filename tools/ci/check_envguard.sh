@@ -135,7 +135,7 @@ is_ignored() {
 # Candidate file enumeration (BPF-4 spec section 5).
 #   - crates/*/tests/**/*.rs
 #   - crates/*/src/**/*.rs containing `#[cfg(test)]` or `#[test]`
-# Exclusions: target/, .claude/worktrees/, tools/, xtask/, fuzz/.
+# Exclusions: target/, .worktrees/, tools/, xtask/, fuzz/.
 # ---------------------------------------------------------------------------
 cd "${REPO_ROOT}"
 
@@ -148,7 +148,7 @@ done < <(
         --glob 'crates/*/tests/**/*.rs' \
         --glob 'crates/*/src/**/*.rs' \
         --glob '!target/**' \
-        --glob '!.claude/worktrees/**' \
+        --glob '!.worktrees/**' \
         --glob '!tools/**' \
         --glob '!xtask/**' \
         --glob '!fuzz/**' \

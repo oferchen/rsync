@@ -38,7 +38,7 @@
 //! - no extra crate dependency.
 //!
 //! The standard-library-first preference (see crate-level
-//! `CLAUDE.md`-equivalent guidance in the engine's `plan_map.rs`
+//! the project guidelines-equivalent guidance in the engine's `plan_map.rs`
 //! header) keeps the dependency footprint flat.
 //!
 //! # Cohort key shape

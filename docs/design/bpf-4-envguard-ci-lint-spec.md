@@ -185,7 +185,7 @@ tools/ci/check_envguard.sh [--list-tracked] [--ignore-file <path>]
 ### 5.2 Excluded paths
 
 - `target/`
-- `.claude/worktrees/`
+- `.worktrees/`
 - `tools/` (this directory hosts the lint itself; tests here are not
   cap-touching)
 - `xtask/`

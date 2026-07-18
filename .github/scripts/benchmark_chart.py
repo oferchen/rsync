@@ -223,6 +223,24 @@ def compute_layout(tests_by_mode: dict[str, list[dict]]) -> ChartLayout:
         if groups:
             y += MODE_GAP
 
+        # Per-group horizontal scale. A single global scale (driven by the one
+        # slowest test across every mode) crushes the sub-second groups into
+        # unreadable stubs while a few multi-second cases stretch across, so
+        # each mode group is scaled to its own slowest bar instead. Absolute
+        # times stay legible via the per-bar ms labels; the ratio column
+        # carries the cross-group comparison.
+        group_times: list[float] = []
+        for t in mode_tests:
+            if _is_three_way_ssh(mode, t):
+                group_times.append(t["upstream_ssh"]["mean"])
+                group_times.append(t["oc_subprocess"]["mean"])
+                group_times.append(t["oc_russh"]["mean"])
+            else:
+                group_times.append(t["upstream"]["mean"])
+                group_times.append(t["oc_rsync"]["mean"])
+        group_max = max(group_times) if group_times else 1.0
+        group_scale = BAR_AREA_WIDTH / (group_max * 1.1)
+
         header_y = y + MODE_HEADER_HEIGHT * 0.7
         y += MODE_HEADER_HEIGHT
 
@@ -257,10 +275,12 @@ def compute_layout(tests_by_mode: dict[str, list[dict]]) -> ChartLayout:
                 oc_t = t["oc_rsync"]["mean"]
                 third_t = None
 
-            up_w = max(up_t * scale, MIN_BAR_WIDTH)
-            oc_w = max(oc_t * scale, MIN_BAR_WIDTH)
+            up_w = max(up_t * group_scale, MIN_BAR_WIDTH)
+            oc_w = max(oc_t * group_scale, MIN_BAR_WIDTH)
             third_w = (
-                max(third_t * scale, MIN_BAR_WIDTH) if third_t is not None else None
+                max(third_t * group_scale, MIN_BAR_WIDTH)
+                if third_t is not None
+                else None
             )
 
             if mode in OPENSSL_MODES:
@@ -674,8 +694,8 @@ def generate_chart(data: dict) -> str:
         f"{size_mb} MB, {files} files \u2014 Linux x86_64 CI",
     )
 
-    builder.add_grid(layout.max_time, layout.scale, TOP_MARGIN, layout.content_bottom)
-
+    # No global x-axis grid: with per-group scaling a single shared axis would
+    # be misleading. Each bar carries its own ms label instead.
     for group in layout.groups:
         builder.add_mode_group(group, layout.scale)
 
