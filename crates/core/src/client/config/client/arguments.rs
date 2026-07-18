@@ -102,6 +102,27 @@ impl ClientConfig {
         //   case.
         dest_remote && !any_source_remote
     }
+
+    /// Whether this transfer is a pull: at least one source operand is remote,
+    /// so the local process is the receiver rather than the sender.
+    ///
+    /// A push (remote destination, local sources) and a local copy both send
+    /// the file list from the local process, so neither is a pull.
+    ///
+    /// upstream: `flist.c:2251` prints "sending incremental file list" only on
+    /// the sender (`!am_server`); the client is `am_sender` for a push and a
+    /// local copy, and the receiver for a pull (which prints "receiving").
+    #[must_use]
+    pub fn is_pull(&self) -> bool {
+        use crate::client::remote::operand_is_remote;
+
+        if self.transfer_args.len() < 2 {
+            return false;
+        }
+
+        let (sources, _destination) = self.transfer_args.split_at(self.transfer_args.len() - 1);
+        sources.iter().any(|s| operand_is_remote(s))
+    }
 }
 
 #[cfg(test)]
@@ -172,6 +193,25 @@ mod tests {
             .transfer_args([OsString::from("host:src/"), OsString::from("dst/")])
             .build();
         assert!(!config.is_local_sender());
+    }
+
+    #[test]
+    fn is_pull_true_only_when_a_source_is_remote() {
+        // Pull: a source operand is remote -> local client is the receiver.
+        let pull = ClientConfig::builder()
+            .transfer_args([OsString::from("host:src/"), OsString::from("dst/")])
+            .build();
+        assert!(pull.is_pull());
+        // Push: remote dest, local source -> client is the sender, not a pull.
+        let push = ClientConfig::builder()
+            .transfer_args([OsString::from("src/"), OsString::from("host:dst/")])
+            .build();
+        assert!(!push.is_pull());
+        // Local copy: no remote operand -> client is the sender, not a pull.
+        let local = ClientConfig::builder()
+            .transfer_args([OsString::from("src/"), OsString::from("dst/")])
+            .build();
+        assert!(!local.is_pull());
     }
 
     #[test]
