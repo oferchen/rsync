@@ -121,6 +121,20 @@ impl Symlinks {
                 "daemon munges symlinks; --safe-links drops every link",
             );
         }
+        // Over a daemon, `-L` dereferences the `unsafe -> ../outside` link, whose
+        // target escapes the module. upstream's sender then refuses to open it
+        // ("Invalid cross-device link (18)"), so the cell can never succeed. This
+        // is the daemon module boundary, not an oc divergence.
+        if matches!(
+            (transport, scenario),
+            (Transport::Daemon, Scenario::CopyLinks)
+        ) {
+            return CheckOutcome::skip(
+                self.name(),
+                label,
+                "daemon module boundary blocks -L on a symlink pointing outside the module",
+            );
+        }
 
         let root = ctx.work.join("symlinks");
         let src = root.join("src");

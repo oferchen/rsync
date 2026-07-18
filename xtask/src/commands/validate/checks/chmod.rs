@@ -4,9 +4,12 @@
 //! it with each client over every transport while applying one `--chmod` spec,
 //! and asserts oc's destination is byte-identical to upstream's and carries the
 //! same mode bits on every entry. Two representative specs are exercised as
-//! separate cells - one numeric (`D2755,F640`) and one symbolic (`ug=rw,o=`) -
-//! so both `--chmod` grammars are covered. `--chmod` needs no privilege, so
-//! this runs fully as an unprivileged user.
+//! separate cells - one numeric (`D2755,F640`) and one symbolic (`ug=rwX,o=`) -
+//! so both `--chmod` grammars are covered. The symbolic spec uses a capital
+//! `X` (`ug=rwX,o=`) so directories stay traversable - a lowercase `x` would
+//! strip the destination root's execute bit and upstream itself would abort
+//! with `exit 23 ... Permission denied`. `--chmod` needs no privilege, so this
+//! runs fully as an unprivileged user.
 
 use std::collections::BTreeMap;
 use std::os::unix::fs::MetadataExt;
@@ -38,9 +41,12 @@ const SPECS: &[Spec] = &[
         arg: "--chmod=D2755,F640",
         expect_file_mode: 0o640,
     },
+    // Capital `X` sets execute only on directories and already-executable
+    // files, so directories (including the destination root) stay traversable
+    // while a plain 0644 file becomes user rw, group rw, other none => 0o660.
     Spec {
-        label: "ug=rw,o=",
-        arg: "--chmod=ug=rw,o=",
+        label: "ug=rwX,o=",
+        arg: "--chmod=ug=rwX,o=",
         expect_file_mode: 0o660,
     },
 ];

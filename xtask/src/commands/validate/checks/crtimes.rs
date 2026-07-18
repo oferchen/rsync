@@ -31,6 +31,17 @@ impl Check for Crtimes {
     }
 
     fn run(&self, ctx: &ValidateCtx) -> Vec<CheckOutcome> {
+        // Support probe: the host's upstream rsync may be built without
+        // `--crtimes` support, in which case it refuses the option at parse time
+        // and exits non-zero. Nothing to compare against, so skip the matrix.
+        if !upstream_supports_crtimes(ctx.upstream) {
+            return vec![CheckOutcome::skip(
+                self.name(),
+                "support",
+                "upstream rsync lacks --crtimes support",
+            )];
+        }
+
         // Support probe: birth times must be exposed by the work filesystem, or
         // there is nothing meaningful to compare.
         if !work_exposes_birth_times(ctx.work) {
@@ -155,6 +166,23 @@ fn dump_crtimes(oc: &Path, up: &Path) {
             up_bt.as_deref().unwrap_or("?"),
         );
     }
+}
+
+/// Probe whether the host's upstream rsync was built with `--crtimes` (`-N`)
+/// support. A build without it refuses the option at parse time (printing
+/// `This rsync does not support --crtimes (-N)` and exiting non-zero) before
+/// `--version` short-circuits, so a clean `--crtimes --version` run succeeds
+/// only when the option is accepted. upstream: options.c:1028
+/// `parse_one_refuse_match(0, "crtimes", ...)` under `#ifndef SUPPORT_CRTIMES`.
+fn upstream_supports_crtimes(upstream: &Path) -> bool {
+    std::process::Command::new(upstream)
+        .args(["--crtimes", "--version"])
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false)
 }
 
 /// Probe whether the work filesystem exposes birth times. Writes a throwaway
