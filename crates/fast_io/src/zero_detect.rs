@@ -173,7 +173,6 @@ unsafe fn find_first_nonzero_avx2_inner(buf: &[u8]) -> usize {
             offset += 32;
         }
 
-        // Handle remaining bytes with scalar
         offset + find_first_nonzero_scalar(&buf[offset..])
     }
 }
