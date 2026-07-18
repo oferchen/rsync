@@ -40,6 +40,20 @@ EXTRA_MODES = {
 
 MEMORY_MODE = "memory"
 
+# Modes that pit oc-rsync directly against upstream rsync. The OpenSSL,
+# io_uring, and SSH-transport modes compare oc-rsync build variants against
+# each other, so they are excluded from the upstream-comparison highlights.
+UPSTREAM_COMPARISON_MODES = {**MODE_LABELS, **EXTRA_MODES}
+
+ALL_LABELS = {
+    **MODE_LABELS,
+    **OPENSSL_MODES,
+    **IO_URING_MODES,
+    **SSH_TRANSPORT_MODES,
+    **EXTRA_MODES,
+    MEMORY_MODE: "Memory Usage",
+}
+
 
 def ratio_indicator(ratio):
     if ratio < 0.95:
@@ -50,15 +64,64 @@ def ratio_indicator(ratio):
         return "slower"
 
 
+def speedup_phrase(ratio):
+    """Phrase a timing ratio as an oc-rsync-relative speedup.
+
+    Ratio < 1.0 means oc-rsync finished sooner, so report it as an
+    `Nx faster` gain; ratios within noise read as parity.
+    """
+    if ratio < 0.95:
+        return f"{1.0 / ratio:.2f}x faster"
+    elif ratio <= 1.05:
+        return "at parity"
+    else:
+        return f"{ratio:.2f}x slower"
+
+
+def highlight_lines(summary):
+    """Lead with oc-rsync's widest wins over upstream across transfer modes."""
+    by_mode = summary.get("by_mode", {})
+    ranked = sorted(
+        (
+            (mode, ratio)
+            for mode, ratio in by_mode.items()
+            if mode in UPSTREAM_COMPARISON_MODES
+        ),
+        key=lambda kv: kv[1],
+    )
+    lines = ["### Highlights\n"]
+    avg = summary.get("avg_ratio")
+    if avg is not None:
+        lines.append(
+            f"- **Overall:** oc-rsync is {speedup_phrase(avg)} than upstream "
+            f"on average across transfer modes."
+        )
+    wins = [(m, r) for m, r in ranked if r < 0.95][:3]
+    for mode, ratio in wins:
+        lines.append(
+            f"- **{UPSTREAM_COMPARISON_MODES[mode]}:** {speedup_phrase(ratio)}."
+        )
+    if not wins:
+        lines.append("- oc-rsync holds parity with upstream across measured modes.")
+    lines.append("")
+    return lines
+
+
 def main():
     with open("benchmark_results.json") as f:
         data = json.load(f)
 
+    upstream_version = data.get("upstream_version") or "3.4.4"
+
     print("## Benchmark Results\n")
     print(
-        f"Test data: {data['test_data']['size_mb']}MB "
-        f"({data['test_data']['files']} files)\n"
+        f"oc-rsync vs upstream rsync {upstream_version} on "
+        f"{data['test_data']['size_mb']}MB "
+        f"({data['test_data']['files']} files).\n"
     )
+
+    for line in highlight_lines(data["summary"]):
+        print(line)
 
     # Group tests by mode
     by_mode = {}
@@ -71,7 +134,7 @@ def main():
             continue
 
         print(f"### {label}\n")
-        print("| Test | Upstream | oc-rsync | Ratio |")
+        print(f"| Test | rsync {upstream_version} | oc-rsync | Ratio |")
         print("|------|----------|----------|-------|")
 
         for t in tests:
@@ -187,7 +250,7 @@ def main():
             continue
 
         print(f"### {label}\n")
-        print("| Test | Upstream | oc-rsync | Ratio |")
+        print(f"| Test | rsync {upstream_version} | oc-rsync | Ratio |")
         print("|------|----------|----------|-------|")
 
         for t in tests:
@@ -203,7 +266,10 @@ def main():
     mem_tests = by_mode.get(MEMORY_MODE, [])
     if mem_tests:
         print("### Memory Usage (Peak RSS)\n")
-        print("| Test | Upstream | oc-rsync | Time Ratio | RSS Upstream | RSS oc-rsync |")
+        print(
+            f"| Test | rsync {upstream_version} | oc-rsync | Time Ratio "
+            f"| RSS rsync {upstream_version} | RSS oc-rsync |"
+        )
         print("|------|----------|----------|------------|-------------|-------------|")
 
         for t in mem_tests:
@@ -230,15 +296,7 @@ def main():
 
     print("| Mode | Avg Ratio |")
     print("|------|-----------|")
-    all_labels = {
-        **MODE_LABELS,
-        **OPENSSL_MODES,
-        **IO_URING_MODES,
-        **SSH_TRANSPORT_MODES,
-        **EXTRA_MODES,
-    }
-    all_labels[MEMORY_MODE] = "Memory Usage"
-    for mode, label in all_labels.items():
+    for mode, label in ALL_LABELS.items():
         if mode in summary.get("by_mode", {}):
             r = summary["by_mode"][mode]
             print(f"| {label} | {r:.2f}x |")

@@ -482,6 +482,7 @@ class ChartBuilder:
         has_io_uring: bool = False,
         has_ssh_transport: bool = False,
         has_ssh_3way: bool = False,
+        upstream_version: str = "3.4.4",
     ) -> None:
         cx = CHART_WIDTH / 2
         self._parts.append(f'<g transform="translate({cx - 160}, {y:.0f})">')
@@ -489,7 +490,8 @@ class ChartBuilder:
             f'<rect x="0" y="0" width="12" height="12" rx="2" fill="{COLOR_UPSTREAM}"/>'
         )
         self._parts.append(
-            f'<text x="16" y="10" font-size="11" fill="{COLOR_LABEL}">upstream rsync 3.4.1</text>'
+            f'<text x="16" y="10" font-size="11" fill="{COLOR_LABEL}">'
+            f'upstream rsync {escape(upstream_version)}</text>'
         )
         self._parts.append(
             f'<rect x="170" y="0" width="12" height="12" rx="2" fill="{COLOR_OC_RSYNC}"/>'
@@ -666,8 +668,9 @@ def generate_chart(data: dict) -> str:
     test_data = data.get("test_data", {})
     size_mb = test_data.get("size_mb", "?")
     files = test_data.get("files", "?")
+    upstream_version = data.get("upstream_version") or "3.4.4"
     builder.add_title(
-        "oc-rsync vs upstream rsync 3.4.1",
+        f"oc-rsync vs upstream rsync {upstream_version}",
         f"{size_mb} MB, {files} files \u2014 Linux x86_64 CI",
     )
 
@@ -682,6 +685,7 @@ def generate_chart(data: dict) -> str:
         has_io_uring,
         has_ssh_transport,
         has_ssh_3way,
+        upstream_version,
     )
 
     return builder.render()
