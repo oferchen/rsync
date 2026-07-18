@@ -29,6 +29,15 @@ pub(in crate::client::remote) fn build_server_config_for_receiver(
     server_config.flags.numeric_ids = crate::server::NumericIds::from_client(config.numeric_ids());
     server_config.flags.delete = config.delete_mode().is_enabled() || config.delete_excluded();
     server_config.file_selection.size_only = config.size_only();
+    // upstream: options.c:2911-2934 - the alt-dest args (--compare-dest,
+    // --copy-dest, --link-dest) live inside the `if (am_sender)` server_options
+    // block, so on a pull they are never sent over the wire to the remote
+    // sender; the local client IS the receiver and applies them itself in
+    // try_dests_reg() (generator.c:954). Carry them onto the local receiver
+    // config here so the receiver hard-links / copies / skips unchanged files
+    // against the reference dirs. Without this the ssh pull transferred every
+    // file whole, while the daemon pull (server_config.rs:30) hard-linked.
+    server_config.reference_directories = config.reference_directories().to_vec();
     // upstream: build_server_flag_string no longer packs the compact 'P' letter,
     // and 'D' now tracks devices only, so carry keep_partial and specials onto
     // the local half here (mirrors --partial / --specials|--no-specials which the
@@ -137,5 +146,64 @@ fn apply_files_from_for_sender(config: &ClientConfig, server_config: &mut Server
     if let Some(path) = plan.sender_files_from_path {
         server_config.file_selection.files_from_path = Some(path);
         server_config.file_selection.from0 = plan.sender_from0;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::client::config::ReferenceDirectoryKind;
+
+    /// On an ssh pull the local client IS the receiver, and the alt-dest args
+    /// (--compare-dest / --copy-dest / --link-dest) are never sent over the wire
+    /// to the remote sender (upstream options.c:2911-2934 gates them on
+    /// am_sender). The receiver applies them itself in try_dests_reg()
+    /// (generator.c:954), so the ssh receiver config must carry them locally -
+    /// exactly as the daemon receiver builder does. Regression guard for the ssh
+    /// pull that hard-linked nothing because reference_directories was empty
+    /// while local and daemon pulls hard-linked correctly.
+    #[test]
+    fn receiver_config_propagates_reference_directories() {
+        let config = ClientConfig::builder()
+            .compare_destination("/tmp/compare")
+            .link_destination("/prev")
+            .build();
+        let server_config =
+            build_server_config_for_receiver(&config, &["dest".to_owned()]).unwrap();
+
+        assert_eq!(server_config.reference_directories.len(), 2);
+        assert_eq!(
+            server_config.reference_directories[0].kind(),
+            ReferenceDirectoryKind::Compare
+        );
+        assert_eq!(
+            server_config.reference_directories[0]
+                .path()
+                .to_str()
+                .unwrap(),
+            "/tmp/compare"
+        );
+        assert_eq!(
+            server_config.reference_directories[1].kind(),
+            ReferenceDirectoryKind::Link
+        );
+        assert_eq!(
+            server_config.reference_directories[1]
+                .path()
+                .to_str()
+                .unwrap(),
+            "/prev"
+        );
+    }
+
+    /// Without any alt-dest option the receiver config carries no reference
+    /// directories, so the hard-link/copy/skip path stays disabled and every
+    /// file transfers as before.
+    #[test]
+    fn receiver_config_without_alt_dest_has_no_reference_directories() {
+        let config = ClientConfig::builder().build();
+        let server_config =
+            build_server_config_for_receiver(&config, &["dest".to_owned()]).unwrap();
+        assert!(server_config.reference_directories.is_empty());
     }
 }
