@@ -205,6 +205,19 @@ impl ReceiverContext {
         // parent-first sorted order and we never create the parent, each descendant
         // path also fails the .exists() probe and is skipped the same way.
         let existing_only = self.config.file_selection.existing_only;
+        // upstream: generator.c:1480-1483 - itemize() compares a directory
+        // against the stat taken when the generator first reaches its flist
+        // entry, before any child (which sorts after its parent) is created.
+        // The mkdir loop below materialises child subdirectories first, and
+        // each child mkdir bumps its parent's on-disk mtime; re-stat'ing an
+        // existing directory after the loop would observe that bumped mtime and
+        // emit a spurious `.d..t...... ./` for an otherwise-unchanged transfer
+        // root. Capture each already-present directory's pre-mkdir stat here so
+        // the itemize pass compares against the true pre-transfer state.
+        let pre_mkdir_meta: Vec<Option<fs::Metadata>> = dir_entries
+            .iter()
+            .map(|(_, _, dir_path)| fs::metadata(dir_path).ok())
+            .collect();
         for (_, relative_path, dir_path) in &dir_entries {
             // `relative_path` is only read on Unix (mkdirat fast path).
             #[cfg(not(unix))]
@@ -331,7 +344,9 @@ impl ReceiverContext {
         // in client mode, where the CLI front-end emits via local-copy
         // records instead of MSG_INFO frames).
         if self.should_emit_itemize() {
-            for ((idx, _, dir_path), is_new) in dir_entries.iter().zip(dir_was_new.iter()) {
+            for (pos, ((idx, _, dir_path), is_new)) in
+                dir_entries.iter().zip(dir_was_new.iter()).enumerate()
+            {
                 if failed_dir_paths.contains(dir_path) || skipped_existing_dirs.contains(dir_path) {
                     continue;
                 }
@@ -349,13 +364,19 @@ impl ReceiverContext {
                     // compares the pre-apply dest stat against the sender entry
                     // and sets ITEM_REPORT_{TIME,PERMS,OWNER,GROUP} for any
                     // attribute that differs; the transfer root `.` therefore
-                    // reports `.d..t......` when its mtime differs. The stat is
-                    // read here, before the parallel metadata pass below applies
-                    // the source values, so it reflects the pre-transfer state.
-                    // emit_itemize's standard gate drops the row when nothing
-                    // differs, and the root-dir compensation still fires
-                    // `cd+++++++++ ./` when the pre-flight mkdir created the root.
-                    crate::generator::ItemFlags::from_raw(self.existing_dir_iflags(entry, dir_path))
+                    // reports `.d..t......` when its mtime differs. Compare
+                    // against `pre_mkdir_meta` (captured before the mkdir loop
+                    // bumped parent mtimes) so an unchanged root does not report
+                    // a spurious time change; fall back to a fresh stat only if
+                    // the pre-mkdir capture failed. emit_itemize's standard gate
+                    // drops the row when nothing differs, and the root-dir
+                    // compensation still fires `cd+++++++++ ./` when the
+                    // pre-flight mkdir created the root.
+                    let raw = match pre_mkdir_meta.get(pos).and_then(Option::as_ref) {
+                        Some(meta) => self.itemize_existing_flags(entry, meta, 0),
+                        None => self.existing_dir_iflags(entry, dir_path),
+                    };
+                    crate::generator::ItemFlags::from_raw(raw)
                 };
                 // Deferred on the run_pipelined path so the dir row lands in
                 // flist-index order (immediately before its children) at flush
@@ -1055,6 +1076,79 @@ mod touch_up_dirs_tests {
         assert!(
             !dest.join("missing").exists(),
             "--existing must not create the missing directory"
+        );
+    }
+
+    /// Regression: creating a child subdirectory inside an already-present
+    /// transfer root bumps the root's on-disk mtime. The batch
+    /// `create_directories` pass mkdir's every directory before it itemizes any,
+    /// so re-stat'ing the root afterwards observed the bumped mtime and produced
+    /// a spurious `.d..t...... ./` row that upstream never emits. Upstream's
+    /// `itemize()` runs when the generator first reaches each entry, before its
+    /// children are created (`generator.c:1480-1483`, before `set_file_attrs`),
+    /// so an unchanged root reports no time change. The receiver must compare a
+    /// directory against its pre-mkdir stat: an unchanged root emits no row even
+    /// when a brand-new child subdir is created inside it, while a genuinely
+    /// new child still itemizes as created.
+    #[cfg(unix)]
+    #[test]
+    fn create_directories_unchanged_root_not_itemized_after_child_mkdir() {
+        let dir = test_support::create_tempdir();
+        let dest = dir.path();
+
+        // Pin the pre-existing transfer-root mtime to a fixed value so the
+        // sender entry below can match it exactly.
+        let root_secs: i64 = 1_577_836_800; // 2020-01-01 00:00:00 UTC
+        filetime::set_file_mtime(dest, FileTime::from_unix_time(root_secs, 0)).unwrap();
+
+        let mut config = config_with_times(true);
+        config.flags.info_flags.itemize = true;
+        config.connection.client_mode = true;
+
+        let hs = handshake();
+        let mut ctx = ReceiverContext::new_for_test(&hs, config);
+        // Record rendered rows under their flist index instead of writing to the
+        // process stdout, so the test can inspect exactly what was itemized.
+        ctx.defer_itemize = true;
+
+        // Transfer root `.` (index 0) carries the SAME mtime as the on-disk dest
+        // root; the new child subdir `sub` (index 1) is created inside it, which
+        // bumps the root's on-disk mtime mid-pass.
+        let mut root_entry = FileEntry::new_directory(".".into(), 0o755);
+        root_entry.set_mtime(root_secs, 0);
+        ctx.file_list = vec![root_entry, FileEntry::new_directory("sub".into(), 0o755)];
+
+        let opts = metadata::MetadataOptions::default();
+        let mut writer = crate::writer::ServerWriter::new_plain(Vec::new());
+        ctx.create_directories(
+            dest,
+            &opts,
+            None,
+            None,
+            &mut writer,
+            #[cfg(unix)]
+            None,
+        )
+        .expect("create_directories succeeds");
+
+        // Proof the root's on-disk mtime was bumped mid-pass: the child exists.
+        assert!(dest.join("sub").is_dir(), "child subdir must be created");
+
+        let rows = ctx.itemize_rows.borrow();
+        // Root `.` (index 0) is unchanged relative to the sender, so comparing
+        // against the pre-mkdir stat yields no significant flags and no row.
+        if let Some(lines) = rows.get(&0) {
+            assert!(
+                lines.is_empty(),
+                "unchanged transfer root must not itemize (got {lines:?})"
+            );
+        }
+        // The genuinely new child subdir (index 1) still reports the creation
+        // glyph - the fix must not suppress legitimate directory itemization.
+        assert_eq!(
+            rows.get(&1).map(Vec::as_slice).unwrap_or_default(),
+            ["cd+++++++++ sub/\n"],
+            "a newly created child subdir must still itemize as created"
         );
     }
 
