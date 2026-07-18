@@ -20,6 +20,39 @@ impl ReceiverContext {
         self.config.flags.info_flags.itemize
     }
 
+    /// Classifies the received file list into the per-type counts the pulling
+    /// client needs to reconstruct the `--stats` "Number of files" breakdown.
+    ///
+    /// Returns `(dirs, symlinks, devices, specials)`; the regular-file count is
+    /// the remainder (`files_listed - sum`). Mirrors upstream's per-type tally
+    /// as the file list is received, so a remote pull reports the same
+    /// `reg: R, dir: D, link: L` line as a local copy.
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `flist.c:2699-2712` - `recv_file_list()` bumps `stats.num_dirs` /
+    ///   `num_symlinks` / `num_devices` / `num_specials` per entry.
+    /// - `main.c:387-411` - `output_itemized_counts()` derives `reg` as the
+    ///   total minus the other four categories.
+    pub(in crate::receiver) fn file_type_counts(&self) -> (u64, u64, u64, u64) {
+        let mut dirs = 0u64;
+        let mut symlinks = 0u64;
+        let mut devices = 0u64;
+        let mut specials = 0u64;
+        for entry in &self.file_list {
+            if entry.is_dir() {
+                dirs += 1;
+            } else if entry.is_symlink() {
+                symlinks += 1;
+            } else if entry.is_device() {
+                devices += 1;
+            } else if entry.is_special() {
+                specials += 1;
+            }
+        }
+        (dirs, symlinks, devices, specials)
+    }
+
     /// Sum of source sizes counted toward the `--stats` "total size".
     ///
     /// Only regular files and symlinks contribute, never directories, devices,

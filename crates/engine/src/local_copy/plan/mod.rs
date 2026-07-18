@@ -24,7 +24,7 @@ pub use plan_impl::LocalCopyPlan;
 pub use progress::LocalCopyProgress;
 pub use record::{LocalCopyRecord, LocalCopyRecordHandler};
 pub use report::LocalCopyReport;
-pub use summary::{CopyMethodKind, LocalCopySummary};
+pub use summary::{CopyMethodKind, FileTypeTotals, LocalCopySummary};
 
 #[cfg(test)]
 pub(crate) use super::filter_program::FilterOutcome;

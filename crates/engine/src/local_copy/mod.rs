@@ -89,9 +89,9 @@ pub use buffer_pool::{
 pub use deferred_sync::{DeferredSync, SyncStrategy};
 
 pub use plan::{
-    CopyMethodKind, LocalCopyAction, LocalCopyChangeSet, LocalCopyExecution, LocalCopyFileKind,
-    LocalCopyMetadata, LocalCopyPlan, LocalCopyProgress, LocalCopyRecord, LocalCopyRecordHandler,
-    LocalCopyReport, LocalCopySummary, TimeChange,
+    CopyMethodKind, FileTypeTotals, LocalCopyAction, LocalCopyChangeSet, LocalCopyExecution,
+    LocalCopyFileKind, LocalCopyMetadata, LocalCopyPlan, LocalCopyProgress, LocalCopyRecord,
+    LocalCopyRecordHandler, LocalCopyReport, LocalCopySummary, TimeChange,
 };
 
 pub use options::{

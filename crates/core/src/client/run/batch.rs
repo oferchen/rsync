@@ -411,6 +411,10 @@ fn replay_batch(
             files: files_transferred as u64,
             ..protocol::CreatedStats::new()
         },
+        // The --read-batch replay engine does not reconstruct a per-type file
+        // breakdown, so leave the tallies at zero: reg = files_listed, the
+        // pre-existing behaviour.
+        engine::local_copy::FileTypeTotals::default(),
     );
     Ok(ClientSummary::from_summary(summary))
 }

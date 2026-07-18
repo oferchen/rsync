@@ -606,8 +606,16 @@ impl ReceiverContext {
             self.record_created(protocol::flist::FileType::Directory.to_mode_bits());
         }
 
+        // upstream: flist.c:2699-2712 - per-type tally so the client
+        // reconstructs the `--stats` "Number of files" breakdown.
+        let (num_dirs, num_symlinks, num_devices, num_specials) = self.file_type_counts();
+
         Ok(TransferStats {
             files_listed: file_count,
+            num_dirs,
+            num_symlinks,
+            num_devices,
+            num_specials,
             files_transferred,
             transferred_file_size,
             bytes_received,

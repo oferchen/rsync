@@ -1,5 +1,28 @@
 use std::time::Duration;
 
+/// Per-type file-list tallies used to reconstruct the `--stats` "Number of
+/// files" breakdown for a remote transfer.
+///
+/// The regular-file count is not carried here: upstream derives it as the
+/// remainder (`total - (dirs + symlinks + devices + specials)`), and
+/// [`LocalCopySummary::from_receiver_stats`] does the same.
+///
+/// # Upstream Reference
+///
+/// - `flist.c:2699-2712` - `recv_file_list()` per-type tally.
+/// - `main.c:387-411` - `output_itemized_counts()` derives `reg`.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct FileTypeTotals {
+    /// Directories in the file list (`stats.num_dirs`).
+    pub dirs: u64,
+    /// Symbolic links in the file list (`stats.num_symlinks`).
+    pub symlinks: u64,
+    /// Device nodes, block and character (`stats.num_devices`).
+    pub devices: u64,
+    /// FIFOs and sockets (`stats.num_specials`).
+    pub specials: u64,
+}
+
 /// I/O technology the local-copy executor used to materialise a whole-file
 /// copy. Tracked so the `Copy method` stats line can report which kernel
 /// acceleration ran. Upstream rsync has no equivalent - it always reconstructs
@@ -524,9 +547,26 @@ impl LocalCopySummary {
         matched_data: u64,
         delete_stats: protocol::DeleteStats,
         created_stats: protocol::CreatedStats,
+        file_type_totals: FileTypeTotals,
     ) -> Self {
+        // upstream: main.c:387-411 output_itemized_counts() - the "Number of
+        // files" line reports the total plus a per-type breakdown where the
+        // regular-file count is the remainder (total minus dirs/links/devs/
+        // specials). The receiver classifies the file list into these tallies
+        // (flist.c:2699-2712); reg is derived here so a remote pull prints the
+        // same `reg: R, dir: D, link: L` line as a local copy instead of
+        // counting every entry as a regular file.
+        let non_regular = file_type_totals
+            .dirs
+            .saturating_add(file_type_totals.symlinks)
+            .saturating_add(file_type_totals.devices)
+            .saturating_add(file_type_totals.specials);
         Self {
-            regular_files_total: files_listed as u64,
+            regular_files_total: (files_listed as u64).saturating_sub(non_regular),
+            directories_total: file_type_totals.dirs,
+            symlinks_total: file_type_totals.symlinks,
+            devices_total: file_type_totals.devices,
+            fifos_total: file_type_totals.specials,
             files_copied: files_transferred as u64,
             // upstream: receiver.c:784 stats.total_transferred_size, computed
             // locally by the pulling client's receiver (never sent on the wire).
@@ -844,6 +884,7 @@ mod tests {
             0,
             protocol::DeleteStats::new(),
             protocol::CreatedStats::new(),
+            FileTypeTotals::default(),
         );
         assert_eq!(summary.regular_files_total(), 100);
         assert_eq!(summary.files_copied(), 50);
@@ -855,6 +896,43 @@ mod tests {
         assert_eq!(summary.bytes_sent(), 256);
         assert_eq!(summary.total_source_bytes(), 8192);
         assert_eq!(summary.total_elapsed(), Duration::from_secs(5));
+    }
+
+    /// A remote pull (ssh or daemon) must reconstruct the `--stats` "Number of
+    /// files" breakdown from the file-list type tallies: `reg` is the remainder
+    /// (total minus dirs/links/devs/specials), and each typed total is surfaced.
+    /// Before the fix the receiver forwarded only the aggregate count, so every
+    /// entry was reported as `reg` and the dir/link/dev/special totals were zero
+    /// (`Number of files: 6 (reg: 6)` instead of `(reg: 2, dir: 3, link: 1)`).
+    ///
+    /// upstream: flist.c:2699-2712 per-type tally; main.c:387-411 derives `reg`.
+    #[test]
+    fn from_receiver_stats_derives_file_type_breakdown() {
+        let summary = LocalCopySummary::from_receiver_stats(
+            6,
+            2,
+            100,
+            50,
+            10,
+            100,
+            Duration::from_secs(1),
+            0,
+            0,
+            protocol::DeleteStats::new(),
+            protocol::CreatedStats::new(),
+            FileTypeTotals {
+                dirs: 3,
+                symlinks: 1,
+                devices: 0,
+                specials: 0,
+            },
+        );
+        // reg = 6 - (3 + 1) = 2; the typed totals feed the reg/dir/link line.
+        assert_eq!(summary.regular_files_total(), 2);
+        assert_eq!(summary.directories_total(), 3);
+        assert_eq!(summary.symlinks_total(), 1);
+        assert_eq!(summary.devices_total(), 0);
+        assert_eq!(summary.fifos_total(), 0);
     }
 
     #[test]
@@ -871,6 +949,7 @@ mod tests {
             1200,
             protocol::DeleteStats::new(),
             protocol::CreatedStats::new(),
+            FileTypeTotals::default(),
         );
         assert_eq!(summary.bytes_copied(), 800);
         assert_eq!(summary.matched_bytes(), 1200);
@@ -940,6 +1019,7 @@ mod tests {
             0,
             delete_stats,
             protocol::CreatedStats::new(),
+            FileTypeTotals::default(),
         );
         assert_eq!(summary.items_deleted(), 3);
         assert_eq!(summary.deleted_regular_files(), 2);
@@ -978,6 +1058,7 @@ mod tests {
             0,
             protocol::DeleteStats::new(),
             created_stats,
+            FileTypeTotals::default(),
         );
         assert_eq!(summary.created_regular_files(), 1);
         assert_eq!(summary.directories_created(), 3);
