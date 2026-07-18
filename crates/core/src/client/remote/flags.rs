@@ -506,6 +506,12 @@ pub(crate) fn apply_common_server_flags(config: &ClientConfig, server_config: &m
     // without this. Mirrors the daemon path (daemon_transfer server_config.rs).
     server_config.flags.verbose = config.verbosity() > 0;
     server_config.flags.verbose_level = config.verbosity();
+    // upstream: options.c msgs2stderr - FINFO (`-v` names) go to stderr when
+    // `--msgs2stderr` is set. The in-process client receiver emits `-v` names
+    // in flist order directly (interleaved with `--progress`), so it needs the
+    // routing decision here; the default (None) and `--no-msgs2stderr` keep
+    // names on stdout.
+    server_config.flags.msgs_to_stderr = config.msgs2stderr() == Some(true);
     // upstream: flist.c::iconv_for_local and options.c::recv_iconv_settings -
     // when --iconv is configured, the local process must transcode file-list
     // entries between the local and remote charsets. Without this bridge the

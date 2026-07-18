@@ -787,7 +787,13 @@ impl ReceiverContext {
             }
         }
 
-        if self.config.flags.verbose && self.config.connection.client_mode {
+        // Under `-i`/`-vi` the itemize row already carries the directory name
+        // (upstream `-vi` uses `%i %n`), so the bare `-v` name is suppressed to
+        // avoid a duplicate line; only plain `-v` emits it.
+        if self.config.flags.verbose
+            && self.config.connection.client_mode
+            && !self.should_emit_itemize()
+        {
             if relative_path.as_os_str() == "." {
                 info_log!(Name, 1, "./");
             } else {

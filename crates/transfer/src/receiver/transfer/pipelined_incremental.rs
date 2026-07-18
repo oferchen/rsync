@@ -293,7 +293,7 @@ impl ReceiverContext {
         stats.bytes_received = bytes_received;
         stats.literal_data = literal_data;
         stats.matched_data = matched_data;
-        stats.total_source_bytes = self.file_list.iter().map(|e| e.size()).sum();
+        stats.total_source_bytes = self.total_source_size();
         if !metadata_errors.is_empty() || stats.directories_failed > 0 || stats.files_skipped > 0 {
             stats.io_error |= crate::generator::io_error_flags::IOERR_GENERAL;
         }

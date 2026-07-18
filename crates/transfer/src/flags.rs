@@ -111,6 +111,10 @@ pub struct ParsedServerFlags {
     /// generator.c:582-583). Collapsing to the `verbose` bool alone loses the
     /// level needed to surface `-ivv` unchanged rows.
     pub verbose_level: u8,
+    /// Route `-v` name / info output to stderr instead of stdout
+    /// (`--msgs2stderr`). Mirrors upstream's `msgs2stderr` FINFO routing;
+    /// consumed by the in-order `-v` name emitter on a client pull.
+    pub msgs_to_stderr: bool,
     /// Compress during transfer (`z` flag, `--compress`).
     pub compress: bool,
     /// Checksum-based transfer (`c` flag, `--checksum`).

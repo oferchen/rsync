@@ -440,7 +440,31 @@ impl ReceiverContext {
                 // upstream: receiver.c:950 - log_item() after successful file transfer
                 {
                     if self.config.flags.verbose && self.config.connection.client_mode {
-                        info_log!(Name, 1, "{}", file_entry.path().display());
+                        if self.interleave_names && !is_redo_pass {
+                            // upstream: receiver.c:1008-1012 - the client prints
+                            // each file's name per file (log_before_transfer),
+                            // in flist order, interleaved with --progress,
+                            // instead of buffering for an end-of-run block. The
+                            // phase-2 redo re-transfers already-named files, so
+                            // it must not re-emit.
+                            if self.progress_active {
+                                // The live --progress renderer already prints
+                                // this file's name before its bar; only release
+                                // the directory names that precede it (the
+                                // renderer never sees directory entries).
+                                let _ = self.flush_names_through(file_idx);
+                            } else {
+                                let _ = self.emit_name_in_order(
+                                    file_idx,
+                                    format!("{}\n", file_entry.path().display()),
+                                );
+                            }
+                        } else if !self.should_emit_itemize() {
+                            // Plain `-v`: bare name. Under `-i`/`-vi` the
+                            // itemize row already carries the name, so suppress
+                            // this to avoid a duplicate line.
+                            info_log!(Name, 1, "{}", file_entry.path().display());
+                        }
                     }
                     // upstream: generator.c:1925-1937 - the transfer itemize is
                     // emitted right after the file request. With
@@ -597,8 +621,12 @@ impl ReceiverContext {
             // notice AFTER the transfer decision is known. In dry-run the
             // sender's echo confirms the file would have been transferred,
             // so emit the "updated" line at the post-decision point to
-            // match upstream wire order.
-            if self.config.flags.verbose && self.config.connection.client_mode {
+            // match upstream wire order. Under `-i`/`-vi` the itemize row
+            // already carries the name, so the bare name is suppressed.
+            if self.config.flags.verbose
+                && self.config.connection.client_mode
+                && !self.should_emit_itemize()
+            {
                 info_log!(Name, 1, "{}", file_entry.path().display());
             }
         }
