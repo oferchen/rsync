@@ -6,6 +6,7 @@ use core::client::{ClientEntryKind, ClientEntryMetadata, ClientEventKind};
 
 use crate::LIST_TIMESTAMP_FORMAT;
 
+/// Reports whether an event kind should appear in `--list-only` output.
 pub(crate) const fn list_only_event(kind: &ClientEventKind) -> bool {
     matches!(
         kind,
@@ -20,6 +21,8 @@ pub(crate) const fn list_only_event(kind: &ClientEventKind) -> bool {
     )
 }
 
+/// Renders a 10-character `ls`-style permission string (type char plus rwx
+/// triples), honoring the setuid, setgid, and sticky bits.
 pub(crate) fn format_list_permissions(metadata: &ClientEntryMetadata) -> String {
     let type_char = match metadata.kind() {
         ClientEntryKind::File => '-',
@@ -82,6 +85,8 @@ pub(crate) fn format_list_permissions(metadata: &ClientEntryMetadata) -> String 
     symbols.iter().collect()
 }
 
+/// Formats a modification time for `--list-only` output, falling back to the
+/// epoch string when the time is absent or cannot be formatted.
 pub(crate) fn format_list_timestamp(modified: Option<SystemTime>) -> String {
     if let Some(time) = modified
         && let Ok(datetime) =

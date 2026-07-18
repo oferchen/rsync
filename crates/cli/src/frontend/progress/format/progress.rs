@@ -31,6 +31,9 @@ pub(crate) fn format_progress_elapsed(elapsed: Duration) -> String {
     format!("{hours}:{minutes:02}:{seconds:02}")
 }
 
+/// Formats a parenthesized breakdown of non-zero stat categories (e.g.
+/// ` (reg: 1,500, dir: 1)`), grouping each sub-count per the human-readable
+/// level. Returns an empty string when every category is zero.
 pub(crate) fn format_stat_categories(
     categories: &[(&str, u64)],
     human_readable: HumanReadableMode,

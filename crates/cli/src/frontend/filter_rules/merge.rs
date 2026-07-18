@@ -13,6 +13,9 @@ use super::directive::{
 use super::parsing::parse_filter_directive;
 use super::sources::{read_merge_file, read_merge_from_standard_input};
 
+/// Loads a merge file referenced by `directive`, parsing each of its lines and
+/// appending the resulting rules to `destination`. `visited` guards against
+/// recursive merge cycles; stdin (`-`) is read once.
 pub(crate) fn apply_merge_directive(
     directive: MergeDirective,
     base_dir: &Path,
@@ -195,6 +198,9 @@ fn parse_merge_contents(
     Ok(())
 }
 
+/// Parses a single line from a merge file and appends its rule to
+/// `destination`, applying the enclosing merge `options` and recursing into any
+/// nested merge directive the line introduces.
 pub(crate) fn process_merge_directive(
     directive: &str,
     options: &DirMergeOptions,

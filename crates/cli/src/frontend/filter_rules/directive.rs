@@ -34,6 +34,8 @@ pub(crate) struct MergeDirective {
 }
 
 impl MergeDirective {
+    /// Builds a merge directive for `source`, seeding the options with the
+    /// enforced include/exclude kind when one is supplied.
     pub(crate) fn new(source: OsString, enforced_kind: Option<FilterRuleKind>) -> Self {
         let mut options = DirMergeOptions::default();
         options = match enforced_kind {
@@ -49,20 +51,26 @@ impl MergeDirective {
         Self { source, options }
     }
 
+    /// Replaces the directive's merge options, returning the updated directive.
     pub(crate) const fn with_options(mut self, options: DirMergeOptions) -> Self {
         self.options = options;
         self
     }
 
+    /// Returns the merge file source path.
     pub(crate) fn source(&self) -> &OsStr {
         self.source.as_os_str()
     }
 
+    /// Returns the merge options attached to this directive.
     pub(crate) const fn options(&self) -> &DirMergeOptions {
         &self.options
     }
 }
 
+/// Merges a nested directive's options onto the enclosing `base` options. Each
+/// field takes the nested value when it differs from the default, otherwise it
+/// inherits from `base`, mirroring upstream's per-directory option inheritance.
 pub(crate) fn merge_directive_options(
     base: &DirMergeOptions,
     directive: &MergeDirective,
@@ -138,6 +146,8 @@ pub(crate) fn merge_directive_options(
     merged
 }
 
+/// Converts an `OsString` into a pattern string, falling back to a lossy
+/// conversion when the value is not valid UTF-8.
 pub(crate) fn os_string_to_pattern(value: OsString) -> String {
     match value.into_string() {
         Ok(text) => text,

@@ -5,6 +5,10 @@ use core::rsync_error;
 use super::super::directive::FilterDirective;
 use super::helpers::consume_rule_separator;
 
+/// Parses a single-character rule prefix (`short`) followed by a separator and
+/// a pattern, building the rule via `builder`. Returns `None` when `short` does
+/// not match case-sensitively or no separator follows; an error when the
+/// pattern is missing.
 pub(super) fn parse_filter_shorthand(
     trimmed: &str,
     short: char,

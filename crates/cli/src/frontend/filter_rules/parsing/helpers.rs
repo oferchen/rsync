@@ -17,6 +17,9 @@ pub(super) fn consume_rule_separator(remainder: &str) -> &str {
     }
 }
 
+/// Splits a `+`/`-` short rule's text into `(modifiers, pattern)` at the first
+/// separator. With no separator the entire text is treated as modifiers and the
+/// pattern is empty, so invalid trailing bytes are rejected by the caller.
 pub(super) fn split_short_rule_modifiers(text: &str) -> (&str, &str) {
     if text.is_empty() {
         return ("", "");
@@ -49,6 +52,10 @@ pub(super) fn split_short_rule_modifiers(text: &str) -> (&str, &str) {
     (text, "")
 }
 
+/// Splits a `.`/`:` merge directive's text into `(modifiers, pattern)`. Only
+/// recognised modifier bytes are consumed; the first unrecognised byte or
+/// separator ends the modifier run. `allow_extended` additionally accepts the
+/// dir-merge-only `e`/`n` modifiers.
 pub(super) fn split_short_merge_modifiers(text: &str, allow_extended: bool) -> (&str, &str) {
     if text.is_empty() {
         return ("", "");
@@ -91,6 +98,8 @@ pub(super) fn split_short_merge_modifiers(text: &str, allow_extended: bool) -> (
     (&text[..end], "")
 }
 
+/// Splits a long-form keyword token into `(name, modifiers)` at the first
+/// comma, returning empty modifiers when no comma is present.
 pub(super) fn split_keyword_modifiers(keyword: &str) -> (&str, &str) {
     if let Some((name, modifiers)) = keyword.split_once(',') {
         (name, modifiers)
