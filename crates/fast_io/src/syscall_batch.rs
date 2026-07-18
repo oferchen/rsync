@@ -1,8 +1,8 @@
 //! Batched metadata syscall operations with dual-path runtime selection.
 //!
 //! This module provides batched metadata operations that reduce syscall overhead when
-//! processing many files. It uses Linux's `statx()` syscall for more efficient metadata
-//! retrieval and groups operations for improved cache locality.
+//! processing many files by grouping operations of the same type for improved cache
+//! locality.
 //!
 //! # Dual-Path Strategy
 //!
@@ -15,8 +15,8 @@
 //!
 //! # Platform Support
 //!
-//! - **Linux**: Uses `statx()` for improved metadata operations in batched path
-//! - **Other Unix**: Batched path uses standard library calls with grouping optimization
+//! - **Linux**: Confirms accessibility via `statx()`, then materializes metadata through the standard library
+//! - **Other Unix**: Uses standard library calls with grouping optimization
 //! - **Non-Unix (Windows)**: Portable fallbacks - `filetime` crate for timestamps,
 //!   readonly attribute mapping for permissions
 //!
@@ -240,8 +240,8 @@ fn execute_single_op(op: &MetadataOp) -> MetadataResult {
 
 /// Stat a file using the best available syscall.
 ///
-/// On Linux, uses `statx()` for improved performance.
-/// On other platforms, uses standard library calls.
+/// On Linux, tries `try_statx` first and falls back to the standard library.
+/// On other platforms, uses standard library calls directly.
 #[cfg(target_os = "linux")]
 fn stat_file(path: &Path, follow_symlinks: bool) -> io::Result<fs::Metadata> {
     match try_statx(path, follow_symlinks) {
@@ -266,9 +266,10 @@ fn stat_file(path: &Path, follow_symlinks: bool) -> io::Result<fs::Metadata> {
     }
 }
 
-/// Try to use statx syscall for improved performance.
+/// Confirm a path's accessibility with `statx()`, then materialize `Metadata`
+/// via the standard library (no public constructor accepts statx output).
 ///
-/// Returns metadata if successful, otherwise returns an error to trigger fallback.
+/// Returns metadata on success, otherwise an error to trigger the fallback.
 #[cfg(target_os = "linux")]
 fn try_statx(path: &Path, follow_symlinks: bool) -> io::Result<fs::Metadata> {
     use rustix::fs::{AtFlags, StatxFlags};
@@ -299,7 +300,9 @@ fn try_statx(path: &Path, follow_symlinks: bool) -> io::Result<fs::Metadata> {
 
 /// Set file times.
 ///
-/// Uses `filetime` crate equivalent functionality via std::fs.
+/// On Unix this calls `utimensat(2)` directly; on non-Unix platforms it uses
+/// the `filetime` crate. A `None` atime or mtime leaves that timestamp
+/// unchanged.
 fn set_file_times(
     path: &Path,
     atime: Option<SystemTime>,
@@ -342,7 +345,8 @@ fn set_file_times(
     }
 }
 
-/// Convert SystemTime to libc::timespec.
+/// Convert an optional `SystemTime` to a `libc::timespec`, mapping `None` to
+/// `UTIME_OMIT` so the corresponding timestamp is left unchanged.
 #[cfg(unix)]
 fn timespec_from_option(time: Option<SystemTime>) -> libc::timespec {
     match time {
@@ -363,7 +367,6 @@ fn timespec_from_option(time: Option<SystemTime>) -> libc::timespec {
     }
 }
 
-/// Set file permissions.
 #[cfg(unix)]
 fn set_file_permissions(path: &Path, mode: u32) -> io::Result<()> {
     use std::os::unix::fs::PermissionsExt;
