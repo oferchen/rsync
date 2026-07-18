@@ -3672,9 +3672,7 @@ fn unix_secs_to_utc_y2k() {
     assert_eq!((y, m, d, h, min), (2000, 1, 1, 0, 0));
 }
 
-// -----------------------------------------------------------------------
 // Remote option (-M / --remote-option) forwarding
-// -----------------------------------------------------------------------
 
 #[test]
 fn remote_options_appended_to_sender_invocation() {
