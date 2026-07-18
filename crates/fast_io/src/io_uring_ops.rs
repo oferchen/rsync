@@ -493,7 +493,6 @@ mod hard_link_convenience_tests {
 
         hard_link(&src, &dst).unwrap();
 
-        // Overwrite via source path.
         fs::write(&src, b"modified").unwrap();
 
         // Read through destination - should see the modification.
