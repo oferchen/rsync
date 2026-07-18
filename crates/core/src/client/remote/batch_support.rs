@@ -1,8 +1,8 @@
-// Shared batch recording support for SSH and daemon transfer paths.
-//
-// Provides the adapter and context types needed to wire `--write-batch` into
-// any transfer path that uses `run_server_with_handshake`. Extracted from
-// the SSH transfer module to avoid duplication with the daemon transfer path.
+//! Shared batch recording support for SSH and daemon transfer paths.
+//!
+//! Provides the adapter and context types needed to wire `--write-batch` into
+//! any transfer path that uses `run_server_with_handshake`. Extracted from
+//! the SSH transfer module to avoid duplication with the daemon transfer path.
 
 use std::sync::{Arc, Mutex};
 
