@@ -2,6 +2,7 @@ use core::client::{FilterRuleKind, FilterRuleSpec};
 use core::message::{Message, Role};
 use core::rsync_error;
 
+/// Accumulated rule modifiers parsed from a rule prefix or keyword.
 #[derive(Default)]
 pub(super) struct RuleModifierState {
     anchor_root: bool,
@@ -97,6 +98,8 @@ pub(super) fn parse_rule_modifiers(
     Ok(state)
 }
 
+/// Applies a parsed `RuleModifierState` onto a `FilterRuleSpec`, setting the
+/// anchor, sender/receiver side, perishable, xattr-only, and negate attributes.
 pub(super) fn apply_rule_modifiers(
     mut rule: FilterRuleSpec,
     modifiers: RuleModifierState,

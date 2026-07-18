@@ -1,6 +1,9 @@
+/// Resolved progress rendering mode used by the live renderer.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum ProgressMode {
+    /// Per-file progress (`--progress`).
     PerFile,
+    /// Overall transfer progress (`--info=progress2`).
     Overall,
 }
 
@@ -36,6 +39,8 @@ pub enum NameOutputLevel {
 }
 
 impl ProgressSetting {
+    /// Resolves the setting to a concrete `ProgressMode`, or `None` when
+    /// progress is disabled or unspecified.
     pub(crate) const fn resolved(self) -> Option<ProgressMode> {
         match self {
             Self::PerFile => Some(ProgressMode::PerFile),

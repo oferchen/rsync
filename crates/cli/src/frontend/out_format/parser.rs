@@ -14,6 +14,8 @@ use super::tokens::{
     PlaceholderAlignment, PlaceholderFormat, PlaceholderToken,
 };
 
+/// Parses the optional modifiers preceding a placeholder letter: apostrophes
+/// (humanization), an optional `-` (left align), and a digit run (width).
 fn parse_placeholder_format(chars: &mut Peekable<Chars<'_>>) -> PlaceholderFormat {
     let mut apostrophes = 0usize;
     while matches!(chars.peek(), Some('\'')) {

@@ -10,6 +10,10 @@ use core::rsync_error;
 use super::directive::FilterDirective;
 use super::parsing::parse_old_prefix_rule;
 
+/// Loads filter patterns from `--include-from` / `--exclude-from` files and
+/// appends the resulting rules to `destination`. Include/exclude files honor the
+/// old-prefix syntax (`- `/`+ `/`!`) with each file's `!` clear scoped locally;
+/// dir-merge is rejected. `eol_nulls` selects NUL-delimited records (`--from0`).
 pub(crate) fn append_filter_rules_from_files(
     destination: &mut Vec<FilterRuleSpec>,
     files: &[OsString],
@@ -70,6 +74,8 @@ pub(crate) fn append_filter_rules_from_files(
     Ok(())
 }
 
+/// Reads the raw pattern lines from a filter file, or from standard input when
+/// `path` is `-`. `eol_nulls` selects NUL-delimited records (`--from0`).
 pub(crate) fn load_filter_file_patterns(
     path: &Path,
     eol_nulls: bool,
@@ -91,6 +97,7 @@ pub(crate) fn load_filter_file_patterns(
     })
 }
 
+/// Reads a merge file's entire contents as a string.
 pub(super) fn read_merge_file(path: &Path) -> Result<String, Message> {
     let display = path.display();
     fs::read_to_string(path).map_err(|error| {
@@ -99,6 +106,7 @@ pub(super) fn read_merge_file(path: &Path) -> Result<String, Message> {
     })
 }
 
+/// Reads an entire merge file from standard input.
 pub(super) fn read_merge_from_standard_input() -> Result<String, Message> {
     #[cfg(test)]
     if let Some(data) = take_filter_stdin_input() {
@@ -116,6 +124,8 @@ pub(super) fn read_merge_from_standard_input() -> Result<String, Message> {
     Ok(buffer)
 }
 
+/// Reads filter pattern lines from standard input. `eol_nulls` selects
+/// NUL-delimited records (`--from0`).
 pub(crate) fn read_filter_patterns_from_standard_input(
     eol_nulls: bool,
 ) -> Result<Vec<String>, Message> {
@@ -136,6 +146,9 @@ pub(crate) fn read_filter_patterns_from_standard_input(
     })
 }
 
+/// Splits a reader into filter pattern records, skipping blank lines and `#`/`;`
+/// comments. Records split on newline, or on NUL when `eol_nulls` is set
+/// (`--from0`), in which case embedded newlines are literal pattern bytes.
 pub(super) fn read_filter_patterns<R: BufRead>(
     reader: &mut R,
     eol_nulls: bool,
