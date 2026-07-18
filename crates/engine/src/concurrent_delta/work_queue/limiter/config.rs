@@ -10,8 +10,8 @@ use super::AimdLimiter;
 ///
 /// Construct with [`LimiterConfig::new`], then chain setters and call
 /// [`LimiterConfig::build`] to produce an `AimdLimiter`. Sensible defaults
-/// match the design RFC: alpha=1, beta=1/2, min_limit=rayon thread count,
-/// max_limit=8x rayon thread count.
+/// match the design RFC: alpha=1, beta=1/2, min_limit=1,
+/// max_limit=8x initial_target.
 #[derive(Debug, Clone)]
 #[must_use]
 pub struct LimiterConfig {

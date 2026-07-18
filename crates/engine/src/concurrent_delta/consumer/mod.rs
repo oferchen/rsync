@@ -197,7 +197,7 @@ impl DeltaConsumer {
     ///
     /// # Panics
     ///
-    /// Panics if `reorder_capacity` is zero and `bypass_reorder` is `false`.
+    /// Panics if `reorder_capacity` is zero.
     #[must_use]
     pub fn spawn(rx: WorkQueueReceiver, reorder_capacity: usize) -> Self {
         spawn_inner(
