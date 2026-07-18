@@ -7,6 +7,24 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 oc-rsync is wire-compatible with upstream rsync 3.4.4 (protocol 32). Release
 tags are mirrored on GitHub at <https://github.com/oferchen/rsync/releases>.
 
+## [0.6.4] - 2026-07-18
+
+### Fixed
+
+- Survive transient `accept(2)` errors (`ECONNABORTED` / `EMFILE`) under connection load instead of exiting the daemon, matching upstream `socket.c` (#6763)
+- Lone `-h` prints help, resolve `--old-args` / secluded-args conflict, correct `-a` flag ordering (#6729)
+- Thread human-readable mode into `--stats` count fields (#6727)
+- Drop dead `--compress-level` help text and correct the stale `E` (exa) size-suffix documentation (#6778)
+
+### Changed
+
+- Remove validated orphan (never-compiled) source files (#6749)
+
+### Documentation
+
+- Systematic rustdoc and comment cleanup across every workspace crate: stale doc claims corrected against the code, restatement/banner comments removed, missing `///` added, and every `// upstream:` source reference preserved (45 PRs)
+- Pin every upstream-comparison reference to rsync 3.4.4 across the docs and the release benchmark; the benchmark report now leads with oc-rsync's widest wins (#6779)
+
 ## [0.6.3] - 2026-06-05
 
 ### Security
@@ -312,5 +330,6 @@ tags are mirrored on GitHub at <https://github.com/oferchen/rsync/releases>.
     keyed by packed `(rsum_low, bucket_idx)` entries, giving sequential probes
     cache-friendly access and removing per-bucket heap allocations.
 
-[Unreleased]: https://github.com/oferchen/rsync/compare/v0.6.3...HEAD
+[Unreleased]: https://github.com/oferchen/rsync/compare/v0.6.4...HEAD
+[0.6.4]: https://github.com/oferchen/rsync/compare/v0.6.3...v0.6.4
 [0.6.3]: https://github.com/oferchen/rsync/compare/v0.6.2...v0.6.3

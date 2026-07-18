@@ -15,7 +15,7 @@ Binary name: **`oc-rsync`** - installs alongside system `rsync` without conflict
 
 ## Status
 
-**Release:** 0.6.3 - Wire-compatible drop-in replacement for rsync 3.4.4 (and 3.4.3 / 3.4.2 / 3.4.1, protocols 28-32).
+**Release:** 0.6.4 - Wire-compatible drop-in replacement for rsync 3.4.4 (and 3.4.3 / 3.4.2 / 3.4.1, protocols 28-32).
 
 All transfer modes (local, SSH, daemon), delta algorithm, metadata preservation, incremental recursion, and compression are complete. Interop scenarios run in CI against upstream rsync 3.0.9, 3.1.3, and 3.4.4, with 2.6.9 built and cached for wire-byte regression coverage; 3.4.4 represents the whole 3.4.x series (3.4.1/3.4.2/3.4.3 share protocol 32 and are superseded by it). Upstream rsync's own `testsuite/*.test` corpus runs in CI against `oc-rsync` as `$RSYNC` - all tests now pass (known-failures roster is empty).
 
@@ -66,6 +66,23 @@ The primary platform is Linux. macOS is well-supported with parity for all metad
 | Optimized file copy | ✓ `copy_file_range` | ✓ `fcopyfile` | ✓ `CopyFileExW` | All three are wired into the local-copy executor with standard-I/O fallback. |
 
 Legend: ✓ supported, ⚠ partial or not yet wired, ✗ not implemented.
+
+### What's New (v0.6.4)
+
+**Reliability**
+- Daemon survives transient `accept(2)` errors (`ECONNABORTED` / `EMFILE`) under connection bursts instead of exiting, matching upstream `socket.c` (#6763)
+
+**CLI fixes**
+- Lone `-h` prints help; `--old-args` / secluded-args conflict resolved; `-a` flag ordering corrected (#6729)
+- Human-readable mode threaded into `--stats` count fields (#6727)
+- Dropped dead `--compress-level` help text and corrected the stale `E` (exa) size-suffix documentation (#6778)
+
+**Documentation**
+- Systematic rustdoc and comment cleanup across every workspace crate: stale claims corrected against the code, restatement/banner comments removed, missing `///` added, and all `// upstream:` references preserved (45 PRs)
+- Upstream comparison pinned to rsync 3.4.4 across the docs and release benchmark; the benchmark report now leads with oc-rsync's widest wins (#6779)
+
+**Housekeeping**
+- Removed validated orphan (never-compiled) source files (#6749)
 
 ### What's New (v0.6.3)
 
