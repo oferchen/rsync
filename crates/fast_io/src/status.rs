@@ -25,8 +25,8 @@ use crate::splice::is_splice_available;
 
 /// Reason io_uring is restricted or unavailable on this system.
 ///
-/// Returned by [`detect_io_uring_restriction`]. The variants map onto the
-/// five outcomes of the startup probe in `io_uring::config` but
+/// Returned by [`detect_io_uring_restriction`]. The variants cover every
+/// compile-time and runtime outcome of the io_uring availability check and
 /// are exposed as a public enum so callers (CLI `--io-uring-status`,
 /// daemon log) can act on them without parsing strings.
 #[derive(Debug, Clone, PartialEq, Eq)]

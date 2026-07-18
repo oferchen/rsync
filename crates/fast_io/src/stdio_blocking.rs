@@ -23,9 +23,8 @@ use std::io;
 /// they match upstream rsync's blocking-I/O contract.
 ///
 /// On Unix this calls `fcntl(F_GETFL)` and `fcntl(F_SETFL)` to clear the
-/// `O_NONBLOCK` bit on FDs 0 and 1. The call is idempotent: if the flag is
-/// already cleared, the second `fcntl` is a no-op from the kernel's
-/// perspective.
+/// `O_NONBLOCK` bit on FDs 0 and 1. The call is idempotent: if `F_GETFL`
+/// shows the flag is already cleared, it returns without issuing `F_SETFL`.
 ///
 /// On non-Unix platforms this returns `Ok(())` immediately.
 ///
