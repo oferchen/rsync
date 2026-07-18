@@ -232,13 +232,13 @@ impl<W: Write + Seek> SparseWriter<W> {
 
     /// Finalizes sparse writing by flushing any remaining pending zeros.
     ///
-    /// Returns the final stream position after all pending zeros have been
-    /// flushed. The caller should use this position to set the file length
-    /// (via `set_len`) to materialize trailing holes.
+    /// Returns the unwrapped inner writer and the write statistics. Use
+    /// `finish_and_position` when the final stream position is needed to
+    /// `set_len` and materialize trailing holes.
     ///
     /// # Errors
     ///
-    /// Returns an I/O error if seeking or querying the stream position fails.
+    /// Returns an I/O error if seeking fails while flushing pending zeros.
     pub fn finish(mut self) -> io::Result<(W, SparseWriteStats)> {
         if self.pending_zeros > 0 {
             self.stats.zero_runs_detected = self.stats.zero_runs_detected.saturating_add(1);
