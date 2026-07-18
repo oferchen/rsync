@@ -100,8 +100,9 @@ impl GeneratorContext {
     /// file owners via `match_acl_ids()` (`uidlist.c:483-484`).
     ///
     /// Must run after the file list is sent (so the ACL cache is fully
-    /// populated) and before [`Self::send_id_lists`]. No-op under `numeric_ids`
-    /// or when the sender-side ACL cache is unavailable.
+    /// populated) and before [`Self::send_id_lists`]. No-op under `numeric_ids`,
+    /// when `--acls` is disabled, or when the sender-side ACL cache is
+    /// unavailable.
     #[cfg(unix)]
     pub(crate) fn collect_acl_id_mappings(&mut self) {
         use metadata::id_lookup::{lookup_group_name_cached, lookup_user_name_cached};
@@ -407,10 +408,12 @@ impl GeneratorContext {
 
     /// Emits itemize output when conditions are met.
     ///
-    /// In server mode (daemon/SSH), sends the formatted itemize string
-    /// (`"%i %n%L\n"`) as a MSG_INFO multiplexed message to the client.
-    /// In client mode, writes directly to the process stdout via the
-    /// itemize callback, matching upstream's `rwrite()` `FCLIENT` path.
+    /// In client mode, writes the formatted itemize string directly to
+    /// process stdout via the itemize callback, matching upstream's
+    /// `rwrite()` `FCLIENT` path. In server mode (daemon/SSH) this is a
+    /// no-op: the client-visible itemize row is owned by the receiver-side
+    /// generator instead, so forwarding a sender-direction row here would
+    /// duplicate every entry under `-ii`/`-vv`.
     ///
     /// Upstream `generator.c:582-583` emits when ANY of four OR'd conditions
     /// hold: significant flags set, `INFO_GTE(NAME, 2)`, `stdout_format_has_i
