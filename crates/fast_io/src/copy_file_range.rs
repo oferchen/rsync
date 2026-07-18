@@ -12,7 +12,8 @@
 //! # Performance Characteristics
 //!
 //! - For files < 64KB: Uses read/write directly (lower syscall overhead)
-//! - For files >= 64KB: Attempts io_uring, then `copy_file_range`, then read/write
+//! - For files 64KB to 256KB: Attempts `copy_file_range`, then read/write
+//! - For files >= 256KB: Attempts io_uring, then `copy_file_range`, then read/write
 //! - Fallback path uses 256KB buffer for efficient bulk transfer
 //!
 //! # Example
