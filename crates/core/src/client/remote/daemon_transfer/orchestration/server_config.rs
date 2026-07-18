@@ -28,6 +28,18 @@ pub(crate) fn build_server_config_for_receiver(
 
     apply_common_daemon_config(config, &mut server_config, filter_rules);
     server_config.reference_directories = config.reference_directories().to_vec();
+    // upstream: backup.c:make_backup() runs on the receiver, invoked from
+    // generator.c/receiver.c. `make_backups` rides in the compact flag string as
+    // 'b' (options.c:2630-2631), so flags.backup is already set here; but
+    // --backup-dir / --suffix are long-form values finalized in the local popt
+    // parse (options.c:2285-2298) and never delivered onto the receiver config.
+    // On a pull the local client IS the receiver, so carry backup_dir/backup_suffix
+    // here - otherwise effective_backup_suffix() falls back to "~" and the backup
+    // lands beside the file instead of in --backup-dir.
+    server_config.backup_dir = config.backup_directory().map(|p| p.display().to_string());
+    server_config.backup_suffix = config
+        .backup_suffix()
+        .map(|s| s.to_string_lossy().into_owned());
     // upstream flist.c:flist_sort_and_clean prunes empty dirs on the receiver
     // (prune_empty_dirs && !am_sender); on a pull the local client IS the receiver,
     // and -m is never sent over the wire (options.c gates it on am_sender), so the
