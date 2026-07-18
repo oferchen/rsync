@@ -941,8 +941,8 @@ impl DeltaSignatureIndex {
     ///
     /// Returns the number of basis block indices yielded by the
     /// `find_all` iterator at the requested `(sum1, sum2)` key. Bench
-    /// harnesses use this to isolate the cache cost of the open-addressed
-    /// probe chain itself from the surrounding match pipeline.
+    /// harnesses use this to isolate the cache cost of the chain-based
+    /// probe walk itself from the surrounding match pipeline.
     #[must_use]
     pub fn lookup_probe(&self, sum1: u16, sum2: u16) -> usize {
         self.lookup.find_all(sum1, sum2).count()
