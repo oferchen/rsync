@@ -10,6 +10,7 @@ mod compress;
 mod delete;
 mod dry_run;
 mod filters;
+mod hard_links;
 mod itemize;
 mod link_dest;
 mod metadata;
@@ -30,6 +31,7 @@ use super::Check;
 pub fn all() -> Vec<Box<dyn Check>> {
     vec![
         Box::new(metadata::Metadata),
+        Box::new(hard_links::HardLinks),
         Box::new(special_bits::SpecialBits),
         Box::new(chmod::Chmod),
         Box::new(chown::Chown),
