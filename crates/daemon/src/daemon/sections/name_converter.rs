@@ -133,11 +133,9 @@ impl metadata::id_lookup::NameConverterCallbacks for WindowsNameConverter {
         platform::name_resolution::rid_to_account_name(uid)
     }
     fn gid_to_name(&mut self, gid: u32) -> Option<String> {
-        // On Windows, GIDs map to group RIDs. Reuse the same enum-and-match
-        // approach. For groups, we could enumerate local groups, but the
-        // rid_to_account_name only enumerates users. For now, return None
-        // for group reverse lookups - groups are less commonly preserved.
-        // A full implementation would enumerate via NetLocalGroupEnum.
+        // On Windows, GIDs map to group RIDs. Resolve them through the same
+        // rid_to_account_name path used for user RIDs, which matches accounts
+        // by RID regardless of whether they name a user or a local group.
         platform::name_resolution::rid_to_account_name(gid)
     }
     fn name_to_uid(&mut self, name: &str) -> Option<u32> {
