@@ -36,12 +36,10 @@ fn extended_flags_one_byte_encoding_when_no_extended_bits() {
     let entry = FileEntry::new_file("simple.txt".into(), 100, 0o644);
     writer.write_entry(&mut buf, &entry).unwrap();
 
-    // For a simple file with no previous entry compression,
-    // flags should fit in one byte (no XMIT_EXTENDED_FLAGS needed)
-    // unless the mode/time differ from defaults
-    // The point is: without extended flags, we should NOT have XMIT_EXTENDED_FLAGS
-    // But actually, write_flags may still set it if xflags==0 for non-dir
-    // Let's verify the encoding is correct for simple entries
+    // A simple file sets no extended-flag bits (0xFF00), so write_flags takes
+    // the single-byte branch. The leading byte must still be non-zero so it
+    // cannot collide with the end-of-list marker (0); when xflags is 0 for a
+    // non-directory, write_flags substitutes XMIT_TOP_DIR to guarantee this.
     assert!(!buf.is_empty(), "buffer should not be empty");
     assert_ne!(buf[0], 0, "flags byte should not be zero (end marker)");
 }

@@ -171,10 +171,6 @@ pub trait FileEntryAccessor {
     fn crtime(&self) -> i64;
 }
 
-// ---------------------------------------------------------------------------
-// FileEntry implementation
-// ---------------------------------------------------------------------------
-
 use super::entry::FileEntry;
 
 impl FileEntryAccessor for FileEntry {
@@ -300,10 +296,6 @@ impl FileEntryAccessor for FileEntry {
         self.crtime()
     }
 }
-
-// ---------------------------------------------------------------------------
-// Tests
-// ---------------------------------------------------------------------------
 
 #[cfg(test)]
 mod tests {
