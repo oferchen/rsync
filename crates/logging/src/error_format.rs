@@ -19,7 +19,7 @@
 ///
 /// Given a `CARGO_MANIFEST_DIR` like `/home/user/project/crates/logging` and a
 /// `file!()` path like `/home/user/project/crates/logging/src/lib.rs`, this
-/// returns `logging/src/lib.rs` - the path relative to the `crates/` directory.
+/// returns `crates/logging/src/lib.rs` - the path relative to the repository root.
 ///
 /// If the path does not contain `crates/`, the full `file!()` value is returned
 /// unchanged.

@@ -14,7 +14,7 @@
 //! # Example
 //!
 //! ```ignore
-//! use flist::lazy_metadata::LazyMetadata;
+//! use flist::LazyMetadata;
 //! use std::path::PathBuf;
 //!
 //! let mut meta = LazyMetadata::new(PathBuf::from("/some/file"), false);

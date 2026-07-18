@@ -295,7 +295,7 @@ pub fn collect_with_batched_stats(
 ///
 /// * `root` - Root directory to traverse
 /// * `follow_symlinks` - Whether to follow symlinks
-/// * `chunk_size` - Number of paths to stat in each parallel batch (default: 8192)
+/// * `chunk_size` - Number of paths to stat in each parallel batch
 ///
 /// # Performance
 ///

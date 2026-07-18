@@ -13,7 +13,7 @@
 //! # Example
 //!
 //! ```ignore
-//! use flist::lazy_entry::LazyFileListEntry;
+//! use flist::LazyFileListEntry;
 //! use std::path::PathBuf;
 //!
 //! let entry = LazyFileListEntry::new(
