@@ -314,7 +314,7 @@ def parse_peak_rss_kb(stderr_text):
     return None
 
 
-def benchmark_rss(cmd, runs=3):
+def benchmark_rss(cmd, runs=4):
     """Run a command with /usr/bin/time and return timing + peak RSS stats."""
     time_flag = "-v" if IS_LINUX else "-l"
     wrapped = f"/usr/bin/time {time_flag} {cmd}"
@@ -343,7 +343,7 @@ def benchmark_rss(cmd, runs=3):
             )
         times.append(elapsed)
     result = {
-        "mean": sum(times) / len(times),
+        "mean": representative_secs(times),
         "min": min(times),
         "max": max(times),
     }
@@ -370,8 +370,28 @@ def binary_version(binary):
     return match.group(1) if match else ""
 
 
-def benchmark(cmd, runs=5):
-    """Run a command multiple times and return timing statistics."""
+def representative_secs(times):
+    """Median of the timed runs after dropping the first (warm-up) run.
+
+    The median resists the occasional cold-cache or scheduler outlier that a
+    plain mean lets dominate a small sample, and dropping the warm-up run
+    removes first-touch page-cache and connection-setup cost that does not
+    reflect steady-state throughput. On a shared CI runner this is the main
+    lever against the ratio noise that made small-workload cells swing wildly.
+    """
+    timed = times[1:] if len(times) > 1 else times
+    ordered = sorted(timed)
+    n = len(ordered)
+    mid = n // 2
+    return ordered[mid] if n % 2 else (ordered[mid - 1] + ordered[mid]) / 2
+
+
+def benchmark(cmd, runs=6):
+    """Run a command multiple times and return timing statistics.
+
+    Reports the warm-up-discarded median under `mean` (kept under that key so
+    the report/chart consumers are unchanged); `min`/`max` span every run.
+    """
     times = []
     for i in range(runs):
         start = time.perf_counter()
@@ -396,7 +416,7 @@ def benchmark(cmd, runs=5):
             )
         times.append(elapsed)
     return {
-        "mean": sum(times) / len(times),
+        "mean": representative_secs(times),
         "min": min(times),
         "max": max(times),
     }
@@ -430,10 +450,13 @@ def main():
             with open(f"{src}/medium/file_{i}.bin", "wb") as f:
                 f.write(os.urandom(100 * 1024))
 
-        # Large files (100 x 1MB = ~100 MB)
-        for i in range(100):
+        # Large files (200 x 3MB = ~600 MB). Sized so the local/SSH/daemon
+        # transfers run for ~1s+ rather than sub-second, keeping per-run
+        # connection/setup overhead from dominating the ratio on a shared
+        # CI runner (the main cause of the previously skewed cells).
+        for i in range(200):
             with open(f"{src}/large/file_{i}.dat", "wb") as f:
-                f.write(os.urandom(1024 * 1024))
+                f.write(os.urandom(3 * 1024 * 1024))
 
         total_size = sum(
             os.path.getsize(os.path.join(dp, f))
