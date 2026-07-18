@@ -1052,6 +1052,38 @@ mod server_config_reference_dirs {
         assert!(server_config.reference_directories.is_empty());
     }
 
+    /// On a daemon pull the local client IS the receiver and runs
+    /// backup.c:make_backup() itself. `make_backups` rides in the compact 'b'
+    /// letter, but --backup-dir / --suffix are long-form values (upstream
+    /// options.c:2285-2298) that must be carried onto the receiver config, else
+    /// effective_backup_suffix() falls back to "~" and the backup lands beside the
+    /// file instead of in --backup-dir.
+    #[test]
+    fn receiver_config_propagates_backup_dir_and_suffix() {
+        let config = ClientConfig::builder()
+            .backup(true)
+            .backup_directory(Some("/bak"))
+            .backup_suffix(Some(".old"))
+            .build();
+        let server_config =
+            build_server_config_for_receiver(&config, &["dest".to_owned()], Vec::new()).unwrap();
+
+        assert!(server_config.flags.backup);
+        assert_eq!(server_config.backup_dir.as_deref(), Some("/bak"));
+        assert_eq!(server_config.backup_suffix.as_deref(), Some(".old"));
+    }
+
+    #[test]
+    fn receiver_config_without_backup_has_no_backup_dir() {
+        let config = ClientConfig::default();
+        let server_config =
+            build_server_config_for_receiver(&config, &["dest".to_owned()], Vec::new()).unwrap();
+
+        assert!(!server_config.flags.backup);
+        assert!(server_config.backup_dir.is_none());
+        assert!(server_config.backup_suffix.is_none());
+    }
+
     #[test]
     fn generator_config_empty_reference_dirs_by_default() {
         let config = ClientConfig::default();
