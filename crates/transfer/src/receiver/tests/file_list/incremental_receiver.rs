@@ -55,7 +55,6 @@ fn try_read_one_returns_false_when_finished() {
         iconv_reorder_suppressed: false,
     };
 
-    // Should return false since already finished
     assert!(!receiver.try_read_one().unwrap());
 }
 
@@ -77,13 +76,11 @@ fn try_read_one_reads_single_entry() {
     let data = encode_entries(&[file]);
     let mut receiver = make_receiver(data);
 
-    // First call reads one entry
     assert!(receiver.try_read_one().unwrap());
     assert_eq!(receiver.entries_read(), 1);
     assert_eq!(receiver.ready_count(), 1);
     assert!(!receiver.is_finished_reading());
 
-    // The entry should be available via pop / next_ready
     let entry = receiver.next_ready().unwrap().unwrap();
     assert_eq!(entry.name(), "hello.txt");
     assert_eq!(entry.size(), 42);
@@ -99,7 +96,6 @@ fn try_read_one_reads_entries_one_at_a_time() {
     let data = encode_entries(&entries);
     let mut receiver = make_receiver(data);
 
-    // Read one at a time
     assert!(receiver.try_read_one().unwrap());
     assert_eq!(receiver.entries_read(), 1);
     assert_eq!(receiver.ready_count(), 1);
@@ -112,11 +108,9 @@ fn try_read_one_reads_entries_one_at_a_time() {
     assert_eq!(receiver.entries_read(), 3);
     assert_eq!(receiver.ready_count(), 3);
 
-    // Next call hits end-of-list
     assert!(!receiver.try_read_one().unwrap());
     assert!(receiver.is_finished_reading());
 
-    // All three entries should be ready
     let names: Vec<String> = std::iter::from_fn(|| receiver.next_ready().ok().flatten())
         .map(|e| e.name().to_string())
         .collect();
@@ -128,11 +122,9 @@ fn try_read_one_after_eof_is_idempotent() {
     let data = encode_entries(&[FileEntry::new_file("only.txt".into(), 1, 0o644)]);
     let mut receiver = make_receiver(data);
 
-    // Read the single entry
     assert!(receiver.try_read_one().unwrap());
-    // Hit EOF
+    // EOF, then subsequent calls stay false.
     assert!(!receiver.try_read_one().unwrap());
-    // Subsequent calls continue to return false
     assert!(!receiver.try_read_one().unwrap());
     assert!(!receiver.try_read_one().unwrap());
     assert!(receiver.is_finished_reading());

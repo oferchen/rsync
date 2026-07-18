@@ -1,8 +1,7 @@
 //! Destination-root pre-flight helpers for the receiver.
 //!
-//! Extracted verbatim from the receiver hub. Detects a trailing path
-//! separator on the destination operand and creates the destination root
-//! directory when the transfer needs one.
+//! Detects a trailing path separator on the destination operand and creates
+//! the destination root directory when the transfer needs one.
 
 use std::ffi::OsStr;
 use std::io;

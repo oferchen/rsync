@@ -1,15 +1,13 @@
 //! Itemize-changes and info-line emission for [`super::ReceiverContext`].
 //!
-//! Extracted verbatim from the receiver hub. Routes already-formatted info
-//! lines (itemize, skip notices) to the correct sink and renders per-entry
-//! itemize output.
+//! Routes already-formatted info lines (itemize, skip notices) to the correct
+//! sink and renders per-entry itemize output.
 
 use super::ReceiverContext;
 
 impl ReceiverContext {
-    /// Returns whether itemize emission should be active.
-    ///
-    /// Whether itemize-changes output should be produced for this transfer.
+    /// Returns whether itemize-changes output should be produced for this
+    /// transfer.
     ///
     /// Emitted whenever the user requested `--itemize-changes` (`-i`). Only a
     /// client receiver (a pull, where oc is the generator/receiver on the

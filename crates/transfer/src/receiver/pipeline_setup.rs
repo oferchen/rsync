@@ -1,8 +1,8 @@
 //! Receiver pipeline setup state and post-transfer attribute helpers.
 //!
-//! Extracted verbatim from the receiver hub. Carries the checksum, metadata,
-//! and ACL state shared across transfer modes, applies cached ACLs to
-//! destination files, and compiles daemon-side filter rules.
+//! Carries the checksum, metadata, and ACL state shared across transfer modes,
+//! applies cached ACLs to destination files, and compiles daemon-side filter
+//! rules.
 
 use std::num::NonZeroU8;
 use std::path::PathBuf;
@@ -42,9 +42,9 @@ pub(in crate::receiver) struct PipelineSetup {
     /// resolves the destination path. Threaded through the receiver
     /// pipeline so the SEC-1.f-j cutover sites can replace path-based
     /// syscalls with their `*at` siblings without re-walking the path
-    /// through the kernel. This PR (SEC-1.e) wires the carrier through
-    /// to [`ReceiverContext`] but does not migrate any syscalls; the
-    /// existing path-based code paths continue to be the active code.
+    /// through the kernel. The carrier is threaded through to
+    /// [`ReceiverContext`] but no syscalls are migrated yet; the existing
+    /// path-based code paths remain the active code (SEC-1.e).
     ///
     /// `None` on Unix when the destination root cannot be opened (for
     /// example because it does not yet exist - the receiver will create

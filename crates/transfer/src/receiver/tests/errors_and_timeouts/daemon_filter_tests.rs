@@ -34,7 +34,6 @@ fn daemon_filter_set_built_from_config_rules() {
     );
 
     let filters = filters.unwrap();
-    // *.tmp should be excluded
     assert!(
         !filters.allows(std::path::Path::new("test.tmp"), false),
         "*.tmp should be excluded by daemon filter"
@@ -124,7 +123,6 @@ fn daemon_filter_rules_prepended_to_receiver_deletion_chain() {
     }];
     let ctx = ReceiverContext::new_for_test(&handshake, config);
 
-    // Daemon filter set should reject secret_ files
     let filters = ctx.daemon_filter_set().unwrap();
     assert!(
         !filters.allows(std::path::Path::new("secret_data.bin"), false),
