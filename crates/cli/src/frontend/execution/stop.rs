@@ -1,3 +1,5 @@
+//! Parsing for the `--stop-after` (duration) and `--stop-at` (deadline) flags.
+
 use std::ffi::OsStr;
 use std::time::{Duration, SystemTime};
 
@@ -5,6 +7,10 @@ use core::message::{Message, Role};
 use core::rsync_error;
 use time::{Date, Month, OffsetDateTime, PrimitiveDateTime, Time, UtcOffset};
 
+/// Parses `--stop-after=MINUTES` into an absolute deadline `MINUTES` from now.
+///
+/// The value is a positive integer (an optional leading `+` is allowed). Zero,
+/// empty, and non-numeric input is rejected.
 pub(crate) fn parse_stop_after_argument(value: &OsStr) -> Result<SystemTime, Message> {
     let text = value.to_string_lossy();
     let trimmed = text.trim_matches(|ch: char| ch.is_ascii_whitespace());
@@ -40,6 +46,11 @@ pub(crate) fn parse_stop_after_argument(value: &OsStr) -> Result<SystemTime, Mes
     Ok(deadline)
 }
 
+/// Parses a `--stop-at` timestamp into an absolute deadline.
+///
+/// Accepts upstream's flexible `[YEAR-MON-DAY][THOUR:MIN]` grammar (see
+/// `parse_stop_at_internal`), interpreted in the process's local timezone.
+/// Rejects malformed input and any time that does not resolve to the future.
 pub(crate) fn parse_stop_at_argument(value: &OsStr) -> Result<SystemTime, Message> {
     let text = value.to_string_lossy();
     let trimmed = text.trim_matches(|ch: char| ch.is_ascii_whitespace());

@@ -72,6 +72,11 @@ pub(crate) fn load_file_list_operands(
     Ok(entries)
 }
 
+/// Reads file-list entries from `reader`, appending them to `entries`.
+///
+/// Splits on `\0` when `zero_terminated` is set, otherwise on newlines (with
+/// trailing `\r` stripped). Comment lines starting with `#` or `;` are skipped
+/// in both modes, matching upstream.
 pub(crate) fn read_file_list_from_reader<R: BufRead>(
     reader: &mut R,
     zero_terminated: bool,
@@ -133,6 +138,7 @@ pub(crate) fn read_file_list_from_reader<R: BufRead>(
     Ok(())
 }
 
+/// Pushes a single file-list entry, dropping trailing `\r` and empty entries.
 pub(super) fn push_file_list_entry(bytes: &[u8], entries: &mut Vec<OsString>) {
     if bytes.is_empty() {
         return;
