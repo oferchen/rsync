@@ -404,7 +404,6 @@ impl DeleteContext {
     ///
     /// Surfaces any fatal error from [`DeleteEmitter::emit_all`] (or the
     /// parallel consumer's equivalent under the feature flag).
-    // DEL-2.d: feature-gated dispatch, parallel-delete-consumer opt-in
     #[cfg(not(feature = "parallel-delete-consumer"))]
     pub fn emit_one<F: DeleteFs>(self, fs: F) -> io::Result<DrainOutcome<F>> {
         let mut emitter = self.into_emitter(fs)?;
@@ -431,7 +430,6 @@ impl DeleteContext {
     /// code the parallel path dispatches through per cohort, so the delete
     /// events, stats, and exit code are byte-identical either way; only the
     /// scheduling wrapper is skipped.
-    // DEL-2.d: feature-gated dispatch, parallel-delete-consumer opt-in
     #[cfg(feature = "parallel-delete-consumer")]
     pub fn emit_one<F: DeleteFs + Sync + Send + 'static>(
         self,
@@ -455,7 +453,6 @@ impl DeleteContext {
     /// # Errors
     ///
     /// Surfaces any fatal error from [`DeleteEmitter::emit_all`].
-    // DEL-2.d: feature-gated dispatch, parallel-delete-consumer opt-in
     #[cfg(not(feature = "parallel-delete-consumer"))]
     pub fn emit_all<F: DeleteFs>(self, fs: F) -> io::Result<DrainOutcome<F>> {
         self.emit_one(fs)
@@ -463,7 +460,6 @@ impl DeleteContext {
 
     /// Parallel-feature variant of [`Self::emit_all`]; bounds widened to
     /// match [`Self::emit_one`].
-    // DEL-2.d: feature-gated dispatch, parallel-delete-consumer opt-in
     #[cfg(feature = "parallel-delete-consumer")]
     pub fn emit_all<F: DeleteFs + Sync + Send + 'static>(
         self,
@@ -600,7 +596,7 @@ impl DeleteContext {
 
     /// Extracts the owned drain inputs (plan map, traversal cursor,
     /// emitter policy) from this context. Shared by [`Self::into_emitter`]
-    /// (sequential path) and the parallel `emit_via_parallel_consumer`
+    /// (sequential path) and the parallel `emit_parallel_from_parts`
     /// path under the `parallel-delete-consumer` feature. The
     /// channel-shutdown semantics and `Arc::try_unwrap` invariant are
     /// preserved exactly because both paths consume `self` by value.

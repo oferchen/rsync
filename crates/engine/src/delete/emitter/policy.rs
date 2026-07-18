@@ -13,7 +13,8 @@ pub const EMITTER_PARTIAL_EXIT_CODE: i32 = 23;
 /// upstream `errcode.h::RERR_VANISHED` and `core::exit_code::ExitCode::Vanished`.
 pub const EMITTER_VANISHED_EXIT_CODE: i32 = 24;
 
-/// Upstream `IOERR_GENERAL`: the only bit the delete pass currently sets.
+/// Upstream `IOERR_GENERAL`: the general-error bit the delete pass sets
+/// for non-fatal failures other than a vanished destination entry.
 pub(super) const IOERR_GENERAL: i32 = 1;
 
 /// Sentinel bit set when the only failure observed was a vanished

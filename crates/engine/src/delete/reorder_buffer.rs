@@ -3,9 +3,10 @@
 //! This module is the buffer primitive specified by DEL-1.b (see
 //! `docs/design/del-1b-reordering-buffer.md`) and the batching strategy
 //! resolved by DEL-1.c (see
-//! `docs/design/del-1c-cohort-batching-strategy.md`). It is the DEL-2.a
-//! deliverable: the data structure only, with no wiring into the production
-//! [`super::emitter::DeleteEmitter`] yet (that is DEL-2.c).
+//! `docs/design/del-1c-cohort-batching-strategy.md`). Originally the
+//! DEL-2.a deliverable (the data structure alone), it is now wired into
+//! the parallel consumer (`super::parallel_consumer`, DEL-2.c) under the
+//! `parallel-delete-consumer` feature.
 //!
 //! # What this buffer does
 //!
@@ -103,9 +104,7 @@ pub const DRAIN_BATCH_CAP: usize = 8;
 
 /// Per-deletion-attempt record the buffer carries.
 ///
-/// The buffer is the DEL-2.a primitive; full wiring into
-/// [`super::emitter::DeleteEmitter`] lands in DEL-2.c. Until then this
-/// struct is a minimal payload that captures everything a consumer
+/// A minimal payload that captures everything the parallel consumer
 /// needs to either re-issue the dispatch or emit a `MSG_DELETED`
 /// frame: the absolute destination path, the leaf name (for
 /// SEC-1.q-style dirfd-anchored dispatch), and the kind for stats

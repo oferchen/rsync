@@ -12,8 +12,9 @@
 //! The function is intentionally side-effect-free apart from
 //! `read_dir`/`symlink_metadata` syscalls on `dest_dir`; it never
 //! unlinks, never opens files for reading, and never touches the
-//! hardlink table. Hardlink-cohort tagging is layered on by task
-//! DDP-D2.
+//! hardlink table. Hardlink-cohort tagging is available through the
+//! `compute_extras_with_cohorts` variant, which reads a pre-built
+//! `CohortIndex` snapshot instead of mutating hardlink state.
 //!
 //! # Upstream Reference
 //!
