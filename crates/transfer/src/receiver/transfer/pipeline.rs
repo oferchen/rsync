@@ -459,7 +459,10 @@ impl ReceiverContext {
                                     format!("{}\n", file_entry.path().display()),
                                 );
                             }
-                        } else {
+                        } else if !self.should_emit_itemize() {
+                            // Plain `-v`: bare name. Under `-i`/`-vi` the
+                            // itemize row already carries the name, so suppress
+                            // this to avoid a duplicate line.
                             info_log!(Name, 1, "{}", file_entry.path().display());
                         }
                     }
@@ -618,8 +621,12 @@ impl ReceiverContext {
             // notice AFTER the transfer decision is known. In dry-run the
             // sender's echo confirms the file would have been transferred,
             // so emit the "updated" line at the post-decision point to
-            // match upstream wire order.
-            if self.config.flags.verbose && self.config.connection.client_mode {
+            // match upstream wire order. Under `-i`/`-vi` the itemize row
+            // already carries the name, so the bare name is suppressed.
+            if self.config.flags.verbose
+                && self.config.connection.client_mode
+                && !self.should_emit_itemize()
+            {
                 info_log!(Name, 1, "{}", file_entry.path().display());
             }
         }

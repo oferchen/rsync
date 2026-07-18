@@ -272,7 +272,10 @@ impl ReceiverContext {
         // names were buffered up front and released in flist order alongside
         // their children in the transfer loop above, so skip this end-of-run
         // block; any trailing directories flush just below via flush_names_all.
-        if self.config.flags.verbose && self.config.connection.client_mode && !self.interleave_names
+        if self.config.flags.verbose
+            && self.config.connection.client_mode
+            && !self.interleave_names
+            && !self.should_emit_itemize()
         {
             for file_entry in &self.file_list {
                 if file_entry.is_dir() {
@@ -338,7 +341,7 @@ impl ReceiverContext {
         // alone only skips the file and carries no exit-code bits.
         stats.io_error |= reader.take_io_error();
 
-        let total_source_bytes: u64 = self.file_list.iter().map(|e| e.size()).sum();
+        let total_source_bytes: u64 = self.total_source_size();
 
         stats.files_transferred = files_transferred;
         stats.transferred_file_size = transferred_file_size;
