@@ -40,6 +40,16 @@ pub(crate) fn build_server_config_for_receiver(
     server_config.backup_suffix = config
         .backup_suffix()
         .map(|s| s.to_string_lossy().into_owned());
+    // upstream: --chmod is parsed into `chmod_modes` (options.c:1762) and is
+    // never placed in server_options, so it is never forwarded to the remote
+    // daemon. On a pull the local client IS the receiver and applies the
+    // modifiers itself as it reads each incoming flist entry (flist.c:905-906
+    // recv_file_entry() -> tweak_mode()). Carry them onto the local receiver
+    // config here; without this the rsync:// pull left every regular file at its
+    // source mode while local copies applied --chmod correctly. This is the
+    // client flag, distinct from the module `incoming chmod` the remote daemon
+    // applies on the far side.
+    server_config.chmod = config.chmod().cloned();
     // upstream flist.c:flist_sort_and_clean prunes empty dirs on the receiver
     // (prune_empty_dirs && !am_sender); on a pull the local client IS the receiver,
     // and -m is never sent over the wire (options.c gates it on am_sender), so the
