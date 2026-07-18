@@ -1,7 +1,5 @@
 //! Character encoding conversion for rsync's --iconv=LOCAL,REMOTE option.
 //!
-//! Filename encoding conversion (iconv) for cross-platform rsync transfers.
-//!
 //! When the local and remote systems use different character encodings for
 //! filenames, this module handles the conversion. This mirrors rsync's `--iconv`
 //! option.
@@ -335,8 +333,6 @@ mod tests {
         let conv2 = EncodingConverter::identity();
         assert_eq!(conv1, conv2);
     }
-
-    // ---- Lossy conversion tests ----
 
     #[test]
     fn lossy_identity_passes_through_without_replacement() {
