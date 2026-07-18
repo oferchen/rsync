@@ -223,7 +223,7 @@ The daemon protocol is plaintext, matching upstream rsync: the daemon provides a
 - **stunnel** in front of `rsync://`-style daemon traffic
 - **A reverse proxy** that performs TLS termination (e.g., HAProxy in TCP mode, or nginx)
 
-Bind the daemon to `127.0.0.1` (or a private VPC interface) and route external clients exclusively through the TLS terminator. Clients reach an SSL-proxied daemon with `--ssl` (requires `--features client-tls`), matching upstream `rsync-ssl`.
+Bind the daemon to `127.0.0.1` (or a private VPC interface) and route external clients exclusively through the TLS terminator. oc-rsync has no built-in TLS client (the former `--ssl` / `client-tls` path was removed to match upstream), so clients reach an SSL-proxied daemon through an external wrapper such as `rsync-ssl` or `stunnel`, the same model as upstream.
 
 ### Daemon module hardening
 
