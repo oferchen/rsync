@@ -464,8 +464,6 @@ mod tests {
         assert!(s.smoothed_ratio().unwrap().is_finite());
     }
 
-    // --- AdaptiveLevelController tests ---
-
     #[test]
     fn controller_initial_level_clamped_to_bounds() {
         let ctrl = AdaptiveLevelController::for_zlib(100);
