@@ -1,5 +1,8 @@
+//! Clap definitions for connection, transport, and logging/output options.
+
 use super::super::{Arg, ArgAction, ClapCommand, OsStringValueParser};
 
+/// Adds the connection and logging argument group to the command.
 pub(crate) fn add_connection_and_logging_options(command: ClapCommand) -> ClapCommand {
     command
         .arg(

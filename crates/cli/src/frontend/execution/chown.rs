@@ -1,3 +1,5 @@
+//! Parsing for the `--chown=USER:GROUP` argument.
+
 use std::ffi::{OsStr, OsString};
 
 use crate::platform::{gid_t, uid_t};
@@ -7,6 +9,9 @@ use core::{
     rsync_error,
 };
 
+/// A resolved `--chown` spec: the numeric owner and/or group to apply, plus the
+/// original spec text. Either `owner` or `group` may be absent (`USER`, `:GROUP`
+/// forms), but not both.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct ParsedChown {
     spec: OsString,
@@ -15,10 +20,12 @@ pub(crate) struct ParsedChown {
 }
 
 impl ParsedChown {
+    /// Returns the resolved owner UID, if the spec named one.
     pub(crate) const fn owner(&self) -> Option<uid_t> {
         self.owner
     }
 
+    /// Returns the resolved group GID, if the spec named one.
     pub(crate) const fn group(&self) -> Option<gid_t> {
         self.group
     }
@@ -30,6 +37,11 @@ impl ParsedChown {
     }
 }
 
+/// Parses a `--chown=USER:GROUP` spec, resolving names to numeric IDs.
+///
+/// Accepts `USER`, `USER:GROUP`, or `:GROUP`. Names are resolved via the
+/// platform lookup; a numeric field is used verbatim. An empty spec, or one
+/// that resolves to neither an owner nor a group, is rejected.
 pub(crate) fn parse_chown_argument(value: &OsStr) -> Result<ParsedChown, Message> {
     let text = value.to_string_lossy();
     let trimmed = text.trim();
