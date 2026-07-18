@@ -54,7 +54,6 @@ fn duplicate_source_operands_copy_each_file_once() {
 
     assert_eq!(code, 0, "stderr: {}", String::from_utf8_lossy(&stderr));
 
-    // Verify files were copied to the destination
     assert_eq!(
         std::fs::read(dest_dir.join("name1")).expect("read name1"),
         b"This is the file"
