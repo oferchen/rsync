@@ -36,19 +36,17 @@ impl Check for Itemize {
 
         ctx.transports
             .iter()
-            .map(|&t| self.cell(ctx, t, &root, &src, &flags, &names, expected))
+            .map(|&t| self.cell(ctx, t, &root, &flags, &names, expected))
             .collect()
     }
 }
 
 impl Itemize {
-    #[allow(clippy::too_many_arguments)]
     fn cell(
         &self,
         ctx: &ValidateCtx,
         transport: Transport,
         root: &Path,
-        src: &Path,
         flags: &[String],
         names: &HashSet<String>,
         expected: usize,
@@ -57,6 +55,8 @@ impl Itemize {
         if transport.needs_ssh() && !support::ssh_ready() {
             return CheckOutcome::skip(self.name(), label, "no sshd on localhost:22");
         }
+        let src = root.join("src");
+        let src = src.as_path();
         let oc_dst = root.join(format!("oc-{label}"));
         let up_dst = root.join(format!("up-{label}"));
 

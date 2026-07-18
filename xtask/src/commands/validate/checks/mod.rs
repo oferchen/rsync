@@ -2,10 +2,21 @@
 
 mod acl_xattr;
 mod banner;
+mod checksum;
+mod chmod;
+mod chown;
+mod compress;
+mod delete;
+mod dry_run;
+mod filters;
 mod itemize;
 mod metadata;
 mod progress;
+mod rsync_path;
+mod special_bits;
+mod stats;
 mod total_size;
+mod verbosity;
 
 use super::Check;
 
@@ -13,10 +24,21 @@ use super::Check;
 pub fn all() -> Vec<Box<dyn Check>> {
     vec![
         Box::new(metadata::Metadata),
+        Box::new(special_bits::SpecialBits),
+        Box::new(chmod::Chmod),
+        Box::new(chown::Chown),
         Box::new(acl_xattr::AclXattr),
         Box::new(progress::Progress),
+        Box::new(verbosity::Verbosity),
         Box::new(itemize::Itemize),
+        Box::new(dry_run::DryRun),
         Box::new(banner::Banner),
+        Box::new(filters::Filters),
+        Box::new(delete::Delete),
+        Box::new(compress::Compress),
+        Box::new(checksum::Checksum),
+        Box::new(stats::Stats),
         Box::new(total_size::TotalSize),
+        Box::new(rsync_path::RsyncPath),
     ]
 }
