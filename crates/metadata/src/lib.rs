@@ -131,7 +131,7 @@ mod ownership_stub;
 #[allow(unused_imports)] // REASON: used on non-unix as the ownership implementation
 use ownership_stub as ownership;
 
-/// Optimized metadata caching with statx support on Linux.
+/// Optimized metadata caching with a libc `lstat` readback on Linux.
 pub mod stat_cache;
 
 mod special;

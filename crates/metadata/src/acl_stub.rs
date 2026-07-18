@@ -40,9 +40,11 @@ pub fn sync_acls(
     Ok(())
 }
 
-/// Reads the filesystem ACL for `path` and converts it to an [`RsyncAcl`].
+/// Synthesises an [`RsyncAcl`] from `mode`, since iOS/tvOS/watchOS cannot read a
+/// filesystem ACL.
 ///
-/// On iOS/tvOS/watchOS, returns a fake ACL derived from mode.
+/// A default-ACL request (`is_default`) yields an empty ACL; otherwise the ACL
+/// is derived from the mode bits.
 #[allow(clippy::module_name_repetitions)]
 pub fn get_rsync_acl(path: &Path, mode: u32, is_default: bool) -> RsyncAcl {
     let _ = path;

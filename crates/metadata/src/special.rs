@@ -272,8 +272,7 @@ fn create_device_node_inner(
 
     // The source rdev already encodes major/minor for this platform, so it can
     // be handed straight to mknod (matching upstream do_mknod, which forwards
-    // the device word verbatim). try_into guards the rare targets where dev_t
-    // is narrower than the u64 returned by MetadataExt::rdev.
+    // the device word verbatim).
     // try_into guards narrow-dev_t targets; on Linux dev_t is u64 so the
     // conversion is a no-op there, which clippy would otherwise flag.
     #[allow(clippy::useless_conversion)]

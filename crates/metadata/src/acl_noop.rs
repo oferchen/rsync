@@ -35,9 +35,11 @@ pub fn sync_acls(
     Ok(())
 }
 
-/// Reads the filesystem ACL for `path` and converts it to an [`RsyncAcl`].
+/// Synthesises an [`RsyncAcl`] from `mode`, since this platform cannot read a
+/// filesystem ACL.
 ///
-/// On platforms without ACL support, returns a fake ACL derived from mode.
+/// A default-ACL request (`is_default`) yields an empty ACL; otherwise the ACL
+/// is derived from the mode bits.
 pub fn get_rsync_acl(_path: &Path, mode: u32, is_default: bool) -> RsyncAcl {
     if is_default {
         RsyncAcl::new()

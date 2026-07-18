@@ -35,6 +35,9 @@ use super::special::restore_special_mode_bits;
 /// * `access_ndx` - Index into the access ACL cache.
 /// * `default_ndx` - Optional index into the default ACL cache (directories only).
 /// * `follow_symlinks` - Whether to follow symlinks. If `false`, returns immediately.
+/// * `mode` - Optional file mode. When present, its bits reconstruct the
+///   stripped base ACL entries and restore the setuid/setgid/sticky bits that
+///   `setfacl` clears when it re-derives permissions from the ACL.
 /// * `id_map` - Optional cross-host id remapper for named ACL entries. When
 ///   present, each named user/group id is remapped through the received id-list
 ///   and `--usermap`/`--groupmap`, matching upstream `match_acl_ids()`.

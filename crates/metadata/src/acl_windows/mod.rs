@@ -13,13 +13,15 @@
 //!
 //! # Scope
 //!
-//! - Only the discretionary ACL (DACL) is read and written. The system ACL
-//!   (SACL) requires the `SE_SECURITY_NAME` privilege and is intentionally
-//!   skipped to avoid surprising privilege escalations on standard
-//!   accounts.
-//! - SACL preservation, inheritance flag round-tripping, and protected
-//!   DACL bits are deliberately left as follow-on work; the current
-//!   implementation focuses on Tier 1C beta parity.
+//! - The default read path (`read_dacl_sddl`) covers the owner, group, and
+//!   discretionary ACL (DACL). The system ACL (SACL) requires the
+//!   `SE_SECURITY_NAME` privilege and is read only on the opt-in
+//!   `read_sddl_with_sacl` path, avoiding surprising privilege escalations
+//!   on standard accounts.
+//! - Applied DACLs set the protected (`P`) bit so the destination does not
+//!   silently inherit ACEs from its parent. SACL entries carried in an SDDL
+//!   payload are written only when the calling token holds
+//!   `SE_SECURITY_NAME`.
 //!
 //! # SID/UID Mapping
 //!
