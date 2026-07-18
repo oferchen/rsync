@@ -222,8 +222,8 @@ fn maybe_warn_namespace_pressure(in_flight: u16) {
 ///   that future [`allocate`](Self::allocate) calls can reuse it.
 /// - Once the monotonic counter reaches `BGID_NAMESPACE_SIZE` (65 536)
 ///   and the free-list is empty, [`allocate`](Self::allocate) returns
-///   [`super::BufferRingError::BgidExhausted`] rather than wrapping and
-///   silently reusing a bgid still held by an active ring.
+///   [`BgidAllocError::Exhausted`] rather than wrapping and silently
+///   reusing a bgid still held by an active ring.
 ///
 /// Callers that create a bounded, fixed number of buffer rings per
 /// process may set [`super::BufferRingConfig::bgid`] directly with known
@@ -424,9 +424,8 @@ impl BgidAllocator {
     ///
     /// Includes both unallocated counter slots and free-list entries
     /// available for reuse. When this reaches zero,
-    /// [`allocate`](Self::allocate) returns
-    /// [`super::BufferRingError::BgidExhausted`]. The value may decrease
-    /// concurrently as other threads allocate.
+    /// [`allocate`](Self::allocate) returns [`BgidAllocError::Exhausted`].
+    /// The value may decrease concurrently as other threads allocate.
     pub fn remaining() -> u32 {
         let used = NEXT_BGID.load(Ordering::Relaxed).min(BGID_NAMESPACE_SIZE);
         let free = bgid_free_list()

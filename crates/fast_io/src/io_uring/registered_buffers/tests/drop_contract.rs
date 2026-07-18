@@ -114,9 +114,10 @@ fn panic_during_slot_use_unwinds_cleanly() {
     let _slot_again = group.checkout().expect("re-checkout after panic");
 }
 
-/// `unregister()` returns an error when the buffer set has already been
-/// released by closing the ring (or never registered). The error must
-/// be reported to the caller; it must NOT cause a panic or abort.
+/// A redundant `unregister()` - one whose buffer set the first
+/// `unregister()` already released against the same live ring - must
+/// surface any kernel error to the caller as a `Result`; it must NOT
+/// panic or abort.
 #[test]
 fn unregister_after_ring_closed_returns_error_or_ok() {
     let Some(ring) = try_ring(4) else { return };

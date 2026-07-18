@@ -24,10 +24,11 @@
 //!
 //! # When NOT to use this
 //!
-//! - **One-shot kernel probes** (`linkat::probe`, `renameat2::probe`,
-//!   `statx::probe`) run once at startup and contribute zero hot-path
-//!   syscalls; per-thread storage would add a TLS slot per probe site for
-//!   no measurable gain. They stay on shared/single rings.
+//! - **One-shot kernel probes** (`linkat::linkat_supported`,
+//!   `renameat2::renameat2_supported`, `statx::statx_supported`) run once at
+//!   startup and contribute zero hot-path syscalls; per-thread storage would
+//!   add a TLS slot per probe site for no measurable gain. They stay on
+//!   shared/single rings.
 //! - **Disk-commit singleton** (`IoUringDiskBatch`) is already `!Send + !Sync`
 //!   and pinned to the disk-commit thread for the life of the session. No
 //!   second thread submits to it.
