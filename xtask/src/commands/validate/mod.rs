@@ -293,17 +293,18 @@ mod unix_impl {
 #[cfg(not(unix))]
 pub fn execute(_workspace: &Path, options: ValidateOptions) -> TaskResult<()> {
     // The transport matrix relies on Unix-only APIs (POSIX ids, symlinks, device
-    // nodes, ssh/daemon plumbing). Destructure the options so their fields are
-    // not reported as dead on non-Unix targets, then decline the command.
-    let ValidateOptions {
-        transports: _,
-        flags: _,
-        bench: _,
-        bench_files: _,
-        edge_cases: _,
-        root: _,
-        verbose: _,
-    } = options;
+    // nodes, ssh/daemon plumbing). Read each field so it is not reported as dead
+    // on non-Unix targets (a `_` destructure discards without counting as a
+    // read), then decline the command.
+    let _ = (
+        &options.transports,
+        &options.flags,
+        options.bench,
+        options.bench_files,
+        options.edge_cases,
+        options.root,
+        options.verbose,
+    );
     Err(crate::error::TaskError::Validation(
         "`cargo xtask validate` is only supported on Unix hosts".into(),
     ))
