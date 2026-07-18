@@ -35,6 +35,7 @@ impl ReceiverContext {
         reader: crate::reader::ServerReader<R>,
         writer: &mut W,
         pipeline_config: PipelineConfig,
+        mut progress: Option<&mut dyn crate::TransferProgressCallback>,
     ) -> io::Result<TransferStats> {
         let _t = PhaseTimer::new("receiver-transfer-pipelined");
         // Buffer itemize rows and flush them once in flist-index order before
@@ -187,7 +188,6 @@ impl ReceiverContext {
         } else {
             let total_files = files_to_transfer.len();
             let redo_config = pipeline_config.clone();
-            let mut no_progress: Option<&mut dyn crate::TransferProgressCallback> = None;
             let redo_indices;
             let delayed;
             (
@@ -207,7 +207,7 @@ impl ReceiverContext {
                 &mut metadata_errors,
                 false,
                 total_files,
-                &mut no_progress,
+                &mut progress,
             )?;
             all_delayed_updates.extend(delayed);
 
@@ -255,7 +255,7 @@ impl ReceiverContext {
                     &mut metadata_errors,
                     true,
                     total_files,
-                    &mut no_progress,
+                    &mut progress,
                 )?;
 
                 files_transferred += redo_transferred;
