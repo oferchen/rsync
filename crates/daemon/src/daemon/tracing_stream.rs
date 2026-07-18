@@ -174,8 +174,6 @@ mod tests {
 
         #[test]
         fn struct_fields_documented() {
-            // TracingStream has inner, direction, total_written, total_read
-            // This test validates the struct exists with expected documentation
             let _ = std::any::type_name::<TracingStream>();
         }
     }

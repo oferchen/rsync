@@ -1,5 +1,3 @@
-//! crates/daemon/src/daemon/concurrent_tests.rs
-//!
 //! Integration tests for concurrent session and connection tracking.
 //!
 //! These tests verify that SessionRegistry and ConnectionPool work correctly
