@@ -132,8 +132,7 @@ where
     // copy, and the receiver on a pull - where the receiver separately prints
     // "receiving incremental file list" - so suppress the "sending" banner for
     // a pull to avoid printing both.
-    let emit_flist_banner =
-        config.recursive() && info_gte(InfoFlag::Flist, 1) && !config.is_pull();
+    let emit_flist_banner = config.recursive() && info_gte(InfoFlag::Flist, 1) && !config.is_pull();
     // Capture the preserve-links state before `config` is consumed so the
     // `--list-only` renderer knows whether to append the ` -> <target>` arrow
     // to symlink rows (upstream: generator.c:1183 gates it on preserve_links).
