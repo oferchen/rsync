@@ -7,6 +7,7 @@ mod checksum;
 mod chmod;
 mod chown;
 mod compress;
+mod crtimes;
 mod delete;
 mod dry_run;
 mod filters;
@@ -24,6 +25,7 @@ mod special_bits;
 mod stats;
 mod total_size;
 mod verbosity;
+mod xattr;
 
 use super::Check;
 
@@ -36,6 +38,8 @@ pub fn all() -> Vec<Box<dyn Check>> {
         Box::new(chmod::Chmod),
         Box::new(chown::Chown),
         Box::new(acl_xattr::AclXattr),
+        Box::new(xattr::Xattr),
+        Box::new(crtimes::Crtimes),
         Box::new(relative::Relative),
         Box::new(sparse::Sparse),
         Box::new(progress::Progress),

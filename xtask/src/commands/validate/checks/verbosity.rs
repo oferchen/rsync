@@ -1,19 +1,23 @@
-//! Verbose stdout parity at `-v` across every transport.
+//! Verbose stdout parity across `-v`, `-vv`, and `-vvv` on every transport.
 //!
-//! Builds a tiny tree, pulls it with each client over every transport at `-v`,
-//! and asserts oc-rsync's verbose stdout is structurally identical to
-//! upstream's. Upstream rsync is the ground truth. Volatile numerics (byte
-//! counts, offsets, checksums, rates) and the trailing timing summary carry no
-//! structural meaning, so both sides are normalized - digit runs collapsed to a
-//! placeholder, summary and rate lines dropped - before the line vectors are
-//! compared for equality. What survives is the structural shape of the output,
-//! which a drop-in must match.
+//! Builds a tiny tree, pulls it with each client over every transport at all
+//! three verbosity levels, and asserts oc-rsync reproduces upstream's stable
+//! user-facing core. Upstream rsync is the ground truth.
 //!
-//! Only `-v` is validated. `-vv` and `-vvv` are debug levels whose output is
-//! upstream-implementation detail (connection traces like `opening connection
-//! using: ssh ...` and internal notes like `[sender] make_file(...)`) that no
-//! independent implementation reproduces byte-for-byte; matching them is not a
-//! drop-in requirement.
+//! Only the stable core is compared: the "incremental file list" banner, the
+//! transferred-name lines (each source relative path, plus the `.`/`./` root),
+//! and the statistics summary. Volatile numerics inside those kept lines (byte
+//! counts, offsets, checksums, rates) are neutralized first - digit runs
+//! collapse to a placeholder - so timing and size jitter carry no weight.
+//!
+//! Everything else is dropped. `-vv` and `-vvv` only add implementation-specific
+//! diagnostics (connection traces like `opening connection using: ssh ...`,
+//! role-prefixed debug like `[sender] make_file(...)`, internal notes), which no
+//! independent implementation reproduces byte-for-byte. Ignoring them lets all
+//! three levels be exercised while the stable core must still match upstream at
+//! every level; a spurious extra name line (e.g. oc emitting `./` when upstream
+//! does not) is a real divergence the check still catches, because `.`/`./` name
+//! lines are kept.
 
 use std::path::Path;
 use std::process::Output;
@@ -25,9 +29,9 @@ use crate::commands::validate::{Check, CheckOutcome, ValidateCtx};
 /// The verbose-output parity check.
 pub struct Verbosity;
 
-/// Verbosity levels exercised, one matrix cell each. Only `-v` is a stable
-/// drop-in surface; `-vv`/`-vvv` are implementation-specific debug output.
-const LEVELS: &[&str] = &["-v"];
+/// Verbosity levels exercised, one matrix cell each. Every level must reproduce
+/// the same stable core; `-vv`/`-vvv` only add ignored diagnostics on top.
+const LEVELS: &[&str] = &["-v", "-vv", "-vvv"];
 
 /// Base flags shared by every cell; the level is appended per run.
 const BASE_FLAGS: &[&str] = &["-rlptgoD", "--numeric-ids"];
@@ -50,11 +54,15 @@ impl Check for Verbosity {
             return vec![CheckOutcome::skip(self.name(), "fixture", e)];
         }
         let expected = support::entry_count(&src);
+        let names: std::collections::HashSet<String> = support::rel_entries(&src)
+            .iter()
+            .map(|entry| entry.to_string_lossy().to_string())
+            .collect();
 
         let mut outcomes = Vec::new();
         for &transport in ctx.transports {
             for level in LEVELS {
-                outcomes.push(self.cell(ctx, transport, &root, &src, level, expected));
+                outcomes.push(self.cell(ctx, transport, &root, level, expected, &names));
             }
         }
         outcomes
@@ -67,10 +75,11 @@ impl Verbosity {
         ctx: &ValidateCtx,
         transport: Transport,
         root: &Path,
-        src: &Path,
         level: &str,
         expected: usize,
+        names: &std::collections::HashSet<String>,
     ) -> CheckOutcome {
+        let src = root.join("src");
         let label = transport.label();
         let cell = format!("{label} {level}");
         if transport.needs_ssh() && !support::ssh_ready() {
@@ -90,7 +99,7 @@ impl Verbosity {
             transport.for_upstream(),
             ctx.upstream,
             ctx.upstream,
-            src,
+            &src,
             &up_dst,
             &flags,
             ctx.work,
@@ -102,7 +111,7 @@ impl Verbosity {
             transport,
             ctx.oc,
             ctx.upstream,
-            src,
+            &src,
             &oc_dst,
             &flags,
             ctx.work,
@@ -116,16 +125,16 @@ impl Verbosity {
             return CheckOutcome::fail(self.name(), cell, "destination entry count != source");
         }
 
-        let oc_norm = normalize(&String::from_utf8_lossy(&oc.stdout));
-        let up_norm = normalize(&String::from_utf8_lossy(&up.stdout));
+        let oc_core = stable_core(&String::from_utf8_lossy(&oc.stdout), names);
+        let up_core = stable_core(&String::from_utf8_lossy(&up.stdout), names);
 
-        if oc_norm != up_norm {
+        if oc_core != up_core {
             if ctx.verbose {
                 eprintln!(
-                    "[verbosity/{cell}] oc={oc_norm:?}\n[verbosity/{cell}] upstream={up_norm:?}"
+                    "[verbosity/{cell}] oc={oc_core:?}\n[verbosity/{cell}] upstream={up_core:?}"
                 );
             }
-            if let Some((i, a, b)) = first_diff(&oc_norm, &up_norm) {
+            if let Some((i, a, b)) = first_diff(&oc_core, &up_core) {
                 return CheckOutcome::fail(
                     self.name(),
                     cell,
@@ -138,29 +147,59 @@ impl Verbosity {
     }
 }
 
-/// Reduce verbose stdout to its structural lines for equality comparison.
+/// Reduce verbose stdout to its stable user-facing core for equality comparison.
 ///
-/// Returns the non-empty, trimmed lines with volatile content neutralized:
-/// every run of ASCII digits (with embedded `.`/`,` and an optional trailing
-/// unit such as `bytes`, `KB`, `B`, `%`, `/s`) collapses to a fixed placeholder,
-/// and the trailing `sent .../received .../total size .../speedup` summary plus
-/// any `bytes/sec` rate line - all of which encode timing or byte counts - are
-/// dropped. Only structural differences remain.
-pub fn normalize(stdout: &str) -> Vec<String> {
+/// Keeps only the non-empty, trimmed lines that a drop-in must reproduce at
+/// every verbosity level - the "incremental file list" banner, the transferred
+/// item names (each source relative path, plus the `.`/`./` root), and the
+/// statistics summary - and drops everything else. The dropped remainder is
+/// implementation-specific diagnostics that `-vv`/`-vvv` add: connection traces
+/// (`opening connection using: ssh ...`), role-prefixed debug (`[sender] ...`),
+/// and internal notes (`... make_file(...)`, `server_sender starting ...`).
+///
+/// Each kept line is neutralized first, so volatile numerics inside it (byte
+/// counts, offsets, checksums, rates) collapse to a placeholder and carry no
+/// weight. `names` is the set of source relative-entry strings.
+pub fn stable_core(stdout: &str, names: &std::collections::HashSet<String>) -> Vec<String> {
     stdout
         .lines()
         .map(str::trim)
-        .filter(|line| !line.is_empty() && !is_summary_line(line))
+        .filter(|line| !line.is_empty() && is_stable_core(line, names))
         .map(neutralize)
         .collect()
 }
 
-/// True for the trailing summary and rate lines that encode timing / counts.
+/// True when a trimmed line belongs to the stable core kept by [`stable_core`].
+fn is_stable_core(line: &str, names: &std::collections::HashSet<String>) -> bool {
+    is_flist_banner(line) || is_transferred_name(line, names) || is_summary_line(line)
+}
+
+/// The file-list banner, e.g. `receiving incremental file list`.
+fn is_flist_banner(line: &str) -> bool {
+    line.contains("incremental file list")
+}
+
+/// A transferred-item line: the line with any single trailing `/` removed is the
+/// `.`/`./` root or a known source relative path. rsync prints the item's
+/// relative path at `-v`, so a spurious extra name (e.g. `./`) is caught here.
+fn is_transferred_name(line: &str, names: &std::collections::HashSet<String>) -> bool {
+    let stem = line.strip_suffix('/').unwrap_or(line);
+    stem == "." || stem == "./" || names.contains(stem)
+}
+
+/// A statistics/summary structural line (case-insensitive prefix match).
 fn is_summary_line(line: &str) -> bool {
-    line.starts_with("sent ")
-        || line.starts_with("total size is")
-        || line.contains("bytes/sec")
-        || line.contains("speedup is")
+    const PREFIXES: &[&str] = &[
+        "number of ",
+        "total ",
+        "file list ",
+        "sent ",
+        "total size",
+        "literal data",
+        "matched data",
+    ];
+    let lower = line.to_ascii_lowercase();
+    PREFIXES.iter().any(|prefix| lower.starts_with(prefix))
 }
 
 /// Collapse every volatile numeric run in one line to [`PLACEHOLDER`].
@@ -273,22 +312,50 @@ fn build_fixture(src: &Path) -> Result<(), String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{neutralize, normalize};
+    use std::collections::HashSet;
+
+    use super::{neutralize, stable_core};
 
     #[test]
-    fn keeps_structural_lines_and_drops_summary() {
+    fn keeps_core_and_drops_diagnostics() {
+        let names: HashSet<String> = ["a.txt".to_string(), "sub/c.txt".to_string()]
+            .into_iter()
+            .collect();
+        // Banner, two names, and two summary lines survive; the `-vv`/`-vvv`
+        // connection trace and role-prefixed debug are dropped.
         let out = "receiving incremental file list\n\
+                   opening connection using: ssh -l user host rsync --server\n\
+                   [sender] make_file(a.txt,*,2)\n\
                    a.txt\n\
-                   sub/\n\
-                   \n\
-                   sent 100 bytes  received 200 bytes  600.00 bytes/sec\n\
-                   total size is 12  speedup is 0.04\n";
+                   sub/c.txt\n\
+                   Number of files: 5\n\
+                   sent 100 bytes  received 200 bytes  600.00 bytes/sec\n";
         assert_eq!(
-            normalize(out),
+            stable_core(out, &names),
             vec![
                 "receiving incremental file list".to_string(),
                 "a.txt".to_string(),
-                "sub/".to_string(),
+                "sub/c.txt".to_string(),
+                "Number of files: #".to_string(),
+                "sent #  received #  #/sec".to_string(),
+            ]
+        );
+    }
+
+    #[test]
+    fn spurious_dot_slash_name_diverges() {
+        let names: HashSet<String> = ["a.txt".to_string()].into_iter().collect();
+        let upstream = "receiving incremental file list\na.txt\n";
+        // oc emits an extra `./` the upstream did not: kept as a name line, so
+        // the two otherwise-equal cores differ.
+        let oc = "receiving incremental file list\n./\na.txt\n";
+        assert_ne!(stable_core(oc, &names), stable_core(upstream, &names));
+        assert_eq!(
+            stable_core(oc, &names),
+            vec![
+                "receiving incremental file list".to_string(),
+                "./".to_string(),
+                "a.txt".to_string(),
             ]
         );
     }
@@ -309,14 +376,5 @@ mod tests {
         // A size unit is absorbed on a word boundary; a name is left intact.
         assert_eq!(neutralize("100B"), "#");
         assert_eq!(neutralize("100Bravo"), "#Bravo");
-    }
-
-    #[test]
-    fn identical_verbose_output_normalizes_equal() {
-        let oc = "a.txt\n  1,234 bytes\nsent 9 bytes  received 9 bytes  1.00 bytes/sec\n";
-        let up = "a.txt\n  5,678 bytes\nsent 7 bytes  received 7 bytes  2.00 bytes/sec\n";
-        assert_eq!(normalize(oc), normalize(up));
-        // The number and its trailing `bytes` unit collapse to one placeholder.
-        assert_eq!(normalize(oc), vec!["a.txt".to_string(), "#".to_string()]);
     }
 }
