@@ -108,10 +108,10 @@ pub struct AsyncSignatureConfig {
     /// Default: Number of CPU cores, capped at 4.
     pub num_threads: usize,
 
-    /// Maximum number of pending requests before blocking.
+    /// Configured target for the number of in-flight signature requests.
     ///
-    /// This bounds memory usage and prevents overwhelming workers.
-    /// Default: 16
+    /// Advisory only: the request channel is unbounded, so this value does not
+    /// by itself block senders or cap memory. Default: 16.
     pub max_pending: usize,
 }
 
@@ -239,8 +239,6 @@ impl AsyncSignatureGenerator {
     /// Requests signature generation for a file.
     ///
     /// Returns the request ID that can be used to match the result.
-    ///
-    /// This may block if the request queue is full (backpressure).
     ///
     /// # Errors
     ///
