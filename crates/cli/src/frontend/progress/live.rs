@@ -265,6 +265,8 @@ impl<'a> ClientProgressObserver for LiveProgress<'a> {
                 let event = update.event();
                 let relative = event.relative_path();
                 let path_changed = self.active_path.as_deref() != Some(relative);
+                let now = Instant::now();
+                let is_final = update.is_final();
 
                 if path_changed {
                     if self.line_active {
@@ -279,10 +281,26 @@ impl<'a> ClientProgressObserver for LiveProgress<'a> {
                     let name = name.replace('\\', "/");
                     writeln!(self.writer, "{name}")?;
                     self.active_path = Some(relative.to_path_buf());
+                    // upstream: progress.c:205-222 - show_progress seeds
+                    // ph_start to the file's transfer start, so a new file's
+                    // throttle baseline is its start rather than a "first tick
+                    // always renders" special-case. A fast single-chunk file
+                    // whose intermediate tick falls within one interval of its
+                    // start therefore renders only the final xfr line.
+                    self.last_tick = Some(now);
+                }
+
+                // upstream: progress.c:224 - show_progress renders an in-flight
+                // tick at most once per interval since the last render, while
+                // end_progress (the final xfr-trailer tick) bypasses the
+                // throttle. Without this the forwarder's intermediate
+                // handle_progress tick and the final handle tick both render,
+                // duplicating the 100% line on non-terminal (piped) output.
+                if tick_throttled(self.last_tick, now, self.tick_interval, is_final) {
+                    return Ok(());
                 }
 
                 let bytes = event.bytes_transferred();
-                let now = Instant::now();
                 let estimator = self
                     .per_file_remaining
                     .entry(relative.to_path_buf())
@@ -302,14 +320,13 @@ impl<'a> ClientProgressObserver for LiveProgress<'a> {
                 );
                 // upstream: progress.c:97-105 prints ETA via the sliding window
                 // mid-transfer and switches to total elapsed for the final tick.
-                let time_text = if update.is_final() {
+                let time_text = if is_final {
                     format_progress_elapsed(event.elapsed())
                 } else {
                     let total = update.total_bytes().unwrap_or(bytes);
                     estimator.render(now, bytes, total)
                 };
                 let time_field = format!("{time_text:>10}");
-                let xfr_index = update.index();
 
                 if self.line_active {
                     if self.output_config.is_terminal {
@@ -319,22 +336,34 @@ impl<'a> ClientProgressObserver for LiveProgress<'a> {
                     }
                 }
 
-                // upstream: progress.c:80 - chk-prefix is "to" once the file
-                // list is complete, "ir" while INC_RECURSE sub-lists are still
-                // arriving on the wire.
-                let chk_prefix = if update.flist_eof() { "to" } else { "ir" };
-                write!(
-                    self.writer,
-                    "{size_field} {percent_field} {rate_field} {time_field} (xfr#{xfr_index}, {chk_prefix}-chk={remaining}/{total})"
-                )?;
-
-                if update.is_final() {
+                if is_final {
+                    // upstream: progress.c:77-92 - the `(xfr#..)` trailer is
+                    // emitted only on the final (is_last) tick; per-file mode
+                    // keeps the trailing newline. progress.c:80 - chk-prefix is
+                    // "to" once the file list is complete, "ir" while
+                    // INC_RECURSE sub-lists are still arriving on the wire.
+                    let chk_prefix = if update.flist_eof() { "to" } else { "ir" };
+                    let xfr_index = update.index();
+                    write!(
+                        self.writer,
+                        "{size_field} {percent_field} {rate_field} {time_field} (xfr#{xfr_index}, {chk_prefix}-chk={remaining}/{total})"
+                    )?;
                     writeln!(self.writer)?;
                     self.line_active = false;
                     self.active_path = None;
                     self.per_file_remaining.remove(relative);
                 } else {
+                    // upstream: progress.c:99-100 - in-flight ticks use a
+                    // trailing `"  "` (two spaces) instead of the xfr trailer.
+                    write!(
+                        self.writer,
+                        "{size_field} {percent_field} {rate_field} {time_field}  "
+                    )?;
                     self.line_active = true;
+                    // upstream: progress.c:224 - the throttle baseline advances
+                    // to the last rendered in-flight tick; the final tick does
+                    // not advance it.
+                    self.last_tick = Some(now);
                     // upstream: progress.c:133 - rflush(FCLIENT) after
                     // every non-final progress tick.
                     self.flush_if_needed()?;
@@ -520,6 +549,79 @@ mod tests {
         let output = String::from_utf8(buf).expect("utf8");
         assert!(output.contains("ir-chk="), "missing ir-chk: {output}");
         assert!(!output.contains("to-chk="), "unexpected to-chk: {output}");
+    }
+
+    /// Builds a per-path in-flight (non-final) update.
+    fn make_mid_for(path: &str) -> ClientProgressUpdate {
+        let event = ClientEvent::for_test(
+            PathBuf::from(path),
+            ClientEventKind::DataCopied,
+            false,
+            None,
+            LocalCopyChangeSet::new(),
+        );
+        ClientProgressUpdate::from_transfer_event_mid(
+            event,
+            1,
+            2,
+            Some(2_048),
+            1_024,
+            Some(2_048),
+            Duration::from_secs(0),
+            true,
+        )
+    }
+
+    /// Builds a per-path final update carrying the xfr trailer.
+    fn make_final_for(path: &str, index: usize) -> ClientProgressUpdate {
+        let event = ClientEvent::for_test(
+            PathBuf::from(path),
+            ClientEventKind::DataCopied,
+            true,
+            None,
+            LocalCopyChangeSet::new(),
+        );
+        ClientProgressUpdate::from_transfer_event(
+            event,
+            index,
+            2,
+            Some(2_048),
+            2_048,
+            Duration::from_secs(0),
+            true,
+        )
+    }
+
+    /// upstream: progress.c:77-92, 224 - a local copy forwards an intermediate
+    /// `handle_progress` tick and a final `handle` tick per file. When both
+    /// fall within one throttle interval (a fast single-chunk file), only the
+    /// final tick renders, and the `(xfr#..)` trailer is emitted solely on
+    /// that final tick. On non-terminal (piped) output each rendered tick is a
+    /// separate line, so exactly one `xfr#` line must appear per file - never
+    /// two. This is the regression guard for the duplicate-line bug.
+    #[test]
+    fn per_file_piped_emits_one_xfr_trailer_per_file() {
+        let mut buf: Vec<u8> = Vec::new();
+        {
+            let mut live = LiveProgress::with_output_config(
+                &mut buf,
+                ProgressMode::PerFile,
+                HumanReadableMode::Grouped,
+                piped_config(),
+            );
+            // Two files, each an intermediate tick immediately followed by its
+            // final tick (well within the default throttle interval).
+            live.on_progress(&make_mid_for("a.bin"));
+            live.on_progress(&make_final_for("a.bin", 1));
+            live.on_progress(&make_mid_for("b.bin"));
+            live.on_progress(&make_final_for("b.bin", 2));
+        }
+        let output = String::from_utf8(buf).expect("utf8");
+        let xfr_lines = output.lines().filter(|line| line.contains("xfr#")).count();
+        assert_eq!(
+            xfr_lines, 2,
+            "expected exactly one xfr trailer per file: {output:?}"
+        );
     }
 
     /// upstream: progress.c:100 - in-flight progress2 ticks use trailing
@@ -752,6 +854,9 @@ mod tests {
                 HumanReadableMode::Grouped,
                 piped_config(),
             );
+            // Disable throttling so both in-flight ticks render and exercise
+            // the `\n`-vs-`\r` line separator choice under test.
+            live.tick_interval = Duration::ZERO;
             live.on_progress(&make_mid_transfer_update(true));
             live.on_progress(&make_mid_transfer_update(true));
         }
@@ -774,6 +879,9 @@ mod tests {
                 HumanReadableMode::Grouped,
                 terminal_config(),
             );
+            // Disable throttling so both in-flight ticks render and exercise
+            // the `\r` in-place overwrite under test.
+            live.tick_interval = Duration::ZERO;
             live.on_progress(&make_mid_transfer_update(true));
             live.on_progress(&make_mid_transfer_update(true));
         }
@@ -952,6 +1060,9 @@ mod tests {
                 HumanReadableMode::Grouped,
                 config,
             );
+            // Disable throttling so the single in-flight tick renders and
+            // triggers the flush under test.
+            live.tick_interval = Duration::ZERO;
             // Mid-transfer tick should trigger flush
             live.on_progress(&make_mid_transfer_update(true));
         }
@@ -996,6 +1107,9 @@ mod tests {
                 HumanReadableMode::Grouped,
                 config,
             );
+            // Disable throttling so the in-flight tick renders; block-buffered
+            // mode must still not flush.
+            live.tick_interval = Duration::ZERO;
             live.on_progress(&make_mid_transfer_update(true));
         }
         let count = writer.flush_count.load(Ordering::Relaxed);
@@ -1039,6 +1153,9 @@ mod tests {
                 HumanReadableMode::Grouped,
                 config,
             );
+            // Disable throttling so the single in-flight tick renders and
+            // triggers the flush under test.
+            live.tick_interval = Duration::ZERO;
             live.on_progress(&make_mid_transfer_update(true));
         }
         let count = writer.flush_count.load(Ordering::Relaxed);
