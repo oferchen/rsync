@@ -222,9 +222,11 @@ impl TryFrom<u8> for FnameCmpType {
     }
 }
 
-/// Error returned when a wire byte does not correspond to a valid `FnameCmpType`.
+/// Error type for the fallible `TryFrom<u8>` conversion into `FnameCmpType`.
 ///
-/// Values 0x84-0xFF are undefined in the upstream protocol.
+/// The `from_wire` mapping is total - every byte decodes, with 0x83-0xFF
+/// mapping to `Fuzzy` offsets - so this error is never produced today. It is
+/// retained for the `TryFrom` contract and forward compatibility.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct InvalidFnameCmpType(
     /// The invalid wire byte.
