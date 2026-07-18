@@ -79,10 +79,7 @@ fn window_advancement_opens_new_slots() {
     // Fill 4, 5, 6 to drain through 7.
     let d = buf.insert(4, 'e').unwrap();
     assert_eq!(d, vec!['e']);
-    // 4 drained, next_expected=5, but 5 not present - empty.
-    // Wait, 4 drains immediately since next_expected=4 and item 4 arrives.
-    // Actually insert(4) sees next_expected=4, inserts, drains 4 (only 4 consecutive).
-    // next_expected becomes 5. 5 not in buffer. Returns ['e'].
+    // insert(4) fills the head: drains only 4 (5 is absent), next_expected = 5.
 
     let d = buf.insert(5, 'f').unwrap();
     assert_eq!(d, vec!['f']);
@@ -122,8 +119,7 @@ fn window_remaining_tracks_capacity() {
     buf.insert(3, "y").unwrap();
     assert_eq!(buf.window_remaining(), 2);
 
-    // Fill gap - drains 0, 1 not present, so only 2, 3 stay buffered.
-    // Actually 0 is not in buffer either, so nothing drains.
+    // Head (0) never arrived, so nothing drains; 2 and 3 stay buffered.
     assert_eq!(buf.buffered_count(), 2);
 }
 
