@@ -2,8 +2,14 @@ use crate::error::TaskError;
 use std::env;
 use std::io;
 
+/// Environment variable listing cargo tools that should be treated as missing.
+///
+/// Entries are separated by `,`, `;`, or `|` and matched against a tool's
+/// display name, letting tests exercise the tool-unavailable paths.
 pub(crate) const FORCE_MISSING_ENV: &str = "OC_RSYNC_FORCE_MISSING_CARGO_TOOLS";
 
+/// Returns whether `display` is listed in `FORCE_MISSING_ENV`, simulating an
+/// unavailable cargo tool.
 pub(crate) fn should_simulate_missing_tool(display: &str) -> bool {
     let Ok(entries) = env::var(FORCE_MISSING_ENV) else {
         return false;
@@ -15,6 +21,8 @@ pub(crate) fn should_simulate_missing_tool(display: &str) -> bool {
         .any(|value| !value.is_empty() && value == display)
 }
 
+/// Maps a command-spawn error to `TaskError`, reporting `TaskError::ToolMissing`
+/// when the program was not found and otherwise wrapping the I/O error.
 pub(crate) fn map_command_error(error: io::Error, program: &str, install_hint: &str) -> TaskError {
     if error.kind() == io::ErrorKind::NotFound {
         TaskError::ToolMissing(format!("{program} is unavailable; {install_hint}"))
@@ -23,6 +31,8 @@ pub(crate) fn map_command_error(error: io::Error, program: &str, install_hint: &
     }
 }
 
+/// Builds a `TaskError::ToolMissing` naming the unavailable tool and its
+/// install hint.
 pub(crate) fn tool_missing_error(display: &str, install_hint: &str) -> TaskError {
     TaskError::ToolMissing(format!("{display} is unavailable; {install_hint}"))
 }

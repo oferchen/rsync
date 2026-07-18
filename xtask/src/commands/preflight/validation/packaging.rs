@@ -5,6 +5,8 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use toml::{Value, value::Table as TomlTable};
 
+/// Validates that packaging assets under `packaging/` match the branded daemon
+/// configuration directory and file names.
 pub(crate) fn validate_packaging_assets(
     workspace: &Path,
     branding: &WorkspaceBranding,

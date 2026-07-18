@@ -11,6 +11,10 @@ mod packaging;
 use packaging::file_name;
 pub(crate) use packaging::validate_packaging_assets;
 
+/// Validates that workspace branding matches the pinned release invariants:
+/// upstream 3.4.1, a `-rust` version suffix, protocol 32, brand-derived binary
+/// and daemon file names, and absolute config/secrets paths within the
+/// configured daemon directory.
 pub(crate) fn validate_branding(branding: &WorkspaceBranding) -> TaskResult<()> {
     let brand = branding.brand.trim();
     ensure(!brand.is_empty(), "workspace brand label must not be empty")?;
@@ -147,6 +151,8 @@ pub(crate) fn validate_branding(branding: &WorkspaceBranding) -> TaskResult<()> 
     Ok(())
 }
 
+/// Ensures the root crate version reported by `cargo metadata` matches the
+/// branded `rust_version`.
 pub(crate) fn validate_package_versions(
     workspace: &Path,
     branding: &WorkspaceBranding,
@@ -183,6 +189,8 @@ pub(crate) fn validate_package_versions(
     Ok(())
 }
 
+/// Ensures `workspace.package.rust-version` in the manifest matches the pinned
+/// CI toolchain (1.88).
 pub(crate) fn validate_workspace_package_rust_version(manifest: &Value) -> TaskResult<()> {
     let workspace = manifest
         .get("workspace")
@@ -207,6 +215,8 @@ pub(crate) fn validate_workspace_package_rust_version(manifest: &Value) -> TaskR
     )
 }
 
+/// Ensures required documentation files contain the branded binary, version,
+/// and daemon-config snippets.
 pub(crate) fn validate_documentation(
     workspace: &Path,
     branding: &WorkspaceBranding,
