@@ -1,24 +1,24 @@
-// Parity validation: partial interrupt behavior must match upstream rsync.
-//
-// Upstream rsync's cleanup.c and receiver.c define the authoritative behavior
-// for what happens to temp files when a transfer is interrupted:
-//
-//   1. PartialMode::None (default): temp file is deleted on any interrupt.
-//   2. PartialMode::Partial (--partial): temp file is renamed to the final
-//      destination, and modtime is stamped to epoch (0). The mtime=0 stamp
-//      prevents --update from skipping the partial file on subsequent runs.
-//      upstream: cleanup.c:130-135, cleanup.c:174-178
-//   3. PartialMode::PartialDir (--partial-dir=DIR): temp file is moved to
-//      DIR/filename. No mtime=0 stamp. upstream: cleanup.c:105-115
-//
-// This test module validates the full behavioral matrix: 3 modes x 3 interrupt
-// types (Shutdown, Abort, channel Disconnect), plus edge cases for
-// CleanupManager integration and zero-byte partial suppression.
-//
-// upstream references:
-//   - cleanup.c:105-135  partial retention decision
-//   - cleanup.c:174-178  mtime=0 stamp for plain --partial
-//   - receiver.c:340-345 do_rename(partialptr, fname) on interrupt
+//! Parity validation: partial interrupt behavior must match upstream rsync.
+//!
+//! Upstream rsync's cleanup.c and receiver.c define the authoritative behavior
+//! for what happens to temp files when a transfer is interrupted:
+//!
+//!   1. PartialMode::None (default): temp file is deleted on any interrupt.
+//!   2. PartialMode::Partial (--partial): temp file is renamed to the final
+//!      destination, and modtime is stamped to epoch (0). The mtime=0 stamp
+//!      prevents --update from skipping the partial file on subsequent runs.
+//!      upstream: cleanup.c:130-135, cleanup.c:174-178
+//!   3. PartialMode::PartialDir (--partial-dir=DIR): temp file is moved to
+//!      DIR/filename. No mtime=0 stamp. upstream: cleanup.c:105-115
+//!
+//! This test module validates the full behavioral matrix: 3 modes x 3 interrupt
+//! types (Shutdown, Abort, channel Disconnect), plus edge cases for
+//! CleanupManager integration and zero-byte partial suppression.
+//!
+//! upstream references:
+//!   - cleanup.c:105-135  partial retention decision
+//!   - cleanup.c:174-178  mtime=0 stamp for plain --partial
+//!   - receiver.c:340-345 do_rename(partialptr, fname) on interrupt
 
 use std::fs;
 
