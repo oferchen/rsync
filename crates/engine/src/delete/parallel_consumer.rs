@@ -8,11 +8,12 @@
 //! # Scope
 //!
 //! - The module is gated behind the `parallel-delete-consumer` Cargo
-//!   feature so production builds remain byte-for-byte unchanged. DEL-2.d
-//!   migrates the receiver-side call site that today routes through
-//!   [`super::emitter::DeleteEmitter::emit_all`]. This change is additive
-//!   only: with the feature off, the symbols here are not compiled and the
-//!   existing sequential emitter remains the only consumer.
+//!   feature so production builds remain byte-for-byte unchanged. When the
+//!   feature is enabled, `DeleteContext::emit_one` (DEL-2.d) routes the
+//!   receiver-side drain through this consumer instead of the sequential
+//!   [`super::emitter::DeleteEmitter`]. This wiring is additive only: with
+//!   the feature off, the symbols here are not compiled and the existing
+//!   sequential emitter remains the only consumer.
 //! - The consumer preserves the DEL-1.a strict cross-cohort wire ordering
 //!   for `NDX_DEL_STATS` accumulation: cohort `N + 1` cannot begin
 //!   dispatch until every op in cohort `N` has completed. Within a

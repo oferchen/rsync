@@ -39,12 +39,14 @@
 //! # Concurrency
 //!
 //! [`DeletePlanMap`](super::plan_map::DeletePlanMap) already provides
-//! interior mutability via a global mutex; the traversal cursor is
-//! wrapped in a [`Mutex`](std::sync::Mutex) here. The observation API
-//! takes `&self`, so the context can live inside an
-//! [`Arc`](std::sync::Arc) shared between the receiver and worker
-//! threads. The drain consumes the context by value (`mut self`) and is
-//! therefore the single-writer path that owns the emitter.
+//! interior mutability via a global mutex; cursor observations from
+//! workers are queued through a `crossbeam_channel::unbounded`
+//! producer-consumer channel rather than a shared
+//! `Arc<Mutex<DirTraversalCursor>>`. The observation API takes `&self`,
+//! so the context can live inside an [`Arc`](std::sync::Arc) shared
+//! between the receiver and worker threads. The drain consumes the
+//! context by value and is therefore the single-writer path that owns
+//! the emitter.
 //!
 //! # Submodules
 //!
