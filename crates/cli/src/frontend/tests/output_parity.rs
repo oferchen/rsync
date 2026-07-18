@@ -1,8 +1,8 @@
-// Output parity tests: verify oc-rsync output format matches upstream rsync conventions.
-//
-// These tests call the formatting functions directly with known inputs and verify
-// that the rendered output matches the structure and content expected by upstream
-// rsync's --stats, --verbose, and --itemize-changes modes.
+//! Output parity tests: verify oc-rsync output format matches upstream rsync conventions.
+//!
+//! These tests call the formatting functions directly with known inputs and verify
+//! that the rendered output matches the structure and content expected by upstream
+//! rsync's --stats, --verbose, and --itemize-changes modes.
 
 use super::common::{RSYNC, run_with_args};
 use super::*;
