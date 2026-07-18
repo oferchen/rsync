@@ -28,6 +28,8 @@ pub struct ValidateOptions {
     pub bench_files: usize,
     /// Enrich fixtures with edge cases (opt-in).
     pub edge_cases: bool,
+    /// Run root-only validations (device nodes, id remaps) when actually root.
+    pub root: bool,
     /// Print each transfer's command and stdout on failure.
     pub verbose: bool,
 }
@@ -39,6 +41,7 @@ impl From<crate::cli::ValidateMatrixArgs> for ValidateOptions {
             bench: args.bench,
             bench_files: args.bench_files.unwrap_or(10_000),
             edge_cases: args.edge_cases,
+            root: args.root,
             verbose: args.verbose,
         }
     }
@@ -134,6 +137,8 @@ mod unix_impl {
         pub transports: &'a [Transport],
         /// Enrich fixtures with edge cases (opt-in).
         pub edge_cases: bool,
+        /// Run root-only validations when the process is actually root.
+        pub root: bool,
         /// Verbose diagnostics.
         pub verbose: bool,
     }
@@ -193,6 +198,7 @@ mod unix_impl {
             work: &work,
             transports: &transports,
             edge_cases: options.edge_cases,
+            root: options.root,
             verbose: options.verbose,
         };
 

@@ -89,6 +89,11 @@ pub struct ValidateMatrixArgs {
     #[arg(long)]
     pub edge_cases: bool,
 
+    /// Run root-only validations (device/FIFO/socket nodes, id remaps). Only
+    /// takes effect when the process is actually running as root.
+    #[arg(long)]
+    pub root: bool,
+
     /// File count for the benchmark workload.
     #[arg(long, value_name = "N")]
     pub bench_files: Option<usize>,
