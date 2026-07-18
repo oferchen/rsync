@@ -353,6 +353,23 @@ def benchmark_rss(cmd, runs=3):
     return result
 
 
+def binary_version(binary):
+    """Return the `x.y.z` release number reported by an rsync-compatible binary.
+
+    Runs `<binary> --version` and extracts the leading release number so the
+    report and chart can label the comparison against the exact upstream
+    build. Returns an empty string if the binary cannot be probed.
+    """
+    try:
+        out = subprocess.run(
+            [binary, "--version"], capture_output=True, timeout=10, text=True,
+        ).stdout
+    except (OSError, subprocess.SubprocessError):
+        return ""
+    match = re.search(r"\b(\d+\.\d+\.\d+)\b", out)
+    return match.group(1) if match else ""
+
+
 def benchmark(cmd, runs=5):
     """Run a command multiple times and return timing statistics."""
     times = []
@@ -429,6 +446,8 @@ def main():
             "size_mb": round(total_size / 1024 / 1024, 1),
             "files": total_files,
         }
+        results["upstream_version"] = binary_version(UPSTREAM)
+        results["oc_rsync_version"] = binary_version(OC_RSYNC)
 
         # Start rsync daemon for daemon benchmarks
         port = find_free_port()
