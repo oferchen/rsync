@@ -5,7 +5,6 @@ fn legacy_daemon_greeting_includes_version_and_digests() {
     // Greeting should start with @RSYNCD: and protocol version
     assert!(greeting.starts_with("@RSYNCD: "));
 
-    // Should end with a newline
     assert!(greeting.ends_with('\n'));
 
     // Should contain supported digest names (md5, md4)
@@ -13,7 +12,6 @@ fn legacy_daemon_greeting_includes_version_and_digests() {
     let parts: Vec<&str> = greeting.trim_end().split(' ').collect();
     assert!(parts.len() >= 2, "expected version and at least one digest");
 
-    // First part is @RSYNCD:
     assert_eq!(parts[0], "@RSYNCD:");
 
     // Second part is the version number (format: "31.0" or similar)

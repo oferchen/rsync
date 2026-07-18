@@ -70,7 +70,7 @@ fn daemon_delta_transfer_updates_modified_files() {
     let (probe_stream, daemon_handle) = start_daemon(daemon_config, port, held_listener);
     drop(probe_stream);
 
-    // === Phase 1: Initial push (whole-file, seeds the destination) ===
+    // Phase 1: Initial push (whole-file, seeds the destination)
     {
         let mut source_arg = source_dir.clone().into_os_string();
         source_arg.push("/");
@@ -117,14 +117,14 @@ fn daemon_delta_transfer_updates_modified_files() {
     filetime::set_file_mtime(dest_dir.join("other.txt"), old_time)
         .expect("backdate dest other.txt");
 
-    // === Modify source files (append data so delta is beneficial) ===
+    // Modify source files (append data so delta is beneficial)
     let mut modified_content = base_content.clone();
     modified_content.extend_from_slice(b"APPENDED DELTA PAYLOAD\n");
 
     fs::write(source_dir.join("data.txt"), &modified_content).expect("rewrite data.txt");
     fs::write(source_dir.join("other.txt"), &modified_content).expect("rewrite other.txt");
 
-    // === Phase 2: Push with delta mode (--no-whole-file) ===
+    // Phase 2: Push with delta mode (--no-whole-file)
     {
         let mut source_arg = source_dir.clone().into_os_string();
         source_arg.push("/");
@@ -152,7 +152,7 @@ fn daemon_delta_transfer_updates_modified_files() {
         }
     }
 
-    // === Verify destination matches modified source ===
+    // Verify destination matches modified source
     let dest_data = fs::read(dest_dir.join("data.txt")).expect("read dest data.txt after delta");
     assert_eq!(
         dest_data, modified_content,

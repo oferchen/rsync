@@ -59,7 +59,7 @@ fn daemon_delete_push_removes_extraneous_destination_files() {
     let (probe_stream, daemon_handle) = start_daemon(daemon_config, port, held_listener);
     drop(probe_stream);
 
-    // === Phase 1: Initial push - seed destination with A, B, C ===
+    // Phase 1: Initial push - seed destination with A, B, C
     {
         let mut source_arg = source_dir.clone().into_os_string();
         source_arg.push("/");
@@ -108,10 +108,10 @@ fn daemon_delete_push_removes_extraneous_destination_files() {
             .unwrap_or_else(|e| panic!("backdate dest {name}: {e}"));
     }
 
-    // === Remove file B from source ===
+    // Remove file B from source
     fs::remove_file(source_dir.join("file_b.txt")).expect("remove file_b from source");
 
-    // === Phase 2: Push with --delete - extraneous file B should be removed ===
+    // Phase 2: Push with --delete - extraneous file B should be removed
     {
         let mut source_arg = source_dir.clone().into_os_string();
         source_arg.push("/");
@@ -135,7 +135,7 @@ fn daemon_delete_push_removes_extraneous_destination_files() {
         }
     }
 
-    // === Verify destination state after delete push ===
+    // Verify destination state after delete push
 
     // Files A and C must still be present
     assert!(
