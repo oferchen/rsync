@@ -404,7 +404,15 @@ impl DeflateSink for ZlibDeflate {
                 output.extend_from_slice(&self.output_buf[..produced]);
             }
 
-            if input.is_empty() && produced == 0 {
+            // Stop as soon as an inflate call makes no forward progress:
+            // neither consuming the sync marker nor producing residual output.
+            // This is zlib's Z_BUF_ERROR ("no pending output"), which upstream
+            // treats as end-of-drain rather than a reason to keep flushing.
+            // Without this an adversarial stream whose inflate state can neither
+            // advance on nor consume the marker spins here forever (a DoS).
+            // upstream: token.c:615-646 recv_deflated_token() r_inflated - a
+            // single Z_SYNC_FLUSH per residual chunk, Z_BUF_ERROR ends the drain.
+            if consumed == 0 && produced == 0 {
                 break;
             }
         }
