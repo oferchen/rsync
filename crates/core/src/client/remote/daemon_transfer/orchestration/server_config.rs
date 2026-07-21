@@ -60,6 +60,15 @@ pub(crate) fn build_server_config_for_receiver(
     // client IS the receiver and --existing is a long-form-only flag absent from
     // the compact letter string, so carry it onto the local receiver config here.
     server_config.file_selection.existing_only = config.existing_only();
+    // upstream generator.c:1395 skips any file already present at the destination
+    // under --ignore-existing (`if (ignore_existing > 0 && statret == 0)` early
+    // goto cleanup). options.c:2911-2919 forwards --ignore-existing to the remote
+    // only inside the `if (am_sender)` server_options block, so on a pull it is
+    // never sent over the wire; the local client IS the receiver and applies it
+    // itself. Carry it onto the local receiver config here, mirroring
+    // existing_only above. Without this the daemon pull re-transferred and
+    // overwrote existing destination files instead of skipping them.
+    server_config.file_selection.ignore_existing = config.ignore_existing();
     // upstream: options.c:2194 / generator.c:1249 - a single source operand with
     // no destination implies --list-only. On a pull the local client IS the
     // receiver and list_only is a long-form-only flag absent from the compact
