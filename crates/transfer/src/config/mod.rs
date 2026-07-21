@@ -534,6 +534,22 @@ pub struct ServerConfig {
     /// - `loadparm.c` - `outgoing chmod` module parameter
     /// - `flist.c:make_file()` - `daemon_chmod_modes` applied during flist build
     pub daemon_outgoing_chmod: Option<ChmodModifiers>,
+    /// Client `--chmod` modifiers applied by the receiver on a pull.
+    ///
+    /// Parsed from the client's `--chmod=SPEC` flag. `--chmod` is never
+    /// forwarded to the remote (it is absent from `options.c` server_options),
+    /// so on a pull the local client IS the receiver and applies the modifiers
+    /// itself when finalising on-disk permissions. Distinct from
+    /// `daemon_incoming_chmod`, which is module-config-driven; on a pull that
+    /// field is always `None` while this one carries the client flag.
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `options.c:1762` - `parse_chmod(arg, &chmod_modes)` parses `--chmod`
+    /// - `flist.c:905-906` - `recv_file_entry()` calls `tweak_mode(mode,
+    ///   chmod_modes)` on the receiver as it reads each incoming entry
+    /// - `chmod.c:218 tweak_mode()` - applies the AND/OR mode clauses
+    pub chmod: Option<ChmodModifiers>,
     /// Parsed `--usermap=SPEC` rules forwarded by the client.
     ///
     /// Receiver-side: applied at metadata-apply time to remap each entry's UID
@@ -606,6 +622,7 @@ impl Default for ServerConfig {
             fake_super: false,
             daemon_incoming_chmod: None,
             daemon_outgoing_chmod: None,
+            chmod: None,
             user_mapping: None,
             group_mapping: None,
             munge_symlinks: false,
