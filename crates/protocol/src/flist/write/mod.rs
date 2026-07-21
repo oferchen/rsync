@@ -22,7 +22,7 @@ use crate::ProtocolVersion;
 use crate::acl::{AclCache, RsyncAcl, send_acl};
 use crate::codec::{ProtocolCodecEnum, create_protocol_codec};
 use crate::iconv::FilenameConverter;
-use crate::xattr::{XattrCache, XattrList, send_xattr};
+use crate::xattr::{XattrCache, send_xattr};
 
 use super::entry::FileEntry;
 use super::state::{FileListCompressionState, FileListStats};
@@ -527,7 +527,7 @@ impl FileListWriter {
         if self.preserve.xattrs {
             let list = entry.xattr_list().cloned().unwrap_or_default();
             // upstream: xattrs.c:send_xattr() - check cache for matching set
-            let cached_index = self.find_matching_xattr(&list);
+            let cached_index = self.xattr_cache.find(&list);
             send_xattr(writer, &list, cached_index, self.checksum_seed)?;
             if cached_index.is_none() {
                 // upstream: xattrs.c:538 - rsync_xal_store() adds to cache
@@ -553,35 +553,6 @@ impl FileListWriter {
         self.update_stats(entry);
 
         Ok(())
-    }
-
-    /// Finds a matching xattr set in the sender-side cache.
-    ///
-    /// Returns `Some(index)` if an identical xattr set has already been sent,
-    /// allowing the writer to emit a cache reference instead of literal data.
-    ///
-    /// Comparison is by entry count plus name+value equality for each entry.
-    /// This is a linear scan - upstream uses hash-based lookup, but the cache
-    /// is typically small enough that linear scan is adequate.
-    ///
-    /// # Upstream Reference
-    ///
-    /// See `xattrs.c:find_matching_xattr()` - hash-based lookup in `rsync_xal_l`.
-    fn find_matching_xattr(&self, list: &XattrList) -> Option<u32> {
-        for i in 0..self.xattr_cache.len() {
-            if let Some(cached) = self.xattr_cache.get(i) {
-                if cached.len() != list.len() {
-                    continue;
-                }
-                let all_match = cached.iter().zip(list.iter()).all(|(a, b)| {
-                    a.name() == b.name() && a.datum_len() == b.datum_len() && a.datum() == b.datum()
-                });
-                if all_match {
-                    return Some(i as u32);
-                }
-            }
-        }
-        None
     }
 }
 
