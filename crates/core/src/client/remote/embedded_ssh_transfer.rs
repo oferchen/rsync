@@ -632,6 +632,22 @@ fn build_server_config_for_receiver(
     // and must carry the fuzzy level; the compact 'y' letter is emitted only
     // when the local side is the sender.
     server_config.flags.fuzzy_level = config.fuzzy_level();
+    // upstream: options.c:2648-2649 - `if (am_sender) { ... if (omit_link_times)
+    // argstr[x++] = 'J'; }`. -J/--omit-link-times skips a received symlink's
+    // mtime (rsync.c:583 adds ATTRS_SKIP_MTIME for `omit_link_times &&
+    // S_ISLNK`), so on a pull the local client IS the receiver and must carry
+    // the flag; the compact 'J' letter is emitted only when the local side is
+    // the sender. Without this the embedded-ssh pull set symlink mtimes from the
+    // source while the local copy executor honoured -J.
+    server_config.flags.omit_link_times = config.omit_link_times();
+    // upstream: options.c:2692-2693 - `else if (preserve_executability &&
+    // am_sender) argstr[x++] = 'E';`. -E/--executability copies the source
+    // executability bits when perms are not otherwise preserved
+    // (rsync.c:457-465), so on a pull the local client IS the receiver and must
+    // carry the flag; the compact 'E' letter is emitted only when the local
+    // side is the sender. Without this the embedded-ssh pull left files at their
+    // existing mode while the local copy executor honoured -E.
+    server_config.flags.preserve_executability = config.preserve_executability();
 
     flags::apply_common_server_flags(config, &mut server_config);
     Ok(server_config)
@@ -983,6 +999,52 @@ mod tests {
             build_server_config_for_receiver(&config, &["dest".to_owned()]).unwrap();
 
         assert!(!server_config.flags.omit_dir_times);
+    }
+
+    /// On an embedded-ssh pull the local client IS the receiver and applies
+    /// --omit-link-times itself (upstream rsync.c:583). options.c:2648-2649
+    /// packs the compact 'J' only when am_sender, so on a pull it must be
+    /// carried onto the receiver config.
+    #[test]
+    fn embedded_receiver_config_propagates_omit_link_times() {
+        let config = ClientConfig::builder().omit_link_times(true).build();
+        let server_config =
+            build_server_config_for_receiver(&config, &["dest".to_owned()]).unwrap();
+
+        assert!(server_config.flags.omit_link_times);
+    }
+
+    /// Without --omit-link-times the receiver config leaves the flag clear.
+    #[test]
+    fn embedded_receiver_config_without_omit_link_times_stays_clear() {
+        let config = ClientConfig::builder().build();
+        let server_config =
+            build_server_config_for_receiver(&config, &["dest".to_owned()]).unwrap();
+
+        assert!(!server_config.flags.omit_link_times);
+    }
+
+    /// On an embedded-ssh pull the local client IS the receiver and applies -E
+    /// itself (upstream rsync.c:457-465). options.c:2692-2693 packs the compact
+    /// 'E' only when am_sender, so on a pull it must be carried onto the
+    /// receiver config.
+    #[test]
+    fn embedded_receiver_config_propagates_preserve_executability() {
+        let config = ClientConfig::builder().executability(true).build();
+        let server_config =
+            build_server_config_for_receiver(&config, &["dest".to_owned()]).unwrap();
+
+        assert!(server_config.flags.preserve_executability);
+    }
+
+    /// Without -E the receiver config leaves the flag clear.
+    #[test]
+    fn embedded_receiver_config_without_preserve_executability_stays_clear() {
+        let config = ClientConfig::builder().build();
+        let server_config =
+            build_server_config_for_receiver(&config, &["dest".to_owned()]).unwrap();
+
+        assert!(!server_config.flags.preserve_executability);
     }
 
     /// The embedded (russh) pull receiver must carry `--mkpath` onto its

@@ -344,6 +344,30 @@ pub struct ParsedServerFlags {
     /// !omit_dir_times`).
     pub omit_dir_times: bool,
 
+    /// Omit symlink modification times (long-form `--omit-link-times` / `-J`).
+    ///
+    /// Receiver-side only. Not part of the compact flag string built by
+    /// `build_server_flag_string`: upstream `options.c:2648-2649` packs `'J'`
+    /// into `server_options` only inside the `if (am_sender)` block, so on a
+    /// pull the flag is never sent over the wire and the local client (which IS
+    /// the receiver) must apply it itself. When set, the receiver skips a
+    /// symlink's mtime, mirroring upstream `rsync.c:583` where `omit_link_times
+    /// && S_ISLNK` adds `ATTRS_SKIP_MTIME | ATTRS_SKIP_ATIME | ATTRS_SKIP_CRTIME`
+    /// in `set_file_attrs()`.
+    pub omit_link_times: bool,
+
+    /// Preserve executability (long-form `--executability` / `-E`).
+    ///
+    /// Receiver-side only. Not part of the compact flag string built by
+    /// `build_server_flag_string`: upstream `options.c:2692-2693` packs `'E'`
+    /// into `server_options` only inside the `else if (preserve_executability &&
+    /// am_sender)` branch, so on a pull the flag is never sent over the wire and
+    /// the local client (which IS the receiver) must apply it itself. When set
+    /// without `--perms`, the receiver copies only the executability bits from
+    /// the source mode, mirroring upstream `rsync.c:457-465` (`set_file_attrs()`
+    /// layers `-E` on top when `!preserve_perms`).
+    pub preserve_executability: bool,
+
     /// Engage the opt-in parallel sender-side delta scan for large files
     /// (long-form `--parallel-delta-scan`).
     ///

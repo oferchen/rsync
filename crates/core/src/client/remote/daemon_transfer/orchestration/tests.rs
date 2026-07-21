@@ -1276,6 +1276,52 @@ mod server_config_reference_dirs {
         assert!(!server_config.flags.omit_dir_times);
     }
 
+    /// On a daemon (rsync://) pull the local client IS the receiver and applies
+    /// --omit-link-times itself (upstream rsync.c:583). options.c:2648-2649
+    /// packs the compact 'J' only when am_sender, so on a pull it must be
+    /// carried onto the receiver config.
+    #[test]
+    fn receiver_config_propagates_omit_link_times() {
+        let config = ClientConfig::builder().omit_link_times(true).build();
+        let server_config =
+            build_server_config_for_receiver(&config, &["dest".to_owned()], Vec::new()).unwrap();
+
+        assert!(server_config.flags.omit_link_times);
+    }
+
+    /// Without --omit-link-times the receiver config leaves the flag clear.
+    #[test]
+    fn receiver_config_without_omit_link_times_stays_clear() {
+        let config = ClientConfig::default();
+        let server_config =
+            build_server_config_for_receiver(&config, &["dest".to_owned()], Vec::new()).unwrap();
+
+        assert!(!server_config.flags.omit_link_times);
+    }
+
+    /// On a daemon (rsync://) pull the local client IS the receiver and applies
+    /// -E itself (upstream rsync.c:457-465). options.c:2692-2693 packs the
+    /// compact 'E' only when am_sender, so on a pull it must be carried onto the
+    /// receiver config.
+    #[test]
+    fn receiver_config_propagates_preserve_executability() {
+        let config = ClientConfig::builder().executability(true).build();
+        let server_config =
+            build_server_config_for_receiver(&config, &["dest".to_owned()], Vec::new()).unwrap();
+
+        assert!(server_config.flags.preserve_executability);
+    }
+
+    /// Without -E the receiver config leaves the flag clear.
+    #[test]
+    fn receiver_config_without_preserve_executability_stays_clear() {
+        let config = ClientConfig::default();
+        let server_config =
+            build_server_config_for_receiver(&config, &["dest".to_owned()], Vec::new()).unwrap();
+
+        assert!(!server_config.flags.preserve_executability);
+    }
+
     /// On a daemon (rsync://) pull the local client IS the receiver and creates
     /// the dest-arg path chain itself. `--mkpath` is never forwarded to the
     /// remote daemon (upstream options.c:2996-2997 gates it on am_sender), so the

@@ -17,6 +17,26 @@ use crate::generator::ItemFlags;
 use crate::receiver::ReceiverContext;
 
 impl ReceiverContext {
+    /// Reports whether a received symlink's mtime should be preserved.
+    ///
+    /// True when `--times` is active and `--omit-link-times` (`-J`) is not.
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `rsync.c:583` - `set_file_attrs()` adds `ATTRS_SKIP_MTIME |
+    ///   ATTRS_SKIP_ATIME | ATTRS_SKIP_CRTIME` when `omit_link_times &&
+    ///   S_ISLNK(file->mode)`, so a symlink keeps its wall-clock creation time
+    ///   instead of the sender-supplied mtime.
+    /// - `options.c:2648-2649` - `-J` is packed into `server_options` only on a
+    ///   push (`am_sender`), so on a pull the local receiver applies it itself.
+    ///
+    /// Mirrors the local-copy executor, which builds symlink options as
+    /// `metadata_options.clone().preserve_times(false)` when
+    /// `omit_link_times_enabled()` (engine `local_copy/executor/special/symlink.rs`).
+    const fn preserve_symlink_times(&self) -> bool {
+        self.config.flags.times && !self.config.flags.omit_link_times
+    }
+
     /// Creates symbolic links from the file list entries.
     ///
     /// Iterates through the received file list, finds symlink entries with
@@ -107,7 +127,7 @@ impl ReceiverContext {
                     let symlink_options = MetadataOptions::new()
                         .preserve_owner(self.config.flags.owner)
                         .preserve_group(self.config.flags.group)
-                        .preserve_times(self.config.flags.times)
+                        .preserve_times(self.preserve_symlink_times())
                         .preserve_atimes(self.config.flags.atimes)
                         .numeric_ids(self.config.flags.numeric_ids.maps_numeric())
                         .fake_super(self.config.fake_super);
@@ -223,7 +243,7 @@ impl ReceiverContext {
                 let compare_opts = MetadataOptions::new()
                     .preserve_owner(self.config.flags.owner)
                     .preserve_group(self.config.flags.group)
-                    .preserve_times(self.config.flags.times)
+                    .preserve_times(self.preserve_symlink_times())
                     .preserve_atimes(self.config.flags.atimes)
                     .numeric_ids(self.config.flags.numeric_ids.maps_numeric())
                     .fake_super(self.config.fake_super);
@@ -291,7 +311,7 @@ impl ReceiverContext {
             let symlink_options = MetadataOptions::new()
                 .preserve_owner(self.config.flags.owner)
                 .preserve_group(self.config.flags.group)
-                .preserve_times(self.config.flags.times)
+                .preserve_times(self.preserve_symlink_times())
                 .preserve_atimes(self.config.flags.atimes)
                 .numeric_ids(self.config.flags.numeric_ids.maps_numeric())
                 .fake_super(self.config.fake_super);
@@ -405,7 +425,7 @@ impl ReceiverContext {
                     let symlink_options = MetadataOptions::new()
                         .preserve_owner(self.config.flags.owner)
                         .preserve_group(self.config.flags.group)
-                        .preserve_times(self.config.flags.times)
+                        .preserve_times(self.preserve_symlink_times())
                         .preserve_atimes(self.config.flags.atimes)
                         .numeric_ids(self.config.flags.numeric_ids.maps_numeric())
                         .fake_super(self.config.fake_super);
@@ -508,7 +528,7 @@ impl ReceiverContext {
             let symlink_options = MetadataOptions::new()
                 .preserve_owner(self.config.flags.owner)
                 .preserve_group(self.config.flags.group)
-                .preserve_times(self.config.flags.times)
+                .preserve_times(self.preserve_symlink_times())
                 .preserve_atimes(self.config.flags.atimes)
                 .numeric_ids(self.config.flags.numeric_ids.maps_numeric())
                 .fake_super(self.config.fake_super);
@@ -965,6 +985,74 @@ fn create_windows_symlink(target: &Path, link_path: &Path) -> std::io::Result<()
 #[cfg(test)]
 mod tests {
     use std::fs;
+
+    /// The receiver honours `-J`/`--omit-link-times`: a received symlink's mtime
+    /// is preserved only when `--times` is set AND `--omit-link-times` is not.
+    ///
+    /// This is the transfer-side honoring decision fed to every
+    /// `apply_symlink_metadata_from_entry` call in `create_symlinks`. It mirrors
+    /// the local copy executor, which builds symlink options as
+    /// `metadata_options.clone().preserve_times(false)` when
+    /// `omit_link_times_enabled()`.
+    ///
+    /// upstream: rsync.c:583 - `set_file_attrs()` adds `ATTRS_SKIP_MTIME` for a
+    /// symlink when `omit_link_times`. options.c:2648-2649 packs the compact 'J'
+    /// only on a push (`am_sender`), so on a pull the receiver applies it itself.
+    #[cfg(any(unix, windows))]
+    #[test]
+    fn omit_link_times_controls_symlink_mtime_preservation() {
+        use std::ffi::OsString;
+
+        use protocol::ProtocolVersion;
+
+        use crate::config::ServerConfig;
+        use crate::flags::ParsedServerFlags;
+        use crate::handshake::HandshakeResult;
+        use crate::receiver::ReceiverContext;
+        use crate::role::ServerRole;
+
+        let handshake = HandshakeResult {
+            protocol: ProtocolVersion::try_from(32u8).unwrap(),
+            buffered: Vec::new(),
+            compat_exchanged: false,
+            client_args: None,
+            io_timeout: None,
+            negotiated_algorithms: None,
+            compat_flags: None,
+            checksum_seed: 0,
+        };
+        let make = |times: bool, omit: bool| ServerConfig {
+            role: ServerRole::Receiver,
+            protocol: ProtocolVersion::try_from(32u8).unwrap(),
+            flag_string: "-r".to_owned(),
+            flags: ParsedServerFlags {
+                times,
+                omit_link_times: omit,
+                recursive: true,
+                ..ParsedServerFlags::default()
+            },
+            args: vec![OsString::from(".")],
+            ..Default::default()
+        };
+
+        let ctx = ReceiverContext::new_for_test(&handshake, make(true, false));
+        assert!(
+            ctx.preserve_symlink_times(),
+            "-t without -J must preserve the symlink mtime"
+        );
+
+        let ctx = ReceiverContext::new_for_test(&handshake, make(true, true));
+        assert!(
+            !ctx.preserve_symlink_times(),
+            "-J must suppress the symlink mtime even under -t"
+        );
+
+        let ctx = ReceiverContext::new_for_test(&handshake, make(false, false));
+        assert!(
+            !ctx.preserve_symlink_times(),
+            "without -t there is no source mtime to preserve"
+        );
+    }
 
     /// Verifies `fast_io::hard_link` creates a valid hard link regardless of
     /// whether io_uring handles it or `std::fs::hard_link` does.
