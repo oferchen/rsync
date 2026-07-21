@@ -10,9 +10,44 @@
 //! comparison and reports one [`CheckOutcome`] per matrix cell; the runner just
 //! aggregates. This keeps checks independent and individually testable.
 
+use std::collections::HashSet;
 use std::path::Path;
 
 use crate::error::TaskResult;
+
+/// A group a [`Check`] belongs to, used to select subsets of the matrix from
+/// the CLI. A check may belong to several categories.
+#[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
+pub enum Category {
+    /// Core drop-in fidelity checks (the default set).
+    Validation,
+    /// Checks that exercise enriched, adversarial fixtures.
+    EdgeCases,
+    /// Security-sensitive behaviours (path escapes, privilege handling).
+    Security,
+    /// Wire-format and protocol-level fidelity.
+    Wire,
+}
+
+impl Category {
+    /// Every category, in display order.
+    pub const ALL: [Category; 4] = [
+        Category::Validation,
+        Category::EdgeCases,
+        Category::Security,
+        Category::Wire,
+    ];
+
+    /// Stable lowercase label matching the CLI flag that selects it.
+    pub fn label(self) -> &'static str {
+        match self {
+            Category::Validation => "validation",
+            Category::EdgeCases => "edge-cases",
+            Category::Security => "security",
+            Category::Wire => "wire",
+        }
+    }
+}
 
 /// Platform-agnostic options parsed from the CLI.
 ///
@@ -28,8 +63,16 @@ pub struct ValidateOptions {
     pub bench: bool,
     /// File count for the benchmark workload.
     pub bench_files: usize,
-    /// Enrich fixtures with edge cases (opt-in).
+    /// Select the [`Category::Validation`] checks.
+    pub validation: bool,
+    /// Enrich fixtures with edge cases and select [`Category::EdgeCases`].
     pub edge_cases: bool,
+    /// Select the [`Category::Security`] checks.
+    pub security: bool,
+    /// Select the [`Category::Wire`] checks.
+    pub wire: bool,
+    /// List the available checks grouped by category, then exit.
+    pub list: bool,
     /// Run root-only validations (device nodes, id remaps) when actually root.
     pub root: bool,
     /// Print each transfer's command and stdout on failure.
@@ -43,11 +86,41 @@ impl From<crate::cli::ValidateMatrixArgs> for ValidateOptions {
             flags: args.flags,
             bench: args.bench,
             bench_files: args.bench_files.unwrap_or(10_000),
+            validation: args.validation,
             edge_cases: args.edge_cases,
+            security: args.security,
+            wire: args.wire,
+            list: args.list,
             root: args.root,
             verbose: args.verbose,
         }
     }
+}
+
+/// Resolve the set of categories to run from the parsed flags.
+///
+/// When no category flag is passed the harness defaults to the historical
+/// [`Category::Validation`] set, keeping a bare `cargo xtask validate`
+/// regression-safe. `--edge-cases` both enriches fixtures and selects
+/// [`Category::EdgeCases`].
+pub fn selected_categories(options: &ValidateOptions) -> HashSet<Category> {
+    let mut set = HashSet::new();
+    if options.validation {
+        set.insert(Category::Validation);
+    }
+    if options.edge_cases {
+        set.insert(Category::EdgeCases);
+    }
+    if options.security {
+        set.insert(Category::Security);
+    }
+    if options.wire {
+        set.insert(Category::Wire);
+    }
+    if set.is_empty() {
+        set.insert(Category::Validation);
+    }
+    set
 }
 
 #[cfg(unix)]
@@ -155,6 +228,11 @@ mod unix_impl {
         fn name(&self) -> &'static str;
         /// Run the check, returning one outcome per matrix cell.
         fn run(&self, ctx: &ValidateCtx) -> Vec<CheckOutcome>;
+        /// Categories this check belongs to. Defaults to
+        /// [`Category::Validation`] so existing checks need no changes.
+        fn categories(&self) -> &'static [Category] {
+            &[Category::Validation]
+        }
     }
 
     /// Resolve requested transport labels to concrete transports (all if empty).
@@ -175,6 +253,18 @@ mod unix_impl {
     /// Detect binaries, run every check, print the matrix, and fail if any cell
     /// diverged.
     pub fn execute(workspace: &Path, options: ValidateOptions) -> TaskResult<()> {
+        let all_checks = checks::all();
+        if options.list {
+            list_checks(&all_checks);
+            return Ok(());
+        }
+
+        let selected = super::selected_categories(&options);
+        let checks: Vec<Box<dyn Check>> = all_checks
+            .into_iter()
+            .filter(|c| c.categories().iter().any(|cat| selected.contains(cat)))
+            .collect();
+
         let oc = crate::commands::interop::shared::oc_rsync::detect_oc_rsync_binary(workspace)?;
         let upstream = pick_upstream(workspace)?;
         let transports = resolve_transports(&options.transports)?;
@@ -186,15 +276,22 @@ mod unix_impl {
         std::fs::create_dir_all(&work)
             .map_err(|e| crate::error::TaskError::Validation(format!("create work dir: {e}")))?;
 
+        let mut cats: Vec<&'static str> = Category::ALL
+            .iter()
+            .filter(|c| selected.contains(c))
+            .map(|c| c.label())
+            .collect();
+        cats.sort_unstable();
         eprintln!(
-            "[validate] oc-rsync={} vs upstream={} over [{}]",
+            "[validate] oc-rsync={} vs upstream={} over [{}] categories [{}]",
             oc.binary_path().display(),
             upstream.display(),
             transports
                 .iter()
                 .map(|t| t.label())
                 .collect::<Vec<_>>()
-                .join(", ")
+                .join(", "),
+            cats.join(", ")
         );
 
         let ctx = ValidateCtx {
@@ -209,10 +306,11 @@ mod unix_impl {
         };
 
         let mut outcomes = Vec::new();
-        for check in checks::all() {
+        for check in &checks {
             outcomes.extend(check.run(&ctx));
         }
         report(&outcomes);
+        report_categories(&checks, &selected);
 
         if options.bench {
             bench::run(&ctx, options.bench_files)?;
@@ -288,6 +386,45 @@ mod unix_impl {
         }
         eprintln!("\n=== {pass} passed, {fail} failed, {skip} skipped ===");
     }
+
+    /// Summarize how many of the run checks fall in each selected category.
+    fn report_categories(checks: &[Box<dyn Check>], selected: &HashSet<Category>) {
+        eprintln!("\n=== categories ===");
+        for cat in Category::ALL {
+            if !selected.contains(&cat) {
+                continue;
+            }
+            let n = checks
+                .iter()
+                .filter(|c| c.categories().contains(&cat))
+                .count();
+            eprintln!("  {}: {n} check(s)", cat.label());
+        }
+    }
+
+    /// Print every check grouped by category (name plus its categories) to
+    /// stdout. A check appears under each category it belongs to.
+    fn list_checks(checks: &[Box<dyn Check>]) {
+        for cat in Category::ALL {
+            let mut members = checks
+                .iter()
+                .filter(|c| c.categories().contains(&cat))
+                .peekable();
+            if members.peek().is_none() {
+                continue;
+            }
+            println!("{}:", cat.label());
+            for c in members {
+                let labels = c
+                    .categories()
+                    .iter()
+                    .map(|x| x.label())
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                println!("  {} [{labels}]", c.name());
+            }
+        }
+    }
 }
 
 #[cfg(not(unix))]
@@ -301,11 +438,84 @@ pub fn execute(_workspace: &Path, options: ValidateOptions) -> TaskResult<()> {
         &options.flags,
         options.bench,
         options.bench_files,
+        options.validation,
         options.edge_cases,
+        options.security,
+        options.wire,
+        options.list,
         options.root,
         options.verbose,
     );
+    let selected = selected_categories(&options);
+    let _ = Category::ALL
+        .iter()
+        .filter(|c| selected.contains(c))
+        .map(|c| c.label())
+        .collect::<Vec<_>>();
     Err(crate::error::TaskError::Validation(
         "`cargo xtask validate` is only supported on Unix hosts".into(),
     ))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn opts(f: impl FnOnce(&mut ValidateOptions)) -> ValidateOptions {
+        let mut o = ValidateOptions::default();
+        f(&mut o);
+        o
+    }
+
+    #[test]
+    fn no_flags_defaults_to_validation() {
+        let set = selected_categories(&ValidateOptions::default());
+        assert_eq!(set, HashSet::from([Category::Validation]));
+    }
+
+    #[test]
+    fn security_flag_selects_only_security() {
+        let set = selected_categories(&opts(|o| o.security = true));
+        assert_eq!(set, HashSet::from([Category::Security]));
+    }
+
+    #[test]
+    fn edge_cases_flag_selects_edge_cases() {
+        let set = selected_categories(&opts(|o| o.edge_cases = true));
+        assert_eq!(set, HashSet::from([Category::EdgeCases]));
+    }
+
+    #[test]
+    fn multiple_flags_union() {
+        let set = selected_categories(&opts(|o| {
+            o.validation = true;
+            o.security = true;
+            o.wire = true;
+        }));
+        assert_eq!(
+            set,
+            HashSet::from([Category::Validation, Category::Security, Category::Wire])
+        );
+    }
+
+    #[test]
+    fn category_labels_are_stable() {
+        assert_eq!(Category::Validation.label(), "validation");
+        assert_eq!(Category::EdgeCases.label(), "edge-cases");
+        assert_eq!(Category::Security.label(), "security");
+        assert_eq!(Category::Wire.label(), "wire");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn all_checks_default_to_validation() {
+        for check in checks::all() {
+            assert_eq!(
+                check.categories(),
+                &[Category::Validation],
+                "check `{}` should default to the Validation category",
+                check.name()
+            );
+        }
+    }
 }
