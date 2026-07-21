@@ -1138,6 +1138,62 @@ mod server_config_reference_dirs {
         assert!(server_config.chmod.is_none());
     }
 
+    /// On a daemon pull the local client IS the receiver and stages the temp
+    /// file itself (upstream receiver.c:766 open_tmpfile() honours tmpdir).
+    /// options.c:2907-2909 forwards --temp-dir to the remote only when am_sender,
+    /// so on a pull it never rides the wire and must be carried onto the receiver
+    /// config, distinct from the module `temp dir` directive the far side
+    /// applies. Regression guard for the daemon pull that staged temps in the
+    /// destination directory.
+    #[test]
+    fn receiver_config_propagates_temp_dir() {
+        let config = ClientConfig::builder()
+            .temp_directory(Some("/var/tmp/rsync"))
+            .build();
+        let server_config =
+            build_server_config_for_receiver(&config, &["dest".to_owned()], Vec::new()).unwrap();
+
+        assert_eq!(
+            server_config.temp_dir.as_deref(),
+            Some(std::path::Path::new("/var/tmp/rsync"))
+        );
+    }
+
+    /// Without --temp-dir the receiver config leaves temp_dir unset.
+    #[test]
+    fn receiver_config_without_temp_dir_stays_none() {
+        let config = ClientConfig::default();
+        let server_config =
+            build_server_config_for_receiver(&config, &["dest".to_owned()], Vec::new()).unwrap();
+
+        assert!(server_config.temp_dir.is_none());
+    }
+
+    /// On a daemon pull the local client IS the receiver and applies
+    /// --omit-dir-times itself (upstream rsync.c:583 skips a directory's mtime,
+    /// generator.c:2271 gates the retouch pass). options.c:2646-2647 packs the
+    /// compact 'O' only when am_sender, so on a pull it never rides the wire and
+    /// must be carried onto the receiver config. Regression guard for the daemon
+    /// pull that set directory mtimes from the source.
+    #[test]
+    fn receiver_config_propagates_omit_dir_times() {
+        let config = ClientConfig::builder().omit_dir_times(true).build();
+        let server_config =
+            build_server_config_for_receiver(&config, &["dest".to_owned()], Vec::new()).unwrap();
+
+        assert!(server_config.flags.omit_dir_times);
+    }
+
+    /// Without --omit-dir-times the receiver config leaves the flag clear.
+    #[test]
+    fn receiver_config_without_omit_dir_times_stays_clear() {
+        let config = ClientConfig::default();
+        let server_config =
+            build_server_config_for_receiver(&config, &["dest".to_owned()], Vec::new()).unwrap();
+
+        assert!(!server_config.flags.omit_dir_times);
+    }
+
     /// On a daemon (rsync://) pull the local client IS the receiver and creates
     /// the dest-arg path chain itself. `--mkpath` is never forwarded to the
     /// remote daemon (upstream options.c:2996-2997 gates it on am_sender), so the
