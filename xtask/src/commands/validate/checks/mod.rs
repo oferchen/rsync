@@ -15,7 +15,9 @@ mod crtimes;
 mod cvs_exclude;
 mod delete;
 mod devices;
+mod dirs;
 mod dry_run;
+mod duplicates;
 mod executability;
 mod files_from;
 mod filters;
@@ -25,6 +27,7 @@ mod itemize;
 mod link_dest;
 mod metadata;
 mod mkpath;
+mod modify_window;
 mod one_file_system;
 mod progress;
 mod prune_empty_dirs;
@@ -37,6 +40,7 @@ mod stats;
 mod symlinks;
 mod total_size;
 mod transfer_conditions;
+mod trimslash;
 mod verbosity;
 mod whole_file;
 mod xattr;
@@ -63,6 +67,9 @@ pub fn all() -> Vec<Box<dyn Check>> {
         Box::new(devices::Devices),
         // Path selection and layout.
         Box::new(relative::Relative),
+        Box::new(trimslash::TrimSlash),
+        Box::new(dirs::Dirs),
+        Box::new(duplicates::Duplicates),
         Box::new(mkpath::Mkpath),
         Box::new(files_from::FilesFrom),
         Box::new(filters::Filters),
@@ -80,6 +87,7 @@ pub fn all() -> Vec<Box<dyn Check>> {
         Box::new(total_size::TotalSize),
         // Transfer decisions and deletion.
         Box::new(transfer_conditions::TransferConditions),
+        Box::new(modify_window::ModifyWindow),
         Box::new(checksum::Checksum),
         Box::new(whole_file::WholeFile),
         Box::new(append_inplace::AppendInplace),
