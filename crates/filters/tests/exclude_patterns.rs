@@ -1134,13 +1134,12 @@ mod edge_cases {
         assert!(set.allows(Path::new("file.gz"), false));
     }
 
-    /// Test: Pattern invalid syntax reports error.
+    /// upstream rsync never rejects a malformed-bracket pattern: `--exclude='['`
+    /// compiles and matches nothing (exclude.c:add_rule stores it verbatim;
+    /// lib/wildmatch.c:dowild returns ABORT_ALL). Compilation must mirror that.
     #[test]
-    fn invalid_pattern_error() {
-        let result = FilterSet::from_rules([FilterRule::exclude("[")]);
-        assert!(result.is_err());
-
-        let error = result.unwrap_err();
-        assert_eq!(error.pattern(), "[");
+    fn malformed_bracket_pattern_compiles_and_never_matches() {
+        let set = FilterSet::from_rules([FilterRule::exclude("[")]).expect("`[` must compile");
+        assert!(set.allows(Path::new("file.txt"), false));
     }
 }
