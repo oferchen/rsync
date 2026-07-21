@@ -86,6 +86,14 @@ pub(crate) fn run_pull_transfer(
         implied_source_args,
         server_config.connection.files_from_data.as_deref(),
     );
+    // upstream: exclude.c:396-401 / main.c:1549 - only a raw daemon module/path
+    // operand is recorded with skip_daemon_module=1; forwarded --files-from
+    // entries (io.c:427,464) are already module-relative and keep
+    // skip_daemon_module=0. Record the decision now, from the stable
+    // files-from-active signal, because files_from_data is later taken while
+    // forwarding the list and would read as absent at validation time.
+    server_config.connection.implied_skip_daemon_module =
+        server_config.connection.is_daemon_connection && !config.files_from().is_active();
 
     // Pull: local side is Receiver; batch records incoming data (is_sender=false).
     let batch_recording = batch_ctx

@@ -136,6 +136,82 @@ fn wildcard_arg_stays_active_and_admits_matching_names() {
 }
 
 #[test]
+fn daemon_files_from_subdir_entry_passes_without_module_strip() {
+    // Regression: `oc-rsync --files-from=LIST rsync://host/m/ dst/` selecting a
+    // subdirectory entry `sub/d.txt`. The forwarded files-from entries are the
+    // implied source args and are already module-relative, so upstream records
+    // them with skip_daemon_module=0 (io.c:427,464) even on a daemon
+    // connection. Stripping the leading path component would turn `sub/d.txt`
+    // into `d.txt` and wrongly reject the arriving `sub/d.txt` as unrequested.
+    // --files-from defaults relative_paths=1 and xfer_dirs=1 (options.c:2206,
+    // 2620) with recursion off, so the received `sub` dir and `sub/d.txt` file
+    // must both pass.
+    let mut config = test_config();
+    config.flags.relative = true;
+    config.flags.dirs = true;
+    config.flags.recursive = false;
+    config.connection.is_daemon_connection = true;
+    config.connection.implied_skip_daemon_module = false;
+    config.connection.implied_source_args = vec!["a.txt".to_owned(), "sub/d.txt".to_owned()];
+    let mut ctx = ReceiverContext::new_for_test(&test_handshake(), config);
+    ctx.file_list
+        .push(FileEntry::new_directory(".".into(), 0o755));
+    ctx.file_list
+        .push(FileEntry::new_file("a.txt".into(), 10, 0o644));
+    ctx.file_list
+        .push(FileEntry::new_directory("sub".into(), 0o755));
+    ctx.file_list
+        .push(FileEntry::new_file("sub/d.txt".into(), 10, 0o644));
+
+    ctx.recheck_received_implied_includes()
+        .expect("a files-from subdir entry on a daemon pull must not be rejected");
+}
+
+#[test]
+fn daemon_files_from_still_rejects_unrequested_name() {
+    // The guard must remain intact: an entry the files-from list never named
+    // (CVE-2022-29154) is still refused on a daemon files-from pull.
+    let mut config = test_config();
+    config.flags.relative = true;
+    config.flags.dirs = true;
+    config.flags.recursive = false;
+    config.connection.is_daemon_connection = true;
+    config.connection.implied_skip_daemon_module = false;
+    config.connection.implied_source_args = vec!["a.txt".to_owned(), "sub/d.txt".to_owned()];
+    let mut ctx = ReceiverContext::new_for_test(&test_handshake(), config);
+    ctx.file_list
+        .push(FileEntry::new_file("evil".into(), 20, 0o644));
+
+    let err = ctx.recheck_received_implied_includes().unwrap_err();
+    assert_eq!(err.kind(), io::ErrorKind::Unsupported);
+    assert_eq!(
+        err.to_string(),
+        "ERROR: rejecting unrequested file-list name: evil"
+    );
+}
+
+#[test]
+fn daemon_module_operand_still_strips_module_name() {
+    // A raw daemon `module/path` operand (no --files-from) keeps
+    // skip_daemon_module=1 (main.c:1549): the module name `m` is stripped so
+    // the requested `path` and its subtree are validated against the received
+    // names, which arrive module-relative.
+    let mut config = test_config();
+    config.flags.recursive = true;
+    config.connection.is_daemon_connection = true;
+    config.connection.implied_skip_daemon_module = true;
+    config.connection.implied_source_args = vec!["m/dir".to_owned()];
+    let mut ctx = ReceiverContext::new_for_test(&test_handshake(), config);
+    ctx.file_list
+        .push(FileEntry::new_directory("dir".into(), 0o755));
+    ctx.file_list
+        .push(FileEntry::new_file("dir/file".into(), 10, 0o644));
+
+    ctx.recheck_received_implied_includes()
+        .expect("module-stripped daemon operand must admit its own subtree");
+}
+
+#[test]
 fn trust_sender_skips_implied_check() {
     // upstream: options.c:2510 / exclude.c:385 - trust_sender_args makes
     // add_implied_include() a no-op, so the implied list is empty and the
