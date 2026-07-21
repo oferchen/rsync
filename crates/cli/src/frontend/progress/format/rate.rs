@@ -4,19 +4,25 @@ use std::time::Duration;
 
 use core::client::HumanReadableMode;
 
-/// Formats the bytes/sec field of the transfer summary trailer: thousands-
-/// grouped with two decimals by default, or unit-suffixed under `-h`/`-hh`.
+/// Formats the bytes/sec field of the transfer summary trailer: raw decimals
+/// under `--no-h`, thousands-grouped at the default level, or unit-suffixed
+/// under `-h`/`-hh`.
 pub(crate) fn format_summary_rate(rate: f64, human_readable: HumanReadableMode) -> String {
     if !human_readable.is_enabled() {
-        // upstream: main.c output_summary() prints the bytes/sec field with
-        // comma_dnum(rate, 2), i.e. thousands-grouped with 2 decimals. Reuse
-        // the same grouping helper the --stats renderer uses so the two
-        // summary paths agree (e.g. "1,234,567.89", not "1234567.89").
-        return crate::stats_format::format_speed(rate);
+        // upstream: main.c:418 formats the rate with human_dnum(rate, 2), i.e.
+        // do_big_dnum(rate, human_readable, 2). do_big_num (lib/compat.c:62)
+        // inserts the thousands separator only when human_flag != 0, so level 0
+        // (`--no-h`) renders raw ("1509.61") while the default level 1 groups
+        // ("1,509.61"). Grouping the rate at level 0 diverges from upstream.
+        return if human_readable.uses_separators() {
+            crate::stats_format::format_speed(rate)
+        } else {
+            format!("{rate:.2}")
+        };
     }
 
-    // upstream: main.c:464 formats the bytes/sec rate with human_num, the same
-    // do_big_num path as the byte counters, so the rate honours the level's base.
+    // upstream: main.c:418 human_dnum uses the same do_big_num unit path as the
+    // byte counters, so the rate honours the level's base under `-h`/`-hh`.
     format_human_rate(rate, human_readable.unit_base())
 }
 
@@ -119,6 +125,22 @@ mod tests {
         assert_eq!(
             format_summary_rate(512.0, HumanReadableMode::Grouped),
             "512.00"
+        );
+    }
+
+    #[test]
+    fn summary_rate_raw_under_no_h() {
+        // upstream: --no-h sets human_readable = 0, so main.c:418's human_dnum
+        // passes human_flag 0 and do_big_num inserts no separator. A rate that
+        // crosses 1000 must therefore render raw, not grouped, matching the real
+        // binary's "sent X bytes  received Y bytes  1509.61 bytes/sec" trailer.
+        assert_eq!(
+            format_summary_rate(1_509.61, HumanReadableMode::Raw),
+            "1509.61"
+        );
+        assert_eq!(
+            format_summary_rate(1_234_567.89, HumanReadableMode::Raw),
+            "1234567.89"
         );
     }
 
