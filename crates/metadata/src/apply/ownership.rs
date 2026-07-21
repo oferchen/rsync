@@ -26,37 +26,64 @@ use std::os::fd::BorrowedFd;
 #[cfg(unix)]
 use std::os::unix::fs::MetadataExt;
 
-/// Applies a path-based `chown`/`lchown` through the `nix` crate, selecting
-/// follow-vs-nofollow via `follow_symlinks` (`AT_SYMLINK_NOFOLLOW` = `lchown`).
+/// Applies a path-based `chown`/`lchown`, anchoring on the parent dirfd to
+/// defeat ancestor-symlink-swap TOCTOU attacks.
 ///
-/// `nix` calls the libc `fchownat(2)` symbol rather than issuing a raw syscall.
-/// This is mandatory for `fakeroot` compatibility: fakeroot interposes the libc
-/// `chown`/`lchown`/`fchown` symbols via `LD_PRELOAD` and fakes the ownership
-/// change for a non-root process. rustix's default `linux_raw` backend bypasses
-/// libc entirely, so fakeroot never sees the call and the real kernel returns
-/// `EPERM`, dropping every file to `0:0`. Routing through the libc symbol lets
-/// fakeroot fake it, matching upstream.
-// upstream: syscall.c:do_lchown()/do_chown() call the lchown(2)/chown(2) libc symbols.
+/// When `--keep-dirlinks` is inactive, dispatches to
+/// [`fast_io::secure_chown_at`], which walks the parent through
+/// `secure_open_dir` (`openat2(RESOLVE_BENEATH | RESOLVE_NO_SYMLINKS)` on
+/// Linux 5.6+, `open(O_NOFOLLOW | O_DIRECTORY)` elsewhere) and anchors
+/// `fchownat` on that dirfd. `AT_SYMLINK_NOFOLLOW` alone only guards the leaf;
+/// a symlink swapped into a receiver-created ancestor directory would
+/// otherwise be followed, redirecting the chown outside the module. Mirrors
+/// the chmod-symlink-race cutover in
+/// [`super::permissions::set_permissions_like`].
+///
+/// When `--keep-dirlinks` is active the user has opted into following
+/// dest-side symlinks-to-dirs, so the sandbox refusal is wrong: fall back to
+/// the path-based `nix` chown (through `AT_FDCWD`) which resolves symlinked
+/// parents like upstream `generator.c:1344`'s `link_stat`.
+///
+/// Both branches perform the ownership change through the libc
+/// `chown`/`lchown`/`fchownat` symbol rather than a raw syscall. This is
+/// mandatory for `fakeroot` compatibility: fakeroot interposes the libc
+/// symbols via `LD_PRELOAD` and fakes the change for a non-root process; a
+/// raw syscall bypasses libc, so fakeroot never sees the call and the kernel
+/// returns `EPERM`, dropping every file to `0:0`. Only the parent-directory
+/// walk uses `openat2`, which fakeroot ignores because it tracks ownership per
+/// inode on the chown call, not on directory opens.
+// upstream: syscall.c:do_lchown()/do_chown() call the lchown(2)/chown(2) libc
+// symbols; rsync 3.4.3+ resolves them under the module dirfd (CVE-2026-29518).
 #[cfg(unix)]
 fn chown_path(
     path: &Path,
     owner: Option<unix_fs::Uid>,
     group: Option<unix_fs::Gid>,
     follow_symlinks: bool,
+    keep_dirlinks: bool,
 ) -> Result<(), MetadataError> {
-    let flag = if follow_symlinks {
-        nix::fcntl::AtFlags::empty()
-    } else {
-        nix::fcntl::AtFlags::AT_SYMLINK_NOFOLLOW
-    };
-    nix::unistd::fchownat(
-        nix::fcntl::AT_FDCWD,
-        path,
-        owner.map(|uid| nix::unistd::Uid::from_raw(uid.as_raw())),
-        group.map(|gid| nix::unistd::Gid::from_raw(gid.as_raw())),
-        flag,
-    )
-    .map_err(|errno| MetadataError::new("preserve ownership", path, io::Error::from(errno)))
+    if keep_dirlinks {
+        let flag = if follow_symlinks {
+            nix::fcntl::AtFlags::empty()
+        } else {
+            nix::fcntl::AtFlags::AT_SYMLINK_NOFOLLOW
+        };
+        return nix::unistd::fchownat(
+            nix::fcntl::AT_FDCWD,
+            path,
+            owner.map(|uid| nix::unistd::Uid::from_raw(uid.as_raw())),
+            group.map(|gid| nix::unistd::Gid::from_raw(gid.as_raw())),
+            flag,
+        )
+        .map_err(|errno| MetadataError::new("preserve ownership", path, io::Error::from(errno)));
+    }
+
+    // `u32::MAX` is `fchownat`'s `(uid_t)-1` / `(gid_t)-1` "leave unchanged"
+    // sentinel, matching `owner`/`group` of `None`.
+    let uid = owner.map(|uid| uid.as_raw()).unwrap_or(u32::MAX);
+    let gid = group.map(|gid| gid.as_raw()).unwrap_or(u32::MAX);
+    fast_io::secure_chown_at(path, uid, gid, follow_symlinks)
+        .map_err(|error| MetadataError::new("preserve ownership", path, error))
 }
 
 /// fd-based counterpart to [`chown_path`] using the libc `fchown(2)` symbol via
@@ -465,7 +492,13 @@ pub(super) fn set_owner_like(
         // upstream: rsync.c:535-546 - DEBUG_GTE(OWN, 1) fires before do_lchown.
         trace_chown_change(destination, owner, group, existing);
 
-        chown_path(destination, owner, group, follow_symlinks)?;
+        chown_path(
+            destination,
+            owner,
+            group,
+            follow_symlinks,
+            options.keep_dirlinks(),
+        )?;
 
         // upstream: rsync.c:558-568 - impossible-id warning + suid/sgid re-stat.
         Ok(post_chown_bookkeeping(destination, owner, group, existing))
@@ -612,7 +645,7 @@ pub(super) fn apply_ownership_from_entry(
             // upstream: rsync.c:535-546 - DEBUG_GTE(OWN, 1) fires before do_lchown.
             trace_chown_change(destination, owner, group, cached_meta);
 
-            chown_path(destination, owner, group, true)?;
+            chown_path(destination, owner, group, true, options.keep_dirlinks())?;
 
             // upstream: rsync.c:558-568 - impossible-id warning + suid/sgid re-stat.
             return Ok(post_chown_bookkeeping(
@@ -691,7 +724,7 @@ pub(super) fn apply_symlink_ownership_from_entry(
     if needs_chown {
         trace_chown_change(destination, owner, group, cached_meta);
 
-        chown_path(destination, owner, group, false)?;
+        chown_path(destination, owner, group, false, options.keep_dirlinks())?;
 
         // upstream: rsync.c:558-561 - impossible-id warning also fires for
         // symlink chowns. The suid/sgid re-stat is irrelevant here because

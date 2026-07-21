@@ -82,7 +82,12 @@ pub fn apply_file_metadata_with_options(
         timestamps::set_timestamp_like(metadata, destination, true, None, Some(options))?;
     } else if options.atimes() {
         // upstream: rsync.c:604-612 - atime applied when SKIP_MTIME but not SKIP_ATIME
-        timestamps::apply_atime_only_from_metadata(metadata, destination, None)?;
+        timestamps::apply_atime_only_from_metadata(
+            metadata,
+            destination,
+            None,
+            options.keep_dirlinks(),
+        )?;
     }
     if options.crtimes() {
         timestamps::apply_crtime_from_source_metadata(destination, metadata)?;
@@ -195,7 +200,12 @@ pub fn apply_file_metadata_if_changed(
     if options.times() {
         timestamps::set_timestamp_like(metadata, destination, true, Some(existing), Some(options))?;
     } else if options.atimes() {
-        timestamps::apply_atime_only_from_metadata(metadata, destination, Some(existing))?;
+        timestamps::apply_atime_only_from_metadata(
+            metadata,
+            destination,
+            Some(existing),
+            options.keep_dirlinks(),
+        )?;
     }
     if options.crtimes() {
         timestamps::apply_crtime_from_source_metadata(destination, metadata)?;
@@ -621,7 +631,12 @@ pub fn apply_metadata_with_attrs_flags_and_pre_transfer(
     // upstream: rsync.c:604 - atime applied independently when SKIP_MTIME is set
     // but SKIP_ATIME is not, since apply_timestamps_from_entry handles both together
     if options.atimes() && attrs_flags.skip_mtime() && !attrs_flags.skip_atime() {
-        timestamps::apply_atime_only_from_entry(destination, entry, cached_meta.as_ref())?;
+        timestamps::apply_atime_only_from_entry(
+            destination,
+            entry,
+            cached_meta.as_ref(),
+            options.keep_dirlinks(),
+        )?;
     }
 
     // upstream: rsync.c:615 - `if (crtimes_ndx && !(flags & ATTRS_SKIP_CRTIME))`
