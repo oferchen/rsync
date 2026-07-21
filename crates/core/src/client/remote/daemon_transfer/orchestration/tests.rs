@@ -1164,6 +1164,36 @@ mod server_config_reference_dirs {
         assert!(!server_config.flags.mkpath);
     }
 
+    /// On a daemon (rsync://) push the local client IS the sender and applies
+    /// `--chmod` itself as it builds each outgoing flist entry (upstream
+    /// flist.c:1580-1581 send_file_name() -> tweak_mode()). `--chmod` is never
+    /// forwarded to the remote daemon receiver, so the generator config must
+    /// carry the parsed modifiers, distinct from the module `incoming chmod` the
+    /// daemon applies. Regression guard for the daemon push that left every file
+    /// at its source mode while local copies and pulls applied `--chmod`.
+    #[test]
+    fn generator_config_propagates_chmod() {
+        let modifiers = ::metadata::ChmodModifiers::parse("D2755,F640").expect("parse chmod spec");
+        let config = ClientConfig::builder()
+            .chmod(Some(modifiers.clone()))
+            .build();
+        let server_config =
+            build_server_config_for_generator(&config, &["src".to_owned()], Vec::new()).unwrap();
+
+        assert_eq!(server_config.chmod.as_ref(), Some(&modifiers));
+    }
+
+    /// Without `--chmod` the daemon generator config carries no chmod modifiers,
+    /// so the source mode travels unchanged.
+    #[test]
+    fn generator_config_without_chmod_has_none() {
+        let config = ClientConfig::default();
+        let server_config =
+            build_server_config_for_generator(&config, &["src".to_owned()], Vec::new()).unwrap();
+
+        assert!(server_config.chmod.is_none());
+    }
+
     #[test]
     fn generator_config_empty_reference_dirs_by_default() {
         let config = ClientConfig::default();

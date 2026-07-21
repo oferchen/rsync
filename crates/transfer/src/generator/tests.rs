@@ -270,6 +270,44 @@ fn send_file_list_first_byte_latency_recorded_for_empty_list() {
 }
 
 #[test]
+fn sender_flist_path_emits_no_debug_instrumentation_at_verbose() {
+    // Regression: a verbose (-v) push must not leak the sender's internal
+    // file-list instrumentation to stdout. Upstream's only stdout file-list
+    // line is the "sending incremental file list" banner (emitted by the CLI
+    // layer). "building file list", "built file list with N", and the
+    // first-byte latency timing are development-only diagnostics with no
+    // upstream stdout analog; every DiagnosticEvent::Info renders to the
+    // client's stdout, so any such event on the sender path is a leak.
+    logging::init(logging::VerbosityConfig::from_verbose_level(1));
+    let _ = logging::drain_events();
+
+    let temp = create_test_files(&[("one.txt", b"a"), ("two.txt", b"bb")]);
+    let (_handshake, mut ctx) = test_generator_for_path(temp.path(), false);
+    build_file_list_for_contents(&mut ctx, temp.path());
+
+    let mut wire = Vec::new();
+    ctx.send_file_list(&mut wire).unwrap();
+
+    let leaked: Vec<String> = logging::drain_events()
+        .into_iter()
+        .filter_map(|event| match event {
+            logging::DiagnosticEvent::Info { message, .. } => Some(message),
+            logging::DiagnosticEvent::Debug { .. } => None,
+        })
+        .filter(|m| {
+            m.contains("building file list")
+                || m.contains("built file list with")
+                || m.contains("first-byte latency")
+        })
+        .collect();
+
+    assert!(
+        leaked.is_empty(),
+        "sender file-list path leaked instrumentation to stdout: {leaked:?}"
+    );
+}
+
+#[test]
 fn ndx_convert_call_counter_increments() {
     // INC_RECURSE diagnostic I4 (#2199): every wire_to_flat_ndx /
     // flat_to_wire_ndx invocation must bump the global call counter. The

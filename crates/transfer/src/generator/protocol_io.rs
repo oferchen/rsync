@@ -13,7 +13,7 @@
 use std::io::{self, IoSlice, Read, Write};
 use std::time::{Duration, Instant};
 
-use logging::{InfoFlag, PhaseTimer, debug_log, info_gte, info_log};
+use logging::{InfoFlag, PhaseTimer, debug_log, info_gte};
 use protocol::CompatibilityFlags;
 use protocol::ProtocolVersion;
 use protocol::codec::{NDX_FLIST_EOF, NDX_FLIST_OFFSET, NdxCodec, NdxCodecEnum};
@@ -561,37 +561,6 @@ impl GeneratorContext {
 
         self.timing.flist_xfer_end = Some(Instant::now());
         self.timing.flist_first_byte_latency = first_byte_latency;
-
-        if let Some(latency) = first_byte_latency {
-            // INC_RECURSE diagnostic I1: time from function entry to first
-            // wire byte. Surfaced at -vv (info=flist1) and -v --info=stats3.
-            info_log!(
-                Flist,
-                1,
-                "send_file_list first-byte latency: {} us",
-                latency.as_micros()
-            );
-            info_log!(
-                Stats,
-                3,
-                "file list first-byte latency: {} us",
-                latency.as_micros()
-            );
-            debug_log!(
-                Flist,
-                2,
-                "send_file_list first-byte latency: {:?} ({} entries)",
-                latency,
-                count
-            );
-            #[cfg(feature = "tracing")]
-            ::tracing::info!(
-                target: "rsync::flist",
-                latency_us = latency.as_micros() as u64,
-                entries = count,
-                "send_file_list first-byte latency"
-            );
-        }
 
         Ok(self.file_list.len())
     }
