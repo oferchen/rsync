@@ -260,12 +260,6 @@ fn bind_with_backlog(
     Ok(socket.into())
 }
 
-/// Configures read/write timeouts on an accepted client stream.
-fn configure_stream(stream: &DaemonStream) -> io::Result<()> {
-    stream.set_read_timeout(Some(SOCKET_TIMEOUT))?;
-    stream.set_write_timeout(Some(SOCKET_TIMEOUT))
-}
-
 /// One-shot guard so the `--tcp-fastopen=on` unsupported-platform warning
 /// fires at most once per daemon process.
 static TCP_FASTOPEN_UNSUPPORTED_WARNED: std::sync::Once = std::sync::Once::new();

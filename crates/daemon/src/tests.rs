@@ -223,6 +223,7 @@ include!("tests/chunks/run_daemon_rejects_invalid_port.rs");
 include!("tests/chunks/run_daemon_rejects_unknown_argument.rs");
 include!("tests/chunks/run_daemon_rejects_push_to_read_only_module.rs");
 include!("tests/chunks/run_daemon_runs_post_xfer_exec_on_read_only_refuse.rs");
+include!("tests/chunks/run_daemon_serves_slow_handshake.rs");
 include!("tests/chunks/run_daemon_rejects_push_to_default_read_only_module.rs");
 include!("tests/chunks/daemon_pre_xfer_exec_rejects_on_nonzero_exit.rs");
 include!("tests/chunks/run_daemon_requests_authentication_for_protected_module.rs");
