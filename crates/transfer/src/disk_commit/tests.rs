@@ -3369,3 +3369,189 @@ fn checksum_mismatch_leaves_preexisting_dest_untouched() {
     h.file_tx.send(FileMessage::Shutdown).unwrap();
     h.join_handle.join().unwrap();
 }
+
+/// Backdated source mtime carried by every sparse regression file. Matches the
+/// host reproduction (source files stamped to 2021-03-04 via `touch -d`).
+const SPARSE_MTIME_SECS: i64 = 1_614_830_767;
+
+/// Builds a `DiskCommitConfig` whose file list carries a single regular-file
+/// entry stamped with [`SPARSE_MTIME_SECS`] and whose metadata options preserve
+/// times, so the disk thread applies that mtime via `apply_file_metadata`
+/// (upstream `set_file_attrs()` -> `set_modtime()`).
+fn sparse_mtime_config(sparse: bool, size: u64) -> DiskCommitConfig {
+    let mut entry = protocol::flist::FileEntry::new_file(
+        std::path::PathBuf::from("sparse_mtime.dat"),
+        size,
+        0o644,
+    );
+    entry.set_mtime(SPARSE_MTIME_SECS, 0);
+    DiskCommitConfig {
+        use_sparse: sparse,
+        file_list: Some(std::sync::Arc::new(vec![entry])),
+        metadata_opts: Some(
+            metadata::MetadataOptions::new()
+                .preserve_permissions(true)
+                .preserve_times(true),
+        ),
+        ..DiskCommitConfig::default()
+    }
+}
+
+/// Reads the destination file's last-modification time in whole seconds.
+fn dest_mtime_secs(path: &std::path::Path) -> i64 {
+    filetime::FileTime::from_last_modification_time(&fs::metadata(path).unwrap()).unix_seconds()
+}
+
+/// A sparse payload: leading data, a large zero hole, then trailing data. The
+/// interior zero run forces `SparseWriteState` to leave a hole so the commit
+/// runs `finalize_sparse` (ftruncate + punch), the operation that used to
+/// clobber the applied mtime.
+fn sparse_payload() -> Vec<u8> {
+    let mut data = Vec::new();
+    data.extend_from_slice(b"HEAD");
+    data.resize(data.len() + 64 * 1024, 0u8);
+    data.extend_from_slice(b"TAIL");
+    data
+}
+
+/// A sparse transfer over the pipelined (remote) receive path must still apply
+/// the source mtime. `finalize_sparse` (set_len + punch_hole) runs before
+/// `apply_file_metadata` on the temp+rename path, matching upstream ordering:
+/// `fileio.c:43 sparse_end()` inside `receive_data()` precedes
+/// `receiver.c` -> `finish_transfer()` -> `set_file_attrs()`. Regression for a
+/// remote `-a --sparse` transfer leaving every destination mtime at wall clock.
+#[test]
+fn sparse_streaming_commit_preserves_source_mtime() {
+    let _registry_lock = test_support::cleanup_registry_test_guard();
+    let dir = test_support::create_tempdir();
+    let file_path = dir.path().join("sparse_stream.dat");
+
+    let payload = sparse_payload();
+    let size = payload.len() as u64;
+    let h = spawn_disk_thread(sparse_mtime_config(true, size)).unwrap();
+
+    h.file_tx
+        .send(FileMessage::Begin(Box::new(BeginMessage {
+            file_path: file_path.clone(),
+            target_size: size,
+            file_entry_index: 0,
+            checksum_verifier: None,
+            is_device_target: false,
+            is_inplace: false,
+            append_offset: 0,
+            xattr_list: None,
+        })))
+        .unwrap();
+    h.file_tx.send(FileMessage::Chunk(payload)).unwrap();
+    h.file_tx
+        .send(FileMessage::Commit {
+            expected_checksum: Default::default(),
+        })
+        .unwrap();
+
+    let result = h.result_rx.recv().unwrap().unwrap();
+    assert!(result.metadata_error.is_none(), "metadata must apply");
+    assert_eq!(
+        fs::metadata(&file_path).unwrap().len(),
+        size,
+        "sparse finalize must truncate to the logical length"
+    );
+    assert_eq!(
+        dest_mtime_secs(&file_path),
+        SPARSE_MTIME_SECS,
+        "sparse temp+rename commit must preserve the source mtime, not stamp wall clock"
+    );
+
+    h.file_tx.send(FileMessage::Shutdown).unwrap();
+    h.join_handle.join().unwrap();
+}
+
+/// The coalesced whole-file path (`process_whole_file`) shares the sparse
+/// finalize-before-metadata ordering fix and must likewise preserve the mtime.
+#[test]
+fn sparse_whole_file_commit_preserves_source_mtime() {
+    let _registry_lock = test_support::cleanup_registry_test_guard();
+    let dir = test_support::create_tempdir();
+    let file_path = dir.path().join("sparse_whole.dat");
+
+    let payload = sparse_payload();
+    let size = payload.len() as u64;
+    let h = spawn_disk_thread(sparse_mtime_config(true, size)).unwrap();
+
+    h.file_tx
+        .send(FileMessage::WholeFile {
+            begin: Box::new(BeginMessage {
+                file_path: file_path.clone(),
+                target_size: size,
+                file_entry_index: 0,
+                checksum_verifier: None,
+                is_device_target: false,
+                is_inplace: false,
+                append_offset: 0,
+                xattr_list: None,
+            }),
+            data: payload,
+            expected_checksum: Default::default(),
+        })
+        .unwrap();
+
+    let result = h.result_rx.recv().unwrap().unwrap();
+    assert!(result.metadata_error.is_none(), "metadata must apply");
+    assert_eq!(
+        fs::metadata(&file_path).unwrap().len(),
+        size,
+        "sparse finalize must truncate to the logical length"
+    );
+    assert_eq!(
+        dest_mtime_secs(&file_path),
+        SPARSE_MTIME_SECS,
+        "sparse whole-file commit must preserve the source mtime, not stamp wall clock"
+    );
+
+    h.file_tx.send(FileMessage::Shutdown).unwrap();
+    h.join_handle.join().unwrap();
+}
+
+/// Control: the non-sparse pipelined path already preserved the mtime and must
+/// keep doing so, guarding against a regression that would move the fix's cost
+/// onto the common path.
+#[test]
+fn non_sparse_commit_preserves_source_mtime() {
+    let _registry_lock = test_support::cleanup_registry_test_guard();
+    let dir = test_support::create_tempdir();
+    let file_path = dir.path().join("non_sparse.dat");
+
+    let payload = b"dense payload".to_vec();
+    let size = payload.len() as u64;
+    let h = spawn_disk_thread(sparse_mtime_config(false, size)).unwrap();
+
+    h.file_tx
+        .send(FileMessage::Begin(Box::new(BeginMessage {
+            file_path: file_path.clone(),
+            target_size: size,
+            file_entry_index: 0,
+            checksum_verifier: None,
+            is_device_target: false,
+            is_inplace: false,
+            append_offset: 0,
+            xattr_list: None,
+        })))
+        .unwrap();
+    h.file_tx.send(FileMessage::Chunk(payload)).unwrap();
+    h.file_tx
+        .send(FileMessage::Commit {
+            expected_checksum: Default::default(),
+        })
+        .unwrap();
+
+    let result = h.result_rx.recv().unwrap().unwrap();
+    assert!(result.metadata_error.is_none(), "metadata must apply");
+    assert_eq!(
+        dest_mtime_secs(&file_path),
+        SPARSE_MTIME_SECS,
+        "non-sparse commit must preserve the source mtime"
+    );
+
+    h.file_tx.send(FileMessage::Shutdown).unwrap();
+    h.join_handle.join().unwrap();
+}
