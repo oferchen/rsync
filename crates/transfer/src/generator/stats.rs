@@ -214,3 +214,38 @@ pub(crate) fn is_early_close_error(e: &std::io::Error) -> bool {
             | std::io::ErrorKind::ConnectionAborted
     )
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::path::PathBuf;
+
+    /// `FlistSendStats::record` classifies each sent entry into the per-type
+    /// tally and adds `F_LENGTH` to `total_size` for regular files and symlinks
+    /// only, mirroring upstream `send_file_entry()` (flist.c:421-438, 690-691).
+    /// A directory and a FIFO must not inflate `total_size`, and a symlink's
+    /// target length must be counted (the sender flist stores the target length
+    /// as the entry size).
+    #[test]
+    fn flist_send_stats_classifies_per_type_and_total_size() {
+        let mut s = FlistSendStats::default();
+        s.record(&FileEntry::new_file(PathBuf::from("a"), 6, 0o644));
+        s.record(&FileEntry::new_file(PathBuf::from("b"), 7, 0o644));
+        s.record(&FileEntry::new_directory(PathBuf::from("d"), 0o755));
+        // The wire flist stores a symlink's size as its target string length;
+        // set it explicitly so the test reflects the on-wire entry.
+        let mut link = FileEntry::new_symlink(PathBuf::from("l"), PathBuf::from("abc"));
+        link.set_size(3);
+        s.record(&link);
+        s.record(&FileEntry::new_fifo(PathBuf::from("f"), 0o644));
+        s.record(&FileEntry::new_char_device(PathBuf::from("c"), 0o644, 1, 3));
+
+        assert_eq!(s.num_dirs, 1);
+        assert_eq!(s.num_symlinks, 1);
+        assert_eq!(s.num_specials, 1);
+        assert_eq!(s.num_devices, 1);
+        // total_size = reg (6 + 7) + symlink target len (3); dir, fifo, and
+        // device contribute 0.
+        assert_eq!(s.total_size, 16);
+    }
+}

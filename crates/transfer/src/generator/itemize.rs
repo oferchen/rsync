@@ -745,4 +745,40 @@ mod tests {
         assert!(ctx.preserve_mtimes);
         assert!(ctx.receiver_symlink_times);
     }
+
+    /// The plain-`-v` name line (`%n%L`): a bare path for a regular file, a
+    /// trailing `/` for a directory, and a ` -> target` arrow for a symlink -
+    /// matching what upstream's `log_item(FCLIENT)` prints on a push.
+    ///
+    /// upstream: log.c:627-636 (%n, dir slash), log.c:643-655 (%L arrow).
+    #[test]
+    fn name_line_renders_dir_slash_and_symlink_arrow() {
+        let none = ItemFlags::from_raw(0);
+        assert_eq!(
+            format_name_line(&make_file_entry("a.txt"), None, &none),
+            "a.txt\n"
+        );
+        assert_eq!(
+            format_name_line(&make_dir_entry("sub"), None, &none),
+            "sub/\n"
+        );
+        assert_eq!(
+            format_name_line(&make_symlink_entry("l1"), None, &none),
+            "l1 -> target\n"
+        );
+    }
+
+    /// `%L`'s ` => <hlink>` form wins over the symlink arrow when the entry
+    /// carries a non-empty alternate-basis name (`ITEM_XNAME_FOLLOWS`).
+    ///
+    /// upstream: log.c:643-655 - the `if (hlink && *hlink)` branch precedes the
+    /// symlink case.
+    #[test]
+    fn name_line_hardlink_suffix_wins() {
+        let hl = ItemFlags::from_raw(ItemFlags::ITEM_XNAME_FOLLOWS);
+        assert_eq!(
+            format_name_line(&make_file_entry("dup"), Some(b"leader"), &hl),
+            "dup => leader\n"
+        );
+    }
 }
