@@ -41,6 +41,20 @@ fn begin_msg(file_path: std::path::PathBuf, target_size: u64) -> FileMessage {
     }))
 }
 
+/// Creates a BeginMessage for an inplace write directly to `file_path`.
+fn begin_msg_inplace(file_path: std::path::PathBuf, target_size: u64) -> FileMessage {
+    FileMessage::Begin(Box::new(BeginMessage {
+        file_path,
+        target_size,
+        file_entry_index: 0,
+        checksum_verifier: None,
+        is_device_target: false,
+        is_inplace: true,
+        append_offset: 0,
+        xattr_list: None,
+    }))
+}
+
 /// Data pattern for partial content verification. Uses a repeating byte
 /// sequence so partial content can be validated as a prefix.
 fn test_data(size: usize) -> Vec<u8> {
@@ -393,6 +407,59 @@ fn parity_partial_dir_disconnect_retains_without_mtime_zero() {
         filetime::FileTime::from_unix_time(0, 0),
         "--partial-dir must NOT stamp mtime=0 on disconnect"
     );
+}
+
+// Why the receiver must never pick an inplace write for a --partial-dir resume.
+
+/// An inplace write (is_inplace == true, needs_rename == false) targets the live
+/// destination directly, and on interrupt the partial data is LEFT at the live
+/// destination name - it is never relocated into the partial dir. This is the
+/// exact data-integrity hazard the receiver's `resolve_use_inplace` avoids by
+/// keeping a `--partial-dir` resume a temp+rename transfer (see
+/// `crate::transfer_ops`): upstream's one_inplace writes to the partial file
+/// (partialptr), not the live destination (receiver.c:910,969), so the live name
+/// never holds a truncated file.
+#[test]
+fn inplace_partial_dir_would_leave_incomplete_file_at_live_dest() {
+    let _registry_lock = test_support::cleanup_registry_test_guard();
+    let dir = test_support::create_tempdir();
+    let dest = dir.path().join("inplace_live.dat");
+    let partial_dir = dir.path().join(".rsync-partial-inplace");
+
+    let config = DiskCommitConfig {
+        partial_mode: PartialMode::PartialDir(partial_dir.clone()),
+        ..DiskCommitConfig::default()
+    };
+    let h = spawn_disk_thread(config).unwrap();
+
+    h.file_tx
+        .send(begin_msg_inplace(dest.clone(), 1024))
+        .unwrap();
+    h.file_tx.send(FileMessage::Chunk(test_data(200))).unwrap();
+    h.file_tx
+        .send(FileMessage::Abort {
+            reason: "mid-transfer interrupt".into(),
+        })
+        .unwrap();
+
+    let result = h.result_rx.recv().unwrap();
+    assert!(result.is_err());
+
+    // The incomplete data is stranded at the live destination name...
+    assert!(
+        dest.exists(),
+        "inplace write leaves partial data at the live destination"
+    );
+    assert_eq!(fs::read(&dest).unwrap(), test_data(200));
+    // ...and nothing is placed in the partial dir. This is why the decision layer
+    // must route a --partial-dir resume through temp+rename instead.
+    assert!(
+        !partial_dir.join("inplace_live.dat").exists(),
+        "an inplace write never relocates into the partial dir"
+    );
+
+    h.file_tx.send(FileMessage::Shutdown).unwrap();
+    h.join_handle.join().unwrap();
 }
 
 // Upstream parity: zero-byte transfers suppress partial retention.
