@@ -518,6 +518,86 @@ fn commit_rename_refuses_parent_symlink_escape() {
     );
 }
 
+/// CVE-2026-29518 secondary residual: the pipelined disk-commit rename must
+/// anchor a file committed into a destination *subdirectory*, not just a file
+/// directly under the sandbox root. Before the fix the subdir case fell through
+/// to a path-based `std::fs::rename`, letting a swapped interior directory
+/// redirect the committed file out of the module on a privileged daemon.
+///
+/// Staging (deterministic, program order - no threads): the temp source is
+/// planted inside the out-of-tree location and the interior directory `sub`
+/// under the pinned root is a symlink to that location, modelling an attacker
+/// who swapped `dest/sub` for a symlink between temp-create and commit. A
+/// path-based `rename(dest/sub/.tmp, dest/sub/payload.bin)` would resolve both
+/// through the symlink and land the file in `outside/payload.bin` (the escape).
+/// The `openat2(RESOLVE_BENEATH)` parent anchor instead refuses to open `sub`
+/// (its symlink target escapes beneath the root), so the rename fails safe and
+/// nothing lands outside the module.
+///
+/// upstream: `syscall.c:910` `do_rename_at()` opens each slashed path's parent
+/// via `secure_relative_open()` before `renameat()`.
+///
+/// Linux + openat2 only: `RESOLVE_BENEATH` is the confinement primitive and has
+/// no portable equivalent; other targets keep the path-based fallback, matching
+/// upstream's `am_daemon && !am_chrooted` Linux gate.
+#[cfg(target_os = "linux")]
+#[test]
+fn commit_rename_subdir_refuses_interior_symlink_escape() {
+    use std::sync::Arc;
+
+    if !fast_io::openat2_supported() {
+        return;
+    }
+
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let staging = std::fs::canonicalize(tmp.path()).expect("canon");
+
+    // Pinned destination root (sandbox anchor) with a real interior subdir.
+    let dest_dir = staging.join("dest");
+    fs::create_dir(&dest_dir).unwrap();
+
+    // Out-of-tree location the escape would target; the temp source lives here
+    // so a symlink-followed rename would find a valid source and succeed.
+    let outside = staging.join("outside");
+    fs::create_dir(&outside).unwrap();
+    let temp_path = dest_dir.join("sub").join(".tmp.payload");
+    let final_path = dest_dir.join("sub").join("payload.bin");
+    fs::write(outside.join(".tmp.payload"), b"received content").unwrap();
+
+    // Open the sandbox at the real dest root BEFORE the swap; the dirfd pins the
+    // real root inode.
+    let sandbox = Arc::new(fast_io::DirSandbox::open_root(&dest_dir).expect("open sandbox"));
+    let config = DiskCommitConfig {
+        sandbox: Some(sandbox),
+        dest_dir: Some(dest_dir.clone()),
+        ..DiskCommitConfig::default()
+    };
+
+    // Plant the interior directory as a symlink escaping beneath the root. A
+    // path-based resolver routes `dest/sub/...` to `outside/...`.
+    std::os::unix::fs::symlink(&outside, dest_dir.join("sub")).expect("plant sub symlink");
+
+    // The anchored rename must refuse: opening `sub` under RESOLVE_BENEATH sees
+    // a symlink whose target escapes the root and fails (EXDEV), so the commit
+    // cannot follow the swap.
+    let result = rename_config_sandboxed(&config, &temp_path, &final_path);
+    assert!(
+        result.is_err(),
+        "anchored subdir rename must fail rather than follow the interior symlink swap",
+    );
+
+    // The escape must not have happened: no committed file outside the module,
+    // and the temp source is left untouched.
+    assert!(
+        !outside.join("payload.bin").exists(),
+        "committed file must not land outside the module through the swapped interior dir",
+    );
+    assert!(
+        outside.join(".tmp.payload").exists(),
+        "temp source is left in place when the anchored rename refuses",
+    );
+}
+
 /// Fallback parity: with no sandbox attached, `rename_config_sandboxed` uses
 /// the path-based [`rename_with_io_uring_fallback`], moving the temp file to
 /// its final destination exactly as before. Proves the sandbox wiring never
