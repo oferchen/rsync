@@ -47,10 +47,17 @@ pub(crate) fn query_destination_state(path: &Path) -> Result<DestinationState, L
 /// generator emits `created directory %s` only when the pre-flight mkdir
 /// actually created the dest; subsequent runs against the same destination
 /// must remain silent.
+///
+/// The `mkpath` argument selects how many components may be created, mirroring
+/// upstream `get_local_name()`: without `--mkpath` a single `do_mkdir(dest_path)`
+/// creates only the final component and a missing ancestor is a fatal ENOENT
+/// (`main.c:787,796`), whereas `--mkpath` first runs `make_path(dest_path, ...)`
+/// to build the whole leading chain (`main.c:736`).
 pub(crate) fn ensure_destination_directory(
     destination_path: &Path,
     state: &mut DestinationState,
     mode: LocalCopyExecution,
+    mkpath: bool,
 ) -> Result<bool, LocalCopyError> {
     if state.exists {
         if !state.is_dir {
@@ -67,7 +74,15 @@ pub(crate) fn ensure_destination_directory(
         return Ok(true);
     }
 
-    fs::create_dir_all(destination_path).map_err(|error| {
+    // upstream: main.c:736 vs main.c:787 - `--mkpath` runs `make_path()` (full
+    // chain) while the plain path does a single `do_mkdir(dest_path)` that fails
+    // with ENOENT when a leading directory is absent.
+    let outcome = if mkpath {
+        fs::create_dir_all(destination_path)
+    } else {
+        fs::create_dir(destination_path)
+    };
+    outcome.map_err(|error| {
         LocalCopyError::io(
             "create destination directory",
             destination_path.to_path_buf(),
