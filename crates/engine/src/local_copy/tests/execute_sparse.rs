@@ -63,16 +63,20 @@ fn execute_with_sparse_enabled_creates_holes() {
     );
 }
 
-/// `--preallocate --sparse` must reserve the destination extent and then punch
-/// the source's zero run back out, so the on-disk allocation stays sparse.
+/// `--preallocate --sparse` leaves the destination fully DENSE, not sparse.
 ///
-/// Mirrors upstream `preallocate_test.py`'s `--preallocate --sparse` leg:
-/// `do_fallocate()` reports the preallocated length and `write_sparse()` uses
-/// `do_punch_hole()` for the zero run inside that extent.
-// upstream: fileio.c:95 write_sparse() -> do_punch_hole within preallocated_len
+/// Upstream `do_fallocate()` reserves the whole extent with `FALLOC_FL_KEEP_SIZE`
+/// and returns 0, so `preallocated_len == 0`. In `write_sparse()` the
+/// `sparse_past_write >= preallocated_len` test is then always true, so the zero
+/// run is seeked over (`do_lseek`) rather than punched (`do_punch_hole`); seeking
+/// does not free the blocks the reservation already allocated, so preallocation
+/// defeats sparseness. Verified against rsync 3.4.4 (ext4): `--preallocate
+/// --sparse` yields `st_blocks*512 == st_size` (dense).
+// upstream: fileio.c:92 write_sparse() `if (sparse_past_write >= preallocated_len)`
+// upstream: syscall.c:1555 do_fallocate() returns 0 for the KEEP_SIZE (opts != 0) path
 #[cfg(target_os = "linux")]
 #[test]
-fn execute_preallocate_sparse_punches_hole() {
+fn execute_preallocate_sparse_stays_dense() {
     use std::os::unix::fs::MetadataExt;
 
     let temp = tempdir().expect("tempdir");
@@ -103,8 +107,9 @@ fn execute_preallocate_sparse_punches_hole() {
     let meta = fs::metadata(&dest).expect("dest metadata");
     assert_eq!(meta.len(), apparent, "content length preserved");
     assert!(
-        meta.blocks() * 512 < apparent,
-        "preallocated extent's zero run must be punched (allocated {}, size {})",
+        meta.blocks() * 512 >= apparent,
+        "preallocated extent must stay dense: the zero run is seeked over, not \
+         punched, so the reserved blocks remain allocated (allocated {}, size {})",
         meta.blocks() * 512,
         apparent,
     );
