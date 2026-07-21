@@ -6,7 +6,7 @@
 
 use crate::error::MetadataError;
 use crate::options::MetadataOptions;
-use filetime::{FileTime, set_file_times, set_symlink_file_times};
+use filetime::FileTime;
 use std::fs;
 use std::path::Path;
 
@@ -15,11 +15,95 @@ use std::io;
 #[cfg(unix)]
 use std::os::fd::BorrowedFd;
 
+/// Applies atime/mtime to `destination` with an anchored, open-free
+/// `utimensat`, defeating ancestor-symlink-swap TOCTOU attacks.
+///
+/// `None` in a slot maps to `UTIME_OMIT` (leave that timestamp unchanged).
+/// `follow_symlinks = false` selects `AT_SYMLINK_NOFOLLOW` for the leaf.
+///
+/// When `--keep-dirlinks` is inactive (Unix), routes through
+/// [`fast_io::secure_utimes_at`], which walks the parent through
+/// `secure_open_dir` and anchors the `utimensat` on that dirfd so a symlink
+/// swapped into a receiver-created ancestor directory cannot redirect the
+/// write outside the module. Mirrors the chmod/chown symlink-race cutovers.
+///
+/// When `--keep-dirlinks` is active the user opted into following dest-side
+/// symlinked directories, so the sandbox refusal is wrong: fall back to an
+/// open-free `utimensat(AT_FDCWD, ...)` that resolves symlinked parents
+/// through the ambient namespace like upstream `generator.c:1344`'s
+/// `link_stat`. The syscall never opens the node, so a peerless FIFO cannot
+/// block it.
+// upstream: rsync.c:set_file_attrs()/util1.c:set_times() apply times through
+// utimensat on the path (never opening the node); rsync 3.4.3+ resolves under
+// the module dirfd (CVE-2026-29518).
+#[cfg(unix)]
+fn set_times_via(
+    destination: &Path,
+    atime: Option<FileTime>,
+    mtime: Option<FileTime>,
+    follow_symlinks: bool,
+    keep_dirlinks: bool,
+) -> std::io::Result<()> {
+    if !keep_dirlinks {
+        return fast_io::secure_utimes_at(destination, atime, mtime, follow_symlinks);
+    }
+    let to_timespec = |time: Option<FileTime>| match time {
+        Some(time) => rustix::fs::Timespec {
+            tv_sec: time.unix_seconds(),
+            tv_nsec: time.nanoseconds().into(),
+        },
+        None => rustix::fs::Timespec {
+            tv_sec: 0,
+            tv_nsec: rustix::fs::UTIME_OMIT,
+        },
+    };
+    let times = rustix::fs::Timestamps {
+        last_access: to_timespec(atime),
+        last_modification: to_timespec(mtime),
+    };
+    let flags = if follow_symlinks {
+        rustix::fs::AtFlags::empty()
+    } else {
+        rustix::fs::AtFlags::SYMLINK_NOFOLLOW
+    };
+    rustix::fs::utimensat(rustix::fs::CWD, destination, &times, flags).map_err(io::Error::from)
+}
+
+/// Non-Unix counterpart to [`set_times_via`] using the [`filetime`] crate.
+///
+/// Windows has no `utimensat`; `filetime` opens the target to set its times.
+/// The `None`-atime case updates only the mtime.
+#[cfg(not(unix))]
+fn set_times_via(
+    destination: &Path,
+    atime: Option<FileTime>,
+    mtime: Option<FileTime>,
+    follow_symlinks: bool,
+    _keep_dirlinks: bool,
+) -> std::io::Result<()> {
+    match (atime, mtime) {
+        (Some(atime), Some(mtime)) => {
+            if follow_symlinks {
+                filetime::set_file_times(destination, atime, mtime)
+            } else {
+                filetime::set_symlink_file_times(destination, atime, mtime)
+            }
+        }
+        (None, Some(mtime)) => filetime::set_file_mtime(destination, mtime),
+        (Some(atime), None) => {
+            let current = fs::metadata(destination)?;
+            let mtime = FileTime::from_last_modification_time(&current);
+            filetime::set_file_times(destination, atime, mtime)
+        }
+        (None, None) => Ok(()),
+    }
+}
+
 /// Applies timestamps (atime + mtime) to a path, optionally following symlinks.
 ///
-/// Uses [`set_file_times`] for regular files/directories and
-/// [`set_symlink_file_times`] for symlinks. Skips the syscall when both
-/// mtime and atime already match `existing`.
+/// Routes through the anchored, open-free [`set_times_via`] for
+/// regular files, symlinks, and special nodes alike. Skips the syscall when
+/// both mtime and atime already match `existing`.
 ///
 /// When `options` is provided and `options.atimes()` is true, the atime
 /// comparison is included in the skip check so that atime-only changes
@@ -59,28 +143,25 @@ pub(super) fn set_timestamp_like(
     }
 
     // upstream: rsync.c:set_file_attrs() applies times through `utimensat` on
-    // the path, never opening the target. filetime's follow variant
-    // (`set_file_times`) opens the file first (`File::open`) before calling
-    // `File::set_times`, which blocks indefinitely on a real FIFO that has no
-    // reader/writer peer. Route special files (and symlinks) through the
-    // `AT_SYMLINK_NOFOLLOW` `utimensat` variant, which sets the node's times
-    // without opening it. For a non-symlink special file NOFOLLOW is
-    // semantically identical to a follow, since the node is not a symlink.
+    // the path, never opening the target. The anchored `set_times_via` uses an
+    // open-free `utimensat`, so special files (device/FIFO/socket) never block
+    // on `File::open` the way filetime's follow variant would on a peerless
+    // FIFO. Special files (and symlinks) still take the `AT_SYMLINK_NOFOLLOW`
+    // leaf so the node itself is timestamped; for a non-symlink special file
+    // NOFOLLOW is semantically identical to a follow.
     #[cfg(unix)]
     let open_free_path = !follow_symlinks || is_special_file(metadata);
     #[cfg(not(unix))]
     let open_free_path = !follow_symlinks;
 
-    let result = match accessed {
-        Some(accessed) => {
-            if open_free_path {
-                set_symlink_file_times(destination, accessed, modified)
-            } else {
-                set_file_times(destination, accessed, modified)
-            }
-        }
-        None => set_mtime_omit_atime(destination, modified, open_free_path),
-    };
+    let keep_dirlinks = options.is_some_and(|o| o.keep_dirlinks());
+    let result = set_times_via(
+        destination,
+        accessed,
+        Some(modified),
+        !open_free_path,
+        keep_dirlinks,
+    );
 
     if let Err(error) = result {
         // upstream: util1.c set_times() is best-effort. Setting times on a
@@ -121,50 +202,6 @@ fn is_tolerable_special_time_error(error: &io::Error) -> bool {
         error.raw_os_error(),
         Some(libc::ENXIO) | Some(libc::EROFS) | Some(libc::EOPNOTSUPP)
     )
-}
-
-/// Sets only the mtime on a path node, leaving the access time unchanged.
-///
-/// Mirrors upstream's `ATTRS_SKIP_ATIME` behaviour (`rsync.c:588-589`): when
-/// `--atimes`/`-U` is off, or for any directory, the access time is left
-/// untouched rather than being written to the mtime value. On Unix this uses
-/// `utimensat` with `UTIME_OMIT` for the access-time slot so no access-time
-/// syscall side effect leaks in; `open_free` selects the
-/// `AT_SYMLINK_NOFOLLOW` variant used for symlinks and special files
-/// (device/FIFO/socket), which updates the node's own mtime without opening
-/// it (a peerless FIFO would otherwise block `File::open`). On non-Unix
-/// targets `filetime::set_file_mtime` provides the equivalent mtime-only
-/// update.
-// upstream: rsync.c:588-589 - `!atimes_ndx || S_ISDIR` sets ATTRS_SKIP_ATIME
-fn set_mtime_omit_atime(
-    destination: &Path,
-    mtime: FileTime,
-    open_free: bool,
-) -> std::io::Result<()> {
-    #[cfg(unix)]
-    {
-        let times = rustix::fs::Timestamps {
-            last_access: rustix::fs::Timespec {
-                tv_sec: 0,
-                tv_nsec: rustix::fs::UTIME_OMIT,
-            },
-            last_modification: rustix::fs::Timespec {
-                tv_sec: mtime.unix_seconds(),
-                tv_nsec: mtime.nanoseconds().into(),
-            },
-        };
-        let flags = if open_free {
-            rustix::fs::AtFlags::SYMLINK_NOFOLLOW
-        } else {
-            rustix::fs::AtFlags::empty()
-        };
-        rustix::fs::utimensat(rustix::fs::CWD, destination, &times, flags).map_err(io::Error::from)
-    }
-    #[cfg(not(unix))]
-    {
-        let _ = open_free;
-        filetime::set_file_mtime(destination, mtime)
-    }
 }
 
 /// fd-based variant of [`set_timestamp_like`] that uses `futimens` on the open fd.
@@ -242,6 +279,7 @@ pub(super) fn apply_atime_only_from_metadata(
     metadata: &fs::Metadata,
     destination: &Path,
     existing: Option<&fs::Metadata>,
+    keep_dirlinks: bool,
 ) -> Result<(), MetadataError> {
     // upstream: rsync.c:609 - the applied access time's nanosecond field is 0.
     let source_atime =
@@ -264,8 +302,14 @@ pub(super) fn apply_atime_only_from_metadata(
         }
     };
 
-    set_file_times(destination, source_atime, dest_mtime)
-        .map_err(|error| MetadataError::new("preserve access time", destination, error))?;
+    set_times_via(
+        destination,
+        Some(source_atime),
+        Some(dest_mtime),
+        true,
+        keep_dirlinks,
+    )
+    .map_err(|error| MetadataError::new("preserve access time", destination, error))?;
 
     Ok(())
 }
@@ -361,23 +405,28 @@ pub(super) fn apply_timestamps_from_entry(
     };
 
     if needs_utime {
-        set_entry_times(destination, entry, atime, mtime, "preserve timestamps")?;
+        set_entry_times(
+            destination,
+            entry,
+            atime,
+            mtime,
+            options.keep_dirlinks(),
+            "preserve timestamps",
+        )?;
     }
 
     Ok(())
 }
 
-/// Applies mtime/atime to a node materialised from a wire `FileEntry`, choosing
-/// an open-free `utimensat` for special files.
+/// Applies mtime/atime to a node materialised from a wire `FileEntry` through
+/// the anchored, open-free [`set_times_via`].
 ///
-/// filetime's follow variant (`set_file_times`) opens the target with
-/// `File::open` before calling `File::set_times`, which blocks forever on a
-/// FIFO that has no reader/writer peer - exactly the node the protocol receiver
-/// materialises via `create_specials`. Device, FIFO, and socket nodes are never
-/// symlinks, so the `AT_SYMLINK_NOFOLLOW` variant (`set_symlink_file_times`)
-/// sets their times without opening them, matching upstream `set_file_attrs()`
-/// which applies times through `utimensat` on the path and never opens the
-/// target. Tolerable special-file errnos are swallowed as best-effort, mirroring
+/// The syscall never opens the target, so a peerless FIFO the protocol
+/// receiver materialises via `create_specials` cannot block it, matching
+/// upstream `set_file_attrs()` which applies times through `utimensat` on the
+/// path and never opens the target. Device, FIFO, and socket nodes are never
+/// symlinks, so they take the `AT_SYMLINK_NOFOLLOW` leaf. Tolerable
+/// special-file errnos are swallowed as best-effort, mirroring
 /// [`set_timestamp_like`].
 // upstream: rsync.c:set_file_attrs() - utimensat on the path, never opens the node
 fn set_entry_times(
@@ -385,21 +434,14 @@ fn set_entry_times(
     entry: &protocol::flist::FileEntry,
     atime: Option<FileTime>,
     mtime: FileTime,
+    keep_dirlinks: bool,
     context: &'static str,
 ) -> Result<(), MetadataError> {
     let is_special = entry.is_device() || entry.is_special();
     // upstream: rsync.c:588-589 - `atime = None` reproduces ATTRS_SKIP_ATIME,
-    // leaving the destination's access time untouched (UTIME_OMIT).
-    let result = match atime {
-        Some(atime) => {
-            if is_special {
-                set_symlink_file_times(destination, atime, mtime)
-            } else {
-                set_file_times(destination, atime, mtime)
-            }
-        }
-        None => set_mtime_omit_atime(destination, mtime, is_special),
-    };
+    // leaving the destination's access time untouched (UTIME_OMIT). Special
+    // files take the `AT_SYMLINK_NOFOLLOW` leaf (open-free node timestamping).
+    let result = set_times_via(destination, atime, Some(mtime), !is_special, keep_dirlinks);
 
     if let Err(error) = result {
         #[cfg(unix)]
@@ -414,9 +456,9 @@ fn set_entry_times(
 /// Applies mtime (and atime when `--atimes`) from a protocol `FileEntry`
 /// to a symbolic link without following the link target.
 ///
-/// Mirrors [`apply_timestamps_from_entry`] but uses `lutimes` /
-/// `utimensat(AT_SYMLINK_NOFOLLOW)` via [`set_symlink_file_times`] so the
-/// symlink's own mtime is updated instead of the link target's. The
+/// Mirrors [`apply_timestamps_from_entry`] but passes `follow_symlinks =
+/// false` to [`set_times_via`], selecting `utimensat(AT_SYMLINK_NOFOLLOW)` so
+/// the symlink's own mtime is updated instead of the link target's. The
 /// receiver invokes this after `do_symlink` so the on-disk link mtime
 /// matches the source-side value.
 // upstream: rsync.c:set_file_attrs() + set_times() - symlink path uses lutimes
@@ -454,13 +496,15 @@ pub(super) fn apply_symlink_timestamps_from_entry(
 
     if needs_utime {
         // upstream: rsync.c:set_times() uses lutimes/utimensat(AT_SYMLINK_NOFOLLOW)
-        // on the symlink itself. `open_free = true` selects that NOFOLLOW variant.
-        match atime {
-            Some(atime) => set_symlink_file_times(destination, atime, mtime)
-                .map_err(|error| MetadataError::new("preserve timestamps", destination, error))?,
-            None => set_mtime_omit_atime(destination, mtime, true)
-                .map_err(|error| MetadataError::new("preserve timestamps", destination, error))?,
-        }
+        // on the symlink itself. `follow_symlinks = false` selects that variant.
+        set_times_via(
+            destination,
+            atime,
+            Some(mtime),
+            false,
+            options.keep_dirlinks(),
+        )
+        .map_err(|error| MetadataError::new("preserve timestamps", destination, error))?;
     }
 
     Ok(())
@@ -479,6 +523,7 @@ pub(super) fn apply_atime_only_from_entry(
     destination: &Path,
     entry: &protocol::flist::FileEntry,
     cached_meta: Option<&fs::Metadata>,
+    keep_dirlinks: bool,
 ) -> Result<(), MetadataError> {
     let atime = if entry.atime() != 0 {
         FileTime::from_unix_time(entry.atime(), 0)
@@ -509,6 +554,7 @@ pub(super) fn apply_atime_only_from_entry(
             entry,
             Some(atime),
             mtime,
+            keep_dirlinks,
             "preserve access time",
         )?;
     }
