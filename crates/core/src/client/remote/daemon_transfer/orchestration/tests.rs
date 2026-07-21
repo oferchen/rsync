@@ -1084,6 +1084,31 @@ mod server_config_reference_dirs {
         assert!(server_config.backup_suffix.is_none());
     }
 
+    /// On a daemon pull the local client IS the receiver and applies
+    /// --ignore-existing itself (upstream generator.c:1395 skips existing dest
+    /// files). options.c:2911-2919 forwards the flag to the remote only when
+    /// am_sender, so on a pull it never rides the wire and must be carried onto
+    /// the receiver config. Regression guard for the daemon pull that overwrote
+    /// an existing destination file instead of skipping it.
+    #[test]
+    fn receiver_config_propagates_ignore_existing() {
+        let config = ClientConfig::builder().ignore_existing(true).build();
+        let server_config =
+            build_server_config_for_receiver(&config, &["dest".to_owned()], Vec::new()).unwrap();
+
+        assert!(server_config.file_selection.ignore_existing);
+    }
+
+    /// Without --ignore-existing the receiver config leaves the flag clear.
+    #[test]
+    fn receiver_config_without_ignore_existing_stays_clear() {
+        let config = ClientConfig::default();
+        let server_config =
+            build_server_config_for_receiver(&config, &["dest".to_owned()], Vec::new()).unwrap();
+
+        assert!(!server_config.file_selection.ignore_existing);
+    }
+
     /// On a daemon (rsync://) pull the local client IS the receiver and applies
     /// `--chmod` itself. `--chmod` is never forwarded to the remote daemon
     /// (upstream options.c:1762 parses it into `chmod_modes`, absent from

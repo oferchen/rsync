@@ -550,6 +550,15 @@ fn build_server_config_for_receiver(
     // client IS the receiver and --existing is a long-form-only flag absent from
     // the compact letter string, so carry it onto the local receiver config here.
     server_config.file_selection.existing_only = config.existing_only();
+    // upstream generator.c:1395 skips any file already present at the destination
+    // under --ignore-existing (`if (ignore_existing > 0 && statret == 0)` early
+    // goto cleanup). options.c:2911-2919 forwards --ignore-existing to the remote
+    // only inside the `if (am_sender)` server_options block, so on a pull it is
+    // never sent over the wire; the local client IS the receiver and applies it
+    // itself. Carry it onto the local receiver config here, mirroring
+    // existing_only above. Without this the ssh:// pull re-transferred and
+    // overwrote existing destination files instead of skipping them.
+    server_config.file_selection.ignore_existing = config.ignore_existing();
 
     flags::apply_common_server_flags(config, &mut server_config);
     Ok(server_config)
@@ -678,6 +687,30 @@ mod tests {
         assert!(!server_config.flags.backup);
         assert!(server_config.backup_dir.is_none());
         assert!(server_config.backup_suffix.is_none());
+    }
+
+    /// The embedded (russh) pull receiver must carry --ignore-existing onto its
+    /// ServerConfig. Upstream generator.c:1395 skips existing dest files, and
+    /// options.c:2911-2919 forwards the flag to the remote only when am_sender, so
+    /// on a pull it never rides the wire. Regression guard for the `ssh://` pull
+    /// that overwrote an existing destination file instead of skipping it.
+    #[test]
+    fn embedded_receiver_config_propagates_ignore_existing() {
+        let config = ClientConfig::builder().ignore_existing(true).build();
+        let server_config =
+            build_server_config_for_receiver(&config, &["dest".to_owned()]).unwrap();
+
+        assert!(server_config.file_selection.ignore_existing);
+    }
+
+    /// Without --ignore-existing the receiver config leaves the flag clear.
+    #[test]
+    fn embedded_receiver_config_without_ignore_existing_stays_clear() {
+        let config = ClientConfig::builder().build();
+        let server_config =
+            build_server_config_for_receiver(&config, &["dest".to_owned()]).unwrap();
+
+        assert!(!server_config.file_selection.ignore_existing);
     }
 
     /// The embedded (russh) pull receiver must carry `--chmod` onto its
