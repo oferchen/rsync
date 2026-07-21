@@ -366,6 +366,15 @@ impl TokenDecodeCore {
                     self.rx_token = token;
                     self.rx_run = u16::from_le_bytes([input[0], input[1]]) as i32;
                     self.phase = Phase::Idle;
+                    if self.rx_run <= 0 {
+                        // upstream: token.c:548 recv_compressed_token_num -
+                        // `if (rx_run <= 0 ...) invalid_compressed_token()` ->
+                        // exit_cleanup(RERR_PROTOCOL) (exit 2). A zero run count
+                        // is malformed; abort instead of accepting it silently.
+                        return Err(crate::protocol_violation::protocol_violation(
+                            "invalid token number in compressed stream",
+                        ));
+                    }
                     return Ok(TokenStep::Emit(CompressedToken::BlockMatch(
                         self.rx_token as u32,
                     )));
@@ -396,6 +405,15 @@ impl TokenDecodeCore {
                     self.rx_token = token;
                     self.rx_run = u16::from_le_bytes([input[0], input[1]]) as i32;
                     self.phase = Phase::Idle;
+                    if self.rx_run <= 0 {
+                        // upstream: token.c:548 recv_compressed_token_num -
+                        // `if (rx_run <= 0 ...) invalid_compressed_token()` ->
+                        // exit_cleanup(RERR_PROTOCOL) (exit 2). A zero run count
+                        // is malformed; abort instead of accepting it silently.
+                        return Err(crate::protocol_violation::protocol_violation(
+                            "invalid token number in compressed stream",
+                        ));
+                    }
                     return Ok(TokenStep::Emit(CompressedToken::BlockMatch(
                         self.rx_token as u32,
                     )));
