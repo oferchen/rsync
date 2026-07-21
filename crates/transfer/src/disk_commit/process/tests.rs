@@ -355,6 +355,60 @@ fn make_backup_returns_destination_relative_notice() {
     assert_eq!(notice.backup, PathBuf::from("payload.bin~"));
 }
 
+/// Verifies `make_backup` succeeds when the backup path is on a different
+/// filesystem than the destination: the bare rename fails cross-device
+/// (`EXDEV`) and upstream's copy tier moves the pre-image by copying its bytes
+/// to the backup and unlinking the original.
+///
+/// Before the copy fallback existed, `make_backup` did a bare rename with no
+/// `EXDEV` handling, so a `--backup-dir` on another mount propagated the error
+/// and failed the commit. The cross-device condition is injected at the rename
+/// boundary via [`ForceExdev`] so the test is deterministic on a single-
+/// filesystem CI runner. If the copy tier were removed the rename error would
+/// surface and this test would fail.
+///
+/// upstream: backup.c:226 make_backup() - `copy_file()` + unlink when
+/// `do_rename_at` cannot cross the mount.
+#[test]
+fn make_backup_cross_device_uses_copy_fallback() {
+    use std::ffi::OsString;
+
+    let dir = tempfile::tempdir().unwrap();
+    let file_path = dir.path().join("payload.bin");
+    fs::write(&file_path, b"pre-transfer content").unwrap();
+
+    let config = BackupConfig {
+        dest_dir: dir.path().to_path_buf(),
+        backup_dir: None,
+        suffix: OsString::from("~"),
+    };
+
+    let notice = {
+        let _force = ForceExdev::new();
+        make_backup(&file_path, &config, &DiskCommitConfig::default())
+            .expect("cross-device backup must succeed via the copy fallback")
+            .expect("notice produced when an existing file is backed up")
+    };
+
+    let backup_path = file_path.with_extension("bin~");
+    assert!(
+        backup_path.exists(),
+        "backup must exist after the copy fallback"
+    );
+    assert!(
+        !file_path.exists(),
+        "original must be unlinked once the copy completes"
+    );
+    assert_eq!(
+        fs::read(&backup_path).unwrap(),
+        b"pre-transfer content",
+        "backup must hold the original pre-transfer bytes"
+    );
+
+    assert_eq!(notice.original, PathBuf::from("payload.bin"));
+    assert_eq!(notice.backup, PathBuf::from("payload.bin~"));
+}
+
 /// Verifies `make_backup` is a no-op (and returns `None`) when the file
 /// does not exist, mirroring upstream `backup.c:make_backup()` which
 /// short-circuits when `stat(fname, &st) != 0`.
