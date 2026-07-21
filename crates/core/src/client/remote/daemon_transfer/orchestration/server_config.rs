@@ -103,6 +103,15 @@ pub(crate) fn build_server_config_for_generator(
 
     apply_common_daemon_config(config, &mut server_config, filter_rules);
     server_config.reference_directories = config.reference_directories().to_vec();
+    // upstream: --chmod is parsed into `chmod_modes` (options.c:1762) and is
+    // never placed in server_options, so it is never forwarded to the remote
+    // daemon receiver. On a push the local client IS the sender and applies the
+    // modifiers itself as it builds each outgoing flist entry (flist.c:1580-1581
+    // send_file_name() -> tweak_mode()). Carry them onto the local generator
+    // config here; without this the daemon push left every file at its source
+    // mode while local copies and pulls applied --chmod correctly. The daemon
+    // module's own `incoming chmod` is applied separately on the daemon side.
+    server_config.chmod = config.chmod().cloned();
 
     // upstream: options.c:2476-2501 / main.c:1322-1328 - the local sender
     // resolves a single files-from fd. A local file (LocalFile/Stdin, or a
