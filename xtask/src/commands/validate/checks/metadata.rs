@@ -5,10 +5,9 @@
 //! every transport and asserts oc's destination is byte- and attribute-
 //! identical to upstream's (perms, mtime, uid/gid, hardlink count).
 
-use std::collections::BTreeMap;
-use std::os::unix::fs::MetadataExt;
 use std::path::Path;
 
+use crate::commands::validate::comparison::{self, OrderedFrameDiffer, WireFrameDiffer};
 use crate::commands::validate::support;
 use crate::commands::validate::transport::{Transport, pull_into};
 use crate::commands::validate::{Check, CheckOutcome, ValidateCtx};
@@ -67,9 +66,8 @@ impl Metadata {
             ctx.work,
         ) {
             Ok(out) if out.status.success() => out,
-            other => return skip_or_fail(self.name(), label, "upstream", other),
+            other => return comparison::classify_failure(self.name(), label, "upstream", other),
         };
-        let _ = up;
         let oc = match pull_into(
             transport,
             ctx.oc,
@@ -80,95 +78,32 @@ impl Metadata {
             ctx.work,
         ) {
             Ok(out) if out.status.success() => out,
-            other => return skip_or_fail(self.name(), label, "oc", other),
+            other => return comparison::classify_failure(self.name(), label, "oc", other),
         };
-        let _ = oc;
 
         // Genuine-result guard: both trees must be fully populated.
         if support::entry_count(&up_dst) != expected || support::entry_count(&oc_dst) != expected {
             return CheckOutcome::fail(self.name(), label, "destination entry count != source");
         }
-        if let Some(diff) = support::content_diff(&oc_dst, &up_dst) {
+        // Content facet, then metadata facet: the entry sets must match before
+        // per-attribute comparison is meaningful.
+        if let Some(diff) = comparison::content_diff(&oc_dst, &up_dst) {
             return CheckOutcome::fail(self.name(), label, diff);
         }
-        match attr_diff(&oc_dst, &up_dst) {
-            Some(diff) => CheckOutcome::fail(self.name(), label, diff),
-            None => CheckOutcome::pass(self.name(), label),
+        if let Some(diff) = comparison::metadata_diff(&oc_dst, &up_dst) {
+            return CheckOutcome::fail(self.name(), label, diff);
         }
-    }
-}
-
-/// Map a tree to per-entry `(mode, mtime, uid, gid, nlink)` for comparison.
-fn attr_map(root: &Path) -> BTreeMap<std::path::PathBuf, (u32, i64, u32, u32, u64)> {
-    support::rel_entries(root)
-        .into_iter()
-        .filter_map(|rel| {
-            let meta = root.join(&rel).symlink_metadata().ok()?;
-            let attrs = (
-                meta.mode() & 0o7777,
-                meta.mtime(),
-                meta.uid(),
-                meta.gid(),
-                meta.nlink(),
-            );
-            Some((rel, attrs))
-        })
-        .collect()
-}
-
-/// First per-attribute divergence between two trees, or `None` when identical.
-fn attr_diff(oc: &Path, up: &Path) -> Option<String> {
-    let (a, b) = (attr_map(oc), attr_map(up));
-    for (rel, oc_attrs) in &a {
-        let Some(up_attrs) = b.get(rel) else {
-            return Some(format!("missing {} in oc tree", rel.display()));
-        };
-        let fields = ["perms", "mtime", "uid", "gid", "nlink"];
-        let mismatches: Vec<&str> = fields
-            .iter()
-            .enumerate()
-            .filter(|(i, _)| !attr_eq(*i, oc_attrs, up_attrs))
-            .map(|(_, name)| *name)
-            .collect();
-        if !mismatches.is_empty() {
-            return Some(format!(
-                "{} differs at {}",
-                mismatches.join("/"),
-                rel.display()
-            ));
+        // Exit-code facet: a correct pull exits like upstream (both `0` here).
+        if let Some(diff) = comparison::exit_code_diff(&oc, &up) {
+            return CheckOutcome::fail(self.name(), label, diff);
         }
-    }
-    None
-}
-
-fn attr_eq(field: usize, a: &(u32, i64, u32, u32, u64), b: &(u32, i64, u32, u32, u64)) -> bool {
-    match field {
-        0 => a.0 == b.0,
-        1 => a.1 == b.1,
-        2 => a.2 == b.2,
-        3 => a.3 == b.3,
-        _ => a.4 == b.4,
-    }
-}
-
-/// Distinguish a genuine divergence from an unrunnable cell (e.g. ssh refused).
-fn skip_or_fail(
-    check: &'static str,
-    label: &str,
-    who: &str,
-    result: Result<std::process::Output, crate::error::TaskError>,
-) -> CheckOutcome {
-    match result {
-        Ok(out) => {
-            let stderr = String::from_utf8_lossy(&out.stderr);
-            let code = out.status.code().unwrap_or(-1);
-            CheckOutcome::fail(
-                check,
-                label,
-                format!("{who} exited {code}: {}", stderr.trim()),
-            )
+        // Wire-frame facet seam: no transport captures frames yet, so both
+        // streams are empty and the ordered diff matches. Wired now so a later
+        // capture PR only needs to populate the streams.
+        if let Some(diff) = OrderedFrameDiffer.diff(&[], &[]) {
+            return CheckOutcome::fail(self.name(), label, diff);
         }
-        Err(e) => CheckOutcome::skip(check, label, format!("{who} could not run: {e}")),
+        CheckOutcome::pass(self.name(), label)
     }
 }
 
@@ -228,32 +163,4 @@ fn write_mode(path: &Path, bytes: &[u8], mode: u32) -> Result<(), String> {
 fn set_mode(path: &Path, mode: u32) -> Result<(), String> {
     use std::os::unix::fs::PermissionsExt;
     std::fs::set_permissions(path, std::fs::Permissions::from_mode(mode)).map_err(|e| e.to_string())
-}
-
-#[cfg(test)]
-mod tests {
-    use super::{attr_diff, set_mode};
-    use std::fs;
-
-    #[test]
-    fn attr_diff_none_for_hard_linked_identical_entries() {
-        // A hard link shares the inode, so mode/mtime/uid/gid/nlink all match
-        // without depending on a GNU-only `touch -d @epoch` (portable to BSD).
-        let (a, b) = (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
-        let source = a.path().join("f");
-        fs::write(&source, b"x").unwrap();
-        set_mode(&source, 0o644).unwrap();
-        fs::hard_link(&source, b.path().join("f")).unwrap();
-        assert!(attr_diff(a.path(), b.path()).is_none());
-    }
-
-    #[test]
-    fn attr_diff_names_the_diverging_permission() {
-        let (a, b) = (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
-        fs::write(a.path().join("f"), b"x").unwrap();
-        fs::write(b.path().join("f"), b"x").unwrap();
-        set_mode(&a.path().join("f"), 0o644).unwrap();
-        set_mode(&b.path().join("f"), 0o600).unwrap();
-        assert!(attr_diff(a.path(), b.path()).unwrap().contains("perms"));
-    }
 }

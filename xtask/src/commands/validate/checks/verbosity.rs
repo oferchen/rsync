@@ -20,8 +20,8 @@
 //! lines are kept.
 
 use std::path::Path;
-use std::process::Output;
 
+use crate::commands::validate::comparison::{self, VolatileNormalizer};
 use crate::commands::validate::support;
 use crate::commands::validate::transport::{Transport, pull_into};
 use crate::commands::validate::{Check, CheckOutcome, ValidateCtx};
@@ -35,12 +35,6 @@ const LEVELS: &[&str] = &["-v", "-vv", "-vvv"];
 
 /// Base flags shared by every cell; the level is appended per run.
 const BASE_FLAGS: &[&str] = &["-rlptgoD", "--numeric-ids"];
-
-/// Placeholder substituted for every volatile numeric run.
-const PLACEHOLDER: &str = "#";
-
-/// Trailing units a numeric run may absorb, longest-first so `KB` wins over `B`.
-const UNITS: &[&str] = &["bytes", "KB", "B", "/s", "%"];
 
 impl Check for Verbosity {
     fn name(&self) -> &'static str {
@@ -105,7 +99,7 @@ impl Verbosity {
             ctx.work,
         ) {
             Ok(out) if out.status.success() => out,
-            other => return skip_or_fail(self.name(), &cell, "upstream", other),
+            other => return comparison::classify_failure(self.name(), &cell, "upstream", other),
         };
         let oc = match pull_into(
             transport,
@@ -117,7 +111,7 @@ impl Verbosity {
             ctx.work,
         ) {
             Ok(out) if out.status.success() => out,
-            other => return skip_or_fail(self.name(), &cell, "oc", other),
+            other => return comparison::classify_failure(self.name(), &cell, "oc", other),
         };
 
         // Genuine-result guard: both trees must be fully populated.
@@ -134,7 +128,7 @@ impl Verbosity {
                     "[verbosity/{cell}] oc={oc_core:?}\n[verbosity/{cell}] upstream={up_core:?}"
                 );
             }
-            if let Some((i, a, b)) = first_diff(&oc_core, &up_core) {
+            if let Some((i, a, b)) = comparison::first_line_diff(&oc_core, &up_core) {
                 return CheckOutcome::fail(
                     self.name(),
                     cell,
@@ -157,15 +151,16 @@ impl Verbosity {
 /// (`opening connection using: ssh ...`), role-prefixed debug (`[sender] ...`),
 /// and internal notes (`... make_file(...)`, `server_sender starting ...`).
 ///
-/// Each kept line is neutralized first, so volatile numerics inside it (byte
+/// Each kept line is normalized first, so volatile numerics inside it (byte
 /// counts, offsets, checksums, rates) collapse to a placeholder and carry no
 /// weight. `names` is the set of source relative-entry strings.
 pub fn stable_core(stdout: &str, names: &std::collections::HashSet<String>) -> Vec<String> {
+    let normalizer = VolatileNormalizer::rsync_verbose();
     stdout
         .lines()
         .map(str::trim)
         .filter(|line| !line.is_empty() && is_stable_core(line, names))
-        .map(neutralize)
+        .map(|line| normalizer.normalize_line(line))
         .collect()
 }
 
@@ -202,87 +197,6 @@ fn is_summary_line(line: &str) -> bool {
     PREFIXES.iter().any(|prefix| lower.starts_with(prefix))
 }
 
-/// Collapse every volatile numeric run in one line to [`PLACEHOLDER`].
-fn neutralize(line: &str) -> String {
-    let mut out = String::with_capacity(line.len());
-    let mut rest = line;
-    while let Some(first) = rest.chars().next() {
-        if first.is_ascii_digit() {
-            rest = strip_unit(&rest[numeric_len(rest)..]);
-            out.push_str(PLACEHOLDER);
-        } else {
-            out.push(first);
-            rest = &rest[first.len_utf8()..];
-        }
-    }
-    out
-}
-
-/// Byte length of the leading numeric run (digits plus embedded `.` and `,`).
-fn numeric_len(rest: &str) -> usize {
-    rest.char_indices()
-        .take_while(|&(_, c)| c.is_ascii_digit() || c == '.' || c == ',')
-        .map(|(i, c)| i + c.len_utf8())
-        .last()
-        .unwrap_or(0)
-}
-
-/// Strip an optional trailing unit (after at most one space) following a number.
-///
-/// Alphabetic units must end on a word boundary so a size like `100B` is
-/// absorbed while a name like `100Bravo` keeps its letters.
-fn strip_unit(rest: &str) -> &str {
-    let candidate = rest.strip_prefix(' ').unwrap_or(rest);
-    for unit in UNITS {
-        if let Some(after) = candidate.strip_prefix(unit) {
-            let alpha = unit.chars().all(|c| c.is_ascii_alphabetic());
-            let boundary = after
-                .chars()
-                .next()
-                .map(|c| !c.is_ascii_alphanumeric())
-                .unwrap_or(true);
-            if !alpha || boundary {
-                return after;
-            }
-        }
-    }
-    rest
-}
-
-/// First index where the two normalized vectors differ, with each side's line
-/// (or `<missing>` when one vector is shorter).
-fn first_diff(oc: &[String], up: &[String]) -> Option<(usize, String, String)> {
-    for i in 0..oc.len().max(up.len()) {
-        let a = oc.get(i).map(String::as_str).unwrap_or("<missing>");
-        let b = up.get(i).map(String::as_str).unwrap_or("<missing>");
-        if a != b {
-            return Some((i, a.to_string(), b.to_string()));
-        }
-    }
-    None
-}
-
-/// Distinguish a genuine divergence from an unrunnable cell (e.g. ssh refused).
-fn skip_or_fail(
-    check: &'static str,
-    label: &str,
-    who: &str,
-    result: Result<Output, crate::error::TaskError>,
-) -> CheckOutcome {
-    match result {
-        Ok(out) => {
-            let stderr = String::from_utf8_lossy(&out.stderr);
-            let code = out.status.code().unwrap_or(-1);
-            CheckOutcome::fail(
-                check,
-                label,
-                format!("{who} exited {code}: {}", stderr.trim()),
-            )
-        }
-        Err(e) => CheckOutcome::skip(check, label, format!("{who} could not run: {e}")),
-    }
-}
-
 /// Build the verbosity fixture. Idempotent: removes any prior tree first.
 ///
 /// A couple of top-level files plus a subdirectory holding one file. Mtimes are
@@ -314,7 +228,7 @@ fn build_fixture(src: &Path) -> Result<(), String> {
 mod tests {
     use std::collections::HashSet;
 
-    use super::{neutralize, stable_core};
+    use super::stable_core;
 
     #[test]
     fn keeps_core_and_drops_diagnostics() {
@@ -358,23 +272,5 @@ mod tests {
                 "a.txt".to_string(),
             ]
         );
-    }
-
-    #[test]
-    fn neutralizes_digit_runs_leaving_structure() {
-        // Offsets, counts and checksums are volatile; the labels around them are
-        // the structural signal that must survive.
-        assert_eq!(
-            neutralize("total: matches=0 data=12 tag_hits=3"),
-            "total: matches=# data=# tag_hits=#"
-        );
-    }
-
-    #[test]
-    fn absorbs_trailing_units_but_not_following_words() {
-        assert_eq!(neutralize("12.5KB 3/s 50%"), "# # #");
-        // A size unit is absorbed on a word boundary; a name is left intact.
-        assert_eq!(neutralize("100B"), "#");
-        assert_eq!(neutralize("100Bravo"), "#Bravo");
     }
 }

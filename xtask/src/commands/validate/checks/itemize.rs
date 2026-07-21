@@ -9,6 +9,7 @@
 use std::collections::HashSet;
 use std::path::Path;
 
+use crate::commands::validate::comparison;
 use crate::commands::validate::support;
 use crate::commands::validate::transport::{Transport, pull_into};
 use crate::commands::validate::{Check, CheckOutcome, ValidateCtx};
@@ -70,7 +71,7 @@ impl Itemize {
             ctx.work,
         ) {
             Ok(out) if out.status.success() => out,
-            other => return skip_or_fail(self.name(), label, "upstream", other),
+            other => return comparison::classify_failure(self.name(), label, "upstream", other),
         };
         let oc = match pull_into(
             transport,
@@ -82,7 +83,7 @@ impl Itemize {
             ctx.work,
         ) {
             Ok(out) if out.status.success() => out,
-            other => return skip_or_fail(self.name(), label, "oc", other),
+            other => return comparison::classify_failure(self.name(), label, "oc", other),
         };
 
         // Genuine-result guard: both trees must be fully populated.
@@ -157,27 +158,6 @@ fn basenames(src: &Path) -> HashSet<String> {
         .iter()
         .filter_map(|rel| rel.file_name().map(|n| n.to_string_lossy().into_owned()))
         .collect()
-}
-
-/// Distinguish a genuine divergence from an unrunnable cell (e.g. ssh refused).
-fn skip_or_fail(
-    check: &'static str,
-    label: &str,
-    who: &str,
-    result: Result<std::process::Output, crate::error::TaskError>,
-) -> CheckOutcome {
-    match result {
-        Ok(out) => {
-            let stderr = String::from_utf8_lossy(&out.stderr);
-            let code = out.status.code().unwrap_or(-1);
-            CheckOutcome::fail(
-                check,
-                label,
-                format!("{who} exited {code}: {}", stderr.trim()),
-            )
-        }
-        Err(e) => CheckOutcome::skip(check, label, format!("{who} could not run: {e}")),
-    }
 }
 
 /// Build the itemize fixture. Idempotent: removes any prior tree first.

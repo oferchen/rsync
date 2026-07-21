@@ -128,6 +128,8 @@ mod bench;
 #[cfg(unix)]
 mod checks;
 #[cfg(unix)]
+mod comparison;
+#[cfg(unix)]
 mod support;
 #[cfg(unix)]
 mod transport;
