@@ -294,7 +294,7 @@ assert_cmd = "2.0"
 # Glob pattern matcher - shared by engine and filters
 globset = "0.4"
 # Pure-Rust LZ4 codec - shared by compress and protocol (optional, per-crate features)
-lz4_flex = { version = "0.13", default-features = false }
+lz4_flex = { version = "0.14", default-features = false }
 # MD5 hash - shared by checksums (asm on unix) and protocol (per-crate features)
 md-5 = { version = "0.10", default-features = false }
 # Unix syscall wrappers - shared by apple-fs, core, platform (per-crate features)
