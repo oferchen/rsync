@@ -1084,6 +1084,35 @@ mod server_config_reference_dirs {
         assert!(server_config.backup_suffix.is_none());
     }
 
+    /// On a daemon (rsync://) pull the local client IS the receiver and applies
+    /// `--chmod` itself. `--chmod` is never forwarded to the remote daemon
+    /// (upstream options.c:1762 parses it into `chmod_modes`, absent from
+    /// server_options), so the receiver applies it as it reads each flist entry
+    /// (flist.c:905-906). The receiver config must carry the parsed modifiers,
+    /// distinct from the module `incoming chmod` the far side applies.
+    #[test]
+    fn receiver_config_propagates_chmod() {
+        let modifiers = ::metadata::ChmodModifiers::parse("D2755,F640").expect("parse chmod spec");
+        let config = ClientConfig::builder()
+            .chmod(Some(modifiers.clone()))
+            .build();
+        let server_config =
+            build_server_config_for_receiver(&config, &["dest".to_owned()], Vec::new()).unwrap();
+
+        assert_eq!(server_config.chmod.as_ref(), Some(&modifiers));
+    }
+
+    /// Without `--chmod` the receiver config carries no chmod modifiers, so the
+    /// destination mode is preserved exactly as sent.
+    #[test]
+    fn receiver_config_without_chmod_has_none() {
+        let config = ClientConfig::default();
+        let server_config =
+            build_server_config_for_receiver(&config, &["dest".to_owned()], Vec::new()).unwrap();
+
+        assert!(server_config.chmod.is_none());
+    }
+
     #[test]
     fn generator_config_empty_reference_dirs_by_default() {
         let config = ClientConfig::default();
