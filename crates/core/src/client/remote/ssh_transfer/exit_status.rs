@@ -65,6 +65,12 @@ pub(in crate::client::remote) fn convert_server_stats_to_summary(
                 generator_stats.matched_data,
                 generator_stats.delete_stats,
                 generator_stats.created_stats,
+                engine::local_copy::FileTypeTotals {
+                    dirs: generator_stats.num_dirs,
+                    symlinks: generator_stats.num_symlinks,
+                    devices: generator_stats.num_devices,
+                    specials: generator_stats.num_specials,
+                },
             );
             (s, generator_stats.io_error, 0u32)
         }

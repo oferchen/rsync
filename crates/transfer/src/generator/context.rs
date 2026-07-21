@@ -120,6 +120,12 @@ pub struct GeneratorContext {
     /// Accumulated deletion statistics received via NDX_DEL_STATS messages.
     /// (upstream: main.c:238-247 `read_del_stats()`)
     pub(crate) delete_stats: DeleteStats,
+    /// Per-type file-list tallies and `total_size`, accumulated as each entry
+    /// is written to the wire (upstream: `send_file_entry()`, flist.c:421-438,
+    /// 690-691). Feeds the `--stats` "Number of files" breakdown and the real
+    /// "Total file size" on a push; accumulated at send time because
+    /// INC_RECURSE drains sent segments from `file_list`.
+    pub(crate) flist_send_stats: super::FlistSendStats,
     /// Per-operation thresholds for switching between sequential and parallel execution.
     ///
     /// Different operations have different overhead profiles: CPU-bound signature
@@ -177,6 +183,7 @@ impl GeneratorContext {
             pending_source_removals: super::pending_removal::PendingSourceRemovals::default(),
             incremental: IncrementalState::new(initial_ndx_start),
             delete_stats: DeleteStats::new(),
+            flist_send_stats: super::FlistSendStats::default(),
             parallel_thresholds: crate::parallel_io::ParallelThresholds::default(),
             pipeline,
         }

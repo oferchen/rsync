@@ -111,7 +111,7 @@ pub use self::stats::GeneratorStats;
 // through `super::*` (matches the pre-decomposition import surface).
 pub(crate) use self::diagnostics::{flush_with_count, record_prepare_acl, record_segment_dispatch};
 pub(crate) use self::segments::{DirSegment, PendingSegment, SegmentScheduler, TaggedIndex};
-pub(crate) use self::stats::{TransferLoopResult, is_early_close_error};
+pub(crate) use self::stats::{FlistSendStats, TransferLoopResult, is_early_close_error};
 
 #[cfg(test)]
 pub(crate) use self::diagnostics::partition_point_depth;
