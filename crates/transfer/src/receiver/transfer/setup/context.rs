@@ -10,7 +10,7 @@ use std::io::{self, Read};
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use logging::{debug_log, info_log};
+use logging::debug_log;
 use metadata::{ChmodModifiers, MetadataOptions};
 use protocol::filters::{FilterRuleWireFormat, read_filter_list};
 
@@ -138,8 +138,23 @@ impl ReceiverContext {
         // are decoupled (no select() loop fanning across them).
         self.forward_files_from_to_sender(writer)?;
 
-        if self.config.flags.verbose && self.config.connection.client_mode {
-            info_log!(Flist, 1, "receiving incremental file list");
+        // upstream: flist.c:2604-2607 recv_file_list() - the first list arrival
+        // prints `receiving incremental file list` on the client's own output.
+        // Write it DIRECTLY to the client stream here instead of through the
+        // deferred `info_log!` event buffer: that buffer is only drained by the
+        // CLI's post-run flush_diagnostics, after the per-file names, itemize
+        // rows, and the summary stats have already gone straight to stdout, so a
+        // buffered banner printed dead last. The per-file names take this same
+        // direct stdout path (itemize.rs `emit_name_line`), so matching it keeps
+        // the banner ahead of them.
+        if self.should_announce_incremental_flist() {
+            use std::io::Write as _;
+            let banner: &[u8] = b"receiving incremental file list\n";
+            if self.config.flags.msgs_to_stderr {
+                std::io::stderr().write_all(banner)?;
+            } else {
+                std::io::stdout().write_all(banner)?;
+            }
         }
 
         // INC_RECURSE sub-list segments are no longer drained here. The whole
@@ -152,6 +167,23 @@ impl ReceiverContext {
 
         let (file_count, setup) = self.build_pipeline_setup(file_count)?;
         Ok((reader, file_count, setup))
+    }
+
+    /// Whether this receiver prints the `receiving incremental file list` banner
+    /// on its own client-visible output.
+    ///
+    /// Mirrors upstream `flist.c:2606-2607`: the banner fires only for a
+    /// client-side receiver (`!am_server` -> `client_mode`), under incremental
+    /// recursion - which upstream disables when `!recurse` (compat.c:172-173), so a
+    /// non-recursive single-file `-v` prints nothing - and when the FLIST info
+    /// category is at level >= 1, so `--info=flist0` suppresses it even at `-v`.
+    /// This is the receive-side twin of the sender's `sending incremental file
+    /// list` gate (`recursive() && INFO_GTE(FLIST, 1)`) in
+    /// `cli::frontend::execution::drive::summary`.
+    pub(in crate::receiver) fn should_announce_incremental_flist(&self) -> bool {
+        self.config.connection.client_mode
+            && self.config.flags.recursive
+            && logging::info_gte(logging::InfoFlag::Flist, 1)
     }
 
     /// Builds the [`PipelineSetup`] from the received file list.
