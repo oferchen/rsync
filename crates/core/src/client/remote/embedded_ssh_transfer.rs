@@ -593,6 +593,14 @@ fn build_server_config_for_generator(
     // Local-only sender optimization; never emitted onto the wire, so it is
     // carried directly onto the in-process generator's ParsedServerFlags.
     server_config.flags.parallel_delta_scan = config.parallel_delta_scan();
+    // upstream: --chmod is parsed into `chmod_modes` (options.c:1762) and is
+    // never placed in server_options, so it is never forwarded to the remote
+    // receiver. On a push the local client IS the sender and applies the
+    // modifiers itself as it builds each outgoing flist entry (flist.c:1580-1581
+    // send_file_name() -> tweak_mode()). Carry them onto the local generator
+    // config here; without this the ssh push left every file at its source mode
+    // while local copies and pulls applied --chmod correctly.
+    server_config.chmod = config.chmod().cloned();
 
     // upstream: options.c:2476-2501 / main.c:1322-1328 - the local sender
     // resolves a single files-from fd: a local file (Stdin/LocalFile, or a
@@ -738,6 +746,35 @@ mod tests {
         let config = ClientConfig::builder().build();
         let server_config =
             build_server_config_for_receiver(&config, &["dest".to_owned()]).unwrap();
+
+        assert!(server_config.chmod.is_none());
+    }
+
+    /// On an `ssh://` (russh) push the local client IS the sender and applies
+    /// `--chmod` itself as it builds each outgoing flist entry (upstream
+    /// flist.c:1580-1581 send_file_name() -> tweak_mode()). `--chmod` is never
+    /// forwarded to the remote receiver, so the generator config must carry the
+    /// parsed modifiers. Regression guard for the embedded-ssh push that left
+    /// every file at its source mode while local copies and pulls applied it.
+    #[test]
+    fn embedded_generator_config_propagates_chmod() {
+        let modifiers = ::metadata::ChmodModifiers::parse("D2755,F640").expect("parse chmod spec");
+        let config = ClientConfig::builder()
+            .chmod(Some(modifiers.clone()))
+            .build();
+        let server_config =
+            build_server_config_for_generator(&config, &["/tmp/source".to_owned()]).unwrap();
+
+        assert_eq!(server_config.chmod.as_ref(), Some(&modifiers));
+    }
+
+    /// Without `--chmod` the embedded generator config carries no chmod
+    /// modifiers, so the source mode travels unchanged.
+    #[test]
+    fn embedded_generator_config_without_chmod_has_none() {
+        let config = ClientConfig::builder().build();
+        let server_config =
+            build_server_config_for_generator(&config, &["/tmp/source".to_owned()]).unwrap();
 
         assert!(server_config.chmod.is_none());
     }

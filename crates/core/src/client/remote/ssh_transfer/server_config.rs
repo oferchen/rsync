@@ -142,6 +142,14 @@ pub(in crate::client::remote) fn build_server_config_for_generator(
     server_config.flags.partial = config.partial();
     server_config.flags.devices = config.preserve_devices();
     server_config.flags.specials = config.preserve_specials();
+    // upstream: --chmod is parsed into `chmod_modes` (options.c:1762) and is
+    // never placed in server_options, so it is never forwarded to the remote
+    // receiver. On a push the local client IS the sender and applies the
+    // modifiers itself as it builds each outgoing flist entry (flist.c:1580-1581
+    // send_file_name() -> tweak_mode()). Carry them onto the local generator
+    // config here; without this the ssh push left every file at its source mode
+    // while local copies and pulls applied --chmod correctly.
+    server_config.chmod = config.chmod().cloned();
 
     apply_files_from_for_sender(config, &mut server_config);
 
@@ -324,6 +332,35 @@ mod tests {
         let config = ClientConfig::builder().build();
         let server_config =
             build_server_config_for_receiver(&config, &["dest".to_owned()]).unwrap();
+
+        assert!(server_config.chmod.is_none());
+    }
+
+    /// On an ssh push the local client IS the sender and applies `--chmod`
+    /// itself as it builds each outgoing flist entry (upstream flist.c:1580-1581
+    /// send_file_name() -> tweak_mode()). `--chmod` is never forwarded to the
+    /// remote receiver, so the generator config must carry the parsed modifiers.
+    /// Regression guard for the ssh push that left files at their source mode
+    /// while local copies and pulls applied `--chmod`.
+    #[test]
+    fn generator_config_propagates_chmod() {
+        let modifiers = ::metadata::ChmodModifiers::parse("D2755,F640").expect("parse chmod spec");
+        let config = ClientConfig::builder()
+            .chmod(Some(modifiers.clone()))
+            .build();
+        let server_config =
+            build_server_config_for_generator(&config, &["/tmp/source".to_owned()]).unwrap();
+
+        assert_eq!(server_config.chmod.as_ref(), Some(&modifiers));
+    }
+
+    /// Without `--chmod` the generator config carries no chmod modifiers, so the
+    /// source mode travels unchanged.
+    #[test]
+    fn generator_config_without_chmod_has_none() {
+        let config = ClientConfig::builder().build();
+        let server_config =
+            build_server_config_for_generator(&config, &["/tmp/source".to_owned()]).unwrap();
 
         assert!(server_config.chmod.is_none());
     }

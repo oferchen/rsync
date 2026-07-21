@@ -387,16 +387,29 @@ impl GeneratorContext {
             }
         }
 
-        // upstream: clientserver.c:rsync_module() arms `daemon_chmod_modes`
-        // and flist.c:make_file() applies it as the file_struct is built so
-        // the wire-emitted mode reflects the daemon's `outgoing chmod = SPEC`
-        // directive. We mirror that ordering: rewrite the entry's mode after
-        // every other flist field has been populated but before the caller
-        // serialises it. The chmod parser preserves the file-type bits, so
-        // the entry's S_IFREG/S_IFDIR/etc. classification is untouched.
-        if let Some(modifiers) = self.config.daemon_outgoing_chmod.as_ref() {
-            let rewritten = modifiers.apply(entry.mode(), file_type);
-            entry.set_mode(rewritten);
+        // upstream: flist.c:1580-1581 send_file_name() applies the client
+        // `--chmod` (chmod_modes) to each entry's mode as the sender builds the
+        // file list, and clientserver.c:1217 appends the daemon module
+        // `outgoing chmod` to that same `chmod_modes` list. On a push oc is the
+        // sender, so both modifier sources must rewrite the wire-emitted mode
+        // here; only then does the remote receiver materialise the transformed
+        // mode and itemize the `p` (perms-changed) flag. Applied after every
+        // other flist field is populated but before the caller serialises it.
+        // Symlinks are skipped (upstream `!S_ISLNK(file->mode)`); the chmod
+        // parser preserves the file-type bits, so the entry's S_IFREG/S_IFDIR
+        // classification is untouched. Order mirrors the receiver's
+        // merge_chmod: daemon modes first, then the client's.
+        if !entry.is_symlink() {
+            for modifiers in [
+                self.config.daemon_outgoing_chmod.as_ref(),
+                self.config.chmod.as_ref(),
+            ]
+            .into_iter()
+            .flatten()
+            {
+                let rewritten = modifiers.apply(entry.mode(), file_type);
+                entry.set_mode(rewritten);
+            }
         }
 
         // upstream: flist.c:1444-1447 - `always_checksum && am_sender &&
@@ -820,6 +833,172 @@ mod daemon_outgoing_chmod_tests {
             .expect("create_entry");
 
         assert_eq!(entry.permissions() & 0o7777, 0o664);
+    }
+}
+
+#[cfg(all(test, unix))]
+mod client_chmod_tests {
+    //! Client `--chmod` push regression: on a push the local client IS the
+    //! sender, so `create_entry` must rewrite each outgoing flist entry's mode
+    //! with the parsed `--chmod` modifiers. Mirrors upstream
+    //! `flist.c:1580-1581 send_file_name() -> tweak_mode()`, where the sender
+    //! applies `chmod_modes` to `file->mode` before serialising the entry. The
+    //! transformed mode is what the remote receiver materialises on disk and
+    //! compares against for the itemize `p` (perms-changed) flag; without the
+    //! rewrite a push left every file/dir at its source mode.
+
+    use crate::config::ServerConfig;
+    use crate::generator::GeneratorContext;
+    use crate::handshake::HandshakeResult;
+    use crate::role::ServerRole;
+    use ::metadata::ChmodModifiers;
+    use protocol::ProtocolVersion;
+    use std::ffi::OsString;
+    use std::os::unix::fs::{PermissionsExt, symlink};
+    use std::path::PathBuf;
+    use tempfile::TempDir;
+
+    fn make_generator(chmod: Option<ChmodModifiers>) -> GeneratorContext {
+        let handshake = HandshakeResult {
+            protocol: ProtocolVersion::try_from(32u8).unwrap(),
+            buffered: Vec::new(),
+            compat_exchanged: false,
+            client_args: None,
+            io_timeout: None,
+            negotiated_algorithms: None,
+            compat_flags: None,
+            checksum_seed: 0,
+        };
+        let mut config = ServerConfig {
+            role: ServerRole::Generator,
+            protocol: ProtocolVersion::try_from(32u8).unwrap(),
+            flag_string: "-logDtpre.".to_owned(),
+            args: vec![OsString::from(".")],
+            chmod,
+            ..Default::default()
+        };
+        config.flags.numeric_ids = crate::NumericIds::Explicit;
+        GeneratorContext::new_for_test(&handshake, config)
+    }
+
+    /// `--chmod=Dg+s,Fo-rwx` on a push: a 0644 file becomes 0640 and a 0755
+    /// directory becomes 02755 on the wire. This is the exact spec from the
+    /// drop-in bug report where the ssh/daemon push left both at their source
+    /// modes while the pull applied the same modifiers correctly.
+    #[test]
+    fn client_chmod_dir_setgid_and_file_clear_other() {
+        let tmp = TempDir::new().expect("tempdir");
+        let file = tmp.path().join("f644");
+        std::fs::write(&file, b"payload").expect("write");
+        std::fs::set_permissions(&file, std::fs::Permissions::from_mode(0o644))
+            .expect("set file perms");
+        let dir = tmp.path().join("sub");
+        std::fs::create_dir(&dir).expect("mkdir");
+        std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o755))
+            .expect("set dir perms");
+
+        let modifiers = ChmodModifiers::parse("Dg+s,Fo-rwx").expect("parse chmod spec");
+        let ctx = make_generator(Some(modifiers));
+
+        let fmeta = std::fs::symlink_metadata(&file).expect("metadata");
+        let fentry = ctx
+            .create_entry(&file, PathBuf::from("f644"), &fmeta)
+            .expect("create_entry file");
+        assert_eq!(
+            fentry.permissions() & 0o7777,
+            0o640,
+            "Fo-rwx must clear other rwx on the wire (0644 -> 0640)",
+        );
+
+        let dmeta = std::fs::symlink_metadata(&dir).expect("metadata");
+        let dentry = ctx
+            .create_entry(&dir, PathBuf::from("sub"), &dmeta)
+            .expect("create_entry dir");
+        assert_eq!(
+            dentry.permissions() & 0o7777,
+            0o2755,
+            "Dg+s must set the setgid bit on the wire (0755 -> 02755)",
+        );
+    }
+
+    /// Numeric `--chmod=D2755,F640` sets exact modes per file type.
+    #[test]
+    fn client_chmod_numeric_dir_and_file_modes() {
+        let tmp = TempDir::new().expect("tempdir");
+        let file = tmp.path().join("f");
+        std::fs::write(&file, b"x").expect("write");
+        std::fs::set_permissions(&file, std::fs::Permissions::from_mode(0o600))
+            .expect("set file perms");
+        let dir = tmp.path().join("d");
+        std::fs::create_dir(&dir).expect("mkdir");
+        std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700))
+            .expect("set dir perms");
+
+        let modifiers = ChmodModifiers::parse("D2755,F640").expect("parse chmod spec");
+        let ctx = make_generator(Some(modifiers));
+
+        let fmeta = std::fs::symlink_metadata(&file).expect("metadata");
+        let fentry = ctx
+            .create_entry(&file, PathBuf::from("f"), &fmeta)
+            .expect("create_entry file");
+        assert_eq!(
+            fentry.permissions() & 0o7777,
+            0o640,
+            "F640 sets file to 0640"
+        );
+
+        let dmeta = std::fs::symlink_metadata(&dir).expect("metadata");
+        let dentry = ctx
+            .create_entry(&dir, PathBuf::from("d"), &dmeta)
+            .expect("create_entry dir");
+        assert_eq!(
+            dentry.permissions() & 0o7777,
+            0o2755,
+            "D2755 sets directory to 02755",
+        );
+    }
+
+    /// Symlinks are exempt from `--chmod` on the sender, matching upstream's
+    /// `!S_ISLNK(file->mode)` guard at flist.c:1580. The link entry's mode must
+    /// survive the rewrite unchanged.
+    #[test]
+    fn client_chmod_skips_symlinks() {
+        let tmp = TempDir::new().expect("tempdir");
+        let link = tmp.path().join("link");
+        symlink("target", &link).expect("symlink");
+
+        let modifiers = ChmodModifiers::parse("Fo-rwx,Do-rwx").expect("parse chmod spec");
+        let ctx = make_generator(Some(modifiers));
+        let meta = std::fs::symlink_metadata(&link).expect("metadata");
+        let before = ctx
+            .create_entry(&link, PathBuf::from("link"), &meta)
+            .expect("create_entry");
+        let unmodified = make_generator(None)
+            .create_entry(&link, PathBuf::from("link"), &meta)
+            .expect("create_entry");
+
+        assert_eq!(
+            before.permissions() & 0o7777,
+            unmodified.permissions() & 0o7777,
+            "symlink entry mode must be untouched by --chmod (upstream !S_ISLNK)",
+        );
+    }
+
+    /// Without `--chmod` the sender emits the on-disk mode verbatim.
+    #[test]
+    fn no_client_chmod_leaves_mode_untouched() {
+        let tmp = TempDir::new().expect("tempdir");
+        let path = tmp.path().join("f");
+        std::fs::write(&path, b"x").expect("write");
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o644)).expect("set perms");
+
+        let ctx = make_generator(None);
+        let meta = std::fs::symlink_metadata(&path).expect("metadata");
+        let entry = ctx
+            .create_entry(&path, PathBuf::from("f"), &meta)
+            .expect("create_entry");
+
+        assert_eq!(entry.permissions() & 0o7777, 0o644);
     }
 }
 
