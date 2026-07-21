@@ -30,7 +30,7 @@ use std::io;
 use std::path::{Path, PathBuf};
 use std::time::Instant;
 
-use logging::{PhaseTimer, debug_log, info_log};
+use logging::{PhaseTimer, debug_log};
 use protocol::flist::FileEntry;
 
 use super::GeneratorContext;
@@ -75,7 +75,6 @@ impl GeneratorContext {
         // upstream: stats.flist_buildtime
         self.timing.flist_build_start = Some(Instant::now());
 
-        info_log!(Flist, 1, "building file list...");
         self.clear_file_list();
 
         // upstream: flist.c:2192 - pre-allocate FLIST_START pointer slots
@@ -161,7 +160,6 @@ impl GeneratorContext {
         self.collect_id_mappings();
 
         let count = self.file_list.len();
-        info_log!(Flist, 1, "built file list with {} entries", count);
         debug_log!(Flist, 2, "file list entries: {:?}", {
             let mut names = Vec::with_capacity(count);
             names.extend(self.file_list.iter().map(FileEntry::name));
@@ -196,7 +194,6 @@ impl GeneratorContext {
     ) -> io::Result<usize> {
         self.timing.flist_build_start = Some(Instant::now());
 
-        info_log!(Flist, 1, "building file list from --files-from...");
         self.clear_file_list();
 
         const FLIST_START: usize = 4096;
@@ -407,7 +404,6 @@ impl GeneratorContext {
         self.collect_id_mappings();
 
         let count = self.file_list.len();
-        info_log!(Flist, 1, "built file list with {} entries", count);
         debug_log!(Flist, 2, "file list entries: {:?}", {
             let mut names = Vec::with_capacity(count);
             names.extend(self.file_list.iter().map(FileEntry::name));
