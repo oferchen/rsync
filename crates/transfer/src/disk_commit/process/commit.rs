@@ -337,20 +337,34 @@ pub(super) fn rename_with_io_uring_fallback(old_path: &Path, new_path: &Path) ->
 /// SEC-1.j: dirfd-anchor the temp→final commit rename against the receiver's
 /// destination sandbox, falling back to [`rename_with_io_uring_fallback`].
 ///
-/// When the `config` carries a [`fast_io::DirSandbox`] rooted at its
-/// `dest_dir`, and both the temp leaf and the final leaf are single components
-/// directly under that root (the default in-destination temp pattern also used
-/// by the temp-file create, see `temp_guard::try_create_new`), the rename routes
-/// through [`fast_io::renameat_via_sandbox_or_fallback`]. Both leaves resolve
-/// against the pinned destination dirfd, so a symlink swap on the commit parent
-/// between temp-create and rename cannot redirect the final file outside the
-/// tree.
+/// When the `config` carries a [`fast_io::DirSandbox`] rooted at its `dest_dir`
+/// and both endpoints live beneath that root, the rename routes through
+/// [`fast_io::renameat_via_sandbox_or_fallback`]. A file directly under the
+/// root resolves its leaf against the pinned destination dirfd; a file in a
+/// destination subdirectory (`sub/file`, the common recursive-copy case) has
+/// its parent opened under `openat2(RESOLVE_BENEATH)` inside the helper. Either
+/// way a concurrent ancestor-symlink swap on the commit parent - including an
+/// *interior* directory - between temp-create and rename cannot redirect the
+/// final file outside the tree.
 ///
-/// In every other case (no sandbox, multi-component relative path, or a
-/// `--temp-dir`/partial-dir on a different parent) it falls back to the existing
-/// io_uring / `std::fs::rename` path with the EXDEV copy+remove backstop, so a
-/// working rename is never regressed. The anchored path shares the destination
-/// parent for both leaves, so EXDEV cannot arise there.
+/// Anchoring the nested (subdir) case closes the CVE-2026-29518 secondary
+/// residual on the pipelined disk-commit path: before this the subdir case fell
+/// through to a path-based `std::fs::rename`, so on a privileged daemon
+/// (`chroot=no`) a swapped interior directory could redirect the committed file
+/// out of the module. This now matches both the non-pipelined receiver
+/// (`transfer_ops::response.rs`) and the primary #6808 ownership/timestamp
+/// anchoring.
+///
+/// upstream: `syscall.c:910` `do_rename_at()` opens each slashed path's parent
+/// via `secure_relative_open()` (openat2 `RESOLVE_BENEATH`) and issues
+/// `renameat()` against the resulting dirfd, gated on `am_daemon &&
+/// !am_chrooted`.
+///
+/// In every other case (no sandbox, or a `--temp-dir`/partial-dir on a
+/// different tree than `dest_dir`) it falls back to the existing io_uring /
+/// `std::fs::rename` path with the EXDEV copy+remove backstop, so a working
+/// rename is never regressed. The anchored path shares the destination subtree
+/// for both endpoints, so EXDEV cannot arise there.
 ///
 /// Returns `Ok(false)` for an in-place rename, `Ok(true)` when the EXDEV
 /// copy+remove fallback ran.
@@ -361,20 +375,23 @@ pub(super) fn rename_config_sandboxed(
     new_path: &Path,
 ) -> io::Result<bool> {
     if let (Some(sandbox), Some(dest_dir)) = (config.sandbox.as_ref(), config.dest_dir.as_deref())
-        && let (Some(old_leaf), Some(new_leaf)) = (old_path.file_name(), new_path.file_name())
-        && old_path.parent() == Some(dest_dir)
-        && new_path.parent() == Some(dest_dir)
+        && let (Ok(old_rel), Ok(new_rel)) = (
+            old_path.strip_prefix(dest_dir),
+            new_path.strip_prefix(dest_dir),
+        )
     {
-        // Both endpoints are single components under the sandbox root, so the
-        // dirfd anchor applies. `replace = true` matches `fs::rename`'s
+        // Both endpoints resolve beneath the sandbox root. The helper picks the
+        // single-component dirfd fast path or the `RESOLVE_BENEATH` parent
+        // anchor per endpoint, so a nested subdir commit is confined exactly
+        // like a root-level one. `replace = true` matches `fs::rename`'s
         // overwrite-the-destination semantics (upstream `do_rename`).
         fast_io::renameat_via_sandbox_or_fallback(
             Some(sandbox.as_ref()),
             dest_dir,
-            Path::new(old_leaf),
+            old_rel,
             old_path,
             dest_dir,
-            Path::new(new_leaf),
+            new_rel,
             new_path,
             true,
         )?;
