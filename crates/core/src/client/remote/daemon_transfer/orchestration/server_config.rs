@@ -107,6 +107,35 @@ pub(crate) fn build_server_config_for_receiver(
     // never sent over the wire, so carry it onto the local receiver config here.
     // Without this the receiver updates files in place, defeating --delay-updates.
     server_config.write.delay_updates = config.delay_updates();
+    // upstream: options.c:2912-2913 - `if (am_sender) { if (usermap) ... }`
+    // forwards --usermap to the remote only on a push. On a pull the local
+    // client IS the receiver and applies the uid name-map itself as it reads
+    // the incoming id list (receiver/file_list/id_lists.rs). Carry it onto the
+    // local receiver config here; without this the daemon pull silently ignored
+    // --usermap while local pulls remapped ownership. This is the client flag,
+    // distinct from the module `uid`/`gid` the remote daemon applies far-side.
+    server_config.user_mapping = config.user_mapping().cloned();
+    // upstream: options.c:2915-2916 - `if (am_sender) { if (groupmap) ... }`
+    // is the gid counterpart of --usermap above; same pull rationale.
+    server_config.group_mapping = config.group_mapping().cloned();
+    // upstream: options.c:2979-2980 - `if (write_devices && am_sender)
+    // --write-devices`. --write-devices makes the receiver write file content
+    // in-place into an existing device node (receiver.c: write_devices &&
+    // IS_DEVICE), so on a pull the local client IS the receiver and must carry
+    // it; it rides the wire only on a push.
+    server_config.write.write_devices = config.write_devices();
+    // upstream: options.c:2641-2643 - `if (am_sender) { if (keep_dirlinks)
+    // argstr[x++] = 'K'; }`. -K makes the receiver follow a symlink-to-dir at
+    // the destination instead of clobbering it (receiver/directory/creation.rs),
+    // so on a pull the local client IS the receiver and must carry the flag; the
+    // compact 'K' letter is emitted only when the local side is the sender.
+    server_config.flags.keep_dirlinks = config.keep_dirlinks();
+    // upstream: options.c:2650-2655 - `if (am_sender) { if (fuzzy_basis) {
+    // argstr[x++] = 'y'; ... } }`. -y/--fuzzy lets the receiver pick a similar
+    // basis file for the delta, so on a pull the local client IS the receiver
+    // and must carry the fuzzy level; the compact 'y' letter is emitted only
+    // when the local side is the sender.
+    server_config.flags.fuzzy_level = config.fuzzy_level();
 
     flags::apply_common_server_flags(config, &mut server_config);
     Ok(server_config)
