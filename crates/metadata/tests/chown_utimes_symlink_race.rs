@@ -19,18 +19,24 @@
 //! that dirfd so a symlink swapped into any parent component is rejected
 //! (`ELOOP`/`EXDEV`/`ENOTDIR`) before the syscall fires.
 //!
+//! The permission apply path is disabled in every case
+//! (`preserve_permissions(false)`) so these tests isolate the ownership and
+//! timestamp cutovers: with `-p` active the already-hardened
+//! `secure_chmod_at` would refuse the symlinked parent first and mask the
+//! chown/utimes behaviour under test.
+//!
 //! Legitimate case: application through a clean path must succeed and update
-//! the destination's timestamps / leave it owned by the caller.
+//! the destination.
 //!
 //! Attack case: application through a parent component that is a symlink to an
 //! out-of-module directory must error, and the file outside the module must
-//! keep its original timestamps.
+//! be untouched.
 
 #![cfg(unix)]
 
 use std::error::Error;
 use std::fs;
-use std::os::unix::fs::{MetadataExt, PermissionsExt, symlink};
+use std::os::unix::fs::{MetadataExt, symlink};
 use std::path::{Path, PathBuf};
 
 use filetime::{FileTime, set_file_times};
@@ -53,12 +59,16 @@ fn mtime_of(path: &Path) -> FileTime {
 /// destination: 2001-09-09T01:46:40Z.
 const SOURCE_MTIME: FileTime = FileTime::from_unix_time(1_000_000_000, 0);
 
-fn seed_source(root: &Path) -> (PathBuf, fs::Metadata) {
+/// A uid the caller cannot own without privilege, so an escaped chown is
+/// observable (the write lands, or fails with `EPERM` rather than the
+/// `ELOOP` a refused parent open produces).
+const FOREIGN_UID: u32 = 4_242_424;
+
+fn seed_source(root: &Path) -> fs::Metadata {
     let source = root.join("source");
     fs::write(&source, b"src").expect("write source");
     set_file_times(&source, SOURCE_MTIME, SOURCE_MTIME).expect("set source times");
-    let meta = fs::metadata(&source).expect("source meta");
-    (source, meta)
+    fs::metadata(&source).expect("source meta")
 }
 
 /// Downcast an `apply_file_metadata_with_options` error to its underlying
@@ -67,6 +77,22 @@ fn errno_of(err: &(dyn Error + 'static)) -> Option<i32> {
     err.source()
         .and_then(|e| e.downcast_ref::<std::io::Error>())
         .and_then(|e| e.raw_os_error())
+}
+
+/// Assert an apply error is a refused-parent-open, not any other failure.
+fn assert_refused(err: &metadata::MetadataError, helper: &str) {
+    let raw = errno_of(err);
+    // Platform-dependent: Linux + openat2 surfaces ELOOP or EXDEV;
+    // O_NOFOLLOW | O_DIRECTORY on a symlinked component surfaces ELOOP on
+    // Linux without openat2 and ENOTDIR on macOS. All three confirm the
+    // parent open was refused before the syscall issued.
+    assert!(
+        matches!(
+            raw,
+            Some(libc::ELOOP) | Some(libc::EXDEV) | Some(libc::ENOTDIR)
+        ),
+        "expected ELOOP/EXDEV/ENOTDIR from {helper}, got {raw:?}"
+    );
 }
 
 /// Plant `module/subdir -> outside` and return the trap destination
@@ -92,7 +118,7 @@ fn plant_ancestor_symlink_trap(root: &Path) -> (PathBuf, PathBuf) {
 }
 
 // -------------------------------------------------------------------------
-// Timestamps (utimensat) - `--times`
+// Timestamps (utimensat) - `--times`, `--no-perms`
 // -------------------------------------------------------------------------
 
 /// Legitimate path: `-t` through non-symlink components must set the
@@ -100,7 +126,7 @@ fn plant_ancestor_symlink_trap(root: &Path) -> (PathBuf, PathBuf) {
 #[test]
 fn receiver_utimes_succeeds_on_clean_path() {
     let (_keep, root) = canonical_tempdir();
-    let (_source, source_meta) = seed_source(&root);
+    let source_meta = seed_source(&root);
 
     let destination = root.join("dest");
     fs::write(&destination, b"dst").expect("write dest");
@@ -108,7 +134,9 @@ fn receiver_utimes_succeeds_on_clean_path() {
     let old = FileTime::from_unix_time(100, 0);
     set_file_times(&destination, old, old).expect("backdate dest");
 
-    let options = MetadataOptions::default().preserve_times(true);
+    let options = MetadataOptions::new()
+        .preserve_permissions(false)
+        .preserve_times(true);
     apply_file_metadata_with_options(&destination, &source_meta, &options)
         .expect("utimes clean path");
 
@@ -125,26 +153,22 @@ fn receiver_utimes_succeeds_on_clean_path() {
 ///
 /// Pre-fix this test fails: the path-based `utimensat(AT_FDCWD, ...)` follows
 /// the symlinked parent and rewrites `outside/sentinel`'s mtime to
-/// `SOURCE_MTIME`. Post-fix `secure_utimes_at` rejects the symlinked parent
-/// before any `utimensat` fires.
+/// `SOURCE_MTIME`, so the apply returns `Ok` and `expect_err` panics. Post-fix
+/// `secure_utimes_at` rejects the symlinked parent before any `utimensat`
+/// fires.
 #[test]
 fn receiver_utimes_refuses_symlinked_parent_component() {
     let (_keep, root) = canonical_tempdir();
-    let (_source, source_meta) = seed_source(&root);
+    let source_meta = seed_source(&root);
     let (attack_dest, outside_target) = plant_ancestor_symlink_trap(&root);
     let sentinel_mtime_before = mtime_of(&outside_target);
 
-    let options = MetadataOptions::default().preserve_times(true);
+    let options = MetadataOptions::new()
+        .preserve_permissions(false)
+        .preserve_times(true);
     let err = apply_file_metadata_with_options(&attack_dest, &source_meta, &options)
         .expect_err("utimes through symlinked parent must error");
-    let raw = errno_of(err.as_ref());
-    assert!(
-        matches!(
-            raw,
-            Some(libc::ELOOP) | Some(libc::EXDEV) | Some(libc::ENOTDIR)
-        ),
-        "expected ELOOP/EXDEV/ENOTDIR from secure_utimes_at, got {raw:?}"
-    );
+    assert_refused(&err, "secure_utimes_at");
 
     assert_eq!(
         mtime_of(&outside_target),
@@ -159,7 +183,7 @@ fn receiver_utimes_refuses_symlinked_parent_component() {
 }
 
 // -------------------------------------------------------------------------
-// Ownership (fchownat) - `--chown`
+// Ownership (fchownat) - `--chown`, `--no-perms`, `--no-times`
 // -------------------------------------------------------------------------
 
 /// Legitimate path: an explicit `--chown` to the caller's own uid/gid through
@@ -168,15 +192,16 @@ fn receiver_utimes_refuses_symlinked_parent_component() {
 #[test]
 fn receiver_chown_succeeds_on_clean_path() {
     let (_keep, root) = canonical_tempdir();
-    let (_source, source_meta) = seed_source(&root);
+    let source_meta = seed_source(&root);
 
     let destination = root.join("dest");
     fs::write(&destination, b"dst").expect("write dest");
-    fs::set_permissions(&destination, fs::Permissions::from_mode(0o644)).expect("dest perms");
     let dest_meta = fs::symlink_metadata(&destination).expect("dest meta");
     let (my_uid, my_gid) = (dest_meta.uid(), dest_meta.gid());
 
-    let options = MetadataOptions::default()
+    let options = MetadataOptions::new()
+        .preserve_permissions(false)
+        .preserve_times(false)
         .with_owner_override(Some(my_uid))
         .with_group_override(Some(my_gid));
     apply_file_metadata_with_options(&destination, &source_meta, &options)
@@ -193,37 +218,41 @@ fn receiver_chown_succeeds_on_clean_path() {
 /// Attack path: an attacker swaps a symlink into the immediate parent
 /// component pointing outside the module. The receiver chown must refuse the
 /// syscall (the sandbox-anchored `secure_open_dir` rejects the symlinked
-/// parent) before any `fchownat` fires.
+/// parent) before any `fchownat` fires, and the outside file's owner must be
+/// unchanged.
 ///
-/// The `--chown` targets the caller's own uid/gid so no privilege is needed;
-/// `preserve_times` seeds an mtime witness so an escaped metadata write of any
-/// kind is observable on the outside sentinel.
+/// The `--chown` targets a foreign uid the caller cannot own. Pre-fix the
+/// path-based `fchownat(AT_FDCWD, ...)` follows the symlinked parent: as root
+/// it reowns `outside/sentinel` (apply returns `Ok`, `expect_err` panics); as
+/// a normal user it fails with `EPERM` (not the expected `ELOOP`), so the
+/// errno assertion fails. Post-fix `secure_chown_at` refuses the symlinked
+/// parent before any `fchownat` fires, regardless of privilege.
 #[test]
 fn receiver_chown_refuses_symlinked_parent_component() {
     let (_keep, root) = canonical_tempdir();
-    let (_source, source_meta) = seed_source(&root);
+    let source_meta = seed_source(&root);
     let (attack_dest, outside_target) = plant_ancestor_symlink_trap(&root);
-    let sentinel = fs::symlink_metadata(&outside_target).expect("sentinel meta");
-    let sentinel_mtime_before = mtime_of(&outside_target);
+    let owner_before = fs::symlink_metadata(&outside_target)
+        .expect("sentinel meta")
+        .uid();
 
-    let options = MetadataOptions::default()
-        .with_owner_override(Some(sentinel.uid()))
-        .with_group_override(Some(sentinel.gid()))
-        .preserve_times(true);
+    let options = MetadataOptions::new()
+        .preserve_permissions(false)
+        .preserve_times(false)
+        .with_owner_override(Some(FOREIGN_UID));
     let err = apply_file_metadata_with_options(&attack_dest, &source_meta, &options)
         .expect_err("chown through symlinked parent must error");
-    let raw = errno_of(err.as_ref());
-    assert!(
-        matches!(
-            raw,
-            Some(libc::ELOOP) | Some(libc::EXDEV) | Some(libc::ENOTDIR)
-        ),
-        "expected ELOOP/EXDEV/ENOTDIR from secure_chown_at, got {raw:?}"
-    );
+    assert_refused(&err, "secure_chown_at");
 
+    let owner_after = fs::symlink_metadata(&outside_target)
+        .expect("sentinel meta")
+        .uid();
     assert_eq!(
-        mtime_of(&outside_target),
-        sentinel_mtime_before,
-        "outside sentinel must be untouched - no metadata write may escape the module"
+        owner_after, owner_before,
+        "outside sentinel owner must be unchanged - chown must not escape the module"
+    );
+    assert_ne!(
+        owner_after, FOREIGN_UID,
+        "the escaped foreign uid must never land on the outside sentinel"
     );
 }
