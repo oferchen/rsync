@@ -59,6 +59,14 @@ pub(in crate::client::remote) fn build_server_config_for_receiver(
     // config here; without this the ssh pull left every regular file at its
     // source mode while local copies applied --chmod correctly.
     server_config.chmod = config.chmod().cloned();
+    // upstream: options.c:2996-2997 - `--mkpath` is forwarded to the remote only
+    // inside the `if (am_sender)` server_options block, so on a pull it never
+    // rides the wire; the local client IS the receiver and creates the dest-arg
+    // path chain itself in get_local_name() (main.c:736 make_path under mkpath).
+    // Carry it onto the local receiver config here. Without this the ssh pull to
+    // a missing deep destination failed with "failed to create destination root
+    // ... No such file or directory" while local copies honored --mkpath.
+    server_config.flags.mkpath = config.mkpath();
     // upstream: build_server_flag_string no longer packs the compact 'P' letter,
     // and 'D' now tracks devices only, so carry keep_partial and specials onto
     // the local half here (mirrors --partial / --specials|--no-specials which the
@@ -157,6 +165,14 @@ pub(in crate::client::remote) fn build_server_config_for_generator(
     server_config.flags.partial = config.partial();
     server_config.flags.devices = config.preserve_devices();
     server_config.flags.specials = config.preserve_specials();
+    // upstream: --chmod is parsed into `chmod_modes` (options.c:1762) and is
+    // never placed in server_options, so it is never forwarded to the remote
+    // receiver. On a push the local client IS the sender and applies the
+    // modifiers itself as it builds each outgoing flist entry (flist.c:1580-1581
+    // send_file_name() -> tweak_mode()). Carry them onto the local generator
+    // config here; without this the ssh push left every file at its source mode
+    // while local copies and pulls applied --chmod correctly.
+    server_config.chmod = config.chmod().cloned();
 
     apply_files_from_for_sender(config, &mut server_config);
 
@@ -398,5 +414,61 @@ mod tests {
             build_server_config_for_receiver(&config, &["dest".to_owned()]).unwrap();
 
         assert!(!server_config.flags.omit_dir_times);
+    }
+
+    /// On an ssh pull the local client IS the receiver and creates the dest-arg
+    /// path chain itself. `--mkpath` is forwarded to the remote only when
+    /// am_sender (upstream options.c:2996-2997), so on a pull it never rides the
+    /// wire and must be carried onto the receiver config. Regression guard for
+    /// the ssh pull that failed with "failed to create destination root ... No
+    /// such file or directory" against a missing deep destination while local
+    /// copies honored --mkpath.
+    #[test]
+    fn receiver_config_propagates_mkpath() {
+        let config = ClientConfig::builder().mkpath(true).build();
+        let server_config =
+            build_server_config_for_receiver(&config, &["dest".to_owned()]).unwrap();
+
+        assert!(server_config.flags.mkpath);
+    }
+
+    /// Without `--mkpath` the receiver config leaves the flag clear, so a missing
+    /// destination parent stays a fatal error, matching upstream main.c:787.
+    #[test]
+    fn receiver_config_without_mkpath_stays_clear() {
+        let config = ClientConfig::builder().build();
+        let server_config =
+            build_server_config_for_receiver(&config, &["dest".to_owned()]).unwrap();
+
+        assert!(!server_config.flags.mkpath);
+    }
+
+    /// On an ssh push the local client IS the sender and applies `--chmod`
+    /// itself as it builds each outgoing flist entry (upstream flist.c:1580-1581
+    /// send_file_name() -> tweak_mode()). `--chmod` is never forwarded to the
+    /// remote receiver, so the generator config must carry the parsed modifiers.
+    /// Regression guard for the ssh push that left files at their source mode
+    /// while local copies and pulls applied `--chmod`.
+    #[test]
+    fn generator_config_propagates_chmod() {
+        let modifiers = ::metadata::ChmodModifiers::parse("D2755,F640").expect("parse chmod spec");
+        let config = ClientConfig::builder()
+            .chmod(Some(modifiers.clone()))
+            .build();
+        let server_config =
+            build_server_config_for_generator(&config, &["/tmp/source".to_owned()]).unwrap();
+
+        assert_eq!(server_config.chmod.as_ref(), Some(&modifiers));
+    }
+
+    /// Without `--chmod` the generator config carries no chmod modifiers, so the
+    /// source mode travels unchanged.
+    #[test]
+    fn generator_config_without_chmod_has_none() {
+        let config = ClientConfig::builder().build();
+        let server_config =
+            build_server_config_for_generator(&config, &["/tmp/source".to_owned()]).unwrap();
+
+        assert!(server_config.chmod.is_none());
     }
 }

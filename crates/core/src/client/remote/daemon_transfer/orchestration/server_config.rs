@@ -50,6 +50,15 @@ pub(crate) fn build_server_config_for_receiver(
     // client flag, distinct from the module `incoming chmod` the remote daemon
     // applies on the far side.
     server_config.chmod = config.chmod().cloned();
+    // upstream: options.c:2996-2997 - `--mkpath` is forwarded to the remote only
+    // inside the `if (am_sender)` server_options block, so on a pull it never
+    // rides the wire; the local client IS the receiver and creates the dest-arg
+    // path chain itself in get_local_name() (main.c:736 make_path under mkpath).
+    // Carry it onto the local receiver config here. Without this the rsync://
+    // pull to a missing deep destination failed with "failed to create
+    // destination root ... No such file or directory" while local copies honored
+    // --mkpath.
+    server_config.flags.mkpath = config.mkpath();
     // upstream flist.c:flist_sort_and_clean prunes empty dirs on the receiver
     // (prune_empty_dirs && !am_sender); on a pull the local client IS the receiver,
     // and -m is never sent over the wire (options.c gates it on am_sender), so the
@@ -118,6 +127,15 @@ pub(crate) fn build_server_config_for_generator(
 
     apply_common_daemon_config(config, &mut server_config, filter_rules);
     server_config.reference_directories = config.reference_directories().to_vec();
+    // upstream: --chmod is parsed into `chmod_modes` (options.c:1762) and is
+    // never placed in server_options, so it is never forwarded to the remote
+    // daemon receiver. On a push the local client IS the sender and applies the
+    // modifiers itself as it builds each outgoing flist entry (flist.c:1580-1581
+    // send_file_name() -> tweak_mode()). Carry them onto the local generator
+    // config here; without this the daemon push left every file at its source
+    // mode while local copies and pulls applied --chmod correctly. The daemon
+    // module's own `incoming chmod` is applied separately on the daemon side.
+    server_config.chmod = config.chmod().cloned();
 
     // upstream: options.c:2476-2501 / main.c:1322-1328 - the local sender
     // resolves a single files-from fd. A local file (LocalFile/Stdin, or a
