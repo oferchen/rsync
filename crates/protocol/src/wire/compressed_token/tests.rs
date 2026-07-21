@@ -1570,6 +1570,53 @@ fn zlib_decoder_rejects_i32_min_token() {
     assert_eq!(err.kind(), io::ErrorKind::InvalidData);
 }
 
+/// A run flag with a zero 16-bit run count must be rejected, not accepted
+/// silently.
+///
+/// Upstream `recv_compressed_token_num` reads the 2-byte run count and aborts
+/// with `RERR_PROTOCOL` when it is not positive:
+///
+/// ```c
+/// if (rx_run <= 0 || rx_token > MAX_TOKEN_INDEX - rx_run)
+///     invalid_compressed_token();
+/// ```
+///
+/// Reference: upstream `token.c:548`. Both the long (`TOKENRUN_LONG`) and
+/// relative (`TOKENRUN_REL`) run encodings feed the same check.
+fn assert_rejects_zero_run_count(wire: &[u8]) {
+    let mut decoder = CompressedTokenDecoder::new();
+    let mut cursor = Cursor::new(wire);
+    let err = decoder
+        .recv_token(&mut cursor)
+        .expect_err("decoder must reject a zero run count");
+    assert_eq!(err.kind(), io::ErrorKind::InvalidData);
+    // upstream token.c:548 invalid_compressed_token() exits RERR_PROTOCOL (2),
+    // not RERR_STREAMIO(12); the error must carry the ProtocolViolation marker.
+    assert!(
+        err.get_ref()
+            .is_some_and(|e| e.is::<crate::ProtocolViolation>()),
+        "zero run count must be tagged RERR_PROTOCOL",
+    );
+    assert_eq!(err.to_string(), "invalid token number in compressed stream");
+}
+
+#[test]
+fn decoder_rejects_zero_run_count_long() {
+    // TOKENRUN_LONG, token 100, run count 0.
+    let mut wire = Vec::new();
+    wire.push(TOKENRUN_LONG);
+    wire.extend_from_slice(&100i32.to_le_bytes());
+    wire.extend_from_slice(&0u16.to_le_bytes());
+    assert_rejects_zero_run_count(&wire);
+}
+
+#[test]
+fn decoder_rejects_zero_run_count_rel() {
+    // TOKENRUN_REL with relative offset 10, run count 0.
+    let wire = [TOKENRUN_REL | 10, 0x00, 0x00];
+    assert_rejects_zero_run_count(&wire);
+}
+
 /// CVE-2026-43618 regression: the decoder must reject `TOKEN_REL`
 /// accumulation that would overflow `rx_token` past `i32::MAX`.
 ///
