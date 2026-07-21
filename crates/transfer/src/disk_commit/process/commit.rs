@@ -10,7 +10,9 @@ use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
 
-use engine::{CleanupManager, compute_backup_path, trace_make_backup_rename};
+use engine::{
+    CleanupManager, compute_backup_path, trace_make_backup_copy, trace_make_backup_rename,
+};
 
 use crate::pipeline::messages::{BackupNotice, BeginMessage};
 use crate::temp_guard::TempFileGuard;
@@ -439,29 +441,132 @@ pub(super) fn is_cross_device(e: &io::Error) -> bool {
     }
 }
 
+/// Moves an existing destination file to its backup path, falling back to a
+/// copy when the rename cannot cross a filesystem boundary.
+///
+/// Returns `Ok(false)` when a plain rename moved the file and `Ok(true)` when
+/// the cross-device (`EXDEV`) copy+unlink fallback ran - the case a
+/// `--backup-dir` (or `--backup` suffix landing on another mount) on a
+/// different filesystem than the destination triggers.
+///
+/// upstream: `backup.c:226` `make_backup()` - after `link_or_rename()` cannot
+/// move the pre-image across the mount (`do_rename_at` fails with `EXDEV`),
+/// rsync falls back to `copy_file()` + unlink (`backup.c:270`). oc reuses the
+/// same `fs::copy` + `fs::remove_file` mechanism the tmp->dest commit uses in
+/// [`rename_with_io_uring_fallback`] (`util1.c:robust_rename()`), so `fs::copy`
+/// carries the mode bits exactly as upstream's `copy_file(..., file->mode)`.
+fn backup_rename_or_copy(old_path: &Path, new_path: &Path) -> io::Result<bool> {
+    match backup_rename_syscall(old_path, new_path) {
+        Ok(()) => Ok(false),
+        Err(e) if is_cross_device(&e) => {
+            // upstream: backup.c:270-284 - copy_file() then keep_backup unlinks
+            // the source; the backup ends up on the other filesystem.
+            fs::copy(old_path, new_path)?;
+            fs::remove_file(old_path)?;
+            Ok(true)
+        }
+        Err(e) => Err(e),
+    }
+}
+
+/// Issues the backup rename. In production this is a bare [`fs::rename`]; under
+/// `cfg(test)` a fault-injection guard can force a cross-device (`EXDEV`) error
+/// so the copy fallback in [`backup_rename_or_copy`] can be exercised
+/// deterministically on filesystems that would otherwise complete the rename.
+#[cfg(not(test))]
+#[inline]
+fn backup_rename_syscall(old_path: &Path, new_path: &Path) -> io::Result<()> {
+    fs::rename(old_path, new_path)
+}
+
+#[cfg(test)]
+fn backup_rename_syscall(old_path: &Path, new_path: &Path) -> io::Result<()> {
+    if force_exdev_active() {
+        return Err(simulated_cross_device_error());
+    }
+    fs::rename(old_path, new_path)
+}
+
+// Test-only fault injection for the backup rename boundary. A thread-local flag
+// (nextest runs each test in its own process, and the guard is thread-scoped
+// regardless) makes `backup_rename_syscall` report a cross-device error,
+// driving the EXDEV copy+remove path without a real second filesystem.
+#[cfg(test)]
+thread_local! {
+    static FORCE_EXDEV: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+#[cfg(test)]
+fn force_exdev_active() -> bool {
+    FORCE_EXDEV.with(std::cell::Cell::get)
+}
+
+/// Builds an error `is_cross_device` recognizes on the current platform.
+#[cfg(test)]
+fn simulated_cross_device_error() -> io::Error {
+    #[cfg(unix)]
+    {
+        io::Error::from_raw_os_error(libc::EXDEV)
+    }
+    #[cfg(windows)]
+    {
+        io::Error::from_raw_os_error(17)
+    }
+    #[cfg(not(any(unix, windows)))]
+    {
+        io::Error::other("simulated cross-device")
+    }
+}
+
+/// Test-only RAII guard that forces [`backup_rename_syscall`] onto the
+/// cross-device path for its lifetime, exercising the copy fallback.
+#[cfg(test)]
+pub(super) struct ForceExdev;
+
+#[cfg(test)]
+impl ForceExdev {
+    pub(super) fn new() -> Self {
+        FORCE_EXDEV.with(|c| c.set(true));
+        Self
+    }
+}
+
+#[cfg(test)]
+impl Drop for ForceExdev {
+    fn drop(&mut self) {
+        FORCE_EXDEV.with(|c| c.set(false));
+    }
+}
+
 /// SEC-1.j: dirfd-anchor the `--backup` rename against the receiver's
-/// destination sandbox, otherwise `std::fs::rename`.
+/// destination sandbox, otherwise rename with a cross-device copy fallback.
 ///
 /// The backup rename moves an existing destination file to its backup name
 /// (`file~` or `<backup-dir>/...`). When the sandbox is present and both the
 /// original and the backup are single components directly under `dest_dir`, the
 /// rename resolves both leaves against the pinned dirfd so a symlink swap on the
-/// parent cannot redirect the backup outside the tree. Otherwise it falls back
-/// to the original path-based [`std::fs::rename`] with no behavior change (no
-/// io_uring/EXDEV path is introduced on the backup rename, matching prior
-/// semantics).
+/// parent cannot redirect the backup outside the tree; both endpoints then
+/// share the destination filesystem, so `EXDEV` cannot arise and the call
+/// returns `Ok(false)`.
+///
+/// Otherwise - the common `--backup-dir` case, where the backup tree may live
+/// on a different mount than the destination - it falls back to
+/// [`backup_rename_or_copy`], which renames and, on a cross-device failure,
+/// copies the pre-image and unlinks the original (upstream `backup.c:226`).
+/// Returns `Ok(true)` when that copy fallback ran so the caller can emit the
+/// upstream `make_backup: COPY` trace instead of `RENAME`.
 #[cfg(unix)]
 fn backup_rename_sandboxed(
     config: &DiskCommitConfig,
     old_path: &Path,
     new_path: &Path,
-) -> io::Result<()> {
+) -> io::Result<bool> {
     if let (Some(sandbox), Some(dest_dir)) = (config.sandbox.as_ref(), config.dest_dir.as_deref())
         && let (Some(old_leaf), Some(new_leaf)) = (old_path.file_name(), new_path.file_name())
         && old_path.parent() == Some(dest_dir)
         && new_path.parent() == Some(dest_dir)
     {
-        return fast_io::renameat_via_sandbox_or_fallback(
+        fast_io::renameat_via_sandbox_or_fallback(
             Some(sandbox.as_ref()),
             dest_dir,
             Path::new(old_leaf),
@@ -470,9 +575,10 @@ fn backup_rename_sandboxed(
             Path::new(new_leaf),
             new_path,
             true,
-        );
+        )?;
+        return Ok(false);
     }
-    fs::rename(old_path, new_path)
+    backup_rename_or_copy(old_path, new_path)
 }
 
 #[cfg(not(unix))]
@@ -480,8 +586,8 @@ fn backup_rename_sandboxed(
     _config: &DiskCommitConfig,
     old_path: &Path,
     new_path: &Path,
-) -> io::Result<()> {
-    fs::rename(old_path, new_path)
+) -> io::Result<bool> {
+    backup_rename_or_copy(old_path, new_path)
 }
 
 /// SEC-1.j: create the `--backup-dir` parent, dirfd-anchoring the leaf `mkdir`
@@ -554,10 +660,16 @@ pub(super) fn make_backup(
         }
     }
 
-    backup_rename_sandboxed(config, file_path, &backup_path)?;
-    // upstream: backup.c:216-217 - DEBUG_GTE(BACKUP, 1) on the RENAME success
-    // branch of link_or_rename. disk_commit always uses rename here.
-    trace_make_backup_rename(&file_path.display().to_string());
+    let was_copy = backup_rename_sandboxed(config, file_path, &backup_path)?;
+    if was_copy {
+        // upstream: backup.c:284 - DEBUG_GTE(BACKUP, 1) "make_backup: COPY %s
+        // successful." when the cross-device copy tier moved the pre-image.
+        trace_make_backup_copy(&file_path.display().to_string());
+    } else {
+        // upstream: backup.c:216-217 - DEBUG_GTE(BACKUP, 1) on the RENAME success
+        // branch of link_or_rename.
+        trace_make_backup_rename(&file_path.display().to_string());
+    }
     // upstream: backup.c:352 - INFO_GTE(BACKUP, 1) fires on success label for
     // every successful backup. Paths are displayed relative to the destination
     // root to match upstream test assertions (testsuite/backup.test). The

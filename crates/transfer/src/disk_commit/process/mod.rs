@@ -28,6 +28,8 @@ pub(super) use self::file_ops::{process_file, process_whole_file};
 
 // Re-exported for the in-module test suite (`use super::*`), which exercises
 // the rename/cross-device/backup helpers and the writer selector directly.
+#[cfg(test)]
+use self::commit::ForceExdev;
 #[cfg(all(test, unix))]
 use self::commit::rename_config_sandboxed;
 #[cfg(test)]
