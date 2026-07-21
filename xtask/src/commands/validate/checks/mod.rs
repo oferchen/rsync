@@ -6,6 +6,7 @@ mod append_inplace;
 mod atimes;
 mod backup;
 mod banner;
+mod capability_string;
 mod checksum;
 mod chmod;
 mod chown;
@@ -30,10 +31,12 @@ mod mkpath;
 mod modify_window;
 mod one_file_system;
 mod progress;
+mod protected_regular;
 mod prune_empty_dirs;
 mod relative;
 mod remove_source_files;
 mod rsync_path;
+mod safe_links;
 mod sparse;
 mod special_bits;
 mod stats;
@@ -100,5 +103,10 @@ pub fn all() -> Vec<Box<dyn Check>> {
         Box::new(compare_dest::CompareDest),
         // Transport plumbing.
         Box::new(rsync_path::RsyncPath),
+        // Security: path-escape and receiver-overwrite safety.
+        Box::new(safe_links::SafeLinks),
+        Box::new(protected_regular::ProtectedRegular),
+        // Wire: server-args capability string.
+        Box::new(capability_string::CapabilityString),
     ]
 }
