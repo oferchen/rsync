@@ -92,7 +92,15 @@ impl ModuleDefinitionBuilder {
             ));
         }
 
-        let auth_users = self.auth_users.unwrap_or_default();
+        // upstream: daemon-parm.h:262 - `auth users` is P_LOCAL. A module with
+        // no explicit list inherits the global-section default, so a global
+        // `auth users` forces authentication on every module that lacks its own
+        // (authenticate.c:228 auth_server reads lp_auth_users). Mirrors
+        // hosts_allow below.
+        let auth_users = self
+            .auth_users
+            .or_else(|| defaults.auth_users.clone())
+            .unwrap_or_default();
         let secrets_file = if auth_users.is_empty() {
             self.secrets_file
         } else if let Some(path) = self.secrets_file {

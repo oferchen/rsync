@@ -3175,4 +3175,70 @@ mod config_parsing_tests {
             "`daemon uid` must arm the process-wide daemon drop",
         );
     }
+
+    /// A global `auth users` is a P_LOCAL default (daemon-parm.h:262): every
+    /// module that omits its own `auth users` must inherit it and therefore
+    /// require authentication (authenticate.c:228 auth_server reads
+    /// lp_auth_users). Before this was wired, the global directive was silently
+    /// dropped and such modules were left open - a fail-open security hole. A
+    /// module that declares its own `auth users` still overrides the default.
+    #[test]
+    fn parse_global_auth_users_inherited_as_module_default() {
+        let dir = TempDir::new().expect("create temp dir");
+        let secrets = dir.path().join("rsyncd.secrets");
+        fs::write(&secrets, "alice:pw\ncarol:pw\n").expect("write secrets");
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            fs::set_permissions(&secrets, fs::Permissions::from_mode(0o600))
+                .expect("chmod secrets");
+        }
+
+        let open = dir.path().join("open");
+        let own = dir.path().join("own");
+        fs::create_dir(&open).expect("create open dir");
+        fs::create_dir(&own).expect("create own dir");
+
+        let config = format!(
+            "auth users = alice\nsecrets file = {secrets}\n\
+             [inherits]\npath = {open}\n\
+             [overrides]\npath = {own}\nauth users = carol\n",
+            secrets = secrets.display(),
+            open = open.display(),
+            own = own.display(),
+        );
+        let file = write_config(&config);
+        let result = parse_config_modules(file.path()).expect("parse succeeds");
+
+        let inherits = result
+            .modules
+            .iter()
+            .find(|m| m.name == "inherits")
+            .expect("inherits module parsed");
+        assert_eq!(
+            inherits.auth_users.len(),
+            1,
+            "module without its own 'auth users' must inherit the global default and require auth",
+        );
+        assert_eq!(inherits.auth_users[0].username, "alice");
+        assert!(
+            inherits.secrets_file.is_some(),
+            "inherited auth must also inherit the global secrets file",
+        );
+
+        let overrides = result
+            .modules
+            .iter()
+            .find(|m| m.name == "overrides")
+            .expect("overrides module parsed");
+        assert_eq!(
+            overrides.auth_users.len(),
+            1,
+            "module with its own 'auth users' keeps exactly its list",
+        );
+        assert_eq!(
+            overrides.auth_users[0].username, "carol",
+            "a module-level 'auth users' overrides the global default",
+        );
+    }
 }

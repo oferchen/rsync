@@ -922,9 +922,23 @@ fn apply_global_directive(
                 state.module_defaults.charset = Some(value.to_owned());
             }
         }
-        // P_LOCAL directives that only make sense per-module - silently accepted
-        // but not stored as inheritable defaults.
-        "path" | "authusers" => {}
+        // upstream: daemon-parm.h:262 - `auth users` is P_LOCAL, so a value in
+        // the global section is the default every module inherits unless it sets
+        // its own list (loadparm.c init_section/copy_section). Modules that omit
+        // `auth users` must then still authenticate (authenticate.c:228
+        // auth_server reads lp_auth_users), so store the list as the default.
+        "authusers" => {
+            let users = parse_auth_user_list(value).map_err(|error| {
+                config_parse_error(
+                    path,
+                    line_number,
+                    format!("invalid 'auth users' directive: {error}"),
+                )
+            })?;
+            state.module_defaults.auth_users = Some(users);
+        }
+        // `path` only makes sense per-module - silently accepted, not inherited.
+        "path" => {}
         _ => {
             eprintln!(
                 "warning: unknown global directive '{}' in '{}' line {} [daemon={}]",
