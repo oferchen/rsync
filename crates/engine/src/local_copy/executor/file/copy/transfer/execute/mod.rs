@@ -529,13 +529,20 @@ pub(in crate::local_copy) fn execute_transfer(
         append_offset,
         context.preallocate_enabled(),
     )?;
-    // upstream: receiver.c:326-336 - when not preallocating but writing inplace,
-    // the existing destination extent (`size_r`) is already allocated, so a new
-    // interior zero run must be punched rather than seeked. A whole-file inplace
-    // copy truncates to zero first, leaving preallocated_len at 0.
+    // upstream: receiver.c:326-336 - the inplace branch (`preallocated_len = size_r`)
+    // is an `else if` reached only when the preallocate branch (receiver.c:320) did
+    // NOT run. That branch runs for `--preallocate` whenever the file grows
+    // (`total_size > size_r`), leaving preallocated_len at do_fallocate()'s 0 so the
+    // reserved tail is seeked, not punched - don't overwrite it. Otherwise the
+    // existing destination extent is already allocated, so an interior zero run must
+    // be punched. A whole-file inplace copy truncates to zero first (0).
     if preallocated_len == 0 && inplace_enabled && !whole_file_enabled {
         if let Some(existing) = existing_metadata {
-            preallocated_len = existing.len();
+            let size_r = existing.len();
+            let preallocate_branch_ran = context.preallocate_enabled() && file_size > size_r;
+            if !preallocate_branch_ran {
+                preallocated_len = size_r;
+            }
         }
     }
 

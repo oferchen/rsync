@@ -414,6 +414,11 @@ fn preallocate_destination_reserves_space() {
     maybe_preallocate_destination(&mut file, &path, 4096, 0, true).expect("preallocate file");
 
     let metadata = fs::metadata(&path).expect("metadata");
+    // Linux reserves blocks with FALLOC_FL_KEEP_SIZE, leaving the apparent size
+    // unchanged; other unix platforms extend the file to the requested length.
+    #[cfg(target_os = "linux")]
+    assert_eq!(metadata.len(), 0, "KEEP_SIZE must not extend apparent size");
+    #[cfg(not(target_os = "linux"))]
     assert_eq!(metadata.len(), 4096);
 }
 
