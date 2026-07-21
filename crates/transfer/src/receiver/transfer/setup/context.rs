@@ -11,7 +11,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use logging::{debug_log, info_log};
-use metadata::MetadataOptions;
+use metadata::{ChmodModifiers, MetadataOptions};
 use protocol::filters::{FilterRuleWireFormat, read_filter_list};
 
 use filters::FilterChain;
@@ -26,6 +26,28 @@ use crate::transfer_state::TransferPhase;
 #[cfg(unix)]
 use super::sandbox::open_sandbox_for_dest_strict;
 use super::wire_filters::parse_wire_filters_for_receiver;
+
+/// Merges the daemon module `incoming chmod` modifiers with the client
+/// `--chmod` modifiers into the single list the receiver applies.
+///
+/// Upstream keeps both in one `chmod_modes` list: the daemon prepends its
+/// module modes ahead of the client's (`clientserver.c:1217`
+/// `parse_chmod(p, &chmod_modes)`), and `chmod.c:tweak_mode()` walks the list
+/// in order. This mirrors that order - daemon modes first, then the client's -
+/// and collapses the two `Option`s so at most one allocation is produced. On a
+/// pull `daemon` is always `None`, so only the client `--chmod` survives.
+fn merge_chmod(
+    daemon: Option<ChmodModifiers>,
+    client: Option<ChmodModifiers>,
+) -> Option<ChmodModifiers> {
+    match (daemon, client) {
+        (Some(mut daemon), Some(client)) => {
+            daemon.extend(client);
+            Some(daemon)
+        }
+        (daemon, client) => daemon.or(client),
+    }
+}
 
 impl ReceiverContext {
     /// Common setup for all transfer modes.
@@ -194,13 +216,23 @@ impl ReceiverContext {
             // (ownership and special-file metadata go to user.rsync.%stat
             // xattrs instead of being applied to inodes).
             .fake_super(self.config.fake_super)
-            // upstream: clientserver.c:rsync_module() + generator.c -
-            // `daemon_chmod_modes` rewrites the destination mode at finalize
-            // time. The parser ran at module-load and stored a parsed
-            // `ChmodModifiers`; we hand it to MetadataOptions so the existing
-            // chmod-application site in `apply_permissions_with_chmod`
-            // performs the rewrite without a separate code path.
-            .with_chmod(self.config.daemon_incoming_chmod.clone())
+            // upstream: two chmod sources rewrite the destination mode on the
+            // receiver, both funnelled through `chmod.c:tweak_mode()`:
+            //   - daemon module `incoming chmod` (clientserver.c:rsync_module()
+            //     + generator.c, `daemon_chmod_modes`), and
+            //   - the client `--chmod` flag (options.c:1762 `chmod_modes`),
+            //     which is never forwarded to the remote, so on a pull the
+            //     local client IS the receiver and applies it itself
+            //     (flist.c:905-906 recv_file_entry()).
+            // Upstream keeps both in one list (clientserver.c:1217 prepends the
+            // daemon modes ahead of `chmod_modes`); we merge here in the same
+            // order and hand the result to the single chmod-application site in
+            // `apply_permissions_with_chmod`. On a pull `daemon_incoming_chmod`
+            // is always None, so only the client `--chmod` applies.
+            .with_chmod(merge_chmod(
+                self.config.daemon_incoming_chmod.clone(),
+                self.config.chmod.clone(),
+            ))
             // upstream: uidlist.c:recv_id_list() applies parsed --usermap /
             // --groupmap rules at file-list receive time on the receiver.
             // The daemon parsed the wire arg in `apply_long_form_args` and
@@ -709,5 +741,49 @@ impl ReceiverContext {
         );
 
         Ok(())
+    }
+}
+
+#[cfg(all(test, unix))]
+mod merge_chmod_tests {
+    use super::merge_chmod;
+    use metadata::ChmodModifiers;
+
+    /// A regular-file `FileType`, needed because `ChmodModifiers::apply` selects
+    /// the `F` (files-only) clauses by file type on Unix.
+    fn regular_file_type() -> std::fs::FileType {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("f");
+        std::fs::write(&path, b"x").expect("write");
+        std::fs::metadata(&path).expect("stat").file_type()
+    }
+
+    /// On a pull `daemon_incoming_chmod` is always None, so only the client
+    /// `--chmod` survives the merge - the exact case the remote pull receivers
+    /// rely on to force the destination mode.
+    #[test]
+    fn client_only_survives() {
+        let client = ChmodModifiers::parse("F640").expect("parse");
+        let merged = merge_chmod(None, Some(client)).expect("some");
+        assert_eq!(merged.apply(0o600, regular_file_type()) & 0o777, 0o640);
+    }
+
+    /// With no chmod on either side the merge yields None so the receiver leaves
+    /// the transferred mode untouched.
+    #[test]
+    fn both_none_is_none() {
+        assert!(merge_chmod(None, None).is_none());
+    }
+
+    /// When both sources are present the daemon modes apply first and the client
+    /// modes second, mirroring upstream's single `chmod_modes` list
+    /// (clientserver.c:1217 prepends the daemon modes). The client's `F640` OR
+    /// clause runs last, so it wins over the daemon's earlier `Fg-r` AND.
+    #[test]
+    fn daemon_and_client_both_apply_in_order() {
+        let daemon = ChmodModifiers::parse("Fg-r").expect("parse");
+        let client = ChmodModifiers::parse("F640").expect("parse");
+        let merged = merge_chmod(Some(daemon), Some(client)).expect("some");
+        assert_eq!(merged.apply(0o600, regular_file_type()) & 0o777, 0o640);
     }
 }

@@ -51,6 +51,14 @@ pub(in crate::client::remote) fn build_server_config_for_receiver(
     server_config.backup_suffix = config
         .backup_suffix()
         .map(|s| s.to_string_lossy().into_owned());
+    // upstream: --chmod is parsed into `chmod_modes` (options.c:1762) and is
+    // never placed in server_options, so it is never forwarded to the remote
+    // sender. On a pull the local client IS the receiver and applies the
+    // modifiers itself as it reads each incoming flist entry (flist.c:905-906
+    // recv_file_entry() -> tweak_mode()). Carry them onto the local receiver
+    // config here; without this the ssh pull left every regular file at its
+    // source mode while local copies applied --chmod correctly.
+    server_config.chmod = config.chmod().cloned();
     // upstream: build_server_flag_string no longer packs the compact 'P' letter,
     // and 'D' now tracks devices only, so carry keep_partial and specials onto
     // the local half here (mirrors --partial / --specials|--no-specials which the
@@ -253,5 +261,35 @@ mod tests {
         assert!(!server_config.flags.backup);
         assert!(server_config.backup_dir.is_none());
         assert!(server_config.backup_suffix.is_none());
+    }
+
+    /// On an ssh pull the local client IS the receiver and applies `--chmod`
+    /// itself. `--chmod` is never forwarded to the remote sender (upstream
+    /// options.c:1762 parses it into `chmod_modes`, absent from server_options),
+    /// so the receiver applies it as it reads each flist entry
+    /// (flist.c:905-906). The receiver config must carry the parsed modifiers.
+    /// Regression guard for the ssh pull that left files at their source mode
+    /// while local copies applied `--chmod`.
+    #[test]
+    fn receiver_config_propagates_chmod() {
+        let modifiers = ::metadata::ChmodModifiers::parse("D2755,F640").expect("parse chmod spec");
+        let config = ClientConfig::builder()
+            .chmod(Some(modifiers.clone()))
+            .build();
+        let server_config =
+            build_server_config_for_receiver(&config, &["dest".to_owned()]).unwrap();
+
+        assert_eq!(server_config.chmod.as_ref(), Some(&modifiers));
+    }
+
+    /// Without `--chmod` the receiver config carries no chmod modifiers, so the
+    /// destination mode is preserved exactly as sent.
+    #[test]
+    fn receiver_config_without_chmod_has_none() {
+        let config = ClientConfig::builder().build();
+        let server_config =
+            build_server_config_for_receiver(&config, &["dest".to_owned()]).unwrap();
+
+        assert!(server_config.chmod.is_none());
     }
 }
