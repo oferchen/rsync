@@ -22,7 +22,9 @@ use crate::temp_guard::open_tmpfile_sandboxed;
 
 use super::super::config::DiskCommitConfig;
 use super::super::writer::{ReusableBufWriter, Writer};
-use super::commit::{SparseFinalize, commit_file, make_backup_copy, retain_partial_file};
+use super::commit::{
+    SparseFinalize, commit_file, finalize_sparse, make_backup_copy, retain_partial_file,
+};
 use super::metadata::{apply_file_metadata, finalize_checksum};
 
 /// Folds the existing on-disk prefix into the whole-file checksum for
@@ -327,6 +329,17 @@ pub(in crate::disk_commit) fn process_file(
                     ));
                 }
 
+                // upstream: fileio.c:43 sparse_end() runs inside receive_data()
+                // BEFORE receiver.c calls finish_transfer() -> set_file_attrs().
+                // Truncate/punch the temp file first so the ftruncate + punch
+                // (both of which touch mtime) cannot clobber the timestamp the
+                // metadata step is about to apply.
+                if needs_rename {
+                    if let Some(ref sparse) = sparse_final {
+                        finalize_sparse(cleanup_guard.path(), sparse)?;
+                    }
+                }
+
                 // upstream: rsync.c:748 finish_transfer() - "Change
                 // permissions before putting the file into place."
                 // Apply metadata to the temp file before rename so the
@@ -522,6 +535,15 @@ pub(in crate::disk_commit) fn process_whole_file(
             bytes_written,
             computed_checksum,
         ));
+    }
+
+    // upstream: fileio.c:43 sparse_end() runs before finish_transfer() ->
+    // set_file_attrs() (see process_file for full rationale). Truncate/punch
+    // the temp file before applying metadata so the mtime survives.
+    if needs_rename {
+        if let Some(ref sparse) = sparse_final {
+            finalize_sparse(cleanup_guard.path(), sparse)?;
+        }
     }
 
     // upstream: rsync.c:748 finish_transfer() - apply metadata to the
