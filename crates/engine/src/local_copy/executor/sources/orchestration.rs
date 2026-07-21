@@ -85,11 +85,13 @@ pub(crate) fn copy_sources(
             // emit_transfer_summary) and the synthesized `cd+++++++++ ./`
             // root record (rendered by copy_directory_recursive) both fire.
             let mut destination_root_created = false;
+            let mkpath = context.mkpath_enabled();
             if plan.destination_spec().force_directory() {
                 destination_root_created |= ensure_destination_directory(
                     destination_path,
                     &mut destination_state,
                     context.mode(),
+                    mkpath,
                 )?;
             }
 
@@ -98,6 +100,7 @@ pub(crate) fn copy_sources(
                     destination_path,
                     &mut destination_state,
                     context.mode(),
+                    mkpath,
                 )?;
             }
 
@@ -144,6 +147,7 @@ pub(crate) fn copy_sources(
                     destination_path,
                     &mut destination_state,
                     context.mode(),
+                    mkpath,
                 )?;
             }
 

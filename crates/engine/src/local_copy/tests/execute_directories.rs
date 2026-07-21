@@ -1878,6 +1878,70 @@ fn execute_mkpath_with_directory_source_creates_parents() {
     );
 }
 
+// upstream: main.c:787,796 get_local_name() - without --mkpath the destination
+// root is created with a single do_mkdir(dest_path); when a leading directory is
+// absent that mkdir fails with ENOENT (mkdir_error -> RERR_FILEIO). A recursive
+// directory source into a dest with 2+ missing ancestor levels must therefore
+// error and create nothing, NOT silently materialise the whole chain the way
+// --mkpath would. Regression guard for the local executor over-creating parents.
+#[test]
+fn execute_directory_source_deep_missing_dest_errors_without_mkpath() {
+    let temp = create_tempdir();
+    let source_root = temp.path().join("source");
+    fs::create_dir_all(&source_root).expect("create source");
+    fs::write(source_root.join("file.txt"), b"content").expect("write file");
+
+    let missing_prefix = temp.path().join("new");
+    let dest_root = missing_prefix.join("deep").join("path");
+
+    let operands = vec![
+        source_root.into_os_string(),
+        dest_root.clone().into_os_string(),
+    ];
+    let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
+    let options = LocalCopyOptions::default();
+
+    let error = plan
+        .execute_with_options(LocalCopyExecution::Apply, options)
+        .expect_err("deep missing dest parent must error without --mkpath");
+
+    match error.kind() {
+        LocalCopyErrorKind::Io { action, source, .. } => {
+            assert_eq!(*action, "create destination directory");
+            assert_eq!(source.kind(), std::io::ErrorKind::NotFound);
+        }
+        other => panic!("unexpected error kind: {other:?}"),
+    }
+    assert!(!missing_prefix.exists(), "no ancestor chain must be created");
+    assert!(!dest_root.exists());
+}
+
+// upstream: main.c:787 - a single missing final component is created by the lone
+// do_mkdir(dest_path) even without --mkpath (rsync always makes the immediate
+// destination directory). Only a missing PARENT is fatal.
+#[test]
+fn execute_directory_source_single_missing_dest_succeeds_without_mkpath() {
+    let temp = create_tempdir();
+    let source_root = temp.path().join("source");
+    fs::create_dir_all(&source_root).expect("create source");
+    fs::write(source_root.join("file.txt"), b"content").expect("write file");
+
+    let dest_root = temp.path().join("new");
+
+    let operands = vec![
+        source_root.into_os_string(),
+        dest_root.clone().into_os_string(),
+    ];
+    let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
+    let options = LocalCopyOptions::default();
+
+    plan.execute_with_options(LocalCopyExecution::Apply, options)
+        .expect("single missing final component succeeds without --mkpath");
+
+    assert!(dest_root.is_dir());
+    assert!(dest_root.join("source").join("file.txt").exists());
+}
+
 #[test]
 fn execute_mkpath_dry_run_does_not_create_parents() {
     let temp = create_tempdir();
