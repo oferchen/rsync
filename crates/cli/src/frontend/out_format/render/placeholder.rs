@@ -147,7 +147,9 @@ pub(super) fn render_placeholder_value(
         OutFormatPlaceholder::ModulePath => {
             Some(remote_placeholder_value(context.module_path.as_deref(), 'P').into_bytes())
         }
-        OutFormatPlaceholder::FullChecksum => Some(format_full_checksum(event).into_bytes()),
+        OutFormatPlaceholder::FullChecksum => {
+            Some(format_full_checksum(event, context).into_bytes())
+        }
     }
 }
 
