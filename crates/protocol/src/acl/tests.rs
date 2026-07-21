@@ -225,7 +225,7 @@ mod acl_cache_tests {
 
     #[test]
     fn find_access_returns_none_for_unknown() {
-        let cache = AclCache::new();
+        let mut cache = AclCache::new();
         let acl = RsyncAcl::new();
         assert!(cache.find_access(&acl).is_none());
     }
