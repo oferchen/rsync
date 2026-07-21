@@ -172,10 +172,10 @@ impl CompiledRule {
         // Anchored patterns (`/**/*`) whose stem starts with `**` after the
         // leading-`/` strip are NOT WILD2_PREFIX and must not get the prepend.
         let wild2_prefix = !anchored && core_pattern.starts_with("**");
-        let direct_matchers = compile_patterns(direct_patterns, &pattern, wild2_prefix)?;
-        let descendant_matchers = compile_patterns(descendant_patterns, &pattern, wild2_prefix)?;
+        let direct_matchers = compile_patterns(direct_patterns, wild2_prefix)?;
+        let descendant_matchers = compile_patterns(descendant_patterns, wild2_prefix)?;
         let deletion_descendant_matchers =
-            compile_patterns(deletion_descendant_patterns, &pattern, wild2_prefix)?;
+            compile_patterns(deletion_descendant_patterns, wild2_prefix)?;
 
         Ok(Self {
             action,

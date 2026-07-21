@@ -2,12 +2,16 @@
 
 use thiserror::Error;
 
-/// Error produced when a [`FilterRule`](crate::FilterRule) cannot be compiled
-/// into a glob matcher.
+/// Error slot for filter-rule compilation, retained for API stability.
 ///
-/// This error is returned by [`FilterSet::from_rules`](crate::FilterSet::from_rules)
-/// when a pattern expands to an invalid glob expression. The error retains the
-/// offending pattern and the underlying [`globset::Error`] for diagnostics.
+/// This is the error type of
+/// [`FilterSet::from_rules`](crate::FilterSet::from_rules) and the
+/// [`FilterSetError::Filter`](crate::FilterSetError::Filter) variant. Filter
+/// compilation is infallible - matching is delegated to a byte-for-byte port
+/// of `lib/wildmatch.c:dowild()`, and upstream rsync never rejects a filter
+/// pattern (exclude.c:add_rule stores every pattern verbatim; a malformed
+/// bracket expression fails to match rather than erroring). The type is kept
+/// so the fallible signature remains source-compatible for callers.
 #[derive(Debug, Error)]
 #[error("failed to compile filter pattern '{pattern}': {source}")]
 pub struct FilterError {
@@ -17,32 +21,9 @@ pub struct FilterError {
 }
 
 impl FilterError {
-    /// Creates a new [`FilterError`] for the given pattern and source error.
-    pub(crate) const fn new(pattern: String, source: globset::Error) -> Self {
-        Self { pattern, source }
-    }
-
     /// Filter pattern that triggered this error.
     #[must_use]
     pub fn pattern(&self) -> &str {
         &self.pattern
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::FilterError;
-    use globset::GlobBuilder;
-    use std::error::Error as _;
-
-    #[test]
-    fn filter_error_preserves_pattern_and_source() {
-        let glob_err = GlobBuilder::new("[").build().unwrap_err();
-        let error = FilterError::new("[".into(), glob_err.clone());
-
-        assert_eq!(error.pattern(), "[");
-        assert!(error.to_string().contains("failed to compile"));
-        assert!(error.source().is_some());
-        assert_eq!(error.source().unwrap().to_string(), glob_err.to_string());
     }
 }
