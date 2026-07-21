@@ -42,7 +42,7 @@ impl CompiledXattrRule {
         debug_assert!(rule.xattr_only, "non-xattr rule compiled as xattr rule");
         let mut patterns = std::collections::HashSet::with_capacity(1);
         patterns.insert(rule.pattern.clone());
-        let matchers = compile_patterns(patterns, &rule.pattern, false)?;
+        let matchers = compile_patterns(patterns, false)?;
         Ok(Self {
             action: rule.action,
             matchers,

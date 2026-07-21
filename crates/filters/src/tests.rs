@@ -114,10 +114,13 @@ fn wildcard_patterns_match_expected_paths() {
     assert!(set.allows(Path::new("note.txt"), false));
 }
 
+/// upstream rsync never rejects a malformed-bracket pattern: `--exclude='['`
+/// compiles and matches nothing (exclude.c:add_rule stores it verbatim;
+/// lib/wildmatch.c:dowild returns ABORT_ALL). Compilation must mirror that.
 #[test]
-fn invalid_pattern_reports_error() {
-    let error = FilterSet::from_rules([FilterRule::exclude("[")]).expect_err("invalid");
-    assert_eq!(error.pattern(), "[");
+fn malformed_bracket_pattern_compiles_and_never_matches() {
+    let set = FilterSet::from_rules([FilterRule::exclude("[")]).expect("`[` must compile");
+    assert!(set.allows(Path::new("note.txt"), false));
 }
 
 #[test]

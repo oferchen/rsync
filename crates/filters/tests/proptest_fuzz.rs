@@ -698,9 +698,11 @@ fn filter_set_only_wildcards() {
 
 #[test]
 fn filter_set_unclosed_bracket() {
-    let result = FilterSet::from_rules([FilterRule::exclude("[")]);
-    // Should be an error (invalid glob), not a panic
-    assert!(result.is_err());
+    // upstream tolerates an unclosed bracket: it compiles and matches nothing
+    // (exclude.c:add_rule stores it verbatim; lib/wildmatch.c:dowild returns
+    // ABORT_ALL), never erroring and never panicking.
+    let set = FilterSet::from_rules([FilterRule::exclude("[")]).expect("`[` must compile");
+    assert!(set.allows(Path::new("file.txt"), false));
 }
 
 #[test]

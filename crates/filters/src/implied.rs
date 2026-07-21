@@ -183,29 +183,67 @@ impl ImpliedIncludes {
 
     /// Compiles and stores one anchored include rule, de-duplicating repeats.
     ///
-    /// A pattern that fails to compile (e.g. an unbalanced `[` in a wildcard
-    /// arg) is retried with its glob metacharacters escaped so it matches
-    /// literally - stricter than a wildcard, never more permissive, and always
-    /// valid. This mirrors upstream falling back to a literal-bracket rule
-    /// (`maybe_add_literal_brackets_rule`).
+    /// When the pattern contains a live (unescaped) `[`, an additional rule with
+    /// every such `[` escaped is stored so the *literal* bracketed name is also
+    /// accepted. A remote shell may return a file matching the literal brackets
+    /// when a `[foo]` glob idiom failed to expand, so upstream adds both the
+    /// wildcard rule and the escaped-literal rule.
+    ///
+    /// upstream: `exclude.c:312` `maybe_add_literal_brackets_rule()`, invoked
+    /// after each implied rule with a live `[` (exclude.c:494, 526, 569).
     fn push_rule(&mut self, pattern: &str, directory_only: bool) -> Result<(), FilterError> {
-        if !self.seen.insert(pattern.to_owned()) {
-            return Ok(());
+        if self.seen.insert(pattern.to_owned()) {
+            let compiled = CompiledRule::new(FilterRule::include(pattern))?;
+            debug_assert_eq!(compiled.is_directory_only(), directory_only);
+            self.rules.push(compiled);
         }
-        let rule = FilterRule::include(pattern);
-        let compiled = match CompiledRule::new(rule) {
-            Ok(compiled) => compiled,
-            Err(_) => CompiledRule::new(FilterRule::include(globset::escape(pattern)))?,
-        };
-        debug_assert_eq!(compiled.is_directory_only(), directory_only);
-        self.rules.push(compiled);
+        if let Some(escaped) = escape_live_brackets(pattern) {
+            if self.seen.insert(escaped.clone()) {
+                let compiled = CompiledRule::new(FilterRule::include(escaped))?;
+                debug_assert_eq!(compiled.is_directory_only(), directory_only);
+                self.rules.push(compiled);
+            }
+        }
         Ok(())
     }
 }
 
+/// Escapes every live (unescaped) `[` in `pattern` as `\[`, returning `None`
+/// when the pattern has no live `[`.
+///
+/// upstream: `exclude.c:312` `maybe_add_literal_brackets_rule()` - a `\`
+/// consumes the following byte (so an already-escaped `\[` is left alone), and
+/// each remaining `[` is prefixed with a backslash so it matches literally.
+fn escape_live_brackets(pattern: &str) -> Option<String> {
+    let bytes = pattern.as_bytes();
+    let mut out = String::with_capacity(pattern.len() + 4);
+    let mut cut = 0;
+    let mut i = 0;
+    let mut changed = false;
+    while i < bytes.len() {
+        if bytes[i] == b'\\' && i + 1 < bytes.len() {
+            // Skip the escape pair verbatim so `\[` is not re-escaped.
+            i += 2;
+        } else if bytes[i] == b'[' {
+            out.push_str(&pattern[cut..i]);
+            out.push('\\');
+            cut = i;
+            changed = true;
+            i += 1;
+        } else {
+            i += 1;
+        }
+    }
+    if !changed {
+        return None;
+    }
+    out.push_str(&pattern[cut..]);
+    Some(out)
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{ImpliedIncludeOptions, ImpliedIncludes};
+    use super::{ImpliedIncludeOptions, ImpliedIncludes, escape_live_brackets};
     use std::path::Path;
 
     fn covers(implied: &ImpliedIncludes, name: &str, is_dir: bool) -> bool {
@@ -416,9 +454,11 @@ mod tests {
     }
 
     #[test]
-    fn unbalanced_bracket_arg_falls_back_to_literal() {
-        // A malformed glob must not abort rule construction; it is matched
-        // literally instead (stricter, never more permissive).
+    fn live_bracket_arg_also_admits_literal_name() {
+        // upstream: exclude.c:312 maybe_add_literal_brackets_rule() - an arg
+        // with a live `[` gets an extra escaped-bracket rule so the literal
+        // name is admitted when the glob idiom failed to expand remotely. It is
+        // stricter than a wildcard, never more permissive.
         let opts = ImpliedIncludeOptions {
             recurse: true,
             ..Default::default()
@@ -426,5 +466,17 @@ mod tests {
         let implied = ImpliedIncludes::from_args(opts, ["a[b"]).unwrap();
         assert!(covers(&implied, "a[b", true));
         assert!(!covers(&implied, "evil", false));
+    }
+
+    #[test]
+    fn escape_live_brackets_escapes_only_live_brackets() {
+        assert_eq!(escape_live_brackets("a[b").as_deref(), Some("a\\[b"));
+        assert_eq!(
+            escape_live_brackets("/x[y]z/**").as_deref(),
+            Some("/x\\[y]z/**")
+        );
+        // Already-escaped `\[` is left alone; no live `[` means no rewrite.
+        assert_eq!(escape_live_brackets("a\\[b"), None);
+        assert_eq!(escape_live_brackets("plain/name"), None);
     }
 }

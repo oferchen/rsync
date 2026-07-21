@@ -1268,11 +1268,14 @@ mod error_handling {
         assert!(result.is_err());
     }
 
+    /// A malformed-bracket glob (`- [`) parses as a rule and compiles: upstream
+    /// rsync stores it verbatim (exclude.c:add_rule) and never matches it
+    /// (lib/wildmatch.c:dowild returns ABORT_ALL), so compilation must not error.
     #[test]
-    fn invalid_glob_pattern() {
+    fn malformed_glob_pattern_compiles() {
         let rules = parse_rules("- [", Path::new("test")).unwrap();
-        let result = FilterSet::from_rules(rules);
-        assert!(result.is_err());
+        let set = FilterSet::from_rules(rules).expect("malformed glob must compile");
+        assert!(set.allows(Path::new("file.txt"), false));
     }
 }
 

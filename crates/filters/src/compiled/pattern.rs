@@ -2,17 +2,18 @@ use std::borrow::Cow;
 use std::collections::HashSet;
 use std::path::Path;
 
-use globset::GlobBuilder;
-
 use crate::FilterError;
 use crate::wildmatch::wildmatch;
 
 /// A compiled filter pattern matched with upstream rsync's `wildmatch()`.
 ///
 /// Matching is delegated to [`wildmatch`] so `*`, `**`, `?`, `[...]`, and `\`
-/// behave byte-for-byte like `lib/wildmatch.c:dowild()`. globset is still used
-/// at compile time to reject malformed patterns, keeping [`FilterError`]
-/// behaviour unchanged.
+/// behave byte-for-byte like `lib/wildmatch.c:dowild()`. Compilation never
+/// rejects a pattern: upstream rsync stores every filter pattern verbatim
+/// (exclude.c:add_rule) and a malformed bracket expression like `[`, `[!`, or
+/// a trailing `\` simply fails to match rather than raising a parse error, so
+/// gating compilation on a stricter glob validator would diverge from
+/// upstream.
 #[derive(Debug, Clone)]
 pub(crate) struct CompiledPattern {
     bytes: Vec<u8>,
@@ -73,22 +74,22 @@ fn path_match_bytes(path: &Path) -> Vec<u8> {
 
 /// Compiles a set of glob pattern strings into sorted, deduplicated matchers.
 ///
-/// Patterns are sorted for deterministic evaluation order. Each pattern is
-/// built with `literal_separator(true)` so that `*` does not match `/`,
-/// matching upstream rsync's wildcard semantics.
+/// Patterns are sorted for deterministic evaluation order. Matching is
+/// delegated to [`wildmatch`], so compilation is infallible: upstream rsync
+/// never rejects a filter pattern (exclude.c:add_rule stores it verbatim; a
+/// malformed bracket expression fails to match instead of erroring). The
+/// [`FilterError`] slot is retained for API stability.
 ///
 /// Bare interior `**` sequences carry the upstream wildmatch semantic
-/// "match anything including `/`". globset's `literal_separator(true)`
-/// only treats `**` as recursive when it is bounded by `/`, so the input
-/// pattern is expanded into TWO variants: the original (covers the
-/// in-segment case where `**` behaves like a single-segment `*`) and a
-/// slash-bounded rewrite (covers the cross-segment case). Both are added
-/// to the matcher set so either form can satisfy upstream parity.
+/// "match anything including `/`". The input pattern is expanded into TWO
+/// variants: the original (covers the in-segment case where `**` behaves like
+/// a single-segment `*`) and a slash-bounded rewrite (covers the cross-segment
+/// case). Both are added to the matcher set so either form can satisfy
+/// upstream parity.
 ///
 /// upstream: `lib/wildmatch.c:dowild()` - `**` always matches across `/`.
 pub(crate) fn compile_patterns(
     patterns: HashSet<String>,
-    original: &str,
     wild2_prefix: bool,
 ) -> Result<Vec<CompiledPattern>, FilterError> {
     let mut expanded: HashSet<String> = HashSet::with_capacity(patterns.len() * 2);
@@ -108,13 +109,6 @@ pub(crate) fn compile_patterns(
 
     let mut matchers = Vec::with_capacity(unique.len());
     for pattern in unique {
-        // globset still validates the pattern so malformed globs surface as
-        // FilterError exactly as before; matching is delegated to wildmatch.
-        GlobBuilder::new(&pattern)
-            .literal_separator(true)
-            .backslash_escape(true)
-            .build()
-            .map_err(|error| FilterError::new(original.to_owned(), error))?;
         matchers.push(CompiledPattern {
             bytes: pattern.into_bytes(),
             wild2_prefix,
