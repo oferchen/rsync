@@ -3409,7 +3409,7 @@ fn dest_mtime_secs(path: &std::path::Path) -> i64 {
 fn sparse_payload() -> Vec<u8> {
     let mut data = Vec::new();
     data.extend_from_slice(b"HEAD");
-    data.extend(std::iter::repeat(0u8).take(64 * 1024));
+    data.resize(data.len() + 64 * 1024, 0u8);
     data.extend_from_slice(b"TAIL");
     data
 }
