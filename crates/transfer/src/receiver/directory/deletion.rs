@@ -64,25 +64,23 @@ fn emit_delete_notification<W: crate::writer::MsgInfoSender + ?Sized>(
             return;
         }
     }
-    // upstream: log.c:872-874 - a local/client receiver renders "deleting %n"
-    // directly; %n (log.c:633-641) appends a trailing slash for a directory.
-    if is_dir {
-        info_log!(Del, 1, "deleting {}/", rel.display());
-    } else {
-        info_log!(Del, 1, "deleting {}", rel.display());
-    }
+    // upstream: log.c:868-874 - a local/client receiver renders exactly ONE
+    // FCLIENT line via log_formatted(): the itemized "%i %n" form when
+    // --itemize-changes is active (stdout_format_has_o_or_i), otherwise the
+    // plain "deleting %n". The two forms are mutually exclusive, never both.
+    // `%n` (log.c:633-641) appends a trailing slash for a directory, so both
+    // forms carry the same slash.
     if emit_itemize {
-        // upstream: log.c:log_delete() emits the "*deleting" itemize row when
-        // --itemize-changes is active. The name is rendered through `%n`
-        // (log.c:633-641), which appends a trailing slash for a directory, so
-        // the itemize row carries the same slash the plain "deleting %n" line
-        // above does.
         let line = if is_dir {
             format!("*deleting   {}/\n", rel.display())
         } else {
             format!("*deleting   {}\n", rel.display())
         };
         let _ = writer.send_msg_info(line.as_bytes());
+    } else if is_dir {
+        info_log!(Del, 1, "deleting {}/", rel.display());
+    } else {
+        info_log!(Del, 1, "deleting {}", rel.display());
     }
 }
 
@@ -1806,6 +1804,40 @@ mod emit_notification_tests {
                 b"*deleting   stale.txt\n".to_vec(),
                 b"*deleting   stale_dir/\n".to_vec(),
             ],
+        );
+    }
+
+    /// A client receiver under `-i` renders the itemized `*deleting` row ONLY;
+    /// it must NOT also emit the plain `deleting %n` Del line. Upstream
+    /// `log.c:868-874` picks one FCLIENT format
+    /// (`stdout_format_has_o_or_i ? stdout_format : "deleting %n"`) and calls
+    /// `log_formatted()` once, never both. Regression for the remote-pull
+    /// double-log where each deletion printed as both `*deleting NAME` and
+    /// `deleting NAME` under `-vi` (delayed `--delete-delay`/`--delete-after`
+    /// and immediate paths share this emitter).
+    #[test]
+    fn itemize_suppresses_plain_deleting_line() {
+        let mut cfg = VerbosityConfig::default();
+        cfg.info.del = 1;
+        init(cfg);
+        let _ = drain_events();
+
+        let mut w = RecordingWriter::default();
+        // Client receiver, itemize active, at -v (Del level 1): the plain line
+        // would fire if not suppressed by the itemize branch.
+        emit_delete_notification(&mut w, Path::new("stale.txt"), false, false, 32, true);
+        emit_delete_notification(&mut w, Path::new("stale_dir"), true, false, 32, true);
+
+        assert_eq!(
+            w.info,
+            vec![
+                b"*deleting   stale.txt\n".to_vec(),
+                b"*deleting   stale_dir/\n".to_vec(),
+            ],
+        );
+        assert!(
+            del_events().is_empty(),
+            "itemize must not also emit the plain `deleting` line",
         );
     }
 
