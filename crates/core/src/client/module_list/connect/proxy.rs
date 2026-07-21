@@ -794,4 +794,105 @@ mod tests {
 
         handle.join().expect("server thread");
     }
+
+    /// Runs one `read_proxy_line` decode over a loopback connection whose server
+    /// side writes `payload` and then closes. Returns the parser's result and
+    /// the (post-parse) line buffer so invariants can be asserted on both.
+    fn run_proxy_line(payload: &[u8]) -> (Result<(), ClientError>, Vec<u8>) {
+        use std::net::TcpListener;
+        use std::thread;
+
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind loopback listener");
+        let addr = listener.local_addr().expect("listener address");
+
+        let server_payload = payload.to_vec();
+        let handle = thread::spawn(move || {
+            let (mut stream, _) = listener.accept().expect("accept");
+            // A malformed decoder could hang forever; the client caps its read,
+            // so ignore write errors from an early client-side close.
+            let _ = stream.write_all(&server_payload);
+            let _ = stream.flush();
+        });
+
+        let mut stream = TcpStream::connect(addr).expect("connect to listener");
+        let mut buffer = Vec::with_capacity(MAX_PROXY_LINE_BYTES + 2);
+        let display = SocketAddrDisplay {
+            host: "proxy.test",
+            port: addr.port(),
+        };
+        let result = read_proxy_line(&mut stream, &mut buffer, display);
+        handle.join().expect("server thread");
+        (result, buffer)
+    }
+
+    /// Deterministic xorshift64 stream so failures are reproducible from `seed`.
+    fn xorshift64(state: &mut u64) -> u64 {
+        let mut x = *state;
+        x ^= x << 13;
+        x ^= x >> 7;
+        x ^= x << 17;
+        *state = x;
+        x
+    }
+
+    #[test]
+    fn read_proxy_line_never_panics_on_arbitrary_bytes() {
+        // CVE-2026-45232 class: a hostile HTTP proxy returns a CONNECT status
+        // line with no newline and arbitrary bytes. The decoder must honour the
+        // MAX_PROXY_LINE_BYTES cap and return an error - never panic, overflow,
+        // or grow the buffer without bound. Cover the exact upstream boundaries
+        // (1023 / 1024 / 4096 bytes) plus a deterministic corpus of random
+        // lines with embedded control, NUL, CR, and high bytes.
+        for len in [MAX_PROXY_LINE_BYTES, MAX_PROXY_LINE_BYTES + 1, 4096] {
+            let payload = vec![b'Z'; len];
+            let (result, buffer) = run_proxy_line(&payload);
+            assert!(
+                result.is_err(),
+                "newline-free {len}-byte line must be rejected"
+            );
+            assert!(
+                buffer.len() <= MAX_PROXY_LINE_BYTES,
+                "buffer grew to {} beyond the {MAX_PROXY_LINE_BYTES}-byte cap",
+                buffer.len()
+            );
+        }
+
+        let mut state: u64 = 0x9E37_79B9_7F4A_7C15;
+        for _ in 0..256 {
+            // Random length spanning below, at, and above the cap.
+            let len = (xorshift64(&mut state) % 4200) as usize;
+            let payload: Vec<u8> = (0..len)
+                .map(|_| (xorshift64(&mut state) & 0xFF) as u8)
+                .collect();
+            let (result, buffer) = run_proxy_line(&payload);
+            // Ok or Err are both graceful; the invariants are cap-bounded buffer
+            // and (on success) a stripped, newline-free line.
+            assert!(
+                buffer.len() <= MAX_PROXY_LINE_BYTES,
+                "buffer grew to {} beyond the cap on a {len}-byte payload",
+                buffer.len()
+            );
+            if result.is_ok() {
+                // The read loop breaks on the first newline and strips the
+                // trailing CR/LF (upstream socket.c), so an accepted line never
+                // contains a newline. Interior CR is retained, matching upstream.
+                assert!(
+                    !buffer.contains(&b'\n'),
+                    "accepted line must not contain a newline"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn read_proxy_line_accepts_capped_line_with_newline() {
+        // A full cap-length line terminated by a newline is the largest legal
+        // response; it must decode without error and be returned CR/LF-stripped.
+        let mut payload = vec![b'H'; MAX_PROXY_LINE_BYTES - 1];
+        payload.push(b'\n');
+        let (result, buffer) = run_proxy_line(&payload);
+        result.expect("cap-length line with newline must decode");
+        assert_eq!(buffer.len(), MAX_PROXY_LINE_BYTES - 1);
+        assert!(!buffer.contains(&b'\n'));
+    }
 }
