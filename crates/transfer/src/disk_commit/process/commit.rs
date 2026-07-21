@@ -31,7 +31,14 @@ pub(super) struct SparseFinalize {
 
 /// Truncates `target` to the sparse logical length and punches its in-basis
 /// zero runs. Runs before the file is put into place.
-fn finalize_sparse(target: &Path, sparse: &SparseFinalize) -> io::Result<()> {
+///
+/// upstream: `fileio.c:43` `sparse_end()` runs inside `receive_data()` BEFORE
+/// `receiver.c` calls `finish_transfer()` -> `set_file_attrs()`. Both `set_len`
+/// (ftruncate) and `punch_hole` (fallocate) update the file mtime, so this must
+/// run before the timestamp is applied or the just-set mtime is clobbered. The
+/// temp+rename callers invoke it directly for that reason; the inplace branch
+/// of `commit_file` re-applies metadata afterwards.
+pub(super) fn finalize_sparse(target: &Path, sparse: &SparseFinalize) -> io::Result<()> {
     let mut file = fs::OpenOptions::new().write(true).open(target)?;
     file.set_len(sparse.logical_len)?;
     for &(pos, len) in &sparse.holes {
@@ -79,14 +86,11 @@ pub(super) fn commit_file(
     bytes_written: u64,
     sparse_final: Option<SparseFinalize>,
 ) -> io::Result<CommitOutcome> {
-    // upstream: fileio.c:43 sparse_end() - for the temp+rename path, truncate
-    // and punch the temp file before it is renamed into place. The inplace
-    // path finalizes in its dedicated branch below (after any backup).
-    if needs_rename {
-        if let Some(ref sparse) = sparse_final {
-            finalize_sparse(cleanup_guard.path(), sparse)?;
-        }
-    }
+    // upstream: fileio.c:43 sparse_end() - the temp+rename path truncates and
+    // punches the temp file in the caller BEFORE applying metadata, so the
+    // ftruncate/punch cannot re-stamp the mtime that set_file_attrs applied.
+    // The inplace path finalizes in its dedicated branch below (after any
+    // backup), then the caller re-applies metadata to the destination.
 
     // upstream: backup.c:make_backup() - rename existing file before overwrite.
     // With delay_updates, backup happens during the sweep, not here.

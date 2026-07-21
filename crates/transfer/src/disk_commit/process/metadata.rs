@@ -37,6 +37,20 @@ pub(super) fn apply_file_metadata(
     if begin.is_device_target {
         None
     } else {
+        // upstream: rsync.c:954-965 dest_mode() runs against the PRE-transfer
+        // destination stat. When metadata is applied to a temp/staged file
+        // (target_path != final path), the final destination still holds the
+        // file it had before this transfer, so stat it to reproduce
+        // dest_mode()'s `stat_mode`/`exists` inputs: `Some(meta)` -> keep the
+        // prior perm bits; a missing final path (`None`) -> brand-new file,
+        // apply the umask-masked source mode. When metadata is applied
+        // directly to the final path (inplace/device/cross-device), the
+        // pre-transfer state is already gone, so pass `None`.
+        let pre_transfer_meta = if target_path != begin.file_path {
+            std::fs::symlink_metadata(&begin.file_path).ok()
+        } else {
+            None
+        };
         apply_metadata_acls_and_xattrs(
             target_path,
             file_entry,
@@ -45,6 +59,7 @@ pub(super) fn apply_file_metadata(
             config.acl_id_map.as_deref(),
             begin.xattr_list.as_ref(),
             config.xattr_filter.as_deref(),
+            pre_transfer_meta,
         )
     }
 }
@@ -66,16 +81,25 @@ fn apply_metadata_acls_and_xattrs(
     acl_id_map: Option<&AclIdMapper>,
     xattr_list: Option<&protocol::xattr::XattrList>,
     xattr_filter: Option<&filters::FilterSet>,
+    pre_transfer_meta: Option<std::fs::Metadata>,
 ) -> Option<(PathBuf, String)> {
     let (opts, entry) = match (metadata_opts, file_entry) {
         (Some(o), Some(e)) => (o, e),
         _ => return None,
     };
 
-    // Skip the stat inside apply_metadata_from_file_entry: the file was
-    // just renamed into place from a temp file, so its metadata will not
-    // match the desired entry. Pass None to apply unconditionally.
-    if let Err(e) = metadata::apply_metadata_with_cached_stat(file_path, entry, opts, None) {
+    // Skip the cached post-rename stat: the file was just committed from a
+    // temp file, so its on-disk metadata will not match the desired entry.
+    // Pass the PRE-transfer stat instead so `set_file_attrs()`'s dest_mode()
+    // chmod keeps an existing file's prior perm bits and applies the
+    // umask-masked source mode to a brand-new file.
+    if let Err(e) = metadata::apply_metadata_with_pre_transfer_stat(
+        file_path,
+        entry,
+        opts,
+        None,
+        pre_transfer_meta,
+    ) {
         return Some((file_path.to_path_buf(), e.to_string()));
     }
 
