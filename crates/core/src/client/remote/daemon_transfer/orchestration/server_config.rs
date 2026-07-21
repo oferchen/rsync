@@ -50,6 +50,15 @@ pub(crate) fn build_server_config_for_receiver(
     // client flag, distinct from the module `incoming chmod` the remote daemon
     // applies on the far side.
     server_config.chmod = config.chmod().cloned();
+    // upstream: options.c:2996-2997 - `--mkpath` is forwarded to the remote only
+    // inside the `if (am_sender)` server_options block, so on a pull it never
+    // rides the wire; the local client IS the receiver and creates the dest-arg
+    // path chain itself in get_local_name() (main.c:736 make_path under mkpath).
+    // Carry it onto the local receiver config here. Without this the rsync://
+    // pull to a missing deep destination failed with "failed to create
+    // destination root ... No such file or directory" while local copies honored
+    // --mkpath.
+    server_config.flags.mkpath = config.mkpath();
     // upstream flist.c:flist_sort_and_clean prunes empty dirs on the receiver
     // (prune_empty_dirs && !am_sender); on a pull the local client IS the receiver,
     // and -m is never sent over the wire (options.c gates it on am_sender), so the
