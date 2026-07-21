@@ -88,8 +88,12 @@ fn daemon_negotiation_version_greeting_format() {
         "Minor version should be numeric"
     );
 
+    // `reader` wraps a clone; the original `stream` handle is still open, so shut
+    // it down to give the daemon's untimed greeting read an EOF before joining.
+    // Otherwise the worker thread blocks and the join wedges (a Windows hang).
     drop(reader);
-    let _ = handle.join();
+    let _ = stream.shutdown(std::net::Shutdown::Both);
+    let _ = finish_daemon(handle);
 }
 
 #[test]

@@ -46,8 +46,20 @@ fn run_daemon_handles_binary_negotiation() {
     );
 
     // Daemon will fail after receiving invalid input (binary instead of @RSYNCD response)
-    // but that's expected behavior - the test verifies that daemon sends @RSYNCD first
-    let _result = handle.join().expect("daemon thread");
+    // but that's expected behavior - the test verifies that daemon sends @RSYNCD first.
+    //
+    // The daemon reads the client's greeting line with an unbounded, timeout-free
+    // read (io_timeout=0, upstream-faithful), so its worker thread only returns on a
+    // newline or EOF. The client sent 4 bytes with no newline, so the thread exits
+    // only once every client handle is closed. `reader` still borrows `stream`, so
+    // drop it and shut the socket down before joining, otherwise the daemon blocks
+    // forever waiting for input the client never sends (a hang seen on Windows, where
+    // a lingering handle keeps the connection from reaching EOF).
+    drop(reader);
+    let _ = stream.shutdown(std::net::Shutdown::Both);
+    // Bounded join (join-then-detach) like the sibling negotiation tests, so a
+    // wedged daemon thread can never turn into a job-level 360s hang.
+    let _ = finish_daemon(handle);
     // Don't assert on result - daemon rightfully fails when client sends invalid data
 }
 
