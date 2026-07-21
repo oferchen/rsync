@@ -69,6 +69,21 @@ pub(crate) fn build_server_config_for_receiver(
     // existing_only above. Without this the daemon pull re-transferred and
     // overwrote existing destination files instead of skipping them.
     server_config.file_selection.ignore_existing = config.ignore_existing();
+    // upstream: options.c:2907-2909 forwards --temp-dir to the remote only inside
+    // the `if (am_sender)` server_options block, so on a pull it is never sent
+    // over the wire; the local client IS the receiver and stages the temp file
+    // itself (receiver.c:766 open_tmpfile() honours tmpdir). Carry it onto the
+    // local receiver config here - without this the daemon pull staged the temp
+    // file in the destination directory, ignoring --temp-dir. Distinct from the
+    // module `temp dir` directive the remote daemon applies on the far side.
+    server_config.temp_dir = config.temp_directory().map(std::path::Path::to_path_buf);
+    // upstream rsync.c:583 adds ATTRS_SKIP_MTIME for `omit_dir_times && S_ISDIR`,
+    // and generator.c:2271 gates need_retouch_dir_times on !omit_dir_times.
+    // options.c:2646-2647 packs the compact 'O' into server_options only when
+    // am_sender, so on a pull -O never rides the wire; the local client IS the
+    // receiver and must apply it itself. Carry it onto the local receiver config
+    // here - without this the daemon pull set directory mtimes from the source.
+    server_config.flags.omit_dir_times = config.omit_dir_times();
     // upstream: options.c:2194 / generator.c:1249 - a single source operand with
     // no destination implies --list-only. On a pull the local client IS the
     // receiver and list_only is a long-form-only flag absent from the compact

@@ -559,6 +559,20 @@ fn build_server_config_for_receiver(
     // existing_only above. Without this the ssh:// pull re-transferred and
     // overwrote existing destination files instead of skipping them.
     server_config.file_selection.ignore_existing = config.ignore_existing();
+    // upstream: options.c:2907-2909 forwards --temp-dir to the remote only inside
+    // the `if (am_sender)` server_options block, so on a pull it is never sent
+    // over the wire; the local client IS the receiver and stages the temp file
+    // itself (receiver.c:766 open_tmpfile() honours tmpdir). Carry it onto the
+    // local receiver config here - without this the ssh:// pull staged the temp
+    // file in the destination directory, ignoring --temp-dir.
+    server_config.temp_dir = config.temp_directory().map(std::path::Path::to_path_buf);
+    // upstream rsync.c:583 adds ATTRS_SKIP_MTIME for `omit_dir_times && S_ISDIR`,
+    // and generator.c:2271 gates need_retouch_dir_times on !omit_dir_times.
+    // options.c:2646-2647 packs the compact 'O' into server_options only when
+    // am_sender, so on a pull -O never rides the wire; the local client IS the
+    // receiver and must apply it itself. Carry it onto the local receiver config
+    // here - without this the ssh:// pull set directory mtimes from the source.
+    server_config.flags.omit_dir_times = config.omit_dir_times();
 
     flags::apply_common_server_flags(config, &mut server_config);
     Ok(server_config)
@@ -740,6 +754,60 @@ mod tests {
             build_server_config_for_receiver(&config, &["dest".to_owned()]).unwrap();
 
         assert!(server_config.chmod.is_none());
+    }
+
+    /// The embedded (russh) pull receiver must carry --temp-dir onto its
+    /// ServerConfig. Upstream receiver.c:766 open_tmpfile() honours tmpdir, and
+    /// options.c:2907-2909 forwards the flag to the remote only when am_sender,
+    /// so on a pull it never rides the wire. Regression guard for the `ssh://`
+    /// pull that staged temps in the destination directory.
+    #[test]
+    fn embedded_receiver_config_propagates_temp_dir() {
+        let config = ClientConfig::builder()
+            .temp_directory(Some("/var/tmp/rsync"))
+            .build();
+        let server_config =
+            build_server_config_for_receiver(&config, &["dest".to_owned()]).unwrap();
+
+        assert_eq!(
+            server_config.temp_dir.as_deref(),
+            Some(std::path::Path::new("/var/tmp/rsync"))
+        );
+    }
+
+    /// Without --temp-dir the receiver config leaves temp_dir unset.
+    #[test]
+    fn embedded_receiver_config_without_temp_dir_stays_none() {
+        let config = ClientConfig::builder().build();
+        let server_config =
+            build_server_config_for_receiver(&config, &["dest".to_owned()]).unwrap();
+
+        assert!(server_config.temp_dir.is_none());
+    }
+
+    /// The embedded (russh) pull receiver must carry --omit-dir-times onto its
+    /// ServerConfig. Upstream rsync.c:583 skips a directory's mtime and
+    /// generator.c:2271 gates the retouch pass; options.c:2646-2647 packs the
+    /// compact 'O' only when am_sender, so on a pull it never rides the wire.
+    /// Regression guard for the `ssh://` pull that set directory mtimes from the
+    /// source.
+    #[test]
+    fn embedded_receiver_config_propagates_omit_dir_times() {
+        let config = ClientConfig::builder().omit_dir_times(true).build();
+        let server_config =
+            build_server_config_for_receiver(&config, &["dest".to_owned()]).unwrap();
+
+        assert!(server_config.flags.omit_dir_times);
+    }
+
+    /// Without --omit-dir-times the receiver config leaves the flag clear.
+    #[test]
+    fn embedded_receiver_config_without_omit_dir_times_stays_clear() {
+        let config = ClientConfig::builder().build();
+        let server_config =
+            build_server_config_for_receiver(&config, &["dest".to_owned()]).unwrap();
+
+        assert!(!server_config.flags.omit_dir_times);
     }
 
     #[test]
