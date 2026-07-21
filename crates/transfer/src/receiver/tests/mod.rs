@@ -22,6 +22,7 @@ mod errors_and_timeouts;
 mod file_list;
 mod generator_keepalive;
 mod hard_links;
+mod incremental_flist_banner;
 #[cfg(unix)]
 mod munge_symlinks;
 mod parallel_delta_notice;
