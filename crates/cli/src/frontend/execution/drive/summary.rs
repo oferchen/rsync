@@ -306,9 +306,9 @@ fn emit_log_output(params: EmitLogOutputParams<'_>) -> io::Result<()> {
         .with_itemize_repeated(itemize_repeated)
         .with_eight_bit_output(eight_bit_output)
         .with_preserve_links(preserve_links);
-    // The log file already carries the parallel "building file list" line via
-    // logging::info_log!(Flist, 1, ...); the FCLIENT "sending incremental file
-    // list" banner is for stdout only (upstream: flist.c:2248 vs 2252).
+    // The FCLIENT "sending incremental file list" banner is stdout only;
+    // upstream's parallel "building file list" line (flist.c:2248) is an FLOG
+    // log-file message that a plain client without --log-file discards.
     emit_transfer_summary(
         summary,
         verbosity,

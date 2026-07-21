@@ -125,12 +125,13 @@ pub(crate) fn emit_transfer_summary(
         return Ok(());
     }
 
-    // upstream: flist.c:2252 - rprintf(FCLIENT, "sending incremental file list\n")
-    // is gated on inc_recurse && INFO_GTE(FLIST, 1) && !am_server. The banner
-    // is FCLIENT-only - the parallel `rprintf(FLOG, "building file list\n")`
-    // covers the log file (already emitted via the logging::info_log! pipeline
-    // in the generator). Local-copy mode is treated as inc_recurse-equivalent
-    // because the source enumeration is interleaved with per-file dispatch.
+    // upstream: flist.c:2251 - rprintf(FCLIENT, "sending incremental file list\n")
+    // is gated on inc_recurse && INFO_GTE(FLIST, 1) && !am_server. This banner is
+    // stdout-only. Upstream's parallel `rprintf(FLOG, "building file list\n")`
+    // (flist.c:2248) targets the log file, which a plain client without
+    // --log-file discards, so it never reaches stdout. Local-copy mode is treated
+    // as inc_recurse-equivalent because the source enumeration is interleaved with
+    // per-file dispatch.
     if emit_flist_banner && verbosity > 0 {
         writeln!(writer, "sending incremental file list")?;
     }
