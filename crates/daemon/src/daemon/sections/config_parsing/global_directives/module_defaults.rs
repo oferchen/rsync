@@ -53,4 +53,10 @@ struct GlobalModuleDefaults {
     // (clientserver.c:1363,1376 `lp_daemon_gid`/`lp_daemon_uid`).
     uid: Option<u32>,
     gid: Option<GidSetting>,
+    // upstream: daemon-parm.h:262 marks `auth users` P_LOCAL, so a global-section
+    // `auth users` becomes every module's default via loadparm.c
+    // init_section()/copy_section(). authenticate.c:228 auth_server() then reads
+    // lp_auth_users(module) and requires authentication whenever it is non-empty,
+    // so a module inheriting the default authenticates like one with its own list.
+    auth_users: Option<Vec<AuthUser>>,
 }
