@@ -233,6 +233,31 @@ pub struct ConnectionConfig {
     /// - `exclude.c:379` `add_implied_include()`
     /// - `flist.c:1026` `recv_file_entry()` - the receiver-side name check
     pub implied_source_args: Vec<String>,
+    /// Whether the leading daemon module name must be stripped from each
+    /// [`implied_source_args`] entry before it is compiled into an implied
+    /// include rule.
+    ///
+    /// This mirrors the `skip_daemon_module` argument upstream passes to
+    /// `add_implied_include()`: it is set only when the recorded arg is a raw
+    /// daemon `module/path` operand (`main.c:1549` passes `daemon_connection`).
+    /// Forwarded `--files-from` entries are already module-relative and must
+    /// never be stripped (`io.c:427,464` pass `0`), so this stays `false` for
+    /// them even on a daemon connection.
+    ///
+    /// It is recorded as a stable flag rather than being re-derived at
+    /// validation time because [`files_from_data`] is consumed (taken) while
+    /// forwarding the list to the sender, so it is already empty by the time
+    /// the receiver validates the incoming file list.
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `exclude.c:396-401` `add_implied_include()` - the module-name strip
+    /// - `main.c:1549` - daemon operand recorded with `skip_daemon_module=1`
+    /// - `io.c:427,464` - files-from entries recorded with `skip_daemon_module=0`
+    ///
+    /// [`implied_source_args`]: Self::implied_source_args
+    /// [`files_from_data`]: Self::files_from_data
+    pub implied_skip_daemon_module: bool,
 }
 
 /// File selection and filtering options for transfer candidates.
