@@ -314,7 +314,16 @@ impl SshConfig {
             .and_then(|s| s.strip_suffix(']'))
             .unwrap_or(raw_host);
 
-        let raw_path = parsed.path();
+        // Take the path from the original URL string rather than
+        // `parsed.path()`. The `url` crate applies WHATWG dot-segment
+        // normalization, which silently collapses `.`/`..` path segments and
+        // would drop rsync's literal `/./` dot-root pivot used by --relative
+        // (-R). The subprocess SSH path passes the operand through verbatim, so
+        // the embedded transport must preserve `/./` identically.
+        // upstream: flist.c:2351 send_file_list - `strstr(fbuf, "/./")` splits
+        // the source arg at the pivot so -R recreates only the components after
+        // it; without the literal marker the whole absolute path is recreated.
+        let raw_path = raw_url_path(url_str).unwrap_or("");
         if raw_path.is_empty() || raw_path == "/" {
             return Err(SshError::InvalidUrl {
                 reason: "empty path".to_owned(),
@@ -358,6 +367,22 @@ impl SshConfig {
 
         Ok((config, remote_path))
     }
+}
+
+/// Extracts the literal path component of an `ssh://` URL without dot-segment
+/// normalization.
+///
+/// The path begins at the first `/` after the `scheme://authority` prefix and
+/// runs to the query (`?`) or fragment (`#`) delimiter, mirroring how the
+/// subprocess SSH transport slices `host:path` operands. Returns `None` when
+/// the URL has no path component. Preserving the raw slice keeps rsync's `/./`
+/// dot-root pivot intact for `--relative` transfers.
+fn raw_url_path(url_str: &str) -> Option<&str> {
+    let after_scheme = &url_str[url_str.find("://")? + 3..];
+    let start = after_scheme.find('/')?;
+    let path = &after_scheme[start..];
+    let end = path.find(['?', '#']).unwrap_or(path.len());
+    Some(&path[..end])
 }
 
 /// Returns the default `~/.ssh/config` path, or `None` if `$HOME` /
@@ -635,6 +660,51 @@ mod tests {
     fn from_url_absolute_path() {
         let (_cfg, path) = SshConfig::from_url("ssh://host/absolute/path").unwrap();
         assert_eq!(path, "/absolute/path");
+    }
+
+    #[test]
+    fn from_url_preserves_dot_root_pivot() {
+        // The `/./` dot-root pivot marks where --relative (-R) begins recreating
+        // implied dirs. The `url` crate's dot-segment normalization would drop
+        // it; the embedded transport must preserve it exactly like the ssh
+        // subprocess `host:path` split does.
+        let (cfg, path) = SshConfig::from_url("ssh://host/SRC/./a/b/c/").unwrap();
+        assert_eq!(cfg.host, "host");
+        assert_eq!(path, "/SRC/./a/b/c/");
+    }
+
+    #[test]
+    fn from_url_preserves_dot_root_pivot_no_trailing_slash() {
+        let (_cfg, path) = SshConfig::from_url("ssh://host/SRC/./a/b/c").unwrap();
+        assert_eq!(path, "/SRC/./a/b/c");
+    }
+
+    #[test]
+    fn from_url_dot_root_pivot_with_user_and_port() {
+        let (cfg, path) = SshConfig::from_url("ssh://user@host:2222/SRC/./a/b").unwrap();
+        assert_eq!(cfg.host, "host");
+        assert_eq!(cfg.port, 2222);
+        assert_eq!(cfg.username.as_deref(), Some("user"));
+        assert_eq!(path, "/SRC/./a/b");
+    }
+
+    #[test]
+    fn from_url_dot_root_pivot_ipv6() {
+        let (cfg, path) = SshConfig::from_url("ssh://[::1]/SRC/./a/b").unwrap();
+        assert_eq!(cfg.host, "::1");
+        assert_eq!(path, "/SRC/./a/b");
+    }
+
+    #[test]
+    fn from_url_preserves_home_relative_dot_root_pivot() {
+        let (_cfg, path) = SshConfig::from_url("ssh://user@host/~/SRC/./a/b").unwrap();
+        assert_eq!(path, "~/SRC/./a/b");
+    }
+
+    #[test]
+    fn from_url_preserves_trailing_slash() {
+        let (_cfg, path) = SshConfig::from_url("ssh://host/data/").unwrap();
+        assert_eq!(path, "/data/");
     }
 
     #[test]
