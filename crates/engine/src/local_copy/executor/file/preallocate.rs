@@ -24,12 +24,14 @@ use crate::local_copy::LocalCopyError;
 /// Skips preallocation when disabled, when `total_len` is zero, or when the
 /// file already has at least `total_len` bytes allocated.
 ///
-/// Returns the preallocated length: the number of bytes now allocated on disk
-/// for the destination (`st_blocks * 512`), or `0` when preallocation was
-/// skipped. This mirrors upstream `do_fallocate()`, whose return value flows
-/// into `preallocated_len` so the sparse writer knows how much of the file has
-/// reserved blocks that must be punched (rather than seeked) to become holes.
-// upstream: receiver.c:319 - preallocated_len = do_fallocate(fd, 0, total_size)
+/// Returns the value upstream `do_fallocate()` feeds into `preallocated_len`,
+/// which the sparse writer compares against to punch versus seek interior zero
+/// runs: `0` when preallocation was skipped or reserved with `FALLOC_FL_KEEP_SIZE`
+/// (the `--preallocate`/`--inplace` path, so runs are seeked and the reserved
+/// blocks stay dense), and `st_blocks * 512` only on the `opts == 0` fallback
+/// path where no `KEEP_SIZE` flag was available and the run is punched instead.
+// upstream: syscall.c:1528 do_fallocate() - returns 0 when opts != 0 (KEEP_SIZE),
+// else st_blocks * S_BLKSIZE; receiver.c:323 preallocated_len = do_fallocate(...)
 pub(crate) fn maybe_preallocate_destination(
     file: &mut fs::File,
     path: &Path,
@@ -82,7 +84,20 @@ fn preallocate_destination_file(
         #[cfg(not(target_os = "linux"))]
         let flags = FallocateFlags::empty();
         match fallocate(fd, flags, 0, total_len) {
+            // upstream: syscall.c:1554-1556 do_fallocate() returns 0 on the KEEP_SIZE
+            // path (opts != 0), so preallocated_len == 0 and write_sparse() seeks over
+            // interior zero runs, leaving the reserved blocks allocated (dense). This is
+            // deterministic - unlike reading back st_blocks, it does not depend on whether
+            // the filesystem eagerly allocates blocks for a KEEP_SIZE reservation.
+            #[cfg(target_os = "linux")]
+            Ok(()) => Ok(0),
+            // Non-Linux uses no KEEP_SIZE flag (opts == 0), so mirror do_fallocate's
+            // `return st.st_blocks * S_BLKSIZE` for that path.
+            #[cfg(not(target_os = "linux"))]
             Ok(()) => Ok(allocated_bytes(file).unwrap_or(total_len)),
+            // KEEP_SIZE unavailable at runtime: fall back to a size-extending
+            // reservation (equivalent to upstream's opts == 0 path) and report the
+            // resulting allocation so the sparse writer punches within it.
             Err(Errno::OPNOTSUPP | Errno::NOSYS | Errno::INVAL) => {
                 file.set_len(total_len).map_err(|error| {
                     LocalCopyError::io("preallocate destination file", path, error)
@@ -290,12 +305,15 @@ mod tests {
         );
     }
 
-    /// Verify that `maybe_preallocate_destination` returns the allocated length
-    /// so the sparse writer can punch holes inside the reserved extent. Mirrors
-    /// upstream `preallocated_len = do_fallocate(...)`.
+    /// Verify `maybe_preallocate_destination` mirrors upstream `do_fallocate()`:
+    /// the Linux `FALLOC_FL_KEEP_SIZE` path returns 0, so `preallocated_len` stays
+    /// 0 and the sparse writer seeks over interior zero runs (leaving the reserved
+    /// blocks dense) rather than punching them. Returning a deterministic 0 - not a
+    /// read-back `st_blocks` - avoids depending on whether the filesystem eagerly
+    /// allocates blocks for a KEEP_SIZE reservation.
     #[cfg(target_os = "linux")]
     #[test]
-    fn maybe_preallocate_returns_allocated_length() {
+    fn maybe_preallocate_returns_keep_size_zero() {
         let temp = tempdir().expect("tempdir");
         let path = temp.path().join("prealloc_len.bin");
         let mut file = fs::File::create(&path).expect("create file");
@@ -303,10 +321,10 @@ mod tests {
         let one_mib = 1024 * 1024;
         let prealloc =
             maybe_preallocate_destination(&mut file, &path, one_mib, 0, true).expect("preallocate");
-        // The reported allocated length must cover the whole requested extent.
-        assert!(
-            prealloc >= one_mib,
-            "expected preallocated length >= {one_mib}, got {prealloc}"
+        // upstream: syscall.c:1554 do_fallocate() returns 0 for the KEEP_SIZE path.
+        assert_eq!(
+            prealloc, 0,
+            "KEEP_SIZE preallocation must report 0 (seek, not punch), got {prealloc}"
         );
 
         // Disabled preallocation reports zero (no reserved extent to punch).
