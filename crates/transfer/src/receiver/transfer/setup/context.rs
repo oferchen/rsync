@@ -226,6 +226,15 @@ impl ReceiverContext {
 
         let metadata_opts = MetadataOptions::new()
             .preserve_permissions(self.config.flags.perms)
+            // upstream: options.c:2692-2693 packs the compact 'E' into
+            // server_options only inside `else if (preserve_executability &&
+            // am_sender)`, so on a pull `-E` never rides the wire to the remote
+            // sender; the local client IS the receiver and applies it itself.
+            // rsync.c:457-465 set_file_attrs() layers the source executability
+            // bits onto the destination mode when `!preserve_perms`. Without
+            // this the ssh/daemon pull left files at their existing mode while
+            // the local copy executor honoured `-E` (local_copy metadata.rs:7).
+            .preserve_executability(self.config.flags.preserve_executability)
             .preserve_times(self.config.flags.times)
             .preserve_atimes(self.config.flags.atimes)
             .preserve_crtimes(self.config.flags.crtimes)
