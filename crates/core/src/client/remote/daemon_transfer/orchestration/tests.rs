@@ -1138,6 +1138,88 @@ mod server_config_reference_dirs {
         assert!(server_config.chmod.is_none());
     }
 
+    /// On a daemon pull the local client IS the receiver and applies --usermap
+    /// itself as it reads the incoming id list. Upstream options.c:2912-2913
+    /// forwards --usermap to the remote only when am_sender, so on a pull it
+    /// never rides the wire and must be carried onto the receiver config.
+    /// Regression guard for the daemon pull that ignored --usermap.
+    #[cfg(unix)]
+    #[test]
+    fn receiver_config_propagates_usermap() {
+        let mapping = ::metadata::UserMapping::parse("*:5678").expect("parse usermap");
+        let config = ClientConfig::builder()
+            .user_mapping(Some(mapping.clone()))
+            .build();
+        let server_config =
+            build_server_config_for_receiver(&config, &["dest".to_owned()], Vec::new()).unwrap();
+
+        assert_eq!(server_config.user_mapping.as_ref(), Some(&mapping));
+    }
+
+    /// The gid counterpart of --usermap (upstream options.c:2915-2916).
+    #[cfg(unix)]
+    #[test]
+    fn receiver_config_propagates_groupmap() {
+        let mapping = ::metadata::GroupMapping::parse("*:1234").expect("parse groupmap");
+        let config = ClientConfig::builder()
+            .group_mapping(Some(mapping.clone()))
+            .build();
+        let server_config =
+            build_server_config_for_receiver(&config, &["dest".to_owned()], Vec::new()).unwrap();
+
+        assert_eq!(server_config.group_mapping.as_ref(), Some(&mapping));
+    }
+
+    /// Without --usermap/--groupmap the receiver config carries no id maps.
+    #[test]
+    fn receiver_config_without_id_maps_has_none() {
+        let config = ClientConfig::default();
+        let server_config =
+            build_server_config_for_receiver(&config, &["dest".to_owned()], Vec::new()).unwrap();
+
+        assert!(server_config.user_mapping.is_none());
+        assert!(server_config.group_mapping.is_none());
+    }
+
+    /// On a daemon pull the local client IS the receiver and writes file content
+    /// in-place into an existing device node under --write-devices. Upstream
+    /// options.c:2979-2980 forwards it to the remote only when am_sender, so on a
+    /// pull it must be carried onto the receiver config.
+    #[test]
+    fn receiver_config_propagates_write_devices() {
+        let config = ClientConfig::builder().write_devices(true).build();
+        let server_config =
+            build_server_config_for_receiver(&config, &["dest".to_owned()], Vec::new()).unwrap();
+
+        assert!(server_config.write.write_devices);
+    }
+
+    /// On a daemon pull the local client IS the receiver and follows a
+    /// symlink-to-dir at the destination under -K. Upstream options.c:2641-2643
+    /// packs the compact 'K' only when am_sender, so on a pull it must be carried
+    /// onto the receiver config.
+    #[test]
+    fn receiver_config_propagates_keep_dirlinks() {
+        let config = ClientConfig::builder().keep_dirlinks(true).build();
+        let server_config =
+            build_server_config_for_receiver(&config, &["dest".to_owned()], Vec::new()).unwrap();
+
+        assert!(server_config.flags.keep_dirlinks);
+    }
+
+    /// On a daemon pull the local client IS the receiver and picks a fuzzy basis
+    /// under -y/--fuzzy. Upstream options.c:2650-2655 packs the compact 'y' only
+    /// when am_sender, so on a pull the fuzzy level must be carried onto the
+    /// receiver config.
+    #[test]
+    fn receiver_config_propagates_fuzzy_level() {
+        let config = ClientConfig::builder().fuzzy_level(2).build();
+        let server_config =
+            build_server_config_for_receiver(&config, &["dest".to_owned()], Vec::new()).unwrap();
+
+        assert_eq!(server_config.flags.fuzzy_level, 2);
+    }
+
     /// On a daemon pull the local client IS the receiver and stages the temp
     /// file itself (upstream receiver.c:766 open_tmpfile() honours tmpdir).
     /// options.c:2907-2909 forwards --temp-dir to the remote only when am_sender,
@@ -1218,6 +1300,19 @@ mod server_config_reference_dirs {
             build_server_config_for_receiver(&config, &["dest".to_owned()], Vec::new()).unwrap();
 
         assert!(!server_config.flags.mkpath);
+    }
+
+    /// Without -K/-y/--write-devices/--temp-dir/--omit-dir-times/--mkpath the
+    /// receiver config leaves those flags clear.
+    #[test]
+    fn receiver_config_without_receiver_only_flags_stays_clear() {
+        let config = ClientConfig::default();
+        let server_config =
+            build_server_config_for_receiver(&config, &["dest".to_owned()], Vec::new()).unwrap();
+
+        assert!(!server_config.write.write_devices);
+        assert!(!server_config.flags.keep_dirlinks);
+        assert_eq!(server_config.flags.fuzzy_level, 0);
     }
 
     /// On a daemon (rsync://) push the local client IS the sender and applies
