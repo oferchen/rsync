@@ -1138,6 +1138,32 @@ mod server_config_reference_dirs {
         assert!(server_config.chmod.is_none());
     }
 
+    /// On a daemon (rsync://) pull the local client IS the receiver and creates
+    /// the dest-arg path chain itself. `--mkpath` is never forwarded to the
+    /// remote daemon (upstream options.c:2996-2997 gates it on am_sender), so the
+    /// receiver config must carry it (main.c:736 make_path). Regression guard for
+    /// the rsync:// pull that failed with "failed to create destination root ...
+    /// No such file or directory" against a missing deep destination.
+    #[test]
+    fn receiver_config_propagates_mkpath() {
+        let config = ClientConfig::builder().mkpath(true).build();
+        let server_config =
+            build_server_config_for_receiver(&config, &["dest".to_owned()], Vec::new()).unwrap();
+
+        assert!(server_config.flags.mkpath);
+    }
+
+    /// Without `--mkpath` the receiver config leaves the flag clear, so a missing
+    /// destination parent stays a fatal error, matching upstream main.c:787.
+    #[test]
+    fn receiver_config_without_mkpath_stays_clear() {
+        let config = ClientConfig::default();
+        let server_config =
+            build_server_config_for_receiver(&config, &["dest".to_owned()], Vec::new()).unwrap();
+
+        assert!(!server_config.flags.mkpath);
+    }
+
     #[test]
     fn generator_config_empty_reference_dirs_by_default() {
         let config = ClientConfig::default();
