@@ -75,41 +75,13 @@ fn collect(root: &Path, dir: &Path, out: &mut Vec<PathBuf>) {
     }
 }
 
-/// Compare two destination trees for entry set, type, file bytes, and symlink
-/// targets. Returns the first divergence, or `None` when identical.
-pub fn content_diff(a: &Path, b: &Path) -> Option<String> {
-    let (ea, eb) = (rel_entries(a), rel_entries(b));
-    if ea != eb {
-        return Some(format!(
-            "entry set differs ({} vs {} entries)",
-            ea.len(),
-            eb.len()
-        ));
-    }
-    for rel in &ea {
-        let (pa, pb) = (a.join(rel), b.join(rel));
-        let (ma, mb) = match (pa.symlink_metadata(), pb.symlink_metadata()) {
-            (Ok(ma), Ok(mb)) => (ma, mb),
-            _ => return Some(format!("cannot stat {}", rel.display())),
-        };
-        let (ta, tb) = (ma.file_type(), mb.file_type());
-        if ta.is_symlink() != tb.is_symlink() || ta.is_dir() != tb.is_dir() {
-            return Some(format!("type differs at {}", rel.display()));
-        }
-        if ta.is_symlink() {
-            if std::fs::read_link(&pa).ok() != std::fs::read_link(&pb).ok() {
-                return Some(format!("symlink target differs at {}", rel.display()));
-            }
-        } else if ta.is_file() && std::fs::read(&pa).ok() != std::fs::read(&pb).ok() {
-            return Some(format!("file content differs at {}", rel.display()));
-        }
-    }
-    None
-}
+/// The content facet lives in [`super::comparison`]; re-exported here so the
+/// many checks that reach for `support::content_diff` keep one import path.
+pub use super::comparison::content_diff;
 
 #[cfg(test)]
 mod tests {
-    use super::{content_diff, entry_count, rel_entries};
+    use super::{entry_count, rel_entries};
     use std::fs;
     use std::os::unix::fs::symlink;
 
@@ -136,44 +108,5 @@ mod tests {
             .map(|p| p.to_string_lossy().into_owned())
             .collect();
         assert_eq!(rels, vec!["a", "z", "z/y"]);
-    }
-
-    #[test]
-    fn content_diff_none_for_identical_trees() {
-        let (a, b) = (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
-        for root in [a.path(), b.path()] {
-            fs::write(root.join("f"), b"same").unwrap();
-            symlink("f", root.join("l")).unwrap();
-        }
-        assert!(content_diff(a.path(), b.path()).is_none());
-    }
-
-    #[test]
-    fn content_diff_reports_content_symlink_and_set_differences() {
-        let (a, b) = (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
-        fs::write(a.path().join("f"), b"alpha").unwrap();
-        fs::write(b.path().join("f"), b"beta").unwrap();
-        assert!(
-            content_diff(a.path(), b.path())
-                .unwrap()
-                .contains("content differs")
-        );
-
-        let (c, d) = (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
-        symlink("x", c.path().join("l")).unwrap();
-        symlink("y", d.path().join("l")).unwrap();
-        assert!(
-            content_diff(c.path(), d.path())
-                .unwrap()
-                .contains("symlink target")
-        );
-
-        let (e, f) = (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
-        fs::write(e.path().join("only"), b"").unwrap();
-        assert!(
-            content_diff(e.path(), f.path())
-                .unwrap()
-                .contains("entry set")
-        );
     }
 }
