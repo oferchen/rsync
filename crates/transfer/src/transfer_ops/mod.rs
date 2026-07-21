@@ -214,6 +214,51 @@ pub struct ResponseContext<'a> {
     pub dest_dir: Option<&'a std::path::Path>,
 }
 
+/// Decides whether the receiver writes this file straight to its final
+/// destination (inplace) or reconstructs it into a temp file that is renamed on
+/// commit.
+///
+/// `--inplace` and `--append` write to the destination in place, preserving
+/// existing content (append implies inplace, and the sender only transmits the
+/// data beyond the existing length).
+///
+/// A `--partial-dir` resume is deliberately excluded. When the `I` capability is
+/// negotiated (`inplace_partial`) and the basis is the partial-dir file
+/// (`FNAMECMP_PARTIAL_DIR`), upstream's `one_inplace` (receiver.c:910) writes the
+/// reconstruction in place to the partial file itself (`partialptr`,
+/// receiver.c:969) and renames it onto the destination only once the transfer
+/// completes, so an interrupt leaves the grown partial inside the partial dir and
+/// never a truncated file at the live destination name. oc reaches the same
+/// observable end state by reconstructing from the partial-dir basis into a temp
+/// file and renaming on commit: keeping the transfer temp+rename
+/// (`needs_rename == true`) lets the disk thread relocate the in-flight temp back
+/// into the partial dir on interrupt (`retain_partial_file`'s `PartialDir` branch,
+/// cleanup.c:105-115). Taking the inplace path for the resume would instead write
+/// the reconstruction directly to the live destination and leave a full-size but
+/// incomplete file there on interrupt - a silent data-integrity hazard.
+///
+/// `--inplace`/`--append` never combine with `--partial-dir` (rejected during
+/// config validation), so the exclusion only ever suppresses the `one_inplace`
+/// case; it is defensive against the two being wired together in the future.
+///
+/// # Upstream Reference
+///
+/// - `receiver.c:855` - append mode implies inplace.
+/// - `receiver.c:910` - `one_inplace = inplace_partial && fnamecmp_type == FNAMECMP_PARTIAL_DIR`.
+/// - `receiver.c:969` - `fnametmp = one_inplace ? partialptr : fname`.
+/// - `cleanup.c:105-115` - `handle_partial_dir()` moves the temp into the partial dir.
+fn resolve_use_inplace(
+    inplace: bool,
+    append: bool,
+    inplace_partial: bool,
+    fnamecmp_type: Option<protocol::FnameCmpType>,
+) -> bool {
+    let write_to_destination = inplace || append;
+    let one_inplace_partial_dir =
+        inplace_partial && fnamecmp_type == Some(protocol::FnameCmpType::PartialDir);
+    write_to_destination && !one_inplace_partial_dir
+}
+
 /// Reads and validates the echoed NDX and sum_head from the sender response.
 ///
 /// Returns the file path, basis path, signature, target size, sender attributes,
@@ -252,13 +297,12 @@ fn read_response_header<R: Read>(
 
     let (file_path, basis_path, signature, target_size) = pending.into_parts();
 
-    // upstream: receiver.c:797 - one_inplace = inplace_partial && fnamecmp_type == FNAMECMP_PARTIAL_DIR
-    // upstream: receiver.c:855 - append mode implies inplace (write directly to destination,
-    // preserving existing content; sender only sends data beyond the existing length)
-    let use_inplace = ctx.config.inplace
-        || ctx.config.append
-        || (ctx.config.inplace_partial
-            && sender_attrs.fnamecmp_type == Some(protocol::FnameCmpType::PartialDir));
+    let use_inplace = resolve_use_inplace(
+        ctx.config.inplace,
+        ctx.config.append,
+        ctx.config.inplace_partial,
+        sender_attrs.fnamecmp_type,
+    );
 
     // upstream: receiver.c:287-307 - in append mode, seek output fd to existing file length
     // (derived from echoed sum_head) before writing new data
@@ -309,6 +353,50 @@ struct ResponseHeader {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn resolve_use_inplace_writes_to_destination_for_inplace_and_append() {
+        // upstream: receiver.c:855 - append implies inplace; both write to the
+        // destination directly.
+        assert!(resolve_use_inplace(true, false, false, None));
+        assert!(resolve_use_inplace(false, true, false, None));
+    }
+
+    #[test]
+    fn resolve_use_inplace_temp_rename_without_inplace_flags() {
+        assert!(!resolve_use_inplace(false, false, false, None));
+        assert!(!resolve_use_inplace(
+            false,
+            false,
+            false,
+            Some(protocol::FnameCmpType::Fname)
+        ));
+    }
+
+    #[test]
+    fn resolve_use_inplace_partial_dir_resume_stays_temp_rename() {
+        // The one_inplace case (inplace_partial negotiated + partial-dir basis)
+        // must NOT take the inplace path: staying temp+rename keeps
+        // needs_rename == true so an interrupt relocates the in-flight temp into
+        // the partial dir (retain_partial_file's PartialDir branch) instead of
+        // leaving a full-size but incomplete file at the live destination name.
+        // upstream: receiver.c:910,969 write one_inplace to partialptr, never fname.
+        assert!(!resolve_use_inplace(
+            false,
+            false,
+            true,
+            Some(protocol::FnameCmpType::PartialDir)
+        ));
+        // A non-partial-dir basis with the capability negotiated (e.g. a fresh
+        // or exact-name transfer) is likewise temp+rename.
+        assert!(!resolve_use_inplace(
+            false,
+            false,
+            true,
+            Some(protocol::FnameCmpType::Fname)
+        ));
+        assert!(!resolve_use_inplace(false, false, true, None));
+    }
 
     #[test]
     fn request_config_debug() {
