@@ -126,9 +126,11 @@ impl Atimes {
         if support::entry_count(&up_dst) != expected || support::entry_count(&oc_dst) != expected {
             return CheckOutcome::fail(self.name(), label, "destination entry count != source");
         }
-        if let Some(diff) = support::content_diff(&oc_dst, &up_dst) {
-            return CheckOutcome::fail(self.name(), label, diff);
-        }
+        // Access times MUST be compared before any byte read: content_diff reads
+        // each file's bytes, which bumps its atime to "now" and would defeat the
+        // comparison. `stat -c %X` (atime_diff/source_atime_diff) and readdir
+        // (entry_count) do not touch a file's atime, so the dest atimes are still
+        // the transferred values here.
         // Parity: oc's per-file atime must match upstream's byte-for-byte.
         if let Some(diff) = atime_diff(&oc_dst, &up_dst) {
             if ctx.verbose {
@@ -138,13 +140,15 @@ impl Atimes {
         }
         // Non-vacuous: oc's dest atime must equal the source's known past value,
         // proving it preserved the atime rather than stamping "now".
-        match source_atime_diff(&oc_dst, src_atimes) {
-            Some(diff) => {
-                if ctx.verbose {
-                    dump_atimes(&oc_dst, &up_dst);
-                }
-                CheckOutcome::fail(self.name(), label, diff)
+        if let Some(diff) = source_atime_diff(&oc_dst, src_atimes) {
+            if ctx.verbose {
+                dump_atimes(&oc_dst, &up_dst);
             }
+            return CheckOutcome::fail(self.name(), label, diff);
+        }
+        // Content parity last (reading bytes clobbers atime, already compared).
+        match support::content_diff(&oc_dst, &up_dst) {
+            Some(diff) => CheckOutcome::fail(self.name(), label, diff),
             None => CheckOutcome::pass(self.name(), label),
         }
     }
