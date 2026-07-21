@@ -508,14 +508,47 @@ mod tests {
 
     #[cfg(unix)]
     #[test]
-    fn all_checks_default_to_validation() {
+    fn every_check_declares_known_nonempty_categories() {
         for check in checks::all() {
-            assert_eq!(
-                check.categories(),
-                &[Category::Validation],
-                "check `{}` should default to the Validation category",
+            let cats = check.categories();
+            assert!(
+                !cats.is_empty(),
+                "check `{}` declares no category",
                 check.name()
             );
+            for cat in cats {
+                assert!(
+                    Category::ALL.contains(cat),
+                    "check `{}` declares an unknown category {cat:?}",
+                    check.name()
+                );
+            }
         }
+    }
+
+    /// Names of the checks that carry a given category, mirroring the filter in
+    /// `execute()`.
+    #[cfg(unix)]
+    fn checks_in(cat: Category) -> Vec<&'static str> {
+        checks::all()
+            .iter()
+            .filter(|c| c.categories().contains(&cat))
+            .map(|c| c.name())
+            .collect()
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn security_flag_selects_exactly_the_security_checks() {
+        assert_eq!(
+            checks_in(Category::Security),
+            ["safe-links", "protected-regular"]
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn wire_flag_selects_exactly_the_wire_checks() {
+        assert_eq!(checks_in(Category::Wire), ["capability-string"]);
     }
 }
