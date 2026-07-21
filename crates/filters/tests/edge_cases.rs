@@ -276,39 +276,37 @@ fn very_long_pattern() {
     assert!(!set.allows(Path::new(&matching), false));
 }
 
-/// Verifies invalid pattern reports error.
+/// upstream rsync accepts an unbalanced `[` and simply never matches it:
+/// exclude.c:add_rule() stores the pattern verbatim and
+/// lib/wildmatch.c:dowild() returns ABORT_ALL for the malformed class rather
+/// than raising a parse error. Compilation must not turn that no-op into an
+/// error. Verified against rsync 3.4.4: `--exclude='['` exits 0 and transfers
+/// every file.
 #[test]
-fn invalid_pattern_unclosed_bracket() {
-    let result = FilterSet::from_rules([FilterRule::exclude("[")]);
-    assert!(result.is_err());
-
-    let error = result.unwrap_err();
-    assert_eq!(error.pattern(), "[");
+fn unclosed_bracket_compiles_and_never_matches() {
+    let set = FilterSet::from_rules([FilterRule::exclude("[")]).expect("`[` must compile");
+    assert!(set.allows(Path::new("foo.txt"), false));
 }
 
-/// Verifies error preserves pattern text.
+/// An unterminated character class (`[invalid`) is likewise tolerated by
+/// upstream and never matches - dowild() runs off the end of the pattern and
+/// returns ABORT_ALL.
 #[test]
-fn error_preserves_pattern() {
-    let result = FilterSet::from_rules([FilterRule::exclude("[invalid")]);
-
-    match result {
-        Err(error) => {
-            assert_eq!(error.pattern(), "[invalid");
-            assert!(error.to_string().contains("failed to compile"));
-        }
-        Ok(_) => panic!("Expected error"),
-    }
+fn unterminated_class_compiles_and_never_matches() {
+    let set = FilterSet::from_rules([FilterRule::exclude("[invalid")]).expect("must compile");
+    assert!(set.allows(Path::new("invalid"), false));
+    assert!(set.allows(Path::new("[invalid"), false));
 }
 
-/// Verifies valid rules still work after invalid one fails.
+/// A batch mixing a well-formed rule with a malformed-bracket rule compiles
+/// as a whole (upstream never rejects the batch); the well-formed rule still
+/// excludes its matches while the malformed rule matches nothing.
 #[test]
-fn valid_rules_compile_before_invalid() {
-    // First rule is valid, second is invalid
-    let rules = [FilterRule::exclude("*.txt"), FilterRule::exclude("[")];
-
-    // The whole batch fails because one is invalid
-    let result = FilterSet::from_rules(rules);
-    assert!(result.is_err());
+fn valid_and_malformed_rules_all_compile() {
+    let set = FilterSet::from_rules([FilterRule::exclude("*.txt"), FilterRule::exclude("[")])
+        .expect("both rules compile");
+    assert!(!set.allows(Path::new("a.txt"), false));
+    assert!(set.allows(Path::new("foo"), false));
 }
 
 /// Verifies all filter actions can be created.
@@ -383,17 +381,34 @@ fn filter_set_debug() {
     assert!(debug.contains("FilterSet"));
 }
 
-/// Verifies FilterError can be accessed.
+/// Malformed bracket / character-class patterns that upstream rsync accepts
+/// syntactically and never matches. Verified against rsync 3.4.4:
+/// `rsync -r --exclude=<pat> src/ dst/` exits 0 and transfers every file for
+/// each pattern below (exclude.c:add_rule stores the pattern verbatim;
+/// lib/wildmatch.c:dowild returns ABORT_ALL/FALSE, never a parse error).
 #[test]
-fn filter_error_access() {
-    let result = FilterSet::from_rules([FilterRule::exclude("[")]);
-
-    if let Err(error) = result {
-        assert_eq!(error.pattern(), "[");
-        // Error should have source
-        assert!(!error.to_string().is_empty());
-    } else {
-        panic!("Expected error");
+fn malformed_bracket_patterns_compile_and_never_match() {
+    let malformed = [
+        "[",
+        "[!",
+        "a[]b",
+        "[a-",
+        "[[:notaclass:]]",
+        "\\",
+        "ab[",
+        "[-",
+    ];
+    for pat in malformed {
+        let set = FilterSet::from_rules([FilterRule::exclude(pat)])
+            .unwrap_or_else(|e| panic!("pattern {pat:?} must compile, got {e}"));
+        assert!(
+            set.allows(Path::new("foo.txt"), false),
+            "pattern {pat:?} must not exclude foo.txt (upstream parity: no match)"
+        );
+        assert!(
+            set.allows(Path::new("a]b"), false),
+            "pattern {pat:?} must not exclude a]b (upstream parity: no match)"
+        );
     }
 }
 
