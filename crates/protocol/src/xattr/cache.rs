@@ -16,28 +16,49 @@
 //! - `xattrs.c:receive_xattr()` - reads index or literal data, stores in cache
 //! - `xattrs.c:rsync_xal_store()` - adds xattr list to global cache
 
+use std::collections::HashMap;
+use std::collections::hash_map::DefaultHasher;
+use std::hash::Hasher;
 use std::io::{self, Read};
 
 use crate::varint::read_varint;
 use crate::xattr::prefix::wire_to_local;
 use crate::xattr::{MAX_FULL_DATUM, MAX_XATTR_DIGEST_LEN, RSYNC_PREFIX, XattrEntry, XattrList};
 
-/// Cache of received xattr sets, indexed for deduplication.
+/// Cache of xattr sets, indexed for deduplication.
 ///
 /// Mirrors upstream's `rsync_xal_l` item list. Each file entry references
 /// an xattr set by index into this cache, avoiding duplicate storage of
 /// identical xattr sets across multiple files.
+///
+/// A hash index (`by_hash`) mirrors upstream's `rsync_xal_h` hash table
+/// (`xattrs.c:xattr_lookup_hash`), giving [`find`](Self::find) amortized
+/// O(1) lookup instead of a linear scan over every stored set. The index is
+/// maintained only by [`store`](Self::store) (the sole insertion path), so
+/// it stays consistent with `lists`. [`get_mut`](Self::get_mut) can mutate a
+/// stored set's datum after the fact, which would stale the hash for that
+/// slot; that path is receiver-only and never feeds [`find`](Self::find)
+/// (a sender-only operation), so lookup correctness is unaffected.
 #[derive(Debug, Default, Clone)]
 pub struct XattrCache {
     /// Stored xattr lists, indexed by position.
     lists: Vec<XattrList>,
+    /// Maps an xattr set's content hash to the slot indices sharing it.
+    ///
+    /// Collisions (and distinct sets that hash alike) are disambiguated by a
+    /// full element-wise comparison in [`find`](Self::find), matching
+    /// upstream's collision walk in `xattrs.c:find_matching_xattr()`.
+    by_hash: HashMap<u64, Vec<u32>>,
 }
 
 impl XattrCache {
     /// Creates an empty xattr cache.
     #[must_use]
     pub fn new() -> Self {
-        Self { lists: Vec::new() }
+        Self {
+            lists: Vec::new(),
+            by_hash: HashMap::new(),
+        }
     }
 
     /// Returns the number of cached xattr sets.
@@ -63,11 +84,87 @@ impl XattrCache {
     }
 
     /// Stores an xattr list in the cache and returns its index.
+    ///
+    /// Also records the set's content hash in the lookup index so subsequent
+    /// [`find`](Self::find) calls resolve in amortized O(1).
+    ///
+    /// # Upstream Reference
+    ///
+    /// See `xattrs.c:rsync_xal_store()` - appends to `rsync_xal_l` and inserts
+    /// the computed key into `rsync_xal_h`.
     #[must_use]
     pub fn store(&mut self, list: XattrList) -> u32 {
-        let index = self.lists.len();
+        let index = self.lists.len() as u32;
+        let key = Self::hash_list(&list);
+        self.by_hash.entry(key).or_default().push(index);
         self.lists.push(list);
-        index as u32
+        index
+    }
+
+    /// Finds a stored xattr set identical to `list`, returning its index.
+    ///
+    /// Uses the content-hash index to select candidate slots, then confirms a
+    /// match with a full element-wise comparison (entry count plus per-entry
+    /// name, datum length, and datum equality). Returns the index of the first
+    /// stored set that matches, or `None` if none does.
+    ///
+    /// This is the sender-side deduplication lookup: a hit lets the writer emit
+    /// a compact cache reference instead of re-transmitting the literal set.
+    /// The returned index is the 1-based-minus-one slot number used for the
+    /// wire abbreviation, so the assignment order (and thus the wire output) is
+    /// identical to a linear scan.
+    ///
+    /// # Upstream Reference
+    ///
+    /// See `xattrs.c:find_matching_xattr()` - hashed lookup in `rsync_xal_h`
+    /// followed by an element-wise walk of the colliding candidates.
+    #[must_use]
+    pub fn find(&self, list: &XattrList) -> Option<u32> {
+        let key = Self::hash_list(list);
+        for &index in self.by_hash.get(&key)? {
+            if let Some(cached) = self.lists.get(index as usize) {
+                if Self::lists_equal(cached, list) {
+                    return Some(index);
+                }
+            }
+        }
+        None
+    }
+
+    /// Element-wise equality of two xattr sets.
+    ///
+    /// Two sets match when they have the same entry count and, positionally,
+    /// each entry shares the same name, datum length, and datum bytes (the
+    /// datum being the checksum for abbreviated entries). Mirrors the compare
+    /// loop in `xattrs.c:find_matching_xattr()`.
+    fn lists_equal(a: &XattrList, b: &XattrList) -> bool {
+        a.len() == b.len()
+            && a.iter().zip(b.iter()).all(|(x, y)| {
+                x.name() == y.name() && x.datum_len() == y.datum_len() && x.datum() == y.datum()
+            })
+    }
+
+    /// Computes a content hash for an xattr set consistent with
+    /// [`lists_equal`](Self::lists_equal).
+    ///
+    /// Hashes the entry count followed by each entry's name, datum length, and
+    /// datum bytes in list order. Equal sets always hash identically; unequal
+    /// sets that collide are separated by the full comparison in
+    /// [`find`](Self::find).
+    ///
+    /// # Upstream Reference
+    ///
+    /// See `xattrs.c:xattr_lookup_hash()` - folds the count and each entry's
+    /// name and datum into the lookup key.
+    fn hash_list(list: &XattrList) -> u64 {
+        let mut hasher = DefaultHasher::new();
+        hasher.write_usize(list.len());
+        for entry in list.iter() {
+            hasher.write(entry.name());
+            hasher.write_usize(entry.datum_len());
+            hasher.write(entry.datum());
+        }
+        hasher.finish()
     }
 
     /// Receives an xattr set from the wire during file list reading.
@@ -786,5 +883,134 @@ mod tests {
         assert!(is_rsync_internal_attr(&aacl_name));
         assert!(!is_rsync_internal_attr(&normal_name));
         assert!(!is_rsync_internal_attr(b"regular_attr"));
+    }
+
+    /// Builds an [`XattrList`] from `(name, value)` pairs, as the sender would
+    /// present it to [`XattrCache::store`] / [`XattrCache::find`].
+    fn list_from(pairs: &[(&[u8], &[u8])]) -> XattrList {
+        let mut list = XattrList::new();
+        for (num, &(name, value)) in pairs.iter().enumerate() {
+            let mut entry = XattrEntry::new(name.to_vec(), value.to_vec());
+            entry.set_num((num + 1) as u32);
+            list.push(entry);
+        }
+        list
+    }
+
+    /// Reference linear scan matching the pre-index sender lookup: entry count
+    /// plus positional name/datum_len/datum equality. Used to prove the hashed
+    /// [`XattrCache::find`] assigns identical dedup indices (and thus identical
+    /// wire output).
+    fn linear_find(lists: &[XattrList], list: &XattrList) -> Option<u32> {
+        for (i, cached) in lists.iter().enumerate() {
+            if cached.len() != list.len() {
+                continue;
+            }
+            let all_match = cached.iter().zip(list.iter()).all(|(a, b)| {
+                a.name() == b.name() && a.datum_len() == b.datum_len() && a.datum() == b.datum()
+            });
+            if all_match {
+                return Some(i as u32);
+            }
+        }
+        None
+    }
+
+    #[test]
+    fn find_resolves_stored_set_by_content() {
+        let mut cache = XattrCache::new();
+        let ndx0 = cache.store(list_from(&[(b"user.a", b"1")]));
+        let ndx1 = cache.store(list_from(&[(b"user.b", b"2"), (b"user.c", b"3")]));
+        assert_eq!(ndx0, 0);
+        assert_eq!(ndx1, 1);
+
+        // A structurally identical set (fresh entries) resolves to the stored slot.
+        assert_eq!(cache.find(&list_from(&[(b"user.a", b"1")])), Some(0));
+        assert_eq!(
+            cache.find(&list_from(&[(b"user.b", b"2"), (b"user.c", b"3")])),
+            Some(1),
+        );
+        // Absent sets miss: unknown name, differing value, and differing order.
+        assert_eq!(cache.find(&list_from(&[(b"user.z", b"9")])), None);
+        assert_eq!(cache.find(&list_from(&[(b"user.a", b"2")])), None);
+        assert_eq!(
+            cache.find(&list_from(&[(b"user.c", b"3"), (b"user.b", b"2")])),
+            None,
+        );
+    }
+
+    #[test]
+    fn find_dedup_indices_match_linear_scan() {
+        // A stream of files with repeated + distinct xattr sets. The hashed
+        // find must assign exactly the indices a linear scan would, so the
+        // wire NUM abbreviation (and thus the byte output) is unchanged.
+        let files = [
+            list_from(&[(b"user.a", b"1")]),
+            list_from(&[(b"user.b", b"2")]),
+            list_from(&[(b"user.a", b"1")]), // dup of file 0
+            list_from(&[(b"user.c", b"3"), (b"user.d", b"4")]),
+            list_from(&[(b"user.b", b"2")]), // dup of file 1
+            list_from(&[(b"user.c", b"3"), (b"user.d", b"4")]), // dup of file 3
+            XattrList::new(),                // empty set, distinct
+            XattrList::new(),                // dup of the empty set
+        ];
+
+        let mut cache = XattrCache::new();
+        let mut reference: Vec<XattrList> = Vec::new();
+
+        for file in &files {
+            let hashed = cache.find(file);
+            let linear = linear_find(&reference, file);
+            assert_eq!(hashed, linear, "hashed find diverged from linear scan");
+
+            if hashed.is_none() {
+                let ndx = cache.store(file.clone());
+                assert_eq!(ndx as usize, reference.len(), "store index diverged");
+                reference.push(file.clone());
+            }
+        }
+
+        // Deduplication collapsed the four unique sets to four slots.
+        assert_eq!(cache.len(), 4);
+    }
+
+    #[test]
+    fn find_is_hash_based_at_scale() {
+        // Populate the cache with many distinct sets, then confirm each is
+        // resolved to its own slot. A linear scan would be O(n) per lookup;
+        // this exercises the hash index at a size where correctness (not just
+        // adequacy) matters.
+        const N: u32 = 5000;
+        let mut cache = XattrCache::new();
+        for i in 0..N {
+            let name = format!("user.attr{i}").into_bytes();
+            let value = format!("value{i}").into_bytes();
+            let ndx = cache.store(list_from(&[(&name, &value)]));
+            assert_eq!(ndx, i);
+        }
+
+        for i in 0..N {
+            let name = format!("user.attr{i}").into_bytes();
+            let value = format!("value{i}").into_bytes();
+            assert_eq!(cache.find(&list_from(&[(&name, &value)])), Some(i));
+        }
+
+        // A set that was never stored misses.
+        assert_eq!(cache.find(&list_from(&[(b"user.absent", b"nope")])), None,);
+    }
+
+    #[test]
+    fn find_confirms_on_hash_collision_candidates() {
+        // Store two sets that differ only in datum; regardless of whether their
+        // hashes collide, find must return the exact matching slot and never a
+        // near-miss sharing the same bucket.
+        let mut cache = XattrCache::new();
+        let ndx0 = cache.store(list_from(&[(b"user.k", b"aaaa")]));
+        let ndx1 = cache.store(list_from(&[(b"user.k", b"bbbb")]));
+        assert_eq!((ndx0, ndx1), (0, 1));
+
+        assert_eq!(cache.find(&list_from(&[(b"user.k", b"aaaa")])), Some(0));
+        assert_eq!(cache.find(&list_from(&[(b"user.k", b"bbbb")])), Some(1));
+        assert_eq!(cache.find(&list_from(&[(b"user.k", b"cccc")])), None);
     }
 }

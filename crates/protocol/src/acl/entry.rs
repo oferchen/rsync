@@ -481,6 +481,13 @@ impl RsyncAcl {
 pub struct AclCache {
     access_acls: Vec<RsyncAcl>,
     default_acls: Vec<RsyncAcl>,
+    /// Index where the previous access-ACL lookup matched, if any.
+    ///
+    /// Mirrors upstream's per-type `static` match cursor so a lookup resumes
+    /// from the last hit (or the list end), since equal ACLs arrive in runs.
+    last_access_match: Option<usize>,
+    /// Index where the previous default-ACL lookup matched, if any.
+    last_default_match: Option<usize>,
 }
 
 impl AclCache {
@@ -490,27 +497,64 @@ impl AclCache {
         Self {
             access_acls: Vec::new(),
             default_acls: Vec::new(),
+            last_access_match: None,
+            last_default_match: None,
         }
     }
 
     /// Finds a matching access ACL in the cache.
     ///
-    /// Returns the index if found, or `None` if no match.
-    pub fn find_access(&self, acl: &RsyncAcl) -> Option<u32> {
-        self.access_acls
-            .iter()
-            .position(|cached| cached == acl)
-            .map(|idx| idx as u32)
+    /// Returns the index if found, or `None` if no match. Because the store
+    /// path only appends ACLs absent from the cache, at most one entry can
+    /// match, so the returned index (and thus the wire output) is identical
+    /// regardless of scan start.
+    pub fn find_access(&mut self, acl: &RsyncAcl) -> Option<u32> {
+        Self::find_matching(&self.access_acls, acl, &mut self.last_access_match)
     }
 
     /// Finds a matching default ACL in the cache.
     ///
-    /// Returns the index if found, or `None` if no match.
-    pub fn find_default(&self, acl: &RsyncAcl) -> Option<u32> {
-        self.default_acls
-            .iter()
-            .position(|cached| cached == acl)
-            .map(|idx| idx as u32)
+    /// Returns the index if found, or `None` if no match. See
+    /// [`find_access`](Self::find_access) for why the resume cursor cannot
+    /// change which index is returned.
+    pub fn find_default(&mut self, acl: &RsyncAcl) -> Option<u32> {
+        Self::find_matching(&self.default_acls, acl, &mut self.last_default_match)
+    }
+
+    /// Scans `acls` for one equal to `acl`, resuming from `last_match`.
+    ///
+    /// Starts at the previous match (or the list end on the first lookup or
+    /// after a miss) and walks backward with wrap-around, since identical ACLs
+    /// tend to arrive in consecutive runs. Updates `last_match` to the hit, or
+    /// clears it on a miss.
+    ///
+    /// # Upstream Reference
+    ///
+    /// See `acls.c:find_matching_rsync_acl()` lines 448-470 - the same
+    /// resume-at-last-match cursor over `rsync_acl_list`.
+    fn find_matching(
+        acls: &[RsyncAcl],
+        acl: &RsyncAcl,
+        last_match: &mut Option<usize>,
+    ) -> Option<u32> {
+        let count = acls.len();
+        if count == 0 {
+            *last_match = None;
+            return None;
+        }
+
+        // upstream: start at the end of the list on the first pass or a prior miss.
+        let mut idx = (*last_match).filter(|&i| i < count).unwrap_or(count - 1);
+        for _ in 0..count {
+            if acls[idx] == *acl {
+                *last_match = Some(idx);
+                return Some(idx as u32);
+            }
+            idx = if idx == 0 { count - 1 } else { idx - 1 };
+        }
+
+        *last_match = None;
+        None
     }
 
     /// Stores an access ACL in the cache.
