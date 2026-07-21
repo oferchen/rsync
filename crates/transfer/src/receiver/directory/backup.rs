@@ -40,6 +40,16 @@ enum BackupPlacement {
     Hardlinked,
     /// Renamed (upstream "RENAME" fallback). The original path is now free.
     Renamed,
+    /// Recreated as a symlink on a different filesystem after both the
+    /// hard-link and the rename failed cross-device (upstream copy tier
+    /// "SYMLINK" branch, `backup.c:296-300`). The original was already
+    /// unlinked while recreating, so the path is free.
+    CopiedSymlink,
+    /// Recreated as a FIFO, socket, or device node on a different filesystem
+    /// after both the hard-link and the rename failed cross-device (upstream
+    /// copy tier "DEVICE" branch, `backup.c:288-291`). The original was
+    /// already unlinked while recreating, so the path is free.
+    CopiedNode,
 }
 
 /// Places `existing` into `backup_path`, mirroring upstream `link_or_rename`
@@ -63,19 +73,69 @@ fn place_existing_backup(existing: &Path, backup_path: &Path) -> io::Result<Back
             let _ = fs::remove_file(backup_path);
             match fast_io::hard_link(existing, backup_path) {
                 Ok(()) => Ok(BackupPlacement::Hardlinked),
-                Err(_) => {
-                    fs::rename(existing, backup_path)?;
-                    Ok(BackupPlacement::Renamed)
-                }
+                Err(_) => rename_or_copy_existing(existing, backup_path),
             }
         }
         // upstream: backup.c:210 - rename fallback when the item cannot be
         // hard-linked (cross-device, or a type/fs without CAN_HARDLINK_*).
-        Err(_) => {
-            fs::rename(existing, backup_path)?;
-            Ok(BackupPlacement::Renamed)
-        }
+        Err(_) => rename_or_copy_existing(existing, backup_path),
     }
+}
+
+/// Renames `existing` to `backup_path`, falling back to recreating the node on
+/// a different filesystem when the rename fails cross-device (`EXDEV`).
+///
+/// upstream: `backup.c:226` `make_backup()` - once `link_or_rename()` cannot
+/// move the item across the mount (a `--backup-dir` on another filesystem),
+/// rsync makes a copy: `copy_file()` for regular files, or recreates the node
+/// via `do_symlink_at`/`do_mknod_at` for symlinks and specials
+/// (`backup.c:288-300`), then `keep_backup` unlinks the source.
+#[cfg(any(unix, windows))]
+fn rename_or_copy_existing(existing: &Path, backup_path: &Path) -> io::Result<BackupPlacement> {
+    match fs::rename(existing, backup_path) {
+        Ok(()) => Ok(BackupPlacement::Renamed),
+        #[cfg(unix)]
+        Err(e) if e.raw_os_error() == Some(libc::EXDEV) => {
+            copy_existing_cross_device(existing, backup_path)
+        }
+        Err(e) => Err(e),
+    }
+}
+
+/// Cross-device copy tier for a non-regular entry: recreates the symlink,
+/// FIFO, socket, or device node at `backup_path`, then unlinks the original.
+///
+/// upstream: `backup.c:288-300` `make_backup()` copy tier - `do_mknod_at` for
+/// devices/specials (SYMLINK/DEVICE traces) and `do_symlink_at` for symlinks,
+/// used when neither hard-link nor rename can cross the filesystem boundary.
+#[cfg(unix)]
+fn copy_existing_cross_device(existing: &Path, backup_path: &Path) -> io::Result<BackupPlacement> {
+    use std::os::unix::fs::FileTypeExt;
+
+    let meta = fs::symlink_metadata(existing)?;
+    let file_type = meta.file_type();
+    let placement = if file_type.is_symlink() {
+        // upstream: backup.c:296-300 - do_symlink_at recreates the link target.
+        let target = fs::read_link(existing)?;
+        std::os::unix::fs::symlink(&target, backup_path)?;
+        BackupPlacement::CopiedSymlink
+    } else if file_type.is_fifo() || file_type.is_socket() {
+        // upstream: backup.c:288-291 - IS_SPECIAL -> do_mknod_at.
+        metadata::create_fifo(backup_path, &meta).map_err(io::Error::other)?;
+        BackupPlacement::CopiedNode
+    } else if file_type.is_block_device() || file_type.is_char_device() {
+        // upstream: backup.c:288-291 - IS_DEVICE -> do_mknod_at (needs root).
+        metadata::create_device_node(backup_path, &meta).map_err(io::Error::other)?;
+        BackupPlacement::CopiedNode
+    } else {
+        return Err(io::Error::new(
+            io::ErrorKind::Unsupported,
+            "cannot back up unsupported non-regular file across filesystems",
+        ));
+    };
+    // upstream: keep_backup unlinks the source once the copy tier recreates it.
+    fs::remove_file(existing)?;
+    Ok(placement)
 }
 
 /// Emits the `--debug=BACKUP` mechanism trace and the `--info=BACKUP` notice
@@ -94,6 +154,10 @@ fn report_backup(
         BackupPlacement::Hardlinked => engine::trace_make_backup_hlink(&existing_display),
         // upstream: backup.c:216-217 - DEBUG_GTE(BACKUP, 1) RENAME success.
         BackupPlacement::Renamed => engine::trace_make_backup_rename(&existing_display),
+        // upstream: backup.c:299-300 - DEBUG_GTE(BACKUP, 1) SYMLINK success.
+        BackupPlacement::CopiedSymlink => engine::trace_make_backup_symlink(&existing_display),
+        // upstream: backup.c:290-291 - DEBUG_GTE(BACKUP, 1) DEVICE success.
+        BackupPlacement::CopiedNode => engine::trace_make_backup_device(&existing_display),
     }
     // upstream: backup.c:352-353 - INFO_GTE(BACKUP, 1) "backed up %s to %s".
     let file_rel = existing.strip_prefix(dest_dir).unwrap_or(existing);
@@ -210,7 +274,9 @@ mod tests {
     //! emitted (HLINK where hard-linking the type is supported) and suppressed
     //! below level 1.
 
-    use super::{BackupPlacement, place_existing_backup, report_backup};
+    use super::{
+        BackupPlacement, copy_existing_cross_device, place_existing_backup, report_backup,
+    };
     use logging::{DebugFlag, DiagnosticEvent, VerbosityConfig, drain_events, init};
     use std::fs;
     use std::os::unix::fs::FileTypeExt;
@@ -278,6 +344,12 @@ mod tests {
             BackupPlacement::Renamed => {
                 format!("make_backup: RENAME {} successful.", link.display())
             }
+            BackupPlacement::CopiedSymlink => {
+                format!("make_backup: SYMLINK {} successful.", link.display())
+            }
+            BackupPlacement::CopiedNode => {
+                format!("make_backup: DEVICE {} successful.", link.display())
+            }
         };
         assert!(
             backup_debug_messages().contains(&expected),
@@ -299,6 +371,58 @@ mod tests {
         assert!(
             fs::symlink_metadata(&backup).unwrap().file_type().is_fifo(),
             "backup of a FIFO must itself be a FIFO"
+        );
+    }
+
+    /// A cross-device backup of an existing symlink must succeed via the copy
+    /// tier: the link is recreated at the backup path with its target intact
+    /// and the original is unlinked, mirroring upstream's `do_symlink_at`
+    /// fallback when neither hard-link nor rename can cross the filesystem.
+    ///
+    /// upstream: backup.c:296-300 make_backup() SYMLINK copy tier.
+    #[test]
+    fn cross_device_symlink_recreated_at_backup() {
+        let dir = tempfile::tempdir().unwrap();
+        let link = dir.path().join("link");
+        let backup = dir.path().join("link~");
+        std::os::unix::fs::symlink("original/target", &link).unwrap();
+
+        let placement = copy_existing_cross_device(&link, &backup).unwrap();
+        assert!(matches!(placement, BackupPlacement::CopiedSymlink));
+
+        assert_eq!(
+            fs::read_link(&backup).unwrap(),
+            std::path::Path::new("original/target"),
+            "recreated backup must preserve the symlink target"
+        );
+        assert!(
+            fs::symlink_metadata(&link).is_err(),
+            "original symlink must be unlinked after the copy tier"
+        );
+    }
+
+    /// A cross-device backup of an existing FIFO must succeed via the copy
+    /// tier: the node is recreated at the backup path as a FIFO and the
+    /// original is unlinked (upstream `do_mknod_at` IS_SPECIAL branch).
+    ///
+    /// upstream: backup.c:288-291 make_backup() DEVICE copy tier.
+    #[test]
+    fn cross_device_fifo_recreated_at_backup() {
+        let dir = tempfile::tempdir().unwrap();
+        let fifo = dir.path().join("pipe");
+        let backup = dir.path().join("pipe~");
+        metadata::create_fifo_node_from_parts(&fifo, 0o644, false, false).unwrap();
+
+        let placement = copy_existing_cross_device(&fifo, &backup).unwrap();
+        assert!(matches!(placement, BackupPlacement::CopiedNode));
+
+        assert!(
+            fs::symlink_metadata(&backup).unwrap().file_type().is_fifo(),
+            "recreated backup of a FIFO must itself be a FIFO"
+        );
+        assert!(
+            fs::symlink_metadata(&fifo).is_err(),
+            "original FIFO must be unlinked after the copy tier"
         );
     }
 
