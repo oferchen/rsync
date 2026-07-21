@@ -24,12 +24,14 @@ use crate::local_copy::LocalCopyError;
 /// Skips preallocation when disabled, when `total_len` is zero, or when the
 /// file already has at least `total_len` bytes allocated.
 ///
-/// Returns the preallocated length: the number of bytes now allocated on disk
-/// for the destination (`st_blocks * 512`), or `0` when preallocation was
-/// skipped. This mirrors upstream `do_fallocate()`, whose return value flows
-/// into `preallocated_len` so the sparse writer knows how much of the file has
-/// reserved blocks that must be punched (rather than seeked) to become holes.
-// upstream: receiver.c:319 - preallocated_len = do_fallocate(fd, 0, total_size)
+/// Returns the value upstream `do_fallocate()` feeds into `preallocated_len`,
+/// which the sparse writer compares against to punch versus seek interior zero
+/// runs: `0` when preallocation was skipped or reserved with `FALLOC_FL_KEEP_SIZE`
+/// (the `--preallocate`/`--inplace` path, so runs are seeked and the reserved
+/// blocks stay dense), and `st_blocks * 512` only on the `opts == 0` fallback
+/// path where no `KEEP_SIZE` flag was available and the run is punched instead.
+// upstream: syscall.c:1528 do_fallocate() - returns 0 when opts != 0 (KEEP_SIZE),
+// else st_blocks * S_BLKSIZE; receiver.c:323 preallocated_len = do_fallocate(...)
 pub(crate) fn maybe_preallocate_destination(
     file: &mut fs::File,
     path: &Path,
@@ -67,12 +69,35 @@ fn preallocate_destination_file(
         }
 
         let fd = file.as_fd();
-        // upstream: syscall.c:do_fallocate() issues a plain fallocate (opts == 0
-        // when FALLOC_FL_KEEP_SIZE is unavailable) and then returns the actual
-        // allocated length from fstat so the caller can punch holes within the
-        // reserved extent rather than seeking over (and leaving) it.
-        match fallocate(fd, FallocateFlags::empty(), 0, total_len) {
+        // upstream: syscall.c:1523 DO_FALLOC_OPTIONS = FALLOC_FL_KEEP_SIZE. The
+        // receiver's do_fallocate() reserves blocks with KEEP_SIZE so the file's
+        // apparent size (st_size) is NOT extended to total_len - it grows only as
+        // data is actually written, preserving the sparse-until-written
+        // appearance observable mid-transfer via stat / du --apparent-size. The
+        // reserved allocation (st_blocks * S_BLKSIZE) still lets the sparse
+        // writer punch holes within the extent rather than seeking over (and
+        // leaving) it. KEEP_SIZE is Linux-only; other unix platforms (where
+        // upstream compiles the preallocation path out entirely) fall back to a
+        // size-extending reservation.
+        #[cfg(target_os = "linux")]
+        let flags = FallocateFlags::KEEP_SIZE;
+        #[cfg(not(target_os = "linux"))]
+        let flags = FallocateFlags::empty();
+        match fallocate(fd, flags, 0, total_len) {
+            // upstream: syscall.c:1554-1556 do_fallocate() returns 0 on the KEEP_SIZE
+            // path (opts != 0), so preallocated_len == 0 and write_sparse() seeks over
+            // interior zero runs, leaving the reserved blocks allocated (dense). This is
+            // deterministic - unlike reading back st_blocks, it does not depend on whether
+            // the filesystem eagerly allocates blocks for a KEEP_SIZE reservation.
+            #[cfg(target_os = "linux")]
+            Ok(()) => Ok(0),
+            // Non-Linux uses no KEEP_SIZE flag (opts == 0), so mirror do_fallocate's
+            // `return st.st_blocks * S_BLKSIZE` for that path.
+            #[cfg(not(target_os = "linux"))]
             Ok(()) => Ok(allocated_bytes(file).unwrap_or(total_len)),
+            // KEEP_SIZE unavailable at runtime: fall back to a size-extending
+            // reservation (equivalent to upstream's opts == 0 path) and report the
+            // resulting allocation so the sparse writer punches within it.
             Err(Errno::OPNOTSUPP | Errno::NOSYS | Errno::INVAL) => {
                 file.set_len(total_len).map_err(|error| {
                     LocalCopyError::io("preallocate destination file", path, error)
@@ -163,8 +188,12 @@ mod tests {
         let result = maybe_preallocate_destination(&mut file, &path, 1000, 0, true);
         assert!(result.is_ok());
 
-        // File should be preallocated to the requested size
         let metadata = fs::metadata(&path).expect("metadata");
+        // Linux reserves blocks with FALLOC_FL_KEEP_SIZE, leaving the apparent
+        // size untouched; other platforms extend the file to the requested size.
+        #[cfg(target_os = "linux")]
+        assert_eq!(metadata.len(), 0, "KEEP_SIZE must not extend apparent size");
+        #[cfg(not(target_os = "linux"))]
         assert_eq!(metadata.len(), 1000);
     }
 
@@ -178,6 +207,10 @@ mod tests {
         assert!(result.is_ok());
 
         let metadata = fs::metadata(&path).expect("metadata");
+        // KEEP_SIZE (Linux) reserves blocks without extending the apparent size.
+        #[cfg(target_os = "linux")]
+        assert_eq!(metadata.len(), 0, "KEEP_SIZE must not extend apparent size");
+        #[cfg(not(target_os = "linux"))]
         assert_eq!(metadata.len(), 2048);
     }
 
@@ -257,7 +290,8 @@ mod tests {
         assert!(result.is_ok());
 
         let metadata = fs::metadata(&path).expect("metadata");
-        assert_eq!(metadata.len(), one_mib);
+        // FALLOC_FL_KEEP_SIZE reserves the blocks but leaves st_size at 0.
+        assert_eq!(metadata.len(), 0, "KEEP_SIZE must not extend apparent size");
 
         // On Linux, fallocate() should reserve disk blocks.  The 512-byte
         // block count should be at least file_size / 512.  Some filesystems
@@ -271,12 +305,15 @@ mod tests {
         );
     }
 
-    /// Verify that `maybe_preallocate_destination` returns the allocated length
-    /// so the sparse writer can punch holes inside the reserved extent. Mirrors
-    /// upstream `preallocated_len = do_fallocate(...)`.
+    /// Verify `maybe_preallocate_destination` mirrors upstream `do_fallocate()`:
+    /// the Linux `FALLOC_FL_KEEP_SIZE` path returns 0, so `preallocated_len` stays
+    /// 0 and the sparse writer seeks over interior zero runs (leaving the reserved
+    /// blocks dense) rather than punching them. Returning a deterministic 0 - not a
+    /// read-back `st_blocks` - avoids depending on whether the filesystem eagerly
+    /// allocates blocks for a KEEP_SIZE reservation.
     #[cfg(target_os = "linux")]
     #[test]
-    fn maybe_preallocate_returns_allocated_length() {
+    fn maybe_preallocate_returns_keep_size_zero() {
         let temp = tempdir().expect("tempdir");
         let path = temp.path().join("prealloc_len.bin");
         let mut file = fs::File::create(&path).expect("create file");
@@ -284,10 +321,10 @@ mod tests {
         let one_mib = 1024 * 1024;
         let prealloc =
             maybe_preallocate_destination(&mut file, &path, one_mib, 0, true).expect("preallocate");
-        // The reported allocated length must cover the whole requested extent.
-        assert!(
-            prealloc >= one_mib,
-            "expected preallocated length >= {one_mib}, got {prealloc}"
+        // upstream: syscall.c:1554 do_fallocate() returns 0 for the KEEP_SIZE path.
+        assert_eq!(
+            prealloc, 0,
+            "KEEP_SIZE preallocation must report 0 (seek, not punch), got {prealloc}"
         );
 
         // Disabled preallocation reports zero (no reserved extent to punch).
@@ -359,21 +396,32 @@ mod tests {
         assert!(result.is_ok());
 
         let metadata = fs::metadata(&path).expect("metadata");
+        // KEEP_SIZE (Linux) leaves the apparent size at 0; writes then grow it as
+        // data lands, exactly as upstream's receiver observes it mid-transfer.
+        #[cfg(target_os = "linux")]
+        assert_eq!(metadata.len(), 0, "KEEP_SIZE must not extend apparent size");
+        #[cfg(not(target_os = "linux"))]
         assert_eq!(metadata.len(), 4096);
 
         // Write some content to the preallocated space
         file.write_all(b"hello preallocated world").expect("write");
         file.flush().expect("flush");
 
-        // File should still show the preallocated size, not the written content size
         let metadata = fs::metadata(&path).expect("metadata after write");
+        // On Linux the size now reflects the 24 bytes written; elsewhere the
+        // earlier size-extending reservation still governs the length.
+        #[cfg(target_os = "linux")]
+        assert_eq!(metadata.len(), 24, "size grows only as data is written");
+        #[cfg(not(target_os = "linux"))]
         assert_eq!(metadata.len(), 4096);
     }
 
-    /// Verify that preallocating a file that already has some content extends
-    /// it to the requested size (the append offset scenario).
+    /// Verify that preallocating a file that already has some content reserves
+    /// the requested extent (the append offset scenario). On Linux KEEP_SIZE
+    /// leaves the apparent size at what was already written; other platforms
+    /// extend it to the requested size.
     #[test]
-    fn preallocate_extends_partially_written_file() {
+    fn preallocate_reserves_for_partially_written_file() {
         let temp = tempdir().expect("tempdir");
         let path = temp.path().join("partial.bin");
         let mut file = fs::File::create(&path).expect("create file");
@@ -386,6 +434,13 @@ mod tests {
         assert!(result.is_ok());
 
         let metadata = fs::metadata(&path).expect("metadata");
+        #[cfg(target_os = "linux")]
+        assert_eq!(
+            metadata.len(),
+            100,
+            "KEEP_SIZE preserves the written length"
+        );
+        #[cfg(not(target_os = "linux"))]
         assert_eq!(metadata.len(), 4096);
     }
 
@@ -403,6 +458,47 @@ mod tests {
         assert!(result.is_ok());
 
         let metadata = fs::metadata(&path).expect("metadata");
+        #[cfg(target_os = "linux")]
+        assert_eq!(metadata.len(), 0, "KEEP_SIZE must not extend apparent size");
+        #[cfg(not(target_os = "linux"))]
         assert_eq!(metadata.len(), 1);
+    }
+
+    /// Regression guard for the KEEP_SIZE behavior-fidelity fix. Upstream's
+    /// do_fallocate() reserves blocks with FALLOC_FL_KEEP_SIZE, so the apparent
+    /// size (st_size) must NOT jump to total_len while the transfer is still
+    /// writing - it grows only as data lands. Before the fix, a plain fallocate
+    /// (or the set_len fallback) extended st_size to total_len immediately,
+    /// observable via stat / du --apparent-size mid-transfer.
+    // upstream: syscall.c:1523 DO_FALLOC_OPTIONS = FALLOC_FL_KEEP_SIZE
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn preallocate_keep_size_does_not_extend_apparent_size() {
+        use std::os::unix::fs::MetadataExt;
+
+        let temp = tempdir().expect("tempdir");
+        let path = temp.path().join("keep_size.bin");
+        let mut file = fs::File::create(&path).expect("create file");
+
+        let total_len: u64 = 1024 * 1024;
+        let reserved =
+            maybe_preallocate_destination(&mut file, &path, total_len, 0, true).expect("prealloc");
+
+        let metadata = fs::metadata(&path).expect("metadata");
+        // The apparent size must stay at 0: KEEP_SIZE reserves blocks without
+        // extending st_size to the eventual length.
+        assert_eq!(
+            metadata.len(),
+            0,
+            "apparent size must not be prematurely extended to total_len"
+        );
+        // Yet the blocks are reserved (unless the filesystem lacks fallocate, in
+        // which case the fallback set_len would have reported total_len as the
+        // length above - which it did not).
+        assert!(
+            reserved >= total_len || metadata.blocks() * 512 >= total_len,
+            "blocks should be reserved for the eventual length (reserved={reserved}, blocks*512={})",
+            metadata.blocks() * 512
+        );
     }
 }

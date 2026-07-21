@@ -104,15 +104,21 @@ fn transfer_request_with_sparse_copies_all_zero_source_without_extra_blocks() {
     );
 }
 
-/// `--sparse --preallocate` reserves the destination extent, then punches the
-/// source's zero run back out. Upstream keeps `sparse_files > 0` under
-/// `--preallocate` and `do_fallocate()` reports the preallocated length so
-/// `write_sparse()` punches the interior hole (rather than leaving the reserved
-/// blocks allocated).
-// upstream: fileio.c:95 write_sparse() -> do_punch_hole within preallocated_len
+/// `--sparse --preallocate` leaves the destination fully DENSE, not sparse.
+/// Upstream's `do_fallocate()` reserves the whole extent with
+/// `FALLOC_FL_KEEP_SIZE`, which returns 0, so `preallocated_len == 0`. In
+/// `write_sparse()` the `sparse_past_write >= preallocated_len` test is then
+/// always true, so the source's interior zero run is seeked over (`do_lseek`)
+/// rather than punched (`do_punch_hole`). Seeking does not free the blocks the
+/// fallocate reservation already allocated, so preallocation defeats sparseness:
+/// the reserved blocks stay allocated across the whole file. Verified against
+/// rsync 3.4.4 (ext4): `--sparse --preallocate` yields `st_blocks*512 == st_size`
+/// (dense), whereas `--sparse` alone yields a hole.
+// upstream: fileio.c:92 write_sparse() `if (sparse_past_write >= preallocated_len)`
+// upstream: syscall.c:1555 do_fallocate() returns 0 for the KEEP_SIZE (opts != 0) path
 #[cfg(target_os = "linux")]
 #[test]
-fn transfer_request_with_sparse_and_preallocate_punches_hole() {
+fn transfer_request_with_sparse_and_preallocate_stays_dense() {
     use std::os::unix::fs::MetadataExt;
     use tempfile::tempdir;
 
@@ -142,8 +148,9 @@ fn transfer_request_with_sparse_and_preallocate_punches_hole() {
     let prealloc_meta = std::fs::metadata(&prealloc_dest).expect("prealloc metadata");
     assert_eq!(prealloc_meta.len(), apparent, "content length preserved");
     assert!(
-        prealloc_meta.blocks() * 512 < apparent,
-        "preallocated zero run must be punched (allocated {}, size {apparent})",
+        prealloc_meta.blocks() * 512 >= apparent,
+        "preallocated extent must stay dense: the zero run is seeked over, not \
+         punched, so the reserved blocks remain allocated (allocated {}, size {apparent})",
         prealloc_meta.blocks() * 512,
     );
 }
