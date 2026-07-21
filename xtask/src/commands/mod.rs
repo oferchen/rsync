@@ -2,6 +2,7 @@ pub mod benchmark;
 pub mod branding;
 pub mod doc_package;
 pub mod docs;
+pub mod gap_report;
 pub mod interop;
 pub mod man_page;
 pub mod no_binaries;
