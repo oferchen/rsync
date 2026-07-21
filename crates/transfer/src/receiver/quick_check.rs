@@ -633,9 +633,14 @@ fn hard_link_reference_non(ref_path: &Path, dest_path: &Path) -> bool {
 /// Applies the source entry's metadata and ACLs onto a freshly materialised
 /// destination (hard link or copy), recording any failures in `metadata_errors`.
 ///
-/// The cached stat is deliberately `None`: the destination was just created, so
-/// its on-disk metadata does not yet match the entry and an extra stat would be
-/// wasted.
+/// The freshly-materialised file's own stat is passed as the cached stat so the
+/// `!--perms` `dest_mode()` chmod-on-commit path treats this as an existing
+/// destination and never rewrites the mode. For a `--link-dest` hard link that
+/// stat is the SHARED reference inode's mode, so passing it (rather than `None`,
+/// which the receiver-commit paths use to signal a brand-new data file) keeps
+/// `dest_mode()` from chmod'ing the reference tree when the source and basis
+/// perms differ under `--no-perms`. Under `-p`/`--chmod` the stat also lets the
+/// permission-apply path skip a redundant chmod when the mode already matches.
 fn apply_altdest_metadata(
     entry: &FileEntry,
     dest_path: &Path,
@@ -644,7 +649,8 @@ fn apply_altdest_metadata(
     acl_cache: Option<&AclCache>,
     acl_id_map: Option<&AclIdMapper>,
 ) {
-    if let Err(e) = apply_metadata_with_cached_stat(dest_path, entry, metadata_opts, None) {
+    let cached_meta = fs::symlink_metadata(dest_path).ok();
+    if let Err(e) = apply_metadata_with_cached_stat(dest_path, entry, metadata_opts, cached_meta) {
         metadata_errors.push((dest_path.to_path_buf(), e.to_string()));
     }
     if let Err(e) =

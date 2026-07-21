@@ -861,13 +861,28 @@ pub(super) fn apply_permissions_from_entry(
             // the temp file's `0o600`/umask-default permissions); for a new
             // destination it applies `source_mode & (~CHMOD_BITS | dflt_perms)`.
             // Only the regular-file branch ships - upstream restricts the
-            // `S_ISREG(flist_mode)` chmod-on-rename loop to data files. Skip
-            // when the caller has supplied neither a pre-transfer stat nor a
-            // cached post-rename stat: we cannot distinguish a fresh-from-
-            // rename temp file from an untouched destination, and the source-
-            // `Metadata` apply path already handles both cases via
-            // `apply_dest_mode_pre_transfer`.
-            if entry.file_type().is_regular() && pre_transfer_meta.is_some() {
+            // `S_ISREG(flist_mode)` chmod-on-rename loop to data files.
+            //
+            // `pre_transfer_meta.is_some()` marks an existing destination:
+            // apply the exists=true `dest_mode()` (keep the prior perm bits).
+            // `cached_meta.is_none()` marks a freshly-committed file: every
+            // receiver commit path (pipelined disk-commit, streaming sync,
+            // alt-dest materialise) passes `cached_meta = None` to apply
+            // unconditionally, so a brand-new file - which correctly has NO
+            // pre-transfer stat - still gets the exists=false `dest_mode()`
+            // (`source_mode & (~CHMOD_BITS | dflt_perms)`). Without this, a
+            // network-received new file kept the temp file's `0o600` creation
+            // mode over ssh/daemon instead of the umask-masked source mode a
+            // local copy and upstream both land.
+            //
+            // Skip only when a cached post-rename stat is present but no
+            // pre-transfer stat is (public API / quick-check skip on an
+            // untouched existing file): the file already exists, upstream
+            // keeps its bits, and applying the new-file formula would wrongly
+            // mask them.
+            if entry.file_type().is_regular()
+                && (pre_transfer_meta.is_some() || cached_meta.is_none())
+            {
                 let new_mode = dest_mode_for_existing_or_new(entry, pre_transfer_meta);
                 let fresh_meta;
                 let current_meta = if let Some(meta) = cached_meta {
