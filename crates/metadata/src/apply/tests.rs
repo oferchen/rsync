@@ -583,6 +583,97 @@ fn apply_permissions_from_entry_no_change_when_disabled() {
     assert_eq!(mode, 0o666);
 }
 
+/// Remote-pull regression: on a transfer WITHOUT `--perms`, a newly-created
+/// destination file must land at the SOURCE entry's mode masked by the umask
+/// (upstream `rsync.c:dest_mode()` `exists=false` branch), NOT the temp
+/// file's `0o600` creation mode. The receiver commit paths (pipelined
+/// disk-commit, streaming sync) pass `cached_meta = None` to signal a fresh
+/// commit and `pre_transfer_meta = None` for a brand-new file; the
+/// chmod-on-commit `dest_mode()` must still fire. Before the fix these files
+/// silently kept the temp file's `0o600` mode over ssh/daemon (e.g. a source
+/// 0o644 file corrupted to 0o600), while a local copy and upstream both land
+/// the umask-masked source mode.
+// upstream: rsync.c:449-472 dest_mode() + rsync.c:954-965 set_file_attrs().
+#[cfg(unix)]
+#[test]
+fn no_perms_new_file_from_entry_gets_umask_masked_source_mode() {
+    use protocol::flist::FileEntry;
+    use std::os::unix::fs::PermissionsExt;
+
+    // Pin the umask so the expected dest_mode is deterministic under nextest's
+    // process-per-test isolation (the crate caches the umask on first read).
+    let prev = nix::sys::stat::umask(nix::sys::stat::Mode::from_bits_truncate(0o022));
+
+    let opts = MetadataOptions::new()
+        .preserve_permissions(false)
+        .preserve_times(false);
+
+    // (source entry mode, expected on-disk mode == source & (~CHMOD_BITS | 0o755))
+    for (src_mode, want) in [
+        (0o644, 0o644),
+        (0o640, 0o640),
+        (0o600, 0o600),
+        (0o777, 0o755),
+    ] {
+        let temp = tempdir().expect("tempdir");
+        let dest = temp.path().join("newfile.bin");
+        fs::write(&dest, b"payload").expect("write dest");
+        // Seed the temp file's O_TMPFILE creation mode the receiver commits.
+        fs::set_permissions(&dest, PermissionsExt::from_mode(0o600)).expect("seed temp mode");
+
+        let entry = FileEntry::new_file("newfile.bin".into(), 7, src_mode);
+        // cached_meta = None (fresh commit), pre_transfer_meta = None (new file).
+        apply_metadata_with_cached_stat(&dest, &entry, &opts, None).expect("apply from entry");
+
+        let got = current_mode(&dest) & 0o7777;
+        assert_eq!(
+            got, want,
+            "no-perms new file from entry 0o{src_mode:o} must land 0o{want:o} \
+             (dest_mode under umask 022), got 0o{got:o}",
+        );
+    }
+
+    nix::sys::stat::umask(prev);
+}
+
+/// Companion to the new-file regression: on a `--no-perms` transfer over an
+/// EXISTING destination the receiver must KEEP the destination's prior
+/// permission bits (upstream `dest_mode()` `exists=true` branch), threading
+/// the pre-transfer stat so the temp file's `0o600` never leaks through.
+// upstream: rsync.c:454-456 dest_mode() exists branch.
+#[cfg(unix)]
+#[test]
+fn no_perms_existing_file_from_entry_keeps_prior_mode() {
+    use protocol::flist::FileEntry;
+    use std::os::unix::fs::PermissionsExt;
+
+    let temp = tempdir().expect("tempdir");
+    // The committed (post-rename) file carries the temp file's 0o600 mode.
+    let dest = temp.path().join("existing.bin");
+    fs::write(&dest, b"payload").expect("write dest");
+    fs::set_permissions(&dest, PermissionsExt::from_mode(0o600)).expect("seed temp mode");
+
+    // The destination existed pre-transfer at 0o755 (captured before rename).
+    let pre = temp.path().join("pre.bin");
+    fs::write(&pre, b"old").expect("write pre");
+    fs::set_permissions(&pre, PermissionsExt::from_mode(0o755)).expect("seed pre mode");
+    let pre_meta = fs::metadata(&pre).expect("pre metadata");
+
+    let entry = FileEntry::new_file("existing.bin".into(), 7, 0o644);
+    let opts = MetadataOptions::new()
+        .preserve_permissions(false)
+        .preserve_times(false);
+
+    apply_metadata_with_pre_transfer_stat(&dest, &entry, &opts, None, Some(pre_meta))
+        .expect("apply from entry");
+
+    assert_eq!(
+        current_mode(&dest) & 0o7777,
+        0o755,
+        "no-perms existing file must keep its prior 0o755 mode, not adopt temp 0o600 or source 0o644",
+    );
+}
+
 #[test]
 fn epoch_timestamp_zero_seconds_is_preserved() {
     let temp = tempdir().expect("tempdir");
