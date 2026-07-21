@@ -36,6 +36,9 @@ pub enum Command {
     /// Generate and package rustdoc for distribution.
     DocPackage(DocPackageArgs),
 
+    /// Report receiver-option propagation coverage vs upstream rsync.
+    GapReport(GapReportArgs),
+
     /// Validate interoperability with upstream rsync.
     Interop(InteropArgs),
 
@@ -71,6 +74,15 @@ pub enum Command {
 
     /// Validate drop-in fidelity vs upstream rsync across all client transports.
     Validate(ValidateMatrixArgs),
+}
+
+/// Arguments for the `gap-report` command.
+#[derive(Parser, Debug, Default)]
+pub struct GapReportArgs {
+    /// Compare the current gap set against the committed baseline and exit
+    /// non-zero when a new gap appears, instead of printing the report.
+    #[arg(long)]
+    pub check: bool,
 }
 
 /// Arguments for the `validate` command.
@@ -462,6 +474,7 @@ impl CommandExt for Command {
             Command::Branding(args) => args.as_task(),
             Command::Docs(args) => args.as_task(),
             Command::DocPackage(args) => args.as_task(),
+            Command::GapReport(args) => args.as_task(),
             Command::Interop(args) => args.as_task(),
             Command::ManPage => Box::new(ManPageTask),
             Command::NoBinaries => Box::new(NoBinariesTask),
@@ -502,6 +515,12 @@ impl CommandExt for DocsArgs {
 impl CommandExt for DocPackageArgs {
     fn as_task(&self) -> Box<dyn Task> {
         Box::new(DocPackageTask { open: self.open })
+    }
+}
+
+impl CommandExt for GapReportArgs {
+    fn as_task(&self) -> Box<dyn Task> {
+        Box::new(GapReportTask)
     }
 }
 
@@ -640,6 +659,23 @@ impl Task for ReadmeVersionTask {
 
     fn description(&self) -> &'static str {
         "Validate README version references"
+    }
+
+    fn explicit_duration(&self) -> Option<Duration> {
+        Some(Duration::from_secs(1))
+    }
+}
+
+/// Task for the receiver-option propagation gap report.
+struct GapReportTask;
+
+impl Task for GapReportTask {
+    fn name(&self) -> &'static str {
+        "gap-report"
+    }
+
+    fn description(&self) -> &'static str {
+        "Report receiver-option propagation coverage"
     }
 
     fn explicit_duration(&self) -> Option<Duration> {
