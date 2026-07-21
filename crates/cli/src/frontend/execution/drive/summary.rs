@@ -6,7 +6,7 @@ use std::io::{self, Write};
 use core::{
     client::{
         ClientConfig, ClientProgressObserver, ClientSummary, HumanReadableMode,
-        run_client_with_observer,
+        StrongChecksumAlgorithm, run_client_with_observer,
     },
     message::Message,
 };
@@ -136,6 +136,15 @@ where
     // `--list-only` renderer knows whether to append the ` -> <target>` arrow
     // to symlink rows (upstream: generator.c:1183 gates it on preserve_links).
     let preserve_links = config.links();
+    // Capture the negotiated checksum before `config` is consumed so the `%C`
+    // renderer reports the negotiated algorithm's digest (upstream: log.c:687-690
+    // selects `file_sum_nni` under `--checksum`, else `xfer_sum_nni`).
+    let always_checksum = config.checksum();
+    let full_checksum_algorithm = if always_checksum {
+        config.checksum_choice().file()
+    } else {
+        config.checksum_choice().transfer()
+    };
 
     let result = {
         let observer = live_progress
@@ -168,7 +177,8 @@ where
                 .with_emit_unchanged(emit_unchanged)
                 .with_itemize_repeated(itemize_repeated)
                 .with_eight_bit_output(eight_bit_output)
-                .with_preserve_links(preserve_links);
+                .with_preserve_links(preserve_links)
+                .with_full_checksum(full_checksum_algorithm, always_checksum);
             if let Err(error) = with_output_writer(stdout, stderr, msgs_to_stderr, |writer| {
                 emit_transfer_summary(
                     &summary,
@@ -217,6 +227,8 @@ where
                     show_crtimes,
                     eight_bit_output,
                     preserve_links,
+                    full_checksum_algorithm,
+                    always_checksum,
                 })
             {
                 let _ = with_output_writer(stdout, stderr, msgs_to_stderr, |writer| {
@@ -276,6 +288,11 @@ struct EmitLogOutputParams<'a> {
     /// `--links` / `-l`: whether symlink rows in `--list-only` log output get
     /// the ` -> <target>` arrow (upstream: generator.c:1183).
     preserve_links: bool,
+    /// Negotiated `%C` checksum algorithm (upstream: log.c:687-690).
+    full_checksum_algorithm: StrongChecksumAlgorithm,
+    /// `--checksum` / `-c` (upstream `always_checksum`), gating `%C` for
+    /// untransferred regular files.
+    always_checksum: bool,
 }
 
 /// Writes the transfer summary to the configured log file.
@@ -295,6 +312,8 @@ fn emit_log_output(params: EmitLogOutputParams<'_>) -> io::Result<()> {
         show_crtimes,
         eight_bit_output,
         preserve_links,
+        full_checksum_algorithm,
+        always_checksum,
     } = params;
     // upstream: generator.c:582-583 - mirror the `INFO_GTE(NAME, 2)` arm of
     // the itemize emit gate in the log-file renderer so `-vv` / `--info=name2`
@@ -305,7 +324,8 @@ fn emit_log_output(params: EmitLogOutputParams<'_>) -> io::Result<()> {
         .with_emit_unchanged(emit_unchanged)
         .with_itemize_repeated(itemize_repeated)
         .with_eight_bit_output(eight_bit_output)
-        .with_preserve_links(preserve_links);
+        .with_preserve_links(preserve_links)
+        .with_full_checksum(full_checksum_algorithm, always_checksum);
     // The FCLIENT "sending incremental file list" banner is stdout only;
     // upstream's parallel "building file list" line (flist.c:2248) is an FLOG
     // log-file message that a plain client without --log-file discards.

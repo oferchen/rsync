@@ -1,9 +1,41 @@
 use super::*;
-use checksums::strong::Md5;
+use core::client::StrongChecksumAlgorithm;
 use core::client::run_client;
 
+/// Transfers `contents` locally and returns the `DataCopied` event whose
+/// committed destination the `%C` renderer will digest.
+fn data_copy_event(summary: &core::client::ClientSummary) -> &core::client::ClientEvent {
+    summary
+        .events()
+        .iter()
+        .find(|event| matches!(event.kind(), ClientEventKind::DataCopied))
+        .expect("data copy event present")
+}
+
+fn render_full_checksum(
+    event: &core::client::ClientEvent,
+    algorithm: StrongChecksumAlgorithm,
+) -> String {
+    let context = OutFormatContext::default().with_full_checksum(algorithm, false);
+    let mut output = Vec::new();
+    parse_out_format(OsStr::new("%C"))
+        .expect("parse %C")
+        .render(event, &context, &mut output)
+        .expect("render %C");
+    String::from_utf8(output)
+        .expect("utf8")
+        .trim_end_matches('\n')
+        .to_owned()
+}
+
+// upstream: log.c:687-690 + util2.c:93 `sum_as_hex` - `%C` reports the
+// negotiated checksum with that algorithm's digest length and byte order, NOT
+// a hardcoded forward MD5. The expected hex strings below are the canonical
+// digests of `"checksum payload"` produced by independent tools (`md5`,
+// `xxhsum -H2/-H1/-H3`, `openssl sha1`), so they prove bytes + width + order
+// against upstream rather than against the renderer's own hashing.
 #[test]
-fn out_format_renders_full_checksum_for_files() {
+fn out_format_renders_full_checksum_per_negotiated_algorithm() {
     let temp = tempfile::tempdir().expect("tempdir");
     let src_dir = temp.path().join("src");
     let dst_dir = temp.path().join("dst");
@@ -11,8 +43,7 @@ fn out_format_renders_full_checksum_for_files() {
     std::fs::create_dir(&dst_dir).expect("create dst dir");
 
     let source = src_dir.join("file.bin");
-    let contents = b"checksum payload";
-    std::fs::write(&source, contents).expect("write source");
+    std::fs::write(&source, b"checksum payload").expect("write source");
     let destination = dst_dir.join("file.bin");
 
     let config = ClientConfig::builder()
@@ -24,25 +55,80 @@ fn out_format_renders_full_checksum_for_files() {
         .build();
 
     let summary = run_client(config).expect("run client");
+    let event = data_copy_event(&summary);
+
+    // MD5 (canonical -1): natural byte order, 32 hex.
+    assert_eq!(
+        render_full_checksum(event, StrongChecksumAlgorithm::Md5),
+        "6c4606710d880afec7b782e2c9d6c558",
+    );
+    // XXH128 (canonical 1): reversed byte order, 32 hex - the canonical
+    // xxhsum -H2 output. A forward-MD5 renderer cannot produce this.
+    assert_eq!(
+        render_full_checksum(event, StrongChecksumAlgorithm::Xxh128),
+        "101f112992f1057ebc29c5880344b907",
+    );
+    // `auto` negotiates xxh128, so the default matches XXH128.
+    assert_eq!(
+        render_full_checksum(event, StrongChecksumAlgorithm::Auto),
+        "101f112992f1057ebc29c5880344b907",
+    );
+    // XXH3-64 (canonical 1): reversed, 16 hex - width differs from MD5.
+    assert_eq!(
+        render_full_checksum(event, StrongChecksumAlgorithm::Xxh3),
+        "b9280f7200d2cd0b",
+    );
+    // XXH64 (canonical 1): reversed, 16 hex.
+    assert_eq!(
+        render_full_checksum(event, StrongChecksumAlgorithm::Xxh64),
+        "98da654e1eb37d9c",
+    );
+    // SHA1 (canonical -1): natural byte order, 40 hex.
+    assert_eq!(
+        render_full_checksum(event, StrongChecksumAlgorithm::Sha1),
+        "be6f9f10fabcfdee6bdcae41ac52c174dd428da2",
+    );
+}
+
+// upstream: log.c:687-690 - without `--checksum`, `%C` is only populated for a
+// transferred file (`ITEM_TRANSFER`). An untransferred regular file (a
+// quick-check `MetadataReused` skip) renders the space-padded field, not a sum.
+#[test]
+fn out_format_full_checksum_untransferred_file_is_spaces_without_checksum() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let src_dir = temp.path().join("src");
+    let dst_dir = temp.path().join("dst");
+    std::fs::create_dir(&src_dir).expect("create src");
+    std::fs::create_dir(&dst_dir).expect("create dst");
+
+    let source = src_dir.join("unchanged.txt");
+    std::fs::write(&source, b"same contents").expect("write source");
+    let destination = dst_dir.join("unchanged.txt");
+
+    let build_config = || {
+        ClientConfig::builder()
+            .transfer_args([
+                source.as_os_str().to_os_string(),
+                destination.as_os_str().to_os_string(),
+            ])
+            .times(true)
+            .force_event_collection(true)
+            .build()
+    };
+
+    run_client(build_config()).expect("initial copy");
+    let summary = run_client(build_config()).expect("re-run");
 
     let event = summary
         .events()
         .iter()
-        .find(|event| event.relative_path().to_string_lossy() == "file.bin")
-        .expect("file event present");
+        .find(|event| matches!(event.kind(), ClientEventKind::MetadataReused))
+        .expect("metadata reuse event present");
 
-    let mut output = Vec::new();
-    parse_out_format(OsStr::new("%C"))
-        .expect("parse %C")
-        .render(event, &OutFormatContext::default(), &mut output)
-        .expect("render %C");
-
-    let rendered = String::from_utf8(output).expect("utf8");
-    let mut hasher = Md5::new();
-    hasher.update(contents);
-    let digest = hasher.finalize();
-    let expected: String = digest.iter().map(|byte| format!("{byte:02x}")).collect();
-    assert_eq!(rendered, format!("{expected}\n"));
+    // Default (auto/xxh128) => 16-byte digest => 32-space field.
+    let rendered = render_full_checksum(event, StrongChecksumAlgorithm::Xxh128);
+    assert_eq!(rendered.len(), 32);
+    assert!(rendered.chars().all(|ch| ch == ' '));
 }
 
 #[test]

@@ -2,6 +2,8 @@
 
 //! Token definitions backing `--out-format` parsing and rendering.
 
+use core::client::StrongChecksumAlgorithm;
+
 /// Maximum width accepted for placeholder formatting.
 pub(super) const MAX_PLACEHOLDER_WIDTH: usize = 4096;
 
@@ -188,6 +190,19 @@ pub(crate) struct OutFormatContext {
     /// `preserve_links && S_ISLNK(f->mode)`; without `-l` the symlink is
     /// still listed (with its target-length size) but no target string.
     pub(super) preserve_links: bool,
+    /// Negotiated strong-checksum algorithm applied to the `%C` placeholder.
+    ///
+    /// Upstream `log.c:687-690` renders `%C` from the negotiated checksum
+    /// (`file_sum_nni` under `--checksum`, otherwise `xfer_sum_nni`). `None`
+    /// means the default negotiated algorithm (auto, i.e. xxh128 for a modern
+    /// protocol-31+ transfer - `checksum.c` `negotiate_the_strings`).
+    pub(super) full_checksum_algorithm: Option<StrongChecksumAlgorithm>,
+    /// `--checksum` / `-c` (upstream `always_checksum`).
+    ///
+    /// Upstream `log.c:687-688` renders `%C` from the file-list checksum
+    /// (`F_SUM`) for every regular file when this is set; otherwise `%C` is
+    /// only populated for a transferred file (`ITEM_TRANSFER`).
+    pub(super) always_checksum: bool,
 }
 
 impl OutFormatContext {
@@ -265,6 +280,39 @@ impl OutFormatContext {
     #[must_use]
     pub(crate) const fn preserve_links(&self) -> bool {
         self.preserve_links
+    }
+
+    /// Sets the negotiated `%C` checksum algorithm and the `--checksum` flag.
+    ///
+    /// upstream: log.c:687-690 - `%C` renders the negotiated file/transfer
+    /// checksum, not a hardcoded MD5. The algorithm selects the digest length
+    /// and byte order (`util2.c:sum_as_hex`), and `always_checksum` decides
+    /// whether an untransferred regular file still shows its file-list sum.
+    #[must_use]
+    pub(crate) fn with_full_checksum(
+        mut self,
+        algorithm: StrongChecksumAlgorithm,
+        always_checksum: bool,
+    ) -> Self {
+        self.full_checksum_algorithm = Some(algorithm);
+        self.always_checksum = always_checksum;
+        self
+    }
+
+    /// Returns the negotiated `%C` checksum algorithm, resolving the default to
+    /// [`Auto`](StrongChecksumAlgorithm::Auto) (xxh128 for a modern transfer).
+    #[must_use]
+    pub(super) const fn full_checksum_algorithm(&self) -> StrongChecksumAlgorithm {
+        match self.full_checksum_algorithm {
+            Some(algorithm) => algorithm,
+            None => StrongChecksumAlgorithm::Auto,
+        }
+    }
+
+    /// Returns whether `--checksum` (`always_checksum`) is in effect.
+    #[must_use]
+    pub(super) const fn always_checksum(&self) -> bool {
+        self.always_checksum
     }
 }
 
@@ -405,6 +453,8 @@ mod tests {
             itemize_repeated: false,
             eight_bit_output: false,
             preserve_links: false,
+            full_checksum_algorithm: None,
+            always_checksum: false,
         };
         assert_eq!(ctx.remote_host.as_deref(), Some("server.example.com"));
         assert_eq!(ctx.remote_address.as_deref(), Some("192.168.1.1"));
