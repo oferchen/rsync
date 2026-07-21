@@ -102,10 +102,27 @@ pub struct ValidateMatrixArgs {
     #[arg(long)]
     pub bench: bool,
 
+    /// Select the Validation category (core drop-in checks, the default set).
+    #[arg(long)]
+    pub validation: bool,
+
     /// Enrich fixtures with edge cases (empty files, spaces/unicode names, deep
-    /// nesting, dangling symlinks). Off by default for a fast, lean matrix.
+    /// nesting, dangling symlinks) and select the EdgeCases category. Off by
+    /// default for a fast, lean matrix.
     #[arg(long)]
     pub edge_cases: bool,
+
+    /// Select the Security category (path escapes, privilege handling).
+    #[arg(long)]
+    pub security: bool,
+
+    /// Select the Wire category (wire-format and protocol fidelity).
+    #[arg(long)]
+    pub wire: bool,
+
+    /// List the available checks grouped by category, then exit.
+    #[arg(long)]
+    pub list: bool,
 
     /// Run root-only validations (device/FIFO/socket nodes, id remaps). Only
     /// takes effect when the process is actually running as root.
