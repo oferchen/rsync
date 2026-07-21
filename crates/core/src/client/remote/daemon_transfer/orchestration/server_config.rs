@@ -136,6 +136,22 @@ pub(crate) fn build_server_config_for_receiver(
     // and must carry the fuzzy level; the compact 'y' letter is emitted only
     // when the local side is the sender.
     server_config.flags.fuzzy_level = config.fuzzy_level();
+    // upstream: options.c:2648-2649 - `if (am_sender) { ... if (omit_link_times)
+    // argstr[x++] = 'J'; }`. -J/--omit-link-times skips a received symlink's
+    // mtime (rsync.c:583 adds ATTRS_SKIP_MTIME for `omit_link_times &&
+    // S_ISLNK`), so on a pull the local client IS the receiver and must carry
+    // the flag; the compact 'J' letter is emitted only when the local side is
+    // the sender. Without this the daemon pull set symlink mtimes from the
+    // source while the local copy executor honoured -J.
+    server_config.flags.omit_link_times = config.omit_link_times();
+    // upstream: options.c:2692-2693 - `else if (preserve_executability &&
+    // am_sender) argstr[x++] = 'E';`. -E/--executability copies the source
+    // executability bits when perms are not otherwise preserved
+    // (rsync.c:457-465), so on a pull the local client IS the receiver and must
+    // carry the flag; the compact 'E' letter is emitted only when the local
+    // side is the sender. Without this the daemon pull left files at their
+    // existing mode while the local copy executor honoured -E.
+    server_config.flags.preserve_executability = config.preserve_executability();
 
     flags::apply_common_server_flags(config, &mut server_config);
     Ok(server_config)
