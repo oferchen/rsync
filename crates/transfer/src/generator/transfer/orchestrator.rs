@@ -314,19 +314,28 @@ impl GeneratorContext {
             self.add_io_error(super::super::io_error_flags::IOERR_GENERAL);
         }
 
-        // upstream: handle_stats() reports stats.total_size, the sum of all
-        // flist file sizes (main.c:351 write_varlong30(f, stats.total_size, 3)).
-        let total_size = self.file_list.iter().map(|e| e.size()).sum();
+        // upstream: handle_stats() reports stats.total_size (main.c:351
+        // write_varlong30(f, stats.total_size, 3)), accumulated in
+        // send_file_entry() as `F_LENGTH(file)` for regular files and symlinks
+        // only (flist.c:690-691). Read the value tallied at send time - summing
+        // `self.file_list` here is wrong because INC_RECURSE drains sent
+        // segments, leaving only the final sub-list, and would also count
+        // directory sizes that upstream excludes.
+        let flist_send_stats = self.flist_send_stats;
 
         Ok(GeneratorStats {
             files_listed: file_count,
+            num_dirs: flist_send_stats.num_dirs,
+            num_symlinks: flist_send_stats.num_symlinks,
+            num_devices: flist_send_stats.num_devices,
+            num_specials: flist_send_stats.num_specials,
             files_transferred: transfer_result.files_transferred,
             transferred_file_size: transfer_result.transferred_file_size,
             bytes_sent: transfer_result.bytes_sent,
             bytes_read: self.timing.total_bytes_read,
             matched_data: transfer_result.matched_data,
             literal_data: transfer_result.literal_data,
-            total_size,
+            total_size: flist_send_stats.total_size,
             flist_buildtime_ms: flist_buildtime,
             flist_xfertime_ms: flist_xfertime,
             flist_first_byte_latency: self.timing.flist_first_byte_latency,

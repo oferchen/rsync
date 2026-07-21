@@ -437,7 +437,7 @@ impl GeneratorContext {
                 // so the receiver can pair the response with its outstanding
                 // request and apply xattr-only updates. Without this echo the
                 // wire stream stalls when ITEM_REPORT_XATTR is the only delta.
-                self.maybe_emit_itemize(writer, &iflags, ndx, xname.as_deref(), itemize)?;
+                self.emit_client_item(writer, &iflags, ndx, xname.as_deref(), itemize, false)?;
                 self.write_ndx_iflags_and_xattr_response(
                     &mut *writer,
                     &mut ndx_write_codec,
@@ -495,11 +495,10 @@ impl GeneratorContext {
                 if iflags.raw() & ItemFlags::ITEM_IS_NEW != 0 {
                     created_stats.record(file_entry.mode());
                 }
-                // upstream: sender.c:395 - log_item(FCLIENT, file, iflags, NULL)
-                if let Some(cb) = itemize {
-                    let name = file_entry.path().to_string_lossy();
-                    cb.on_itemize(&format!("{name}\n"));
-                }
+                // upstream: sender.c:341-344 - a dry run logs the transfer item
+                // via log_item(FCLIENT) without sending data: the `-i` itemize
+                // row or, under plain `-v`, the bare `%n%L` name line.
+                self.emit_client_item(writer, &iflags, ndx, xname.as_deref(), itemize, true)?;
                 files_transferred += 1;
                 transferred_file_size += file_entry.size();
                 flush_with_count(writer)?;
@@ -880,7 +879,7 @@ impl GeneratorContext {
             debug_log!(Send, 1, "sender finished {}", file_entry.path().display());
 
             // upstream: sender.c:430 - log_item(log_code, file, iflags, xname)
-            self.maybe_emit_itemize(writer, &iflags, ndx, xname.as_deref(), itemize)?;
+            self.emit_client_item(writer, &iflags, ndx, xname.as_deref(), itemize, true)?;
 
             if let Some(cb) = progress.as_mut() {
                 // upstream: progress.c:80 - "to" once the final sub-list has been

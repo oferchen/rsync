@@ -31,8 +31,12 @@ impl GeneratorContext {
         flist_buildtime_ms: u64,
         flist_xfertime_ms: u64,
     ) -> io::Result<()> {
-        // upstream: stats.total_size is the sum of all file sizes in the transfer
-        let total_size: u64 = self.file_list.iter().map(|e| e.size()).sum();
+        // upstream: flist.c:690-691 - stats.total_size accumulates F_LENGTH for
+        // regular files and symlinks only, tallied in send_file_entry() as each
+        // entry is written. Read that running total rather than summing
+        // `self.file_list` (which INC_RECURSE has drained down to the final
+        // sub-list, and which would also count directory sizes upstream omits).
+        let total_size: u64 = self.flist_send_stats.total_size;
 
         let stats = TransferStats::with_bytes(
             self.timing.total_bytes_read,
