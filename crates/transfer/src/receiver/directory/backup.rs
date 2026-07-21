@@ -44,11 +44,16 @@ enum BackupPlacement {
     /// hard-link and the rename failed cross-device (upstream copy tier
     /// "SYMLINK" branch, `backup.c:296-300`). The original was already
     /// unlinked while recreating, so the path is free.
+    // Only the `#[cfg(unix)]` cross-device copy tier constructs this; the
+    // variant stays visible so `report_backup`/placement matches compile on
+    // every platform.
+    #[cfg_attr(not(unix), allow(dead_code))]
     CopiedSymlink,
     /// Recreated as a FIFO, socket, or device node on a different filesystem
     /// after both the hard-link and the rename failed cross-device (upstream
     /// copy tier "DEVICE" branch, `backup.c:288-291`). The original was
     /// already unlinked while recreating, so the path is free.
+    #[cfg_attr(not(unix), allow(dead_code))]
     CopiedNode,
 }
 
