@@ -233,12 +233,36 @@ pub(crate) fn format_itemize_line(
     ctx: &ItemizeContext,
     xname: Option<&[u8]>,
 ) -> String {
-    use std::fmt::Write;
-
     // Pre-allocate: 11 (iflags) + 1 (space) + ~32 (path estimate) + 1 (newline)
     let mut buf = String::with_capacity(48);
     write_iflags_into(&mut buf, iflags, entry, is_sender, ctx);
     buf.push(' ');
+    buf.push_str(&format_name_line(entry, xname, iflags));
+    buf
+}
+
+/// Renders the upstream `%n%L` name field for a file-list entry, terminated by
+/// a newline: the relative path, a trailing `/` for directories, and the `%L`
+/// suffix (` => <hlink>` for a hard-link leader, else ` -> <target>` for a
+/// symlink).
+///
+/// Shared by the `-i` itemize row (`%i %n%L`, [`format_itemize_line`]) and the
+/// plain-`-v` name line the client sender prints via `log_item(FCLIENT)` with
+/// the default `stdout_format = "%n%L"`.
+///
+/// # Upstream Reference
+///
+/// - `log.c:627-636` - `%n` expansion (path, trailing `/` for directories).
+/// - `log.c:643-655` - `%L` expansion (` => hlink` wins over ` -> target`).
+/// - `options.c:2372` - `stdout_format = "%n%L"` for plain `-v` (no `-i`).
+pub(crate) fn format_name_line(
+    entry: &FileEntry,
+    xname: Option<&[u8]>,
+    iflags: &ItemFlags,
+) -> String {
+    use std::fmt::Write;
+
+    let mut buf = String::with_capacity(40);
 
     // upstream: log.c:627-636 - %n expansion
     let path = entry.path();
@@ -720,5 +744,41 @@ mod tests {
         let ctx = ItemizeContext::default();
         assert!(ctx.preserve_mtimes);
         assert!(ctx.receiver_symlink_times);
+    }
+
+    /// The plain-`-v` name line (`%n%L`): a bare path for a regular file, a
+    /// trailing `/` for a directory, and a ` -> target` arrow for a symlink -
+    /// matching what upstream's `log_item(FCLIENT)` prints on a push.
+    ///
+    /// upstream: log.c:627-636 (%n, dir slash), log.c:643-655 (%L arrow).
+    #[test]
+    fn name_line_renders_dir_slash_and_symlink_arrow() {
+        let none = ItemFlags::from_raw(0);
+        assert_eq!(
+            format_name_line(&make_file_entry("a.txt"), None, &none),
+            "a.txt\n"
+        );
+        assert_eq!(
+            format_name_line(&make_dir_entry("sub"), None, &none),
+            "sub/\n"
+        );
+        assert_eq!(
+            format_name_line(&make_symlink_entry("l1"), None, &none),
+            "l1 -> target\n"
+        );
+    }
+
+    /// `%L`'s ` => <hlink>` form wins over the symlink arrow when the entry
+    /// carries a non-empty alternate-basis name (`ITEM_XNAME_FOLLOWS`).
+    ///
+    /// upstream: log.c:643-655 - the `if (hlink && *hlink)` branch precedes the
+    /// symlink case.
+    #[test]
+    fn name_line_hardlink_suffix_wins() {
+        let hl = ItemFlags::from_raw(ItemFlags::ITEM_XNAME_FOLLOWS);
+        assert_eq!(
+            format_name_line(&make_file_entry("dup"), Some(b"leader"), &hl),
+            "dup => leader\n"
+        );
     }
 }

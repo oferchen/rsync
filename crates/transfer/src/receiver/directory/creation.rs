@@ -386,7 +386,17 @@ impl ReceiverContext {
         }
 
         // Build owned data for parallel metadata application, skipping failed dirs.
-        let metadata_opts_clone = metadata_opts.clone();
+        // upstream: rsync.c:583 - `omit_dir_times && S_ISDIR(...)` adds
+        // ATTRS_SKIP_MTIME, so a directory's mtime is never applied under -O.
+        // On a pull the local client IS the receiver and -O rides no wire bit
+        // (options.c:2646-2647 gates 'O' on am_sender), so clear preserve_times
+        // for the directory apply here, mirroring the local executor's
+        // apply_final_directory_metadata.
+        let metadata_opts_clone = if self.config.flags.omit_dir_times {
+            metadata_opts.clone().preserve_times(false)
+        } else {
+            metadata_opts.clone()
+        };
         // upstream: generator.c:1512-1520 - grant a transient u+rwx to any
         // directory whose final mode is not writable by us so the receiver can
         // create temp files inside it; the real mode is restored in
@@ -867,10 +877,11 @@ impl ReceiverContext {
             return;
         }
 
-        // upstream: generator.c:2398 - need_retouch_dir_times =
+        // upstream: generator.c:2271 - need_retouch_dir_times =
         // preserve_mtimes && !omit_dir_times. The backup skip (generator.c:2101)
         // only concerns the mtime repair (backup file creation moves mtimes).
         let retouch_times = self.config.flags.times
+            && !self.config.flags.omit_dir_times
             && !(self.config.flags.backup && self.config.backup_dir.is_none());
 
         // upstream: generator.c:2122 - fix_dir_perms = !am_root && !(mode &
@@ -1187,6 +1198,47 @@ mod touch_up_dirs_tests {
         assert_eq!(
             actual, expected,
             "directory mtime should be restored to the file list value"
+        );
+    }
+
+    /// Under `--omit-dir-times` the retouch pass must NOT re-apply the source
+    /// directory mtime, leaving the directory at its (current) on-disk mtime.
+    ///
+    /// upstream: generator.c:2271 - `need_retouch_dir_times = preserve_mtimes
+    /// && !omit_dir_times`. On a remote pull the local client IS the receiver
+    /// and `-O` never rides the wire (options.c:2646-2647 gates the compact
+    /// 'O' on am_sender), so the receiver config must carry `omit_dir_times`
+    /// and honor it here. Regression guard for the remote pull that applied the
+    /// source directory mtime despite `-O`.
+    #[test]
+    fn omit_dir_times_skips_directory_mtime_restore() {
+        let dir = test_support::create_tempdir();
+        let sub = dir.path().join("subdir");
+        fs::create_dir(&sub).unwrap();
+        fs::write(sub.join("file.txt"), b"hello").unwrap();
+
+        // Source mtime is in the past; with -O it must NOT be applied.
+        let source_secs: i64 = 1_577_836_800;
+        let mut entry = FileEntry::new_directory("subdir".into(), 0o755);
+        entry.set_mtime(source_secs, 0);
+
+        let hs = handshake();
+        let mut config = config_with_times(true);
+        config.flags.omit_dir_times = true;
+        let mut ctx = ReceiverContext::new_for_test(&hs, config);
+        ctx.file_list = vec![entry];
+
+        ctx.touch_up_dirs(
+            dir.path(),
+            &mut crate::writer::ServerWriter::new_plain(Vec::new()),
+        );
+
+        let meta = fs::metadata(&sub).unwrap();
+        let actual = FileTime::from_last_modification_time(&meta);
+        let source_mtime = FileTime::from_unix_time(source_secs, 0);
+        assert_ne!(
+            actual, source_mtime,
+            "under --omit-dir-times the source directory mtime must NOT be applied"
         );
     }
 

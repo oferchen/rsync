@@ -533,6 +533,15 @@ fn build_server_config_for_receiver(
     // config here; without this the russh (ssh://) pull left every regular file
     // at its source mode while local copies applied --chmod correctly.
     server_config.chmod = config.chmod().cloned();
+    // upstream: options.c:2996-2997 - `--mkpath` is forwarded to the remote only
+    // inside the `if (am_sender)` server_options block, so on a pull it never
+    // rides the wire; the local client IS the receiver and creates the dest-arg
+    // path chain itself in get_local_name() (main.c:736 make_path under mkpath).
+    // Carry it onto the local receiver config here. Without this the russh
+    // (ssh://) pull to a missing deep destination failed with "failed to create
+    // destination root ... No such file or directory" while local copies honored
+    // --mkpath.
+    server_config.flags.mkpath = config.mkpath();
     // upstream: build_server_flag_string no longer packs the compact 'P' letter,
     // and 'D' now tracks devices only, so carry keep_partial and specials onto
     // the local half here (mirrors --partial / --specials|--no-specials which the
@@ -559,6 +568,20 @@ fn build_server_config_for_receiver(
     // existing_only above. Without this the ssh:// pull re-transferred and
     // overwrote existing destination files instead of skipping them.
     server_config.file_selection.ignore_existing = config.ignore_existing();
+    // upstream: options.c:2907-2909 forwards --temp-dir to the remote only inside
+    // the `if (am_sender)` server_options block, so on a pull it is never sent
+    // over the wire; the local client IS the receiver and stages the temp file
+    // itself (receiver.c:766 open_tmpfile() honours tmpdir). Carry it onto the
+    // local receiver config here - without this the ssh:// pull staged the temp
+    // file in the destination directory, ignoring --temp-dir.
+    server_config.temp_dir = config.temp_directory().map(std::path::Path::to_path_buf);
+    // upstream rsync.c:583 adds ATTRS_SKIP_MTIME for `omit_dir_times && S_ISDIR`,
+    // and generator.c:2271 gates need_retouch_dir_times on !omit_dir_times.
+    // options.c:2646-2647 packs the compact 'O' into server_options only when
+    // am_sender, so on a pull -O never rides the wire; the local client IS the
+    // receiver and must apply it itself. Carry it onto the local receiver config
+    // here - without this the ssh:// pull set directory mtimes from the source.
+    server_config.flags.omit_dir_times = config.omit_dir_times();
     // upstream: options.c:2194 / generator.c:1249 - a single source operand with
     // no destination implies list-only. On a pull the local client IS the
     // receiver and `list_only` is a long-form-only concern absent from the
@@ -643,6 +666,14 @@ fn build_server_config_for_generator(
     // Local-only sender optimization; never emitted onto the wire, so it is
     // carried directly onto the in-process generator's ParsedServerFlags.
     server_config.flags.parallel_delta_scan = config.parallel_delta_scan();
+    // upstream: --chmod is parsed into `chmod_modes` (options.c:1762) and is
+    // never placed in server_options, so it is never forwarded to the remote
+    // receiver. On a push the local client IS the sender and applies the
+    // modifiers itself as it builds each outgoing flist entry (flist.c:1580-1581
+    // send_file_name() -> tweak_mode()). Carry them onto the local generator
+    // config here; without this the ssh push left every file at its source mode
+    // while local copies and pulls applied --chmod correctly.
+    server_config.chmod = config.chmod().cloned();
 
     // upstream: options.c:2476-2501 / main.c:1322-1328 - the local sender
     // resolves a single files-from fd: a local file (Stdin/LocalFile, or a
@@ -900,6 +931,86 @@ mod tests {
         assert_eq!(server_config.flags.fuzzy_level, 2);
     }
 
+    /// The embedded (russh) pull receiver must carry --temp-dir onto its
+    /// ServerConfig. Upstream receiver.c:766 open_tmpfile() honours tmpdir, and
+    /// options.c:2907-2909 forwards the flag to the remote only when am_sender,
+    /// so on a pull it never rides the wire. Regression guard for the `ssh://`
+    /// pull that staged temps in the destination directory.
+    #[test]
+    fn embedded_receiver_config_propagates_temp_dir() {
+        let config = ClientConfig::builder()
+            .temp_directory(Some("/var/tmp/rsync"))
+            .build();
+        let server_config =
+            build_server_config_for_receiver(&config, &["dest".to_owned()]).unwrap();
+
+        assert_eq!(
+            server_config.temp_dir.as_deref(),
+            Some(std::path::Path::new("/var/tmp/rsync"))
+        );
+    }
+
+    /// Without --temp-dir the receiver config leaves temp_dir unset.
+    #[test]
+    fn embedded_receiver_config_without_temp_dir_stays_none() {
+        let config = ClientConfig::builder().build();
+        let server_config =
+            build_server_config_for_receiver(&config, &["dest".to_owned()]).unwrap();
+
+        assert!(server_config.temp_dir.is_none());
+    }
+
+    /// The embedded (russh) pull receiver must carry --omit-dir-times onto its
+    /// ServerConfig. Upstream rsync.c:583 skips a directory's mtime and
+    /// generator.c:2271 gates the retouch pass; options.c:2646-2647 packs the
+    /// compact 'O' only when am_sender, so on a pull it never rides the wire.
+    /// Regression guard for the `ssh://` pull that set directory mtimes from the
+    /// source.
+    #[test]
+    fn embedded_receiver_config_propagates_omit_dir_times() {
+        let config = ClientConfig::builder().omit_dir_times(true).build();
+        let server_config =
+            build_server_config_for_receiver(&config, &["dest".to_owned()]).unwrap();
+
+        assert!(server_config.flags.omit_dir_times);
+    }
+
+    /// Without --omit-dir-times the receiver config leaves the flag clear.
+    #[test]
+    fn embedded_receiver_config_without_omit_dir_times_stays_clear() {
+        let config = ClientConfig::builder().build();
+        let server_config =
+            build_server_config_for_receiver(&config, &["dest".to_owned()]).unwrap();
+
+        assert!(!server_config.flags.omit_dir_times);
+    }
+
+    /// The embedded (russh) pull receiver must carry `--mkpath` onto its
+    /// ServerConfig. `--mkpath` is never forwarded to the remote sender (upstream
+    /// options.c:2996-2997 gates it on am_sender), so on a pull the local client
+    /// IS the receiver and creates the dest-arg path chain itself (main.c:736).
+    /// Regression guard for the `ssh://` pull that failed against a missing deep
+    /// destination while local copies honored `--mkpath`.
+    #[test]
+    fn embedded_receiver_config_propagates_mkpath() {
+        let config = ClientConfig::builder().mkpath(true).build();
+        let server_config =
+            build_server_config_for_receiver(&config, &["dest".to_owned()]).unwrap();
+
+        assert!(server_config.flags.mkpath);
+    }
+
+    /// Without `--mkpath` the embedded receiver config leaves the flag clear, so
+    /// a missing destination parent stays a fatal error, matching upstream.
+    #[test]
+    fn embedded_receiver_config_without_mkpath_stays_clear() {
+        let config = ClientConfig::builder().build();
+        let server_config =
+            build_server_config_for_receiver(&config, &["dest".to_owned()]).unwrap();
+
+        assert!(!server_config.flags.mkpath);
+    }
+
     /// Without any of the receiver-only options the embedded receiver config
     /// leaves them clear, so a normal `ssh://` pull is unaffected.
     #[test]
@@ -916,6 +1027,35 @@ mod tests {
         assert_eq!(server_config.flags.fuzzy_level, 0);
         assert!(server_config.user_mapping.is_none());
         assert!(server_config.group_mapping.is_none());
+    }
+
+    /// On an `ssh://` (russh) push the local client IS the sender and applies
+    /// `--chmod` itself as it builds each outgoing flist entry (upstream
+    /// flist.c:1580-1581 send_file_name() -> tweak_mode()). `--chmod` is never
+    /// forwarded to the remote receiver, so the generator config must carry the
+    /// parsed modifiers. Regression guard for the embedded-ssh push that left
+    /// every file at its source mode while local copies and pulls applied it.
+    #[test]
+    fn embedded_generator_config_propagates_chmod() {
+        let modifiers = ::metadata::ChmodModifiers::parse("D2755,F640").expect("parse chmod spec");
+        let config = ClientConfig::builder()
+            .chmod(Some(modifiers.clone()))
+            .build();
+        let server_config =
+            build_server_config_for_generator(&config, &["/tmp/source".to_owned()]).unwrap();
+
+        assert_eq!(server_config.chmod.as_ref(), Some(&modifiers));
+    }
+
+    /// Without `--chmod` the embedded generator config carries no chmod
+    /// modifiers, so the source mode travels unchanged.
+    #[test]
+    fn embedded_generator_config_without_chmod_has_none() {
+        let config = ClientConfig::builder().build();
+        let server_config =
+            build_server_config_for_generator(&config, &["/tmp/source".to_owned()]).unwrap();
+
+        assert!(server_config.chmod.is_none());
     }
 
     #[test]

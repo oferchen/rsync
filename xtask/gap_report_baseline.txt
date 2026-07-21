@@ -1,0 +1,17 @@
+# gap-report baseline - receiver-option propagation gaps
+#
+# Upstream options.c server_options() gates receiver-applied options behind
+# `if (am_sender)`, so they are never sent over the wire on a pull. The local
+# client is the receiver and must carry each such option onto its own
+# ServerConfig. Each non-comment line below is a KNOWN gap: an option whose
+# ServerConfig field is not assigned in the named receiver builder.
+#
+# The baseline is currently empty: every catalog option is propagated on every
+# applicable receiver builder (ssh, embedded-ssh, daemon).
+#
+# `cargo xtask gap-report --check` exits non-zero when a gap appears that is
+# not listed here (a regression, or a newly added upstream option). Regenerate
+# on an upstream version bump: run `cargo xtask gap-report` and copy the
+# "Current gap set (baseline format)" block into this file.
+#
+# format: <upstream-option> <builder-id>

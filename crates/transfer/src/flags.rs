@@ -331,6 +331,19 @@ pub struct ParsedServerFlags {
     /// it, `main.c:736` calls `make_path()` to create the whole chain.
     pub mkpath: bool,
 
+    /// Omit directory modification times (long-form `--omit-dir-times` / `-O`).
+    ///
+    /// Receiver-side only. Not part of the compact flag string: upstream
+    /// `options.c:2646-2647` packs `'O'` into `server_options` only inside the
+    /// `if (am_sender)` block, so on a pull the flag is never sent over the
+    /// wire and the local client (which IS the receiver) must apply it itself.
+    /// When set, the receiver skips a directory's mtime both at creation
+    /// (upstream `rsync.c:583` - `omit_dir_times && S_ISDIR` sets
+    /// `ATTRS_SKIP_MTIME`) and in the final retouch pass (upstream
+    /// `generator.c:2271` - `need_retouch_dir_times = preserve_mtimes &&
+    /// !omit_dir_times`).
+    pub omit_dir_times: bool,
+
     /// Engage the opt-in parallel sender-side delta scan for large files
     /// (long-form `--parallel-delta-scan`).
     ///

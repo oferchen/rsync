@@ -51,7 +51,8 @@ pub use lstat::{LstatOutcome, lstat_via_sandbox_or_fallback};
 pub use metadata::{AtMetadata, fstatat_nofollow};
 pub use metadata_ops::{
     fchmodat, fchmodat_via_sandbox_or_fallback, fchownat, fchownat_via_sandbox_or_fallback,
-    secure_chmod_at, utimensat, utimensat_via_sandbox_or_fallback,
+    secure_chmod_at, secure_chown_at, secure_utimes_at, utimensat,
+    utimensat_via_sandbox_or_fallback,
 };
 pub use open::{
     openat, openat_via_sandbox_or_fallback, readlinkat, readlinkat_via_sandbox_or_fallback,

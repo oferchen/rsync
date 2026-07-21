@@ -8,7 +8,69 @@
 use std::time::Duration;
 
 use protocol::codec::{MonotonicNdxWriter, NdxCodecEnum};
+use protocol::flist::FileEntry;
 use protocol::stats::{CreatedStats, DeleteStats};
+
+/// Per-type file-list tallies accumulated as the sender writes each entry to
+/// the wire, mirroring upstream's `send_file_entry()` counting.
+///
+/// Directories, symlinks, devices, and specials are counted per type; the
+/// regular-file count is the remainder and is never stored here (the summary
+/// derives it). `total_size` sums `F_LENGTH` for regular files and symlinks
+/// only, exactly as upstream guards the accumulation. Counting at send time -
+/// rather than summing the flat `file_list` at the end - is required because
+/// INC_RECURSE drains sent segments, leaving only the final sub-list in
+/// `file_list` when the transfer completes.
+///
+/// # Upstream Reference
+///
+/// - `flist.c:421-438` - `send_file_entry()` bumps `stats.num_dirs` /
+///   `num_symlinks` / `num_devices` / `num_specials` per entry.
+/// - `flist.c:690-691` - `stats.total_size += F_LENGTH(file)` guarded by
+///   `S_ISREG(mode) || S_ISLNK(mode)`.
+/// - `main.c:387-411` - `output_itemized_counts()` derives `reg` as the total
+///   minus the four typed categories.
+#[derive(Debug, Clone, Copy, Default)]
+pub(crate) struct FlistSendStats {
+    /// Directories sent (upstream `stats.num_dirs`).
+    pub(crate) num_dirs: u64,
+    /// Symbolic links sent (upstream `stats.num_symlinks`).
+    pub(crate) num_symlinks: u64,
+    /// Device nodes, block and character, sent (upstream `stats.num_devices`).
+    pub(crate) num_devices: u64,
+    /// FIFOs and sockets sent (upstream `stats.num_specials`).
+    pub(crate) num_specials: u64,
+    /// Summed `F_LENGTH` for regular files and symlinks (upstream
+    /// `stats.total_size`); directories, devices, and specials contribute 0.
+    pub(crate) total_size: u64,
+}
+
+impl FlistSendStats {
+    /// Classifies one file-list entry as it is written to the wire and updates
+    /// the running per-type counts and `total_size`, mirroring the counting in
+    /// upstream `send_file_entry()`.
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `flist.c:421-438` - per-type tally.
+    /// - `flist.c:690-691` - `total_size` for regular files and symlinks only.
+    pub(crate) fn record(&mut self, entry: &FileEntry) {
+        if entry.is_dir() {
+            self.num_dirs += 1;
+        } else if entry.is_symlink() {
+            self.num_symlinks += 1;
+            self.total_size = self.total_size.saturating_add(entry.size());
+        } else if entry.is_device() {
+            self.num_devices += 1;
+        } else if entry.is_special() {
+            self.num_specials += 1;
+        } else {
+            // Regular file (upstream: S_ISREG - the only remaining type that
+            // contributes to total_size).
+            self.total_size = self.total_size.saturating_add(entry.size());
+        }
+    }
+}
 
 /// Result from the transfer loop phase of the generator.
 ///
@@ -58,6 +120,21 @@ pub(crate) struct TransferLoopResult {
 pub struct GeneratorStats {
     /// Number of files in the sent file list.
     pub files_listed: usize,
+    /// Directories in the sent file list (upstream `stats.num_dirs`).
+    ///
+    /// Per-type tallies accumulated as each entry is written to the wire so the
+    /// pushing client can reconstruct the `--stats` "Number of files"
+    /// breakdown (`reg: R, dir: D, link: L, dev: V, special: S`), where `reg`
+    /// is the remainder. Mirrors upstream `send_file_entry()`
+    /// (flist.c:421-438); the receiver-side equivalent lives on `TransferStats`.
+    pub num_dirs: u64,
+    /// Symbolic links in the sent file list (upstream `stats.num_symlinks`).
+    pub num_symlinks: u64,
+    /// Device nodes, block and character, in the sent file list
+    /// (upstream `stats.num_devices`).
+    pub num_devices: u64,
+    /// FIFOs and sockets in the sent file list (upstream `stats.num_specials`).
+    pub num_specials: u64,
     /// Number of files actually transferred (delta or whole-file).
     pub files_transferred: usize,
     /// Summed length of every transferred file (upstream: `total_transferred_size`).
@@ -136,4 +213,39 @@ pub(crate) fn is_early_close_error(e: &std::io::Error) -> bool {
             | std::io::ErrorKind::WouldBlock
             | std::io::ErrorKind::ConnectionAborted
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::path::PathBuf;
+
+    /// `FlistSendStats::record` classifies each sent entry into the per-type
+    /// tally and adds `F_LENGTH` to `total_size` for regular files and symlinks
+    /// only, mirroring upstream `send_file_entry()` (flist.c:421-438, 690-691).
+    /// A directory and a FIFO must not inflate `total_size`, and a symlink's
+    /// target length must be counted (the sender flist stores the target length
+    /// as the entry size).
+    #[test]
+    fn flist_send_stats_classifies_per_type_and_total_size() {
+        let mut s = FlistSendStats::default();
+        s.record(&FileEntry::new_file(PathBuf::from("a"), 6, 0o644));
+        s.record(&FileEntry::new_file(PathBuf::from("b"), 7, 0o644));
+        s.record(&FileEntry::new_directory(PathBuf::from("d"), 0o755));
+        // The wire flist stores a symlink's size as its target string length;
+        // set it explicitly so the test reflects the on-wire entry.
+        let mut link = FileEntry::new_symlink(PathBuf::from("l"), PathBuf::from("abc"));
+        link.set_size(3);
+        s.record(&link);
+        s.record(&FileEntry::new_fifo(PathBuf::from("f"), 0o644));
+        s.record(&FileEntry::new_char_device(PathBuf::from("c"), 0o644, 1, 3));
+
+        assert_eq!(s.num_dirs, 1);
+        assert_eq!(s.num_symlinks, 1);
+        assert_eq!(s.num_specials, 1);
+        assert_eq!(s.num_devices, 1);
+        // total_size = reg (6 + 7) + symlink target len (3); dir, fifo, and
+        // device contribute 0.
+        assert_eq!(s.total_size, 16);
+    }
 }

@@ -185,7 +185,10 @@ pub(crate) fn run_push_transfer(
     // pre-rendered MSG_INFO line (see receiver::emit_itemize). This restores
     // output for oc-client -> upstream-daemon pushes, where upstream never
     // forwards oc's itemize.
-    let wants_itemize = config.itemize_changes();
+    // upstream: sender.c:449 - plain `-v` (no `-i`) prints the bare `%n%L` name
+    // per file too, so the callback must be wired whenever the sender has any
+    // client-visible per-file output, not only under `-i`.
+    let wants_client_output = config.itemize_changes() || config.verbosity() >= 1;
     let stdout_handle = std::io::stdout();
     let mut itemize_cb = move |line: &str| {
         let mut out = stdout_handle.lock();
@@ -199,7 +202,7 @@ pub(crate) fn run_push_transfer(
         writer,
         progress,
         batch_recording,
-        if wants_itemize {
+        if wants_client_output {
             Some(&mut itemize_cb as &mut dyn crate::server::ItemizeCallback)
         } else {
             None
