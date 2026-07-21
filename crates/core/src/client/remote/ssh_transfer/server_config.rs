@@ -123,6 +123,41 @@ pub(in crate::client::remote) fn build_server_config_for_receiver(
     // never sent over the wire, so carry it onto the local receiver config here.
     // Without this the receiver updates files in place, defeating --delay-updates.
     server_config.write.delay_updates = config.delay_updates();
+    // upstream: options.c:2912-2913 - `if (am_sender) { if (usermap) ... }`
+    // forwards --usermap to the remote only on a push. On a pull the local
+    // client IS the receiver and applies the uid name-map itself as it reads
+    // the incoming id list (receiver/file_list/id_lists.rs). Carry it onto the
+    // local receiver config here; without this the ssh pull silently ignored
+    // --usermap while local and daemon pulls remapped ownership.
+    server_config.user_mapping = config.user_mapping().cloned();
+    // upstream: options.c:2915-2916 - `if (am_sender) { if (groupmap) ... }`
+    // is the gid counterpart of --usermap above; same pull rationale.
+    server_config.group_mapping = config.group_mapping().cloned();
+    // upstream: options.c:2930-2931 - `if (am_sender && do_fsync) --fsync`.
+    // --fsync is applied by the receiver, which fsync()s each committed file
+    // (syscall.c do_fsync), so on a pull the local client IS the receiver and
+    // must carry the flag; it rides the wire only on a push. The daemon pull
+    // already sets this in apply_common_daemon_config; both ssh builders dropped
+    // it, so the ssh pull never fsync'd its writes.
+    server_config.write.fsync = config.fsync();
+    // upstream: options.c:2979-2980 - `if (write_devices && am_sender)
+    // --write-devices`. --write-devices makes the receiver write file content
+    // in-place into an existing device node (receiver.c: write_devices &&
+    // IS_DEVICE), so on a pull the local client IS the receiver and must carry
+    // it; it rides the wire only on a push.
+    server_config.write.write_devices = config.write_devices();
+    // upstream: options.c:2641-2643 - `if (am_sender) { if (keep_dirlinks)
+    // argstr[x++] = 'K'; }`. -K makes the receiver follow a symlink-to-dir at
+    // the destination instead of clobbering it (receiver/directory/creation.rs),
+    // so on a pull the local client IS the receiver and must carry the flag; the
+    // compact 'K' letter is emitted only when the local side is the sender.
+    server_config.flags.keep_dirlinks = config.keep_dirlinks();
+    // upstream: options.c:2650-2655 - `if (am_sender) { if (fuzzy_basis) {
+    // argstr[x++] = 'y'; ... } }`. -y/--fuzzy lets the receiver pick a similar
+    // basis file for the delta, so on a pull the local client IS the receiver
+    // and must carry the fuzzy level; the compact 'y' letter is emitted only
+    // when the local side is the sender.
+    server_config.flags.fuzzy_level = config.fuzzy_level();
 
     flags::apply_common_server_flags(config, &mut server_config);
     Ok(server_config)
@@ -357,6 +392,146 @@ mod tests {
             build_server_config_for_receiver(&config, &["dest".to_owned()]).unwrap();
 
         assert!(server_config.chmod.is_none());
+    }
+
+    /// On an ssh pull the local client IS the receiver and applies --usermap
+    /// itself as it reads the incoming id list (receiver/file_list/id_lists.rs).
+    /// Upstream options.c:2912-2913 forwards --usermap to the remote only when
+    /// am_sender, so on a pull it never rides the wire and must be carried onto
+    /// the receiver config. Regression guard for the ssh pull that ignored
+    /// --usermap while the daemon pull remapped ownership.
+    #[cfg(unix)]
+    #[test]
+    fn receiver_config_propagates_usermap() {
+        let mapping = ::metadata::UserMapping::parse("*:5678").expect("parse usermap");
+        let config = ClientConfig::builder()
+            .user_mapping(Some(mapping.clone()))
+            .build();
+        let server_config =
+            build_server_config_for_receiver(&config, &["dest".to_owned()]).unwrap();
+
+        assert_eq!(server_config.user_mapping.as_ref(), Some(&mapping));
+    }
+
+    /// The gid counterpart of --usermap (upstream options.c:2915-2916).
+    #[cfg(unix)]
+    #[test]
+    fn receiver_config_propagates_groupmap() {
+        let mapping = ::metadata::GroupMapping::parse("*:1234").expect("parse groupmap");
+        let config = ClientConfig::builder()
+            .group_mapping(Some(mapping.clone()))
+            .build();
+        let server_config =
+            build_server_config_for_receiver(&config, &["dest".to_owned()]).unwrap();
+
+        assert_eq!(server_config.group_mapping.as_ref(), Some(&mapping));
+    }
+
+    /// Without --usermap/--groupmap the receiver config carries no id maps.
+    #[test]
+    fn receiver_config_without_id_maps_has_none() {
+        let config = ClientConfig::builder().build();
+        let server_config =
+            build_server_config_for_receiver(&config, &["dest".to_owned()]).unwrap();
+
+        assert!(server_config.user_mapping.is_none());
+        assert!(server_config.group_mapping.is_none());
+    }
+
+    /// On an ssh pull the local client IS the receiver and fsync()s each
+    /// committed file under --fsync. Upstream options.c:2930-2931 forwards
+    /// --fsync to the remote only when am_sender, so on a pull it must be carried
+    /// onto the receiver config. Regression guard for the ssh pull that never
+    /// fsync'd its writes while the daemon pull did.
+    #[test]
+    fn receiver_config_propagates_fsync() {
+        let config = ClientConfig::builder().fsync(true).build();
+        let server_config =
+            build_server_config_for_receiver(&config, &["dest".to_owned()]).unwrap();
+
+        assert!(server_config.write.fsync);
+    }
+
+    /// On an ssh pull the local client IS the receiver and writes file content
+    /// in-place into an existing device node under --write-devices. Upstream
+    /// options.c:2979-2980 forwards it to the remote only when am_sender.
+    #[test]
+    fn receiver_config_propagates_write_devices() {
+        let config = ClientConfig::builder().write_devices(true).build();
+        let server_config =
+            build_server_config_for_receiver(&config, &["dest".to_owned()]).unwrap();
+
+        assert!(server_config.write.write_devices);
+    }
+
+    /// On an ssh pull the local client IS the receiver and follows a
+    /// symlink-to-dir at the destination under -K. Upstream options.c:2641-2643
+    /// packs the compact 'K' only when am_sender.
+    #[test]
+    fn receiver_config_propagates_keep_dirlinks() {
+        let config = ClientConfig::builder().keep_dirlinks(true).build();
+        let server_config =
+            build_server_config_for_receiver(&config, &["dest".to_owned()]).unwrap();
+
+        assert!(server_config.flags.keep_dirlinks);
+    }
+
+    /// On an ssh pull the local client IS the receiver and picks a fuzzy basis
+    /// under -y/--fuzzy. Upstream options.c:2650-2655 packs the compact 'y' only
+    /// when am_sender.
+    #[test]
+    fn receiver_config_propagates_fuzzy_level() {
+        let config = ClientConfig::builder().fuzzy_level(2).build();
+        let server_config =
+            build_server_config_for_receiver(&config, &["dest".to_owned()]).unwrap();
+
+        assert_eq!(server_config.flags.fuzzy_level, 2);
+    }
+
+    /// On an ssh pull the local client IS the receiver and stages updates into
+    /// the partial dir then renames them in the phase-2 sweep under
+    /// --delay-updates (upstream receiver.c:656,1029-1050). options.c:2886-2892
+    /// forwards it to the remote only on a push (partial_dir && am_sender), so on
+    /// a pull it never rides the wire and must be carried onto the receiver
+    /// config. Regression guard for the ssh pull that updated files in place.
+    #[test]
+    fn receiver_config_propagates_delay_updates() {
+        let config = ClientConfig::builder().delay_updates(true).build();
+        let server_config =
+            build_server_config_for_receiver(&config, &["dest".to_owned()]).unwrap();
+
+        assert!(server_config.write.delay_updates);
+    }
+
+    /// On an ssh pull a single source operand with no destination implies
+    /// list-only (upstream options.c:2194 / generator.c:1249). `list_only` is a
+    /// long-form-only concern absent from the compact letter string and must be
+    /// carried onto the receiver config. Regression guard for the ssh pull that
+    /// rendered the flist AND wrote files.
+    #[test]
+    fn receiver_config_propagates_list_only() {
+        let config = ClientConfig::builder().list_only(true).build();
+        let server_config =
+            build_server_config_for_receiver(&config, &["dest".to_owned()]).unwrap();
+
+        assert!(server_config.flags.list_only);
+    }
+
+    /// Without --fsync/-K/-y/--write-devices/--delay-updates/--list-only the
+    /// receiver config leaves those flags clear, so a normal ssh pull is
+    /// unaffected.
+    #[test]
+    fn receiver_config_without_receiver_only_flags_stays_clear() {
+        let config = ClientConfig::builder().build();
+        let server_config =
+            build_server_config_for_receiver(&config, &["dest".to_owned()]).unwrap();
+
+        assert!(!server_config.write.fsync);
+        assert!(!server_config.write.write_devices);
+        assert!(!server_config.flags.keep_dirlinks);
+        assert_eq!(server_config.flags.fuzzy_level, 0);
+        assert!(!server_config.write.delay_updates);
+        assert!(!server_config.flags.list_only);
     }
 
     /// On an ssh pull the local client IS the receiver and stages the temp file
