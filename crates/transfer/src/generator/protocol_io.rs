@@ -493,6 +493,78 @@ impl GeneratorContext {
         }
     }
 
+    /// Emits the client-visible per-file line for entry `ndx`: the `-i` itemize
+    /// row (via [`Self::maybe_emit_itemize`]) and/or the plain-`-v` name line
+    /// (via [`Self::maybe_emit_name`]). The two are mutually exclusive - under
+    /// `-i` the itemize row carries `%n%L` and the bare-name path early-returns,
+    /// so calling both is safe and keeps one call site per transfer stage.
+    ///
+    /// `is_transfer` marks a data-transfer item, which is always named under
+    /// `-v`; a non-transfer item (dir, symlink, unchanged) is named only when it
+    /// carries significant iflags.
+    pub(super) fn emit_client_item<W: Write>(
+        &self,
+        writer: &mut super::super::writer::ServerWriter<W>,
+        iflags: &super::item_flags::ItemFlags,
+        ndx: usize,
+        xname: Option<&[u8]>,
+        itemize_cb: &mut Option<&mut dyn super::super::ItemizeCallback>,
+        is_transfer: bool,
+    ) -> io::Result<()> {
+        self.maybe_emit_itemize(writer, iflags, ndx, xname, itemize_cb)?;
+        self.maybe_emit_name(iflags, ndx, xname, itemize_cb, is_transfer)
+    }
+
+    /// Emits a plain-`-v` name line for entry `ndx` to the client's stdout,
+    /// mirroring upstream `log_item(FCLIENT, ...)` with the default
+    /// `stdout_format = "%n%L"`.
+    ///
+    /// A no-op unless the local side is the client (`!am_server`), `-v` is on,
+    /// and `-i` is off (under `-i` the itemize row already carries the name).
+    /// Non-transfer items are named only when significant, matching upstream's
+    /// `maybe_log_item` gate.
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `sender.c:449-461` - `log_item(FCLIENT, ...)` prints each file's name.
+    /// - `log.c:818-843` - `log_item()` renders via `stdout_format`;
+    ///   `maybe_log_item()` gates non-transfer items on significant iflags.
+    /// - `options.c:2372` - plain `-v` sets `stdout_format = "%n%L"`.
+    pub(super) fn maybe_emit_name(
+        &self,
+        iflags: &super::item_flags::ItemFlags,
+        ndx: usize,
+        xname: Option<&[u8]>,
+        itemize_cb: &mut Option<&mut dyn super::super::ItemizeCallback>,
+        is_transfer: bool,
+    ) -> io::Result<()> {
+        // Under `-i` the itemize row already carries `%n%L`; only plain `-v`
+        // (no `-i`) prints a bare name here.
+        if self.config.flags.info_flags.itemize || !self.config.flags.verbose {
+            return Ok(());
+        }
+        // upstream: log.c:822 - rwrite() forwards FCLIENT to stdout only when
+        // !am_server. A server-sender's names are owned by the peer receiver.
+        if !self.config.connection.client_mode {
+            return Ok(());
+        }
+        // upstream: log.c:828-843 maybe_log_item - a non-transfer item is named
+        // only when it carries significant iflags (a new/changed dir, symlink,
+        // device, or special); a data-transfer item is always named.
+        if !is_transfer && !iflags.has_significant_flags() {
+            return Ok(());
+        }
+        if ndx >= self.file_list.len() {
+            return Ok(());
+        }
+        let entry = &self.file_list[ndx];
+        let line = super::itemize::format_name_line(entry, xname, iflags);
+        if let Some(cb) = itemize_cb.as_mut() {
+            cb.on_itemize(&line);
+        }
+        Ok(())
+    }
+
     /// Sends the file list to the receiver.
     ///
     /// Encodes file entries using the configured `FileListWriter`, writes them to
@@ -542,6 +614,9 @@ impl GeneratorContext {
             let entry = &self.file_list[i];
             self.prepare_pending_acl(entry, i, &mut flist_writer);
             flist_writer.write_entry(&mut probed, entry)?;
+            // upstream: flist.c:421-438,690-691 - send_file_entry() tallies the
+            // per-type counts and total_size as each entry is written.
+            self.flist_send_stats.record(entry);
         }
 
         // upstream: flist.c:2518 - write io_error with end marker (SAFE_FILE_LIST)
@@ -677,6 +752,9 @@ impl GeneratorContext {
             let entry = &self.file_list[i];
             self.prepare_pending_acl(entry, i, flist_writer);
             flist_writer.write_entry(writer, entry)?;
+            // upstream: flist.c:421-438,690-691 - send_file_entry() tallies the
+            // per-type counts and total_size as each entry is written.
+            self.flist_send_stats.record(entry);
         }
 
         // End-of-flist marker (zero byte).

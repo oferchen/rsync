@@ -233,12 +233,36 @@ pub(crate) fn format_itemize_line(
     ctx: &ItemizeContext,
     xname: Option<&[u8]>,
 ) -> String {
-    use std::fmt::Write;
-
     // Pre-allocate: 11 (iflags) + 1 (space) + ~32 (path estimate) + 1 (newline)
     let mut buf = String::with_capacity(48);
     write_iflags_into(&mut buf, iflags, entry, is_sender, ctx);
     buf.push(' ');
+    buf.push_str(&format_name_line(entry, xname, iflags));
+    buf
+}
+
+/// Renders the upstream `%n%L` name field for a file-list entry, terminated by
+/// a newline: the relative path, a trailing `/` for directories, and the `%L`
+/// suffix (` => <hlink>` for a hard-link leader, else ` -> <target>` for a
+/// symlink).
+///
+/// Shared by the `-i` itemize row (`%i %n%L`, [`format_itemize_line`]) and the
+/// plain-`-v` name line the client sender prints via `log_item(FCLIENT)` with
+/// the default `stdout_format = "%n%L"`.
+///
+/// # Upstream Reference
+///
+/// - `log.c:627-636` - `%n` expansion (path, trailing `/` for directories).
+/// - `log.c:643-655` - `%L` expansion (` => hlink` wins over ` -> target`).
+/// - `options.c:2372` - `stdout_format = "%n%L"` for plain `-v` (no `-i`).
+pub(crate) fn format_name_line(
+    entry: &FileEntry,
+    xname: Option<&[u8]>,
+    iflags: &ItemFlags,
+) -> String {
+    use std::fmt::Write;
+
+    let mut buf = String::with_capacity(40);
 
     // upstream: log.c:627-636 - %n expansion
     let path = entry.path();

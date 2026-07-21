@@ -619,9 +619,25 @@ impl LocalCopySummary {
         matched_data: u64,
         delete_stats: protocol::DeleteStats,
         created_stats: protocol::CreatedStats,
+        file_type_totals: FileTypeTotals,
     ) -> Self {
+        // upstream: main.c:387-411 output_itemized_counts() - "Number of files"
+        // reports the total plus a per-type breakdown where reg is the
+        // remainder. The sender tallies the typed counts in send_file_entry()
+        // (flist.c:421-438); reg is derived here so a push prints the same
+        // `reg: R, dir: D, link: L` line as a local copy instead of counting
+        // every entry as a regular file.
+        let non_regular = file_type_totals
+            .dirs
+            .saturating_add(file_type_totals.symlinks)
+            .saturating_add(file_type_totals.devices)
+            .saturating_add(file_type_totals.specials);
         Self {
-            regular_files_total: files_listed as u64,
+            regular_files_total: (files_listed as u64).saturating_sub(non_regular),
+            directories_total: file_type_totals.dirs,
+            symlinks_total: file_type_totals.symlinks,
+            devices_total: file_type_totals.devices,
+            fifos_total: file_type_totals.specials,
             files_copied: files_transferred as u64,
             // upstream: sender.c:343 stats.total_transferred_size, computed
             // locally by the pushing client's sender (never sent on the wire).
@@ -986,6 +1002,7 @@ mod tests {
             0,
             delete_stats,
             protocol::CreatedStats::new(),
+            FileTypeTotals::default(),
         );
         assert_eq!(summary.items_deleted(), 7);
         // reg is derived as total - (dir+link+dev+special), mirroring upstream
@@ -1092,6 +1109,7 @@ mod tests {
             0,
             protocol::DeleteStats::new(),
             created_stats,
+            FileTypeTotals::default(),
         );
         // reg = 4 - (1 dir + 1 link) = 2.
         assert_eq!(summary.created_regular_files(), 2);
@@ -1099,6 +1117,45 @@ mod tests {
         assert_eq!(summary.created_symlinks(), 1);
         assert_eq!(summary.created_devices(), 0);
         assert_eq!(summary.created_specials(), 0);
+    }
+
+    /// The push twin of [`from_receiver_stats_derives_file_type_breakdown`]: a
+    /// client sender reconstructs the `--stats` "Number of files" breakdown from
+    /// the per-type tallies its `send_file_entry()` loop accumulated, deriving
+    /// `reg` as the remainder. Before the fix the sender threaded no per-type
+    /// data, so every entry was reported as `reg` (`Number of files: 6 (reg:
+    /// 6)` instead of `(reg: 3, dir: 2, link: 1)`).
+    ///
+    /// upstream: flist.c:421-438 per-type tally; main.c:387-411 derives `reg`.
+    #[test]
+    fn from_generator_stats_derives_file_type_breakdown() {
+        let summary = LocalCopySummary::from_generator_stats(
+            6,
+            3,
+            15,
+            0,
+            91,
+            20,
+            Duration::from_secs(1),
+            0,
+            0,
+            protocol::DeleteStats::new(),
+            protocol::CreatedStats::new(),
+            FileTypeTotals {
+                dirs: 2,
+                symlinks: 1,
+                devices: 0,
+                specials: 0,
+            },
+        );
+        // reg = 6 - (2 + 1) = 3; the typed totals feed the reg/dir/link line.
+        assert_eq!(summary.regular_files_total(), 3);
+        assert_eq!(summary.directories_total(), 2);
+        assert_eq!(summary.symlinks_total(), 1);
+        assert_eq!(summary.devices_total(), 0);
+        assert_eq!(summary.fifos_total(), 0);
+        // "Total file size" comes straight from the sender-accumulated total.
+        assert_eq!(summary.total_source_bytes(), 20);
     }
 
     #[test]
@@ -1115,6 +1172,7 @@ mod tests {
             202_000,
             protocol::DeleteStats::new(),
             protocol::CreatedStats::new(),
+            FileTypeTotals::default(),
         );
         assert_eq!(summary.regular_files_total(), 200);
         assert_eq!(summary.files_copied(), 75);
