@@ -62,7 +62,16 @@ fn handle_session(
     // the server to send the @RSYNCD greeting first!
     // Always use Legacy mode for daemon connections.
     let style = SessionStyle::Legacy;
-    configure_stream(&stream)?;
+    // The `@RSYNCD:` greeting exchange is deliberately left untimed, matching
+    // upstream. Upstream keeps io_timeout at 0 (options.c:102) until a module
+    // has been selected, only then arming lp_timeout(module_id)
+    // (clientserver.c:1206); the handshake itself runs with no I/O deadline.
+    // Arming one here tore down connections whose peer was momentarily
+    // CPU-starved under a burst: the handshake read timed out, the worker
+    // returned an error, and dropping the socket with the client's still-unread
+    // request in the kernel buffer sent an RST that the client surfaced as
+    // "Connection reset by peer". The per-module `timeout` directive still
+    // governs the data phase via apply_module_timeout once the module is known.
 
     // upstream: clientserver.c:1298 - read PROXY protocol header before any
     // rsync protocol data when `proxy protocol = true` in the config.

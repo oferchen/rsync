@@ -117,8 +117,6 @@ pub(crate) const LEGACY_CONFIG_ENV: &str = "RSYNCD_CONFIG";
 pub(crate) const BRANDED_SECRETS_ENV: &str = "OC_RSYNC_SECRETS";
 /// Legacy environment variable for secrets file override; checked when `OC_RSYNC_SECRETS` is unset.
 pub(crate) const LEGACY_SECRETS_ENV: &str = "RSYNCD_SECRETS";
-/// Timeout applied to accepted sockets to avoid hanging handshakes.
-const SOCKET_TIMEOUT: Duration = Duration::from_secs(10);
 
 /// Error payload returned to clients while daemon functionality is incomplete.
 pub(crate) const HANDSHAKE_ERROR_PAYLOAD: &str =
