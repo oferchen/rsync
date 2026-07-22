@@ -68,7 +68,7 @@ fn transfer_request_with_from0_strips_comment_prefix_entries() {
     ]);
 
     // upstream: a leading `#` marks a comment line in a --files-from list even
-    // under --from0 (read_line RL_DUMP_COMMENTS, io.c:1276), so the only entry
+    // under --from0 (read_line RL_DUMP_COMMENTS, io.c:1279), so the only entry
     // is stripped and nothing is transferred.
     assert_eq!(code, 0);
     assert!(!dest_dir.join("#commented.txt").exists());

@@ -148,7 +148,7 @@ fn level_1_lists_multiple_transferred_files() {
 
     let (code, stdout, stderr) = run_with_args([
         OsString::from(RSYNC),
-        // recurse defaults to 0 (options.c:112); a trailing-slash directory
+        // recurse defaults to 0 (options.c:113); a trailing-slash directory
         // without -r is "skipping directory ." and lists nothing. Pass -r so
         // the files transfer and -v lists them, mirroring upstream.
         OsString::from("--recursive"),
@@ -225,7 +225,7 @@ fn verbose_transfer_reports_skipped_specials() {
     assert_eq!(code, 0);
     assert!(std::fs::symlink_metadata(&destination).is_err());
 
-    // The upstream-format NONREG notice (generator.c:1687) must appear on
+    // The upstream-format NONREG notice (generator.c:1699) must appear on
     // either stream: emit_verbose renders it to stdout at -v, and the
     // default-on `--info=NONREG` emission feeds the diagnostic queue.
     let stdout_text = String::from_utf8(stdout).expect("verbose stdout is UTF-8");
@@ -306,7 +306,7 @@ fn verbose_human_readable_combined_formats_sizes() {
 
 /// Verifies that -vv lists files using upstream's bare `%n%L` format
 /// (no `copied:`/`symlink:` descriptor prefix, no byte-count wrapper).
-/// Upstream: options.c:2372 sets `stdout_format = "%n%L"`; log.c:603-659
+/// Upstream: options.c:2390 sets `stdout_format = "%n%L"`; log.c:603-659
 /// expands `%n` to the filename and `%L` to ` -> target` for symlinks.
 /// The upstream testsuite `duplicates.test` greps `^name1$` to detect
 /// duplicate copies, so the per-file line must be bare.
@@ -435,7 +435,7 @@ fn verbose_with_dry_run_lists_files() {
 
     let (code, stdout, stderr) = run_with_args([
         OsString::from(RSYNC),
-        // recurse defaults to 0 (options.c:112); a trailing-slash directory
+        // recurse defaults to 0 (options.c:113); a trailing-slash directory
         // without -r is "skipping directory ." and lists nothing. Pass -r so
         // the files transfer and -v lists them, mirroring upstream.
         OsString::from("--recursive"),
@@ -1047,7 +1047,7 @@ fn verbose_dry_run_with_stats_shows_statistics() {
 /// bare `name1` line and exactly one `name2 -> target` line on -vv stdout.
 /// The test greps `^name1$` / `^name2 -> ` to detect duplicate copies, so
 /// any prefix (`copied:`, `symlink:`) or byte-count wrapper breaks interop.
-/// Upstream: `testsuite/duplicates.test`, options.c:2372 (`stdout_format = "%n%L"`).
+/// Upstream: `testsuite/duplicates.test`, options.c:2390 (`stdout_format = "%n%L"`).
 #[cfg(unix)]
 #[test]
 fn duplicates_testsuite_emits_bare_name_lines() {
@@ -1095,11 +1095,11 @@ fn duplicates_testsuite_emits_bare_name_lines() {
 
 /// Verifies that `-vv` on an all-uptodate tree mirrors upstream rsync 3.4.4:
 ///
-/// 1. The first stdout line is `sending incremental file list` (flist.c:2252).
+/// 1. The first stdout line is `sending incremental file list` (flist.c:2287).
 /// 2. Unchanged files emit `<name> is uptodate` (rsync.c:676) at NAME>=2.
 /// 3. Files are NOT pre-listed as bare names before the uptodate notice -
 ///    upstream gates the bare per-file emission on `INFO_EQ(PROGRESS, 1)`
-///    (receiver.c:1011, sender.c:450), and no `--progress` was requested here.
+///    (receiver.c:1011, sender.c:481), and no `--progress` was requested here.
 #[test]
 fn level_2_all_uptodate_matches_upstream_banner_and_uptodate_lines() {
     use tempfile::tempdir;
@@ -1145,10 +1145,10 @@ fn level_2_all_uptodate_matches_upstream_banner_and_uptodate_lines() {
     );
     assert_eq!(
         lines[0], "sending incremental file list",
-        "first line must be the FCLIENT banner (flist.c:2252), got: {rendered:?}"
+        "first line must be the FCLIENT banner (flist.c:2287), got: {rendered:?}"
     );
 
-    // Per upstream rsync.c:676 + sender.c:450, no bare `<name>` lines should
+    // Per upstream rsync.c:676 + sender.c:481, no bare `<name>` lines should
     // precede the `is uptodate` notice when --progress is absent. A regression
     // would surface as e.g. `foo/a.txt` on its own line right after the banner.
     let uptodate_count = lines.iter().filter(|l| l.ends_with(" is uptodate")).count();
@@ -1299,7 +1299,7 @@ fn level_2_hardlink_uptodate_emits_is_uptodate_notice() {
 /// `testsuite/itemize.test` `v_filt` helper (`sed -e '/^$/,$d'`) can strip the
 /// trailer before diffing.
 ///
-/// upstream: main.c:461 - `output_summary()` emits `rprintf(FCLIENT, "\n")`
+/// upstream: main.c:470 - `output_summary()` emits `rprintf(FCLIENT, "\n")`
 /// before the `INFO_GTE(STATS, 1)` totals block.
 #[test]
 fn level_2_blank_line_precedes_totals_trailer() {

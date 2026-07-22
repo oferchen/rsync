@@ -121,7 +121,7 @@ fn render_itemize(event: &ClientEvent) -> String {
 
 #[test]
 fn info_name_only_suppresses_stats_footer() {
-    // upstream: main.c:459-461 output_summary() gates the
+    // upstream: main.c:468-470 output_summary() gates the
     // `sent %s bytes  received %s bytes` / `total size is %s` trailer on
     // `verbose > 0 || INFO_GTE(STATS, 1)`. `--info=name2` raises only the NAME
     // level, so the trailer must NOT print - previously oc emitted it whenever
@@ -155,14 +155,14 @@ fn info_name_only_suppresses_stats_footer() {
     assert!(
         !out.contains("sent ") && !out.contains("total size is"),
         "name-only output (verbose 0, stats 0) must not print the summary \
-         trailer, matching upstream main.c:459-461:\n{out}"
+         trailer, matching upstream main.c:468-470:\n{out}"
     );
 }
 
 #[test]
 fn verbose_still_emits_stats_footer() {
     // upstream: the verbose level-1 word list raises INFO_STATS to 1
-    // (options.c:251), so plain `-v` still prints the trailer. Guards against
+    // (options.c:261), so plain `-v` still prints the trailer. Guards against
     // over-suppressing the footer when tightening the name-only gate.
     let (summary, _temp) = create_known_summary(&[("file.txt", b"hello world")]);
     let out = render_verbose(&summary, 1);
@@ -216,7 +216,7 @@ fn parity_stats_output_contains_all_upstream_field_labels() {
     );
     // Both File list timing lines are emitted together only when the flist
     // build time exceeds 1 ms, matching upstream's single
-    // `if (stats.flist_buildtime)` guard (main.c:437). Local-only transfers may
+    // `if (stats.flist_buildtime)` guard (main.c:446). Local-only transfers may
     // complete sub-millisecond, in which case both lines are absent (this
     // matches upstream rsync behaviour, so the assertion below tolerates either
     // presence).
@@ -242,7 +242,7 @@ fn parity_stats_output_field_order_matches_upstream() {
     let output = render_stats(&summary, HumanReadableMode::Grouped);
 
     // Upstream rsync emits stats in a fixed order. The File-list timing
-    // lines are conditional on `stats.flist_buildtime > 0` (main.c:437);
+    // lines are conditional on `stats.flist_buildtime > 0` (main.c:446);
     // when both are sub-millisecond they are omitted on both sides.
     let labels = [
         "Number of files:",
@@ -615,7 +615,7 @@ fn parity_stats_level_1_emits_only_summary_lines() {
     let output = render_stats_at_level(&summary, HumanReadableMode::Grouped, 1);
 
     // Level 1 emits only the "sent X bytes received Y bytes" + "total size"
-    // pair, matching upstream's INFO_GTE(STATS, 1) block (main.c:451-461).
+    // pair, matching upstream's INFO_GTE(STATS, 1) block (main.c:460-470).
     assert!(
         output.contains("sent "),
         "level 1 must include 'sent' summary line:\n{output}"
@@ -655,8 +655,8 @@ fn parity_stats_level_2_emits_full_detail_block_plus_summary() {
     let (summary, _temp) = create_known_summary(&[("lvl2.txt", b"level two")]);
     let output = render_stats_at_level(&summary, HumanReadableMode::Grouped, 2);
 
-    // Level 2 emits the full INFO_GTE(STATS, 2) detail block (main.c:418-449)
-    // followed by the level-1 summary (main.c:451-461).
+    // Level 2 emits the full INFO_GTE(STATS, 2) detail block (main.c:427-458)
+    // followed by the level-1 summary (main.c:460-470).
     for required in [
         "Number of files:",
         "Number of created files:",
@@ -679,7 +679,7 @@ fn parity_stats_level_2_emits_full_detail_block_plus_summary() {
     }
 
     // The detail block must precede the summary lines (single blank line
-    // separator, matching upstream's `rprintf(FCLIENT, "\n")` at main.c:452).
+    // separator, matching upstream's `rprintf(FCLIENT, "\n")` at main.c:461).
     let bytes_received_pos = output
         .find("Total bytes received:")
         .expect("Total bytes received: must be present at level 2");
@@ -787,7 +787,7 @@ fn parity_verbose_directory_names_end_with_slash() {
 #[test]
 fn parity_verbose_v2_emits_bare_name_per_upstream() {
     // upstream: log.c:log_formatted() at NAME>=1 emits the default
-    // `%n%L` format set by options.c:2372 - bare name plus optional
+    // `%n%L` format set by options.c:2390 - bare name plus optional
     // ` -> target` for symlinks or ` => hardlink` for hardlinks. Higher
     // verbosity adds ancillary log frames, never a per-file descriptor
     // prefix or byte-count wrapper. The upstream testsuite
@@ -2294,7 +2294,7 @@ fn parity_verbose_v3_produces_output_with_debug_info() {
     let (code, stdout, stderr) = run_with_args([
         OsString::from(RSYNC),
         OsString::from("-vvv"),
-        // upstream recurse defaults to 0 (options.c:112); a trailing-slash
+        // upstream recurse defaults to 0 (options.c:113); a trailing-slash
         // directory operand is "skipping directory ." without -r/-d, so it
         // transfers nothing. Pass --recursive so the top-level file is
         // actually enumerated and the verbose listing has something to show,

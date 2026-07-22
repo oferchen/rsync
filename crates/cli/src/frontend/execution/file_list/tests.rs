@@ -145,8 +145,8 @@ fn read_file_list_zero_terminated_no_trailing_null() {
 
 #[test]
 fn read_file_list_zero_terminated_strips_hash_and_semicolon_comments() {
-    // upstream: flist.c:2249 sets RL_DUMP_COMMENTS independent of eol_nulls,
-    // and io.c:1276 read_line() strips leading '#'/';' comment lines even with
+    // upstream: flist.c:2284 sets RL_DUMP_COMMENTS independent of eol_nulls,
+    // and io.c:1279 read_line() strips leading '#'/';' comment lines even with
     // NUL delimiters. Comment entries are dropped; normal entries are kept.
     let input = b"#comment\0keep.txt\0;also-comment\0other.txt\0";
     let mut reader = Cursor::new(input);
@@ -466,7 +466,7 @@ fn resolve_files_from_host_colon_prefix() {
     // UTS-V3-D regression: upstream's `testsuite/files-from.test` 4th
     // invocation passes `--files-from=localhost:scratch/filelist`. The
     // parser must recognise the hostspec form (upstream
-    // `options.c:3112-3138 check_for_hostspec`) and emit RemoteFile
+    // `options.c:3130-3156 check_for_hostspec`) and emit RemoteFile
     // with the host stripped. Without this fix the loader hit
     // `loader.rs:54` immediately with "No such file or directory".
     let files = vec![OsString::from("localhost:/remote/path.txt")];
@@ -509,7 +509,7 @@ fn resolve_files_from_daemon_module_spec_is_local() {
 
 #[test]
 fn resolve_files_from_remote_stdin_marker_falls_through() {
-    // upstream `options.c:2466-2469` aborts on `host:-`; we route through
+    // upstream `options.c:2484-2487` aborts on `host:-`; we route through
     // LocalFile so the downstream loader returns a clear error rather
     // than silently routing the literal `-` to the remote side.
     let files = vec![OsString::from("host:-")];

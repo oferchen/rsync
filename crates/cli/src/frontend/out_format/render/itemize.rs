@@ -57,7 +57,7 @@ pub(super) fn format_itemized_changes(event: &ClientEvent, is_sender: bool) -> S
         }
         DataCopied => 'c',
         HardLink => 'h',
-        // upstream: generator.c:1039 - copy-dest reconstruction itemizes with
+        // upstream: generator.c:1051 - copy-dest reconstruction itemizes with
         // ITEM_LOCAL_CHANGE, rendered as 'c' by log.c:707-708.
         ReferenceCopied => 'c',
         DirectoryCreated | SymlinkCopied | FifoCopied | DeviceCopied | SourceRemoved => 'c',

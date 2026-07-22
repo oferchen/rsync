@@ -3,7 +3,7 @@ use super::*;
 
 /// `-F` shortcuts interleave with `--filter`/`-f` rules at their argv position.
 ///
-/// upstream: options.c:1589-1598 - the first `-F` adds `dir-merge
+/// upstream: options.c:1605-1614 - the first `-F` adds `dir-merge
 /// /.rsync-filter`, the second adds `exclude .rsync-filter`; each is inserted
 /// where the flag appears on the command line.
 #[test]

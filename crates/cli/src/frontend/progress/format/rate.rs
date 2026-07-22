@@ -9,7 +9,7 @@ use core::client::HumanReadableMode;
 /// under `-h`/`-hh`.
 pub(crate) fn format_summary_rate(rate: f64, human_readable: HumanReadableMode) -> String {
     if !human_readable.is_enabled() {
-        // upstream: main.c:418 formats the rate with human_dnum(rate, 2), i.e.
+        // upstream: main.c:427 formats the rate with human_dnum(rate, 2), i.e.
         // do_big_dnum(rate, human_readable, 2). do_big_num (lib/compat.c:62)
         // inserts the thousands separator only when human_flag != 0, so level 0
         // (`--no-h`) renders raw ("1509.61") while the default level 1 groups
@@ -21,7 +21,7 @@ pub(crate) fn format_summary_rate(rate: f64, human_readable: HumanReadableMode) 
         };
     }
 
-    // upstream: main.c:418 human_dnum uses the same do_big_num unit path as the
+    // upstream: main.c:427 human_dnum uses the same do_big_num unit path as the
     // byte counters, so the rate honours the level's base under `-h`/`-hh`.
     format_human_rate(rate, human_readable.unit_base())
 }
@@ -130,7 +130,7 @@ mod tests {
 
     #[test]
     fn summary_rate_raw_under_no_h() {
-        // upstream: --no-h sets human_readable = 0, so main.c:418's human_dnum
+        // upstream: --no-h sets human_readable = 0, so main.c:427's human_dnum
         // passes human_flag 0 and do_big_num inserts no separator. A rate that
         // crosses 1000 must therefore render raw, not grouped, matching the real
         // binary's "sent X bytes  received Y bytes  1509.61 bytes/sec" trailer.

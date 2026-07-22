@@ -18,7 +18,7 @@ fn delete_modes_are_mutually_exclusive_two_flags() {
     let result = parse_test_args(["-r", "--delete-before", "--delete-after", "src/", "dst/"]);
     assert!(result.is_err());
     let err = result.unwrap_err();
-    // upstream: options.c:2211-2212 exact wording.
+    // upstream: options.c:2229-2230 exact wording.
     assert!(
         err.to_string()
             .contains("You may not combine multiple --delete-WHEN options.")
@@ -72,7 +72,7 @@ fn delete_excluded_activates_delete_mode() {
 
 #[test]
 fn max_delete_does_not_activate_delete_mode() {
-    // upstream: options.c:2215-2217 - `--max-delete` never enables deletion; it
+    // upstream: options.c:2233-2235 - `--max-delete` never enables deletion; it
     // only caps the count once an explicit `--delete*` has enabled it.
     let result = parse_test_args(["-r", "--max-delete=10", "src/", "dst/"]);
     assert!(result.is_ok());
@@ -160,7 +160,7 @@ fn omit_link_times_flag() {
     assert_eq!(parsed.omit_link_times, Some(true));
 }
 
-// upstream: options.c:2366-2367 - `--list-only` does NOT set dry_run (only -n
+// upstream: options.c:2384-2385 - `--list-only` does NOT set dry_run (only -n
 // does). The receiver skips destination writes under list_only independently
 // (run_client mode selection + TransferFlags::skip_dest_writes), so the two
 // must stay decoupled or the server args wrongly pack the compact 'n' letter.
@@ -207,7 +207,7 @@ fn backup_dir_implies_backup() {
 
 #[test]
 fn backup_suffix_does_not_imply_backup() {
-    // upstream: options.c:2296-2307 - only `--backup-dir` implies `--backup`; a
+    // upstream: options.c:2314-2325 - only `--backup-dir` implies `--backup`; a
     // bare `--suffix` sets the suffix string without enabling backups.
     let result = parse_test_args(["--suffix=.bak", "src/", "dst/"]);
     assert!(result.is_ok());
@@ -374,7 +374,7 @@ fn human_readable_long_flag_is_enabled() {
 
 #[test]
 fn human_readable_explicit_argument_is_rejected() {
-    // upstream: options.c:616 declares -h/--human-readable as POPT_ARG_NONE, so
+    // upstream: options.c:626 declares -h/--human-readable as POPT_ARG_NONE, so
     // `--human-readable=N` errors with "option does not take an argument".
     assert!(parse_test_args(["--human-readable=2", "src/", "dst/"]).is_err());
     assert!(parse_test_args(["--human-readable=0", "src/", "dst/"]).is_err());
@@ -382,7 +382,7 @@ fn human_readable_explicit_argument_is_rejected() {
 
 #[test]
 fn human_readable_no_flag_is_raw_level_zero() {
-    // upstream: options.c:617 resets human_readable to 0 (raw digits, width 11).
+    // upstream: options.c:627 resets human_readable to 0 (raw digits, width 11).
     let parsed = parse_test_args(["--no-human-readable", "src/", "dst/"]).expect("parse");
     assert_eq!(parsed.human_readable, Some(HumanReadableMode::Raw));
 }
@@ -973,7 +973,7 @@ fn alt_dest_args(flag: &str, count: usize) -> Vec<String> {
     args
 }
 
-/// upstream: options.c:1749-1754 accepts up to `MAX_BASIS_DIRS` (rsync.h:196)
+/// upstream: options.c:1765-1770 accepts up to `MAX_BASIS_DIRS` (rsync.h:196)
 /// alt-dest args; the boundary itself must not be rejected.
 #[test]
 fn alt_dest_limit_accepts_twenty() {
@@ -981,7 +981,7 @@ fn alt_dest_limit_accepts_twenty() {
     assert!(result.is_ok(), "20 alt-dest dirs must be accepted");
 }
 
-/// upstream: options.c:1752-1753 rejects the 21st alt-dest arg with the verbatim
+/// upstream: options.c:1768-1769 rejects the 21st alt-dest arg with the verbatim
 /// `ERROR: at most 20 <opt> args may be specified` message and RERR_SYNTAX. The
 /// exact wording matters because it is observable output a drop-in must mirror.
 #[test]
@@ -1017,7 +1017,7 @@ fn alt_dest_limit_enforced_for_each_type() {
 }
 
 /// The `basis_dir[]` array is shared, but upstream forbids mixing the three
-/// alt-dest types (options.c:1741-1745), a rule oc mirrors with
+/// alt-dest types (options.c:1757-1761), a rule oc mirrors with
 /// `conflicts_with_all`. So a "combined" total spanning types (here 10
 /// `--compare-dest` + 11 `--link-dest`) can never reach the count check - it is
 /// rejected first by the conflict rule. This proves only one type ever populates
@@ -1037,7 +1037,7 @@ fn alt_dest_types_cannot_be_mixed() {
     );
 }
 
-/// upstream: options.c:2169 uses `strlen(batch_name) > MAX_BATCH_NAME_LEN`, so a
+/// upstream: options.c:2187 uses `strlen(batch_name) > MAX_BATCH_NAME_LEN`, so a
 /// name of exactly MAX_BATCH_NAME_LEN (256) bytes is the boundary and must be
 /// accepted. This is observable behaviour a drop-in must not regress: rejecting
 /// a legal name would break scripts that upstream rsync accepts.
@@ -1055,7 +1055,7 @@ fn batch_name_at_max_len_accepted() {
     );
 }
 
-/// upstream: options.c:2169-2174 rejects a batch name longer than
+/// upstream: options.c:2187-2192 rejects a batch name longer than
 /// MAX_BATCH_NAME_LEN with the verbatim message
 /// `the batch-file name must be 256 characters or less.` and exits
 /// `RERR_SYNTAX` (1). The exact wording and the syntax exit code are both
@@ -1080,7 +1080,7 @@ fn batch_name_over_max_len_rejected_with_exact_message() {
     );
 }
 
-/// upstream: options.c:796-798 - `--write-batch`, `--only-write-batch`, and
+/// upstream: options.c:808-810 - `--write-batch`, `--only-write-batch`, and
 /// `--read-batch` all set the same `batch_name`, so the length cap fires for
 /// whichever one is present. `--read-batch` takes a dest-only operand.
 #[test]

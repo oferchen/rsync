@@ -916,7 +916,7 @@ fn itemize_skipped_newer_destination_shows_dot() {
     );
 }
 
-// upstream: generator.c:1721-1724 - an `--update` skip (destination newer)
+// upstream: generator.c:1734-1737 - an `--update` skip (destination newer)
 // emits `"%s is newer"` only at INFO_GTE(SKIP, 1) and never itemizes the
 // entry. These two tests pin that orchestration behavior so the entry is not
 // rendered as an itemized `.f` row when `-ii` is also in effect.
@@ -1960,7 +1960,7 @@ fn render_binary_units_below_threshold_falls_back_to_separator() {
 
 // Regression: upstream `testsuite/itemize.test` line 113-124 expects `-ivvplrtH`
 // to emit all-dot itemize rows for unchanged dirs, files, and symlinks,
-// mirroring the upstream gate `INFO_GTE(NAME, 2)` in `generator.c:582-583`.
+// mirroring the upstream gate `INFO_GTE(NAME, 2)` in `generator.c:589-590`.
 // The renderer's empty-change-set suppression must be bypassed when the
 // context flags `emit_unchanged`.
 
@@ -1968,7 +1968,7 @@ fn render_binary_units_below_threshold_falls_back_to_separator() {
 fn emit_out_format_suppresses_unchanged_metadata_reused_by_default() {
     // Without `emit_unchanged`, a `MetadataReused` event whose change set
     // reports no change and was not created must be omitted from output
-    // (upstream `generator.c:582` default gate).
+    // (upstream `generator.c:589` default gate).
     let event = make_event(
         ClientEventKind::MetadataReused,
         false,
@@ -2009,7 +2009,7 @@ fn emit_out_format_emits_unchanged_metadata_reused_under_double_itemize() {
     // upstream `testsuite/exclude.test:243-247` runs `-aiiO --update` and
     // expects an equal-mtime quick-check match to surface as `.f          `.
     // The `-ii` arm (`stdout_format_has_i > 1`, threaded as `itemize_repeated`)
-    // forces the row independently of `-vv`, mirroring `generator.c:582-583`.
+    // forces the row independently of `-vv`, mirroring `generator.c:589-590`.
     let event = make_event(
         ClientEventKind::MetadataReused,
         false,
@@ -2068,7 +2068,7 @@ fn emit_out_format_emits_unchanged_directory_under_info_name_2() {
 
 #[test]
 fn emit_out_format_suppresses_uptodate_hardlink_alias_by_default() {
-    // upstream: hlink.c:215-227 + generator.c:581-583 - an already-correct
+    // upstream: hlink.c:215-227 + generator.c:588-590 - an already-correct
     // hardlink alias is itemized with an empty xname (no `=> target`) and an
     // empty change-set. Under plain `-i` (NAME<2, has_i==1) the row must be
     // suppressed: the shared inode already carries the leader's attributes, so
@@ -2093,7 +2093,7 @@ fn emit_out_format_suppresses_uptodate_hardlink_alias_by_default() {
 
 #[test]
 fn emit_out_format_emits_uptodate_hardlink_alias_under_info_name_2() {
-    // upstream: generator.c:582 `INFO_GTE(NAME, 2)` arm - under `-ivv` (or
+    // upstream: generator.c:589 `INFO_GTE(NAME, 2)` arm - under `-ivv` (or
     // `--info=name2`) the same up-to-date alias surfaces as `hf          n`.
     let event = make_event(
         ClientEventKind::HardLink,
@@ -2169,7 +2169,7 @@ fn emit_out_format_suppresses_uptodate_hardlink_alias_at_plain_i() {
 
 #[test]
 fn emit_out_format_emits_fresh_hardlink_alias_with_relink_target() {
-    // upstream: generator.c:582 `(xname && *xname)` arm / hlink.c:232-234 - a
+    // upstream: generator.c:589 `(xname && *xname)` arm / hlink.c:232-234 - a
     // freshly atomic_create'd alias (NOT sharing the leader inode, e.g. a
     // `--copy-dest` cluster member linked to a copied leader) itemizes with the
     // relink target as the xname (`=> %s`), forcing the row even at plain `-i`.
@@ -2210,7 +2210,7 @@ fn emit_out_format_emits_unchanged_symlink_under_info_name_2() {
     assert_eq!(rendered, ".L          test.txt\n");
 }
 
-// upstream: generator.c:1039 / log.c:707-749 - a `--copy-dest` reconstruction
+// upstream: generator.c:1051 / log.c:707-749 - a `--copy-dest` reconstruction
 // itemizes the regular file with ITEM_LOCAL_CHANGE (`c`) and, when the source
 // already matched the basis, leaves the attribute columns blank. ITEM_IS_NEW is
 // never set, so the row is `cf` + 9 spaces rather than `>f+++++++++`.
@@ -2239,7 +2239,7 @@ fn itemize_reference_copied_file_reports_basis_drift() {
     assert_eq!(format_itemized_changes(&event, false), "cf..t......");
 }
 
-// upstream: generator.c:1127 do_link_at() - a `--link-dest` exact match
+// upstream: generator.c:1139 do_link_at() - a `--link-dest` exact match
 // hard-links from the basis and itemizes as `hf` + blank when identical.
 #[test]
 fn itemize_link_dest_hardlink_is_h_with_blank_attrs() {
@@ -2278,7 +2278,7 @@ fn itemize_reference_copied_symlink_is_cl_with_blank_attrs() {
     assert_eq!(format_itemized_changes(&event, false), "cL         ");
 }
 
-// upstream: generator.c:582-583 + rsync.h:258 - at plain `-i` (no `-vv`) the
+// upstream: generator.c:589-590 + rsync.h:258 - at plain `-i` (no `-vv`) the
 // blank copy-dest reconstruction rows carry only ITEM_LOCAL_CHANGE, which is
 // excluded from SIGNIFICANT_ITEM_FLAGS, so the emit gate drops them. Only `-vv`
 // (`emit_unchanged`) surfaces the `cf`/`cd`/`cL` rows.

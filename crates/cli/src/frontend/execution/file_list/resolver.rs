@@ -14,7 +14,7 @@ use super::parser::operand_is_remote;
 ///
 /// # Upstream Reference
 ///
-/// - `flist.c:2316` - `strstr(fbuf, "/./")` detects embedded marker
+/// - `flist.c:2351` - `strstr(fbuf, "/./")` detects embedded marker
 fn entry_contains_dot_marker(operand: &OsStr) -> bool {
     #[cfg(unix)]
     {
@@ -53,8 +53,8 @@ fn entry_contains_dot_marker(operand: &OsStr) -> bool {
 ///
 /// # Upstream Reference
 ///
-/// - `options.c:2187-2188` - `--files-from` implies `--relative`
-/// - `main.c:780-790` - source dir used as chdir base for file list entries
+/// - `options.c:2205-2206` - `--files-from` implies `--relative`
+/// - `main.c:789-799` - source dir used as chdir base for file list entries
 pub(crate) fn resolve_file_list_entries(
     entries: &mut [OsString],
     explicit_operands: &[OsString],
@@ -99,7 +99,7 @@ pub(crate) fn resolve_file_list_entries(
         }
 
         if files_from_active {
-            // upstream: flist.c:2316-2318 - when relative_paths is set and a
+            // upstream: flist.c:2351-2353 - when relative_paths is set and a
             // file list entry contains "/./", upstream splits the entry at that
             // marker: the portion before becomes a chdir prefix (relative to
             // argv[0]), and the portion after becomes the transferred filename.

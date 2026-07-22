@@ -29,7 +29,7 @@ pub(super) fn parse_server_flag_string_and_args(args: &[OsString]) -> (String, V
         let arg_str = arg.to_string_lossy();
 
         if is_known_server_long_flag(&arg_str) {
-            // upstream: options.c:2886-2890 - `--partial-dir` is emitted as
+            // upstream: options.c:2904-2908 - `--partial-dir` is emitted as
             // TWO separate argv entries by server_options(), so the value
             // that immediately follows must also be skipped here. Without
             // this, the partial-dir VALUE leaks into the positional list and

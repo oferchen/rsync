@@ -67,7 +67,7 @@ pub(crate) fn parse_timeout_argument(value: &OsStr) -> Result<TransferTimeout, M
 /// Parses the `--max-delete` argument into a non-negative deletion cap.
 ///
 /// A leading `+` prefix is permitted and ignored. Mirroring upstream
-/// (`options.c:2182-2185`), a negative value is not an error: it is clamped to
+/// (`options.c:2200-2203`), a negative value is not an error: it is clamped to
 /// `0` ("no deletions") and parsing continues. Deletion itself is still gated on
 /// an explicit `--delete*`, so a clamped cap of `0` only takes effect when
 /// deletion is already enabled.
@@ -157,7 +157,7 @@ pub(crate) fn parse_checksum_seed_argument(value: &OsStr) -> Result<u32, Message
 /// A leading `+` prefix is permitted and ignored. A negative value is accepted
 /// and requests upstream's nanosecond-exact mtime comparison
 /// (`modify_window < 0`, util1.c:1482); upstream parses this option as a signed
-/// `int` (options.c:660, `POPT_ARG_INT`).
+/// `int` (options.c:670, `POPT_ARG_INT`).
 pub(crate) fn parse_modify_window_argument(value: &OsStr) -> Result<i64, Message> {
     let text = value.to_string_lossy();
     let trimmed = text.trim_matches(|ch: char| ch.is_ascii_whitespace());

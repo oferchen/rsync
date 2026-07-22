@@ -15,7 +15,7 @@ fn transfer_request_with_filter_excludes_patterns() {
 
     let (code, stdout, stderr) = run_with_args([
         OsString::from(RSYNC),
-        // recurse defaults to 0 (options.c:112); -r walks source/ so the
+        // recurse defaults to 0 (options.c:113); -r walks source/ so the
         // filter rules are actually exercised, mirroring upstream.
         OsString::from("--recursive"),
         OsString::from("--filter"),
@@ -47,7 +47,7 @@ fn transfer_request_with_filter_clear_resets_rules() {
 
     let (code, stdout, stderr) = run_with_args([
         OsString::from(RSYNC),
-        // recurse defaults to 0 (options.c:112); -r walks source/ so the
+        // recurse defaults to 0 (options.c:113); -r walks source/ so the
         // filter rules are actually exercised, mirroring upstream.
         OsString::from("--recursive"),
         OsString::from("--filter"),
@@ -86,7 +86,7 @@ fn transfer_request_with_filter_merge_applies_rules() {
 
     let (code, stdout, stderr) = run_with_args([
         OsString::from(RSYNC),
-        // recurse defaults to 0 (options.c:112); -r walks source/ so the
+        // recurse defaults to 0 (options.c:113); -r walks source/ so the
         // filter rules are actually exercised, mirroring upstream.
         OsString::from("--recursive"),
         OsString::from("--filter"),
@@ -124,7 +124,7 @@ fn transfer_request_with_filter_merge_clear_resets_rules() {
 
     let (code, stdout, stderr) = run_with_args([
         OsString::from(RSYNC),
-        // recurse defaults to 0 (options.c:112); -r walks source/ so the
+        // recurse defaults to 0 (options.c:113); -r walks source/ so the
         // filter rules are actually exercised, mirroring upstream.
         OsString::from("--recursive"),
         OsString::from("--filter"),
@@ -229,7 +229,7 @@ fn transfer_request_with_filter_merge_bang_preserves_parent_cli_rule() {
 
     let (code, stdout, stderr) = run_with_args([
         OsString::from(RSYNC),
-        // recurse defaults to 0 (options.c:112); -r walks source/ so the
+        // recurse defaults to 0 (options.c:113); -r walks source/ so the
         // filter rules are actually exercised, mirroring upstream.
         OsString::from("--recursive"),
         OsString::from("--filter"),
@@ -277,7 +277,7 @@ fn transfer_request_with_filter_nested_merge_bang_preserves_outer_scope() {
 
     let (code, stdout, stderr) = run_with_args([
         OsString::from(RSYNC),
-        // recurse defaults to 0 (options.c:112); -r walks source/ so the
+        // recurse defaults to 0 (options.c:113); -r walks source/ so the
         // filter rules are actually exercised, mirroring upstream.
         OsString::from("--recursive"),
         OsString::from("--filter"),
@@ -317,7 +317,7 @@ fn transfer_request_with_exclude_from_bang_preserves_parent_cli_rule() {
 
     let (code, stdout, stderr) = run_with_args([
         OsString::from(RSYNC),
-        // recurse defaults to 0 (options.c:112); -r walks source/ so the
+        // recurse defaults to 0 (options.c:113); -r walks source/ so the
         // filter rules are actually exercised, mirroring upstream.
         OsString::from("--recursive"),
         OsString::from("--filter"),
@@ -366,7 +366,7 @@ fn transfer_request_with_cvsignore_bang_wipes_default_cvs_patterns() {
 
     let (code, stdout, stderr) = run_with_args([
         OsString::from(RSYNC),
-        // recurse defaults to 0 (options.c:112); -r walks source/ so the
+        // recurse defaults to 0 (options.c:113); -r walks source/ so the
         // cvs-exclude rules are actually exercised, mirroring upstream.
         OsString::from("--recursive"),
         OsString::from("--cvs-exclude"),

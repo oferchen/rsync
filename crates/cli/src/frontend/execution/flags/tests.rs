@@ -174,7 +174,7 @@ fn debug_flag_apply_io() {
     assert_eq!(settings.io, Some(1));
 }
 
-/// upstream: options.c:444-445 - levels beyond MAX_OUT_LEVEL (4) are clamped,
+/// upstream: options.c:454-455 - levels beyond MAX_OUT_LEVEL (4) are clamped,
 /// not rejected. `--debug=IO5` becomes IO level 4 in upstream.
 #[test]
 fn debug_flag_apply_io_level_clamped_to_max() {
@@ -663,7 +663,7 @@ fn debug_flag_all_keywords_accepted() {
     }
 }
 
-/// upstream: options.c:444-445 - all debug levels are clamped to MAX_OUT_LEVEL (4),
+/// upstream: options.c:454-455 - all debug levels are clamped to MAX_OUT_LEVEL (4),
 /// never rejected. Verify that levels at and beyond the documented per-flag maxima
 /// are accepted and clamped.
 #[test]
@@ -727,7 +727,7 @@ fn debug_flag_level_clamping() {
     assert_eq!(settings.time, Some(4));
 }
 
-/// upstream: options.c:452-453 - "all" with a numeric suffix sets every flag to
+/// upstream: options.c:462-463 - "all" with a numeric suffix sets every flag to
 /// min(suffix, MAX_OUT_LEVEL). e.g. `all4` sets all to 4, `all9` clamps to 4.
 #[test]
 fn debug_flag_all_with_level() {
@@ -933,7 +933,7 @@ fn debug_help_text_mentions_all_and_none() {
 
 // upstream: options.c output_item_help (rsync-3.4.1:499-509) prints the
 // per-verbosity summary block. debug_verbosity has levels 0 and 1 empty,
-// so the summary lists levels 2-5 only (options.c:228-235).
+// so the summary lists levels 2-5 only (options.c:238-245).
 #[test]
 fn debug_help_text_lists_verbosity_summary() {
     assert!(DEBUG_HELP_TEXT.contains("Options added at each level of verbosity:"));

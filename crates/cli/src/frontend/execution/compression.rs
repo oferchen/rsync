@@ -23,7 +23,7 @@ pub(crate) enum CompressLevelArg {
 
 /// Outcome of parsing `--compress-choice=NAME`.
 ///
-/// upstream: options.c:2013-2016 `if (compress_choice && strcasecmp(...,
+/// upstream: options.c:2031-2034 `if (compress_choice && strcasecmp(...,
 /// "auto") != 0) parse_compress_choice(0); else compress_choice = NULL;` -
 /// the literal `auto` is nulled out so normal codec negotiation runs, distinct
 /// from `none` (which disables compression) and an explicit codec.
@@ -126,7 +126,7 @@ pub(crate) fn parse_compress_choice(argument: &OsStr) -> Result<CompressChoice, 
         );
     }
 
-    // upstream: options.c:2013 - only the literal `auto` (case-insensitive) is
+    // upstream: options.c:2031 - only the literal `auto` (case-insensitive) is
     // nulled; anything else, including `auto,auto`, is passed to
     // parse_compress_choice and rejected if unknown.
     if trimmed.eq_ignore_ascii_case("auto") {
@@ -201,15 +201,15 @@ const COMPRESS_THREADS_MAX: i32 = 64;
 /// Parses `--compress-threads=N` into an optional worker count.
 ///
 /// Returns `Ok(None)` for `0` (delegates the choice to zstd, matching
-/// `do_compression_threads = 0` in upstream `options.c:89`). Returns
+/// `do_compression_threads = 0` in upstream `options.c:90`). Returns
 /// `Ok(Some(n))` for positive integers up to [`COMPRESS_THREADS_MAX`].
 /// Rejects negative values, non-numeric input, and out-of-range positive
 /// integers with a user-facing error message.
 ///
 /// # Upstream Reference
 ///
-/// - `options.c:760-761` - `{"compress-threads", 0, POPT_ARG_INT, &do_compression_threads, 0, 0, 0 }`.
-/// - `options.c:2016-2017` - upstream clamps negative values to 0.
+/// - `options.c:772-773` - `{"compress-threads", 0, POPT_ARG_INT, &do_compression_threads, 0, 0, 0 }`.
+/// - `options.c:2034-2035` - upstream clamps negative values to 0.
 pub(crate) fn parse_compress_threads(argument: &OsStr) -> Result<Option<NonZeroU8>, Message> {
     let original = argument.to_string_lossy().into_owned();
     let trimmed = original.trim();
@@ -264,7 +264,7 @@ mod tests {
 
     #[test]
     fn compress_level_zero_is_codec_dependent() {
-        // upstream: token.c:55-104 init_compression_level() - `--compress-level=0`
+        // upstream: token.c:56-105 init_compression_level() - `--compress-level=0`
         // is codec-dependent, NOT unconditionally disabled: for zlib the
         // off_level is Z_NO_COMPRESSION (0), so level 0 turns compression off
         // (CPRES_NONE); for zstd off_level is CLVL_NOT_SPECIFIED and a literal 0
@@ -289,7 +289,7 @@ mod tests {
 
     #[test]
     fn parse_compress_choice_auto_is_nulled() {
-        // upstream: options.c:2013-2016 - the literal `auto` (case-insensitive)
+        // upstream: options.c:2031-2034 - the literal `auto` (case-insensitive)
         // is nulled so normal codec negotiation runs; it is neither a disable
         // nor an explicit codec.
         assert!(matches!(
@@ -304,7 +304,7 @@ mod tests {
 
     #[test]
     fn parse_compress_choice_auto_auto_is_rejected() {
-        // upstream: options.c:2013 only special-cases the exact token `auto`;
+        // upstream: options.c:2031 only special-cases the exact token `auto`;
         // `auto,auto` falls through to parse_compress_choice and is rejected
         // as an unknown compress name (RERR_UNSUPPORTED, exit 4).
         let error = parse_compress_choice(OsStr::new("auto,auto")).expect_err("auto,auto rejected");

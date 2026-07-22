@@ -30,7 +30,7 @@ fn empty_compress_choice_returns_unsupported() {
     assert_eq!(code, 4);
 }
 
-/// upstream: options.c:2013-2016 - `--compress-choice=auto` is nulled out so
+/// upstream: options.c:2031-2034 - `--compress-choice=auto` is nulled out so
 /// normal codec negotiation runs; it is accepted (exit 0), not rejected.
 #[test]
 fn compress_choice_auto_is_accepted() {
@@ -48,7 +48,7 @@ fn compress_choice_auto_is_accepted() {
     assert!(destination.exists());
 }
 
-/// upstream: options.c:2013 only special-cases the exact token `auto`;
+/// upstream: options.c:2031 only special-cases the exact token `auto`;
 /// `--compress-choice=auto,auto` is an unknown compress name (exit 4).
 #[test]
 fn compress_choice_auto_auto_returns_unsupported() {
@@ -61,7 +61,7 @@ fn compress_choice_auto_auto_returns_unsupported() {
     assert_eq!(code, 4);
 }
 
-/// upstream: options.c:2465-2471 - with `--files-from`, more than two operands
+/// upstream: options.c:2483-2489 - with `--files-from`, more than two operands
 /// (or a lone operand) is a syntax error (RERR_SYNTAX = 1).
 #[test]
 fn files_from_extra_operands_return_syntax_error() {

@@ -63,7 +63,7 @@ pub(crate) fn server_mode_requested(args: &[OsString]) -> bool {
 /// remote shell wrappers (e.g., `lsh.sh`) that invoke rsync as:
 ///   `rsync --config=<file> --server --daemon .`
 ///
-/// upstream: main.c:1843-1844 - when both `am_server` and `am_daemon` are set,
+/// upstream: main.c:1867-1868 - when both `am_server` and `am_daemon` are set,
 /// `start_daemon(STDIN_FILENO, STDOUT_FILENO)` is called.
 pub(crate) fn server_daemon_mode_requested(args: &[OsString]) -> bool {
     let mut has_server = false;
@@ -129,7 +129,7 @@ where
 /// inherited file descriptors. Used by remote shells (e.g., SSH) that invoke:
 ///   `oc-rsync --config=<file> --server --daemon .`
 ///
-/// upstream: main.c:1843-1844 - `start_daemon(STDIN_FILENO, STDOUT_FILENO)`.
+/// upstream: main.c:1867-1868 - `start_daemon(STDIN_FILENO, STDOUT_FILENO)`.
 #[cfg(unix)]
 pub(crate) fn run_server_daemon_mode<Err>(args: &[OsString], stderr: &mut Err) -> i32
 where
