@@ -234,6 +234,57 @@ mod fake_super_bytes_tests {
     }
 
     #[test]
+    fn golden_bytes_mixed_base_and_named_entries() {
+        // Non-trivial base perms (mask_obj absent) plus one named-user and
+        // one named-group entry, pinned against a hand-computed byte
+        // literal so a byte-order or field-order regression in either
+        // encode or decode direction cannot hide behind a self-consistent
+        // round trip.
+        let mut acl = RsyncAcl::new();
+        acl.user_obj = 0x07; // rwx
+        acl.group_obj = 0x05; // r-x
+        acl.other_obj = 0x04; // r--
+        // mask_obj left at NO_ENTRY (0x80) from RsyncAcl::new().
+        acl.names.push(IdAccess::user(1000, 0x07)); // named user, rwx
+        acl.names.push(IdAccess::group(100, 0x05)); // named group, r-x
+
+        #[rustfmt::skip]
+        let expected: Vec<u8> = vec![
+            // upstream: acls.c:962 SIVAL(buf, 0, user_obj) -> 0x07
+            0x07, 0x00, 0x00, 0x00,
+            // upstream: acls.c:963 SIVAL(buf, 4, group_obj) -> 0x05
+            0x05, 0x00, 0x00, 0x00,
+            // upstream: acls.c:964 SIVAL(buf, 8, mask_obj) -> NO_ENTRY (0x80)
+            0x80, 0x00, 0x00, 0x00,
+            // upstream: acls.c:965 SIVAL(buf, 12, other_obj) -> 0x04
+            0x04, 0x00, 0x00, 0x00,
+            // upstream: acls.c:971 SIVAL(bp, 0, ida->id) -> 1000 (named user)
+            0xE8, 0x03, 0x00, 0x00,
+            // upstream: acls.c:972 SIVAL(bp, 4, ida->access) -> 0x07 | NAME_IS_USER
+            0x07, 0x00, 0x00, 0x80,
+            // upstream: acls.c:971 SIVAL(bp, 0, ida->id) -> 100 (named group)
+            0x64, 0x00, 0x00, 0x00,
+            // upstream: acls.c:972 SIVAL(bp, 4, ida->access) -> 0x05 (no NAME_IS_USER)
+            0x05, 0x00, 0x00, 0x00,
+        ];
+
+        assert_eq!(acl.to_fake_super_bytes(), expected);
+
+        // Decode the SAME literal (not the just-produced `bytes`) so the
+        // two directions are pinned against one shared ground truth rather
+        // than merely agreeing with each other.
+        let decoded = RsyncAcl::from_fake_super_bytes(&expected).expect("valid blob");
+        assert_eq!(decoded, acl);
+        let mut names = decoded.names.iter();
+        let user_entry = names.next().expect("named user entry");
+        assert!(user_entry.is_user());
+        assert_eq!(user_entry.id, 1000);
+        let group_entry = names.next().expect("named group entry");
+        assert!(!group_entry.is_user());
+        assert_eq!(group_entry.id, 100);
+    }
+
+    #[test]
     fn from_bytes_rejects_short_header() {
         assert!(RsyncAcl::from_fake_super_bytes(&[0u8; 15]).is_none());
         assert!(RsyncAcl::from_fake_super_bytes(&[]).is_none());
