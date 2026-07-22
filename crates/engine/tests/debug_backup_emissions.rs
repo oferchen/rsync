@@ -7,8 +7,8 @@
 //!
 //! # Upstream Reference
 //!
-//! - `backup.c:216-217` - `"make_backup: RENAME %s successful.\n"` fires
-//!   on the success branch of `do_rename(from, to)` inside `link_or_rename`,
+//! - `backup.c:200-207` - `"make_backup: HLINK %s successful.\n"` fires
+//!   on the success branch of `do_link_at(from, to)` inside `link_or_rename`,
 //!   which is the strategy oc-rsync's local-copy executor exercises by
 //!   default when `--backup` is on and the destination shares a
 //!   filesystem with the backup location.
@@ -36,13 +36,14 @@ fn backup_debug_messages() -> Vec<String> {
 }
 
 /// Drives a full local-copy that overwrites an existing destination with
-/// `--backup --suffix=~` and confirms the RENAME debug line fires at
+/// `--backup --suffix=~` and confirms the HLINK debug line fires at
 /// level 1 with upstream's exact wording.
 ///
-/// upstream: backup.c:216-217 - `DEBUG_GTE(BACKUP, 1)` on the RENAME
-/// success branch of `link_or_rename`.
+/// upstream: backup.c:200-207 - `DEBUG_GTE(BACKUP, 1)` on the HLINK
+/// success branch of `link_or_rename`, which upstream tries before RENAME
+/// whenever the caller doesn't prefer a rename outright.
 #[test]
-fn local_copy_backup_emits_rename_debug_line() {
+fn local_copy_backup_emits_hlink_debug_line() {
     let mut cfg = VerbosityConfig::default();
     cfg.debug.backup = 1;
     init(cfg);
@@ -69,11 +70,11 @@ fn local_copy_backup_emits_rename_debug_line() {
     plan.execute_with_options(LocalCopyExecution::Apply, options)
         .expect("copy succeeds");
 
-    let expected = format!("make_backup: RENAME {} successful.", existing.display());
+    let expected = format!("make_backup: HLINK {} successful.", existing.display());
     let messages = backup_debug_messages();
     assert!(
         messages.iter().any(|m| m == &expected),
-        "expected upstream-format BACKUP,1 RENAME line {expected:?}; got {messages:?}"
+        "expected upstream-format BACKUP,1 HLINK line {expected:?}; got {messages:?}"
     );
 
     assert!(
@@ -83,7 +84,7 @@ fn local_copy_backup_emits_rename_debug_line() {
 }
 
 /// Same scenario as above but with `--debug=BACKUP` disabled. No BACKUP
-/// debug lines should fire even though the rename still happens.
+/// debug lines should fire even though the backup still happens.
 #[test]
 fn backup_debug_level_zero_suppresses_emission() {
     init(VerbosityConfig::default());
@@ -117,6 +118,6 @@ fn backup_debug_level_zero_suppresses_emission() {
 
     assert!(
         dest_root.join("file.txt~").exists(),
-        "rename should still occur regardless of debug flag"
+        "backup should still occur regardless of debug flag"
     );
 }

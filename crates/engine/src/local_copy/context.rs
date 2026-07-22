@@ -39,7 +39,8 @@ use super::{
     load_dir_merge_rules_recursive, map_metadata_error, record_directory_subtree,
     remove_source_entry_if_requested, resolve_dir_merge_path, should_skip_copy,
     symlink_target_is_safe, trace_make_backup_copy, trace_make_backup_device,
-    trace_make_backup_rename, trace_make_backup_symlink, write_sparse_chunk,
+    trace_make_backup_hlink, trace_make_backup_rename, trace_make_backup_symlink,
+    write_sparse_chunk,
 };
 use crate::delta::DeltaSignatureIndex;
 use crate::signature::SignatureBlock;
@@ -59,7 +60,7 @@ use filters::FilterRule;
 use logging::info_log;
 use protocol::flist::FileListWriter;
 
-use super::overrides::backup_rename;
+use super::overrides::{backup_rename, create_hard_link};
 #[cfg(target_os = "linux")]
 use super::overrides::{cached_parent_device, same_filesystem};
 
@@ -538,13 +539,16 @@ pub(crate) enum CreatedEntryKind {
 
 /// Strategy used to place an existing destination into the backup
 /// location. Mirrors upstream rsync's `make_backup` success branches
-/// (RENAME / COPY / SYMLINK / DEVICE / HLINK) for `--debug=BACKUP`
-/// reporting; oc-rsync's local-copy executor exercises RENAME, COPY
-/// (cross-device fallback for regular files), SYMLINK (cross-device
+/// (HLINK / RENAME / COPY / SYMLINK / DEVICE) for `--debug=BACKUP`
+/// reporting; oc-rsync's local-copy executor exercises HLINK (same-fs
+/// backup, the default when the caller doesn't prefer a rename), RENAME
+/// (delete-pass callers that prefer a rename, and the hard-link fallback),
+/// COPY (cross-device fallback for regular files), SYMLINK (cross-device
 /// fallback for symlinks), and DEVICE (cross-device fallback for
 /// device/FIFO/socket nodes, recreated via mknod).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum BackupStrategy {
+    HardLink,
     Rename,
     Copy,
     Symlink,
