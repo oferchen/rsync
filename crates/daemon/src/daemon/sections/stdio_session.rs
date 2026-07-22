@@ -1,11 +1,11 @@
 // Stdio daemon session - runs a single daemon session over stdin/stdout.
 //
-// upstream: main.c:1843-1844 - when both `am_server` and `am_daemon` are set,
+// upstream: main.c:1867-1868 - when both `am_server` and `am_daemon` are set,
 // upstream rsync calls `start_daemon(STDIN_FILENO, STDOUT_FILENO)`. This runs
 // the daemon protocol over the process's stdin and stdout, used by remote-shell
 // daemon mode (`rsync -e ssh host::module`) and by `RSYNC_CONNECT_PROG`.
 //
-// upstream: clientserver.c:1496-1509 - `daemon_main()` detects
+// upstream: clientserver.c:1546-1559 - `daemon_main()` detects
 // `is_a_socket(STDIN_FILENO)` for inetd-style invocations and calls
 // `start_daemon(STDIN_FILENO, STDIN_FILENO)`.
 
@@ -51,7 +51,7 @@ pub fn run_stdio_session(
     }
 
     // When no --config was given, search for a config file.
-    // upstream: clientserver.c:1263-1267 - load_config() uses RSYNCD_USERCONF
+    // upstream: clientserver.c:1277-1281 - load_config() uses RSYNCD_USERCONF
     // ("rsyncd.conf" relative to CWD) for rsh-daemon non-root invocations,
     // and RSYNCD_SYSCONF ("/etc/rsyncd.conf") otherwise.
     if !has_explicit_config {
@@ -106,7 +106,7 @@ pub fn run_stdio_session(
     let pair = crate::daemon_stream::StdioPair::new(Box::new(stdin), Box::new(stdout));
     let stream = DaemonStream::stdio(pair);
 
-    // upstream: clientserver.c:1286-1287 - for rsh-daemon, am_daemon is set
+    // upstream: clientserver.c:1300-1301 - for rsh-daemon, am_daemon is set
     // to -1 as a flag distinguishing it from a network daemon. We use a
     // loopback address as the synthetic peer for log messages and access checks.
     let peer_addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 0);

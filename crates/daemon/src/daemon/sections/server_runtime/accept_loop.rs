@@ -264,7 +264,7 @@ fn serve_connections(
     // Detach from terminal if --detach is active (Unix default).
     // Must happen after binding so startup errors reach stderr, and before
     // PID file creation so the file records the child's PID.
-    // upstream: clientserver.c:1518-1521 -- become_daemon() called before accept loop.
+    // upstream: clientserver.c:1568-1571 -- become_daemon() called before accept loop.
     #[cfg(unix)]
     if detach {
         become_daemon()?;
@@ -287,7 +287,7 @@ fn serve_connections(
     // PID file. Order matches upstream: chroot first (while still root), then
     // setgid, then setuid. Any failure is fatal so the daemon never continues
     // running as root after a partial privilege drop.
-    // upstream: clientserver.c:1301-1339 start_accept_loop() applies
+    // upstream: clientserver.c:1337-1389 start_accept_loop() applies
     // lp_daemon_chroot() then lp_daemon_gid()/lp_daemon_uid() before the accept
     // loop services any client.
     if daemon_chroot.is_some() || daemon_uid.is_some() || daemon_gid.is_some() {

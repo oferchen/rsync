@@ -1,6 +1,6 @@
 // Inetd/connect-program stdin detection for standalone daemon mode.
 //
-// upstream: clientserver.c:1496-1510 - `daemon_main()` checks
+// upstream: clientserver.c:1546-1560 - `daemon_main()` checks
 // `is_a_socket(STDIN_FILENO)` before entering the TCP accept loop. When stdin
 // is a socket (inetd invocation or `RSYNC_CONNECT_PROG` pipe), the daemon
 // serves a single session over stdin/stdout instead of binding a TCP listener.
@@ -43,7 +43,7 @@ fn is_stdin_socket() -> bool {
 /// descriptors, then exits. No TCP binding, signal registration, or
 /// daemonization occurs.
 ///
-/// upstream: clientserver.c:1498-1509 - when `is_a_socket(STDIN_FILENO)` is
+/// upstream: clientserver.c:1548-1559 - when `is_a_socket(STDIN_FILENO)` is
 /// true, `daemon_main()` redirects stdout/stderr to `/dev/null` and calls
 /// `start_daemon(STDIN_FILENO, STDIN_FILENO)`.
 fn serve_inetd_session(options: RuntimeOptions) -> Result<(), DaemonError> {
@@ -95,7 +95,7 @@ fn serve_inetd_session(options: RuntimeOptions) -> Result<(), DaemonError> {
     }
 
     // Build a DaemonStream::Stdio from process stdin/stdout.
-    // upstream: clientserver.c:1509 - start_daemon(STDIN_FILENO, STDIN_FILENO)
+    // upstream: clientserver.c:1559 - start_daemon(STDIN_FILENO, STDIN_FILENO)
     // passes the same fd for both read and write. We use separate stdin/stdout
     // handles since Rust's std::io separates them.
     let stdin = io::stdin();

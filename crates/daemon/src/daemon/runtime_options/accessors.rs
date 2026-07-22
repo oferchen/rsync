@@ -42,7 +42,7 @@ impl RuntimeOptions {
 
     /// Returns whether incoming connections require a PROXY protocol header.
     ///
-    /// upstream: clientserver.c:1298 - checked before accepting client data.
+    /// upstream: clientserver.c:1312 - checked before accepting client data.
     #[allow(dead_code)] // REASON: accessor for daemon listener; wired when async daemon starts
     pub(crate) fn proxy_protocol(&self) -> bool {
         self.proxy_protocol

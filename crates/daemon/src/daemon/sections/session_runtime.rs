@@ -73,7 +73,7 @@ fn handle_session(
     // "Connection reset by peer". The per-module `timeout` directive still
     // governs the data phase via apply_module_timeout once the module is known.
 
-    // upstream: clientserver.c:1298 - read PROXY protocol header before any
+    // upstream: clientserver.c:1312 - read PROXY protocol header before any
     // rsync protocol data when `proxy protocol = true` in the config.
     let mut stream = stream;
     let peer_addr = if proxy_protocol {
@@ -249,7 +249,7 @@ fn handle_legacy_session(
         cached_legacy_daemon_greeting(),
     )?;
 
-    // upstream: clientserver.c:158-170 exchange_protocols() - immediately after
+    // upstream: clientserver.c:160-172 exchange_protocols() - immediately after
     // the greeting the daemon dumps the MOTD file verbatim and appends a single
     // trailing newline (write_sbuf(f_out, "\n")), before reading the client's
     // version/module request. Emitting it here (rather than only in the module
@@ -273,7 +273,7 @@ fn handle_legacy_session(
     fast_io::rearm_tcp_quickack(reader.get_ref().tcp_stream());
     while let Some(line) = read_trimmed_line(&mut reader)? {
         fast_io::rearm_tcp_quickack(reader.get_ref().tcp_stream());
-        // upstream: clientserver.c:180-211 exchange_protocols() (am_client == 0) -
+        // upstream: clientserver.c:182-213 exchange_protocols() (am_client == 0) -
         // before proceeding the daemon validates the client's version greeting,
         // refusing one that omits the subprotocol value (protocol >= 30) or the
         // digest name list (protocol > 31). The refusal is a fatal pre-OK
@@ -325,7 +325,7 @@ fn handle_legacy_session(
             Err(_) => {}
         }
 
-        // upstream: clientserver.c:1357-1368 - the daemon checks if the first
+        // upstream: clientserver.c:1407-1418 - the daemon checks if the first
         // non-@RSYNCD line is `#early_input=<len>`. If so, it reads <len> bytes
         // of raw data and then reads the next line as the module name.
         if let Some(data) = read_early_input(&line, &mut reader)? {
@@ -409,7 +409,7 @@ const EARLY_INPUT_MAX_SIZE: usize = 5120;
 /// data was read successfully, `Ok(None)` when the line is not an early-input
 /// command, or an I/O error if reading fails or the length is invalid.
 ///
-/// upstream: clientserver.c:1357-1364 - `rsync_module()` reads early input data
+/// upstream: clientserver.c:1407-1414 - `rsync_module()` reads early input data
 /// and stores it for later delivery to the pre-xfer exec script.
 fn read_early_input(line: &str, reader: &mut impl Read) -> io::Result<Option<Vec<u8>>> {
     let len_str = match line.strip_prefix(EARLY_INPUT_CMD) {

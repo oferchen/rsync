@@ -3,7 +3,7 @@
 // never reach the daemon.
 /// Applies long-form arguments from the client to the server configuration.
 ///
-/// Upstream rsync's `server_options()` (options.c:2737-2980) sends many options
+/// Upstream rsync's `server_options()` (options.c:2755-2998) sends many options
 /// as long-form arguments that are not encoded in the compact flag string.
 /// The daemon must parse these to correctly configure the transfer.
 ///
@@ -11,18 +11,18 @@
 /// reaches the daemon. The caller surfaces that as an `@ERROR` and exits
 /// instead of letting the unrecognised option drive a silent connection
 /// close mid file-list framing. Upstream mirrors this at
-/// `options.c:1444-1449` with `rsync: <BAD>: <err> (in daemon mode)` then
-/// `daemon_error:` (`options.c:1464-1466`) exiting `RERR_SYNTAX`.
+/// `options.c:1460-1465` with `rsync: <BAD>: <err> (in daemon mode)` then
+/// `daemon_error:` (`options.c:1480-1482`) exiting `RERR_SYNTAX`.
 ///
 /// # Upstream Reference
 ///
-/// - `options.c:1444-1449` - daemon-mode unknown option error path
-/// - `options.c:2818-2829` - delete mode variants
-/// - `options.c:2836-2837` - `--size-only`
-/// - `options.c:2878-2879` - `--ignore-errors`
-/// - `options.c:2888` - `--numeric-ids`
-/// - `options.c:2891` - `--use-qsort`
-/// - `options.c:2737-2740` - `--compress-level=N`
+/// - `options.c:1460-1465` - daemon-mode unknown option error path
+/// - `options.c:2836-2847` - delete mode variants
+/// - `options.c:2854-2855` - `--size-only`
+/// - `options.c:2896-2897` - `--ignore-errors`
+/// - `options.c:2906` - `--numeric-ids`
+/// - `options.c:2909` - `--use-qsort`
+/// - `options.c:2755-2758` - `--compress-level=N`
 fn apply_long_form_args(client_args: &[String], config: &mut ServerConfig) -> Option<String> {
     // Positional path args follow the standalone `.` separator. Upstream
     // `glob_expand_module()` consumes them through a different code path, so
@@ -38,7 +38,7 @@ fn apply_long_form_args(client_args: &[String], config: &mut ServerConfig) -> Op
             continue;
         }
         match arg.as_str() {
-            // upstream: options.c:2818-2829 - delete mode variants
+            // upstream: options.c:2836-2847 - delete mode variants
             "--delete" | "--delete-before" | "--delete-during" => {
                 config.flags.delete = true;
             }
@@ -57,30 +57,30 @@ fn apply_long_form_args(client_args: &[String], config: &mut ServerConfig) -> Op
             "--delete-excluded" => {
                 config.flags.delete = true;
             }
-            // upstream: options.c:2838-2839 - --stats sets do_stats which causes
+            // upstream: options.c:2856-2857 - --stats sets do_stats which causes
             // INFO_STATS to level 2+. Without this flag, the generator does not
             // emit NDX_DEL_STATS during the goodbye phase and the client sender's
             // "Number of deleted files" line stays at zero on daemon uploads.
             "--stats" => {
                 config.do_stats = true;
             }
-            // upstream: options.c:2836-2837
+            // upstream: options.c:2854-2855
             "--size-only" => {
                 config.file_selection.size_only = true;
             }
-            // upstream: options.c:2878-2879
+            // upstream: options.c:2896-2897
             "--ignore-errors" => {
                 config.deletion.ignore_errors = true;
             }
-            // upstream: options.c:2881-2882
+            // upstream: options.c:2899-2900
             "--copy-unsafe-links" => {
                 config.flags.copy_unsafe_links = true;
             }
-            // upstream: options.c:2884-2885
+            // upstream: options.c:2902-2903
             "--safe-links" => {
                 config.flags.safe_links = true;
             }
-            // upstream: options.c:2887-2888 - an explicit client --numeric-ids
+            // upstream: options.c:2905-2906 - an explicit client --numeric-ids
             // sets `numeric_ids = 1` (drops the wire name-list entirely).
             "--numeric-ids" => {
                 config.flags.numeric_ids = core::server::NumericIds::Explicit;
@@ -92,26 +92,26 @@ fn apply_long_form_args(client_args: &[String], config: &mut ServerConfig) -> Op
             "--no-implied-dirs" => {
                 config.flags.no_implied_dirs = true;
             }
-            // upstream: options.c:2890-2891
+            // upstream: options.c:2908-2909
             "--use-qsort" => {
                 config.qsort = true;
             }
-            // upstream: options.c:2893-2897
+            // upstream: options.c:2918-2919
             "--ignore-existing" => {
                 config.file_selection.ignore_existing = true;
             }
-            // upstream: options.c:2899-2900
+            // upstream: options.c:2922-2923
             "--existing" => {
                 config.file_selection.existing_only = true;
             }
-            // upstream: options.c:817-818
+            // upstream: options.c:2870-2871
             "--ignore-missing-args" => {
                 config.file_selection.ignore_missing_args = true;
             }
             "--delete-missing-args" => {
                 config.file_selection.delete_missing_args = true;
             }
-            // upstream: options.c:2933-2942
+            // upstream: options.c:2951-2960
             "--inplace" => {
                 config.write.inplace = true;
             }
@@ -125,11 +125,11 @@ fn apply_long_form_args(client_args: &[String], config: &mut ServerConfig) -> Op
                 }
                 config.flags.append = true;
             }
-            // upstream: options.c:2934-2935
+            // upstream: options.c:2891-2892
             "--delay-updates" => {
                 config.write.delay_updates = true;
             }
-            // upstream: options.c:2964-2965
+            // upstream: options.c:2930-2931
             "--fsync" => {
                 config.write.fsync = true;
             }
@@ -147,8 +147,8 @@ fn apply_long_form_args(client_args: &[String], config: &mut ServerConfig) -> Op
                 config.write.zero_copy_policy = fast_io::ZeroCopyPolicy::Disabled;
             }
             // upstream: options.c:2996-2997 - --mkpath forwarded to the daemon
-            // receiver on a push. Gates dest-arg path creation (main.c:736
-            // make_path vs main.c:788 single do_mkdir).
+            // receiver on a push. Gates dest-arg path creation (main.c:738
+            // make_path vs main.c:796 single do_mkdir).
             "--mkpath" => {
                 config.flags.mkpath = true;
             }
@@ -167,7 +167,7 @@ fn apply_long_form_args(client_args: &[String], config: &mut ServerConfig) -> Op
                 config.flags.backup = true;
             }
             // Two-arg options: upstream sends option and value as separate args.
-            // upstream: options.c:2915-2923 - reference directories
+            // upstream: options.c:2933-2941 - reference directories
             "--compare-dest" => {
                 if let Some(dir) = client_args.get(i + 1) {
                     config.reference_directories.push(ReferenceDirectory {
@@ -195,7 +195,7 @@ fn apply_long_form_args(client_args: &[String], config: &mut ServerConfig) -> Op
                     i += 1;
                 }
             }
-            // upstream: options.c:2787-2790 - backup-dir as separate args
+            // upstream: options.c:2805-2808 - backup-dir as separate args
             "--backup-dir" => {
                 config.flags.backup = true;
                 if let Some(dir) = client_args.get(i + 1) {
@@ -203,7 +203,7 @@ fn apply_long_form_args(client_args: &[String], config: &mut ServerConfig) -> Op
                     i += 1;
                 }
             }
-            // upstream: options.c:2791-2793 - suffix as separate args
+            // upstream: options.c:2809-2811 - suffix as separate args
             // When --backup-dir is specified without explicit --suffix,
             // upstream changes the default suffix from "~" to "" and sends
             // --suffix as a two-arg form (not --suffix=VALUE).
@@ -213,14 +213,14 @@ fn apply_long_form_args(client_args: &[String], config: &mut ServerConfig) -> Op
                     i += 1;
                 }
             }
-            // upstream: options.c:2907-2909 - temp-dir as separate args
+            // upstream: options.c:2925-2927 - temp-dir as separate args
             "--temp-dir" => {
                 if let Some(dir) = client_args.get(i + 1) {
                     config.temp_dir = Some(std::path::PathBuf::from(dir));
                     i += 1;
                 }
             }
-            // upstream: options.c:2800-2805 - --compress-choice, --new-compress, --old-compress
+            // upstream: options.c:2818-2823 - --compress-choice, --new-compress, --old-compress
             "--new-compress" => {
                 config.flags.compress = true;
                 if config.connection.compression_level.is_none() {
@@ -236,7 +236,7 @@ fn apply_long_form_args(client_args: &[String], config: &mut ServerConfig) -> Op
                 }
             }
             _ => {
-                // upstream: options.c:2800-2805 - --compress-choice=ALGO
+                // upstream: options.c:2818-2823 - --compress-choice=ALGO
                 if let Some(_choice) = arg
                     .strip_prefix("--compress-choice=")
                     .or_else(|| arg.strip_prefix("--zc="))
@@ -248,14 +248,14 @@ fn apply_long_form_args(client_args: &[String], config: &mut ServerConfig) -> Op
                         config.connection.compression_level =
                             Some(compress::zlib::CompressionLevel::Default);
                     }
-                // upstream: options.c:2737-2740
+                // upstream: options.c:2755-2758
                 } else if let Some(level_str) = arg.strip_prefix("--compress-level=") {
                     if let Ok(level) = level_str.parse::<u32>() {
                         if let Ok(cl) = compress::zlib::CompressionLevel::from_numeric(level) {
                             config.connection.compression_level = Some(cl);
                         }
                     }
-                // upstream: options.c:2807-2810
+                // upstream: options.c:2825-2828
                 } else if let Some(val) = arg.strip_prefix("--max-delete=") {
                     if let Ok(n) = val.parse::<i64>() {
                         if n >= 0 {
@@ -304,7 +304,7 @@ fn apply_long_form_args(client_args: &[String], config: &mut ServerConfig) -> Op
                     config.temp_dir = Some(std::path::PathBuf::from(dir));
                 } else if let Some(path) = arg.strip_prefix("--files-from=") {
                     config.file_selection.files_from_path = Some(path.to_owned());
-                // upstream: options.c:2904 / 2907 - --usermap=SPEC / --groupmap=SPEC.
+                // upstream: options.c:2912 / 2915 - --usermap=SPEC / --groupmap=SPEC.
                 // After unbackslash_arg / secluded-args delivery the spec arrives
                 // verbatim (`*:1234` wildcards intact) so we hand it directly to
                 // the metadata parser. Without this step the daemon-mode receiver
@@ -330,7 +330,7 @@ fn apply_long_form_args(client_args: &[String], config: &mut ServerConfig) -> Op
                     // upstream: options.c:940 - --from0 sets NUL-delimited mode
                     // for --files-from content read from the protocol stream.
                     config.file_selection.from0 = true;
-                // upstream: options.c:773,963 - --log-format is the deprecated
+                // upstream: options.c:785,975 - --log-format is the deprecated
                 // alias for --out-format. The server parses it to set
                 // stdout_format_has_i (options.c:2345-2348): `%i` sets has_i = 1
                 // (itemize significant items) and `%I` sets has_i = 2, the `-ii`
@@ -347,10 +347,10 @@ fn apply_long_form_args(client_args: &[String], config: &mut ServerConfig) -> Op
                         config.flags.info_flags.itemize_unchanged = true;
                     }
                 } else if unknown.is_none() && is_client_only_flag_reaching_daemon(arg) {
-                    // upstream: options.c:1444-1449 - the daemon's popt loop
+                    // upstream: options.c:1460-1465 - the daemon's popt loop
                     // emits `rsync: <BAD>: <err> (in daemon mode)` on the
                     // first unrecognised option and jumps to `daemon_error:`
-                    // (options.c:1464-1466), exiting `RERR_SYNTAX`. We mirror
+                    // (options.c:1480-1482), exiting `RERR_SYNTAX`. We mirror
                     // that fail-loud surface for batch-family flags that the
                     // client-side sanitiser should have stripped. Catching
                     // them here converts the previously silent connection

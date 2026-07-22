@@ -99,7 +99,7 @@ fn daemon_munge_symlinks_push_prepends_prefix() {
         std::path::Path::new("/rsyncd-munged//etc/passwd"),
         "absolute targets must carry the `/rsyncd-munged/` prefix verbatim \
          so the kernel cannot follow them out of the module root \
-         (upstream flist.c:1122-1126)",
+         (upstream flist.c:1150-1154)",
     );
 
     let rel_link = fs::read_link(dest_dir.join("rel_link")).expect("read rel_link target");

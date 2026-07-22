@@ -88,7 +88,7 @@ fn run_daemon_auth_failure_rejects_wrong_credentials() {
         .expect("send wrong credentials");
     stream.flush().expect("flush wrong credentials");
 
-    // upstream: clientserver.c:762 - auth failure sends
+    // upstream: clientserver.c:764 - auth failure sends
     // "@ERROR: auth failed on module %s\n"
     line.clear();
     reader.read_line(&mut line).expect("denied message");
