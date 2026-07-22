@@ -2950,9 +2950,12 @@ mod leading_slash_parity {
 
     #[test]
     fn non_relative_double_leading_slash_rejected() {
+        // upstream: flist.c:768 exit_cleanup(RERR_UNSUPPORTED) - refusing an
+        // absolute sender pathname is exit 4, which oc maps from the
+        // `Unsupported` io error kind (not `InvalidData`, which is exit 12).
         assert_eq!(
             run(b"//foo", false).unwrap_err(),
-            std::io::ErrorKind::InvalidData
+            std::io::ErrorKind::Unsupported
         );
     }
 
@@ -2960,7 +2963,16 @@ mod leading_slash_parity {
     fn non_relative_triple_leading_slash_rejected() {
         assert_eq!(
             run(b"///foo", false).unwrap_err(),
-            std::io::ErrorKind::InvalidData
+            std::io::ErrorKind::Unsupported
+        );
+    }
+
+    #[test]
+    fn dot_dot_component_rejected_as_unsupported() {
+        // upstream: util1.c CFN_REFUSE_DOT_DOT_DIRS -> RERR_UNSUPPORTED (exit 4).
+        assert_eq!(
+            run(b"../escape", true).unwrap_err(),
+            std::io::ErrorKind::Unsupported
         );
     }
 }
