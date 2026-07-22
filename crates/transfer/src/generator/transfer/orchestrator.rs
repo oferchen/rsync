@@ -7,8 +7,8 @@
 //! # Upstream Reference
 //!
 //! - `sender.c:send_files()` - Main transfer loop
-//! - `flist.c:2192` - `send_file_list()` builds and sends file list
-//! - `main.c:875-906` - `read_final_goodbye()` protocol finalization
+//! - `flist.c:2227` - `send_file_list()` builds and sends file list
+//! - `main.c:893-924` - `read_final_goodbye()` protocol finalization
 
 use std::io::{self, Read, Write};
 use std::path::PathBuf;
@@ -31,8 +31,8 @@ impl GeneratorContext {
     /// # Upstream Reference
     ///
     /// - `sender.c:send_files()` - Main transfer loop
-    /// - `flist.c:2192` - `send_file_list()` builds and sends file list
-    /// - `main.c:875-906` - `read_final_goodbye()` protocol finalization
+    /// - `flist.c:2227` - `send_file_list()` builds and sends file list
+    /// - `main.c:893-924` - `read_final_goodbye()` protocol finalization
     pub fn run<R: Read, W: Write>(
         &mut self,
         mut reader: super::super::super::reader::ServerReader<R>,
@@ -54,7 +54,7 @@ impl GeneratorContext {
             })?;
         }
 
-        // upstream: main.c:1248-1258 - flush pending multiplex output before
+        // upstream: main.c:1266-1276 - flush pending multiplex output before
         // blocking on recv_filter_list(). Upstream's perform_io() flushes the
         // output buffer while waiting for input via select(), but our separate
         // read/write streams cannot do that. Without this flush, any buffered
@@ -65,7 +65,7 @@ impl GeneratorContext {
             writer.flush()?;
         }
 
-        // upstream: main.c:1258 - recv_filter_list() in server mode
+        // upstream: main.c:1276 - recv_filter_list() in server mode
         self.receive_filter_list_if_server(&mut reader)?;
 
         // upstream: flist.c:2240-2264 - resolve --files-from paths if configured
@@ -78,7 +78,7 @@ impl GeneratorContext {
 
         let reader = &mut reader;
 
-        // upstream: flist.c:2192 - send_file_list()
+        // upstream: flist.c:2227 - send_file_list()
         let file_count = {
             let _t = PhaseTimer::new("file-list-build-send");
             if files_from_entries.is_empty() {
@@ -116,7 +116,7 @@ impl GeneratorContext {
             .advance_to(TransferPhase::Finalization)
             .map_err(crate::fsm_error)?;
 
-        // upstream: main.c:960-962 - do_server_sender() calls io_flush then handle_stats
+        // upstream: main.c:978-980 - do_server_sender() calls io_flush then handle_stats
         // before read_final_goodbye. Server-sender writes transfer stats; client-sender
         // handle_stats(-1) is a no-op (main.c:339-345).
         if !self.config.connection.client_mode {

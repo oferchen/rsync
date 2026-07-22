@@ -109,7 +109,7 @@ impl ReceiverContext {
     /// Upstream emits a directory's `-v` name only when `set_file_attrs()`
     /// changed it (`generator.c:1503-1505`). For the implied root `.` that is
     /// true when oc created the destination root (`FLAG_DIR_CREATED`,
-    /// `main.c:794-796`) or when the root's pre-transfer attributes differ from
+    /// `main.c:803-805`) or when the root's pre-transfer attributes differ from
     /// the source entry. Must be consulted BEFORE `create_directories` applies
     /// the root's metadata (and before child mkdirs bump the root mtime), so the
     /// stat reflects the pre-transfer state - the same pre-mkdir gate the `-i`
@@ -245,14 +245,14 @@ impl ReceiverContext {
     /// # Upstream Reference
     ///
     /// - `generator.c:574-576` - `iflags & (SIGNIFICANT_ITEM_FLAGS|ITEM_REPORT_XATTR)`
-    /// - `main.c:794-796` - `FLAG_DIR_CREATED` for a pre-flight-mkdir'd root
+    /// - `main.c:803-805` - `FLAG_DIR_CREATED` for a pre-flight-mkdir'd root
     /// - `log.c:707-710` - direction glyph selection
     pub(in crate::receiver) fn render_itemize_line(
         &self,
         iflags: &crate::generator::ItemFlags,
         entry: &protocol::flist::FileEntry,
     ) -> Option<String> {
-        // upstream: main.c:794-796 - when the receiver pre-flight-mkdirs the
+        // upstream: main.c:803-805 - when the receiver pre-flight-mkdirs the
         // destination root, `flist->files[0]->flags |= FLAG_DIR_CREATED`. The
         // generator's `itemize()` then sees `statret < 0` for the root entry,
         // ORs in `ITEM_IS_NEW`, and emits `cd+++++++++ ./`. oc-rsync's
@@ -274,7 +274,7 @@ impl ReceiverContext {
             return None;
         }
         let effective_iflags = if is_created_root_dir {
-            // upstream: generator.c:1468-1471 + generator.c:566-572 - a root that
+            // upstream: generator.c:1480-1483 + generator.c:573-579 - a root that
             // the pre-flight mkdir created this run is itemize()'d with
             // `statret < 0`, which takes the `else` branch and ORs
             // `ITEM_LOCAL_CHANGE | ITEM_IS_NEW` WITHOUT computing any attribute
@@ -355,7 +355,7 @@ impl ReceiverContext {
     /// each follower from `finish_hard_link()` -> `maybe_hard_link()`, which
     /// writes `NDX + write_shortint(iflags) + write_vstring(xname)` to
     /// `sock_f_out`; the peer's sender reads those attrs and logs the row
-    /// (`sender.c:287` `maybe_log_item`). Without this a server-mode receiver
+    /// (`sender.c:293` `maybe_log_item`). Without this a server-mode receiver
     /// (the remote end of a push) drops every follower row, because
     /// [`emit_itemize`](Self::emit_itemize) is a no-op off the client.
     ///

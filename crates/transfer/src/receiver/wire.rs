@@ -38,7 +38,7 @@ fn parse_fnamecmp_type(byte: u8) -> io::Result<protocol::FnameCmpType> {
 ///
 /// If the high bit of `len_byte` is set the length spans two bytes
 /// (`(len_byte & 0x7F) * 256 + second`); otherwise it is `len_byte`. Upstream
-/// `io.c:1944-1960` `read_vstring()`.
+/// `io.c:2004-2020` `read_vstring()`.
 #[inline]
 fn xname_len_from_bytes(len_byte: u8, second: Option<u8>) -> usize {
     if len_byte & 0x80 != 0 {
@@ -66,7 +66,7 @@ fn check_xname_len(xname_len: usize) -> io::Result<()> {
 
 /// Decides whether the sender-response frame carries xattr abbreviation data.
 ///
-/// Mirrors upstream `receiver.c:609-611`: read when xattrs are preserved and
+/// Mirrors upstream `receiver.c:721-723`: read when xattrs are preserved and
 /// `ITEM_REPORT_XATTR` is set, unless the xattr hardlink optimization elides it
 /// for a local-change rename.
 #[inline]
@@ -292,7 +292,7 @@ impl SumHead {
 ///
 /// # Upstream Reference
 ///
-/// - `sender.c:180` - `write_ndx_and_attrs()` sends these
+/// - `sender.c:184` - `write_ndx_and_attrs()` sends these
 /// - `rsync.c:383` - `read_ndx_and_attrs()` reads them
 /// - `xattrs.c:623` - `send_xattr_request()` writes abbreviated xattr values
 #[derive(Debug, Clone, Default)]
@@ -352,9 +352,9 @@ impl SenderAttrs {
     ///
     /// # Upstream Reference
     ///
-    /// - `io.c:2289-2318` - `read_ndx()` for NDX decoding
+    /// - `io.c:2364-2393` - `read_ndx()` for NDX decoding
     /// - `rsync.c:383` - `read_ndx_and_attrs()` reads NDX + iflags
-    /// - `receiver.c:609-611` - receiver reads xattr data when ITEM_REPORT_XATTR set
+    /// - `receiver.c:721-723` - receiver reads xattr data when ITEM_REPORT_XATTR set
     /// - `xattrs.c:681` - `recv_xattr_request()` reads abbreviated values
     pub fn read_with_codec<R: Read>(
         reader: &mut R,
@@ -398,7 +398,7 @@ impl SenderAttrs {
         };
 
         let xname = if iflags & Self::ITEM_XNAME_FOLLOWS != 0 {
-            // Read vstring: upstream io.c:1944-1960 read_vstring()
+            // Read vstring: upstream io.c:2004-2020 read_vstring()
             // Format: first byte is length; if bit 7 set, length = (byte & 0x7F) * 256 + next_byte
             let mut len_byte = [0u8; 1];
             reader.read_exact(&mut len_byte)?;
@@ -421,7 +421,7 @@ impl SenderAttrs {
             None
         };
 
-        // upstream: receiver.c:609-611 - read xattr data when ITEM_REPORT_XATTR is set
+        // upstream: receiver.c:721-723 - read xattr data when ITEM_REPORT_XATTR is set
         // Condition mirrors upstream: preserve_xattrs && iflags & ITEM_REPORT_XATTR && do_xfers
         // && !(want_xattr_optim && BITS_SET(iflags, ITEM_XNAME_FOLLOWS|ITEM_LOCAL_CHANGE))
         let xattr_values = if want_xattr_read(preserve_xattrs, iflags, want_xattr_optim) {

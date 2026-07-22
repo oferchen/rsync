@@ -1,6 +1,6 @@
 //! Protocol 28/29 trailing `io_error` int after the file-list end marker.
 //!
-//! upstream: flist.c:2738-2742 - the sender writes `write_int(f, io_error)`
+//! upstream: flist.c:2773-2777 - the sender writes `write_int(f, io_error)`
 //! after the id lists. Without this read, subsequent wire data is misaligned,
 //! causing "received request to transfer non-regular file" errors.
 

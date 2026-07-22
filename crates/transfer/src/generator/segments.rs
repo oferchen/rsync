@@ -10,7 +10,7 @@
 //!
 //! - `flist.c:46` - `#define MIN_FILECNT_LOOKAHEAD 1000`
 //! - `flist.c:2498-2510` - `send_extra_file_list()` lookahead throttling
-//! - `sender.c:227,261` - send loop calls into segment scheduling at top/bottom
+//! - `sender.c:231,265` - send loop calls into segment scheduling at top/bottom
 
 /// Minimum file count lookahead before the sender emits the next incremental
 /// sub-list. The sender accumulates at least this many unsent entries before
@@ -30,13 +30,13 @@ pub const MIN_FILECNT_LOOKAHEAD: usize = 1000;
 /// # Upstream Reference
 ///
 /// - `flist.c:send_extra_file_list()` - sends one directory's entries as a sub-list
-/// - `flist.c:2931` - `ndx_start = prev->ndx_start + prev->used + 1`
+/// - `flist.c:2966` - `ndx_start = prev->ndx_start + prev->used + 1`
 #[derive(Debug)]
 pub(crate) struct PendingSegment {
     /// Wire `dir_ndx` of the owning directory in the receiver's `dir_flist`.
     ///
     /// Written to the wire as `NDX_FLIST_OFFSET - parent_dir_ndx`
-    /// (flist.c:2117) to identify which directory this sub-list belongs to.
+    /// (flist.c:2152) to identify which directory this sub-list belongs to.
     pub(crate) parent_dir_ndx: i32,
     /// Flat `GeneratorContext::file_list` index of the owning directory entry.
     ///
@@ -84,11 +84,11 @@ pub(crate) struct DirSegment {
 /// Controls *when* sub-lists are sent during the transfer loop using
 /// upstream's `MIN_FILECNT_LOOKAHEAD` throttling heuristic. The transfer
 /// loop calls `next_if_needed()` at top and bottom of each iteration,
-/// matching upstream `sender.c:227,261`.
+/// matching upstream `sender.c:231,265`.
 ///
 /// # Upstream Reference
 ///
-/// - `sender.c:227,261` - checks `inc_recurse` at top/bottom of send loop
+/// - `sender.c:231,265` - checks `inc_recurse` at top/bottom of send loop
 /// - `flist.c:2498` - `send_extra_file_list()` uses `MIN_FILECNT_LOOKAHEAD`
 #[derive(Debug)]
 pub(crate) struct SegmentScheduler {
@@ -167,7 +167,7 @@ pub(crate) struct IncrementalState {
     /// Segment boundary table for mapping wire NDX values to flat array indices.
     ///
     /// With INC_RECURSE, the sender sends segmented file lists with +1 gaps
-    /// between segments (upstream `flist.c:2931`). When the receiver sends
+    /// between segments (upstream `flist.c:2966`). When the receiver sends
     /// wire NDX values back, this table maps them to flat array indices.
     /// Each entry is `(flat_start, ndx_start)`.
     ///
@@ -202,7 +202,7 @@ pub(crate) struct IncrementalState {
     /// # Upstream Reference
     ///
     /// - `flist.c:101` - `first_flist` pointer
-    /// - `sender.c:244` - `flist_free(first_flist)` advances `first_flist`
+    /// - `sender.c:248` - `flist_free(first_flist)` advances `first_flist`
     pub(crate) first_segment_idx: usize,
 }
 

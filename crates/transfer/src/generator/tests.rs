@@ -375,7 +375,7 @@ fn inc_recurse_gap_ndx_round_trip_preserves_original() {
     // 0 + (0 - 1) as usize = usize::MAX, and flat_to_wire_ndx(usize::MAX)
     // produced a garbage value instead of 0.
     //
-    // upstream: sender.c:263-266 - gap NDX echoed unchanged
+    // upstream: sender.c:267-272 - gap NDX echoed unchanged
     use protocol::CompatibilityFlags;
 
     let mut handshake = test_handshake_with_protocol(32);
@@ -473,7 +473,7 @@ fn inc_recurse_gap_ndx_itemizes_parent_directory() {
 
     // Dispatching sub/'s sub-list appends its (flat_start, ndx_start) and
     // owning-flat rows, exactly as encode_and_send_segment does in the transfer
-    // loop. upstream flist.c:2931: ndx_start = prev(1) + prev_used(2) + 1 = 4,
+    // loop. upstream flist.c:2966: ndx_start = prev(1) + prev_used(2) + 1 = 4,
     // so sub/'s gap NDX is 3. The initial list keeps ndx_start 1, gap NDX 0.
     ctx.incremental.ndx_segments = vec![(0, 1), (2, 4)];
     ctx.incremental.segment_parent_flat = vec![0, 1];
@@ -1913,7 +1913,7 @@ fn send_io_error_flag_with_errors_protocol_29() {
 
 #[test]
 fn send_io_error_flag_ignore_errors_suppresses_value() {
-    // Tests upstream behavior: flist.c:2518: write_int(f, ignore_errors ? 0 : io_error);
+    // Tests upstream behavior: flist.c:2553: write_int(f, ignore_errors ? 0 : io_error);
     let handshake = test_handshake_with_protocol(29);
     let mut config = test_config();
     config.deletion.ignore_errors = true;
@@ -2227,7 +2227,7 @@ fn walk_skips_fifo_when_preserve_specials_is_false() {
     // Trailing-slash source enters upstream's DOTDIR_NAME branch
     // (flist.c:2312-2322) so the file list contains `.` + the base
     // directory's children, matching `rsync <dir>/ dst/`. Without it the
-    // non-relative walk-base split (flist.c:2338-2349) would emit only
+    // non-relative walk-base split (flist.c:2373-2384) would emit only
     // the source basename instead of `.` plus its children.
     let count = build_file_list_for_contents(&mut ctx, base_path);
 
@@ -2673,7 +2673,7 @@ fn to_exit_code_no_errors_returns_zero() {
 /// a single NDX_DONE (4-byte LE) and the sender (generator) reads it.
 /// No NDX_DEL_STATS or extended goodbye round-trip occurs.
 ///
-/// upstream: main.c:875-906 `read_final_goodbye()`
+/// upstream: main.c:893-924 `read_final_goodbye()`
 mod legacy_goodbye_tests {
     use super::*;
     use protocol::codec::{MonotonicNdxWriter, create_ndx_codec};
@@ -2684,7 +2684,7 @@ mod legacy_goodbye_tests {
 
     /// NDX_DONE as encoded by the modern (protocol >= 30) codec.
     ///
-    /// upstream io.c:2259-2262 - single 0x00 byte with no side effects.
+    /// upstream io.c:2334-2337 - single 0x00 byte with no side effects.
     const NDX_DONE_MODERN: [u8; 1] = [0x00];
 
     /// Creates a `GeneratorContext` for a specific protocol version.
@@ -2808,7 +2808,7 @@ mod legacy_goodbye_tests {
     // the four marker bytes in user-space while the receiver is already
     // shutting down the socket - the symptom upstream's batch-mode interop
     // surfaced as a silent close at byte ~2241725. Mirroring
-    // `main.c:875-906 read_final_goodbye()` requires the flush to happen
+    // `main.c:893-924 read_final_goodbye()` requires the flush to happen
     // before close on every protocol-31+ goodbye.
     #[test]
     fn handle_goodbye_proto31_flushes_ndx_done_before_close() {
@@ -3203,7 +3203,7 @@ mod files_from {
         );
     }
 
-    /// upstream: flist.c:1614-1638 send_file1() - a name that cannot be
+    /// upstream: flist.c:1650-1674 send_file1() - a name that cannot be
     /// strictly transcoded under --iconv is dropped (io_error |= IOERR_GENERAL,
     /// "cannot convert filename", return NULL) so it never enters the file list.
     /// The --files-from build path runs the same per-source send_file_name(), so
@@ -3335,7 +3335,7 @@ mod files_from {
         // directory (e.g. `dir/subdir`) and a file inside it (e.g.
         // `dir/subdir/child.txt`), the directory must appear in the wire
         // file list exactly ONCE. Upstream's `implied_filter_list` check
-        // (flist.c:998) rejects the second occurrence as
+        // (flist.c:1026) rejects the second occurrence as
         // "rejecting unrequested file-list name: dir/subdir", which broke
         // upstream's `files-from.test` interop suite in the pull direction.
         //
@@ -3480,7 +3480,7 @@ mod files_from {
             "expected child to retain path prefix in {names:?}"
         );
         // Every parent ancestor must be present so the receiver can resolve
-        // generator.c:1313 parent-lookup without ABORTING.
+        // generator.c:1325 parent-lookup without ABORTING.
         for ancestor in src_dir
             .ancestors()
             .skip(1)
@@ -3810,7 +3810,7 @@ mod files_from {
 
     #[test]
     fn non_relative_mode_emits_source_basename() {
-        // upstream: flist.c:2338-2349 - non-relative mode splits each
+        // upstream: flist.c:2373-2384 - non-relative mode splits each
         // positional on its last `/`: `dir` becomes the chdir target,
         // `fn` is link_stat'd. For source `<tmp>/payload`, dir = <tmp>
         // and fn = payload, so the wire entries carry the basename
@@ -3917,7 +3917,7 @@ mod files_from {
             "no implied root . for a non-anchored list"
         );
 
-        // upstream: flist.c:1810 - ENOENT for a --files-from entry that never
+        // upstream: flist.c:1846 - ENOENT for a --files-from entry that never
         // existed should set IOERR_GENERAL (exit 23), not IOERR_VANISHED (exit 24).
         assert_ne!(
             ctx.io_error() & io_error_flags::IOERR_GENERAL,
@@ -4219,7 +4219,7 @@ fn generator_skips_files_matching_per_directory_merge_rules() {
     // Trailing-slash source exercises upstream's DOTDIR_NAME branch
     // (flist.c:2312-2322) so the file list is `.` + the directory's
     // children, matching `rsync <dir>/ dst/`. Without it, the non-relative
-    // walk-base split (flist.c:2338-2349) emits only the source basename.
+    // walk-base split (flist.c:2373-2384) emits only the source basename.
     let count = build_file_list_for_contents(&mut ctx, base);
 
     // Should have "." + "keep.txt" + ".rsync-filter" but not "skip.log"
@@ -4259,7 +4259,7 @@ fn generator_nested_directories_cascading_merge_rules() {
     // Trailing-slash source exercises upstream's DOTDIR_NAME branch
     // (flist.c:2312-2322) so the file list is `.` + the directory's
     // children, matching `rsync <dir>/ dst/`. Without it, the non-relative
-    // walk-base split (flist.c:2338-2349) prefixes every name with the
+    // walk-base split (flist.c:2373-2384) prefixes every name with the
     // source basename.
     let _count = build_file_list_for_contents(&mut ctx, base);
     let names: Vec<&str> = ctx.file_list().iter().map(|e| e.name()).collect();
@@ -4319,7 +4319,7 @@ fn generator_merge_filters_properly_scoped() {
     // Trailing-slash source exercises upstream's DOTDIR_NAME branch
     // (flist.c:2312-2322) so the file list is `.` + the directory's
     // children, matching `rsync <dir>/ dst/`. Without it, the non-relative
-    // walk-base split (flist.c:2338-2349) prefixes every name with the
+    // walk-base split (flist.c:2373-2384) prefixes every name with the
     // source basename and the exact-equality assertions below would miss.
     let _count = build_file_list_for_contents(&mut ctx, base);
     let names: Vec<String> = ctx
@@ -4384,7 +4384,7 @@ fn generator_no_merge_configs_unchanged_behavior() {
     // Trailing-slash source exercises upstream's DOTDIR_NAME branch
     // (flist.c:2312-2322) so the file list is `.` + the directory's
     // children, matching `rsync <dir>/ dst/`. Without it, the non-relative
-    // walk-base split (flist.c:2338-2349) emits only the source basename.
+    // walk-base split (flist.c:2373-2384) emits only the source basename.
     let count = build_file_list_for_contents(&mut ctx, base);
 
     // Should have "." + 2 files = 3 entries
@@ -4445,7 +4445,7 @@ fn server_mode_flushes_writer_before_filter_list_read() {
     // client's filter list. Without this flush, the client may wait for
     // server output before sending its filter list, causing a deadlock.
     //
-    // upstream: main.c:1248-1258 - io_start_multiplex_out() then recv_filter_list()
+    // upstream: main.c:1266-1276 - io_start_multiplex_out() then recv_filter_list()
     // upstream: io.c:perform_io() - flushes output buffer while waiting for input
 
     use std::sync::Arc;
@@ -5170,7 +5170,7 @@ mod itemize_emit_gate {
         );
     }
 
-    /// upstream: generator.c:583 - `(xname && *xname)` (encoded as
+    /// upstream: generator.c:590 - `(xname && *xname)` (encoded as
     /// `ITEM_XNAME_FOLLOWS` on the wire) forces emission. Verbose level 0
     /// proves the new branch alone is sufficient.
     #[test]

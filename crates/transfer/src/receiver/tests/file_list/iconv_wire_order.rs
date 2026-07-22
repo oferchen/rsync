@@ -9,11 +9,11 @@
 //!
 //! # Upstream Reference
 //!
-//! - `options.c:2051-2056` - sets `need_unsorted_flist = 1` when `--iconv`
+//! - `options.c:2069-2074` - sets `need_unsorted_flist = 1` when `--iconv`
 //!   is in effect (and not disabled by `--iconv=-`).
 //! - `flist.c:2496-2498` - "both sides keep an unsorted file-list array
 //!   because the names will differ on the sending and receiving sides".
-//! - `flist.c:2149-2153` - allocates a separate `flist->sorted[]` pointer
+//! - `flist.c:2184-2188` - allocates a separate `flist->sorted[]` pointer
 //!   array so `flist->files[]` (NDX-addressed) stays in scan order.
 
 use std::ffi::OsString;
@@ -132,7 +132,7 @@ fn no_iconv_path_still_sorts_entries() {
 /// An iconv converter whose local and remote encodings are identical
 /// performs no transcoding, so the NDX-addressed array cannot diverge
 /// from the sender's wire view. Mirrors upstream's check at
-/// `options.c:2053` that nulls out `iconv_opt` on `--iconv=-`, leaving
+/// `options.c:2071` that nulls out `iconv_opt` on `--iconv=-`, leaving
 /// `need_unsorted_flist` unset.
 #[test]
 fn identity_iconv_does_not_suppress_reorder() {

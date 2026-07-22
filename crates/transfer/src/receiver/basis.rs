@@ -157,7 +157,7 @@ impl SignatureGenerationConfig {
 ///
 /// # Upstream Reference
 ///
-/// - `generator.c:963-983` - `try_dests_reg()` scans `basis_dir[j]` in order;
+/// - `generator.c:975-995` - `try_dests_reg()` scans `basis_dir[j]` in order;
 ///   the first existing regular file sets `best_match = j` (match_level 1).
 /// - `generator.c:1054` - `return FNAMECMP_BASIS_DIR_LOW + j` when the file
 ///   exists in the reference dir but its content differs (match_level 1).
@@ -286,7 +286,7 @@ fn try_fuzzy_match(
     let fuzzy_matcher = FuzzyMatcher::with_level(fuzzy_level).with_fuzzy_basis_dirs(basis_dirs);
     let fuzzy_match =
         fuzzy_matcher.find_fuzzy_basis(target_name, dest_dir, target_size, Some(target_mtime))?;
-    // upstream: generator.c:1775 - announce the selected fuzzy basis at
+    // upstream: generator.c:1788 - announce the selected fuzzy basis at
     // FUZZY,1 the moment the matcher returns a candidate, before we attempt
     // to open it.
     trace_fuzzy_basis_selected(
@@ -619,7 +619,7 @@ fn compute_basis_signature<R: std::io::Read>(
 /// - `generator.c:1580` - Fuzzy matching via `find_fuzzy_basis()`
 /// - `generator.c:1400` - Reference directory checking
 pub fn find_basis_file_with_config(config: &BasisFileConfig<'_>) -> BasisFileResult {
-    // Upstream `generator.c:1949`: when `whole_file` is set, no basis file
+    // Upstream `generator.c:1962`: when `whole_file` is set, no basis file
     // is used - the entire file is sent as literals.
     if config.whole_file {
         return BasisFileResult::EMPTY;

@@ -163,8 +163,8 @@ impl GeneratorContext {
             #[cfg(not(unix))]
             let mode = 0o755;
 
-            // upstream: flist.c:1465 - `file->len32 = (uint32)st.st_size` runs for
-            // every entry; only devices/specials are zeroed (flist.c:1452-1454).
+            // upstream: flist.c:1501 - `file->len32 = (uint32)st.st_size` runs for
+            // every entry; only devices/specials are zeroed (flist.c:1484-1486).
             // Directories therefore carry their on-disk inode size on the wire,
             // which feeds `--list-only`, `%l`, and the `--stats` total.
             let mut entry = FileEntry::new_directory(relative_path, mode);
@@ -209,7 +209,7 @@ impl GeneratorContext {
             // re-applies the prefix when the link is materialized on disk.
             let target = strip_symlink_munge_prefix(self.config.munge_symlinks, raw_target);
 
-            // upstream: flist.c:1465 - symlinks carry `st_size`, which lstat
+            // upstream: flist.c:1501 - symlinks carry `st_size`, which lstat
             // reports as the byte length of the link target. The receiver gets
             // the target separately, so this length is purely the size shown by
             // `--list-only`/`%l` and summed into the `--stats` total.
@@ -299,7 +299,7 @@ impl GeneratorContext {
                 .as_ref()
                 .map_or_else(|| metadata.uid(), |s| s.uid);
             entry.set_uid(uid);
-            // upstream: flist.c:466-470 - add_uid() looks up name for inline
+            // upstream: flist.c:478-482 - add_uid() looks up name for inline
             // sending via XMIT_USER_NAME_FOLLOWS when INC_RECURSE is active.
             // Without names, the receiver can't map uid->name on the remote.
             if self.config.flags.numeric_ids.is_off() {
@@ -316,7 +316,7 @@ impl GeneratorContext {
                 .as_ref()
                 .map_or_else(|| metadata.gid(), |s| s.gid);
             entry.set_gid(gid);
-            // upstream: flist.c:476-480 - add_gid() looks up name for inline
+            // upstream: flist.c:488-492 - add_gid() looks up name for inline
             // sending via XMIT_GROUP_NAME_FOLLOWS when INC_RECURSE is active.
             if self.config.flags.numeric_ids.is_off() {
                 if let Ok(Some(name_bytes)) = metadata::id_lookup::lookup_group_name_cached(gid) {
@@ -1261,11 +1261,11 @@ mod windows_reparse_tests {
 mod entry_length_tests {
     //! `F_LENGTH` parity regression for directory and symlink entries.
     //!
-    //! upstream: flist.c:1465 - `file->len32 = (uint32)st.st_size` runs for
-    //! every entry type; only devices and specials are zeroed at flist.c:1452
-    //! and flist.c:1454. Directories therefore carry their on-disk inode size
+    //! upstream: flist.c:1501 - `file->len32 = (uint32)st.st_size` runs for
+    //! every entry type; only devices and specials are zeroed at flist.c:1484
+    //! and flist.c:1486. Directories therefore carry their on-disk inode size
     //! and symlinks carry `st_size` (the target byte length). That field is
-    //! summed into the `--stats` "Total file size" total at flist.c:679 and
+    //! summed into the `--stats` "Total file size" total at flist.c:691 and
     //! rendered by `--list-only` and `%l`, so emitting 0 here would diverge
     //! from upstream's observable output byte-for-byte.
 
@@ -1322,7 +1322,7 @@ mod entry_length_tests {
         assert_eq!(
             entry.size(),
             meta.len(),
-            "directory F_LENGTH must mirror st_size (upstream flist.c:1465), \
+            "directory F_LENGTH must mirror st_size (upstream flist.c:1501), \
              not the hardcoded 0 from FileEntry::new_directory",
         );
     }

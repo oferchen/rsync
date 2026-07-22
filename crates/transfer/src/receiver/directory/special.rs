@@ -55,7 +55,7 @@ impl ReceiverContext {
     /// # Upstream Reference
     ///
     /// - `generator.c:1627` - `if (preserve_devices && IS_DEVICE(file->mode))`
-    /// - `generator.c:1663` - `atomic_create(file, fname, NULL, ...)`
+    /// - `generator.c:1675` - `atomic_create(file, fname, NULL, ...)`
     #[cfg(unix)]
     pub(in crate::receiver) fn create_specials<W: crate::writer::MsgInfoSender + ?Sized>(
         &self,
@@ -88,7 +88,7 @@ impl ReceiverContext {
             let node_path = dest_dir.join(relative_path);
 
             // Ensure parent directory exists for --relative paths.
-            // upstream: generator.c:1317-1326 make_path() for relative_paths
+            // upstream: generator.c:1329-1338 make_path() for relative_paths
             if let Some(parent) = node_path.parent() {
                 let _ = fs::create_dir_all(parent);
             }
@@ -109,7 +109,7 @@ impl ReceiverContext {
 
             if !up_to_date {
                 dest_existed = fs::symlink_metadata(&node_path).is_ok();
-                // upstream: generator.c:1667 - `else if (basis_dir[0] != NULL)`
+                // upstream: generator.c:1679 - `else if (basis_dir[0] != NULL)`
                 // is reached only when the destination is absent (`statret !=
                 // 0`). An identical node in a `--compare-dest` basis leaves the
                 // destination absent; a `--link-dest` basis is hard-linked. A
@@ -190,7 +190,7 @@ impl ReceiverContext {
                     }
                 }
 
-                // upstream: generator.c:1663 atomic_create -> do_mknod_at
+                // upstream: generator.c:1675 atomic_create -> do_mknod_at
                 let create_result = if is_device {
                     create_device_node_from_parts(
                         &node_path,
@@ -246,7 +246,7 @@ impl ReceiverContext {
             }
 
             if up_to_date {
-                // upstream: generator.c:1133 - "%s is uptodate" at INFO_GTE(NAME, 2)
+                // upstream: generator.c:1145 - "%s is uptodate" at INFO_GTE(NAME, 2)
                 let iflags = ItemFlags::from_raw(0);
                 let _ = self.emit_itemize(writer, &iflags, entry);
                 info_log!(Name, 2, "{} is uptodate", relative_path.display());

@@ -5,7 +5,7 @@
 //!
 //! # Upstream Reference
 //!
-//! - `main.c:875-906` - `read_final_goodbye()` with del_stats handling
+//! - `main.c:893-924` - `read_final_goodbye()` with del_stats handling
 
 use std::io::{self, Read, Write};
 
@@ -36,9 +36,9 @@ impl GeneratorContext {
     ///
     /// # Upstream Reference
     ///
-    /// - `main.c:875-906` - `read_final_goodbye()`
-    /// - `main.c:883` - protocol < 29 uses `read_int(f_in)`
-    /// - `main.c:885-886` - protocol >= 29 uses `read_ndx_and_attrs()`
+    /// - `main.c:893-924` - `read_final_goodbye()`
+    /// - `main.c:901` - protocol < 29 uses `read_int(f_in)`
+    /// - `main.c:903-904` - protocol >= 29 uses `read_ndx_and_attrs()`
     /// - `rsync.c:337-342` - NDX_DEL_STATS handling in `read_ndx_and_attrs()`
     /// - `main.c:225-238` - `write_del_stats()` format
     /// - `generator.c:2376-2381` - early del_stats path
@@ -99,7 +99,7 @@ impl GeneratorContext {
         }
 
         // Read first NDX_DONE from receiver, skipping any NDX_DEL_STATS.
-        // upstream: main.c:886 - read_ndx_and_attrs() handles NDX_DEL_STATS internally.
+        // upstream: main.c:904 - read_ndx_and_attrs() handles NDX_DEL_STATS internally.
         // Connection may close early in dry-run or when the remote daemon exits before
         // completing the goodbye exchange - treat this as acceptable.
         let ndx = match self.read_ndx_skipping_del_stats(reader, ndx_read_codec) {
@@ -123,7 +123,7 @@ impl GeneratorContext {
         //
         // Upstream gates del_stats sending on INFO_GTE(STATS, 2) (i.e. --stats was passed)
         // and splits it into early vs late paths depending on deletion timing:
-        // - Early (generator.c:2376-2381): !(delete_during==2 || delete_after) =>
+        // - Early (generator.c:2393-2398): !(delete_during==2 || delete_after) =>
         //   send del_stats only when (do_stats && (delete_mode || force_delete))
         // - Late (generator.c:2420-2425): (delete_during==2 || delete_after) =>
         //   send del_stats when do_stats

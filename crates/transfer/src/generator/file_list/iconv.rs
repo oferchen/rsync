@@ -11,7 +11,7 @@
 //!
 //! # Upstream Reference
 //!
-//! - `flist.c:1614-1638` `send_file1()` - strict `ic_send` conversion + skip.
+//! - `flist.c:1650-1674` `send_file1()` - strict `ic_send` conversion + skip.
 //! - `flist.c:757` `recv_file_entry()` - the receiver mirrors this.
 
 use protocol::CompatibilityFlags;
@@ -35,7 +35,7 @@ impl GeneratorContext {
     ///
     /// # Upstream Reference
     ///
-    /// - `flist.c:1631` `send_file1()` - name failure: `rprintf(FERROR_XFER,
+    /// - `flist.c:1667` `send_file1()` - name failure: `rprintf(FERROR_XFER,
     ///   "[%s] cannot convert filename: %s (%s)\n", ...)` then `return NULL`.
     /// - `flist.c:1642-1651` `send_file1()` - symlink-target failure (guarded by
     ///   `symlink_len && sender_symlink_iconv`): `rprintf(FERROR_XFER, "[%s]
@@ -177,7 +177,7 @@ mod drop_decision_tests {
     }
 
     /// An unconvertible NAME is always a drop cause, independent of the symlink
-    /// gate. upstream: flist.c:1631 `return NULL`.
+    /// gate. upstream: flist.c:1667 `return NULL`.
     #[test]
     fn unconvertible_name_always_dropped() {
         let conv = latin1_converter();

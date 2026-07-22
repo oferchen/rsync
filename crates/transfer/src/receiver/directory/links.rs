@@ -49,8 +49,8 @@ impl ReceiverContext {
     ///
     /// # Upstream Reference
     ///
-    /// - `generator.c:1544` - `if (preserve_links && ftype == FT_SYMLINK)`
-    /// - `generator.c:1591` - `atomic_create(file, fname, sl, ...)`
+    /// - `generator.c:1556` - `if (preserve_links && ftype == FT_SYMLINK)`
+    /// - `generator.c:1603` - `atomic_create(file, fname, sl, ...)`
     #[cfg(unix)]
     pub(in crate::receiver) fn create_symlinks<W: crate::writer::MsgInfoSender + ?Sized>(
         &self,
@@ -117,11 +117,11 @@ impl ReceiverContext {
             // change, not a creation.
             let mut dest_existed = false;
 
-            // upstream: generator.c:1561 - quick_check_ok(FT_SYMLINK, ...)
+            // upstream: generator.c:1573 - quick_check_ok(FT_SYMLINK, ...)
             if let Ok(existing_target) = std::fs::read_link(&link_path) {
                 dest_existed = true;
                 if existing_target == *target {
-                    // upstream: generator.c:1563 - even on the up-to-date branch
+                    // upstream: generator.c:1575 - even on the up-to-date branch
                     // `set_file_attrs(fname, file, &sx, NULL, maybe_ATTRS_REPORT)`
                     // still runs so a stale on-disk mtime is corrected.
                     let symlink_options = MetadataOptions::new()
@@ -146,7 +146,7 @@ impl ReceiverContext {
                     let iflags = ItemFlags::from_raw(0);
                     let _ = self.emit_itemize(writer, &iflags, entry);
                     // upstream: log.c log_item / send_directory NAME emissions
-                    // upstream: generator.c:1133 - "%s is uptodate" at INFO_GTE(NAME, 2)
+                    // upstream: generator.c:1145 - "%s is uptodate" at INFO_GTE(NAME, 2)
                     info_log!(Name, 2, "{} is uptodate", relative_path.display());
                     continue;
                 }
@@ -259,12 +259,12 @@ impl ReceiverContext {
             }
 
             // Ensure parent directory exists for --relative paths.
-            // upstream: generator.c:1317-1326 - make_path() for relative_paths
+            // upstream: generator.c:1329-1338 - make_path() for relative_paths
             if let Some(parent) = link_path.parent() {
                 let _ = fs::create_dir_all(parent);
             }
 
-            // upstream: generator.c:1591 - atomic_create() -> do_symlink()
+            // upstream: generator.c:1603 - atomic_create() -> do_symlink()
             //
             // SEC-1.h: when the sandbox is plumbed and the destination
             // parent is the sandbox root, the create goes through
@@ -302,7 +302,7 @@ impl ReceiverContext {
                 }
                 return Err(e);
             }
-            // upstream: generator.c:1592 - `set_file_attrs(fname, file, NULL, NULL, 0)`
+            // upstream: generator.c:1604 - `set_file_attrs(fname, file, NULL, NULL, 0)`
             // runs immediately after `atomic_create` -> `do_symlink` so the new
             // symlink's mtime matches the sender-supplied value. Without this
             // step the receiver-created symlink wears the wall-clock time from
@@ -352,8 +352,8 @@ impl ReceiverContext {
     ///
     /// # Upstream Reference
     ///
-    /// - `generator.c:1544` - `if (preserve_links && ftype == FT_SYMLINK)`
-    /// - `generator.c:1591` - `atomic_create(file, fname, sl, ...)`
+    /// - `generator.c:1556` - `if (preserve_links && ftype == FT_SYMLINK)`
+    /// - `generator.c:1603` - `atomic_create(file, fname, sl, ...)`
     #[cfg(windows)]
     pub(in crate::receiver) fn create_symlinks<W: crate::writer::MsgInfoSender + ?Sized>(
         &mut self,
@@ -416,7 +416,7 @@ impl ReceiverContext {
             // stats.created_symlinks (upstream generator.c:1561, `statret < 0`).
             let mut dest_existed = false;
 
-            // upstream: generator.c:1561 - quick_check_ok(FT_SYMLINK, ...)
+            // upstream: generator.c:1573 - quick_check_ok(FT_SYMLINK, ...)
             if let Ok(existing_target) = std::fs::read_link(&link_path) {
                 dest_existed = true;
                 if existing_target == *target {
@@ -443,7 +443,7 @@ impl ReceiverContext {
                     // upstream: generator.c:1565 - symlink up-to-date, metadata only
                     let iflags = ItemFlags::from_raw(0);
                     let _ = self.emit_itemize(writer, &iflags, entry);
-                    // upstream: generator.c:1133 - "%s is uptodate" at INFO_GTE(NAME, 2)
+                    // upstream: generator.c:1145 - "%s is uptodate" at INFO_GTE(NAME, 2)
                     info_log!(Name, 2, "{} is uptodate", relative_path.display());
                     continue;
                 }
@@ -488,12 +488,12 @@ impl ReceiverContext {
             }
 
             // Ensure parent directory exists for --relative paths.
-            // upstream: generator.c:1317-1326 - make_path() for relative_paths
+            // upstream: generator.c:1329-1338 - make_path() for relative_paths
             if let Some(parent) = link_path.parent() {
                 let _ = fs::create_dir_all(parent);
             }
 
-            // upstream: generator.c:1591 - atomic_create() -> do_symlink().
+            // upstream: generator.c:1603 - atomic_create() -> do_symlink().
             if let Err(e) = create_windows_symlink(target, &link_path) {
                 // A Windows file symbolic link cannot be created without
                 // privilege and has no junction fallback (directory links do
@@ -522,7 +522,7 @@ impl ReceiverContext {
                 return Err(e);
             }
 
-            // upstream: generator.c:1592 - set_file_attrs() runs immediately
+            // upstream: generator.c:1604 - set_file_attrs() runs immediately
             // after atomic_create -> do_symlink so the new link's mtime matches
             // the sender-supplied value.
             let symlink_options = MetadataOptions::new()
@@ -644,7 +644,7 @@ impl ReceiverContext {
     ///
     /// - `hlink.c:hard_link_check()` - skips followers, links to leader
     /// - `hlink.c:finish_hard_link()` - creates links after leader transfer completes
-    /// - `generator.c:1539` - `F_HLINK_NOT_FIRST` check before `hard_link_check()`
+    /// - `generator.c:1551` - `F_HLINK_NOT_FIRST` check before `hard_link_check()`
     pub(in crate::receiver) fn create_hardlinks<W: crate::writer::MsgInfoSender + ?Sized>(
         &mut self,
         dest_dir: &Path,
@@ -937,7 +937,7 @@ impl ReceiverContext {
 
 /// Prepends the `/rsyncd-munged/` prefix to a symlink target.
 ///
-/// Mirrors upstream `flist.c:1122-1126` where the receiver prepends
+/// Mirrors upstream `flist.c:1150-1154` where the receiver prepends
 /// `SYMLINK_PREFIX` to the wire target so the on-disk symlink cannot resolve
 /// outside the module root when followed. Only invoked when the daemon module
 /// has `munge symlinks = yes` (or the `!use_chroot` auto default).

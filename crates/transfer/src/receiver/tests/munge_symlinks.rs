@@ -1,6 +1,6 @@
 //! Receiver-side `munge symlinks` regression tests.
 //!
-//! Mirrors the on-disk transform upstream applies in `flist.c:1122-1126`:
+//! Mirrors the on-disk transform upstream applies in `flist.c:1150-1154`:
 //! when the daemon module has `munge symlinks = yes`, every symlink that the
 //! receiver materializes carries the `/rsyncd-munged/` prefix so that
 //! following the link cannot escape the module root. The complementary
@@ -8,10 +8,10 @@
 //!
 //! # Upstream Reference
 //!
-//! - `clientserver.c:992-1004` - daemon resolves `munge_symlinks` from
+//! - `clientserver.c:997-1009` - daemon resolves `munge_symlinks` from
 //!   `lp_munge_symlinks()` and aborts if `rsyncd-munged` already exists at
 //!   the module root.
-//! - `flist.c:1122-1126` - receiver prepends `SYMLINK_PREFIX` to the wire
+//! - `flist.c:1150-1154` - receiver prepends `SYMLINK_PREFIX` to the wire
 //!   target before the link is written to disk.
 
 use std::ffi::OsString;
@@ -124,7 +124,7 @@ fn receiver_prepends_munge_prefix_to_on_disk_symlink() {
 /// share the same upstream-parity rule (`PermissionDenied` is the
 /// only non-fatal class).
 ///
-/// upstream: generator.c:1591 atomic_create -> do_symlink - EACCES is
+/// upstream: generator.c:1603 atomic_create -> do_symlink - EACCES is
 /// non-fatal (increment io_error and continue); every other class is
 /// a security boundary the receiver must surface.
 #[cfg(unix)]
@@ -192,7 +192,7 @@ fn create_symlinks_surfaces_non_eacces_error() {
 ///    the exact second. Upstream's diff drops nanoseconds; matching seconds is
 ///    the load-bearing invariant.
 ///
-/// upstream: generator.c:1592 `set_file_attrs(fname, file, NULL, NULL, 0)`
+/// upstream: generator.c:1604 `set_file_attrs(fname, file, NULL, NULL, 0)`
 /// upstream: rsync.c:set_times() uses `lutimes`/`utimensat(AT_SYMLINK_NOFOLLOW)`
 #[cfg(unix)]
 #[test]

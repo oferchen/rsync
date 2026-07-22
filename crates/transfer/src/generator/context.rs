@@ -155,7 +155,7 @@ impl GeneratorContext {
         config: ServerConfig,
         pipeline: TransferPipeline,
     ) -> Self {
-        // upstream: flist.c:2923 - ndx_start = inc_recurse ? 1 : 0
+        // upstream: flist.c:2958 - ndx_start = inc_recurse ? 1 : 0
         let inc_recurse = handshake
             .compat_flags
             .is_some_and(|f| f.contains(CompatibilityFlags::INC_RECURSE));
@@ -251,7 +251,7 @@ impl GeneratorContext {
         let segments = &self.incremental.ndx_segments;
         // A gap NDX `g` satisfies `g + 1 == ndx_start` for exactly one sub-list;
         // no regular entry's NDX can equal a sub-list start minus one (the +1
-        // gap is reserved, flist.c:2931). Binary search is valid because
+        // gap is reserved, flist.c:2966). Binary search is valid because
         // `ndx_start` values are strictly increasing.
         if let Ok(seg_idx) =
             segments.binary_search_by(|&(_, ndx_start)| ndx_start.cmp(&(wire_ndx + 1)))
@@ -275,7 +275,7 @@ impl GeneratorContext {
     ///
     /// # Upstream Reference
     ///
-    /// - `generator.c:2321` - `ndx = i + cur_flist->ndx_start`
+    /// - `generator.c:2338` - `ndx = i + cur_flist->ndx_start`
     #[cfg(test)]
     pub(crate) fn flat_to_wire_ndx(&self, flat_idx: usize) -> i32 {
         let segments = &self.incremental.ndx_segments;
@@ -477,11 +477,11 @@ impl GeneratorContext {
     ///
     /// The activation threshold differs by mode:
     ///
-    /// **Server mode** (daemon sender - `main.c:1252-1257` `start_server am_sender`):
+    /// **Server mode** (daemon sender - `main.c:1270-1275` `start_server am_sender`):
     /// - For protocol >= 30, `need_messages_from_generator = 1` (compat.c:776)
     /// - `if (need_messages_from_generator) io_start_multiplex_in(f_in);`
     ///
-    /// **Client mode** (client pushing to daemon - `main.c:1304-1305` `client_run am_sender`):
+    /// **Client mode** (client pushing to daemon - `main.c:1322-1323` `client_run am_sender`):
     /// - `if (protocol_version >= 31 || (!filesfrom_host && protocol_version >= 23))`
     /// - We don't support filesfrom, so this simplifies to >= 23
     ///
@@ -787,8 +787,8 @@ impl GeneratorContext {
     ///
     /// # Upstream Reference
     ///
-    /// - `flist.c:2945 flist_free()` - frees completed file list segments
-    /// - `sender.c:244` - `flist_free(first_flist)` in sender transfer loop
+    /// - `flist.c:2980 flist_free()` - frees completed file list segments
+    /// - `sender.c:248` - `flist_free(first_flist)` in sender transfer loop
     pub(crate) fn reclaim_oldest_segment(&mut self) {
         let segments = &self.incremental.ndx_segments;
         let first = self.incremental.first_segment_idx;

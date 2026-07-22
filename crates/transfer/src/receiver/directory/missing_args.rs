@@ -10,7 +10,7 @@
 //!
 //! # Upstream Reference
 //!
-//! - `generator.c:1348-1354` - `if (missing_args == 2 && file->mode == 0)`:
+//! - `generator.c:1360-1366` - `if (missing_args == 2 && file->mode == 0)`:
 //!   apply the filter list, then `delete_item()` when `statret == 0`.
 //! - `flist.c:2254-2258` - `missing_args == 2` sender branch that emits
 //!   the mode-0 sentinel this handler consumes.
@@ -51,7 +51,7 @@ impl ReceiverContext {
     ///
     /// # Upstream Reference
     ///
-    /// - `generator.c:1348-1354` - `missing_args == 2 && file->mode == 0`
+    /// - `generator.c:1360-1366` - `missing_args == 2 && file->mode == 0`
     ///   branch that calls `delete_item()` for an existing destination
     ///   and falls through (no creation) for a missing destination.
     pub(in crate::receiver) fn process_missing_args_sentinels(
