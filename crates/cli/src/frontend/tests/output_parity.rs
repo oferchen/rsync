@@ -214,11 +214,12 @@ fn parity_stats_output_contains_all_upstream_field_labels() {
         output.contains("File list size:"),
         "missing 'File list size:' label in:\n{output}"
     );
-    // File list timing lines are emitted only when at least one timing exceeds
-    // 1 ms, matching upstream's `if (stats.flist_buildtime)` guard
-    // (main.c:437). Local-only transfers may complete sub-millisecond, in which
-    // case both lines are absent (this matches upstream rsync behaviour, so the
-    // assertion below tolerates either presence).
+    // Both File list timing lines are emitted together only when the flist
+    // build time exceeds 1 ms, matching upstream's single
+    // `if (stats.flist_buildtime)` guard (main.c:437). Local-only transfers may
+    // complete sub-millisecond, in which case both lines are absent (this
+    // matches upstream rsync behaviour, so the assertion below tolerates either
+    // presence).
     if output.contains("File list generation time:") {
         assert!(
             output.contains("File list transfer time:"),

@@ -8,7 +8,6 @@
 
 mod created;
 mod delete;
-mod display;
 mod transfer;
 
 #[cfg(test)]
