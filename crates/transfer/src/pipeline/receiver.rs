@@ -22,7 +22,7 @@ use protocol::MessageCode;
 use crate::pipeline::spsc::{self, TryRecvError};
 
 use crate::delta_apply::ChecksumVerifier;
-use crate::disk_commit::{DiskCommitConfig, spawn_disk_thread};
+use crate::disk_commit::{DiskCommitConfig, PartialMode, spawn_disk_thread};
 use crate::pipeline::messages::{CommitResult, FileMessage};
 
 /// Expected checksum for a pending file, used for deferred verification.
@@ -36,6 +36,14 @@ struct PendingChecksum {
     file_path: PathBuf,
     /// File list index for this file, used to identify which file to redo.
     file_index: usize,
+    /// Whether this file was written in place (`--inplace`/`--append`).
+    ///
+    /// Selects the upstream `keptstr` wording on a verification failure: an
+    /// in-place update is "retained" rather than "discarded", because the
+    /// destination inode was overwritten and cannot be rolled back.
+    ///
+    /// upstream: receiver.c:1073-1078 - `!inplace` gates the "discarded" word.
+    is_inplace: bool,
 }
 
 /// Mediator that coordinates the network ingest thread with the disk
@@ -96,6 +104,30 @@ pub struct PipelinedReceiver {
     ///
     /// - `receiver.c:1063-1069`: `send_msg_success(fname, ndx)` on `recv_ok == 1`.
     success_indices: Vec<usize>,
+    /// Partial-retention mode for the session, captured from the disk-commit
+    /// config before it is moved into the disk thread. Selects the upstream
+    /// `keptstr` wording on a verification failure.
+    ///
+    /// upstream: receiver.c:1073-1078 - `keep_partial`/`partial_dir` gating.
+    partial_mode: PartialMode,
+}
+
+/// Selects the upstream verification-failure `keptstr` wording for a file.
+///
+/// Mirrors the branch at `receiver.c:1073-1078`: a temp update with no partial
+/// retention and no in-place write is "discarded"; a `--partial-dir` transfer
+/// keeps it "put into partial-dir"; anything else (plain `--partial` or an
+/// in-place/append write to the live destination) leaves it "retained".
+///
+/// upstream: receiver.c:1073-1078 keptstr selection.
+fn verification_kept_str(partial_mode: &PartialMode, is_inplace: bool) -> &'static str {
+    if matches!(partial_mode, PartialMode::None) && !is_inplace {
+        "discarded"
+    } else if matches!(partial_mode, PartialMode::PartialDir(_)) {
+        "put into partial-dir"
+    } else {
+        "retained"
+    }
 }
 
 impl PipelinedReceiver {
@@ -106,6 +138,7 @@ impl PipelinedReceiver {
     /// Propagates the `io::Error` from [`spawn_disk_thread`] when the disk
     /// commit thread cannot be spawned (typically `EAGAIN`/`RLIMIT_NPROC`).
     pub fn new(config: DiskCommitConfig) -> io::Result<Self> {
+        let partial_mode = config.partial_mode.clone();
         let h = spawn_disk_thread(config)?;
         Ok(Self {
             file_tx: h.file_tx,
@@ -120,6 +153,7 @@ impl PipelinedReceiver {
             warnings: Vec::new(),
             delayed_updates: Vec::new(),
             success_indices: Vec::new(),
+            partial_mode,
         })
     }
 
@@ -151,6 +185,7 @@ impl PipelinedReceiver {
         checksum_len: usize,
         file_path: PathBuf,
         file_index: usize,
+        is_inplace: bool,
     ) {
         self.pending_commits += 1;
         self.expected_checksums.push_back(PendingChecksum {
@@ -158,6 +193,7 @@ impl PipelinedReceiver {
             len: checksum_len,
             file_path,
             file_index,
+            is_inplace,
         });
     }
 
@@ -321,26 +357,29 @@ impl PipelinedReceiver {
             if computed.len != pending.len
                 || computed.bytes[..computed.len] != pending.expected[..pending.len]
             {
+                // upstream: receiver.c:1073-1078 - keptstr depends on partial
+                // retention and whether the write was in place.
+                let kept = verification_kept_str(&self.partial_mode, pending.is_inplace);
                 if self.redo_enabled {
-                    // upstream: receiver.c:965-968 -
+                    // upstream: receiver.c:1088-1091 -
                     // "WARNING: %s failed verification -- update %s%s.\n"
-                    // with keptstr="discarded", redostr=" (will try again)".
+                    // with redostr=" (will try again)" on the non-batch path.
                     self.warnings.push((
                         MessageCode::Warning,
                         format!(
-                            "WARNING: {} failed verification -- update discarded (will try again).",
+                            "WARNING: {} failed verification -- update {kept} (will try again).",
                             pending.file_path.display(),
                         ),
                     ));
                     self.redo_indices.push(pending.file_index);
                     return Ok(());
                 }
-                // upstream: receiver.c:957-968 - phase-2 redo path (FERROR_XFER):
-                // "ERROR: %s failed verification -- update %s.\n" with keptstr="discarded".
+                // upstream: receiver.c:1088-1091 - phase-2 redo path (FERROR_XFER):
+                // "ERROR: %s failed verification -- update %s.\n" with redostr="".
                 self.warnings.push((
                     MessageCode::ErrorXfer,
                     format!(
-                        "ERROR: {} failed verification -- update discarded.",
+                        "ERROR: {} failed verification -- update {kept}.",
                         pending.file_path.display(),
                     ),
                 ));
@@ -557,6 +596,7 @@ mod tests {
             0,
             file_path.clone(),
             0,
+            false,
         );
 
         let (bytes, errors) = pr.drain_all_results().unwrap();
@@ -616,6 +656,7 @@ mod tests {
             len: 4,
             file_path: PathBuf::from("/dest/file.txt"),
             file_index: 7,
+            is_inplace: false,
         });
 
         // Create a CommitResult with a different computed checksum.
@@ -666,6 +707,7 @@ mod tests {
             len: 4,
             file_path: PathBuf::from("/dest/file2.txt"),
             file_index: 3,
+            is_inplace: false,
         });
 
         let mut computed_bytes = [0u8; ChecksumVerifier::MAX_DIGEST_LEN];
@@ -706,6 +748,7 @@ mod tests {
             len: 4,
             file_path: PathBuf::from("/dest/ok.txt"),
             file_index: 5,
+            is_inplace: false,
         });
 
         // Same checksum - should succeed without redo.
@@ -756,6 +799,7 @@ mod tests {
             len: 4,
             file_path: PathBuf::from("/dest/ok.txt"),
             file_index: 9,
+            is_inplace: false,
         });
 
         // A matching checksum on a committed (post-rename) result confirms the file.
@@ -817,6 +861,7 @@ mod tests {
             len: 4,
             file_path: PathBuf::from("/dest/corrupt.txt"),
             file_index: 4,
+            is_inplace: false,
         });
 
         // A different computed checksum: the update is discarded and queued for redo.
@@ -885,7 +930,13 @@ mod tests {
             })
             .unwrap();
 
-        pr.note_commit_sent([0u8; ChecksumVerifier::MAX_DIGEST_LEN], 0, file_path, 0);
+        pr.note_commit_sent(
+            [0u8; ChecksumVerifier::MAX_DIGEST_LEN],
+            0,
+            file_path,
+            0,
+            false,
+        );
 
         // Should NOT return an error - permission denied is recoverable
         let (bytes, errors) = pr.drain_all_results().unwrap();
@@ -968,7 +1019,13 @@ mod tests {
             })
             .unwrap();
 
-        pr.note_commit_sent([0u8; ChecksumVerifier::MAX_DIGEST_LEN], 0, file_path, 0);
+        pr.note_commit_sent(
+            [0u8; ChecksumVerifier::MAX_DIGEST_LEN],
+            0,
+            file_path,
+            0,
+            false,
+        );
 
         // Exactly ONE recoverable error - no spurious second error from
         // orphaned Chunk/Commit messages, no propagated fatal Err (exit 12).
@@ -1015,6 +1072,7 @@ mod tests {
             0,
             ok_path.clone(),
             1,
+            false,
         );
         let (bytes2, errors2) = pr.drain_all_results().unwrap();
         assert_eq!(bytes2, 4, "the following file transfers normally");
@@ -1072,7 +1130,13 @@ mod tests {
                 expected_checksum: Default::default(),
             })
             .unwrap();
-        pr.note_commit_sent([0u8; ChecksumVerifier::MAX_DIGEST_LEN], 0, file_path, 0);
+        pr.note_commit_sent(
+            [0u8; ChecksumVerifier::MAX_DIGEST_LEN],
+            0,
+            file_path,
+            0,
+            false,
+        );
 
         let (_bytes, errors) = pr.drain_all_results().unwrap();
         assert_eq!(errors.len(), 1, "one recoverable per-file error");
@@ -1122,6 +1186,27 @@ mod tests {
         );
     }
 
+    /// The `keptstr` selection must mirror upstream `receiver.c:1073-1078`: a
+    /// plain temp update is "discarded", an in-place/append write is "retained"
+    /// (the destination inode was already overwritten), `--partial` retains the
+    /// temp, and `--partial-dir` reports "put into partial-dir".
+    #[test]
+    fn verification_kept_str_matches_upstream() {
+        assert_eq!(
+            verification_kept_str(&PartialMode::None, false),
+            "discarded"
+        );
+        assert_eq!(verification_kept_str(&PartialMode::None, true), "retained");
+        assert_eq!(
+            verification_kept_str(&PartialMode::Partial, false),
+            "retained"
+        );
+        assert_eq!(
+            verification_kept_str(&PartialMode::PartialDir(PathBuf::from("/pd")), false),
+            "put into partial-dir"
+        );
+    }
+
     /// Verifies `collect_delayed_update` captures the staging path from
     /// `CommitResult::delayed_path` paired with the final destination from
     /// the pending checksum queue.
@@ -1135,6 +1220,7 @@ mod tests {
             len: 0,
             file_path: PathBuf::from("/dest/file.txt"),
             file_index: 0,
+            is_inplace: false,
         });
 
         let result = CommitResult {
@@ -1205,6 +1291,7 @@ mod tests {
             0,
             file_path.clone(),
             0,
+            false,
         );
 
         let (bytes, errors) = pr.drain_all_results().unwrap();
@@ -1268,6 +1355,7 @@ mod tests {
             0,
             file_path.clone(),
             0,
+            false,
         );
 
         // Explicit shutdown (not drop) - still no sweep.
@@ -1321,6 +1409,7 @@ mod tests {
             0,
             file_path.clone(),
             0,
+            false,
         );
 
         let (bytes, errors) = pr.drain_all_results().unwrap();
