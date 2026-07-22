@@ -54,9 +54,7 @@ fn assert_storage_full(err: &SpillError) {
     );
 }
 
-// ---------------------------------------------------------------------------
 // Tier 1: 1 MiB spill hits ENOSPC at byte 500 KiB.
-// ---------------------------------------------------------------------------
 
 #[test]
 fn tier1_one_mib_spill_hits_enospc_at_500k_no_panic_no_data_loss() {
@@ -159,9 +157,7 @@ fn tier1_spillable_buffer_surfaces_storage_full_during_spill() {
     );
 }
 
-// ---------------------------------------------------------------------------
 // Tier 2: sequential spills, second hits ENOSPC.
-// ---------------------------------------------------------------------------
 
 #[test]
 fn tier2_first_spill_survives_second_spill_hits_enospc() {
@@ -252,10 +248,8 @@ fn tier2_subsequent_inserts_after_failure_keep_buffer_consistent() {
     );
 }
 
-// ---------------------------------------------------------------------------
 // Tier 3: per-chunk write hits ENOSPC mid-chunk; buffer state stays
 // consistent (length equals actually-written bytes).
-// ---------------------------------------------------------------------------
 
 #[test]
 fn tier3_mid_chunk_failure_keeps_buffer_length_consistent() {
@@ -314,9 +308,7 @@ fn tier3_partial_progress_then_atomic_fail_on_threshold_cross() {
     assert!(backing.iter().all(|&b| b == 0x77));
 }
 
-// ---------------------------------------------------------------------------
 // Tier 4: post-ENOSPC writes return Err immediately on a persistent plan.
-// ---------------------------------------------------------------------------
 
 #[test]
 fn tier4_persistent_plan_returns_err_immediately_post_trip() {
@@ -379,9 +371,7 @@ fn tier4_one_shot_plan_recovers_but_persistent_plan_does_not() {
         .expect_err("persistent plan must keep failing");
 }
 
-// ---------------------------------------------------------------------------
 // Tier 5 (Linux only): real-kernel ENOSPC via with_full_tmpfs.
-// ---------------------------------------------------------------------------
 
 #[cfg(target_os = "linux")]
 #[test]
@@ -429,9 +419,7 @@ fn tier5_real_kernel_enospc_via_full_tmpfs() {
     assert_storage_full(&outcome);
 }
 
-// ---------------------------------------------------------------------------
 // Property test: varying ENOSPC byte threshold across 100 random samples.
-// ---------------------------------------------------------------------------
 
 proptest! {
     #![proptest_config(ProptestConfig::with_cases(100))]
@@ -469,10 +457,8 @@ proptest! {
     }
 }
 
-// ---------------------------------------------------------------------------
 // Chassis-counter assertions: prove the harness counters are consistent
 // across the assertion suite, not just the harness self-tests.
-// ---------------------------------------------------------------------------
 
 #[test]
 fn chassis_counter_matches_actually_written_bytes_across_many_writes() {
