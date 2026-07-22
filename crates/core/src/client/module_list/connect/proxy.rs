@@ -330,7 +330,10 @@ mod tests {
     // rejected or specially recognised. oc must not invent scheme support.
     #[test]
     fn parse_proxy_spec_has_no_scheme_concept() {
-        let error = parse_proxy_spec("http://proxy.example.com:3128").unwrap_err();
+        let error = match parse_proxy_spec("http://proxy.example.com:3128") {
+            Ok(_) => panic!("a scheme prefix must not parse as a valid proxy spec"),
+            Err(error) => error,
+        };
         assert!(error.message().to_string().contains("invalid port"));
     }
 
@@ -349,7 +352,10 @@ mod tests {
     // fails to parse as a port rather than being silently stripped.
     #[test]
     fn parse_proxy_spec_leading_trailing_whitespace_is_literal_not_trimmed() {
-        let error = parse_proxy_spec("  proxy.example.com:8080  ").unwrap_err();
+        let error = match parse_proxy_spec("  proxy.example.com:8080  ") {
+            Ok(_) => panic!("literal whitespace must not parse as a valid proxy spec"),
+            Err(error) => error,
+        };
         assert!(error.message().to_string().contains("invalid port"));
     }
 

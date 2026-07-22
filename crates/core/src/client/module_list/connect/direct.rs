@@ -56,9 +56,11 @@ pub(crate) fn connect_direct(
 /// Mirrors upstream's per-address connect loop (upstream: socket.c:262-310
 /// `open_socket_out()`), including one easy-to-miss subtlety: an ordinary
 /// connect failure (e.g. `ECONNREFUSED`) falls through to the next address,
-/// but a `--contimeout` expiry does not. Upstream's retry loop is
-/// `while (connect(...) < 0) { if (connect_timeout < 0) exit_cleanup(RERR_CONTIMEOUT); ... }`
-/// - once the `SIGALRM` handler has set `connect_timeout` negative, the
+/// but a `--contimeout` expiry does not.
+///
+/// Upstream's retry loop is
+/// `while (connect(...) < 0) { if (connect_timeout < 0) exit_cleanup(RERR_CONTIMEOUT); ... }`;
+/// once the `SIGALRM` handler has set `connect_timeout` negative, the
 /// process exits immediately without ever reaching `res->ai_next`. A plain
 /// connection failure instead `close(s)`s and `break`s out to the outer
 /// `for` loop, which does advance to the next address. `attempt` returning
