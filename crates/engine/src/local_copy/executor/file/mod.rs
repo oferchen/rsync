@@ -33,7 +33,7 @@ pub use partial::{PartialFileManager, PartialMode};
 #[cfg(test)]
 pub(crate) use paths::partial_destination_path;
 #[cfg(test)]
-pub(crate) use paths::temporary_destination_path;
+pub(crate) use paths::temp_name_with_suffix;
 #[cfg(test)]
 pub(crate) use preallocate::maybe_preallocate_destination;
 pub use sparse::{

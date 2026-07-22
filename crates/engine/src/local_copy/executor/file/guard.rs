@@ -14,7 +14,7 @@ use std::sync::atomic::Ordering as AtomicOrdering;
 use crate::local_copy::LocalCopyError;
 
 use super::super::super::NEXT_TEMP_FILE_ID;
-use super::paths::{partial_dir_fname, temp_name_with_suffix, temporary_destination_path};
+use super::paths::{partial_dir_fname, temp_name_with_suffix};
 use crate::CleanupManager;
 
 /// Where an interrupted `--partial` temp file is finalised, and how the temp is
@@ -139,10 +139,12 @@ enum GuardStrategy {
 ///
 /// # Modes
 ///
-/// - **Normal mode** (`partial = false`): Temporary files are created with a unique
-///   name (including process ID and counter) and are automatically cleaned up on failure.
-/// - **Partial mode** (`partial = true`): Temporary files are preserved on failure to
-///   allow for transfer resumption. These files use the `.rsync-partial-` prefix.
+/// - **Normal mode** (`partial = false`): Temporary files are staged beside the
+///   destination as `.<name>.XXXXXX` (upstream `get_tmpname()`) and are
+///   automatically cleaned up on failure.
+/// - **Partial mode** (`partial = true`): The temp is staged the same way but is
+///   preserved on failure - moved onto the destination (`--partial`) or into the
+///   `--partial-dir` - so the transfer can resume.
 /// - **Anonymous mode** (Linux only): Uses `O_TMPFILE` + `linkat(2)` for zero-cleanup
 ///   atomic writes. No directory entry exists until commit.
 ///
@@ -209,12 +211,7 @@ impl DestinationWriteGuard {
         // the destination (or in --temp-dir), regardless of partial mode; the
         // partial only appears at its final resting place on interrupt/success.
         loop {
-            let temp_path = if partial {
-                temp_name_with_suffix(destination, temp_dir, &temp_suffix())
-            } else {
-                let unique = NEXT_TEMP_FILE_ID.fetch_add(1, AtomicOrdering::Relaxed);
-                temporary_destination_path(destination, unique, temp_dir)
-            };
+            let temp_path = temp_name_with_suffix(destination, temp_dir, &temp_suffix());
             match fs::OpenOptions::new()
                 .write(true)
                 .create_new(true)

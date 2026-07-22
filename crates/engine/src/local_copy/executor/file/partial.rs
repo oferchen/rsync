@@ -13,7 +13,7 @@
 //! # Behavior
 //!
 //! Without `--partial`:
-//! - Temp files use `.~tmp~*` naming
+//! - Temp files use upstream `get_tmpname()` naming (`.<name>.XXXXXX`)
 //! - Deleted on transfer failure or interruption
 //!
 //! With `--partial`:
