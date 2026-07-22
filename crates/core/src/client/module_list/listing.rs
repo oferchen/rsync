@@ -198,7 +198,7 @@ pub fn run_module_list_with_password_and_options(
     // `host::` listing reaches the daemon through the remote shell
     // (daemon-over-rsh); otherwise RSYNC_CONNECT_PROG, otherwise plain TCP.
     let mut stream = if let Some(shell_args) = options.remote_shell() {
-        // upstream: main.c:594-604 + main.c:1571-1586 - spawn the remote shell
+        // upstream: main.c:603-613 + main.c:1593-1608 - spawn the remote shell
         // with `rsync --server --daemon .` and speak the `@RSYNCD:` listing
         // handshake over its pipes instead of opening a TCP socket. Matches
         // `clientserver.c:start_inband_exchange` carried over the shell.
