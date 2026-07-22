@@ -54,7 +54,7 @@ pub(crate) fn copy_fifo(
     #[cfg(not(all(any(unix, windows), feature = "acl")))]
     let _ = mode;
 
-    // upstream: generator.c:558-563 / 550-556 - a replace itemize reports
+    // upstream: generator.c:565-570 / 550-556 - a replace itemize reports
     // ITEM_REPORT_XATTR / ITEM_REPORT_ACL when those features are active and the
     // basis differs. Surface the enabled flags on all platforms so the recreate
     // change-set is derivable without cfg branching at the record site.
@@ -115,7 +115,7 @@ pub(crate) fn copy_fifo(
         return Ok(());
     }
 
-    // upstream: generator.c:1615-1630 - a special file (FIFO/socket) whose
+    // upstream: generator.c:1627-1642 - a special file (FIFO/socket) whose
     // destination already holds another special of the same FT_SPECIAL bucket is
     // recreated rather than treated as new; quick_check_ok() (generator.c:657-660)
     // compares the `_S_IFMT` bits (FIFO vs socket). Snapshot the existing special
@@ -426,7 +426,7 @@ pub(crate) fn copy_fifo(
             Some(metadata_snapshot),
         );
         let record = if let Some(existing) = replaced_special.as_ref() {
-            // upstream: generator.c:1665-1669 - a special replacing a differing
+            // upstream: generator.c:1677-1681 - a special replacing a differing
             // special of the same FT_SPECIAL bucket recreates it and itemizes via
             // ITEM_LOCAL_CHANGE|ITEM_REPORT_CHANGE, not ITEM_IS_NEW. Derive the
             // change-set from the `_S_IFMT` comparison.

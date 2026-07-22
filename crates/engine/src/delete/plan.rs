@@ -218,7 +218,7 @@ impl DeletePlan {
     /// file `a` - diverging from upstream's traversal and, under
     /// `--max-delete`, changing which entries survive when the cap trips.
     /// The sort is unstable to match upstream's `qsort` choice (upstream:
-    /// `flist.c:3217-3343`, `generator.c:320`).
+    /// `flist.c:3252-3378`, `generator.c:320`).
     pub fn sort_by_name(&mut self) {
         let dir = &self.directory;
         self.extras.sort_unstable_by(|a, b| {

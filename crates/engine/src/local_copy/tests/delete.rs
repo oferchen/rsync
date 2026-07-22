@@ -651,7 +651,7 @@ fn delete_during_deletes_directory_before_transferring_its_children() {
 
 #[test]
 fn delete_before_keeps_in_source_file() {
-    // upstream: generator.c:279-351 delete_in_dir() / do_delete_pass() - a
+    // upstream: generator.c:286-358 delete_in_dir() / do_delete_pass() - a
     // destination entry is deleted only when flist_find_ignore_dirness() fails
     // to find it in the source file list. --delete-before shares that keep
     // decision with --delete-during/-after, so a file that exists in the
