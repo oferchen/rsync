@@ -60,7 +60,7 @@
 //! before generating signatures:
 //!
 //! ```
-//! use signature::{calculate_block_length, calculate_checksum_length, calculate_checksum_count};
+//! use signature::{calculate_block_length, calculate_checksum_count};
 //!
 //! // Calculate optimal block size for a 10 MB file
 //! let file_size = 10 * 1024 * 1024;
@@ -68,14 +68,13 @@
 //! let block_len = calculate_block_length(file_size, protocol_version, None);
 //! assert_eq!(block_len, 3232); // sqrt-based scaling
 //!
-//! // Calculate checksum length
-//! let checksum_len = calculate_checksum_length(file_size, block_len, protocol_version, 2);
-//! assert!(checksum_len >= 2);
-//!
 //! // Calculate number of blocks
 //! let block_count = calculate_checksum_count(file_size, block_len);
 //! assert_eq!(block_count, 3245);
 //! ```
+//!
+//! Strong checksum length is computed as part of `calculate_signature_layout`
+//! (`SignatureLayoutParams`), which applies the negotiated transfer-digest cap.
 
 #![allow(clippy::module_name_repetitions)]
 #![cfg_attr(docsrs, feature(doc_cfg))]
@@ -105,7 +104,7 @@ pub use algorithm::{DigestBuf, SignatureAlgorithm};
 pub use block::SignatureBlock;
 pub use block_size::{
     DEFAULT_BLOCK_SIZE, MAX_BLOCK_SIZE_OLD, MAX_BLOCK_SIZE_V30, MAX_SUM_LENGTH, MIN_BLOCK_SIZE,
-    SHORT_SUM_LENGTH, calculate_block_length, calculate_checksum_count, calculate_checksum_length,
+    SHORT_SUM_LENGTH, calculate_block_length, calculate_checksum_count,
 };
 pub use file::FileSignature;
 pub use generation::{SignatureError, generate_file_signature};

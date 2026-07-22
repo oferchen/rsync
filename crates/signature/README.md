@@ -16,7 +16,6 @@ using rolling and strong checksums, with block sizing from upstream `generator.c
 - `calculate_signature_layout` - determines block size and checksum length from file size
 - `generate_file_signature` - reads file blocks and computes all checksums
 - `calculate_block_length` - standalone block size calculation (upstream `sum_sizes_sqroot`)
-- `calculate_checksum_length` - strong checksum length for given file/block size
 - `calculate_checksum_count` - number of blocks for a given file size
 
 ## Modules

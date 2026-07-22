@@ -296,24 +296,28 @@ oc-rsync conformance:
   and `:82` (`MAX_SUM_LENGTH = 16`). Test
   `sum_length_constants_match_upstream` at `block_size.rs:580-586` enforces
   the values match upstream's `rsync.h:714-715`.
-- Heuristic: `block_size.rs:191-234` (`calculate_checksum_length`) reproduces
-  the bias loop, with the phase-2 short-circuit `if requested ==
-  MAX_SUM_LENGTH return MAX_SUM_LENGTH` (line 204-206) preserving the
-  redo-pass invariant.
+- Heuristic: `layout.rs::derive_strong_sum_length` reproduces the bias loop,
+  with the phase-2 short-circuit `if checksum_length == SUM_LENGTH` returning
+  the negotiated digest width (not an unconditional `MAX_SUM_LENGTH`),
+  preserving the redo-pass invariant while also applying the
+  `max_s2length = MIN(SUM_LENGTH, xfer_sum_len)` cap from
+  `generator.c:705`.
 - Phase distinction: `crates/transfer/src/receiver/mod.rs:75` and `:84`
   document the `csum_length = SHORT_SUM_LENGTH` and `csum_length =
   SUM_LENGTH` upstream call-sites at `generator.c:2157` and `generator.c:2163`
   respectively.
 - Tests:
-  - `sum_length_phase1_uses_dynamic_checksum`
-    (`block_size.rs:589-598`) confirms phase 1 produces a value `>= 2 <= 16`.
-  - `sum_length_phase2_redo_returns_max_immediately`
-    (`block_size.rs:601-616`) confirms phase 2 always returns 16.
-  - `sum_length_short_vs_max_differ_for_small_files`
-    (`block_size.rs:619-630`) confirms the phase 1 value differs from phase 2
-    on a small file.
-  - `specific_upstream_compatibility_values` (`block_size.rs:633-648`) pins
-    the block-length output for several known file sizes against
+  - `sum_length_derive_strong_phase1_is_dynamic` (`layout.rs`) confirms phase 1
+    produces a value `>= SHORT_SUM_LENGTH <= SUM_LENGTH`.
+  - `sum_length_derive_strong_phase2_redo_returns_max` (`layout.rs`) confirms
+    phase 2 returns the full negotiated digest width for any file/block size.
+  - `sum_length_phase_toggle_produces_different_layouts` (`layout.rs`)
+    confirms the phase 1 value differs from phase 2 for the same file.
+  - `phase1_strong_sum_capped_by_narrow_transfer_digest` and
+    `phase2_strong_sum_capped_by_narrow_transfer_digest` (`layout.rs`) confirm
+    the `max_s2length = MIN(SUM_LENGTH, xfer_sum_len)` cap.
+  - `specific_upstream_compatibility_values` (`block_size.rs`) pins the
+    block-length output for several known file sizes against
     upstream-derived values (1 MiB -> 1024, 10 MiB -> 3232, 100 MiB ->
     10240, 1 GiB -> 32768).
 
