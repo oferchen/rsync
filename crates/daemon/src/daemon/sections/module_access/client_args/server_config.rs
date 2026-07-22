@@ -102,6 +102,13 @@ fn apply_module_transfer_directives(module: &ModuleDefinition, cfg: &mut ServerC
     if cfg.flags.numeric_ids.is_off() && module_forces_numeric_ids {
         cfg.flags.numeric_ids = core::server::NumericIds::DaemonForced;
     }
+
+    // upstream: loadparm `open noatime` - the module directive makes the
+    // daemon (as sender) open source files with O_NOATIME. It can only enable
+    // the flag, never clear a value the client already requested.
+    if module.open_noatime {
+        cfg.write.open_noatime = true;
+    }
 }
 
 /// Builds the server configuration from client arguments.
