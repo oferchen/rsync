@@ -804,8 +804,16 @@ impl<'a> CopyContext<'a> {
         Ok(())
     }
 
-    /// Renames or copies an existing destination entry to the backup location
-    /// when `--backup` is enabled.
+    /// Hard-links, renames, or copies an existing destination entry to the
+    /// backup location when `--backup` is enabled.
+    ///
+    /// `prefer_rename` mirrors upstream's `make_backup(fname, prefer_rename)`
+    /// parameter: callers backing up an item that is about to be unlinked
+    /// outright (the delete pass) pass `true` to skip straight to the rename
+    /// tier, since the caller removes the original right after regardless of
+    /// which strategy placed the backup (`delete.c:165-167`). Callers backing
+    /// up an item before overwriting it with fresh content pass `false` so
+    /// the hard-link tier runs first (`rsync.c:740`, `receiver.c:538`).
     ///
     /// Emits an `--info=BACKUP` notice mirroring upstream rsync 3.4.1
     /// (backup.c:352) under `INFO_GTE(BACKUP, 1)` once the backup has been
@@ -816,6 +824,7 @@ impl<'a> CopyContext<'a> {
         destination: &Path,
         _relative: Option<&Path>,
         file_type: fs::FileType,
+        prefer_rename: bool,
     ) -> Result<(), LocalCopyError> {
         if !self.options.backup_enabled() || self.mode.is_dry_run() {
             return Ok(());
@@ -853,10 +862,41 @@ impl<'a> CopyContext<'a> {
             )?;
         }
 
+        // upstream: backup.c:200-207 link_or_rename() - try a hard link into
+        // the backup area first when the caller doesn't prefer a rename
+        // outright. A successful link leaves the destination's inode as the
+        // backup, so no metadata reapply is needed below (same as RENAME).
+        let hard_linked = if prefer_rename {
+            None
+        } else {
+            match create_hard_link(destination, &backup_path) {
+                Ok(()) => Some(BackupStrategy::HardLink),
+                Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(()),
+                // upstream: backup.c:247-256 - a stale backup entry is
+                // removed and the hard link retried once.
+                Err(error) if is_stale_backup_conflict(&error) => {
+                    remove_stale_backup_entry(&backup_path)?;
+                    match create_hard_link(destination, &backup_path) {
+                        Ok(()) => Some(BackupStrategy::HardLink),
+                        Err(_) => None,
+                    }
+                }
+                // Any other failure (e.g. EXDEV across a `--backup-dir` on a
+                // different filesystem, or a type the platform cannot
+                // hard-link) falls through to the rename tier below, mirroring
+                // `link_or_rename`'s in-call rename fallback.
+                Err(_) => None,
+            }
+        };
+
         // Track which backup strategy succeeded so we can emit the matching
-        // upstream `--debug=BACKUP` trace (RENAME, COPY, or SYMLINK).
+        // upstream `--debug=BACKUP` trace (HLINK, RENAME, COPY, SYMLINK, or
+        // DEVICE).
         // upstream: backup.c:link_or_rename and the fall-through copy_file path.
-        let strategy = match backup_rename(destination, &backup_path) {
+        let strategy = if let Some(strategy) = hard_linked {
+            strategy
+        } else {
+            match backup_rename(destination, &backup_path) {
             Ok(()) => BackupStrategy::Rename,
             Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(()),
             // upstream: backup.c:247-256 - link_or_rename failing with EEXIST or
@@ -871,41 +911,8 @@ impl<'a> CopyContext<'a> {
             // re-stat below still gates removal on the target actually existing,
             // so a genuine permission error falls through to the retry-and-fail
             // path unchanged.
-            Err(error)
-                if error.kind() == io::ErrorKind::AlreadyExists
-                    || error.kind() == io::ErrorKind::IsADirectory
-                    || error.kind() == io::ErrorKind::PermissionDenied =>
-            {
-                match fs::symlink_metadata(&backup_path) {
-                    Ok(meta) if meta.is_dir() => {
-                        fs::remove_dir_all(&backup_path).map_err(|remove_error| {
-                            LocalCopyError::io(
-                                "remove existing backup directory",
-                                backup_path.clone(),
-                                remove_error,
-                            )
-                        })?;
-                    }
-                    Ok(_) => {
-                        if let Err(remove_error) = fs::remove_file(&backup_path)
-                            && remove_error.kind() != io::ErrorKind::NotFound
-                        {
-                            return Err(LocalCopyError::io(
-                                "remove existing backup",
-                                backup_path,
-                                remove_error,
-                            ));
-                        }
-                    }
-                    Err(meta_error) if meta_error.kind() == io::ErrorKind::NotFound => {}
-                    Err(meta_error) => {
-                        return Err(LocalCopyError::io(
-                            "stat existing backup",
-                            backup_path,
-                            meta_error,
-                        ));
-                    }
-                }
+            Err(error) if is_stale_backup_conflict(&error) => {
+                remove_stale_backup_entry(&backup_path)?;
                 fs::rename(destination, &backup_path).map_err(|rename_error| {
                     LocalCopyError::io("create backup", backup_path.clone(), rename_error)
                 })?;
@@ -953,6 +960,7 @@ impl<'a> CopyContext<'a> {
             Err(error) => {
                 return Err(LocalCopyError::io("create backup", backup_path, error));
             }
+            }
         };
 
         // upstream: backup.c:338-341 - set_file_attrs(buf, file, NULL, fname,
@@ -991,12 +999,14 @@ impl<'a> CopyContext<'a> {
             )?;
         }
 
-        // upstream: backup.c:201-202,216-217,299-300,333-334 - DEBUG_GTE(BACKUP, 1)
-        // emits one of HLINK/RENAME/SYMLINK/COPY per success path. oc-rsync's
-        // local-copy executor uses rename as the primary strategy and falls back
-        // to copy or symlink across filesystem boundaries.
+        // upstream: backup.c:201-202,216-217,282-283,299-300,333-334 -
+        // DEBUG_GTE(BACKUP, 1) emits one of HLINK/RENAME/DEVICE/SYMLINK/COPY
+        // per success path. oc-rsync's local-copy executor prefers a
+        // same-filesystem hard link, falls back to rename, then falls back to
+        // copy or symlink recreation across filesystem boundaries.
         let destination_display = destination.display().to_string();
         match strategy {
+            BackupStrategy::HardLink => trace_make_backup_hlink(&destination_display),
             BackupStrategy::Rename => trace_make_backup_rename(&destination_display),
             BackupStrategy::Copy => trace_make_backup_copy(&destination_display),
             BackupStrategy::Symlink => trace_make_backup_symlink(&destination_display),
@@ -1145,7 +1155,11 @@ impl<'a> CopyContext<'a> {
             return Ok(());
         }
 
-        self.backup_existing_entry(destination, relative, file_type)?;
+        // upstream: delete.c:165-167 - `delete_item()` (the callee behind
+        // generator.c:1240's DEL_FOR_FILE removal) always calls
+        // `make_backup(fbuf, True)`, so the hard-link tier is skipped here
+        // exactly as it is for a genuine delete-pass removal.
+        self.backup_existing_entry(destination, relative, file_type, true)?;
 
         if file_type.is_dir() {
             self.record_make_room_contents(destination, relative)?;
@@ -1372,6 +1386,55 @@ impl<'a> CopyContext<'a> {
             info_log!(Nonreg, 1, "IO error encountered -- skipping file deletion");
         }
         true
+    }
+}
+
+/// Returns `true` when a hard-link or rename attempt into the backup area
+/// failed because a stale entry already occupies `backup_path`.
+///
+/// upstream: `backup.c:247` - `link_or_rename()` fails with `EEXIST` or
+/// `EISDIR` when the backup path is already occupied. Windows reports
+/// renaming or linking onto an existing directory as `ERROR_ACCESS_DENIED`
+/// (`PermissionDenied`) rather than `EEXIST`/`EISDIR`, so it is treated the
+/// same way; [`remove_stale_backup_entry`]'s re-stat still gates removal on
+/// the target actually existing, so a genuine permission error falls through
+/// to the retry-and-fail path unchanged.
+fn is_stale_backup_conflict(error: &io::Error) -> bool {
+    matches!(
+        error.kind(),
+        io::ErrorKind::AlreadyExists | io::ErrorKind::IsADirectory | io::ErrorKind::PermissionDenied
+    )
+}
+
+/// Clears whatever occupies `backup_path` so a hard-link or rename retry can
+/// land cleanly.
+///
+/// upstream: `backup.c:247-256` - `make_backup()` lstats the stale backup
+/// target and calls `delete_item(...DEL_FOR_BACKUP | DEL_RECURSE)` before
+/// retrying `link_or_rename()`.
+fn remove_stale_backup_entry(backup_path: &Path) -> Result<(), LocalCopyError> {
+    match fs::symlink_metadata(backup_path) {
+        Ok(meta) if meta.is_dir() => fs::remove_dir_all(backup_path).map_err(|remove_error| {
+            LocalCopyError::io("remove existing backup directory", backup_path, remove_error)
+        }),
+        Ok(_) => {
+            if let Err(remove_error) = fs::remove_file(backup_path)
+                && remove_error.kind() != io::ErrorKind::NotFound
+            {
+                return Err(LocalCopyError::io(
+                    "remove existing backup",
+                    backup_path,
+                    remove_error,
+                ));
+            }
+            Ok(())
+        }
+        Err(meta_error) if meta_error.kind() == io::ErrorKind::NotFound => Ok(()),
+        Err(meta_error) => Err(LocalCopyError::io(
+            "stat existing backup",
+            backup_path,
+            meta_error,
+        )),
     }
 }
 
