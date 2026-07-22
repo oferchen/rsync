@@ -1,6 +1,6 @@
 # oc-rsync Protocol 32 Implementation
 
-This document describes the wire protocol negotiation, framing, roles, and state machine logic used to implement upstream rsync 3.4.1 Protocol 32.
+This document describes the wire protocol negotiation, framing, roles, and state machine logic used to implement upstream rsync 3.4.4 Protocol 32.
 
 ---
 
@@ -178,7 +178,7 @@ Server-to-client flags (unidirectional):
 
 ## Wire Format References
 
-Based on upstream rsync 3.4.1 source code:
+Based on upstream rsync 3.4.4 source code:
 - `io.c`: Multiplex frame construction (SIVAL macro, little-endian)
 - `main.c:1245-1265`: `start_server()` multiplex activation sequence
 - `compat.c:710-744`: Compatibility flags exchange

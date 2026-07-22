@@ -309,7 +309,7 @@ Start with `crates/transfer/src/lib.rs` for the overview, then:
 ### "I want to understand local copies (no network)"
 
 - Local copy executor: `crates/engine/src/local_copy/`
-- Sparse file I/O: `crates/engine/src/local_copy/` (SparseWriter/SparseReader)
+- Sparse file I/O: `crates/engine/src/local_copy/executor/file/sparse/` (`SparseWriteState`/`SparseReader`)
 - Filter evaluation: `crates/filters/src/`
 - Metadata application: `crates/metadata/src/`
 
@@ -351,7 +351,7 @@ Start with `crates/transfer/src/lib.rs` for the overview, then:
 
 ## Upstream Reference
 
-The upstream C source at `target/interop/upstream-src/rsync-3.4.1/` is the
+The upstream C source at `target/interop/upstream-src/rsync-3.4.4/` is the
 single source of truth for protocol behaviour. Key files to cross-reference:
 
 | Upstream File | Corresponds To |

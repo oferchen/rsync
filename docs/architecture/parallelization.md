@@ -134,7 +134,7 @@ order. This ordering requirement means:
   already does this at the batch level via `pipeline.available_slots()`.
 - **Out-of-order transfer with reordering**: the sender could transmit files
   out of order and include a reorder buffer. This would require a protocol
-  extension and is not wire-compatible with upstream rsync 3.4.1.
+  extension and is not wire-compatible with upstream rsync 3.4.4.
 - **Multiple concurrent connections**: rsync has no built-in support for
   splitting a transfer across multiple connections. Tools like `rrsync` or
   split-source scripts are the conventional workaround.
