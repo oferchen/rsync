@@ -45,6 +45,25 @@ pub(crate) fn build_server_flag_string(config: &ClientConfig) -> String {
         flags.push('q');
     }
 
+    // upstream: options.c:2630-2631 - `make_backups` rides in the compact
+    // flag string as `b`. Emitting `--backup` as a separate long arg lands
+    // as a positional path on upstream server arg parsers that do not
+    // consult popt for long flags.
+    if config.backup() {
+        flags.push('b');
+    }
+    if config.update() {
+        flags.push('u');
+    }
+    // upstream: 'n' = dry_run (!do_xfers), NOT numeric_ids.
+    // numeric_ids is always sent as long-form --numeric-ids (options.c:2887-2888).
+    if config.dry_run() {
+        flags.push('n');
+    }
+    if config.links() {
+        flags.push('l');
+    }
+
     // upstream: options.c:2169-2173 - --files-from disables recursion and
     // enables xfer_dirs. options.c:2205-2206 - --files-from defaults
     // relative_paths=1.
@@ -60,8 +79,37 @@ pub(crate) fn build_server_flag_string(config: &ClientConfig) -> String {
     // wire signal (`sub/file` implied dir instead of the flattened `file`).
     let effective_relative = config.relative_paths();
 
-    if config.links() {
-        flags.push('l');
+    // upstream: 'd' = --dirs (xfer_dirs without recursion), NOT delete.
+    // delete variants are always sent as long-form --delete-* (options.c:2818-2827).
+    // upstream: options.c:2620 - xfer_dirs=1 when files_from is active.
+    let effective_dirs = config.dirs() || files_from_active;
+    if effective_dirs && !effective_recursive {
+        flags.push('d');
+    }
+
+    // upstream: options.c:2655-2660 - `if (am_sender) { ... } else { if
+    // (copy_links) 'L'; if (copy_dirlinks) 'k'; }`. The compact L/k letters are
+    // role-specific: server_options() emits them ONLY when the local side is
+    // NOT the sender (a pull), because copy_links/copy_dirlinks dereference
+    // symlinks on the SENDER, so they matter to the remote only when the remote
+    // is the sender. This role-agnostic builder therefore does NOT pack L/k -
+    // the daemon wire path (build_full_daemon_args) re-adds them gated on the
+    // pull direction, and the in-process half sets `flags.copy_links` /
+    // `flags.copy_dirlinks` directly in apply_common_server_flags so a push
+    // generator still dereferences.
+
+    // upstream: options.c:2644-2648 - only send 'W' when explicitly set
+    // (whole_file > 0). The default for remote transfers is no-whole-file
+    // (delta mode); upstream never sends --no-whole-file because it is the
+    // default. Sending 'W' unconditionally when the tri-state defaults to
+    // true forces the remote generator to skip basis-file checksums, so the
+    // sender falls back to whole-file even when a basis exists.
+    if config.whole_file_raw() == Some(true) && !config.append() {
+        flags.push('W');
+    }
+
+    if config.preserve_hard_links() {
+        flags.push('H');
     }
     if config.preserve_owner() {
         flags.push('o');
@@ -82,11 +130,44 @@ pub(crate) fn build_server_flag_string(config: &ClientConfig) -> String {
     for _ in 0..config.preserve_atimes_level().min(2) {
         flags.push('U');
     }
+    if config.preserve_crtimes() {
+        flags.push('N');
+    }
     if config.preserve_permissions() {
         flags.push('p');
     }
+    #[cfg(all(any(unix, windows), feature = "acl"))]
+    if config.preserve_acls() {
+        flags.push('A');
+    }
+    #[cfg(all(unix, feature = "xattr"))]
+    // upstream: options.c:2698-2704 - `-XX` doubles the letter at level 2.
+    for _ in 0..config.preserve_xattrs_level().min(2) {
+        flags.push('X');
+    }
     if effective_recursive {
         flags.push('r');
+    }
+    if config.checksum() {
+        flags.push('c');
+    }
+    // upstream: options.c:2709-2710 - `if (cvs_exclude) 'C'`. Forwarded so the
+    // remote peer runs get_cvs_excludes() itself; duplicate excludes are
+    // idempotent with the transmitted CVS filter rules.
+    if config.cvs_exclude() {
+        flags.push('C');
+    }
+    if config.ignore_times() {
+        flags.push('I');
+    }
+    if effective_relative {
+        flags.push('R');
+    }
+    for _ in 0..config.one_file_system_level() {
+        flags.push('x');
+    }
+    if config.sparse() {
+        flags.push('S');
     }
     // upstream: options.c:2704 - 'z' is only sent when the compression
     // algorithm is the default (no explicit --compress-choice). For
@@ -98,86 +179,10 @@ pub(crate) fn build_server_flag_string(config: &ClientConfig) -> String {
     {
         flags.push('z');
     }
-    if config.checksum() {
-        flags.push('c');
-    }
-    // upstream: options.c:2709-2710 - `if (cvs_exclude) 'C'`. Forwarded so the
-    // remote peer runs get_cvs_excludes() itself; duplicate excludes are
-    // idempotent with the transmitted CVS filter rules.
-    if config.cvs_exclude() {
-        flags.push('C');
-    }
-    if config.preserve_hard_links() {
-        flags.push('H');
-    }
-    if config.ignore_times() {
-        flags.push('I');
-    }
-    #[cfg(all(any(unix, windows), feature = "acl"))]
-    if config.preserve_acls() {
-        flags.push('A');
-    }
-    #[cfg(all(unix, feature = "xattr"))]
-    // upstream: options.c:2698-2704 - `-XX` doubles the letter at level 2.
-    for _ in 0..config.preserve_xattrs_level().min(2) {
-        flags.push('X');
-    }
-    // upstream: 'n' = dry_run (!do_xfers), NOT numeric_ids.
-    // numeric_ids is always sent as long-form --numeric-ids (options.c:2887-2888).
-    if config.dry_run() {
-        flags.push('n');
-    }
-    // upstream: 'd' = --dirs (xfer_dirs without recursion), NOT delete.
-    // delete variants are always sent as long-form --delete-* (options.c:2818-2827).
-    // upstream: options.c:2620 - xfer_dirs=1 when files_from is active.
-    let effective_dirs = config.dirs() || files_from_active;
-    if effective_dirs && !effective_recursive {
-        flags.push('d');
-    }
-    // upstream: options.c:2644-2648 - only send 'W' when explicitly set
-    // (whole_file > 0). The default for remote transfers is no-whole-file
-    // (delta mode); upstream never sends --no-whole-file because it is the
-    // default. Sending 'W' unconditionally when the tri-state defaults to
-    // true forces the remote generator to skip basis-file checksums, so the
-    // sender falls back to whole-file even when a basis exists.
-    if config.whole_file_raw() == Some(true) && !config.append() {
-        flags.push('W');
-    }
-    if config.sparse() {
-        flags.push('S');
-    }
-    for _ in 0..config.one_file_system_level() {
-        flags.push('x');
-    }
-    if effective_relative {
-        flags.push('R');
-    }
+
     // upstream: options.c has NO compact 'P' letter. keep_partial rides as the
     // long-form --partial (daemon: build_full_daemon_args; local ServerConfig:
     // propagated via server_config.flags.partial in the *_server_config sites).
-    // upstream: options.c:2630-2631 - `make_backups` rides in the compact
-    // flag string as `b`. Emitting `--backup` as a separate long arg lands
-    // as a positional path on upstream server arg parsers that do not
-    // consult popt for long flags.
-    if config.backup() {
-        flags.push('b');
-    }
-    if config.update() {
-        flags.push('u');
-    }
-    if config.preserve_crtimes() {
-        flags.push('N');
-    }
-    // upstream: options.c:2655-2660 - `if (am_sender) { ... } else { if
-    // (copy_links) 'L'; if (copy_dirlinks) 'k'; }`. The compact L/k letters are
-    // role-specific: server_options() emits them ONLY when the local side is
-    // NOT the sender (a pull), because copy_links/copy_dirlinks dereference
-    // symlinks on the SENDER, so they matter to the remote only when the remote
-    // is the sender. This role-agnostic builder therefore does NOT pack L/k -
-    // the daemon wire path (build_full_daemon_args) re-adds them gated on the
-    // pull direction, and the in-process half sets `flags.copy_links` /
-    // `flags.copy_dirlinks` directly in apply_common_server_flags so a push
-    // generator still dereferences.
 
     // upstream: options.c:2750-2762 - itemize-changes is forwarded via
     // --log-format=%i in the long-form args, not as a compact flag.
@@ -1329,5 +1334,45 @@ mod tests {
             !flags.contains('W'),
             "explicit whole_file(false) must not include 'W': {flags}"
         );
+    }
+
+    /// Golden byte-order test: a real rsync server dispatches each compact
+    /// flag independently (`parse_arguments()` switches on one byte at a
+    /// time), so the LETTER ORDER within the bundle has no effect on how a
+    /// peer parses it. But wire-fidelity requires oc-rsync's client to be a
+    /// drop-in replacement whose argv is indistinguishable from upstream's
+    /// own client - packet captures, `--server` invocation logs, and
+    /// interop diffing all compare this string byte-for-byte. Exercising one
+    /// flag from each upstream `server_options()` grouping pins the full
+    /// emission sequence (options.c:2619-2723) so a future edit cannot
+    /// silently reorder it back out of parity.
+    #[test]
+    fn server_flag_string_matches_upstream_letter_order() {
+        let config = ClientConfig::builder()
+            .verbosity(1)
+            .backup(true)
+            .update(true)
+            .dry_run(true)
+            .links(true)
+            .whole_file(true)
+            .hard_links(true)
+            .owner(true)
+            .group(true)
+            .devices(true)
+            .times(true)
+            .crtimes(true)
+            .permissions(true)
+            .recursive(true)
+            .checksum(true)
+            .cvs_exclude(true)
+            .ignore_times(true)
+            .relative_paths(true)
+            .one_file_system(1)
+            .sparse(true)
+            .compress(true)
+            .build();
+
+        let flags = build_server_flag_string(&config);
+        assert_eq!(flags, "-vbunlWHogDtNprcCIRxSz");
     }
 }
