@@ -1675,17 +1675,15 @@ fn lz4_decoder_rejects_token_rel_overflow() {
 /// CVE-2026-43618 regression: the decoder must reject run emission that
 /// would overflow `rx_token` past `i32::MAX`.
 ///
-/// A TOKENRUN_LONG starting near `i32::MAX` with a non-trivial run count
-/// causes the run emission loop to increment `rx_token` past the signed
-/// maximum. Without checked arithmetic, the counter wraps to negative and
-/// `as u32` produces a huge block index.
+/// A TOKENRUN_LONG whose run pushes `rx_token` past `MAX_TOKEN_INDEX`
+/// (0x7ffffffe) must abort with a protocol violation rather than wrap the
+/// counter negative and produce a huge `as u32` block index.
 ///
-/// upstream: token.c defence-in-depth (3.4.3) - bounded run emission
+/// upstream: token.c invalid_compressed_token() -> exit_cleanup(RERR_PROTOCOL).
 fn assert_rejects_run_overflow(mut decoder: CompressedTokenDecoder) {
-    // TOKENRUN_LONG with token = i32::MAX - 1 and run count = 5.
-    // The first token (i32::MAX - 1) succeeds, then the run emits
-    // tokens at i32::MAX - 1 + 1 = i32::MAX (ok), then +1 = overflow.
-    let start: i32 = i32::MAX - 1;
+    // TOKENRUN_LONG with the base token at MAX_TOKEN_INDEX (the largest legal
+    // index) and a run: the base token is valid, the next increment exceeds it.
+    let start: i32 = 0x7fff_fffe; // MAX_TOKEN_INDEX
     let run_count: u16 = 5;
     let mut wire = Vec::new();
     wire.push(TOKENRUN_LONG);
@@ -1693,19 +1691,20 @@ fn assert_rejects_run_overflow(mut decoder: CompressedTokenDecoder) {
     wire.extend_from_slice(&run_count.to_le_bytes());
 
     let mut cursor = Cursor::new(&wire);
-    // First token: BlockMatch(i32::MAX - 1) - succeeds
+    // First token: BlockMatch(MAX_TOKEN_INDEX) - the largest legal index.
     let t1 = decoder.recv_token(&mut cursor).unwrap();
-    assert!(matches!(t1, CompressedToken::BlockMatch(v) if v == (i32::MAX - 1) as u32));
+    assert!(matches!(t1, CompressedToken::BlockMatch(v) if v == 0x7fff_fffe));
 
-    // Second token: rx_token = i32::MAX - succeeds
-    let t2 = decoder.recv_token(&mut cursor).unwrap();
-    assert!(matches!(t2, CompressedToken::BlockMatch(v) if v == i32::MAX as u32));
-
-    // Third token: rx_token = i32::MAX + 1 - must overflow
+    // Next token would be MAX_TOKEN_INDEX + 1 - must be rejected.
     let err = decoder
         .recv_token(&mut cursor)
         .expect_err("decoder must reject run overflow");
-    assert_eq!(err.kind(), io::ErrorKind::InvalidData);
+    // upstream aborts with RERR_PROTOCOL(2), not RERR_STREAMIO(12).
+    assert!(
+        err.get_ref()
+            .is_some_and(|e| e.is::<crate::ProtocolViolation>()),
+        "run overflow must be tagged RERR_PROTOCOL, got: {err}",
+    );
     assert!(
         err.to_string().contains("token index overflow"),
         "unexpected error message: {err}"

@@ -21,6 +21,13 @@ use std::io::{self, Read};
 
 use super::{CHUNK_SIZE, CompressedToken, DEFLATED_DATA, END_FLAG, TOKEN_REL};
 
+/// Largest legal token index in the compressed stream. A run increment or
+/// relative token that pushes the running index past this is a malformed
+/// stream that must abort with a protocol violation rather than be accepted.
+/// upstream: token.c `#define MAX_TOKEN_INDEX ((int32)0x7ffffffe)` and
+/// `invalid_compressed_token()` -> `exit_cleanup(RERR_PROTOCOL)`.
+const MAX_TOKEN_INDEX: i32 = 0x7fff_fffe;
+
 /// The outcome of a single decoder step.
 ///
 /// The state machine that produces these owns all decode state; the driver only
@@ -238,12 +245,17 @@ impl TokenDecodeCore {
 
     fn next_run_token(&mut self) -> io::Result<CompressedToken> {
         self.rx_run -= 1;
-        self.rx_token = self.rx_token.checked_add(1).ok_or_else(|| {
-            io::Error::new(
-                io::ErrorKind::InvalidData,
-                "token index overflow in compressed stream run",
-            )
-        })?;
+        // upstream: token.c recv_deflated_token - a run increment past
+        // MAX_TOKEN_INDEX is invalid_compressed_token() -> RERR_PROTOCOL.
+        self.rx_token = self
+            .rx_token
+            .checked_add(1)
+            .filter(|&t| t <= MAX_TOKEN_INDEX)
+            .ok_or_else(|| {
+                crate::protocol_violation::protocol_violation(
+                    "token index overflow in compressed stream run",
+                )
+            })?;
         Ok(CompressedToken::BlockMatch(self.rx_token as u32))
     }
 
@@ -436,12 +448,17 @@ impl TokenDecodeCore {
 
         if flag & TOKEN_REL != 0 {
             let rel = (flag & 0x3F) as i32;
-            self.rx_token = self.rx_token.checked_add(rel).ok_or_else(|| {
-                io::Error::new(
-                    io::ErrorKind::InvalidData,
-                    "token index overflow in compressed stream",
-                )
-            })?;
+            // upstream: token.c invalid_compressed_token() -> RERR_PROTOCOL when
+            // the relative token index exceeds MAX_TOKEN_INDEX.
+            self.rx_token = self
+                .rx_token
+                .checked_add(rel)
+                .filter(|&t| t <= MAX_TOKEN_INDEX)
+                .ok_or_else(|| {
+                    crate::protocol_violation::protocol_violation(
+                        "token index overflow in compressed stream",
+                    )
+                })?;
             if (flag >> 6) & 1 != 0 {
                 self.phase = Phase::RunCount {
                     token: self.rx_token,
