@@ -585,8 +585,13 @@ impl SshCommand {
         // args[argc++] = user; }`. `SshCommand` never drives a
         // `daemon_connection` invocation (that path is
         // `client::module_list::connect::rsh::build_rsh_command_argv`), so
-        // the condition reduces to a plain `if (user)`.
-        if let Some(user) = &self.user {
+        // the condition reduces to a plain `if (user)`. Skipped when
+        // `target_override` is set: the override fully replaces the computed
+        // destination operand (host and any login), so a caller supplying
+        // their own target string owns the whole operand.
+        if self.target_override.is_none()
+            && let Some(user) = &self.user
+        {
             args.push(OsString::from("-l"));
             args.push(user.clone());
         }
