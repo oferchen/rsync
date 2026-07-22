@@ -1,22 +1,16 @@
 //! Temporary, partial, and destination path computation.
 //!
-//! Generates temp file paths (`.~tmp~` prefix with PID), partial transfer
-//! paths (`--partial-dir`), and resolves the final destination for each file.
+//! Generates temp file paths (`.<name>.XXXXXX`, upstream `get_tmpname()`),
+//! partial transfer paths (`--partial-dir`), and resolves the final destination
+//! for each file.
 
 // upstream: receiver.c - temp file naming, util1.c:partial_dir_fname()
 
 use std::ffi::OsStr;
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::sync::OnceLock;
 
 use crate::local_copy::LocalCopyError;
-
-/// Cached process ID to avoid a `getpid` syscall per temp file.
-fn cached_pid() -> u32 {
-    static PID: OnceLock<u32> = OnceLock::new();
-    *PID.get_or_init(std::process::id)
-}
 
 /// Computes the partial-file path by prefixing the filename with `.rsync-partial-`.
 pub(crate) fn partial_destination_path(destination: &Path) -> PathBuf {
@@ -119,26 +113,6 @@ pub(crate) fn partial_dir_fname(destination: &Path, partial_dir: &Path) -> PathB
     base_dir.join(file_name)
 }
 
-/// Computes the temporary file path used during atomic writes.
-///
-/// The name includes the PID and a unique counter to prevent collisions.
-// upstream: receiver.c:get_tmpname()
-pub(crate) fn temporary_destination_path(
-    destination: &Path,
-    unique: usize,
-    temp_dir: Option<&Path>,
-) -> PathBuf {
-    let file_name = destination.file_name().map_or_else(
-        || "temp".to_owned(),
-        |name| name.to_string_lossy().to_string(),
-    );
-    let temp_name = format!(".~tmp~{file_name}.{}.{}", cached_pid(), unique);
-    match temp_dir {
-        Some(dir) => dir.join(temp_name),
-        None => destination.with_file_name(temp_name),
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -166,39 +140,37 @@ mod tests {
     }
 
     #[test]
-    fn temporary_destination_path_adds_prefix() {
+    fn temp_name_with_suffix_uses_upstream_naming() {
         let dest = Path::new("/path/to/file.txt");
-        let temp = temporary_destination_path(dest, 42, None);
-        assert!(temp.to_string_lossy().contains(".~tmp~"));
-        assert!(temp.to_string_lossy().contains("file.txt"));
-    }
-
-    #[test]
-    fn temporary_destination_path_includes_unique_id() {
-        let dest = Path::new("/path/to/file.txt");
-        let temp = temporary_destination_path(dest, 123, None);
-        assert!(temp.to_string_lossy().contains("123"));
-    }
-
-    #[test]
-    fn temporary_destination_path_uses_temp_dir() {
-        let dest = Path::new("/path/to/file.txt");
-        let temp_dir = Path::new("/tmp/rsync");
-        let temp = temporary_destination_path(dest, 1, Some(temp_dir));
-        assert!(temp.starts_with(temp_dir));
-    }
-
-    #[test]
-    fn temporary_destination_path_preserves_directory_without_temp_dir() {
-        let dest = Path::new("/path/to/file.txt");
-        let temp = temporary_destination_path(dest, 1, None);
+        let temp = temp_name_with_suffix(dest, None, "ABCDEF");
+        assert_eq!(
+            temp.file_name().unwrap().to_string_lossy(),
+            ".file.txt.ABCDEF"
+        );
         assert_eq!(temp.parent(), dest.parent());
     }
 
     #[test]
-    fn temporary_destination_path_handles_no_filename() {
-        let dest = Path::new("/");
-        let temp = temporary_destination_path(dest, 1, None);
-        assert!(temp.to_string_lossy().contains("temp"));
+    fn temp_name_with_suffix_uses_temp_dir() {
+        let dest = Path::new("/path/to/file.txt");
+        let temp_dir = Path::new("/tmp/rsync");
+        let temp = temp_name_with_suffix(dest, Some(temp_dir), "ABCDEF");
+        assert!(temp.starts_with(temp_dir));
+        // In --temp-dir the name has no leading dot (upstream get_tmpname()).
+        assert_eq!(
+            temp.file_name().unwrap().to_string_lossy(),
+            "file.txt.ABCDEF"
+        );
+    }
+
+    #[test]
+    fn temp_name_with_suffix_elides_leading_dot() {
+        let dest = Path::new("/path/to/.hidden");
+        let temp = temp_name_with_suffix(dest, None, "ABCDEF");
+        // A base that already starts with a dot has it elided (no double dot).
+        assert_eq!(
+            temp.file_name().unwrap().to_string_lossy(),
+            ".hidden.ABCDEF"
+        );
     }
 }
