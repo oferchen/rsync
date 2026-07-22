@@ -86,6 +86,7 @@ pub(super) fn process_remaining_tokens<R: Read>(
     token_reader: &mut TokenReader,
     initial_literal_bytes: u64,
     updating_basis: bool,
+    is_inplace: bool,
 ) -> io::Result<StreamingResult> {
     let send_abort = |tx: &spsc::Sender<FileMessage>, reason: String| {
         let _ = tx.send(FileMessage::Abort { reason });
@@ -136,6 +137,7 @@ pub(super) fn process_remaining_tokens<R: Read>(
                     matched_bytes,
                     expected_checksum,
                     checksum_len,
+                    is_inplace,
                 });
             }
             DeltaToken::Literal(literal_data) => {
