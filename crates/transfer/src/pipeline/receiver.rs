@@ -1192,9 +1192,15 @@ mod tests {
     /// temp, and `--partial-dir` reports "put into partial-dir".
     #[test]
     fn verification_kept_str_matches_upstream() {
-        assert_eq!(verification_kept_str(&PartialMode::None, false), "discarded");
+        assert_eq!(
+            verification_kept_str(&PartialMode::None, false),
+            "discarded"
+        );
         assert_eq!(verification_kept_str(&PartialMode::None, true), "retained");
-        assert_eq!(verification_kept_str(&PartialMode::Partial, false), "retained");
+        assert_eq!(
+            verification_kept_str(&PartialMode::Partial, false),
+            "retained"
+        );
         assert_eq!(
             verification_kept_str(&PartialMode::PartialDir(PathBuf::from("/pd")), false),
             "put into partial-dir"
