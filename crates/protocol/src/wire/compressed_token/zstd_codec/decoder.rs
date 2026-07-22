@@ -22,15 +22,15 @@ use super::super::{CompressedToken, MAX_DATA_COUNT};
 /// context between files - the session is one continuous zstd stream.
 ///
 /// Between files, only the token index (rx_token) resets to 0, matching
-/// upstream token.c:807-810 (r_init state just resets rx_token).
+/// upstream token.c:862-865 (r_init state just resets rx_token).
 ///
 /// The decoder processes one DEFLATED_DATA block at a time, matching
 /// upstream's state machine (r_idle -> r_inflating -> r_idle). When all
 /// compressed input is consumed and the output buffer is not full, the
 /// decoder returns to idle to read the next wire flag.
 ///
-/// upstream: token.c:recv_zstd_token() - DCtx created once (line 789),
-/// never reset between files (line 807-810 only resets rx_token)
+/// upstream: token.c:recv_zstd_token() - DCtx created once (line 844),
+/// never reset between files (line 862-865 only resets rx_token)
 pub(in crate::wire::compressed_token) struct ZstdTokenDecoder {
     /// Shared sans-io decode state machine (framing, run index, output chunking).
     core: TokenDecodeCore,
@@ -45,8 +45,8 @@ pub(in crate::wire::compressed_token) struct ZstdTokenDecoder {
 /// [`TokenDecodeCore`] drives all wire framing and delegates one DEFLATED_DATA
 /// block at a time here.
 ///
-/// upstream: token.c:recv_zstd_token() - DCtx created once (line 789),
-/// never reset between files (line 807-810 only resets rx_token)
+/// upstream: token.c:recv_zstd_token() - DCtx created once (line 844),
+/// never reset between files (line 862-865 only resets rx_token)
 struct ZstdDeflate {
     /// Persistent zstd decompression context.
     decoder: ZstdRawDecoder<'static>,
@@ -74,7 +74,7 @@ impl DeflateSink for ZstdDeflate {
     }
 
     fn decompress_into(&mut self, output: &mut Vec<u8>) -> io::Result<()> {
-        // upstream: token.c lines 846-863 (r_inflating state)
+        // upstream: token.c lines 892-909 (r_inflating state)
         let mut input_pos = 0;
 
         while input_pos < self.compressed_input_buf.len() {
@@ -90,7 +90,7 @@ impl DeflateSink for ZstdDeflate {
                 output.extend_from_slice(&self.output_buf[..produced]);
             }
 
-            // upstream: token.c lines 862-863
+            // upstream: token.c lines 908-909
             // If input is fully consumed and output buffer not full,
             // transition back to idle (read next flag).
             if input_pos >= self.compressed_input_buf.len() && produced < self.output_buf.len() {
@@ -102,7 +102,7 @@ impl DeflateSink for ZstdDeflate {
         // After all compressed input is consumed, the decoder may still
         // hold decompressed data internally when the output buffer was
         // full on the last iteration. Flush by feeding empty input.
-        // upstream: token.c lines 846-863 - inflate loop continues until
+        // upstream: token.c lines 892-909 - inflate loop continues until
         // output buffer is not full, indicating decoder is drained.
         loop {
             let mut in_buf = zstd::stream::raw::InBuffer::around(&[]);
@@ -126,7 +126,7 @@ impl ZstdTokenDecoder {
     /// between files; see the type-level documentation.
     pub(in crate::wire::compressed_token) fn new() -> io::Result<Self> {
         let decoder = ZstdRawDecoder::new()?;
-        // upstream: token.c line 795 - out_buffer_size = ZSTD_DStreamOutSize() * 2
+        // upstream: token.c line 851 - out_buffer_size = ZSTD_DStreamOutSize() * 2
         let out_size = zstd::zstd_safe::DCtx::out_size() * 2;
         Ok(Self {
             core: TokenDecodeCore::new(true),
@@ -149,7 +149,7 @@ impl ZstdTokenDecoder {
     /// context is NOT reinitialized - upstream rsync uses a single continuous
     /// stream across all files in the session.
     ///
-    /// upstream: token.c:807-810 - r_init only resets rx_token to 0
+    /// upstream: token.c:862-865 - r_init only resets rx_token to 0
     pub(in crate::wire::compressed_token) fn reset(&mut self) {
         self.core.reset();
         self.deflate.compressed_input_buf.clear();
@@ -160,7 +160,7 @@ impl ZstdTokenDecoder {
     ///
     /// A thin blocking driver over the shared sans-io decode state machine.
     ///
-    /// upstream: token.c:recv_zstd_token() lines 805-877
+    /// upstream: token.c:recv_zstd_token() lines 861-920
     pub(in crate::wire::compressed_token) fn recv_token<R: Read>(
         &mut self,
         reader: &mut R,

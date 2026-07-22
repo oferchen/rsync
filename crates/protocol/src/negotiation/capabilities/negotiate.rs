@@ -643,7 +643,7 @@ fn advertised_list<'a>(names: impl IntoIterator<Item = &'a str>, is_server: bool
 
 /// Writes a vstring (variable-length string) using upstream rsync's format.
 ///
-/// Format (upstream io.c:2222-2240 write_vstring):
+/// Format (upstream io.c:2297-2315 write_vstring):
 /// - For len <= 127: 1 byte = len
 /// - For len > 127: 2 bytes = [(len >> 8) | 0x80, len & 0xFF]
 ///

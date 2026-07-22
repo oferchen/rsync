@@ -93,7 +93,7 @@ where
     /// `Some(_)` when the `zstdmt` Cargo feature is disabled returns
     /// `Unsupported` so callers can fall back gracefully.
     ///
-    /// upstream: `token.c:701`, `options.c:89`.
+    /// upstream: `token.c:749`, `options.c:89`.
     pub fn with_sink_workers(
         sink: W,
         level: CompressionLevel,
@@ -257,7 +257,7 @@ pub const fn default_algorithm() -> CompressionAlgorithm {
     CompressionAlgorithm::Zstd
 }
 
-// upstream: token.c:701 - ZSTD_CCtx_setParameter(zstd_cctx, ZSTD_c_nbWorkers, do_compression_threads).
+// upstream: token.c:749 - ZSTD_CCtx_setParameter(zstd_cctx, ZSTD_c_nbWorkers, do_compression_threads).
 fn configure_workers<W: Write>(
     encoder: &mut ZstdEncoder<'static, CountingWriter<W>>,
     workers: Option<NonZeroU8>,

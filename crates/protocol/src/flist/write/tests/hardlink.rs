@@ -153,7 +153,7 @@ fn write_hardlink_follower_skips_metadata() {
 
     // Follower metadata is skipped on the wire; the receiver copies it from the
     // leader in the same segment (upstream flist.c:recv_file_entry lines
-    // 793-822), so size and mtime match the leader rather than being blank.
+    // 805-834), so size and mtime match the leader rather than being blank.
     assert_eq!(entries[1].name(), "link.txt");
     assert_eq!(entries[1].size(), 500);
     assert_eq!(entries[1].mtime(), 1700000000);

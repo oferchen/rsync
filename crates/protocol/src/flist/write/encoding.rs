@@ -25,7 +25,7 @@ impl FileListWriter {
     /// - Protocol 28+: one or two bytes depending on extended flags
     /// - Protocol < 28: single byte
     ///
-    /// upstream: flist.c:send_file_entry() lines 545-565
+    /// upstream: flist.c:send_file_entry() lines 557-577
     pub(super) fn write_flags<W: Write + ?Sized>(
         &self,
         writer: &mut W,
@@ -34,7 +34,7 @@ impl FileListWriter {
     ) -> io::Result<()> {
         if self.use_varint_flags() {
             // Varint mode: avoid xflags=0 which collides with the end marker.
-            // upstream: flist.c:550 write_varint(f, xflags ? xflags : XMIT_EXTENDED_FLAGS)
+            // upstream: flist.c:562 write_varint(f, xflags ? xflags : XMIT_EXTENDED_FLAGS)
             let flags_to_write = if xflags == 0 {
                 XMIT_EXTENDED_FLAGS as u32
             } else {
@@ -54,7 +54,7 @@ impl FileListWriter {
                 writer.write_all(&[xflags_to_write as u8])?;
             }
         } else {
-            // upstream: flist.c:559-562 - dirs use XMIT_LONG_NAME, non-dirs use XMIT_TOP_DIR
+            // upstream: flist.c:571-574 - dirs use XMIT_LONG_NAME, non-dirs use XMIT_TOP_DIR
             let flags_to_write = if (xflags & 0xFF) == 0 {
                 if is_dir {
                     xflags | XMIT_LONG_NAME as u32
@@ -74,7 +74,7 @@ impl FileListWriter {
     /// Encodes the shared prefix length (if `XMIT_SAME_NAME`) and the name
     /// suffix. Long names (> 255 bytes) use varint length encoding.
     ///
-    /// upstream: flist.c:send_file_entry() lines 566-580
+    /// upstream: flist.c:send_file_entry() lines 578-592
     pub(super) fn write_name<W: Write + ?Sized>(
         &self,
         writer: &mut W,
@@ -100,7 +100,7 @@ impl FileListWriter {
     ///
     /// Wire format: varint30(len) + raw bytes (no null terminator)
     ///
-    /// upstream: flist.c:send_file_entry() lines 660-670
+    /// upstream: flist.c:send_file_entry() lines 650-655
     pub(super) fn write_symlink_target<W: Write + ?Sized>(
         &self,
         writer: &mut W,
@@ -114,7 +114,7 @@ impl FileListWriter {
             // Symlink targets use the same wire-form normalisation as filenames:
             // any platform-native backslash separators are translated to forward
             // slashes before transmission.
-            // upstream: flist.c:send_file_entry() lines 660-670 and util1.c:955-961
+            // upstream: flist.c:send_file_entry() lines 650-655 and util1.c:955-961
             let wire_bytes = path_bytes_to_wire(target.as_path());
             // upstream: flist.c:1642 - the target is transcoded through ic_send
             // ONLY when `sender_symlink_iconv` (iconv active AND CF_SYMLINK_ICONV
@@ -143,7 +143,7 @@ impl FileListWriter {
     /// - Major: varint30 (omitted if XMIT_SAME_RDEV_MAJOR set)
     /// - Minor: varint (protocol 30+) or byte/int (protocol 28-29)
     ///
-    /// upstream: flist.c:send_file_entry() lines 640-660
+    /// upstream: flist.c:send_file_entry() lines 633-648
     pub(super) fn write_rdev<W: Write + ?Sized>(
         &mut self,
         writer: &mut W,
@@ -206,7 +206,7 @@ impl FileListWriter {
     /// - If XMIT_HLINKED is set but not XMIT_HLINK_FIRST: write varint index
     /// - If XMIT_HLINK_FIRST is also set: no index (this is the first/leader)
     ///
-    /// upstream: flist.c:send_file_entry() lines 583-595
+    /// upstream: flist.c:send_file_entry() lines 584-590
     pub(super) fn write_hardlink_idx<W: Write + ?Sized>(
         &self,
         writer: &mut W,
@@ -238,7 +238,7 @@ impl FileListWriter {
     /// - If not XMIT_SAME_DEV_PRE30: write longint(dev + 1)
     /// - Always write longint(ino)
     ///
-    /// upstream: flist.c:send_file_entry() lines 670-690
+    /// upstream: flist.c:send_file_entry() lines 656-671
     pub(super) fn write_hardlink_dev_ino<W: Write + ?Sized>(
         &mut self,
         writer: &mut W,
@@ -278,7 +278,7 @@ impl FileListWriter {
     /// - For regular files: actual checksum from entry
     /// - For non-regular files (proto < 28 only): empty_sum (all zeros)
     ///
-    /// upstream: flist.c:send_file_entry() lines 700-720
+    /// upstream: flist.c:send_file_entry() lines 674-683
     pub(super) fn write_checksum<W: Write + ?Sized>(
         &self,
         writer: &mut W,
@@ -350,7 +350,7 @@ impl FileListWriter {
         if let Some(ref converter) = self.iconv {
             let outcome = converter.local_to_remote_lossy(name);
             if outcome.had_replacements {
-                // upstream: flist.c:1597-1600 - warn about unconvertible filename
+                // upstream: flist.c:1633-1636 - warn about unconvertible filename
                 crate::iconv::trace_conversion_warning(
                     crate::iconv::IconvRole::Server,
                     &String::from_utf8_lossy(name),

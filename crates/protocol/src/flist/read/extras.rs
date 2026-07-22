@@ -21,7 +21,7 @@ impl FileListReader {
     ///
     /// Wire format: varint30(len) + raw bytes
     ///
-    /// upstream: flist.c:recv_file_entry() lines 920-935
+    /// upstream: flist.c:recv_file_entry() lines 948-963
     ///
     /// `name` is the entry's already-read wire filename, used only to render the
     /// `cannot convert symlink data for` diagnostic on a strict conversion
@@ -107,7 +107,7 @@ impl FileListReader {
     /// - Major: varint30 (omitted if XMIT_SAME_RDEV_MAJOR set)
     /// - Minor: varint (protocol 30+) or byte/int (protocol 28-29)
     ///
-    /// upstream: flist.c:recv_file_entry() lines 936-970
+    /// upstream: flist.c:recv_file_entry() lines 932-953
     pub(super) fn read_rdev<R: Read + ?Sized>(
         &mut self,
         reader: &mut R,
@@ -165,7 +165,7 @@ impl FileListReader {
     /// - If XMIT_HLINKED is set but not XMIT_HLINK_FIRST: read varint index
     /// - If XMIT_HLINK_FIRST is also set: return u32::MAX (this is the first/leader)
     ///
-    /// upstream: flist.c:recv_file_entry() lines 800-815
+    /// upstream: flist.c:recv_file_entry() lines 791-799
     pub(super) fn read_hardlink_idx<R: Read + ?Sized>(
         &self,
         reader: &mut R,
@@ -226,7 +226,7 @@ impl FileListReader {
             self.state.prev_hardlink_dev()
         } else {
             let raw_dev = crate::read_longint(reader)?;
-            // Upstream stores dev + 1, so subtract 1. upstream: flist.c:1177
+            // Upstream stores dev + 1, so subtract 1. upstream: flist.c:668
             // `dev = read_longint(f)` then the +1 offset is undone with plain
             // int64 arithmetic that wraps; a malicious sender can supply
             // raw_dev == i64::MIN, so wrapping_sub matches upstream's wrap and
@@ -245,7 +245,7 @@ impl FileListReader {
     ///
     /// Wire format: raw bytes of length flist_csum_len
     ///
-    /// upstream: flist.c:recv_file_entry() lines 1010-1030
+    /// upstream: flist.c:recv_file_entry() lines 1219-1231
     pub(super) fn read_checksum<R: Read + ?Sized>(
         &self,
         reader: &mut R,
@@ -315,7 +315,7 @@ mod edg_panic_tests {
 
     /// A malicious sender must not crash the protocol 28-29 hardlink decode by
     /// sending dev == i64::MIN, which would underflow the `raw_dev - 1` offset
-    /// (upstream: flist.c:1177) and panic under overflow-checks (cargo-fuzz /
+    /// (upstream: flist.c:668) and panic under overflow-checks (cargo-fuzz /
     /// debug). The hardened decode mirrors upstream's int64 wraparound and must
     /// return cleanly instead of panicking.
     #[test]

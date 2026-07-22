@@ -4,7 +4,7 @@
 //! single persistent compression context across the entire transfer session,
 //! flushing at each token boundary with `ZSTD_e_flush`.
 //!
-//! - upstream: token.c:send_zstd_token() lines 678-776
+//! - upstream: token.c:send_zstd_token() lines 732-832
 
 use std::io::{self, Write};
 
@@ -84,7 +84,7 @@ impl ZstdTokenEncoder {
     /// `ZSTD_c_nbWorkers`. `None` keeps the encoder single-threaded,
     /// matching upstream's `do_compression_threads = 0` default.
     ///
-    /// upstream: token.c:701 - `ZSTD_CCtx_setParameter(zstd_cctx, ZSTD_c_nbWorkers, do_compression_threads)`
+    /// upstream: token.c:749 - `ZSTD_CCtx_setParameter(zstd_cctx, ZSTD_c_nbWorkers, do_compression_threads)`
     pub(in crate::wire::compressed_token) fn new(
         level: i32,
         workers: Option<std::num::NonZeroU8>,
@@ -239,7 +239,7 @@ impl ZstdTokenEncoder {
     }
 
     /// Noop for zstd - no dictionary synchronization needed.
-    /// upstream: token.c:1102-1104 (see_token for CPRES_ZSTD is empty)
+    /// upstream: token.c:1132-1134 (see_token for CPRES_ZSTD is empty)
     pub(in crate::wire::compressed_token) fn see_token(&mut self, _data: &[u8]) -> io::Result<()> {
         Ok(())
     }
@@ -336,12 +336,12 @@ impl ZstdTokenEncoder {
     /// Writes the accumulated output buffer as a single DEFLATED_DATA block.
     ///
     /// Upstream writes the entire output buffer as one DEFLATED_DATA block
-    /// (token.c lines 756-760), then resets the buffer for the next chunk.
+    /// (token.c lines 813-817), then resets the buffer for the next chunk.
     /// The DEFLATED_DATA header uses 14-bit length encoding, so the maximum
     /// block size is `MAX_DATA_COUNT` (16383 bytes).
     fn write_output_buffer<W: Write>(&mut self, writer: &mut W) -> io::Result<()> {
         debug_assert!(self.output_pos <= MAX_DATA_COUNT);
-        // upstream: token.c lines 758-760
+        // upstream: token.c lines 815-817
         write_deflated_data_header(writer, self.output_pos)?;
         writer.write_all(&self.output_buf[..self.output_pos])?;
         self.output_pos = 0;

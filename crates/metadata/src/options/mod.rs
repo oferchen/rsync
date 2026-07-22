@@ -41,7 +41,7 @@ pub struct MetadataOptions {
     /// When true, `--keep-dirlinks` is active: dest-side symlinks pointing to
     /// real directories are followed instead of being replaced.
     ///
-    /// upstream: generator.c:1344 - `link_stat(fname, &sx.st, keep_dirlinks && is_dir)`
+    /// upstream: generator.c:1356 - `link_stat(fname, &sx.st, keep_dirlinks && is_dir)`
     /// resolves symlinked dest dirs at stat time, so subsequent chmod/chown
     /// operations land on the canonical real path. We mirror that by bypassing
     /// the dirfd-anchored sandbox in `secure_chmod_at` when this flag is set:

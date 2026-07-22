@@ -256,7 +256,7 @@ fn zstd_consecutive_block_matches_use_run_encoding() {
 /// a single buffer, the entire compressed+flushed output should appear
 /// as a single DEFLATED_DATA block, not multiple smaller blocks.
 ///
-/// upstream: token.c lines 755-763
+/// upstream: token.c lines 812-818
 #[test]
 fn zstd_flush_produces_single_deflated_data_block_for_small_input() {
     let mut encoder = ZstdTokenEncoder::new(3, None).unwrap();
@@ -376,7 +376,7 @@ fn zstd_wire_format_ordering() {
 /// each capped at MAX_DATA_COUNT, matching upstream's buffer-full write
 /// pattern.
 ///
-/// upstream: token.c line 755 - write when zstd_out_buff.pos == zstd_out_buff.size
+/// upstream: token.c line 812 - write when zstd_out_buff.pos == zstd_out_buff.size
 #[test]
 fn zstd_large_literal_splits_into_max_data_count_blocks() {
     let mut encoder = ZstdTokenEncoder::new(1, None).unwrap();
@@ -462,8 +462,8 @@ fn zstd_large_literal_splits_into_max_data_count_blocks() {
 /// The encoder and decoder contexts persist across file boundaries -
 /// only token run-encoding state resets between files.
 ///
-/// upstream: token.c:688 (CCtx created once), token.c:700-703 (only
-/// run state resets), token.c:789 (DCtx created once)
+/// upstream: token.c:740 (CCtx created once), token.c:756-759 (only
+/// run state resets), token.c:844 (DCtx created once)
 #[test]
 fn zstd_continuous_stream_across_files() {
     let mut encoder = ZstdTokenEncoder::new(3, None).unwrap();
@@ -536,7 +536,7 @@ fn zstd_block_match_without_literals_no_deflated_data() {
 /// Verifies the 2-byte header encoding: first byte is
 /// `DEFLATED_DATA | (len >> 8)`, second byte is `len & 0xFF`.
 /// This must match upstream's obuf[0]/obuf[1] encoding at
-/// token.c lines 758-759.
+/// token.c lines 815-816.
 #[test]
 fn zstd_deflated_data_header_matches_upstream() {
     let mut encoder = ZstdTokenEncoder::new(3, None).unwrap();

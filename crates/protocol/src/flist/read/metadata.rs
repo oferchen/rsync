@@ -5,7 +5,7 @@
 //!
 //! # Upstream Reference
 //!
-//! See `flist.c:recv_file_entry()` lines 826-920 for the metadata reading logic.
+//! See `flist.c:recv_file_entry()` lines 839-948 for the metadata reading logic.
 
 use std::io::{self, Read};
 
@@ -57,7 +57,7 @@ pub(crate) struct MetadataResult {
 impl FileListReader {
     /// Reads metadata fields in upstream rsync wire format order.
     ///
-    /// Fields are read in this exact order (matching flist.c recv_file_entry lines 826-920):
+    /// Fields are read in this exact order (matching flist.c recv_file_entry lines 839-948):
     ///
     /// | Order | Field | Condition | Encoding |
     /// |-------|-------|-----------|----------|
@@ -76,7 +76,7 @@ impl FileListReader {
         flags: FileFlags,
     ) -> io::Result<MetadataResult> {
         // 1. Read mtime
-        // upstream: flist.c:828-839 - proto >= 30 uses read_varlong(f, 4),
+        // upstream: flist.c:840-851 - proto >= 30 uses read_varlong(f, 4),
         // proto < 30 uses read_uint(f) (fixed 4-byte unsigned)
         let mtime = if flags.same_time() {
             self.state.prev_mtime()
@@ -132,7 +132,7 @@ impl FileListReader {
         // Upstream validates the FINAL resolved mode, whether freshly read or
         // inherited via XMIT_SAME_MODE, so the check lives outside the branch.
         // mode 0 is the sole exception, and only under --delete-missing-args
-        // (missing_args == 2), the mode-0 sentinel for a vanished arg (flist.c:2257).
+        // (missing_args == 2), the mode-0 sentinel for a vanished arg (flist.c:2442).
         if !(mode == 0 && self.delete_missing_args)
             && crate::flist::FileType::from_mode(mode).is_none()
         {
@@ -164,7 +164,7 @@ impl FileListReader {
         };
 
         // 6. Read UID and optional user name
-        // upstream: flist.c:880-890 - XMIT_USER_NAME_FOLLOWS only exists in
+        // upstream: flist.c:908-918 - XMIT_USER_NAME_FOLLOWS only exists in
         // protocol >= 30. In protocol 28-29 that bit position is
         // XMIT_SAME_DEV_pre30, so we must not interpret it as name_follows.
         let uid_name_follows = self.protocol.as_u8() >= 30 && flags.user_name_follows();
@@ -183,7 +183,7 @@ impl FileListReader {
         };
 
         // 7. Read GID and optional group name
-        // upstream: flist.c:891-902 - XMIT_GROUP_NAME_FOLLOWS only exists in
+        // upstream: flist.c:919-930 - XMIT_GROUP_NAME_FOLLOWS only exists in
         // protocol >= 30. In protocol 28-29 that bit position is
         // XMIT_RDEV_MINOR_8_pre30.
         let gid_name_follows = self.protocol.as_u8() >= 30 && flags.group_name_follows();
@@ -253,7 +253,7 @@ impl FileListReader {
 /// value unchanged. Otherwise reads the ID using fixed or varint encoding,
 /// and optionally reads a name string if `name_follows` is set.
 ///
-/// upstream: flist.c:recv_file_entry() lines 880-910 - uid/gid reading
+/// upstream: flist.c:recv_file_entry() lines 908-938 - uid/gid reading
 fn read_owner_id<R: Read + ?Sized>(
     reader: &mut R,
     same: bool,

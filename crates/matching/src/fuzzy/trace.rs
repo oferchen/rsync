@@ -5,8 +5,8 @@
 //!
 //! # Upstream Reference
 //!
-//! - `generator.c:1775` - `"fuzzy basis selected for %s: %s"` (level 1).
-//! - `generator.c:847`  - `"fuzzy size/modtime match for %s"` (level 2).
+//! - `generator.c:1789` - `"fuzzy basis selected for %s: %s"` (level 1).
+//! - `generator.c:860`  - `"fuzzy size/modtime match for %s"` (level 2).
 //! - `generator.c:897`  - `"fuzzy distance for %s = %d.%05d"` (level 2).
 
 use logging::debug_log;
@@ -18,7 +18,7 @@ use logging::debug_log;
 /// fuzzy basis selected for path/to/target: path/to/basis
 /// ```
 ///
-/// upstream: generator.c:1775-1778.
+/// upstream: generator.c:1788-1791.
 #[inline]
 pub fn trace_fuzzy_basis_selected(target: &str, basis: &str) {
     debug_log!(Fuzzy, 1, "fuzzy basis selected for {}: {}", target, basis);
@@ -31,7 +31,7 @@ pub fn trace_fuzzy_basis_selected(target: &str, basis: &str) {
 /// fuzzy size/modtime match for path/to/candidate
 /// ```
 ///
-/// upstream: generator.c:847-848.
+/// upstream: generator.c:859-860.
 #[inline]
 pub fn trace_fuzzy_size_mtime_match(candidate: &str) {
     debug_log!(Fuzzy, 2, "fuzzy size/modtime match for {}", candidate);
@@ -94,7 +94,7 @@ mod tests {
 
     /// Pins the level 1 emission to upstream's format byte-for-byte.
     ///
-    /// upstream: generator.c:1775-1778.
+    /// upstream: generator.c:1788-1791.
     #[test]
     fn fuzzy_basis_selected_matches_upstream() {
         setup_fuzzy(1);
@@ -142,7 +142,7 @@ mod tests {
 
     /// Pins the level 2 size/modtime fast-path emission format.
     ///
-    /// upstream: generator.c:847-848.
+    /// upstream: generator.c:859-860.
     #[test]
     fn fuzzy_size_mtime_match_matches_upstream() {
         setup_fuzzy(2);

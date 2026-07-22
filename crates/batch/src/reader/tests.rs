@@ -538,7 +538,7 @@ mod flist_deserialization_tests {
     /// in the flist carries a trailing checksum. If the reader doesn't consume
     /// these bytes, subsequent entries will be deserialized incorrectly.
     ///
-    /// upstream: flist.c:670 writes checksum bytes, flist.c:1202 reads them
+    /// upstream: flist.c:682 writes checksum bytes, flist.c:1230 reads them
     #[test]
     fn protocol_flist_roundtrip_with_always_checksum() {
         let temp_dir = TempDir::new().unwrap();

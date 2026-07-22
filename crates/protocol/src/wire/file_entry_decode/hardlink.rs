@@ -2,7 +2,7 @@
 //! Hardlink association decoding.
 //!
 //! Protocol 30+ uses a flist-relative index; protocols 28-29 use a (dev, ino)
-//! pair. upstream: flist.c:recv_file_entry() hardlink branches (lines 950-975).
+//! pair. upstream: flist.c:recv_file_entry() hardlink branches (lines 1189-1216).
 
 use std::io::{self, Read};
 
@@ -51,7 +51,7 @@ pub fn decode_hardlink_idx<R: Read>(reader: &mut R, flags: u32) -> io::Result<Op
 ///
 /// # Upstream Reference
 ///
-/// See `flist.c:recv_file_entry()` lines 950-975
+/// See `flist.c:recv_file_entry()` lines 1200-1207
 pub fn decode_hardlink_dev_ino<R: Read>(
     reader: &mut R,
     flags: u32,

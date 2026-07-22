@@ -128,7 +128,7 @@ fn attrs_flags_upstream_set_file_attrs_scenario() {
 
 #[test]
 fn attrs_flags_upstream_accurate_time_with_report() {
-    // Mirrors upstream generator.c:1814 where quick-check match combines
+    // Mirrors upstream generator.c:1827 where quick-check match combines
     // maybe_ATTRS_REPORT and maybe_ATTRS_ACCURATE_TIME.
     let flags = AttrsFlags::REPORT | AttrsFlags::ACCURATE_TIME;
     assert!(flags.report());

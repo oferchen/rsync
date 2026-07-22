@@ -155,7 +155,7 @@ fn write_filesfrom_entry<W: Write>(
 ///
 /// # Upstream Reference
 ///
-/// - `flist.c:2262` - `read_line(filesfrom_fd, fbuf, sizeof fbuf, rl_flags)`
+/// - `flist.c:2297` - `read_line(filesfrom_fd, fbuf, sizeof fbuf, rl_flags)`
 ///   with `RL_EOL_NULLS` set when `reading_remotely`
 /// - `io.c:read_line()` (RL_CONVERT branch) - `iconvbufs(ic_recv, ...)`
 /// - `compat.c:799-806` - `filesfrom_convert` gating predicate

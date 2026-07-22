@@ -86,7 +86,7 @@ impl BandwidthLimiter {
     /// Recalculates the write-max chunk size for the new rate and resets all
     /// internal accounting (debt, timing, simulated elapsed time). This is
     /// used when a daemon module overrides the client-supplied `--bwlimit`.
-    // upstream: options.c:2374 - daemon_bwlimit override reconfiguration
+    // upstream: options.c:2392 - daemon_bwlimit override reconfiguration
     #[doc(alias = "--bwlimit")]
     pub fn update_configuration(&mut self, limit: NonZeroU64, burst: Option<NonZeroU64>) {
         let write_max = calculate_write_max(limit, burst);
@@ -145,7 +145,7 @@ impl BandwidthLimiter {
     /// The value scales linearly with the configured rate so that pacing
     /// sleeps remain short and responsive. Callers should split writes
     /// larger than this threshold into chunks.
-    // upstream: options.c:2377 - bwlimit_writemax = bwlimit * 128
+    // upstream: options.c:2395 - bwlimit_writemax = bwlimit * 128
     #[inline]
     #[must_use]
     pub const fn write_max_bytes(&self) -> usize {
