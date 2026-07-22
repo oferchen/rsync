@@ -7,7 +7,8 @@
 //!
 //! # Wire Format
 //!
-//! The `user.rsync.%stat` xattr stores metadata in the format matching upstream:
+//! The fake-super stat xattr (`user.rsync.%stat` on Linux, `rsync.%stat`
+//! elsewhere) stores metadata in the format matching upstream:
 //! ```text
 //! <mode_octal> <rdev_major>,<rdev_minor> <uid>:<gid>
 //! ```
@@ -24,7 +25,18 @@ use std::os::unix::fs::MetadataExt;
 use std::path::Path;
 
 /// The xattr name used to store fake-super metadata.
+///
+/// Linux extended attributes require the `user.` namespace prefix; other
+/// platforms use a flat xattr namespace, so upstream stores the attribute under
+/// bare `rsync.` there. Using the Linux name unconditionally would write an
+/// attribute literally called `user.rsync.%stat` on macOS/BSD and break
+/// fake-super interop and round-trip. upstream: xattrs.c:64-70 RSYNC_PREFIX
+/// (`HAVE_LINUX_XATTRS`).
+#[cfg(target_os = "linux")]
 pub const FAKE_SUPER_XATTR: &str = "user.rsync.%stat";
+/// The fake-super stat xattr name on non-Linux platforms (flat namespace).
+#[cfg(not(target_os = "linux"))]
+pub const FAKE_SUPER_XATTR: &str = "rsync.%stat";
 
 /// Parsed fake-super metadata.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -379,6 +391,17 @@ pub fn remove_fake_super(_path: &Path) -> io::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn fake_super_xattr_name_matches_platform_namespace() {
+        // Linux xattrs need the `user.` prefix; other platforms use a flat
+        // namespace and store the attribute under bare `rsync.`.
+        // upstream: xattrs.c:64-70 RSYNC_PREFIX.
+        #[cfg(target_os = "linux")]
+        assert_eq!(FAKE_SUPER_XATTR, "user.rsync.%stat");
+        #[cfg(not(target_os = "linux"))]
+        assert_eq!(FAKE_SUPER_XATTR, "rsync.%stat");
+    }
 
     #[test]
     fn test_encode_regular_file() {
