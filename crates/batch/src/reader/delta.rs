@@ -47,6 +47,8 @@ impl BatchReader {
                 match token {
                     None => break,
                     Some(n) if n > 0 => {
+                        protocol::wire::delta::check_literal_token_len(n)
+                            .map_err(BatchError::Io)?;
                         let mut data = vec![0u8; n as usize];
                         reader.read_exact(&mut data).map_err(|e| {
                             BatchError::Io(io::Error::new(
