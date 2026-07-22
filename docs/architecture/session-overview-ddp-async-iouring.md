@@ -16,7 +16,7 @@ without changing the wire protocol or the user-visible CLI surface.
 First, the deletion path is restructured into a two-phase pipeline
 (parallel candidate compute fanned out across rayon, single emitter
 draining in upstream order) so every `--delete-*` mode matches upstream
-3.4.1 byte-for-byte by default while retaining internal parallelism.
+3.4.4 byte-for-byte by default while retaining internal parallelism.
 Second, an opt-in async SSH transport (`async-ssh` feature) and an
 opt-in tokio-based daemon listener (`async-daemon` feature) provide the
 high-concurrency I/O surfaces required for fan-out workloads, layered
@@ -36,7 +36,7 @@ target platform before they are promoted to default.
 DDP replaces the previous batched pre-transfer sweep
 (`delete_extraneous_files` over a `HashMap<PathBuf, HashSet<OsString>>`)
 with a two-phase model that produces byte-identical wall-clock event
-order against upstream rsync 3.4.1 for every `--delete-*` mode. No new
+order against upstream rsync 3.4.4 for every `--delete-*` mode. No new
 user-visible flag controls this; parity is the default. The legacy
 batched sweep no longer exists in the tree.
 

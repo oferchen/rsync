@@ -4,7 +4,7 @@ Audit of all `#[cfg(unix)]`, `#[cfg(target_os = "linux")]`, and `#[cfg(not(windo
 in `crates/` that represent functionality, documenting which have proper Windows implementations,
 no-op stubs, or missing support.
 
-Last updated: 2026-04-21
+Last updated: 2026-07-22
 
 ---
 

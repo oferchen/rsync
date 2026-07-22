@@ -45,5 +45,5 @@ for tooling, audits, and any future opt-in AppleDouble merge feature
 - RFC 1740: "MIME Encapsulation of Macintosh Files - MacMIME", section 5
   (AppleDouble container layout).
 - Apple Technical Note TN1188: "AppleSingle/AppleDouble Formats".
-- Upstream rsync 3.4.1 `xattrs.c` - reads `com.apple.*` xattrs through the
+- Upstream rsync 3.4.4 `xattrs.c` - reads `com.apple.*` xattrs through the
   generic `getxattr` / `setxattr` path with no Mac-specific code.

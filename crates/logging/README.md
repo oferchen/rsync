@@ -299,7 +299,7 @@ cargo run --package logging --example tracing_demo --features tracing
 
 ## Compatibility
 
-Designed to match rsync 3.4.1 behavior:
+Designed to match rsync 3.4.4 behavior:
 
 - ✅ Verbosity level mapping matches upstream
 - ✅ Info flag names and semantics match upstream

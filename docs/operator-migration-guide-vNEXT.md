@@ -24,7 +24,7 @@ and
 ## 1. Wire-format compatibility
 
 No protocol changes. vNEXT speaks protocol 32, byte-for-byte
-identically with the previous release and with upstream rsync 3.4.1.
+identically with the previous release and with upstream rsync 3.4.4.
 
 - Existing clients can connect to vNEXT servers and daemons unchanged.
 - Existing servers and daemons can accept vNEXT clients unchanged.

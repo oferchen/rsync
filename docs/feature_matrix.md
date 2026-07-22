@@ -1,4 +1,4 @@
-# Feature Matrix — Rust rsync vs Upstream 3.4.1
+# Feature Matrix — Rust rsync vs Upstream 3.4.4
 
 The table below enumerates the major capability areas described in the
 `Codex Mission Brief` and records the current implementation status in this

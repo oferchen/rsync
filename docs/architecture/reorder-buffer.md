@@ -5,7 +5,7 @@ Tracking issue: oc-rsync task #1883. Branch: `docs/reorder-buffer-hol-1883`.
 ## Scope
 
 Document the head-of-line (HoL) blocking behaviour of the concurrent delta
-pipeline's reorder buffer, contrast it against upstream rsync 3.4.1's
+pipeline's reorder buffer, contrast it against upstream rsync 3.4.4's
 strictly-sequential per-file pipeline, and capture the workloads where the
 behaviour is observable. The audit covers the two reorder-buffer
 implementations that exist today, the consumer thread that owns the
@@ -69,7 +69,7 @@ the batch.
 
 ## Upstream evidence
 
-Upstream rsync 3.4.1 has no reorder buffer. `receiver.c:recv_files` is a tight
+Upstream rsync 3.4.4 has no reorder buffer. `receiver.c:recv_files` is a tight
 single-threaded loop that reads `(ndx, iflags, ...)` tuples from the wire,
 applies the delta against the basis, commits the temp file, and writes the
 ack. Files are processed strictly in NDX order:
