@@ -453,9 +453,9 @@ pub(crate) fn emit_progress<W: Write + ?Sized>(
 /// - level 0: emits nothing.
 /// - level 1: emits only the trailing `sent X / total size is Y` summary.
 /// - level 2+: emits the full file-count + byte-breakdown block followed by
-///   the level-1 summary. The `File list generation/transfer time` lines are
-///   only emitted when the corresponding counter is non-zero, matching
-///   upstream's `if (stats.flist_buildtime)` guard.
+///   the level-1 summary. Both `File list generation/transfer time` lines are
+///   gated together on a non-zero file-list build time, matching upstream's
+///   single `if (stats.flist_buildtime)` guard.
 ///
 /// Line ordering and label spelling track upstream byte-for-byte. The leading
 /// `\n` (`main.c:419`) is intentionally omitted; the caller is responsible
@@ -551,7 +551,6 @@ fn emit_stats_detail_block<W: Write + ?Sized>(
     let matched_bytes = summary.matched_bytes();
     let file_list_size = summary.file_list_size();
     let file_list_generation_ms = summary.file_list_generation_time().as_millis();
-    let file_list_transfer_ms = summary.file_list_transfer_time().as_millis();
     let file_list_generation = summary.file_list_generation_time().as_secs_f64();
     let file_list_transfer = summary.file_list_transfer_time().as_secs_f64();
 
@@ -654,7 +653,7 @@ fn emit_stats_detail_block<W: Write + ?Sized>(
     // upstream: main.c:437 `if (stats.flist_buildtime)` gates both timing
     // lines. The upstream counter is a millisecond integer, so sub-millisecond
     // durations suppress the lines just as on the C side.
-    if file_list_generation_ms > 0 || file_list_transfer_ms > 0 {
+    if file_list_generation_ms > 0 {
         writeln!(
             stdout,
             "File list generation time: {file_list_generation:.3} seconds"

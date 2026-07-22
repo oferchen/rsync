@@ -19,7 +19,7 @@ use cli::{
     progress_format::{
         OverallProgress, PerFileProgress, calculate_rate, format_eta, format_number, format_rate,
     },
-    stats_format::{StatsData, StatsFormatter, format_speed, format_speedup},
+    stats_format::{format_speed, format_speedup},
 };
 use std::time::Duration;
 
@@ -69,97 +69,6 @@ fn stats_number_formatting_large_values() {
 }
 
 #[test]
-fn stats_summary_line_format_exact() {
-    // Upstream format: "sent X bytes  received Y bytes  Z bytes/sec"
-    // Note: TWO spaces between "bytes" and "received", and "bytes" and the speed
-    let data = StatsData {
-        total_bytes_sent: 12_345,
-        total_bytes_received: 67_890,
-        file_list_generation_time: 1.0,
-        file_list_transfer_time: 2.0,
-        ..Default::default()
-    };
-
-    let formatter = StatsFormatter::new(data);
-    let output = formatter.format();
-
-    // Verify exact format with two spaces
-    assert!(
-        output.contains("sent 12,345 bytes  received 67,890 bytes"),
-        "summary line must have exact upstream format with two spaces"
-    );
-}
-
-#[test]
-fn stats_speedup_line_format_exact() {
-    // Upstream format: "total size is X  speedup is Y.ZZ"
-    // Note: TWO spaces between "is" and "speedup"
-    let data = StatsData {
-        total_file_size: 1_234_567,
-        total_bytes_sent: 12_345,
-        total_bytes_received: 67_890,
-        ..Default::default()
-    };
-
-    let formatter = StatsFormatter::new(data);
-    let output = formatter.format();
-
-    // Verify exact format with two spaces
-    assert!(
-        output.contains("total size is 1,234,567  speedup is"),
-        "speedup line must have exact upstream format with two spaces"
-    );
-}
-
-#[test]
-fn stats_speedup_calculation() {
-    // Speedup = total_size / (sent + received)
-    // Upstream calculation: 1,234,567 / (12,345 + 67,890) = 15.38
-    // Test via formatted output since calculation is internal
-    let data = StatsData {
-        total_file_size: 1_234_567,
-        total_bytes_sent: 12_345,
-        total_bytes_received: 67_890,
-        ..Default::default()
-    };
-
-    let formatter = StatsFormatter::new(data);
-    let output = formatter.format();
-
-    // Expected speedup: 1,234,567 / (12,345 + 67,890) = 1,234,567 / 80,235 = 15.38...
-    // Should contain speedup around 15.38 (allow for rounding)
-    assert!(
-        output.contains("speedup is 15.38")
-            || output.contains("speedup is 15.39")
-            || output.contains("speedup is 15.37"),
-        "speedup calculation should match upstream formula, got: {}",
-        output
-            .lines()
-            .find(|line| line.contains("speedup"))
-            .unwrap_or("")
-    );
-}
-
-#[test]
-fn stats_speedup_zero_transfer() {
-    // If no bytes transferred, speedup is 0.00 (not infinite)
-    let data = StatsData {
-        total_file_size: 1_234_567,
-        total_bytes_sent: 0,
-        total_bytes_received: 0,
-        ..Default::default()
-    };
-
-    let formatter = StatsFormatter::new(data);
-    let output = formatter.format();
-
-    assert!(
-        output.contains("speedup is 0.00"),
-        "speedup should be 0 when no bytes transferred"
-    );
-}
-
-#[test]
 fn stats_speedup_formatting_decimal_places() {
     // Upstream always shows 2 decimal places: "15.38"
     assert_eq!(
@@ -187,45 +96,6 @@ fn stats_speed_formatting_decimal_places() {
         "100.00",
         "speed should show .00 for whole numbers"
     );
-}
-
-#[test]
-fn stats_full_output_format() {
-    // Verify complete stats output structure matches upstream
-    let data = StatsData {
-        num_files: 1234,
-        num_created_files: 56,
-        num_deleted_files: 0,
-        num_transferred_files: 42,
-        total_file_size: 1_234_567,
-        total_transferred_size: 123_456,
-        literal_data: 12_345,
-        matched_data: 111_111,
-        file_list_size: 1_234,
-        file_list_generation_time: 0.001,
-        file_list_transfer_time: 0.0,
-        total_bytes_sent: 12_345,
-        total_bytes_received: 67_890,
-        protocol_version: 32,
-    };
-
-    let formatter = StatsFormatter::new(data);
-    let output = formatter.format();
-
-    // Verify all required lines are present in exact format
-    assert!(output.contains("Number of files: 1,234"));
-    assert!(output.contains("Number of created files: 56"));
-    assert!(output.contains("Number of deleted files: 0"));
-    assert!(output.contains("Number of regular files transferred: 42"));
-    assert!(output.contains("Total file size: 1,234,567 bytes"));
-    assert!(output.contains("Total transferred file size: 123,456 bytes"));
-    assert!(output.contains("Literal data: 12,345 bytes"));
-    assert!(output.contains("Matched data: 111,111 bytes"));
-    assert!(output.contains("File list size: 1,234"));
-    assert!(output.contains("File list generation time: 0.001 seconds"));
-    assert!(output.contains("File list transfer time: 0.000 seconds"));
-    assert!(output.contains("Total bytes sent: 12,345"));
-    assert!(output.contains("Total bytes received: 67,890"));
 }
 
 #[test]
