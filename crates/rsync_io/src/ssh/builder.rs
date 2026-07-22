@@ -573,6 +573,24 @@ impl SshCommand {
             args.push(jump.clone());
         }
 
+        // Emit the remote username as a separate `-l <user>` argument rather
+        // than folding it into a `user@host` operand. Unlike the `-4`/`-6`
+        // and cipher/keepalive injections above, this is unconditional on the
+        // program basename: upstream applies it to any remote-shell program
+        // (ssh, rsh, or a custom `-e` wrapper), which matters for wrappers
+        // such as the testsuite's `lsh.sh` that parse `-l <user>` but do not
+        // understand `user@host`.
+        // upstream: main.c:569-586 `do_cmd()` - `if (user &&
+        // !(daemon_connection && dash_l_set)) { args[argc++] = "-l";
+        // args[argc++] = user; }`. `SshCommand` never drives a
+        // `daemon_connection` invocation (that path is
+        // `client::module_list::connect::rsh::build_rsh_command_argv`), so
+        // the condition reduces to a plain `if (user)`.
+        if let Some(user) = &self.user {
+            args.push(OsString::from("-l"));
+            args.push(user.clone());
+        }
+
         // Force IPv4/IPv6 host resolution by appending `-4`/`-6` right before
         // the destination operand, matching upstream's placement. Gated on the
         // program basename being `ssh` so non-ssh `-e` wrappers are untouched.
@@ -603,15 +621,14 @@ impl SshCommand {
             return Some(target.clone());
         }
 
-        if self.host.is_empty() && self.user.is_none() {
+        if self.host.is_empty() {
             return None;
         }
 
+        // The remote username is rendered as a separate `-l <user>` argument
+        // (see `command_parts`), matching upstream `do_cmd()`, so this
+        // operand is the bare host - never a `user@host` composite.
         let mut target = OsString::new();
-        if let Some(user) = &self.user {
-            target.push(user);
-            target.push("@");
-        }
 
         // Strict validation: IPv6 hosts must parse via `Ipv6Addr::from_str`
         // (with optional `%zone` suffix per RFC 4007). Anything else is

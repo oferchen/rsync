@@ -48,9 +48,10 @@ pub(crate) struct RshDaemonSpawn<'a> {
 }
 
 /// Returns whether the remote-shell program is ssh (or an ssh-family binary
-/// such as `/usr/bin/ssh`), which understands the `-o`/`-J`/`-l` connection
+/// such as `/usr/bin/ssh`), which understands the `-o`/`-J` connection
 /// options. A custom `-e` program (`rsh`, the testsuite `lsh.sh`, etc.) does
-/// not, and upstream only injects those SSH flags when the rsh is ssh.
+/// not, and upstream only injects those SSH flags when the rsh is ssh. `-l
+/// <user>` is unaffected by this gate: upstream emits it for any program.
 fn is_ssh_like(program: &OsStr) -> bool {
     let name = std::path::Path::new(program)
         .file_name()
@@ -84,8 +85,8 @@ fn build_rsh_command_argv(spec: &RshDaemonSpawn<'_>) -> (OsString, Vec<OsString>
         args.push(opt.clone());
     }
 
-    // upstream: main.c - the `-o`/`-J`/`-l` connection options are SSH-specific
-    // and are only injected when the remote-shell program is ssh. A custom
+    // upstream: main.c - the `-o`/`-J` connection options are SSH-specific and
+    // are only injected when the remote-shell program is ssh. A custom
     // `-e PROG` (e.g. the testsuite `lsh.sh`, or `rsh`) is spawned verbatim as
     // `PROG <pre-args> <host> "<cmd>"`; passing it `-o ConnectTimeout=...`
     // breaks programs that do not understand SSH flags (lsh.sh reads the next
@@ -110,11 +111,28 @@ fn build_rsh_command_argv(spec: &RshDaemonSpawn<'_>) -> (OsString, Vec<OsString>
                 timeout.as_secs()
             )));
         }
+    }
 
-        if let Some(user) = spec.username {
-            args.push(OsString::from("-l"));
-            args.push(OsString::from(user));
-        }
+    // upstream: main.c:569-586 do_cmd() - `-l user` is emitted as a separate
+    // argument for ANY remote-shell program, not just ssh: `lsh.sh` and
+    // traditional `rsh` both parse `-l USER` (see `support/lsh.sh`), so
+    // rendering `user@host` instead would leave those wrappers unable to
+    // find the host operand. The only case upstream skips re-emitting the
+    // parsed user is `daemon_connection && dash_l_set` - the caller already
+    // wrote a literal `-l <user>` into the `--rsh`/`-e` string:
+    // `for (i = 0; i < argc-1; i++) if (!strcmp(args[i], "-l") &&
+    // args[i+1][0] != '-') dash_l_set = 1;` (main.c:569-573), scanning the
+    // whole tokenized `--rsh` argv. This path is always a daemon connection
+    // (daemon-over-rsh), so the condition reduces to `!dash_l_set`.
+    let dash_l_set = spec
+        .shell_args
+        .windows(2)
+        .any(|w| w[0].to_string_lossy() == "-l" && !w[1].to_string_lossy().starts_with('-'));
+    if let Some(user) = spec.username
+        && !dash_l_set
+    {
+        args.push(OsString::from("-l"));
+        args.push(OsString::from(user));
     }
 
     // upstream: main.c:588-593 do_cmd() - -4/-6 appended when default_af_hint
@@ -130,12 +148,9 @@ fn build_rsh_command_argv(spec: &RshDaemonSpawn<'_>) -> (OsString, Vec<OsString>
         }
     }
 
-    // ssh takes the login via `-l user` above and the bare host here; a custom
-    // rsh program receives `user@host` (upstream do_cmd handling).
-    match (ssh_like, spec.username) {
-        (false, Some(user)) => args.push(OsString::from(format!("{user}@{}", spec.host))),
-        _ => args.push(OsString::from(spec.host)),
-    }
+    // The login was already rendered above as `-l user`; the operand here is
+    // always the bare host (upstream do_cmd() never composes `user@host`).
+    args.push(OsString::from(spec.host));
 
     // upstream: main.c:594-604 - the remote command is
     // `rsync_path --server --daemon .` with no server_options().
@@ -326,6 +341,124 @@ mod tests {
         assert!(
             !rendered.contains(&"-6".to_owned()),
             "unexpected -6 for rsh: {rendered:?}"
+        );
+    }
+
+    fn argv_strings_with_user(shell: &str, username: Option<&str>) -> Vec<String> {
+        let shell_args = vec![OsString::from(shell)];
+        let spec = RshDaemonSpawn {
+            shell_args: &shell_args,
+            host: "example.com",
+            username,
+            port: 873,
+            rsync_path: None,
+            bind_address: None,
+            jump_hosts: None,
+            connect_timeout: None,
+            address_mode: AddressMode::Default,
+        };
+        let (_, args) = build_rsh_command_argv(&spec);
+        args.iter()
+            .map(|a| a.to_string_lossy().into_owned())
+            .collect()
+    }
+
+    /// A username parsed from `user@host::module` must render as a separate
+    /// `-l user` argument ahead of the bare host, even for a non-ssh custom
+    /// `-e` program. WHY: `support/lsh.sh` in the upstream testsuite only
+    /// recognises `-l USER` and matches the literal hostnames `localhost`/
+    /// `lh`; a `user@localhost` operand would fall through to its `*)`
+    /// branch and fail with "unable to connect to host user@localhost",
+    /// silently breaking every `--rsh`/`-e` script written to the
+    /// traditional `rsh -l user host` calling convention.
+    /// upstream: main.c:569-586 do_cmd() emits `-l user` unconditionally.
+    #[test]
+    fn renders_dash_l_user_for_non_ssh_program() {
+        let rendered = argv_strings_with_user("lsh.sh", Some("backup"));
+        let l_idx = rendered.iter().position(|a| a == "-l");
+        let user_idx = rendered.iter().position(|a| a == "backup");
+        let host_idx = rendered.iter().position(|a| a == "example.com");
+        assert_eq!(
+            l_idx.map(|i| i + 1),
+            user_idx,
+            "-l must immediately precede the user: {rendered:?}"
+        );
+        assert!(
+            user_idx.zip(host_idx).is_some_and(|(u, h)| u < h),
+            "-l user must precede the host operand: {rendered:?}"
+        );
+        assert!(
+            !rendered.iter().any(|a| a.contains('@')),
+            "no user@host composite should be rendered: {rendered:?}"
+        );
+    }
+
+    /// The same `-l user` placement applies to `ssh` itself.
+    #[test]
+    fn renders_dash_l_user_for_ssh() {
+        let rendered = argv_strings_with_user("ssh", Some("backup"));
+        assert_eq!(
+            rendered,
+            vec![
+                "-l".to_owned(),
+                "backup".to_owned(),
+                "example.com".to_owned(),
+                "rsync".to_owned(),
+                "--server".to_owned(),
+                "--daemon".to_owned(),
+                ".".to_owned(),
+            ]
+        );
+    }
+
+    /// No username means no `-l` is emitted at all.
+    #[test]
+    fn omits_dash_l_without_username() {
+        let rendered = argv_strings_with_user("ssh", None);
+        assert!(
+            !rendered.contains(&"-l".to_owned()),
+            "unexpected -l with no username: {rendered:?}"
+        );
+    }
+
+    /// When the caller's `--rsh` string already spells out a literal
+    /// `-l <user>` (the `dash_l_set` case), the parsed `user@host` login must
+    /// not be re-emitted as a second `-l`, matching upstream's
+    /// `daemon_connection && dash_l_set` skip.
+    /// upstream: main.c:569-573,583-586.
+    #[test]
+    fn skips_dash_l_when_already_set_in_rsh_string() {
+        let shell_args = vec![
+            OsString::from("ssh"),
+            OsString::from("-l"),
+            OsString::from("preconfigured"),
+        ];
+        let spec = RshDaemonSpawn {
+            shell_args: &shell_args,
+            host: "example.com",
+            username: Some("backup"),
+            port: 873,
+            rsync_path: None,
+            bind_address: None,
+            jump_hosts: None,
+            connect_timeout: None,
+            address_mode: AddressMode::Default,
+        };
+        let (_, args) = build_rsh_command_argv(&spec);
+        let rendered: Vec<String> = args.iter().map(|a| a.to_string_lossy().into_owned()).collect();
+
+        let l_count = rendered.iter().filter(|a| a.as_str() == "-l").count();
+        assert_eq!(
+            l_count, 1,
+            "the pre-existing -l must not be duplicated: {rendered:?}"
+        );
+        assert!(
+            rendered.contains(&"preconfigured".to_owned()),
+            "the literal -l value from the --rsh string must survive: {rendered:?}"
+        );
+        assert!(
+            !rendered.contains(&"backup".to_owned()),
+            "the parsed user@host login must be suppressed: {rendered:?}"
         );
     }
 }
