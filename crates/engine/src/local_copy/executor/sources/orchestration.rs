@@ -676,7 +676,9 @@ pub(super) fn delete_missing_source_entry(
         return Ok(());
     }
 
-    context.backup_existing_entry(&target, record_path, file_type)?;
+    // upstream: delete.c:167 - prefer_rename=True; the item is unlinked
+    // outright right after, so skip the hard-link tier.
+    context.backup_existing_entry(&target, record_path, file_type, true)?;
     let removal = if file_type.is_dir() {
         fs::remove_dir_all(&target)
     } else {

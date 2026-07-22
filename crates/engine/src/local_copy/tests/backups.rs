@@ -1,4 +1,67 @@
 
+// `--backup` must hard-link the existing destination into the backup
+// location when it stays on the same filesystem, mirroring upstream's
+// `link_or_rename()` HLINK branch (backup.c:200-207) - the default whenever
+// the caller doesn't prefer a rename outright. A plain rename would still
+// preserve the bytes, but a hard link is what upstream actually does, and it
+// matters: it keeps the backup coherent with any other name pointing at the
+// same inode instead of severing it, and it avoids gratuitously moving data
+// across directories when the backup dir shares a filesystem with the
+// destination. The transfer's rename-into-place then reassigns the
+// destination name to the freshly written content, leaving the backup as
+// the sole remaining link to the original inode.
+#[cfg(unix)]
+#[test]
+fn backup_hard_links_same_filesystem_backup() {
+    use std::os::unix::fs::MetadataExt;
+
+    let ctx = test_helpers::setup_copy_test();
+    fs::create_dir_all(&ctx.dest).expect("create dest");
+
+    let source_file = ctx.source.join("file.txt");
+    fs::write(&source_file, b"updated").expect("write source");
+
+    let dest_root = ctx.dest.join("source");
+    fs::create_dir_all(&dest_root).expect("create dest root");
+    let existing = dest_root.join("file.txt");
+    fs::write(&existing, b"original").expect("write dest");
+    let inode_before = fs::metadata(&existing).expect("stat dest").ino();
+
+    let operands = vec![
+        ctx.source.clone().into_os_string(),
+        ctx.dest.clone().into_os_string(),
+    ];
+    let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
+    let options = LocalCopyOptions::default().backup(true);
+
+    plan.execute_with_options(LocalCopyExecution::Apply, options)
+        .expect("copy succeeds");
+
+    let backup = dest_root.join("file.txt~");
+    let backup_meta = fs::metadata(&backup).expect("stat backup");
+    assert_eq!(
+        backup_meta.ino(),
+        inode_before,
+        "same-filesystem backup must be a hard link to the original inode, not a copy"
+    );
+    assert_eq!(
+        backup_meta.nlink(),
+        1,
+        "the destination name was reassigned to the newly written content by \
+         the transfer's rename-into-place, leaving the backup as the sole \
+         remaining link to the original inode"
+    );
+    assert_eq!(
+        fs::read(&backup).expect("read backup"),
+        b"original",
+        "backup must retain the pre-transfer bytes"
+    );
+    assert_eq!(
+        fs::read(dest_root.join("file.txt")).expect("read dest"),
+        b"updated"
+    );
+}
+
 #[test]
 fn backup_creation_uses_default_suffix() {
     let ctx = test_helpers::setup_copy_test();
@@ -590,11 +653,18 @@ fn cross_device_file_backup_preserves_mode_and_mtime() {
         .group(true)
         .with_backup_directory(Some(backup_dir.clone()));
 
-    with_backup_rename_override(
-        |_, _| Some(Err(io::Error::from_raw_os_error(super::CROSS_DEVICE_ERROR_CODE))),
+    // The hard-link tier is tried first (backup.c:200-207); force it to fail
+    // cross-device too so the rename override below is actually reached.
+    with_hard_link_override(
+        |_, _| Err(io::Error::from_raw_os_error(super::CROSS_DEVICE_ERROR_CODE)),
         || {
-            plan.execute_with_options(LocalCopyExecution::Apply, options)
-                .expect("copy succeeds")
+            with_backup_rename_override(
+                |_, _| Some(Err(io::Error::from_raw_os_error(super::CROSS_DEVICE_ERROR_CODE))),
+                || {
+                    plan.execute_with_options(LocalCopyExecution::Apply, options)
+                        .expect("copy succeeds")
+                },
+            )
         },
     );
 
@@ -650,11 +720,18 @@ fn cross_device_symlink_backup_preserves_target_and_mtime() {
         .group(true)
         .with_backup_directory(Some(backup_dir.clone()));
 
-    with_backup_rename_override(
-        |_, _| Some(Err(io::Error::from_raw_os_error(super::CROSS_DEVICE_ERROR_CODE))),
+    // The hard-link tier is tried first (backup.c:200-207); force it to fail
+    // cross-device too so the rename override below is actually reached.
+    with_hard_link_override(
+        |_, _| Err(io::Error::from_raw_os_error(super::CROSS_DEVICE_ERROR_CODE)),
         || {
-            plan.execute_with_options(LocalCopyExecution::Apply, options)
-                .expect("copy succeeds")
+            with_backup_rename_override(
+                |_, _| Some(Err(io::Error::from_raw_os_error(super::CROSS_DEVICE_ERROR_CODE))),
+                || {
+                    plan.execute_with_options(LocalCopyExecution::Apply, options)
+                        .expect("copy succeeds")
+                },
+            )
         },
     );
 
