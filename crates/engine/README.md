@@ -16,7 +16,7 @@ drive file operations through this crate.
 - `apply_delta` / `generate_delta` / `generate_file_signature` - end-to-end delta helpers
 - `SignatureLayout` / `calculate_signature_layout` - upstream-compatible block-size heuristics
 - `LocalCopyPlan` - recursive wire-compatible local transfer executor
-- `SparseWriter` / `SparseReader` / `SparseDetector` - sparse file I/O with zero-run detection
+- `SparseReader` / `SparseDetector` - sparse file I/O with zero-run detection
 - `BufferPool` / `PooledBuffer` - RAII buffer reuse to eliminate per-file heap churn
 - `FuzzyMatcher` - basis-file similarity scoring for `--fuzzy`
 - `DeleteTiming` - controls before/after deletion passes

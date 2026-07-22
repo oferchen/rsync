@@ -11,14 +11,12 @@ mod detect;
 mod hole_punch;
 mod reader;
 mod state;
-mod writer;
 
 #[cfg(test)]
 mod tests;
 
 pub use detect::SparseDetector;
 pub use reader::SparseReader;
-pub use writer::{SparseWriteStats, SparseWriter, ZeroScanStrategy};
 
 /// Selects the mechanism used by [`SparseReader::detect_holes`] to identify
 /// sparse regions in a file.
