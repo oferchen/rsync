@@ -40,6 +40,20 @@ pub fn sync_acls(
     Ok(())
 }
 
+/// Stub fake-super ACL synchronisation for iOS/tvOS/watchOS platforms.
+///
+/// Mirrors [`sync_acls`]'s behaviour: no work, one-time warning, `Ok(())`.
+#[allow(clippy::module_name_repetitions)]
+pub fn sync_acls_via_fake_super(
+    source: &Path,
+    destination: &Path,
+    follow_symlinks: bool,
+) -> Result<(), MetadataError> {
+    let _ = (source, destination, follow_symlinks);
+    warn_acl_unsupported();
+    Ok(())
+}
+
 /// Synthesises an [`RsyncAcl`] from `mode`, since iOS/tvOS/watchOS cannot read a
 /// filesystem ACL.
 ///
@@ -82,6 +96,23 @@ pub fn apply_acls_from_cache(
     Ok(())
 }
 
+/// Stores parsed ACLs from an [`AclCache`] into `--fake-super` xattrs.
+///
+/// On iOS/tvOS/watchOS platforms without ACL support, emits a one-time
+/// warning and returns `Ok(())`.
+#[allow(clippy::module_name_repetitions)]
+pub fn store_acls_via_fake_super(
+    destination: &Path,
+    cache: &AclCache,
+    access_ndx: u32,
+    default_ndx: Option<u32>,
+    follow_symlinks: bool,
+) -> Result<(), MetadataError> {
+    let _ = (destination, cache, access_ndx, default_ndx, follow_symlinks);
+    warn_acl_unsupported();
+    Ok(())
+}
+
 /// Returns the umask-derived default permissions for `dir`.
 ///
 /// iOS/tvOS/watchOS lack POSIX default-ACL support, so this stub returns
@@ -108,6 +139,14 @@ mod tests {
     }
 
     #[test]
+    fn sync_acls_via_fake_super_returns_ok() {
+        let src = Path::new("/nonexistent/src");
+        let dst = Path::new("/nonexistent/dst");
+        let result = sync_acls_via_fake_super(src, dst, false);
+        assert!(result.is_ok());
+    }
+
+    #[test]
     fn get_rsync_acl_non_default_returns_from_mode() {
         let path = Path::new("/nonexistent/file");
         let acl = get_rsync_acl(path, 0o755, false);
@@ -128,6 +167,14 @@ mod tests {
         let dst = Path::new("/nonexistent/dst");
         let cache = AclCache::new();
         let result = apply_acls_from_cache(dst, &cache, 0, None, false, None, None);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn store_acls_via_fake_super_returns_ok() {
+        let dst = Path::new("/nonexistent/dst");
+        let cache = AclCache::new();
+        let result = store_acls_via_fake_super(dst, &cache, 0, None, false);
         assert!(result.is_ok());
     }
 }

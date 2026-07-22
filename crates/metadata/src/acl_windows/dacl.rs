@@ -290,6 +290,36 @@ pub fn apply_acls_from_cache(
     apply_rsync_acl_to_path(destination, &reconstructed)
 }
 
+/// Stores parsed ACLs from an [`AclCache`] into `--fake-super` xattrs.
+///
+/// `--fake-super`'s `%aacl`/`%dacl` stashing is a POSIX-ACL-only mechanism
+/// (upstream: `acls.c`'s `am_root < 0` branch operates on `SMB_ACL_T`, which
+/// has no Windows equivalent). Windows ACLs are already persisted via their
+/// own SDDL xattr (`WINDOWS_SDDL_XATTR_NAME`), so this falls straight through
+/// to the normal apply path unchanged.
+///
+/// # Errors
+///
+/// Returns [`MetadataError`] on unrecoverable Win32 failures.
+#[allow(clippy::module_name_repetitions)]
+pub fn store_acls_via_fake_super(
+    destination: &Path,
+    cache: &AclCache,
+    access_ndx: u32,
+    default_ndx: Option<u32>,
+    follow_symlinks: bool,
+) -> Result<(), MetadataError> {
+    apply_acls_from_cache(
+        destination,
+        cache,
+        access_ndx,
+        default_ndx,
+        follow_symlinks,
+        None,
+        None,
+    )
+}
+
 /// Returns the umask-derived default permissions for `dir`.
 ///
 /// Windows lacks POSIX default ACLs, so this returns `ACCESSPERMS & ~umask`

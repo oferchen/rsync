@@ -98,7 +98,14 @@ pub(super) fn apply_final_directory_metadata(
     )?;
 
     #[cfg(all(any(unix, windows), feature = "acl"))]
-    sync_acls_if_requested(preserve_acls, mode, source, destination, true)?;
+    sync_acls_if_requested(
+        preserve_acls,
+        context.options().fake_super_enabled(),
+        mode,
+        source,
+        destination,
+        true,
+    )?;
 
     // Suppress unused variable warnings when features are disabled
     let _ = source;

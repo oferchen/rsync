@@ -19,7 +19,7 @@ use super::LocalCopyExecution;
 use super::FilterProgram;
 
 #[cfg(all(any(unix, windows), feature = "acl"))]
-use ::metadata::sync_acls;
+use ::metadata::{sync_acls, sync_acls_via_fake_super};
 
 #[cfg(all(unix, feature = "xattr"))]
 use ::metadata::sync_xattrs;
@@ -64,22 +64,38 @@ pub(crate) fn sync_xattrs_if_requested(
 
 /// Synchronizes POSIX/extended ACLs from source to destination if requested.
 ///
-/// No-op when `preserve_acls` is false or in dry-run mode.
-/// Unsupported-filesystem errors are silently ignored.
+/// No-op when `preserve_acls` is false or in dry-run mode. Under
+/// `--fake-super`, the ACL is stashed in the destination's `%aacl`/`%dacl`
+/// xattr instead of being applied with a real `setfacl` - an unprivileged
+/// fake-super receiver cannot reliably apply an arbitrary ACL (particularly
+/// named user/group entries), matching how ownership is stashed in `%stat`
+/// ([`store_effective_fake_super_if_requested`]). Unsupported-filesystem
+/// errors are silently ignored.
 ///
 /// # Errors
 ///
 /// Returns [`LocalCopyError`] if ACL synchronization fails.
+///
+/// # Upstream Reference
+///
+/// Mirrors the `am_root < 0` branches of `get_rsync_acl()`/`set_rsync_acl()`
+/// in `acls.c` lines 472-509 and 933-971.
 #[cfg(all(any(unix, windows), feature = "acl"))]
 pub(crate) fn sync_acls_if_requested(
     preserve_acls: bool,
+    fake_super: bool,
     mode: LocalCopyExecution,
     source: &Path,
     destination: &Path,
     follow_symlinks: bool,
 ) -> Result<(), LocalCopyError> {
     if preserve_acls && !mode.is_dry_run() {
-        sync_acls(source, destination, follow_symlinks).map_err(map_metadata_error)?;
+        if fake_super {
+            sync_acls_via_fake_super(source, destination, follow_symlinks)
+                .map_err(map_metadata_error)?;
+        } else {
+            sync_acls(source, destination, follow_symlinks).map_err(map_metadata_error)?;
+        }
     }
     Ok(())
 }
