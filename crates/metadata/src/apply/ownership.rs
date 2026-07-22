@@ -42,7 +42,7 @@ use std::os::unix::fs::MetadataExt;
 /// When `--keep-dirlinks` is active the user has opted into following
 /// dest-side symlinks-to-dirs, so the sandbox refusal is wrong: fall back to
 /// the path-based `nix` chown (through `AT_FDCWD`) which resolves symlinked
-/// parents like upstream `generator.c:1344`'s `link_stat`.
+/// parents like upstream `generator.c:1356`'s `link_stat`.
 ///
 /// Both branches perform the ownership change through the libc
 /// `chown`/`lchown`/`fchownat` symbol rather than a raw syscall. This is

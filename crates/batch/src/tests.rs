@@ -633,8 +633,8 @@ mod integration {
     /// fix, checksum bytes after each regular file entry are not consumed, causing
     /// subsequent entries to be deserialized incorrectly.
     ///
-    /// upstream: flist.c:670 `write_buf(f, sum, flist_csum_len)` writes the
-    /// checksum, and flist.c:1202 `read_buf(f, bp, flist_csum_len)` reads it.
+    /// upstream: flist.c:682 `write_buf(f, sum, flist_csum_len)` writes the
+    /// checksum, and flist.c:1230 `read_buf(f, bp, flist_csum_len)` reads it.
     #[test]
     fn test_protocol_flist_roundtrip_with_always_checksum() {
         use protocol::flist::{FileEntry, FileListWriter};
@@ -966,13 +966,13 @@ mod integration {
     /// a compressed delta batch with copy tokens (block matches) requires the
     /// decoder to feed matched block data into the inflate dictionary via
     /// see_token(). Without this, inflate fails with "invalid distance too
-    /// far back" (error -3 at token.c:608).
+    /// far back" (error -3 at token.c:665).
     ///
     /// oc-rsync implements proper dictionary sync in batch replay, making it
     /// capable of reading compressed delta batches that upstream itself cannot.
     ///
     /// upstream: token.c:see_deflate_token() - dictionary sync during live transfer
-    /// upstream: token.c:608 - inflate fails without dictionary sync in batch read
+    /// upstream: token.c:665 - inflate fails without dictionary sync in batch read
     #[test]
     fn test_replay_compressed_delta_with_block_matches() {
         use protocol::flist::{FileEntry, FileListWriter};
@@ -1052,7 +1052,7 @@ mod integration {
 
             // Multiple CPRES_ZLIB block matches require see_token() to feed
             // basis bytes into the inflate dictionary; without it, the decoder
-            // fails with "invalid distance too far back" (token.c:608).
+            // fails with "invalid distance too far back" (token.c:665).
             let mut token_buf = Vec::new();
             let mut encoder = CompressedTokenEncoder::default();
             encoder.set_zlibx(false);
@@ -1459,7 +1459,7 @@ mod integration {
     /// This test exercises the exact code path in `replay.rs` where
     /// `decoder.reset()` is called before each file's token reading loop.
     ///
-    /// upstream: token.c:496 - inflateReset per file
+    /// upstream: token.c:589 - inflateReset per file
     /// upstream: token.c:recv_deflated_token() - r_init resets state
     #[test]
     fn test_replay_compressed_multi_file_resets_decoder() {
@@ -1596,11 +1596,11 @@ mod integration {
     /// tokens. The decoder must reset between files AND correctly feed basis
     /// block data via see_token() for each file independently.
     ///
-    /// This exercises the upstream bug scenario (token.c:608 inflate -3) for
+    /// This exercises the upstream bug scenario (token.c:665 inflate -3) for
     /// multiple files in sequence, verifying that oc-rsync handles it correctly.
     ///
     /// upstream: token.c:see_deflate_token() - per-file dictionary sync
-    /// upstream: token.c:608 - inflate error -3 when dictionary sync missing
+    /// upstream: token.c:665 - inflate error -3 when dictionary sync missing
     #[test]
     fn test_replay_compressed_multi_file_with_block_matches() {
         use protocol::flist::{FileEntry, FileListWriter};

@@ -272,7 +272,7 @@ pub fn apply_file_metadata_with_fd_if_changed(
 
 /// Fast check whether all metadata attributes already match the destination.
 ///
-/// Mirrors upstream `generator.c:461 unchanged_attrs()` - a pure in-memory
+/// Mirrors upstream `generator.c:468 unchanged_attrs()` - a pure in-memory
 /// comparison that avoids the function-call overhead of the full
 /// [`apply_metadata_with_cached_stat`] path. Returns `true` when every
 /// preserved attribute (permissions, ownership, timestamps) matches the
@@ -281,9 +281,9 @@ pub fn apply_file_metadata_with_fd_if_changed(
 ///
 /// # Upstream Reference
 ///
-/// - `generator.c:461-502` - `unchanged_attrs()` checks `perms_differ`,
+/// - `generator.c:468-509` - `unchanged_attrs()` checks `perms_differ`,
 ///   `ownership_differs`, `any_time_differs`, `acls_differ`, `xattrs_differ`
-/// - `generator.c:1809-1814` - quick-check match calls `set_file_attrs` only
+/// - `generator.c:1822-1827` - quick-check match calls `set_file_attrs` only
 ///   when `unchanged_attrs` would fail (implicit - upstream always calls
 ///   `set_file_attrs` but its internal guards skip every syscall when nothing
 ///   differs)
@@ -297,13 +297,13 @@ pub fn metadata_unchanged(
     {
         use std::os::unix::fs::MetadataExt;
 
-        // upstream: generator.c:487-488 - perms_differ(file, sxp)
+        // upstream: generator.c:494-495 - perms_differ(file, sxp)
         if options.permissions() && (cached_meta.mode() & 0o7777) != (entry.permissions() & 0o7777)
         {
             return false;
         }
 
-        // upstream: generator.c:489-490 - ownership_differs(file, sxp)
+        // upstream: generator.c:496-497 - ownership_differs(file, sxp)
         if options.owner() {
             if let Some(uid) = entry.uid() {
                 if cached_meta.uid() != uid {
@@ -319,7 +319,7 @@ pub fn metadata_unchanged(
             }
         }
 
-        // upstream: generator.c:485-486 - any_time_differs(sxp, file, fname)
+        // upstream: generator.c:492-493 - any_time_differs(sxp, file, fname)
         // Compare raw seconds + nanoseconds directly instead of constructing
         // FileTime structs on the hot path.
         if options.times()
@@ -446,7 +446,7 @@ pub fn apply_symlink_metadata_with_options(
 ///
 /// - `rsync.c:set_file_attrs()` - skips chmod for symlinks
 /// - `rsync.c:set_times()` - uses `lutimes` when the target is a symlink
-/// - `generator.c:1592` - `set_file_attrs(fname, file, NULL, NULL, 0)` runs
+/// - `generator.c:1604` - `set_file_attrs(fname, file, NULL, NULL, 0)` runs
 ///   after `atomic_create` -> `do_symlink` so the new symlink's mtime matches
 ///   the sender's `F_MOD_NSEC_or_0(file)`.
 pub fn apply_symlink_metadata_from_entry(
@@ -570,7 +570,7 @@ pub fn apply_metadata_with_pre_transfer_stat(
 ///   which timestamps are applied and whether the comparison is exact.
 /// - `rsync.c:585` - `flags |= ATTRS_SKIP_MTIME | ATTRS_SKIP_ATIME | ATTRS_SKIP_CRTIME`
 ///   when `omit_dir_times` or `omit_link_times` is active.
-/// - `generator.c:1814` - Passes `maybe_ATTRS_REPORT | maybe_ATTRS_ACCURATE_TIME`
+/// - `generator.c:1827` - Passes `maybe_ATTRS_REPORT | maybe_ATTRS_ACCURATE_TIME`
 ///   on quick-check match paths.
 pub fn apply_metadata_with_attrs_flags(
     destination: &Path,

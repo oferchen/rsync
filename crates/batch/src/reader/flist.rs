@@ -120,7 +120,7 @@ impl BatchReader {
             .with_preserve_acls(flags.preserve_acls)
             .with_preserve_xattrs(flags.preserve_xattrs);
 
-        // upstream: flist.c:150 - when always_checksum is set, each regular file
+        // upstream: flist.c:162 - when always_checksum is set, each regular file
         // entry in the flist carries a trailing checksum of flist_csum_len bytes.
         // Without this, the reader would skip those bytes and go out of sync.
         // The checksum length depends on the negotiated algorithm. For batch files
@@ -157,7 +157,7 @@ impl BatchReader {
         // sender reports errors, then breaks the loop without aborting.
         self.io_error = flist_reader.io_error();
 
-        // upstream: flist.c:2726-2728 - recv_id_list(f, flist) when !inc_recurse
+        // upstream: flist.c:2761-2763 - recv_id_list(f, flist) when !inc_recurse
         // The batch stream contains uid/gid name mapping lists after the flist
         // entries. We must consume them to keep the stream position correct for
         // delta replay. Batch files don't record numeric_ids, but if the original
@@ -195,7 +195,7 @@ impl BatchReader {
         // with recv_files() in an event loop.
         if inc_recurse {
             self.ndx_codec = Some(NdxCodecEnum::new(protocol_version.as_u8()));
-            // upstream: flist.c:2931 - ndx_start = prev->ndx_start + prev->used + 1
+            // upstream: flist.c:2966 - ndx_start = prev->ndx_start + prev->used + 1
             // The initial flist has ndx_start=1, so the next sub-list starts at
             // 1 + entries.len() + 1 (the +1 gap between segments).
             self.flist_next_ndx_start = 1 + entries.len() as i32 + 1;
@@ -256,7 +256,7 @@ impl BatchReader {
         }
 
         self.io_error |= flist_reader.io_error();
-        // upstream: flist.c:2931 - ndx_start = prev->ndx_start + prev->used + 1
+        // upstream: flist.c:2966 - ndx_start = prev->ndx_start + prev->used + 1
         // The current segment started at flist_next_ndx_start (set before
         // reset_for_new_segment). The next segment's ndx_start accounts for
         // the entries in this segment plus the +1 gap.
@@ -269,7 +269,7 @@ impl BatchReader {
 
 /// Returns the default flist checksum length for a batch file.
 ///
-/// Upstream `flist.c:150` computes `flist_csum_len = csum_len_for_type(file_sum_nni->num, 1)`.
+/// Upstream `flist.c:162` computes `flist_csum_len = csum_len_for_type(file_sum_nni->num, 1)`.
 /// Without explicit checksum negotiation (which batch files bypass), the default
 /// file checksum algorithm is MD5 (protocol >= 30) or MD4 (protocol < 30). Both
 /// produce 16-byte digests. Protocol < 27 with `CSUM_MD4_ARCHAIC` uses 2 bytes

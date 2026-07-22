@@ -150,7 +150,7 @@ impl CompressionAlgorithm {
         match self {
             CompressionAlgorithm::Zlib => clamp_zlib_level(level).map(CompressionLevel::Precise),
             #[cfg(feature = "lz4")]
-            // upstream: token.c:81-87 - lz4 forces min/max/def to 0 and never
+            // upstream: token.c:82-88 - lz4 forces min/max/def to 0 and never
             // disables; oc represents this as the fastest expressible level.
             CompressionAlgorithm::Lz4 => Some(CompressionLevel::Precise(clamped(1))),
             // upstream: token.c:72-79,101-104 - reuse the shared resolver so the
@@ -199,7 +199,7 @@ impl CompressionAlgorithm {
                     raw_level.clamp(zstd_min_level(), ZSTD_MAX_LEVEL)
                 }
             }
-            // upstream: token.c:81-87 - lz4 forces min/max/def to 0.
+            // upstream: token.c:82-88 - lz4 forces min/max/def to 0.
             #[cfg(feature = "lz4")]
             CompressionAlgorithm::Lz4 => 0,
         }

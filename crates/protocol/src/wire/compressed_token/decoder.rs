@@ -96,7 +96,7 @@ impl CompressedTokenDecoder {
     /// For zstd, only resets token index and buffer state - the decompression
     /// context is preserved across files (one continuous stream).
     ///
-    /// upstream: token.c:807-810 (zstd r_init), token.c:496 (zlib inflateReset)
+    /// upstream: token.c:862-865 (zstd r_init), token.c:589 (zlib inflateReset)
     pub fn reset(&mut self) {
         match &mut self.inner {
             DecoderInner::Zlib(dec) => dec.reset(),

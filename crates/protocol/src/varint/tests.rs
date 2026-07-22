@@ -475,7 +475,7 @@ fn read_varlong_rejects_min_bytes_too_large() {
 /// must produce a typed InvalidData error from read_varint (not a panic or
 /// silent wrap). The 0xFC..=0xFF byte range maps to extra=5,5,6,6 in
 /// INT_BYTE_EXTRA, all of which exceed MAX_EXTRA_BYTES (4).
-/// upstream: io.c:1809 `if (extra >= (int)sizeof u.b) ... "Overflow in
+/// upstream: io.c:1830 `if (extra >= (int)sizeof u.b) ... "Overflow in
 /// read_varint()"`. PULL-VARINT (#4345) cross-check.
 #[test]
 fn read_varint_overflow_full_extra_range() {

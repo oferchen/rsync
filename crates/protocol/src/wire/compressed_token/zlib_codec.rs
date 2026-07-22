@@ -117,7 +117,7 @@ impl ZlibTokenEncoder {
     /// Feeds block data into the compressor's dictionary.
     ///
     /// Only active in CPRES_ZLIB mode (noop for zlibx).
-    /// Reference: upstream token.c lines 463-484.
+    /// Reference: upstream token.c lines 472-508.
     ///
     /// # Overflow handling
     ///

@@ -82,14 +82,14 @@ fn cached_umask() -> u32 {
 
 /// Returns the default permission seed for a child created under `parent`.
 ///
-/// Mirrors upstream `generator.c:1337-1339` which calls `default_perms_for_dir(dn)`
+/// Mirrors upstream `generator.c:1349-1351` which calls `default_perms_for_dir(dn)`
 /// when `--perms` is off. The helper folds the parent directory's POSIX default
 /// ACL `user_obj`/`group_obj`/`other_obj` entries into the seed; when there is
 /// no default ACL (or the filesystem does not support POSIX default ACLs) it
 /// returns the umask-derived `ACCESSPERMS & ~orig_umask`.
 ///
 /// upstream: `acls.c:1083-1139` `default_perms_for_dir`
-/// upstream: `generator.c:1337-1340` per-parent `dflt_perms` lookup
+/// upstream: `generator.c:1349-1352` per-parent `dflt_perms` lookup
 #[cfg(unix)]
 fn default_perms_seed(parent: Option<&Path>) -> u32 {
     let umask = cached_umask();
@@ -128,8 +128,8 @@ fn default_perms_seed(parent: Option<&Path>) -> u32 {
 /// umask-derived seed when the parent is unknown or no default ACL is present.
 ///
 /// upstream: rsync.c:449-472 `dest_mode()`
-/// upstream: generator.c:1337-1339 `dflt_perms = default_perms_for_dir(dn)`
-/// upstream: generator.c:2280 `dflt_perms = (ACCESSPERMS & ~orig_umask)`
+/// upstream: generator.c:1349-1351 `dflt_perms = default_perms_for_dir(dn)`
+/// upstream: generator.c:2297 `dflt_perms = (ACCESSPERMS & ~orig_umask)`
 #[cfg(unix)]
 fn compute_dest_mode(
     source_mode: u32,
@@ -609,7 +609,7 @@ pub(super) fn apply_permissions_with_chmod_fd(
 /// parent in our test path is a symlink to a real directory and the chmod must
 /// land on the canonical file. Falls back to `std::fs::set_permissions`, which
 /// resolves symlinks through the OS path walk like upstream
-/// `generator.c:1344`'s `link_stat(fname, &sx.st, keep_dirlinks && is_dir)`.
+/// `generator.c:1356`'s `link_stat(fname, &sx.st, keep_dirlinks && is_dir)`.
 ///
 /// Both branches remain visible to `fakeroot`: `secure_chmod_at` performs the
 /// mode change with the libc `fchmodat(2)` symbol (only the parent-directory
@@ -619,7 +619,7 @@ pub(super) fn apply_permissions_with_chmod_fd(
 /// interposed by fakeroot's LD_PRELOAD wrapper, so no raw-syscall path bypasses
 /// the faked mode here.
 ///
-/// upstream: rsync.c:set_file_attrs() / generator.c:1344 link_stat
+/// upstream: rsync.c:set_file_attrs() / generator.c:1356 link_stat
 #[cfg(unix)]
 fn chmod_path_honoring_keep_dirlinks(
     destination: &Path,
@@ -902,7 +902,7 @@ pub(super) fn apply_permissions_from_entry(
                     )?;
                 }
             } else if entry.file_type().is_dir() {
-                // upstream: generator.c:1465-1466 - even when !preserve_perms
+                // upstream: generator.c:1466-1467 - even when !preserve_perms
                 // the generator runs `file->mode = dest_mode(...)` for
                 // directories, and set_file_attrs() (rsync.c:659-660) chmods
                 // the dir to it. A new dir therefore lands the source mode
@@ -965,7 +965,7 @@ pub(super) fn apply_permissions_from_entry(
                 // symlink swapped into any parent component cannot redirect
                 // the chmod outside the receiver's confinement (testsuite
                 // chdir-symlink-race). Under `--keep-dirlinks` the helper
-                // follows symlinked parents to mirror upstream `generator.c:1344`.
+                // follows symlinked parents to mirror upstream `generator.c:1356`.
                 chmod_path_honoring_keep_dirlinks(
                     destination,
                     mode,
@@ -980,8 +980,8 @@ pub(super) fn apply_permissions_from_entry(
             // upstream: rsync.c:495+518 - `new_mode = file->mode` then
             // `new_mode = tweak_mode(new_mode, daemon_chmod_modes)`. The
             // chmod baseline is the source file's mode (already collapsed
-            // through `dest_mode()` in the generator at generator.c:1455 +
-            // :1535 when `!preserve_perms`), NEVER the destination's
+            // through `dest_mode()` in the generator at generator.c:1467 +
+            // :1547 when `!preserve_perms`), NEVER the destination's
             // tempfile mode. Reading the destination would feed back the
             // `O_TMPFILE` 0o600 default for fresh transfers and produce
             // 0o600 under e.g. `Fo-x` instead of the expected umask
@@ -1026,7 +1026,7 @@ pub(super) fn apply_permissions_from_entry(
             if new_mode != current_mode {
                 // upstream: syscall.c:do_chmod_at() symlink-race-safe variant.
                 // Helper follows symlinked parents under `--keep-dirlinks` to
-                // mirror upstream `generator.c:1344`.
+                // mirror upstream `generator.c:1356`.
                 chmod_path_honoring_keep_dirlinks(destination, new_mode, options, "apply chmod")?;
             }
         } else if options.executability()
@@ -1066,7 +1066,7 @@ pub(super) fn apply_permissions_from_entry(
             if (current_meta.permissions().mode() & 0o7777) != destination_permissions {
                 // upstream: syscall.c:do_chmod_at() symlink-race-safe variant.
                 // Helper follows symlinked parents under `--keep-dirlinks` to
-                // mirror upstream `generator.c:1344`.
+                // mirror upstream `generator.c:1356`.
                 chmod_path_honoring_keep_dirlinks(
                     destination,
                     destination_permissions,

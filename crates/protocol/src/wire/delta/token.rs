@@ -230,7 +230,7 @@ pub fn read_token<R: Read>(reader: &mut R) -> io::Result<Option<i32>> {
 /// the receiver aborts with a `RERR_PROTOCOL`-mapped error rather than reserving
 /// the buffer. Mirrors the guard in `simple_recv_token`.
 ///
-/// upstream: token.c:299-305 simple_recv_token
+/// upstream: token.c:298-302 simple_recv_token
 pub fn check_literal_token_len(len: i32) -> io::Result<()> {
     if len > CHUNK_SIZE as i32 {
         return Err(crate::protocol_violation(format!(

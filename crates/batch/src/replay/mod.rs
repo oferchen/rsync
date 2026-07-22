@@ -131,7 +131,7 @@ pub fn replay(
 
     let mut entries = reader.read_protocol_flist()?;
 
-    // upstream: flist.c:2736 - flist_sort_and_clean() after recv_file_list().
+    // upstream: flist.c:2771 - flist_sort_and_clean() after recv_file_list().
     // NDX values from the generator reference sorted positions, not wire order.
     let pre29 = reader.config().protocol_version < 29;
     sort_file_list(&mut entries, false, pre29);
@@ -142,7 +142,7 @@ pub fn replay(
         ..ReplayResult::default()
     };
 
-    // upstream: main.c:778-799 - get_local_name() creates the destination
+    // upstream: main.c:787-808 - get_local_name() creates the destination
     // directory automatically when the transfer involves more than one file or
     // the destination operand ends in a slash. Batch replay reproduces that
     // behaviour so a fresh destination tree can absorb a batch without

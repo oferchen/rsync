@@ -428,7 +428,7 @@ impl SshCommand {
         // upstream: pipe.c:54-55 - "opening connection using:" precedes every
         // remote-shell spawn. The argv passed to upstream is the full child
         // command (program + args), so we prepend the program here.
-        // upstream: main.c:620-624 - DEBUG_GTE(CMD, 2) follows with the
+        // upstream: main.c:629-633 - DEBUG_GTE(CMD, 2) follows with the
         // per-index `cmd[i]=value` enumeration once argv is finalised. Both
         // helpers gate internally on `DebugFlag::Cmd`; the surrounding
         // `debug_gte` check avoids the Vec allocation when CMD is disabled.

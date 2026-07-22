@@ -1718,7 +1718,7 @@ fn apply_permissions_from_entry_refuses_parent_symlink_escape() {
 /// KDL.8: with `--keep-dirlinks` active, a path-based chmod through a
 /// destination whose parent is a symlink-to-a-real-dir must succeed by
 /// resolving the symlink, instead of being refused by the dirfd-anchored
-/// `secure_chmod_at` sandbox. Mirrors upstream `generator.c:1344`'s
+/// `secure_chmod_at` sandbox. Mirrors upstream `generator.c:1356`'s
 /// `link_stat(fname, &sx.st, keep_dirlinks && is_dir)` which follows the
 /// symlinked parent at stat time.
 ///
@@ -1906,7 +1906,7 @@ fn dir_without_perms_over_entry_path_lands_source_mode() {
         .preserve_times(false);
     apply_metadata_from_file_entry(&dir, &entry, &opts).expect("apply dir entry");
 
-    // upstream: generator.c:1465-1466 + rsync.c:659-660 - a new directory
+    // upstream: generator.c:1466-1467 + rsync.c:659-660 - a new directory
     // without -p lands the source mode masked by dflt_perms, so a 0700 source
     // dir stays 0700 rather than the mkdir umask default 0755.
     assert_eq!(

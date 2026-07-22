@@ -229,7 +229,7 @@ fn burst_handling_u64_max_burst_no_clamping() {
     let mut limiter = BandwidthLimiter::with_burst(nz(1000), Some(nz(u64::MAX)));
 
     // Write 100_000 bytes at 1000 B/s - burst is so large it won't clamp.
-    // upstream: io.c:2025 sleep_for_bwlimit has no burst concept; u64::MAX
+    // upstream: io.c:2100 sleep_for_bwlimit has no burst concept; u64::MAX
     // burst should behave identically (no clamping).
     let sleep = limiter.register(100_000);
 
@@ -238,7 +238,7 @@ fn burst_handling_u64_max_burst_no_clamping() {
     assert_eq!(sleep.requested(), Duration::from_secs(100));
 
     // Debt carries forward after simulated sleep - verify not clamped.
-    // upstream: io.c:2058 - leftover = (sleep_usec - elapsed_usec) * bwlimit / ONE_SEC
+    // upstream: io.c:2133 - leftover = (sleep_usec - elapsed_usec) * bwlimit / ONE_SEC
     // A few real microseconds always elapse during the no-op sleep_for call,
     // causing integer division to lose up to 1 byte of debt. Allow this.
     let debt = limiter.accumulated_debt_for_testing();
