@@ -106,7 +106,7 @@ Block-related quantities flow as plain integers in many places:
 
 | Site | Type used | Conceptual unit |
 |------|-----------|-----------------|
-| `crates/signature/src/block_size.rs:129,194,262` (`calculate_block_length`, `calculate_checksum_length`, `calculate_checksum_count`) | `u32`, `u8`, `u64` | Block length (bytes), checksum length (bytes), block count (blocks). |
+| `crates/signature/src/block_size.rs` (`calculate_block_length`, `calculate_checksum_count`) | `u32`, `u64` | Block length (bytes), block count (blocks). |
 | `crates/protocol/src/wire/signature.rs:107` (`block_length: u32`) | `u32` | Block size in bytes. |
 | `crates/batch/src/replay.rs:198,201,217,815,816,828` | `u32`/`usize` | Block index and `block_index * block_length` offset arithmetic. |
 | `crates/engine/src/local_copy/debug_*` trace helpers (`trace_delta_apply_match`, `trace_match_hit`, `trace_match_false_alarm`, `record_match`, `record_literal`, etc.) | `usize`, `u64`, `u32` | `block_index`, file `offset`, span `length`, weak checksum. |

@@ -18,7 +18,7 @@
 //! # Examples
 //!
 //! ```rust
-//! use signature::block_size::{calculate_block_length, calculate_checksum_length};
+//! use signature::block_size::calculate_block_length;
 //!
 //! // Small file uses default block size
 //! let block_len = calculate_block_length(1024, 31, None);
@@ -32,11 +32,11 @@
 //! // User can override with --block-size
 //! let block_len = calculate_block_length(10 * 1024 * 1024, 31, Some(4096));
 //! assert_eq!(block_len, 4096);
-//!
-//! // Checksum length scales with file size and block size
-//! let checksum_len = calculate_checksum_length(1024 * 1024, 1024, 31, 2);
-//! assert!(checksum_len >= 2);
 //! ```
+//!
+//! Strong checksum length (`s2length`) is computed by
+//! `calculate_signature_layout`, which applies the negotiated
+//! transfer-digest cap upstream requires; see the `layout` module.
 
 /// Default block length used by rsync for small files.
 ///
@@ -60,12 +60,6 @@ pub const MAX_BLOCK_SIZE_OLD: u32 = 1 << 29;
 /// While rsync doesn't enforce this minimum in the protocol, blocks smaller
 /// than 64 bytes are impractical due to overhead.
 pub const MIN_BLOCK_SIZE: u32 = 64;
-
-/// Bias constant used in strong checksum length calculation.
-///
-/// This constant affects how checksum lengths scale with file size.
-/// Mirrors `BLOCKSUM_BIAS` in upstream rsync.
-const BLOCKSUM_BIAS: i32 = 10;
 
 /// Abbreviated strong checksum length used during phase 1 of the transfer.
 ///
@@ -144,93 +138,6 @@ pub fn calculate_block_length(
     };
 
     block_length.min(max_block)
-}
-
-/// Calculates the strong checksum length based on file size and block size.
-///
-/// This implements the checksum length heuristic from upstream rsync's
-/// `generator.c:sum_sizes_sqroot()` (lines 725-738), which adjusts the
-/// checksum length to balance collision probability against overhead.
-///
-/// Behavior depends on the transfer phase:
-/// - **Phase 1** (`requested_checksum_length = SHORT_SUM_LENGTH = 2`): dynamically
-///   computes a length between 2-16 bytes. Smaller files get shorter checksums,
-///   reducing signature size and network overhead.
-/// - **Phase 2 redo** (`requested_checksum_length = MAX_SUM_LENGTH = 16`):
-///   short-circuits to return 16 bytes, ensuring full collision resistance
-///   for files that failed phase 1 verification.
-///
-/// # Arguments
-///
-/// * `file_size` - Size of the file in bytes
-/// * `block_length` - Block size in bytes (from `calculate_block_length`)
-/// * `protocol_version` - Rsync protocol version
-/// * `requested_checksum_length` - Minimum checksum length (`SHORT_SUM_LENGTH`
-///   for phase 1, `MAX_SUM_LENGTH` for phase 2 redo)
-///
-/// # Returns
-///
-/// Strong checksum length in bytes, clamped to
-/// [`requested_checksum_length`, `MAX_SUM_LENGTH`].
-///
-/// # Examples
-///
-/// ```rust
-/// use signature::block_size::{calculate_checksum_length, SHORT_SUM_LENGTH, MAX_SUM_LENGTH};
-///
-/// // Protocol < 27 always returns requested length
-/// assert_eq!(calculate_checksum_length(1024, 700, 26, 8), 8);
-///
-/// // Phase 1: SHORT_SUM_LENGTH (2) - dynamic computation
-/// let len = calculate_checksum_length(10 * 1024 * 1024, 1024, 31, SHORT_SUM_LENGTH);
-/// assert!(len >= SHORT_SUM_LENGTH && len <= MAX_SUM_LENGTH);
-///
-/// // Phase 2 redo: MAX_SUM_LENGTH (16) - always returns 16
-/// assert_eq!(calculate_checksum_length(1024, 700, 31, MAX_SUM_LENGTH), MAX_SUM_LENGTH);
-/// ```
-#[must_use]
-pub fn calculate_checksum_length(
-    file_size: u64,
-    block_length: u32,
-    protocol_version: u8,
-    requested_checksum_length: u8,
-) -> u8 {
-    // Protocol versions < 27 lack adaptive checksum length negotiation.
-    if protocol_version < 27 {
-        return requested_checksum_length;
-    }
-
-    // Phase 2 redo short-circuit: full collision resistance for retransmits.
-    if requested_checksum_length == MAX_SUM_LENGTH {
-        return MAX_SUM_LENGTH;
-    }
-
-    let mut bias = BLOCKSUM_BIAS;
-    let mut l = file_size;
-    while l >> 1 != 0 {
-        l >>= 1;
-        bias += 2;
-    }
-
-    let mut current = block_length;
-    while current >> 1 != 0 && bias > 0 {
-        current >>= 1;
-        bias -= 1;
-    }
-
-    let mut checksum_len = (bias + 1 - 32 + 7) / 8;
-
-    let min_len = i32::from(requested_checksum_length);
-    if checksum_len < min_len {
-        checksum_len = min_len;
-    }
-
-    let max_len = i32::from(MAX_SUM_LENGTH);
-    if checksum_len > max_len {
-        checksum_len = max_len;
-    }
-
-    checksum_len as u8
 }
 
 /// Calculates the number of blocks needed for a file.
@@ -482,54 +389,6 @@ mod tests {
     }
 
     #[test]
-    fn checksum_length_protocol_versions() {
-        // Protocol < 27 always returns the requested length verbatim.
-        assert_eq!(calculate_checksum_length(1024, 700, 26, 8), 8);
-        assert_eq!(calculate_checksum_length(1024 * 1024, 700, 26, 2), 2);
-        assert_eq!(calculate_checksum_length(1024 * 1024, 700, 26, 16), 16);
-
-        // Protocol >= 27 applies the bias heuristic.
-        let len = calculate_checksum_length(1024 * 1024, 1024, 27, 2);
-        assert!((2..=MAX_SUM_LENGTH).contains(&len));
-
-        let len = calculate_checksum_length(1024 * 1024, 1024, 31, 2);
-        assert!((2..=MAX_SUM_LENGTH).contains(&len));
-    }
-
-    #[test]
-    fn checksum_length_max_requested() {
-        assert_eq!(
-            calculate_checksum_length(1024, 700, 31, MAX_SUM_LENGTH),
-            MAX_SUM_LENGTH
-        );
-        assert_eq!(
-            calculate_checksum_length(1024 * 1024, 700, 31, MAX_SUM_LENGTH),
-            MAX_SUM_LENGTH
-        );
-    }
-
-    #[test]
-    fn checksum_length_scales_with_file_size() {
-        let small = calculate_checksum_length(1024, 700, 31, 2);
-        let medium = calculate_checksum_length(1024 * 1024, 700, 31, 2);
-        let large = calculate_checksum_length(100 * 1024 * 1024, 700, 31, 2);
-
-        assert!(small >= 2);
-        assert!(medium >= small);
-        assert!(large >= medium);
-        assert!(large <= MAX_SUM_LENGTH);
-    }
-
-    #[test]
-    fn checksum_length_bounded_by_requested() {
-        for requested in 2..=MAX_SUM_LENGTH {
-            let len = calculate_checksum_length(1024 * 1024, 1024, 31, requested);
-            assert!(len >= requested);
-            assert!(len <= MAX_SUM_LENGTH);
-        }
-    }
-
-    #[test]
     fn roundtrip_block_coverage() {
         let test_sizes = [
             0u64,
@@ -566,48 +425,6 @@ mod tests {
         // upstream: rsync.h:715 `#define SUM_LENGTH 16`
         assert_eq!(MAX_SUM_LENGTH, 16);
         assert!(usize::from(SHORT_SUM_LENGTH) < usize::from(MAX_SUM_LENGTH));
-    }
-
-    #[test]
-    fn sum_length_phase1_uses_dynamic_checksum() {
-        // Phase 1 passes SHORT_SUM_LENGTH; the heuristic widens the result for
-        // larger files, so a 100 MB file should exceed the minimum of 2.
-        let len = calculate_checksum_length(100 * 1024 * 1024, 10_240, 31, SHORT_SUM_LENGTH);
-        assert!(len >= SHORT_SUM_LENGTH);
-        assert!(len <= MAX_SUM_LENGTH);
-        assert!(len > SHORT_SUM_LENGTH);
-    }
-
-    #[test]
-    fn sum_length_phase2_redo_returns_max_immediately() {
-        // Phase 2 redo passes MAX_SUM_LENGTH; the function short-circuits and
-        // returns 16 regardless of file or block size.
-        for &(file_size, block_len) in &[
-            (1024u64, 700u32),
-            (1_048_576, 1024),
-            (100 * 1024 * 1024, 10_240),
-            (1u64 << 30, 32768),
-        ] {
-            let len = calculate_checksum_length(file_size, block_len, 31, MAX_SUM_LENGTH);
-            assert_eq!(
-                len, MAX_SUM_LENGTH,
-                "redo pass must return MAX_SUM_LENGTH for file_size={file_size}"
-            );
-        }
-    }
-
-    #[test]
-    fn sum_length_short_vs_max_differ_for_small_files() {
-        // For small files the phase toggle is observable: phase 1 emits the
-        // shorter checksum while phase 2 emits the maximum.
-        let file_size = 1024u64;
-        let block_len = 700u32;
-        let phase1 = calculate_checksum_length(file_size, block_len, 31, SHORT_SUM_LENGTH);
-        let phase2 = calculate_checksum_length(file_size, block_len, 31, MAX_SUM_LENGTH);
-
-        assert_eq!(phase1, SHORT_SUM_LENGTH);
-        assert_eq!(phase2, MAX_SUM_LENGTH);
-        assert!(phase1 < phase2);
     }
 
     #[test]
