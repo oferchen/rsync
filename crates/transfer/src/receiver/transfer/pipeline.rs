@@ -404,6 +404,7 @@ impl ReceiverContext {
                     result.checksum_len,
                     file_path,
                     file_idx,
+                    result.is_inplace,
                 );
 
                 // Non-blocking: collect any ready disk results.

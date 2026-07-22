@@ -42,6 +42,12 @@ pub struct StreamingResult {
     pub expected_checksum: [u8; ChecksumVerifier::MAX_DIGEST_LEN],
     /// Number of valid bytes in `expected_checksum`.
     pub checksum_len: usize,
+    /// Whether this file was written in place (`--inplace`/`--append`).
+    ///
+    /// Mirrors `BeginMessage::is_inplace` so the caller can select the
+    /// upstream `keptstr` wording on a verification failure (an in-place update
+    /// is "retained", not "discarded").
+    pub is_inplace: bool,
 }
 
 /// Processes a file transfer response, streaming chunks to the disk thread.
@@ -93,6 +99,7 @@ pub fn process_file_response_streaming<R: Read>(
     // position are then seeked past rather than rewritten.
     let updating_basis =
         header.use_inplace && header.basis_path.as_deref() == Some(header.file_path.as_path());
+    let is_inplace = header.use_inplace;
 
     // upstream: xattrs.c:744-755 - apply abbreviated values from sender to xattr list
     let xattr_list = if !header.xattr_values.is_empty() {
@@ -181,6 +188,7 @@ pub fn process_file_response_streaming<R: Read>(
                     matched_bytes: 0,
                     expected_checksum,
                     checksum_len,
+                    is_inplace,
                 });
             }
 
@@ -209,6 +217,7 @@ pub fn process_file_response_streaming<R: Read>(
                 token_reader,
                 total_bytes, // initial literal bytes from first chunk
                 updating_basis,
+                is_inplace,
             )
         }
         first_delta => {
@@ -229,6 +238,7 @@ pub fn process_file_response_streaming<R: Read>(
                 token_reader,
                 0,
                 updating_basis,
+                is_inplace,
             )
         }
     }
