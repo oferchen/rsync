@@ -194,7 +194,9 @@ pub(in crate::local_copy) fn execute_transfer(
             // basis override: copy_file_contents rewrites the existing inode via
             // the proven inplace path (which truncates to the final length).
         } else {
-            context.backup_existing_entry(destination, relative, existing.file_type())?;
+            // upstream: rsync.c:740 - `make_backup(fname, False)` tries a
+            // hard link into the backup area before renaming.
+            context.backup_existing_entry(destination, relative, existing.file_type(), false)?;
             // When a rename moved the basis file, delta transfer must read
             // matched blocks from the backup location. The delta signature is
             // only built for regular files, so this condition is sufficient.

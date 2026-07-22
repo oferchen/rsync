@@ -200,7 +200,10 @@ pub(crate) fn copy_device(
     }
 
     if let Some(existing) = existing_metadata.take() {
-        context.backup_existing_entry(destination, relative, existing.file_type())?;
+        // upstream: generator.c:2019 atomic_create() - `make_backup(fname,
+        // skip_atomic)` with `skip_atomic` false here, so the hard-link tier
+        // runs before the rename.
+        context.backup_existing_entry(destination, relative, existing.file_type(), false)?;
         remove_existing_destination(destination)?;
     }
 

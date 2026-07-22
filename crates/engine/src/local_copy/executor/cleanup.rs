@@ -606,7 +606,10 @@ fn delete_leaf(
         && let Some(name) = path.file_name()
         && context.options().should_backup_before_delete(name)
     {
-        context.backup_existing_entry(path, Some(entry_relative), file_type)?;
+        // upstream: delete.c:167 - the delete pass calls `make_backup(fbuf,
+        // True)`, skipping the hard-link tier since the item is unlinked
+        // outright right after regardless of which strategy placed it.
+        context.backup_existing_entry(path, Some(entry_relative), file_type, true)?;
     }
 
     if !context.options().is_itemize_active() {
@@ -908,7 +911,9 @@ fn apply_delete_side_effects(
                 .options()
                 .should_backup_before_delete(entry.name.as_os_str())
         {
-            context.backup_existing_entry(&path, Some(entry_relative.as_path()), file_type)?;
+            // upstream: delete.c:167 - prefer_rename=True; the item is
+            // unlinked outright right after, so skip the hard-link tier.
+            context.backup_existing_entry(&path, Some(entry_relative.as_path()), file_type, true)?;
         }
         // upstream: log.c:log_delete emits exactly ONE line - the itemize
         // format when stdout_format_has_o_or_i, otherwise "deleting %n".
