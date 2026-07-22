@@ -329,14 +329,19 @@ fn process_approved_module(
     #[cfg(windows)]
     let _name_converter_guard = Some(install_windows_name_converter());
 
-    // Rewrite the module path to "/" only when chroot was actually applied.
-    // After a rootless auto-fallback (D3) the process is not chrooted, so the
-    // real absolute module path must be preserved.
-    // upstream: clientserver.c:848-862 - the post-chroot inner path is "/".
+    // Rewrite the module path to the post-chroot inner directory only when
+    // chroot was actually applied. After a rootless auto-fallback (D3) the
+    // process is not chrooted, so the real absolute module path must be
+    // preserved. The inner directory is "/" unless the module path carried a
+    // `/./` marker, in which case it is the normalized remainder after it.
+    // upstream: clientserver.c:845-862 - `module_dir` after the `/./` split.
     let effective_module;
     let config_module = if privilege_outcome.chroot_applied {
         let mut adjusted = module.definition.clone();
-        adjusted.path = PathBuf::from("/");
+        adjusted.path = privilege_outcome
+            .inner_module_path
+            .clone()
+            .unwrap_or_else(|| PathBuf::from("/"));
         effective_module = ModuleRuntime::from(adjusted);
         &effective_module
     } else {

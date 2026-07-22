@@ -90,29 +90,90 @@ fn drop_privileges(
     Ok(())
 }
 
-/// Applies chroot for a module, auto-falling back to no-chroot when `use
-/// chroot` was unset and the runtime chroot probe fails.
+/// Splits a module path at the first `/./` marker into the outer chroot
+/// root and the inner post-chroot working directory.
 ///
-/// Returns `Ok(true)` when the process is chrooted, `Ok(false)` after a
-/// rootless auto-fallback, and `Err` when chroot was demanded explicitly but
-/// failed (the caller then refuses the connection).
+/// A path without `/./` chroots into the whole path, starting the session
+/// at the new root (inner = `/`). A path with `/./` chroots into only the
+/// portion before the marker and starts the session at the (still-absolute)
+/// portion after it - upstream's inner/outer split, which leaves siblings
+/// of the inner directory reachable inside the jail for modules that need
+/// to share a parent directory with other served paths.
 ///
-/// upstream: clientserver.c:831-838 `rsync_module()` - `use_chroot < 0` (unset)
-/// probes `chroot("/")`; on failure it logs "Switching 'use chroot' from unset
-/// to false" and clears the flag. An explicit `use chroot = yes` has no such
-/// escape and aborts the connection.
-fn chroot_or_fallback(module: &ModuleDefinition, log_sink: &SharedLogSink) -> io::Result<bool> {
-    match apply_chroot(&module.path, log_sink) {
-        Ok(()) => Ok(true),
-        Err(err) if !module.use_chroot_explicit => {
+/// upstream: clientserver.c:845-862 `rsync_module()` - `strstr(module_dir,
+/// "/./")` locates the marker; the outer half becomes `module_chdir` (the
+/// chroot target) and the normalized remainder becomes `module_dir` (the
+/// post-chroot `change_dir` target).
+fn split_chroot_path(path: &Path) -> (PathBuf, PathBuf) {
+    let Some((outer, inner)) = path.to_str().and_then(|s| s.split_once("/./")) else {
+        return (path.to_path_buf(), PathBuf::from("/"));
+    };
+    let outer = if outer.is_empty() { "/" } else { outer };
+    let inner = inner.trim_start_matches('/');
+    let inner_path = if inner.is_empty() {
+        PathBuf::from("/")
+    } else {
+        PathBuf::from(format!("/{inner}"))
+    };
+    (PathBuf::from(outer), inner_path)
+}
+
+/// Resolves the effective per-module chroot decision, mirroring upstream's
+/// tri-state `use_chroot` (`0`/`1`/unset).
+///
+/// - An explicit `use chroot = yes|no` always wins.
+/// - Unset with a `/./` inner/outer marker in the path is treated as an
+///   implicit `yes`: the path itself signals chroot intent, so no probe runs.
+/// - Unset otherwise probes chroot capability with a no-op `chroot("/")`;
+///   success resolves to `yes`, failure (typically `EPERM`, the common
+///   rootless-daemon case) resolves to `no` with a log notice matching
+///   upstream's wording.
+///
+/// upstream: clientserver.c:706,831-844 `rsync_module()`.
+fn resolve_use_chroot(module: &ModuleDefinition, log_sink: &SharedLogSink) -> bool {
+    if module.use_chroot_explicit {
+        return module.use_chroot;
+    }
+    if module.path.to_str().is_some_and(|s| s.contains("/./")) {
+        return true;
+    }
+    match platform::privilege::probe_chroot_capability() {
+        Ok(()) => true,
+        Err(err) => {
             let notice =
                 format!("chroot test failed: {err}. Switching 'use chroot' from unset to false.");
             let message = rsync_warning!(notice).with_role(Role::Daemon);
             log_message(log_sink, &message);
-            Ok(false)
+            false
         }
-        Err(err) => Err(err),
     }
+}
+
+/// Applies chroot for a module, resolving the tri-state `use chroot`
+/// decision and (when enabled) chrooting into the possibly `/./`-split
+/// module path.
+///
+/// Returns `Ok((chroot_applied, inner_dir))`. `chroot_applied` is `false`
+/// when chroot is disabled outright (`use chroot = no`) or was unset and the
+/// capability probe failed; `inner_dir` is the post-chroot working directory
+/// the caller must serve from (`/` unless the path carried a `/./`
+/// inner/outer marker). Once `use_chroot` resolves true - explicitly, via
+/// `/./`, or via a successful probe - a failure of the real `chroot(2)` call
+/// is always fatal, matching upstream's unconditional `@ERROR: chroot
+/// failed` once the tri-state is settled.
+///
+/// upstream: clientserver.c:831-990 `rsync_module()`.
+fn chroot_or_fallback(
+    module: &ModuleDefinition,
+    log_sink: &SharedLogSink,
+) -> io::Result<(bool, PathBuf)> {
+    if !resolve_use_chroot(module, log_sink) {
+        return Ok((false, module.path.clone()));
+    }
+
+    let (outer, inner) = split_chroot_path(&module.path);
+    apply_chroot(&outer, log_sink)?;
+    Ok((true, inner))
 }
 
 /// The uid and complete group set the daemon will drop to for a connection.
@@ -529,7 +590,7 @@ mod privilege_tests {
             ..Default::default()
         };
         let sink = test_log_sink();
-        let applied = chroot_or_fallback(&module, &sink)
+        let (applied, _inner) = chroot_or_fallback(&module, &sink)
             .expect("unset use chroot must fall back, not error");
         assert!(!applied, "rootless fallback must report chroot NOT applied");
     }
@@ -607,6 +668,86 @@ mod privilege_tests {
         assert!(
             chroot_or_fallback(&module, &sink).is_err(),
             "explicit use chroot must not silently fall back"
+        );
+    }
+
+    /// WHY: upstream clientserver.c:845-862 - a module path without `/./`
+    /// chroots into the whole path and starts the session at the new root.
+    /// Pure path-string logic, no syscall involved.
+    #[test]
+    fn split_chroot_path_without_marker_chroots_whole_path() {
+        let (outer, inner) = split_chroot_path(Path::new("/var/data/module"));
+        assert_eq!(outer, PathBuf::from("/var/data/module"));
+        assert_eq!(inner, PathBuf::from("/"));
+    }
+
+    /// WHY: upstream clientserver.c:846-855 - a `/./` marker splits the path
+    /// into the outer chroot root and the inner post-chroot working
+    /// directory, e.g. `path = /var/data/./module` chroots to `/var/data`
+    /// then starts the session at `/module` (still reachable: siblings of
+    /// `module` under `/var/data` remain inside the jail).
+    #[test]
+    fn split_chroot_path_splits_at_first_slash_dot_marker() {
+        let (outer, inner) = split_chroot_path(Path::new("/var/data/./module"));
+        assert_eq!(outer, PathBuf::from("/var/data"));
+        assert_eq!(inner, PathBuf::from("/module"));
+    }
+
+    /// WHY: a marker at the very end of the path (empty inner segment)
+    /// normalizes to the root, matching upstream's `module_dirlen` resetting
+    /// to 0 for a trailing `/./`.
+    #[test]
+    fn split_chroot_path_trailing_marker_normalizes_inner_to_root() {
+        let (outer, inner) = split_chroot_path(Path::new("/var/data/./"));
+        assert_eq!(outer, PathBuf::from("/var/data"));
+        assert_eq!(inner, PathBuf::from("/"));
+    }
+
+    /// WHY: only the FIRST `/./` marker is a split point; a nested module
+    /// tree that happens to contain a second `/./` further down stays part
+    /// of the inner half, matching `strstr`'s first-match semantics.
+    #[test]
+    fn split_chroot_path_only_splits_at_first_marker() {
+        let (outer, inner) = split_chroot_path(Path::new("/a/./b/./c"));
+        assert_eq!(outer, PathBuf::from("/a"));
+        assert_eq!(inner, PathBuf::from("/b/./c"));
+    }
+
+    /// WHY: upstream clientserver.c:832-833 - `strstr(module_dir, "/./") !=
+    /// NULL` short-circuits the tri-state straight to enabled, with no
+    /// `chroot("/")` probe at all. This must hold even on an unprivileged
+    /// runner (no root guard needed), because the marker check happens
+    /// before the probe would ever run.
+    #[test]
+    fn resolve_use_chroot_slash_dot_marker_skips_probe() {
+        let module = ModuleDefinition {
+            path: PathBuf::from("/some/outer/./inner"),
+            use_chroot: true,
+            use_chroot_explicit: false,
+            ..Default::default()
+        };
+        let sink = test_log_sink();
+        assert!(
+            resolve_use_chroot(&module, &sink),
+            "a /./ marker must resolve to chroot-enabled without probing"
+        );
+    }
+
+    /// WHY: an explicit `use chroot = no` always wins, even when the path
+    /// carries a `/./` marker - upstream only consults the marker when the
+    /// tri-state is unset (`use_chroot < 0`).
+    #[test]
+    fn resolve_use_chroot_explicit_false_overrides_slash_dot_marker() {
+        let module = ModuleDefinition {
+            path: PathBuf::from("/some/outer/./inner"),
+            use_chroot: false,
+            use_chroot_explicit: true,
+            ..Default::default()
+        };
+        let sink = test_log_sink();
+        assert!(
+            !resolve_use_chroot(&module, &sink),
+            "explicit 'use chroot = no' must not be overridden by a /./ marker"
         );
     }
 }
