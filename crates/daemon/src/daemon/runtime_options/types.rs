@@ -12,7 +12,7 @@ pub(crate) struct RuntimeOptions {
     /// and closed without dispatching a session, while the accept loop keeps
     /// running. Distinct from `max_sessions`, which caps total served sessions.
     ///
-    /// upstream: clientserver.c:744-756 - `claim_connection()` enforces the
+    /// upstream: clientserver.c:746-758 - `claim_connection()` enforces the
     /// per-module `max connections` directive and emits the same error.
     max_connections: Option<NonZeroUsize>,
     pub(crate) modules: Vec<ModuleDefinition>,

@@ -156,7 +156,7 @@ fn short_option_long_name(letter: char) -> &'static str {
 /// short-letter alias. Used by the refuse-list matcher so rules can reference
 /// either the long or short form (`!verbose` and `!v` are equivalent).
 ///
-/// upstream: options.c:594-... - the `shortName` column on each `long_options[]`
+/// upstream: options.c:604-... - the `shortName` column on each `long_options[]`
 /// entry; upstream's `parse_one_refuse_match` calls `wildmatch(ref, shortName)`
 /// as a fallback when the long-name comparison fails.
 fn long_option_short_letter(long_name: &str) -> Option<char> {
@@ -353,7 +353,7 @@ fn is_option_refused(
             continue;
         }
 
-        // upstream: options.c:904 - `a` / `archive` rules expand to the
+        // upstream: options.c:916 - `a` / `archive` rules expand to the
         // character class containing every short letter implied by `-a`.
         let mut is_glob = pattern.contains('*') || pattern.contains('?') || pattern.contains('[');
         if pattern == "a" || pattern == "archive" {
@@ -361,7 +361,7 @@ fn is_option_refused(
             is_glob = true;
         }
 
-        // upstream: options.c:953-968 - vital options carry `descrip = "a="`
+        // upstream: options.c:965-980 - vital options carry `descrip = "a="`
         // and `parse_one_refuse_match` only updates them when the rule is
         // exact, never wild. Mirror that here so administrators cannot wreck
         // the handshake with `refuse options = *`.
@@ -369,7 +369,7 @@ fn is_option_refused(
             continue;
         }
 
-        // upstream: options.c:909-921 - the rule is tried against both
+        // upstream: options.c:921-933 - the rule is tried against both
         // `op->longName` and `op->shortName` so `!verbose` and `!v` refer to
         // the same option. Glob patterns additionally need the original-case
         // short letter (so `[ardlptgoD]` matches `-D` via the upper-case `D`).

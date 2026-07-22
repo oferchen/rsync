@@ -7,7 +7,7 @@ use crate::daemon::HostPattern;
 
 /// Resolved `gid` directive for a daemon module's privilege drop.
 ///
-/// upstream: clientserver.c:791-822 `rsync_module()` parses `lp_gid()` as a
+/// upstream: clientserver.c:793-824 `rsync_module()` parses `lp_gid()` as a
 /// whitespace/comma-separated list via `conf_strtok`. A leading `*` requests
 /// all groups the target user belongs to (`getgrouplist`, clientserver.c:797
 /// `want_all_groups`); any remaining tokens are explicit groups added with
@@ -72,7 +72,7 @@ pub(crate) struct ModuleDefinition {
     /// the daemon falls back to no-chroot with a notice instead of refusing the
     /// connection.
     ///
-    /// upstream: clientserver.c:831-838 `rsync_module()`.
+    /// upstream: clientserver.c:833-840 `rsync_module()`.
     pub(crate) use_chroot_explicit: bool,
     pub(crate) max_connections: Option<NonZeroU32>,
     pub(crate) incoming_chmod: Option<String>,
@@ -389,7 +389,7 @@ impl ModuleDefinition {
     /// (`/./`) with a non-empty inner path, mirroring upstream's
     /// `module_dirlen > 0`.
     ///
-    /// upstream: clientserver.c:845-872 - when `use chroot` is set and the
+    /// upstream: clientserver.c:847-874 - when `use chroot` is set and the
     /// module path contains a `/./` marker, the normalized inner path length
     /// (`module_dirlen`) is non-zero. A `/./` at the very end (empty inner
     /// path) normalizes to `/` and resets `module_dirlen` back to 0.

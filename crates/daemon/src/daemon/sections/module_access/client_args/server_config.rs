@@ -130,7 +130,7 @@ fn build_server_config(
     // upstream: clientserver.c - clamp verbose to lp_max_verbosity(i)
     let flag_string = clamp_verbose_flags(&flag_string, module.max_verbosity);
 
-    // upstream: clientserver.c:1127 `limit_output_verbosity(lp_max_verbosity(i))`
+    // upstream: clientserver.c:1141 `limit_output_verbosity(lp_max_verbosity(i))`
     // caps the per-connection log verbosity once the module is selected. Each
     // oc-rsync connection runs on its own worker thread whose thread-local
     // `logging::VerbosityConfig` starts at level 0, so seed it from the clamped
@@ -188,9 +188,9 @@ fn build_server_config(
             // than silently dropping the option and continuing into a wire
             // path that closes mid file-list framing.
             //
-            // upstream: options.c:1444-1449 - daemon-mode unknown option
+            // upstream: options.c:1460-1465 - daemon-mode unknown option
             // emits `rsync: <BAD>: <err> (in daemon mode)` and exits
-            // `RERR_SYNTAX` via `daemon_error:` (options.c:1464-1466).
+            // `RERR_SYNTAX` via `daemon_error:` (options.c:1480-1482).
             if let Some(offender) = apply_long_form_args(client_args, &mut cfg) {
                 if let Some(log) = ctx.log_sink {
                     let text = format!(
@@ -206,7 +206,7 @@ fn build_server_config(
                 return Ok(None);
             }
 
-            // upstream: options.c:2737-2740 - when -z is in the compact flag string
+            // upstream: options.c:2755-2758 - when -z is in the compact flag string
             // but no explicit --compress-level=N was sent, default to level 6 (the
             // upstream default). Without this, compression_level stays None and the
             // transfer pipeline won't activate token-level compression.
@@ -214,7 +214,7 @@ fn build_server_config(
                 cfg.connection.compression_level = Some(compress::zlib::CompressionLevel::Default);
             }
 
-            // upstream: main.c:1199-1206 calls `check_alt_basis_dirs()` after
+            // upstream: main.c:1217-1224 calls `check_alt_basis_dirs()` after
             // `get_local_name(flist, argv[0])` chdir's into the dest directory,
             // so relative basis paths like `--link-dest=../01` resolve against
             // the receiver's destination (a sibling of `dest/00/`), not against
@@ -277,7 +277,7 @@ fn build_server_config(
                 }
             }
 
-            // upstream: clientserver.c:712-716 - `iconv_opt = lp_charset(i);
+            // upstream: clientserver.c:714-718 - `iconv_opt = lp_charset(i);
             // if (*iconv_opt) setup_iconv();` resolves the module's `charset =`
             // directive into the iconv handles used for filename transcoding.
             // Without this wiring the daemon would parse `charset = LATIN1` but
@@ -292,7 +292,7 @@ fn build_server_config(
             // window once the original CVE-2026-29518 fix landed.
             cfg.connection.is_daemon_connection = true;
 
-            // upstream: clientserver.c:1106-1107 - `fake super = yes` on the
+            // upstream: clientserver.c:1120-1121 - `fake super = yes` on the
             // daemon module demotes the receiver's am_root and forces fake-super
             // semantics regardless of whether the client requested --fake-super.
             // The directive is purely daemon-config-driven; client --fake-super
@@ -322,7 +322,7 @@ fn build_server_config(
                 }
             }
 
-            // upstream: clientserver.c:992-993 - `munge_symlinks = lp_munge_symlinks(i)`
+            // upstream: clientserver.c:997-998 - `munge_symlinks = lp_munge_symlinks(i)`
             // with `!use_chroot || module_dirlen` as the auto default. The bit is
             // purely daemon-config-driven (no client-side override) and travels
             // through the transfer layer so the sender strips `/rsyncd-munged/`

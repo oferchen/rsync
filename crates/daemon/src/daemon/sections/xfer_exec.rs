@@ -94,7 +94,7 @@ fn build_pre_xfer_command(command: &str, ctx: &XferExecContext<'_>) -> ProcessCo
 /// Builds the post-xfer exec environment: the shared base only.
 ///
 /// The caller adds `RSYNC_EXIT_STATUS` (and, on Unix, `RSYNC_RAW_STATUS`).
-/// upstream: clientserver.c:915-930 - the post-xfer parent sets only the shared
+/// upstream: clientserver.c:917-932 - the post-xfer parent sets only the shared
 /// env plus the status variables; it never sets `RSYNC_REQUEST` or
 /// `RSYNC_ARG<n>`, so a post-xfer hook must not see them.
 fn build_post_xfer_command(command: &str, ctx: &XferExecContext<'_>) -> ProcessCommand {
@@ -205,7 +205,7 @@ fn run_pre_xfer_exec(
     let mut child = cmd.spawn()?;
 
     // Pipe early-input data to the child's stdin, then close it.
-    // upstream: clientserver.c:583-584 - write_buf(write_fd, early_input, early_input_len)
+    // upstream: clientserver.c:585-586 - write_buf(write_fd, early_input, early_input_len)
     if let Some(data) = early_input {
         if let Some(mut stdin) = child.stdin.take() {
             // Best-effort write; ignore broken pipe if the child exits early.

@@ -6,8 +6,8 @@
 /// # Why this matters
 ///
 /// Upstream applies a module's timeout only *after* a module has been
-/// selected (`clientserver.c:1192` sets the io timeout against the chosen
-/// `module_id`). The module listing (`clientserver.c:1373`,
+/// selected (`clientserver.c:1206` sets the io timeout against the chosen
+/// `module_id`). The module listing (`clientserver.c:1423`,
 /// `send_listing()`) runs *before* any module is selected, so a per-module
 /// timeout must neither gate nor block the pre-selection listing path. A
 /// naive implementation that armed the module read/write timeout before
@@ -43,7 +43,7 @@ fn run_daemon_lists_modules_with_module_timeout() {
     reader.read_line(&mut line).expect("greeting");
     assert_eq!(line, expected_greeting);
 
-    // upstream: clientserver.c:1373 - an empty request lists modules.
+    // upstream: clientserver.c:1423 - an empty request lists modules.
     stream.write_all(b"\n").expect("send empty request");
     stream.flush().expect("flush empty request");
 

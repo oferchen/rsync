@@ -100,7 +100,7 @@ fn drop_privileges(
 /// of the inner directory reachable inside the jail for modules that need
 /// to share a parent directory with other served paths.
 ///
-/// upstream: clientserver.c:845-862 `rsync_module()` - `strstr(module_dir,
+/// upstream: clientserver.c:847-864 `rsync_module()` - `strstr(module_dir,
 /// "/./")` locates the marker; the outer half becomes `module_chdir` (the
 /// chroot target) and the normalized remainder becomes `module_dir` (the
 /// post-chroot `change_dir` target).
@@ -260,7 +260,7 @@ impl From<DropResolutionError> for io::Error {
 /// Delegates to the `platform` crate, which owns the `nix` dependency on every
 /// Unix target (the daemon crate links `nix` only on Linux).
 ///
-/// upstream: clientserver.c:780 `am_root = (uid == ROOT_UID)`. Non-Unix
+/// upstream: clientserver.c:779 `am_root = (uid == ROOT_UID)`. Non-Unix
 /// platforms have no root uid and use the impersonation path instead.
 fn daemon_is_root() -> bool {
     platform::privilege::is_effective_root()
@@ -316,7 +316,7 @@ fn resolve_drop_target(
 
 /// Resolves the `nobody` user to its uid via NSS.
 ///
-/// upstream: clientserver.c:782 `user_to_uid(NOBODY_USER, ...)`; NOBODY_USER is
+/// upstream: clientserver.c:783 `user_to_uid(NOBODY_USER, ...)`; NOBODY_USER is
 /// `"nobody"` (config.h). Errors when the account is absent, mirroring
 /// upstream's `@ERROR: invalid uid nobody`.
 #[cfg(unix)]
@@ -521,7 +521,7 @@ mod privilege_tests {
         );
     }
 
-    /// WHY: upstream clientserver.c:779-780 recomputes `am_root` from the live
+    /// WHY: upstream clientserver.c:778-779 recomputes `am_root` from the live
     /// uid; a non-root daemon with an unconfigured module leaves the identity
     /// untouched (`set_uid = 0`, empty `gid_list`). Guarantees we never attempt
     /// a spurious drop that would EPERM and break unprivileged daemons.
@@ -671,7 +671,7 @@ mod privilege_tests {
         );
     }
 
-    /// WHY: upstream clientserver.c:845-862 - a module path without `/./`
+    /// WHY: upstream clientserver.c:847-864 - a module path without `/./`
     /// chroots into the whole path and starts the session at the new root.
     /// Pure path-string logic, no syscall involved.
     #[test]
@@ -681,7 +681,7 @@ mod privilege_tests {
         assert_eq!(inner, PathBuf::from("/"));
     }
 
-    /// WHY: upstream clientserver.c:846-855 - a `/./` marker splits the path
+    /// WHY: upstream clientserver.c:848-857 - a `/./` marker splits the path
     /// into the outer chroot root and the inner post-chroot working
     /// directory, e.g. `path = /var/data/./module` chroots to `/var/data`
     /// then starts the session at `/module` (still reachable: siblings of

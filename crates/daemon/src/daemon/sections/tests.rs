@@ -274,7 +274,7 @@ fn is_option_refused_re_refuse_after_negation() {
 
 #[test]
 fn is_option_refused_short_letter_rule_matches_long_option() {
-    // upstream: options.c:909-921 `parse_one_refuse_match` compares each rule
+    // upstream: options.c:921-933 `parse_one_refuse_match` compares each rule
     // against BOTH `op->longName` and `op->shortName`. A `!v` rule must
     // un-refuse the same option that `!verbose` would, so allow-list
     // configurations that use short-letter shorthands behave the same as
@@ -286,7 +286,7 @@ fn is_option_refused_short_letter_rule_matches_long_option() {
 
 #[test]
 fn is_option_refused_archive_rule_expands_to_short_letter_set() {
-    // upstream: options.c:904-906 - the `archive` (and `a`) rules expand to
+    // upstream: options.c:916-918 - the `archive` (and `a`) rules expand to
     // the character class `[ardlptgoD]` and so refuse every short letter that
     // `-a` implies, not just the `--archive` long name.
     let module = module_with_refuse(vec!["archive".to_owned()]);
@@ -298,7 +298,7 @@ fn is_option_refused_archive_rule_expands_to_short_letter_set() {
 
 #[test]
 fn is_option_refused_pure_allowlist_does_not_refuse_anything() {
-    // upstream: options.c:947-968 - every option starts marked as accepted
+    // upstream: options.c:959-980 - every option starts marked as accepted
     // (`a*` or `a=`). A refuse list of only negations therefore touches
     // nothing - no option flips to refused. Sanity-check the obvious cases.
     let module = module_with_refuse(vec!["!verbose".to_owned(), "!archive".to_owned()]);
@@ -381,7 +381,7 @@ fn wildcard_all_spares_vital_log_format_but_refuses_out_format() {
 
 #[test]
 fn exact_rule_refuses_vital_log_format() {
-    // upstream: options.c:909-940 - a non-wild exact rule still marks a vital
+    // upstream: options.c:921-952 - a non-wild exact rule still marks a vital
     // option refused, so `refuse options = log-format` rejects `--log-format`.
     let module = module_with_refuse(vec!["log-format".to_owned()]);
     assert_eq!(
@@ -487,7 +487,7 @@ fn refused_client_arg_allowlist_module_passes_bundled_av() {
     // refuse-list matcher; upstream rsync flips each option's `descrip` back
     // to "accepted" once the explicit `!verbose` / `!archive` rule lands.
     //
-    // upstream: options.c:977-991 - rules are processed in order and the last
+    // upstream: options.c:989-1003 - rules are processed in order and the last
     // match wins; the negated rule after the catch-all wildcard un-refuses
     // both the long-form name and its short-letter alias.
     let module = ModuleDefinition {
@@ -506,7 +506,7 @@ fn refused_client_arg_allowlist_module_passes_bundled_av() {
 
 #[test]
 fn refused_client_arg_allowlist_short_letter_negation_passes_av() {
-    // upstream: options.c:909-921 - `parse_one_refuse_match` matches each
+    // upstream: options.c:921-933 - `parse_one_refuse_match` matches each
     // rule against both `op->longName` and `op->shortName`. A short-letter
     // allow-list `!v !a` therefore un-refuses the same options that
     // `!verbose !archive` would. Pinning this behaviour prevents a relapse of
@@ -524,7 +524,7 @@ fn refused_client_arg_allowlist_short_letter_negation_passes_av() {
 fn refused_client_arg_pure_negation_allowlist_passes_av() {
     // A pure-negation refuse list never marks anything as refused (nothing
     // was refused to begin with), so an `-av` transfer must succeed.
-    // upstream: options.c:947-968 - every option starts as `a*`/`a=`
+    // upstream: options.c:959-980 - every option starts as `a*`/`a=`
     // (accepted); only explicit non-negated rules flip the descrip to
     // `r*`/`r=`.
     let module = ModuleDefinition {
@@ -667,7 +667,7 @@ fn refused_client_arg_delete_rule_allows_non_delete_transfer() {
 fn refused_client_arg_delete_negation_clears_semantic_refusal() {
     // `refuse options = !delete` un-refuses the `delete` entry, so the
     // semantic delete-mode pass must not fire. With no other refuse rule a
-    // bare `--delete` transfer is allowed. upstream: options.c:977-991 - the
+    // bare `--delete` transfer is allowed. upstream: options.c:989-1003 - the
     // negated rule flips the `delete` descrip back to accepted, clearing
     // `refused_delete`, so options.c:2238 never triggers.
     let module = ModuleDefinition {
@@ -680,7 +680,7 @@ fn refused_client_arg_delete_negation_clears_semantic_refusal() {
 
 #[test]
 fn refused_client_arg_archive_rule_refuses_implied_short_letters() {
-    // upstream: options.c:904-906 - the `archive` rule rewrites itself to the
+    // upstream: options.c:916-918 - the `archive` rule rewrites itself to the
     // character class `[ardlptgoD]`. A module configured with
     // `refuse options = archive` must therefore reject `-r`, `-l`, `-D`, etc.
     // (and not just `--archive` itself).
