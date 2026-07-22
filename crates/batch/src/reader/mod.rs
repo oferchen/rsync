@@ -105,6 +105,20 @@ impl BatchReader {
                 ))
             })?;
 
+            // A batch written by a newer rsync than this build supports cannot
+            // be replayed correctly, so abort rather than adopt an unsupported
+            // protocol. The comparison uses this build's maximum supported
+            // protocol, matching upstream's `remote_protocol > protocol_version`
+            // (for --read-batch `protocol_version` is the client's compiled max).
+            // upstream: compat.c:609-613 setup_protocol()
+            let max_supported = i32::from(protocol::SUPPORTED_PROTOCOL_BOUNDS.1);
+            if header.protocol_version > max_supported {
+                return Err(BatchError::Io(protocol::protocol_violation(format!(
+                    "The protocol version in the batch file is too new ({} > {})",
+                    header.protocol_version, max_supported
+                ))));
+            }
+
             // Adopt protocol version, compat flags, and checksum seed from
             // the batch header. upstream: compat.c:setup_protocol() reads
             // these values from the batch fd and uses them directly, so the
