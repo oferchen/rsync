@@ -315,11 +315,15 @@ mod tests {
             let _ = listener.accept();
         });
 
+        // TFO Off so connect() performs a full handshake; with TFO the handshake
+        // is deferred to the first write (which this test never issues), so on
+        // some platforms the listener's accept() would block until the test
+        // times out. Sockopt application is independent of the TFO mode.
         let stream = connect_with_optional_bind(
             target,
             None,
             None,
-            TcpFastOpenMode::Auto,
+            TcpFastOpenMode::Off,
             Some(std::ffi::OsStr::new("SO_SNDBUF=131072")),
         )
         .expect("connect with sockopts");
