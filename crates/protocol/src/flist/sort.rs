@@ -313,8 +313,17 @@ pub(super) fn resolve_duplicate(
         (false, true) => true,
         // Keep the directory (write) over the plain file (read).
         (true, false) => false,
-        // Both directories - keep the first, merge the content-dir flag.
+        // Both directories - keep the first, merge the survivor's vital dir
+        // flags from the dropped duplicate. upstream: flist.c:3073-3076
+        // (!am_sender) `fp->flags |= file->flags & (FLAG_TOP_DIR|FLAG_CONTENT_DIR)`.
+        // TOP_DIR scopes --delete, so a surviving duplicate that lost it could
+        // wrongly become delete-eligible. (oc collapses upstream's separate
+        // FLAG_IMPLIED_DIR into the top_dir/content_dir state at read time, so
+        // only these two flags are represented here.)
         (true, true) => {
+            if read.top_dir() {
+                write.set_top_dir(true);
+            }
             if read.content_dir() {
                 write.set_content_dir(true);
             }
@@ -740,6 +749,24 @@ mod tests {
         // Survivor at slot 0 with the merged content-dir flag; slot 1 tombstoned.
         assert!(cleaned[0].is_active());
         assert!(cleaned[0].content_dir());
+        assert!(!cleaned[1].is_active());
+    }
+
+    #[test]
+    fn flist_clean_merges_top_dir_flag() {
+        // A duplicate directory carrying TOP_DIR must pass that flag to the
+        // survivor: TOP_DIR scopes --delete, so dropping it on merge would
+        // wrongly make the surviving directory eligible for deletion.
+        // upstream: flist.c:3073 `fp->flags |= file->flags & FLAG_TOP_DIR`.
+        let mut dir1 = make_dir("subdir");
+        dir1.set_top_dir(false);
+        let mut dir2 = make_dir("subdir");
+        dir2.set_top_dir(true);
+        let entries = vec![dir1, dir2];
+        let (cleaned, stats) = flist_clean(entries, false, false);
+        assert_eq!(stats.flags_merged, 1);
+        assert!(cleaned[0].is_active());
+        assert!(cleaned[0].top_dir(), "survivor must inherit TOP_DIR");
         assert!(!cleaned[1].is_active());
     }
 
