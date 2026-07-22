@@ -222,3 +222,20 @@ pub fn read_token<R: Read>(reader: &mut R) -> io::Result<Option<i32>> {
         Ok(Some(token))
     }
 }
+
+/// Rejects an uncompressed literal-token length larger than [`CHUNK_SIZE`], the
+/// per-token cap the sender enforces when chunking literal data
+/// (`token.c:simple_send_token`). A larger claimed length is a malformed or
+/// hostile stream that must not be allowed to drive an oversized allocation, so
+/// the receiver aborts with a `RERR_PROTOCOL`-mapped error rather than reserving
+/// the buffer. Mirrors the guard in `simple_recv_token`.
+///
+/// upstream: token.c:299-305 simple_recv_token
+pub fn check_literal_token_len(len: i32) -> io::Result<()> {
+    if len > CHUNK_SIZE as i32 {
+        return Err(crate::protocol_violation(format!(
+            "invalid uncompressed token length {len}"
+        )));
+    }
+    Ok(())
+}
