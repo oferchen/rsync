@@ -51,9 +51,8 @@
 //!
 //! ## Hardlink tracking
 //!
-//! [`HardlinkResolver`] / [`HardlinkTracker`] detect and re-create hardlink
-//! groups across the destination tree, matching upstream rsync's `--hard-links`
-//! semantics.
+//! `HardlinkApplyTracker` detects and re-creates hardlink groups across the
+//! destination tree, matching upstream rsync's `--hard-links` semantics.
 //!
 //! ## Batch mode
 //!
@@ -132,7 +131,6 @@ pub mod concurrent_delta;
 pub mod delete;
 pub mod delta;
 pub mod error;
-pub mod hardlink;
 pub mod local_copy;
 pub mod util;
 pub mod walk;
@@ -202,9 +200,6 @@ pub use fuzzy::{
     FUZZY_LEVEL_1, FUZZY_LEVEL_2, FuzzyMatch, FuzzyMatcher, trace_fuzzy_basis_selected,
     trace_fuzzy_distance, trace_fuzzy_size_mtime_match,
 };
-
-/// Hardlink detection and resolution.
-pub use hardlink::{HardlinkAction, HardlinkGroup, HardlinkKey, HardlinkResolver, HardlinkTracker};
 
 /// Buffer pool for cross-crate I/O buffer reuse.
 ///
