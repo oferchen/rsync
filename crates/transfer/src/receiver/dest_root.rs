@@ -10,7 +10,7 @@ use std::path::Path;
 /// Reports whether a destination operand was written with a trailing path
 /// separator.
 ///
-/// Upstream rsync inspects the raw `dest_path` argument (`main.c:724-725`)
+/// Upstream rsync inspects the raw `dest_path` argument (`main.c:733-734`)
 /// after a final `strrchr('/')` to decide whether the operand ends with a
 /// directory marker. The detection is byte-level on Unix and matches either
 /// `'/'` or `'\\'` on Windows so paths produced by either separator convention
@@ -64,7 +64,7 @@ pub(in crate::receiver) fn dest_arg_has_trailing_slash(arg: &OsStr) -> bool {
 /// # `--mkpath` gating
 ///
 /// Upstream creates the destination root with a *single* `do_mkdir(dest_path)`
-/// (`main.c:788-792`), which fails with `ENOENT` when an ancestor directory is
+/// (`main.c:797-801`), which fails with `ENOENT` when an ancestor directory is
 /// missing. The whole missing chain is created only under `--mkpath`, via
 /// `make_path(dest_path)` (`main.c:736`). This helper mirrors that: with
 /// `mkpath == false` it uses [`std::fs::create_dir`] (single level), with
@@ -100,7 +100,7 @@ pub(in crate::receiver) fn dest_arg_has_trailing_slash(arg: &OsStr) -> bool {
 ///   `make_path(dest_path, ...)` creates the whole missing chain.
 /// - `main.c:778-792` - `get_local_name()` pre-flight `do_mkdir(dest_path, ACCESSPERMS)`
 ///   (single level, no ancestor creation) when `--mkpath` was not requested.
-/// - `main.c:794-796` - sets `FLAG_DIR_CREATED` on the first flist entry when
+/// - `main.c:803-805` - sets `FLAG_DIR_CREATED` on the first flist entry when
 ///   its basename is `.` (deferred follow-up; oc-rsync's delete path does
 ///   not currently consume that flag).
 pub fn ensure_dest_root_exists(
@@ -113,7 +113,7 @@ pub fn ensure_dest_root_exists(
     if dry_run {
         return Ok(false);
     }
-    // upstream: main.c:788 - the non-mkpath dir branch only fires for a
+    // upstream: main.c:797 - the non-mkpath dir branch only fires for a
     // multi-file transfer or a trailing-slash operand. A single-file
     // no-slash operand names the destination file itself (the operand
     // basename was already split off by `apply_single_file_rename`), so
@@ -159,7 +159,7 @@ pub fn ensure_dest_root_exists(
                 ));
             }
             // upstream: main.c:736 make_path (full chain) only under --mkpath;
-            // otherwise main.c:788 do_mkdir creates a single level and fails
+            // otherwise main.c:797 do_mkdir creates a single level and fails
             // with ENOENT when an ancestor is missing.
             if mkpath {
                 std::fs::create_dir_all(dest_root).map(|()| true)

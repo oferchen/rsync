@@ -12,7 +12,7 @@
 //! 2. For each sub-list (received in depth-first order): dirs in that sub-list
 //!
 //! Our `parent_dir_ndx` values in `PendingSegment` must match these indices
-//! exactly, or the receiver's dirname validation at `flist.c:2652-2659` will
+//! exactly, or the receiver's dirname validation at `flist.c:2687-2694` will
 //! reject entries with "ABORTING due to invalid path from sender".
 //!
 //! # Upstream Reference

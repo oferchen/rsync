@@ -303,12 +303,12 @@ pub(in crate::receiver) enum DeletePassPhase {
 /// Renames all delayed-update files from their `.~tmp~` staging paths to
 /// their final destinations, then removes the empty `.~tmp~` directories.
 ///
-/// Mirrors upstream `receiver.c:422-450 handle_delayed_updates()` which
+/// Mirrors upstream `receiver.c:529-557 handle_delayed_updates()` which
 /// iterates `delayed_bits`, renames each file from its `partial_dir_fname()`
 /// path to the final destination, and calls `handle_partial_dir(PDIR_DELETE)`.
 ///
 /// When `backup_config` is `Some`, backs up the existing destination file
-/// before the rename (upstream: `receiver.c:431 make_backup(fname, False)`).
+/// before the rename (upstream: `receiver.c:538 make_backup(fname, False)`).
 ///
 /// A failed rename (or backup) is logged and does not abort the sweep -
 /// remaining files are still renamed, matching upstream which calls
@@ -340,7 +340,7 @@ pub(in crate::receiver) fn handle_delayed_updates(
     let mut io_error = 0;
 
     for (staging_path, final_path) in delayed {
-        // upstream: receiver.c:431-432 - make_backup(fname, False)
+        // upstream: receiver.c:538-539 - make_backup(fname, False)
         if let Some(ref bc) = backup_config {
             if final_path.exists() {
                 let backup_path = engine::compute_backup_path(
@@ -391,7 +391,7 @@ pub(in crate::receiver) fn handle_delayed_updates(
             }
         }
 
-        // upstream: receiver.c:433-435 - DEBUG_GTE(RECV, 1) rename notice
+        // upstream: receiver.c:540-542 - DEBUG_GTE(RECV, 1) rename notice
         debug_log!(
             Recv,
             1,
@@ -400,7 +400,7 @@ pub(in crate::receiver) fn handle_delayed_updates(
             final_path.display()
         );
 
-        // upstream: receiver.c:439 - do_rename(partialptr, fname)
+        // upstream: receiver.c:546 - do_rename(partialptr, fname)
         if let Err(e) = fs::rename(staging_path, final_path) {
             // upstream: rsyserr(FERROR_XFER, ...) sets got_xfer_error ->
             // RERR_PARTIAL (exit 23). On kernels 5.13-5.18 the Landlock
@@ -422,7 +422,7 @@ pub(in crate::receiver) fn handle_delayed_updates(
         }
     }
 
-    // upstream: receiver.c:446 - handle_partial_dir(partialptr, PDIR_DELETE)
+    // upstream: receiver.c:553 - handle_partial_dir(partialptr, PDIR_DELETE)
     // Remove empty .~tmp~ staging directories.
     for dir in &staging_dirs {
         let _ = fs::remove_dir(dir);
@@ -587,7 +587,7 @@ mod tests {
     /// `BackupConfig` is supplied.
     ///
     /// This is the receiver-side equivalent of upstream
-    /// `receiver.c:431-432 make_backup(fname, False)` -> `backup.c:make_backup`
+    /// `receiver.c:538-539 make_backup(fname, False)` -> `backup.c:make_backup`
     /// which renames the existing file out of the way and emits the
     /// `backed up X to Y` info_log via `INFO_GTE(BACKUP, 1)` at
     /// `backup.c:352-353`. Upstream `testsuite/backup.test:43,56` greps for
@@ -882,7 +882,7 @@ mod tests {
     /// propagates the error before reaching the sweep call in `pipelined.rs`),
     /// leaving staged files intact for the next resume attempt.
     ///
-    /// upstream: receiver.c:584-585 - handle_delayed_updates() only after
+    /// upstream: receiver.c:694-695 - handle_delayed_updates() only after
     /// successful completion of both transfer phases.
     #[test]
     fn interrupt_skips_sweep_files_persist_in_staging() {

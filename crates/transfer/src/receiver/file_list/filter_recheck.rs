@@ -54,7 +54,7 @@ impl ReceiverContext {
     ///
     /// # Upstream Reference
     ///
-    /// - `flist.c:1021-1024` `recv_file_entry()`
+    /// - `flist.c:1049-1052` `recv_file_entry()`
     pub(in crate::receiver) fn recheck_received_filter(&self) -> io::Result<()> {
         // upstream: flist.c:1021 - `!trust_sender_filter` guards the whole
         // re-check (options.c:2512/main.c:1496 set it for local/--trust-sender).

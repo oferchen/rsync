@@ -8,7 +8,7 @@ use std::path::PathBuf;
 
 /// Strips the `/rsyncd-munged/` prefix from a symlink target when munging is active.
 ///
-/// Mirrors upstream `flist.c:222-226`: when the daemon module has
+/// Mirrors upstream `flist.c:234-238`: when the daemon module has
 /// `munge symlinks = yes`, the sender restores the original target before it
 /// is encoded onto the wire so the receiver can reapply the prefix on its
 /// side. The receiver-side write path uses the matching
@@ -22,7 +22,7 @@ pub(super) fn strip_symlink_munge_prefix(munge_symlinks: bool, target: PathBuf) 
         return target;
     }
     let prefix_len = ::metadata::SYMLINK_MUNGE_PREFIX.len();
-    // upstream: flist.c:222 - the strncmp guard requires `llen > SYMLINK_PREFIX_LEN`,
+    // upstream: flist.c:234 - the strncmp guard requires `llen > SYMLINK_PREFIX_LEN`,
     // so a target consisting of exactly the prefix is left untouched.
     #[cfg(unix)]
     {
@@ -78,7 +78,7 @@ mod munge_strip_tests {
 
     #[test]
     fn does_not_strip_exact_prefix_match() {
-        // upstream: flist.c:222 - `llen > SYMLINK_PREFIX_LEN` is strict, so a
+        // upstream: flist.c:234 - `llen > SYMLINK_PREFIX_LEN` is strict, so a
         // target whose entire content is the prefix is left untouched. Without
         // the strict check we would emit an empty target onto the wire and
         // diverge from upstream byte-for-byte.

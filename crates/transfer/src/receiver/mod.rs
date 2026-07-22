@@ -82,7 +82,7 @@ const PHASE1_CHECKSUM_LENGTH: NonZeroU8 =
 /// Upstream rsync switches to `SUM_LENGTH` (16) for phase 2 redo to ensure
 /// maximum integrity after a whole-file checksum failure.
 ///
-/// (upstream: generator.c:2163 `csum_length = SUM_LENGTH`)
+/// (upstream: generator.c:2178 `csum_length = SUM_LENGTH`)
 const REDO_CHECKSUM_LENGTH: NonZeroU8 =
     NonZeroU8::new(signature::block_size::MAX_SUM_LENGTH).unwrap();
 

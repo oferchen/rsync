@@ -63,7 +63,7 @@ impl ReceiverContext {
         let mut failed_dirs = crate::receiver::directory::FailedDirectories::new();
         let mut metadata_errors: Vec<(PathBuf, String)> = Vec::new();
 
-        // upstream: generator.c:1317-1326 - make_path() for relative_paths
+        // upstream: generator.c:1329-1338 - make_path() for relative_paths
         self.ensure_relative_parents(&setup.dest_dir);
 
         for (flist_idx, file_entry) in self.file_list.iter().enumerate() {
@@ -116,7 +116,7 @@ impl ReceiverContext {
         #[cfg(not(unix))]
         self.create_specials(&setup.dest_dir, writer)?;
 
-        // upstream: generator.c:1348-1354 - missing_args == 2 && file->mode == 0
+        // upstream: generator.c:1360-1366 - missing_args == 2 && file->mode == 0
         // deletes the destination path and skips any creation for the sentinel.
         self.process_missing_args_sentinels(
             &setup.dest_dir,
@@ -201,7 +201,7 @@ impl ReceiverContext {
             if !redo_indices.is_empty() {
                 setup.checksum_length = REDO_CHECKSUM_LENGTH;
 
-                // upstream: generator.c:1926 - the phase-2 redo re-itemizes with
+                // upstream: generator.c:1939 - the phase-2 redo re-itemizes with
                 // ITEM_TRANSFER; the basis comparison is not re-run for the retry.
                 let redo_files: Vec<(usize, &FileEntry, PathBuf, u32)> = redo_indices
                     .iter()
@@ -284,7 +284,7 @@ impl ReceiverContext {
             )?;
         }
 
-        // upstream: generator.c:2080-2133 - touch_up_dirs() re-applies
+        // upstream: generator.c:2093-2146 - touch_up_dirs() re-applies
         // directory mtimes after file writes clobber them.
         self.touch_up_dirs(&setup.dest_dir, writer);
 
@@ -309,7 +309,7 @@ impl ReceiverContext {
         }
         stats.metadata_errors = metadata_errors;
         stats.redo_count = redo_count;
-        // upstream: main.c:794-796 - the pre-flight mkdir of the destination
+        // upstream: main.c:803-805 - the pre-flight mkdir of the destination
         // root sets FLAG_DIR_CREATED on flist[0], so the generator itemizes it
         // with ITEM_IS_NEW and receiver.c:736-738 counts created_dirs for it.
         // oc creates the root out-of-band (ensure_dest_root_exists), so the root

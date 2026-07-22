@@ -220,7 +220,7 @@ pub(crate) fn format_iflags(
 ///
 /// # Upstream Reference
 ///
-/// - `options.c:2336-2338` - `stdout_format = "%i %n%L"` for `-i`
+/// - `options.c:2354-2356` - `stdout_format = "%i %n%L"` for `-i`
 /// - `log.c:627-636` - `%n` expansion (filename with trailing `/` for dirs)
 /// - `log.c:643-655` - `%L` expansion: ` => hlink` when the xname is non-empty,
 ///   else ` -> target` for symlinks

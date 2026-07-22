@@ -67,7 +67,7 @@ impl ReceiverContext {
         let mut bytes_received = 0u64;
 
         // First pass: create directories and symlinks from file list.
-        // upstream: generator.c:1317-1326 - make_path() for relative_paths
+        // upstream: generator.c:1329-1338 - make_path() for relative_paths
         self.ensure_relative_parents(&dest_dir);
         let mut metadata_errors = self.create_directories(
             &dest_dir,
@@ -87,7 +87,7 @@ impl ReceiverContext {
         #[cfg(not(unix))]
         self.create_specials(&dest_dir, writer)?;
 
-        // upstream: generator.c:1348-1354 - missing_args == 2 && file->mode == 0
+        // upstream: generator.c:1360-1366 - missing_args == 2 && file->mode == 0
         // deletes the destination path and skips any creation for the sentinel.
         self.process_missing_args_sentinels(
             &dest_dir,
@@ -170,7 +170,7 @@ impl ReceiverContext {
                 continue;
             }
 
-            // upstream: generator.c:1704-1718 - skip files outside the
+            // upstream: generator.c:1716-1731 - skip files outside the
             // min-size/max-size window with a SKIP-gated notice on FINFO.
             if self.emit_size_bound_skip(
                 writer,
@@ -584,7 +584,7 @@ impl ReceiverContext {
         #[cfg(not(unix))]
         self.create_hardlinks(&dest_dir, writer)?;
 
-        // upstream: generator.c:2080-2133 - touch_up_dirs() re-applies
+        // upstream: generator.c:2093-2146 - touch_up_dirs() re-applies
         // directory mtimes after file writes clobber them.
         self.touch_up_dirs(&dest_dir, writer);
 
@@ -599,7 +599,7 @@ impl ReceiverContext {
 
         let total_source_bytes: u64 = self.total_source_size();
 
-        // upstream: main.c:794-796 - count the pre-flight-created destination
+        // upstream: main.c:803-805 - count the pre-flight-created destination
         // root as a created dir (FLAG_DIR_CREATED -> ITEM_IS_NEW). See the
         // incremental path for the full rationale.
         if self.dest_root_created {

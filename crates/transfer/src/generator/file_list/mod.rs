@@ -14,7 +14,7 @@
 //!
 //! # Upstream Reference
 //!
-//! - `flist.c:2192` - `send_file_list()` main file list builder
+//! - `flist.c:2227` - `send_file_list()` main file list builder
 //! - `flist.c:1456` - `send_file_entry()` per-file encoding
 //! - `hlink.c:match_hard_links()` - post-sort hardlink index assignment
 
@@ -67,7 +67,7 @@ impl GeneratorContext {
     ///
     /// # Upstream Reference
     ///
-    /// - `flist.c:2192` - `send_file_list()` - Main file list builder
+    /// - `flist.c:2227` - `send_file_list()` - Main file list builder
     /// - `flist.c:1456` - `send_file_entry()` - Per-file encoding
     ///
     /// Mirrors upstream recursive directory scanning and file list construction behavior.
@@ -117,7 +117,7 @@ impl GeneratorContext {
             // --no-implied-dirs. At protocol < 30 the flag is honoured
             // (flist.c:2468 `else if (implied_dirs && ...)`), so
             // --no-implied-dirs omits the implied parents from the flist and the
-            // receiver recreates them via make_path (generator.c:1317) without
+            // receiver recreates them via make_path (generator.c:1329) without
             // their source metadata. Mirror both: emit when implied dirs are on
             // OR the protocol forces them.
             if relative_paths && (!self.config.flags.no_implied_dirs || self.protocol.as_u8() >= 30)
@@ -183,7 +183,7 @@ impl GeneratorContext {
     ///
     /// # Upstream Reference
     ///
-    /// - `flist.c:2240-2264` - `change_dir(argv[0])` then read relative filenames
+    /// - `flist.c:2275-2299` - `change_dir(argv[0])` then read relative filenames
     /// - `flist.c:2316-2330` - per-entry `/./` anchor split
     /// - `flist.c:2368-2419` - `implied_dot_dir` gates the transfer-root `.`
     ///   emission via `send_file_name(".", ..., FLAG_IMPLIED_DIR & ~FLAG_CONTENT_DIR, ...)`
@@ -283,7 +283,7 @@ impl GeneratorContext {
         // protocol >= 30 regardless of --no-implied-dirs; at protocol < 30 the
         // flag is honoured (flist.c:2468 `else if (implied_dirs && ...)`), so
         // --no-implied-dirs omits the implied parents from the --files-from
-        // flist and the receiver recreates them via make_path (generator.c:1317)
+        // flist and the receiver recreates them via make_path (generator.c:1329)
         // without their source metadata. Mirror the same gate as the positional
         // path (build_file_list): emit only in relative mode, and then when
         // implied dirs are on OR the protocol forces them. When suppressed,
@@ -327,7 +327,7 @@ impl GeneratorContext {
         // Directories emitted purely as implied parents of some other entry
         // (i.e. not also listed explicitly in --files-from). The top-level
         // walk skips these so we do not produce a duplicate file-list entry
-        // that upstream's `implied_filter_list` check (flist.c:998) would
+        // that upstream's `implied_filter_list` check (flist.c:1026) would
         // reject as "unrequested". Explicit --files-from dirs remain walkable
         // so their recursive contents continue to flow normally.
         let implied_only_dirs: HashSet<(PathBuf, PathBuf)> =
@@ -425,7 +425,7 @@ impl GeneratorContext {
     ///
     /// # Upstream Reference
     ///
-    /// - `flist.c:1901-1980` - `send_implied_dirs()`
+    /// - `flist.c:1937-2016` - `send_implied_dirs()`
     /// - `generator.c:1300-1315` - parent dir presence check
     fn emit_implied_parents(
         &mut self,
@@ -456,7 +456,7 @@ impl GeneratorContext {
                 continue;
             }
             let full = base.join(&relative_ancestor);
-            // upstream: flist.c:1949 - `copy_links = 1` is set before
+            // upstream: flist.c:1985 - `copy_links = 1` is set before
             // emitting implied parents, so stat() follows symlinks. On
             // macOS /var is a symlink to /private/var; using
             // symlink_metadata would skip it (is_dir() false for a
@@ -492,7 +492,7 @@ impl GeneratorContext {
 /// The returned `base` is what `walk_path` strips from each child path to
 /// compute its wire-side relative name.
 fn relative_walk_base(path: &Path) -> (PathBuf, PathBuf) {
-    // upstream: flist.c:2316 - `if ((p = strstr(fbuf, "/./")) != NULL)`
+    // upstream: flist.c:2351 - `if ((p = strstr(fbuf, "/./")) != NULL)`
     if let Some(anchor) = find_dot_dir_anchor(path) {
         let path_str = path.as_os_str().to_string_lossy();
         let (head, tail) = path_str.split_at(anchor);

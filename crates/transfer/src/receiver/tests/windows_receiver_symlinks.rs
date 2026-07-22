@@ -11,8 +11,8 @@
 //!
 //! # Upstream Reference
 //!
-//! - `generator.c:1544` - `if (preserve_links && ftype == FT_SYMLINK)`
-//! - `generator.c:1591` - `atomic_create(file, fname, sl, ...)`
+//! - `generator.c:1556` - `if (preserve_links && ftype == FT_SYMLINK)`
+//! - `generator.c:1603` - `atomic_create(file, fname, sl, ...)`
 
 #![cfg(windows)]
 

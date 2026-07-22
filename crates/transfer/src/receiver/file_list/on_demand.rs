@@ -27,7 +27,7 @@
 //!
 //! - `rsync.c:318-429` - `read_ndx_and_attrs()` frame dispatch
 //! - `io.c:1750-1786` - `wait_for_receiver()` one-frame fetch
-//! - `generator.c:2299-2368` - `generate_files()` on-demand fetch loop
+//! - `generator.c:2316-2385` - `generate_files()` on-demand fetch loop
 
 use std::io::{self, Read};
 
@@ -400,7 +400,7 @@ mod tests {
     /// `overflow in read_varint`, since `int_byte_extra[0xFF >> 2] = 5 > 4`).
     ///
     /// upstream: flist.c:2152 `write_ndx(NDX_FLIST_OFFSET - dir_ndx)`,
-    /// io.c:2243 `write_ndx()`, flist.c:2112 `write_end_of_flist()`.
+    /// io.c:2318 `write_ndx()`, flist.c:2112 `write_end_of_flist()`.
     #[rustfmt::skip]
     const UPSTREAM_INC_RECURSE_FRAME: &[u8] = &[
         0xac, 0x01, 0x01, 0x2e, 0x00, 0x00, 0x10, 0x6a, 0x66, 0x1f, 0x52, 0xf0,
@@ -656,7 +656,7 @@ mod tests {
 
     /// A sub-list entry whose dirname escapes its declared parent must be rejected.
     ///
-    /// WHY: upstream `flist.c:2684-2695` compares every sub-list entry's dirname
+    /// WHY: upstream `flist.c:2719-2730` compares every sub-list entry's dirname
     /// against `f_name(dir_flist->files[dir_ndx])` and, on a mismatch, aborts with
     /// `exit_cleanup(RERR_UNSUPPORTED)` ("ABORTING due to invalid path from
     /// sender"). Without this check a hostile sender could frame a sub-list for a

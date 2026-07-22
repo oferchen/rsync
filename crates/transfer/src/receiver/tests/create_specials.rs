@@ -59,7 +59,7 @@ fn special_receiver_config() -> ServerConfig {
     }
 }
 
-/// upstream: generator.c:1663 - `FT_SPECIAL` entries are materialised via
+/// upstream: generator.c:1675 - `FT_SPECIAL` entries are materialised via
 /// `atomic_create -> do_mknod_at`. Without `create_specials` the receiver
 /// dropped the FIFO entirely; this test fails (dest is empty) on the pre-fix
 /// receiver and passes once the node is created.

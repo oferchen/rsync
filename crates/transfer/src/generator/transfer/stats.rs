@@ -23,7 +23,7 @@ impl GeneratorContext {
     /// # Upstream Reference
     ///
     /// - `main.c:347-357` - `handle_stats()` server-sender write path
-    /// - `main.c:960-962` - `do_server_sender()` calls `handle_stats(f_out)`
+    /// - `main.c:978-980` - `do_server_sender()` calls `handle_stats(f_out)`
     pub(super) fn send_stats<W: Write>(
         &self,
         writer: &mut W,

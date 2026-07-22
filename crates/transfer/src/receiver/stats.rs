@@ -121,7 +121,7 @@ pub struct TransferStats {
     ///
     /// # Upstream Reference
     ///
-    /// - `flist.c:2518`: `write_int(f, ignore_errors ? 0 : io_error);`
+    /// - `flist.c:2553`: `write_int(f, ignore_errors ? 0 : io_error);`
     pub io_error: i32,
     /// Number of `MSG_ERROR` messages received from the remote sender.
     ///
@@ -191,7 +191,7 @@ pub struct TransferStats {
     ///
     /// # Upstream Reference
     ///
-    /// - `receiver.c:970-974` - `send_msg_int(MSG_REDO, ndx)` queues for redo
+    /// - `receiver.c:1093-1097` - `send_msg_int(MSG_REDO, ndx)` queues for redo
     /// - `generator.c:2160-2199` - generator processes redo queue in phase 2
     pub redo_count: usize,
 

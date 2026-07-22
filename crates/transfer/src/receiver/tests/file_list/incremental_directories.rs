@@ -311,7 +311,7 @@ mod create_directory_incremental_tests {
     /// entry must report `ITEM_REPORT_TIME`, so the transfer root `.` (and any
     /// existing directory) emits a `.d..t......` itemize row.
     ///
-    /// WHY: upstream's `itemize()` (`generator.c:511-572`, reached from
+    /// WHY: upstream's `itemize()` (`generator.c:518-579`, reached from
     /// `generator.c:1480-1483` with `statret == 0`) sets `ITEM_REPORT_TIME`
     /// whenever `mtime_differs(&sxp->st, file)` for a directory under `--times`
     /// (`keep_time` true). This is independent of `--checksum`: a quick-check

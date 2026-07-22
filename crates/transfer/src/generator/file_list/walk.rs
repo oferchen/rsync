@@ -56,7 +56,7 @@ impl GeneratorContext {
     /// children of the same directory still reach the receiver via their own
     /// top-level walks, and re-walking here would produce a duplicate parent
     /// entry that upstream's `implied_filter_list` check rejects with
-    /// "rejecting unrequested file-list name" (flist.c:998).
+    /// "rejecting unrequested file-list name" (flist.c:1026).
     ///
     /// `emitted_dirs` is `Some` only from `build_file_list_with_base`, which
     /// passes the set of directories already emitted by its implied-parent
@@ -65,9 +65,9 @@ impl GeneratorContext {
     ///
     /// # Upstream Reference
     ///
-    /// - `flist.c:998` - `check_filter(&implied_filter_list, ...)` rejects
+    /// - `flist.c:1026` - `check_filter(&implied_filter_list, ...)` rejects
     ///   second occurrences as "unrequested file-list name".
-    /// - `flist.c:1901` - `send_implied_dirs()` is upstream's equivalent
+    /// - `flist.c:1937` - `send_implied_dirs()` is upstream's equivalent
     ///   single emission point for the same logical directory.
     pub(in crate::generator) fn try_walk_source_entry_dedup(
         &mut self,
@@ -80,7 +80,7 @@ impl GeneratorContext {
         // exclude.c add_rule XFLG_ANCHORED2ABS). Idempotent across source
         // entries; `base` is the same root for the whole walk.
         self.filter_chain.set_transfer_root(base.to_path_buf());
-        // upstream: flist.c:2390 - link_stat() once, then pass &st to
+        // upstream: flist.c:2425 - link_stat() once, then pass &st to
         // send_file_name(). Reuse the metadata to avoid a redundant stat
         // inside walk_path_with_metadata.
         match self.resolve_symlink_metadata(path, base) {
@@ -113,7 +113,7 @@ impl GeneratorContext {
                         self.emit_delete_sentinel(base, path)?;
                         Ok(true)
                     }
-                    // upstream: flist.c:1810 - default: link_stat failed + IOERR_GENERAL
+                    // upstream: flist.c:1846 - default: link_stat failed + IOERR_GENERAL
                     _ => {
                         // FFV-4: emit the correct error message and error flag
                         // for a source that never existed at flist build time.
@@ -239,7 +239,7 @@ impl GeneratorContext {
             }
         }
 
-        // upstream: flist.c:1332 - is_excluded() applied during make_file()
+        // upstream: flist.c:1360 - is_excluded() applied during make_file()
         // FilterChain evaluates per-directory scoped rules (innermost first)
         // then global rules. If no rules are configured, allows() returns true.
         if !self.filter_chain.allows(&relative, metadata.is_dir()) {
@@ -288,7 +288,7 @@ impl GeneratorContext {
             match std::fs::read_dir(&path) {
                 Ok(entries) => Some(entries),
                 Err(e) => {
-                    // upstream: flist.c:1842 - rsyserr(FERROR_XFER, errno, "opendir %s failed", ...)
+                    // upstream: flist.c:1878 - rsyserr(FERROR_XFER, errno, "opendir %s failed", ...)
                     eprintln!(
                         "rsync: [sender] opendir \"{}\" failed: {}",
                         path.display(),
@@ -387,7 +387,7 @@ impl GeneratorContext {
         match std::fs::read_dir(dir_path) {
             Ok(entries) => self.process_dir_entries_batched(base, dir_path, entries),
             Err(e) => {
-                // upstream: flist.c:1842 - rsyserr(FERROR_XFER, errno, "opendir %s failed", ...)
+                // upstream: flist.c:1878 - rsyserr(FERROR_XFER, errno, "opendir %s failed", ...)
                 eprintln!(
                     "rsync: [sender] opendir \"{}\" failed: {}",
                     dir_path.display(),
@@ -415,7 +415,7 @@ impl GeneratorContext {
             match entry {
                 Ok(de) => child_paths.push(de.path()),
                 Err(e) => {
-                    // upstream: flist.c:1888 - rsyserr(FERROR_XFER, errno, "readdir(%s)", ...)
+                    // upstream: flist.c:1924 - rsyserr(FERROR_XFER, errno, "readdir(%s)", ...)
                     eprintln!(
                         "rsync: [sender] readdir(\"{}\"): {}",
                         dir_path.display(),
@@ -471,7 +471,7 @@ impl GeneratorContext {
                                 target.as_os_str(),
                                 relative,
                             ) {
-                                // upstream: flist.c:217 - INFO_GTE(SYMSAFE, 1)
+                                // upstream: flist.c:229 - INFO_GTE(SYMSAFE, 1)
                                 // fires before the target is dereferenced.
                                 info_log!(
                                     Symsafe,
@@ -510,10 +510,10 @@ impl GeneratorContext {
     /// matching upstream `flist.c:1286-1294` error reporting.
     fn log_stat_error(&self, path: &Path, e: &io::Error) {
         if e.kind() == io::ErrorKind::NotFound {
-            // upstream: flist.c:1289 - rprintf(c, "file has vanished: %s\n", full_fname(...))
+            // upstream: flist.c:1317 - rprintf(c, "file has vanished: %s\n", full_fname(...))
             eprintln!("file has vanished: \"{}\"", path.display());
         } else {
-            // upstream: flist.c:1810 - rsyserr(FERROR_XFER, errno, "link_stat %s failed", ...)
+            // upstream: flist.c:1846 - rsyserr(FERROR_XFER, errno, "link_stat %s failed", ...)
             eprintln!(
                 "rsync: [sender] link_stat \"{}\" failed: {}",
                 path.display(),
@@ -532,8 +532,8 @@ impl GeneratorContext {
     ///
     /// # Upstream Reference
     ///
-    /// - `flist.c:205-232` - `readlink_stat()`
-    /// - `flist.c:215` - `copy_unsafe_links && unsafe_symlink(linkbuf, path)`
+    /// - `flist.c:217-244` - `readlink_stat()`
+    /// - `flist.c:227` - `copy_unsafe_links && unsafe_symlink(linkbuf, path)`
     pub(in crate::generator) fn resolve_symlink_metadata(
         &self,
         path: &Path,
@@ -582,7 +582,7 @@ impl GeneratorContext {
             let relative = path.strip_prefix(base).unwrap_or(path);
             if super::super::super::symlink_safety::is_unsafe_symlink(target.as_os_str(), relative)
             {
-                // upstream: flist.c:217 - INFO_GTE(SYMSAFE, 1) fires before
+                // upstream: flist.c:229 - INFO_GTE(SYMSAFE, 1) fires before
                 // the unsafe symlink is dereferenced into a regular entry.
                 info_log!(
                     Symsafe,
@@ -610,7 +610,7 @@ mod rsyserr_wording_tests {
     /// refactor that re-inserts the source-location or role-version trailer
     /// will fail these asserts.
     const CASES: &[(&str, &str)] = &[
-        // upstream: flist.c:1810 - "link_stat %s failed"
+        // upstream: flist.c:1846 - "link_stat %s failed"
         (
             "rsync: [sender] link_stat \"{path}\" failed: No such file or directory (2)",
             "rsync: [sender] link_stat \"/p\" failed: No such file or directory (2)",
@@ -620,7 +620,7 @@ mod rsyserr_wording_tests {
             "rsync: [sender] opendir \"{path}\" failed: Permission denied (13)",
             "rsync: [sender] opendir \"/p\" failed: Permission denied (13)",
         ),
-        // upstream: flist.c:1888 - "readdir(%s)"
+        // upstream: flist.c:1924 - "readdir(%s)"
         (
             "rsync: [sender] readdir(\"{path}\"): Input/output error (5)",
             "rsync: [sender] readdir(\"/p\"): Input/output error (5)",
@@ -630,9 +630,9 @@ mod rsyserr_wording_tests {
             "rsync: [sender] make_file failed for \"{path}\": Permission denied (13)",
             "rsync: [sender] make_file failed for \"/p\": Permission denied (13)",
         ),
-        // upstream: flist.c:1289 / sender.c:358 - "file has vanished: %s" via full_fname()
+        // upstream: flist.c:1317 / sender.c:389 - "file has vanished: %s" via full_fname()
         ("file has vanished: \"{path}\"", "file has vanished: \"/p\""),
-        // upstream: sender.c:362 - "send_files failed to open %s"
+        // upstream: sender.c:393 - "send_files failed to open %s"
         (
             "rsync: [sender] send_files failed to open \"{path}\": Permission denied (13)",
             "rsync: [sender] send_files failed to open \"/p\": Permission denied (13)",
@@ -656,7 +656,7 @@ mod symsafe_emission_tests {
     //! Wording tests for `--info=SYMSAFE` producer emissions on the
     //! sender side.
     //!
-    //! Upstream rsync 3.4.1 fires `INFO_GTE(SYMSAFE, 1)` at `flist.c:217`
+    //! Upstream rsync 3.4.1 fires `INFO_GTE(SYMSAFE, 1)` at `flist.c:229`
     //! when `--copy-unsafe-links` triggers a dereference. The exact line
     //! emitted (per `rprintf(FINFO, ...)`) is matched byte-for-byte so
     //! interop harnesses that grep for the literal continue to find it.
@@ -685,7 +685,7 @@ mod symsafe_emission_tests {
 
     #[test]
     fn copying_unsafe_symlink_wording_matches_upstream() {
-        // upstream: flist.c:217 -
+        // upstream: flist.c:229 -
         //     rprintf(FINFO, "copying unsafe symlink \"%s\" -> \"%s\"\n",
         //             path, linkbuf);
         init_symsafe_level1();

@@ -54,14 +54,14 @@
 //!
 //! ## Upstream Reference
 //!
-//! - `flist.c:2192 send_file_list()` - top-level + initial segment dispatch.
+//! - `flist.c:2227 send_file_list()` - top-level + initial segment dispatch.
 //! - `flist.c:send_extra_file_list()` - per-directory sub-segments,
 //!   `MIN_FILECNT_LOOKAHEAD` throttling, `NDX_FLIST_EOF` finalization.
-//! - `sender.c:199 send_files()` - main send loop, calls into segment
+//! - `sender.c:203 send_files()` - main send loop, calls into segment
 //!   scheduling at the top and bottom of each iteration (lines ~227, ~261).
-//! - `generator.c:2226 generate_files()` - peer side that consumes the
+//! - `generator.c:2243 generate_files()` - peer side that consumes the
 //!   segmented stream and drives signature/data exchange.
-//! - `receiver.c:522 recv_files()` - receiver-side counterpart to the
+//! - `receiver.c:632 recv_files()` - receiver-side counterpart to the
 //!   sender's segmented dispatch.
 //! - `compat.c:161 set_allow_inc_recurse()` - capability negotiation gate
 //!   (`allow_inc_recurse` is cleared when `!recurse || use_qsort` or when

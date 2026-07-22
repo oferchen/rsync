@@ -137,7 +137,7 @@ impl ReceiverContext {
             return Ok(Vec::new());
         }
 
-        // upstream: generator.c:1261-1262 - check_filter(&daemon_filter_list, ...)
+        // upstream: generator.c:1273-1274 - check_filter(&daemon_filter_list, ...)
         // skips daemon-excluded directories before creation.
         let daemon_filters = self.daemon_filter_set();
         let dir_entries: Vec<(usize, PathBuf, PathBuf)> = self
@@ -182,7 +182,7 @@ impl ReceiverContext {
         // `cd+++++++++ <name>/`, an existing one emits a metadata-only row
         // gated by the standard significance check.
         let mut dir_was_new: Vec<bool> = Vec::with_capacity(dir_entries.len());
-        // upstream: generator.c:1337-1340 - probe each new parent directory's
+        // upstream: generator.c:1349-1352 - probe each new parent directory's
         // default POSIX ACL when !preserve_perms so dest_mode() folds the bits
         // in. The probe also drives the `DEBUG_GTE(ACL, 1)` emission in
         // `acls.c:1133-1134`. Mirror the gating exactly: only probe when
@@ -263,7 +263,7 @@ impl ReceiverContext {
                 if probe_default_perms {
                     if let Some(parent) = dir_path.parent() {
                         if probed_parents.insert(parent.to_path_buf()) {
-                            // upstream: generator.c:1339 dflt_perms = default_perms_for_dir(dn)
+                            // upstream: generator.c:1351 dflt_perms = default_perms_for_dir(dn)
                             // Pass umask = 0; upstream prints the ACL-derived bits, not
                             // the umask-derived fallback, so the trace value is umask-independent.
                             let _ = ::metadata::default_perms_for_dir(parent, 0);
@@ -514,9 +514,9 @@ impl ReceiverContext {
     ///
     /// # Upstream Reference
     ///
-    /// - `generator.c:1317-1326` - `make_path()` for missing parents when
+    /// - `generator.c:1329-1338` - `make_path()` for missing parents when
     ///   `relative_paths && !implied_dirs`
-    /// - `generator.c:1472-1475` - retry `mkdir` after `make_path()` when
+    /// - `generator.c:1484-1487` - retry `mkdir` after `make_path()` when
     ///   `relative_paths` and initial `mkdir` returns `ENOENT`
     pub(in crate::receiver) fn ensure_relative_parents(&self, dest_dir: &Path) {
         if !self.config.flags.relative || self.config.flags.skip_dest_writes() {
@@ -600,7 +600,7 @@ impl ReceiverContext {
     /// # Upstream Reference
     ///
     /// - `generator.c:1432` - `recv_generator()` creates directories
-    /// - `generator.c:1472-1475` - retry `mkdir` after `make_path()`
+    /// - `generator.c:1484-1487` - retry `mkdir` after `make_path()`
     /// - `generator.c:1480-1483` - `itemize()` before metadata application
     pub(in crate::receiver) fn create_directory_incremental(
         &self,
@@ -858,7 +858,7 @@ impl ReceiverContext {
     ///
     /// # Upstream Reference
     ///
-    /// - `generator.c:2080-2133` - `touch_up_dirs(dir_flist, -1)` iterates in
+    /// - `generator.c:2093-2146` - `touch_up_dirs(dir_flist, -1)` iterates in
     ///   reverse order and repairs perms then times.
     /// - `generator.c:2122-2127` - `fix_dir_perms = !am_root && !(mode &
     ///   S_IWUSR)` restores the real directory mode.
@@ -1167,7 +1167,7 @@ mod touch_up_dirs_tests {
     /// mtime with the current time. `touch_up_dirs` must re-apply the
     /// original mtime from the file list entry.
     ///
-    /// upstream: generator.c:2080-2133 - touch_up_dirs()
+    /// upstream: generator.c:2093-2146 - touch_up_dirs()
     #[test]
     fn restores_directory_mtime_after_file_writes() {
         let dir = test_support::create_tempdir();

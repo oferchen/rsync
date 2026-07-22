@@ -4,7 +4,7 @@
 //! just NDX_DONE as 4-byte little-endian i32, without NDX_FLIST_EOF
 //! or NDX_DEL_STATS messages.
 //!
-//! upstream: main.c:875-906 `read_final_goodbye()`
+//! upstream: main.c:893-924 `read_final_goodbye()`
 
 use std::ffi::OsString;
 use std::io::Cursor;
