@@ -221,8 +221,8 @@ pub use local_copy::{
     LocalCopyError, LocalCopyErrorKind, LocalCopyOptions, LocalCopyOptionsBuilder, LocalCopyPlan,
     LocalCopySummary, ReferenceDirectory, ReferenceDirectoryKind, SkipCompressList,
     SkipCompressParseError, SparseDetectStrategy, SparseDetector, SparseReader, SparseRegion,
-    compute_backup_path, trace_make_backup_copy, trace_make_backup_device,
-    trace_make_backup_hlink, trace_make_backup_rename, trace_make_backup_symlink,
+    compute_backup_path, trace_make_backup_copy, trace_make_backup_device, trace_make_backup_hlink,
+    trace_make_backup_rename, trace_make_backup_symlink,
 };
 
 /// File signature generation for delta transfers.
