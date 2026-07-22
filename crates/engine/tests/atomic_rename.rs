@@ -42,9 +42,16 @@ fn temp_file_is_created_during_transfer() {
         dest.as_path(),
         "staging path should differ from destination"
     );
+    // upstream get_tmpname(): the in-flight temp is `.<name>.XXXXXX` beside dest.
+    let staging_name = staging.file_name().unwrap().to_string_lossy();
     assert!(
-        staging.to_string_lossy().contains(".~tmp~"),
-        "staging path should have upstream rsync .~tmp~ prefix"
+        staging_name.starts_with(".final.txt."),
+        "staging name should match upstream get_tmpname(): got {staging_name}"
+    );
+    assert_eq!(
+        staging_name.len(),
+        ".final.txt.".len() + 6,
+        "six-character mkstemp-style suffix: got {staging_name}"
     );
     assert!(!dest.exists(), "destination should not exist until commit");
 
@@ -52,24 +59,6 @@ fn temp_file_is_created_during_transfer() {
     drop(file);
     let content = fs::read(staging).expect("read staging file");
     assert_eq!(content, b"test content");
-
-    guard.discard();
-}
-
-#[test]
-fn temp_file_path_includes_process_id() {
-    let temp = tempdir().expect("tempdir");
-    let dest = temp.path().join("file.txt");
-
-    let (guard, _file) =
-        DestinationWriteGuard::new(&dest, false, None, None).expect("create guard");
-
-    let staging = guard.staging_path();
-    let pid = std::process::id();
-    assert!(
-        staging.to_string_lossy().contains(&pid.to_string()),
-        "staging path should include process ID for uniqueness"
-    );
 
     guard.discard();
 }
