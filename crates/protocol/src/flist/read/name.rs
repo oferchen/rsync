@@ -199,8 +199,10 @@ impl FileListReader {
         // Fast path: most names from a well-behaved sender need no cleaning.
         if !needs_cleaning(&name) {
             if !self.relative_paths && name[0] == b'/' {
+                // upstream: flist.c:768 exit_cleanup(RERR_UNSUPPORTED); the
+                // `Unsupported` kind maps to exit 4, not StreamIo(12).
                 return Err(io::Error::new(
-                    io::ErrorKind::InvalidData,
+                    io::ErrorKind::Unsupported,
                     format!(
                         "ABORTING due to unsafe pathname from sender: {}",
                         String::from_utf8_lossy(&name)
@@ -216,8 +218,9 @@ impl FileListReader {
 
         // upstream: flist.c:757 - reject absolute paths when not --relative
         if anchored && !self.relative_paths {
+            // upstream: flist.c:768 exit_cleanup(RERR_UNSUPPORTED) -> exit 4.
             return Err(io::Error::new(
-                io::ErrorKind::InvalidData,
+                io::ErrorKind::Unsupported,
                 format!(
                     "ABORTING due to unsafe pathname from sender: {}",
                     String::from_utf8_lossy(&name)
@@ -254,8 +257,9 @@ impl FileListReader {
                 if next == Some(b'.') {
                     let after = name.get(i + 2).copied();
                     if after == Some(b'/') || after.is_none() {
+                        // upstream: flist.c:768 exit_cleanup(RERR_UNSUPPORTED) -> exit 4.
                         return Err(io::Error::new(
-                            io::ErrorKind::InvalidData,
+                            io::ErrorKind::Unsupported,
                             format!(
                                 "ABORTING due to unsafe pathname from sender: {}",
                                 String::from_utf8_lossy(&name)
