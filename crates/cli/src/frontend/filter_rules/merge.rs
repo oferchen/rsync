@@ -270,7 +270,6 @@ fn merge_directive_requires_argument(keyword: &str) -> bool {
         "include" | "exclude" | "show" | "hide" | "protect" | "risk" | "exclude-if-present"
     ) || keyword.starts_with("merge")
         || keyword.starts_with("dir-merge")
-        || keyword.starts_with("per-dir")
         || keyword == "."
         || keyword == ":"
 }
@@ -328,11 +327,6 @@ mod tests {
     #[test]
     fn requires_argument_dir_merge() {
         assert!(merge_directive_requires_argument("dir-merge"));
-    }
-
-    #[test]
-    fn requires_argument_per_dir() {
-        assert!(merge_directive_requires_argument("per-dir"));
     }
 
     #[test]

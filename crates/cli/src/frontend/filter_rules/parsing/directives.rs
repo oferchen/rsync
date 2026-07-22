@@ -1,4 +1,4 @@
-//! Long `merge` and `dir-merge` / `per-dir` directive parsers.
+//! Long `merge` and `dir-merge` directive parsers.
 //!
 //! Parses the verbose merge-file directives that introduce per-file or
 //! per-directory filter merges, applying their modifier strings and
@@ -58,27 +58,16 @@ pub(super) fn parse_long_merge_directive(text: &str) -> Option<Result<FilterDire
     Some(Ok(FilterDirective::Merge(directive)))
 }
 
-/// Parses a long-form `dir-merge[,MODS] FILE` directive (and the `per-dir`
-/// alias). Returns `None` when neither alias matches, or an error when the file
-/// name is missing.
+/// Parses a long-form `dir-merge[,MODS] FILE` directive. Returns `None` when
+/// the keyword does not match, or an error when the file name is missing.
 pub(super) fn parse_dir_merge_alias(trimmed: &str) -> Option<Result<FilterDirective, Message>> {
-    const DIR_MERGE_ALIASES: [&str; 2] = ["dir-merge", "per-dir"];
-
-    let mut matched_prefix = None;
-    for alias in DIR_MERGE_ALIASES {
-        // upstream: exclude.c:1143 RULE_STRCMP(s, "dir-merge") is a case-sensitive
-        // strncmp reached via `case 'd'`, so `DIR-MERGE`/`Dir-Merge` never match
-        // the keyword. Compare bytes exactly (the `per-dir` alias is an oc-rsync
-        // extension held to the same case-sensitivity for consistency). Every
-        // alias is ASCII, so an equal prefix guarantees `alias.len()` is a char
-        // boundary, keeping the slices below panic-safe.
-        if trimmed.as_bytes().starts_with(alias.as_bytes()) {
-            matched_prefix = Some((&trimmed[..alias.len()], &trimmed[alias.len()..]));
-            break;
-        }
-    }
-
-    let (label, remainder) = matched_prefix?;
+    // upstream: exclude.c:1143 RULE_STRCMP(s, "dir-merge") is a case-sensitive
+    // strncmp reached via `case 'd'`, so `DIR-MERGE`/`Dir-Merge` never match the
+    // keyword. Compare bytes exactly; "dir-merge" is ASCII, so a matching prefix
+    // lands on a char boundary, keeping the slices below panic-safe. (upstream
+    // has no other dir-merge spelling, so no alias is accepted.)
+    const KEYWORD: &str = "dir-merge";
+    let remainder = trimmed.strip_prefix(KEYWORD)?;
     let mut remainder =
         remainder.trim_start_matches(|ch: char| ch == '_' || ch.is_ascii_whitespace());
     let mut modifiers = "";
@@ -101,7 +90,7 @@ pub(super) fn parse_dir_merge_alias(trimmed: &str) -> Option<Result<FilterDirect
         if assume_cvsignore {
             path_text = ".cvsignore";
         } else {
-            let text = format!("filter rule '{trimmed}' is missing a file name after '{label}'");
+            let text = format!("filter rule '{trimmed}' is missing a file name after '{KEYWORD}'");
             return Some(Err(rsync_error!(1, text).with_role(Role::Client)));
         }
     }
