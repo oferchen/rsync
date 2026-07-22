@@ -225,7 +225,10 @@ pub(crate) fn build_io_timeout_reapply(
 /// Opens a plain TCP connection to a daemon.
 ///
 /// Respects `RSYNC_CONNECT_PROG` and `RSYNC_PROXY` environment
-/// variables.
+/// variables. `sockopts` (`--sockopts`), when given, is applied to the
+/// connecting socket before `connect(2)` for both the direct and proxied
+/// paths; it has no effect on a connect program, matching upstream (a
+/// connect program bypasses `open_socket_out()` entirely).
 pub(crate) fn open_daemon_stream(
     addr: &DaemonAddress,
     connect_timeout: Option<Duration>,
@@ -234,15 +237,22 @@ pub(crate) fn open_daemon_stream(
     connect_program: Option<&OsStr>,
     bind_address: Option<SocketAddr>,
     tfo: TcpFastOpenMode,
+    sockopts: Option<&OsStr>,
 ) -> Result<DaemonStream, ClientError> {
     if let Some(program) = program::load_daemon_connect_program(connect_program)? {
         return program::connect_via_program(addr, &program);
     }
 
     let stream = match load_daemon_proxy()? {
-        Some(proxy) => {
-            proxy::connect_via_proxy(addr, &proxy, connect_timeout, io_timeout, bind_address, tfo)?
-        }
+        Some(proxy) => proxy::connect_via_proxy(
+            addr,
+            &proxy,
+            connect_timeout,
+            io_timeout,
+            bind_address,
+            tfo,
+            sockopts,
+        )?,
         None => connect_direct(
             addr,
             connect_timeout,
@@ -250,6 +260,7 @@ pub(crate) fn open_daemon_stream(
             address_mode,
             bind_address,
             tfo,
+            sockopts,
         )?,
     };
 

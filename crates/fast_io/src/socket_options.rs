@@ -99,6 +99,26 @@ pub fn set_socket_int_option_raw(
     setsockopt_int_raw(fd, level, option, value)
 }
 
+/// Windows counterpart to [`set_socket_int_option_raw`]: same semantics, but
+/// accepts a `RawSocket` so a caller holding a pre-connect `socket2::Socket`
+/// (which has no `TcpStream` yet) can set the handful of options with no
+/// typed `socket2` equivalent.
+///
+/// # Errors
+///
+/// Returns the OS error reported by Winsock's `setsockopt` if the call fails.
+#[cfg(windows)]
+pub fn set_socket_int_option_raw(
+    raw_socket: std::os::windows::io::RawSocket,
+    level: i32,
+    option: i32,
+    value: i32,
+) -> io::Result<()> {
+    use windows_sys::Win32::Networking::WinSock::SOCKET;
+
+    setsockopt_int_raw_winsock(raw_socket as SOCKET, level, option, value)
+}
+
 /// Enables the server-side `TCP_FASTOPEN` option on a raw socket file
 /// descriptor or handle.
 ///

@@ -172,6 +172,26 @@ fn serve_connections(
         }
     };
 
+    // upstream: socket.c:set_socket_options() - the `socket options =` /
+    // `--sockopts` string is parsed once up front so it can be applied to
+    // each listener socket before bind(2) (socket.c:449-452 - after
+    // SO_REUSEADDR, before bind), and later to each accepted client
+    // connection before the session handler runs.
+    let parsed_socket_options: Vec<SocketOption> = if let Some(ref opts_str) = socket_options_str {
+        parse_socket_options(opts_str, log_sink.as_ref()).map_err(|msg| {
+            DaemonError::new(
+                FEATURE_UNAVAILABLE_EXIT_CODE,
+                rsync_error!(
+                    FEATURE_UNAVAILABLE_EXIT_CODE,
+                    format!("invalid socket options: {msg}")
+                )
+                .with_role(Role::Daemon),
+            )
+        })?
+    } else {
+        Vec::new()
+    };
+
     // When a pre-bound listener is injected (test infrastructure), use it
     // directly - skipping the bind step eliminates the TOCTOU race between
     // port allocation and daemon bind. `listeners` is later moved into the
@@ -183,6 +203,12 @@ fn serve_connections(
         let local_addr = listener
             .local_addr()
             .unwrap_or_else(|_| SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), port));
+        // The listener is already bound (and, for a real `TcpListener`,
+        // already listening) by the test harness that injected it, so
+        // sockopts can only be applied post-hoc here. This path is
+        // test-infrastructure-only; the real startup path below applies
+        // sockopts pre-bind.
+        apply_socket_options_to_listener(&listener, &parsed_socket_options, log_sink.as_ref());
         bound_addresses = vec![local_addr];
         listeners = vec![listener];
     } else {
@@ -202,6 +228,7 @@ fn serve_connections(
             backlog,
             tcp_fastopen_mode,
             acceptor_threads,
+            &parsed_socket_options,
             log_sink.as_ref(),
         ) {
             Ok((bound_listeners, bound_local_addrs)) => {
@@ -229,32 +256,10 @@ fn serve_connections(
         warn_tcp_fastopen_unsupported(log_sink.as_ref());
     }
 
-    // upstream: socket.c:set_socket_options() - apply socket options to each
-    // listener socket before accepting connections, and to each accepted
-    // client connection before the session handler runs.
-    let client_socket_options: Arc<Vec<SocketOption>> = if let Some(ref opts_str) =
-        socket_options_str
-    {
-        let parsed = parse_socket_options(opts_str, log_sink.as_ref()).map_err(|msg| {
-            DaemonError::new(
-                FEATURE_UNAVAILABLE_EXIT_CODE,
-                rsync_error!(
-                    FEATURE_UNAVAILABLE_EXIT_CODE,
-                    format!("invalid socket options: {msg}")
-                )
-                .with_role(Role::Daemon),
-            )
-        })?;
-        // upstream: socket.c:730-733 - a failed setsockopt warns and continues;
-        // it never aborts binding. apply_socket_options_to_listener applies each
-        // option independently and logs any per-option failure.
-        for listener in &listeners {
-            apply_socket_options_to_listener(listener, &parsed, log_sink.as_ref());
-        }
-        Arc::new(parsed)
-    } else {
-        Arc::new(Vec::new())
-    };
+    // Retained for each accepted client connection - upstream: clientserver.c
+    // applies set_socket_options() to the accepted fd before the session
+    // handler runs, independent of the listener-side application above.
+    let client_socket_options: Arc<Vec<SocketOption>> = Arc::new(parsed_socket_options);
 
     // Detach from terminal if --detach is active (Unix default).
     // Must happen after binding so startup errors reach stderr, and before

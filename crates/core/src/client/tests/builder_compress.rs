@@ -507,6 +507,7 @@ fn connect_direct_applies_io_timeout() {
         AddressMode::Default,
         None,
         crate::client::TcpFastOpenMode::Auto,
+        None,
     )
     .expect("connect directly");
 
@@ -558,6 +559,7 @@ fn connect_via_proxy_applies_io_timeout() {
         timeout,
         None,
         crate::client::TcpFastOpenMode::Auto,
+        None,
     )
     .expect("proxy connect");
 

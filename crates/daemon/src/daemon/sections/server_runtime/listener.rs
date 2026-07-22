@@ -158,6 +158,14 @@ const UPSTREAM_IPPROTO_TCP: i32 = 6;
 /// default (128). This matches upstream rsync's `socket.c` which calls
 /// `listen(sp[i], lp_listen_backlog())`.
 ///
+/// `socket_options` (the `socket options =` config directive / `--sockopts`)
+/// is applied before `bind(2)` - upstream: socket.c:447-465 applies
+/// `SO_REUSEADDR` then `set_socket_options(s, sockopts)` then `bind(2)`.
+/// Applying user socket options only after `listen(2)` (as a prior version of
+/// this function did, via a caller-side post-bind pass) is a no-op for
+/// options that shape the window scale advertised in the SYN-ACK the kernel
+/// sends once the socket starts accepting connections.
+///
 /// Failed `socket(2)` and `bind(2)` syscalls are reported through the
 /// `--debug=BIND` producer (`protocol::bind::trace`), mirroring upstream
 /// `socket.c:432-470` per-address-family accumulation. The errors are
@@ -167,6 +175,8 @@ fn bind_with_backlog(
     backlog: i32,
     tcp_fastopen: TcpFastOpenMode,
     reuse_port: bool,
+    socket_options: &[SocketOption],
+    log_sink: Option<&SharedLogSink>,
 ) -> io::Result<TcpListener> {
     let domain = if addr.is_ipv4() {
         socket2::Domain::IPV4
@@ -220,6 +230,12 @@ fn bind_with_backlog(
             );
         }
     }
+
+    // upstream: socket.c:449-452 - set_socket_options(s, sockopts) runs here,
+    // after SO_REUSEADDR and before bind(2), so options that shape the SYN-ACK
+    // (e.g. SO_SNDBUF/SO_RCVBUF window scaling) take effect from the first
+    // connection the listener accepts.
+    apply_socket_options_impl(socket2::SockRef::from(&socket), socket_options, log_sink);
 
     // For IPv6 sockets, set IPV6_V6ONLY to avoid conflicts with the separate
     // IPv4 listener in dual-stack mode.
@@ -405,6 +421,7 @@ fn bind_listeners_per_family(
     backlog: i32,
     tcp_fastopen: TcpFastOpenMode,
     acceptor_threads: u32,
+    socket_options: &[SocketOption],
     log_sink: Option<&SharedLogSink>,
 ) -> Result<(Vec<TcpListener>, Vec<SocketAddr>), io::Error> {
     let replicas = acceptor_threads.max(1) as usize;
@@ -428,7 +445,14 @@ fn bind_listeners_per_family(
         let mut family_bound = 0usize;
         let mut family_error: Option<io::Error> = None;
         for _ in 0..replicas {
-            match bind_with_backlog(requested_addr, backlog, tcp_fastopen, reuse_port) {
+            match bind_with_backlog(
+                requested_addr,
+                backlog,
+                tcp_fastopen,
+                reuse_port,
+                socket_options,
+                log_sink,
+            ) {
                 Ok(listener) => {
                     let local_addr = listener.local_addr().unwrap_or(requested_addr);
                     bound_addresses.push(local_addr);
