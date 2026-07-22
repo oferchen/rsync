@@ -163,7 +163,7 @@ pub(crate) struct OutFormatContext {
     /// Whether `INFO_GTE(NAME, 2)` is in effect (i.e. `-vv` or
     /// `--info=name2`).
     ///
-    /// Upstream `generator.c:582-583` keeps emitting itemize lines for
+    /// Upstream `generator.c:589-590` keeps emitting itemize lines for
     /// entries whose `iflags == 0` when this is set, so unchanged dirs,
     /// files, and symlinks still surface as all-dot rows. The render path
     /// uses this to bypass the empty-change-set suppression that mirrors
@@ -172,7 +172,7 @@ pub(crate) struct OutFormatContext {
     /// Whether `-ii` (the `-i` flag repeated) is in effect, i.e. upstream
     /// `stdout_format_has_i > 1`.
     ///
-    /// Upstream `generator.c:582-583` ORs `stdout_format_has_i > 1` into the
+    /// Upstream `generator.c:589-590` ORs `stdout_format_has_i > 1` into the
     /// itemize emit gate as a term separate from `INFO_GTE(NAME, 2)`. Two
     /// `-i` flags therefore surface unchanged (`iflags == 0`) entries as
     /// all-dot rows even without `-vv`. The render path uses this to bypass
@@ -186,7 +186,7 @@ pub(crate) struct OutFormatContext {
     /// preserved.
     ///
     /// Controls whether `--list-only` output appends ` -> <target>` to a
-    /// symlink row. Upstream `generator.c:1183` only sets the arrow when
+    /// symlink row. Upstream `generator.c:1195` only sets the arrow when
     /// `preserve_links && S_ISLNK(f->mode)`; without `-l` the symlink is
     /// still listed (with its target-length size) but no target string.
     pub(super) preserve_links: bool,
@@ -221,7 +221,7 @@ impl OutFormatContext {
 
     /// Sets the `INFO_GTE(NAME, 2)` flag (`-vv` / `--info=name2`).
     ///
-    /// Upstream `generator.c:582-583` ORs `INFO_GTE(NAME, 2)` into the
+    /// Upstream `generator.c:589-590` ORs `INFO_GTE(NAME, 2)` into the
     /// itemize emit gate; mirroring that semantic locally requires the
     /// renderer to skip the "no change set, no creation" suppression so
     /// unchanged entries still print as all-dot rows.
@@ -240,7 +240,7 @@ impl OutFormatContext {
 
     /// Sets the `-ii` flag (`stdout_format_has_i > 1`).
     ///
-    /// Upstream `generator.c:582-583` ORs `stdout_format_has_i > 1` into the
+    /// Upstream `generator.c:589-590` ORs `stdout_format_has_i > 1` into the
     /// itemize emit gate; mirroring it locally makes the renderer skip the
     /// "no change set, no creation" suppression for `-ii` even without `-vv`.
     #[must_use]
@@ -266,7 +266,7 @@ impl OutFormatContext {
 
     /// Sets the `--links` / `-l` (preserve-symlinks) flag.
     ///
-    /// upstream: generator.c:1183 - the ` -> <target>` arrow in `--list-only`
+    /// upstream: generator.c:1195 - the ` -> <target>` arrow in `--list-only`
     /// output is gated on `preserve_links`.
     #[must_use]
     pub(crate) fn with_preserve_links(mut self, preserve_links: bool) -> Self {

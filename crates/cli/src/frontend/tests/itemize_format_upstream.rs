@@ -132,7 +132,7 @@ fn itemize_updated_file_shows_change_indicators() {
 
     assert_eq!(&format_str[0..1], ">");
     assert_eq!(&format_str[1..2], "f");
-    // upstream: generator.c:1942 - ITEM_REPORT_CHECKSUM is set only under
+    // upstream: generator.c:1955 - ITEM_REPORT_CHECKSUM is set only under
     // `always_checksum > 0` (i.e. `--checksum`); without it, position 2 is '.'.
     assert_eq!(
         &format_str[2..3],
@@ -507,8 +507,8 @@ fn itemize_last_toggle_wins_disabled() {
 /// against a non-existent dest emits a created-directory notice, a synthetic
 /// root `cd+++++++++ ./` row, a `cd+++++++++ <subdir>/` row for every
 /// directory entered during the recursive walk (including nested children),
-/// and then the per-file rows. Mirrors upstream `main.c:798-799` +
-/// `generator.c:566-572`.
+/// and then the per-file rows. Mirrors upstream `main.c:807-808` +
+/// `generator.c:573-579`.
 #[test]
 fn itemize_initial_recursive_transfer_emits_dir_rows_for_each_subdir() {
     use tempfile::tempdir;
@@ -566,13 +566,13 @@ fn itemize_initial_recursive_transfer_emits_dir_rows_for_each_subdir() {
 
 /// UTS-IT.15: focused regression for the synthetic root `cd+++++++++ ./` row.
 ///
-/// Upstream `generator.c:566-572` emits a single dir-row for the destination
+/// Upstream `generator.c:573-579` emits a single dir-row for the destination
 /// root on an initial recursive transfer under `-i`/`--itemize-changes`, even
 /// when the source tree contains only top-level files. This locks down that
 /// behaviour in isolation so a regression cannot hide behind a broader test
 /// also asserting per-file rows.
 ///
-/// upstream: generator.c:566-572 root row emission.
+/// upstream: generator.c:573-579 root row emission.
 #[test]
 fn itemize_initial_recursive_transfer_emits_root_dir_row() {
     use tempfile::tempdir;
@@ -635,7 +635,7 @@ fn itemize_initial_recursive_transfer_emits_root_dir_row() {
 /// asserts both rows are present, in upstream order, before the per-file
 /// row inside the nested directory.
 ///
-/// upstream: generator.c:566-572 + flist walk recursion.
+/// upstream: generator.c:573-579 + flist walk recursion.
 #[test]
 fn itemize_initial_recursive_transfer_emits_intermediate_subdir_rows() {
     use tempfile::tempdir;

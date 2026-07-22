@@ -121,7 +121,7 @@ where
     // Threaded into `OutFormatContext` so the itemize renderer picks the correct
     // direction arrow (upstream: log.c:701-704 - `<` for sender, `>` otherwise).
     let is_sender = config.is_local_sender();
-    // upstream: flist.c:2251 emits "sending incremental file list" only when
+    // upstream: flist.c:2286 emits "sending incremental file list" only when
     // `inc_recurse && INFO_GTE(FLIST, 1) && !am_server`. Mirror each gate:
     // - compat.c:172 disables inc_recurse when `!recurse`, so a single-file
     //   `-v` transfer gets no banner (`config.recursive()`);
@@ -134,7 +134,7 @@ where
     let emit_flist_banner = config.recursive() && info_gte(InfoFlag::Flist, 1) && !config.is_pull();
     // Capture the preserve-links state before `config` is consumed so the
     // `--list-only` renderer knows whether to append the ` -> <target>` arrow
-    // to symlink rows (upstream: generator.c:1183 gates it on preserve_links).
+    // to symlink rows (upstream: generator.c:1195 gates it on preserve_links).
     let preserve_links = config.links();
     // Capture the negotiated checksum before `config` is consumed so the `%C`
     // renderer reports the negotiated algorithm's digest (upstream: log.c:687-690
@@ -167,7 +167,7 @@ where
                 });
             }
 
-            // upstream: generator.c:582-583 - `INFO_GTE(NAME, 2)` (i.e. `-vv`
+            // upstream: generator.c:589-590 - `INFO_GTE(NAME, 2)` (i.e. `-vv`
             // or `--info=name2`) keeps emitting itemize lines for unchanged
             // entries. Thread the resolved name-level into the renderer so it
             // bypasses the empty-change-set suppression and surfaces all-dot
@@ -286,7 +286,7 @@ struct EmitLogOutputParams<'a> {
     /// octal escaping in log-file output.
     eight_bit_output: bool,
     /// `--links` / `-l`: whether symlink rows in `--list-only` log output get
-    /// the ` -> <target>` arrow (upstream: generator.c:1183).
+    /// the ` -> <target>` arrow (upstream: generator.c:1195).
     preserve_links: bool,
     /// Negotiated `%C` checksum algorithm (upstream: log.c:687-690).
     full_checksum_algorithm: StrongChecksumAlgorithm,
@@ -315,7 +315,7 @@ fn emit_log_output(params: EmitLogOutputParams<'_>) -> io::Result<()> {
         full_checksum_algorithm,
         always_checksum,
     } = params;
-    // upstream: generator.c:582-583 - mirror the `INFO_GTE(NAME, 2)` arm of
+    // upstream: generator.c:589-590 - mirror the `INFO_GTE(NAME, 2)` arm of
     // the itemize emit gate in the log-file renderer so `-vv` / `--info=name2`
     // surfaces unchanged entries in the log alongside stdout. The `-ii`
     // (`stdout_format_has_i > 1`) arm forces them independently of `-vv`.
@@ -327,7 +327,7 @@ fn emit_log_output(params: EmitLogOutputParams<'_>) -> io::Result<()> {
         .with_preserve_links(preserve_links)
         .with_full_checksum(full_checksum_algorithm, always_checksum);
     // The FCLIENT "sending incremental file list" banner is stdout only;
-    // upstream's parallel "building file list" line (flist.c:2248) is an FLOG
+    // upstream's parallel "building file list" line (flist.c:2283) is an FLOG
     // log-file message that a plain client without --log-file discards.
     emit_transfer_summary(
         summary,

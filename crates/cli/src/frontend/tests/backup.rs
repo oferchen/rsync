@@ -81,7 +81,7 @@ fn backup_dir_flag_places_backups_in_relative_directory() {
     assert!(stdout.is_empty());
     assert!(stderr.is_empty());
 
-    // upstream: options.c:2296-2297 - --backup-dir without --suffix defaults the
+    // upstream: options.c:2314-2315 - --backup-dir without --suffix defaults the
     // suffix to "" (empty). This test pins the empty-suffix layout explicitly via
     // `--suffix ''` so the assertion exercises the upstream rule directly without
     // depending on the implicit default. See also
@@ -119,7 +119,7 @@ fn backup_suffix_flag_overrides_default_suffix() {
     );
     filetime::set_file_mtime(dest_root.join("file.txt"), one_hour_ago).expect("backdate dest");
 
-    // upstream: options.c:2296-2307 - `--suffix` sets the suffix string but does
+    // upstream: options.c:2314-2325 - `--suffix` sets the suffix string but does
     // NOT enable backups on its own; `--backup` must be given explicitly.
     let (code, stdout, stderr) = run_with_args([
         OsString::from(RSYNC),
