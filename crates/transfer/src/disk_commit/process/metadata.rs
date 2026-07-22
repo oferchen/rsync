@@ -107,15 +107,30 @@ fn apply_metadata_acls_and_xattrs(
     if let Some(cache) = acl_cache {
         if let Some(access_ndx) = entry.acl_ndx() {
             let follow = !entry.is_symlink();
-            if let Err(e) = metadata::apply_acls_from_cache(
-                file_path,
-                cache,
-                access_ndx,
-                entry.def_acl_ndx(),
-                follow,
-                Some(entry.mode()),
-                acl_id_map,
-            ) {
+            // upstream: acls.c:930-971 - under `--fake-super`, set_rsync_acl()
+            // stashes the ACL in an xattr instead of calling sys_acl_set_file(),
+            // since an unprivileged account cannot reliably apply an arbitrary
+            // ACL (particularly named user/group entries).
+            let result = if opts.fake_super_enabled() {
+                metadata::store_acls_via_fake_super(
+                    file_path,
+                    cache,
+                    access_ndx,
+                    entry.def_acl_ndx(),
+                    follow,
+                )
+            } else {
+                metadata::apply_acls_from_cache(
+                    file_path,
+                    cache,
+                    access_ndx,
+                    entry.def_acl_ndx(),
+                    follow,
+                    Some(entry.mode()),
+                    acl_id_map,
+                )
+            };
+            if let Err(e) = result {
                 return Some((file_path.to_path_buf(), e.to_string()));
             }
         }

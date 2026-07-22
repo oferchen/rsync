@@ -207,19 +207,26 @@ pub use acl_idmap::AclIdMapper;
     feature = "acl",
     any(target_os = "linux", target_os = "macos", target_os = "freebsd")
 ))]
-pub use acl_exacl::{apply_acls_from_cache, default_perms_for_dir, get_rsync_acl, sync_acls};
+pub use acl_exacl::{
+    apply_acls_from_cache, default_perms_for_dir, get_rsync_acl, store_acls_via_fake_super,
+    sync_acls, sync_acls_via_fake_super,
+};
 
 #[cfg(all(
     feature = "acl",
     any(target_os = "ios", target_os = "tvos", target_os = "watchos")
 ))]
-pub use acl_stub::{apply_acls_from_cache, default_perms_for_dir, get_rsync_acl, sync_acls};
+pub use acl_stub::{
+    apply_acls_from_cache, default_perms_for_dir, get_rsync_acl, store_acls_via_fake_super,
+    sync_acls, sync_acls_via_fake_super,
+};
 
 #[cfg(all(feature = "acl", windows))]
 pub use acl_windows::{
     WINDOWS_SDDL_XATTR_NAME, apply_acls_from_cache, apply_sddl_from_xattrs, dacl_to_posix_mode,
     default_perms_for_dir, find_sddl_in_xattrs, get_rsync_acl, posix_mode_to_dacl, read_dacl_sddl,
-    read_sddl_with_sacl, sddl_xattr_entry, sync_acls, write_dacl_sddl,
+    read_sddl_with_sacl, sddl_xattr_entry, store_acls_via_fake_super, sync_acls,
+    sync_acls_via_fake_super, write_dacl_sddl,
 };
 
 #[cfg(not(any(
@@ -236,7 +243,10 @@ pub use acl_windows::{
     ),
     all(feature = "acl", windows),
 )))]
-pub use acl_noop::{apply_acls_from_cache, default_perms_for_dir, get_rsync_acl, sync_acls};
+pub use acl_noop::{
+    apply_acls_from_cache, default_perms_for_dir, get_rsync_acl, store_acls_via_fake_super,
+    sync_acls, sync_acls_via_fake_super,
+};
 
 #[cfg(unix)]
 pub use apply::{
@@ -284,8 +294,9 @@ pub use xattr_stub::{
 pub use copy_as::{CopyAsGuard, CopyAsIds, parse_copy_as_spec, switch_effective_ids};
 
 pub use fake_super::{
-    FAKE_SUPER_XATTR, FakeSuperStat, effective_source_stat, load_fake_super, remove_fake_super,
-    store_fake_super,
+    FAKE_SUPER_ACCESS_ACL_XATTR, FAKE_SUPER_DEFAULT_ACL_XATTR, FAKE_SUPER_XATTR, FakeSuperStat,
+    effective_source_stat, load_fake_super, load_fake_super_acl, remove_fake_super,
+    remove_fake_super_default_acl, store_fake_super, store_fake_super_acl,
 };
 
 pub use symlink_munge::{SYMLINK_MUNGE_PREFIX, munge_symlink, unmunge_symlink};

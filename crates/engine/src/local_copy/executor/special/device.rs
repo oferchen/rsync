@@ -283,7 +283,14 @@ pub(crate) fn copy_device(
                 context.filter_program(),
             )?;
             #[cfg(all(any(unix, windows), feature = "acl"))]
-            sync_acls_if_requested(preserve_acls, mode, source, destination, true)?;
+            sync_acls_if_requested(
+                preserve_acls,
+                context.options().fake_super_enabled(),
+                mode,
+                source,
+                destination,
+                true,
+            )?;
 
             context.record_hard_link(metadata, destination);
             context.summary_mut().record_hard_link();
@@ -377,7 +384,14 @@ pub(crate) fn copy_device(
             context.filter_program(),
         )?;
         #[cfg(feature = "acl")]
-        sync_acls_if_requested(preserve_acls, mode, source, destination, true)?;
+        sync_acls_if_requested(
+            preserve_acls,
+            context.options().fake_super_enabled(),
+            mode,
+            source,
+            destination,
+            true,
+        )?;
 
         // Under fake-super, capture the would-be device's mode/uid/gid/rdev
         // in the rsync.%stat xattr so the destination can be restored later.
