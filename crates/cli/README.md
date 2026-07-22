@@ -2,7 +2,7 @@
 
 The `cli` crate exposes the command-line front-end used by the
 `oc-rsync` binary. It provides argument parsing, help text rendering, and
-version output that mirror upstream rsync 3.4.1 while delegating transfer
+version output that mirror upstream rsync 3.4.4 while delegating transfer
 execution to the shared `core` facade.
 
 ## Features

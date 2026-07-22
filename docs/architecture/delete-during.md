@@ -1,7 +1,7 @@
 # Receiver deletion model: parallel-deterministic two-phase pipeline
 
 This document describes oc-rsync's deletion architecture and how it
-matches upstream rsync 3.4.1's observable ordering byte-for-byte while
+matches upstream rsync 3.4.4's observable ordering byte-for-byte while
 preserving internal parallelism. The design is specified in
 [`docs/design/parallel-deterministic-delete.md`](../design/parallel-deterministic-delete.md);
 this page is the architectural overview.
@@ -88,7 +88,7 @@ byte-for-byte.
 
 ## Upstream parity guarantees
 
-| Aspect                 | Upstream 3.4.1                            | oc-rsync                                                 |
+| Aspect                 | Upstream 3.4.4                            | oc-rsync                                                 |
 | ---------------------- | ----------------------------------------- | -------------------------------------------------------- |
 | Phase ordering         | Interleaved per directory                 | Same: emitter walks directories in upstream order        |
 | Determinism            | Reverse-iteration single-threaded         | Same: single emitter, plans reverse-sorted by `f_name_cmp` |

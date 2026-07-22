@@ -3,7 +3,7 @@
 This document describes how oc-rsync's daemon differs from upstream rsync's
 process model and the implications for operators and contributors.
 
-**Last verified:** 2026-02-22
+**Last verified:** 2026-07-22
 
 ---
 

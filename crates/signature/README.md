@@ -20,7 +20,7 @@ using rolling and strong checksums, with block sizing from upstream `generator.c
 
 ## Modules
 
-- `block_size` - block sizing heuristics matching upstream rsync 3.4.1
+- `block_size` - block sizing heuristics matching upstream rsync 3.4.4
 - `layout` - signature layout computation
 - `generation` - sequential signature generation
 - `parallel` - rayon-based parallel signature generation
