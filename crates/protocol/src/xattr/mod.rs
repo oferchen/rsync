@@ -29,7 +29,7 @@
 //!
 //! # Reference
 //!
-//! - Upstream rsync 3.4.1 `xattrs.c`
+//! - Upstream rsync 3.4.4 `xattrs.c`
 
 mod cache;
 mod entry;

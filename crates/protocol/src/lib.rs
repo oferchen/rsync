@@ -1,7 +1,7 @@
 //! Wire protocol implementation for rsync protocol versions 28-32.
 //!
 //! This crate implements the negotiation and multiplexing primitives for the
-//! rsync wire protocol. It mirrors upstream rsync 3.4.1 behaviour so that
+//! rsync wire protocol. It mirrors upstream rsync 3.4.4 behaviour so that
 //! higher layers can negotiate protocol versions, interpret legacy daemon
 //! banners, exchange multiplexed `MSG_*` frames, encode file lists, and
 //! perform delta transfers without depending on the original C sources.
@@ -86,20 +86,20 @@
 pub mod acl;
 /// `--debug=BIND` producer emissions for daemon listener setup.
 ///
-/// Hosts the trace helpers that mirror upstream rsync 3.4.1's
+/// Hosts the trace helpers that mirror upstream rsync 3.4.4's
 /// `DEBUG_GTE(BIND, 1)` diagnostics emitted from `socket.c::open_socket_in`
 /// while iterating per-address-family during daemon listener setup.
 pub mod bind;
 /// `--debug=CHDIR` producer emissions for current-directory changes.
 ///
-/// Hosts the trace helper that mirrors upstream rsync 3.4.1's single
+/// Hosts the trace helper that mirrors upstream rsync 3.4.4's single
 /// `DEBUG_GTE(CHDIR, 1)` emission from `util1.c::change_dir`. Wires from
 /// every successful `chdir()` syscall (notably the daemon chroot setup
 /// in `crates/daemon/src/daemon/sections/privilege.rs::apply_chroot`).
 pub mod chdir;
 /// `--debug=CMD` producer emissions for remote command construction.
 ///
-/// Hosts the trace helpers that mirror upstream rsync 3.4.1's
+/// Hosts the trace helpers that mirror upstream rsync 3.4.4's
 /// `DEBUG_GTE(CMD, N)` diagnostics emitted from `pipe.c`,
 /// `clientserver.c`, `rsync.c`, and `main.c` during remote command
 /// construction, secluded-args transmission, and daemon argument

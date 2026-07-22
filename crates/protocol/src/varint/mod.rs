@@ -11,7 +11,7 @@
 //! The codec exposes a streaming API via [`read_varint`] and [`write_varint`],
 //! plus helpers for working with in-memory buffers. The lookup table that maps
 //! tag prefixes to the number of continuation bytes is copied directly from
-//! upstream, ensuring byte-for-byte equivalence with rsync 3.4.1.
+//! upstream, ensuring byte-for-byte equivalence with rsync 3.4.4.
 //!
 //! # Examples
 //!
