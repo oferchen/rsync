@@ -143,7 +143,10 @@ mod tests {
     fn temp_name_with_suffix_uses_upstream_naming() {
         let dest = Path::new("/path/to/file.txt");
         let temp = temp_name_with_suffix(dest, None, "ABCDEF");
-        assert_eq!(temp.file_name().unwrap().to_string_lossy(), ".file.txt.ABCDEF");
+        assert_eq!(
+            temp.file_name().unwrap().to_string_lossy(),
+            ".file.txt.ABCDEF"
+        );
         assert_eq!(temp.parent(), dest.parent());
     }
 
@@ -154,7 +157,10 @@ mod tests {
         let temp = temp_name_with_suffix(dest, Some(temp_dir), "ABCDEF");
         assert!(temp.starts_with(temp_dir));
         // In --temp-dir the name has no leading dot (upstream get_tmpname()).
-        assert_eq!(temp.file_name().unwrap().to_string_lossy(), "file.txt.ABCDEF");
+        assert_eq!(
+            temp.file_name().unwrap().to_string_lossy(),
+            "file.txt.ABCDEF"
+        );
     }
 
     #[test]
@@ -162,6 +168,9 @@ mod tests {
         let dest = Path::new("/path/to/.hidden");
         let temp = temp_name_with_suffix(dest, None, "ABCDEF");
         // A base that already starts with a dot has it elided (no double dot).
-        assert_eq!(temp.file_name().unwrap().to_string_lossy(), ".hidden.ABCDEF");
+        assert_eq!(
+            temp.file_name().unwrap().to_string_lossy(),
+            ".hidden.ABCDEF"
+        );
     }
 }
