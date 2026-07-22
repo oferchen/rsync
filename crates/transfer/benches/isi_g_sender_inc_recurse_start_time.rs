@@ -27,10 +27,10 @@
 //!
 //! Three pipe-driven push transfers against the same source tree:
 //!
-//! | Bench | Sender binary                           | INC_RECURSE on the wire? |
-//! |-------|-----------------------------------------|--------------------------|
-//! | A     | `oc-rsync` built **without** `sender-inc-recurse` | No  (baseline) |
-//! | B     | `oc-rsync` built **with** `sender-inc-recurse`    | Yes (under test) |
+//! | Bench | Sender invocation                             | INC_RECURSE on the wire? |
+//! |-------|------------------------------------------------|--------------------------|
+//! | A     | `oc-rsync` with `--no-inc-recursive`             | No  (baseline) |
+//! | B     | `oc-rsync` with default flags (INC_RECURSE is unconditional since ISI.h) | Yes (under test) |
 //! | C     | upstream `rsync` (protocol >= 30, default ON)     | Yes (reference) |
 //!
 //! Each cell reports two metrics:
@@ -80,9 +80,11 @@
 //! - `OC_RSYNC_BENCH_FIRST_DATA_BYTES` - override the start-time
 //!   threshold (default `1_048_576`). Lower it to measure protocol
 //!   greeting latency, raise it to require more file-list payload.
-//! - `OC_RSYNC_BIN_BASELINE` / `OC_RSYNC_BIN_INC_RECURSE` /
-//!   `OC_RSYNC_BIN_UPSTREAM` - override the binary paths. Defaults match
-//!   the build script convention used by `pip_6_end_to_end_parallel_vs_sequential`.
+//! - `OC_RSYNC_BIN` / `OC_RSYNC_BIN_UPSTREAM` - override the binary paths.
+//!   Defaults match the build script convention used by
+//!   `pip_6_end_to_end_parallel_vs_sequential`. The baseline and under-test
+//!   cells share the same `oc-rsync` binary; only the `--no-inc-recursive`
+//!   flag differs between them.
 //!
 //! # Skip semantics
 //!
@@ -95,23 +97,18 @@
 //!
 //! # How to run
 //!
-//! Three binaries are required. Build them out-of-band:
+//! One `oc-rsync` binary and an upstream reference are required:
 //!
 //! ```sh
-//! # Baseline: default features, sender-inc-recurse OFF
+//! # oc-rsync: INC_RECURSE is unconditional since ISI.h; the bench toggles
+//! # it per-cell via the runtime `--no-inc-recursive` flag.
 //! cargo build --release --bin oc-rsync
-//! mv target/release/oc-rsync target/release/oc-rsync-baseline
-//!
-//! # Under test: sender-inc-recurse ON
-//! cargo build --release --features sender-inc-recurse --bin oc-rsync
-//! mv target/release/oc-rsync target/release/oc-rsync-inc-recurse
 //!
 //! # Upstream reference: rsync 3.4.1 (or any protocol >= 30 build)
 //! bash tools/ci/run_interop.sh
 //!
 //! # Run the bench
-//! OC_RSYNC_BIN_BASELINE=target/release/oc-rsync-baseline \
-//! OC_RSYNC_BIN_INC_RECURSE=target/release/oc-rsync-inc-recurse \
+//! OC_RSYNC_BIN=target/release/oc-rsync \
 //! OC_RSYNC_BIN_UPSTREAM=target/interop/upstream-install/3.4.1/bin/rsync \
 //! cargo bench -p transfer --bench isi_g_sender_inc_recurse_start_time
 //! ```
@@ -121,7 +118,9 @@
 //! - ISI.a (`docs/design/isi-a-sender-inc-recurse-call-graph.md`) -
 //!   sender-side call graph and the single-flip blocker that ISI.b
 //!   lifted.
-//! - ISI.b (`#4802`) - introduces the `sender-inc-recurse` cargo feature.
+//! - ISI.b (`#4802`) - introduced the now-retired `sender-inc-recurse`
+//!   cargo feature; ISI.h made INC_RECURSE unconditional and ISI.i.2
+//!   removed the flag.
 //! - ISI.c (`#4842`) - single-segment push interop.
 //! - ISI.d (`#4846`) - multi-segment push interop.
 //! - ISI.e (`#4859`) - wire-byte parity against upstream sender.
@@ -175,14 +174,17 @@ const FILE_PAYLOAD_BYTES: usize = 16;
 /// same dialect across the test and bench harnesses.
 const UPSTREAM_FLAGS_341: &str = "-vlogDtprze.iLsfxCIvu";
 
-/// The three sender binaries the bench drives.
+/// The two INC_RECURSE modes the bench compares, plus the upstream
+/// reference. Since ISI.h, INC_RECURSE is unconditional on the sender side;
+/// `Baseline` and `IncRecurse` now share the same `oc-rsync` binary and
+/// differ only by the runtime `--no-inc-recursive` flag.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Sender {
-    /// `oc-rsync` built **without** `sender-inc-recurse`. Capability string
+    /// `oc-rsync` invoked with `--no-inc-recursive`. Capability string
     /// strips `'i'`; the upstream peer never enables INC_RECURSE.
     Baseline,
-    /// `oc-rsync` built **with** `sender-inc-recurse`. Capability string
-    /// emits `'i'`; the peer enables INC_RECURSE on its compat flags.
+    /// `oc-rsync` invoked with its default flags. Capability string emits
+    /// `'i'`; the peer enables INC_RECURSE on its compat flags.
     IncRecurse,
     /// Upstream `rsync`. Defaults to INC_RECURSE for protocol >= 30.
     Upstream,
@@ -197,18 +199,26 @@ impl Sender {
         }
     }
 
+    /// Extra CLI args spliced into the sender invocation immediately after
+    /// `--sender`. Only `Baseline` needs one; `IncRecurse` runs with the
+    /// (now unconditional) default and `Upstream` is a separate binary.
+    fn extra_args(self) -> &'static [&'static str] {
+        match self {
+            Sender::Baseline => &["--no-inc-recursive"],
+            Sender::IncRecurse | Sender::Upstream => &[],
+        }
+    }
+
     fn env_var(self) -> &'static str {
         match self {
-            Sender::Baseline => "OC_RSYNC_BIN_BASELINE",
-            Sender::IncRecurse => "OC_RSYNC_BIN_INC_RECURSE",
+            Sender::Baseline | Sender::IncRecurse => "OC_RSYNC_BIN",
             Sender::Upstream => "OC_RSYNC_BIN_UPSTREAM",
         }
     }
 
     fn default_path(self) -> &'static str {
         match self {
-            Sender::Baseline => "target/release/oc-rsync-baseline",
-            Sender::IncRecurse => "target/release/oc-rsync-inc-recurse",
+            Sender::Baseline | Sender::IncRecurse => "target/release/oc-rsync",
             Sender::Upstream => "target/interop/upstream-install/3.4.1/bin/rsync",
         }
     }
@@ -351,6 +361,7 @@ struct PushTiming {
 /// `--server` receiver, copy bytes between them, and record both timings.
 fn run_one_push(
     sender_bin: &Path,
+    extra_sender_args: &[&str],
     receiver_bin: &Path,
     src: &Path,
     dst: &Path,
@@ -361,6 +372,7 @@ fn run_one_push(
     let mut server = Command::new(sender_bin)
         .arg("--server")
         .arg("--sender")
+        .args(extra_sender_args)
         .arg(UPSTREAM_FLAGS_341)
         .arg(".")
         .arg(src.to_string_lossy().as_ref())
@@ -473,6 +485,7 @@ fn bench_sender(
         return;
     };
 
+    let extra_args = sender.extra_args();
     let group_name = format!("isi_g_sender_inc_recurse_start_time/{}", sender.label());
     let mut group = c.benchmark_group(group_name);
     // Each iteration spawns two processes and pumps the full 100 000-file
@@ -493,6 +506,7 @@ fn bench_sender(
                 let dest = TempDir::new().expect("dest tempdir");
                 let timing = run_one_push(
                     &sender_bin,
+                    extra_args,
                     &receiver_bin,
                     src_root,
                     dest.path(),
@@ -530,6 +544,7 @@ fn bench_sender(
                 let dest = TempDir::new().expect("dest tempdir");
                 let timing = run_one_push(
                     &sender_bin,
+                    extra_args,
                     &receiver_bin,
                     src_root,
                     dest.path(),

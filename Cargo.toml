@@ -66,13 +66,6 @@ iconv = ["cli/iconv", "core/iconv"]
 # Trade-offs: Minimal overhead on single-core systems
 parallel = ["cli/parallel", "checksums/parallel"]
 
-
-# DEPRECATED (ISI.h): sender INC_RECURSE is now default-on. Flag
-# retained for one release as an emergency-disable no-op. CLI
-# `--no-inc-recursive` is the recommended override. Remove in the
-# next minor version (ISI.i.2).
-sender-inc-recurse = ["core/sender-inc-recurse", "transfer/sender-inc-recurse"]
-
 # io_uring support for Linux 5.6+ - batched async I/O syscalls
 # Requirements: Linux kernel 5.6+ (runtime fallback on older kernels)
 # Benefits: 20-40% faster I/O on supported systems via syscall batching
