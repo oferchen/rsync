@@ -35,6 +35,18 @@ pub fn sync_acls(
     Ok(())
 }
 
+/// No-op fake-super ACL synchronisation with a one-time warning.
+///
+/// Mirrors [`sync_acls`]'s behaviour: no work, one-time warning, `Ok(())`.
+pub fn sync_acls_via_fake_super(
+    _source: &Path,
+    _destination: &Path,
+    _follow_symlinks: bool,
+) -> Result<(), MetadataError> {
+    warn_acl_unsupported();
+    Ok(())
+}
+
 /// Synthesises an [`RsyncAcl`] from `mode`, since this platform cannot read a
 /// filesystem ACL.
 ///
@@ -61,6 +73,22 @@ pub fn apply_acls_from_cache(
     _follow_symlinks: bool,
     _mode: Option<u32>,
     _id_map: Option<&AclIdMapper>,
+) -> Result<(), MetadataError> {
+    warn_acl_unsupported();
+    Ok(())
+}
+
+/// Stores parsed ACLs from an [`AclCache`] into `--fake-super` xattrs.
+///
+/// On platforms without ACL support, emits a one-time warning and
+/// returns `Ok(())`.
+#[allow(clippy::module_name_repetitions)]
+pub fn store_acls_via_fake_super(
+    _destination: &Path,
+    _cache: &AclCache,
+    _access_ndx: u32,
+    _default_ndx: Option<u32>,
+    _follow_symlinks: bool,
 ) -> Result<(), MetadataError> {
     warn_acl_unsupported();
     Ok(())
@@ -100,6 +128,14 @@ mod tests {
     }
 
     #[test]
+    fn sync_acls_via_fake_super_returns_ok() {
+        let src = Path::new("/nonexistent/src");
+        let dst = Path::new("/nonexistent/dst");
+        let result = sync_acls_via_fake_super(src, dst, true);
+        assert!(result.is_ok());
+    }
+
+    #[test]
     fn get_rsync_acl_non_default_returns_from_mode() {
         let path = Path::new("/nonexistent/file");
         let acl = get_rsync_acl(path, 0o755, false);
@@ -128,6 +164,14 @@ mod tests {
         let dst = Path::new("/nonexistent/dst");
         let cache = AclCache::new();
         let result = apply_acls_from_cache(dst, &cache, 0, Some(1), true, Some(0o644), None);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn store_acls_via_fake_super_returns_ok() {
+        let dst = Path::new("/nonexistent/dst");
+        let cache = AclCache::new();
+        let result = store_acls_via_fake_super(dst, &cache, 0, Some(1), true);
         assert!(result.is_ok());
     }
 }

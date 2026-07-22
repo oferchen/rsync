@@ -382,7 +382,14 @@ impl<'a> CopyContext<'a> {
 
         #[cfg(all(any(unix, windows), feature = "acl"))]
         {
-            sync_acls_if_requested(preserve_acls, mode, source, destination, true)?;
+            sync_acls_if_requested(
+                preserve_acls,
+                self.options.fake_super_enabled(),
+                mode,
+                source,
+                destination,
+                true,
+            )?;
         }
 
         #[cfg(not(any(all(unix, feature = "xattr"), all(any(unix, windows), feature = "acl"))))]

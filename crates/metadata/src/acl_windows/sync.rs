@@ -73,3 +73,21 @@ pub fn sync_acls(
 
     apply_rsync_acl_to_path(destination, &acl)
 }
+
+/// Fake-super variant of [`sync_acls`] for Windows.
+///
+/// `--fake-super`'s `%aacl`/`%dacl` stashing is a POSIX-ACL-only mechanism
+/// (see [`super::dacl::store_acls_via_fake_super`]); Windows ACLs are already
+/// persisted via their own SDDL xattr, so this falls straight through to the
+/// normal sync path unchanged.
+///
+/// # Errors
+///
+/// Returns [`MetadataError`] on unrecoverable Win32 failures.
+pub fn sync_acls_via_fake_super(
+    source: &Path,
+    destination: &Path,
+    follow_symlinks: bool,
+) -> Result<(), MetadataError> {
+    sync_acls(source, destination, follow_symlinks)
+}

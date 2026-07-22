@@ -54,10 +54,12 @@ mod xattr;
 #[cfg(test)]
 mod tests;
 
-pub use dacl::{apply_acls_from_cache, default_perms_for_dir, get_rsync_acl};
+pub use dacl::{
+    apply_acls_from_cache, default_perms_for_dir, get_rsync_acl, store_acls_via_fake_super,
+};
 pub use posix_map::{dacl_to_posix_mode, posix_mode_to_dacl};
 pub use sddl::{read_dacl_sddl, read_sddl_with_sacl, write_dacl_sddl};
-pub use sync::sync_acls;
+pub use sync::{sync_acls, sync_acls_via_fake_super};
 pub use xattr::{
     WINDOWS_SDDL_XATTR_NAME, apply_sddl_from_xattrs, find_sddl_in_xattrs, sddl_xattr_entry,
 };

@@ -269,6 +269,77 @@ impl RsyncAcl {
         }
         flags
     }
+
+    /// Encodes this ACL into upstream's `--fake-super` xattr byte format.
+    ///
+    /// Four little-endian `u32` base fields (`user_obj`, `group_obj`,
+    /// `mask_obj`, `other_obj` - zero-extended from the `u8` permission value
+    /// or the `NO_ENTRY` sentinel), followed by one 8-byte `(id: u32 LE,
+    /// access: u32 LE)` record per named entry in `names`. `access` is the
+    /// raw in-memory value, including the `NAME_IS_USER` high bit.
+    ///
+    /// # Upstream Reference
+    ///
+    /// Mirrors the blob written by `set_rsync_acl()` (`acls.c` lines 933-970)
+    /// via `set_xattr_acl()` (`xattrs.c` lines 1112-1125).
+    #[must_use]
+    pub fn to_fake_super_bytes(&self) -> Vec<u8> {
+        let mut buf = Vec::with_capacity(16 + self.names.len() * 8);
+        buf.extend_from_slice(&u32::from(self.user_obj).to_le_bytes());
+        buf.extend_from_slice(&u32::from(self.group_obj).to_le_bytes());
+        buf.extend_from_slice(&u32::from(self.mask_obj).to_le_bytes());
+        buf.extend_from_slice(&u32::from(self.other_obj).to_le_bytes());
+        for ida in self.names.iter() {
+            buf.extend_from_slice(&ida.id.to_le_bytes());
+            buf.extend_from_slice(&ida.access.to_le_bytes());
+        }
+        buf
+    }
+
+    /// Decodes an ACL from upstream's `--fake-super` xattr byte format.
+    ///
+    /// Returns `None` when `buf` is shorter than the 16-byte base header or
+    /// its length is not `16 + 8*n` for some named-entry count `n`, mirroring
+    /// `get_rsync_acl()`'s length validation (`acls.c` lines 483-486).
+    ///
+    /// # Upstream Reference
+    ///
+    /// Mirrors the `am_root < 0` branch of `get_rsync_acl()` in `acls.c`
+    /// lines 472-509.
+    #[must_use]
+    pub fn from_fake_super_bytes(buf: &[u8]) -> Option<Self> {
+        if buf.len() < 16 {
+            return None;
+        }
+        let names_len = buf.len() - 16;
+        if names_len % 8 != 0 {
+            return None;
+        }
+        let count = names_len / 8;
+
+        let u32_at = |offset: usize| -> u32 {
+            u32::from_le_bytes(buf[offset..offset + 4].try_into().unwrap_or([0; 4]))
+        };
+
+        let mut acl = Self {
+            names: IdaEntries::with_capacity(count),
+            user_obj: u32_at(0) as u8,
+            group_obj: u32_at(4) as u8,
+            mask_obj: u32_at(8) as u8,
+            other_obj: u32_at(12) as u8,
+        };
+
+        for i in 0..count {
+            let offset = 16 + i * 8;
+            acl.names.push(IdAccess {
+                id: u32_at(offset),
+                access: u32_at(offset + 4),
+                name: None,
+            });
+        }
+
+        Some(acl)
+    }
 }
 
 /// POSIX ACL tag type for permission extraction from file mode bits.
