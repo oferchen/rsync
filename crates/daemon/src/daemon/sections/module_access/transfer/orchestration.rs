@@ -4,7 +4,7 @@
 /// Runs the module's `post-xfer exec` hook, if one is configured and exec
 /// hooks are enabled, with the given transfer `exit_status`.
 ///
-/// upstream: clientserver.c:906-931 - the daemon forks a child that runs the
+/// upstream: clientserver.c:908-933 - the daemon forks a child that runs the
 /// whole module session while the parent waits for the child's exit status and
 /// then runs `post-xfer exec` with it. Because the parent waits for *any* child
 /// outcome, the hook fires regardless of transfer success - including a refused
@@ -192,7 +192,7 @@ fn process_approved_module(
     // to multiplexed input. The error must travel as `MSG_ERROR_XFER` +
     // `MSG_ERROR_EXIT` frames; raw `@ERROR:` text would surface on the
     // receiver as `unexpected tag 77` (the 'T' from "The server ..." minus
-    // `MPLEX_BASE = 7`). upstream: clientserver.c:1146 io_start_multiplex_out
+    // `MPLEX_BASE = 7`). upstream: clientserver.c:1169 io_start_multiplex_out
     // immediately followed by `rwrite(FERROR, ...)`.
     if let Some(refused) = refused_client_arg(module, &client_args) {
         return handle_refused_option_post_handshake(
@@ -229,7 +229,7 @@ fn process_approved_module(
     // check is unaffected: upstream's auth override only touches `read_only`.
     let role = determine_server_role(&client_args);
     let effective_read_only = access_effective_read_only(module.read_only, auth_access_level);
-    // upstream: clientserver.c:906-931 - the post-xfer parent waits for the
+    // upstream: clientserver.c:908-933 - the post-xfer parent waits for the
     // module child and runs `post-xfer exec` regardless of outcome. A refused
     // read-only push / write-only pull exits `RERR_SYNTAX` (1) in the child, so
     // the hook still fires with `RSYNC_EXIT_STATUS=1`. Emit the framed
@@ -301,7 +301,7 @@ fn process_approved_module(
         None => return Ok(()),
     };
 
-    // upstream: clientserver.c:962-969 - spawn name converter after privilege
+    // upstream: clientserver.c:964-971 - spawn name converter after privilege
     // reduction so it runs with reduced privileges inside the chroot.
     #[cfg(unix)]
     let _name_converter_guard = if let Some(ref cmd) = module.name_converter {
@@ -334,7 +334,7 @@ fn process_approved_module(
     // process is not chrooted, so the real absolute module path must be
     // preserved. The inner directory is "/" unless the module path carried a
     // `/./` marker, in which case it is the normalized remainder after it.
-    // upstream: clientserver.c:845-862 - `module_dir` after the `/./` split.
+    // upstream: clientserver.c:847-864 - `module_dir` after the `/./` split.
     let effective_module;
     let config_module = if privilege_outcome.chroot_applied {
         let mut adjusted = module.definition.clone();

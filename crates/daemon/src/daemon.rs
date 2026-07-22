@@ -123,17 +123,17 @@ pub(crate) const HANDSHAKE_ERROR_PAYLOAD: &str =
     "@ERROR: daemon functionality is unavailable in this build";
 /// Error payload sent when a host is denied access to a module.
 ///
-/// upstream: clientserver.c:733 - `@ERROR: access denied to %s from %s (%s)\n`
+/// upstream: clientserver.c:735 - `@ERROR: access denied to %s from %s (%s)\n`
 /// where args are (name, host, addr).
 pub(crate) const ACCESS_DENIED_PAYLOAD: &str =
     "@ERROR: access denied to {module} from {host} ({addr})";
 /// Error payload sent when authentication fails on a protected module.
 ///
-/// upstream: clientserver.c:762 - `@ERROR: auth failed on module %s\n`
+/// upstream: clientserver.c:764 - `@ERROR: auth failed on module %s\n`
 pub(crate) const AUTH_FAILED_PAYLOAD: &str = "@ERROR: auth failed on module {module}";
 /// Error payload returned when a requested module does not exist.
 ///
-/// upstream: clientserver.c:730 - `@ERROR: Unknown module '%s'\n`
+/// upstream: clientserver.c:732 - `@ERROR: Unknown module '%s'\n`
 pub(crate) const UNKNOWN_MODULE_PAYLOAD: &str = "@ERROR: Unknown module '{module}'";
 /// Error payload returned when a `#`-prefixed request is not a recognized command.
 ///
@@ -146,32 +146,32 @@ pub(crate) const UNKNOWN_MODULE_PAYLOAD: &str = "@ERROR: Unknown module '{module
 pub(crate) const UNKNOWN_COMMAND_PAYLOAD: &str = "@ERROR: Unknown command '{command}'";
 /// Error payload returned when a module reaches its connection cap.
 ///
-/// upstream: clientserver.c:752 - `@ERROR: max connections (%d) reached -- try again later\n`
+/// upstream: clientserver.c:754 - `@ERROR: max connections (%d) reached -- try again later\n`
 pub(crate) const MODULE_MAX_CONNECTIONS_PAYLOAD: &str =
     "@ERROR: max connections ({limit}) reached -- try again later";
 /// Error payload returned when opening the module connection lock file fails.
 ///
-/// upstream: clientserver.c:748 - `@ERROR: failed to open lock file\n`
+/// upstream: clientserver.c:750 - `@ERROR: failed to open lock file\n`
 pub(crate) const MODULE_LOCK_ERROR_PAYLOAD: &str = "@ERROR: failed to open lock file";
 /// Error payload returned when chroot fails during module setup.
 ///
-/// upstream: clientserver.c:981 - `@ERROR: chroot failed\n`
+/// upstream: clientserver.c:985 - `@ERROR: chroot failed\n`
 pub(crate) const CHROOT_FAILED_PAYLOAD: &str = "@ERROR: chroot failed";
 /// Error payload returned when chdir fails during module setup.
 ///
-/// upstream: clientserver.c:647 - `@ERROR: chdir failed\n`
+/// upstream: clientserver.c:649 - `@ERROR: chdir failed\n`
 pub(crate) const CHDIR_FAILED_PAYLOAD: &str = "@ERROR: chdir failed";
 /// Error payload returned when setuid fails after chroot.
 ///
-/// upstream: clientserver.c:1039 - `@ERROR: setuid failed\n`
+/// upstream: clientserver.c:1053 - `@ERROR: setuid failed\n`
 pub(crate) const SETUID_FAILED_PAYLOAD: &str = "@ERROR: setuid failed";
 /// Error payload returned when setgid fails after chroot.
 ///
-/// upstream: clientserver.c:1010 - `@ERROR: setgid failed\n`
+/// upstream: clientserver.c:1024 - `@ERROR: setgid failed\n`
 pub(crate) const SETGID_FAILED_PAYLOAD: &str = "@ERROR: setgid failed";
 /// Error payload returned when setgroups fails after chroot.
 ///
-/// upstream: clientserver.c:1017 - `@ERROR: setgroups failed\n`
+/// upstream: clientserver.c:1031 - `@ERROR: setgroups failed\n`
 pub(crate) const SETGROUPS_FAILED_PAYLOAD: &str = "@ERROR: setgroups failed";
 /// Error payload template returned when a module's uid NAME cannot be resolved
 /// at connection time. `{uid}` is replaced with the offending name. This is a
@@ -243,7 +243,7 @@ include!("daemon/sections/group_expansion.rs");
 /// (inetd/connect-program mode) or binds a TCP listener and enters the
 /// connection accept loop.
 ///
-/// upstream: clientserver.c:1496-1510 - `daemon_main()` checks
+/// upstream: clientserver.c:1546-1560 - `daemon_main()` checks
 /// `is_a_socket(STDIN_FILENO)` before binding TCP. When stdin is a socket
 /// (inetd, xinetd, systemd socket activation, or `RSYNC_CONNECT_PROG`),
 /// the daemon serves one session over the inherited file descriptors and
@@ -265,7 +265,7 @@ pub fn run_daemon(mut config: DaemonConfig) -> Result<(), DaemonError> {
 
     apply_verbosity(options.verbosity());
 
-    // upstream: clientserver.c:1498 - `if (is_a_socket(STDIN_FILENO))`
+    // upstream: clientserver.c:1548 - `if (is_a_socket(STDIN_FILENO))`
     // When stdin is a socket, serve a single session over stdio (inetd mode)
     // instead of binding a TCP listener.
     if is_stdin_socket() {
@@ -303,7 +303,7 @@ pub(crate) fn apply_verbosity(level: u8) {
 /// the module table, and serves a single connection on the provided
 /// stdin/stdout streams. No TCP binding or signal handler registration occurs.
 ///
-/// upstream: main.c:1843-1844 - `if (am_server && am_daemon) return
+/// upstream: main.c:1867-1868 - `if (am_server && am_daemon) return
 /// start_daemon(STDIN_FILENO, STDOUT_FILENO);`
 ///
 /// # Errors
@@ -688,7 +688,7 @@ pub(crate) fn async_max_inflight(max_connections: Option<usize>) -> usize {
 /// Writes the upstream-compatible max-connections refusal to an accepted
 /// async socket, then lets it drop.
 ///
-/// upstream: clientserver.c:752 - `@ERROR: max connections (%d) reached --
+/// upstream: clientserver.c:754 - `@ERROR: max connections (%d) reached --
 /// try again later\n`. Mirrors the sync accept loop's `refuse_if_at_capacity`
 /// wording so clients see an identical reply regardless of accept engine.
 #[cfg(feature = "async-daemon")]

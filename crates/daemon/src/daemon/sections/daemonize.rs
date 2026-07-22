@@ -3,7 +3,7 @@
 ///
 /// Delegates to `platform::daemonize::become_daemon()`.
 ///
-/// upstream: clientserver.c:1463 - `become_daemon()`
+/// upstream: clientserver.c:1513 - `become_daemon()`
 #[cfg(unix)]
 fn become_daemon() -> Result<(), DaemonError> {
     platform::daemonize::become_daemon().map_err(|e| daemonize_error("become_daemon", e))

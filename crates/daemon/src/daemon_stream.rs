@@ -7,7 +7,7 @@
 //!
 //! The `Stdio` variant supports the `--server --daemon` remote-shell daemon
 //! mode where stdin/stdout are used instead of a TCP socket.
-//! upstream: main.c:1843-1844 - `if (am_server && am_daemon)
+//! upstream: main.c:1867-1868 - `if (am_server && am_daemon)
 //! return start_daemon(STDIN_FILENO, STDOUT_FILENO);`
 
 use std::io::{self, Read, Write};

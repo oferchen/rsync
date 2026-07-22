@@ -4,10 +4,10 @@
 /// `@ERROR` messages on failure.
 ///
 /// Upstream sends distinct error strings for each failure type:
-/// - `@ERROR: chroot failed` (clientserver.c:981)
-/// - `@ERROR: setgid failed` (clientserver.c:1010)
-/// - `@ERROR: setgroups failed` (clientserver.c:1017)
-/// - `@ERROR: setuid failed` (clientserver.c:1039)
+/// - `@ERROR: chroot failed` (clientserver.c:985)
+/// - `@ERROR: setgid failed` (clientserver.c:1024)
+/// - `@ERROR: setgroups failed` (clientserver.c:1031)
+/// - `@ERROR: setuid failed` (clientserver.c:1053)
 ///
 /// Returns `Ok(Some(outcome))` when restrictions applied successfully or were
 /// not configured; `outcome.chroot_applied` records whether the process is
@@ -17,7 +17,7 @@ fn apply_privilege_restrictions_with_upstream_errors(
     ctx: &mut ModuleRequestContext<'_>,
     module: &ModuleRuntime,
 ) -> io::Result<Option<PrivilegeOutcome>> {
-    // upstream: clientserver.c:779-780 - `uid = MY_UID(); am_root = (uid ==
+    // upstream: clientserver.c:778-779 - `uid = MY_UID(); am_root = (uid ==
     // ROOT_UID)`. A root daemon drops to `nobody:nobody` by default even when
     // the module sets no explicit uid/gid.
     let am_root = daemon_is_root();
@@ -38,7 +38,7 @@ fn apply_privilege_restrictions_with_upstream_errors(
         }
     };
 
-    // upstream: clientserver.c:978-984 - chroot first, then privilege drop.
+    // upstream: clientserver.c:980-989 - chroot first, then privilege drop.
     // A rootless auto-fallback (unset `use chroot` + failing probe) yields
     // `Ok(false)`; an explicit `use chroot = yes` that fails is fatal.
     let mut chroot_applied = false;
@@ -53,8 +53,8 @@ fn apply_privilege_restrictions_with_upstream_errors(
             }
             Err(err) => {
                 // Operator demanded chroot explicitly: a failure is fatal.
-                // upstream: clientserver.c:981 - `@ERROR: chroot failed\n`
-                // upstream: clientserver.c:647 - `@ERROR: chdir failed\n`
+                // upstream: clientserver.c:985 - `@ERROR: chroot failed\n`
+                // upstream: clientserver.c:649 - `@ERROR: chdir failed\n`
                 let text = err.to_string();
                 let payload = if text.contains("chdir") {
                     CHDIR_FAILED_PAYLOAD
@@ -68,7 +68,7 @@ fn apply_privilege_restrictions_with_upstream_errors(
     }
 
     if needs_privdrop {
-        // upstream: clientserver.c:781-822 - resolve the effective uid and full
+        // upstream: clientserver.c:783-824 - resolve the effective uid and full
         // group set (nobody defaults, `gid = *` expansion) before dropping.
         let target = match resolve_drop_target(module, am_root) {
             Ok(target) => target,
@@ -78,7 +78,7 @@ fn apply_privilege_restrictions_with_upstream_errors(
                 // SYSCALL failures handled below: it yields `@ERROR: invalid
                 // uid <name>` / `@ERROR: invalid gid <name>` with a matching
                 // FLOG `Invalid uid/gid <name>`.
-                // upstream: clientserver.c:784-786 (uid) / 656-658 (gid).
+                // upstream: clientserver.c:784-786 (uid) / 657-659 (gid).
                 let (flog, payload) = err.upstream_reply();
                 let message = rsync_error!(1, flog).with_role(Role::Daemon);
                 log_message(log_sink, &message);
@@ -90,7 +90,7 @@ fn apply_privilege_restrictions_with_upstream_errors(
         if target.uid.is_some() || !target.gids.is_empty() {
             if let Err(err) = drop_privileges(target.uid, &target.gids, log_sink) {
                 // Distinguish upstream error messages based on the error text.
-                // upstream: clientserver.c:1010/1017/1039
+                // upstream: clientserver.c:1024/1031/1053
                 let text = err.to_string();
                 let payload = if text.contains("setgroups") {
                     SETGROUPS_FAILED_PAYLOAD
@@ -118,7 +118,7 @@ struct PrivilegeOutcome {
     /// failed (rootless fallback) - downstream path handling must then treat
     /// the module as non-chrooted.
     ///
-    /// upstream: clientserver.c:831-862 - the effective `use_chroot` decides
+    /// upstream: clientserver.c:833-864 - the effective `use_chroot` decides
     /// whether the module path is rewritten to the post-chroot inner path.
     chroot_applied: bool,
     /// The post-chroot working directory to serve from, when `chroot_applied`
@@ -126,7 +126,7 @@ struct PrivilegeOutcome {
     /// marker, in which case it is the normalized remainder after the
     /// marker (e.g. `/module` for `path = /var/data/./module`).
     ///
-    /// upstream: clientserver.c:845-862 - `module_dir` after the `/./` split.
+    /// upstream: clientserver.c:847-864 - `module_dir` after the `/./` split.
     inner_module_path: Option<PathBuf>,
 }
 

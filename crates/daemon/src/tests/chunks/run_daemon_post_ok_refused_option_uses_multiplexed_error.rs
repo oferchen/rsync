@@ -1,6 +1,6 @@
 /// Regression test for the post-`@RSYNCD: OK` refused-options wire shape.
 ///
-/// upstream: clientserver.c:1146-1186 - once the daemon has acknowledged
+/// upstream: clientserver.c:1160-1200 - once the daemon has acknowledged
 /// the module, the multiplex framing on the client side starts
 /// immediately after `setup_protocol()` completes. Refused options
 /// detected by `parse_arguments()` flow through `rwrite(FERROR, ...)`,

@@ -225,7 +225,7 @@ mod config_helpers_tests {
         assert_eq!(parse_numeric_identifier("-1"), None);
     }
 
-    /// WHY: upstream clientserver.c:791-817 - a module `gid` is a
+    /// WHY: upstream clientserver.c:793-819 - a module `gid` is a
     /// whitespace/comma-separated list. Every entry must reach `setgroups`, so
     /// the parser must preserve order and count rather than collapse to one gid.
     #[test]
@@ -242,7 +242,7 @@ mod config_helpers_tests {
         );
     }
 
-    /// WHY: upstream clientserver.c:793-799 - a leading `*` requests all of the
+    /// WHY: upstream clientserver.c:795-801 - a leading `*` requests all of the
     /// target user's groups (`want_all_groups`), and may be followed by extra
     /// explicit gids.
     #[test]
@@ -257,7 +257,7 @@ mod config_helpers_tests {
         );
     }
 
-    /// WHY: upstream clientserver.c:793 - `The "*" gid must be the first item in
+    /// WHY: upstream clientserver.c:794 - `The "*" gid must be the first item in
     /// the list.` A `*` appearing later is a configuration error.
     #[test]
     fn parse_gid_setting_rejects_non_leading_star() {

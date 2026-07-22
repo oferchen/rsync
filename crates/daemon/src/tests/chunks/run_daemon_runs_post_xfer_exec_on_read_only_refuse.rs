@@ -3,7 +3,7 @@
 /// the module child and runs the hook regardless of outcome, so a refused push
 /// (child exits `RERR_SYNTAX`) fires the hook with `RSYNC_EXIT_STATUS=1`.
 ///
-/// upstream: clientserver.c:906-931 - post-xfer exec runs after the child exits
+/// upstream: clientserver.c:908-933 - post-xfer exec runs after the child exits
 /// for any reason; main.c:1166-1169 - the read-only push child exits
 /// `RERR_SYNTAX` (1). Regression guard for the daemon skipping the hook on the
 /// refuse early-return path.

@@ -160,7 +160,7 @@ fn read_client_arguments<R: BufRead>(
 /// capability string, e.g. `.iLsfxCIvu`). Characters after `e` must NOT be
 /// treated as flags - the `s` in `sfxCIvu` is SYMLINK_ICONV, not secluded-args.
 ///
-/// upstream: options.c:792 - `{secluded-args, 's', POPT_ARG_VAL, &protect_args, 1}`
+/// upstream: options.c:804 - `{secluded-args, 's', POPT_ARG_VAL, &protect_args, 1}`
 fn has_secluded_args_flag(args: &[String]) -> bool {
     args.iter().any(|a| {
         if a == "-s" || a == "--protect-args" || a == "--secluded-args" {
@@ -200,7 +200,7 @@ fn has_secluded_args_flag(args: &[String]) -> bool {
 ///
 /// # Upstream Reference
 ///
-/// - `clientserver.c:1059-1073` - two-phase `read_args()` for protect_args
+/// - `clientserver.c:1073-1087` - two-phase `read_args()` for protect_args
 fn read_and_log_client_args(
     ctx: &mut ModuleRequestContext<'_>,
     negotiated_protocol: Option<ProtocolVersion>,
@@ -215,14 +215,14 @@ fn read_and_log_client_args(
     };
 
     // Detect secluded-args flag in phase-1 args.
-    // upstream: clientserver.c:1066 - if (protect_args && ret)
-    // upstream: options.c:792 - `-s` is a short option for `--secluded-args`
+    // upstream: clientserver.c:1080 - if (protect_args && ret)
+    // upstream: options.c:804 - `-s` is a short option for `--secluded-args`
     // Protocol 28/29 clients may bundle `-s` into compact flag strings like `-logDtprs`.
     let has_secluded = has_secluded_args_flag(&phase1_args);
 
     let client_args = if has_secluded {
         // Phase 2: read the real args via secluded-args wire format.
-        // upstream: clientserver.c:1068-1071 - read_args with rl_nulls=1.
+        // upstream: clientserver.c:1082-1085 - read_args with rl_nulls=1.
         //
         // The two phases carry disjoint slices of the original argv:
         // - Phase 1 (cmdline): `--server`, `--sender`, the compact flag

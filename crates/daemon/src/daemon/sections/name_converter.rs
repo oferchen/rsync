@@ -4,7 +4,7 @@
 /// NSS lookups (getpwuid, getpwnam, getgrgid, getgrnam) with a simple
 /// line-based protocol over stdin/stdout pipes.
 ///
-/// upstream: clientserver.c:962-969 - the name converter is spawned after
+/// upstream: clientserver.c:964-971 - the name converter is spawned after
 /// privilege reduction and communicates via stdin/stdout pipes. Requests are
 /// `"{cmd} {arg}\n"`, responses are single lines.
 #[cfg(unix)]

@@ -3129,7 +3129,7 @@ mod config_parsing_tests {
         );
     }
 
-    // WHY: upstream clientserver.c:781 - an explicit per-module `uid` overrides
+    // WHY: upstream clientserver.c:783 - an explicit per-module `uid` overrides
     // the inherited global default, exactly like every other P_LOCAL parameter.
     #[test]
     fn module_uid_overrides_global_uid_default() {

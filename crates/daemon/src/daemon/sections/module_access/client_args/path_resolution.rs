@@ -75,7 +75,7 @@ fn resolve_receiver_dest(
     module_name: &str,
 ) -> Option<std::path::PathBuf> {
     let positionals = extract_module_relative_paths(client_args, module_name);
-    // upstream: main.c:1203-1204 - `local_name = get_local_name(flist, argv[0])`
+    // upstream: main.c:1212-1213 - `local_name = get_local_name(flist, argv[0])`
     // uses the FIRST remaining positional (after the `.` placeholder has been
     // consumed by `do_server_recv` at line 1166). For a receiver that
     // translates to the last wire positional - the destination.
