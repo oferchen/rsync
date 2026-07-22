@@ -2,8 +2,9 @@
 //!
 //! Upstream rsync negotiates the strong checksum algorithm based on the protocol
 //! version and compile-time feature set. This module exposes streaming wrappers
-//! for MD4, MD5, XXH64, XXH3/64, and XXH3/128 so higher layers can compose the
-//! desired strategy without reimplementing the hashing primitives.
+//! for MD4, MD5, SHA-1, SHA-256, SHA-512, XXH64, XXH3/64, and XXH3/128 so higher
+//! layers can compose the desired strategy without reimplementing the hashing
+//! primitives.
 //!
 //! # Upstream Reference
 //!
