@@ -28,7 +28,7 @@ impl Check for Itemize {
     fn run(&self, ctx: &ValidateCtx) -> Vec<CheckOutcome> {
         let root = ctx.work.join("itemize");
         let src = root.join("src");
-        if let Err(e) = build_fixture(&src) {
+        if let Err(e) = support::build_backdated_tree(&src) {
             return vec![CheckOutcome::skip(self.name(), "fixture", e)];
         }
         let names = basenames(&src);
@@ -158,30 +158,6 @@ fn basenames(src: &Path) -> HashSet<String> {
         .iter()
         .filter_map(|rel| rel.file_name().map(|n| n.to_string_lossy().into_owned()))
         .collect()
-}
-
-/// Build the itemize fixture. Idempotent: removes any prior tree first.
-fn build_fixture(src: &Path) -> Result<(), String> {
-    if src.exists() {
-        std::fs::remove_dir_all(src).map_err(|e| e.to_string())?;
-    }
-    let sub = src.join("sub");
-    std::fs::create_dir_all(&sub).map_err(|e| e.to_string())?;
-
-    std::fs::write(src.join("a.txt"), b"alpha").map_err(|e| e.to_string())?;
-    std::fs::write(src.join("b.txt"), b"bravo").map_err(|e| e.to_string())?;
-    std::fs::write(sub.join("c.txt"), b"charlie").map_err(|e| e.to_string())?;
-
-    // Backdate mtimes so the quick-check does not skip anything under test.
-    for entry in support::rel_entries(src) {
-        let path = src.join(&entry);
-        support::capture(
-            "touch",
-            &["-h", "-d", "@1614830767", &path.to_string_lossy()],
-        )
-        .map_err(|e| e.to_string())?;
-    }
-    Ok(())
 }
 
 #[cfg(test)]
