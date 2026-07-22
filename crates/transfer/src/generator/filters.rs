@@ -10,7 +10,7 @@
 //!
 //! # Upstream Reference
 //!
-//! - `main.c:1258` - `recv_filter_list()` in server mode
+//! - `main.c:1276` - `recv_filter_list()` in server mode
 //! - `flist.c:2240-2264` - `--files-from` filename reading and resolution
 //! - `exclude.c:push_local_filters()` - per-directory merge file loading
 
@@ -87,7 +87,7 @@ fn has_leading_dot_anchor(name: &str) -> bool {
 /// (before sanitisation) ended with `/`, including the `/./` DOTDIR form.
 /// Upstream `flist.c:2329` flags those lines as `SLASH_ENDING_NAME` /
 /// `DOTDIR_NAME` and recurses into their children even when global `-r` is
-/// off (`options.c:2189` clears `recurse` whenever `--files-from` is
+/// off (`options.c:2207` clears `recurse` whenever `--files-from` is
 /// active), so we propagate the flag onto [`FilesFromEntry::recurse`] for
 /// `build_file_list_with_base` to honour.
 ///
@@ -99,7 +99,7 @@ fn has_leading_dot_anchor(name: &str) -> bool {
 /// instead of promoting `from` to the per-entry walk base.
 ///
 /// `relative_paths` selects the upstream split branch. In relative mode
-/// (`flist.c:2350-2365`) the entry is split on its first `/./` anchor as
+/// (`flist.c:2385-2400`) the entry is split on its first `/./` anchor as
 /// above. Under `--no-relative` (`relative_paths == 0`, `flist.c:2338-2349`)
 /// upstream instead splits on the entry's LAST `/`: the parent becomes the
 /// chdir target (walk base) and only the basename is transmitted, so nested
@@ -227,8 +227,8 @@ impl GeneratorContext {
     ///
     /// # Upstream Reference
     ///
-    /// - Server mode: `recv_filter_list()` at `main.c:1258`
-    /// - Client mode: `send_filter_list()` at `main.c:1308` (done in mod.rs)
+    /// - Server mode: `recv_filter_list()` at `main.c:1276`
+    /// - Client mode: `send_filter_list()` at `main.c:1326` (done in mod.rs)
     pub(super) fn receive_filter_list_if_server<R: Read>(
         &mut self,
         reader: &mut R,
@@ -236,7 +236,7 @@ impl GeneratorContext {
         if self.config.connection.client_mode {
             // Client mode: apply filters from config for local file list building.
             // Filter rules were already sent to the daemon in mod.rs.
-            // upstream: flist.c:1332 - is_excluded() applied during make_file()
+            // upstream: flist.c:1360 - is_excluded() applied during make_file()
             if !self.config.connection.filter_rules.is_empty() {
                 let (filter_set, merge_configs) =
                     self.parse_received_filters(&self.config.connection.filter_rules.clone())?;
@@ -291,7 +291,7 @@ impl GeneratorContext {
     ///
     /// # Upstream Reference
     ///
-    /// - `flist.c:2262` - `read_line(filesfrom_fd, ...)` reads one name at a time
+    /// - `flist.c:2297` - `read_line(filesfrom_fd, ...)` reads one name at a time
     /// - `flist.c:2316-2330` - `/./` anchor split for relative-name emission
     /// - `main.c:681-685` - `filesfrom_fd` set to `STDIN_FILENO` for `--files-from=-`
     /// - `io.c:start_filesfrom_forwarding()` - client forwards local file over socket
@@ -306,7 +306,7 @@ impl GeneratorContext {
         };
 
         // Determine base directory: use the first positional arg (source dir).
-        // upstream: flist.c:2240-2244 - change_dir(argv[0]) before reading filenames.
+        // upstream: flist.c:2275-2279 - change_dir(argv[0]) before reading filenames.
         let base_dir = original_paths
             .first()
             .cloned()
@@ -348,7 +348,7 @@ impl GeneratorContext {
             if name.is_empty() {
                 continue;
             }
-            // upstream: flist.c:2264 - sanitize_path(fbuf, fbuf, "", 0, SP_KEEP_DOT_DIRS)
+            // upstream: flist.c:2299 - sanitize_path(fbuf, fbuf, "", 0, SP_KEEP_DOT_DIRS)
             // Always sanitize files_from entries to prevent directory traversal.
             // This collapses ".." components and strips leading "/" to confine
             // paths within the transfer root. `SP_KEEP_DOT_DIRS` preserves the
@@ -671,7 +671,7 @@ fn append_cvsignore_tokens(rules: &mut Vec<FilterRule>, source: &str, perishable
 /// # Upstream Reference
 ///
 /// - `main.c:675-679` - `open(files_from, O_RDONLY)` for local file
-/// - `flist.c:2262` - `read_line(filesfrom_fd, ...)` reads lines
+/// - `flist.c:2297` - `read_line(filesfrom_fd, ...)` reads lines
 pub(super) fn read_files_from_local_path(path: &str, from0: bool) -> io::Result<Vec<String>> {
     let file = std::fs::File::open(path)?;
     let mut reader = io::BufReader::new(file);
@@ -870,7 +870,7 @@ mod tests {
         // UTS-21.REOPEN regression: `from/./dir/subdir` must split so that
         // the wire-side relative name (path.strip_prefix(base)) is just
         // `dir/subdir`. Otherwise upstream's `implied_filter_list` check
-        // (flist.c:998) rejects `from/dir/subdir` as "unrequested".
+        // (flist.c:1026) rejects `from/dir/subdir` as "unrequested".
         let base = PathBuf::from("/src");
         let split = split_files_from_entry(&base, "from/./dir/subdir", false, true);
         assert_eq!(split.base, PathBuf::from("/src/from"));

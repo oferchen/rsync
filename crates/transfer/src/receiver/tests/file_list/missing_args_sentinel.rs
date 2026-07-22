@@ -9,7 +9,7 @@
 //!
 //! # Upstream Reference
 //!
-//! - `generator.c:1348-1354` - `missing_args == 2 && file->mode == 0`
+//! - `generator.c:1360-1366` - `missing_args == 2 && file->mode == 0`
 //!   branch that calls `delete_item()` when the destination exists and
 //!   falls through (no creation) otherwise.
 

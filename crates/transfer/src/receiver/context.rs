@@ -63,7 +63,7 @@ pub struct ReceiverContext {
     /// Each entry is `(flat_start, ndx_start)`.
     /// Without INC_RECURSE, contains a single entry `(0, 0)`.
     ///
-    /// upstream: flist.c:2931 - `flist->ndx_start = prev->ndx_start + prev->used + 1`
+    /// upstream: flist.c:2966 - `flist->ndx_start = prev->ndx_start + prev->used + 1`
     pub(in crate::receiver) ndx_segments: Vec<(usize, i32)>,
     /// Index into `ndx_segments` of the oldest unreclaimed segment.
     ///
@@ -74,7 +74,7 @@ pub struct ReceiverContext {
     /// # Upstream Reference
     ///
     /// - `flist.c:101` - `first_flist` pointer
-    /// - `receiver.c:573` - `flist_free(first_flist)` advances `first_flist`
+    /// - `receiver.c:683` - `flist_free(first_flist)` advances `first_flist`
     pub(in crate::receiver) first_segment_idx: usize,
     /// Count of directory entries received so far across the initial file list
     /// and every INC_RECURSE sub-list, mirroring upstream's `dir_flist->used`.
@@ -113,7 +113,7 @@ pub struct ReceiverContext {
     ///
     /// # Upstream Reference
     ///
-    /// - `flist.c:2685` - `f_name(dir_flist->files[dir_ndx], NULL)` names the
+    /// - `flist.c:2720` - `f_name(dir_flist->files[dir_ndx], NULL)` names the
     ///   parent that every entry in the sub-list must live under.
     pub(in crate::receiver) dir_flist_names: Vec<PathBuf>,
     /// Cached file list reader for compression state continuity across sub-lists.
@@ -135,9 +135,9 @@ pub struct ReceiverContext {
     ///
     /// # Upstream Reference
     ///
-    /// - `receiver.c:599-604` - `check_filter(&daemon_filter_list, ...)` rejects
+    /// - `receiver.c:711-716` - `check_filter(&daemon_filter_list, ...)` rejects
     ///   excluded files before accepting transfer data
-    /// - `flist.c:254-272` - `path_is_daemon_excluded()` checks each path
+    /// - `flist.c:266-284` - `path_is_daemon_excluded()` checks each path
     ///   component against the daemon filter list
     pub(in crate::receiver) daemon_filter_set: Option<FilterSet>,
     /// Per-directory scoped filter chain for deletion protection.
@@ -192,7 +192,7 @@ pub struct ReceiverContext {
     /// Accumulated I/O error flags from the sender's file list for protocol < 30.
     ///
     /// For protocol < 30, the sender writes a 4-byte LE io_error flag after the
-    /// id lists (upstream: flist.c:2517-2518). Protocol >= 30 uses MSG_IO_ERROR
+    /// id lists (upstream: flist.c:2552-2553). Protocol >= 30 uses MSG_IO_ERROR
     /// or SAFE_FILE_LIST instead.
     pub(in crate::receiver) flist_io_error: i32,
     /// Per-operation thresholds for switching between sequential and parallel execution.
@@ -368,7 +368,7 @@ impl ReceiverContext {
         config: ServerConfig,
         pipeline: TransferPipeline,
     ) -> Self {
-        // upstream: flist.c:2923 - ndx_start = inc_recurse ? 1 : 0
+        // upstream: flist.c:2958 - ndx_start = inc_recurse ? 1 : 0
         let inc_recurse = handshake
             .compat_flags
             .is_some_and(|f| f.contains(CompatibilityFlags::INC_RECURSE));
@@ -385,7 +385,7 @@ impl ReceiverContext {
             None
         };
 
-        // upstream: clientserver.c:874-893 - daemon_filter_list is built from
+        // upstream: clientserver.c:876-895 - daemon_filter_list is built from
         // module filter/exclude/include directives and used by all roles.
         let daemon_filter_set = compile_daemon_filter_set(&config.daemon_filter_rules);
 
@@ -526,7 +526,7 @@ impl ReceiverContext {
     ///
     /// # Upstream Reference
     ///
-    /// - `generator.c:2321` - `ndx = i + cur_flist->ndx_start`
+    /// - `generator.c:2338` - `ndx = i + cur_flist->ndx_start`
     pub(in crate::receiver) fn flat_to_wire_ndx(&self, flat_idx: usize) -> i32 {
         let segments = &self.ndx_segments;
         NDX_CONVERT_CALLS.fetch_add(1, Ordering::Relaxed);
@@ -664,7 +664,7 @@ impl ReceiverContext {
     ///
     /// # Upstream Reference
     ///
-    /// - `options.c:2051-2056` - `need_unsorted_flist = 1` when `iconv_opt`
+    /// - `options.c:2069-2074` - `need_unsorted_flist = 1` when `iconv_opt`
     /// - `flist.c:2496-2498` - "both sides keep an unsorted file-list array
     ///   because the names will differ on the sending and receiving sides"
     /// - `flist.c:2149-2153` - allocates a separate `flist->sorted[]`
@@ -750,7 +750,7 @@ impl ReceiverContext {
     /// **Client mode** (daemon pull - `main.c:1342-1343` `client_run !am_sender`):
     /// - `if (protocol_version >= 23) io_start_multiplex_in(f_in);`
     ///
-    /// **Server mode** (daemon/SSH receiver - `main.c:1167-1168` `do_recv`):
+    /// **Server mode** (daemon/SSH receiver - `main.c:1185-1186` `do_recv`):
     /// - `if (protocol_version >= 30) io_start_multiplex_in(f_in);`
     /// - Protocol < 30 uses `io_start_buffering_in()` instead (no multiplex).
     #[must_use]
@@ -832,8 +832,8 @@ impl ReceiverContext {
     ///
     /// # Upstream Reference
     ///
-    /// - `flist.c:2945 flist_free()` - frees completed file list segments
-    /// - `receiver.c:573` - `flist_free(first_flist)` in receiver transfer loop
+    /// - `flist.c:2980 flist_free()` - frees completed file list segments
+    /// - `receiver.c:683` - `flist_free(first_flist)` in receiver transfer loop
     pub(in crate::receiver) fn reclaim_oldest_segment(&mut self) {
         let first = self.first_segment_idx;
 

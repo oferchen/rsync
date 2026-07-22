@@ -99,7 +99,7 @@ impl GeneratorContext {
         };
         use super::super::protocol_io::{read_signature_blocks_keepalive, signature_read_lull_mod};
 
-        // upstream: sender.c:217-218 - rprintf(FINFO, "send_files starting\n")
+        // upstream: sender.c:221-222 - rprintf(FINFO, "send_files starting\n")
         debug_log!(Send, 1, "send_files starting");
 
         // upstream: sender.c:218 - int save_io_error = io_error;
@@ -205,7 +205,7 @@ impl GeneratorContext {
         // transition. This counter tracks how many flist-free echoes remain.
         let mut flist_done_remaining: usize = 0;
 
-        // upstream: flist.c:104,2160 - file_total tracks entries the receiver
+        // upstream: flist.c:104,2195 - file_total tracks entries the receiver
         // knows about (initial segment + dispatched sub-lists). Used for the
         // MIN_FILECNT_LOOKAHEAD comparison in send_extra_file_list().
         // Unlike self.file_list.len() which includes undispatched segments,
@@ -221,7 +221,7 @@ impl GeneratorContext {
         loop {
             // upstream: sender.c:227 - send extra file lists at top of loop
             if inc_recurse {
-                // upstream: flist.c:2104 - file_total - file_old_total < at_least
+                // upstream: flist.c:2139 - file_total - file_old_total < at_least
                 // remaining = entries the receiver knows about minus transferred
                 let remaining = dispatched_entry_count.saturating_sub(files_transferred);
                 while let Some(seg) = scheduler.next_if_needed(remaining) {
@@ -270,14 +270,14 @@ impl GeneratorContext {
             if ndx < 0 {
                 match ndx {
                     NDX_DONE => {
-                        // upstream: sender.c:242-257 - INC_RECURSE flist-free path.
+                        // upstream: sender.c:246-261 - INC_RECURSE flist-free path.
                         // With INC_RECURSE, the client sends one NDX_DONE per
                         // completed sub-file-list before the actual phase transitions.
                         // Echo these without incrementing phase, matching upstream's
                         // flist_free(first_flist) loop.
                         if inc_recurse && flist_done_remaining > 0 {
                             flist_done_remaining -= 1;
-                            // upstream: sender.c:243-244 -
+                            // upstream: sender.c:247-248 -
                             // file_old_total -= first_flist->used; flist_free(first_flist).
                             // Reclaim heap data from the oldest completed segment to
                             // reduce RSS. Entries stay in place for NDX indexing but
@@ -317,13 +317,13 @@ impl GeneratorContext {
                             continue;
                         }
 
-                        // upstream: sender.c:252-257 - phase transition.
+                        // upstream: sender.c:256-261 - phase transition.
                         // Increment phase first, break without echo if past max_phase.
                         phase += 1;
                         if phase > max_phase {
                             break;
                         }
-                        // upstream: sender.c:254-255
+                        // upstream: sender.c:258-259
                         // rprintf(FINFO, "send_files phase=%d\n", phase)
                         debug_log!(Send, 1, "send_files phase={}", phase);
                         if let Err(e) = ndx_write_codec
@@ -374,7 +374,7 @@ impl GeneratorContext {
                 }
             }
 
-            // upstream: sender.c:263-266 - preserve the original wire NDX for
+            // upstream: sender.c:267-272 - preserve the original wire NDX for
             // echo-back. When INC_RECURSE is active, the receiver sends "gap
             // NDX" values (ndx_start - 1 per sub-list) that fall below
             // cur_flist->ndx_start. Upstream echoes the original NDX unchanged;
@@ -400,7 +400,7 @@ impl GeneratorContext {
             // exact wire bytes consumed so this count never drifts from the wire.
             self.timing.total_bytes_read += trailing_bytes;
 
-            // upstream: sender.c:280-284 - drain the generator's xattr request
+            // upstream: sender.c:286-290 - drain the generator's xattr request
             // when preserve_xattrs && ITEM_REPORT_XATTR is set. The generator
             // always emits at least a 0 terminator (varint) under this gate, so
             // skipping it desyncs the subsequent sum_head read and aborts the
@@ -414,7 +414,7 @@ impl GeneratorContext {
             let mut pending_xattr_response =
                 self.read_generator_xattr_request_if_any(&mut *reader, ndx, &iflags)?;
 
-            // upstream: sender.c:277-278
+            // upstream: sender.c:283-284
             // rprintf(FINFO, "send_files(%d, %s%s%s)\n", ndx, path,slash,fname)
             // F_PATHNAME is unset for the in-band file list we build, so the
             // path/slash prefix is empty and we emit just the relative name.
@@ -469,7 +469,7 @@ impl GeneratorContext {
                 )));
             }
 
-            // upstream: sender.c:341-344 - dry_run (!do_xfers) logs the item and
+            // upstream: sender.c:347-350 - dry_run (!do_xfers) logs the item and
             // echoes write_ndx_and_attrs() without calling receive_sums(). The
             // echo still carries the xattr response when ITEM_REPORT_XATTR is
             // set so the receiver can pair its outstanding request.
@@ -495,7 +495,7 @@ impl GeneratorContext {
                 if iflags.raw() & ItemFlags::ITEM_IS_NEW != 0 {
                     created_stats.record(file_entry.mode());
                 }
-                // upstream: sender.c:341-344 - a dry run logs the transfer item
+                // upstream: sender.c:347-350 - a dry run logs the transfer item
                 // via log_item(FCLIENT) without sending data: the `-i` itemize
                 // row or, under plain `-v`, the bare `%n%L` name line.
                 self.emit_client_item(writer, &iflags, ndx, xname.as_deref(), itemize, true)?;
@@ -520,7 +520,7 @@ impl GeneratorContext {
             let source_path = self.reconstruct_source_path(ndx);
             let source_path_display = source_path.display().to_string();
 
-            // upstream: sender.c:319-335 - when a file arrives again on the redo
+            // upstream: sender.c:325-341 - when a file arrives again on the redo
             // pass (`file->flags & FLAG_FILE_SENT`), the sender negates
             // append_mode and make_backups so the resend is a full-content
             // transfer. The receiver's generator has already restored
@@ -772,7 +772,7 @@ impl GeneratorContext {
                 };
                 bytes_sent += wire_bytes;
             } else {
-                // upstream: sender.c:354-369 - whole-file path; MSG_NO_SEND on open failure
+                // upstream: sender.c:385-400 - whole-file path; MSG_NO_SEND on open failure
                 // Use unbuffered reader: stream_whole_file_transfer manages its
                 // own 256 KB staging buffer with read_exact, so a BufReader would
                 // only add an extra memcpy per byte through its internal buffer.
@@ -878,7 +878,7 @@ impl GeneratorContext {
             // rprintf(FINFO, "sender finished %s%s%s\n", path,slash,fname)
             debug_log!(Send, 1, "sender finished {}", file_entry.path().display());
 
-            // upstream: sender.c:430 - log_item(log_code, file, iflags, xname)
+            // upstream: sender.c:461 - log_item(log_code, file, iflags, xname)
             self.emit_client_item(writer, &iflags, ndx, xname.as_deref(), itemize, true)?;
 
             if let Some(cb) = progress.as_mut() {
@@ -946,7 +946,7 @@ impl GeneratorContext {
         // Cache flist_writer back for potential reuse (e.g., phase 2).
         self.incremental.flist_writer_cache = Some(flist_writer);
 
-        // upstream: sender.c:457-458
+        // upstream: sender.c:488-489
         // rprintf(FINFO, "send files finished\n")
         debug_log!(Send, 1, "send files finished");
 
@@ -964,7 +964,7 @@ impl GeneratorContext {
             }
         }
 
-        // upstream: sender.c:454-462 - after the transfer loop exits, the sender
+        // upstream: sender.c:485-493 - after the transfer loop exits, the sender
         // sends io_error (if changed) and a final NDX_DONE. This NDX_DONE is the
         // "goodbye" that tells the client's generator to proceed with its own
         // goodbye handshake. Without it, the client hangs waiting for this marker.

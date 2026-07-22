@@ -203,7 +203,7 @@ pub struct GeneratorStats {
 /// # Upstream Reference
 ///
 /// - `sender.c:225-232` - tolerant error handling for dry-run
-/// - `main.c:875-906` - `read_final_goodbye()` with early close tolerance
+/// - `main.c:893-924` - `read_final_goodbye()` with early close tolerance
 pub(crate) fn is_early_close_error(e: &std::io::Error) -> bool {
     matches!(
         e.kind(),
