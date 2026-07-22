@@ -32,10 +32,10 @@ totals are unchanged.
 
 ## How to revert
 
-- **Build-time:** build without the `sender-inc-recurse` cargo feature
-  (`cargo build --no-default-features --features "<other features>"`).
 - **Runtime per invocation:** pass `--no-inc-recursive` on the client.
   There is no environment variable; the CLI flag is the runtime override.
+  (The `sender-inc-recurse` cargo feature that gated this during the ISI
+  bake-in period was retired in ISI.i.2; there is no build-time toggle.)
 
 ## Reference
 

@@ -37,15 +37,6 @@
 //! headers on the wire without depending on a particular timing
 //! pattern.
 //!
-//! ## Feature gate
-//!
-//! `#[cfg(feature = "sender-inc-recurse")]` - same temporary bake-up
-//! flag the rest of the ISI series uses. Without it the builder default
-//! is `inc_recursive_send = false`, the `'i'` bit is stripped from the
-//! capability string, and the upstream peer never accepts `INC_RECURSE`
-//! in its compat flags. The cargo feature must be set at the workspace
-//! level so the dependency `oc-rsync` binary is also built with it on.
-//!
 //! ## Platform gate
 //!
 //! `#[cfg(all(unix, not(target_os = "macos")))]` - the upstream rsync
@@ -73,7 +64,7 @@
 //! sentinels in the sender's outbound stream and confirm it equals
 //! the number of sub-list segments the partitioner produced).
 
-#![cfg(all(unix, not(target_os = "macos"), feature = "sender-inc-recurse"))]
+#![cfg(all(unix, not(target_os = "macos")))]
 
 mod integration;
 

@@ -53,15 +53,6 @@
 //!    keeping `v` (protocol-level varint flist flags advertisement)
 //!    inside the post-`.` capability segment.
 //!
-//! ## Feature gate
-//!
-//! `#[cfg(feature = "sender-inc-recurse")]` - matches ISI.c/ISI.d. The
-//! cargo feature must be set at the workspace level so the dependency
-//! `oc-rsync` binary is built with it on; without the feature the
-//! sender strips `'i'` from its capability advertisement and the
-//! upstream receiver falls back to non-INC_RECURSE mode, producing a
-//! different wire stream than the comparison run.
-//!
 //! ## Platform gate
 //!
 //! `#[cfg(all(unix, not(target_os = "macos")))]` - identical reasoning
@@ -69,7 +60,7 @@
 //! are pre-built only for Linux in `tools/ci/run_interop.sh`; macOS
 //! would be a perpetual skip.
 
-#![cfg(all(unix, not(target_os = "macos"), feature = "sender-inc-recurse"))]
+#![cfg(all(unix, not(target_os = "macos")))]
 
 mod integration;
 
