@@ -42,9 +42,16 @@ fn temp_file_is_created_during_transfer() {
         dest.as_path(),
         "staging path should differ from destination"
     );
+    // upstream get_tmpname(): the in-flight temp is `.<name>.XXXXXX` beside dest.
+    let staging_name = staging.file_name().unwrap().to_string_lossy();
     assert!(
-        staging.to_string_lossy().contains(".~tmp~"),
-        "staging path should have upstream rsync .~tmp~ prefix"
+        staging_name.starts_with(".final.txt."),
+        "staging name should match upstream get_tmpname(): got {staging_name}"
+    );
+    assert_eq!(
+        staging_name.len(),
+        ".final.txt.".len() + 6,
+        "six-character mkstemp-style suffix: got {staging_name}"
     );
     assert!(!dest.exists(), "destination should not exist until commit");
 

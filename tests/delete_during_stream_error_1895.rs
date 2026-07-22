@@ -169,7 +169,19 @@ fn count_dst_tmp_files(dst: &Path) -> usize {
     while let Some(entry) = stack.pop() {
         let name = entry.file_name();
         let s = name.to_string_lossy();
-        if s.starts_with(".oc-rsync-tmp") || s.starts_with(".~tmp~") || s.contains(".oc-rsync.") {
+        // upstream get_tmpname() stages the in-flight temp as a hidden
+        // `.<name>.XXXXXX` with a six-character mkstemp-style suffix.
+        let is_get_tmpname = s.starts_with('.')
+            && s.rsplit_once('.').is_some_and(|(stem, suffix)| {
+                !stem.is_empty()
+                    && suffix.len() == 6
+                    && suffix.chars().all(|c| c.is_ascii_alphanumeric())
+            });
+        if s.starts_with(".oc-rsync-tmp")
+            || s.starts_with(".~tmp~")
+            || s.contains(".oc-rsync.")
+            || is_get_tmpname
+        {
             count += 1;
         }
         if entry.file_type().map(|t| t.is_dir()).unwrap_or(false) {

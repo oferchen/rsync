@@ -841,10 +841,12 @@ fn execute_without_temp_dir_creates_temps_alongside_destination() {
         b"no temp dir test"
     );
     let parent = destination.parent().unwrap();
+    // upstream get_tmpname() stages `.dest.txt.XXXXXX` beside the destination;
+    // none should survive a successful transfer.
     let stray_temps: Vec<_> = fs::read_dir(parent)
         .expect("read dir")
         .filter_map(|e| e.ok())
-        .filter(|e| e.file_name().to_string_lossy().contains(".~tmp~"))
+        .filter(|e| e.file_name().to_string_lossy().starts_with(".dest.txt."))
         .collect();
     assert!(
         stray_temps.is_empty(),
@@ -854,33 +856,29 @@ fn execute_without_temp_dir_creates_temps_alongside_destination() {
 
 
 #[test]
-fn execute_with_temp_dir_uses_upstream_temp_prefix() {
-    // Verify the temp file uses .~tmp~ prefix matching upstream rsync
-    let temp_path = temporary_destination_path(Path::new("/path/to/file.txt"), 42, None);
+fn execute_with_temp_dir_uses_upstream_temp_name() {
+    // upstream get_tmpname(): beside the destination the temp is `.<name>.XXXXXX`
+    // with a leading dot and a six-character suffix.
+    let temp_path = temp_name_with_suffix(Path::new("/path/to/file.txt"), None, "ABCDEF");
     let name = temp_path
         .file_name()
         .expect("file name")
         .to_string_lossy();
-    assert!(
-        name.starts_with(".~tmp~"),
-        "temp file should use .~tmp~ prefix: got {name}"
-    );
-    assert!(
-        name.contains("file.txt"),
-        "temp file name should contain original filename: got {name}"
-    );
-    assert!(
-        name.contains(&std::process::id().to_string()),
-        "temp file name should contain process ID: got {name}"
+    assert_eq!(name, ".file.txt.ABCDEF", "got {name}");
+    assert_eq!(
+        temp_path.parent().unwrap(),
+        Path::new("/path/to"),
+        "temp file stages beside the destination"
     );
 }
 
 #[test]
 fn execute_with_temp_dir_format_in_custom_directory() {
-    // When temp_dir is set, temp file should go into that directory
+    // When temp_dir is set, the temp goes into that directory with no leading
+    // dot: upstream get_tmpname() only prepends a dot without --temp-dir.
     let temp_dir = Path::new("/my/temp");
     let temp_path =
-        temporary_destination_path(Path::new("/destination/subdir/file.txt"), 1, Some(temp_dir));
+        temp_name_with_suffix(Path::new("/destination/subdir/file.txt"), Some(temp_dir), "ABCDEF");
     assert!(
         temp_path.starts_with(temp_dir),
         "temp file should be in custom temp directory"
@@ -889,12 +887,8 @@ fn execute_with_temp_dir_format_in_custom_directory() {
         .file_name()
         .expect("file name")
         .to_string_lossy();
-    assert!(
-        name.starts_with(".~tmp~"),
-        "temp file in custom dir should use .~tmp~ prefix"
-    );
-    assert!(
-        name.contains("file.txt"),
+    assert_eq!(
+        name, "file.txt.ABCDEF",
         "temp file should use filename only, not full subpath"
     );
     assert_eq!(
@@ -1100,11 +1094,12 @@ fn execute_with_temp_dir_and_checksum_mode() {
 
 #[test]
 fn execute_with_temp_dir_unique_temp_names_across_files() {
-    // Verify that multiple files in the same temp dir get unique temp names
+    // Verify that multiple files in the same temp dir get distinct temp names,
+    // driven by the per-destination basename.
     let td = Path::new("/tmp/staging");
 
-    let temp1 = temporary_destination_path(Path::new("/dest/file1.txt"), 0, Some(td));
-    let temp2 = temporary_destination_path(Path::new("/dest/file2.txt"), 1, Some(td));
+    let temp1 = temp_name_with_suffix(Path::new("/dest/file1.txt"), Some(td), "ABCDEF");
+    let temp2 = temp_name_with_suffix(Path::new("/dest/file2.txt"), Some(td), "ABCDEF");
 
     assert_ne!(
         temp1, temp2,
@@ -1115,17 +1110,18 @@ fn execute_with_temp_dir_unique_temp_names_across_files() {
 }
 
 #[test]
-fn execute_with_temp_dir_unique_counter_per_file() {
-    // Same destination file with different unique IDs should get different temp paths
+fn execute_with_temp_dir_unique_suffix_per_file() {
+    // The same destination collides only when the six-character suffix repeats;
+    // distinct suffixes (upstream's mkstemp `.XXXXXX`) yield distinct temp paths.
     let td = Path::new("/tmp/staging");
     let dest = Path::new("/dest/file.txt");
 
-    let temp1 = temporary_destination_path(dest, 0, Some(td));
-    let temp2 = temporary_destination_path(dest, 1, Some(td));
+    let temp1 = temp_name_with_suffix(dest, Some(td), "AAAAAA");
+    let temp2 = temp_name_with_suffix(dest, Some(td), "BBBBBB");
 
     assert_ne!(
         temp1, temp2,
-        "same destination with different unique IDs should get different temp paths"
+        "different suffixes should get different temp paths"
     );
 }
 

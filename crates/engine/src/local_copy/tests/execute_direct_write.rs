@@ -60,7 +60,7 @@ fn direct_write_does_not_create_temp_files() {
     plan.execute_with_options(LocalCopyExecution::Apply, LocalCopyOptions::default())
         .expect("copy succeeds");
 
-    // Verify no temp files remain - temp files use the `.~tmp~` prefix
+    // Verify no temp files remain - the in-flight temp is `.<name>.XXXXXX`.
     let entries: Vec<_> = fs::read_dir(&dest_dir)
         .expect("read dest dir")
         .filter_map(|e| e.ok())
@@ -169,14 +169,12 @@ fn direct_write_handles_multiple_files_in_directory() {
         b"gamma content"
     );
 
+    // upstream get_tmpname() stages the in-flight temp as a hidden `.<name>.XXXXXX`
+    // beside the destination; none should survive a successful transfer.
     let entries: Vec<_> = fs::read_dir(&dest_dir)
         .expect("read dest dir")
         .filter_map(|e| e.ok())
-        .filter(|e| {
-            e.file_name()
-                .to_string_lossy()
-                .starts_with(".~tmp~")
-        })
+        .filter(|e| e.file_name().to_string_lossy().starts_with('.'))
         .collect();
     assert!(
         entries.is_empty(),
