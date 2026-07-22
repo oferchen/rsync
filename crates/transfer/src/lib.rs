@@ -389,10 +389,10 @@ fn perishable_rules_too_modern(
 /// Upstream rsync activates multiplex output differently depending on
 /// the execution context:
 ///
-/// - **Server mode** (`--server`): always for protocol >= 23 (main.c:1247-1248).
-/// - **Client sender** (push): always for protocol >= 30 (main.c:1300-1301).
+/// - **Server mode** (`--server`): always for protocol >= 23 (main.c:1265-1266).
+/// - **Client sender** (push): always for protocol >= 30 (main.c:1318-1319).
 /// - **Client receiver** (pull): when `need_messages_from_generator` is set
-///   (main.c:1344-1347). Upstream sets this unconditionally for protocol >= 30
+///   (main.c:1362-1365). Upstream sets this unconditionally for protocol >= 30
 ///   (compat.c:776), so the client always activates multiplex output for pull.
 fn requires_multiplex_output(
     client_mode: bool,
@@ -401,7 +401,7 @@ fn requires_multiplex_output(
     _compat_flags: Option<protocol::CompatibilityFlags>,
 ) -> bool {
     if client_mode {
-        // upstream: both sender (main.c:1300) and receiver (main.c:1344)
+        // upstream: both sender (main.c:1318) and receiver (main.c:1362)
         // activate multiplex output when need_messages_from_generator is set,
         // which is unconditional for protocol >= 30 (compat.c:776).
         protocol.supports_generator_messages()
@@ -562,7 +562,7 @@ pub fn run_server_with_handshake_adopting<W: Write>(
         Box::new(buffered.chain(stdin))
     };
 
-    // upstream: main.c:1245 start_server() → setup_protocol(f_out, f_in)
+    // upstream: main.c:1263 start_server() → setup_protocol(f_out, f_in)
     // Performs compat flags exchange + capability negotiation in RAW mode,
     // before multiplex activation.
     let is_server = !config.connection.client_mode;
@@ -573,7 +573,7 @@ pub fn run_server_with_handshake_adopting<W: Write>(
 
     // upstream: compat.c - do_compression is set by -z (short option) or by
     // --new-compress, --old-compress, --compress-choice=ALGO (long options).
-    // upstream: options.c:2704 only puts 'z' in argstr for CPRES_ZLIB.
+    // upstream: options.c:2722 only puts 'z' in argstr for CPRES_ZLIB.
     // For zlibx, zstd, lz4, upstream sends long options instead.
     let (do_compression, compress_choice) = if config.connection.client_mode {
         // upstream: compat.c - client knows its own compress_choice from CLI args.
@@ -590,7 +590,7 @@ pub fn run_server_with_handshake_adopting<W: Write>(
             .iter()
             .any(|arg| arg.starts_with('-') && !arg.starts_with("--") && arg.contains('z'));
 
-        // upstream: options.c:2800-2805 - long options for non-ZLIB compression:
+        // upstream: options.c:2818-2823 - long options for non-ZLIB compression:
         //   CPRES_ZLIBX → --new-compress
         //   CPRES_ZLIB with explicit choice → --old-compress
         //   other (zstd/lz4) → --compress-choice=ALGO
@@ -613,7 +613,7 @@ pub fn run_server_with_handshake_adopting<W: Write>(
         // compression intent from the parsed flag string (`config.flags.compress`
         // for `-z`) and the explicit `--compress-choice` / `--new-compress` /
         // `--old-compress` long options preserved on `config.connection`.
-        // upstream: options.c:2696-2805 - server_options() emits `-z` in the
+        // upstream: options.c:2714-2823 - server_options() emits `-z` in the
         // compact arg string for CPRES_ZLIB, and the long-form variants for
         // other algorithms. Both flow through to ServerConfig here.
         let choice = config.connection.compress_choice.map(|algo| algo.as_str());
@@ -688,7 +688,7 @@ pub fn run_server_with_handshake_adopting<W: Write>(
     // upstream: compat.c:777-778 - apply CF_INPLACE_PARTIAL_DIR after compat exchange.
     // When the server advertises this flag and a partial directory is configured,
     // enable per-file inplace for partial-dir basis files.
-    // upstream: receiver.c:797 - one_inplace = inplace_partial && fnamecmp_type == FNAMECMP_PARTIAL_DIR
+    // upstream: receiver.c:910 - one_inplace = inplace_partial && fnamecmp_type == FNAMECMP_PARTIAL_DIR
     if let Some(flags) = setup_result.compat_flags {
         if flags.contains(protocol::CompatibilityFlags::INPLACE_PARTIAL_DIR)
             && config.has_partial_dir
@@ -707,7 +707,7 @@ pub fn run_server_with_handshake_adopting<W: Write>(
         // sender and desynced the proto-30 flist ("xa index out of range").
     }
 
-    // upstream: options.c:1842-1868 - when compiled without SUPPORT_ACLS or
+    // upstream: options.c:1858-1884 - when compiled without SUPPORT_ACLS or
     // SUPPORT_XATTRS, the server rejects -A/-X from the client. We mirror this
     // by clearing feature-gated flags and warning instead of hard-failing, so
     // the transfer proceeds without the unsupported metadata type.
@@ -803,7 +803,7 @@ pub fn run_server_with_handshake_adopting<W: Write>(
         handshake.protocol,
     );
 
-    // upstream: main.c:1258 - daemon sender always calls recv_filter_list(f_in).
+    // upstream: main.c:1276 - daemon sender always calls recv_filter_list(f_in).
     let should_send_filter_list = if config.connection.client_mode {
         match config.role {
             ServerRole::Generator => receiver_wants_filter_list,
@@ -843,7 +843,7 @@ pub fn run_server_with_handshake_adopting<W: Write>(
         writer.flush()?;
     }
 
-    // upstream: main.c:1354-1356 - after sending filter list, forward
+    // upstream: main.c:1372-1374 - after sending filter list, forward
     // pre-read --files-from data to the remote daemon's generator so it
     // can build the file list from the forwarded filenames.
     // This applies only in client-mode pull (Receiver), where the daemon's
@@ -855,7 +855,7 @@ pub fn run_server_with_handshake_adopting<W: Write>(
         }
     }
 
-    // upstream: main.c:1249-1250 - server sends MSG_IO_TIMEOUT to client.
+    // upstream: main.c:1267-1268 - server sends MSG_IO_TIMEOUT to client.
     if !config.connection.client_mode
         && let Some(timeout_secs) = handshake.io_timeout
         && handshake.protocol.supports_extended_goodbye()

@@ -2,7 +2,7 @@
 //!
 //! Contains the `DeltaApplicator` that applies delta data received from a sender
 //! to reconstruct files. Mirrors upstream rsync's `receive_data()` function from
-//! `receiver.c:240`.
+//! `receiver.c:305`.
 
 use std::fs::File;
 use std::io::{self, Read, Seek, SeekFrom, Write};
@@ -613,7 +613,7 @@ impl<'a> DeltaApplicator<'a> {
     /// every block reference the basis bytes are fed back into the
     /// decompressor dictionary via [`TokenReader::see_token`] so the inflate
     /// state stays synchronized with the sender's deflate state - the critical
-    /// step that plain raw-`i32` reads omit (upstream: `token.c:631`
+    /// step that plain raw-`i32` reads omit (upstream: `token.c:685`
     /// `see_deflate_token()`; mirrors `sync.rs:629`).
     ///
     /// Uses the applicator's reusable `TokenBuffer` for `Pending` literal
@@ -651,7 +651,7 @@ impl<'a> DeltaApplicator<'a> {
             }
             DeltaToken::BlockRef(block_idx) => {
                 self.apply_block_ref(block_idx)?;
-                // upstream: token.c:631 see_deflate_token() - keep the inflate
+                // upstream: token.c:685 see_deflate_token() - keep the inflate
                 // dictionary synced with the sender after every block match.
                 // Mirrors the live receiver loop (sync.rs:629). Only the
                 // compressed reader needs the bytes; for the plain reader
@@ -829,7 +829,7 @@ impl<'a> DeltaApplicator<'a> {
             ));
         }
 
-        // upstream: receiver.c:240 receive_data() emits the same summary line.
+        // upstream: receiver.c:305 receive_data() emits the same summary line.
         debug_log!(
             Deltasum,
             1,
@@ -858,7 +858,7 @@ pub fn apply_delta_stream<R: Read>(
     applicator: &mut DeltaApplicator<'_>,
     token_reader: &mut TokenReader,
 ) -> io::Result<()> {
-    // upstream: receiver.c:240 receive_data() logs the same start marker.
+    // upstream: receiver.c:305 receive_data() logs the same start marker.
     debug_log!(Deltasum, 2, "recv delta stream start");
 
     while applicator.apply_token(reader, token_reader)? {}

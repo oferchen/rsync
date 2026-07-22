@@ -175,7 +175,7 @@ pub fn send_file_request_xattr<W: Write + ?Sized>(
     };
     sum_head.write(writer)?;
 
-    // upstream: generator.c:775-776 - in append mode, generator skips writing
+    // upstream: generator.c:787-788 - in append mode, generator skips writing
     // signature blocks after sum_head. The sender's receive_sums() (sender.c:87-92)
     // returns early without reading blocks, using sum_head to calculate existing length.
     if !config.append {

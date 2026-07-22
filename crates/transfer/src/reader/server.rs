@@ -217,7 +217,7 @@ impl<R: Read> ServerReader<R> {
     ///
     /// # Upstream Reference
     ///
-    /// - `io.c:1521-1528`: receiver accumulates `io_error |= val` and forwards
+    /// - `io.c:1542-1549`: receiver accumulates `io_error |= val` and forwards
     ///   via `send_msg_int(MSG_IO_ERROR, val)` when `am_receiver`.
     pub fn take_io_error(&mut self) -> i32 {
         match &mut self.inner {
@@ -237,7 +237,7 @@ impl<R: Read> ServerReader<R> {
     /// # Upstream Reference
     ///
     /// - `log.c:311`: receipt of `FERROR_XFER` sets `got_xfer_error = 1`
-    /// - `main.c:1635`: `if (got_xfer_error) _exit(RERR_PARTIAL);`
+    /// - `main.c:1630-1631`: `if (got_xfer_error) _exit(RERR_PARTIAL);`
     pub fn xfer_error_count(&mut self) -> u32 {
         match &mut self.inner {
             ServerReaderInner::Multiplex(mux) => mux.xfer_error_count(),
@@ -281,9 +281,9 @@ impl<R: Read> ServerReader<R> {
     ///
     /// # Upstream Reference
     ///
-    /// - `io.c:1514-1519`: `MSG_REDO` dispatches to `got_flist_entry_status(FES_REDO, val)`
+    /// - `io.c:1535-1540`: `MSG_REDO` dispatches to `got_flist_entry_status(FES_REDO, val)`
     ///   on the generator side, pushing the NDX to `redo_list`.
-    /// - `receiver.c:970-974`: receiver sends `send_msg_int(MSG_REDO, ndx)` on checksum failure.
+    /// - `receiver.c:1093-1097`: receiver sends `send_msg_int(MSG_REDO, ndx)` on checksum failure.
     pub fn take_redo_indices(&mut self) -> Vec<i32> {
         match &mut self.inner {
             ServerReaderInner::Multiplex(mux) => mux.take_redo_indices(),

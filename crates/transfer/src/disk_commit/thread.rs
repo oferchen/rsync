@@ -40,7 +40,7 @@ pub struct DiskThreadHandle {
 
 /// Spawns the disk commit thread and returns channels + join handle.
 ///
-/// Buffer recycling mirrors upstream rsync's `simple_recv_token` (token.c:284)
+/// Buffer recycling mirrors upstream rsync's `simple_recv_token` (token.c:285)
 /// which uses a single static buffer that is never freed. Here, the disk thread
 /// sends used `Vec<u8>` buffers back through `buf_return_rx` for reuse by the
 /// network thread, eliminating per-chunk malloc/free overhead.

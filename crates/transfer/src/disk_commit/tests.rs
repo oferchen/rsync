@@ -679,7 +679,7 @@ fn commit_file_rename_replaces_existing_via_io_uring_or_fallback() {
 /// to `.~tmp~/<filename>` instead of renaming to the final destination.
 /// The final rename is deferred to the receiver's phase 2 sweep.
 ///
-/// upstream: receiver.c:906-929 - delay_updates stages to partial dir
+/// upstream: receiver.c:1029-1052 - delay_updates stages to partial dir
 #[test]
 fn delay_updates_stages_to_partial_dir() {
     let _registry_lock = test_support::cleanup_registry_test_guard();
@@ -2777,7 +2777,7 @@ fn partial_mode_partial_stamps_mtime_zero_on_disconnect() {
 /// when the transfer is interrupted, so partially-transferred files stay in
 /// the staging directory as valid partials for resume.
 ///
-/// upstream: receiver.c:584-585 - handle_delayed_updates() only at phase 2
+/// upstream: receiver.c:694-695 - handle_delayed_updates() only at phase 2
 #[test]
 fn delay_updates_interrupt_leaves_committed_files_in_staging() {
     let _registry_lock = test_support::cleanup_registry_test_guard();
@@ -2870,7 +2870,7 @@ fn delay_updates_interrupt_leaves_committed_files_in_staging() {
 /// file's temp file is cleaned up but any previously committed files remain
 /// staged in `.~tmp~/`.
 ///
-/// upstream: receiver.c:584 - handle_delayed_updates() only after successful
+/// upstream: receiver.c:694 - handle_delayed_updates() only after successful
 /// completion; interrupted transfers leave staged files for resume.
 #[test]
 fn delay_updates_interrupt_mid_file_retains_prior_staged_files() {
@@ -2952,7 +2952,7 @@ fn delay_updates_interrupt_mid_file_retains_prior_staged_files() {
 /// staged content is valid and complete. Without the sweep, files remain
 /// as partials for resume.
 ///
-/// upstream: receiver.c:422-450 - handle_delayed_updates() bulk rename
+/// upstream: receiver.c:529-557 - handle_delayed_updates() bulk rename
 #[test]
 fn delay_updates_manual_sweep_after_commit_moves_to_final() {
     let _registry_lock = test_support::cleanup_registry_test_guard();

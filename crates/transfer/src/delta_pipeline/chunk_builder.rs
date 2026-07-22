@@ -31,7 +31,7 @@
 //!
 //! # Upstream Reference
 //!
-//! - `token.c:284` `simple_recv_token()` - the wire decoder this adapter
+//! - `token.c:285` `simple_recv_token()` - the wire decoder this adapter
 //!   layers on top of.
 //! - `match.c:288` `find_match()` - sender-side block matcher; the strong
 //!   digest at that site is the same one we compare against here.
