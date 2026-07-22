@@ -40,6 +40,20 @@ pub fn sync_acls(
     Ok(())
 }
 
+/// Stub fake-super ACL synchronisation for iOS/tvOS/watchOS platforms.
+///
+/// Mirrors [`sync_acls`]'s behaviour: no work, one-time warning, `Ok(())`.
+#[allow(clippy::module_name_repetitions)]
+pub fn sync_acls_via_fake_super(
+    source: &Path,
+    destination: &Path,
+    follow_symlinks: bool,
+) -> Result<(), MetadataError> {
+    let _ = (source, destination, follow_symlinks);
+    warn_acl_unsupported();
+    Ok(())
+}
+
 /// Synthesises an [`RsyncAcl`] from `mode`, since iOS/tvOS/watchOS cannot read a
 /// filesystem ACL.
 ///
@@ -121,6 +135,14 @@ mod tests {
         let src = Path::new("/nonexistent/src");
         let dst = Path::new("/nonexistent/dst");
         let result = sync_acls(src, dst, false);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn sync_acls_via_fake_super_returns_ok() {
+        let src = Path::new("/nonexistent/src");
+        let dst = Path::new("/nonexistent/dst");
+        let result = sync_acls_via_fake_super(src, dst, false);
         assert!(result.is_ok());
     }
 

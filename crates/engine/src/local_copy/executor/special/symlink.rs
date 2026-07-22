@@ -754,7 +754,14 @@ pub(crate) fn copy_symlink(
         context.filter_program(),
     )?;
     #[cfg(all(any(unix, windows), feature = "acl"))]
-    sync_acls_if_requested(preserve_acls, mode, source, destination, false)?;
+    sync_acls_if_requested(
+        preserve_acls,
+        context.options().fake_super_enabled(),
+        mode,
+        source,
+        destination,
+        false,
+    )?;
 
     context.record_hard_link(metadata, destination);
     context.summary_mut().record_symlink();

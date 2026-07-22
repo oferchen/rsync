@@ -65,4 +65,4 @@ mod tests;
 pub use apply::{apply_acls_from_cache, store_acls_via_fake_super};
 pub use default_perms::default_perms_for_dir;
 pub use read::get_rsync_acl;
-pub use sync::sync_acls;
+pub use sync::{sync_acls, sync_acls_via_fake_super};

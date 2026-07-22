@@ -6,7 +6,7 @@ use super::reconstruct::{reconstruct_acl, rsync_acl_to_entries};
 #[cfg(any(target_os = "linux", target_os = "freebsd"))]
 use super::reset::clear_default_acl;
 use super::reset::reset_acl_from_mode;
-use super::sync::sync_acls;
+use super::sync::{sync_acls, sync_acls_via_fake_super};
 
 use exacl::{AclEntryKind, Perm};
 #[cfg(any(target_os = "linux", target_os = "freebsd"))]
@@ -49,6 +49,72 @@ fn sync_acls_works_with_directories() {
 
     let result = sync_acls(&source, &destination, true);
     assert!(result.is_ok());
+}
+
+#[test]
+fn sync_acls_via_fake_super_skips_when_not_following_symlinks() {
+    let dir = tempdir().expect("tempdir");
+    let source = dir.path().join("src");
+    let destination = dir.path().join("dst");
+    File::create(&source).expect("create src");
+    File::create(&destination).expect("create dst");
+
+    let result = sync_acls_via_fake_super(&source, &destination, false);
+    assert!(result.is_ok());
+}
+
+// A named-user ACL entry set on the source (via a real `setfacl`) must land
+// in the destination's `%aacl` xattr - not as a real ACL - confirming the
+// fake-super local-copy path stashes rather than applies. Mirrors the
+// wire/receive-path coverage in `fake_super.rs`'s
+// `store_and_load_fake_super_acl_roundtrips`, but exercised through the
+// source-to-destination sync entry point used by `engine::local_copy`.
+#[test]
+fn sync_acls_via_fake_super_stashes_named_entry_instead_of_applying() {
+    use crate::fake_super::load_fake_super_acl;
+
+    let dir = tempdir().expect("tempdir");
+    let source = dir.path().join("src");
+    let destination = dir.path().join("dst");
+    File::create(&source).expect("create src");
+    File::create(&destination).expect("create dst");
+
+    // Skip on filesystems without user xattr support (matches other
+    // fake-super tests in this crate).
+    if load_fake_super_acl(&source, true).is_err() {
+        return;
+    }
+
+    let entries = vec![exacl::AclEntry::allow_user(
+        "1000",
+        Perm::READ | Perm::WRITE,
+        None,
+    )];
+    if exacl::setfacl(&[&source], &entries, None).is_err() {
+        return;
+    }
+
+    if sync_acls_via_fake_super(&source, &destination, true).is_err() {
+        return;
+    }
+
+    let stashed = load_fake_super_acl(&destination, true)
+        .expect("load must succeed")
+        .expect("access ACL xattr must be present");
+    assert!(
+        !stashed.names.is_empty(),
+        "named entry must be stashed in the destination's %aacl xattr"
+    );
+
+    // The destination must NOT have picked up a real POSIX ACL: fake-super
+    // stashes instead of applying.
+    let real_acl = exacl::getfacl(&destination, None).unwrap_or_default();
+    assert!(
+        !real_acl
+            .iter()
+            .any(|e| e.kind == AclEntryKind::User && e.name == "1000"),
+        "fake-super must not apply a real ACL to the destination"
+    );
 }
 
 #[test]

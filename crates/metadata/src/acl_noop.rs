@@ -35,6 +35,18 @@ pub fn sync_acls(
     Ok(())
 }
 
+/// No-op fake-super ACL synchronisation with a one-time warning.
+///
+/// Mirrors [`sync_acls`]'s behaviour: no work, one-time warning, `Ok(())`.
+pub fn sync_acls_via_fake_super(
+    _source: &Path,
+    _destination: &Path,
+    _follow_symlinks: bool,
+) -> Result<(), MetadataError> {
+    warn_acl_unsupported();
+    Ok(())
+}
+
 /// Synthesises an [`RsyncAcl`] from `mode`, since this platform cannot read a
 /// filesystem ACL.
 ///
@@ -112,6 +124,14 @@ mod tests {
         let src = Path::new("/nonexistent/src");
         let dst = Path::new("/nonexistent/dst");
         let result = sync_acls(src, dst, true);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn sync_acls_via_fake_super_returns_ok() {
+        let src = Path::new("/nonexistent/src");
+        let dst = Path::new("/nonexistent/dst");
+        let result = sync_acls_via_fake_super(src, dst, true);
         assert!(result.is_ok());
     }
 
