@@ -393,7 +393,7 @@ fn transfer_request_with_sparse_and_inplace_punches_hole() {
     );
 }
 
-/// upstream: options.c:2431-2437 - `--write-devices` forces the global inplace
+/// upstream: options.c:2413-2419 - `--write-devices` forces the global inplace
 /// flag on. An inplace update rewrites the destination file in place (same
 /// inode), whereas the default atomic mode writes a temp file and renames it
 /// (new inode). Comparing the destination inode before and after a

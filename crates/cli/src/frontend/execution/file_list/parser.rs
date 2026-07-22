@@ -8,12 +8,12 @@ use std::path::{Path, PathBuf};
 
 /// Resolves a `--files-from` CLI value into a [`FilesFromSource`].
 ///
-/// The resolution mirrors upstream rsync's `options.c:2465-2508`:
+/// The resolution mirrors upstream rsync's `options.c:2447-2490`:
 /// - `"-"` means stdin
 /// - `:path` (bare colon prefix) means a remote file opened by the server
 ///   using the host taken from the transfer operand
 /// - `host:path` (hostspec form) means a remote file opened by the named
-///   host (must match the transfer host, validated in `main.c:1438`)
+///   host (must match the transfer host, validated in `main.c:1420`)
 /// - Otherwise, a local file read by the client
 ///
 /// Only the last `--files-from` argument takes effect, matching upstream
@@ -21,10 +21,10 @@ use std::path::{Path, PathBuf};
 ///
 /// # Upstream Reference
 ///
-/// - `options.c:2476` - `check_for_hostspec()` detects `host:path` prefix
-/// - `options.c:2482-2483` - `files_from = p; filesfrom_host = h;`
-/// - `options.c:2484-2487` - `:-` (remote stdin) is rejected
-/// - `options.c:3130-3156` - `check_for_hostspec()` parses `host:path`
+/// - `options.c:2458` - `check_for_hostspec()` detects `host:path` prefix
+/// - `options.c:2464-2465` - `files_from = p; filesfrom_host = h;`
+/// - `options.c:2466-2469` - `:-` (remote stdin) is rejected
+/// - `options.c:3112-3138` - `check_for_hostspec()` parses `host:path`
 pub(crate) fn resolve_files_from_source(files_from: &[OsString]) -> core::client::FilesFromSource {
     use core::client::FilesFromSource;
 
@@ -49,7 +49,7 @@ pub(crate) fn resolve_files_from_source(files_from: &[OsString]) -> core::client
     // module specs (`host::module`). The latter is for daemon transfers,
     // which we do not currently support for files-from.
     if let Some((host, path)) = split_hostspec(&text) {
-        // upstream: options.c:3130-3156 / options.c:2494-2501 -
+        // upstream: options.c:3112-3138 / options.c:2476-2483 -
         // check_for_hostspec strips the host prefix and forwards the path to
         // the remote server. When the host resolves to localhost AND the
         // stripped path is openable on this client, emit the hybrid variant.
@@ -79,7 +79,7 @@ pub(crate) fn resolve_files_from_source(files_from: &[OsString]) -> core::client
 
 /// Returns `true` when the parsed hostspec names the local machine.
 ///
-/// Matches upstream `main.c:1456 strcmp(filesfrom_host, shell_machine)`
+/// Matches upstream `main.c:1438 strcmp(filesfrom_host, shell_machine)`
 /// semantics: a hostspec of `localhost` (case-insensitive) refers to this
 /// client, allowing a hybrid local-open + wire-forward dispatch.
 fn host_is_localhost(host: &str) -> bool {
@@ -90,7 +90,7 @@ fn host_is_localhost(host: &str) -> bool {
 /// hostspec. Returns `None` for local paths, Windows drive letters, daemon
 /// module specs (`::`), and URL forms.
 ///
-/// Mirrors `options.c:3130-3156 check_for_hostspec()`:
+/// Mirrors `options.c:3112-3138 check_for_hostspec()`:
 /// - Reject URL forms (`rsync://`); those are daemon URLs, handled elsewhere
 /// - Reject `host::module` (daemon module spec)
 /// - Reject paths beginning with `/` (no host part)
@@ -121,7 +121,7 @@ fn split_hostspec(text: &str) -> Option<(&str, &str)> {
         return None;
     }
 
-    // Reject `host:-` (upstream options.c:2484-2487 rejects remote stdin).
+    // Reject `host:-` (upstream options.c:2466-2469 rejects remote stdin).
     if rest == "-" {
         return None;
     }
