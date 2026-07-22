@@ -79,11 +79,68 @@ fn collect(root: &Path, dir: &Path, out: &mut Vec<PathBuf>) {
 /// many checks that reach for `support::content_diff` keep one import path.
 pub use super::comparison::content_diff;
 
+/// Fixed past mtime stamped on every fixture entry and the source root.
+const FIXTURE_MTIME: &str = "@1614830767";
+
+/// Build the shared itemize/dry-run fixture (`a.txt`, `b.txt`, `sub/c.txt`) with
+/// every entry *and the source root itself* backdated to a fixed past mtime.
+///
+/// Backdating the entries stops the quick-check from skipping a transfer.
+/// Backdating the root matters just as much: a freshly-created destination
+/// directory carries a "now" mtime, so a source root left at "now" makes the
+/// `.d..t...... ./` top-directory itemize row appear only when the two land in
+/// different clock seconds - a race that makes two sequentially-run clients'
+/// plans compare unequal. A fixed old root mtime makes that row deterministic
+/// (always present, identical) for every client.
+pub fn build_backdated_tree(src: &Path) -> Result<(), String> {
+    if src.exists() {
+        std::fs::remove_dir_all(src).map_err(|e| e.to_string())?;
+    }
+    let sub = src.join("sub");
+    std::fs::create_dir_all(&sub).map_err(|e| e.to_string())?;
+    std::fs::write(src.join("a.txt"), b"alpha").map_err(|e| e.to_string())?;
+    std::fs::write(src.join("b.txt"), b"bravo").map_err(|e| e.to_string())?;
+    std::fs::write(sub.join("c.txt"), b"charlie").map_err(|e| e.to_string())?;
+
+    // Backdate the entries, then the root last: the writes above bumped the
+    // root's mtime to "now", so it must be stamped after them.
+    for entry in rel_entries(src) {
+        let path = src.join(&entry);
+        capture(
+            "touch",
+            &["-h", "-d", FIXTURE_MTIME, &path.to_string_lossy()],
+        )
+        .map_err(|e| e.to_string())?;
+    }
+    capture("touch", &["-d", FIXTURE_MTIME, &src.to_string_lossy()]).map_err(|e| e.to_string())?;
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{entry_count, rel_entries};
+    use super::{build_backdated_tree, entry_count, rel_entries};
     use std::fs;
     use std::os::unix::fs::symlink;
+    use std::time::UNIX_EPOCH;
+
+    #[test]
+    fn backdated_tree_populates_and_backdates_the_root() {
+        let dir = tempfile::tempdir().unwrap();
+        let src = dir.path().join("src");
+        build_backdated_tree(&src).unwrap();
+        // a.txt + b.txt + sub + sub/c.txt = 4 entries.
+        assert_eq!(entry_count(&src), 4);
+        // The root mtime must be the fixed past value, not "now", so the
+        // top-directory itemize row is deterministic across sequential clients.
+        let secs = fs::metadata(&src)
+            .unwrap()
+            .modified()
+            .unwrap()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+        assert_eq!(secs, 1_614_830_767);
+    }
 
     #[test]
     fn entry_count_recurses_but_does_not_follow_symlinks() {
