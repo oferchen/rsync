@@ -2,7 +2,7 @@
 //! Wire protocol serialization for signatures, deltas, and file entries.
 //!
 //! This module provides the serialization and deserialization logic for the
-//! rsync protocol's data structures. The formats mirror upstream rsync 3.4.1
+//! rsync protocol's data structures. The formats mirror upstream rsync 3.4.4
 //! to ensure interoperability.
 //!
 //! # Submodules

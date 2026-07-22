@@ -1,4 +1,4 @@
-//! Daemon mode authentication matching upstream rsync 3.4.1.
+//! Daemon mode authentication matching upstream rsync 3.4.4.
 //!
 //! This module implements the rsync daemon challenge-response authentication protocol
 //! that protects modules configured with `auth users`. The implementation mirrors

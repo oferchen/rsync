@@ -174,7 +174,7 @@
 #[cfg(feature = "async-daemon")]
 #[cfg_attr(docsrs, doc(cfg(feature = "async-daemon")))]
 pub mod async_listener;
-/// Daemon mode challenge-response authentication matching upstream rsync 3.4.1.
+/// Daemon mode challenge-response authentication matching upstream rsync 3.4.4.
 pub mod auth;
 mod cli;
 mod config;
