@@ -31,7 +31,7 @@ impl UserMapping {
 
     /// Applies the mapping to `uid` keyed on the sender-transmitted `name`.
     ///
-    /// See [`NameMapping::map_uid_named`]: name/wildcard rules match against the
+    /// See `NameMapping::map_uid_named`: name/wildcard rules match against the
     /// wire name rather than a receiver-local reverse lookup of the raw id,
     /// mirroring upstream `recv_add_id` (uidlist.c:255-268).
     pub fn map_uid_named(
@@ -78,7 +78,7 @@ impl GroupMapping {
 
     /// Applies the mapping to `gid` keyed on the sender-transmitted `name`.
     ///
-    /// See [`NameMapping::map_gid_named`]: name/wildcard rules match against the
+    /// See `NameMapping::map_gid_named`: name/wildcard rules match against the
     /// wire name rather than a receiver-local reverse lookup of the raw id,
     /// mirroring upstream `recv_add_id` (uidlist.c:255-268).
     pub fn map_gid_named(
