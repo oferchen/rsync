@@ -2,8 +2,9 @@
 //!
 //! Each lookup first rejects via the tag table (low 16 bits of the rolling
 //! checksum), then probes the hash table keyed by full rolling checksum, then
-//! verifies with the strong checksum. The sorted constructor enables a
-//! sequential-scan optimization for large block sets.
+//! verifies with the strong checksum. Lookups always resolve through the hash
+//! table; the sorted constructor records that blocks were pre-sorted by
+//! checksum but does not add a distinct sequential-scan lookup path.
 
 use rustc_hash::FxHashMap;
 
@@ -61,7 +62,7 @@ pub struct BlockHashTable {
     blocks: Vec<BlockEntry>,
     /// Tag table for quick rejection.
     tag_table: TagTable,
-    /// Whether blocks are sorted by checksum (enables sequential optimization).
+    /// Whether blocks were pre-sorted by checksum in the constructor.
     sorted: bool,
 }
 
@@ -86,8 +87,10 @@ impl BlockHashTable {
         }
     }
 
-    /// Builds a hash table with pre-sorted blocks, enabling the sequential-scan
-    /// optimization for large block sets.
+    /// Builds a hash table from blocks pre-sorted by checksum.
+    ///
+    /// Sorting is recorded via [`Self::is_sorted`]; lookups still resolve
+    /// through the hash table exactly as [`Self::new`] does.
     pub fn new_sorted(mut blocks: Vec<BlockEntry>) -> Self {
         blocks.sort_by_key(|b| b.checksum);
 
@@ -157,8 +160,7 @@ impl BlockHashTable {
         self.blocks.is_empty()
     }
 
-    /// Returns `true` if blocks are sorted by checksum (sequential-scan
-    /// optimization enabled).
+    /// Returns `true` if blocks were pre-sorted by checksum in the constructor.
     pub fn is_sorted(&self) -> bool {
         self.sorted
     }

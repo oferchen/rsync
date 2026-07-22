@@ -3,13 +3,18 @@
 
 //! # Overview
 //!
-//! `flist` provides file list generation and traversal for the Rust rsync
-//! implementation, mirroring upstream's `flist.c`. The walker enumerates
-//! regular files, directories, and symbolic links while enforcing relative-path
-//! constraints so callers cannot accidentally escape the configured root. The
-//! implementation keeps ordering stable across platforms by sorting directory
-//! entries lexicographically before yielding them, mirroring upstream rsync's
-//! behaviour when building transfer lists.
+//! `flist` is a standalone filesystem-traversal implementation loosely modelled
+//! on upstream's `flist.c`. The walker enumerates regular files, directories,
+//! and symbolic links while enforcing relative-path constraints so callers
+//! cannot accidentally escape the configured root. It keeps ordering stable
+//! across platforms by sorting directory entries lexicographically before
+//! yielding them.
+//!
+//! This crate is not wired into the active transfer path. The live file-list
+//! machinery used by transfers lives in `protocol::flist`; nothing in the
+//! transfer pipeline consumes [`FileListWalker`] or [`FileListBuilder`]. The
+//! crate is re-exported by `core` but is otherwise a self-contained, legacy
+//! traversal utility retained for its standalone walker API.
 //!
 //! # Design
 //!
@@ -78,10 +83,10 @@
 //!
 //! # See also
 //!
-//! - [`engine`](https://docs.rs/engine/latest/engine/) for the
-//!   transfer planning facilities that will eventually consume the walker.
+//! - `protocol::flist` for the file-list implementation actually used by the
+//!   transfer pipeline (wire encoding, incremental recursion, sorting).
 //! - [`core`](https://docs.rs/core/latest/core/) for the
-//!   central orchestration facade.
+//!   central orchestration facade, which re-exports this crate.
 
 mod builder;
 mod entry;
