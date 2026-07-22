@@ -56,7 +56,9 @@ fn assembles_command_with_user_port_and_remote_args() {
             "-oServerAliveCountMax=3".to_owned(),
             "-oConnectTimeout=30".to_owned(),
             "-vvv".to_owned(),
-            "backup@rsync.example.com".to_owned(),
+            "-l".to_owned(),
+            "backup".to_owned(),
+            "rsync.example.com".to_owned(),
             "rsync".to_owned(),
             "--server".to_owned(),
             ".".to_owned(),
@@ -115,7 +117,9 @@ fn wraps_ipv6_hosts_with_usernames() {
             "-oServerAliveInterval=20".to_owned(),
             "-oServerAliveCountMax=3".to_owned(),
             "-oConnectTimeout=30".to_owned(),
-            "backup@[2001:db8::1]".to_owned(),
+            "-l".to_owned(),
+            "backup".to_owned(),
+            "[2001:db8::1]".to_owned(),
         ]
     );
 }
@@ -135,7 +139,9 @@ fn preserves_explicit_bracketed_ipv6_literals() {
             "-oServerAliveInterval=20".to_owned(),
             "-oServerAliveCountMax=3".to_owned(),
             "-oConnectTimeout=30".to_owned(),
-            "backup@[2001:db8::1]".to_owned(),
+            "-l".to_owned(),
+            "backup".to_owned(),
+            "[2001:db8::1]".to_owned(),
         ]
     );
 }
@@ -157,7 +163,9 @@ fn wraps_ipv6_hosts_with_scoped_zone_id() {
             "-oServerAliveInterval=20".to_owned(),
             "-oServerAliveCountMax=3".to_owned(),
             "-oConnectTimeout=30".to_owned(),
-            "backup@[fe80::1%eth0]".to_owned(),
+            "-l".to_owned(),
+            "backup".to_owned(),
+            "[fe80::1%eth0]".to_owned(),
         ]
     );
 }
@@ -2320,6 +2328,71 @@ fn forces_ipv4_flag_for_ssh_program() {
     assert!(
         flag_pos < host_pos,
         "-4 must precede the host: {rendered:?}"
+    );
+}
+
+#[test]
+fn dash_l_user_precedes_address_family_and_host() {
+    // upstream: main.c:569-593 do_cmd() emits `-l user` then `-4`/`-6` then
+    // the bare host, in that order, never `user@host`.
+    let mut command = SshCommand::new("example.com");
+    command.set_prefer_aes_gcm(Some(false));
+    command.set_user("backup");
+    command.set_address_family(Some(SshAddressFamily::V4));
+
+    let (_, args) = command.command_parts_for_testing();
+    let rendered = args_to_strings(&args);
+
+    let l_pos = rendered.iter().position(|a| a == "-l").expect("-l present");
+    let user_pos = rendered
+        .iter()
+        .position(|a| a == "backup")
+        .expect("user present");
+    let flag_pos = rendered.iter().position(|a| a == "-4").expect("-4 present");
+    let host_pos = rendered
+        .iter()
+        .position(|a| a == "example.com")
+        .expect("host present");
+
+    assert_eq!(
+        l_pos + 1,
+        user_pos,
+        "-l must immediately precede the user: {rendered:?}"
+    );
+    assert!(
+        user_pos < flag_pos && flag_pos < host_pos,
+        "expected order -l user -4 host, got: {rendered:?}"
+    );
+    assert!(
+        !rendered.iter().any(|a| a.contains('@')),
+        "no user@host composite should be rendered: {rendered:?}"
+    );
+}
+
+#[test]
+fn dash_l_user_applies_to_non_ssh_shell_too() {
+    // upstream: main.c:569-586 do_cmd() emits `-l user` unconditionally, not
+    // gated on the remote-shell program being `ssh`. A custom `-e` wrapper
+    // (e.g. the testsuite's `lsh.sh`) parses `-l USER` and does not
+    // understand `user@host`.
+    let mut command = SshCommand::new("example.com");
+    command.set_prefer_aes_gcm(Some(false));
+    command
+        .configure_remote_shell(OsStr::new("rsh"))
+        .expect("valid remote shell");
+    command.set_user("backup");
+
+    let (program, args) = command.command_parts_for_testing();
+    let rendered = args_to_strings(&args);
+
+    assert_eq!(program, OsString::from("rsh"));
+    assert_eq!(
+        rendered,
+        vec![
+            "-l".to_owned(),
+            "backup".to_owned(),
+            "example.com".to_owned()
+        ]
     );
 }
 
