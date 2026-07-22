@@ -42,9 +42,15 @@ fn apply_privilege_restrictions_with_upstream_errors(
     // A rootless auto-fallback (unset `use chroot` + failing probe) yields
     // `Ok(false)`; an explicit `use chroot = yes` that fails is fatal.
     let mut chroot_applied = false;
+    let mut inner_module_path = None;
     if needs_chroot {
         match chroot_or_fallback(module, log_sink) {
-            Ok(applied) => chroot_applied = applied,
+            Ok((applied, inner)) => {
+                chroot_applied = applied;
+                if applied {
+                    inner_module_path = Some(inner);
+                }
+            }
             Err(err) => {
                 // Operator demanded chroot explicitly: a failure is fatal.
                 // upstream: clientserver.c:981 - `@ERROR: chroot failed\n`
@@ -99,7 +105,10 @@ fn apply_privilege_restrictions_with_upstream_errors(
         }
     }
 
-    Ok(Some(PrivilegeOutcome { chroot_applied }))
+    Ok(Some(PrivilegeOutcome {
+        chroot_applied,
+        inner_module_path,
+    }))
 }
 
 /// Result of applying a module's chroot and privilege restrictions.
@@ -110,8 +119,15 @@ struct PrivilegeOutcome {
     /// the module as non-chrooted.
     ///
     /// upstream: clientserver.c:831-862 - the effective `use_chroot` decides
-    /// whether the module path is rewritten to `/`.
+    /// whether the module path is rewritten to the post-chroot inner path.
     chroot_applied: bool,
+    /// The post-chroot working directory to serve from, when `chroot_applied`
+    /// is `true`. `/` unless the module path carried a `/./` inner/outer
+    /// marker, in which case it is the normalized remainder after the
+    /// marker (e.g. `/module` for `path = /var/data/./module`).
+    ///
+    /// upstream: clientserver.c:845-862 - `module_dir` after the `/./` split.
+    inner_module_path: Option<PathBuf>,
 }
 
 impl PrivilegeOutcome {
@@ -119,6 +135,7 @@ impl PrivilegeOutcome {
     const fn not_chrooted() -> Self {
         Self {
             chroot_applied: false,
+            inner_module_path: None,
         }
     }
 }
