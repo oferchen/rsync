@@ -149,6 +149,7 @@ impl TokenReader {
                 match token.cmp(&0) {
                     std::cmp::Ordering::Equal => Ok(DeltaToken::End),
                     std::cmp::Ordering::Greater => {
+                        protocol::wire::delta::check_literal_token_len(token)?;
                         Ok(DeltaToken::Literal(LiteralData::Pending(token as usize)))
                     }
                     std::cmp::Ordering::Less => Ok(DeltaToken::BlockRef(-(token + 1) as usize)),
@@ -227,6 +228,37 @@ mod tests {
         match reader.read_token(&mut cursor).unwrap() {
             DeltaToken::Literal(LiteralData::Pending(len)) => assert_eq!(len, 5),
             other => panic!("expected Literal(Pending(5)), got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn plain_reader_rejects_oversized_literal_token() {
+        // A hostile plain literal claiming more than CHUNK_SIZE bytes must be
+        // rejected before any buffer is reserved, matching upstream's
+        // simple_recv_token guard (token.c:299-305): otherwise a peer could
+        // force a multi-gigabyte allocation with four wire bytes.
+        let oversized = (protocol::wire::delta::CHUNK_SIZE as i32 + 1).to_le_bytes();
+        let mut reader = TokenReader::new(None).unwrap();
+        let mut cursor = Cursor::new(oversized.to_vec());
+        let err = reader.read_token(&mut cursor).unwrap_err();
+        assert!(
+            err.to_string()
+                .contains("invalid uncompressed token length"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn plain_reader_accepts_max_literal_token() {
+        // Exactly CHUNK_SIZE is the largest a compliant sender emits.
+        let max = (protocol::wire::delta::CHUNK_SIZE as i32).to_le_bytes();
+        let mut reader = TokenReader::new(None).unwrap();
+        let mut cursor = Cursor::new(max.to_vec());
+        match reader.read_token(&mut cursor).unwrap() {
+            DeltaToken::Literal(LiteralData::Pending(len)) => {
+                assert_eq!(len, protocol::wire::delta::CHUNK_SIZE)
+            }
+            other => panic!("expected Pending(CHUNK_SIZE), got {other:?}"),
         }
     }
 
