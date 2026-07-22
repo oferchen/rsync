@@ -30,8 +30,8 @@
 //! [`local_copy::LocalCopyPlan`] drives recursive, wire-compatible local
 //! transfers (regular files, directories, symbolic links, FIFOs). Key features:
 //! - Temp-file write + atomic rename (`--inplace` bypasses the rename).
-//! - Sparse file support via [`SparseWriter`] / [`SparseReader`] / [`SparseDetector`]
-//!   with 16-byte `u128` zero-run detection and a single seek-per-zero-run invariant.
+//! - Sparse file support via [`SparseReader`] / [`SparseDetector`] with 16-byte
+//!   `u128` zero-run detection and a single seek-per-zero-run invariant.
 //! - Deletion passes controlled by [`DeleteTiming`] (before/after transfer).
 //! - Backup paths computed by [`compute_backup_path`].
 //! - Reference-directory comparisons via [`ReferenceDirectory`].
@@ -221,9 +221,8 @@ pub use local_copy::{
     LocalCopyError, LocalCopyErrorKind, LocalCopyOptions, LocalCopyOptionsBuilder, LocalCopyPlan,
     LocalCopySummary, ReferenceDirectory, ReferenceDirectoryKind, SkipCompressList,
     SkipCompressParseError, SparseDetectStrategy, SparseDetector, SparseReader, SparseRegion,
-    SparseWriteStats, SparseWriter, ZeroScanStrategy, compute_backup_path, trace_make_backup_copy,
-    trace_make_backup_device, trace_make_backup_hlink, trace_make_backup_rename,
-    trace_make_backup_symlink,
+    compute_backup_path, trace_make_backup_copy, trace_make_backup_device, trace_make_backup_hlink,
+    trace_make_backup_rename, trace_make_backup_symlink,
 };
 
 /// File signature generation for delta transfers.
