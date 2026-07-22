@@ -392,13 +392,13 @@ pub(crate) fn copy_fifo(
     )?;
     #[cfg(all(any(unix, windows), feature = "acl"))]
     sync_acls_if_requested(
-                preserve_acls,
-                context.options().fake_super_enabled(),
-                mode,
-                source,
-                destination,
-                true,
-            )?;
+        preserve_acls,
+        context.options().fake_super_enabled(),
+        mode,
+        source,
+        destination,
+        true,
+    )?;
 
     // Under fake-super, capture the would-be FIFO/socket's mode/uid/gid in
     // the rsync.%stat xattr so the destination can be restored later.

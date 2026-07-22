@@ -268,13 +268,13 @@ pub(super) fn process_links(
             )?;
             #[cfg(all(any(unix, windows), feature = "acl"))]
             sync_acls_if_requested(
-                        preserve_acls,
-                        context.options().fake_super_enabled(),
-                        mode,
-                        source,
-                        destination,
-                        true,
-                    )?;
+                preserve_acls,
+                context.options().fake_super_enabled(),
+                mode,
+                source,
+                destination,
+                true,
+            )?;
         }
         return Ok(LinkOutcome {
             copy_source_override: None,
@@ -310,13 +310,13 @@ pub(super) fn process_links(
             )?;
             #[cfg(all(any(unix, windows), feature = "acl"))]
             sync_acls_if_requested(
-                        preserve_acls,
-                        context.options().fake_super_enabled(),
-                        mode,
-                        source,
-                        destination,
-                        true,
-                    )?;
+                preserve_acls,
+                context.options().fake_super_enabled(),
+                mode,
+                source,
+                destination,
+                true,
+            )?;
             context.record_hard_link(metadata, destination);
             context.summary_mut().record_regular_file_matched();
             let total_bytes = Some(metadata.len());
@@ -777,13 +777,13 @@ pub(super) fn process_links(
                     #[cfg(all(any(unix, windows), feature = "acl"))]
                     if context.register_acl_cohort_leader(&path) {
                         sync_acls_if_requested(
-                        preserve_acls,
-                        context.options().fake_super_enabled(),
-                        mode,
-                        source,
-                        destination,
-                        true,
-                    )?;
+                            preserve_acls,
+                            context.options().fake_super_enabled(),
+                            mode,
+                            source,
+                            destination,
+                            true,
+                        )?;
                     }
                     // upstream: hlink.c:236 - "%s => %s" at INFO_GTE(NAME, 1)
                     // when a hard link is created from a reference directory.
