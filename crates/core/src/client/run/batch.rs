@@ -31,7 +31,7 @@ pub(crate) fn handle_batch_read(
         return None;
     }
 
-    // upstream: main.c:1464-1473 - reject remote destinations with --read-batch
+    // upstream: main.c:1482-1491 - reject remote destinations with --read-batch
     let has_remote_dest = config.transfer_args().iter().any(|arg| {
         let s = arg.to_string_lossy();
         s.starts_with("rsync://") || s.contains("::") || remote::operand_is_remote(arg)

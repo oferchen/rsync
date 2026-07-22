@@ -348,7 +348,7 @@ pub(crate) fn io_error(action: &str, path: &Path, error: io::Error) -> ClientErr
 
 #[cold]
 pub(crate) fn destination_access_error(path: &Path, error: io::Error) -> ClientError {
-    // upstream: main.c:751 change_dir validation returns FileSelect (3) for
+    // upstream: main.c:760 change_dir validation returns FileSelect (3) for
     // destination directory access errors.
     let code = ExitCode::FileSelect;
     let path_display = path.display();

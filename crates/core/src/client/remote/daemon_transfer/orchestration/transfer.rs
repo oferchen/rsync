@@ -61,7 +61,7 @@ pub(crate) fn run_pull_transfer(
 
     let mut server_config = build_server_config_for_receiver(config, local_paths, filter_rules)?;
 
-    // upstream: main.c:1354-1356 - when pulling with --files-from pointing to a
+    // upstream: main.c:1372-1374 - when pulling with --files-from pointing to a
     // local file or stdin, the client reads the file list locally and forwards
     // it to the daemon's generator over the protocol stream.
     if config
@@ -362,7 +362,7 @@ impl TransferProgressCallback for DaemonProgressAdapter<'_> {
 /// # Upstream Reference
 ///
 /// - `io.c:forward_filesfrom_data()` - reads from local fd, writes to socket
-/// - `main.c:1354-1356` - `start_filesfrom_forwarding(filesfrom_fd)`
+/// - `main.c:1372-1374` - `start_filesfrom_forwarding(filesfrom_fd)`
 #[cfg(test)]
 pub(super) use crate::client::remote::files_from_forwarding::read_local_files_from_for_forwarding as read_files_from_for_forwarding;
 

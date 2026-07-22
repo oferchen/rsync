@@ -41,7 +41,7 @@ impl ClientConfigBuilder {
     /// Calling this method marks the choice as explicit, so the invocation
     /// builder will forward it to the remote peer via `--compress-choice`,
     /// `--new-compress`, or `--old-compress` - matching upstream
-    /// `options.c:2800-2805`.
+    /// `options.c:2818-2823`.
     #[must_use]
     #[doc(alias = "--compress-choice")]
     pub const fn compression_algorithm(mut self, value: CompressionAlgorithm) -> Self {

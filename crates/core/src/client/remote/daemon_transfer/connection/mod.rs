@@ -289,7 +289,7 @@ pub(crate) fn perform_daemon_handshake<R: std::io::Read, W: Write>(
         send_early_input(writer, path, request)?;
     }
 
-    // upstream: clientserver.c:351 - module name is sent BEFORE waiting for @RSYNCD: OK
+    // upstream: clientserver.c:353 - module name is sent BEFORE waiting for @RSYNCD: OK
     let module_request = format!("{}\n", request.module);
     writer.write_all(module_request.as_bytes()).map_err(|e| {
         socket_error(

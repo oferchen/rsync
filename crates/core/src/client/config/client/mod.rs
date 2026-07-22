@@ -128,7 +128,7 @@ pub struct ClientConfig {
     ///
     /// Distinguishes "user chose zstd" from "zstd is the default."
     /// Required for correct forwarding to the remote peer - upstream
-    /// `options.c:2800-2805` only sends `--compress-choice` / `--new-compress`
+    /// `options.c:2818-2823` only sends `--compress-choice` / `--new-compress`
     /// / `--old-compress` when the user explicitly selected an algorithm.
     pub(super) explicit_compress_choice: bool,
     /// Raw `--compress-choice` name as typed by the user (e.g. `"zlibx"`).

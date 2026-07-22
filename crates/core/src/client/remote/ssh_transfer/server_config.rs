@@ -40,7 +40,7 @@ pub(in crate::client::remote) fn build_server_config_for_receiver(
     server_config.reference_directories = config.reference_directories().to_vec();
     // upstream: backup.c:make_backup() runs on the receiver, invoked from
     // generator.c/receiver.c. `make_backups` rides in the compact flag string as
-    // 'b' (options.c:2630-2631), so flags.backup is already set here; but
+    // 'b' (options.c:2648-2649), so flags.backup is already set here; but
     // --backup-dir / --suffix are long-form values finalized in the local popt
     // parse (options.c:2285-2298) and never delivered onto the receiver config.
     // On a pull the local client IS the receiver, so carry backup_dir/backup_suffix
@@ -675,7 +675,7 @@ mod tests {
     }
 
     /// Without `--mkpath` the receiver config leaves the flag clear, so a missing
-    /// destination parent stays a fatal error, matching upstream main.c:787.
+    /// destination parent stays a fatal error, matching upstream main.c:796.
     #[test]
     fn receiver_config_without_mkpath_stays_clear() {
         let config = ClientConfig::builder().build();
