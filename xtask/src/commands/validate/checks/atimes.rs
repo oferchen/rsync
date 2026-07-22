@@ -31,6 +31,15 @@ const FLAGS: &[&str] = &["-rlptgoD", "--atimes", "--numeric-ids"];
 /// filesystem honors explicitly-set access times.
 const PROBE_ATIME: i64 = 1_600_000_000;
 
+/// Source fixture files: `(relative path, contents, distinct past atime epoch)`.
+/// Shared by `build_fixture` (initial write) and `stamp_source_atimes`
+/// (re-applied before every pull so each client reads the same known atimes).
+const FIXTURE: &[(&str, &[u8], i64)] = &[
+    ("alpha", b"alpha", 1_500_000_000),
+    ("bravo", b"bravo", 1_500_001_000),
+    ("sub/charlie", b"charlie", 1_500_002_000),
+];
+
 impl Check for Atimes {
     fn name(&self) -> &'static str {
         "atimes"
@@ -95,6 +104,17 @@ impl Atimes {
         let oc_dst = root.join(format!("oc-{label}"));
         let up_dst = root.join(format!("up-{label}"));
 
+        // A sender's content read bumps the source atime (neither upstream nor
+        // oc opens the source with O_NOATIME), so a client running second
+        // against a shared source would snapshot the "now" atime the first
+        // client's read left behind and appear to fail. Re-stamp the known
+        // source atimes before every pull so each client reads pristine values;
+        // the dest atime is the flist snapshot taken at transfer start
+        // (upstream: flist.c make_file F_ATIME), so just-in-time restamping
+        // suffices.
+        if let Err(e) = stamp_source_atimes(&src) {
+            return CheckOutcome::skip(self.name(), label, e);
+        }
         let up = match pull_into(
             transport.for_upstream(),
             ctx.upstream,
@@ -108,6 +128,9 @@ impl Atimes {
             other => return skip_or_fail(self.name(), label, "upstream", other),
         };
         let _ = up;
+        if let Err(e) = stamp_source_atimes(&src) {
+            return CheckOutcome::skip(self.name(), label, e);
+        }
         let oc = match pull_into(
             transport,
             ctx.oc,
@@ -306,23 +329,29 @@ fn build_fixture(src: &Path) -> Result<(), String> {
     if src.exists() {
         std::fs::remove_dir_all(src).map_err(|e| e.to_string())?;
     }
-    let sub = src.join("sub");
-    std::fs::create_dir_all(&sub).map_err(|e| e.to_string())?;
+    std::fs::create_dir_all(src.join("sub")).map_err(|e| e.to_string())?;
 
-    // (relative path contents, distinct atime epoch) for each source file.
-    let files: [(PathBuf, &[u8], i64); 3] = [
-        (PathBuf::from("alpha"), b"alpha", 1_500_000_000),
-        (PathBuf::from("bravo"), b"bravo", 1_500_001_000),
-        (PathBuf::from("sub/charlie"), b"charlie", 1_500_002_000),
-    ];
-    for (rel, body, atime) in files {
-        let path = src.join(&rel);
+    for &(rel, body, atime) in FIXTURE {
+        let path = src.join(rel);
         std::fs::write(&path, body).map_err(|e| e.to_string())?;
         let name = path.to_string_lossy().into_owned();
         // Backdate mtime first, then stamp the distinct atime; separate `touch`
         // calls so neither clobbers the other's target field.
         support::capture("touch", &["-m", "-d", "@1614830767", &name])
             .map_err(|e| e.to_string())?;
+        support::capture("touch", &["-a", "-d", &format!("@{atime}"), &name])
+            .map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
+
+/// Re-apply each fixture file's known access time to the source. A sender's
+/// content read bumps the source atime (neither upstream nor oc opens with
+/// `O_NOATIME`), so re-stamping before every pull guarantees each client reads
+/// the same pristine values rather than one another's post-read "now".
+fn stamp_source_atimes(src: &Path) -> Result<(), String> {
+    for &(rel, _body, atime) in FIXTURE {
+        let name = src.join(rel).to_string_lossy().into_owned();
         support::capture("touch", &["-a", "-d", &format!("@{atime}"), &name])
             .map_err(|e| e.to_string())?;
     }
