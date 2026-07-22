@@ -4,27 +4,19 @@
 //! regression.md`) traced to PR #3557's flip of `inc_recursive_send` to
 //! `true` by default: push transfers (client-as-sender) against an
 //! upstream rsync daemon ran 95-201x slower than the v0.6.0 baseline.
-//! The mitigation (PR #3744) restored the default to `false` and gated
-//! the flip behind the `sender-inc-recurse` cargo feature.
+//! The mitigation (PR #3744) restored the default to `false` behind a
+//! temporary `sender-inc-recurse` cargo feature; ISI.h later re-flipped
+//! the default to `true` unconditionally once the regression was fixed,
+//! and ISI.i.2 retired the now-redundant feature flag.
 //!
-//! This test rebuilds the failure mode under that feature. It pushes a
-//! small (~1 MiB) source tree from `oc-rsync` (sender) to an upstream
+//! This test guards the fixed path permanently. It pushes a small
+//! (~1 MiB) source tree from `oc-rsync` (sender) to an upstream
 //! `rsync --daemon` (receiver) and times the transfer, then repeats the
 //! same push with upstream `rsync` as the sender to capture a baseline.
 //! Asserts the oc-rsync push completes within 5x of the upstream
 //! baseline. The v0.6.1 symptom was 95-201x, so 5x is a generous
 //! threshold that still trips on a real regression while tolerating
 //! normal benchmark noise on CI runners.
-//!
-//! ## Feature gate
-//!
-//! `#[cfg(feature = "sender-inc-recurse")]` - mirrors ISI.c/d/e. Without
-//! the feature, `ClientConfigBuilder::build()` leaves
-//! `inc_recursive_send = false`, the capability string omits `'i'`, the
-//! upstream peer clears `allow_inc_recurse`, and both sides walk the
-//! fully-baked non-INC_RECURSE sender path - exactly the post-mitigation
-//! state where no regression is observable. The feature must be on for
-//! the test to exercise the at-risk path.
 //!
 //! ## Platform gate
 //!
@@ -53,7 +45,7 @@
 //! - PR #3744 / commit `b3a264061` - the mitigation that restored the
 //!   default to `false`.
 
-#![cfg(all(unix, not(target_os = "macos"), feature = "sender-inc-recurse"))]
+#![cfg(all(unix, not(target_os = "macos")))]
 
 use std::env;
 use std::fs::{self, File};
@@ -318,8 +310,8 @@ fn daemon_push_under_inc_recurse_stays_within_5x_of_upstream_sender_baseline() {
         }
     };
 
-    // Sender under test: oc-rsync built with sender-inc-recurse ON. This
-    // is the at-risk path the V61D-1 audit identified.
+    // Sender under test: oc-rsync's default INC_RECURSE-on sender path.
+    // This is the at-risk path the V61D-1 audit identified.
     let oc_elapsed = time_push(&oc_bin, &src, port).expect("oc-rsync push must succeed");
 
     // Reset the destination so the baseline push does not get a

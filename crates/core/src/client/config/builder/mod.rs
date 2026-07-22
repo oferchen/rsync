@@ -478,10 +478,9 @@ impl ClientConfigBuilder {
             mkpath: self.mkpath,
             prune_empty_dirs: self.prune_empty_dirs,
             qsort: self.qsort,
-            // ISI.h: sender-side INC_RECURSE is now default-on, matching
+            // ISI.h: sender-side INC_RECURSE is default-on, matching
             // upstream rsync 3.4.x. CLI `--no-inc-recursive` still overrides
-            // to `false`. The `sender-inc-recurse` cargo feature is retained
-            // for one release as a no-op escape hatch; ISI.i.2 retires it.
+            // to `false`.
             inc_recursive_send: self.inc_recursive_send.unwrap_or(true),
             verbosity: self.verbosity,
             progress: self.progress,

@@ -133,11 +133,6 @@ thread-slab-pool = ["engine/thread-slab-pool"]
 # Incremental file list processing with failed directory tracking
 incremental-flist = []
 
-# DEPRECATED (ISI.h): sender INC_RECURSE is now default-on. Marker
-# retained for one release to keep V61D-2 / V61D-3 interop gates
-# compilable until ISI.i.2 retires both.
-sender-inc-recurse = []
-
 # ============================================================================
 # Debugging Features
 # ============================================================================

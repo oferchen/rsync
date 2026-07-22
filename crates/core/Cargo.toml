@@ -92,10 +92,6 @@ embedded-ssh = ["dep:tokio", "rsync_io/embedded-ssh"]
 # Async runtime support - enables tokio-based async I/O for core operations
 async = ["dep:tokio", "engine/async"]
 
-# DEPRECATED (ISI.h): sender INC_RECURSE is now default-on. Marker
-# retained for one release until ISI.i.2 retires the feature flag.
-sender-inc-recurse = []
-
 # Async SSH transport: wires `rsync_io::ssh::AsyncSshTransport` into the client
 # remote transfer path. Opt-in at runtime via the `OC_RSYNC_ASYNC_SSH=1` env
 # var until the CLI flag lands (#1806).

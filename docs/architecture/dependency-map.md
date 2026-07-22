@@ -216,11 +216,6 @@ bin[async] -> daemon/async + core/async -> engine/async + transfer/async
 bin[mmap-free-basis] -> engine/mmap-free-basis + fast_io/mmap-free-basis
 ```
 
-### sender-inc-recurse (deprecated, no-op)
-```
-bin[sender-inc-recurse] -> core/sender-inc-recurse + transfer/sender-inc-recurse
-```
-
 ### openssl / openssl-vendored (checksum acceleration)
 ```
 bin[openssl] -> checksums/openssl (dep:openssl)
