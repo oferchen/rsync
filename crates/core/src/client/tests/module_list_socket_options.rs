@@ -1,6 +1,12 @@
 use crate::client::module_list::apply_socket_options;
 
-fn connected_stream() -> (std::net::TcpStream, std::thread::JoinHandle<()>) {
+/// Builds a connected `socket2::Socket`, mirroring the pre-connect socket
+/// `apply_socket_options` now runs against (upstream: socket.c:279-280 -
+/// `set_socket_options()` must run before `connect(2)`). The accept thread
+/// only needs to complete the handshake; the options under test are applied
+/// (and read back) after connect for test convenience, which does not
+/// change the option semantics being exercised here.
+fn connected_socket() -> (socket2::Socket, std::thread::JoinHandle<()>) {
     let listener = std::net::TcpListener::bind(("127.0.0.1", 0)).expect("listener");
     let addr = listener.local_addr().expect("addr");
 
@@ -9,22 +15,19 @@ fn connected_stream() -> (std::net::TcpStream, std::thread::JoinHandle<()>) {
     });
 
     let stream = std::net::TcpStream::connect(addr).expect("connect");
-    (stream, handle)
+    (socket2::Socket::from(stream), handle)
 }
 
 #[test]
 fn apply_socket_options_sets_send_buffer_size() {
-    let (stream, handle) = connected_stream();
+    let (socket, handle) = connected_socket();
 
-    apply_socket_options(&stream, std::ffi::OsStr::new("SO_SNDBUF=32768"));
+    apply_socket_options(&socket, std::ffi::OsStr::new("SO_SNDBUF=32768"));
 
-    let sockref = socket2::SockRef::from(&stream);
-    let reported = sockref
-        .send_buffer_size()
-        .expect("query send buffer size");
+    let reported = socket.send_buffer_size().expect("query send buffer size");
     assert!(reported >= 32768);
 
-    drop(stream);
+    drop(socket);
     handle.join().expect("accept thread completes");
 }
 
@@ -35,17 +38,16 @@ fn apply_socket_options_sets_send_buffer_size() {
 /// continued past the unknown token instead of bailing out.
 #[test]
 fn apply_socket_options_warns_and_continues_on_unknown_name() {
-    let (stream, handle) = connected_stream();
+    let (socket, handle) = connected_socket();
 
-    apply_socket_options(&stream, std::ffi::OsStr::new("SO_NOTREAL=1,SO_SNDBUF=32768"));
+    apply_socket_options(&socket, std::ffi::OsStr::new("SO_NOTREAL=1,SO_SNDBUF=32768"));
 
-    let sockref = socket2::SockRef::from(&stream);
     assert!(
-        sockref.send_buffer_size().expect("query send buffer size") >= 32768,
+        socket.send_buffer_size().expect("query send buffer size") >= 32768,
         "valid option after an unknown one must still apply"
     );
 
-    drop(stream);
+    drop(socket);
     handle.join().expect("accept thread completes");
 }
 
@@ -55,13 +57,13 @@ fn apply_socket_options_warns_and_continues_on_unknown_name() {
 #[cfg(not(target_family = "windows"))]
 #[test]
 fn apply_socket_options_opt_on_with_value_still_applies() {
-    let (stream, handle) = connected_stream();
+    let (socket, handle) = connected_socket();
 
     // IPTOS_LOWDELAY is an IPv4 IP_TOS preset; supplying `=5` is a user error
     // upstream warns about but still applies the 0x10 preset on an AF_INET
     // socket. This must return normally (no panic / no fatal error).
-    apply_socket_options(&stream, std::ffi::OsStr::new("IPTOS_LOWDELAY=5"));
+    apply_socket_options(&socket, std::ffi::OsStr::new("IPTOS_LOWDELAY=5"));
 
-    drop(stream);
+    drop(socket);
     handle.join().expect("accept thread completes");
 }

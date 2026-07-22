@@ -1,7 +1,7 @@
 //! Socket option parsing and application for rsync daemon connections.
 //!
 //! Translates user-facing option strings (e.g. `SO_KEEPALIVE,TCP_NODELAY`)
-//! into platform-specific `setsockopt` calls on a `TcpStream`.
+//! into platform-specific `setsockopt` calls on the pre-connect socket.
 // upstream: socket.c:set_socket_options()
 
 mod apply;

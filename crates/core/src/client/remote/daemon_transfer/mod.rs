@@ -33,8 +33,7 @@ use super::super::DAEMON_SOCKET_TIMEOUT;
 use super::super::config::ClientConfig;
 use super::super::error::{ClientError, invalid_argument_error, socket_error};
 use super::super::module_list::{
-    RshDaemonSpawn, apply_socket_options, open_daemon_stream, resolve_connect_timeout,
-    spawn_rsh_daemon_stream,
+    RshDaemonSpawn, open_daemon_stream, resolve_connect_timeout, spawn_rsh_daemon_stream,
 };
 use super::super::progress::ClientProgressObserver;
 use super::super::summary::ClientSummary;
@@ -131,16 +130,13 @@ pub fn run_daemon_transfer(
         config.connect_program(),
         config.bind_address().map(|b| b.socket()),
         config.tcp_fastopen(),
+        config.sockopts(),
     )?;
 
-    // upstream: clientserver.c - start_daemon_client() calls set_socket_options()
-    // on the daemon socket before the handshake. Only applies to TCP connections,
-    // not connect programs.
-    if let Some(sockopts) = config.sockopts() {
-        if let Some(tcp) = stream.as_tcp_stream() {
-            apply_socket_options(tcp, sockopts);
-        }
-    }
+    // upstream: socket.c:279-280 - set_socket_options(s, sockopts) is applied
+    // pre-connect inside open_daemon_stream, before start_daemon_client()'s
+    // handshake. Only applies to TCP connections, not connect programs (that
+    // gate lives inside connect_direct/connect_via_proxy).
 
     // Apply oc-rsync-specific TCP perf options (TCP_NOTSENT_LOWAT for the
     // client side; client-side TFO is deferred to a follow-up). These are

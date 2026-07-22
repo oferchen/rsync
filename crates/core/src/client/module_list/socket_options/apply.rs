@@ -1,18 +1,17 @@
-//! Public entry point for applying socket options to a TCP stream.
+//! Public entry point for applying socket options to a pre-connect socket.
 //!
 //! Parses a comma/whitespace-separated option string and applies each
 //! option via platform-specific `setsockopt` calls.
 // upstream: socket.c:set_socket_options()
 
 use std::ffi::OsStr;
-use std::net::TcpStream;
 
 use super::lookup::{intern_name, lookup_socket_option, parse_socket_option_value};
 use super::types::ParsedSocketOption;
 #[cfg(not(target_family = "windows"))]
 use super::types::SocketOptionKind;
 
-/// Applies caller-provided socket options to the supplied TCP stream.
+/// Applies caller-provided socket options to the supplied socket.
 ///
 /// The option string is a comma/whitespace-separated list of names with
 /// optional `=value` suffixes:
@@ -22,11 +21,17 @@ use super::types::SocketOptionKind;
 /// - `TCP_NODELAY`
 /// - `IPTOS_LOWDELAY` (Unix only)
 ///
+/// Must be called on `socket` before `connect(2)` - upstream:
+/// socket.c:279-280 applies `set_socket_options(s, sockopts)` immediately
+/// before `connect(s, ...)` so options that shape the SYN (e.g.
+/// `SO_SNDBUF`/`SO_RCVBUF` window scaling) actually take effect; setting
+/// them after `connect(2)` returns is a no-op for the handshake.
+///
 /// upstream: socket.c:set_socket_options() is `void` - every parse or
 /// `setsockopt(2)` failure warns to stderr and `continue`s the loop, so a bad
 /// option never aborts the connection. We mirror that warn-and-continue
 /// contract rather than propagating a fatal error.
-pub(crate) fn apply_socket_options(stream: &TcpStream, options: &OsStr) {
+pub(crate) fn apply_socket_options(socket: &socket2::Socket, options: &OsStr) {
     let list = options.to_string_lossy();
 
     if list.trim().is_empty() {
@@ -92,7 +97,7 @@ pub(crate) fn apply_socket_options(stream: &TcpStream, options: &OsStr) {
     }
 
     for option in parsed {
-        if let Err(error) = option.apply(stream) {
+        if let Err(error) = option.apply(socket) {
             // upstream: socket.c:730-733 - a failed `setsockopt(2)` reports
             // `rsyserr(FERROR, errno, "failed to set socket option %s")` and
             // keeps applying the remaining options.

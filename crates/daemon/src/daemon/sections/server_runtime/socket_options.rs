@@ -269,8 +269,13 @@ fn parse_tos_option_value(value: Option<&str>) -> Result<u32, String> {
 
 /// Applies parsed socket options to a TCP listener via `socket2`.
 ///
-/// upstream: socket.c - `set_socket_options()` applies options via `setsockopt(2)`
-/// after binding and before accepting connections.
+/// upstream: socket.c:449-452 - `set_socket_options()` runs before `bind(2)`
+/// (socket.c:465), before the listener can process a SYN. The real daemon
+/// startup path (`listener.rs::bind_with_backlog`) applies options to the
+/// pre-connect `socket2::Socket` directly for that reason; this
+/// `&TcpListener` entry point exists for the test-injected pre-bound-listener
+/// path, where the listener is already bound (and listening) by the time
+/// socket options can be applied.
 fn apply_socket_options_to_listener(
     listener: &TcpListener,
     options: &[SocketOption],

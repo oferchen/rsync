@@ -1,3 +1,4 @@
+use std::ffi::OsStr;
 use std::io;
 use std::net::{SocketAddr, TcpStream, ToSocketAddrs};
 use std::time::Duration;
@@ -5,6 +6,7 @@ use std::time::Duration;
 use socket2::{Domain, Protocol, SockAddr, Socket, Type};
 
 use super::super::DaemonAddress;
+use super::super::socket_options::apply_socket_options;
 use crate::client::{
     AddressMode, ClientError, SOCKET_IO_EXIT_CODE, TcpFastOpenMode, connect_timeout_error,
     daemon_error, socket_error,
@@ -14,7 +16,9 @@ use crate::client::{
 ///
 /// Resolves the daemon address, iterates through candidates filtered by
 /// `address_mode`, and returns the first successful connection. I/O timeouts
-/// are applied to the resulting stream.
+/// are applied to the resulting stream. `sockopts`, when given, is applied to
+/// each candidate socket before `connect(2)` (upstream: socket.c:279-280), so
+/// options that shape the SYN (e.g. `SO_SNDBUF`/`SO_RCVBUF`) take effect.
 pub(crate) fn connect_direct(
     addr: &DaemonAddress,
     connect_timeout: Option<Duration>,
@@ -22,12 +26,13 @@ pub(crate) fn connect_direct(
     address_mode: AddressMode,
     bind_address: Option<SocketAddr>,
     tfo: TcpFastOpenMode,
+    sockopts: Option<&OsStr>,
 ) -> Result<TcpStream, ClientError> {
     let addresses = resolve_daemon_addresses(addr, address_mode)?;
     let mut last_error: Option<(SocketAddr, io::Error)> = None;
 
     for candidate in addresses {
-        match connect_with_optional_bind(candidate, bind_address, connect_timeout, tfo) {
+        match connect_with_optional_bind(candidate, bind_address, connect_timeout, tfo, sockopts) {
             Ok(stream) => {
                 if let Some(duration) = io_timeout {
                     stream.set_read_timeout(Some(duration)).map_err(|error| {
@@ -138,12 +143,20 @@ pub(crate) fn resolve_daemon_addresses(
 /// an ephemeral port. A `connect_timeout`, when given, is forwarded to the
 /// underlying socket. The connection is always built through a `socket2`
 /// socket so a `TCP_FASTOPEN_CONNECT` option can be set before `connect(2)`
-/// when `tfo` requests it.
+/// when `tfo` requests it, and so `sockopts` (`--sockopts`), when given, can
+/// be applied before `connect(2)` too.
+///
+/// upstream: socket.c:267-280 `open_socket_out()` - `try_bind_local()` runs
+/// first, then `set_socket_options(s, sockopts)`, then `connect(s, ...)`.
+/// Applying `--sockopts` after `connect(2)` returns is a no-op for options
+/// that shape the SYN (e.g. `SO_SNDBUF`/`SO_RCVBUF` window scaling), so the
+/// order here must match: bind, then sockopts, then connect.
 pub(crate) fn connect_with_optional_bind(
     target: SocketAddr,
     bind_address: Option<SocketAddr>,
     timeout: Option<Duration>,
     tfo: TcpFastOpenMode,
+    sockopts: Option<&OsStr>,
 ) -> io::Result<TcpStream> {
     let domain = if target.is_ipv4() {
         Domain::IPV4
@@ -166,6 +179,12 @@ pub(crate) fn connect_with_optional_bind(
             SocketAddr::V6(addr) => addr.set_port(0),
         }
         socket.bind(&SockAddr::from(bind_addr))?;
+    }
+
+    // upstream: socket.c:279 - set_socket_options(s, sockopts) runs here,
+    // after the optional bind and before connect(2).
+    if let Some(options) = sockopts {
+        apply_socket_options(&socket, options);
     }
 
     // Request client-side TCP Fast Open before connect. On Linux this sets
@@ -274,5 +293,50 @@ mod tests {
         let error = io::Error::new(io::ErrorKind::ConnectionRefused, "refused");
         let mapped = map_connect_failure(Some(Duration::from_secs(5)), candidate(), error);
         assert_eq!(mapped.exit_code(), 10);
+    }
+
+    // upstream: socket.c:279-280 - set_socket_options(s, sockopts) runs before
+    // connect(s, ...), so options that shape the SYN (e.g. SO_SNDBUF/SO_RCVBUF
+    // window scaling) take effect. connect_with_optional_bind applies sockopts
+    // to the socket2::Socket before either connect() or connect_timeout() is
+    // called; a --sockopts value applied only after connect(2) returns would
+    // be a no-op for the handshake. This proves --sockopts is wired all the
+    // way through the connect helper and takes effect on the live socket
+    // (setting it post-connect on an already-established stream would report
+    // the identical read-back value, so this also guards against the
+    // parameter silently failing to reach the socket).
+    #[test]
+    fn connect_with_optional_bind_applies_sockopts() {
+        use std::net::TcpListener;
+
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind loopback listener");
+        let target = listener.local_addr().expect("listener addr");
+        let handle = std::thread::spawn(move || {
+            let _ = listener.accept();
+        });
+
+        // TFO Off so connect() performs a full handshake; with TFO the handshake
+        // is deferred to the first write (which this test never issues), so on
+        // some platforms the listener's accept() would block until the test
+        // times out. Sockopt application is independent of the TFO mode.
+        let stream = connect_with_optional_bind(
+            target,
+            None,
+            None,
+            TcpFastOpenMode::Off,
+            Some(std::ffi::OsStr::new("SO_SNDBUF=131072")),
+        )
+        .expect("connect with sockopts");
+
+        let reported = socket2::SockRef::from(&stream)
+            .send_buffer_size()
+            .expect("query send buffer size");
+        assert!(
+            reported >= 131_072,
+            "SO_SNDBUF=131072 must be applied via --sockopts, got {reported}"
+        );
+
+        drop(stream);
+        handle.join().expect("accept thread completes");
     }
 }

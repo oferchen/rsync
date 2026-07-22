@@ -35,7 +35,6 @@ use super::connect::{
 use super::errors::{legacy_daemon_error_payload, map_daemon_handshake_error, read_trimmed_line};
 use super::request::ModuleListOptions;
 use super::request::ModuleListRequest;
-use super::socket_options::apply_socket_options;
 use super::types::DaemonAddress;
 use crate::auth::{parse_daemon_digest_list, select_daemon_digest};
 
@@ -223,6 +222,7 @@ pub fn run_module_list_with_password_and_options(
             options.connect_program(),
             options.bind_address(),
             options.tcp_fastopen(),
+            options.sockopts(),
         )?
     };
 
@@ -468,9 +468,8 @@ fn configure_daemon_stream(
     addr: &DaemonAddress,
 ) -> Result<(), ClientError> {
     if let super::connect::DaemonStream::Tcp(socket) = stream {
-        if let Some(values) = options.sockopts() {
-            apply_socket_options(socket, values);
-        }
+        // --sockopts is applied pre-connect inside open_daemon_stream (upstream:
+        // socket.c:279-280 - set_socket_options() must run before connect(2)).
 
         // Module listing has no transfer, so no bwlimit pacing applies.
         super::tcp_perf::apply_client_tcp_perf_options(socket, options.tcp_fastopen(), None);
