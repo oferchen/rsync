@@ -178,7 +178,7 @@ fn dontcache_write(fd: RawFd, chunk: &[u8]) -> io::Result<usize> {
 /// for a genuine I/O error or an unexpected short read after some bytes landed.
 /// Uses positioned reads, so the file's seek offset is left untouched.
 ///
-/// Mirrors [`dontcache_write`] on the read side.
+/// Mirrors `dontcache_write` on the read side.
 #[cfg(all(target_os = "linux", feature = "dontcache"))]
 #[allow(unsafe_code)]
 pub fn dontcache_read_exact(file: &File, offset: u64, dst: &mut [u8]) -> io::Result<bool> {

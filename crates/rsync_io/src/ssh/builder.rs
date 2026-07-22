@@ -149,7 +149,7 @@ impl SshCommand {
     /// Forces the address family the spawned `ssh` client uses, mirroring
     /// rsync's `--ipv4`/`--ipv6`. When `Some`, a `-4` or `-6` flag is appended
     /// to the argv, but only when the program basename is `ssh` (see
-    /// [`SshCommand::is_ssh_program`]); a user-supplied non-ssh `-e` wrapper is
+    /// `SshCommand::is_ssh_program`); a user-supplied non-ssh `-e` wrapper is
     /// left untouched.
     ///
     /// upstream: main.c:587-594 `do_cmd()` - `if (default_af_hint == AF_INET &&
@@ -163,7 +163,7 @@ impl SshCommand {
     /// Records rsync's tri-state `--blocking-io`/`--no-blocking-io` preference
     /// for the remote-shell child: `Some(true)` forces blocking I/O,
     /// `Some(false)` forces non-blocking, and `None` (the default) leaves it
-    /// unset so [`SshCommand::resolved_blocking_io`] can apply upstream's
+    /// unset so `SshCommand::resolved_blocking_io` can apply upstream's
     /// `rsh`/`remsh` auto-enable.
     ///
     /// upstream: options.c:144,842-843 - `blocking_io` defaults to `-1` (unset)

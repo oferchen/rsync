@@ -167,7 +167,7 @@ impl DualFileList {
     /// Under INC_RECURSE the pass still runs (upstream's `!am_sender ||
     /// inc_recurse` branch): each sub-list is cleaned so its numbering matches
     /// the receiver's identical pass. It reuses
-    /// [`resolve_duplicate`](super::sort::resolve_duplicate) for an identical
+    /// `resolve_duplicate` for an identical
     /// keep/drop tie-break.
     ///
     /// # Panics
