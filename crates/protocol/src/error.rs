@@ -34,7 +34,7 @@ pub enum NegotiationError {
     },
     /// The peer advertised a protocol version outside the upstream supported range.
     ///
-    /// The Display rendering is byte-identical to upstream rsync 3.4.1's two
+    /// The Display rendering is byte-identical to upstream rsync 3.4.4's two
     /// `FERROR` lines emitted from `compat.c:620-621` when `remote_protocol`
     /// falls outside `[MIN_PROTOCOL_VERSION, MAX_PROTOCOL_VERSION]`. Backup
     /// monitoring tools grep for this exact wording, so changing it would
