@@ -318,7 +318,8 @@ fn chown_path_libc(link_path: &Path, uid: u32, gid: u32, follow_symlinks: bool) 
     }
 }
 
-/// Chown `path` after walking its parent through [`secure_open_dir`].
+/// Chown `path` after walking its parent through
+/// [`secure_open_dir`](crate::secure_open_dir).
 ///
 /// Symlink-race-safe counterpart to a path-based `fchownat(AT_FDCWD,
 /// path, ..., AT_SYMLINK_NOFOLLOW)`. `AT_SYMLINK_NOFOLLOW` only guards the
@@ -413,7 +414,8 @@ fn utimensat_omit_raw(
 }
 
 /// Set atime/mtime on `path` after walking its parent through
-/// [`secure_open_dir`], with `None` slots left unchanged (`UTIME_OMIT`).
+/// [`secure_open_dir`](crate::secure_open_dir), with `None` slots left
+/// unchanged (`UTIME_OMIT`).
 ///
 /// Symlink-race-safe counterpart to a path-based `utimensat(AT_FDCWD,
 /// path, ...)`. Like [`secure_chown_at`] and [`secure_chmod_at`] the
