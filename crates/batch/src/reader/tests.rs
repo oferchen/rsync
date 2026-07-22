@@ -114,12 +114,15 @@ mod header_tests {
         let config = BatchConfig::new(
             BatchMode::Read,
             batch_path.to_string_lossy().to_string(),
-            28, // mismatched: batch was written with 30
+            28, // config placeholder; the batch was written with 30
         );
 
         let mut reader = BatchReader::new(config).unwrap();
         reader.read_header().unwrap();
 
+        // The reader adopts the batch's recorded protocol (30), which this build
+        // supports (<= 32). Only a protocol newer than the build supports is
+        // rejected (see read_header_rejects_batch_from_newer_protocol).
         assert_eq!(reader.config().protocol_version, 30);
         assert_eq!(reader.header().unwrap().protocol_version, 30);
     }

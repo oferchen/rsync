@@ -91,6 +91,37 @@ mod integration {
     }
 
     #[test]
+    fn read_header_rejects_batch_from_newer_protocol() {
+        // A batch written by a future rsync (protocol 33) must be refused by a
+        // client that supports at most protocol 32, rather than silently
+        // adopting an unsupported protocol and replaying it wrong.
+        // upstream: compat.c:609-613 "protocol version in the batch file is too new".
+        let temp_dir = TempDir::new().unwrap();
+        let batch_path = temp_dir.path().join("too_new.batch");
+
+        let write_config = BatchConfig::new(
+            BatchMode::Write,
+            batch_path.to_string_lossy().to_string(),
+            33,
+        );
+        let mut writer = BatchWriter::new(write_config).unwrap();
+        writer.write_header(BatchFlags::default()).unwrap();
+        writer.finalize().unwrap();
+
+        let read_config = BatchConfig::new(
+            BatchMode::Read,
+            batch_path.to_string_lossy().to_string(),
+            32,
+        );
+        let mut reader = BatchReader::new(read_config).unwrap();
+        let err = reader.read_header().unwrap_err();
+        assert!(
+            err.to_string().contains("too new"),
+            "expected 'too new' rejection, got: {err}"
+        );
+    }
+
+    #[test]
     fn test_batch_empty_data() {
         let temp_dir = TempDir::new().unwrap();
         let batch_path = temp_dir.path().join("empty.batch");
