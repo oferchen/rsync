@@ -1,4 +1,5 @@
 use std::env::{self, VarError};
+use std::ffi::OsStr;
 use std::io::{self, ErrorKind, Read, Write};
 use std::net::{SocketAddr, TcpStream, ToSocketAddrs};
 use std::time::Duration;
@@ -13,6 +14,13 @@ use crate::client::{ClientError, SOCKET_IO_EXIT_CODE, TcpFastOpenMode, socket_er
 use crate::message::Role;
 use crate::rsync_error;
 
+/// Connects to `addr`'s daemon through an HTTP(S) CONNECT proxy.
+///
+/// `sockopts`, when given, is applied to the socket used to reach the proxy
+/// before `connect(2)` - upstream `open_socket_out()` resolves and connects to
+/// the proxy host in place of the daemon host (socket.c:200-242), so
+/// `set_socket_options(s, sockopts)` at socket.c:279 runs against that same
+/// proxy-bound socket before its `connect(2)`.
 pub(crate) fn connect_via_proxy(
     addr: &DaemonAddress,
     proxy: &ProxyConfig,
@@ -20,6 +28,7 @@ pub(crate) fn connect_via_proxy(
     io_timeout: Option<Duration>,
     bind_address: Option<SocketAddr>,
     tfo: TcpFastOpenMode,
+    sockopts: Option<&OsStr>,
 ) -> Result<TcpStream, ClientError> {
     let target = (proxy.host.as_str(), proxy.port);
     let addrs = target
@@ -30,7 +39,7 @@ pub(crate) fn connect_via_proxy(
     let mut stream_result: Option<TcpStream> = None;
 
     for candidate in addrs {
-        match connect_with_optional_bind(candidate, bind_address, connect_timeout, tfo) {
+        match connect_with_optional_bind(candidate, bind_address, connect_timeout, tfo, sockopts) {
             Ok(stream) => {
                 stream_result = Some(stream);
                 break;

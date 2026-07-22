@@ -1245,6 +1245,7 @@ fn bind_listeners_per_family_falls_back_when_first_family_unreachable() {
         DEFAULT_LISTEN_BACKLOG,
         TcpFastOpenMode::Off,
         1,
+        &[],
         None,
     )
     .expect("at least one family must bind");
@@ -1259,6 +1260,41 @@ fn bind_listeners_per_family_falls_back_when_first_family_unreachable() {
     assert!(
         bound_addresses[0].port() != 0,
         "kernel must assign an ephemeral port for the bound listener"
+    );
+}
+
+#[test]
+fn bind_listeners_per_family_applies_socket_options_before_listen() {
+    // upstream: socket.c:449-452 - set_socket_options(s, sockopts) runs before
+    // bind(2)/listen(2), so options that shape the SYN-ACK (e.g.
+    // SO_SNDBUF/SO_RCVBUF window scaling) take effect from the very first
+    // connection. Prior to this fix the daemon applied `socket options =` /
+    // `--sockopts` only after the listener was already bound and listening
+    // (a caller-side post-bind pass), which is a no-op for the handshake.
+    // This proves the option reaches the listener through
+    // `bind_listeners_per_family` itself, exercising the pre-bind apply path.
+    let loopback = IpAddr::V4(std::net::Ipv4Addr::LOCALHOST);
+    let socket_options = vec![SocketOption::SoSndBuf(131_072)];
+
+    let (listeners, _bound_addresses) = bind_listeners_per_family(
+        &[loopback],
+        0,
+        DEFAULT_LISTEN_BACKLOG,
+        TcpFastOpenMode::Off,
+        1,
+        &socket_options,
+        None,
+    )
+    .expect("loopback bind must succeed");
+
+    assert_eq!(listeners.len(), 1);
+    let reported = socket2::SockRef::from(&listeners[0])
+        .send_buffer_size()
+        .expect("query send buffer size");
+    assert!(
+        reported >= 131_072,
+        "SO_SNDBUF=131072 must be applied to the listener before it starts \
+         serving, got {reported}"
     );
 }
 
@@ -1279,6 +1315,7 @@ fn bind_listeners_per_family_replicates_acceptor_threads() {
         DEFAULT_LISTEN_BACKLOG,
         TcpFastOpenMode::Off,
         3,
+        &[],
         None,
     )
     .expect("the reachable family must bind all replicas");
@@ -1323,6 +1360,7 @@ fn default_single_listener_refuses_a_second_bind_on_the_same_port() {
         DEFAULT_LISTEN_BACKLOG,
         TcpFastOpenMode::Off,
         1,
+        &[],
         None,
     )
     .expect("first default bind must succeed");
@@ -1338,6 +1376,7 @@ fn default_single_listener_refuses_a_second_bind_on_the_same_port() {
         DEFAULT_LISTEN_BACKLOG,
         TcpFastOpenMode::Off,
         1,
+        &[],
         None,
     );
     assert!(
@@ -1374,6 +1413,7 @@ fn multi_acceptor_replicas_co_bind_the_same_fixed_port() {
             DEFAULT_LISTEN_BACKLOG,
             TcpFastOpenMode::Off,
             2,
+            &[],
             None,
         ) {
             Ok((listeners, addrs)) if listeners.len() == 2 => {
@@ -1415,6 +1455,7 @@ fn bind_listeners_per_family_fails_only_when_all_families_unreachable() {
         DEFAULT_LISTEN_BACKLOG,
         TcpFastOpenMode::Off,
         1,
+        &[],
         None,
     )
     .expect_err("no family should bind");
@@ -1458,6 +1499,7 @@ fn bind_listeners_per_family_falls_back_from_ipv6_to_ipv4() {
         DEFAULT_LISTEN_BACKLOG,
         TcpFastOpenMode::Off,
         1,
+        &[],
         None,
     )
     .expect("IPv4 fallback must bind when IPv6 is unreachable");
@@ -1495,6 +1537,7 @@ fn bind_listeners_per_family_single_family_propagates_error() {
         DEFAULT_LISTEN_BACKLOG,
         TcpFastOpenMode::Off,
         1,
+        &[],
         None,
     )
     .expect_err("the single configured address must fail to bind");
