@@ -368,7 +368,16 @@ pub(crate) fn build_compat_flags_from_client_info(
             continue;
         }
 
-        if client_info.contains(mapping.char) {
+        // upstream: compat.c:713-718 sets CF_SYMLINK_TIMES / CF_SYMLINK_ICONV
+        // from the server's OWN compile-time capability (`#ifdef`), NOT from the
+        // client's advertisement - only f/x/C/I/v/u are client_info-gated. The
+        // platform_ok / requires_iconv guards above already encode that own
+        // capability, so set these two whenever we support them, even for a peer
+        // (e.g. a non-unix sender) whose -e string omits 'L'. Matches
+        // build_default_flags on the client path.
+        let own_server_capability = mapping.flag == CompatibilityFlags::SYMLINK_TIMES
+            || mapping.flag == CompatibilityFlags::SYMLINK_ICONV;
+        if own_server_capability || client_info.contains(mapping.char) {
             flags |= mapping.flag;
         }
     }
