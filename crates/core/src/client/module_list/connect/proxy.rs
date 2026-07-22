@@ -7,8 +7,7 @@ use std::time::Duration;
 use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD;
 
-use super::direct::connect_with_optional_bind;
-use crate::client::module_list::parsing::{decode_host_component, hex_value, parse_bracketed_host};
+use super::direct::{connect_with_optional_bind, map_connect_failure, try_candidates};
 use crate::client::module_list::{DaemonAddress, types::SocketAddrDisplay};
 use crate::client::{ClientError, SOCKET_IO_EXIT_CODE, TcpFastOpenMode, socket_error};
 use crate::message::Role;
@@ -31,28 +30,12 @@ pub(crate) fn connect_via_proxy(
     sockopts: Option<&OsStr>,
 ) -> Result<TcpStream, ClientError> {
     let target = (proxy.host.as_str(), proxy.port);
-    let addrs = target
+    let addrs: Vec<SocketAddr> = target
         .to_socket_addrs()
-        .map_err(|error| socket_error("resolve proxy address for", proxy.display(), error))?;
+        .map_err(|error| socket_error("resolve proxy address for", proxy.display(), error))?
+        .collect();
 
-    let mut last_error: Option<(SocketAddr, io::Error)> = None;
-    let mut stream_result: Option<TcpStream> = None;
-
-    for candidate in addrs {
-        match connect_with_optional_bind(candidate, bind_address, connect_timeout, tfo, sockopts) {
-            Ok(stream) => {
-                stream_result = Some(stream);
-                break;
-            }
-            Err(error) => last_error = Some((candidate, error)),
-        }
-    }
-
-    let mut stream = if let Some(stream) = stream_result {
-        stream
-    } else if let Some((candidate, error)) = last_error {
-        return Err(socket_error("connect to", candidate, error));
-    } else {
+    if addrs.is_empty() {
         return Err(socket_error(
             "resolve proxy address for",
             proxy.display(),
@@ -61,6 +44,19 @@ pub(crate) fn connect_via_proxy(
                 "proxy resolution returned no addresses",
             ),
         ));
+    }
+
+    // upstream: socket.c:262-310 - open_socket_out() resolves and connects to
+    // the proxy host in place of the daemon host, so the same per-address
+    // --contimeout semantics (try each address, but abort immediately - not
+    // move to the next address - once the alarm fires) apply here too.
+    let mut stream = match try_candidates(&addrs, connect_timeout, |candidate| {
+        connect_with_optional_bind(candidate, bind_address, connect_timeout, tfo, sockopts)
+    }) {
+        Ok(stream) => stream,
+        Err((candidate, error)) => {
+            return Err(map_connect_failure(connect_timeout, candidate, error));
+        }
     };
 
     establish_proxy_tunnel(&mut stream, addr, proxy)?;
@@ -139,12 +135,14 @@ pub(crate) fn establish_proxy_tunnel(
 
 pub(crate) fn load_daemon_proxy() -> Result<Option<ProxyConfig>, ClientError> {
     match env::var("RSYNC_PROXY") {
+        // upstream: socket.c:202-203 - `proxied = h != NULL && *h != '\0';`
+        // only a zero-length value is treated as "unset"; a whitespace-only
+        // value is proxied (and then fails to parse), not silently ignored.
         Ok(value) => {
-            let trimmed = value.trim();
-            if trimmed.is_empty() {
+            if value.is_empty() {
                 return Ok(None);
             }
-            parse_proxy_spec(trimmed).map(Some)
+            parse_proxy_spec(&value).map(Some)
         }
         Err(VarError::NotPresent) => Ok(None),
         Err(VarError::NotUnicode(_)) => Err(proxy_configuration_error(
@@ -153,59 +151,36 @@ pub(crate) fn load_daemon_proxy() -> Result<Option<ProxyConfig>, ClientError> {
     }
 }
 
+/// Parses an `RSYNC_PROXY` value into a [`ProxyConfig`].
+///
+/// Mirrors upstream's raw buffer-splitting parser exactly (upstream:
+/// socket.c:205-234 `open_socket_out()`): `[USER:PASS@]HOST:PORT`. There is
+/// no URL scheme, no percent-decoding, and no bracketed-IPv6 syntax in
+/// upstream's C parser - those all belong to the separate `rsync://` URL
+/// grammar, not `RSYNC_PROXY`. The `USER:PASS@` prefix is found by the LAST
+/// `@` (`strrchr`); both the `USER:PASS` split and the `HOST:PORT` split use
+/// the FIRST `:` in their segment (`strchr`), so a plain unbracketed IPv6
+/// literal is not representable here, matching upstream's own limitation.
 pub(crate) fn parse_proxy_spec(spec: &str) -> Result<ProxyConfig, ClientError> {
-    let trimmed = spec.trim();
-    if trimmed.is_empty() {
+    if spec.is_empty() {
         return Err(proxy_configuration_error(
             "RSYNC_PROXY must specify a proxy host",
         ));
     }
 
-    let mut remainder = trimmed;
-    if let Some(idx) = trimmed.find("://") {
-        let (scheme, rest_with_separator) = trimmed.split_at(idx);
-        let rest = &rest_with_separator[3..];
-        if rest.is_empty() {
-            return Err(proxy_configuration_error(
-                "RSYNC_PROXY must specify a proxy host",
-            ));
-        }
-
-        if !scheme.eq_ignore_ascii_case("http") && !scheme.eq_ignore_ascii_case("https") {
-            return Err(proxy_configuration_error(
-                "RSYNC_PROXY scheme must be http:// or https://",
-            ));
-        }
-
-        remainder = rest;
-    }
-
-    if remainder.contains('/') {
-        return Err(proxy_configuration_error(
-            "RSYNC_PROXY must not include a path component",
-        ));
-    }
-
-    let (credentials, remainder) = if let Some(idx) = remainder.rfind('@') {
-        let (userinfo, host_part) = remainder.split_at(idx);
-        if userinfo.is_empty() {
-            return Err(proxy_configuration_error(
-                "RSYNC_PROXY user information must be non-empty when '@' is present",
-            ));
-        }
+    let (credentials, remainder) = if let Some(idx) = spec.rfind('@') {
+        let (userinfo, host_part) = spec.split_at(idx);
 
         let mut segments = userinfo.splitn(2, ':');
         let username = segments.next().unwrap();
         let password = segments.next().ok_or_else(|| {
-            proxy_configuration_error("RSYNC_PROXY credentials must use USER:PASS@HOST:PORT format")
+            proxy_configuration_error("invalid proxy specification: should be USER:PASS@HOST:PORT")
         })?;
 
-        let username = decode_proxy_component(username, "username")?;
-        let password = decode_proxy_component(password, "password")?;
-        let credentials = ProxyCredentials::new(username, password);
+        let credentials = ProxyCredentials::new(username.to_owned(), password.to_owned());
         (Some(credentials), &host_part[1..])
     } else {
-        (None, remainder)
+        (None, spec)
     };
 
     let (host, port) = parse_proxy_host_port(remainder)?;
@@ -217,89 +192,24 @@ pub(crate) fn parse_proxy_spec(spec: &str) -> Result<ProxyConfig, ClientError> {
     })
 }
 
+/// Splits a `HOST:PORT` string at the first `:`, matching upstream's
+/// `strchr(h, ':')` (upstream: socket.c:228-234).
 fn parse_proxy_host_port(input: &str) -> Result<(String, u16), ClientError> {
-    if input.is_empty() {
-        return Err(proxy_configuration_error(
-            "RSYNC_PROXY must specify a proxy host and port",
-        ));
-    }
-
-    if let Some(rest) = input.strip_prefix('[') {
-        let (host, port) = parse_bracketed_host(rest, 0).map_err(|_| {
-            proxy_configuration_error("RSYNC_PROXY contains an invalid bracketed host")
-        })?;
-        if port == 0 {
-            return Err(proxy_configuration_error(
-                "RSYNC_PROXY bracketed host must include a port",
-            ));
-        }
-        return Ok((host, port));
-    }
-
-    let idx = input
-        .rfind(':')
-        .ok_or_else(|| proxy_configuration_error("RSYNC_PROXY must be in HOST:PORT form"))?;
+    let idx = input.find(':').ok_or_else(|| {
+        proxy_configuration_error("invalid proxy specification: should be HOST:PORT")
+    })?;
     let host = &input[..idx];
     let port_text = &input[idx + 1..];
 
-    if port_text.is_empty() {
-        return Err(proxy_configuration_error(
-            "RSYNC_PROXY must include a proxy port",
-        ));
-    }
-
-    let host = decode_host_component(host).map_err(|_| {
-        proxy_configuration_error("RSYNC_PROXY proxy host contains invalid percent-encoding")
-    })?;
+    // upstream copies the raw port text into a 10-byte buffer with no
+    // numeric validation at parse time, deferring any failure to
+    // getaddrinfo(); oc needs a concrete u16 up front to build the
+    // candidate SocketAddrs, so the port must parse as a number here.
     let port = port_text
         .parse::<u16>()
         .map_err(|_| proxy_configuration_error("RSYNC_PROXY specified an invalid port"))?;
 
-    Ok((host, port))
-}
-
-fn decode_proxy_component(input: &str, field: &str) -> Result<String, ClientError> {
-    if !input.contains('%') {
-        return Ok(input.to_owned());
-    }
-
-    let mut decoded = Vec::with_capacity(input.len());
-    let bytes = input.as_bytes();
-    let mut index = 0;
-
-    while index < bytes.len() {
-        if bytes[index] == b'%' {
-            if index + 2 >= bytes.len() {
-                return Err(proxy_configuration_error(format!(
-                    "RSYNC_PROXY {field} contains truncated percent-encoding"
-                )));
-            }
-
-            let hi = hex_value(bytes[index + 1]).ok_or_else(|| {
-                proxy_configuration_error(format!(
-                    "RSYNC_PROXY {field} contains invalid percent-encoding"
-                ))
-            })?;
-            let lo = hex_value(bytes[index + 2]).ok_or_else(|| {
-                proxy_configuration_error(format!(
-                    "RSYNC_PROXY {field} contains invalid percent-encoding"
-                ))
-            })?;
-
-            decoded.push((hi << 4) | lo);
-            index += 3;
-            continue;
-        }
-
-        decoded.push(bytes[index]);
-        index += 1;
-    }
-
-    String::from_utf8(decoded).map_err(|_| {
-        proxy_configuration_error(format!(
-            "RSYNC_PROXY {field} contains invalid UTF-8 after percent-decoding"
-        ))
-    })
+    Ok((host.to_owned(), port))
 }
 
 pub(crate) struct ProxyConfig {
@@ -412,27 +322,16 @@ mod tests {
         assert!(config.credentials.is_none());
     }
 
+    // upstream: socket.c:205-234 - RSYNC_PROXY has no URL-scheme concept at
+    // all; getenv()'s raw value is split directly on '@' and ':'. A
+    // "scheme://" prefix is just more HOST text to upstream's parser, and
+    // (since strchr(':') finds the FIRST ':', which lands right after the
+    // scheme name) it is misparsed as bogus credentials rather than
+    // rejected or specially recognised. oc must not invent scheme support.
     #[test]
-    fn parse_proxy_spec_with_http_scheme() {
-        let config = parse_proxy_spec("http://proxy.example.com:3128").unwrap();
-        assert_eq!(config.host, "proxy.example.com");
-        assert_eq!(config.port, 3128);
-    }
-
-    #[test]
-    fn parse_proxy_spec_with_https_scheme() {
-        let config = parse_proxy_spec("https://proxy.example.com:443").unwrap();
-        assert_eq!(config.host, "proxy.example.com");
-        assert_eq!(config.port, 443);
-    }
-
-    #[test]
-    fn parse_proxy_spec_scheme_case_insensitive() {
-        let config = parse_proxy_spec("HTTP://proxy.example.com:8080").unwrap();
-        assert_eq!(config.host, "proxy.example.com");
-
-        let config = parse_proxy_spec("HTTPS://proxy.example.com:8080").unwrap();
-        assert_eq!(config.host, "proxy.example.com");
+    fn parse_proxy_spec_has_no_scheme_concept() {
+        let error = parse_proxy_spec("http://proxy.example.com:3128").unwrap_err();
+        assert!(error.message().to_string().contains("invalid port"));
     }
 
     #[test]
@@ -443,19 +342,15 @@ mod tests {
         assert!(config.credentials.is_some());
     }
 
+    // upstream never trims the getenv() value: `proxied = h != NULL && *h !=
+    // '\0';` treats any non-empty string (including one that is all
+    // whitespace) as set, then feeds it straight into the buffer splitter.
+    // Leading/trailing whitespace becomes literal host/port text, which
+    // fails to parse as a port rather than being silently stripped.
     #[test]
-    fn parse_proxy_spec_with_scheme_and_credentials() {
-        let config = parse_proxy_spec("http://user:pass@proxy.example.com:8080").unwrap();
-        assert_eq!(config.host, "proxy.example.com");
-        assert_eq!(config.port, 8080);
-        assert!(config.credentials.is_some());
-    }
-
-    #[test]
-    fn parse_proxy_spec_with_whitespace_trimmed() {
-        let config = parse_proxy_spec("  proxy.example.com:8080  ").unwrap();
-        assert_eq!(config.host, "proxy.example.com");
-        assert_eq!(config.port, 8080);
+    fn parse_proxy_spec_leading_trailing_whitespace_is_literal_not_trimmed() {
+        let error = parse_proxy_spec("  proxy.example.com:8080  ").unwrap_err();
+        assert!(error.message().to_string().contains("invalid port"));
     }
 
     #[test]
@@ -464,26 +359,22 @@ mod tests {
         assert!(result.is_err());
     }
 
+    // upstream: socket.c:202-203 - a whitespace-only value is non-empty, so
+    // it is "proxied" and fed to the parser (where it then fails to find a
+    // ':' and errors), unlike an actually-empty value which upstream treats
+    // as "no proxy configured" before ever reaching this parser.
     #[test]
     fn parse_proxy_spec_whitespace_only_returns_error() {
         let result = parse_proxy_spec("   ");
         assert!(result.is_err());
     }
 
+    // A "/path" suffix is not a recognised construct in upstream's parser;
+    // it is just more raw text that ends up in the port field and fails
+    // u16 parsing (upstream would similarly fail later at getaddrinfo()
+    // when handed a bogus "port/path" service string).
     #[test]
-    fn parse_proxy_spec_invalid_scheme_returns_error() {
-        let result = parse_proxy_spec("socks://proxy.example.com:1080");
-        assert!(result.is_err());
-    }
-
-    #[test]
-    fn parse_proxy_spec_scheme_only_returns_error() {
-        let result = parse_proxy_spec("http://");
-        assert!(result.is_err());
-    }
-
-    #[test]
-    fn parse_proxy_spec_with_path_returns_error() {
+    fn parse_proxy_spec_with_path_suffix_fails_port_parse() {
         let result = parse_proxy_spec("proxy.example.com:8080/path");
         assert!(result.is_err());
     }
@@ -500,11 +391,14 @@ mod tests {
         assert!(result.is_err());
     }
 
+    // upstream never percent-decodes RSYNC_PROXY components (that grammar
+    // belongs only to rsync:// URLs); a literal "%40" stays literal.
     #[test]
-    fn parse_proxy_spec_percent_encoded_credentials() {
-        let config = parse_proxy_spec("user%40domain:p%40ss@proxy.example.com:8080").unwrap();
-        assert_eq!(config.host, "proxy.example.com");
-        assert!(config.credentials.is_some());
+    fn parse_proxy_spec_does_not_percent_decode_credentials() {
+        let config = parse_proxy_spec("user%40domain:pass@proxy.example.com:8080").unwrap();
+        let creds = config.credentials.expect("credentials present");
+        let decoded = STANDARD.decode(creds.authorization_value()).unwrap();
+        assert_eq!(decoded, b"user%40domain:pass");
     }
 
     #[test]
@@ -514,18 +408,14 @@ mod tests {
         assert_eq!(config.port, 8080);
     }
 
+    // upstream's HOST:PORT split uses strchr() (the FIRST ':'), so a
+    // bracketed IPv6 literal is not recognised: the first ':' lands inside
+    // the brackets, producing a non-numeric "port" and an error. oc must
+    // not accept a syntax upstream cannot parse.
     #[test]
-    fn parse_proxy_spec_ipv6_bracketed() {
-        let config = parse_proxy_spec("[::1]:8080").unwrap();
-        assert_eq!(config.host, "::1");
-        assert_eq!(config.port, 8080);
-    }
-
-    #[test]
-    fn parse_proxy_spec_ipv6_bracketed_full() {
-        let config = parse_proxy_spec("[2001:db8::1]:3128").unwrap();
-        assert_eq!(config.host, "2001:db8::1");
-        assert_eq!(config.port, 3128);
+    fn parse_proxy_spec_does_not_support_bracketed_ipv6() {
+        let result = parse_proxy_spec("[::1]:8080");
+        assert!(result.is_err());
     }
 
     #[test]
@@ -565,73 +455,22 @@ mod tests {
         assert!(result.is_err());
     }
 
+    // upstream's strchr(h, ':') finds the FIRST colon; a host string that
+    // itself contains a colon (as an unbracketed IPv6 literal would) splits
+    // in the wrong place and fails the numeric port check.
     #[test]
-    fn parse_proxy_host_port_ipv6_bracketed() {
-        let (host, port) = parse_proxy_host_port("[::1]:8080").unwrap();
-        assert_eq!(host, "::1");
-        assert_eq!(port, 8080);
-    }
-
-    #[test]
-    fn parse_proxy_host_port_ipv6_no_port_returns_error() {
-        let result = parse_proxy_host_port("[::1]");
+    fn parse_proxy_host_port_first_colon_wins_over_embedded_colon() {
+        let result = parse_proxy_host_port("::1:8080");
         assert!(result.is_err());
     }
 
+    // oc does not percent-decode the host component; a literal "%20"
+    // becomes literal host text (which then fails DNS/getaddrinfo like any
+    // other invalid hostname), matching upstream exactly.
     #[test]
-    fn parse_proxy_host_port_percent_encoded_host() {
+    fn parse_proxy_host_port_does_not_percent_decode_host() {
         let (host, _port) = parse_proxy_host_port("my%20host:8080").unwrap();
-        assert_eq!(host, "my host");
-    }
-
-    #[test]
-    fn decode_proxy_component_plain_text() {
-        let result = decode_proxy_component("username", "test").unwrap();
-        assert_eq!(result, "username");
-    }
-
-    #[test]
-    fn decode_proxy_component_percent_encoded() {
-        let result = decode_proxy_component("user%40domain", "test").unwrap();
-        assert_eq!(result, "user@domain");
-    }
-
-    #[test]
-    fn decode_proxy_component_multiple_encoded() {
-        let result = decode_proxy_component("a%20b%20c", "test").unwrap();
-        assert_eq!(result, "a b c");
-    }
-
-    #[test]
-    fn decode_proxy_component_hex_case_insensitive() {
-        let result1 = decode_proxy_component("a%2Fb", "test").unwrap();
-        let result2 = decode_proxy_component("a%2fb", "test").unwrap();
-        assert_eq!(result1, "a/b");
-        assert_eq!(result2, "a/b");
-    }
-
-    #[test]
-    fn decode_proxy_component_truncated_encoding_returns_error() {
-        let result = decode_proxy_component("user%4", "field");
-        assert!(result.is_err());
-    }
-
-    #[test]
-    fn decode_proxy_component_invalid_hex_returns_error() {
-        let result = decode_proxy_component("user%ZZ", "field");
-        assert!(result.is_err());
-    }
-
-    #[test]
-    fn decode_proxy_component_trailing_percent_returns_error() {
-        let result = decode_proxy_component("test%", "field");
-        assert!(result.is_err());
-    }
-
-    #[test]
-    fn decode_proxy_component_invalid_utf8_returns_error() {
-        let result = decode_proxy_component("%FF%FE", "field");
-        assert!(result.is_err());
+        assert_eq!(host, "my%20host");
     }
 
     #[test]
