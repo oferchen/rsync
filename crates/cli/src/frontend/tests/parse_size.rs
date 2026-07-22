@@ -40,7 +40,7 @@ fn parse_block_size_argument_accepts_valid_value() {
 
 #[test]
 fn parse_block_size_argument_zero_falls_back_to_default() {
-    // upstream: options.c:1692-1695 - `--block-size=0` is accepted (min_value 0)
+    // upstream: options.c:1708-1711 - `--block-size=0` is accepted (min_value 0)
     // and falls back to the default block size, represented here as `None`.
     let parsed = parse_block_size_argument(OsStr::new("0")).expect("zero accepted");
     assert_eq!(parsed, None);
@@ -48,7 +48,7 @@ fn parse_block_size_argument_zero_falls_back_to_default() {
 
 #[test]
 fn parse_block_size_argument_rejects_large_value() {
-    // upstream: options.c:1692-1695 - a value above MAX_BLOCK_SIZE (131072) is
+    // upstream: options.c:1708-1711 - a value above MAX_BLOCK_SIZE (131072) is
     // "too large (max: 128.00K)".
     let error = parse_block_size_argument(OsStr::new("5000000000")).expect_err("overflow rejected");
     assert!(

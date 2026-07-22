@@ -30,7 +30,7 @@ fn parse_args_recognises_no_mkpath_flag() {
 
 #[test]
 fn parse_args_recognises_old_dirs_flag() {
-    // upstream: options.c:2197-2199 - --old-dirs forces recursion and does not
+    // upstream: options.c:2215-2217 - --old-dirs forces recursion and does not
     // touch --mkpath.
     let parsed = parse_args([
         OsString::from(RSYNC),

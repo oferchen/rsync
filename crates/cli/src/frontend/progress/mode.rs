@@ -67,7 +67,7 @@ pub enum StderrMode {
 impl StderrMode {
     /// Parses a `--stderr` mode value.
     ///
-    /// Mirrors upstream rsync's `options.c:1912` `OPT_STDERR` handler, which
+    /// Mirrors upstream rsync's `options.c:1928` `OPT_STDERR` handler, which
     /// accepts any non-empty, case-sensitive prefix of `errors`, `all`, or
     /// `client` (via `strncmp(word, arg, strlen(arg))`). So `e`/`er`/`err`/
     /// `error`/`errors` all select `Errors`, but `ERRORS` and `errorsX` are

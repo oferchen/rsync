@@ -20,7 +20,7 @@ fn transfer_request_with_delete_excluded_prunes_filtered_entries() {
         OsString::from(RSYNC),
         OsString::from("--delete-excluded"),
         OsString::from("--exclude=*.log"),
-        // upstream recurse defaults to 0 (options.c:112); a non-trailing-slash
+        // upstream recurse defaults to 0 (options.c:113); a non-trailing-slash
         // directory operand under --dirs is added without descending, so its
         // children never transfer. Use --recursive to walk source/ and satisfy
         // --delete's "needs -r or -d" requirement, mirroring upstream.

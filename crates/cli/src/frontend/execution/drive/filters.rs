@@ -117,7 +117,7 @@ fn push_filter_directive(
 /// Adds a CLI-supplied `--exclude`/`--include` pattern to `destination`,
 /// honoring upstream's `XFLG_OLD_PREFIXES` compatibility mode.
 ///
-/// upstream: options.c:1512-1519 routes `--exclude`/`--include` through
+/// upstream: options.c:1528-1535 routes `--exclude`/`--include` through
 /// `parse_filter_str(..., XFLG_OLD_PREFIXES)`, so a value of `- pat` (or
 /// `+ pat`) flips the rule kind and `!` clears the list. Plain patterns
 /// retain `default_kind`.

@@ -244,7 +244,7 @@ fn progress2_single_file_final_tick_matches_upstream_format() {
 
     // Final tick should show to-chk=0/2: the trailing-slash copy enumerates the
     // source root directory plus the single file, so `num_files == 2` (reg: 1,
-    // dir: 1). upstream: flist.c:2561 counts directories into stats.num_files,
+    // dir: 1). upstream: flist.c:2596 counts directories into stats.num_files,
     // so `rsync -r source/ dest` reports `to-chk=0/2` here. Verified against
     // rsync 3.4.4: `Number of files: 2 (reg: 1, dir: 1)`.
     assert!(
