@@ -415,50 +415,6 @@ jobs:
           if-no-files-found: ignore
           retention-days: 14
 
-      # V61D-3 - daemon-push interop with the gated `sender-inc-recurse`
-      # feature enabled. The flag flips the `inc_recursive_send` builder
-      # default ON so push transfers advertise the `'i'` capability bit
-      # (ISI.b, #2739). The full default-OFF interop run already happened
-      # above; this cell rebuilds oc-rsync with `--features
-      # sender-inc-recurse` and re-runs `run_interop.sh` so the
-      # daemon-push scenarios exercise the sender-INC_RECURSE path that
-      # ISI.h will eventually make the default. Non-blocking: failures
-      # surface regressions early but must not gate PRs until ISI.h
-      # flips the default. Memory note:
-      # [[project_v061_daemon_push_increcurse_disable]]. Linux-only
-      # because the harness only runs on Linux runners anyway. Restores
-      # the default-OFF binary at the end so the downstream SSH cell
-      # observes the same binary it would have without this step.
-      - name: Run interop tests with sender-inc-recurse feature (V61D-3)
-        continue-on-error: true
-        run: |
-          set -euo pipefail
-          # Stash the default-OFF dist binary so we can put it back
-          # before the SSH interop cell runs (do not change existing
-          # cell behaviour).
-          ORIG_BIN=""
-          if [[ -x target/dist/oc-rsync ]]; then
-            ORIG_BIN=$(mktemp)
-            cp target/dist/oc-rsync "$ORIG_BIN"
-          fi
-          restore_default_bin() {
-            if [[ -n "$ORIG_BIN" && -f "$ORIG_BIN" ]]; then
-              cp "$ORIG_BIN" target/dist/oc-rsync
-              chmod +x target/dist/oc-rsync
-              rm -f "$ORIG_BIN"
-            fi
-          }
-          trap restore_default_bin EXIT
-
-          # Force a rebuild with the feature so `ensure_workspace_binaries`
-          # inside `run_interop.sh` re-links oc-rsync with
-          # `--features sender-inc-recurse` instead of reusing the
-          # default-OFF binary from the earlier interop step.
-          rm -f target/dist/oc-rsync
-          cargo build --locked --profile dist --bin oc-rsync --features sender-inc-recurse
-          target/dist/oc-rsync --version 2>&1 | head -1
-          bash tools/ci/run_interop.sh
-
       - name: Run SSH interop tests
         run: |
           set -euo pipefail

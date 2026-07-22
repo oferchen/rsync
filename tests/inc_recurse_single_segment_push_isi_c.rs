@@ -1,9 +1,9 @@
 //! ISI.c - single-segment INC_RECURSE push interop.
 //!
 //! Smallest possible end-to-end exercise of the sender-side INC_RECURSE
-//! path: an oc-rsync `--server --sender` instance built with the
-//! `sender-inc-recurse` cargo feature pushes a 10-file single-directory
-//! tree to an upstream rsync `--server` receiver over wired pipes. The
+//! path: an oc-rsync `--server --sender` instance (INC_RECURSE is
+//! unconditional since ISI.h) pushes a 10-file single-directory tree to
+//! an upstream rsync `--server` receiver over wired pipes. The
 //! destination must match the source byte-for-byte and the capability
 //! string we would emit must include `'i'`.
 //!
@@ -29,16 +29,6 @@
 //! `parent_dir_ndx` alignment on adversarial fixtures. This file is the
 //! regression seed all three build on.
 //!
-//! ## Feature gate
-//!
-//! `#[cfg(feature = "sender-inc-recurse")]` - the temporary bake-up
-//! flag from ISI.b. Without it the builder default is
-//! `inc_recursive_send = false`, the `'i'` bit is stripped, and the
-//! upstream peer never accepts `INC_RECURSE` in its compat flags.
-//! `cfg!(feature = "sender-inc-recurse")` must be passed at the
-//! workspace level so the dependency `oc-rsync` binary is also built
-//! with the feature on.
-//!
 //! ## Platform gate
 //!
 //! `#[cfg(all(unix, not(target_os = "macos")))]` - the upstream rsync
@@ -62,7 +52,7 @@
 //! a buffer in `run_pipe_push`, decode `MSG_DATA` frames, and assert the
 //! `NDX_FLIST` / `NDX_FLIST_EOF` sequence matches the golden trace.
 
-#![cfg(all(unix, not(target_os = "macos"), feature = "sender-inc-recurse"))]
+#![cfg(all(unix, not(target_os = "macos")))]
 
 mod integration;
 
@@ -204,9 +194,9 @@ fn copy_until_eof<R: Read, W: Write>(reader: &mut R, writer: &mut W) -> io::Resu
 /// wired stdio pipes. Mirrors the SSH transport without needing sshd.
 ///
 /// The oc-rsync side is launched **without** `--inc-recursive` on the
-/// CLI: the `sender-inc-recurse` cargo feature flips the builder
-/// default so push transfers advertise the `'i'` bit unconditionally.
-/// That is the precise invariant ISI.c locks in.
+/// CLI: the builder default (unconditional since ISI.h) already
+/// advertises the `'i'` bit on push transfers. That is the precise
+/// invariant ISI.c locks in.
 fn run_pipe_push(oc_bin: &Path, up_bin: &Path, src: &Path, dst: &Path) -> io::Result<()> {
     let mut server = Command::new(oc_bin)
         .arg("--server")
@@ -276,7 +266,7 @@ fn run_pipe_push(oc_bin: &Path, up_bin: &Path, src: &Path, dst: &Path) -> io::Re
     Ok(())
 }
 
-/// Default `ClientConfig` must advertise INC_RECURSE under the feature.
+/// Default `ClientConfig` must advertise INC_RECURSE unconditionally.
 ///
 /// This is the in-process counterpart to the byte-level pipe push: if
 /// the builder default ever regresses to `false` the capability string
@@ -288,7 +278,7 @@ fn default_capability_string_includes_inc_recurse() {
     let config = ClientConfig::builder().build();
     assert!(
         config.inc_recursive_send(),
-        "sender-inc-recurse feature must flip inc_recursive_send default ON"
+        "inc_recursive_send default must be ON"
     );
 
     let caps = build_capability_string(config.inc_recursive_send());
@@ -298,15 +288,14 @@ fn default_capability_string_includes_inc_recurse() {
     );
     assert!(
         caps.contains('i'),
-        "sender-inc-recurse feature must include 'i' in capability string: {caps}"
+        "capability string must include 'i' by default: {caps}"
     );
 }
 
-/// `--no-inc-recursive` must still suppress `'i'` even with the feature on.
+/// `--no-inc-recursive` must still suppress `'i'` even with the default ON.
 ///
 /// Mirrors the upstream `set_allow_inc_recurse()` precedent: the CLI
-/// override wins over the compiled-in default. ISI.h preserves this
-/// invariant when the feature gate is retired.
+/// override wins over the compiled-in default.
 #[test]
 fn no_inc_recursive_override_suppresses_inc_recurse_bit() {
     let config = ClientConfig::builder().inc_recursive_send(false).build();
@@ -314,7 +303,7 @@ fn no_inc_recursive_override_suppresses_inc_recurse_bit() {
     let caps = build_capability_string(config.inc_recursive_send());
     assert!(
         !caps.contains('i'),
-        "--no-inc-recursive override must drop 'i' even with feature on: {caps}"
+        "--no-inc-recursive override must drop 'i' even with the default ON: {caps}"
     );
 }
 

@@ -45,13 +45,6 @@
 //! test logs `skip:` and succeeds when `geteuid() == 0`. CI runners
 //! run unprivileged; root-only environments simply opt out.
 //!
-//! ## Feature gate
-//!
-//! `#[cfg(feature = "sender-inc-recurse")]` - identical reasoning to
-//! ISI.c/.d/.e. Without the feature the capability string strips `'i'`
-//! and the sender falls back to non-INC_RECURSE walk, exercising the
-//! wrong code path.
-//!
 //! ## Platform gate
 //!
 //! `#[cfg(all(unix, not(target_os = "macos")))]` - the upstream rsync
@@ -61,7 +54,7 @@
 //! would not exercise the same code path even if the upstream binary
 //! were available.
 
-#![cfg(all(unix, not(target_os = "macos"), feature = "sender-inc-recurse"))]
+#![cfg(all(unix, not(target_os = "macos")))]
 
 mod integration;
 
