@@ -361,9 +361,20 @@ mod tests {
             rendered.contains(&"-oServerAliveCountMax=3".to_owned()),
             "expected ServerAliveCountMax=3 in {rendered:?}"
         );
+        // upstream: main.c:569-586 do_cmd() renders the parsed username as a
+        // separate `-l <user>` argument ahead of the bare host operand, not
+        // a `user@host` composite.
         assert!(
-            rendered.contains(&"user@example.com".to_owned()),
-            "user@host operand should be rendered: {rendered:?}"
+            rendered.contains(&"-l".to_owned()),
+            "expected -l in {rendered:?}"
+        );
+        assert!(
+            rendered.contains(&"user".to_owned()),
+            "expected user in {rendered:?}"
+        );
+        assert!(
+            rendered.contains(&"example.com".to_owned()),
+            "bare host operand should be rendered: {rendered:?}"
         );
     }
 
