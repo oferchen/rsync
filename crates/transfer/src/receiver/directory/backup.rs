@@ -325,10 +325,10 @@ pub(in crate::receiver::directory) fn backup_victim(
 
 /// Backs up (when configured) then unlinks a single extraneous file victim.
 ///
-/// This is the shared file-removal step for the `--delete` sites that lack a
-/// [`ReceiverContext`] to call [`ReceiverContext::backup_victim_before_delete`]:
-/// the parallel scan workers and the capped serial executor. When the backup
-/// took ownership of the victim the direct unlink is skipped.
+/// The shared file-removal step for every `--delete` site: the immediate
+/// parallel scan, the deferred `--delete-delay` executor, and the capped
+/// serial executor. When the backup took ownership of the victim the direct
+/// unlink is skipped.
 ///
 /// upstream: `delete.c:165-174` - back up under the guard, otherwise unlink.
 #[cfg(unix)]
@@ -427,37 +427,6 @@ impl ReceiverContext {
         Ok(true)
     }
 
-    /// Backs up an extraneous destination file before the `--delete` pass
-    /// unlinks it, applying upstream's `is_backup_file` guard.
-    ///
-    /// Returns `Ok(true)` when the victim was preserved into the backup area and
-    /// its original path is already clear (the caller must NOT unlink again),
-    /// `Ok(false)` when no backup applies, and `Err` when the backup mechanism
-    /// failed (the caller treats that as a failed deletion).
-    ///
-    /// # Upstream Reference
-    ///
-    /// - `delete.c:165-170` - the `make_backups > 0 && (backup_dir ||
-    ///   !is_backup_file(fbuf))` guard around `make_backup(fbuf, True)`.
-    #[cfg(unix)]
-    pub(in crate::receiver) fn backup_victim_before_delete(
-        &self,
-        existing: &Path,
-        relative_path: &Path,
-        dest_dir: &Path,
-        sandbox: Option<&fast_io::DirSandbox>,
-    ) -> io::Result<bool> {
-        backup_victim(
-            self.config.flags.backup,
-            self.config.backup_dir.as_deref().map(Path::new),
-            self.config.effective_backup_suffix(),
-            existing,
-            relative_path,
-            dest_dir,
-            sandbox,
-        )
-    }
-
     /// Windows variant: no dirfd sandbox, so the post-hard-link removal uses a
     /// path-based `remove_file`, matching the Windows symlink-create path.
     #[cfg(windows)]
@@ -481,24 +450,6 @@ impl ReceiverContext {
             OsStr::new(self.config.effective_backup_suffix()),
         )?;
         Ok(true)
-    }
-
-    /// Windows variant of [`backup_victim_before_delete`]: no dirfd sandbox.
-    ///
-    /// [`backup_victim_before_delete`]: Self::backup_victim_before_delete
-    #[cfg(windows)]
-    pub(in crate::receiver) fn backup_victim_before_delete(
-        &self,
-        existing: &Path,
-        dest_dir: &Path,
-    ) -> io::Result<bool> {
-        backup_victim(
-            self.config.flags.backup,
-            self.config.backup_dir.as_deref().map(Path::new),
-            self.config.effective_backup_suffix(),
-            existing,
-            dest_dir,
-        )
     }
 }
 

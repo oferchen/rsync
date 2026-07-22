@@ -468,18 +468,15 @@ impl ReceiverContext {
                 // gone, so the direct unlink is skipped.
                 #[cfg(unix)]
                 {
-                    match self.backup_victim_before_delete(&path, &entry.rel, dest_dir, sandbox_ref)
-                    {
-                        Ok(true) => Ok(()),
-                        Ok(false) => fast_io::unlink_via_sandbox_or_fallback(
-                            sandbox_ref,
-                            dest_dir,
-                            &entry.rel,
-                            &path,
-                            fast_io::UnlinkFlags::File,
-                        ),
-                        Err(e) => Err(e),
-                    }
+                    super::backup::remove_file_victim(
+                        self.config.flags.backup,
+                        self.config.backup_dir.as_deref().map(Path::new),
+                        self.config.effective_backup_suffix(),
+                        &path,
+                        &entry.rel,
+                        dest_dir,
+                        sandbox_ref,
+                    )
                 }
                 #[cfg(not(unix))]
                 {
