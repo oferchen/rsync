@@ -22,6 +22,8 @@
 //! - `backup.c:352-353` - `INFO_GTE(BACKUP, 1)` "backed up %s to %s".
 
 #[cfg(any(unix, windows))]
+use std::ffi::OsStr;
+#[cfg(any(unix, windows))]
 use std::fs;
 #[cfg(any(unix, windows))]
 use std::io;
@@ -176,6 +178,212 @@ fn report_backup(
     );
 }
 
+/// Reports whether `name` already ends with the backup `suffix`.
+///
+/// upstream: `delete.c:37-41` `is_backup_file()` - a non-empty suffix that
+/// matches the trailing bytes of the name, with at least one byte preceding it
+/// (`k = strlen(fn) - backup_suffix_len; k > 0 && strcmp(fn+k, suffix) == 0`).
+#[cfg(any(unix, windows))]
+pub(in crate::receiver::directory) fn is_backup_file(name: &OsStr, suffix: &str) -> bool {
+    if suffix.is_empty() {
+        return false;
+    }
+    let name = name.as_encoded_bytes();
+    let suffix = suffix.as_bytes();
+    name.len() > suffix.len() && name.ends_with(suffix)
+}
+
+/// Moves `existing` into its computed backup location, emits the trace, and
+/// clears the original path so the caller need not unlink again.
+///
+/// Shared by the pre-replace and pre-delete backup callers. Only the hard-link
+/// placement leaves the original behind (upstream's copy tier, `ok == 2`); the
+/// rename and cross-device copy tiers already free the path.
+///
+/// upstream: `delete.c:167-170` - `make_backup(fbuf, True)` then, when the copy
+/// tier left the original in place (`ok == 2`), `robust_unlink(fbuf)`.
+#[cfg(unix)]
+fn place_report_and_clear(
+    existing: &Path,
+    relative_path: &Path,
+    dest_dir: &Path,
+    backup_dir: Option<&Path>,
+    suffix: &OsStr,
+    sandbox: Option<&fast_io::DirSandbox>,
+) -> io::Result<()> {
+    let backup_path = engine::compute_backup_path(dest_dir, existing, None, backup_dir, suffix);
+    let placement = place_existing_backup(existing, &backup_path)?;
+    report_backup(&placement, existing, &backup_path, dest_dir);
+    if matches!(placement, BackupPlacement::Hardlinked) {
+        // upstream: delete.c:169-170 - the hard-link tier is upstream's `ok == 2`
+        // here: the original survives as a second link and must be unlinked.
+        // SEC-1.g: route through the sandbox dirfd when the parent is the root.
+        let _ = fast_io::unlink_via_sandbox_or_fallback(
+            sandbox,
+            dest_dir,
+            relative_path,
+            existing,
+            fast_io::UnlinkFlags::File,
+        );
+    }
+    Ok(())
+}
+
+/// Windows variant of [`place_report_and_clear`]: no dirfd sandbox, so the
+/// leftover-original unlink is path-based.
+#[cfg(windows)]
+fn place_report_and_clear(
+    existing: &Path,
+    dest_dir: &Path,
+    backup_dir: Option<&Path>,
+    suffix: &OsStr,
+) -> io::Result<()> {
+    let backup_path = engine::compute_backup_path(dest_dir, existing, None, backup_dir, suffix);
+    let placement = place_existing_backup(existing, &backup_path)?;
+    report_backup(&placement, existing, &backup_path, dest_dir);
+    if matches!(placement, BackupPlacement::Hardlinked) {
+        let _ = fs::remove_file(existing);
+    }
+    Ok(())
+}
+
+/// Backs up an extraneous destination file before the `--delete` pass unlinks
+/// it, applying upstream's `is_backup_file` guard.
+///
+/// Returns `Ok(true)` when the victim was preserved into the backup area and
+/// its original path is now clear (the caller must NOT unlink again); `Ok(false)`
+/// when no backup applies (`--backup` off, an already-suffixed name with no
+/// `--backup-dir`, or nothing at `existing`); `Err` when the backup mechanism
+/// failed, which the caller treats as a failed deletion (upstream `DR_FAILURE`).
+///
+/// upstream: `delete.c:165-170` - `make_backups > 0 && !(flags & DEL_FOR_BACKUP)
+/// && (backup_dir || !is_backup_file(fbuf))` guards `make_backup(fbuf, True)`.
+#[cfg(unix)]
+pub(in crate::receiver::directory) fn backup_victim(
+    backup: bool,
+    backup_dir: Option<&Path>,
+    suffix: &str,
+    existing: &Path,
+    relative_path: &Path,
+    dest_dir: &Path,
+    sandbox: Option<&fast_io::DirSandbox>,
+) -> io::Result<bool> {
+    if !backup {
+        return Ok(false);
+    }
+    // upstream: delete.c:165 - DEL_FOR_BACKUP is never set on this delete path,
+    // so the guard reduces to `backup_dir || !is_backup_file(name)`: a file
+    // already ending in the suffix is unlinked directly unless a --backup-dir
+    // sends it to the separate directory (no `<name><suffix><suffix>`).
+    if backup_dir.is_none()
+        && existing
+            .file_name()
+            .is_some_and(|name| is_backup_file(name, suffix))
+    {
+        return Ok(false);
+    }
+    // upstream: backup.c:236 - a vanished source (x_lstat != 0) needs no backup.
+    if fs::symlink_metadata(existing).is_err() {
+        return Ok(false);
+    }
+    place_report_and_clear(
+        existing,
+        relative_path,
+        dest_dir,
+        backup_dir,
+        OsStr::new(suffix),
+        sandbox,
+    )?;
+    Ok(true)
+}
+
+/// Windows variant of [`backup_victim`]: no dirfd sandbox is threaded through.
+#[cfg(windows)]
+pub(in crate::receiver::directory) fn backup_victim(
+    backup: bool,
+    backup_dir: Option<&Path>,
+    suffix: &str,
+    existing: &Path,
+    dest_dir: &Path,
+) -> io::Result<bool> {
+    if !backup {
+        return Ok(false);
+    }
+    if backup_dir.is_none()
+        && existing
+            .file_name()
+            .is_some_and(|name| is_backup_file(name, suffix))
+    {
+        return Ok(false);
+    }
+    if fs::symlink_metadata(existing).is_err() {
+        return Ok(false);
+    }
+    place_report_and_clear(existing, dest_dir, backup_dir, OsStr::new(suffix))?;
+    Ok(true)
+}
+
+/// Backs up (when configured) then unlinks a single extraneous file victim.
+///
+/// This is the shared file-removal step for the `--delete` sites that lack a
+/// [`ReceiverContext`] to call [`ReceiverContext::backup_victim_before_delete`]:
+/// the parallel scan workers and the capped serial executor. When the backup
+/// took ownership of the victim the direct unlink is skipped.
+///
+/// upstream: `delete.c:165-174` - back up under the guard, otherwise unlink.
+#[cfg(unix)]
+pub(in crate::receiver::directory) fn remove_file_victim(
+    backup: bool,
+    backup_dir: Option<&Path>,
+    suffix: &str,
+    existing: &Path,
+    relative_path: &Path,
+    dest_dir: &Path,
+    sandbox: Option<&fast_io::DirSandbox>,
+) -> io::Result<()> {
+    if backup_victim(
+        backup,
+        backup_dir,
+        suffix,
+        existing,
+        relative_path,
+        dest_dir,
+        sandbox,
+    )? {
+        return Ok(());
+    }
+    fast_io::unlink_via_sandbox_or_fallback(
+        sandbox,
+        dest_dir,
+        relative_path,
+        existing,
+        fast_io::UnlinkFlags::File,
+    )
+}
+
+/// Non-Unix variant of [`remove_file_victim`]: path-based removal, with the
+/// backup step wired only on Windows where the mechanism is supported.
+#[cfg(not(unix))]
+pub(in crate::receiver::directory) fn remove_file_victim(
+    backup: bool,
+    backup_dir: Option<&std::path::Path>,
+    suffix: &str,
+    existing: &std::path::Path,
+    dest_dir: &std::path::Path,
+) -> std::io::Result<()> {
+    #[cfg(windows)]
+    {
+        if backup_victim(backup, backup_dir, suffix, existing, dest_dir)? {
+            return Ok(());
+        }
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = (backup, backup_dir, suffix, dest_dir);
+    }
+    std::fs::remove_file(existing)
+}
+
 impl ReceiverContext {
     /// Backs up an existing destination entry before it is replaced by a fresh
     /// symlink, FIFO, socket, or device node.
@@ -208,34 +416,46 @@ impl ReceiverContext {
             return Ok(false);
         }
 
-        let backup_path = engine::compute_backup_path(
-            dest_dir,
+        place_report_and_clear(
             existing,
-            None,
+            relative_path,
+            dest_dir,
             self.config.backup_dir.as_deref().map(Path::new),
-            std::ffi::OsStr::new(self.config.effective_backup_suffix()),
-        );
-
-        let placement = place_existing_backup(existing, &backup_path)?;
-        report_backup(&placement, existing, &backup_path, dest_dir);
-
-        if matches!(placement, BackupPlacement::Hardlinked) {
-            // The original still exists as a second link; remove it so the new
-            // node can take its place. upstream: atomic_create's rename over
-            // `fname` does this implicitly.
-            //
-            // SEC-1.g: route the removal through the sandbox dirfd when the
-            // destination parent is the sandbox root so a TOCTOU swap on the
-            // original path cannot redirect the unlink.
-            let _ = fast_io::unlink_via_sandbox_or_fallback(
-                sandbox,
-                dest_dir,
-                relative_path,
-                existing,
-                fast_io::UnlinkFlags::File,
-            );
-        }
+            OsStr::new(self.config.effective_backup_suffix()),
+            sandbox,
+        )?;
         Ok(true)
+    }
+
+    /// Backs up an extraneous destination file before the `--delete` pass
+    /// unlinks it, applying upstream's `is_backup_file` guard.
+    ///
+    /// Returns `Ok(true)` when the victim was preserved into the backup area and
+    /// its original path is already clear (the caller must NOT unlink again),
+    /// `Ok(false)` when no backup applies, and `Err` when the backup mechanism
+    /// failed (the caller treats that as a failed deletion).
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `delete.c:165-170` - the `make_backups > 0 && (backup_dir ||
+    ///   !is_backup_file(fbuf))` guard around `make_backup(fbuf, True)`.
+    #[cfg(unix)]
+    pub(in crate::receiver) fn backup_victim_before_delete(
+        &self,
+        existing: &Path,
+        relative_path: &Path,
+        dest_dir: &Path,
+        sandbox: Option<&fast_io::DirSandbox>,
+    ) -> io::Result<bool> {
+        backup_victim(
+            self.config.flags.backup,
+            self.config.backup_dir.as_deref().map(Path::new),
+            self.config.effective_backup_suffix(),
+            existing,
+            relative_path,
+            dest_dir,
+            sandbox,
+        )
     }
 
     /// Windows variant: no dirfd sandbox, so the post-hard-link removal uses a
@@ -254,21 +474,31 @@ impl ReceiverContext {
             return Ok(false);
         }
 
-        let backup_path = engine::compute_backup_path(
-            dest_dir,
+        place_report_and_clear(
             existing,
-            None,
+            dest_dir,
             self.config.backup_dir.as_deref().map(Path::new),
-            std::ffi::OsStr::new(self.config.effective_backup_suffix()),
-        );
-
-        let placement = place_existing_backup(existing, &backup_path)?;
-        report_backup(&placement, existing, &backup_path, dest_dir);
-
-        if matches!(placement, BackupPlacement::Hardlinked) {
-            let _ = fs::remove_file(existing);
-        }
+            OsStr::new(self.config.effective_backup_suffix()),
+        )?;
         Ok(true)
+    }
+
+    /// Windows variant of [`backup_victim_before_delete`]: no dirfd sandbox.
+    ///
+    /// [`backup_victim_before_delete`]: Self::backup_victim_before_delete
+    #[cfg(windows)]
+    pub(in crate::receiver) fn backup_victim_before_delete(
+        &self,
+        existing: &Path,
+        dest_dir: &Path,
+    ) -> io::Result<bool> {
+        backup_victim(
+            self.config.flags.backup,
+            self.config.backup_dir.as_deref().map(Path::new),
+            self.config.effective_backup_suffix(),
+            existing,
+            dest_dir,
+        )
     }
 }
 

@@ -26,11 +26,16 @@
 //! - [`delete_timing`] - early vs late (`--delete-after` / `--delete-delay`)
 //!   delete-pass scheduling and the dest-side `.rsync-filter` protection
 //!   invariant that makes deferral load-bearing.
+//! - [`delete_backup`] - `--backup` / `--backup-dir` preservation of each
+//!   extraneous file victim before the receiver's delete pass unlinks it,
+//!   across the immediate, delayed, and capped removal sites.
 //! - [`iconv_wire_order`] - regression coverage for the receiver-side
 //!   `--iconv` ordering invariant (file_list stays in sender wire-emit
 //!   order, never re-sorted on local-charset bytes).
 
 mod dedup;
+#[cfg(unix)]
+mod delete_backup;
 mod delete_pipeline_hook;
 mod delete_timing;
 mod filter_chain;

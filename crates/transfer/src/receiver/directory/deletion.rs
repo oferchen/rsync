@@ -463,19 +463,33 @@ impl ReceiverContext {
                     std::fs::remove_dir_all(&path)
                 }
             } else {
+                // upstream: delete.c:165-174 - back up the victim (when
+                // --backup) before unlinking; a preserved victim is already
+                // gone, so the direct unlink is skipped.
                 #[cfg(unix)]
                 {
-                    fast_io::unlink_via_sandbox_or_fallback(
-                        sandbox_ref,
-                        dest_dir,
-                        &entry.rel,
-                        &path,
-                        fast_io::UnlinkFlags::File,
-                    )
+                    match self.backup_victim_before_delete(&path, &entry.rel, dest_dir, sandbox_ref)
+                    {
+                        Ok(true) => Ok(()),
+                        Ok(false) => fast_io::unlink_via_sandbox_or_fallback(
+                            sandbox_ref,
+                            dest_dir,
+                            &entry.rel,
+                            &path,
+                            fast_io::UnlinkFlags::File,
+                        ),
+                        Err(e) => Err(e),
+                    }
                 }
                 #[cfg(not(unix))]
                 {
-                    std::fs::remove_file(&path)
+                    super::backup::remove_file_victim(
+                        self.config.flags.backup,
+                        self.config.backup_dir.as_deref().map(Path::new),
+                        self.config.effective_backup_suffix(),
+                        &path,
+                        dest_dir,
+                    )
                 }
             };
             match result {
@@ -829,6 +843,14 @@ impl ReceiverContext {
         #[cfg(unix)]
         let sandbox_for_workers = sandbox.cloned();
 
+        // upstream: delete.c:165-174 - each file victim is backed up (when
+        // --backup) before it is unlinked. The workers hold no `self`, so carry
+        // the backup settings as owned values the `move` closure can consult.
+        let backup_enabled = self.config.flags.backup;
+        let backup_dir_owned: Option<PathBuf> =
+            self.config.backup_dir.as_deref().map(PathBuf::from);
+        let backup_suffix: String = self.config.effective_backup_suffix().to_owned();
+
         // Collect deleted relative paths for post-parallel itemize emission.
         // The writer is not Send, so MSG_INFO frames are emitted sequentially
         // after parallel deletion completes.
@@ -1069,20 +1091,31 @@ impl ReceiverContext {
                                 std::fs::remove_dir_all(&path)
                             }
                         } else {
-                            // SEC-1.q2 audit row #7
+                            // upstream: delete.c:165-174 - back up the file
+                            // victim (when --backup) before unlinking it.
+                            // SEC-1.q2 audit row #7: the fallback unlink still
+                            // routes through the sandbox dirfd.
                             #[cfg(unix)]
                             {
-                                fast_io::unlink_via_sandbox_or_fallback(
-                                    sandbox_ref,
-                                    &dest_dir_owned,
-                                    &entry_rel,
+                                super::backup::remove_file_victim(
+                                    backup_enabled,
+                                    backup_dir_owned.as_deref(),
+                                    &backup_suffix,
                                     &path,
-                                    fast_io::UnlinkFlags::File,
+                                    &entry_rel,
+                                    &dest_dir_owned,
+                                    sandbox_ref,
                                 )
                             }
                             #[cfg(not(unix))]
                             {
-                                std::fs::remove_file(&path)
+                                super::backup::remove_file_victim(
+                                    backup_enabled,
+                                    backup_dir_owned.as_deref(),
+                                    &backup_suffix,
+                                    &path,
+                                    &dest_dir_owned,
+                                )
                             }
                         };
 
@@ -1243,7 +1276,6 @@ impl ReceiverContext {
         #[cfg(unix)] boundary_dev: Option<u64>,
     ) -> io::Result<(DeleteStats, bool, i32)> {
         let mut state = CappedDeleteState {
-            #[cfg(unix)]
             dest_dir,
             #[cfg(unix)]
             sandbox,
@@ -1257,6 +1289,9 @@ impl ReceiverContext {
             emit_itemize: self.should_emit_itemize(),
             server_mode: !self.config.connection.client_mode,
             protocol: self.protocol.as_u8(),
+            backup: self.config.flags.backup,
+            backup_dir: self.config.backup_dir.as_deref().map(PathBuf::from),
+            backup_suffix: self.config.effective_backup_suffix().to_owned(),
             writer,
         };
 
@@ -1396,9 +1431,8 @@ struct CappedCandidate {
 
 /// Mutable bookkeeping threaded through the recursive capped deletion walk.
 struct CappedDeleteState<'w, W: ?Sized> {
-    // Only read by the Unix sandbox-anchored scan path; the non-Unix scan
-    // walks `target_path` directly, so gate the field like `sandbox` below.
-    #[cfg(unix)]
+    /// Deletion root. Anchors the Unix sandbox-anchored scan path and the
+    /// per-victim backup-path computation on every platform.
     dest_dir: &'w Path,
     #[cfg(unix)]
     sandbox: Option<&'w std::sync::Arc<fast_io::DirSandbox>>,
@@ -1423,6 +1457,12 @@ struct CappedDeleteState<'w, W: ?Sized> {
     server_mode: bool,
     /// Negotiated protocol version, gating the `>= 29` `MSG_DELETED` path.
     protocol: u8,
+    /// `--backup`: back up each file victim before unlinking it.
+    backup: bool,
+    /// `--backup-dir` destination (relative to the deletion root, or absolute).
+    backup_dir: Option<PathBuf>,
+    /// Effective backup suffix (`~` by default, `""` when `--backup-dir` is set).
+    backup_suffix: String,
     writer: &'w mut W,
 }
 
@@ -1603,22 +1643,31 @@ impl<W: crate::writer::MsgInfoSender + ?Sized> CappedDeleteState<'_, W> {
         }
     }
 
-    /// Performs the unlink/rmdir syscall, anchored through the sandbox helper
-    /// on Unix.
+    /// Performs the rmdir (directory) or backup-then-unlink (file) removal for
+    /// one leaf, anchored through the sandbox helper on Unix.
+    ///
+    /// A file victim is first backed up when `--backup` is set (upstream
+    /// delete.c:165-174); directories are never backed up here.
     fn raw_unlink(&self, rel: &Path, path: &Path, is_dir: bool) -> io::Result<()> {
         #[cfg(unix)]
         {
-            let flags = if is_dir {
-                fast_io::UnlinkFlags::Dir
-            } else {
-                fast_io::UnlinkFlags::File
-            };
-            fast_io::unlink_via_sandbox_or_fallback(
-                self.sandbox.map(|a| &**a),
-                self.dest_dir,
-                rel,
+            if is_dir {
+                return fast_io::unlink_via_sandbox_or_fallback(
+                    self.sandbox.map(|a| &**a),
+                    self.dest_dir,
+                    rel,
+                    path,
+                    fast_io::UnlinkFlags::Dir,
+                );
+            }
+            super::backup::remove_file_victim(
+                self.backup,
+                self.backup_dir.as_deref(),
+                &self.backup_suffix,
                 path,
-                flags,
+                rel,
+                self.dest_dir,
+                self.sandbox.map(|a| &**a),
             )
         }
         #[cfg(not(unix))]
@@ -1627,7 +1676,13 @@ impl<W: crate::writer::MsgInfoSender + ?Sized> CappedDeleteState<'_, W> {
             if is_dir {
                 std::fs::remove_dir(path)
             } else {
-                std::fs::remove_file(path)
+                super::backup::remove_file_victim(
+                    self.backup,
+                    self.backup_dir.as_deref(),
+                    &self.backup_suffix,
+                    path,
+                    self.dest_dir,
+                )
             }
         }
     }
