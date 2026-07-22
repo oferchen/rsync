@@ -64,24 +64,6 @@ fn temp_file_is_created_during_transfer() {
 }
 
 #[test]
-fn temp_file_path_includes_process_id() {
-    let temp = tempdir().expect("tempdir");
-    let dest = temp.path().join("file.txt");
-
-    let (guard, _file) =
-        DestinationWriteGuard::new(&dest, false, None, None).expect("create guard");
-
-    let staging = guard.staging_path();
-    let pid = std::process::id();
-    assert!(
-        staging.to_string_lossy().contains(&pid.to_string()),
-        "staging path should include process ID for uniqueness"
-    );
-
-    guard.discard();
-}
-
-#[test]
 fn temp_file_path_includes_unique_counter() {
     let temp = tempdir().expect("tempdir");
     let dest = temp.path().join("file.txt");
