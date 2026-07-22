@@ -342,16 +342,11 @@ fn parse_filter_directive_accepts_dir_merge_without_modifiers() {
 }
 
 #[test]
-fn parse_filter_directive_accepts_per_dir_alias() {
-    let directive =
-        parse_filter_directive(OsStr::new("per-dir .rsync-filter")).expect("per-dir alias parses");
-    assert_eq!(
-        directive,
-        FilterDirective::Rule(FilterRuleSpec::dir_merge(
-            ".rsync-filter".to_owned(),
-            DirMergeOptions::default(),
-        )),
-    );
+fn parse_filter_directive_rejects_per_dir_alias() {
+    // "per-dir" is not an upstream keyword; it must be rejected rather than
+    // treated as a dir-merge alias. upstream: exclude.c recognizes only
+    // "dir-merge" (case 'd').
+    assert!(parse_filter_directive(OsStr::new("per-dir .rsync-filter")).is_err());
 }
 
 #[test]

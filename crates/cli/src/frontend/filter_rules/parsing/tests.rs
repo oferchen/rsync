@@ -263,16 +263,15 @@ fn dir_merge_basic() {
 }
 
 #[test]
-fn dir_merge_per_dir_alias() {
-    let result = parse_dir_merge_alias("per-dir filter-file");
-    assert!(result.is_some());
-    let directive = result.unwrap().unwrap();
-    match directive {
-        FilterDirective::Rule(spec) => {
-            assert_eq!(spec.kind(), FilterRuleKind::DirMerge);
-        }
-        _ => panic!("expected Rule directive"),
-    }
+fn per_dir_is_not_a_keyword() {
+    // upstream: exclude.c recognizes only "dir-merge" (case 'd' RULE_STRCMP);
+    // there is no "per-dir" spelling. oc must decline it (returns None) so the
+    // caller rejects the unknown rule, rather than accepting an oc-only alias.
+    assert!(parse_dir_merge_alias("per-dir filter-file").is_none());
+    // The canonical keyword still parses as a dir-merge directive.
+    let ok = parse_dir_merge_alias("dir-merge filter-file");
+    assert!(ok.is_some());
+    assert!(ok.unwrap().is_ok());
 }
 
 #[test]
