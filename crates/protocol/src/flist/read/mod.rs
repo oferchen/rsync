@@ -122,14 +122,14 @@ pub struct FileListReader {
     ///
     /// Controls pathname validation: when false, absolute paths (leading `/`)
     /// are rejected. When true, leading slashes are stripped instead.
-    /// upstream: flist.c:757 `!relative_paths && *thisname == '/'`
+    /// upstream: flist.c:769 `!relative_paths && *thisname == '/'`
     relative_paths: bool,
     /// Wire NDX start of the current flist segment.
     ///
     /// Used to distinguish abbreviated vs unabbreviated hardlink followers.
     /// Abbreviated followers (leader in same segment, idx >= ndx_start) have
     /// metadata skipped on wire. Unabbreviated followers carry full metadata.
-    /// upstream: flist.c:recv_file_entry() line 793
+    /// upstream: flist.c:recv_file_entry() line 805
     ndx_start: i32,
     /// Interner for deduplicating parent directory paths across file entries.
     ///
@@ -402,7 +402,7 @@ impl FileListReader {
     ///
     /// # Upstream Reference
     ///
-    /// - `flist.c:757`: `!relative_paths && *thisname == '/'`
+    /// - `flist.c:769`: `!relative_paths && *thisname == '/'`
     #[inline]
     #[must_use]
     pub const fn with_relative_paths(mut self, relative: bool) -> Self {
@@ -480,7 +480,7 @@ impl FileListReader {
     ///
     /// Unabbreviated followers (leader in a previous flist segment) carry full
     /// metadata on the wire and must NOT skip reading it.
-    /// upstream: flist.c:recv_file_entry() line 793
+    /// upstream: flist.c:recv_file_entry() line 805
     #[inline]
     pub(crate) fn is_abbreviated_follower(
         &self,
@@ -539,7 +539,7 @@ impl FileListReader {
     ///
     /// # Upstream Reference
     ///
-    /// `flist.c:recv_file_entry()` lines 793-822 - receiver copies metadata
+    /// `flist.c:recv_file_entry()` lines 805-834 - receiver copies metadata
     /// from leader and updates static compression variables.
     pub fn read_entry_with_flist<R: Read + ?Sized>(
         &mut self,
@@ -559,7 +559,7 @@ impl FileListReader {
 
         let name = self.read_name(reader, flags)?;
 
-        // upstream: flist.c:1873 - sender rejects empty names; we enforce the
+        // upstream: flist.c:1909 - sender rejects empty names; we enforce the
         // same invariant as defense-in-depth against a malicious sender.
         if name.is_empty() {
             return Err(io::Error::new(
@@ -574,10 +574,10 @@ impl FileListReader {
 
         // Abbreviated followers (leader in same flist segment) have metadata
         // copied from the leader; unabbreviated followers carry full metadata.
-        // upstream: flist.c:recv_file_entry() lines 793-822
+        // upstream: flist.c:recv_file_entry() lines 805-834
         let (size, metadata, link_target, rdev, hardlink_dev_ino, checksum) =
             if self.is_abbreviated_follower(flags, hardlink_idx) {
-                // upstream: flist.c:794 - look up leader in the current segment
+                // upstream: flist.c:806 - look up leader in the current segment
                 // and copy its metadata. The sender's static compression variables
                 // (mode, modtime, uid, gid, atime) were already updated from the
                 // leader's data before `goto the_end`, so the receiver must mirror
@@ -610,7 +610,7 @@ impl FileListReader {
                     )));
                 };
 
-                // upstream: flist.c:795-810 - copy fields from leader
+                // upstream: flist.c:807-822 - copy fields from leader
                 let leader_mode = leader.mode();
                 let leader_mtime = leader.mtime();
                 let leader_uid = leader.uid();
@@ -619,7 +619,7 @@ impl FileListReader {
 
                 // Update compression state to match sender's statics
                 // upstream: sender updates mode/modtime/uid/gid/atime at
-                // flist.c:430-493 BEFORE goto the_end
+                // flist.c:442-505 BEFORE goto the_end
                 self.state.update_mode(leader_mode);
                 self.state.update_mtime(leader_mtime);
                 if let Some(uid) = leader_uid {
@@ -682,7 +682,7 @@ impl FileListReader {
         // sender intended (mirrors upstream's `lastname` semantics).
         let converted_name = self.apply_encoding_conversion(name)?;
 
-        // upstream: flist.c:756-760 - clean_fname(CFN_REFUSE_DOT_DOT_DIRS)
+        // upstream: flist.c:768-772 - clean_fname(CFN_REFUSE_DOT_DOT_DIRS)
         // then reject leading '/' when !relative_paths.
         // In --relative mode, leading slashes are stripped instead.
         let cleaned_name = self.clean_and_validate_name(converted_name)?;
@@ -747,7 +747,7 @@ impl FileListReader {
         }
 
         // Read ACLs from the wire (after checksum, before xattrs).
-        // upstream: flist.c:1205-1207 - ACLs are read for all non-symlink entries,
+        // upstream: flist.c:1233-1235 - ACLs are read for all non-symlink entries,
         // including abbreviated hardlink followers. Symlinks never carry ACLs.
         if self.preserve_acls && !entry.is_symlink() {
             let (access_ndx, def_ndx) =
@@ -759,7 +759,7 @@ impl FileListReader {
         }
 
         // Read xattr index/data from wire (after ACLs).
-        // upstream: flist.c:1209-1212 - receive_xattr() is called after
+        // upstream: flist.c:1237-1240 - receive_xattr() is called after
         // receive_acl() and runs for ALL entries including hardlink followers.
         if self.preserve_xattrs {
             let xattr_ndx =

@@ -1365,7 +1365,7 @@ fn read_entry_accepts_name_below_maxpathlen() {
 }
 
 // Zero-length filename validation tests
-// upstream: flist.c:1873 - sender rejects empty names. These tests verify
+// upstream: flist.c:1909 - sender rejects empty names. These tests verify
 // that the receiver also rejects zero-length filenames as defense-in-depth.
 
 #[test]
@@ -1734,7 +1734,7 @@ fn abbreviated_hardlink_follower_out_of_range_is_protocol_violation() {
 /// same segment) still decodes cleanly and inherits the leader's metadata,
 /// proving the bounds check in
 /// `abbreviated_hardlink_follower_out_of_range_is_protocol_violation` never
-/// rejects a legitimate follower. upstream: flist.c:795-810.
+/// rejects a legitimate follower. upstream: flist.c:807-822.
 #[test]
 fn abbreviated_hardlink_follower_in_range_decodes() {
     use crate::flist::write::FileListWriter;
@@ -2106,7 +2106,7 @@ mod acl_integration {
     }
 
     /// Combined ACL + xattr reading respects upstream wire order.
-    /// upstream: flist.c:1205-1212 - ACLs before xattrs on wire.
+    /// upstream: flist.c:1233-1240 - ACLs before xattrs on wire.
     #[test]
     fn combined_acl_and_xattr_reading() {
         use crate::flist::write::FileListWriter;
@@ -2912,7 +2912,7 @@ fn update_stats_saturates_on_symlink_target_overflow() {
 // fix (commit d4c4f67, NEWS.md:71). The upstream fix lives in `support/rrsync`;
 // here we pin the equivalent oc-rsync site (`clean_and_validate_name`) so any
 // future refactor that switches to a pair-replace strategy is caught.
-// upstream: util1.c clean_fname leading-slash skip + flist.c:3079 strip_root
+// upstream: util1.c clean_fname leading-slash skip + flist.c:3114 strip_root
 mod leading_slash_parity {
     use super::*;
 

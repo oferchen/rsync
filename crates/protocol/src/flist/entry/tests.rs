@@ -1453,7 +1453,7 @@ fn extras_presence_bitfield_independence() {
 
 #[test]
 fn set_mode_overrides_constructor_mode() {
-    // upstream: flist.c:2257 - delete-missing-args sets file->mode = 0
+    // upstream: flist.c:2442 - delete-missing-args sets file->mode = 0
     let mut entry = FileEntry::new_file("sentinel.txt".into(), 0, 0o644);
     assert_eq!(entry.mode(), 0o100644); // S_IFREG | 0644
     entry.set_mode(0);

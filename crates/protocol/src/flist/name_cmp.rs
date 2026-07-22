@@ -1,14 +1,14 @@
 //! Foundational byte-wise name comparison for file list entries.
 //!
 //! Ports the upstream `f_name_cmp()` function from `flist.c` (upstream:
-//! flist.c:3217). The comparison is performed in two stages, matching
+//! flist.c:3252). The comparison is performed in two stages, matching
 //! upstream's split between `dirname` and `basename`:
 //!
 //! 1. Compare the parent directory bytes (`dirname`).
 //! 2. If equal, compare the leaf name bytes (`basename`).
 //!
 //! The comparison is a plain unsigned byte compare via `strcmp` in upstream
-//! (`flist.c:3331` - `(int)*c1++ - (int)*c2++`), so bytes with the high bit
+//! (`flist.c:3366` - `(int)*c1++ - (int)*c2++`), so bytes with the high bit
 //! set sort after ASCII. There is no locale awareness and no case folding.
 //!
 //! This module intentionally implements the simple, foundational comparator
@@ -19,11 +19,11 @@
 //!
 //! # Upstream Reference
 //!
-//! - `flist.c:3197` `enum fnc_state { s_DIR, s_SLASH, s_BASE, s_TRAILING }`
-//! - `flist.c:3198` `enum fnc_type { t_PATH, t_ITEM }`
-//! - `flist.c:3217-3334` `int f_name_cmp(const struct file_struct *f1,
+//! - `flist.c:3232` `enum fnc_state { s_DIR, s_SLASH, s_BASE, s_TRAILING }`
+//! - `flist.c:3233` `enum fnc_type { t_PATH, t_ITEM }`
+//! - `flist.c:3252-3369` `int f_name_cmp(const struct file_struct *f1,
 //!   const struct file_struct *f2)`
-//! - `flist.c:3331` `(int)*c1++ - (int)*c2++` - the byte-wise compare
+//! - `flist.c:3366` `(int)*c1++ - (int)*c2++` - the byte-wise compare
 //!   operates on `uchar`, so high bytes sort as unsigned.
 
 use std::cmp::Ordering;
@@ -36,7 +36,7 @@ use super::wire_path::path_bytes_to_wire;
 ///
 /// This is the foundational sort key for the parallel-deterministic-delete
 /// pipeline. It ports upstream rsync's `f_name_cmp()` (upstream:
-/// flist.c:3217) in its simplest form: dirname first, then basename, with
+/// flist.c:3252) in its simplest form: dirname first, then basename, with
 /// every byte compared as `unsigned char`. No locale awareness, no case
 /// folding, no protocol-29 directory-vs-file disambiguation.
 ///
@@ -82,7 +82,7 @@ pub fn f_name_cmp(a: &FileEntry, b: &FileEntry) -> Ordering {
 ///
 /// # Upstream Reference
 ///
-/// - `flist.c:3206-3211` documents the trailing-slash equivalence for
+/// - `flist.c:3241-3246` documents the trailing-slash equivalence for
 ///   directory entries at protocol 29+.
 #[must_use]
 pub fn name_cmp_eq(a: &FileEntry, b: &FileEntry) -> bool {
@@ -187,7 +187,7 @@ mod tests {
         use std::os::unix::ffi::OsStrExt;
         // "a<0xC3><0xA9>b" vs "a<0xC2>b" - 0xC3 > 0xC2 as unsigned, so the
         // first sorts after the second. This is upstream's behaviour because
-        // it casts to uchar before subtracting (upstream: flist.c:3331).
+        // it casts to uchar before subtracting (upstream: flist.c:3366).
         let a = FileEntry::new_file(PathBuf::from(OsStr::from_bytes(b"a\xC3\xA9b")), 0, 0o644);
         let b = FileEntry::new_file(PathBuf::from(OsStr::from_bytes(b"a\xC2b")), 0, 0o644);
         assert_eq!(f_name_cmp(&a, &b), Ordering::Greater);
@@ -233,7 +233,7 @@ mod tests {
         // explicit: a basename "subdir" and "subdir/" compare equal under
         // name_cmp_eq. This mirrors upstream's protocol-29 implicit
         // trailing-`/` rule for directory entries (upstream:
-        // flist.c:3206-3211).
+        // flist.c:3241-3246).
         assert_eq!(strip_trailing_slash(b"subdir/"), b"subdir");
         assert_eq!(strip_trailing_slash(b"subdir"), b"subdir");
         assert_eq!(strip_trailing_slash(b""), b"");

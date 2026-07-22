@@ -17,7 +17,7 @@
 //!
 //! At protocol < 29, upstream uses plain lexicographic byte comparison
 //! without file-before-directory distinction or implicit trailing '/'.
-//! upstream: flist.c:3223 - `protocol_version >= 29 ? t_PATH : t_ITEM`
+//! upstream: flist.c:3258 - `protocol_version >= 29 ? t_PATH : t_ITEM`
 
 use std::cmp::Ordering;
 
@@ -80,7 +80,7 @@ impl SortKey {
 /// we precompute the last '/' position via `memrchr` once per call and answer
 /// the query in O(1): `last_slash >= i` means a separator remains.
 /// This matches upstream's approach of avoiding forward scans in `f_name_cmp()`
-/// (upstream: flist.c:3217).
+/// (upstream: flist.c:3252).
 #[must_use]
 pub fn compare_file_entries(a: &FileEntry, b: &FileEntry) -> Ordering {
     let key_a = SortKey::new(0, a);
@@ -96,7 +96,7 @@ pub fn compare_file_entries(a: &FileEntry, b: &FileEntry) -> Ordering {
 /// At protocol < 29, upstream `f_name_cmp()` uses `t_path = t_ITEM`,
 /// meaning directories are NOT treated specially - no implicit trailing
 /// slash, no files-before-dirs. This is a simple lexicographic sort.
-/// upstream: flist.c:3223 - `protocol_version >= 29 ? t_PATH : t_ITEM`
+/// upstream: flist.c:3258 - `protocol_version >= 29 ? t_PATH : t_ITEM`
 fn compare_with_keys_pre29(bytes_a: &[u8], bytes_b: &[u8]) -> Ordering {
     // "." always comes first (even at protocol < 29)
     match (bytes_a == b".", bytes_b == b".") {
@@ -202,7 +202,7 @@ fn compare_with_keys(bytes_a: &[u8], key_a: &SortKey, bytes_b: &[u8], key_b: &So
 ///
 /// - `flist.c:flist_sort_and_clean()` - Called after `send_file_list()`
 ///   and `recv_file_list()` to sort entries.
-/// - `flist.c:2991` - `if (use_qsort) qsort(...); else merge_sort(...);`
+/// - `flist.c:1788` - `if (use_qsort) qsort(...); else merge_sort(...);`
 pub fn sort_file_list(file_list: &mut [FileEntry], use_qsort: bool, protocol_pre29: bool) {
     debug_log!(
         Flist,
@@ -226,7 +226,7 @@ pub fn sort_file_list(file_list: &mut [FileEntry], use_qsort: bool, protocol_pre
 
     if protocol_pre29 {
         // Protocol < 29: plain lexicographic sort, no file-before-dir.
-        // upstream: flist.c:3223 - t_path = t_ITEM at protocol < 29.
+        // upstream: flist.c:3258 - t_path = t_ITEM at protocol < 29.
         let cmp = |a: &SortKey, b: &SortKey| {
             let bytes_a = file_list[a.index as usize].name_bytes();
             let bytes_b = file_list[b.index as usize].name_bytes();
@@ -298,7 +298,7 @@ pub struct CleanResult {
 ///
 /// # Upstream Reference
 ///
-/// - `flist.c:3050-3082` - "If one is a dir and the other is not, we want to
+/// - `flist.c:3064-3081` - "If one is a dir and the other is not, we want to
 ///   keep the dir because it might have contents in the list. Otherwise keep
 ///   the first one." When both are dirs, upstream merges the vital flags into
 ///   the survivor (`fp->flags |= file->flags & (FLAG_TOP_DIR|FLAG_CONTENT_DIR)`).
@@ -757,7 +757,7 @@ mod tests {
         // A duplicate directory carrying TOP_DIR must pass that flag to the
         // survivor: TOP_DIR scopes --delete, so dropping it on merge would
         // wrongly make the surviving directory eligible for deletion.
-        // upstream: flist.c:3073 `fp->flags |= file->flags & FLAG_TOP_DIR`.
+        // upstream: flist.c:3075 `fp->flags |= file->flags & FLAG_TOP_DIR`.
         let mut dir1 = make_dir("subdir");
         dir1.set_top_dir(false);
         let mut dir2 = make_dir("subdir");
@@ -1012,7 +1012,7 @@ mod tests {
 
     /// Protocol < 29: directories do NOT sort after files at the same level.
     /// Plain lexicographic byte comparison, no implicit trailing '/'.
-    /// upstream: flist.c:3223 - `t_path = t_ITEM` at protocol < 29.
+    /// upstream: flist.c:3258 - `t_path = t_ITEM` at protocol < 29.
     #[test]
     fn pre29_no_files_before_dirs() {
         let mut entries = vec![make_file("zebra.txt"), make_dir("aardvark")];
