@@ -66,6 +66,22 @@ pub fn apply_acls_from_cache(
     Ok(())
 }
 
+/// Stores parsed ACLs from an [`AclCache`] into `--fake-super` xattrs.
+///
+/// On platforms without ACL support, emits a one-time warning and
+/// returns `Ok(())`.
+#[allow(clippy::module_name_repetitions)]
+pub fn store_acls_via_fake_super(
+    _destination: &Path,
+    _cache: &AclCache,
+    _access_ndx: u32,
+    _default_ndx: Option<u32>,
+    _follow_symlinks: bool,
+) -> Result<(), MetadataError> {
+    warn_acl_unsupported();
+    Ok(())
+}
+
 /// Returns the umask-derived default permissions for `dir`.
 ///
 /// Platforms without POSIX default-ACL support fall straight through to the
@@ -128,6 +144,14 @@ mod tests {
         let dst = Path::new("/nonexistent/dst");
         let cache = AclCache::new();
         let result = apply_acls_from_cache(dst, &cache, 0, Some(1), true, Some(0o644), None);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn store_acls_via_fake_super_returns_ok() {
+        let dst = Path::new("/nonexistent/dst");
+        let cache = AclCache::new();
+        let result = store_acls_via_fake_super(dst, &cache, 0, Some(1), true);
         assert!(result.is_ok());
     }
 }

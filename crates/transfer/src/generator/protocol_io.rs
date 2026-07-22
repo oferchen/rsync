@@ -11,6 +11,7 @@
 //! - `sender.c:120` - `receive_sums()` reads signature blocks
 
 use std::io::{self, IoSlice, Read, Write};
+use std::path::Path;
 use std::time::{Duration, Instant};
 
 use logging::{InfoFlag, PhaseTimer, debug_log, info_gte};
@@ -786,16 +787,47 @@ impl GeneratorContext {
         let mode = entry.mode();
 
         // upstream: acls.c:560-561 - read access ACL
-        let access_acl = metadata::get_rsync_acl(&full_path, mode, false);
+        let access_acl = self.read_source_acl(&full_path, mode, false);
 
         // upstream: acls.c:566-569 - read default ACL for directories
         let default_acl = if entry.is_dir() {
-            Some(metadata::get_rsync_acl(&full_path, mode, true))
+            Some(self.read_source_acl(&full_path, mode, true))
         } else {
             None
         };
 
         flist_writer.set_pending_acl(access_acl, default_acl);
+    }
+
+    /// Reads the effective ACL for a source path, preferring a stashed
+    /// `--fake-super` xattr over the real filesystem ACL when present.
+    ///
+    /// A source placeholder written by an earlier `--fake-super --acls`
+    /// receive carries its logical ACL in `%aacl`/`%dacl`, not in a real
+    /// POSIX ACL on disk (an unprivileged receiver cannot apply one). Reading
+    /// the placeholder's real ACL would silently drop that stashed ACL on
+    /// re-send, so - mirroring `%stat`'s `fake_super_override` analogue for
+    /// ownership - the xattr wins when it decodes successfully.
+    ///
+    /// # Upstream Reference
+    ///
+    /// Mirrors the `am_root < 0` branch of `get_rsync_acl()` in `acls.c`
+    /// lines 472-509, reached via `x_lstat()`'s xattr-backed stat layering.
+    #[cfg(unix)]
+    fn read_source_acl(&self, full_path: &Path, mode: u32, is_default: bool) -> protocol::acl::RsyncAcl {
+        if self.config.fake_super
+            && let Ok(Some(acl)) = metadata::load_fake_super_acl(full_path, !is_default)
+        {
+            return acl;
+        }
+        metadata::get_rsync_acl(full_path, mode, is_default)
+    }
+
+    /// Non-Unix fallback: always reads the real filesystem ACL, since
+    /// `--fake-super`'s xattr stash is a POSIX-only mechanism.
+    #[cfg(not(unix))]
+    fn read_source_acl(&self, full_path: &Path, mode: u32, is_default: bool) -> protocol::acl::RsyncAcl {
+        metadata::get_rsync_acl(full_path, mode, is_default)
     }
 
     /// Sends `NDX_FLIST_EOF` and flushes, marking incremental sending as complete.

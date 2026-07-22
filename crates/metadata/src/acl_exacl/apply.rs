@@ -118,3 +118,72 @@ pub fn apply_acls_from_cache(
 
     Ok(())
 }
+
+/// Stores parsed ACLs from an [`AclCache`] into `--fake-super` xattrs instead
+/// of applying them with a real `setfacl`.
+///
+/// An unprivileged account cannot reliably apply an arbitrary POSIX ACL -
+/// particularly named user/group entries - via a real `setfacl`, so under
+/// `--fake-super` the encoded ACL is stashed in `%aacl`/`%dacl` xattrs
+/// instead, mirroring how ownership is stashed in `%stat`
+/// ([`crate::fake_super::store_fake_super`]).
+///
+/// Symbolic links are skipped: they do not support ACLs (or, for the xattr
+/// route, portable `lsetxattr`) on any platform.
+///
+/// # Arguments
+///
+/// * `destination` - Path to store the fake-super ACL xattrs on.
+/// * `cache` - The ACL cache populated during file list reception.
+/// * `access_ndx` - Index into the access ACL cache.
+/// * `default_ndx` - Optional index into the default ACL cache (directories only).
+/// * `follow_symlinks` - Whether to process this entry at all. If `false`,
+///   returns immediately.
+///
+/// # Errors
+///
+/// Returns [`MetadataError`] if the underlying xattr operation fails.
+///
+/// # Upstream Reference
+///
+/// Mirrors the `am_root < 0` branch of `set_rsync_acl()` in `acls.c` lines
+/// 933-971.
+#[allow(clippy::module_name_repetitions)]
+pub fn store_acls_via_fake_super(
+    destination: &Path,
+    cache: &AclCache,
+    access_ndx: u32,
+    default_ndx: Option<u32>,
+    follow_symlinks: bool,
+) -> Result<(), MetadataError> {
+    use crate::fake_super::{remove_fake_super_default_acl, store_fake_super_acl};
+
+    if !follow_symlinks {
+        return Ok(());
+    }
+
+    if let Some(acl) = cache.get_access(access_ndx) {
+        store_fake_super_acl(destination, true, acl)
+            .map_err(|e| MetadataError::new("store fake-super access ACL", destination, e))?;
+    }
+
+    if let Some(def_ndx) = default_ndx {
+        match cache.get_default(def_ndx) {
+            // upstream: acls.c:934-935 - user_obj == NO_ENTRY means "no default
+            // ACL", so the xattr is removed rather than storing an empty ACL.
+            Some(def_acl) if !def_acl.has_user_obj() => {
+                remove_fake_super_default_acl(destination).map_err(|e| {
+                    MetadataError::new("remove fake-super default ACL", destination, e)
+                })?;
+            }
+            Some(def_acl) => {
+                store_fake_super_acl(destination, false, def_acl).map_err(|e| {
+                    MetadataError::new("store fake-super default ACL", destination, e)
+                })?;
+            }
+            None => {}
+        }
+    }
+
+    Ok(())
+}

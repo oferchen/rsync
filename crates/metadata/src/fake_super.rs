@@ -38,6 +38,26 @@ pub const FAKE_SUPER_XATTR: &str = "user.rsync.%stat";
 #[cfg(not(target_os = "linux"))]
 pub const FAKE_SUPER_XATTR: &str = "rsync.%stat";
 
+/// The xattr name used to store a fake-super access ACL.
+///
+/// Follows the same platform-prefix rule as [`FAKE_SUPER_XATTR`].
+/// upstream: `xattrs.c:75-76` `XACC_ACL_ATTR` (`RSYNC_PREFIX "%aacl"`).
+#[cfg(target_os = "linux")]
+pub const FAKE_SUPER_ACCESS_ACL_XATTR: &str = "user.rsync.%aacl";
+/// The fake-super access-ACL xattr name on non-Linux platforms.
+#[cfg(not(target_os = "linux"))]
+pub const FAKE_SUPER_ACCESS_ACL_XATTR: &str = "rsync.%aacl";
+
+/// The xattr name used to store a fake-super default (directory) ACL.
+///
+/// Follows the same platform-prefix rule as [`FAKE_SUPER_XATTR`].
+/// upstream: `xattrs.c:77-78` `XDEF_ACL_ATTR` (`RSYNC_PREFIX "%dacl"`).
+#[cfg(target_os = "linux")]
+pub const FAKE_SUPER_DEFAULT_ACL_XATTR: &str = "user.rsync.%dacl";
+/// The fake-super default-ACL xattr name on non-Linux platforms.
+#[cfg(not(target_os = "linux"))]
+pub const FAKE_SUPER_DEFAULT_ACL_XATTR: &str = "rsync.%dacl";
+
 /// Parsed fake-super metadata.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FakeSuperStat {
@@ -268,6 +288,84 @@ pub fn remove_fake_super(path: &Path) -> io::Result<()> {
     }
 }
 
+/// Returns the fake-super xattr name for an access or default ACL.
+#[cfg(all(unix, feature = "xattr"))]
+const fn fake_super_acl_xattr(is_access_acl: bool) -> &'static str {
+    if is_access_acl {
+        FAKE_SUPER_ACCESS_ACL_XATTR
+    } else {
+        FAKE_SUPER_DEFAULT_ACL_XATTR
+    }
+}
+
+/// Stores an ACL as a fake-super xattr on a file.
+///
+/// Called when `--fake-super` is enabled and `--acls` is active: an
+/// unprivileged account cannot reliably apply an arbitrary POSIX ACL (in
+/// particular named user/group entries) via a real `setfacl`, so the encoded
+/// ACL is stashed in `%aacl`/`%dacl` instead, mirroring how ownership is
+/// stashed in `%stat`.
+///
+/// # Upstream Reference
+///
+/// Mirrors the `am_root < 0` branch of `set_rsync_acl()` in `acls.c` lines
+/// 950-971, which calls `set_xattr_acl()` (`xattrs.c` lines 1118-1126).
+#[cfg(all(unix, feature = "xattr"))]
+pub fn store_fake_super_acl(
+    path: &Path,
+    is_access_acl: bool,
+    acl: &protocol::acl::RsyncAcl,
+) -> io::Result<()> {
+    xattr::set(path, fake_super_acl_xattr(is_access_acl), &acl.to_fake_super_bytes())
+}
+
+/// Retrieves a fake-super ACL from a file's xattr.
+///
+/// Returns `None` if the xattr does not exist. Returns an error if the xattr
+/// exists but its byte layout is corrupt (mirrors upstream's `get_rsync_acl()`
+/// returning an error on a malformed length, `acls.c` lines 483-486).
+#[cfg(all(unix, feature = "xattr"))]
+pub fn load_fake_super_acl(
+    path: &Path,
+    is_access_acl: bool,
+) -> io::Result<Option<protocol::acl::RsyncAcl>> {
+    let name = fake_super_acl_xattr(is_access_acl);
+    match xattr::get(path, name) {
+        Ok(Some(bytes)) => protocol::acl::RsyncAcl::from_fake_super_bytes(&bytes)
+            .map(Some)
+            .ok_or_else(|| {
+                io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    format!("corrupt {name} xattr: {} bytes", bytes.len()),
+                )
+            }),
+        Ok(None) => Ok(None),
+        Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(None),
+        Err(e) => Err(e),
+    }
+}
+
+/// Removes the fake-super default-ACL xattr from a file.
+///
+/// Called when a directory's default ACL was removed at the source (encoded
+/// as `user_obj == NO_ENTRY`, i.e. [`protocol::acl::RsyncAcl::has_user_obj`]
+/// is `false`): upstream deletes the `%dacl` xattr in that case rather than
+/// storing an empty ACL.
+///
+/// # Upstream Reference
+///
+/// Mirrors `del_def_xattr_acl()` in `xattrs.c` lines 1128-1131, called from
+/// `set_rsync_acl()`'s default-ACL-removal branch (`acls.c` lines 933-949).
+#[cfg(all(unix, feature = "xattr"))]
+pub fn remove_fake_super_default_acl(path: &Path) -> io::Result<()> {
+    match xattr::remove(path, FAKE_SUPER_DEFAULT_ACL_XATTR) {
+        Ok(()) => Ok(()),
+        Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(()),
+        Err(e) if is_absent_xattr(&e) => Ok(()),
+        Err(e) => Err(e),
+    }
+}
+
 /// Computes the *effective* fake-super stat for a source file.
 ///
 /// Under `--fake-super`, a source placeholder file may already carry a
@@ -385,6 +483,34 @@ pub fn load_fake_super(_path: &Path) -> io::Result<Option<FakeSuperStat>> {
 /// No-op on platforms without xattr support.
 #[cfg(not(all(unix, feature = "xattr")))]
 pub fn remove_fake_super(_path: &Path) -> io::Result<()> {
+    Ok(())
+}
+
+/// Returns `Unsupported` on platforms without xattr support.
+#[cfg(not(all(unix, feature = "xattr")))]
+pub fn store_fake_super_acl(
+    _path: &Path,
+    _is_access_acl: bool,
+    _acl: &protocol::acl::RsyncAcl,
+) -> io::Result<()> {
+    Err(io::Error::new(
+        io::ErrorKind::Unsupported,
+        "fake-super requires xattr support",
+    ))
+}
+
+/// Always returns `Ok(None)` on platforms without xattr support.
+#[cfg(not(all(unix, feature = "xattr")))]
+pub fn load_fake_super_acl(
+    _path: &Path,
+    _is_access_acl: bool,
+) -> io::Result<Option<protocol::acl::RsyncAcl>> {
+    Ok(None)
+}
+
+/// No-op on platforms without xattr support.
+#[cfg(not(all(unix, feature = "xattr")))]
+pub fn remove_fake_super_default_acl(_path: &Path) -> io::Result<()> {
     Ok(())
 }
 
@@ -606,6 +732,101 @@ mod tests {
         remove_fake_super(&path).expect("remove of absent fake-super xattr must be Ok");
     }
 
+    // Verifies the `%aacl`/`%dacl` xattr names follow the same platform-prefix
+    // rule as `%stat` (upstream: xattrs.c:64-78 RSYNC_PREFIX + XACC_ACL_ATTR /
+    // XDEF_ACL_ATTR).
+    #[test]
+    fn fake_super_acl_xattr_names_match_platform_namespace() {
+        #[cfg(target_os = "linux")]
+        {
+            assert_eq!(FAKE_SUPER_ACCESS_ACL_XATTR, "user.rsync.%aacl");
+            assert_eq!(FAKE_SUPER_DEFAULT_ACL_XATTR, "user.rsync.%dacl");
+        }
+        #[cfg(not(target_os = "linux"))]
+        {
+            assert_eq!(FAKE_SUPER_ACCESS_ACL_XATTR, "rsync.%aacl");
+            assert_eq!(FAKE_SUPER_DEFAULT_ACL_XATTR, "rsync.%dacl");
+        }
+    }
+
+    // A stored access ACL must read back byte-for-byte identical, including
+    // named user/group entries - the exact round trip a `--fake-super --acls`
+    // receive-then-resend cycle depends on.
+    #[cfg(all(unix, feature = "xattr"))]
+    #[test]
+    fn store_and_load_fake_super_acl_roundtrips() {
+        use protocol::acl::{IdAccess, RsyncAcl};
+
+        let temp = tempfile::tempdir().expect("tempdir");
+        let path = temp.path().join("acl-file");
+        std::fs::write(&path, b"body").expect("write");
+
+        let mut acl = RsyncAcl::new();
+        acl.user_obj = 0x07;
+        acl.group_obj = 0x05;
+        acl.mask_obj = 0x07;
+        acl.other_obj = 0x04;
+        acl.names.push(IdAccess::user(1000, 0x07));
+
+        // Skip when the FS can't hold user xattrs (e.g. tmpfs without support).
+        if store_fake_super_acl(&path, true, &acl).is_err() {
+            return;
+        }
+
+        let loaded = load_fake_super_acl(&path, true)
+            .expect("load must succeed")
+            .expect("xattr must be present");
+        assert_eq!(loaded, acl);
+
+        // The default-ACL xattr is a separate attribute; it must not exist yet.
+        assert!(
+            load_fake_super_acl(&path, false)
+                .expect("load must succeed")
+                .is_none()
+        );
+    }
+
+    // `remove_fake_super_default_acl` on a file that never had a `%dacl` xattr
+    // must succeed, mirroring `remove_fake_super_absent_xattr_is_ok` above.
+    #[cfg(all(unix, feature = "xattr"))]
+    #[test]
+    fn remove_fake_super_default_acl_absent_is_ok() {
+        use protocol::acl::RsyncAcl;
+
+        let temp = tempfile::tempdir().expect("tempdir");
+
+        // Confirm the FS supports user xattrs at all; skip otherwise.
+        let probe = temp.path().join("probe");
+        std::fs::write(&probe, b"probe").expect("write");
+        if store_fake_super_acl(&probe, true, &RsyncAcl::new()).is_err() {
+            return;
+        }
+
+        let path = temp.path().join("no-dacl");
+        std::fs::write(&path, b"body").expect("write");
+        remove_fake_super_default_acl(&path)
+            .expect("remove of absent fake-super default ACL xattr must be Ok");
+    }
+
+    // A corrupt xattr value (bad length) must surface as an error, not a
+    // silent `None`, mirroring upstream's `get_rsync_acl()` error path
+    // (acls.c:483-486).
+    #[cfg(all(unix, feature = "xattr"))]
+    #[test]
+    fn load_fake_super_acl_rejects_corrupt_value() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let path = temp.path().join("corrupt-acl");
+        std::fs::write(&path, b"body").expect("write");
+
+        // 5 bytes: shorter than the 16-byte base header.
+        if xattr::set(&path, FAKE_SUPER_ACCESS_ACL_XATTR, &[0u8; 5]).is_err() {
+            return;
+        }
+
+        let err = load_fake_super_acl(&path, true).unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::InvalidData);
+    }
+
     #[cfg(not(all(unix, feature = "xattr")))]
     mod stub_tests {
         use super::*;
@@ -636,6 +857,28 @@ mod tests {
         fn remove_fake_super_stub_returns_ok() {
             let path = Path::new("/nonexistent/file");
             let result = remove_fake_super(path);
+            assert!(result.is_ok());
+        }
+
+        #[test]
+        fn store_fake_super_acl_stub_returns_unsupported() {
+            let path = Path::new("/nonexistent/file");
+            let acl = protocol::acl::RsyncAcl::new();
+            let err = store_fake_super_acl(path, true, &acl).unwrap_err();
+            assert_eq!(err.kind(), io::ErrorKind::Unsupported);
+        }
+
+        #[test]
+        fn load_fake_super_acl_stub_returns_none() {
+            let path = Path::new("/nonexistent/file");
+            let result = load_fake_super_acl(path, true).unwrap();
+            assert!(result.is_none());
+        }
+
+        #[test]
+        fn remove_fake_super_default_acl_stub_returns_ok() {
+            let path = Path::new("/nonexistent/file");
+            let result = remove_fake_super_default_acl(path);
             assert!(result.is_ok());
         }
     }

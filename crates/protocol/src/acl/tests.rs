@@ -182,6 +182,78 @@ mod rsync_acl_tests {
     }
 }
 
+/// Tests for the `--fake-super` xattr byte format (`%aacl`/`%dacl` blobs).
+///
+/// Upstream: `acls.c:472-509` `get_rsync_acl()` and `acls.c:933-970`
+/// `set_rsync_acl()` (the `am_root < 0` branches).
+mod fake_super_bytes_tests {
+    use super::*;
+
+    #[test]
+    fn empty_acl_encodes_to_16_byte_header() {
+        let acl = RsyncAcl::new();
+        let bytes = acl.to_fake_super_bytes();
+        assert_eq!(bytes.len(), 16);
+        // All four base fields are NO_ENTRY (0x80), zero-extended to u32 LE.
+        assert_eq!(&bytes[0..4], &[0x80, 0, 0, 0]);
+        assert_eq!(&bytes[4..8], &[0x80, 0, 0, 0]);
+        assert_eq!(&bytes[8..12], &[0x80, 0, 0, 0]);
+        assert_eq!(&bytes[12..16], &[0x80, 0, 0, 0]);
+    }
+
+    #[test]
+    fn roundtrip_base_entries_only() {
+        let mut acl = RsyncAcl::new();
+        acl.user_obj = 0x07;
+        acl.group_obj = 0x05;
+        acl.mask_obj = 0x07;
+        acl.other_obj = 0x04;
+
+        let bytes = acl.to_fake_super_bytes();
+        let decoded = RsyncAcl::from_fake_super_bytes(&bytes).expect("valid blob");
+        assert_eq!(decoded, acl);
+    }
+
+    #[test]
+    fn roundtrip_with_named_entries() {
+        let mut acl = RsyncAcl::new();
+        acl.user_obj = 0x07;
+        acl.group_obj = 0x05;
+        acl.mask_obj = 0x07;
+        acl.other_obj = 0x04;
+        acl.names.push(IdAccess::user(1000, 0x07));
+        acl.names.push(IdAccess::group(100, 0x05));
+
+        let bytes = acl.to_fake_super_bytes();
+        assert_eq!(bytes.len(), 16 + 2 * 8);
+        let decoded = RsyncAcl::from_fake_super_bytes(&bytes).expect("valid blob");
+        assert_eq!(decoded, acl);
+        // The user entry's NAME_IS_USER bit (bit 31) must survive the round trip
+        // since it distinguishes user from group entries in the ida list.
+        assert!(decoded.names.iter().next().unwrap().is_user());
+    }
+
+    #[test]
+    fn from_bytes_rejects_short_header() {
+        assert!(RsyncAcl::from_fake_super_bytes(&[0u8; 15]).is_none());
+        assert!(RsyncAcl::from_fake_super_bytes(&[]).is_none());
+    }
+
+    #[test]
+    fn from_bytes_rejects_misaligned_trailer() {
+        // 16-byte header plus a partial (non-multiple-of-8) named entry.
+        assert!(RsyncAcl::from_fake_super_bytes(&[0u8; 20]).is_none());
+        assert!(RsyncAcl::from_fake_super_bytes(&[0u8; 23]).is_none());
+    }
+
+    #[test]
+    fn from_bytes_accepts_exact_multiple_of_8_trailer() {
+        assert!(RsyncAcl::from_fake_super_bytes(&[0u8; 16]).is_some());
+        assert!(RsyncAcl::from_fake_super_bytes(&[0u8; 24]).is_some());
+        assert!(RsyncAcl::from_fake_super_bytes(&[0u8; 32]).is_some());
+    }
+}
+
 /// Tests for `AclCache` structure.
 mod acl_cache_tests {
     use super::*;
