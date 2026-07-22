@@ -2354,7 +2354,11 @@ fn dash_l_user_precedes_address_family_and_host() {
         .position(|a| a == "example.com")
         .expect("host present");
 
-    assert_eq!(l_pos + 1, user_pos, "-l must immediately precede the user: {rendered:?}");
+    assert_eq!(
+        l_pos + 1,
+        user_pos,
+        "-l must immediately precede the user: {rendered:?}"
+    );
     assert!(
         user_pos < flag_pos && flag_pos < host_pos,
         "expected order -l user -4 host, got: {rendered:?}"
@@ -2384,7 +2388,11 @@ fn dash_l_user_applies_to_non_ssh_shell_too() {
     assert_eq!(program, OsString::from("rsh"));
     assert_eq!(
         rendered,
-        vec!["-l".to_owned(), "backup".to_owned(), "example.com".to_owned()]
+        vec![
+            "-l".to_owned(),
+            "backup".to_owned(),
+            "example.com".to_owned()
+        ]
     );
 }
 

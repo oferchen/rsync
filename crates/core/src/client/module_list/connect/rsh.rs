@@ -445,7 +445,10 @@ mod tests {
             address_mode: AddressMode::Default,
         };
         let (_, args) = build_rsh_command_argv(&spec);
-        let rendered: Vec<String> = args.iter().map(|a| a.to_string_lossy().into_owned()).collect();
+        let rendered: Vec<String> = args
+            .iter()
+            .map(|a| a.to_string_lossy().into_owned())
+            .collect();
 
         let l_count = rendered.iter().filter(|a| a.as_str() == "-l").count();
         assert_eq!(
