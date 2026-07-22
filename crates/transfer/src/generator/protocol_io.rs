@@ -814,7 +814,12 @@ impl GeneratorContext {
     /// Mirrors the `am_root < 0` branch of `get_rsync_acl()` in `acls.c`
     /// lines 472-509, reached via `x_lstat()`'s xattr-backed stat layering.
     #[cfg(unix)]
-    fn read_source_acl(&self, full_path: &Path, mode: u32, is_default: bool) -> protocol::acl::RsyncAcl {
+    fn read_source_acl(
+        &self,
+        full_path: &Path,
+        mode: u32,
+        is_default: bool,
+    ) -> protocol::acl::RsyncAcl {
         if self.config.fake_super
             && let Ok(Some(acl)) = metadata::load_fake_super_acl(full_path, !is_default)
         {
@@ -826,7 +831,12 @@ impl GeneratorContext {
     /// Non-Unix fallback: always reads the real filesystem ACL, since
     /// `--fake-super`'s xattr stash is a POSIX-only mechanism.
     #[cfg(not(unix))]
-    fn read_source_acl(&self, full_path: &Path, mode: u32, is_default: bool) -> protocol::acl::RsyncAcl {
+    fn read_source_acl(
+        &self,
+        full_path: &Path,
+        mode: u32,
+        is_default: bool,
+    ) -> protocol::acl::RsyncAcl {
         metadata::get_rsync_acl(full_path, mode, is_default)
     }
 

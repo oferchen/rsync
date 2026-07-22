@@ -316,7 +316,11 @@ pub fn store_fake_super_acl(
     is_access_acl: bool,
     acl: &protocol::acl::RsyncAcl,
 ) -> io::Result<()> {
-    xattr::set(path, fake_super_acl_xattr(is_access_acl), &acl.to_fake_super_bytes())
+    xattr::set(
+        path,
+        fake_super_acl_xattr(is_access_acl),
+        &acl.to_fake_super_bytes(),
+    )
 }
 
 /// Retrieves a fake-super ACL from a file's xattr.

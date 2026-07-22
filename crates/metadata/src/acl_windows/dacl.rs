@@ -309,7 +309,15 @@ pub fn store_acls_via_fake_super(
     default_ndx: Option<u32>,
     follow_symlinks: bool,
 ) -> Result<(), MetadataError> {
-    apply_acls_from_cache(destination, cache, access_ndx, default_ndx, follow_symlinks, None, None)
+    apply_acls_from_cache(
+        destination,
+        cache,
+        access_ndx,
+        default_ndx,
+        follow_symlinks,
+        None,
+        None,
+    )
 }
 
 /// Returns the umask-derived default permissions for `dir`.
