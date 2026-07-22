@@ -133,7 +133,11 @@ pub(super) fn commit_file(
         let result = rename_config_sandboxed(config, cleanup_guard.path(), &begin.file_path)?;
         CleanupManager::global().unregister_temp_file(cleanup_guard.path());
         result
-    } else if begin.is_inplace {
+    } else if begin.is_inplace && !begin.is_device_target {
+        // upstream: receiver.c:496 gates the in-place ftruncate on
+        // `!IS_DEVICE(file->mode)`, so `--write-devices` never truncates the
+        // target device - its data lands via the in-place writes and a
+        // block/char device has no length to set (ftruncate would fail EINVAL).
         if let Some(ref sparse) = sparse_final {
             // upstream: fileio.c:47-52 sparse_end() - punch stale basis blocks
             // then ftruncate to the logical length for the in-place update.

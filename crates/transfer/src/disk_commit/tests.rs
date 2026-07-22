@@ -138,6 +138,57 @@ fn write_file_with_io_uring_auto_policy() {
 }
 
 #[test]
+fn device_target_inplace_commit_does_not_truncate() {
+    // upstream: receiver.c:496 gates the in-place ftruncate on !IS_DEVICE, so
+    // --write-devices writes into the device without ever truncating it (a
+    // block/char device has no settable length; ftruncate would fail EINVAL).
+    // A pre-populated regular file stands in for the device open path: with
+    // is_device_target set, the committer must leave its length untouched and
+    // only overwrite the leading bytes it received in place.
+    let _registry_lock = test_support::cleanup_registry_test_guard();
+    let dir = test_support::create_tempdir();
+    let file_path = dir.path().join("device_target.dat");
+    fs::write(&file_path, vec![b'x'; 100]).unwrap();
+
+    let h = spawn_disk_thread(DiskCommitConfig::default()).unwrap();
+    h.file_tx
+        .send(FileMessage::Begin(Box::new(BeginMessage {
+            file_path: file_path.clone(),
+            target_size: 5,
+            file_entry_index: 0,
+            checksum_verifier: None,
+            is_device_target: true,
+            is_inplace: true,
+            append_offset: 0,
+            xattr_list: None,
+        })))
+        .unwrap();
+    h.file_tx
+        .send(FileMessage::Chunk(b"AAAAA".to_vec()))
+        .unwrap();
+    h.file_tx
+        .send(FileMessage::Commit {
+            expected_checksum: Default::default(),
+        })
+        .unwrap();
+
+    let result = h.result_rx.recv().unwrap().unwrap();
+    assert_eq!(result.bytes_written, 5);
+
+    let contents = fs::read(&file_path).unwrap();
+    assert_eq!(
+        contents.len(),
+        100,
+        "device target must not be truncated to target_size"
+    );
+    assert_eq!(&contents[..5], b"AAAAA", "leading bytes written in place");
+    assert_eq!(&contents[5..], &[b'x'; 95], "trailing bytes left intact");
+
+    h.file_tx.send(FileMessage::Shutdown).unwrap();
+    h.join_handle.join().unwrap();
+}
+
+#[test]
 fn channel_capacity_default_passthrough() {
     let config = DiskCommitConfig::default();
     assert_eq!(config.effective_channel_capacity(), 128);
