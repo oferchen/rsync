@@ -105,7 +105,7 @@ pub(super) fn read_iflags_and_skip_meta(
 
 /// Read the 16-byte `sum_head` and return `(block_count, block_length_wire, remainder_wire)`.
 ///
-/// upstream: receiver.c:273 - `read_sum_head()` reads 4 x i32.
+/// upstream: receiver.c:338 - `read_sum_head()` reads 4 x i32.
 /// The `s2length` field is read and discarded - oc-rsync derives the strong
 /// checksum length from the negotiated checksum algorithm, not from the wire.
 pub(super) fn read_sum_head(stream: &mut BufReader<File>) -> BatchResult<(i32, i32, i32)> {
@@ -125,7 +125,7 @@ pub(super) fn read_sum_head(stream: &mut BufReader<File>) -> BatchResult<(i32, i
 
 /// Read the per-file transfer checksum and discard it.
 ///
-/// upstream: receiver.c:408 - `read_buf(f_in, sender_file_sum, xfer_sum_len)`.
+/// upstream: receiver.c:515 - `read_buf(f_in, sender_file_sum, xfer_sum_len)`.
 /// The sender ALWAYS writes `xfer_sum_len` bytes of file checksum after the
 /// delta stream, regardless of `sum_head.s2length`. For protocol 32 the
 /// default xfer checksum is XXH3-128 or MD5 - both 16 bytes. For protocol

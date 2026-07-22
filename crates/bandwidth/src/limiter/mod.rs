@@ -44,7 +44,7 @@ pub(super) const MAX_REPRESENTABLE_MICROSECONDS: u128 =
 pub(super) const MAX_SLEEP_DURATION: Duration = Duration::new(i64::MAX as u64, 999_999_999);
 
 /// Floor for the per-write chunk size.
-// upstream: options.c:2378 - `if (bwlimit_writemax < 512) bwlimit_writemax = 512`
+// upstream: options.c:2396 - `if (bwlimit_writemax < 512) bwlimit_writemax = 512`
 pub(super) const MIN_WRITE_MAX: usize = 512;
 
 #[cfg(any(test, feature = "test-support"))]

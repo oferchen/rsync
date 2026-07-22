@@ -644,7 +644,7 @@ fn test_batch_header_all_flags_byte_layout() {
 
 /// Verify multi-byte varint compat_flags encoding.
 ///
-/// upstream: io.c:2448 write_varint(batch_fd, compat_flags) - uses the
+/// upstream: io.c:2523 write_varint(batch_fd, compat_flags) - uses the
 /// same varint encoding as io.c:write_varint() where values >= 0x80 use
 /// multiple bytes.
 #[test]

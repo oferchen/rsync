@@ -66,7 +66,7 @@ impl CompressedTokenEncoder {
     /// `workers` plumbs `--compress-threads=N` through to zstd's
     /// `ZSTD_c_nbWorkers`. `None` keeps the encoder single-threaded.
     ///
-    /// upstream: token.c:send_zstd_token(), token.c:701
+    /// upstream: token.c:send_zstd_token(), token.c:749
     #[cfg(feature = "zstd")]
     pub fn new_zstd(level: i32, workers: Option<std::num::NonZeroU8>) -> io::Result<Self> {
         Ok(Self {
@@ -91,7 +91,7 @@ impl CompressedTokenEncoder {
     /// For zstd, only resets token run-encoding state - the compression
     /// context is preserved across files (one continuous stream).
     ///
-    /// upstream: token.c:700-703 (zstd), token.c:378 (zlib deflateReset)
+    /// upstream: token.c:756-759 (zstd), token.c:387 (zlib deflateReset)
     pub fn reset(&mut self) {
         match &mut self.inner {
             EncoderInner::Zlib(enc) => enc.reset(),

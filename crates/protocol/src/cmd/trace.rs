@@ -12,11 +12,11 @@
 //!   suffix used by every level-1 CMD emission.
 //! - `pipe.c:54-55` - `print_child_argv("opening connection using:", command)`
 //!   inside `piped_child()` before `fork()`/`execvp()`.
-//! - `clientserver.c:348-349` - `print_child_argv("sending daemon args:", sargs)`
+//! - `clientserver.c:350-351` - `print_child_argv("sending daemon args:", sargs)`
 //!   immediately before writing the argument list to the daemon socket.
 //! - `rsync.c:296-297` - `print_child_argv("protected args:", args + i + 1)`
 //!   inside `send_protected_args()` before the per-arg iconv loop.
-//! - `main.c:620-624` - per-argument enumeration `cmd[%d]=%s ...\n` emitted
+//! - `main.c:629-633` - per-argument enumeration `cmd[%d]=%s ...\n` emitted
 //!   from `do_cmd()` once the final remote argv has been assembled.
 
 use std::ffi::OsStr;
@@ -83,7 +83,7 @@ pub fn trace_opening_connection<S: AsRef<OsStr>>(command: &[S]) {
 
 /// Traces the daemon argument list being sent over the TCP socket (level 1).
 ///
-/// upstream: clientserver.c:348-349 - `print_child_argv("sending daemon args:", sargs)`
+/// upstream: clientserver.c:350-351 - `print_child_argv("sending daemon args:", sargs)`
 /// inside `start_inband_exchange()` right before the per-arg write loop.
 /// `sargs` includes the leading `--server [--sender] -flags . path` argv that
 /// the daemon will hand to its own `parse_arguments()`.
@@ -112,7 +112,7 @@ pub fn trace_protected_args<S: AsRef<OsStr>>(args: &[S]) {
 
 /// Traces the assembled remote argv element-by-element (level 2).
 ///
-/// upstream: main.c:620-624 - inside `do_cmd()` once `args[]` has been
+/// upstream: main.c:629-633 - inside `do_cmd()` once `args[]` has been
 /// finalised:
 ///
 /// ```text
@@ -246,7 +246,7 @@ mod tests {
     }
 
     /// Pins the level 1 `sending daemon args:` emission for the upstream
-    /// `clientserver.c:348-349` site.
+    /// `clientserver.c:350-351` site.
     #[test]
     fn sending_daemon_args_matches_upstream_format() {
         init_cmd(1);
@@ -276,7 +276,7 @@ mod tests {
     }
 
     /// Pins the level 2 `cmd[i]=value` enumeration for the upstream
-    /// `main.c:620-624` site.
+    /// `main.c:629-633` site.
     #[test]
     fn trace_cmd_argv_matches_upstream_enumeration() {
         init_cmd(2);

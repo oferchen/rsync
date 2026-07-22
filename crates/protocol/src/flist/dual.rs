@@ -521,7 +521,7 @@ mod tests {
     #[test]
     fn dedup_with_parallel_keeps_directory_over_file() {
         // WHY: a dir must win over a same-named file "because it might have
-        // contents in the list" (flist.c:3060); its base must travel with it.
+        // contents in the list" (flist.c:3065); its base must travel with it.
         let mut list = DualFileList::new();
         list.push(FileEntry::new_file("item".into(), 0, 0o644));
         list.push(FileEntry::new_directory("item".into(), 0o755));
