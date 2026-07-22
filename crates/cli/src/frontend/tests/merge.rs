@@ -58,7 +58,7 @@ fn apply_merge_directive_parses_whitespace_risk_and_exclude_if_present() {
 }
 
 #[test]
-fn apply_merge_directive_parses_whitespace_per_dir_alias() {
+fn apply_merge_directive_rejects_per_dir_alias() {
     use std::collections::HashSet;
     use tempfile::tempdir;
 
@@ -71,14 +71,9 @@ fn apply_merge_directive_parses_whitespace_per_dir_alias() {
 
     let mut rules = Vec::new();
     let mut visited = HashSet::new();
-    apply_merge_directive(directive, temp.path(), &mut rules, &mut visited).expect("apply merge");
-
-    assert!(visited.is_empty());
-    let dir_merge_rule = rules
-        .iter()
-        .find(|rule| rule.kind() == FilterRuleKind::DirMerge)
-        .expect("dir-merge rule present");
-    assert_eq!(dir_merge_rule.pattern(), ".rsync-filter");
+    // "per-dir" is not an upstream directive, so a merge file that uses it must
+    // fail to load rather than silently accept the oc-only alias.
+    assert!(apply_merge_directive(directive, temp.path(), &mut rules, &mut visited).is_err());
 }
 
 #[test]
