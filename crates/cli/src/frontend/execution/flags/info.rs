@@ -10,7 +10,7 @@ use super::super::super::progress::{NameOutputLevel, ProgressSetting};
 /// Per-flag descriptor for an `--info=` token.
 ///
 /// upstream: options.c `output_struct` (rsync-3.4.1:259-266) plus the
-/// `info_verbosity[]` grouping at options.c:239-243. `max_level` is the
+/// `info_verbosity[]` grouping at options.c:249-253. `max_level` is the
 /// per-flag ceiling used when `--info=all<N>` or `--info=N` fans out
 /// across every flag (it caps each flag at its highest meaningful level,
 /// mirroring upstream's runtime `INFO_GTE(...)` checks). `priority`
@@ -18,7 +18,7 @@ use super::super::super::progress::{NameOutputLevel, ProgressSetting};
 /// from `-v` (NONREG=0, level-1 group covers COPY/DEL/FLIST/MISC/NAME/
 /// STATS/SYMSAFE=1, level-2 group covers BACKUP/MOUNT/REMOVE/SKIP=2). It
 /// is currently informational, exposed for the daemon-side limit handling
-/// tracked by audit I16 (`limit_output_verbosity()`, options.c:527-552).
+/// tracked by audit I16 (`limit_output_verbosity()`, options.c:537-562).
 /// `strict_cap` controls whether a per-token level above `max_level` is
 /// rejected (`--info=flist3`) or silently capped (`--info=backup5`),
 /// preserving oc-rsync's historical usability split.
@@ -193,7 +193,7 @@ impl InfoFlagSettings {
     /// `stats` is intentionally omitted: oc conflates `--stats` and
     /// `--info=stats` into a single stats level and forwards it via the
     /// standalone `--stats` flag (upstream `if (do_stats) --stats`,
-    /// options.c:2856), so re-emitting `--info=stats` here would double-send.
+    /// options.c:2874), so re-emitting `--info=stats` here would double-send.
     /// The remote builders apply upstream's role `where` filter to this list.
     pub(crate) fn iter_enabled_flags(&self) -> Vec<(&'static str, u8)> {
         let mut out: Vec<(&'static str, u8)> = Vec::new();
@@ -202,7 +202,7 @@ impl InfoFlagSettings {
                 out.push((name, level));
             }
         };
-        // upstream: options.c:280-294 info_words[] order.
+        // upstream: options.c:290-304 info_words[] order.
         push("backup", self.backup);
         push("copy", self.copy);
         push("del", self.del);
@@ -238,7 +238,7 @@ impl InfoFlagSettings {
     ///
     /// When `am_server` is `true`, an unrecognised token is silently
     /// accepted instead of producing an error, mirroring upstream rsync's
-    /// `parse_output_words()` (`options.c:465`) where the
+    /// `parse_output_words()` (`options.c:475`) where the
     /// `if (len && !words[j].name && !am_server)` guard skips the
     /// `RERR_SYNTAX` exit. This preserves cross-version compatibility when a
     /// newer client forwards info tokens this server build does not know.
@@ -303,7 +303,7 @@ impl InfoFlagSettings {
 
     // Internal-only extension: `no<flag>` and `-<flag>` are accepted as a
     // negation form mapping to level 0 (e.g. `noprogress` == `progress0`).
-    // Upstream rsync 3.4.1's `parse_output_words` (`options.c:427`) does NOT
+    // Upstream rsync 3.4.1's `parse_output_words` (`options.c:437`) does NOT
     // implement this prefix; it relies on the `flag0` suffix instead. The
     // forms remain accepted for backwards compatibility and to tolerate
     // server-mode token forwarding, but they are intentionally not advertised
@@ -347,7 +347,7 @@ pub(crate) fn parse_info_flags(values: &[OsString]) -> Result<InfoFlagSettings, 
 /// Parses `--info` flag values in server mode, silently ignoring unknown tokens.
 ///
 /// Upstream rsync's `parse_output_words()` checks `!am_server` before raising
-/// `Unknown --info item` (`options.c:465`). The server side accepts whatever
+/// `Unknown --info item` (`options.c:475`). The server side accepts whatever
 /// the (possibly newer) client forwards so the connection survives across
 /// version skew. The client-side parser still rejects unknown tokens via
 /// [`parse_info_flags`] so typos surface at the source.
@@ -390,8 +390,8 @@ fn parse_info_flags_inner(
 // matches `rsync --info=help`. The format string is `"%-10s %s\n"`: each
 // name is left-padded to 10 columns, followed by a single space and the
 // help text. ALL/NONE descriptions inline the sentinel's `--info` help
-// (options.c:489-495). The per-verbosity summary block is rendered by
-// upstream's `make_output_option` over `info_verbosity[]` (options.c:239-
+// (options.c:499-505). The per-verbosity summary block is rendered by
+// upstream's `make_output_option` over `info_verbosity[]` (options.c:249-
 // 243) and emits one line per non-empty level in `info_words[]` order.
 pub(crate) const INFO_HELP_TEXT: &str = "\
 Use OPT or OPT1 for level 1 output, OPT2 for level 2, etc.; OPT0 silences.\n\

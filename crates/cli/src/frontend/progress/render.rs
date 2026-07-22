@@ -28,7 +28,7 @@ fn writeln_wrapped<W: Write + ?Sized>(
 }
 
 /// Renders a path with any trailing platform path separators trimmed as raw
-/// bytes, mirroring upstream rsync's `*cp = '\0'` slash-lopping in `main.c:789`
+/// bytes, mirroring upstream rsync's `*cp = '\0'` slash-lopping in `main.c:798`
 /// before the `created directory %s\n` print.
 fn display_without_trailing_separators(path: &Path, allow_8bit: bool) -> Vec<u8> {
     let mut rendered = escape_path(path, allow_8bit);
@@ -125,10 +125,10 @@ pub(crate) fn emit_transfer_summary(
         return Ok(());
     }
 
-    // upstream: flist.c:2251 - rprintf(FCLIENT, "sending incremental file list\n")
+    // upstream: flist.c:2286 - rprintf(FCLIENT, "sending incremental file list\n")
     // is gated on inc_recurse && INFO_GTE(FLIST, 1) && !am_server. This banner is
     // stdout-only. Upstream's parallel `rprintf(FLOG, "building file list\n")`
-    // (flist.c:2248) targets the log file, which a plain client without
+    // (flist.c:2283) targets the log file, which a plain client without
     // --log-file discards, so it never reaches stdout. Local-copy mode is treated
     // as inc_recurse-equivalent because the source enumeration is interleaved with
     // per-file dispatch.
@@ -136,11 +136,11 @@ pub(crate) fn emit_transfer_summary(
         writeln!(writer, "sending incremental file list")?;
     }
 
-    // upstream: main.c:787-808 - when the receiver pre-flight-mkdirs the
+    // upstream: main.c:796-817 - when the receiver pre-flight-mkdirs the
     // destination root because `file_total > 1 || trailing_slash`, it lops
     // off the trailing slash (`*cp = '\0'`) and prints `created directory
     // %s\n` gated on `INFO_GTE(NAME, 1) || stdout_format_has_i`. The print at
-    // main.c:808 precedes the `dry_run++` at main.c:810, so a dry-run still
+    // main.c:817 precedes the `dry_run++` at main.c:819, so a dry-run still
     // reports the directory it would create. Mirror the same gate plus
     // trailing-slash trim here so `-i` and `-v` invocations - including
     // `--dry-run` - emit the notice ahead of the per-entry itemize lines,
@@ -213,7 +213,7 @@ pub(crate) fn emit_transfer_summary(
         )?;
     }
 
-    // upstream: main.c:459-461 output_summary() emits the
+    // upstream: main.c:468-470 output_summary() emits the
     // `sent/received/total size` trailer only when
     // `verbose > 0 || INFO_GTE(STATS, 1)`. `stats_on` already captures the
     // STATS>=1 arm (it routes to emit_stats below), so the name-only and
@@ -223,7 +223,7 @@ pub(crate) fn emit_transfer_summary(
     let _ = suppress_updated_only_totals;
     let emit_trailer_totals = !stats_on && verbosity > 0;
 
-    // upstream: main.c:427/458 - `output_summary()` unconditionally emits a
+    // upstream: main.c:436/467 - `output_summary()` unconditionally emits a
     // leading `rprintf(FCLIENT, "\n")` before both the STATS>=2 detail block and
     // the STATS>=1 sent/received trailer, separating them from any preceding
     // per-file output. When a per-file block (verbose listing, itemize, or
@@ -313,7 +313,7 @@ pub(crate) fn emit_list_only<W: Write + ?Sized>(
                 String::new()
             };
             let mut rendered = escape_path(event.relative_path(), eight_bit_output);
-            // upstream: generator.c:1183 list_file_entry() - the ` -> <target>`
+            // upstream: generator.c:1195 list_file_entry() - the ` -> <target>`
             // arrow is emitted only when `preserve_links && S_ISLNK(f->mode)`.
             // Without `--links`/`-l` the symlink is still listed (with its
             // target-length size) but no target string.
@@ -393,7 +393,7 @@ pub(crate) fn emit_progress<W: Write + ?Sized>(
     // directories and symlinks included); the numerator `total - checked`
     // counts down over all of them, mirroring upstream's
     // `num_files - current_file_index - 1`. Only regular-file transfers print a
-    // block and advance `xfr#` (upstream receiver.c:782), so a symlink or
+    // block and advance `xfr#` (upstream receiver.c:895), so a symlink or
     // directory is counted but silent.
     let total = flist_entries.len();
     let transferred_total = flist_entries
@@ -448,7 +448,7 @@ pub(crate) fn emit_progress<W: Write + ?Sized>(
 /// Emits a statistics summary mirroring the subset of counters supported by the local engine.
 ///
 /// Output is gated by `level`, matching upstream rsync's `INFO_GTE(STATS, N)`
-/// checks in `output_summary` (`main.c:416-465`):
+/// checks in `output_summary` (`main.c:425-474`):
 ///
 /// - level 0: emits nothing.
 /// - level 1: emits only the trailing `sent X / total size is Y` summary.
@@ -458,7 +458,7 @@ pub(crate) fn emit_progress<W: Write + ?Sized>(
 ///   single `if (stats.flist_buildtime)` guard.
 ///
 /// Line ordering and label spelling track upstream byte-for-byte. The leading
-/// `\n` (`main.c:419`) is intentionally omitted; the caller is responsible
+/// `\n` (`main.c:428`) is intentionally omitted; the caller is responsible
 /// for the blank-line separator between prior output blocks and stats.
 ///
 /// upstream: main.c output_summary (rsync-3.4.2 lines 416-465)
@@ -560,7 +560,7 @@ fn emit_stats_detail_block<W: Write + ?Sized>(
         .saturating_add(symlinks_total)
         .saturating_add(special_total);
 
-    // upstream: receiver.c:733-746 / sender.c:295-308 - "Number of created
+    // upstream: receiver.c:845-858 / sender.c:301-314 - "Number of created
     // files" counts ITEM_IS_NEW entries per type (new dirs, symlinks, devices,
     // specials and empty files included), NOT the "copied/updated" tallies. An
     // in-place update of a pre-existing file/symlink is transferred but never
@@ -621,7 +621,7 @@ fn emit_stats_detail_block<W: Write + ?Sized>(
         "Number of files: {}{files_breakdown}",
         format_count(total_entries, human_readable)
     )?;
-    // upstream: main.c:429 - `if (protocol_version >= 29)`
+    // upstream: main.c:438 - `if (protocol_version >= 29)`
     if summary.protocol_version() >= 29 {
         writeln!(
             stdout,
@@ -629,7 +629,7 @@ fn emit_stats_detail_block<W: Write + ?Sized>(
             format_count(created_total, human_readable)
         )?;
     }
-    // upstream: main.c:431 - `if (protocol_version >= 31)`
+    // upstream: main.c:440 - `if (protocol_version >= 31)`
     if summary.protocol_version() >= 31 {
         writeln!(
             stdout,
@@ -650,7 +650,7 @@ fn emit_stats_detail_block<W: Write + ?Sized>(
     writeln!(stdout, "Literal data: {literal_bytes_display} bytes")?;
     writeln!(stdout, "Matched data: {matched_bytes_display} bytes")?;
     writeln!(stdout, "File list size: {file_list_size_display}")?;
-    // upstream: main.c:437 `if (stats.flist_buildtime)` gates both timing
+    // upstream: main.c:446 `if (stats.flist_buildtime)` gates both timing
     // lines. The upstream counter is a millisecond integer, so sub-millisecond
     // durations suppress the lines just as on the C side.
     if file_list_generation_ms > 0 {
@@ -680,7 +680,7 @@ pub(crate) fn emit_totals<W: Write + ?Sized>(
     let sent = summary.bytes_sent();
     let received = summary.bytes_received();
     let total_size = summary.total_source_bytes();
-    // upstream main.c:418-423: rate = (written+read) / (0.5 + (endtime-starttime)),
+    // upstream main.c:427-432: rate = (written+read) / (0.5 + (endtime-starttime)),
     // a single wall-clock span with a 0.5s floor - never the summed per-file copy
     // durations (which are ~0 for CoW/clonefile and explode the rate).
     let wall_seconds = summary.wall_clock_elapsed().as_secs_f64();
@@ -716,7 +716,7 @@ pub(crate) fn emit_totals<W: Write + ?Sized>(
         stdout,
         "sent {sent_display} bytes  received {received_display} bytes  {rate_display} bytes/sec"
     )?;
-    // upstream: main.c:469 - `write_batch < 0 ? " (BATCH ONLY)" : dry_run ?
+    // upstream: main.c:478 - `write_batch < 0 ? " (BATCH ONLY)" : dry_run ?
     // " (DRY RUN)" : ""`. `--only-write-batch` sets `write_batch < 0` and takes
     // precedence over `--dry-run`.
     let speedup_suffix = if only_write_batch {
@@ -726,7 +726,7 @@ pub(crate) fn emit_totals<W: Write + ?Sized>(
     } else {
         ""
     };
-    // upstream: main.c:466-468 - speedup uses comma_dnum(_, 2), i.e. thousands
+    // upstream: main.c:475-477 - speedup uses comma_dnum(_, 2), i.e. thousands
     // grouping. Reuse the same helper the --stats path uses (stats_format.rs)
     // so both summary paths group identically.
     let speedup_display = crate::stats_format::format_speedup(speedup);
@@ -740,7 +740,7 @@ pub(crate) fn emit_totals<W: Write + ?Sized>(
 /// reorder events so upstream's generator-first / receiver-second wire order
 /// is preserved in verbose mode.
 ///
-/// upstream: hlink.c:218-224, generator.c:1010-1022, rsync.c:672-676 - the
+/// upstream: hlink.c:218-224, generator.c:1022-1034, rsync.c:672-676 - the
 /// generator emits `"is uptodate"` synchronously while the receiver emits
 /// the bare-name notice from `set_file_attrs` only after the transfer
 /// completes. The two processes pipeline so uptodate lines appear ahead of
@@ -755,7 +755,7 @@ fn is_uptodate_event(event: &ClientEvent) -> bool {
 /// phase that prints transferred-file names. Bucketing these with the uptodate
 /// notices reproduces that interleaving.
 ///
-/// upstream: generator.c:1379,1395,1708,1716,1723 (recv_generator)
+/// upstream: generator.c:1391,1407,1720,1729,1736 (recv_generator)
 fn is_generator_phase_skip(event: &ClientEvent) -> bool {
     matches!(
         event.kind(),
@@ -852,7 +852,7 @@ pub(crate) fn emit_verbose<W: Write + ?Sized>(
         // generator phase, ahead of the receiver phase that prints the
         // transferred-file names. Bucket those generator-phase notices first
         // so the stable sort reproduces that interleaving.
-        // (generator.c:1379,1395,1723)
+        // (generator.c:1391,1407,1736)
         if is_uptodate_event(event) || is_generator_phase_skip(event) {
             0u8
         } else if is_deferred_hardlink_event(event) {
@@ -879,7 +879,7 @@ pub(crate) fn emit_verbose<W: Write + ?Sized>(
             // through the uptodate phrasing instead of the bare path.
             //
             // Skip directory MetadataReused events: upstream invokes
-            // `set_file_attrs(..., 0)` for dirs (generator.c:1503), so the
+            // `set_file_attrs(..., 0)` for dirs (generator.c:1515), so the
             // rsync.c:676 "is uptodate" notice is gated off for them.
             if matches!(kind, ClientEventKind::MetadataReused) || event.is_hardlink_uptodate() {
                 if event
@@ -918,11 +918,11 @@ pub(crate) fn emit_verbose<W: Write + ?Sized>(
 
         match kind {
             ClientEventKind::SkippedExisting => {
-                // upstream: generator.c:1397-1409 - `rprintf(FINFO, "%s exists\n",
+                // upstream: generator.c:1409-1421 - `rprintf(FINFO, "%s exists\n",
                 // fname)` for an --ignore-existing skip: the bare relative name
                 // followed by " exists", no descriptor and no quotes. Gated on
                 // INFO_GTE(SKIP, 1), which the info verbosity table raises only
-                // at -vv (options.c:252).
+                // at -vv (options.c:262).
                 if info_gte(InfoFlag::Skip, 1) {
                     writeln_wrapped(
                         stdout,
@@ -935,7 +935,7 @@ pub(crate) fn emit_verbose<W: Write + ?Sized>(
                 continue;
             }
             ClientEventKind::SkippedMissingDestination => {
-                // upstream: generator.c:1379-1382 - `rprintf(FINFO,
+                // upstream: generator.c:1391-1394 - `rprintf(FINFO,
                 // "not creating new %s \"%s\"\n", "file", fname)` for an
                 // --existing / --ignore-non-existing skip, gated on
                 // INFO_GTE(SKIP, 1).
@@ -951,7 +951,7 @@ pub(crate) fn emit_verbose<W: Write + ?Sized>(
                 continue;
             }
             ClientEventKind::SkippedNewerDestination => {
-                // upstream: generator.c:1723-1724 - `rprintf(FINFO, "%s is
+                // upstream: generator.c:1736-1737 - `rprintf(FINFO, "%s is
                 // newer\n", fname)` for an --update skip: the bare relative name
                 // followed by " is newer", gated on INFO_GTE(SKIP, 1).
                 if info_gte(InfoFlag::Skip, 1) {
@@ -966,7 +966,7 @@ pub(crate) fn emit_verbose<W: Write + ?Sized>(
                 continue;
             }
             ClientEventKind::SkippedOverMaxSize => {
-                // upstream: generator.c:1704-1711 - `rprintf(FINFO,
+                // upstream: generator.c:1716-1724 - `rprintf(FINFO,
                 // "%s is over max-size\n", fname)` for a `--max-size` skip: the
                 // bare relative name followed by " is over max-size", gated on
                 // INFO_GTE(SKIP, 1).
@@ -982,7 +982,7 @@ pub(crate) fn emit_verbose<W: Write + ?Sized>(
                 continue;
             }
             ClientEventKind::SkippedUnderMinSize => {
-                // upstream: generator.c:1712-1719 - `rprintf(FINFO,
+                // upstream: generator.c:1725-1732 - `rprintf(FINFO,
                 // "%s is under min-size\n", fname)` for a `--min-size` skip: the
                 // bare relative name followed by " is under min-size", gated on
                 // INFO_GTE(SKIP, 1).
@@ -1008,7 +1008,7 @@ pub(crate) fn emit_verbose<W: Write + ?Sized>(
                 continue;
             }
             ClientEventKind::SkippedDirectory => {
-                // upstream: flist.c:1338 and flist.c:2452 -
+                // upstream: flist.c:1366 and flist.c:2487 -
                 // `rprintf(FINFO, "skipping directory %s\n", ...)`: the bare
                 // relative name with no surrounding quotes and no trailing
                 // "(no recursion)" suffix.
@@ -1057,7 +1057,7 @@ pub(crate) fn emit_verbose<W: Write + ?Sized>(
                 // routing it through the event renderer keeps `is uptodate`
                 // lines ahead of the totals to match upstream's wire order.
                 //
-                // upstream: generator.c:1503 calls `set_file_attrs(..., 0)`
+                // upstream: generator.c:1515 calls `set_file_attrs(..., 0)`
                 // for directories (no ATTRS_REPORT flag), so dirs never trigger
                 // the rsync.c:676 "is uptodate" notice. Symlinks (line 1575)
                 // and regular files (line 1827) DO pass `maybe_ATTRS_REPORT`
@@ -1098,7 +1098,7 @@ pub(crate) fn emit_verbose<W: Write + ?Sized>(
                 }
                 continue;
             }
-            // upstream: generator.c:1021-1022 / 1044-1046 / 1145-1147 - a
+            // upstream: generator.c:1033-1034 / 1056-1058 / 1157-1159 - a
             // `--copy-dest` match that needs no transfer prints `"%s%s is
             // uptodate\n"` at INFO_GTE(NAME, 2), with a trailing `/` for
             // directories, and prints nothing at lower verbosity (the bare
@@ -1119,7 +1119,7 @@ pub(crate) fn emit_verbose<W: Write + ?Sized>(
                 }
                 continue;
             }
-            // upstream: generator.c:1145-1147 - a `--link-dest` symlink
+            // upstream: generator.c:1157-1159 - a `--link-dest` symlink
             // hard-linked from the basis prints `"%s is uptodate"` at NAME>=2.
             ClientEventKind::HardLink if is_hardlinked_symlink_event(event) => {
                 if verbosity >= 2 || matches!(name_level, NameOutputLevel::UpdatedAndUnchanged) {
@@ -1182,7 +1182,7 @@ pub(crate) fn emit_verbose<W: Write + ?Sized>(
         }
 
         // upstream: log.c:log_formatted() emits the default `%n%L` per-file
-        // line at every verbosity tier (set in options.c:2372). The rendered
+        // line at every verbosity tier (set in options.c:2390). The rendered
         // bytes already include the `-> target` suffix for symlinks; higher
         // tiers only add ancillary log messages, never a per-file descriptor
         // prefix or byte-count wrapper.
@@ -1216,7 +1216,7 @@ mod tests {
     fn render_verbose_scenario(events: Vec<ClientEvent>, verbose_level: u8) -> String {
         // Mirror the CLI's per-thread verbosity setup so `info_gte(Skip, ..)`
         // reflects the requested level. `from_verbose_level(2)` raises Skip to 1
-        // (upstream options.c:252), `(1)` leaves it at 0.
+        // (upstream options.c:262), `(1)` leaves it at 0.
         logging::init(logging::VerbosityConfig::from_verbose_level(verbose_level));
         let mut out = Vec::new();
         emit_verbose(
@@ -1262,7 +1262,7 @@ mod tests {
         // notices must surface first, in flist order, with upstream's exact
         // bare-name-plus-" exists" text - never after the transferred names or
         // after the stats block.
-        // upstream: generator.c:1395-1409
+        // upstream: generator.c:1407-1421
         let events = vec![
             transferred_event("big.txt"),
             skip_event("onlyexists.txt", ClientEventKind::SkippedExisting),
@@ -1279,7 +1279,7 @@ mod tests {
     fn skip_notices_suppressed_below_skip_verbosity() {
         // WHY: upstream gates the exists/not-creating/is-newer notices on
         // INFO_GTE(SKIP, 1), which the info verbosity table raises only at -vv
-        // (options.c:252). At plain -v they must be silent, leaving only the
+        // (options.c:262). At plain -v they must be silent, leaving only the
         // transferred-file names - otherwise a drop-in tool sees phantom lines
         // that upstream never emits.
         let events = vec![
@@ -1295,8 +1295,8 @@ mod tests {
     fn not_creating_and_is_newer_use_upstream_text_at_vv() {
         // WHY: the local path previously emitted oc-invented wording ("skipping
         // non-existent destination file", "skipping newer destination file").
-        // Upstream prints `not creating new file "%s"` (generator.c:1380) and
-        // `%s is newer` (generator.c:1724). Drop-in parsers key on the exact
+        // Upstream prints `not creating new file "%s"` (generator.c:1392) and
+        // `%s is newer` (generator.c:1737). Drop-in parsers key on the exact
         // strings, so any deviation breaks compatibility.
         let missing = vec![skip_event(
             "big.txt",
@@ -1322,7 +1322,7 @@ mod tests {
         // order, so the two size-skip notices must surface first, in flist
         // order, with upstream's exact bare-name text - never after the
         // transferred names or after the stats block.
-        // upstream: generator.c:1704-1719
+        // upstream: generator.c:1716-1732
         let events = vec![
             transferred_event("keep.txt"),
             skip_event("big.bin", ClientEventKind::SkippedOverMaxSize),
@@ -1338,7 +1338,7 @@ mod tests {
     #[test]
     fn size_skip_notices_suppressed_below_skip_verbosity() {
         // WHY: upstream gates the size-skip notices on INFO_GTE(SKIP, 1), which
-        // the info verbosity table raises only at -vv (options.c:252). At plain
+        // the info verbosity table raises only at -vv (options.c:262). At plain
         // -v they must be silent, leaving only the transferred name - otherwise
         // a drop-in tool sees phantom lines upstream never emits.
         let events = vec![
@@ -1356,7 +1356,7 @@ mod tests {
         // notices. Mixing all of them must keep every generator-phase notice
         // ahead of the transferred names, in flist order, so adding the size
         // cases does not regress the #6639 ordering.
-        // upstream: generator.c:1379,1395,1708,1716,1723
+        // upstream: generator.c:1391,1407,1720,1729,1736
         let events = vec![
             transferred_event("keep.txt"),
             skip_event("exists.txt", ClientEventKind::SkippedExisting),
@@ -1380,7 +1380,7 @@ mod tests {
             Some(ClientEntryMetadata::for_test(ClientEntryKind::Directory)),
             LocalCopyChangeSet::new(),
         );
-        // upstream: flist.c:1338 and flist.c:2452 emit
+        // upstream: flist.c:1366 and flist.c:2487 emit
         // `rprintf(FINFO, "skipping directory %s\n", ...)` - a bare relative
         // name with no surrounding quotes and no "(no recursion)" suffix. Byte
         // fidelity with upstream requires exactly this form.
@@ -1420,7 +1420,7 @@ mod tests {
 
     #[test]
     fn plain_stats_trailer_starts_with_blank_line() {
-        // upstream: main.c:458 - output_summary() emits an unconditional leading
+        // upstream: main.c:467 - output_summary() emits an unconditional leading
         // `rprintf(FCLIENT, "\n")` before the STATS>=1 sent/received trailer,
         // even when no per-file output preceded it (a plain `--stats` run). oc
         // previously emitted the trailer with no leading blank.
@@ -1440,7 +1440,7 @@ mod tests {
 
     #[test]
     fn stats_detail_block_starts_with_blank_line() {
-        // upstream: main.c:427 - the STATS>=2 detail block is also preceded by an
+        // upstream: main.c:436 - the STATS>=2 detail block is also preceded by an
         // unconditional leading blank.
         let out = render_summary(2, false, false);
         assert!(
@@ -1456,7 +1456,7 @@ mod tests {
 
     #[test]
     fn speedup_suffix_matches_upstream_precedence() {
-        // upstream: main.c:469 - `write_batch < 0 ? " (BATCH ONLY)" : dry_run ?
+        // upstream: main.c:478 - `write_batch < 0 ? " (BATCH ONLY)" : dry_run ?
         // " (DRY RUN)" : ""`. --only-write-batch wins over --dry-run.
         assert!(render_summary(1, false, false).contains("speedup is"));
         assert!(!render_summary(1, false, false).contains("(DRY RUN)"));

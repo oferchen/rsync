@@ -82,7 +82,7 @@ fn dry_run_with_verbose_lists_files_on_stdout() {
 
     // upstream: -v lists the files that would be transferred on stdout.
     // Recurse is required for upstream to descend the source directory
-    // (options.c:112 defaults recurse=0).
+    // (options.c:113 defaults recurse=0).
     let output = String::from_utf8_lossy(&stdout);
     assert!(
         output.contains("file1.txt"),

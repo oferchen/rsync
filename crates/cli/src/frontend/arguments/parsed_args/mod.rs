@@ -234,7 +234,7 @@ pub struct ParsedArgs {
     /// (clap `overrides_with` mirrors upstream's last-wins popt semantics). The
     /// deprecated spelling is forwarded verbatim on the wire.
     ///
-    /// upstream: options.c:730, 2982-2985.
+    /// upstream: options.c:740, 3000-3003.
     pub remove_sent_files: bool,
 
     /// `--trust-sender` - trust the sending side's file list.
@@ -555,7 +555,7 @@ pub struct ParsedArgs {
     ///
     /// Distinct from `verbosity == 0` (the default): captured separately so the
     /// server-arg builder can pack the compact `q` letter, which upstream
-    /// (`options.c:2628`) emits only when `quiet && msgs2stderr`.
+    /// (`options.c:2646`) emits only when `quiet && msgs2stderr`.
     pub quiet: bool,
 
     /// `--progress`, `--info=progress2` / `--no-progress`.
@@ -580,7 +580,7 @@ pub struct ParsedArgs {
     ///
     /// Forces the itemize line for entries whose `iflags == 0` (a quick-check
     /// match with no attribute drift), independently of `-vv`. See upstream
-    /// `generator.c:582-583` and `options.c:1581,2354`.
+    /// `generator.c:589-590` and `options.c:1597,2372`.
     pub itemize_repeated: bool,
 
     /// `--out-format` - format string for file transfer messages.

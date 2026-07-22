@@ -124,7 +124,7 @@ fn log_file_multiple_files_produce_multiple_entries() {
     let mut source_trailing = source_dir.into_os_string();
     source_trailing.push(std::path::MAIN_SEPARATOR.to_string());
 
-    // upstream: options.c:112 defaults `recurse = 0` and flist.c:2451 prints
+    // upstream: options.c:113 defaults `recurse = 0` and flist.c:2486 prints
     // `skipping directory %s` for a directory operand without -r/-a/-d, so a
     // trailing-slash directory source must be paired with --recursive to fan
     // out into the per-child %f log entries this test verifies. Mirrors the

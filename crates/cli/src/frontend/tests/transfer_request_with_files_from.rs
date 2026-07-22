@@ -49,8 +49,8 @@ fn transfer_request_with_files_from_uses_source_directory_for_relative_entries()
 ///
 /// # Upstream Reference
 ///
-/// - `flist.c:2240-2264` - `send_file_list()` reads from `filesfrom_fd`
-/// - `options.c:2169-2177` - `--files-from` disables recursion, enables xfer_dirs
+/// - `flist.c:2275-2299` - `send_file_list()` reads from `filesfrom_fd`
+/// - `options.c:2187-2195` - `--files-from` disables recursion, enables xfer_dirs
 #[test]
 fn files_from_excludes_unlisted_files() {
     use tempfile::tempdir;
@@ -109,7 +109,7 @@ fn files_from_excludes_unlisted_files() {
 /// # Upstream Reference
 ///
 /// - `testsuite/files-from.test` - tests `from/./dir/subdir` entries
-/// - `flist.c:2316-2318` - `strstr(fbuf, "/./")` splits at marker
+/// - `flist.c:2351-2353` - `strstr(fbuf, "/./")` splits at marker
 #[test]
 fn files_from_embedded_dot_marker_determines_destination_structure() {
     use tempfile::tempdir;
@@ -158,7 +158,7 @@ fn files_from_embedded_dot_marker_determines_destination_structure() {
 
 /// Verifies that `--files-from` entries flagged as DOTDIR_NAME (`from/./`) and
 /// SLASH_ENDING_NAME (`dir/`) walk their immediate children even when global
-/// recursion is off, matching upstream `flist.c:2442`.
+/// recursion is off, matching upstream `flist.c:2477`.
 ///
 /// Upstream's `(xfer_dirs && name_type != NORMAL_NAME)` predicate forces
 /// `send_directory()` to emit one level of contents for the listed directory.
@@ -169,8 +169,8 @@ fn files_from_embedded_dot_marker_determines_destination_structure() {
 /// # Upstream Reference
 ///
 /// - `testsuite/files-from.test` - the local invocation exercises this path
-/// - `flist.c:2329` - SLASH_ENDING_NAME / DOTDIR_NAME flagging
-/// - `flist.c:2442-2456` - `(xfer_dirs && name_type != NORMAL_NAME)` walk
+/// - `flist.c:2364` - SLASH_ENDING_NAME / DOTDIR_NAME flagging
+/// - `flist.c:2477-2491` - `(xfer_dirs && name_type != NORMAL_NAME)` walk
 #[test]
 fn files_from_dotdir_entry_walks_immediate_children() {
     use tempfile::tempdir;

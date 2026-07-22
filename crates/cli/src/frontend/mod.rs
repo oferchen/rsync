@@ -269,7 +269,7 @@ where
     let daemon_alias_requested = daemon_invoked_via_program_name(&args, brand);
 
     // Check for --server --daemon (remote-shell daemon mode) BEFORE plain
-    // --server. upstream: main.c:1843-1844 dispatches start_daemon() when both
+    // --server. upstream: main.c:1867-1868 dispatches start_daemon() when both
     // am_server and am_daemon are set, before the normal server path.
     if server::server_daemon_mode_requested(&args) {
         return server::run_server_daemon_mode(&args, stderr);
@@ -302,7 +302,7 @@ where
     let raw_token_count = args.len();
     let exit_code = match parse_args(args) {
         Ok(parsed) => {
-            // upstream: options.c:2005 - `human_readable > 1 && argc == 2 &&
+            // upstream: options.c:2021 - `human_readable > 1 && argc == 2 &&
             // !am_server` preserves the historic meaning of a lone `-h` as
             // `--help`. When the only command-line token increments the
             // human-readable counter (`-h`, `-hh`, `-avh`, `--human-readable`),

@@ -24,7 +24,7 @@ fn parse_args_recognises_partial_dir_and_enables_partial() {
 
 #[test]
 fn parse_args_uses_rsync_partial_dir_env_with_partial() {
-    // upstream: options.c:2448-2451 - RSYNC_PARTIAL_DIR is consulted only when
+    // upstream: options.c:2466-2469 - RSYNC_PARTIAL_DIR is consulted only when
     // keep_partial is active (--partial/-P) and no explicit --partial-dir was
     // given.
     let _env_lock = ENV_LOCK.lock().expect("env lock");
@@ -48,7 +48,7 @@ fn parse_args_uses_rsync_partial_dir_env_with_partial() {
 
 #[test]
 fn parse_args_ignores_rsync_partial_dir_env_without_partial() {
-    // upstream: options.c:2448 `if (keep_partial && !partial_dir && !am_server)`
+    // upstream: options.c:2466 `if (keep_partial && !partial_dir && !am_server)`
     // - without --partial/-P the env var is ignored and does not enable partial.
     let _env_lock = ENV_LOCK.lock().expect("env lock");
 
@@ -67,7 +67,7 @@ fn parse_args_ignores_rsync_partial_dir_env_without_partial() {
 
 #[test]
 fn parse_args_treats_dot_rsync_partial_dir_env_as_unset() {
-    // upstream: options.c:2452-2454 - a "." partial dir collapses to NULL.
+    // upstream: options.c:2470-2472 - a "." partial dir collapses to NULL.
     let _env_lock = ENV_LOCK.lock().expect("env lock");
 
     let _guard = EnvGuard::set("RSYNC_PARTIAL_DIR", OsStr::new("."));
