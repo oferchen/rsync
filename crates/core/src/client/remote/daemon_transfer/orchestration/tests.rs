@@ -91,7 +91,7 @@ mod protect_args_daemon_tests {
 
     #[test]
     fn build_full_args_capability_flags_protocol30() {
-        // upstream: options.c:2710 - capability string is embedded in the
+        // upstream: options.c:2728 - capability string is embedded in the
         // compact flag string for protocol >= 30.
         let config = ClientConfig::default();
         let request = test_daemon_request();
@@ -534,7 +534,7 @@ mod protect_args_daemon_tests {
 
     #[test]
     fn build_full_args_omits_reference_dirs_in_pull_mode() {
-        // upstream: options.c:2915-2923 - reference dirs are inside if(am_sender).
+        // upstream: options.c:2933-2941 - reference dirs are inside if(am_sender).
         let config = ClientConfig::builder()
             .compare_destination("/tmp/compare")
             .link_destination("/prev")
@@ -782,7 +782,7 @@ mod protect_args_daemon_tests {
     #[cfg(unix)]
     #[test]
     fn build_full_args_forwards_groupmap_wildcard_verbatim() {
-        // upstream: options.c:2894-2898 - --groupmap value is shipped verbatim
+        // upstream: options.c:2912-2916 - --groupmap value is shipped verbatim
         // through the daemon secluded-args byte stream. Wildcards like `*`
         // must survive so the receiver's `uidlist.c:parse_name_map()` sees
         // `strpbrk(cp, "*[?")` and installs a `NFLAGS_WILD_NAME_MATCH` rule.
@@ -1338,7 +1338,7 @@ mod server_config_reference_dirs {
     }
 
     /// Without `--mkpath` the receiver config leaves the flag clear, so a missing
-    /// destination parent stays a fatal error, matching upstream main.c:787.
+    /// destination parent stays a fatal error, matching upstream main.c:796.
     #[test]
     fn receiver_config_without_mkpath_stays_clear() {
         let config = ClientConfig::default();
@@ -1402,7 +1402,7 @@ mod server_config_reference_dirs {
 
     #[test]
     fn generator_config_sets_files_from_for_local_file_push() {
-        // upstream: options.c:2944 - when the client is the sender and
+        // upstream: options.c:2962 - when the client is the sender and
         // --files-from points to a local file, the generator reads filenames
         // directly from the file (not via the protocol stream).
         let config = ClientConfig::builder()
@@ -1447,7 +1447,7 @@ mod server_config_reference_dirs {
 
     #[test]
     fn generator_config_propagates_itemize_flag() {
-        // upstream: options.c:2750-2762 - the local ServerConfig must have
+        // upstream: options.c:2768-2780 - the local ServerConfig must have
         // info_flags.itemize set so the generator's maybe_emit_itemize()
         // produces client-side output via the callback.
         let config = ClientConfig::builder().itemize_changes(true).build();
@@ -1542,7 +1542,7 @@ mod files_from_daemon_args_tests {
 
     #[test]
     fn push_with_local_file_omits_files_from_arg() {
-        // upstream: options.c:2944 - when client is sender and files_from
+        // upstream: options.c:2962 - when client is sender and files_from
         // is local, the arg is NOT sent to the daemon.
         let config = ClientConfig::builder()
             .files_from(FilesFromSource::LocalFile(PathBuf::from("/tmp/list.txt")))
@@ -1580,7 +1580,7 @@ mod files_from_daemon_args_tests {
 
     #[test]
     fn pull_with_local_file_sends_files_from_stdin() {
-        // upstream: options.c:2944 - when client is receiver (pull), local
+        // upstream: options.c:2962 - when client is receiver (pull), local
         // files are forwarded as --files-from=- with --from0.
         let config = ClientConfig::builder()
             .files_from(FilesFromSource::LocalFile(PathBuf::from("/tmp/list.txt")))

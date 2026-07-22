@@ -188,7 +188,7 @@ impl<'a> RemoteInvocationBuilder<'a> {
 
         let mut flags = self.build_flag_string();
 
-        // upstream: options.c:2710 - maybe_add_e_option() appends the `e.xxx`
+        // upstream: options.c:2728 - maybe_add_e_option() appends the `e.xxx`
         // capability string directly onto the compact flag string, producing a
         // single argument like `-logDtpre.iLsfxCIvu`. Emitting it as a separate
         // `-e.xxx` argument would confuse the server-side parser which treats
@@ -230,7 +230,7 @@ impl<'a> RemoteInvocationBuilder<'a> {
 
         for path in remote_paths {
             if escape_for_shell && !old_args_active {
-                // upstream: main.c:613 safe_arg(NULL, *remote_argv++)
+                // upstream: main.c:622 safe_arg(NULL, *remote_argv++)
                 // upstream: options.c:2555-2557 - escape a leading ~ for a
                 // relative path without a `/./` pivot, or a path with no `/`.
                 let escape_tilde = escape_tilde_role
@@ -357,7 +357,7 @@ impl<'a> RemoteInvocationBuilder<'a> {
             }
         }
 
-        // upstream: options.c:2845-2846 - `--max-alloc=arg` is forwarded to
+        // upstream: options.c:2863-2864 - `--max-alloc=arg` is forwarded to
         // the server when the user supplied a non-default value. Each side
         // owns its own cap, so forwarding lets the remote enforce the same
         // budget the client requested.
@@ -388,7 +388,7 @@ impl<'a> RemoteInvocationBuilder<'a> {
             args.push(OsString::from(format!("--compress-level={numeric}")));
         }
 
-        // upstream: options.c:2800-2805 - compress choice forwarding.
+        // upstream: options.c:2818-2823 - compress choice forwarding.
         // Only sent when the user explicitly specified --compress-choice,
         // --new-compress, or --old-compress. The wire format depends on the
         // algorithm: zlibx uses --new-compress, explicit zlib uses
@@ -399,9 +399,9 @@ impl<'a> RemoteInvocationBuilder<'a> {
             match name {
                 // upstream: compat.c:100 - "zlibx" is the new-compress alias
                 "zlibx" => args.push(OsString::from("--new-compress")),
-                // upstream: options.c:2802 - explicit zlib sent as --old-compress
+                // upstream: options.c:2820 - explicit zlib sent as --old-compress
                 "zlib" => args.push(OsString::from("--old-compress")),
-                // upstream: options.c:2804-2805 - other algorithms
+                // upstream: options.c:2822-2823 - other algorithms
                 _ => args.push(OsString::from(format!("--compress-choice={name}"))),
             }
         }
@@ -514,7 +514,7 @@ impl<'a> RemoteInvocationBuilder<'a> {
             args.push(OsString::from("--munge-links"));
         }
 
-        // upstream: options.c:2887-2888 - --numeric-ids is long-form only.
+        // upstream: options.c:2905-2906 - --numeric-ids is long-form only.
         if self.config.numeric_ids() {
             args.push(OsString::from("--numeric-ids"));
         }
@@ -660,7 +660,7 @@ impl<'a> RemoteInvocationBuilder<'a> {
             args.push(OsString::from("--delay-updates"));
         }
 
-        // upstream: options.c:2630-2631 - bare `make_backups` is emitted as the
+        // upstream: options.c:2648-2649 - bare `make_backups` is emitted as the
         // `b` character in the compact flag string by `build_flag_string`. Only
         // `--backup-dir` and `--suffix` are forwarded as long-form arguments
         // (`options.c:2807,2813`).
@@ -798,7 +798,7 @@ impl<'a> RemoteInvocationBuilder<'a> {
             }
         }
 
-        // upstream: options.c:2894-2898 - --usermap / --groupmap are
+        // upstream: options.c:2912-2916 - --usermap / --groupmap are
         // forwarded as `--key=value` arguments. With `protect_args` the value
         // is shipped verbatim; without `protect_args`, upstream wraps it in
         // `safe_arg("--usermap", value)` which escapes shell + wildcard
@@ -821,7 +821,7 @@ impl<'a> RemoteInvocationBuilder<'a> {
             }
         }
 
-        // upstream: options.c:2716-2723 - --iconv forwarding. When iconv_opt
+        // upstream: options.c:2734-2741 - --iconv forwarding. When iconv_opt
         // contains a comma, only the post-comma half (the remote charset) is
         // forwarded; otherwise the whole string is forwarded as-is.
         // `--iconv=-` (Disabled) and the default (Unspecified) forward
@@ -838,7 +838,7 @@ impl<'a> RemoteInvocationBuilder<'a> {
             }
         }
 
-        // upstream: options.c:2986-2993 - remote_options[] are appended after
+        // upstream: options.c:3004-3011 - remote_options[] are appended after
         // all other server arguments. Each -M value is forwarded verbatim.
         for opt in self.config.remote_options() {
             args.push(opt.clone());
@@ -853,7 +853,7 @@ impl<'a> RemoteInvocationBuilder<'a> {
     fn build_flag_string(&self) -> String {
         let mut flags = String::from("-");
 
-        // upstream: options.c:2169-2188 - when --files-from is active, upstream
+        // upstream: options.c:2187-2206 - when --files-from is active, upstream
         // sets recurse=0, xfer_dirs=1, relative_paths=1. Suppress 'r' and imply
         // 'R' to match this behaviour.
         let files_from_active = self.config.files_from().is_active();
@@ -882,14 +882,14 @@ impl<'a> RemoteInvocationBuilder<'a> {
         for _ in 0..self.config.verbosity() {
             flags.push('v');
         }
-        // upstream: options.c:2628-2629 - `if (quiet && msgs2stderr) 'q'`. The
+        // upstream: options.c:2646-2647 - `if (quiet && msgs2stderr) 'q'`. The
         // default `msgs2stderr` is 2 (nonzero), so plain `-q` packs 'q';
         // `--no-msgs2stderr` (msgs2stderr == 0) suppresses it. Modelled as
         // `msgs2stderr() != Some(false)`.
         if self.config.quiet() && self.config.msgs2stderr() != Some(false) {
             flags.push('q');
         }
-        // upstream: options.c:2630-2631 - `make_backups` rides as `b`. Emitting
+        // upstream: options.c:2648-2649 - `make_backups` rides as `b`. Emitting
         // `--backup` as a long arg lands as a positional path on upstream
         // server parsers, so `b` is mandatory here.
         if self.config.backup() {
