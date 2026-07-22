@@ -65,6 +65,31 @@ pub fn apply_chroot(_path: &Path) -> io::Result<()> {
     Ok(())
 }
 
+/// Probes chroot capability with a no-op `chroot("/")`, without touching any
+/// module path.
+///
+/// Used only when a module's `use chroot` directive is unset: the daemon
+/// tries this harmless self-chroot to determine whether the process has
+/// `CAP_SYS_CHROOT` before deciding the tri-state default. Success leaves
+/// the process root unchanged (chrooting to `/` is a no-op); failure (almost
+/// always `EPERM`) means the daemon is unprivileged.
+///
+/// upstream: clientserver.c:834 `rsync_module()` - `chroot("/") < 0` probes
+/// capability before the real `chroot(module_chdir)` later in the function.
+#[cfg(unix)]
+pub fn probe_chroot_capability() -> io::Result<()> {
+    nix::unistd::chroot("/").map_err(nix_to_io)?;
+    std::env::set_current_dir("/")?;
+    Ok(())
+}
+
+/// No-op chroot probe on non-Unix platforms: chroot never applies there, so
+/// the tri-state always resolves to "enabled" (harmlessly unused).
+#[cfg(not(unix))]
+pub fn probe_chroot_capability() -> io::Result<()> {
+    Ok(())
+}
+
 /// Drops process privileges to the specified uid and group list.
 ///
 /// `gids` is the complete group set to install, primary group first (as
@@ -403,6 +428,26 @@ mod tests {
                 None => std::env::remove_var("TZ"),
             }
             tzset();
+        }
+    }
+
+    /// `probe_chroot_capability` must never touch a module path - it always
+    /// targets `"/"`. On a non-root test runner it fails with `EPERM`
+    /// (lack of `CAP_SYS_CHROOT`); on a root runner it succeeds harmlessly
+    /// (chrooting to `/` changes nothing). Either outcome is valid; the
+    /// test only pins that the call never panics and returns an `io::Error`
+    /// on failure rather than something unexpected.
+    #[cfg(unix)]
+    #[test]
+    fn probe_chroot_capability_succeeds_or_reports_permission_denied() {
+        match probe_chroot_capability() {
+            Ok(()) => {}
+            Err(err) => assert_eq!(
+                err.kind(),
+                io::ErrorKind::PermissionDenied,
+                "unexpected probe failure kind: {:?}",
+                err.kind()
+            ),
         }
     }
 
