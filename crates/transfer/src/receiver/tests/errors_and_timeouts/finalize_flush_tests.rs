@@ -14,9 +14,9 @@
 //!
 //! # Upstream Reference
 //!
-//! - `main.c:1067` - `do_recv()` child path `io_flush(FULL_FLUSH)` after the
+//! - `main.c:1085` - `do_recv()` child path `io_flush(FULL_FLUSH)` after the
 //!   receiver writes its final NDX_DONE.
-//! - `main.c:1117` / `main.c:1123` - `do_recv()` parent path
+//! - `main.c:1135` / `main.c:1141` - `do_recv()` parent path
 //!   `io_flush(FULL_FLUSH)` after `handle_stats(-1)` and after the final
 //!   NDX_DONE write.
 

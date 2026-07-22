@@ -106,7 +106,7 @@ fn render_itemize_root_directory_emits_creation_glyph_when_freshly_created() {
     // create_directory_incremental cannot observe the pre-flight mkdir
     // performed by `ensure_dest_root_exists`. When that pre-flight actually
     // created the root (`dest_root_created == true`), mirror upstream
-    // main.c:794-796 FLAG_DIR_CREATED by forcing the created-directory glyph.
+    // main.c:803-805 FLAG_DIR_CREATED by forcing the created-directory glyph.
     let handshake = test_handshake();
     let config = receiver_config_with_itemize();
     let mut ctx = ReceiverContext::new_for_test(&handshake, config);
@@ -123,7 +123,7 @@ fn render_itemize_root_directory_emits_creation_glyph_when_freshly_created() {
 
 #[test]
 fn render_itemize_root_directory_no_glyph_when_dest_root_preexisted() {
-    // upstream main.c:794-796 only sets FLAG_DIR_CREATED when the receiver
+    // upstream main.c:803-805 only sets FLAG_DIR_CREATED when the receiver
     // had to mkdir the destination root. When the root already existed
     // (e.g. `up1/ -> up2/` where up2 is present), the flag stays clear and
     // the root reports a metadata-only row that the significance gate drops

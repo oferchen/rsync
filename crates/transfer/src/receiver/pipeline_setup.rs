@@ -96,13 +96,13 @@ pub(in crate::receiver) fn apply_acls_from_receiver_cache(
 /// Returns `Some(filter_set)` when rules are present, `None` when empty.
 /// Used by the receiver to reject daemon-excluded files before accepting
 /// transfer data, mirroring upstream `check_filter(&daemon_filter_list, ...)`
-/// in `receiver.c:599-604`.
+/// in `receiver.c:711-716`.
 ///
 /// # Upstream Reference
 ///
 /// - `clientserver.c:874-893` - daemon filter list is built from module
 ///   filter/exclude/include/exclude_from/include_from directives
-/// - `receiver.c:599-604` - per-file check against daemon_filter_list
+/// - `receiver.c:711-716` - per-file check against daemon_filter_list
 pub(in crate::receiver) fn compile_daemon_filter_set(
     rules: &[FilterRuleWireFormat],
 ) -> Option<FilterSet> {

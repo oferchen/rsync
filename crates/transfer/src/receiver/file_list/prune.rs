@@ -77,7 +77,7 @@ pub(in crate::receiver) fn prune_empty_dirs_pass(
         let depth = entry_depth(entry) as i64;
 
         if is_dir && depth > 0 {
-            // upstream: flist.c:3133-3140 - "Dump empty dirs when coming back
+            // upstream: flist.c:3168-3175 - "Dump empty dirs when coming back
             // down." Walk back through the candidate chain via prev_i,
             // clearing any candidates whose depth is at or below the current
             // dir's depth that were never reprieved.

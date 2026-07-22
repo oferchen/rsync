@@ -6,7 +6,7 @@
 //!
 //! # Upstream Reference
 //!
-//! - `main.c:875-906` - `read_final_goodbye()` with extended goodbye
+//! - `main.c:893-924` - `read_final_goodbye()` with extended goodbye
 //! - `main.c:356-384` - `handle_stats()` sends/receives statistics
 //! - `io.c:read_ndx()` / `write_ndx()` - NDX wire encoding
 
@@ -49,7 +49,7 @@ impl ReceiverContext {
         if inc_recurse {
             let num_segments = self.ndx_segments.len();
             for _ in 0..num_segments {
-                // upstream: receiver.c:573 - flist_free(first_flist)
+                // upstream: receiver.c:683 - flist_free(first_flist)
                 // Reclaim heap data from the oldest completed segment
                 // to reduce RSS before sending the per-segment NDX_DONE.
                 self.reclaim_oldest_segment();
@@ -58,7 +58,7 @@ impl ReceiverContext {
                 self.read_expected_ndx_done(ndx_read_codec, reader, "segment completion")?;
             }
 
-            // upstream: generator.c:2355-2357 - phase++ then "generate_files phase=%d"
+            // upstream: generator.c:2372-2374 - phase++ then "generate_files phase=%d"
             // The first `phase++` after the per-segment loop advances 0 -> 1.
             let mut phase: i32 = 1;
             // upstream: receiver.c:692-693 DEBUG_GTE(RECV, 1)
@@ -95,7 +95,7 @@ impl ReceiverContext {
                 phase += 1;
                 // upstream: receiver.c:692-693 DEBUG_GTE(RECV, 1)
                 debug_log!(Recv, 1, "recv_files phase={}", phase);
-                // upstream: generator.c:2355-2357, 2366-2368, 2392-2394
+                // upstream: generator.c:2372-2374, 2366-2368, 2392-2394
                 // "generate_files phase=%d" emitted after each phase++.
                 debug_log!(Genr, 1, "generate_files phase={}", phase);
                 if phase > max_phase {
@@ -172,7 +172,7 @@ impl ReceiverContext {
     /// # Upstream Reference
     ///
     /// - `main.c:1107-1132` - daemon-recv parent process runs `generate_files`
-    /// - `generator.c:2393-2398` - early `write_del_stats(f_out)` emission
+    /// - `generator.c:2410-2415` - early `write_del_stats(f_out)` emission
     /// - `main.c:225-238` - `write_del_stats()` wire format
     pub(in crate::receiver) fn handle_goodbye<R: Read, W: Write + ?Sized>(
         &self,
@@ -204,7 +204,7 @@ impl ReceiverContext {
         writer.flush()?;
 
         if self.protocol.supports_extended_goodbye() {
-            // upstream: main.c:875-906 read_final_goodbye() - the sender may
+            // upstream: main.c:893-924 read_final_goodbye() - the sender may
             // send NDX_DEL_STATS before the NDX_DONE echo. Loop to skip it.
             loop {
                 let ndx = ndx_read_codec.read_ndx(reader)?;
@@ -288,7 +288,7 @@ impl ReceiverContext {
 
         self.handle_goodbye(reader, writer, &mut ndx_write_codec, &mut ndx_read_codec)?;
 
-        // upstream: main.c:1067 do_recv() child path and main.c:1117/1123
+        // upstream: main.c:1085 do_recv() child path and main.c:1135/1123
         // do_recv() parent path both call io_flush(FULL_FLUSH) immediately
         // after the final NDX_DONE write so the kernel ships the goodbye
         // frame (and any trailing multiplexed MSG_INFO frames) before the
@@ -313,7 +313,7 @@ impl ReceiverContext {
         // upstream: receiver.c:1114-1115 DEBUG_GTE(RECV, 1)
         debug_log!(Recv, 1, "recv_files finished");
 
-        // upstream: generator.c:2436-2437 - "generate_files finished" emitted at
+        // upstream: generator.c:2453-2454 - "generate_files finished" emitted at
         // the bottom of generate_files() after the final goodbye handshake.
         debug_log!(Genr, 1, "generate_files finished");
 
@@ -393,7 +393,7 @@ mod genr_debug_emission_tests {
 
     #[test]
     fn recv_generator_per_file_matches_upstream() {
-        // upstream: generator.c:1234-1235 - "recv_generator(%s,%d)"
+        // upstream: generator.c:1246-1247 - "recv_generator(%s,%d)"
         init_genr_level1();
         let name = PathBuf::from("dir/file.txt");
         let ndx: i32 = 7;
@@ -407,7 +407,7 @@ mod genr_debug_emission_tests {
 
     #[test]
     fn generate_files_phase_matches_upstream() {
-        // upstream: generator.c:2355-2357, 2366-2368, 2392-2394
+        // upstream: generator.c:2372-2374, 2366-2368, 2392-2394
         // "generate_files phase=%d" - the phase counter advances 1 -> 2 -> 3
         // across the regular, redo, and protocol-29+ delay-updates phases.
         init_genr_level1();
@@ -426,7 +426,7 @@ mod genr_debug_emission_tests {
 
     #[test]
     fn generate_files_finished_matches_upstream() {
-        // upstream: generator.c:2436-2437 - "generate_files finished"
+        // upstream: generator.c:2453-2454 - "generate_files finished"
         init_genr_level1();
         debug_log!(Genr, 1, "generate_files finished");
         let msgs = genr_messages();

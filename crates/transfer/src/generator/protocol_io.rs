@@ -6,7 +6,7 @@
 //!
 //! # Upstream Reference
 //!
-//! - `flist.c:2192-2545` - File list building and sending
+//! - `flist.c:2227-2580` - File list building and sending
 //! - `uidlist.c:407-414` - `send_id_lists()` for name-based ownership
 //! - `sender.c:120` - `receive_sums()` reads signature blocks
 
@@ -27,7 +27,7 @@ use super::item_flags::ItemFlags;
 /// payload on the wire.
 ///
 /// Bundles the NDX with the iflags-gated trailing fields that always travel
-/// together (upstream `sender.c:180-189`): `fnamecmp_type` is emitted when
+/// together (upstream `sender.c:184-193`): `fnamecmp_type` is emitted when
 /// `iflags.has_basis_type()` and `xname` when `iflags.has_xname()`. Grouping
 /// them as a single parameter object keeps the two writer methods below at a
 /// manageable arity and prevents the four fields from drifting apart at call
@@ -59,7 +59,7 @@ impl GeneratorContext {
     ///
     /// # Upstream Reference
     ///
-    /// - `flist.c:2513-2514` - `if (numeric_ids <= 0 && !inc_recurse) send_id_lists(f);`
+    /// - `flist.c:2548-2549` - `if (numeric_ids <= 0 && !inc_recurse) send_id_lists(f);`
     /// - `uidlist.c:407-414` - `send_id_lists()`
     pub(crate) fn send_id_lists<W: Write>(&self, writer: &mut W) -> io::Result<()> {
         let inc_recurse = self
@@ -153,7 +153,7 @@ impl GeneratorContext {
     ///
     /// # Upstream Reference
     ///
-    /// - `flist.c:2517-2518`: `write_int(f, ignore_errors ? 0 : io_error);`
+    /// - `flist.c:2552-2553`: `write_int(f, ignore_errors ? 0 : io_error);`
     pub(super) fn send_io_error_flag<W: Write>(&self, writer: &mut W) -> io::Result<()> {
         if self.protocol.uses_fixed_encoding() {
             // upstream: flist.c:2517-2518
@@ -187,7 +187,7 @@ impl GeneratorContext {
     ///
     /// # Upstream Reference
     ///
-    /// - `sender.c:280-284` - `recv_xattr_request()` called when
+    /// - `sender.c:286-290` - `recv_xattr_request()` called when
     ///   `preserve_xattrs && iflags & ITEM_REPORT_XATTR && do_xfers
     ///    && !(want_xattr_optim && BITS_SET(iflags, ITEM_XNAME_FOLLOWS|ITEM_LOCAL_CHANGE))`
     /// - `xattrs.c:681-758` - `recv_xattr_request()` sender path marks entries
@@ -204,7 +204,7 @@ impl GeneratorContext {
         if iflags.raw() & ItemFlags::ITEM_REPORT_XATTR == 0 {
             return Ok(None);
         }
-        // upstream: sender.c:281 also gates on the want_xattr_optim hardlink
+        // upstream: sender.c:287 also gates on the want_xattr_optim hardlink
         // optimisation. upstream: compat.c:747 -
         // `want_xattr_optim = protocol_version >= 31 && !(compat_flags & CF_AVOID_XATTR_OPTIM)`.
         // The optimisation only exists at protocol 31+, so it must stay off for
@@ -248,13 +248,13 @@ impl GeneratorContext {
     /// xattr_request body) with the immediately following `write_sum_head()`
     /// call. When `xattr_response` is `Some` and the file has entries the
     /// generator requested, the full xattr values are written between iflags
-    /// and sum_head, matching the byte order of upstream sender.c:411-412.
+    /// and sum_head, matching the byte order of upstream sender.c:442-443.
     ///
     /// # Upstream Reference
     ///
-    /// - `sender.c:180-196` - `write_ndx_and_attrs()` body (calls
+    /// - `sender.c:184-200` - `write_ndx_and_attrs()` body (calls
     ///   `send_xattr_request(fname, file, f_out)` when ITEM_REPORT_XATTR set)
-    /// - `sender.c:411-412` - `write_ndx_and_attrs()` followed by
+    /// - `sender.c:442-443` - `write_ndx_and_attrs()` followed by
     ///   `write_sum_head(f_xfer, s)`
     pub(super) fn write_ndx_and_attrs<W: Write>(
         &self,
@@ -317,7 +317,7 @@ impl GeneratorContext {
             }
         }
         if iflags.has_xname() {
-            // upstream: sender.c:189 write_vstring(f_out, xname, strlen(xname)).
+            // upstream: sender.c:193 write_vstring(f_out, xname, strlen(xname)).
             // The xname length prefix is a 1- or 2-byte vstring (io.c:2297), NOT
             // a varint: the two encodings only agree for len <= 0x7F, so a longer
             // fuzzy basename or hard-link leader name would desync the receiver's
@@ -325,7 +325,7 @@ impl GeneratorContext {
             // byte.
             protocol::write_vstring(writer, xname.unwrap_or(&[]))?;
         }
-        // upstream: sender.c:192-196 - send_xattr_request(fname, file, f_out)
+        // upstream: sender.c:196-200 - send_xattr_request(fname, file, f_out)
         // is invoked from inside write_ndx_and_attrs() when ITEM_REPORT_XATTR
         // is set in iflags. Skipping this body causes the receiver to read the
         // following bytes as a stale xattr request, desyncing the goodbye phase.
@@ -362,11 +362,11 @@ impl GeneratorContext {
     ) -> io::Result<()> {
         if error.kind() == io::ErrorKind::NotFound {
             self.io_error |= super::io_error_flags::IOERR_VANISHED;
-            // upstream: sender.c:358 - rprintf(c, "file has vanished: %s\n", full_fname(...))
+            // upstream: sender.c:389 - rprintf(c, "file has vanished: %s\n", full_fname(...))
             eprintln!("file has vanished: \"{path_display}\"");
         } else {
             self.io_error |= super::io_error_flags::IOERR_GENERAL;
-            // upstream: sender.c:362 - rsyserr(FERROR_XFER, errno, "send_files failed to open %s", ...)
+            // upstream: sender.c:393 - rsyserr(FERROR_XFER, errno, "send_files failed to open %s", ...)
             eprintln!(
                 "rsync: [sender] send_files failed to open \"{path_display}\": {}",
                 engine::local_copy::upstream_io_error(error),
@@ -427,8 +427,8 @@ impl GeneratorContext {
     /// - `generator.c:582-583` - emit gate: `(iflags & (SIGNIFICANT_ITEM_FLAGS
     ///   | ITEM_REPORT_XATTR)) || INFO_GTE(NAME, 2) || stdout_format_has_i > 1
     ///   || (xname && *xname)`
-    /// - `sender.c:287` - `maybe_log_item()` for non-transfer items
-    /// - `sender.c:430` - `log_item()` after file transfer
+    /// - `sender.c:293` - `maybe_log_item()` for non-transfer items
+    /// - `sender.c:461` - `log_item()` after file transfer
     /// - `log.c:330-340` - `rwrite()`: when `am_server`, sends MSG_INFO;
     ///   when `!am_server`, writes to stdout (FCLIENT)
     pub(super) fn maybe_emit_itemize<W: Write>(
@@ -580,8 +580,8 @@ impl GeneratorContext {
     ///
     /// # Upstream Reference
     ///
-    /// - `flist.c:2192` - `send_file_list()` main entry point
-    /// - `flist.c:2518` - `write_int(f, io_error)` end marker with SAFE_FILE_LIST
+    /// - `flist.c:2227` - `send_file_list()` main entry point
+    /// - `flist.c:2553` - `write_int(f, io_error)` end marker with SAFE_FILE_LIST
     pub fn send_file_list<W: Write>(&mut self, writer: &mut W) -> io::Result<usize> {
         let _t = PhaseTimer::new("file-list-send");
         // upstream: stats.flist_xfertime
@@ -620,7 +620,7 @@ impl GeneratorContext {
             self.flist_send_stats.record(entry);
         }
 
-        // upstream: flist.c:2518 - write io_error with end marker (SAFE_FILE_LIST)
+        // upstream: flist.c:2553 - write io_error with end marker (SAFE_FILE_LIST)
         let io_error_for_end = if self.io_error != 0 {
             Some(self.io_error)
         } else {
@@ -657,7 +657,7 @@ impl GeneratorContext {
     /// # Upstream Reference
     ///
     /// - `flist.c:send_extra_file_list()` - sends one directory's entries
-    /// - `flist.c:2931` - `ndx_start = prev->ndx_start + prev->used + 1`
+    /// - `flist.c:2966` - `ndx_start = prev->ndx_start + prev->used + 1`
     pub(super) fn encode_and_send_segment<W: Write>(
         &mut self,
         writer: &mut W,
@@ -688,7 +688,7 @@ impl GeneratorContext {
         ndx_codec: &mut NdxCodecEnum,
     ) -> io::Result<()> {
         // Compute ndx_start for this sub-list.
-        // upstream: flist.c:2931 - flist->ndx_start = prev->ndx_start + prev->used + 1
+        // upstream: flist.c:2966 - flist->ndx_start = prev->ndx_start + prev->used + 1
         let &(prev_flat_start, prev_ndx_start) = self
             .incremental
             .ndx_segments
@@ -708,7 +708,7 @@ impl GeneratorContext {
             .push(segment.parent_flat_idx as i32);
 
         // Signal new sub-list to receiver.
-        // upstream: flist.c:2117 - write_ndx(f, NDX_FLIST_OFFSET - dir_ndx)
+        // upstream: flist.c:2152 - write_ndx(f, NDX_FLIST_OFFSET - dir_ndx)
         ndx_codec.write_ndx(writer, NDX_FLIST_OFFSET - segment.parent_dir_ndx)?;
 
         // Set first_ndx so abbreviated vs unabbreviated followers are
@@ -728,7 +728,7 @@ impl GeneratorContext {
         }
 
         // End-of-flist marker (zero byte).
-        // upstream: flist.c:2139-2146 - always sends write_end_of_flist()
+        // upstream: flist.c:2174-2181 - always sends write_end_of_flist()
         flist_writer.write_end(writer, None)?;
 
         debug_log!(
@@ -757,7 +757,7 @@ impl GeneratorContext {
     ///
     /// # Upstream Reference
     ///
-    /// Mirrors `flist.c:1627-1656` where `get_acl()` reads filesystem ACLs
+    /// Mirrors `flist.c:1663-1692` where `get_acl()` reads filesystem ACLs
     /// and `send_acl()` strips and sends them.
     fn prepare_pending_acl(
         &self,

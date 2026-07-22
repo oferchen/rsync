@@ -129,7 +129,7 @@ impl ReceiverContext {
             .advance_to(TransferPhase::FileListTransfer)
             .map_err(crate::fsm_error)?;
 
-        // upstream: main.c:1173-1180 - server-receiver opened a local
+        // upstream: main.c:1191-1198 - server-receiver opened a local
         // `--files-from` file (filesfrom_fd) and now forwards its contents
         // to the sender (the client) over f_out so the sender can build the
         // file list. Upstream interleaves this with `recv_file_list` via the
@@ -138,7 +138,7 @@ impl ReceiverContext {
         // are decoupled (no select() loop fanning across them).
         self.forward_files_from_to_sender(writer)?;
 
-        // upstream: flist.c:2604-2607 recv_file_list() - the first list arrival
+        // upstream: flist.c:2639-2642 recv_file_list() - the first list arrival
         // prints `receiving incremental file list` on the client's own output.
         // Write it DIRECTLY to the client stream here instead of through the
         // deferred `info_log!` event buffer: that buffer is only drained by the
@@ -241,7 +241,7 @@ impl ReceiverContext {
             .preserve_owner(self.config.flags.owner)
             .preserve_group(self.config.flags.group)
             .numeric_ids(self.config.flags.numeric_ids.maps_numeric())
-            // upstream: generator.c:1344 - `link_stat(fname, &sx.st,
+            // upstream: generator.c:1356 - `link_stat(fname, &sx.st,
             // keep_dirlinks && is_dir)` follows a destination symlink-to-dir
             // at stat time instead of rejecting it. The
             // `chmod_path_honoring_keep_dirlinks` helper in
@@ -348,7 +348,7 @@ impl ReceiverContext {
         self.dest_root_created = created_dest_root;
         if created_dest_root {
             debug_log!(Recv, 1, "created destination root {}", dest_dir.display());
-            // upstream: main.c:798-799 - `rprintf(FINFO, "created directory %s\n", dest_path)`
+            // upstream: main.c:807-808 - `rprintf(FINFO, "created directory %s\n", dest_path)`
             // gated on `INFO_GTE(NAME, 1) || stdout_format_has_i`. The notice
             // is for the receiver's destination root only; alt-basis dirs
             // (`--copy-dest`, `--link-dest`, `--compare-dest`) never produce
@@ -373,7 +373,7 @@ impl ReceiverContext {
         // directory via the stat path in ensure_dest_root_exists, lock the
         // canonical target in here so every downstream open (DirSandbox,
         // per-entry `*at` syscalls) operates on the resolved directory.
-        // Upstream `main.c:748` reaches the same state by calling
+        // Upstream `main.c:757` reaches the same state by calling
         // `change_dir(dest_path, CD_NORMAL)` after `S_ISDIR` succeeds: the
         // kernel resolves the link once and every subsequent syscall is
         // relative to the resolved cwd. We mirror that by canonicalizing
@@ -630,7 +630,7 @@ impl ReceiverContext {
     /// # Upstream Reference
     ///
     /// - `main.c:805-832` - `get_local_name()` rename branch
-    /// - `receiver.c:594` - `fname = local_name ? local_name : f_name(...)`
+    /// - `receiver.c:706` - `fname = local_name ? local_name : f_name(...)`
     fn apply_single_file_rename(
         &mut self,
         dest_dir: PathBuf,
@@ -714,7 +714,7 @@ impl ReceiverContext {
     /// Forwards a server-receiver-side `--files-from=<localpath>` file to the
     /// sender (peer) over the protocol writer.
     ///
-    /// Upstream's `main.c:1173-1180` server-receiver opens `filesfrom_fd`
+    /// Upstream's `main.c:1191-1198` server-receiver opens `filesfrom_fd`
     /// locally and registers it with `start_filesfrom_forwarding`. The I/O
     /// scheduler then interleaves writes to `f_out` (toward the sender) with
     /// reads from `f_in` (the incoming flist). The sender's `send_file_list`
@@ -731,7 +731,7 @@ impl ReceiverContext {
     ///
     /// # Upstream Reference
     ///
-    /// - `main.c:1173-1180` - `start_filesfrom_forwarding(filesfrom_fd)`
+    /// - `main.c:1191-1198` - `start_filesfrom_forwarding(filesfrom_fd)`
     /// - `io.c:370-381` - `forward_filesfrom_data()` core loop
     /// - `options.c:2944-2956` - server-side `--files-from <path>` arg form
     fn forward_files_from_to_sender<W: io::Write + ?Sized>(
@@ -746,7 +746,7 @@ impl ReceiverContext {
             _ => return Ok(()),
         };
 
-        // upstream: options.c:2483 open(files_from, O_RDONLY|O_BINARY).
+        // upstream: options.c:2501 open(files_from, O_RDONLY|O_BINARY).
         let file = std::fs::File::open(path).map_err(|err| {
             io::Error::new(
                 err.kind(),

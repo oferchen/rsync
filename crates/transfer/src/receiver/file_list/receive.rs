@@ -61,7 +61,7 @@ impl ReceiverContext {
             self.flist_io_error |= flist_reader.io_error();
         }
 
-        // upstream: flist.c:2726-2727 - recv_id_list() called when !inc_recurse
+        // upstream: flist.c:2761-2762 - recv_id_list() called when !inc_recurse
         let inc_recurse = self
             .compat_flags
             .is_some_and(|f| f.contains(CompatibilityFlags::INC_RECURSE));
@@ -89,7 +89,7 @@ impl ReceiverContext {
             self.remap_flist_ownership_from_id_lists();
         }
 
-        // upstream: flist.c:2738-2742 - read io_error flag for protocol < 30.
+        // upstream: flist.c:2773-2777 - read io_error flag for protocol < 30.
         // The sender writes write_int(f, io_error) as a 4-byte LE integer after
         // the id lists. Protocol >= 30 uses MSG_IO_ERROR or SAFE_FILE_LIST instead.
         if self.protocol.uses_fixed_encoding() {
@@ -101,7 +101,7 @@ impl ReceiverContext {
             }
         }
 
-        // upstream: flist.c:1646 - send_file_entry() is called with flist->used
+        // upstream: flist.c:1682 - send_file_entry() is called with flist->used
         // (readdir-order position) BEFORE flist_sort_and_clean(). Leader GNUM values
         // (F_HL_GNUM) are readdir-order wire NDXes. Replace the u32::MAX sentinel
         // with the actual readdir-order wire NDX so followers can find their leader
@@ -116,10 +116,10 @@ impl ReceiverContext {
             }
         }
 
-        // upstream: flist.c:2736 - flist_sort_and_clean() after recv_id_list()
+        // upstream: flist.c:2771 - flist_sort_and_clean() after recv_id_list()
         //
         // When `--iconv` is in effect, upstream sets `need_unsorted_flist = 1`
-        // (options.c:2056) so the receiver's NDX-addressed `flist->files[]`
+        // (options.c:2074) so the receiver's NDX-addressed `flist->files[]`
         // array stays in sender scan order; only a separate `flist->sorted[]`
         // pointer array is reordered. We do not maintain a parallel pointer
         // array, so we mirror upstream by skipping the in-place reorder when
@@ -140,7 +140,7 @@ impl ReceiverContext {
         // are not surfaced elsewhere.
         //
         // When `--iconv` is in effect, upstream sets `need_unsorted_flist = 1`
-        // (options.c:2056) so the receiver's NDX-addressed `flist->files[]`
+        // (options.c:2074) so the receiver's NDX-addressed `flist->files[]`
         // array stays in sender scan order; only a separate `flist->sorted[]`
         // pointer array is reordered and dedup-cleared. We do not maintain a
         // parallel pointer array, so we mirror upstream by skipping the in-place
@@ -274,7 +274,7 @@ impl ReceiverContext {
     /// # Upstream Reference
     ///
     /// - `flist.c:recv_file_list()` - per-sub-list entry decode
-    /// - `flist.c:2931` - `ndx_start = prev->ndx_start + prev->used + 1`
+    /// - `flist.c:2966` - `ndx_start = prev->ndx_start + prev->used + 1`
     pub(in crate::receiver) fn receive_one_extra_segment<R: Read + ?Sized>(
         &mut self,
         reader: &mut R,
@@ -378,7 +378,7 @@ impl ReceiverContext {
         self.dir_flist_used += count_directories(&self.file_list[flat_start..]);
         self.record_dir_flist_names(flat_start);
 
-        // upstream: flist.c:2931 - ndx_start = prev->ndx_start + prev->used + 1
+        // upstream: flist.c:2966 - ndx_start = prev->ndx_start + prev->used + 1
         self.ndx_segments.push((flat_start, seg_ndx_start));
 
         // Restore the cached reader so the next segment continues the same
@@ -543,7 +543,7 @@ impl ReceiverContext {
     ///
     /// # Upstream Reference
     ///
-    /// - `generator.c:272-347` `delete_in_dir()` - per-directory extras
+    /// - `generator.c:279-354` `delete_in_dir()` - per-directory extras
     ///   computation that this hook publishes a plan for.
     pub(in crate::receiver) fn publish_segment_to_delete_pipeline(
         &self,

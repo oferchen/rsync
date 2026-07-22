@@ -49,7 +49,7 @@ pub struct IncrementalFileListReceiver<R> {
     ///
     /// # Upstream Reference
     ///
-    /// - `options.c:2051-2056` - `need_unsorted_flist = 1` when `iconv_opt`
+    /// - `options.c:2069-2074` - `need_unsorted_flist = 1` when `iconv_opt`
     /// - `flist.c:2496-2498` - "both sides keep an unsorted file-list array
     ///   because the names will differ on the sending and receiving sides"
     pub(in crate::receiver) iconv_reorder_suppressed: bool,

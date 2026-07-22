@@ -7,8 +7,8 @@
 //! # Upstream Reference
 //!
 //! - `generator.c:recv_generator()` - per-file quick-check and skip logic
-//! - `generator.c:942` - `try_dests_reg()` for reference directory handling
-//! - `generator.c:617` - `quick_check_ok()` evaluation order
+//! - `generator.c:954` - `try_dests_reg()` for reference directory handling
+//! - `generator.c:624` - `quick_check_ok()` evaluation order
 
 use std::fs;
 use std::io::Write;
@@ -93,7 +93,7 @@ impl ReceiverContext {
         acl_cache: Option<&protocol::acl::AclCache>,
         acl_id_map: Option<&metadata::AclIdMapper>,
     ) -> Vec<(usize, &'a FileEntry, PathBuf, u32)> {
-        // upstream: generator.c:1234-1235 - "recv_generator(%s,%d)" emitted at
+        // upstream: generator.c:1246-1247 - "recv_generator(%s,%d)" emitted at
         // the top of recv_generator() for every file the generator considers
         // (regular files, directories, symlinks, devices, specials). Skipping
         // the loop when the flag is off keeps the hot path allocation-free.
@@ -128,7 +128,7 @@ impl ReceiverContext {
             .filter(|(_, e)| e.is_file())
             .filter(|(_, e)| !is_hardlink_follower(e))
             .filter(|(_, e)| {
-                // upstream: receiver.c:599-604 - check_filter(&daemon_filter_list, ...)
+                // upstream: receiver.c:711-716 - check_filter(&daemon_filter_list, ...)
                 // rejects daemon-excluded files before accepting transfer data.
                 if has_daemon_filters {
                     let filters = daemon_filters.unwrap();
@@ -158,13 +158,13 @@ impl ReceiverContext {
             })
             .collect();
 
-        // upstream: generator.c:1845 - dry_run (!do_xfers) skips stat and data
+        // upstream: generator.c:1858 - dry_run (!do_xfers) skips stat and data
         // transfer but still builds the candidate list so NDX requests are sent
         // to the sender, which logs each file name for verbose output. List-only
         // also skips the destination stat/quick-check; its caller never issues
         // per-file NDX requests (the list_only branch in `run_pipelined`).
         if self.config.flags.skip_dest_writes() {
-            // upstream: generator.c:1925-1926 - dry-run still itemizes with
+            // upstream: generator.c:1938-1939 - dry-run still itemizes with
             // ITEM_TRANSFER; the dry-run loop writes the bare ITEM_TRANSFER
             // attrs over the wire and does not consume this precomputed value.
             return candidates
@@ -333,7 +333,7 @@ impl ReceiverContext {
                 }
             } else {
                 if existing_only {
-                    // upstream: generator.c:1368-1383 - --existing /
+                    // upstream: generator.c:1380-1395 - --existing /
                     // --ignore-non-existing never creates an absent
                     // destination; a missing regular file is skipped with a
                     // SKIP-gated "not creating new file" notice. Directories
@@ -371,7 +371,7 @@ impl ReceiverContext {
                     continue;
                 }
             }
-            // upstream: generator.c:504-572 itemize() - compute the base itemize
+            // upstream: generator.c:511-579 itemize() - compute the base itemize
             // flags before the data transfer so the row reflects attribute
             // changes against the pre-transfer destination. A non-existent dest
             // (statret < 0) is ITEM_IS_NEW; an existing one OR-s the per-attr
@@ -395,7 +395,7 @@ impl ReceiverContext {
                 // too, since it is still requested and materialised.
                 self.record_created(entry.mode());
             }
-            // upstream: generator.c:1925-1937 - the generator emits the transfer
+            // upstream: generator.c:1938-1950 - the generator emits the transfer
             // itemize right after write_ndx(ndx), in flist order. With
             // log_before_transfer (`!am_server`, i.e. client mode) the row is
             // written to stdout before the data moves, so emit it here in the
@@ -549,7 +549,7 @@ impl ReceiverContext {
     }
 
     /// Computes the attribute-comparison itemize flags for a destination file
-    /// that already exists, mirroring upstream `generator.c:508-549` `itemize()`.
+    /// that already exists, mirroring upstream `generator.c:515-556` `itemize()`.
     ///
     /// `base` is `ITEM_TRANSFER` for a file being transferred, or `0` for an
     /// up-to-date file (quick-check match). The returned raw flags OR `base`
@@ -569,11 +569,11 @@ impl ReceiverContext {
     ) -> u32 {
         use crate::generator::ItemFlags;
         let mut iflags = base;
-        // upstream: generator.c:514 - S_ISREG(file->mode) && F_LENGTH(file) != st_size
+        // upstream: generator.c:521 - S_ISREG(file->mode) && F_LENGTH(file) != st_size
         if entry.is_file() && entry.size() != dest_meta.len() {
             iflags |= ItemFlags::ITEM_REPORT_SIZE;
         }
-        // upstream: generator.c:519-523 - keep_time ? mtime_differs(&st, file).
+        // upstream: generator.c:526-530 - keep_time ? mtime_differs(&st, file).
         // For regular files keep_time == preserve_mtimes (`--times`).
         if self.config.flags.times {
             #[cfg(unix)]
@@ -598,14 +598,14 @@ impl ReceiverContext {
         #[cfg(unix)]
         {
             use std::os::unix::fs::MetadataExt;
-            // upstream: generator.c:540-542 - preserve_perms && CHMOD_BITS differ
+            // upstream: generator.c:547-549 - preserve_perms && CHMOD_BITS differ
             if self.config.flags.perms {
                 const CHMOD_BITS: u32 = 0o7777;
                 if (dest_meta.mode() & CHMOD_BITS) != (entry.mode() & CHMOD_BITS) {
                     iflags |= ItemFlags::ITEM_REPORT_PERMS;
                 }
             }
-            // upstream: generator.c:546-547 - uid_ndx && am_root && uid differs
+            // upstream: generator.c:553-554 - uid_ndx && am_root && uid differs
             if self.config.flags.owner && metadata::am_root() {
                 if let Some(uid) = entry.uid() {
                     if dest_meta.uid() != uid {
@@ -613,7 +613,7 @@ impl ReceiverContext {
                     }
                 }
             }
-            // upstream: generator.c:548-549 - gid_ndx && !FLAG_SKIP_GROUP && gid differs
+            // upstream: generator.c:555-556 - gid_ndx && !FLAG_SKIP_GROUP && gid differs
             if self.config.flags.group {
                 if let Some(gid) = entry.gid() {
                     if dest_meta.gid() != gid {
@@ -723,7 +723,7 @@ impl ReceiverContext {
     ///
     /// # Upstream Reference
     ///
-    /// - `generator.c:1814` - `set_file_attrs()` on quick-check match
+    /// - `generator.c:1827` - `set_file_attrs()` on quick-check match
     /// - `generator.c:1816` - `itemize()` on quick-check match
     #[allow(clippy::too_many_arguments)]
     fn apply_no_change_metadata<W: Write + crate::writer::MsgInfoSender + ?Sized>(
@@ -755,7 +755,7 @@ impl ReceiverContext {
             let _ = self.emit_or_record_itemize(writer, flist_idx, &iflags, entry);
         }
 
-        // upstream: generator.c:461 unchanged_attrs() - fast-path check avoids
+        // upstream: generator.c:468 unchanged_attrs() - fast-path check avoids
         // the per-function-call overhead of apply_metadata when all attributes
         // already match. Skip entirely when no preservation flags are active.
         // On a no-change scan this eliminates ownership mapping, permission
@@ -1190,7 +1190,7 @@ mod skip_notice_tests {
         assert!(run(cfg(), 0, files(), dest).is_empty());
     }
 
-    /// #44 - upstream: generator.c:1368-1383. With `--existing`, a regular file
+    /// #44 - upstream: generator.c:1380-1395. With `--existing`, a regular file
     /// absent at the destination is never created; upstream prints `not
     /// creating new file "%s"` (literal quotes) at `INFO_GTE(SKIP, 1)`, silent
     /// otherwise.
