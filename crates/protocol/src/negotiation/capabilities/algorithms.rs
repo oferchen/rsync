@@ -2,7 +2,7 @@ use std::io;
 
 /// Supported checksum algorithms in preference order.
 ///
-/// This list matches upstream rsync 3.4.1's default order.
+/// This list matches upstream rsync 3.4.4's default order.
 /// The client will select the first algorithm in this list that it also supports.
 /// Upstream order: xxh128 xxh3 xxh64 md5 md4 sha1 none
 pub(super) const SUPPORTED_CHECKSUMS: &[&str] =
@@ -52,7 +52,7 @@ pub(super) fn supported_compressions() -> Vec<&'static str> {
 /// and each side selects the first mutually supported entry. For protocol
 /// versions below 30, [`MD4`](Self::MD4) is always used. The variants are
 /// ordered from strongest/newest to weakest/oldest, matching upstream rsync
-/// 3.4.1's preference order.
+/// 3.4.4's preference order.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum ChecksumAlgorithm {
