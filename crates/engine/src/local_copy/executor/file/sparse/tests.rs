@@ -1,7 +1,6 @@
 use super::detect::{leading_zero_run, trailing_zero_run};
 use super::hole_punch::{punch_hole, write_zeros_fallback};
 use super::state::{SparseWriteState, write_sparse_chunk};
-use std::fs;
 use std::io::{Read, Seek, SeekFrom, Write};
 use tempfile::NamedTempFile;
 
@@ -2518,7 +2517,7 @@ fn sub_window_interior_zero_run_is_punched() {
     write_sparse_chunk(&mut file, &mut state, &data, tmp.path()).expect("write");
     let end = state.finish(&mut file, tmp.path()).expect("finish");
     file.set_len(end).expect("set_len");
-    let meta = fs::metadata(tmp.path()).expect("metadata");
+    let meta = std::fs::metadata(tmp.path()).expect("metadata");
     assert_eq!(meta.len(), 16384, "apparent size unchanged");
     assert!(
         meta.blocks() * 512 < 16384,
