@@ -2,7 +2,7 @@
 
 This document describes the delete module's internal architecture,
 threading model, performance characteristics, and relationship to
-upstream rsync 3.4.1's deletion behaviour. It covers the full pipeline
+upstream rsync 3.4.4's deletion behaviour. It covers the full pipeline
 from candidate discovery through ordered emission, performance scaling
 across directory sizes, mode-specific trade-offs, and upstream
 divergence boundaries.

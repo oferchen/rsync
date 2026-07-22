@@ -357,7 +357,7 @@ single-threaded by design. Adding cores helps only the CPU-bound work
 off the wire critical path. On a 32-core box transferring many small
 files, scaling stops at ~3 threads. Out-of-order transfer would require
 a wire-protocol extension; we deliberately do not break wire
-compatibility with upstream 3.4.1. See
+compatibility with upstream 3.4.4. See
 [`architecture/parallelization.md`](architecture/parallelization.md).
 
 ### One SSH process per transfer
@@ -415,4 +415,4 @@ boundaries are the value, not the cost.
   what runs in parallel and what is intentionally serial.
 - [`PROTOCOL.md`](PROTOCOL.md) - wire format details.
 - [`UPSTREAM_COMPARISON.md`](UPSTREAM_COMPARISON.md) - point-by-point
-  comparison with upstream rsync 3.4.1.
+  comparison with upstream rsync 3.4.4.

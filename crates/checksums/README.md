@@ -2,7 +2,7 @@
 
 `checksums` provides the rolling and strong checksum primitives used by the
 Rust `rsync` implementation. The algorithms are byte-for-byte compatible with
-upstream rsync 3.4.1 so delta-transfer heuristics and compatibility checks remain
+upstream rsync 3.4.4 so delta-transfer heuristics and compatibility checks remain
 interchangeable with the C reference implementation.
 
 ## Design

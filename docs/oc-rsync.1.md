@@ -27,7 +27,7 @@ oc-rsync - fast, wire-compatible rsync implementation in Rust
 # DESCRIPTION
 
 **oc-rsync** is a Rust reimplementation of rsync that is wire-compatible with
-upstream rsync 3.4.1 (protocol version 32). It works as a drop-in replacement
+upstream rsync 3.4.4 (protocol version 32). It works as a drop-in replacement
 for the traditional C rsync binary, supporting local copies, remote transfers
 over SSH, and daemon-mode connections over the rsync protocol.
 
