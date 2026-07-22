@@ -8,7 +8,7 @@
 //! Shared by the transfer path (`remote::run_daemon_over_remote_shell`) and
 //! the module-listing path so both honour `-e PROG host::` identically.
 //!
-//! upstream: `main.c:594-604` + `main.c:1571-1586` - the daemon-over-rsh path
+//! upstream: `main.c:603-613` + `main.c:1593-1608` - the daemon-over-rsh path
 //! in `start_client()` runs `rsync_path --server --daemon .` with no
 //! `server_options()`, exports `RSYNC_PORT` into the shell environment, and
 //! then speaks the daemon protocol over the spawned process's stdin/stdout.
@@ -152,7 +152,7 @@ fn build_rsh_command_argv(spec: &RshDaemonSpawn<'_>) -> (OsString, Vec<OsString>
     // always the bare host (upstream do_cmd() never composes `user@host`).
     args.push(OsString::from(spec.host));
 
-    // upstream: main.c:594-604 - the remote command is
+    // upstream: main.c:603-613 - the remote command is
     // `rsync_path --server --daemon .` with no server_options().
     let rsync_path = spec.rsync_path.unwrap_or_else(|| OsStr::new("rsync"));
     args.push(rsync_path.to_os_string());
@@ -175,7 +175,7 @@ pub(crate) fn spawn_rsh_daemon_stream(
     let mut cmd = Command::new(&program);
     cmd.args(&args);
 
-    // upstream: main.c:1571-1572 - set_env_num("RSYNC_PORT", env_port)
+    // upstream: main.c:1593-1594 - set_env_num("RSYNC_PORT", env_port)
     cmd.env("RSYNC_PORT", spec.port.to_string());
     cmd.stdin(Stdio::piped());
     cmd.stdout(Stdio::piped());

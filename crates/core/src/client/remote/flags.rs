@@ -36,7 +36,7 @@ pub(crate) fn build_server_flag_string(config: &ClientConfig) -> String {
         flags.push('v');
     }
 
-    // upstream: options.c:2628-2629 - `if (quiet && msgs2stderr) 'q'`. The
+    // upstream: options.c:2646-2647 - `if (quiet && msgs2stderr) 'q'`. The
     // default `msgs2stderr` is 2 (nonzero), so plain `-q` packs 'q';
     // `--no-msgs2stderr` (msgs2stderr == 0) suppresses it. The local-half
     // ServerConfig parser ignores 'q' (transfer/flags.rs), so packing it here
@@ -45,7 +45,7 @@ pub(crate) fn build_server_flag_string(config: &ClientConfig) -> String {
         flags.push('q');
     }
 
-    // upstream: options.c:2630-2631 - `make_backups` rides in the compact
+    // upstream: options.c:2648-2649 - `make_backups` rides in the compact
     // flag string as `b`. Emitting `--backup` as a separate long arg lands
     // as a positional path on upstream server arg parsers that do not
     // consult popt for long flags.
@@ -56,7 +56,7 @@ pub(crate) fn build_server_flag_string(config: &ClientConfig) -> String {
         flags.push('u');
     }
     // upstream: 'n' = dry_run (!do_xfers), NOT numeric_ids.
-    // numeric_ids is always sent as long-form --numeric-ids (options.c:2887-2888).
+    // numeric_ids is always sent as long-form --numeric-ids (options.c:2905-2906).
     if config.dry_run() {
         flags.push('n');
     }
@@ -64,7 +64,7 @@ pub(crate) fn build_server_flag_string(config: &ClientConfig) -> String {
         flags.push('l');
     }
 
-    // upstream: options.c:2169-2173 - --files-from disables recursion and
+    // upstream: options.c:2187-2191 - --files-from disables recursion and
     // enables xfer_dirs. options.c:2205-2206 - --files-from defaults
     // relative_paths=1.
     let files_from_active = config.files_from().is_active();
@@ -81,7 +81,7 @@ pub(crate) fn build_server_flag_string(config: &ClientConfig) -> String {
 
     // upstream: 'd' = --dirs (xfer_dirs without recursion), NOT delete.
     // delete variants are always sent as long-form --delete-* (options.c:2818-2827).
-    // upstream: options.c:2620 - xfer_dirs=1 when files_from is active.
+    // upstream: options.c:2638 - xfer_dirs=1 when files_from is active.
     let effective_dirs = config.dirs() || files_from_active;
     if effective_dirs && !effective_recursive {
         flags.push('d');
@@ -98,7 +98,7 @@ pub(crate) fn build_server_flag_string(config: &ClientConfig) -> String {
     // `flags.copy_dirlinks` directly in apply_common_server_flags so a push
     // generator still dereferences.
 
-    // upstream: options.c:2644-2648 - only send 'W' when explicitly set
+    // upstream: options.c:2662-2666 - only send 'W' when explicitly set
     // (whole_file > 0). The default for remote transfers is no-whole-file
     // (delta mode); upstream never sends --no-whole-file because it is the
     // default. Sending 'W' unconditionally when the tri-state defaults to
@@ -169,7 +169,7 @@ pub(crate) fn build_server_flag_string(config: &ClientConfig) -> String {
     if config.sparse() {
         flags.push('S');
     }
-    // upstream: options.c:2704 - 'z' is only sent when the compression
+    // upstream: options.c:2722 - 'z' is only sent when the compression
     // algorithm is the default (no explicit --compress-choice). For
     // explicitly chosen algorithms (lz4, zstd), the 'z' flag is omitted
     // and --compress-choice=ALGO is sent as a long-form arg instead.
@@ -184,7 +184,7 @@ pub(crate) fn build_server_flag_string(config: &ClientConfig) -> String {
     // long-form --partial (daemon: build_full_daemon_args; local ServerConfig:
     // propagated via server_config.flags.partial in the *_server_config sites).
 
-    // upstream: options.c:2750-2762 - itemize-changes is forwarded via
+    // upstream: options.c:2768-2780 - itemize-changes is forwarded via
     // --log-format=%i in the long-form args, not as a compact flag.
 
     flags
@@ -395,7 +395,7 @@ pub(crate) fn apply_common_server_flags(config: &ClientConfig, server_config: &m
     server_config.trust_sender = config.trust_sender();
     server_config.qsort = config.qsort();
     server_config.write.inplace = config.inplace();
-    // upstream: receiver.c:855 - append mode implies inplace; the sum_head
+    // upstream: receiver.c:968 - append mode implies inplace; the sum_head
     // block-skip (generator.c:786) and flength derivation (sender.c:89) on both
     // the local sender (push) and receiver (pull) roles gate on these flags, so
     // they must be carried onto the in-process ServerConfig for SSH and daemon.
@@ -433,7 +433,7 @@ pub(crate) fn apply_common_server_flags(config: &ClientConfig, server_config: &m
         ::metadata::ModifyWindow::ZERO,
         ::metadata::ModifyWindow::from_secs,
     );
-    // upstream: options.c:2046-2048 - do_stats sets INFO_STATS to level 2+
+    // upstream: options.c:2064-2066 - do_stats sets INFO_STATS to level 2+
     server_config.do_stats = config.stats();
     // upstream: generator.c:124 - EARLY_DELETE_DONE_MSG = !(delete_during==2 || delete_after)
     server_config.deletion.late_delete =
@@ -481,7 +481,7 @@ pub(crate) fn apply_common_server_flags(config: &ClientConfig, server_config: &m
     // sender does the dereferencing.
     server_config.flags.copy_links = config.copy_links();
     server_config.flags.copy_dirlinks = config.copy_dirlinks();
-    // upstream: options.c:2881-2885 - copy_unsafe_links and safe_links are long-form only
+    // upstream: options.c:2899-2903 - copy_unsafe_links and safe_links are long-form only
     server_config.flags.copy_unsafe_links = config.copy_unsafe_links();
     server_config.flags.safe_links = config.safe_links();
     // upstream: flist.c:1419 / options.c:2987 - `--copy-devices` converts device
@@ -494,7 +494,7 @@ pub(crate) fn apply_common_server_flags(config: &ClientConfig, server_config: &m
     server_config.flags.copy_devices = config.copy_devices();
     // upstream: syscall.c do_open / do_open_nofollow propagate O_NOATIME when set.
     server_config.write.open_noatime = config.open_noatime();
-    // upstream: options.c:2750-2762 - itemize_changes is forwarded to the remote
+    // upstream: options.c:2768-2780 - itemize_changes is forwarded to the remote
     // as --log-format=%i, but the local ServerConfig also needs the flag set so
     // the generator's maybe_emit_itemize() produces client-side output via callback.
     server_config.flags.info_flags.itemize = config.itemize_changes();
@@ -613,7 +613,7 @@ mod tests {
 
     #[test]
     fn server_flag_string_includes_z_for_default_algorithm() {
-        // upstream: options.c:2704 - 'z' is sent for the default compression
+        // upstream: options.c:2722 - 'z' is sent for the default compression
         // algorithm (no explicit --compress-choice).
         let config = ClientConfig::builder()
             .compress(true)
@@ -629,7 +629,7 @@ mod tests {
     #[cfg(feature = "lz4")]
     #[test]
     fn server_flag_string_omits_z_for_lz4() {
-        // upstream: options.c:2704 - 'z' NOT sent for non-default algorithms.
+        // upstream: options.c:2722 - 'z' NOT sent for non-default algorithms.
         // LZ4 uses --compress-choice=lz4 as a long-form arg instead.
         let config = ClientConfig::builder()
             .compress(true)
@@ -720,7 +720,7 @@ mod tests {
 
     #[test]
     fn server_flag_string_omits_itemize_compact_flag() {
-        // upstream: options.c:2750-2762 - itemize is sent via --log-format=%i,
+        // upstream: options.c:2768-2780 - itemize is sent via --log-format=%i,
         // not as a compact flag character in the flag string.
         let config = ClientConfig::builder().itemize_changes(true).build();
         let flags = build_server_flag_string(&config);
@@ -1224,7 +1224,7 @@ mod tests {
 
     #[test]
     fn server_flag_string_files_from_suppresses_r_adds_d_and_r_upper() {
-        // upstream: options.c:2169-2173, 2205-2206 - --files-from sets
+        // upstream: options.c:2187-2191, 2205-2206 - --files-from sets
         // recurse=0, xfer_dirs=1, and defaults relative_paths=1. The CLI layer
         // (workflow/run.rs) folds that default into the resolved relative_paths
         // passed here, so relative is explicit at this stage.
@@ -1302,7 +1302,7 @@ mod tests {
         );
     }
 
-    // upstream: options.c:2644-2648 - 'W' is only sent when whole_file > 0
+    // upstream: options.c:2662-2666 - 'W' is only sent when whole_file > 0
     // (explicitly forced). The default for remote transfers is auto (-1),
     // which does NOT send 'W'. Sending 'W' unconditionally causes the
     // remote generator to skip basis-file checksums, defeating delta.

@@ -162,7 +162,7 @@ fn run_pull_transfer(
     observer: Option<&mut dyn ClientProgressObserver>,
     batch_writer: Option<Arc<Mutex<BatchWriter>>>,
 ) -> Result<ClientSummary, ClientError> {
-    // upstream: main.c:1258 - client_mode=true tells the server flow to send the
+    // upstream: main.c:1276 - client_mode=true tells the server flow to send the
     // filter list after handshake + compat exchange (where recv_filter_list() is
     // called inside the server).
     let mut server_config = build_server_config_for_receiver(config, local_paths)?;

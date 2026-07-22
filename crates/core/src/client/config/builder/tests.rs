@@ -1165,7 +1165,7 @@ fn io_uring_depth_clears_to_none() {
 }
 
 // Mutual exclusion validation tests
-// (upstream: options.c:2406-2414 - inplace/append conflicts with partial-dir/delay-updates)
+// (upstream: options.c:2424-2432 - inplace/append conflicts with partial-dir/delay-updates)
 
 #[test]
 fn validate_inplace_with_partial_dir_conflicts() {
@@ -1205,7 +1205,7 @@ fn validate_append_with_delay_updates_conflicts() {
 
 #[test]
 fn validate_append_with_whole_file_conflicts() {
-    // upstream: options.c:2382 - --append cannot be used with --whole-file.
+    // upstream: options.c:2400 - --append cannot be used with --whole-file.
     let b = builder().append(true).whole_file(true);
     let err = b.validate().unwrap_err();
     assert_eq!(err.option1, "append");
@@ -1482,7 +1482,7 @@ fn compression_algorithm_sets_value() {
 
 #[test]
 fn compression_algorithm_marks_explicit_choice() {
-    // upstream: options.c:2800-2805 - explicit compress_choice is forwarded
+    // upstream: options.c:2818-2823 - explicit compress_choice is forwarded
     // to the remote peer. The explicit flag distinguishes "user chose zstd"
     // from "zstd is the default."
     let config = builder()

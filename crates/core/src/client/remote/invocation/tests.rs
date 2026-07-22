@@ -13,8 +13,8 @@ use crate::client::config::{ClientConfig, IconvSetting, TransferTimeout};
 
 #[test]
 fn builds_receiver_invocation_with_sender_flag() {
-    // Pull: local is receiver -> remote needs --sender (upstream options.c:2598).
-    // upstream: options.c:2710 - capability string is embedded in the compact
+    // Pull: local is receiver -> remote needs --sender (upstream options.c:2616).
+    // upstream: options.c:2728 - capability string is embedded in the compact
     // flag string, producing one argument like `-re.LsfxCIvu`.
     // The local Receiver does not advertise 'i' because oc-rsync's receiver
     // path strips CF_INC_RECURSE from compat_flags (lib.rs::compute_allow_inc_recurse).
@@ -42,7 +42,7 @@ fn builds_receiver_invocation_with_sender_flag() {
 #[test]
 fn builds_sender_invocation_no_sender_flag() {
     // Push: local is sender -> remote is receiver, no --sender flag.
-    // upstream: options.c:2710 - capability string is embedded in the compact
+    // upstream: options.c:2728 - capability string is embedded in the compact
     // flag string, producing one argument like `-re.iLsfxCIvu`.
     let config = ClientConfig::builder().build();
     let builder = RemoteInvocationBuilder::new(&config, RemoteRole::Sender);
@@ -735,7 +735,7 @@ fn includes_executability_flag() {
     assert!(flags.contains('E'), "expected 'E' in flags: {flags}");
 }
 
-/// upstream: options.c:2674 - 'E' is only sent when preserve_perms is false.
+/// upstream: options.c:2692 - 'E' is only sent when preserve_perms is false.
 #[test]
 fn executability_suppressed_when_permissions_set() {
     let config = ClientConfig::builder()
@@ -811,7 +811,7 @@ fn includes_backup_related_args() {
         .map(|a| a.to_string_lossy().into_owned())
         .collect();
 
-    // upstream: options.c:2630-2631 - `make_backups` rides in the compact
+    // upstream: options.c:2648-2649 - `make_backups` rides in the compact
     // flag string as `b`, NOT as a standalone `--backup` long arg.
     let flag_string = find_flag_string(&string_args);
     assert!(
@@ -821,7 +821,7 @@ fn includes_backup_related_args() {
     assert!(
         !args.iter().any(|a| a == "--backup"),
         "must not emit --backup as a long arg (upstream emits 'b' in flag \
-         string instead, options.c:2630-2631): {args:?}"
+         string instead, options.c:2648-2649): {args:?}"
     );
     assert!(
         args.iter()
@@ -1350,7 +1350,7 @@ fn default_config_produces_expected_flags() {
         flags.contains('r'),
         "default builder enables recursive: {flags}"
     );
-    // upstream: options.c:2644-2648 - 'W' is only sent when explicitly set.
+    // upstream: options.c:2662-2666 - 'W' is only sent when explicitly set.
     // The default for remote transfers is no-whole-file.
     assert!(
         !flags.contains('W'),
@@ -1815,7 +1815,7 @@ fn fake_super_not_forwarded_on_push() {
     );
 }
 
-// upstream: options.c:2628-2629 - `if (quiet && msgs2stderr) 'q'`. Default
+// upstream: options.c:2646-2647 - `if (quiet && msgs2stderr) 'q'`. Default
 // msgs2stderr is 2 (nonzero), so plain `-q` packs 'q'. Sealed argv:
 // `-qe.LsfxCIvu --msgs2stderr` (with --msgs2stderr) / `-q...` (plain quiet).
 #[test]
@@ -2108,7 +2108,7 @@ fn includes_compress_level_default() {
 
 #[test]
 fn includes_old_compress_for_explicit_zlib() {
-    // upstream: options.c:2802 - explicit zlib sent as --old-compress
+    // upstream: options.c:2820 - explicit zlib sent as --old-compress
     let config = ClientConfig::builder()
         .compression_algorithm(CompressionAlgorithm::Zlib)
         .build();
@@ -2167,7 +2167,7 @@ fn includes_compress_choice_for_lz4() {
 
 #[test]
 fn includes_new_compress_for_explicit_zlibx() {
-    // upstream: options.c:2800 - zlibx sent as --new-compress
+    // upstream: options.c:2818 - zlibx sent as --new-compress
     let config = ClientConfig::builder()
         .compression_algorithm(compress::algorithm::CompressionAlgorithm::Zlib)
         .build();
@@ -2313,7 +2313,7 @@ fn includes_existing_only_long_arg() {
 
 #[test]
 fn includes_omit_dir_times_compact_flag() {
-    // upstream: options.c:2628-2629 - omit_dir_times rides the compact flag
+    // upstream: options.c:2646-2647 - omit_dir_times rides the compact flag
     // string as 'O' inside the am_sender block, not as a standalone long arg.
     let config = ClientConfig::builder().omit_dir_times(true).build();
     let args = build_sender_args(&config);
@@ -2330,7 +2330,7 @@ fn includes_omit_dir_times_compact_flag() {
 
 #[test]
 fn includes_omit_link_times_compact_flag() {
-    // upstream: options.c:2630-2631 - omit_link_times rides the compact flag
+    // upstream: options.c:2648-2649 - omit_link_times rides the compact flag
     // string as 'J' inside the am_sender block, not as a standalone long arg.
     let config = ClientConfig::builder().omit_link_times(true).build();
     let args = build_sender_args(&config);
@@ -2420,7 +2420,7 @@ fn default_rsync_path_is_rsync() {
 
 #[test]
 fn capability_string_embedded_in_sender_flag_string() {
-    // upstream: options.c:2710 - capability suffix is embedded in the compact
+    // upstream: options.c:2728 - capability suffix is embedded in the compact
     // flag string, not sent as a separate argument.
     let config = ClientConfig::builder().build();
     let args = build_sender_args(&config);
@@ -2440,7 +2440,7 @@ fn capability_string_embedded_in_sender_flag_string() {
 
 #[test]
 fn capability_string_embedded_in_receiver_flag_string() {
-    // upstream: options.c:2710 - capability suffix is embedded in the compact
+    // upstream: options.c:2728 - capability suffix is embedded in the compact
     // flag string, not sent as a separate argument.
     // The local Receiver omits 'i' from its advertised capability because
     // its receive path strips CF_INC_RECURSE from compat_flags. See
@@ -2600,7 +2600,7 @@ fn partial_dir_emits_partial_dir_not_compact_p_nor_bare_partial() {
 fn backup_without_dir_or_suffix_emits_only_b_short_flag() {
     let config = ClientConfig::builder().backup(true).build();
     let args = build_sender_args(&config);
-    // upstream: options.c:2630-2631 - bare `--backup` is `b` in the compact
+    // upstream: options.c:2648-2649 - bare `--backup` is `b` in the compact
     // flag string, not a standalone long arg.
     let flag_string = find_flag_string(&args);
     assert!(
@@ -2894,7 +2894,7 @@ fn all_flags_enabled_produces_valid_invocation() {
         ('t', "times"),
         ('U', "atimes"),
         ('p', "permissions"),
-        // upstream: options.c:2674 - 'E' is only sent when preserve_perms
+        // upstream: options.c:2692 - 'E' is only sent when preserve_perms
         // is false (else-if), so it is absent when 'p' is also set.
         ('r', "recursive"),
         ('z', "compress"),
@@ -2913,7 +2913,7 @@ fn all_flags_enabled_produces_valid_invocation() {
         ('u', "update"),
         ('N', "crtimes"),
         ('m', "prune_empty_dirs"),
-        // upstream: options.c:2628-2631 - omit_dir_times ('O') and
+        // upstream: options.c:2646-2649 - omit_dir_times ('O') and
         // omit_link_times ('J') ride in the compact flag string inside the
         // am_sender block, never as standalone long args.
         ('O', "omit_dir_times"),
@@ -2982,7 +2982,7 @@ fn all_flags_enabled_produces_valid_invocation() {
         "all-flags test: --copy-devices must not be forwarded on a push: {args:?}"
     );
 
-    // upstream: options.c:2802 - explicit zlib is sent as --old-compress
+    // upstream: options.c:2820 - explicit zlib is sent as --old-compress
     assert!(
         args.iter().any(|a| a == "--old-compress"),
         "all-flags test: expected --old-compress for explicit zlib: {args:?}"
@@ -3007,7 +3007,7 @@ fn all_flags_enabled_produces_valid_invocation() {
         );
     }
 
-    // upstream: options.c:2710 - capability suffix is embedded in flag string.
+    // upstream: options.c:2728 - capability suffix is embedded in flag string.
     let expected_suffix = build_capability_string_suffix(true);
     let flag_str = find_flag_string(&args);
     assert!(
@@ -3251,7 +3251,7 @@ fn daemon_double_colon_to_local_is_pull() {
 }
 
 // --iconv server-arg forwarding tests.
-// upstream: options.c:2716-2723 - the post-comma half of iconv_opt is
+// upstream: options.c:2734-2741 - the post-comma half of iconv_opt is
 // forwarded; without a comma the whole spec is forwarded; --iconv=- and the
 // default forward nothing because options.c:2052-2054 nulls iconv_opt.
 
@@ -3298,7 +3298,7 @@ fn iconv_locale_default_forwards_dot() {
 
 #[test]
 fn iconv_explicit_pair_forwards_only_remote_half() {
-    // upstream: options.c:2717-2721 - `set = strchr(iconv_opt, ','); if (set)
+    // upstream: options.c:2735-2739 - `set = strchr(iconv_opt, ','); if (set)
     // set++;` so only the post-comma half (the remote charset) reaches the
     // server. The local charset stays on the client side.
     let config = ClientConfig::builder()
@@ -3321,7 +3321,7 @@ fn iconv_explicit_pair_forwards_only_remote_half() {
 
 #[test]
 fn iconv_explicit_single_forwards_whole_spec() {
-    // upstream: options.c:2718-2721 - `else set = iconv_opt;` so when there
+    // upstream: options.c:2736-2739 - `else set = iconv_opt;` so when there
     // is no comma the entire spec is forwarded as the remote charset.
     let config = ClientConfig::builder()
         .iconv(IconvSetting::Explicit {
@@ -3471,7 +3471,7 @@ fn shell_safe_escaping_in_normal_mode() {
 #[cfg(unix)]
 #[test]
 fn includes_groupmap_wildcard_verbatim() {
-    // upstream: options.c:2898 - --groupmap is forwarded verbatim under
+    // upstream: options.c:2916 - --groupmap is forwarded verbatim under
     // `protect_args` (the default). The wildcard `*` must survive so the
     // receiver's `uidlist.c:parse_name_map()` installs a wildcard rule.
     let mapping = ::metadata::GroupMapping::parse("*:1234").expect("parse");
@@ -3676,7 +3676,7 @@ fn unix_secs_to_utc_y2k() {
 
 #[test]
 fn remote_options_appended_to_sender_invocation() {
-    // upstream: options.c:2986-2993 - remote_options[] appended after all
+    // upstream: options.c:3004-3011 - remote_options[] appended after all
     // other server args, before "." and remote paths.
     let config = ClientConfig::builder()
         .remote_options(vec!["--bwlimit=100", "--compress-level=1"])

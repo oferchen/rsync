@@ -305,7 +305,7 @@ pub fn run_daemon_over_remote_shell(
     let daemon_operand_str = daemon_operand.to_string_lossy();
     let request = DaemonTransferRequest::parse_double_colon(&daemon_operand_str)?;
 
-    // upstream: main.c:594-604 - when daemon_connection > 0, the remote
+    // upstream: main.c:603-613 - when daemon_connection > 0, the remote
     // command is `rsync_path --server --daemon .` with no server_options().
     let shell_args = config
         .remote_shell()

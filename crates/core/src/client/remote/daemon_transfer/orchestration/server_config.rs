@@ -30,7 +30,7 @@ pub(crate) fn build_server_config_for_receiver(
     server_config.reference_directories = config.reference_directories().to_vec();
     // upstream: backup.c:make_backup() runs on the receiver, invoked from
     // generator.c/receiver.c. `make_backups` rides in the compact flag string as
-    // 'b' (options.c:2630-2631), so flags.backup is already set here; but
+    // 'b' (options.c:2648-2649), so flags.backup is already set here; but
     // --backup-dir / --suffix are long-form values finalized in the local popt
     // parse (options.c:2285-2298) and never delivered onto the receiver config.
     // On a pull the local client IS the receiver, so carry backup_dir/backup_suffix
@@ -232,7 +232,7 @@ fn apply_common_daemon_config(
     // for both receiver and generator), shared with the SSH transfer paths.
     server_config.connection.compression_level = config.compression_level();
 
-    // upstream: options.c:2704,2800-2805 - replicate the compress flag/option
+    // upstream: options.c:2722,2818-2823 - replicate the compress flag/option
     // split the client would emit so the daemon-push Generator actually
     // engages the codec. `do_compression` in the transfer layer
     // (transfer/src/lib.rs) reads `flags.compress` for the compact `-z` case
@@ -245,18 +245,18 @@ fn apply_common_daemon_config(
         let is_default_zlib = !config.explicit_compress_choice()
             && algo == compress::algorithm::CompressionAlgorithm::default_algorithm();
         if is_default_zlib {
-            // upstream: options.c:2704 - the compact `-z` flag drives default
+            // upstream: options.c:2722 - the compact `-z` flag drives default
             // zlib through vstring negotiation (no explicit compress_choice).
             server_config.flags.compress = true;
         } else if let Ok(proto_algo) = protocol::CompressionAlgorithm::parse(algo.name()) {
-            // upstream: compat.c:543,819 / options.c:2800-2805 - explicit or
+            // upstream: compat.c:543,819 / options.c:2818-2823 - explicit or
             // non-default algorithms (e.g. `-zz` -> zlibx) bypass vstring
             // negotiation and travel as a compress_choice.
             server_config.connection.compress_choice = Some(proto_algo);
         }
     }
 
-    // upstream: options.c:2737-2740 - compress_level defaults to 6 when -z is set.
+    // upstream: options.c:2755-2758 - compress_level defaults to 6 when -z is set.
     if server_config.flags.compress && server_config.connection.compression_level.is_none() {
         server_config.connection.compression_level =
             Some(compress::zlib::CompressionLevel::Default);

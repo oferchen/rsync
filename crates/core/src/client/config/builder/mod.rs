@@ -302,7 +302,7 @@ impl ClientConfigBuilder {
     /// - `--append` conflicts with `--partial-dir` and `--delay-updates`
     ///   (upstream: `--append` sets `inplace = 1`, then the `inplace && partial_dir` check fires)
     /// - `--append` conflicts with `--whole-file`
-    ///   (upstream: options.c:2382 `if (append_mode) { if (whole_file > 0) ... }`)
+    ///   (upstream: options.c:2400 `if (append_mode) { if (whole_file > 0) ... }`)
     pub fn validate(&self) -> Result<(), ConfigConflict> {
         self.validate_with_capabilities(protocol::CompatibilityFlags::EMPTY)
     }
@@ -320,7 +320,7 @@ impl ClientConfigBuilder {
         &self,
         caps: protocol::CompatibilityFlags,
     ) -> Result<(), ConfigConflict> {
-        // upstream: options.c:1958-1961 - --old-args conflicts with --protect-args.
+        // upstream: options.c:1974-1977 - --old-args conflicts with --protect-args.
         if self.old_args == Some(true) && self.protect_args == Some(true) {
             return Err(ConfigConflict {
                 option1: "old-args",
@@ -328,7 +328,7 @@ impl ClientConfigBuilder {
             });
         }
 
-        // upstream: options.c:2382 - --append cannot be used with --whole-file.
+        // upstream: options.c:2400 - --append cannot be used with --whole-file.
         // Only an explicit `--whole-file` (Some(true)) conflicts; the default
         // (None) and `--no-whole-file` (Some(false)) are accepted.
         if self.append && self.whole_file == Some(true) {

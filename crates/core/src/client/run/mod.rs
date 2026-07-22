@@ -216,7 +216,7 @@ fn run_client_internal(
     });
 
     if has_daemon_url {
-        // upstream: main.c:1571-1586 - when `-e`/`--rsh` is active with `::`,
+        // upstream: main.c:1593-1608 - when `-e`/`--rsh` is active with `::`,
         // the client spawns SSH with `rsync --server --daemon .` as the remote
         // command, then speaks the daemon protocol over the SSH pipes.
         let summary = if config.remote_shell().is_some() {
@@ -313,7 +313,7 @@ fn run_client_internal(
         Err(error) => return Err(map_local_copy_error(error)),
     };
 
-    // upstream: main.c:751 validates destination directory access early,
+    // upstream: main.c:760 validates destination directory access early,
     // returning FILE_SELECTION (3) for PermissionDenied instead of
     // PARTIAL_TRANSFER (23). Other errors (e.g. NotFound) proceed normally.
     use std::fs;
@@ -354,7 +354,7 @@ fn run_client_internal(
         options = options.batch_writer(Some(writer_arc.clone()));
     }
 
-    // upstream: main.c:1817-1818 - `--only-write-batch` forces dry_run=1 so
+    // upstream: main.c:1841-1842 - `--only-write-batch` forces dry_run=1 so
     // that the transfer runs (populating the batch file) without creating the
     // destination directory or writing any files.
     let is_only_write_batch = config

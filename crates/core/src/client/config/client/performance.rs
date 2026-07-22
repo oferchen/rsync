@@ -42,7 +42,7 @@ impl ClientConfig {
     /// is the build-time default (zstd > lz4 > zlib).
     ///
     /// This distinction is required for correct argument forwarding to
-    /// the remote peer - upstream `options.c:2800-2805` only sends
+    /// the remote peer - upstream `options.c:2818-2823` only sends
     /// `--compress-choice` / `--new-compress` / `--old-compress` when
     /// the user explicitly selected an algorithm.
     #[must_use]
