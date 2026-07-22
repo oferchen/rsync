@@ -3131,6 +3131,29 @@ mod module_access_tests {
         assert!(!cfg.deletion.ignore_errors);
     }
 
+    // upstream: loadparm `open noatime` - the module directive makes the daemon
+    // (as sender) open source files with O_NOATIME. Without wiring it into the
+    // server config the directive was parsed but never enforced.
+    #[test]
+    fn module_open_noatime_forces_config_flag() {
+        let module = ModuleDefinition {
+            open_noatime: true,
+            ..Default::default()
+        };
+        let mut cfg = ServerConfig::default();
+        assert!(!cfg.write.open_noatime);
+        apply_module_transfer_directives(&module, &mut cfg);
+        assert!(cfg.write.open_noatime);
+    }
+
+    #[test]
+    fn module_without_open_noatime_leaves_config_untouched() {
+        let module = ModuleDefinition::default();
+        let mut cfg = ServerConfig::default();
+        apply_module_transfer_directives(&module, &mut cfg);
+        assert!(!cfg.write.open_noatime);
+    }
+
     // upstream: clientserver.c:1201-1204 - `numeric ids = yes` forces
     // `numeric_ids = -1` for the session (NOT `1`), except under chroot when a
     // `name converter` is configured (the converter maps names inside the
