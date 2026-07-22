@@ -230,11 +230,22 @@ fn build_compat_flags_enables_symlink_times_when_client_advertises_l() {
 }
 
 #[test]
-fn build_compat_flags_skips_symlink_times_when_client_missing_l() {
+fn build_compat_flags_sets_symlink_times_from_own_capability_when_client_missing_l() {
+    // upstream: compat.c:713 sets CF_SYMLINK_TIMES from the server's OWN
+    // compile-time capability (`#ifdef CAN_SET_SYMLINK_TIMES`), NOT from the
+    // client's 'L'. A peer that omits 'L' (e.g. a non-unix sender pushing to a
+    // Unix server) must still get symlink-time preservation. The client-sender
+    // reads this advertised flag as `receiver_symlink_times` (compat.c:756-761).
     let flags = build_compat_flags_from_client_info("fxCIvu", true);
+    #[cfg(unix)]
+    assert!(
+        flags.contains(CompatibilityFlags::SYMLINK_TIMES),
+        "SYMLINK_TIMES must come from our own capability, regardless of client 'L'"
+    );
+    #[cfg(not(unix))]
     assert!(
         !flags.contains(CompatibilityFlags::SYMLINK_TIMES),
-        "SYMLINK_TIMES should not be enabled when client doesn't advertise 'L'"
+        "SYMLINK_TIMES stays off where the platform cannot set symlink times"
     );
 }
 
