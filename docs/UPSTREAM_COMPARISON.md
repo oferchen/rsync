@@ -1,12 +1,12 @@
-# Rust rsync vs Upstream rsync 3.4.1 Comparison
+# Rust rsync vs Upstream rsync 3.4.4 Comparison
 
-This document provides a systematic comparison between the Rust rsync implementation and upstream rsync 3.4.1, treating code as the source of truth.
+This document provides a systematic comparison between the Rust rsync implementation and upstream rsync 3.4.4 (protocol 32), treating the upstream C source at `target/interop/upstream-src/rsync-3.4.4/` as the source of truth.
 
-**Last verified:** 2026-02-22
+**Last verified:** 2026-07-22
 **Validation commands:**
 ```sh
 cargo fmt --all -- --check \
-  && cargo clippy --workspace --all-targets --all-features --no-deps -D warnings \
+  && cargo clippy --workspace --all-targets --all-features --no-deps -- -D warnings \
   && cargo nextest run --workspace --all-features
 ```
 
@@ -471,7 +471,24 @@ If literal:
 | `system.foo` | `rsync.system.foo` | Disguise (root only) |
 | `security.foo` | `rsync.security.foo` | Disguise (root only) |
 
-**Source:** `crates/protocol/src/xattr/`
+### Fake-super Stashing (`--fake-super`)
+
+When run unprivileged, upstream stashes ownership, permissions, and ACLs it cannot
+apply directly into `rsync.*` xattrs, using the `user.` prefix on Linux and a bare
+`rsync.` prefix elsewhere (`xattrs.c:61-78`).
+
+| Stashed Item | Xattr Name (Linux / other) | Upstream Reference |
+|--------------|----------------------------|--------------------|
+| uid/gid/mode/device | `user.rsync.%stat` / `rsync.%stat` | `xattrs.c` `XSTAT_ATTR` |
+| access ACL | `user.rsync.%aacl` / `rsync.%aacl` | `xattrs.c:75` `XACC_ACL_ATTR` |
+| default ACL | `user.rsync.%dacl` / `rsync.%dacl` | `xattrs.c:78` `XDEF_ACL_ATTR` |
+
+The `%aacl`/`%dacl` value is upstream's byte-exact ACL encoding (`acls.c:479-509`,
+`933-971`): four little-endian `u32` base fields (`user_obj`, `group_obj`, `mask_obj`,
+`other_obj`; `NO_ENTRY = 0x80`) followed by one `(id: u32, access: u32)` record per
+named entry (`NAME_IS_USER = 1 << 31`).
+
+**Source:** `crates/protocol/src/xattr/`, `crates/protocol/src/acl/entry.rs`, `crates/metadata/src/fake_super.rs`
 
 ---
 
@@ -524,7 +541,7 @@ pipeline: rayon workers compute per-directory delete plans in parallel
 (`compute_extras`), and a single emitter thread walks directories in
 upstream depth-first order to perform every `unlink`, emit every
 `*deleting` itemize line, and update every counter. The emitter
-preserves upstream rsync 3.4.1's wall-clock event sequence
+preserves upstream rsync 3.4.4's wall-clock event sequence
 byte-for-byte while keeping candidate computation parallel. See
 [`docs/architecture/delete-during.md`](architecture/delete-during.md)
 and the full specification in
@@ -645,6 +662,23 @@ Server: @RSYNCD: OK (success) or @ERROR: access denied (failure)
 | MD5 | 22 bytes | Low |
 | MD4 | 22 bytes | Lowest |
 
+### Module Chroot Handling
+
+Mirrors upstream `clientserver.c:831` `rsync_module()`:
+
+| `use chroot` | Behavior |
+|--------------|----------|
+| explicit `yes`/`no` | Honored directly |
+| unset, path contains `/./` | Chroot enabled without probing |
+| unset, otherwise | Probe with a harmless `chroot("/")`: enable on success, fall back to no chroot on `EPERM` |
+
+Once chroot is resolved on, a real `chroot()` failure at the module directory is
+fatal (the connection is refused, not silently served unchrooted). A module `path`
+containing `/./` splits into an outer chroot root and an inner post-chroot working
+directory (`clientserver.c:845-862`).
+
+**Source:** `crates/daemon/src/daemon/sections/privilege.rs`, `crates/platform/src/privilege.rs`
+
 **Source:** `crates/core/src/auth/mod.rs:17-189`
 
 ---
@@ -713,7 +747,7 @@ struct SparseWriteState {
 
 ## 22. Backup Handling
 
-**Reference:** `crates/engine/src/local_copy/executor/file/backup.rs`
+**Reference:** upstream `backup.c` vs `crates/engine/src/local_copy/context_impl/state.rs`, `crates/transfer/src/receiver/directory/backup.rs`
 
 ### Options
 
@@ -731,7 +765,25 @@ struct SparseWriteState {
 | Relative backup-dir | `--backup-dir backups` → `/dest/backups/file.txt~` |
 | Absolute backup-dir | `--backup-dir /var/backups` → `/var/backups/file.txt~` |
 
-**Source:** `crates/engine/src/local_copy/executor/file/backup.rs:8-78`
+### Placement Strategy (`link_or_rename`, `backup.c:187-221`)
+
+The existing entry is preserved with the same tiered strategy as upstream
+`make_backup()` (called with `prefer_rename = 0` outside `--temp-dir`):
+
+1. Hard-link into the backup area first (the `HLINK` trace).
+2. Fall back to `rename(2)` when the entry cannot be hard-linked (`RENAME`).
+3. Cross-device: recreate the node (regular copy, symlink, or device/FIFO) and
+   unlink the original (`backup.c:288-300`).
+
+### Backup Before Delete
+
+When `--backup` is set, extraneous files removed by the `--delete` pass are backed
+up before being unlinked, for both the local executor and the network receiver's
+delete pass, matching `delete.c:165-174`. The `make_backups && (backup_dir ||
+!is_backup_file(name))` guard applies, so an already-suffixed file with no
+`--backup-dir` is unlinked directly rather than re-backed-up.
+
+**Source:** `crates/engine/src/local_copy/context_impl/state.rs`, `crates/transfer/src/receiver/directory/backup.rs`
 
 ---
 
@@ -822,7 +874,7 @@ struct SparseWriteState {
 
 ## Summary
 
-The Rust rsync implementation achieves **full wire protocol compatibility** with upstream rsync 3.4.1:
+The Rust rsync implementation achieves **full wire protocol compatibility** with upstream rsync 3.4.4:
 
 1. **Protocol versions 28-32** fully supported with version-specific feature gates
 2. **All compatibility flags** match upstream bit positions
@@ -854,7 +906,7 @@ The Rust rsync implementation achieves **full wire protocol compatibility** with
 4. **ACL handling:** rsync-specific synchronization semantics
 5. **Filter rules:** rsync syntax differs from gitignore
 
-These custom implementations are necessary for byte-level wire protocol compatibility with upstream rsync 3.4.1.
+These custom implementations are necessary for byte-level wire protocol compatibility with upstream rsync 3.4.4.
 
 ---
 
@@ -892,4 +944,4 @@ These custom implementations are necessary for byte-level wire protocol compatib
 
 ---
 
-**Verification methodology:** Each constant and algorithm was verified by reading upstream rsync 3.4.1 source code and comparing against the corresponding Rust implementation.
+**Verification methodology:** Each constant and algorithm was verified by reading upstream rsync 3.4.4 source code and comparing against the corresponding Rust implementation.
