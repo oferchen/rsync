@@ -57,7 +57,7 @@ fn daemon_munge_symlinks_pull_strips_prefix() {
     unix_fs::symlink("/rsyncd-munged/../escape", source_dir.join("parent_link"))
         .expect("create parent_link");
 
-    // upstream: flist.c:222 - targets that lack the prefix pass through
+    // upstream: flist.c:234 - targets that lack the prefix pass through
     // unchanged via the `llen > SYMLINK_PREFIX_LEN && strncmp(...) == 0`
     // guard. Cover that branch alongside the strip path.
     unix_fs::symlink("already_unmunged", source_dir.join("bare_link"))
@@ -113,7 +113,7 @@ fn daemon_munge_symlinks_pull_strips_prefix() {
         std::path::Path::new("/etc/passwd"),
         "daemon sender must strip the `/rsyncd-munged/` prefix before writing \
          the wire entry so the client receives the original absolute target \
-         (upstream flist.c:222-226)",
+         (upstream flist.c:234-238)",
     );
 
     let rel_link = fs::read_link(dest_dir.join("rel_link")).expect("read rel_link target");

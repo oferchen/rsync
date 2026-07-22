@@ -54,7 +54,7 @@ fn run_daemon_sends_motd_before_unknown_module_error() {
     reader.read_line(&mut line).expect("motd trailing blank");
     assert_eq!(line, "\n");
 
-    // upstream: clientserver.c:730 - "@ERROR: Unknown module '%s'\n"
+    // upstream: clientserver.c:732 - "@ERROR: Unknown module '%s'\n"
     line.clear();
     reader.read_line(&mut line).expect("error message");
     assert_eq!(line, "@ERROR: Unknown module 'nosuchmod'\n");

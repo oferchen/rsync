@@ -13,7 +13,7 @@ struct AcceptLoopState<'a> {
     /// Concurrent connection cap consulted by the accept loop before
     /// dispatching a worker. `None` disables the check.
     ///
-    /// upstream: clientserver.c:744-756 enforces the per-module `max
+    /// upstream: clientserver.c:746-758 enforces the per-module `max
     /// connections` directive via `claim_connection()`; this cap mirrors
     /// the same behaviour at the daemon level.
     max_connections: Option<usize>,
@@ -113,7 +113,7 @@ fn check_signals_and_maintain(
 /// stream (matching upstream's wording byte for byte). The accept loop
 /// keeps running.
 ///
-/// upstream: clientserver.c:744-756 - `claim_connection()` enforces the
+/// upstream: clientserver.c:746-758 - `claim_connection()` enforces the
 /// per-module `lp_max_connections()` cap and emits
 /// `@ERROR: max connections (%d) reached -- try again later\n` to the
 /// client via `io_printf(f_out, ...)`.

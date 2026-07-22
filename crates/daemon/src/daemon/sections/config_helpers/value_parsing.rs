@@ -294,7 +294,7 @@ pub(crate) fn parse_uid_setting(value: &str) -> Option<u32> {
 /// `*` requests every group the target user belongs to; it must appear first,
 /// and any following tokens are extra explicit gids.
 ///
-/// upstream: clientserver.c:791-822 `rsync_module()` splits `lp_gid()` with
+/// upstream: clientserver.c:793-824 `rsync_module()` splits `lp_gid()` with
 /// `conf_strtok`; `*` triggers `want_all_groups`, and each remaining token is
 /// added via `add_a_group`. The whole list is later installed with
 /// `setgroups`, clearing inherited supplementary groups.

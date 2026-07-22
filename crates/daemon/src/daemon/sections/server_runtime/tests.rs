@@ -1066,7 +1066,7 @@ fn accept_loop_refuses_when_at_capacity() {
     let line = read_error_line(&mut client_stream);
     assert_eq!(
         line, "@ERROR: max connections (2) reached -- try again later",
-        "refusal payload must mirror upstream clientserver.c:752"
+        "refusal payload must mirror upstream clientserver.c:754"
     );
 
     // The accept loop is expected to keep running: dropping the server
