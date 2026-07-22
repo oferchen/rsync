@@ -913,7 +913,12 @@ fn apply_delete_side_effects(
         {
             // upstream: delete.c:167 - prefer_rename=True; the item is
             // unlinked outright right after, so skip the hard-link tier.
-            context.backup_existing_entry(&path, Some(entry_relative.as_path()), file_type, true)?;
+            context.backup_existing_entry(
+                &path,
+                Some(entry_relative.as_path()),
+                file_type,
+                true,
+            )?;
         }
         // upstream: log.c:log_delete emits exactly ONE line - the itemize
         // format when stdout_format_has_o_or_i, otherwise "deleting %n".
