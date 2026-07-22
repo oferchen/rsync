@@ -79,34 +79,33 @@ fn run_module_list_reports_invalid_proxy_configuration() {
         error
             .message()
             .to_string()
-            .contains("RSYNC_PROXY must be in HOST:PORT form")
+            .contains("invalid proxy specification: should be HOST:PORT")
     );
 }
 
+// upstream: socket.c:205-234 - RSYNC_PROXY has no URL-scheme concept; oc must
+// not invent one. A "scheme://" prefix is just more raw text to upstream's
+// buffer splitter, and with credentials present the "://" after the scheme
+// name is consumed as part of a bogus password rather than rejected.
 #[test]
-fn parse_proxy_spec_accepts_http_scheme() {
+fn parse_proxy_spec_has_no_scheme_concept() {
     let proxy =
-        parse_proxy_spec("http://user:secret@proxy.example:8080").expect("http proxy parses");
+        parse_proxy_spec("http://user:secret@proxy.example:8080").expect("proxy parses");
     assert_eq!(proxy.host, "proxy.example");
     assert_eq!(proxy.port, 8080);
-    assert_eq!(proxy.authorization_header(), Some("dXNlcjpzZWNyZXQ="));
-}
-
-#[test]
-fn parse_proxy_spec_decodes_percent_encoded_credentials() {
-    let proxy = parse_proxy_spec("http://user%3Aname:p%40ss%25word@proxy.example:1080")
-        .expect("percent-encoded proxy parses");
-    assert_eq!(proxy.host, "proxy.example");
-    assert_eq!(proxy.port, 1080);
-    assert_eq!(
-        proxy.authorization_header(),
-        Some("dXNlcjpuYW1lOnBAc3Mld29yZA==")
-    );
+    // strrchr('@') finds the only '@'; strchr(':') on "http://user" then
+    // finds the FIRST ':' (right after "http"), so upstream's username is
+    // "http" and its password is "//user" - not "user"/"secret" as a
+    // scheme-aware parser might assume.
+    let decoded = STANDARD
+        .decode(proxy.authorization_header().expect("auth header"))
+        .unwrap();
+    assert_eq!(decoded, b"http://user:secret");
 }
 
 #[test]
 fn parse_proxy_spec_caches_authorization_header() {
-    let proxy = parse_proxy_spec("http://user:secret@proxy.example:1080").expect("proxy parses");
+    let proxy = parse_proxy_spec("user:secret@proxy.example:1080").expect("proxy parses");
     let first = proxy.authorization_header().expect("header value");
     let second = proxy
         .authorization_header()
@@ -114,72 +113,6 @@ fn parse_proxy_spec_caches_authorization_header() {
     assert!(
         std::ptr::eq(first, second),
         "authorization header should reuse cached storage"
-    );
-}
-
-#[test]
-fn parse_proxy_spec_accepts_https_scheme() {
-    let proxy = parse_proxy_spec("https://proxy.example:3128").expect("https proxy parses");
-    assert_eq!(proxy.host, "proxy.example");
-    assert_eq!(proxy.port, 3128);
-    assert!(proxy.authorization_header().is_none());
-}
-
-#[test]
-fn parse_proxy_spec_rejects_unknown_scheme() {
-    let error = match parse_proxy_spec("socks5://proxy:1080") {
-        Ok(_) => panic!("invalid proxy scheme should be rejected"),
-        Err(error) => error,
-    };
-    assert_eq!(error.exit_code(), SOCKET_IO_EXIT_CODE);
-    assert!(
-        error
-            .message()
-            .to_string()
-            .contains("RSYNC_PROXY scheme must be http:// or https://")
-    );
-}
-
-#[test]
-fn parse_proxy_spec_rejects_path_component() {
-    let error = match parse_proxy_spec("http://proxy.example:3128/path") {
-        Ok(_) => panic!("proxy specification with path should be rejected"),
-        Err(error) => error,
-    };
-    assert_eq!(error.exit_code(), SOCKET_IO_EXIT_CODE);
-    assert!(
-        error
-            .message()
-            .to_string()
-            .contains("RSYNC_PROXY must not include a path component")
-    );
-}
-
-#[test]
-fn parse_proxy_spec_rejects_invalid_percent_encoding_in_credentials() {
-    let error = match parse_proxy_spec("user%zz:secret@proxy.example:8080") {
-        Ok(_) => panic!("invalid percent-encoding should be rejected"),
-        Err(error) => error,
-    };
-
-    assert_eq!(error.exit_code(), SOCKET_IO_EXIT_CODE);
-    assert!(
-        error
-            .message()
-            .to_string()
-            .contains("RSYNC_PROXY username contains invalid percent-encoding")
-    );
-
-    let error = match parse_proxy_spec("user:secret%@proxy.example:8080") {
-        Ok(_) => panic!("truncated percent-encoding should be rejected"),
-        Err(error) => error,
-    };
-    assert_eq!(error.exit_code(), SOCKET_IO_EXIT_CODE);
-    assert!(
-        error
-            .message()
-            .to_string()
-            .contains("RSYNC_PROXY password contains truncated percent-encoding")
     );
 }
 

@@ -29,28 +29,66 @@ pub(crate) fn connect_direct(
     sockopts: Option<&OsStr>,
 ) -> Result<TcpStream, ClientError> {
     let addresses = resolve_daemon_addresses(addr, address_mode)?;
+
+    let result = try_candidates(&addresses, connect_timeout, |candidate| {
+        connect_with_optional_bind(candidate, bind_address, connect_timeout, tfo, sockopts)
+    });
+
+    match result {
+        Ok(stream) => {
+            if let Some(duration) = io_timeout {
+                stream.set_read_timeout(Some(duration)).map_err(|error| {
+                    socket_error("set read timeout on", addr.socket_addr_display(), error)
+                })?;
+                stream.set_write_timeout(Some(duration)).map_err(|error| {
+                    socket_error("set write timeout on", addr.socket_addr_display(), error)
+                })?;
+            }
+            Ok(stream)
+        }
+        Err((candidate, error)) => Err(map_connect_failure(connect_timeout, candidate, error)),
+    }
+}
+
+/// Iterates `candidates` in order, calling `attempt` for each and returning
+/// the first success.
+///
+/// Mirrors upstream's per-address connect loop (upstream: socket.c:262-310
+/// `open_socket_out()`), including one easy-to-miss subtlety: an ordinary
+/// connect failure (e.g. `ECONNREFUSED`) falls through to the next address,
+/// but a `--contimeout` expiry does not.
+///
+/// Upstream's retry loop is
+/// `while (connect(...) < 0) { if (connect_timeout < 0) exit_cleanup(RERR_CONTIMEOUT); ... }`;
+/// once the `SIGALRM` handler has set `connect_timeout` negative, the
+/// process exits immediately without ever reaching `res->ai_next`. A plain
+/// connection failure instead `close(s)`s and `break`s out to the outer
+/// `for` loop, which does advance to the next address. `attempt` returning
+/// `io::ErrorKind::TimedOut` while `connect_timeout` is `Some` is treated as
+/// that alarm firing, so iteration stops there rather than trying the
+/// remaining candidates with a fresh timeout budget.
+pub(crate) fn try_candidates<T>(
+    candidates: &[SocketAddr],
+    connect_timeout: Option<Duration>,
+    mut attempt: impl FnMut(SocketAddr) -> io::Result<T>,
+) -> Result<T, (SocketAddr, io::Error)> {
     let mut last_error: Option<(SocketAddr, io::Error)> = None;
 
-    for candidate in addresses {
-        match connect_with_optional_bind(candidate, bind_address, connect_timeout, tfo, sockopts) {
-            Ok(stream) => {
-                if let Some(duration) = io_timeout {
-                    stream.set_read_timeout(Some(duration)).map_err(|error| {
-                        socket_error("set read timeout on", addr.socket_addr_display(), error)
-                    })?;
-                    stream.set_write_timeout(Some(duration)).map_err(|error| {
-                        socket_error("set write timeout on", addr.socket_addr_display(), error)
-                    })?;
+    for &candidate in candidates {
+        match attempt(candidate) {
+            Ok(value) => return Ok(value),
+            Err(error) => {
+                let contimeout_expired =
+                    connect_timeout.is_some() && error.kind() == io::ErrorKind::TimedOut;
+                last_error = Some((candidate, error));
+                if contimeout_expired {
+                    break;
                 }
-
-                return Ok(stream);
             }
-            Err(error) => last_error = Some((candidate, error)),
         }
     }
 
-    let (candidate, error) = last_error.expect("no addresses available for daemon connection");
-    Err(map_connect_failure(connect_timeout, candidate, error))
+    Err(last_error.expect("try_candidates requires at least one candidate"))
 }
 
 /// Maps a final `connect(2)` failure to a [`ClientError`] with the correct exit
@@ -63,7 +101,7 @@ pub(crate) fn connect_direct(
 /// socket-I/O code (10).
 ///
 /// upstream: socket.c:280-282 - `if (connect_timeout < 0) exit_cleanup(RERR_CONTIMEOUT);`
-fn map_connect_failure(
+pub(crate) fn map_connect_failure(
     connect_timeout: Option<Duration>,
     candidate: SocketAddr,
     error: io::Error,
@@ -293,6 +331,107 @@ mod tests {
         let error = io::Error::new(io::ErrorKind::ConnectionRefused, "refused");
         let mapped = map_connect_failure(Some(Duration::from_secs(5)), candidate(), error);
         assert_eq!(mapped.exit_code(), 10);
+    }
+
+    fn candidates(n: usize) -> Vec<SocketAddr> {
+        (0..n)
+            .map(|i| SocketAddr::new(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)), 10_000 + i as u16))
+            .collect()
+    }
+
+    // upstream: socket.c:262-310 - the address loop tries each getaddrinfo()
+    // result in order; a success on the first candidate must never attempt
+    // the rest.
+    #[test]
+    fn try_candidates_stops_on_first_success() {
+        let addrs = candidates(3);
+        let mut attempted = Vec::new();
+        let result = try_candidates(&addrs, None, |candidate| {
+            attempted.push(candidate);
+            Ok::<_, io::Error>(candidate)
+        });
+        assert_eq!(result.unwrap(), addrs[0]);
+        assert_eq!(attempted, vec![addrs[0]]);
+    }
+
+    // upstream: socket.c:285-296 - an ordinary connect() failure (e.g.
+    // ECONNREFUSED) `close(s)`s and falls through to the next
+    // `res->ai_next` address rather than aborting.
+    #[test]
+    fn try_candidates_continues_past_ordinary_failure() {
+        let addrs = candidates(2);
+        let mut attempted = Vec::new();
+        let result = try_candidates(&addrs, None, |candidate| {
+            attempted.push(candidate);
+            if candidate == addrs[0] {
+                Err(io::Error::new(io::ErrorKind::ConnectionRefused, "refused"))
+            } else {
+                Ok(candidate)
+            }
+        });
+        assert_eq!(result.unwrap(), addrs[1]);
+        assert_eq!(attempted, addrs);
+    }
+
+    // upstream: socket.c:280-282 - once the contimeout alarm has fired,
+    // `exit_cleanup(RERR_CONTIMEOUT)` runs immediately from inside the
+    // current address's retry loop; `res->ai_next` is never reached, even
+    // though a second (perhaps reachable) address remains. This is the
+    // GAP L15 fix: previously oc kept iterating past a --contimeout expiry
+    // and gave every remaining candidate a fresh timeout budget.
+    #[test]
+    fn try_candidates_stops_on_contimeout_expiry_without_trying_next() {
+        let addrs = candidates(2);
+        let mut attempted = Vec::new();
+        let result = try_candidates(&addrs, Some(Duration::from_secs(5)), |candidate| {
+            attempted.push(candidate);
+            Err::<SocketAddr, _>(io::Error::new(io::ErrorKind::TimedOut, "timed out"))
+        });
+        let (candidate, error) = result.expect_err("contimeout expiry must fail");
+        assert_eq!(candidate, addrs[0]);
+        assert_eq!(error.kind(), io::ErrorKind::TimedOut);
+        assert_eq!(
+            attempted,
+            vec![addrs[0]],
+            "must not try the second address after a contimeout expiry"
+        );
+    }
+
+    // upstream never arms the SIGALRM handler unless `connect_timeout > 0`
+    // (`--contimeout` was given), so an OS-level TimedOut error without
+    // --contimeout configured is an ordinary failure that falls through to
+    // the next address like any other errno.
+    #[test]
+    fn try_candidates_without_contimeout_continues_past_os_level_timeout() {
+        let addrs = candidates(2);
+        let mut attempted = Vec::new();
+        let result = try_candidates(&addrs, None, |candidate| {
+            attempted.push(candidate);
+            if candidate == addrs[0] {
+                Err(io::Error::new(io::ErrorKind::TimedOut, "os timeout"))
+            } else {
+                Ok(candidate)
+            }
+        });
+        assert_eq!(result.unwrap(), addrs[1]);
+        assert_eq!(attempted, addrs);
+    }
+
+    // upstream: socket.c:312-323 - when every address fails, upstream
+    // reports on all of them but the caller only needs the final one to
+    // construct the exit-code mapping; the last candidate/error pair must
+    // be preserved.
+    #[test]
+    fn try_candidates_all_fail_returns_last_error() {
+        let addrs = candidates(2);
+        let result = try_candidates(&addrs, None, |candidate| {
+            Err::<SocketAddr, _>(io::Error::new(
+                io::ErrorKind::ConnectionRefused,
+                format!("refused {candidate}"),
+            ))
+        });
+        let (candidate, _error) = result.expect_err("both candidates fail");
+        assert_eq!(candidate, addrs[1]);
     }
 
     // upstream: socket.c:279-280 - set_socket_options(s, sockopts) runs before
