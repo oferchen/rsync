@@ -127,14 +127,18 @@ impl TransferSpec {
 
 /// Result of building a remote invocation with secluded-args support.
 ///
-/// When secluded-args is enabled, the command-line arguments are minimal
-/// (just `rsync --server -s`) and the full argument list is provided
-/// separately for transmission over stdin after SSH connection.
+/// When secluded-args is enabled, the command-line arguments hold only the
+/// protected head (`--server`, `--sender`, the compact flag string with
+/// capability suffix, `--iconv`) and the deferred remainder (long-form
+/// options, `.`, and paths) is provided separately for transmission over
+/// stdin after SSH connection (upstream: `options.c:2745-2746` NULL cutoff).
 #[derive(Debug)]
 pub struct SecludedInvocation {
-    /// Arguments to place on the SSH command line (minimal when secluded-args).
+    /// Arguments to place on the SSH command line. Under secluded-args this
+    /// is the protected head only; the full invocation otherwise.
     pub command_line_args: Vec<OsString>,
-    /// Arguments to send over stdin (non-empty only when secluded-args is active).
+    /// Arguments to send over stdin (non-empty only when secluded-args is
+    /// active): the deferred long-form tail, `.`, and the path arguments.
     /// Each string is sent null-separated with an empty-string terminator.
     pub stdin_args: Vec<String>,
 }

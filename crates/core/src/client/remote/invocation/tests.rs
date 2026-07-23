@@ -1177,7 +1177,14 @@ fn secluded_invocation_disabled_returns_normal_args() {
 }
 
 #[test]
-fn secluded_invocation_enabled_produces_minimal_command_line() {
+fn secluded_invocation_enabled_keeps_flags_and_capability_on_command_line() {
+    // upstream: options.c:2604-2745 server_options() keeps `--server`, the
+    // compact flag string (with 's' and the capability suffix), and
+    // `--iconv` on the actual spawned command line even under
+    // `--secluded-args`; only the long-form tail, `.`, and the path
+    // arguments are deferred to the stdin stream after the
+    // `protect_args && !local_server` NULL cutoff (rsync.c:283-320
+    // send_protected_args()).
     let config = ClientConfig::builder().protect_args(Some(true)).build();
     let builder = RemoteInvocationBuilder::new(&config, RemoteRole::Sender);
     let secluded = builder.build_secluded(&["/path/to/files"]);
@@ -1190,9 +1197,21 @@ fn secluded_invocation_enabled_produces_minimal_command_line() {
 
     assert!(cmd_strs.contains(&"rsync".to_owned()));
     assert!(cmd_strs.contains(&"--server".to_owned()));
-    assert!(cmd_strs.contains(&"-s".to_owned()));
-    assert!(cmd_strs.contains(&".".to_owned()));
 
+    let flag_string = cmd_strs
+        .iter()
+        .find(|a| a.starts_with('-') && !a.starts_with("--"))
+        .unwrap_or_else(|| panic!("command line must contain a compact flag string: {cmd_strs:?}"));
+    assert!(
+        flag_string.starts_with("-s"),
+        "'s' must be the first transfer-flag letter, packed with the rest \
+         into a single argv slot (not a standalone -s token): {flag_string}"
+    );
+
+    assert!(
+        !cmd_strs.contains(&".".to_owned()),
+        "the '.' separator is deferred to stdin, not the command line: {cmd_strs:?}"
+    );
     assert!(
         !cmd_strs.contains(&"/path/to/files".to_owned()),
         "command line should not contain remote path in secluded mode"
@@ -1205,6 +1224,18 @@ fn secluded_invocation_enabled_produces_minimal_command_line() {
     assert!(
         secluded.stdin_args.iter().any(|a| a == "/path/to/files"),
         "stdin_args should contain the remote path"
+    );
+    assert!(
+        secluded.stdin_args.iter().any(|a| a == "."),
+        "stdin_args should contain the '.' separator"
+    );
+    assert!(
+        !secluded
+            .stdin_args
+            .iter()
+            .any(|a| a.starts_with('-') && a.contains('s') && a.len() > 2),
+        "the compact flag string must not be duplicated over stdin: {:?}",
+        secluded.stdin_args
     );
 }
 
@@ -1225,35 +1256,57 @@ fn secluded_invocation_pull_includes_sender_flag() {
         "pull secluded invocation should include --sender on command line"
     );
     assert!(
-        cmd_strs.contains(&"-s".to_owned()),
-        "secluded invocation should include -s flag"
+        cmd_strs
+            .iter()
+            .any(|a| a.starts_with('-') && !a.starts_with("--") && a.contains('s')),
+        "secluded invocation should include the 's' letter in the compact flag string"
     );
 
     assert!(
-        secluded.stdin_args.iter().any(|a| a == "--sender"),
-        "stdin_args should include --sender for pull"
+        !secluded.stdin_args.iter().any(|a| a == "--sender"),
+        "--sender must not be duplicated over stdin; it is already on the command line"
     );
 }
 
 #[test]
-fn secluded_invocation_stdin_args_contain_flag_string() {
+fn secluded_invocation_stdin_args_omit_flag_string_and_defer_long_form() {
+    // The compact flag string ('r', 't') now lives on the command line
+    // (see secluded_invocation_enabled_keeps_flags_and_capability_on_command_line);
+    // stdin only carries the deferred long-form tail, '.', and paths.
     let config = ClientConfig::builder()
         .protect_args(Some(true))
         .recursive(true)
         .times(true)
+        .ignore_errors(true)
         .build();
     let builder = RemoteInvocationBuilder::new(&config, RemoteRole::Sender);
     let secluded = builder.build_secluded(&["/data"]);
 
-    let has_flags = secluded
-        .stdin_args
-        .iter()
-        .any(|a| a.starts_with('-') && a.contains('r') && a.contains('t'));
     assert!(
-        has_flags,
-        "stdin_args should contain flag string with 'r' and 't': {:?}",
+        !secluded
+            .stdin_args
+            .iter()
+            .any(|a| a.starts_with('-') && !a.starts_with("--") && a.len() > 1),
+        "stdin_args must not contain the compact flag string: {:?}",
         secluded.stdin_args
     );
+    assert!(
+        secluded.stdin_args.iter().any(|a| a == "--ignore-errors"),
+        "stdin_args should still carry deferred long-form options: {:?}",
+        secluded.stdin_args
+    );
+
+    let cmd_strs: Vec<String> = secluded
+        .command_line_args
+        .iter()
+        .map(|a| a.to_string_lossy().into_owned())
+        .collect();
+    let flag_string = cmd_strs
+        .iter()
+        .find(|a| a.starts_with('-') && !a.starts_with("--"))
+        .expect("flag string must be on the command line");
+    assert!(flag_string.contains('r'), "expected 'r': {flag_string}");
+    assert!(flag_string.contains('t'), "expected 't': {flag_string}");
 }
 
 #[test]
@@ -1265,6 +1318,64 @@ fn secluded_invocation_explicitly_disabled_returns_normal() {
     assert!(
         secluded.stdin_args.is_empty(),
         "stdin_args should be empty when protect_args is explicitly false"
+    );
+}
+
+/// Locks the exact cmdline-vs-stdin split for a representative
+/// `--secluded-args` push invocation with an `--iconv` charset configured.
+///
+/// upstream: `options.c:2604-2745 server_options()` builds `--server`, the
+/// compact flag string (`s` first, then transfer flags, then the
+/// capability suffix), and `--iconv` before the `protect_args &&
+/// !local_server` NULL cutoff; everything emitted afterward (here just
+/// `--ignore-errors`, `.`, and the destination path) is deferred to
+/// `send_protected_args()` (`rsync.c:283-320`).
+#[test]
+fn secluded_invocation_locks_cmdline_and_stdin_sequence() {
+    let config = ClientConfig::builder()
+        .protect_args(Some(true))
+        .recursive(true)
+        .times(true)
+        .ignore_errors(true)
+        .iconv(IconvSetting::Explicit {
+            local: "UTF-8".to_owned(),
+            remote: Some("ISO-8859-1".to_owned()),
+        })
+        .inc_recursive_send(false)
+        .build();
+    let builder = RemoteInvocationBuilder::new(&config, RemoteRole::Sender);
+    let secluded = builder.build_secluded(&["/data"]);
+
+    let cmd_strs: Vec<String> = secluded
+        .command_line_args
+        .iter()
+        .map(|a| a.to_string_lossy().into_owned())
+        .collect();
+    // build_flag_string() emits 't' (preserve_mtimes) before 'r' (recurse);
+    // 's' is inserted immediately after the leading '-', giving "-str...".
+    let expected_flags = format!("-str{}", build_capability_string_suffix(false));
+    assert_eq!(
+        cmd_strs,
+        vec![
+            "rsync".to_owned(),
+            "--server".to_owned(),
+            expected_flags,
+            "--iconv=ISO-8859-1".to_owned(),
+        ],
+        "cmdline must hold exactly --server, the compact flag string \
+         (with 's' and the capability suffix), and --iconv"
+    );
+
+    assert_eq!(
+        secluded.stdin_args,
+        vec![
+            "rsync".to_owned(),
+            "--ignore-errors".to_owned(),
+            ".".to_owned(),
+            "/data".to_owned(),
+        ],
+        "stdin must hold exactly the synthetic arg0, the deferred \
+         long-form tail, the '.' separator, and the path"
     );
 }
 
