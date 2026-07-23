@@ -21,11 +21,15 @@ use crate::client::remote::output_option::{OutputWordKind, make_output_option};
 ///
 /// When `--protect-args` / `-s` is active, uses a two-phase protocol
 /// matching upstream `clientserver.c:393-408`:
-/// - Phase 1: role markers + `--secluded-args` so the daemon knows to
-///   expect protected args (see [`build_minimal_daemon_args`] for why
-///   the long-form alias is used in place of a bare `-s` and why no
+/// - Phase 1: role markers + `--secluded-args` + `--iconv=...` (when
+///   configured) so the daemon knows to expect protected args and, for a
+///   real upstream daemon, parses `--iconv` while `need_unsorted_flist`'s
+///   `protect_args != 2` guard still holds (see
+///   [`build_minimal_daemon_args`] for the full rationale, including why
+///   the long-form `-s` alias is used in place of a bare `-s` and why no
 ///   standalone `.` is emitted)
-/// - Phase 2: full argument list via `send_secluded_args()` wire format
+/// - Phase 2: remaining argument list via `send_secluded_args()` wire
+///   format, with `--iconv` filtered back out since phase 1 already sent it
 ///
 /// Without protect-args, sends all arguments in a single phase.
 /// For protocol >= 30, strings are null-terminated; for < 30, newline-terminated.
@@ -44,7 +48,7 @@ pub(crate) fn send_daemon_arguments<W: Write>(
     // protocol; with protect-args, only the minimal set is sent so the daemon
     // detects the secluded-args marker and expects phase-2 secluded args.
     let phase1_args = if protect {
-        build_minimal_daemon_args(is_sender)
+        build_minimal_daemon_args(config, is_sender)
     } else {
         // upstream: options.c:2608-3015 server_options() wraps every emitted
         // option-with-value through `safe_arg()` before it enters the wire
@@ -94,7 +98,17 @@ pub(crate) fn send_daemon_arguments<W: Write>(
     // applying iconvbufs(ic_send, ...) per arg when --iconv is configured.
     if protect {
         let mut secluded = vec!["rsync"];
-        secluded.extend(full_args.iter().map(String::as_str));
+        // upstream: options.c:2734-2745 - `--iconv=...` is emitted before the
+        // NULL cutoff, so it already travelled in phase 1
+        // (`build_minimal_daemon_args`). Skip it here to avoid sending it
+        // twice; `full_args` still carries it for the non-protect single-phase
+        // send path above.
+        secluded.extend(
+            full_args
+                .iter()
+                .filter(|a| !a.starts_with("--iconv="))
+                .map(String::as_str),
+        );
         // upstream: rsync.c:296-297 - DEBUG_GTE(CMD, 1) emits
         // `print_child_argv("protected args:", args + i + 1)` right before the
         // per-arg `iconvbufs(ic_send, ...)` loop. Upstream's argv begins after
@@ -134,7 +148,8 @@ pub(crate) fn send_daemon_arguments<W: Write>(
 /// a bare `-s`: the `s` for `--secluded-args` is embedded inside the
 /// compact flag string (`argstr[x++] = 's'`, `options.c:2622-2623`).
 ///
-/// We emit only the role markers plus `--secluded-args` here so that:
+/// We emit only the role markers, `--secluded-args`, and `--iconv=...` (when
+/// configured) here so that:
 ///
 /// 1. The daemon's `has_secluded_args_flag` check still trips and reads
 ///    phase 2 via `recv_secluded_args` (`--secluded-args` is in the same
@@ -149,6 +164,16 @@ pub(crate) fn send_daemon_arguments<W: Write>(
 ///    would shadow the real compact flag string in `build_server_config`'s
 ///    first-short-form-arg picker. The real flag string arrives in phase 2
 ///    via `build_full_daemon_args`.
+/// 4. `--iconv=...`, when configured, is parsed by a real upstream daemon
+///    while `protect_args` still reads `1` (not yet forced to `2` at
+///    `clientserver.c:1082`), so `options.c:2069-2074`'s `need_unsorted_flist
+///    = 1` side effect fires. If `--iconv` were deferred to phase 2 (as
+///    every other long-form option is), a real upstream daemon would parse
+///    it under `protect_args == 2` and `options.c:2070`'s `protect_args !=
+///    2` guard would suppress `need_unsorted_flist`, breaking the sender's
+///    and receiver's shared NDX-vs-unsorted-index correlation whenever
+///    `-s`/`--secluded-args` and `--iconv` are combined against a real
+///    upstream daemon.
 ///
 /// Upstream daemons accept `--secluded-args` as the long-form alias of `-s`
 /// (`options.c:804`), so this remains wire-compatible with upstream rsync.
@@ -157,16 +182,41 @@ pub(crate) fn send_daemon_arguments<W: Write>(
 ///
 /// - `clientserver.c:303` - `sargs[sargc++] = "."` AFTER `server_options()`
 /// - `clientserver.c:395-402` - phase 1 wire writes args until `!sargs[i]`
+/// - `clientserver.c:1080-1082` - `protect_args = 2` only takes effect AFTER
+///   phase 1's `parse_arguments()` returns
+/// - `options.c:2069-2074` - `need_unsorted_flist = 1` guarded by
+///   `protect_args != 2`
 /// - `options.c:2622-2623` - `argstr[x++] = 's'` when `protect_args`
+/// - `options.c:2734-2741` - `--iconv=...` emitted immediately before the
+///   NULL cutoff
 /// - `options.c:2744-2745` - NULL marker between phase 1 / phase 2 args
 /// - `options.c:804` - `--secluded-args` long-form alias for `-s`
-pub(super) fn build_minimal_daemon_args(is_sender: bool) -> Vec<String> {
+pub(super) fn build_minimal_daemon_args(config: &ClientConfig, is_sender: bool) -> Vec<String> {
     let mut args = vec!["--server".to_owned()];
     if is_sender {
         args.push("--sender".to_owned());
     }
     args.push("--secluded-args".to_owned());
+    if let Some(arg) = daemon_iconv_arg(config) {
+        args.push(arg);
+    }
     args
+}
+
+/// Builds the `--iconv=...` argument when configured, or `None`.
+///
+/// Shared by [`build_minimal_daemon_args`] (phase-1, when protect-args is
+/// active) and [`build_full_daemon_args`] (the non-protect single-phase send
+/// and phase-2's fallback carrier). Mirrors upstream `options.c:2734-2741`.
+fn daemon_iconv_arg(config: &ClientConfig) -> Option<String> {
+    match config.iconv() {
+        IconvSetting::Unspecified | IconvSetting::Disabled => None,
+        IconvSetting::LocaleDefault => Some("--iconv=.".to_owned()),
+        IconvSetting::Explicit { local, remote } => {
+            let forwarded = remote.as_deref().unwrap_or(local);
+            Some(format!("--iconv={forwarded}"))
+        }
+    }
 }
 
 /// Builds the full argument list for daemon-mode transfer.
@@ -720,13 +770,13 @@ pub(super) fn build_full_daemon_args(
     // (Unspecified) forward nothing because upstream nulls iconv_opt at
     // options.c:2052-2054 before this branch runs. Without this the daemon
     // never enables `ic_recv` and writes wire UTF-8 bytes verbatim.
-    match config.iconv() {
-        IconvSetting::Unspecified | IconvSetting::Disabled => {}
-        IconvSetting::LocaleDefault => args.push("--iconv=.".to_owned()),
-        IconvSetting::Explicit { local, remote } => {
-            let forwarded = remote.as_deref().unwrap_or(local);
-            args.push(format!("--iconv={forwarded}"));
-        }
+    //
+    // Under protect-args, `send_daemon_arguments` strips this entry back out
+    // of the phase-2 payload because `build_minimal_daemon_args` already sent
+    // it in phase 1 (see that function's doc comment for why the phase
+    // matters to a real upstream daemon's `need_unsorted_flist`).
+    if let Some(arg) = daemon_iconv_arg(config) {
+        args.push(arg);
     }
 
     // upstream: dummy argument representing CWD.

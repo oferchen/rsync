@@ -36,7 +36,8 @@ mod protect_args_daemon_tests {
     // string in the daemon's first-short-form-arg picker.
     #[test]
     fn build_minimal_args_receiver_excludes_dot_and_bare_short_flag() {
-        let args = build_minimal_daemon_args(false);
+        let config = ClientConfig::default();
+        let args = build_minimal_daemon_args(&config, false);
         assert_eq!(args, vec!["--server", "--secluded-args"]);
         assert!(
             !args.iter().any(|a| a == "."),
@@ -51,10 +52,36 @@ mod protect_args_daemon_tests {
 
     #[test]
     fn build_minimal_args_sender_excludes_dot_and_bare_short_flag() {
-        let args = build_minimal_daemon_args(true);
+        let config = ClientConfig::default();
+        let args = build_minimal_daemon_args(&config, true);
         assert_eq!(args, vec!["--server", "--sender", "--secluded-args"]);
         assert!(!args.iter().any(|a| a == "."));
         assert!(!args.iter().any(|a| a == "-s"));
+    }
+
+    // upstream: options.c:2069-2074 - `need_unsorted_flist = 1` fires only
+    // while `protect_args != 2`, i.e. during phase 1's parse
+    // (`clientserver.c:1080-1082` forces `protect_args = 2` only after phase
+    // 1 returns). `--iconv` must therefore travel in phase 1, alongside
+    // `--secluded-args`, or a real upstream daemon combining `-s` with
+    // `--iconv` never enables `need_unsorted_flist`.
+    #[test]
+    fn build_minimal_args_includes_iconv_when_configured() {
+        let config = ClientConfig::builder()
+            .iconv(crate::client::config::IconvSetting::Explicit {
+                local: "UTF-8".to_owned(),
+                remote: Some("LATIN1".to_owned()),
+            })
+            .build();
+        let args = build_minimal_daemon_args(&config, false);
+        assert_eq!(args, vec!["--server", "--secluded-args", "--iconv=LATIN1"]);
+    }
+
+    #[test]
+    fn build_minimal_args_omits_iconv_when_unconfigured() {
+        let config = ClientConfig::default();
+        let args = build_minimal_daemon_args(&config, false);
+        assert!(!args.iter().any(|a| a.starts_with("--iconv")));
     }
 
     #[test]
