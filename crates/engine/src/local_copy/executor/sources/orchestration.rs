@@ -3,7 +3,7 @@
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use logging::{debug_log, info_log};
 
@@ -22,6 +22,20 @@ use super::handlers::{
 };
 use super::metadata::{compute_relative_paths, fetch_source_metadata};
 use super::types::{SourceMetadataResult, SourceProcessingContext};
+
+/// Returns the current time truncated to whole seconds since the Unix epoch.
+///
+/// Mirrors upstream's `time(NULL)` (main.c:327,1763), whose `time_t` result has
+/// whole-second resolution. The transfer rate uses the integer difference of
+/// two such marks (main.c:422), so the wall-clock span must be captured the same
+/// way. A clock that reads before the epoch (never expected in practice) yields
+/// `0` rather than panicking.
+fn whole_unix_seconds() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|since_epoch| since_epoch.as_secs())
+        .unwrap_or(0)
+}
 
 /// Entry point for copying all sources to the destination.
 ///
@@ -47,7 +61,9 @@ pub(crate) fn copy_sources(
             )
         })?;
 
-    let run_start = Instant::now();
+    // upstream: main.c:1763 `starttime = time(NULL)` - the transfer rate span
+    // is measured between two whole-second time_t marks, not a fractional clock.
+    let run_start_secs = whole_unix_seconds();
     let destination_root = plan.destination_spec().path().to_path_buf();
     let mut context = CopyContext::new(mode, options, handler, destination_root);
     context.set_multi_source(plan.sources().len() > 1);
@@ -269,11 +285,15 @@ pub(crate) fn copy_sources(
 
     match result {
         Ok(()) => {
-            // upstream main.c:418: the transfer rate uses a single wall-clock
-            // span, not the sum of per-file copy durations (which is ~0 for CoW).
+            // upstream main.c:327,422: the transfer rate uses `endtime -
+            // starttime`, the integer difference of two whole-second time_t
+            // marks - not the sum of per-file copy durations (~0 for CoW) and
+            // not a fractional clock. Capture the same whole-second span so a
+            // transfer crossing a second boundary reports the upstream rate.
+            let elapsed_secs = whole_unix_seconds().saturating_sub(run_start_secs);
             context
                 .summary_mut()
-                .record_wall_clock_elapsed(run_start.elapsed());
+                .record_wall_clock_elapsed(Duration::from_secs(elapsed_secs));
             Ok(context.into_outcome())
         }
         Err(error) => {

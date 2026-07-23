@@ -1,5 +1,6 @@
 use std::io::{self, Write};
 use std::path::Path;
+use std::time::Duration;
 
 use core::client::{
     ClientEntryKind, ClientEntryMetadata, ClientEvent, ClientEventKind, ClientSummary,
@@ -668,6 +669,22 @@ fn emit_stats_detail_block<W: Write + ?Sized>(
     Ok(())
 }
 
+/// Computes the summary transfer rate in bytes/sec.
+///
+/// Mirrors upstream `main.c:418-423` `bytes_per_sec_human_dnum()`:
+/// `(total_written + total_read) / (0.5 + (endtime - starttime))`, where
+/// `endtime`/`starttime` are whole-second `time_t` values captured with
+/// `time(NULL)` (main.c:141,327,1763). The wall-clock span is therefore
+/// truncated to whole seconds here so a transfer that runs 1.4 s divides by the
+/// same integer second count upstream would use, rather than a fractional span.
+/// The `0.5` floor keeps a sub-second transfer from dividing by zero, and the
+/// single wall-clock span avoids the summed per-file copy durations (which are
+/// ~0 for CoW/clonefile and would explode the rate).
+fn transfer_rate(sent: u64, received: u64, wall_clock: Duration) -> f64 {
+    let whole_seconds = wall_clock.as_secs() as f64;
+    (sent + received) as f64 / (0.5 + whole_seconds)
+}
+
 /// Emits the summary lines reported by verbose transfers.
 pub(crate) fn emit_totals<W: Write + ?Sized>(
     summary: &ClientSummary,
@@ -680,11 +697,7 @@ pub(crate) fn emit_totals<W: Write + ?Sized>(
     let sent = summary.bytes_sent();
     let received = summary.bytes_received();
     let total_size = summary.total_source_bytes();
-    // upstream main.c:418-423: rate = (written+read) / (0.5 + (endtime-starttime)),
-    // a single wall-clock span with a 0.5s floor - never the summed per-file copy
-    // durations (which are ~0 for CoW/clonefile and explode the rate).
-    let wall_seconds = summary.wall_clock_elapsed().as_secs_f64();
-    let rate = (sent + received) as f64 / (0.5 + wall_seconds);
+    let rate = transfer_rate(sent, received, summary.wall_clock_elapsed());
     let transmitted = sent.saturating_add(received);
     let speedup = if transmitted > 0 {
         total_size as f64 / transmitted as f64
@@ -1472,6 +1485,24 @@ mod tests {
         let both = render_summary(1, true, true);
         assert!(both.contains(" (BATCH ONLY)"), "{both:?}");
         assert!(!both.contains("(DRY RUN)"), "{both:?}");
+    }
+
+    #[test]
+    fn transfer_rate_uses_whole_second_denominator() {
+        // upstream: main.c:422 - rate = (written+read) / (0.5 + (endtime -
+        // starttime)), where endtime/starttime are whole-second time_t values
+        // (main.c:141,327,1763 `time(NULL)`). A 1.9 s wall span must truncate to
+        // 1 whole second, giving a denominator of 0.5 + 1 = 1.5 exactly like
+        // upstream - never 0.5 + 1.9. Dividing by the fractional span would
+        // report a rate below upstream's for any transfer crossing into a new
+        // whole second.
+        let rate = transfer_rate(3000, 0, Duration::from_millis(1900));
+        assert!((rate - 2000.0).abs() < 1e-9, "got {rate}");
+
+        // A sub-second span truncates to 0 whole seconds, so the denominator is
+        // the bare 0.5 floor (upstream's `0.5 + 0`).
+        let sub_second = transfer_rate(1000, 0, Duration::from_millis(400));
+        assert!((sub_second - 2000.0).abs() < 1e-9, "got {sub_second}");
     }
 
     #[test]
