@@ -498,6 +498,99 @@ fn group_override_takes_precedence() {
     assert_eq!(dest_meta.gid(), 1000);
 }
 
+// GAP M8: upstream never distinguishes an explicit `--chown`/`--usermap`
+// override from the `-o`/`-a` preserve path - both set `preserve_uid` and are
+// gated by the same `change_uid = am_root && ...` check (rsync.c:526,
+// options.c:1793,1833). A non-root process that cannot chown must have the
+// attempt skipped, not surfaced as a fatal EPERM (exit code 23). Before this
+// fix `owner_override`/`group_override` bypassed the gate and propagated the
+// kernel's EPERM as a fatal `MetadataError`.
+#[cfg(unix)]
+#[test]
+fn owner_override_non_root_chown_is_skipped_not_fatal() {
+    if rustix::process::geteuid().is_root() {
+        // Root behaviour is exercised by owner_override_takes_precedence above.
+        return;
+    }
+
+    let temp = tempdir().expect("tempdir");
+    let source = temp.path().join("source-nonroot-override.txt");
+    let dest = temp.path().join("dest-nonroot-override.txt");
+    fs::write(&source, b"data").expect("write source");
+    fs::write(&dest, b"data").expect("write dest");
+
+    let metadata = fs::metadata(&source).expect("metadata");
+    let original_uid = fs::metadata(&dest).expect("dest metadata").uid();
+
+    // Explicit `--chown=root:...` (uid 0) as a non-root process: upstream
+    // never attempts this chown (change_uid requires am_root), so oc-rsync
+    // must complete without error and leave ownership untouched.
+    apply_file_metadata_with_options(
+        &dest,
+        &metadata,
+        &MetadataOptions::new()
+            .preserve_owner(true)
+            .with_owner_override(Some(0))
+            .preserve_times(false),
+    )
+    .expect("non-root --chown to an unreachable uid must be skipped, not fatal");
+
+    let dest_meta = fs::metadata(&dest).expect("dest metadata");
+    assert_eq!(
+        dest_meta.uid(),
+        original_uid,
+        "ownership must be unchanged when the chown was skipped for lack of privilege"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn group_override_non_root_chown_to_foreign_group_is_skipped_not_fatal() {
+    if rustix::process::geteuid().is_root() {
+        // Root behaviour is exercised by group_override_takes_precedence above.
+        return;
+    }
+
+    // Pick a gid the current process is provably not a member of (neither its
+    // effective gid nor a supplementary group), reusing the same membership
+    // check the production gate uses.
+    let egid = rustix::process::getegid().as_raw();
+    let foreign_gid = (1u32..=4096)
+        .map(|delta| egid.wrapping_add(delta))
+        .find(|candidate| !super::ownership::process_in_group(ownership::gid_from_raw(*candidate)))
+        .expect("must find a gid outside the process's groups");
+
+    let temp = tempdir().expect("tempdir");
+    let source = temp.path().join("source-nonroot-grp-override.txt");
+    let dest = temp.path().join("dest-nonroot-grp-override.txt");
+    fs::write(&source, b"data").expect("write source");
+    fs::write(&dest, b"data").expect("write dest");
+
+    let metadata = fs::metadata(&source).expect("metadata");
+    let original_gid = fs::metadata(&dest).expect("dest metadata").gid();
+
+    // Explicit `--chown=:<foreign-group>` as a non-root process: upstream's
+    // FLAG_SKIP_GROUP gate (uidlist.c:284) drops this before it ever reaches
+    // do_lchown, so oc-rsync must complete without error and leave the group
+    // untouched rather than surface the kernel's EPERM as fatal.
+    apply_file_metadata_with_options(
+        &dest,
+        &metadata,
+        &MetadataOptions::new()
+            .preserve_group(true)
+            .with_group_override(Some(foreign_gid))
+            .preserve_times(false),
+    )
+    .expect("non-root --chown to a foreign group must be skipped, not fatal");
+
+    let dest_meta = fs::metadata(&dest).expect("dest metadata");
+    assert_eq!(
+        dest_meta.gid(),
+        original_gid,
+        "group must be unchanged when the chgrp was skipped for lack of privilege"
+    );
+}
+
 // Sub-100ns nanosecond preservation requires filesystem granularity finer than
 // NTFS's 100ns FILETIME, so the exact-equality assertion is Unix-only.
 #[cfg(unix)]

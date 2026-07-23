@@ -222,7 +222,7 @@ fn post_chown_bookkeeping(
 /// where `gate_preserved_group` short-circuits on the faked-root euid.
 #[cfg(unix)]
 #[allow(unsafe_code)]
-fn process_in_group(gid: unix_fs::Gid) -> bool {
+pub(super) fn process_in_group(gid: unix_fs::Gid) -> bool {
     if nix::unistd::getegid() == nix::unistd::Gid::from_raw(gid.as_raw()) {
         return true;
     }
@@ -245,13 +245,16 @@ fn process_in_group(gid: unix_fs::Gid) -> bool {
     groups[..filled as usize].contains(&target)
 }
 
-/// Gates an owner UID resolved from the *preserve* path (`-o`/`-a`, no explicit
-/// `--chown`/`--usermap`). Mirrors upstream `change_uid = am_root && ...`
-/// (rsync.c:526): a non-root process never sets a file's owner uid, so the
-/// chown is skipped rather than attempted and failed. Before this gate oc-rsync
-/// attempted it and surfaced the resulting `EPERM` as a fatal exit-code-23
-/// error, e.g. under `-aR` when an implied parent directory is owned by another
-/// user. Explicit overrides keep their fail-loud behaviour and are not routed here.
+/// Gates a resolved owner UID against process privilege, whether it came from
+/// the *preserve* path (`-o`/`-a`) or an explicit `--chown`/`--usermap`
+/// override. Mirrors upstream `change_uid = am_root && ...` (rsync.c:526):
+/// `preserve_uid` is set identically by `-o`, `--chown`, and `--usermap`
+/// (options.c:1793,1811,1833), and upstream's gate makes no distinction
+/// between them - a non-root process never sets a file's owner uid, so the
+/// chown is skipped rather than attempted and failed. Before this gate
+/// oc-rsync attempted it and surfaced the resulting `EPERM` as a fatal
+/// exit-code-23 error, e.g. under `-aR` when an implied parent directory is
+/// owned by another user, or under a non-root `--chown=user:group`.
 #[cfg(unix)]
 pub(super) fn gate_preserved_owner(owner: Option<unix_fs::Uid>) -> Option<unix_fs::Uid> {
     // nix (libc `geteuid`) so the euid reflects fakeroot's faked identity,
@@ -260,11 +263,13 @@ pub(super) fn gate_preserved_owner(owner: Option<unix_fs::Uid>) -> Option<unix_f
     owner.filter(|_| nix::unistd::geteuid().is_root())
 }
 
-/// Gates a group GID resolved from the *preserve* path (`-g`/`-a`, no explicit
-/// `--chown`/`--groupmap`). Mirrors upstream's `FLAG_SKIP_GROUP` gate
-/// (uidlist.c:284): a non-root process may only set a group it belongs to, so a
-/// non-member group is skipped rather than attempted and failed. Explicit
-/// overrides keep their fail-loud behaviour and are not routed here.
+/// Gates a resolved group GID against process privilege, whether it came from
+/// the *preserve* path (`-g`/`-a`) or an explicit `--chown`/`--groupmap`
+/// override. Mirrors upstream's `FLAG_SKIP_GROUP` gate (uidlist.c:284), which
+/// is set on the mapped id regardless of whether it was reached via
+/// `preserve_gid`, `--chown`, or `--groupmap` (options.c:1809,1832,1848): a
+/// non-root process may only set a group it belongs to, so a non-member group
+/// is skipped rather than attempted and failed.
 #[cfg(unix)]
 pub(super) fn gate_preserved_group(group: Option<unix_fs::Gid>) -> Option<unix_fs::Gid> {
     // See `gate_preserved_owner`: nix (libc `geteuid`) so fakeroot's faked root
@@ -382,7 +387,7 @@ pub(super) fn resolve_ownership(
     }
 
     let owner = if let Some(uid) = options.owner_override() {
-        Some(ownership::uid_from_raw(uid as RawUid))
+        gate_preserved_owner(Some(ownership::uid_from_raw(uid as RawUid)))
     } else if options.owner() {
         let mut raw_uid = metadata.uid() as RawUid;
         if let Some(mapping) = options.user_mapping()
@@ -397,7 +402,7 @@ pub(super) fn resolve_ownership(
         None
     };
     let group = if let Some(gid) = options.group_override() {
-        Some(ownership::gid_from_raw(gid as RawGid))
+        gate_preserved_group(Some(ownership::gid_from_raw(gid as RawGid)))
     } else if options.group() {
         let mut raw_gid = metadata.gid() as RawGid;
         if let Some(mapping) = options.group_mapping()
@@ -613,7 +618,7 @@ pub(super) fn apply_ownership_from_entry(
     }
 
     let owner = if let Some(uid_override) = options.owner_override() {
-        Some(ownership::uid_from_raw(uid_override as RawUid))
+        gate_preserved_owner(Some(ownership::uid_from_raw(uid_override as RawUid)))
     } else if options.owner() {
         gate_preserved_owner(resolve_owner_uid(entry, options))
     } else {
@@ -621,7 +626,7 @@ pub(super) fn apply_ownership_from_entry(
     };
 
     let group = if let Some(gid_override) = options.group_override() {
-        Some(ownership::gid_from_raw(gid_override as RawGid))
+        gate_preserved_group(Some(ownership::gid_from_raw(gid_override as RawGid)))
     } else if options.group() {
         gate_preserved_group(resolve_group_gid(entry, options))
     } else {
@@ -690,7 +695,7 @@ pub(super) fn apply_symlink_ownership_from_entry(
     }
 
     let owner = if let Some(uid_override) = options.owner_override() {
-        Some(ownership::uid_from_raw(uid_override as RawUid))
+        gate_preserved_owner(Some(ownership::uid_from_raw(uid_override as RawUid)))
     } else if options.owner() {
         gate_preserved_owner(resolve_owner_uid(entry, options))
     } else {
@@ -698,7 +703,7 @@ pub(super) fn apply_symlink_ownership_from_entry(
     };
 
     let group = if let Some(gid_override) = options.group_override() {
-        Some(ownership::gid_from_raw(gid_override as RawGid))
+        gate_preserved_group(Some(ownership::gid_from_raw(gid_override as RawGid)))
     } else if options.group() {
         gate_preserved_group(resolve_group_gid(entry, options))
     } else {
