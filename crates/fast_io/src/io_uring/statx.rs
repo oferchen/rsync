@@ -342,7 +342,9 @@ fn submit_statx_batch_io_uring(
                 continue;
             }
 
-            let c_path = c_paths[i].as_ref().unwrap();
+            let c_path = c_paths[i]
+                .as_ref()
+                .expect("c_path present for non-skipped index");
             let sqe = opcode::Statx::new(
                 types::Fd(libc::AT_FDCWD),
                 c_path.as_ptr(),

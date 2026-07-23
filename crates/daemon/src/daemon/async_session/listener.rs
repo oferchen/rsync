@@ -60,7 +60,9 @@ impl ListenerConfig {
     #[must_use]
     pub fn new() -> Self {
         Self {
-            bind_address: "0.0.0.0:873".parse().unwrap(),
+            bind_address: "0.0.0.0:873"
+                .parse()
+                .expect("constant socket address literal parses"),
             max_connections: DEFAULT_MAX_CONNECTIONS,
             connection_timeout: Duration::from_secs(DEFAULT_CONNECTION_TIMEOUT),
             read_timeout: Duration::from_secs(DEFAULT_READ_TIMEOUT),

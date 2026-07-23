@@ -114,7 +114,7 @@ fn find_first_nonzero_scalar(buf: &[u8]) -> usize {
     let mut iter = buf.chunks_exact(16);
 
     for chunk in &mut iter {
-        let word = u128::from_ne_bytes(chunk.try_into().unwrap());
+        let word = u128::from_ne_bytes(chunk.try_into().expect("chunk is exactly 16 bytes"));
         if word != 0 {
             return offset + chunk.iter().position(|&b| b != 0).unwrap_or(16);
         }

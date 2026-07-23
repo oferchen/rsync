@@ -78,6 +78,7 @@
 
 #![allow(clippy::module_name_repetitions)]
 #![cfg_attr(docsrs, feature(doc_cfg))]
+#![cfg_attr(not(test), warn(clippy::unwrap_used))]
 
 mod algorithm;
 mod block;
