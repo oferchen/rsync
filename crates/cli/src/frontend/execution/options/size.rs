@@ -84,12 +84,12 @@ pub(crate) const MAX_ALLOC_CEILING: u64 = u64::MAX / 4;
 /// Lower bound for a non-zero `--max-alloc`, mirroring upstream's
 /// `parse_size_arg(arg, 'B', "max-alloc", 1024*1024, -1, True)` min value.
 ///
-/// upstream: options.c:1976.
+/// upstream: options.c:1960.
 const MAX_ALLOC_MIN: u64 = 1024 * 1024;
 
 /// Sentinel returned for `--max-alloc=0`, meaning "unlimited".
 ///
-/// upstream: options.c:1982 `if (!max_alloc) max_alloc = SIZE_MAX;` - a parsed
+/// upstream: options.c:1966 `if (!max_alloc) max_alloc = SIZE_MAX;` - a parsed
 /// value of zero disables the ceiling entirely. Callers resolve this to the
 /// platform's `usize::MAX` before publishing it.
 pub(crate) const MAX_ALLOC_UNLIMITED: u64 = 0;
@@ -97,15 +97,15 @@ pub(crate) const MAX_ALLOC_UNLIMITED: u64 = 0;
 /// Upper bound for `--block-size` at protocol >= 30.
 ///
 /// upstream: rsync.h:161 `#define MAX_BLOCK_SIZE ((int32)1 << 17)` (131072),
-/// enforced by options.c:1708-1711 `parse_size_arg(arg, 'b', "block-size", 0,
+/// enforced by options.c:1692-1695 `parse_size_arg(arg, 'b', "block-size", 0,
 /// max_blength, False)`.
 const MAX_BLOCK_SIZE: u64 = 1 << 17;
 
 /// Parses the `--max-alloc` argument as a byte ceiling.
 ///
 /// Mirrors upstream rsync's `parse_size_arg(arg, 'B', "max-alloc", 1024*1024,
-/// -1, True)` (options.c:1976) followed by `if (!max_alloc) max_alloc =
-/// SIZE_MAX;` (options.c:1982):
+/// -1, True)` (options.c:1960) followed by `if (!max_alloc) max_alloc =
+/// SIZE_MAX;` (options.c:1966):
 ///
 /// - `0` is accepted and returned verbatim ([`MAX_ALLOC_UNLIMITED`]); callers
 ///   resolve it to an unlimited ceiling.
@@ -129,12 +129,12 @@ pub(crate) fn parse_max_alloc_argument(value: &OsStr) -> Result<u64, Message> {
 
     let limit = parse_size_limit_argument(value, "--max-alloc")?;
 
-    // upstream: options.c:1982 - a zero value means unlimited (SIZE_MAX).
+    // upstream: options.c:1966 - a zero value means unlimited (SIZE_MAX).
     if limit == MAX_ALLOC_UNLIMITED {
         return Ok(MAX_ALLOC_UNLIMITED);
     }
 
-    // upstream: options.c:1976,1132-1139 - parse_size_arg rejects a non-zero
+    // upstream: options.c:1960,1120-1127 - parse_size_arg rejects a non-zero
     // value below the 1 MiB minimum with "is too small (min: 1.00M or 0 for
     // unlimited)". do_big_num renders the constant 1 MiB minimum as "1.00M".
     if limit < MAX_ALLOC_MIN {
@@ -159,7 +159,7 @@ pub(crate) fn parse_max_alloc_argument(value: &OsStr) -> Result<u64, Message> {
 /// Parses the `--block-size` argument into an optional override.
 ///
 /// Mirrors upstream rsync's `parse_size_arg(arg, 'b', "block-size", 0,
-/// MAX_BLOCK_SIZE, False)` (options.c:1708-1711):
+/// MAX_BLOCK_SIZE, False)` (options.c:1692-1695):
 ///
 /// - `0` is accepted and yields `None`, falling back to the negotiated default
 ///   block size (upstream stores `block_size = 0`, later replaced with the
@@ -178,13 +178,13 @@ pub(crate) fn parse_block_size_argument(value: &OsStr) -> Result<Option<NonZeroU
 
     let limit = parse_size_limit_argument(value, "--block-size")?;
 
-    // upstream: options.c:1708-1711 - min_value 0 accepts `--block-size=0`,
+    // upstream: options.c:1692-1695 - min_value 0 accepts `--block-size=0`,
     // which stores block_size = 0 and later falls back to the default.
     if limit == 0 {
         return Ok(None);
     }
 
-    // upstream: options.c:1708-1711,1128-1131 - a value above MAX_BLOCK_SIZE is
+    // upstream: options.c:1692-1695,1116-1119 - a value above MAX_BLOCK_SIZE is
     // rejected with "is too large (max: ...)". do_big_num renders the constant
     // 131072 ceiling as "128.00K".
     if limit > MAX_BLOCK_SIZE {
@@ -542,13 +542,13 @@ mod tests {
 
     #[test]
     fn parse_max_alloc_argument_valid_kilobyte() {
-        // 1024K == 1 MiB, exactly the upstream minimum (options.c:1976).
+        // 1024K == 1 MiB, exactly the upstream minimum (options.c:1960).
         assert_eq!(parse_max_alloc_argument(&os("1024K")).unwrap(), 1024 * 1024);
     }
 
     #[test]
     fn parse_max_alloc_argument_accepts_zero_as_unlimited() {
-        // upstream: options.c:1982 `if (!max_alloc) max_alloc = SIZE_MAX;` - a
+        // upstream: options.c:1966 `if (!max_alloc) max_alloc = SIZE_MAX;` - a
         // zero value is accepted and means unlimited, not an error.
         assert_eq!(
             parse_max_alloc_argument(&os("0")).unwrap(),
@@ -558,7 +558,7 @@ mod tests {
 
     #[test]
     fn parse_max_alloc_argument_rejects_below_one_mib() {
-        // upstream: options.c:1976 - parse_size_arg min value is 1 MiB, so a
+        // upstream: options.c:1960 - parse_size_arg min value is 1 MiB, so a
         // non-zero value below it ("512K", 1024 bytes) is "too small".
         for value in ["1024", "512K"] {
             let err = parse_max_alloc_argument(&os(value)).unwrap_err();
@@ -613,7 +613,7 @@ mod tests {
 
     #[test]
     fn parse_block_size_argument_zero_falls_back_to_default() {
-        // upstream: options.c:1708-1711 - `--block-size=0` passes the min_value
+        // upstream: options.c:1692-1695 - `--block-size=0` passes the min_value
         // 0 check and stores block_size = 0, which falls back to the default.
         assert_eq!(parse_block_size_argument(&os("0")).unwrap(), None);
     }
@@ -627,7 +627,7 @@ mod tests {
 
     #[test]
     fn parse_block_size_argument_rejects_above_maximum() {
-        // upstream: options.c:1708-1711 - a value above MAX_BLOCK_SIZE is "too
+        // upstream: options.c:1692-1695 - a value above MAX_BLOCK_SIZE is "too
         // large (max: 128.00K)".
         let err = parse_block_size_argument(&os("200000")).unwrap_err();
         assert!(

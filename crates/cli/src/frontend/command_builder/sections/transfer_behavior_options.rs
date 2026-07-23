@@ -114,7 +114,7 @@ pub(crate) fn add_transfer_behavior_options(command: ClapCommand) -> ClapCommand
                     .overrides_with("remove-source-files"),
             )
             .arg(
-                // upstream: options.c:1738-1742 - OPT_APPEND increments
+                // upstream: options.c:1722-1726 - OPT_APPEND increments
                 // append_mode on the server side; two `--append` flags mean
                 // append_mode == 2 (verify). Count occurrences so the server
                 // parser can recover that from the wire, where a repeated
@@ -436,7 +436,7 @@ pub(crate) fn add_transfer_behavior_options(command: ClapCommand) -> ClapCommand
             .arg(
                 Arg::new("block-size")
                     .long("block-size")
-                    // upstream: options.c:762 {"block-size", 'B', ...} - short alias.
+                    // upstream: options.c:752 {"block-size", 'B', ...} - short alias.
                     .short('B')
                     .value_name("SIZE")
                     .help("Force the delta-transfer block size to SIZE bytes.")

@@ -102,7 +102,7 @@ fn emit_transfer_summary_with_progress_and_verbose_listing() {
 
     let output = String::from_utf8(rendered).expect("utf8");
     assert!(output.contains("(xfr#1, to-chk="));
-    // upstream emits bare `%n%L` per-file even at -vv (options.c:2390).
+    // upstream emits bare `%n%L` per-file even at -vv (options.c:2372).
     // Do not emit descriptor prefixes like `copied:` - upstream testsuite
     // `duplicates.test` greps for `^name1$` to detect duplicate copies.
     assert!(

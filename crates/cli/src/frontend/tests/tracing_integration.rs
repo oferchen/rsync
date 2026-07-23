@@ -180,7 +180,7 @@ fn info_progress2_shows_overall_progress_during_transfer() {
     let (code, stdout, _stderr) = run_with_args([
         OsString::from(RSYNC),
         OsString::from("--info=progress2"),
-        // upstream recurse defaults to 0 (options.c:113); a trailing-slash
+        // upstream recurse defaults to 0 (options.c:112); a trailing-slash
         // directory operand is "skipping directory ." without -r/-d, so it
         // transfers nothing and progress2 has no files to count. Pass
         // --recursive so the directory is enumerated, mirroring upstream

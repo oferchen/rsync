@@ -41,7 +41,7 @@ pub(crate) struct DebugFlagSettings {
 }
 
 /// Maximum debug output level. Levels above this are clamped rather than rejected.
-/// upstream: options.c:255 - #define MAX_OUT_LEVEL 4
+/// upstream: options.c:245 - #define MAX_OUT_LEVEL 4
 const MAX_OUT_LEVEL: u8 = 4;
 
 impl DebugFlagSettings {
@@ -82,7 +82,7 @@ impl DebugFlagSettings {
     }
 
     /// Sets all debug flags to the given level.
-    /// upstream: options.c:462-463 - "all" with numeric suffix sets every flag.
+    /// upstream: options.c:452-453 - "all" with numeric suffix sets every flag.
     fn set_all(&mut self, level: u8) {
         self.acl = Some(level);
         self.backup = Some(level);
@@ -148,7 +148,7 @@ impl DebugFlagSettings {
     pub(super) fn apply(&mut self, token: &str, display: &str) -> Result<(), Message> {
         let lower = token.to_ascii_lowercase();
 
-        // upstream: options.c:460-463 - "none" sets all to 0;
+        // upstream: options.c:450-453 - "none" sets all to 0;
         // "all" with optional numeric suffix sets all flags to min(suffix, MAX_OUT_LEVEL).
         if lower == "0" || lower == "none" {
             self.disable_all();
@@ -170,7 +170,7 @@ impl DebugFlagSettings {
 
         let (normalized, level) = self.parse_flag_and_level(&lower);
 
-        // upstream: options.c:454-455 - clamp to MAX_OUT_LEVEL rather than reject
+        // upstream: options.c:444-445 - clamp to MAX_OUT_LEVEL rather than reject
         let level = level.min(MAX_OUT_LEVEL);
 
         match normalized {
@@ -281,12 +281,12 @@ pub(crate) fn parse_debug_flags(values: &[OsString]) -> Result<DebugFlagSettings
 
 // upstream: options.c output_item_help (rsync-3.4.1:474-510). Reproduced
 // byte-for-byte from upstream's runtime output so `--debug=help` matches
-// `rsync --debug=help`. Layout matches `"%-10s %s\n"` from options.c:488.
+// `rsync --debug=help`. Layout matches `"%-10s %s\n"` from options.c:478.
 // ALL/NONE descriptions inline the sentinel's `--debug` help
-// (options.c:499-505). The per-verbosity summary lines are rendered by
+// (options.c:489-495). The per-verbosity summary lines are rendered by
 // upstream's `make_output_option` over `debug_verbosity[]`
-// (options.c:238-245) and emit names in `debug_words[]` order
-// (options.c:299-325). Levels 0-1 are empty in `debug_verbosity[]`, so the
+// (options.c:228-235) and emit names in `debug_words[]` order
+// (options.c:289-315). Levels 0-1 are empty in `debug_verbosity[]`, so the
 // summary block lists levels 2-5 only.
 pub(crate) const DEBUG_HELP_TEXT: &str = "\
 Use OPT or OPT1 for level 1 output, OPT2 for level 2, etc.; OPT0 silences.\n\

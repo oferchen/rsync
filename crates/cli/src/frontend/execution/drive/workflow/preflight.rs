@@ -149,7 +149,7 @@ where
 ///
 /// `show_version` is a count: 1 = human-readable output (upstream `-V`),
 /// 2+ = machine-readable JSON (upstream `-VV`).
-// upstream: options.c:1956-1958 - version_opt_cnt selects JSON vs human-readable
+// upstream: options.c:1940-1942 - version_opt_cnt selects JSON vs human-readable
 pub(crate) fn maybe_print_help_or_version<Out>(
     show_help: bool,
     show_version: u8,

@@ -22,7 +22,7 @@ fn transfer_request_with_cvs_exclude_skips_default_patterns() {
 
     let (code, stdout, stderr) = run_with_args([
         OsString::from(RSYNC),
-        // upstream recurse defaults to 0 (options.c:113); a directory operand
+        // upstream recurse defaults to 0 (options.c:112); a directory operand
         // without -r/-d is "skipping directory" and transfers nothing. Pass
         // --recursive so the tree is enumerated and --cvs-exclude filtering is
         // actually exercised, mirroring upstream `rsync -rC src dst`.
@@ -61,7 +61,7 @@ fn transfer_request_with_cvs_exclude_respects_cvsignore_files() {
 
     let (code, stdout, stderr) = run_with_args([
         OsString::from(RSYNC),
-        // upstream recurse defaults to 0 (options.c:113); a directory operand
+        // upstream recurse defaults to 0 (options.c:112); a directory operand
         // without -r/-d is "skipping directory" and transfers nothing. Pass
         // --recursive so the tree is enumerated and --cvs-exclude filtering is
         // actually exercised, mirroring upstream `rsync -rC src dst`.
@@ -98,7 +98,7 @@ fn transfer_request_with_cvs_exclude_respects_cvsignore_env() {
 
     let (code, stdout, stderr) = run_with_args([
         OsString::from(RSYNC),
-        // upstream recurse defaults to 0 (options.c:113); a directory operand
+        // upstream recurse defaults to 0 (options.c:112); a directory operand
         // without -r/-d is "skipping directory" and transfers nothing. Pass
         // --recursive so the tree is enumerated and --cvs-exclude filtering is
         // actually exercised, mirroring upstream `rsync -rC src dst`.

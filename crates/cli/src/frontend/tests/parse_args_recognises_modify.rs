@@ -42,7 +42,7 @@ fn parse_args_accepts_negative_modify_window() {
 
 #[test]
 fn parse_args_accepts_short_at_alias_modify_window() {
-    // WHY: upstream options.c:670 defines `-@` as the short alias for
+    // WHY: upstream options.c:660 defines `-@` as the short alias for
     // `--modify-window`. `-@-1`, `-@2`, and `-@ 2` must all parse to the same
     // value the long form yields.
     for (arg, expected) in [("-@-1", "-1"), ("-@2", "2")] {

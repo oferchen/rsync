@@ -240,7 +240,7 @@ fn max_alloc_rejects_non_numeric() {
 
 #[test]
 fn max_alloc_argument_resolution_accepts_zero_as_unlimited() {
-    // upstream: options.c:1982 `if (!max_alloc) max_alloc = SIZE_MAX;` - a zero
+    // upstream: options.c:1966 `if (!max_alloc) max_alloc = SIZE_MAX;` - a zero
     // value is accepted and resolves to unlimited, not an error.
     use crate::frontend::execution::parse_max_alloc_argument;
     assert_eq!(
@@ -251,7 +251,7 @@ fn max_alloc_argument_resolution_accepts_zero_as_unlimited() {
 
 #[test]
 fn max_alloc_argument_resolution_rejects_below_one_mib() {
-    // upstream: options.c:1976 - parse_size_arg min value is 1 MiB, so "512K"
+    // upstream: options.c:1960 - parse_size_arg min value is 1 MiB, so "512K"
     // (below the minimum) is rejected as "too small".
     use crate::frontend::execution::parse_max_alloc_argument;
     let error = parse_max_alloc_argument(OsStr::new("512K")).expect_err("below 1 MiB rejected");
@@ -303,7 +303,7 @@ fn max_alloc_argument_resolution_rejects_excessive_value() {
 
 #[test]
 fn max_alloc_zero_value_is_accepted_as_unlimited() {
-    // upstream: options.c:1982 - `--max-alloc=0` is accepted (unlimited), so it
+    // upstream: options.c:1966 - `--max-alloc=0` is accepted (unlimited), so it
     // never triggers a max-alloc syntax error. Any exit here comes from the
     // missing "source"/"dest" operands, not from option validation.
     let _guard = clear_rsync_rsh();
@@ -322,7 +322,7 @@ fn max_alloc_zero_value_is_accepted_as_unlimited() {
 
 #[test]
 fn max_alloc_below_one_mib_produces_error_exit() {
-    // upstream: options.c:1976 - a non-zero `--max-alloc` below 1 MiB is a
+    // upstream: options.c:1960 - a non-zero `--max-alloc` below 1 MiB is a
     // syntax error (exit 1).
     let _guard = clear_rsync_rsh();
     let (code, _stdout, stderr) = run_with_args([
