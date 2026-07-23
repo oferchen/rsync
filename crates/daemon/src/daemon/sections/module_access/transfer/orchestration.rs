@@ -9,9 +9,11 @@
 /// then runs `post-xfer exec` with it. Because the parent waits for *any* child
 /// outcome, the hook fires regardless of transfer success - including a refused
 /// request (a read-only push or write-only pull exits `RERR_SYNTAX`, so the
-/// hook sees `RSYNC_EXIT_STATUS=1`). This finalizer lets the early-return refuse
-/// paths mirror that "post-xfer always runs" flow, matching the inline
-/// post-xfer dispatch on the success path.
+/// hook sees `RSYNC_EXIT_STATUS=1`) and every other early-return abort that
+/// happens after the fork point (early/pre-xfer exec failures, chroot/setuid
+/// failures, a refused option, and so on). This finalizer lets those
+/// early-return paths mirror that "post-xfer always runs" flow, matching the
+/// inline post-xfer dispatch on the success path.
 fn run_post_xfer_finalizer(
     ctx: &ModuleRequestContext<'_>,
     module: &ModuleRuntime,
@@ -163,6 +165,18 @@ fn process_approved_module(
                 Ok(Err(error_msg)) => {
                     let payload = format!("@ERROR: {error_msg}");
                     send_error(ctx.reader.get_mut(), ctx.limiter, &payload)?;
+                    // upstream: clientserver.c:945-949 - early exec runs after
+                    // the post-xfer-exec fork point, so its failure is a
+                    // child exit the waiting parent still observes.
+                    let host_owned = ctx.effective_host().map(str::to_owned);
+                    run_post_xfer_finalizer(
+                        ctx,
+                        module,
+                        host_owned.as_deref(),
+                        auth_user.as_deref(),
+                        &[],
+                        MODULE_ABORT_EXIT_CODE,
+                    );
                     return Ok(());
                 }
                 Err(err) => {
@@ -171,6 +185,15 @@ fn process_approved_module(
                         ctx.request
                     );
                     send_error(ctx.reader.get_mut(), ctx.limiter, &payload)?;
+                    let host_owned = ctx.effective_host().map(str::to_owned);
+                    run_post_xfer_finalizer(
+                        ctx,
+                        module,
+                        host_owned.as_deref(),
+                        auth_user.as_deref(),
+                        &[],
+                        MODULE_ABORT_EXIT_CODE,
+                    );
                     return Ok(());
                 }
             }
@@ -195,12 +218,26 @@ fn process_approved_module(
     // `MPLEX_BASE = 7`). upstream: clientserver.c:1169 io_start_multiplex_out
     // immediately followed by `rwrite(FERROR, ...)`.
     if let Some(refused) = refused_client_arg(module, &client_args) {
-        return handle_refused_option_post_handshake(
+        let host_owned = ctx.effective_host().map(str::to_owned);
+        let result = handle_refused_option_post_handshake(
             ctx,
             &refused,
             negotiated_protocol,
             &client_args,
         );
+        // upstream: clientserver.c:1079/1171 - parse_arguments() rejecting a
+        // refused option runs after the post-xfer-exec fork point and exits
+        // via exit_cleanup(RERR_UNSUPPORTED), which the waiting parent
+        // observes and still hooks.
+        run_post_xfer_finalizer(
+            ctx,
+            module,
+            host_owned.as_deref(),
+            auth_user.as_deref(),
+            &client_args,
+            RERR_UNSUPPORTED_EXIT_CODE,
+        );
+        return result;
     }
 
     // Enforce read-only / write-only access restrictions.
@@ -273,6 +310,18 @@ fn process_approved_module(
     }
 
     if !validate_module_path(ctx, module)? {
+        // upstream: clientserver.c:992-993 - change_dir() into the module
+        // path runs after the post-xfer-exec fork point, so a missing/
+        // unreachable path is a child exit the waiting parent still hooks.
+        let host_owned = ctx.effective_host().map(str::to_owned);
+        run_post_xfer_finalizer(
+            ctx,
+            module,
+            host_owned.as_deref(),
+            auth_user.as_deref(),
+            &client_args,
+            MODULE_ABORT_EXIT_CODE,
+        );
         return Ok(());
     }
 
@@ -296,7 +345,12 @@ fn process_approved_module(
     // after auth and arg reading but before the transfer starts.
     // Split into separate steps so each failure sends the correct upstream
     // error message: `@ERROR: chroot failed` vs `@ERROR: setuid failed` etc.
-    let privilege_outcome = match apply_privilege_restrictions_with_upstream_errors(ctx, module)? {
+    let privilege_outcome = match apply_privilege_restrictions_with_upstream_errors(
+        ctx,
+        module,
+        auth_user.as_deref(),
+        &client_args,
+    )? {
         Some(outcome) => outcome,
         None => return Ok(()),
     };
@@ -319,6 +373,18 @@ fn process_approved_module(
             Err(err) => {
                 let payload = format!("@ERROR: name-converter exec failed: {err}");
                 send_error(ctx.reader.get_mut(), ctx.limiter, &payload)?;
+                // upstream: clientserver.c:965-970 - the name-converter spawn
+                // runs after the post-xfer-exec fork point, so its failure
+                // is a child exit the waiting parent still observes.
+                let host_owned = ctx.effective_host().map(str::to_owned);
+                run_post_xfer_finalizer(
+                    ctx,
+                    module,
+                    host_owned.as_deref(),
+                    auth_user.as_deref(),
+                    &client_args,
+                    MODULE_ABORT_EXIT_CODE,
+                );
                 return Ok(());
             }
         }
@@ -350,7 +416,21 @@ fn process_approved_module(
 
     let mut config = match build_server_config(ctx, &client_args, config_module)? {
         Some(cfg) => cfg,
-        None => return Ok(()),
+        None => {
+            // upstream: clientserver.c - config assembly runs after the
+            // post-xfer-exec fork point (post-chroot, post-args), so a
+            // failure here is a child exit the waiting parent still hooks.
+            let host_owned = ctx.effective_host().map(str::to_owned);
+            run_post_xfer_finalizer(
+                ctx,
+                module,
+                host_owned.as_deref(),
+                auth_user.as_deref(),
+                &client_args,
+                MODULE_ABORT_EXIT_CODE,
+            );
+            return Ok(());
+        }
     };
 
     // upstream: clientserver.c:rsync_module() - build daemon_filter_list from
@@ -361,6 +441,15 @@ fn process_approved_module(
         Err(err) => {
             let payload = format!("@ERROR: failed to load module filter rules: {err}");
             send_error(ctx.reader.get_mut(), ctx.limiter, &payload)?;
+            let host_owned = ctx.effective_host().map(str::to_owned);
+            run_post_xfer_finalizer(
+                ctx,
+                module,
+                host_owned.as_deref(),
+                auth_user.as_deref(),
+                &client_args,
+                MODULE_ABORT_EXIT_CODE,
+            );
             return Ok(());
         }
     }
@@ -390,6 +479,15 @@ fn process_approved_module(
         .map(|p| p.as_path())
         .collect();
     if !engage_landlock_sandbox(ctx, module, &extra_allowed)? {
+        let host_owned = ctx.effective_host().map(str::to_owned);
+        run_post_xfer_finalizer(
+            ctx,
+            module,
+            host_owned.as_deref(),
+            auth_user.as_deref(),
+            &client_args,
+            MODULE_ABORT_EXIT_CODE,
+        );
         return Ok(());
     }
 
@@ -418,7 +516,18 @@ fn process_approved_module(
     let zero_copy_policy = config.write.zero_copy_policy;
     let mut streams = match setup_transfer_streams(ctx, arm_drain, zero_copy_policy)? {
         Some(s) => s,
-        None => return Ok(()),
+        None => {
+            let host_owned = ctx.effective_host().map(str::to_owned);
+            run_post_xfer_finalizer(
+                ctx,
+                module,
+                host_owned.as_deref(),
+                auth_user.as_deref(),
+                &client_args,
+                MODULE_ABORT_EXIT_CODE,
+            );
+            return Ok(());
+        }
     };
 
     // Extract host name before building structs that borrow ctx, so the
@@ -488,6 +597,17 @@ fn process_approved_module(
                     let message = rsync_error!(1, err.message).with_role(Role::Daemon);
                     log_message(log, &message);
                 }
+                // upstream: clientserver.c:1098-1100/1171 - finish_pre_exec()
+                // is checked after the post-xfer-exec fork point; a non-zero
+                // pre-xfer exec script exits via exit_cleanup(RERR_UNSUPPORTED).
+                run_post_xfer_finalizer(
+                    ctx,
+                    module,
+                    host_name_owned.as_deref(),
+                    auth_user.as_deref(),
+                    &client_args,
+                    RERR_UNSUPPORTED_EXIT_CODE,
+                );
                 return Ok(());
             }
             Err(io_err) => {
@@ -501,6 +621,16 @@ fn process_approved_module(
                     let message = rsync_error!(1, error_msg).with_role(Role::Daemon);
                     log_message(log, &message);
                 }
+                // upstream: clientserver.c:955-961 - start_pre_exec()
+                // preparation failure returns -1 from the child directly.
+                run_post_xfer_finalizer(
+                    ctx,
+                    module,
+                    host_name_owned.as_deref(),
+                    auth_user.as_deref(),
+                    &client_args,
+                    MODULE_ABORT_EXIT_CODE,
+                );
                 return Ok(());
             }
         }

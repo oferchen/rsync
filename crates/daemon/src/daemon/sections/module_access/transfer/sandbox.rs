@@ -13,9 +13,19 @@
 /// not configured; `outcome.chroot_applied` records whether the process is
 /// actually chrooted (false after a rootless auto-fallback). Returns `Ok(None)`
 /// after sending an error to the client.
+///
+/// A `chroot()`/`setgid()`/`setuid()` syscall failure runs the module's
+/// `post-xfer exec` hook before returning: upstream: clientserver.c:983-1059 -
+/// these syscalls execute after the post-xfer-exec fork point (908-933), so
+/// the waiting parent still observes the child's exit and still fires the
+/// hook. A `resolve_drop_target` uid/gid *name* resolution failure does not:
+/// upstream: clientserver.c:784-786/657-659 - that lookup runs before the
+/// fork point, so the waiting parent never sees a child at all.
 fn apply_privilege_restrictions_with_upstream_errors(
     ctx: &mut ModuleRequestContext<'_>,
     module: &ModuleRuntime,
+    auth_user: Option<&str>,
+    client_args: &[String],
 ) -> io::Result<Option<PrivilegeOutcome>> {
     // upstream: clientserver.c:778-779 - `uid = MY_UID(); am_root = (uid ==
     // ROOT_UID)`. A root daemon drops to `nobody:nobody` by default even when
@@ -62,6 +72,15 @@ fn apply_privilege_restrictions_with_upstream_errors(
                     CHROOT_FAILED_PAYLOAD
                 };
                 send_error(ctx.reader.get_mut(), ctx.limiter, payload)?;
+                let host_owned = ctx.effective_host().map(str::to_owned);
+                run_post_xfer_finalizer(
+                    ctx,
+                    module,
+                    host_owned.as_deref(),
+                    auth_user,
+                    client_args,
+                    MODULE_ABORT_EXIT_CODE,
+                );
                 return Ok(None);
             }
         }
@@ -78,7 +97,9 @@ fn apply_privilege_restrictions_with_upstream_errors(
                 // SYSCALL failures handled below: it yields `@ERROR: invalid
                 // uid <name>` / `@ERROR: invalid gid <name>` with a matching
                 // FLOG `Invalid uid/gid <name>`.
-                // upstream: clientserver.c:784-786 (uid) / 657-659 (gid).
+                // upstream: clientserver.c:784-786 (uid) / 657-659 (gid). This
+                // lookup runs before the post-xfer-exec fork point (908), so
+                // no `post-xfer exec` hook fires here.
                 let (flog, payload) = err.upstream_reply();
                 let message = rsync_error!(1, flog).with_role(Role::Daemon);
                 log_message(log_sink, &message);
@@ -100,6 +121,15 @@ fn apply_privilege_restrictions_with_upstream_errors(
                     SETGID_FAILED_PAYLOAD
                 };
                 send_error(ctx.reader.get_mut(), ctx.limiter, payload)?;
+                let host_owned = ctx.effective_host().map(str::to_owned);
+                run_post_xfer_finalizer(
+                    ctx,
+                    module,
+                    host_owned.as_deref(),
+                    auth_user,
+                    client_args,
+                    MODULE_ABORT_EXIT_CODE,
+                );
                 return Ok(None);
             }
         }

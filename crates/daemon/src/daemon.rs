@@ -98,6 +98,22 @@ pub(crate) const FEATURE_UNAVAILABLE_EXIT_CODE: i32 = 1;
 /// push and write-only pull rejections call `exit_cleanup(RERR_SYNTAX)`
 /// (main.c:934, main.c:1167).
 pub(crate) const RERR_SYNTAX_EXIT_CODE: i32 = 1;
+/// Exit code for a refused option or a failed `pre-xfer exec` script,
+/// mirroring upstream `RERR_UNSUPPORTED`.
+///
+/// upstream: errcode.h:28 - `#define RERR_UNSUPPORTED 4`. clientserver.c:1183
+/// calls `exit_cleanup(RERR_UNSUPPORTED)` when `parse_arguments()` rejects a
+/// refused option, or when the `pre-xfer exec` script exits non-zero.
+pub(crate) const RERR_UNSUPPORTED_EXIT_CODE: i32 = 4;
+/// Exit code for a generic module-session abort (chroot/setuid/setgid syscall
+/// failure, name-converter or early-exec spawn failure, and similar setup
+/// errors that occur after the module child has been forked).
+///
+/// upstream: clientserver.c - these paths `return -1` from `rsync_module()`
+/// after the `post-xfer exec` fork point (clientserver.c:908-933); the
+/// forked child's `_exit(-1)` truncates to the low 8 bits, so the waiting
+/// parent's `WEXITSTATUS()` observes 255.
+pub(crate) const MODULE_ABORT_EXIT_CODE: i32 = 255;
 /// Exit code returned when socket I/O fails.
 const SOCKET_IO_EXIT_CODE: i32 = 10;
 
