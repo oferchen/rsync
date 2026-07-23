@@ -1,6 +1,7 @@
 #![deny(unsafe_code)]
 #![deny(rustdoc::broken_intra_doc_links)]
 #![deny(missing_docs)]
+#![cfg_attr(not(test), warn(clippy::unwrap_used))]
 
 //! # Overview
 //!

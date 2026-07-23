@@ -330,7 +330,9 @@ fn worker_thread_main_shared(
 ) {
     loop {
         let msg = {
-            let receiver = request_receiver.lock().unwrap();
+            let receiver = request_receiver
+                .lock()
+                .expect("request receiver mutex poisoned");
             receiver.recv()
         };
 
