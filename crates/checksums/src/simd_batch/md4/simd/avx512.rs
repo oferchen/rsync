@@ -103,7 +103,9 @@ pub unsafe fn digest_x16(inputs: &[&[u8]; 16]) -> [Digest; 16] {
             for (lane, padded) in padded_storage.iter().enumerate() {
                 if word_offset + 4 <= padded.len() {
                     m_word.0[lane] = u32::from_le_bytes(
-                        padded[word_offset..word_offset + 4].try_into().unwrap(),
+                        padded[word_offset..word_offset + 4]
+                            .try_into()
+                            .expect("4-byte word slice"),
                     );
                 }
             }

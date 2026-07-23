@@ -78,6 +78,7 @@
 
 #![deny(rustdoc::broken_intra_doc_links)]
 #![deny(missing_docs)]
+#![cfg_attr(not(test), warn(clippy::unwrap_used))]
 
 /// Cached sorting using the Schwartzian transform.
 pub mod cached_sort;
