@@ -287,9 +287,11 @@ fn order_matters_per_category() {
     // Transfer: include matches first, all .tmp allowed
     assert!(set.allows(Path::new("keep.tmp"), false));
     assert!(set.allows(Path::new("other.tmp"), false));
-    // Deletion: include allows transfer, protect matches first for protection
-    assert!(!set.allows_deletion(Path::new("keep.tmp"), false));
-    assert!(!set.allows_deletion(Path::new("other.tmp"), false));
+    // Deletion: upstream check_filter() is one first-match-wins pass across all
+    // rule kinds; `+ *.tmp` matches first and returns include, so both entries
+    // are deletable - the later `P *.tmp` / `R keep.tmp` never run.
+    assert!(set.allows_deletion(Path::new("keep.tmp"), false));
+    assert!(set.allows_deletion(Path::new("other.tmp"), false));
 }
 
 /// Verifies order matters for overlapping wildcard patterns.

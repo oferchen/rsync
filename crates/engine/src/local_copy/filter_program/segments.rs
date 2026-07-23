@@ -15,16 +15,26 @@ use logging::debug_log;
 pub(crate) struct FilterSegment {
     include_exclude: Vec<CompiledRule>,
     protect_risk: Vec<CompiledRule>,
+    /// Running source-definition counter stamped onto each compiled rule so the
+    /// deletion decision can merge the two chains back into the single
+    /// first-match-wins pass upstream `check_filter()` performs (exclude.c:1038).
+    next_order: usize,
 }
 
 impl FilterSegment {
     pub(crate) fn push_rule(&mut self, rule: FilterRule) -> Result<(), super::FilterProgramError> {
         match rule.action() {
             FilterAction::Include | FilterAction::Exclude => {
-                self.include_exclude.push(CompiledRule::new(rule)?);
+                let mut compiled = CompiledRule::new(rule)?;
+                compiled.order = self.next_order;
+                self.next_order += 1;
+                self.include_exclude.push(compiled);
             }
             FilterAction::Protect | FilterAction::Risk => {
-                self.protect_risk.push(CompiledRule::new(rule)?);
+                let mut compiled = CompiledRule::new(rule)?;
+                compiled.order = self.next_order;
+                self.next_order += 1;
+                self.protect_risk.push(compiled);
             }
             FilterAction::Clear => {
                 debug_assert!(
@@ -160,6 +170,38 @@ impl FilterSegment {
                 }
             }
         }
+
+        // upstream: exclude.c:1038 check_filter() walks ONE list first-match-wins
+        // and returns `ent->rflags & FILTRULE_INCLUDE ? 1 : -1`. oc partitions
+        // that list into the include/exclude and protect/risk chains, so the two
+        // decisions above latch independently and would let a protect override an
+        // earlier include (or vice versa) regardless of source order. Merge the
+        // two receiver-side first-matches back into a single source-ordered pass:
+        // the earlier-defined rule (by `order`) decides. Include/risk makes the
+        // entry deletable, exclude/protect protects it. Latched globally so a
+        // later segment cannot override the first match (upstream returns on it).
+        if for_deletion && !outcome.deletion_decided() {
+            let ie_hit = self
+                .include_exclude
+                .iter()
+                .find(|rule| rule.applies_to_receiver && rule_matches(rule, path, is_dir));
+            let pr_hit = self
+                .protect_risk
+                .iter()
+                .find(|rule| rule.applies_to_receiver && rule_matches(rule, path, is_dir));
+            let winner = match (ie_hit, pr_hit) {
+                (Some(ie), Some(pr)) => Some(if ie.order <= pr.order { ie } else { pr }),
+                (Some(ie), None) => Some(ie),
+                (None, Some(pr)) => Some(pr),
+                (None, None) => None,
+            };
+            if let Some(rule) = winner {
+                outcome.decide_deletion(matches!(
+                    rule.action,
+                    FilterAction::Include | FilterAction::Risk
+                ));
+            }
+        }
     }
 }
 
@@ -227,6 +269,12 @@ pub(crate) struct FilterOutcome {
     protected: bool,
     protection_decided: bool,
     excluded_for_delete_excluded: bool,
+    /// Unified deletion verdict: the include-flag of the single first-matching
+    /// rule across BOTH chains in source order, mirroring upstream
+    /// `check_filter()` (exclude.c:1060 `rflags & FILTRULE_INCLUDE ? 1 : -1`).
+    /// Latched once decided so later segments cannot override it.
+    deletion_deletable: bool,
+    deletion_decided: bool,
 }
 
 impl FilterOutcome {
@@ -237,6 +285,8 @@ impl FilterOutcome {
             protected: false,
             protection_decided: false,
             excluded_for_delete_excluded: false,
+            deletion_deletable: true,
+            deletion_decided: false,
         }
     }
 
@@ -244,8 +294,20 @@ impl FilterOutcome {
         self.transfer_allowed
     }
 
+    /// Whether the receiver may delete this entry.
+    ///
+    /// upstream `check_filter()` is a single first-match-wins pass over the
+    /// whole rule list; oc splits it into two chains, so [`FilterSegment::apply`]
+    /// merges their first receiver-side matches by source order into
+    /// [`Self::deletion_deletable`]. When any rule matched, that unified verdict
+    /// is authoritative; with no match at all we fall back to the split
+    /// `transfer_allowed && !protected` (which is likewise deletable by default).
     pub(crate) const fn allows_deletion(self) -> bool {
-        self.transfer_allowed && !self.protected
+        if self.deletion_decided {
+            self.deletion_deletable
+        } else {
+            self.transfer_allowed && !self.protected
+        }
     }
 
     pub(crate) const fn allows_deletion_when_excluded_removed(self) -> bool {
@@ -258,6 +320,16 @@ impl FilterOutcome {
 
     const fn protection_decided(self) -> bool {
         self.protection_decided
+    }
+
+    const fn deletion_decided(self) -> bool {
+        self.deletion_decided
+    }
+
+    /// Latches the unified deletion verdict from the first matching rule.
+    const fn decide_deletion(&mut self, deletable: bool) {
+        self.deletion_deletable = deletable;
+        self.deletion_decided = true;
     }
 
     const fn decide_transfer(&mut self) {
@@ -309,6 +381,11 @@ struct CompiledRule {
     /// upstream: exclude.c:906 - `ret_match = ex->rflags & FILTRULE_NEGATE ? 0 : 1`.
     /// When set, the rule fires on paths that do NOT match the pattern.
     negate: bool,
+    /// Source-definition order within the owning segment, assigned by
+    /// [`FilterSegment::push_rule`]. Lets the deletion decision merge the
+    /// include/exclude and protect/risk chains back into the single
+    /// first-match-wins pass upstream `check_filter()` runs (exclude.c:1038).
+    order: usize,
 }
 
 impl CompiledRule {
@@ -386,6 +463,7 @@ impl CompiledRule {
             applies_to_receiver,
             negate,
             pattern,
+            order: 0,
         })
     }
 

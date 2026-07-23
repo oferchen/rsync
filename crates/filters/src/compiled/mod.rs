@@ -188,6 +188,7 @@ impl CompiledRule {
             applies_to_receiver,
             perishable,
             negate,
+            order: 0,
         })
     }
 }

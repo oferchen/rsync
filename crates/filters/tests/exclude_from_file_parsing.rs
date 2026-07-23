@@ -1052,8 +1052,10 @@ mod integration_tests {
         assert!(set.allows(Path::new("Cargo.toml"), false));
         assert!(set.allows(Path::new("Cargo.lock"), false));
 
-        // Cargo.lock protected from deletion
-        assert!(!set.allows_deletion(Path::new("Cargo.lock"), false));
+        // upstream: `+ Cargo.lock` matches first in check_filter()'s single
+        // pass and returns include, so Cargo.lock is deletable; the following
+        // `P Cargo.lock` is never reached.
+        assert!(set.allows_deletion(Path::new("Cargo.lock"), false));
 
         // Other files excluded
         assert!(!set.allows(Path::new("README.md"), false));
