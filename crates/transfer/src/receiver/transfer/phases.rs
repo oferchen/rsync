@@ -380,7 +380,7 @@ mod genr_debug_emission_tests {
 
     #[test]
     fn generator_starting_matches_upstream() {
-        // upstream: generator.c:2260-2261 - "generator starting pid=%d"
+        // upstream: generator.c:2277-2278 - "generator starting pid=%d"
         init_genr_level1();
         let pid: u32 = 12345;
         debug_log!(Genr, 1, "generator starting pid={}", pid);
