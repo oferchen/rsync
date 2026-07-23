@@ -434,6 +434,18 @@ pub struct BatchConfig {
     /// when true, matching upstream `batch.c:write_filter_rules()` under
     /// `eol_nulls`.
     pub eol_nulls: bool,
+
+    /// Whether `--numeric-ids` was active for the batch invocation.
+    ///
+    /// Unlike the flags in [`BatchFlags`], numeric-ids is not recorded in the
+    /// batch stream flags (`batch.c:59-76` omits it). It is instead re-supplied
+    /// by the replay script's pass-through arguments, so it must be threaded in
+    /// from the current invocation. It gates the post-flist uid/gid id-list
+    /// region on both sides: the writer omits the id-lists and the reader must
+    /// not attempt to consume them, matching upstream `flist.c:2548`
+    /// (`numeric_ids <= 0 && !inc_recurse`) and `uidlist.c:465,473`
+    /// (`numeric_ids <= 0`).
+    pub numeric_ids: bool,
 }
 
 impl BatchConfig {
@@ -488,6 +500,7 @@ impl BatchConfig {
             operands: Vec::new(),
             active_flags: BatchFlags::default(),
             eol_nulls: false,
+            numeric_ids: false,
         }
     }
 
@@ -657,6 +670,28 @@ impl BatchConfig {
     /// ```
     pub const fn with_eol_nulls(mut self, eol_nulls: bool) -> Self {
         self.eol_nulls = eol_nulls;
+        self
+    }
+
+    /// Set whether `--numeric-ids` was active for the batch invocation.
+    ///
+    /// Gates the post-flist uid/gid id-list region: under `--numeric-ids`
+    /// upstream sends no id-lists (`flist.c:2548` requires `numeric_ids <= 0`),
+    /// so the writer omits them and the reader must not consume them
+    /// (`uidlist.c:465,473`).
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use batch::{BatchConfig, BatchMode};
+    ///
+    /// let config = BatchConfig::new(BatchMode::Read, "/tmp/batch".to_string(), 31)
+    ///     .with_numeric_ids(true);
+    ///
+    /// assert!(config.numeric_ids);
+    /// ```
+    pub const fn with_numeric_ids(mut self, numeric_ids: bool) -> Self {
+        self.numeric_ids = numeric_ids;
         self
     }
 

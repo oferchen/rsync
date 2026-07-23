@@ -80,6 +80,11 @@ impl BatchReader {
             )));
         }
 
+        // Captured before the mutable borrow of the batch file below. Unlike
+        // the stream flags, numeric_ids is not recorded in the batch header
+        // (batch.c:59-76); it is carried in from the --read-batch invocation.
+        let numeric_ids = self.config.numeric_ids;
+
         let header = self.header.as_ref().expect("header checked above");
         let flags = header.stream_flags;
 
@@ -160,10 +165,11 @@ impl BatchReader {
         // upstream: flist.c:2761-2763 - recv_id_list(f, flist) when !inc_recurse
         // The batch stream contains uid/gid name mapping lists after the flist
         // entries. We must consume them to keep the stream position correct for
-        // delta replay. Batch files don't record numeric_ids, but if the original
-        // transfer used --numeric-ids, no ID lists were sent and none are in the
-        // stream. Since the interop test default does NOT use --numeric-ids, we
-        // consume them when preserve_uid/gid is set.
+        // delta replay. numeric_ids is not recorded in the batch header, but the
+        // replay script re-supplies --numeric-ids from the original invocation.
+        // When it is set, the sender emits no ID lists (flist.c:2548 requires
+        // numeric_ids <= 0), so none are present in the stream and the reader
+        // must not attempt to consume them.
         if !inc_recurse {
             let id0_names = header
                 .compat_flags
@@ -174,13 +180,13 @@ impl BatchReader {
             let proto_ver = protocol_version.as_u8();
 
             // upstream: uidlist.c:465 - (preserve_uid || preserve_acls) && numeric_ids <= 0
-            if flags.preserve_uid || flags.preserve_acls {
+            if (flags.preserve_uid || flags.preserve_acls) && !numeric_ids {
                 let mut uid_list = IdList::new();
                 uid_list.read(reader, id0_names, proto_ver, |_| None)?;
             }
 
             // upstream: uidlist.c:473 - (preserve_gid || preserve_acls) && numeric_ids <= 0
-            if flags.preserve_gid || flags.preserve_acls {
+            if (flags.preserve_gid || flags.preserve_acls) && !numeric_ids {
                 let mut gid_list = IdList::new();
                 gid_list.read(reader, id0_names, proto_ver, |_| None)?;
             }
