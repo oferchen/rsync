@@ -314,7 +314,7 @@ impl GeneratorContext {
 
         if let Some(entries) = dir_read {
             // Safety: dir_path is always Some when dir_read is Some
-            let dir_path = dir_path.unwrap();
+            let dir_path = dir_path.expect("dir_path is Some whenever dir_read is Some");
 
             // upstream: exclude.c:push_local_filters() - read per-directory
             // merge files when entering a subdirectory during recursive walk.

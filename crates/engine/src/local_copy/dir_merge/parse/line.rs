@@ -224,7 +224,11 @@ pub(crate) fn parse_filter_directive_line(
     };
 
     if keyword.len() == 1 {
-        let shorthand = keyword.chars().next().unwrap().to_ascii_lowercase();
+        let shorthand = keyword
+            .chars()
+            .next()
+            .expect("keyword has exactly one char")
+            .to_ascii_lowercase();
         match shorthand {
             'p' => {
                 if !keyword_modifiers.is_empty() {

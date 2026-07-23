@@ -1,6 +1,7 @@
 #![deny(unsafe_code)]
 #![deny(missing_docs)]
 #![deny(rustdoc::broken_intra_doc_links)]
+#![cfg_attr(not(test), warn(clippy::unwrap_used))]
 #![cfg_attr(docsrs, feature(doc_cfg))]
 //! Transfer coordination between sender, receiver, and generator roles.
 //!
