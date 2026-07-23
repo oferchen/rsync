@@ -37,7 +37,9 @@ fn bwlimit_accepts_decimal_base_specifier() {
     let limit = parse_bandwidth_limit(OsStr::new("10KB"))
         .expect("parse succeeds")
         .expect("limit available");
-    assert_eq!(limit.bytes_per_second().get(), 10_000);
+    // upstream: options.c:1718 quantizes --bwlimit to whole KiB, so 10000 bytes
+    // rounds to 10 KiB (10240 B/s) rather than pacing at the exact decimal value.
+    assert_eq!(limit.bytes_per_second().get(), 10_240);
 }
 
 #[test]

@@ -68,8 +68,9 @@ fn parse_bandwidth_argument_petabytes() {
 fn parse_bandwidth_argument_decimal_base_suffix() {
     // "kb" means decimal kilobytes (1000, not 1024)
     let result = parse_bandwidth_argument("10kb").unwrap();
-    // 10 * 1000 = 10000, rounded to nearest 1000 = 10000
-    assert_eq!(result, Some(nz(10000)));
+    // 10 * 1000 = 10000 bytes, rounded to whole KiB for pacing
+    // (options.c:1718 `(10000 + 512) / 1024` = 10 KiB).
+    assert_eq!(result, Some(nz(10240)));
 }
 
 #[test]
@@ -82,8 +83,9 @@ fn parse_bandwidth_argument_binary_suffix() {
 #[test]
 fn parse_bandwidth_argument_megabytes_decimal() {
     let result = parse_bandwidth_argument("5mb").unwrap();
-    // 5 * 1000000 = 5000000, rounded to nearest 1000 = 5000000
-    assert_eq!(result, Some(nz(5_000_000)));
+    // 5 * 1000000 = 5000000 bytes, rounded to whole KiB for pacing
+    // (options.c:1718 `(5000000 + 512) / 1024` = 4883 KiB).
+    assert_eq!(result, Some(nz(5_000_192)));
 }
 
 #[test]
@@ -100,8 +102,9 @@ fn parse_bandwidth_argument_mixed_case_suffixes() {
     let result = parse_bandwidth_argument("10KiB").unwrap();
     assert_eq!(result, Some(nz(10 * 1024)));
 
+    // 5 MB decimal = 5_000_000 bytes -> 4883 KiB pacing (options.c:1718).
     let result = parse_bandwidth_argument("5Mb").unwrap();
-    assert_eq!(result, Some(nz(5_000_000)));
+    assert_eq!(result, Some(nz(5_000_192)));
 }
 
 #[test]
@@ -190,9 +193,10 @@ fn parse_bandwidth_argument_too_small() {
 
 #[test]
 fn parse_bandwidth_argument_exactly_512_bytes() {
-    // Exactly 512 bytes should be accepted
+    // Exactly 512 bytes is accepted (upstream's floor) and rounds up to the
+    // 1 KiB pacing rate (options.c:1718).
     let result = parse_bandwidth_argument("512b").unwrap();
-    assert_eq!(result, Some(nz(512)));
+    assert_eq!(result, Some(nz(1024)));
 }
 
 #[test]
@@ -374,10 +378,11 @@ fn parse_bandwidth_limit_burst_too_small() {
 
 #[test]
 fn rounding_to_kilobyte_boundary() {
-    // 1500 bytes with 'b' suffix - no rounding since alignment is 1
+    // 1500 bytes with 'b' suffix skips the suffix multiplier, but the pacing
+    // rate is still rounded to whole KiB (options.c:1718 `(1500 + 512) / 1024`
+    // = 1 KiB).
     let result = parse_bandwidth_argument("1500b").unwrap();
-    // With 'b' suffix, alignment is 1, so result is 1500
-    assert_eq!(result, Some(nz(1500)));
+    assert_eq!(result, Some(nz(1024)));
 }
 
 #[test]
@@ -390,16 +395,17 @@ fn rounding_default_kilobyte() {
 
 #[test]
 fn rounding_decimal_base() {
-    // "kb" uses base 1000, rounds to 1000
+    // "kb" uses base 1000 (1500 * 1000 = 1_500_000 bytes), but the pacing rate
+    // is rounded to whole KiB (options.c:1718), so the result is a KiB multiple.
     let result = parse_bandwidth_argument("1500kb").unwrap();
-    // 1500 * 1000 = 1500000, rounded to nearest 1000
-    assert!(result.unwrap().get() % 1000 == 0);
+    assert!(result.unwrap().get() % 1024 == 0);
 }
 
 #[test]
 fn boundary_minimum_valid_512_bytes() {
+    // Accepted floor of 512 bytes rounds up to the 1 KiB pacing rate.
     let result = parse_bandwidth_argument("512b").unwrap();
-    assert_eq!(result, Some(nz(512)));
+    assert_eq!(result, Some(nz(1024)));
 }
 
 #[test]
@@ -410,9 +416,9 @@ fn boundary_511_bytes_too_small() {
 
 #[test]
 fn boundary_513_bytes_valid() {
+    // 513 bytes rounds to the 1 KiB pacing rate (options.c:1718).
     let result = parse_bandwidth_argument("513b").unwrap();
-    // With 'b' suffix, alignment is 1, so no rounding - result is 513
-    assert_eq!(result, Some(nz(513)));
+    assert_eq!(result, Some(nz(1024)));
 }
 
 #[test]
