@@ -402,9 +402,14 @@ fn execute_applies_group_override_to_multiple_files() {
     assert_eq!(summary.files_copied(), 2);
 }
 
+// GAP M8: upstream's `change_uid = am_root && ...` gate (rsync.c:526) applies
+// identically to `-o`/`-a` preserve and to an explicit `--chown`/`--usermap`
+// override - there is no "explicit overrides fail loud" path in upstream. A
+// non-root process must silently skip a uid chown it cannot perform and
+// finish the transfer, not surface the kernel's EPERM as a fatal error.
 #[cfg(unix)]
 #[test]
-fn execute_owner_override_without_privileges_fails_gracefully() {
+fn execute_owner_override_without_privileges_is_skipped_not_fatal() {
     use std::os::unix::fs::MetadataExt;
 
     if rustix::process::geteuid().as_raw() == 0 {
@@ -425,21 +430,29 @@ fn execute_owner_override_without_privileges_fails_gracefully() {
     ];
     let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
 
-    let result = plan.execute_with_options(
-        LocalCopyExecution::Apply,
-        LocalCopyOptions::default().with_owner_override(Some(different_uid)),
-    );
+    let summary = plan
+        .execute_with_options(
+            LocalCopyExecution::Apply,
+            LocalCopyOptions::default().with_owner_override(Some(different_uid)),
+        )
+        .expect("a non-root --chown to an unreachable uid must be skipped, not fatal");
 
-    assert!(
-        result.is_err(),
-        "changing to a different user without privileges should fail"
+    assert_eq!(summary.files_copied(), 1);
+    let dest_uid = fs::metadata(&destination).expect("dest metadata").uid();
+    assert_eq!(
+        dest_uid, current_uid,
+        "ownership must be unchanged when the chown was skipped for lack of privilege"
     );
 }
 
+// GAP M8: upstream's `FLAG_SKIP_GROUP` gate (uidlist.c:284) applies
+// identically whether the target gid came from `-g`/`-a` preserve or an
+// explicit `--chown`/`--groupmap` override - a non-root process that is not a
+// member of the target group must skip the chgrp rather than fail.
 #[cfg(unix)]
 #[test]
-fn execute_group_override_to_non_member_group_without_privileges() {
-    
+fn execute_group_override_to_non_member_group_without_privileges_is_skipped_not_fatal() {
+    use std::os::unix::fs::MetadataExt;
 
     if rustix::process::geteuid().as_raw() == 0 {
         return;
@@ -450,6 +463,7 @@ fn execute_group_override_to_non_member_group_without_privileges() {
     let destination = temp.path().join("dest.txt");
     fs::write(&source, b"group test").expect("write source");
 
+    let original_gid = fs::metadata(&source).expect("metadata").gid();
     let unlikely_gid = 29999;
 
     let operands = vec![
@@ -458,14 +472,18 @@ fn execute_group_override_to_non_member_group_without_privileges() {
     ];
     let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
 
-    let result = plan.execute_with_options(
-        LocalCopyExecution::Apply,
-        LocalCopyOptions::default().with_group_override(Some(unlikely_gid)),
-    );
+    let summary = plan
+        .execute_with_options(
+            LocalCopyExecution::Apply,
+            LocalCopyOptions::default().with_group_override(Some(unlikely_gid)),
+        )
+        .expect("a non-root chgrp to a non-member group must be skipped, not fatal");
 
-    assert!(
-        result.is_err(),
-        "changing to a group the user is not a member of should fail"
+    assert_eq!(summary.files_copied(), 1);
+    let dest_gid = fs::metadata(&destination).expect("dest metadata").gid();
+    assert_eq!(
+        dest_gid, original_gid,
+        "group must be unchanged when the chgrp was skipped for lack of privilege"
     );
 }
 
