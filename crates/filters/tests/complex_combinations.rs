@@ -163,9 +163,11 @@ fn included_but_at_risk() {
     // Temp files included for transfer
     assert!(set.allows(Path::new("temp/scratch.txt"), false));
 
-    // protect("*") matches first (first-match-wins), so still protected
-    // For risk to override, it must come before protect
-    assert!(!set.allows_deletion(Path::new("temp/scratch.txt"), false));
+    // upstream: exclude.c:check_filter() is one first-match-wins pass; the
+    // leading `+ temp/**` matches first and returns include, so the entry is
+    // deletable - the later protect is never reached (and `*` would not match
+    // the multi-segment path anyway).
+    assert!(set.allows_deletion(Path::new("temp/scratch.txt"), false));
 
     // Other files protected
     assert!(!set.allows_deletion(Path::new("important.txt"), false));
@@ -436,8 +438,10 @@ fn rust_project_filter() {
     assert!(set.allows(Path::new("Cargo.toml"), false));
     assert!(set.allows(Path::new("Cargo.lock"), false));
 
-    // Cargo.lock protected
-    assert!(!set.allows_deletion(Path::new("Cargo.lock"), false));
+    // upstream: `+ /Cargo.lock` matches first in check_filter()'s single pass
+    // and returns include, so the entry is deletable; the trailing
+    // `P Cargo.lock` never runs.
+    assert!(set.allows_deletion(Path::new("Cargo.lock"), false));
 
     // Source files included via src/** rule
     assert!(set.allows(Path::new("src/main.rs"), false));
@@ -515,8 +519,10 @@ fn javascript_project_filter() {
     assert!(!set.allows(Path::new(".env.local"), false));
     assert!(!set.allows(Path::new(".env"), false));
 
-    // Lock file protected
-    assert!(!set.allows_deletion(Path::new("package-lock.json"), false));
+    // upstream: `+ package-lock.json` matches first in check_filter()'s single
+    // pass and returns include, so the entry is deletable; the trailing
+    // `P package-lock.json` is never reached.
+    assert!(set.allows_deletion(Path::new("package-lock.json"), false));
 }
 
 /// Verifies monorepo filter pattern.
