@@ -1099,8 +1099,22 @@ impl<'a> RemoteInvocationBuilder<'a> {
         if self.config.sparse() {
             flags.push('S');
         }
-        // upstream: options.c:2722-2723 - 'z' only for zlib compression.
-        if self.config.compress() {
+        // upstream: options.c:2722-2723 - the compact 'z' is packed only when
+        // `do_compression == CPRES_ZLIB`. Plain `-z` defaults to zlib, but an
+        // explicit `--compress-choice` of zlibx/zstd/lz4 is forwarded via the
+        // long-form `--new-compress`/`--compress-choice` above and must NOT also
+        // pack 'z' (upstream sends `-logDtpre...`, not `-logDtprze...`).
+        // `CompressionAlgorithm` folds zlibx onto Zlib, so the enum's name()
+        // returns "zlib" for zlibx; use the raw `compress_choice_name` to
+        // distinguish it (upstream sends zlibx via --new-compress, no 'z').
+        if self.config.compress()
+            && (!self.config.explicit_compress_choice()
+                || self
+                    .config
+                    .compress_choice_name()
+                    .unwrap_or_else(|| self.config.compression_algorithm().name())
+                    == "zlib")
+        {
             flags.push('z');
         }
         // upstream: options.c has NO compact 'P' letter for --partial. keep_partial
