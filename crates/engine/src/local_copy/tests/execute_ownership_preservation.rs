@@ -578,9 +578,13 @@ fn owner_and_group_preserved_on_symlink() {
     assert!(summary.symlinks_copied() >= 1);
 }
 
+// GAP M8: upstream's `change_uid = am_root && ...` gate (rsync.c:526) applies
+// to explicit `--chown`/`--usermap` overrides exactly as to `-o`/`-a` preserve.
+// A non-root process that cannot set the target uid skips the chown and
+// finishes the transfer - it does not surface the kernel's EPERM as fatal.
 #[cfg(unix)]
 #[test]
-fn non_root_cannot_change_owner_to_different_user() {
+fn non_root_owner_override_to_different_user_is_skipped_not_fatal() {
     use std::os::unix::fs::MetadataExt;
 
     // Only run this test when NOT root
@@ -594,7 +598,9 @@ fn non_root_cannot_change_owner_to_different_user() {
     fs::write(&source, b"non-root test").expect("write source");
 
     let current_uid = fs::metadata(&source).expect("metadata").uid();
-    let different_uid = if current_uid == 0 { 1000 } else { 0 };
+    // uid 0 (root) is always present and always unreachable for a non-root
+    // caller, so the gate must skip the chown regardless of platform.
+    let different_uid = 0;
 
     let operands = vec![
         source.into_os_string(),
@@ -602,33 +608,58 @@ fn non_root_cannot_change_owner_to_different_user() {
     ];
     let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
 
-    // Trying to change to a different user's UID should fail
-    let result = plan.execute_with_options(
-        LocalCopyExecution::Apply,
-        LocalCopyOptions::default().with_owner_override(Some(different_uid)),
-    );
+    let summary = plan
+        .execute_with_options(
+            LocalCopyExecution::Apply,
+            LocalCopyOptions::default().with_owner_override(Some(different_uid)),
+        )
+        .expect("a non-root --chown to an unreachable uid must be skipped, not fatal");
 
-    assert!(
-        result.is_err(),
-        "non-root user should not be able to change file ownership"
+    assert_eq!(summary.files_copied(), 1);
+    let dest_uid = fs::metadata(&destination).expect("dest metadata").uid();
+    assert_ne!(
+        dest_uid, different_uid,
+        "the unreachable uid must never be applied - the chown must be skipped"
+    );
+    assert_eq!(
+        dest_uid, current_uid,
+        "ownership must be unchanged when the chown was skipped for lack of privilege"
     );
 }
 
+// GAP M8: upstream's `FLAG_SKIP_GROUP` gate (uidlist.c:284) drops a non-member
+// group before `do_lchown`, whether the gid came from `-g`/`-a` preserve or an
+// explicit `--chown`/`--groupmap` override.
 #[cfg(unix)]
 #[test]
-fn non_root_cannot_change_group_to_non_member() {
+fn non_root_group_override_to_non_member_is_skipped_not_fatal() {
+    use std::os::unix::fs::MetadataExt;
+
     // Only run this test when NOT root
     if rustix::process::geteuid().as_raw() == 0 {
         return;
     }
+
+    // Pick a gid the process is provably not a member of. A hardcoded
+    // "unlikely" gid is not robust on macOS/BSD, where the default group set
+    // and getgroups membership differ from Linux; probe the real group list
+    // via rustix (portable, no unsafe).
+    let mut member_gids: Vec<u32> = rustix::process::getgroups()
+        .expect("getgroups")
+        .into_iter()
+        .map(|gid| gid.as_raw())
+        .collect();
+    member_gids.push(rustix::process::getegid().as_raw());
+    let foreign_gid = (1u32..=1_000_000)
+        .find(|candidate| !member_gids.contains(candidate))
+        .expect("must find a gid outside the process's groups");
 
     let temp = tempdir().expect("tempdir");
     let source = temp.path().join("source.txt");
     let destination = temp.path().join("dest.txt");
     fs::write(&source, b"non-root group test").expect("write source");
 
-    // Use a GID that the user is unlikely to be a member of
-    let unlikely_gid = 29999;
+    let original_gid = fs::metadata(&source).expect("metadata").gid();
 
     let operands = vec![
         source.into_os_string(),
@@ -636,15 +667,22 @@ fn non_root_cannot_change_group_to_non_member() {
     ];
     let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
 
-    // Trying to change to a group the user is not a member of should fail
-    let result = plan.execute_with_options(
-        LocalCopyExecution::Apply,
-        LocalCopyOptions::default().with_group_override(Some(unlikely_gid)),
-    );
+    let summary = plan
+        .execute_with_options(
+            LocalCopyExecution::Apply,
+            LocalCopyOptions::default().with_group_override(Some(foreign_gid)),
+        )
+        .expect("a non-root chgrp to a non-member group must be skipped, not fatal");
 
-    assert!(
-        result.is_err(),
-        "non-root user should not be able to change to non-member group"
+    assert_eq!(summary.files_copied(), 1);
+    let dest_gid = fs::metadata(&destination).expect("dest metadata").gid();
+    assert_ne!(
+        dest_gid, foreign_gid,
+        "the non-member group must never be applied - the chgrp must be skipped"
+    );
+    assert_eq!(
+        dest_gid, original_gid,
+        "group must be unchanged when the chgrp was skipped for lack of privilege"
     );
 }
 
