@@ -169,13 +169,18 @@ pub(crate) fn build_server_flag_string(config: &ClientConfig) -> String {
     if config.sparse() {
         flags.push('S');
     }
-    // upstream: options.c:2722 - 'z' is only sent when the compression
-    // algorithm is the default (no explicit --compress-choice). For
-    // explicitly chosen algorithms (lz4, zstd), the 'z' flag is omitted
-    // and --compress-choice=ALGO is sent as a long-form arg instead.
+    // upstream: options.c:2722 - the compact 'z' is packed only when
+    // `do_compression == CPRES_ZLIB`. Plain `-z` defaults to zlib and explicit
+    // `--compress-choice=zlib` also packs 'z', but zlibx/zstd/lz4 are forwarded
+    // via the long-form `--new-compress`/`--compress-choice` instead and must
+    // NOT also pack 'z'. `CompressionAlgorithm` folds zlibx onto Zlib, so the
+    // raw choice name (not the enum) distinguishes it.
     if config.compress()
-        && config.compression_algorithm()
-            == compress::algorithm::CompressionAlgorithm::default_algorithm()
+        && (!config.explicit_compress_choice()
+            || config
+                .compress_choice_name()
+                .unwrap_or_else(|| config.compression_algorithm().name())
+                == "zlib")
     {
         flags.push('z');
     }
@@ -623,17 +628,17 @@ mod tests {
     }
 
     #[test]
-    fn server_flag_string_includes_z_for_default_algorithm() {
-        // upstream: options.c:2722 - 'z' is sent for the default compression
-        // algorithm (no explicit --compress-choice).
-        let config = ClientConfig::builder()
-            .compress(true)
-            .compression_algorithm(compress::algorithm::CompressionAlgorithm::default_algorithm())
-            .build();
+    fn server_flag_string_includes_z_for_default_compression() {
+        // upstream: options.c:2722 - plain `-z` (no explicit --compress-choice)
+        // defaults to zlib, so the compact 'z' is packed. Note default_algorithm()
+        // is the best-available codec (zstd), which is NOT zlib - an explicit
+        // choice of it would omit 'z' (see the zstd test) - so the default case
+        // must be expressed as plain compress() with no explicit choice.
+        let config = ClientConfig::builder().compress(true).build();
         let flags = build_server_flag_string(&config);
         assert!(
             flags.contains('z'),
-            "expected 'z' for default algorithm: {flags}"
+            "expected 'z' for default (plain -z) compression: {flags}"
         );
     }
 
@@ -648,6 +653,38 @@ mod tests {
             .build();
         let flags = build_server_flag_string(&config);
         assert!(!flags.contains('z'), "should not send 'z' for lz4: {flags}");
+    }
+
+    #[cfg(feature = "zstd")]
+    #[test]
+    fn server_flag_string_omits_z_for_zstd() {
+        // upstream: options.c:2722 - 'z' NOT sent for zstd; the codec rides as
+        // the long-form --compress-choice=zstd instead.
+        let config = ClientConfig::builder()
+            .compress(true)
+            .compression_algorithm(compress::algorithm::CompressionAlgorithm::Zstd)
+            .build();
+        let flags = build_server_flag_string(&config);
+        assert!(
+            !flags.contains('z'),
+            "should not send 'z' for zstd: {flags}"
+        );
+    }
+
+    #[test]
+    fn server_flag_string_omits_z_for_zlibx() {
+        // zlibx folds onto Zlib in the enum, but the raw choice name keeps it
+        // distinct; upstream sends --new-compress, never the compact 'z'.
+        let config = ClientConfig::builder()
+            .compress(true)
+            .compression_algorithm(compress::algorithm::CompressionAlgorithm::Zlib)
+            .compress_choice_name(Some("zlibx".to_owned()))
+            .build();
+        let flags = build_server_flag_string(&config);
+        assert!(
+            !flags.contains('z'),
+            "should not send 'z' for zlibx: {flags}"
+        );
     }
 
     // upstream: options.c:2625-2626 - `for (i = 0; i < verbose; i++)
