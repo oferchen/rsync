@@ -673,6 +673,19 @@ mod tests {
             assert_eq!(client_error.code(), ExitCode::DeleteLimit);
             assert!(client_error.to_string().contains("max-delete"));
         }
+
+        #[test]
+        fn map_local_copy_error_for_stop_at_reports_message() {
+            let deadline = std::time::SystemTime::now();
+            let expected_code = LocalCopyError::stop_at_reached(deadline).exit_code();
+            let mapped = map_local_copy_error(LocalCopyError::stop_at_reached(deadline));
+
+            assert_eq!(mapped.exit_code(), expected_code);
+            assert!(
+                mapped.to_string().contains("stopping at requested limit"),
+                "{mapped}"
+            );
+        }
     }
 
     mod error_factory_tests {
