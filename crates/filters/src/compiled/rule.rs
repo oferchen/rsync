@@ -41,6 +41,15 @@ pub(crate) struct CompiledRule {
     pub(crate) applies_to_receiver: bool,
     pub(crate) perishable: bool,
     pub(crate) negate: bool,
+    /// Source-definition order across the whole rule stream, assigned by
+    /// [`FilterSet::from_rules`](crate::FilterSet::from_rules). Upstream keeps
+    /// every rule in one list and `check_filter()` walks it first-match-wins
+    /// (exclude.c:1038); oc partitions include/exclude and protect/risk into
+    /// separate chains, so this index lets the deletion decision merge the two
+    /// first-matches back into a single source-ordered pass. Zero for rules
+    /// built outside `from_rules` (per-dir implied includes), which never mix
+    /// the two chains against one path.
+    pub(crate) order: usize,
 }
 
 impl CompiledRule {
