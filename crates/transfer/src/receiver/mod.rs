@@ -73,7 +73,7 @@ pub use self::wire::{
 /// signature wire size. The `derive_strong_sum_length()` heuristic computes
 /// a dynamic length between 2-16 bytes based on file and block sizes.
 ///
-/// (upstream: generator.c:2157 `csum_length = SHORT_SUM_LENGTH`)
+/// (upstream: generator.c:2205 `csum_length = SHORT_SUM_LENGTH`)
 const PHASE1_CHECKSUM_LENGTH: NonZeroU8 =
     NonZeroU8::new(signature::block_size::SHORT_SUM_LENGTH).unwrap();
 
