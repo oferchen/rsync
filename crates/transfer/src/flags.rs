@@ -106,7 +106,7 @@ pub struct ParsedServerFlags {
     pub verbose: bool,
     /// Count of `v` flags in the packed server flag string. Upstream derives
     /// info/debug levels from this count via `info_verbosity[]`
-    /// (options.c:239-243); `-vv` sets `info.name = 2`, which gates the
+    /// (options.c:250-253); `-vv` sets `info.name = 2`, which gates the
     /// itemize line for an unchanged entry (`INFO_GTE(NAME, 2)`,
     /// generator.c:582-583). Collapsing to the `verbose` bool alone loses the
     /// level needed to surface `-ivv` unchanged rows.
@@ -228,7 +228,7 @@ pub struct ParsedServerFlags {
     /// (`K` flag, `--keep-dirlinks`).
     ///
     /// Upstream: options.c:688 `{"keep-dirlinks", 'K', ...}` and
-    /// generator.c:1344 `link_stat(fname, &sx.st, keep_dirlinks && is_dir)`.
+    /// generator.c:1356 `link_stat(fname, &sx.st, keep_dirlinks && is_dir)`.
     /// On the receiver this prevents replacing a destination symlink-to-dir
     /// with a real directory and lets per-file operations (basis open, chmod
     /// of the file leaf) follow the dir-symlink instead of being refused by
@@ -268,7 +268,7 @@ pub struct ParsedServerFlags {
     pub append_verify: bool,
     /// Make backups before overwriting (`b` flag, `--backup`).
     ///
-    /// Upstream: `options.c:2613` - `argstr[x++] = 'b'`.
+    /// Upstream: `options.c:2631` - `argstr[x++] = 'b'`.
     pub backup: bool,
     /// Fuzzy basis file matching level (`y` flag, `--fuzzy`).
     ///
@@ -290,7 +290,7 @@ pub struct ParsedServerFlags {
     /// Remove source files after successful transfer (long-form `--remove-source-files`).
     ///
     /// Not part of the compact flag string; set via long-form args (upstream
-    /// `options.c:2964-2965` emits `--remove-source-files` whenever the client
+    /// `options.c:2982-2983` emits `--remove-source-files` whenever the client
     /// requested it). When true, the sender unlinks each source file after the
     /// receiver acknowledges a successful transfer.
     ///
@@ -439,7 +439,7 @@ impl ParsedServerFlags {
     /// the corresponding feature (`acl` or `xattr`), the flag is cleared
     /// and the feature name is returned so the caller can emit a warning.
     ///
-    /// This mirrors upstream rsync's `options.c:1842-1857` where
+    /// This mirrors upstream rsync's `options.c:1858-1873` where
     /// `SUPPORT_ACLS` / `SUPPORT_XATTRS` guards produce an error. We
     /// choose a graceful fallback instead - warn and continue without the
     /// unsupported feature.
@@ -534,10 +534,10 @@ impl ParsedServerFlags {
             b'A' => self.acls = true,
             b'X' => self.xattrs = true,
             // upstream: 'n' = dry_run (!do_xfers), NOT numeric_ids.
-            // numeric_ids is long-form only (options.c:2887 sends --numeric-ids).
+            // numeric_ids is long-form only (options.c:2905 sends --numeric-ids).
             b'n' => self.dry_run = true,
             // upstream: 'd' = --dirs (xfer_dirs without recursion), NOT delete.
-            // delete is long-form only (options.c:2818-2827 sends --delete-*).
+            // delete is long-form only (options.c:2836-2845 sends --delete-*).
             b'd' => self.dirs = true,
             b'W' => self.whole_file = true,
             b'S' => self.sparse = true,
@@ -545,7 +545,7 @@ impl ParsedServerFlags {
             b'R' => self.relative = true,
             b'P' => self.partial = true,
             b'u' => self.update = true,
-            // upstream: options.c:2613 - 'b' = backup.
+            // upstream: options.c:2631 - 'b' = backup.
             b'b' => self.backup = true,
             b'N' => self.crtimes = true,
             // upstream: options.c:764 - 'L' = copy_links (resolve symlinks).
@@ -830,7 +830,7 @@ mod tests {
     /// no clearing occurs. When the feature is absent, the flag is cleared
     /// and the feature name is returned.
     ///
-    /// upstream: options.c:1842-1857 - SUPPORT_ACLS guard
+    /// upstream: options.c:1858-1873 - SUPPORT_ACLS guard
     #[test]
     fn clear_unsupported_features_handles_acls() {
         let mut flags = ParsedServerFlags::parse("-A").unwrap();
@@ -854,7 +854,7 @@ mod tests {
     /// no clearing occurs. When the feature is absent, the flag is cleared
     /// and the feature name is returned.
     ///
-    /// upstream: options.c:1859-1868 - SUPPORT_XATTRS guard
+    /// upstream: options.c:1875-1884 - SUPPORT_XATTRS guard
     #[test]
     fn clear_unsupported_features_handles_xattrs() {
         let mut flags = ParsedServerFlags::parse("-X").unwrap();
@@ -877,7 +877,7 @@ mod tests {
     /// When both ACLs and xattrs are requested but the platform lacks support,
     /// both are cleared and reported.
     ///
-    /// upstream: options.c:1842-1868 - both guards apply independently
+    /// upstream: options.c:1858-1884 - both guards apply independently
     #[test]
     fn clear_unsupported_features_handles_both_acl_and_xattr() {
         let mut flags = ParsedServerFlags::parse("-AX").unwrap();

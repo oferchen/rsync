@@ -120,7 +120,7 @@ impl DeletedRender {
 ///
 /// # Upstream Reference
 ///
-/// - `io.c:1521-1528`: receiver reads `MSG_IO_ERROR`, OR's value into
+/// - `io.c:1542-1549`: receiver reads `MSG_IO_ERROR`, OR's value into
 ///   `io_error`, and forwards it to the generator when `am_receiver`.
 /// - `io.c:1618-1627`: `MSG_NO_SEND` received on the sender/receiver pipe;
 ///   if `am_generator`, calls `got_flist_entry_status(FES_NO_SEND, val)`,
@@ -130,13 +130,13 @@ pub(crate) struct MultiplexReader<R> {
     pub(super) buffer: Vec<u8>,
     pub(super) pos: usize,
     /// Accumulated I/O error flags from `MSG_IO_ERROR` messages.
-    /// upstream: io.c:1526 `io_error |= val;`
+    /// upstream: io.c:1547 `io_error |= val;`
     pub(super) io_error: i32,
     /// File indices received via `MSG_NO_SEND` from the sender.
     /// upstream: io.c:1618-1627, sender.c:367-368
     pub(super) no_send_indices: Vec<i32>,
     /// File indices received via `MSG_REDO` from the receiver.
-    /// upstream: io.c:1514-1519, receiver.c:970-974
+    /// upstream: io.c:1535-1540, receiver.c:1093-1097
     pub(super) redo_indices: Vec<i32>,
     /// File indices received via `MSG_SUCCESS` from the peer's generator or
     /// receiver, each confirming that the file was fully received and committed
@@ -146,7 +146,7 @@ pub(crate) struct MultiplexReader<R> {
     /// upstream: io.c:1623-1637, sender.c:131-182 `successful_send()`.
     pub(super) success_indices: Vec<i32>,
     /// Exit code from MSG_ERROR_EXIT. When set, the remote has requested
-    /// immediate termination. upstream: io.c:1663-1701 calls _exit_cleanup().
+    /// immediate termination. upstream: io.c:1684-1722 calls _exit_cleanup().
     pub(super) error_exit_code: Option<i32>,
     /// Count of MSG_ERROR_XFER messages received from the remote.
     ///
@@ -181,7 +181,7 @@ pub(crate) struct MultiplexReader<R> {
 /// Exit code for partial transfer due to error.
 ///
 /// upstream: errcode.h `RERR_PARTIAL = 23`. Produced only when
-/// `got_xfer_error` is set (cleanup.c:217-218, main.c:1608-1609).
+/// `got_xfer_error` is set (cleanup.c:217-218, main.c:1630-1631).
 pub(super) const RERR_PARTIAL: i32 = 23;
 
 /// Typed error carrying the exit code a remote peer requested via
@@ -198,7 +198,7 @@ pub(super) const RERR_PARTIAL: i32 = 23;
 /// inline string form (`"remote error exit (code N)"`), so any diagnostic that
 /// rendered the wrapping `io::Error` verbatim is unchanged.
 ///
-/// upstream: io.c:1663-1701 - on `MSG_ERROR_EXIT` the client calls the NORETURN
+/// upstream: io.c:1684-1722 - on `MSG_ERROR_EXIT` the client calls the NORETURN
 /// `_exit_cleanup(val)`, exiting with the peer-supplied code.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct RemoteExitError {
@@ -293,7 +293,7 @@ impl<R> MultiplexReader<R> {
     ///
     /// # Upstream Reference
     ///
-    /// - `io.c:1526-1528`: `io_error |= val; if (am_receiver) send_msg_int(MSG_IO_ERROR, val);`
+    /// - `io.c:1547-1549`: `io_error |= val; if (am_receiver) send_msg_int(MSG_IO_ERROR, val);`
     pub(super) fn take_io_error(&mut self) -> i32 {
         std::mem::take(&mut self.io_error)
     }
@@ -307,7 +307,7 @@ impl<R> MultiplexReader<R> {
     /// # Upstream Reference
     ///
     /// - `log.c:311`: receipt of `FERROR_XFER` sets `got_xfer_error = 1`
-    /// - `main.c:1635`: `if (got_xfer_error) _exit(RERR_PARTIAL);`
+    /// - `main.c:1630-1631`: `if (got_xfer_error) _exit(RERR_PARTIAL);`
     pub(super) fn xfer_error_count(&self) -> u32 {
         self.xfer_error_count
     }
@@ -326,8 +326,8 @@ impl<R> MultiplexReader<R> {
     ///
     /// # Upstream Reference
     ///
-    /// - `io.c:1514-1519`: `MSG_REDO` received, calls `got_flist_entry_status(FES_REDO, val)`.
-    /// - `receiver.c:970-974`: receiver sends `MSG_REDO` when `!redoing`.
+    /// - `io.c:1535-1540`: `MSG_REDO` received, calls `got_flist_entry_status(FES_REDO, val)`.
+    /// - `receiver.c:1093-1097`: receiver sends `MSG_REDO` when `!redoing`.
     pub(super) fn take_redo_indices(&mut self) -> Vec<i32> {
         std::mem::take(&mut self.redo_indices)
     }
@@ -374,13 +374,13 @@ impl<R> MultiplexReader<R> {
     /// (confirming the daemon filter scenario) or the connection closes
     /// naturally via EOF.
     ///
-    /// upstream: generator.c:1269 - `rprintf(FERROR_XFER, "daemon refused...")`
+    /// upstream: generator.c:1281 - `rprintf(FERROR_XFER, "daemon refused...")`
     /// upstream: log.c:311 - `got_xfer_error = 1;` on FERROR_XFER receipt
-    /// upstream: main.c:1608-1609 - `if (got_xfer_error) _exit(RERR_PARTIAL);`
+    /// upstream: main.c:1630-1631 - `if (got_xfer_error) _exit(RERR_PARTIAL);`
     fn check_error_exit(&self) -> io::Result<()> {
         if let Some(code) = self.error_exit_code {
             // RERR_PARTIAL is only produced when got_xfer_error is set
-            // (upstream cleanup.c:217-218, main.c:1608-1609), so receiving
+            // (upstream cleanup.c:217-218, main.c:1630-1631), so receiving
             // exit code 23 guarantees that FERROR_XFER messages exist in the
             // wire even if we haven't read them yet. Suppression is always
             // safe - FERROR_XFER may still be in flight due to the msg2sndr
@@ -400,7 +400,7 @@ impl<R> MultiplexReader<R> {
     /// Handles a `MSG_IO_ERROR` payload by accumulating the error flags.
     ///
     /// The payload must be exactly 4 bytes (little-endian `i32`).
-    /// upstream: io.c:1522-1526
+    /// upstream: io.c:1543-1547
     fn handle_io_error_msg(&mut self) {
         if self.buffer.len() == 4 {
             let val = i32::from_le_bytes([
@@ -416,7 +416,7 @@ impl<R> MultiplexReader<R> {
     /// Handles a `MSG_REDO` payload by recording the file index.
     ///
     /// The payload must be exactly 4 bytes (little-endian `i32` file index).
-    /// upstream: io.c:1514-1519
+    /// upstream: io.c:1535-1540
     fn handle_redo_msg(&mut self) {
         if self.buffer.len() == 4 {
             let ndx = i32::from_le_bytes([
@@ -603,7 +603,7 @@ impl<R> MultiplexReader<R> {
                 }
             }
             protocol::MessageCode::ErrorExit => {
-                // upstream: io.c:1663-1701 - MSG_ERROR_EXIT carries a 4-byte
+                // upstream: io.c:1684-1722 - MSG_ERROR_EXIT carries a 4-byte
                 // exit code. Upon receipt, upstream calls _exit_cleanup(val)
                 // which is NORETURN. We propagate it as an io::Error so the
                 // transfer loop can abort cleanly.
@@ -620,7 +620,7 @@ impl<R> MultiplexReader<R> {
                 self.error_exit_code = Some(exit_code);
             }
             protocol::MessageCode::IoError => {
-                // upstream: io.c:1521-1526
+                // upstream: io.c:1542-1547
                 self.handle_io_error_msg();
             }
             protocol::MessageCode::NoSend => {
@@ -628,7 +628,7 @@ impl<R> MultiplexReader<R> {
                 self.handle_no_send_msg();
             }
             protocol::MessageCode::Redo => {
-                // upstream: io.c:1514-1519
+                // upstream: io.c:1535-1540
                 self.handle_redo_msg();
             }
             protocol::MessageCode::Success => {

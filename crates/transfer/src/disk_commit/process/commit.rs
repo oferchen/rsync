@@ -78,8 +78,8 @@ pub(super) struct CommitOutcome {
 ///
 /// # Upstream Reference
 ///
-/// - `receiver.c:906-929`: delay_updates stages to partial dir
-/// - `receiver.c:422-450`: `handle_delayed_updates()` bulk rename
+/// - `receiver.c:1029-1052`: delay_updates stages to partial dir
+/// - `receiver.c:529-557`: `handle_delayed_updates()` bulk rename
 pub(super) fn commit_file(
     begin: &BeginMessage,
     config: &DiskCommitConfig,
@@ -114,7 +114,7 @@ pub(super) fn commit_file(
     };
 
     if needs_rename && config.delay_updates {
-        // upstream: receiver.c:916-929 - stage to partial dir (.~tmp~)
+        // upstream: receiver.c:1039-1052 - stage to partial dir (.~tmp~)
         let staging_path = partial_dir_path(&begin.file_path);
         if let Some(parent) = staging_path.parent() {
             fs::create_dir_all(parent)?;
@@ -202,7 +202,7 @@ const DELAY_UPDATES_PARTIAL_DIR: &str = ".~tmp~";
 
 /// Computes the `.~tmp~/<filename>` staging path for a destination file.
 ///
-/// upstream: receiver.c:430 - `partial_dir_fname(fname)` returns
+/// upstream: receiver.c:537 - `partial_dir_fname(fname)` returns
 /// `<parent>/.~tmp~/<basename>`.
 pub(super) fn partial_dir_path(file_path: &Path) -> PathBuf {
     let parent = file_path.parent().unwrap_or(Path::new("."));

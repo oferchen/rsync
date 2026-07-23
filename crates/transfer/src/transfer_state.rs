@@ -50,7 +50,7 @@ pub enum TransferPhase {
     ///
     /// Client-mode or server-mode writes/reads the filter rule list over
     /// the wire. Multiplex I/O is activated before this phase.
-    /// (upstream: `exclude.c:recv_filter_list()`, `main.c:1258`)
+    /// (upstream: `exclude.c:recv_filter_list()`, `main.c:1276`)
     FilterExchange,
 
     /// File list build, transmission, or reception.

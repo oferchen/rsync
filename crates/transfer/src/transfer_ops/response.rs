@@ -81,7 +81,7 @@ pub fn process_file_response<R: Read>(
 
     // Inplace: write directly to destination. Otherwise temp+rename for atomicity.
     let (mut file, mut cleanup_guard, needs_rename) = if use_inplace {
-        // upstream: receiver.c:855 - do_open(fname, O_WRONLY|O_CREAT, 0600)
+        // upstream: receiver.c:968 - do_open(fname, O_WRONLY|O_CREAT, 0600)
         let f = fs::OpenOptions::new()
             .write(true)
             .create(true)
@@ -110,7 +110,7 @@ pub fn process_file_response<R: Read>(
         cleanup_guard.mark_registered();
     }
 
-    // upstream: receiver.c:307-308 - in append mode, seek past existing content
+    // upstream: receiver.c:372-373 - in append mode, seek past existing content
     // so new data is written at the end of the file
     let append_offset = header.append_offset;
     if append_offset > 0 {
@@ -157,7 +157,7 @@ pub fn process_file_response<R: Read>(
         None
     };
 
-    // upstream: token.c:807-810 - reset per-file token state. For zstd the
+    // upstream: token.c:863-866 - reset per-file token state. For zstd the
     // decompression context is preserved (single continuous stream across all
     // files); for zlib it reinitializes the inflate context (per-file streams).
     token_reader.reset();
@@ -278,7 +278,7 @@ pub fn process_file_response<R: Read>(
                     }
                     checksum_verifier.update(block_data);
 
-                    // upstream: token.c:631 - see_deflate_token() keeps the
+                    // upstream: token.c:685 - see_deflate_token() keeps the
                     // decompressor dictionary in sync after block matches.
                     token_reader.see_token(block_data)?;
 

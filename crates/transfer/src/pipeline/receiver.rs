@@ -8,7 +8,7 @@
 //!
 //! # Upstream Reference
 //!
-//! - `receiver.c:970-976` - `send_msg_int(MSG_REDO, ndx)` on checksum failure
+//! - `receiver.c:1093-1099` - `send_msg_int(MSG_REDO, ndx)` on checksum failure
 //! - `generator.c:2160-2199` - `check_for_finished_files()` processes redo queue
 //! - `receiver.c:580-587` - phase transition on `NDX_DONE`
 
@@ -92,7 +92,7 @@ pub struct PipelinedReceiver {
     /// # Upstream Reference
     ///
     /// - `receiver.c:546-547`: `delayed_bits = bitbag_create()`
-    /// - `receiver.c:584-585`: `handle_delayed_updates()` sweep
+    /// - `receiver.c:694-695`: `handle_delayed_updates()` sweep
     delayed_updates: Vec<(PathBuf, PathBuf)>,
     /// Flat file indices whose commit was confirmed (finish_transfer succeeded,
     /// checksum verified). The receiver drains these and, when
@@ -342,11 +342,11 @@ impl PipelinedReceiver {
     ///
     /// When `redo_enabled` is true (phase 1), checksum mismatches queue the file
     /// index into `redo_indices` and log a warning - mirroring upstream
-    /// `receiver.c:960-973` which sends `MSG_REDO` and continues.
+    /// `receiver.c:1083-1096` which sends `MSG_REDO` and continues.
     ///
     /// When `redo_enabled` is false (phase 2), checksum mismatches are logged
     /// as errors but do not abort the transfer - mirroring upstream
-    /// `receiver.c:948-957` where `redoing=1` uses `FERROR_XFER`.
+    /// `receiver.c:1071-1080` where `redoing=1` uses `FERROR_XFER`.
     fn verify_checksum(&mut self, result: &CommitResult) -> io::Result<()> {
         let pending = match self.expected_checksums.pop_front() {
             Some(p) => p,
@@ -445,7 +445,7 @@ impl PipelinedReceiver {
     ///
     /// # Upstream Reference
     ///
-    /// - `receiver.c:584-585`: `handle_delayed_updates()` at phase 2
+    /// - `receiver.c:694-695`: `handle_delayed_updates()` at phase 2
     pub fn take_delayed_updates(&mut self) -> Vec<(PathBuf, PathBuf)> {
         std::mem::take(&mut self.delayed_updates)
     }
@@ -461,7 +461,7 @@ impl PipelinedReceiver {
     ///
     /// # Upstream Reference
     ///
-    /// - `receiver.c:970-974`: `send_msg_int(MSG_REDO, ndx)` sent immediately
+    /// - `receiver.c:1093-1097`: `send_msg_int(MSG_REDO, ndx)` sent immediately
     ///   when a checksum mismatch is detected during phase 1.
     pub fn drain_new_redo_indices(&mut self) -> Vec<usize> {
         std::mem::take(&mut self.redo_indices)
@@ -1256,7 +1256,7 @@ mod tests {
     /// renamed. The caller never calls `handle_delayed_updates()`, so files
     /// persist as valid partials for resume.
     ///
-    /// upstream: receiver.c:584-585 - handle_delayed_updates() only after
+    /// upstream: receiver.c:694-695 - handle_delayed_updates() only after
     /// successful transfer; interruption leaves staged files intact.
     #[test]
     fn delay_updates_drop_without_sweep_preserves_staged_files() {

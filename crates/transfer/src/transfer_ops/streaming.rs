@@ -129,7 +129,7 @@ pub fn process_file_response_streaming<R: Read>(
         file_entry_index,
         checksum_verifier: Some(disk_verifier),
         is_device_target,
-        // upstream: receiver.c:797 - one_inplace = inplace_partial && fnamecmp_type == FNAMECMP_PARTIAL_DIR
+        // upstream: receiver.c:910 - one_inplace = inplace_partial && fnamecmp_type == FNAMECMP_PARTIAL_DIR
         is_inplace: header.use_inplace,
         append_offset: header.append_offset,
         xattr_list,
@@ -145,7 +145,7 @@ pub fn process_file_response_streaming<R: Read>(
 
     let mut total_bytes: u64 = 0;
 
-    // upstream: token.c:807-810 - reset per-file token state. For zstd the
+    // upstream: token.c:863-866 - reset per-file token state. For zstd the
     // decompression context is preserved (single continuous stream across all
     // files); for zlib it reinitializes the inflate context (per-file streams).
     token_reader.reset();

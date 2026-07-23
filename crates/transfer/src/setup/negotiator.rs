@@ -97,7 +97,7 @@ pub trait CapabilityNegotiator {
 pub trait ChecksumSeedExchanger {
     /// Generates (or uses a fixed) seed and writes it to the output stream.
     ///
-    /// # Seed generation (upstream `options.c:835`)
+    /// # Seed generation (upstream `options.c:847`)
     ///
     /// - `None` or `Some(0)`: generate from `time() ^ (pid << 6)`
     /// - `Some(n)`: use `n` as the fixed seed
@@ -184,7 +184,7 @@ impl CapabilityNegotiator for RsyncNegotiator {
 
 impl ChecksumSeedExchanger for RsyncNegotiator {
     fn write_seed(&self, writer: &mut dyn Write, fixed_seed: Option<u32>) -> io::Result<i32> {
-        // upstream: options.c:835 - seed generation
+        // upstream: options.c:847 - seed generation
         let seed = match fixed_seed {
             Some(0) | None => {
                 use std::time::{SystemTime, UNIX_EPOCH};
