@@ -549,7 +549,7 @@ impl LocalCopySummary {
         created_stats: protocol::CreatedStats,
         file_type_totals: FileTypeTotals,
     ) -> Self {
-        // upstream: main.c:387-411 output_itemized_counts() - the "Number of
+        // upstream: main.c:429 output_itemized_counts() - the "Number of
         // files" line reports the total plus a per-type breakdown where the
         // regular-file count is the remainder (total minus dirs/links/devs/
         // specials). The receiver classifies the file list into these tallies
@@ -621,7 +621,7 @@ impl LocalCopySummary {
         created_stats: protocol::CreatedStats,
         file_type_totals: FileTypeTotals,
     ) -> Self {
-        // upstream: main.c:387-411 output_itemized_counts() - "Number of files"
+        // upstream: main.c:429 output_itemized_counts() - "Number of files"
         // reports the total plus a per-type breakdown where reg is the
         // remainder. The sender tallies the typed counts in send_file_entry()
         // (flist.c:421-438); reg is derived here so a push prints the same

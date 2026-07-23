@@ -94,7 +94,7 @@ mod send_debug_emission_tests {
 
     #[test]
     fn sender_finished_matches_upstream() {
-        // upstream: sender.c:445-446 - "sender finished %s%s%s"
+        // upstream: sender.c:477 - "sender finished %s%s%s"
         init_send_level1();
         let name = PathBuf::from("dir/file.txt");
         debug_log!(Send, 1, "sender finished {}", name.display());
@@ -107,7 +107,7 @@ mod send_debug_emission_tests {
 
     #[test]
     fn send_files_finished_matches_upstream() {
-        // upstream: sender.c:457-458 - "send files finished"
+        // upstream: sender.c:489 - "send files finished"
         init_send_level1();
         debug_log!(Send, 1, "send files finished");
         let msgs = send_messages();
