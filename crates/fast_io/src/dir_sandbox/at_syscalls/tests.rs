@@ -1396,6 +1396,92 @@ fn recursive_unlinkat_via_sandbox_or_fallback_with_no_sandbox_removes_tree() {
     assert!(!target.exists());
 }
 
+/// `true` when the test runs as root, in which case every permission
+/// bit is bypassed and the `DEL_NO_UID_WRITE` chmod-before-delete fix
+/// below is both meaningless and untestable.
+fn running_as_root() -> bool {
+    // SAFETY: `geteuid(2)` is a pure accessor with no arguments and no
+    // failure mode.
+    #[allow(unsafe_code)]
+    let euid = unsafe { libc::geteuid() };
+    euid == 0
+}
+
+// DEL_NO_UID_WRITE chmod-before-delete tests (upstream delete.c:100-101 /
+// 141-142): a directory we own but cannot write to must still be emptied
+// and removed under --delete rather than failing with EACCES.
+
+#[test]
+fn recursive_unlinkat_removes_owned_read_only_directory() {
+    if running_as_root() {
+        return;
+    }
+
+    let (_keep, root) = canonical_tempdir();
+    let tree = root.join("readonly");
+    std::fs::create_dir(&tree).expect("mkdir");
+    std::fs::write(tree.join("extraneous"), b"x").expect("write");
+    std::fs::set_permissions(&tree, std::fs::Permissions::from_mode(0o555)).expect("chmod 0555");
+
+    let sandbox = DirSandbox::open_root(&root).expect("sandbox");
+    let leaf = Path::new("readonly");
+    let result = recursive_unlinkat_via_sandbox_or_fallback(Some(&sandbox), &root, leaf, &tree);
+    // Defensive restore so a failed assertion below still leaves the
+    // tempdir removable by the `TempDir` drop.
+    let _ = std::fs::set_permissions(&tree, std::fs::Permissions::from_mode(0o755));
+
+    result.expect("a read-only owned directory must be removable, matching upstream");
+    assert!(!tree.exists(), "read-only directory must be gone");
+}
+
+#[test]
+fn recursive_unlinkat_removes_nested_owned_read_only_directory() {
+    // Exercises the recursive (non-top-level) call site: upstream's
+    // delete_dir_contents() chmods a doomed child before descending into
+    // it, not just the top-level delete_item() candidate.
+    if running_as_root() {
+        return;
+    }
+
+    let (_keep, root) = canonical_tempdir();
+    let tree = root.join("tree");
+    let nested = tree.join("readonly-child");
+    std::fs::create_dir_all(&nested).expect("mkdir -p");
+    std::fs::write(nested.join("extraneous"), b"x").expect("write");
+    std::fs::set_permissions(&nested, std::fs::Permissions::from_mode(0o555)).expect("chmod 0555");
+
+    let sandbox = DirSandbox::open_root(&root).expect("sandbox");
+    let leaf = Path::new("tree");
+    let result = recursive_unlinkat_via_sandbox_or_fallback(Some(&sandbox), &root, leaf, &tree);
+    let _ = std::fs::set_permissions(&nested, std::fs::Permissions::from_mode(0o755));
+
+    result.expect("a nested owned read-only directory must not block removal");
+    assert!(!tree.exists());
+}
+
+#[test]
+fn recursive_unlinkat_fallback_removes_owned_read_only_directory() {
+    // Same fix exercised through the no-sandbox std::fs::remove_dir_all
+    // retry path (recursive_unlinkat_via_sandbox_or_fallback's fallback
+    // arm).
+    if running_as_root() {
+        return;
+    }
+
+    let (_keep, root) = canonical_tempdir();
+    let tree = root.join("readonly");
+    std::fs::create_dir(&tree).expect("mkdir");
+    std::fs::write(tree.join("extraneous"), b"x").expect("write");
+    std::fs::set_permissions(&tree, std::fs::Permissions::from_mode(0o555)).expect("chmod 0555");
+
+    let result =
+        recursive_unlinkat_via_sandbox_or_fallback(None, &root, Path::new("readonly"), &tree);
+    let _ = std::fs::set_permissions(&tree, std::fs::Permissions::from_mode(0o755));
+
+    result.expect("the no-sandbox fallback must also honor DEL_NO_UID_WRITE");
+    assert!(!tree.exists());
+}
+
 // read_dir_via_sandbox_or_fallback tests (SEC-1.q2)
 
 fn collect_names(outcome: ReadDirOutcome) -> Vec<std::ffi::OsString> {
