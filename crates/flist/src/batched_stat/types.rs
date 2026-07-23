@@ -52,6 +52,11 @@ impl FstatResult {
         let rdev = stat_buf.st_rdev;
         #[cfg(not(target_os = "linux"))]
         let rdev: u64 = stat_buf.st_rdev.try_into().unwrap_or_default();
+        // st_nlink is u32 on aarch64 Linux (the cast is a no-op there) but u64 on
+        // x86_64 Linux and u16 on macOS, so `as u32` is required for portability;
+        // it only looks redundant on aarch64.
+        #[allow(clippy::unnecessary_cast)]
+        let nlink = stat_buf.st_nlink as u32;
         Self {
             mode: to_u32(stat_buf.st_mode),
             size: stat_buf.st_size as u64,
@@ -60,7 +65,7 @@ impl FstatResult {
             uid: stat_buf.st_uid,
             gid: stat_buf.st_gid,
             ino: stat_buf.st_ino,
-            nlink: stat_buf.st_nlink as u32,
+            nlink,
             rdev_major: rdev_major(rdev),
             rdev_minor: rdev_minor(rdev),
         }
