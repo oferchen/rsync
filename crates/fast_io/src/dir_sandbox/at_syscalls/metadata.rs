@@ -76,6 +76,13 @@ impl AtMetadata {
         widen_mode(self.stat.st_mode)
     }
 
+    /// Owning user id (`st_uid`). `uid_t` is `u32` on every supported
+    /// target, so no widening is needed.
+    #[must_use]
+    pub fn uid(&self) -> u32 {
+        self.stat.st_uid
+    }
+
     /// Size of the file in bytes (or the length of the symlink target
     /// when [`is_symlink`](Self::is_symlink) is `true`).
     #[must_use]

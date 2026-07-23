@@ -235,3 +235,39 @@ fn sandbox_off_fallback_matches_std_for_legitimate_delete() {
         .expect("recursive unlink fallback");
     assert!(!dir.exists(), "fallback recursive unlink must remove dir");
 }
+
+/// upstream: `delete.c:100-101`/`141-142` `DEL_NO_UID_WRITE` - a destination
+/// directory we own but cannot write to (no owner-write bit) must still be
+/// emptied and removed under `--delete`, via a proactive chmod +w rather
+/// than failing with `EACCES`. Exercised at the same sandbox anchor the
+/// receiver's `delete_extraneous_files` recursive branch uses.
+#[test]
+fn delete_removes_owned_read_only_directory_containing_extraneous_file() {
+    // SAFETY: geteuid(2) is a pure accessor; root bypasses every
+    // permission check, which would make this test meaningless.
+    #[allow(unsafe_code)]
+    let euid = unsafe { libc::geteuid() };
+    if euid == 0 {
+        return;
+    }
+
+    let (_keep, root) = canonical_tempdir();
+    let dir = root.join("readonly");
+    std::fs::create_dir(&dir).expect("mkdir readonly");
+    std::fs::write(dir.join("extraneous"), b"stale").expect("write extraneous");
+    std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o555)).expect("chmod 0555");
+
+    let sandbox = DirSandbox::open_root(&root).expect("sandbox");
+    let result = recursive_unlinkat_via_sandbox_or_fallback(
+        Some(&sandbox),
+        &root,
+        Path::new("readonly"),
+        &dir,
+    );
+    // Defensive restore so tempdir cleanup can proceed even if the
+    // assertion below fails.
+    let _ = std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o755));
+
+    result.expect("a read-only owned directory must be removable under --delete");
+    assert!(!dir.exists(), "read-only directory must be gone");
+}
