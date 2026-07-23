@@ -114,7 +114,7 @@ pub struct BeginMessage {
     ///
     /// # Upstream Reference
     ///
-    /// - `receiver.c:307-308` - `offset = sum.flength; do_lseek(fd, offset, SEEK_SET)`
+    /// - `receiver.c:372-373` - `offset = sum.flength; do_lseek(fd, offset, SEEK_SET)`
     pub append_offset: u64,
     /// Xattr list resolved from the wire protocol cache for this file.
     ///
@@ -187,7 +187,7 @@ pub struct CommitResult {
     ///
     /// # Upstream Reference
     ///
-    /// - `receiver.c:927-928`: `bitbag_set_bit(delayed_bits, ndx)`
+    /// - `receiver.c:1050-1051`: `bitbag_set_bit(delayed_bits, ndx)`
     pub delayed_path: Option<PathBuf>,
     /// Backup notice when `--backup` renamed a pre-existing file. The main
     /// thread emits this as `INFO_GTE(BACKUP, 1)` so the `--info=backup`

@@ -6,7 +6,7 @@
 //!
 //! # Buffer Recycling
 //!
-//! Mirrors upstream rsync's `simple_recv_token` (token.c:284) single-buffer
+//! Mirrors upstream rsync's `simple_recv_token` (token.c:285) single-buffer
 //! pattern. Buffers flow from the network thread to the disk thread and back
 //! through a return channel, avoiding per-chunk allocation.
 
@@ -25,7 +25,7 @@ use super::streaming::StreamingResult;
 
 /// Try to reuse a buffer returned by the disk thread, or allocate a new one.
 ///
-/// Mirrors upstream rsync's `simple_recv_token` (token.c:284) which uses a
+/// Mirrors upstream rsync's `simple_recv_token` (token.c:285) which uses a
 /// single static buffer. Here we recycle buffers through a return channel.
 #[inline]
 pub(super) fn recycle_or_alloc(
@@ -188,7 +188,7 @@ pub(super) fn process_remaining_tokens<R: Read>(
 
                     let block_data = basis_map.map_ptr(offset, bytes_to_copy)?;
 
-                    // upstream: token.c:631 - see_deflate_token() keeps the
+                    // upstream: token.c:685 - see_deflate_token() keeps the
                     // decompressor dictionary in sync after block matches.
                     token_reader.see_token(block_data)?;
 

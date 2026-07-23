@@ -231,7 +231,7 @@ impl ServerConfigBuilder {
     /// Forwarded to `ZSTD_c_nbWorkers` when zstd is the negotiated
     /// compression algorithm.
     ///
-    /// upstream: `options.c:89`, `token.c:701`
+    /// upstream: `options.c:89`, `token.c:749`
     pub fn compression_threads(&mut self, threads: Option<std::num::NonZeroU8>) -> &mut Self {
         self.connection.compression_threads = threads;
         self
@@ -500,7 +500,7 @@ impl ServerConfigBuilder {
     ///
     /// # Upstream Reference
     ///
-    /// - `clientserver.c:1106-1107` - daemon `fake super = yes` demotes
+    /// - `clientserver.c:1120-1121` - daemon `fake super = yes` demotes
     ///   `am_root` and forces `--fake-super` semantics on the receiver
     /// - `loadparm.c` - `fake super` module parameter
     pub fn fake_super(&mut self, enabled: bool) -> &mut Self {
@@ -551,8 +551,8 @@ impl ServerConfigBuilder {
     ///
     /// - `clientserver.c:992-1004` - daemon resolves `munge_symlinks` from
     ///   `lp_munge_symlinks()` and the `use_chroot` auto default.
-    /// - `flist.c:222-226` - sender-side strip.
-    /// - `flist.c:1122-1126` - receiver-side prepend.
+    /// - `flist.c:234-238` - sender-side strip.
+    /// - `flist.c:1150-1154` - receiver-side prepend.
     pub fn munge_symlinks(&mut self, enabled: bool) -> &mut Self {
         self.munge_symlinks = enabled;
         self

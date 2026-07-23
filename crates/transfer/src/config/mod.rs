@@ -37,7 +37,7 @@ pub struct WriteConfig {
     /// # Upstream Reference
     ///
     /// - `compat.c:777-778`: `if (compat_flags & CF_INPLACE_PARTIAL_DIR) inplace_partial = 1;`
-    /// - `receiver.c:797`: `one_inplace = inplace_partial && fnamecmp_type == FNAMECMP_PARTIAL_DIR;`
+    /// - `receiver.c:910`: `one_inplace = inplace_partial && fnamecmp_type == FNAMECMP_PARTIAL_DIR;`
     pub inplace_partial: bool,
     /// Write data to device files instead of creating with mknod (`--write-devices`).
     pub write_devices: bool,
@@ -50,7 +50,7 @@ pub struct WriteConfig {
     ///
     /// # Upstream Reference
     ///
-    /// - `options.c:2934-2935`: `--delay-updates` option handling
+    /// - `options.c:2891-2892`: `--delay-updates` option handling
     /// - `receiver.c`: deferred rename sweep at end of transfer
     pub delay_updates: bool,
     /// Policy controlling io_uring usage for file I/O.
@@ -170,7 +170,7 @@ pub struct ConnectionConfig {
     /// # Upstream Reference
     ///
     /// - `compat.c:543`: compression vstrings skipped when compress_choice is set
-    /// - `options.c:2800-2805`: `--compress-choice=ALGO` sent as long-form arg
+    /// - `options.c:2818-2823`: `--compress-choice=ALGO` sent as long-form arg
     pub compress_choice: Option<protocol::CompressionAlgorithm>,
     /// Worker thread count for zstd's `ZSTD_c_nbWorkers` (`--compress-threads=N`).
     ///
@@ -181,7 +181,7 @@ pub struct ConnectionConfig {
     /// # Upstream Reference
     ///
     /// - `options.c:89`: `do_compression_threads` global
-    /// - `token.c:701`: `ZSTD_CCtx_setParameter(.., ZSTD_c_nbWorkers, ..)`
+    /// - `token.c:749`: `ZSTD_CCtx_setParameter(.., ZSTD_c_nbWorkers, ..)`
     pub compression_threads: Option<std::num::NonZeroU8>,
     /// Whole-stream compression store triggered by a daemon module's
     /// `dont compress = *` (upstream's match-all special case).
@@ -215,7 +215,7 @@ pub struct ConnectionConfig {
     /// # Upstream Reference
     ///
     /// - `io.c:forward_filesfrom_data()` - forwards local file to socket
-    /// - `main.c:1354-1356` - `start_filesfrom_forwarding(filesfrom_fd)`
+    /// - `main.c:1372-1374` - `start_filesfrom_forwarding(filesfrom_fd)`
     pub files_from_data: Option<Vec<u8>>,
     /// Remote source arguments the client requested on a pull, recorded as
     /// implied includes to validate the received file list (CVE-2022-29154).
@@ -350,7 +350,7 @@ pub struct ServerConfig {
     ///
     /// # Upstream Reference
     ///
-    /// - `options.c:835`: `--checksum-seed=NUM`
+    /// - `options.c:847`: `--checksum-seed=NUM`
     /// - `compat.c:750`: `checksum_seed = (int32)time(NULL);` (default)
     pub checksum_seed: Option<u32>,
     /// Optional checksum algorithm override from `--checksum-choice`.
@@ -371,7 +371,7 @@ pub struct ServerConfig {
     ///
     /// # Upstream Reference
     ///
-    /// - `flist.c:757`: `clean_fname(thisname, CFN_REFUSE_DOT_DOT_DIRS)`
+    /// - `flist.c:769`: `clean_fname(thisname, CFN_REFUSE_DOT_DOT_DIRS)`
     /// - `options.c:797`: `--trust-sender` option definition
     /// - `options.c:2493`: trust_sender logic for args and filter
     pub trust_sender: bool,
@@ -398,7 +398,7 @@ pub struct ServerConfig {
     ///
     /// # Upstream Reference
     ///
-    /// - `flist.c:2991`: `if (use_qsort) qsort(...); else merge_sort(...);`
+    /// - `flist.c:1787`: `if (use_qsort) qsort(...); else merge_sort(...);`
     /// - `options.c`: `--qsort` flag definition
     pub qsort: bool,
     /// Whether `--partial-dir` is configured on the client.
@@ -410,7 +410,7 @@ pub struct ServerConfig {
     /// # Upstream Reference
     ///
     /// - `compat.c:777-778`: `if (compat_flags & CF_INPLACE_PARTIAL_DIR) inplace_partial = 1;`
-    /// - `receiver.c:797`: `one_inplace = inplace_partial && fnamecmp_type == FNAMECMP_PARTIAL_DIR;`
+    /// - `receiver.c:910`: `one_inplace = inplace_partial && fnamecmp_type == FNAMECMP_PARTIAL_DIR;`
     pub has_partial_dir: bool,
     /// Directory path for storing partial files on interrupt (`--partial-dir=DIR`).
     ///
@@ -430,7 +430,7 @@ pub struct ServerConfig {
     ///
     /// # Upstream Reference
     ///
-    /// - `options.c:2854-2870`: `--backup-dir=DIR` server option
+    /// - `options.c:2805-2809`: `--backup-dir=DIR` server option
     pub backup_dir: Option<String>,
     /// Backup file suffix (long-form `--backup-suffix=SUFFIX`).
     ///
@@ -439,7 +439,7 @@ pub struct ServerConfig {
     ///
     /// # Upstream Reference
     ///
-    /// - `options.c:2871-2876`: `--backup-suffix=SUFFIX` server option
+    /// - `options.c:2812-2813`: `--backup-suffix=SUFFIX` server option
     pub backup_suffix: Option<String>,
     /// Daemon-side filter rules from module configuration.
     ///
@@ -462,8 +462,8 @@ pub struct ServerConfig {
     ///
     /// # Upstream Reference
     ///
-    /// - `options.c:2046-2048`: `do_stats` sets `info_levels[INFO_STATS]` to 2+
-    /// - `generator.c:2377,2422`: `INFO_GTE(STATS, 2)` gates `write_del_stats()`
+    /// - `options.c:2064-2066`: `do_stats` sets `info_levels[INFO_STATS]` to 2+
+    /// - `generator.c:2393,2438`: `INFO_GTE(STATS, 2)` gates `write_del_stats()`
     pub do_stats: bool,
     /// Temporary directory for receiving files before final placement.
     ///
@@ -476,7 +476,7 @@ pub struct ServerConfig {
     ///
     /// # Upstream Reference
     ///
-    /// - `options.c:2907-2909`: `--temp-dir` server option
+    /// - `options.c:2924-2927`: `--temp-dir` server option
     /// - `receiver.c:766`: `open_tmpfile()` uses `tmpdir` when set
     /// - `loadparm.c`: `temp dir` daemon module parameter
     pub temp_dir: Option<std::path::PathBuf>,
@@ -497,7 +497,7 @@ pub struct ServerConfig {
     ///
     /// # Upstream Reference
     ///
-    /// - `clientserver.c:1106-1107` - daemon `fake super = yes` demotes
+    /// - `clientserver.c:1120-1121` - daemon `fake super = yes` demotes
     ///   `am_root` and forces `--fake-super` semantics on the receiver
     /// - `loadparm.c` - `fake super` module parameter
     /// - `rsync.c:set_file_attrs()` - fake-super stores ownership in xattrs
@@ -589,8 +589,8 @@ pub struct ServerConfig {
     ///
     /// - `clientserver.c:992-1004` - daemon sets `munge_symlinks` from
     ///   `lp_munge_symlinks()`.
-    /// - `flist.c:222-226` - sender strips the prefix.
-    /// - `flist.c:1122-1126` - receiver prepends the prefix.
+    /// - `flist.c:234-238` - sender strips the prefix.
+    /// - `flist.c:1150-1154` - receiver prepends the prefix.
     pub munge_symlinks: bool,
 }
 
@@ -638,7 +638,7 @@ impl ServerConfig {
     ///
     /// # Upstream Reference
     ///
-    /// - `options.c:2278-2279`: `backup_suffix = backup_dir ? "" : BACKUP_SUFFIX`
+    /// - `options.c:2296-2297`: `backup_suffix = backup_dir ? "" : BACKUP_SUFFIX`
     pub fn effective_backup_suffix(&self) -> &str {
         match self.backup_suffix.as_deref() {
             Some(s) => s,
@@ -888,7 +888,7 @@ mod tests {
 
     #[test]
     fn effective_backup_suffix_empty_when_backup_dir_set() {
-        // upstream: options.c:2278-2279 - backup_suffix = backup_dir ? "" : BACKUP_SUFFIX
+        // upstream: options.c:2296-2297 - backup_suffix = backup_dir ? "" : BACKUP_SUFFIX
         let config = ServerConfig {
             backup_dir: Some(".backups".to_owned()),
             ..Default::default()

@@ -47,7 +47,7 @@ pub enum PartialMode {
 /// # Upstream Reference
 ///
 /// - `backup.c:make_backup()` - renames existing file to backup path
-/// - `options.c:2854-2876` - `--backup`, `--backup-dir`, `--suffix`
+/// - `options.c:2805-2813` - `--backup`, `--backup-dir`, `--suffix`
 #[derive(Debug, Clone)]
 pub struct BackupConfig {
     /// Destination root directory for computing relative backup paths.
@@ -183,8 +183,8 @@ pub struct DiskCommitConfig {
     /// # Upstream Reference
     ///
     /// - `receiver.c:546-547`: `delayed_bits = bitbag_create()`
-    /// - `receiver.c:906-929`: staging to partial dir when `delay_updates`
-    /// - `receiver.c:584-585`: `handle_delayed_updates()` at phase 2
+    /// - `receiver.c:1029-1052`: staging to partial dir when `delay_updates`
+    /// - `receiver.c:694-695`: `handle_delayed_updates()` at phase 2
     pub delay_updates: bool,
     /// Whether `--append-verify` (append_mode == 2) is active for the session.
     ///
