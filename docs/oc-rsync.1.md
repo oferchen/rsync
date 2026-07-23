@@ -46,7 +46,7 @@ rsync without conflict.
 ## Protocol Compatibility
 
 **oc-rsync** supports rsync protocol versions 28 through 32 and has been
-validated against upstream rsync versions 3.0.9, 3.1.3, 3.4.1, and 3.4.2.
+validated against upstream rsync versions 3.0.9, 3.1.3, and 3.4.4.
 Incremental recursion, checksum negotiation (including XXH3 and XXH128),
 and all standard wire-format features are supported.
 
@@ -59,8 +59,7 @@ and transfer-mode combinations:
 | 2.6.9          | 29       | pull (daemon)            | non-blocking (RP28.d) |
 | 3.0.9          | 30       | push, pull, daemon       | gating |
 | 3.1.3          | 31       | push, pull, daemon       | gating |
-| 3.4.1          | 32       | push, pull, daemon, SSH  | gating |
-| 3.4.2          | 32       | push, pull, daemon       | gating |
+| 3.4.4          | 32       | push, pull, daemon, SSH  | gating |
 
 Wire format is verified byte-identical to upstream rsync via CI golden-byte
 tests for the listed versions. Other versions may work but are not
@@ -298,7 +297,7 @@ NEON) are used where available, with automatic scalar fallbacks.
     that does not resolve locally, see `docs/user-guide/acl-id-mapping.md`.
     Since PR #4742 (commit `07f81641f`), unmappable named entries are
     preserved with their raw wire id rather than silently dropped, matching
-    upstream rsync 3.4.2 `acls.c::recv_ida_entries`.
+    upstream rsync 3.4.4 `acls.c::recv_ida_entries`.
 
     On Windows, **--acls** preserves the NTFS discretionary ACL (DACL) via
     `GetNamedSecurityInfoW`/`SetNamedSecurityInfoW`. The Windows path is a
@@ -1336,8 +1335,7 @@ partial file does not occupy the final destination path.
 - Upstream rsync 2.6.9 (protocol 29) - daemon push/pull validated via RP28 series
 - Upstream rsync 3.0.9 (protocol 30)
 - Upstream rsync 3.1.3 (protocol 31)
-- Upstream rsync 3.4.1 (protocol 32)
-- Upstream rsync 3.4.2 (protocol 32)
+- Upstream rsync 3.4.4 (protocol 32)
 
 Both as a client connecting to upstream rsync servers and as a server
 accepting connections from upstream rsync clients.
