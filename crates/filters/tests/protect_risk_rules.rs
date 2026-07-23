@@ -192,8 +192,40 @@ fn included_protected_file() {
     // File is included for transfer (include matches first)
     assert!(set.allows(Path::new("config.yaml"), false));
 
-    // And protected from deletion
-    assert!(!set.allows_deletion(Path::new("config.yaml"), false));
+    // upstream: check_filter() is one first-match-wins pass; the leading
+    // `+ config.yaml` matches first and returns include, so the entry is
+    // deletable - the trailing `P config.yaml` is unreachable.
+    assert!(set.allows_deletion(Path::new("config.yaml"), false));
+}
+
+/// Deletion resolves include/exclude and protect/risk in a single
+/// source-ordered first-match-wins pass, exactly like upstream
+/// `exclude.c:check_filter()` (`ent->rflags & FILTRULE_INCLUDE ? 1 : -1`).
+/// Whichever rule is written first decides - the rule *kind* does not grant
+/// priority. Verified against rsync 3.4.4: `+ foo` / `- *` / `P foo` with
+/// `--delete` deletes `foo` (include wins) and keeps `other` (exclude
+/// protects); moving `P foo` ahead of `+ foo` keeps `foo` instead.
+#[test]
+fn deletion_first_match_wins_across_include_and_protect() {
+    // Include before protect: the include is first, so `foo` is deletable.
+    let include_first = FilterSet::from_rules([
+        FilterRule::include("foo"),
+        FilterRule::exclude("*"),
+        FilterRule::protect("foo"),
+    ])
+    .unwrap();
+    assert!(include_first.allows_deletion(Path::new("foo"), false));
+    // A sibling with no include falls to `- *` and is protected from deletion.
+    assert!(!include_first.allows_deletion(Path::new("other"), false));
+
+    // Protect before include: the protect is first, so `foo` is protected.
+    let protect_first = FilterSet::from_rules([
+        FilterRule::protect("foo"),
+        FilterRule::include("foo"),
+        FilterRule::exclude("*"),
+    ])
+    .unwrap();
+    assert!(!protect_first.allows_deletion(Path::new("foo"), false));
 }
 
 /// Verifies protect rules are receiver-side only by default.

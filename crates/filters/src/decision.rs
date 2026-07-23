@@ -212,6 +212,22 @@ impl FilterSetInner {
             }
         }
 
+        // upstream: exclude.c:1038 check_filter() walks ONE list first-match-wins
+        // and returns `ent->rflags & FILTRULE_INCLUDE ? 1 : -1`. oc partitions
+        // that list into the include/exclude and protect/risk chains, so combine
+        // their two receiver-side first-matches back into a single source-ordered
+        // pass: the earlier-defined rule decides. An include/risk (`+`/`R`) makes
+        // the entry deletable, an exclude/protect (`-`/`P`) protects it, and no
+        // match at all leaves it deletable (check_filter returns 0). This is the
+        // authoritative deletion verdict; the split `transfer_allowed && !protected`
+        // fallback stays only for decisions produced outside the Deletion context.
+        if for_deletion {
+            decision.deletion_override = Some(deletion_first_match_deletable(
+                transfer_rule,
+                protection_rule,
+            ));
+        }
+
         decision
     }
 
@@ -343,6 +359,34 @@ where
     })
 }
 
+/// Merges the include/exclude and protect/risk first-matches into the single
+/// source-ordered verdict upstream's `check_filter()` produces for deletion.
+///
+/// Upstream keeps every rule in one list and returns on the first match with
+/// `rflags & FILTRULE_INCLUDE ? 1 : -1` (exclude.c:1060). oc splits the list
+/// into two chains, so the earlier-defined of the two first-matches (by
+/// [`CompiledRule::order`]) is the one upstream would have hit first. A rule
+/// carrying the include flag (`+` include or `R` risk) makes the entry
+/// deletable; an exclude (`-`) or protect (`P`) protects it. When neither chain
+/// matches, `check_filter` returns 0 and the entry is deletable by default.
+///
+/// upstream: exclude.c:check_filter()
+fn deletion_first_match_deletable(
+    include_exclude: Option<&CompiledRule>,
+    protect_risk: Option<&CompiledRule>,
+) -> bool {
+    let winner = match (include_exclude, protect_risk) {
+        (Some(ie), Some(pr)) => Some(if ie.order <= pr.order { ie } else { pr }),
+        (Some(ie), None) => Some(ie),
+        (None, Some(pr)) => Some(pr),
+        (None, None) => None,
+    };
+    match winner {
+        None => true,
+        Some(rule) => matches!(rule.action, FilterAction::Include | FilterAction::Risk),
+    }
+}
+
 /// Resolves the winning include/exclude rule for a single-path Transfer query,
 /// gating the synthetic descendant matchers by upstream's subtree-pruning rule.
 ///
@@ -441,6 +485,12 @@ pub(crate) struct FilterDecision {
     transfer_allowed: bool,
     protected: bool,
     excluded_for_delete_excluded: bool,
+    /// Unified deletion verdict for decisions produced in the
+    /// [`Deletion`](DecisionContext::Deletion) context, computed as a single
+    /// source-ordered first-match over both rule chains (upstream
+    /// `check_filter()`). `None` for Transfer-context decisions, where deletion
+    /// is not queried and `allows_deletion` falls back to the split formula.
+    deletion_override: Option<bool>,
 }
 
 impl FilterDecision {
@@ -451,10 +501,18 @@ impl FilterDecision {
 
     /// Returns `true` if the path may be deleted on the receiver.
     ///
-    /// Deletion requires both that the path is included (not excluded by
-    /// receiver-side rules) and that no protect rule matches.
+    /// For decisions produced in the Deletion context this is the unified
+    /// source-ordered first-match verdict ([`deletion_override`]), matching
+    /// upstream `check_filter()`. The split `transfer_allowed && !protected`
+    /// formula remains only as the fallback for decisions built in other
+    /// contexts, where `deletion_override` is unset.
+    ///
+    /// [`deletion_override`]: FilterDecision::deletion_override
     pub(crate) const fn allows_deletion(self) -> bool {
-        self.transfer_allowed && !self.protected
+        match self.deletion_override {
+            Some(deletable) => deletable,
+            None => self.transfer_allowed && !self.protected,
+        }
     }
 
     /// Returns `true` if the path may be removed during `--delete-excluded`.
@@ -482,6 +540,7 @@ impl Default for FilterDecision {
             transfer_allowed: true,
             protected: false,
             excluded_for_delete_excluded: false,
+            deletion_override: None,
         }
     }
 }
@@ -521,6 +580,7 @@ mod tests {
             transfer_allowed: false,
             protected: false,
             excluded_for_delete_excluded: false,
+            deletion_override: None,
         };
         assert!(!decision.allows_transfer());
         assert!(!decision.allows_deletion());
@@ -532,6 +592,7 @@ mod tests {
             transfer_allowed: false,
             protected: false,
             excluded_for_delete_excluded: true,
+            deletion_override: None,
         };
         assert!(decision.allows_deletion_when_excluded_removed());
     }
@@ -542,6 +603,7 @@ mod tests {
             transfer_allowed: false,
             protected: true,
             excluded_for_delete_excluded: true,
+            deletion_override: None,
         };
         assert!(!decision.allows_deletion_when_excluded_removed());
     }
