@@ -93,14 +93,21 @@ impl WorkQueueReceiver {
                         std::hash::Hash::hash(&id, &mut hasher);
                         std::hash::Hasher::finish(&hasher) as usize
                     });
-                    shards[idx % num_shards].lock().unwrap().push(result);
+                    shards[idx % num_shards]
+                        .lock()
+                        .expect("delta-drain shard mutex poisoned")
+                        .push(result);
                 });
             }
         });
 
         shards
             .into_iter()
-            .flat_map(|shard| shard.into_inner().unwrap())
+            .flat_map(|shard| {
+                shard
+                    .into_inner()
+                    .expect("delta-drain shard mutex poisoned")
+            })
             .collect()
     }
 

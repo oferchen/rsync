@@ -1,6 +1,7 @@
 #![cfg_attr(not(test), deny(unsafe_code))]
 #![deny(missing_docs)]
 #![deny(rustdoc::broken_intra_doc_links)]
+#![cfg_attr(not(test), warn(clippy::unwrap_used))]
 
 //! Transfer engine - delta pipeline, local-copy executor, and sparse I/O.
 //!

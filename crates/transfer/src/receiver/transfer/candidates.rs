@@ -131,7 +131,8 @@ impl ReceiverContext {
                 // upstream: receiver.c:711-716 - check_filter(&daemon_filter_list, ...)
                 // rejects daemon-excluded files before accepting transfer data.
                 if has_daemon_filters {
-                    let filters = daemon_filters.unwrap();
+                    let filters =
+                        daemon_filters.expect("daemon_filters is Some when has_daemon_filters");
                     let name = e.name();
                     if name != "." && !filters.allows(Path::new(name), false) {
                         stats.files_skipped += 1;
@@ -139,7 +140,7 @@ impl ReceiverContext {
                     }
                 }
                 if has_failed_dirs {
-                    let fd = failed_dirs.unwrap();
+                    let fd = failed_dirs.expect("failed_dirs is Some when has_failed_dirs");
                     if let Some(failed_parent) = fd.failed_ancestor(e.name()) {
                         if verbose_client {
                             info_log!(

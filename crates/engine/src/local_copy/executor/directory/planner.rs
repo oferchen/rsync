@@ -643,7 +643,9 @@ fn plan_directory_entries_with_prefetch<'a>(
                     }
                     Err(_) if context.copy_links_enabled() => {
                         // Re-fetch to get the actual error for reporting
-                        return Err(follow_symlink_metadata(entry.path.as_path()).unwrap_err());
+                        return Err(follow_symlink_metadata(entry.path.as_path()).expect_err(
+                            "metadata re-fetch of a just-failed symlink path fails again",
+                        ));
                     }
                     Err(_) => {}
                 }

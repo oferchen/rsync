@@ -376,7 +376,10 @@ pub(in crate::disk_commit) fn process_file(
                 let metadata_error = if outcome.delayed_path.is_some() {
                     // upstream: receiver.c:1047 - finish_transfer(partialptr, ...)
                     // applies metadata to the staged partial file.
-                    let staged = outcome.delayed_path.as_ref().unwrap();
+                    let staged = outcome
+                        .delayed_path
+                        .as_ref()
+                        .expect("delayed_path is Some on the staged-partial path");
                     apply_file_metadata(staged, &begin, config)
                 } else if needs_rename && !outcome.was_copy {
                     pre_meta_error
@@ -568,7 +571,10 @@ pub(in crate::disk_commit) fn process_whole_file(
     }
 
     let metadata_error = if outcome.delayed_path.is_some() {
-        let staged = outcome.delayed_path.as_ref().unwrap();
+        let staged = outcome
+            .delayed_path
+            .as_ref()
+            .expect("delayed_path checked is_some above");
         apply_file_metadata(staged, &begin, config)
     } else if needs_rename && !outcome.was_copy {
         pre_meta_error
