@@ -16,13 +16,21 @@ use std::os::fd::AsRawFd;
 use std::os::fd::BorrowedFd;
 use std::os::unix::ffi::{OsStrExt, OsStringExt};
 use std::path::Path;
+use std::sync::OnceLock;
 
 use super::errno_location;
 use super::lstat::single_component_leaf;
-use super::metadata::fstatat_nofollow;
+use super::metadata::{AtMetadata, fstatat_nofollow};
+use super::metadata_ops::fchmodat;
 use super::nested::{ParentAnchor, anchor_parent};
 use super::open::openat;
 use std::ffi::CString;
+
+/// Owner write bit (`S_IWUSR`). A plain `u32` constant rather than
+/// `libc::S_IWUSR` (whose type varies by target) sidesteps a
+/// platform-conditional cast, matching the existing convention in
+/// `metadata::chmod`.
+const S_IWUSR: u32 = 0o200;
 
 /// Selector for [`unlinkat`].
 ///
@@ -220,10 +228,59 @@ pub fn recursive_unlinkat_via_sandbox_or_fallback(
     {
         return recursive_unlinkat(dirfd.as_fd(), name);
     }
+    remove_dir_all_with_uid_write_fix(target_path)
+}
+
+/// Path-based sibling of the dirfd-anchored recursive removal above, used
+/// only when no sandbox could resolve `target_path`.
+///
+/// Tries the plain `remove_dir_all` first so the common (already-writable)
+/// case pays no extra syscalls. On `EACCES` - which upstream avoids by
+/// proactively chmodding `DEL_NO_UID_WRITE` candidates before ever
+/// attempting the unlink (`delete.c:100-101`/`141-142`) - this walks the
+/// subtree once, grants owner-write on every directory this process owns
+/// but cannot write to, and retries exactly once. Best-effort: a failed
+/// chmod during the walk is swallowed and surfaces later as the retry's
+/// own `EACCES`.
+fn remove_dir_all_with_uid_write_fix(target_path: &Path) -> io::Result<()> {
     match std::fs::remove_dir_all(target_path) {
         Ok(()) => Ok(()),
         Err(err) if err.kind() == io::ErrorKind::NotFound => Ok(()),
+        Err(err) if err.kind() == io::ErrorKind::PermissionDenied => {
+            fix_uid_write_recursive(target_path);
+            match std::fs::remove_dir_all(target_path) {
+                Ok(()) => Ok(()),
+                Err(err) if err.kind() == io::ErrorKind::NotFound => Ok(()),
+                Err(err) => Err(err),
+            }
+        }
         Err(err) => Err(err),
+    }
+}
+
+/// Grants owner-write on `path` and every directory beneath it that this
+/// process owns but cannot write to, mirroring the dirfd-anchored check in
+/// [`recursive_unlinkat_inner`]. A symlink is never followed (`is_dir()` on
+/// [`std::fs::symlink_metadata`] is `false` for a symlink regardless of its
+/// target), matching the dirfd path's `O_NOFOLLOW` descent.
+fn fix_uid_write_recursive(path: &Path) {
+    use std::os::unix::fs::{MetadataExt, PermissionsExt};
+
+    let Ok(meta) = std::fs::symlink_metadata(path) else {
+        return;
+    };
+    if !meta.is_dir() {
+        return;
+    }
+    if meta.mode() & S_IWUSR == 0 && effective_uid() != 0 && meta.uid() == effective_uid() {
+        let mode = meta.mode() | S_IWUSR;
+        let _ = std::fs::set_permissions(path, std::fs::Permissions::from_mode(mode));
+    }
+    let Ok(entries) = std::fs::read_dir(path) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        fix_uid_write_recursive(&entry.path());
     }
 }
 
@@ -257,6 +314,34 @@ pub fn recursive_unlinkat(parent_dirfd: BorrowedFd<'_>, leaf: &OsStr) -> io::Res
     recursive_unlinkat_inner(parent_dirfd, leaf, &mut visited)
 }
 
+/// Caches the process effective uid (`geteuid(2)` never changes for the
+/// life of the process absent a `setuid` call this codebase never makes).
+fn effective_uid() -> u32 {
+    static EUID: OnceLock<u32> = OnceLock::new();
+    *EUID.get_or_init(|| {
+        // SAFETY: `geteuid(2)` is a pure accessor with no arguments and no
+        // failure mode.
+        #[allow(unsafe_code)]
+        unsafe {
+            libc::geteuid()
+        }
+    })
+}
+
+/// Reports whether `meta` needs the upstream `DEL_NO_UID_WRITE` chmod: it
+/// lacks the owner-write bit, we own it, and we are not root (root can
+/// always write regardless of the mode bit, so upstream never bothers).
+///
+/// # Upstream Reference
+///
+/// - `delete.c:100` / `generator.c:342` -
+///   `!(fp->mode & S_IWUSR) && !am_root && fp->flags & FLAG_OWNED_BY_US`
+/// - `flist.c:1513-1514` - `FLAG_OWNED_BY_US` is set when
+///   `am_generator && st.st_uid == our_uid`.
+fn needs_uid_write_fix(meta: &AtMetadata) -> bool {
+    meta.mode() & S_IWUSR == 0 && effective_uid() != 0 && meta.uid() == effective_uid()
+}
+
 /// Inner recursive walker shared by the public entry point and the
 /// per-entry subdir recursion. Threads the cycle-detection set through
 /// each descent level so a `(dev, ino)` we have already entered aborts
@@ -288,6 +373,26 @@ fn recursive_unlinkat_inner(
     let key = (leaf_meta.dev(), leaf_meta.ino());
     if !visited.insert(key) {
         return Err(io::Error::from_raw_os_error(libc::ELOOP));
+    }
+
+    // upstream: delete.c:100-101 `delete_dir_contents()` chmods a doomed
+    // directory it owns but cannot write to (mode lacks S_IWUSR) before
+    // descending into it, and delete.c:141-142 `delete_item()` does the
+    // same for the top-level candidate before recursing. This function
+    // serves both call sites (it is entered once for the top-level
+    // directory and again for every nested subdirectory), so a single
+    // check here covers both. The result is ignored, matching upstream's
+    // unchecked `do_chmod_at()` call - a failed chmod just means the
+    // subsequent unlinks fail with their own `EACCES`, same as if this
+    // were never attempted. Only directories are load-bearing: unlink(2)
+    // permission is governed by the *containing* directory's mode, not
+    // the removed entry's own mode, so a read-only file being deleted
+    // does not need this fix (upstream's identical file-side chmod is a
+    // no-op under POSIX unlink semantics). `leaf` is always a directory
+    // here - the `openat` above used `O_DIRECTORY` and would have failed
+    // with `ENOTDIR` otherwise.
+    if needs_uid_write_fix(&leaf_meta) {
+        let _ = fchmodat(parent_dirfd, leaf, leaf_meta.mode() | S_IWUSR, false);
     }
 
     // Step 3a: drain the children. Names are collected up-front so the
