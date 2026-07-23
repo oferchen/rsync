@@ -29,8 +29,11 @@
 //! the destination.
 //!
 //! Attack case: application through a parent component that is a symlink to an
-//! out-of-module directory must error, and the file outside the module must
-//! be untouched.
+//! out-of-module directory must never touch the file outside the module. The
+//! timestamp case and the root-chown case observe this as an error from the
+//! sandbox refusal; the non-root chown case observes it as a skipped chown
+//! (no privilege to set the target uid in the first place), but the outside
+//! file is untouched either way.
 
 #![cfg(unix)]
 
@@ -216,17 +219,20 @@ fn receiver_chown_succeeds_on_clean_path() {
 }
 
 /// Attack path: an attacker swaps a symlink into the immediate parent
-/// component pointing outside the module. The receiver chown must refuse the
-/// syscall (the sandbox-anchored `secure_open_dir` rejects the symlinked
-/// parent) before any `fchownat` fires, and the outside file's owner must be
-/// unchanged.
+/// component pointing outside the module. The out-of-module file's owner
+/// must never become the attempted foreign uid, whichever layer stops the
+/// attempt.
 ///
-/// The `--chown` targets a foreign uid the caller cannot own. Pre-fix the
-/// path-based `fchownat(AT_FDCWD, ...)` follows the symlinked parent: as root
-/// it reowns `outside/sentinel` (apply returns `Ok`, `expect_err` panics); as
-/// a normal user it fails with `EPERM` (not the expected `ELOOP`), so the
-/// errno assertion fails. Post-fix `secure_chown_at` refuses the symlinked
-/// parent before any `fchownat` fires, regardless of privilege.
+/// The `--chown` targets a foreign uid the caller cannot own. As root the
+/// GAP-M8 privilege gate is a no-op (upstream's `am_root` check passes), so
+/// `fchownat` is actually attempted and `secure_chown_at`'s `secure_open_dir`
+/// anchor must refuse the symlinked parent (ELOOP/EXDEV/ENOTDIR) before any
+/// syscall fires. As a non-root caller, upstream never attempts a chown to a
+/// uid it cannot own in the first place (`change_uid = am_root && ...`,
+/// rsync.c:526), so `gate_preserved_owner` skips the chown before
+/// `secure_chown_at` is ever reached and the call succeeds with the
+/// destination untouched - the sandbox is simply never exercised because
+/// there is nothing left to attempt.
 #[test]
 fn receiver_chown_refuses_symlinked_parent_component() {
     let (_keep, root) = canonical_tempdir();
@@ -240,9 +246,16 @@ fn receiver_chown_refuses_symlinked_parent_component() {
         .preserve_permissions(false)
         .preserve_times(false)
         .with_owner_override(Some(FOREIGN_UID));
-    let err = apply_file_metadata_with_options(&attack_dest, &source_meta, &options)
-        .expect_err("chown through symlinked parent must error");
-    assert_refused(&err, "secure_chown_at");
+    let result = apply_file_metadata_with_options(&attack_dest, &source_meta, &options);
+
+    if rustix::process::geteuid().is_root() {
+        let err = result.expect_err("chown through symlinked parent must error");
+        assert_refused(&err, "secure_chown_at");
+    } else {
+        result.expect(
+            "a non-root chown to an unreachable uid must be skipped before secure_chown_at is ever reached",
+        );
+    }
 
     let owner_after = fs::symlink_metadata(&outside_target)
         .expect("sentinel meta")
