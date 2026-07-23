@@ -22,7 +22,7 @@
 //! # Upstream Reference
 //!
 //! - `token.c:271` - `recv_token()` dispatch
-//! - `token.c:284` - `simple_recv_token()` plain format
+//! - `token.c:285` - `simple_recv_token()` plain format
 //! - `token.c:500` - `recv_deflated_token()` compressed format
 
 use std::io::{self, Read};
@@ -173,7 +173,7 @@ impl TokenReader {
     ///
     /// # Upstream Reference
     ///
-    /// - `token.c:631` - `see_deflate_token()` called after each block match
+    /// - `token.c:685` - `see_deflate_token()` called after each block match
     ///
     /// # Errors
     ///

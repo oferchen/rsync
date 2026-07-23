@@ -188,7 +188,7 @@ fn open_tmpfile_inner(
                 // parent chain at temp-file open time; a missing destination
                 // ancestor is a hard error (`mkstemp %s failed`). In-tree
                 // subdirectories are created up-front by the receiver's
-                // directory pass (generator.c:1317-1326 / create_directories),
+                // directory pass (generator.c:1329-1338 / create_directories),
                 // and the dest-arg path is created only under `--mkpath` in
                 // `ensure_dest_root_exists` (upstream main.c:736). Auto-creating
                 // here would resurrect the no-`--mkpath` deep-path bug, so we

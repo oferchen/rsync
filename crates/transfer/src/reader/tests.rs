@@ -176,7 +176,7 @@ fn multiplex_reader_buffered_partial_read() {
 
 #[test]
 fn multiplex_reader_accumulates_msg_io_error() {
-    // upstream: io.c:1521-1526
+    // upstream: io.c:1542-1547
     let mut stream = Vec::new();
 
     let io_err_val: i32 = 1; // IOERR_GENERAL
@@ -222,7 +222,7 @@ fn multiplex_reader_accumulates_msg_io_error() {
 
 #[test]
 fn multiplex_reader_io_error_wrong_payload_length_ignored() {
-    // upstream: io.c:1522 `if (msg_bytes != 4) goto invalid_msg;`
+    // upstream: io.c:1543 `if (msg_bytes != 4) goto invalid_msg;`
     let mut stream = Vec::new();
 
     protocol::send_msg(&mut stream, protocol::MessageCode::IoError, &[1, 0, 0]).unwrap();
@@ -310,7 +310,7 @@ fn msg_io_error_round_trip_through_multiplex_layer() {
     // 3. Receiver forwards accumulated flags via multiplex writer
     // 4. Generator receives the forwarded MSG_IO_ERROR
     //
-    // upstream: io.c:1521-1528
+    // upstream: io.c:1542-1549
     use crate::io_error_flags;
     use protocol::{MessageCode, MplexWriter};
     use std::io::Write;
@@ -430,7 +430,7 @@ fn multiplex_reader_accumulates_msg_no_send() {
 
 #[test]
 fn multiplex_reader_no_send_wrong_payload_length_ignored() {
-    // upstream: io.c:1619 `if (msg_bytes != 4) goto invalid_msg;`
+    // upstream: io.c:1640 `if (msg_bytes != 4) goto invalid_msg;`
     let mut stream = Vec::new();
 
     protocol::send_msg(&mut stream, protocol::MessageCode::NoSend, &[1, 0, 0]).unwrap();
@@ -481,7 +481,7 @@ fn server_reader_take_no_send_indices_multiplex_accumulates() {
 
 #[test]
 fn multiplex_reader_accumulates_msg_redo() {
-    // upstream: io.c:1514-1519, receiver.c:970-974
+    // upstream: io.c:1535-1540, receiver.c:1093-1097
     let mut stream = Vec::new();
 
     let ndx1: i32 = 5;
@@ -526,7 +526,7 @@ fn multiplex_reader_accumulates_msg_redo() {
 
 #[test]
 fn multiplex_reader_redo_wrong_payload_length_ignored() {
-    // upstream: io.c:1516 reads exactly 4 bytes for val
+    // upstream: io.c:1537 reads exactly 4 bytes for val
     let mut stream = Vec::new();
 
     protocol::send_msg(&mut stream, protocol::MessageCode::Redo, &[1, 0, 0]).unwrap();

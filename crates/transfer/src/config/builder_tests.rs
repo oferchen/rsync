@@ -208,7 +208,7 @@ mod defaults {
     /// `ServerConfig.fake_super`, which the receiver then forwards into
     /// `MetadataOptions.fake_super` so ownership/special-file metadata is
     /// stored in the `user.rsync.%stat` xattr instead of being applied to
-    /// inodes (upstream: `clientserver.c:1106-1107`).
+    /// inodes (upstream: `clientserver.c:1120-1121`).
     #[test]
     fn fake_super_round_trips_through_builder() {
         let enabled = ServerConfigBuilder::new()

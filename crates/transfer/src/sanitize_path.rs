@@ -12,9 +12,9 @@
 //! # Upstream Reference
 //!
 //! - `util1.c:1035` - `sanitize_path(dest, p, rootdir, depth, flags)`
-//! - `flist.c:762` - applied to received file names in daemon mode
-//! - `flist.c:2264` - applied to `--files-from` entries
-//! - `flist.c:1154` - applied to symlink targets when `sanitize_paths && !munge_symlinks`
+//! - `flist.c:774` - applied to received file names in daemon mode
+//! - `flist.c:2299` - applied to `--files-from` entries
+//! - `flist.c:1182` - applied to symlink targets when `sanitize_paths && !munge_symlinks`
 
 /// Sanitizes a path to prevent directory traversal beyond the module root.
 ///
@@ -42,7 +42,7 @@ pub fn sanitize_path(path: &str) -> String {
 ///
 /// # Upstream Reference
 ///
-/// - `flist.c:2264` - `sanitize_path(fbuf, fbuf, "", 0, SP_KEEP_DOT_DIRS)`
+/// - `flist.c:2299` - `sanitize_path(fbuf, fbuf, "", 0, SP_KEEP_DOT_DIRS)`
 pub fn sanitize_path_keep_dot_dirs(path: &str) -> String {
     sanitize_path_with_depth(path, 0, true)
 }

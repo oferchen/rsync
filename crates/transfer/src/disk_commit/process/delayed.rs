@@ -2,7 +2,7 @@
 //!
 //! Files staged to `.~tmp~/<filename>` during commit are renamed to their
 //! final destinations after all files are committed, mirroring upstream
-//! `receiver.c:422-450` `handle_delayed_updates()`.
+//! `receiver.c:529-557` `handle_delayed_updates()`.
 
 use std::io;
 use std::path::{Path, PathBuf};
@@ -29,7 +29,7 @@ pub struct DelayedUpdateEntry {
 /// `.~tmp~/` subdirectories), this function renames each staged file to its
 /// final destination and removes the now-empty staging directories.
 ///
-/// Mirrors upstream `receiver.c:422-450` which iterates the list of delayed
+/// Mirrors upstream `receiver.c:529-557` which iterates the list of delayed
 /// files, calls `handle_partial_dir(partialptr, PDIR_DELETE)` to rename each
 /// file from the partial directory to its final path, then removes the
 /// partial directory itself.
@@ -41,7 +41,7 @@ pub struct DelayedUpdateEntry {
 /// upstream rsync behavior where a failed rename is logged and the sweep
 /// continues.
 pub fn handle_delayed_updates(outcomes: &[DelayedUpdateEntry]) -> io::Result<()> {
-    // upstream: receiver.c:422-450 - iterate delayed_bits, rename each file
+    // upstream: receiver.c:529-557 - iterate delayed_bits, rename each file
     // from partialptr to fname, then handle_partial_dir(partialptr, PDIR_DELETE)
     let mut staging_dirs = std::collections::BTreeSet::new();
 
@@ -56,7 +56,7 @@ pub fn handle_delayed_updates(outcomes: &[DelayedUpdateEntry]) -> io::Result<()>
             }
         }
 
-        // upstream: receiver.c:435 - do_rename(partialptr, fname)
+        // upstream: receiver.c:542 - do_rename(partialptr, fname)
         if let Some(parent) = outcome.final_path.parent() {
             if !parent.exists() {
                 std::fs::create_dir_all(parent)?;
@@ -73,7 +73,7 @@ pub fn handle_delayed_updates(outcomes: &[DelayedUpdateEntry]) -> io::Result<()>
         );
     }
 
-    // upstream: receiver.c:447 - handle_partial_dir(partialptr, PDIR_DELETE)
+    // upstream: receiver.c:554 - handle_partial_dir(partialptr, PDIR_DELETE)
     // Remove empty staging directories after all renames complete.
     for dir in staging_dirs.iter().rev() {
         let _ = std::fs::remove_dir(dir);
@@ -96,7 +96,7 @@ pub fn handle_delayed_updates(outcomes: &[DelayedUpdateEntry]) -> io::Result<()>
 ///
 /// # Upstream Reference
 ///
-/// - `receiver.c:410-415` - compute `partialptr` from `partial_dir` + `fname`
+/// - `receiver.c:820` - compute `partialptr` from `partial_dir` + `fname`
 pub fn delay_updates_staging_path(final_path: &Path) -> PathBuf {
     let parent = final_path.parent().unwrap_or_else(|| Path::new("."));
     let file_name = final_path.file_name().unwrap_or(final_path.as_os_str());

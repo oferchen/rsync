@@ -30,7 +30,7 @@ fn parse_client_info_returns_empty_when_not_found() {
 
 #[test]
 fn parse_client_info_from_compact_server_flag_string() {
-    // upstream: options.c:2710 - maybe_add_e_option appends -e.LsfxCIvu
+    // upstream: options.c:2728 - maybe_add_e_option appends -e.LsfxCIvu
     // to the compact flag string. parse_client_info must extract it.
     let args = vec!["-logDtprze.iLsfxCIvu".to_owned()];
     let info = parse_client_info(&args);
@@ -1711,7 +1711,7 @@ fn server_parses_client_acl_and_xattr_flags() {
 /// (CF_AVOID_XATTR_OPTIM), since our build always compiles with xattr wire
 /// protocol support. This is how remote peers detect xattr awareness.
 ///
-/// upstream: options.c:3003-3050 - maybe_add_e_option() builds -e.xxx
+/// upstream: options.c:3021-3068 - maybe_add_e_option() builds -e.xxx
 #[test]
 fn capability_string_always_includes_xattr_marker() {
     use super::build_capability_string;

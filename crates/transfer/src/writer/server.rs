@@ -84,7 +84,7 @@ impl<W: Write> ServerWriter<W> {
     }
 
     /// Like [`activate_compression`](Self::activate_compression) but plumbs
-    /// `--compress-threads=N` into `ZSTD_c_nbWorkers`. upstream: `token.c:701`.
+    /// `--compress-threads=N` into `ZSTD_c_nbWorkers`. upstream: `token.c:749`.
     pub fn activate_compression_with_workers(
         self,
         algorithm: CompressionAlgorithm,
@@ -252,8 +252,8 @@ impl<W: Write> ServerWriter<W> {
     ///
     /// # Upstream Reference
     ///
-    /// - `receiver.c:970-974`: `send_msg_int(MSG_REDO, ndx)` on checksum failure
-    /// - `io.c:1514-1519`: generator-side handler queues index to `redo_list`
+    /// - `receiver.c:1093-1097`: `send_msg_int(MSG_REDO, ndx)` on checksum failure
+    /// - `io.c:1535-1540`: generator-side handler queues index to `redo_list`
     ///
     /// # Errors
     ///

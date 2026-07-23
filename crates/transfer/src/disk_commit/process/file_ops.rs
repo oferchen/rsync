@@ -53,7 +53,7 @@ fn sum_append_prefix(
         return Ok(());
     };
 
-    // Append implies inplace (receiver.c:855), so the prefix lives at the final
+    // Append implies inplace (receiver.c:968), so the prefix lives at the final
     // destination and is untouched until the appended tail is written.
     let mut file = fs::File::open(&begin.file_path)?;
     let mut remaining = begin.append_offset;
@@ -374,7 +374,7 @@ pub(in crate::disk_commit) fn process_file(
                 // When delay_updates staged the file, apply metadata to
                 // the staging path (it will be renamed to final later).
                 let metadata_error = if outcome.delayed_path.is_some() {
-                    // upstream: receiver.c:924 - finish_transfer(partialptr, ...)
+                    // upstream: receiver.c:1047 - finish_transfer(partialptr, ...)
                     // applies metadata to the staged partial file.
                     let staged = outcome.delayed_path.as_ref().unwrap();
                     apply_file_metadata(staged, &begin, config)
@@ -689,7 +689,7 @@ fn make_inplace_backup(
 /// # Upstream Reference
 ///
 /// - `receiver.c`: `write_devices && IS_DEVICE(st.st_mode)` - inplace write to device
-/// - `receiver.c:855-860`: opens destination directly when inplace
+/// - `receiver.c:968-984`: opens destination directly when inplace
 fn open_output_file(
     begin: &BeginMessage,
     config: &DiskCommitConfig,
@@ -706,7 +706,7 @@ fn open_output_file(
             false,
         ))
     } else if begin.is_inplace {
-        // upstream: receiver.c:855 - do_open(fname, O_WRONLY|O_CREAT, 0600)
+        // upstream: receiver.c:968 - do_open(fname, O_WRONLY|O_CREAT, 0600)
         let opened = fs::OpenOptions::new()
             .write(true)
             .create(true)
@@ -725,7 +725,7 @@ fn open_output_file(
             other => other,
         };
         let mut file = opened?;
-        // upstream: receiver.c:307-308 - in append mode, seek past existing content
+        // upstream: receiver.c:372-373 - in append mode, seek past existing content
         if begin.append_offset > 0 {
             use std::io::Seek;
             file.seek(io::SeekFrom::Start(begin.append_offset))?;

@@ -99,7 +99,7 @@ pub struct RequestConfig<'a> {
     ///
     /// # Upstream Reference
     ///
-    /// - `receiver.c:855-860`: opens destination directly when inplace
+    /// - `receiver.c:968-984`: opens destination directly when inplace
     pub inplace: bool,
     /// Per-file inplace for partial-dir basis files (CF_INPLACE_PARTIAL_DIR).
     ///
@@ -108,7 +108,7 @@ pub struct RequestConfig<'a> {
     ///
     /// # Upstream Reference
     ///
-    /// - `receiver.c:797`: `one_inplace = inplace_partial && fnamecmp_type == FNAMECMP_PARTIAL_DIR`
+    /// - `receiver.c:910`: `one_inplace = inplace_partial && fnamecmp_type == FNAMECMP_PARTIAL_DIR`
     pub inplace_partial: bool,
     /// Policy controlling io_uring usage for file I/O (`--io-uring` / `--no-io-uring`).
     pub io_uring_policy: fast_io::IoUringPolicy,
@@ -141,7 +141,7 @@ pub struct RequestConfig<'a> {
     ///
     /// # Upstream Reference
     ///
-    /// - `generator.c:775-776` - generator skips writing signature blocks in append mode
+    /// - `generator.c:787-788` - generator skips writing signature blocks in append mode
     /// - `sender.c:87-92` - `receive_sums()` returns early without reading blocks
     pub append: bool,
     /// Whether append-verify mode is active (`--append-verify`, append_mode == 2).
@@ -170,7 +170,7 @@ impl RequestConfig<'_> {
     /// # Upstream Reference
     ///
     /// - `token.c:271` - `recv_token()` selects plain or compressed based on `-z`
-    /// - `token.c:807-810` - zstd `r_init` only resets `rx_token`, not the DCtx
+    /// - `token.c:863-866` - zstd `r_init` only resets `rx_token`, not the DCtx
     ///
     /// # Errors
     ///
@@ -243,7 +243,7 @@ pub struct ResponseContext<'a> {
 ///
 /// # Upstream Reference
 ///
-/// - `receiver.c:855` - append mode implies inplace.
+/// - `receiver.c:968` - append mode implies inplace.
 /// - `receiver.c:910` - `one_inplace = inplace_partial && fnamecmp_type == FNAMECMP_PARTIAL_DIR`.
 /// - `receiver.c:969` - `fnametmp = one_inplace ? partialptr : fname`.
 /// - `cleanup.c:105-115` - `handle_partial_dir()` moves the temp into the partial dir.
@@ -304,7 +304,7 @@ fn read_response_header<R: Read>(
         sender_attrs.fnamecmp_type,
     );
 
-    // upstream: receiver.c:287-307 - in append mode, seek output fd to existing file length
+    // upstream: receiver.c:352-372 - in append mode, seek output fd to existing file length
     // (derived from echoed sum_head) before writing new data
     let append_offset = if ctx.config.append {
         echoed_sum_head.flength()
@@ -342,7 +342,7 @@ struct ResponseHeader {
     ///
     /// # Upstream Reference
     ///
-    /// - `receiver.c:307-308` - `offset = sum.flength; do_lseek(fd, offset, SEEK_SET)`
+    /// - `receiver.c:372-373` - `offset = sum.flength; do_lseek(fd, offset, SEEK_SET)`
     append_offset: u64,
     /// Abbreviated xattr values from the sender (1-based num, value pairs).
     ///
@@ -356,7 +356,7 @@ mod tests {
 
     #[test]
     fn resolve_use_inplace_writes_to_destination_for_inplace_and_append() {
-        // upstream: receiver.c:855 - append implies inplace; both write to the
+        // upstream: receiver.c:968 - append implies inplace; both write to the
         // destination directly.
         assert!(resolve_use_inplace(true, false, false, None));
         assert!(resolve_use_inplace(false, true, false, None));
