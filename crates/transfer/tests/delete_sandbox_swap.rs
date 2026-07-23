@@ -22,7 +22,7 @@
 
 #![cfg(unix)]
 
-use std::os::unix::fs::symlink;
+use std::os::unix::fs::{PermissionsExt, symlink};
 use std::path::{Path, PathBuf};
 
 use fast_io::{
