@@ -458,13 +458,31 @@ fn execute_group_override_to_non_member_group_without_privileges_is_skipped_not_
         return;
     }
 
+    // Pick a gid the process is provably not a member of: neither its
+    // effective gid nor any supplementary group. A hardcoded "unlikely" gid is
+    // not robust on macOS/BSD, where the default group set and getgroups
+    // membership differ from Linux; probe the real group list via rustix
+    // (portable, no unsafe) instead.
+    let mut member_gids: Vec<u32> = rustix::process::getgroups()
+        .expect("getgroups")
+        .into_iter()
+        .map(|gid| gid.as_raw())
+        .collect();
+    member_gids.push(rustix::process::getegid().as_raw());
+    let foreign_gid = (1u32..=1_000_000)
+        .find(|candidate| !member_gids.contains(candidate))
+        .expect("must find a gid outside the process's groups");
+
     let temp = tempdir().expect("tempdir");
     let source = temp.path().join("source.txt");
     let destination = temp.path().join("dest.txt");
     fs::write(&source, b"group test").expect("write source");
 
+    // Source and destination live in the same directory, so a plain copy
+    // leaves them with the same group (the process egid on Linux, the parent
+    // directory's group on macOS/BSD). With the chgrp skipped the destination
+    // keeps that natural group.
     let original_gid = fs::metadata(&source).expect("metadata").gid();
-    let unlikely_gid = 29999;
 
     let operands = vec![
         source.into_os_string(),
@@ -475,12 +493,16 @@ fn execute_group_override_to_non_member_group_without_privileges_is_skipped_not_
     let summary = plan
         .execute_with_options(
             LocalCopyExecution::Apply,
-            LocalCopyOptions::default().with_group_override(Some(unlikely_gid)),
+            LocalCopyOptions::default().with_group_override(Some(foreign_gid)),
         )
         .expect("a non-root chgrp to a non-member group must be skipped, not fatal");
 
     assert_eq!(summary.files_copied(), 1);
     let dest_gid = fs::metadata(&destination).expect("dest metadata").gid();
+    assert_ne!(
+        dest_gid, foreign_gid,
+        "the non-member group must never be applied - the chgrp must be skipped, not attempted"
+    );
     assert_eq!(
         dest_gid, original_gid,
         "group must be unchanged when the chgrp was skipped for lack of privilege"
