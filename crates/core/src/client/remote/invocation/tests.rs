@@ -196,6 +196,35 @@ fn includes_compress_flag() {
     assert!(flags.contains('z'), "expected 'z' in flags: {flags}");
 }
 
+// upstream: options.c:2722 - the compact 'z' is packed only for
+// do_compression == CPRES_ZLIB. An explicit non-zlib --compress-choice is
+// forwarded as a long-form arg and must NOT also pack 'z'.
+#[cfg(feature = "zstd")]
+#[test]
+fn omits_compress_flag_for_zstd() {
+    let config = ClientConfig::builder()
+        .compress(true)
+        .compression_algorithm(compress::algorithm::CompressionAlgorithm::Zstd)
+        .build();
+    let args = RemoteInvocationBuilder::new(&config, RemoteRole::Sender).build("/path");
+    let flags = args[2].to_string_lossy();
+    assert!(!flags.contains('z'), "must not pack 'z' for zstd: {flags}");
+}
+
+#[test]
+fn omits_compress_flag_for_zlibx() {
+    // zlibx folds onto CompressionAlgorithm::Zlib, but the raw choice name
+    // keeps it distinct; upstream sends it via --new-compress, never 'z'.
+    let config = ClientConfig::builder()
+        .compress(true)
+        .compression_algorithm(compress::algorithm::CompressionAlgorithm::Zlib)
+        .compress_choice_name(Some("zlibx".to_owned()))
+        .build();
+    let args = RemoteInvocationBuilder::new(&config, RemoteRole::Sender).build("/path");
+    let flags = args[2].to_string_lossy();
+    assert!(!flags.contains('z'), "must not pack 'z' for zlibx: {flags}");
+}
+
 #[test]
 fn includes_log_format_for_itemize() {
     // upstream: options.c:2345-2358,2772-2775 - `-i` alone installs the default
