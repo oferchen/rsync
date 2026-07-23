@@ -43,10 +43,13 @@ use transfer::setup::build_capability_string_suffix;
 ///
 /// # Secluded Args
 ///
-/// When `--protect-args` / `-s` is enabled, the builder produces a minimal
-/// command line containing only `rsync --server [-s] [--sender]`,
-/// and the full argument list is returned in `SecludedInvocation::stdin_args`
-/// for transmission over stdin after SSH connection establishment.
+/// When `--protect-args` / `-s` is enabled, the builder mirrors upstream
+/// `server_options()`: the protected head - `rsync --server [--sender]
+/// -<flags>e.<caps> [--iconv=...]` - stays on the spawned command line, and
+/// only the remainder (long-form options, `.`, and the path arguments) is
+/// returned in `SecludedInvocation::stdin_args` for transmission over stdin
+/// after SSH connection establishment (upstream: `options.c:2745-2746`
+/// NULL cutoff, `rsync.c:283-320 send_protected_args()`).
 pub struct RemoteInvocationBuilder<'a> {
     config: &'a ClientConfig,
     role: RemoteRole,
@@ -88,16 +91,22 @@ impl<'a> RemoteInvocationBuilder<'a> {
     /// Builds an invocation with secluded-args support.
     ///
     /// When secluded args is active, the SSH command line contains only the
-    /// minimal server startup arguments (`rsync --server [-s] [--sender]`),
-    /// and the full argument list is returned in `stdin_args` for transmission
-    /// over stdin after the SSH connection is established.
+    /// protected head - `rsync --server [--sender] -<flags>e.<caps>
+    /// [--iconv=...]` - and the remainder (the long-form options, `.`, and
+    /// the path arguments) is returned in `stdin_args` for transmission over
+    /// stdin after the SSH connection is established.
     ///
     /// When secluded args is not active, this returns the same result as
     /// `build_with_paths` with an empty `stdin_args`.
     ///
     /// # Upstream Reference
     ///
-    /// Mirrors `send_protected_args()` in upstream `main.c:1119`.
+    /// Mirrors upstream `options.c:2604-2745 server_options()`, which keeps
+    /// `--server`, `--sender`, the compact flag string (with `s` and the
+    /// capability suffix), and `--iconv` on the actual spawned command line
+    /// even under `--secluded-args`; only the arguments emitted after the
+    /// `protect_args && !local_server` NULL cutoff (`options.c:2745-2746`)
+    /// are deferred to `send_protected_args()` (`rsync.c:283-320`).
     pub fn build_secluded(self, remote_paths: &[&str]) -> SecludedInvocation {
         if !self.config.protect_args().unwrap_or(false) {
             return SecludedInvocation {
@@ -106,87 +115,80 @@ impl<'a> RemoteInvocationBuilder<'a> {
             };
         }
 
-        // Build the full argument list as if secluded args were off; these
-        // are what we will send over stdin.
-        let full_args = self.build_full_args_for_stdin(remote_paths);
-
         let mut cmd_args = Vec::new();
         if let Some(rsync_path) = self.config.rsync_path() {
             cmd_args.push(OsString::from(rsync_path));
         } else {
             cmd_args.push(OsString::from("rsync"));
         }
-        cmd_args.push(OsString::from("--server"));
-        if self.role == RemoteRole::Receiver {
-            cmd_args.push(OsString::from("--sender"));
-        }
-        // upstream: options.c - protect_args flag sent as `-s` in server
-        // mode tells the remote server to read args from stdin.
-        cmd_args.push(OsString::from("-s"));
-        // upstream: dummy argument required after the flag string.
-        cmd_args.push(OsString::from("."));
+        cmd_args.extend(self.build_head_args());
+
+        let stdin_args = self.build_tail_args_for_stdin(remote_paths);
 
         SecludedInvocation {
             command_line_args: cmd_args,
-            stdin_args: full_args,
+            stdin_args,
         }
     }
 
-    /// Builds the full argument list for stdin transmission in secluded-args mode.
+    /// Builds the tail portion for stdin transmission in secluded-args mode:
+    /// the long-form options, `.`, and the remote paths as `String` values
+    /// suitable for null-separated transmission. No shell escaping is
+    /// applied because stdin args are null-separated, not eval'd.
     ///
-    /// This produces the same arguments as `build_with_paths()` but as `String`
-    /// values suitable for null-separated transmission over stdin. No shell
-    /// escaping is applied because stdin args are null-separated, not eval'd.
-    fn build_full_args_for_stdin(&self, remote_paths: &[&str]) -> Vec<String> {
-        let os_args = self.build_args_without_program(remote_paths, false);
-        os_args
-            .into_iter()
+    /// # Upstream Reference
+    ///
+    /// This is exactly the portion upstream emits after the `protect_args`
+    /// NULL cutoff and ships via `send_protected_args()` (`rsync.c:283-320`).
+    /// The leading `"rsync"` element mirrors `rsync.c:293 args[i] =
+    /// "rsync";`, which overwrites the NULL-cutoff slot with a synthetic
+    /// arg0 so the receiver's `read_args()`/`parse_arguments()` can skip
+    /// argv[0] the same way it would for a real command line; the
+    /// server-side reader (`frontend/server/run.rs`) discards this element.
+    fn build_tail_args_for_stdin(&self, remote_paths: &[&str]) -> Vec<String> {
+        let mut args = vec![OsString::from("rsync")];
+        self.append_long_form_args(&mut args);
+        args.push(OsString::from("."));
+        for path in remote_paths {
+            args.push(OsString::from(*path));
+        }
+        args.into_iter()
             .map(|a| a.to_string_lossy().into_owned())
             .collect()
     }
 
-    /// Builds the argument list without the rsync program name.
+    /// Builds the protected head of the server invocation: `--server`,
+    /// optional `--sender`, the compact flag string (with the `s` letter and
+    /// capability suffix embedded), and `--iconv=...` when configured.
     ///
-    /// This is shared between normal `build_with_paths` and secluded-args
-    /// `build_full_args_for_stdin`. The result includes `--server`, optional
-    /// `--sender`, flags, capability string, `.`, and remote paths.
+    /// # Upstream Reference
     ///
-    /// When `escape_for_shell` is true, filename arguments (remote paths) are
-    /// backslash-escaped for safe evaluation by the remote shell. This mirrors
-    /// upstream `options.c:safe_arg(NULL, path)` which escapes shell
-    /// metacharacters so that `eval "$@"` in the remote shell wrapper (e.g.,
-    /// `lsh.sh`) does not misinterpret special characters in filenames.
-    fn build_args_without_program(
-        &self,
-        remote_paths: &[&str],
-        escape_for_shell: bool,
-    ) -> Vec<OsString> {
+    /// `options.c:2604-2745 server_options()` builds exactly this sequence
+    /// before inserting the `protect_args && !local_server` NULL cutoff
+    /// (`options.c:2745-2746`) that splits the spawned command line from the
+    /// arguments `send_protected_args()` defers to stdin. This method
+    /// returns the pre-cutoff portion, so it belongs on the actual process
+    /// command line even when secluded-args defers the remainder
+    /// (`append_long_form_args` + `.` + paths) to stdin - see
+    /// [`Self::build_secluded`].
+    fn build_head_args(&self) -> Vec<OsString> {
         let mut args = Vec::new();
 
         args.push(OsString::from("--server"));
-
         if self.role == RemoteRole::Receiver {
             args.push(OsString::from("--sender"));
         }
 
-        if self.config.ignore_errors() {
-            args.push(OsString::from("--ignore-errors"));
-        }
-
-        // upstream: options.c:2930-2931 - `if (do_fsync) --fsync` lives inside
-        // the `if (am_sender)` block, so it is forwarded only on a PUSH
-        // (RemoteRole::Sender): the remote receiver fsyncs the files it writes.
-        // On a PULL the local receiver fsyncs its own writes and the remote
-        // sender, which never writes destination files, must not receive it.
-        if self.config.fsync() && self.role == RemoteRole::Sender {
-            args.push(OsString::from("--fsync"));
-        }
-
-        if let Some(depth) = self.config.io_uring_depth() {
-            args.push(OsString::from(format!("--io-uring-depth={depth}")));
-        }
-
         let mut flags = self.build_flag_string();
+
+        // upstream: options.c:2604 - `if (protect_args) argstr[x++] = 's';`
+        // packs 's' as the FIRST transfer-flag letter, immediately after the
+        // leading '-' and before verbosity. Embedding it here (rather than
+        // emitting a standalone `-s` token) keeps the compact flag string a
+        // single argv slot, matching upstream's argstr byte-for-byte.
+        if self.config.protect_args().unwrap_or(false) {
+            flags.insert(1, 's');
+        }
 
         // upstream: options.c:2728 - maybe_add_e_option() appends the `e.xxx`
         // capability string directly onto the compact flag string, producing a
@@ -203,12 +205,49 @@ impl<'a> RemoteInvocationBuilder<'a> {
         // upstream: io.c:1816 read_varint - rejects encodings with extra > 4.
         let advertise_inc_recurse =
             self.config.inc_recursive_send() && self.role != RemoteRole::Receiver;
-        let capability_suffix = build_capability_string_suffix(advertise_inc_recurse);
-        flags.push_str(&capability_suffix);
+        flags.push_str(&build_capability_string_suffix(advertise_inc_recurse));
+        args.push(OsString::from(flags));
 
-        if !flags.is_empty() {
-            args.push(OsString::from(flags));
+        if let Some(arg) = self.iconv_arg() {
+            args.push(arg);
         }
+
+        args
+    }
+
+    /// Builds the `--iconv=...` argument when configured, or `None`.
+    ///
+    /// upstream: `options.c:2734-2741` - forwarded immediately before the
+    /// `protect_args` NULL cutoff, so `--iconv` stays on the command line
+    /// even under secluded-args.
+    fn iconv_arg(&self) -> Option<OsString> {
+        match self.config.iconv() {
+            IconvSetting::Unspecified | IconvSetting::Disabled => None,
+            IconvSetting::LocaleDefault => Some(OsString::from("--iconv=.")),
+            IconvSetting::Explicit { local, remote } => {
+                let forwarded = remote.as_deref().unwrap_or(local);
+                Some(OsString::from(format!("--iconv={forwarded}")))
+            }
+        }
+    }
+
+    /// Builds the argument list without the rsync program name.
+    ///
+    /// This is shared between normal `build_with_paths` and secluded-args
+    /// `build_tail_args_for_stdin`. The result includes `--server`, optional
+    /// `--sender`, flags, capability string, `.`, and remote paths.
+    ///
+    /// When `escape_for_shell` is true, filename arguments (remote paths) are
+    /// backslash-escaped for safe evaluation by the remote shell. This mirrors
+    /// upstream `options.c:safe_arg(NULL, path)` which escapes shell
+    /// metacharacters so that `eval "$@"` in the remote shell wrapper (e.g.,
+    /// `lsh.sh`) does not misinterpret special characters in filenames.
+    fn build_args_without_program(
+        &self,
+        remote_paths: &[&str],
+        escape_for_shell: bool,
+    ) -> Vec<OsString> {
+        let mut args = self.build_head_args();
 
         // Long-form options that cannot be expressed as single-char flags.
         // Order mirrors upstream options.c server_options().
@@ -265,6 +304,26 @@ impl<'a> RemoteInvocationBuilder<'a> {
         // --delete-excluded leak is the worst: it rewrites the remote sender's
         // send_rules so excluded files vanish from the file list).
         let am_sender = self.role == RemoteRole::Sender;
+
+        // upstream: options.c:2896-2897 - `if (ignore_errors) --ignore-errors`,
+        // well after the protect_args NULL cutoff, so under secluded-args this
+        // rides the deferred stdin stream rather than the command line.
+        if self.config.ignore_errors() {
+            args.push(OsString::from("--ignore-errors"));
+        }
+
+        // upstream: options.c:2930-2931 - `if (do_fsync) --fsync` lives inside
+        // the `if (am_sender)` block, so it is forwarded only on a PUSH
+        // (RemoteRole::Sender): the remote receiver fsyncs the files it writes.
+        // On a PULL the local receiver fsyncs its own writes and the remote
+        // sender, which never writes destination files, must not receive it.
+        if self.config.fsync() && self.role == RemoteRole::Sender {
+            args.push(OsString::from("--fsync"));
+        }
+
+        if let Some(depth) = self.config.io_uring_depth() {
+            args.push(OsString::from(format!("--io-uring-depth={depth}")));
+        }
 
         // upstream: options.c:2747-2748 - `if (list_only > 1) "--list-only"`.
         // Only the EXPLICIT `--list-only` (list_only == 2) is forwarded; the
@@ -821,22 +880,11 @@ impl<'a> RemoteInvocationBuilder<'a> {
             }
         }
 
-        // upstream: options.c:2734-2741 - --iconv forwarding. When iconv_opt
-        // contains a comma, only the post-comma half (the remote charset) is
-        // forwarded; otherwise the whole string is forwarded as-is.
-        // `--iconv=-` (Disabled) and the default (Unspecified) forward
-        // nothing because upstream nulls iconv_opt at options.c:2052-2054
-        // before this branch runs.
-        match self.config.iconv() {
-            IconvSetting::Unspecified | IconvSetting::Disabled => {}
-            IconvSetting::LocaleDefault => {
-                args.push(OsString::from("--iconv=."));
-            }
-            IconvSetting::Explicit { local, remote } => {
-                let forwarded = remote.as_deref().unwrap_or(local);
-                args.push(OsString::from(format!("--iconv={forwarded}")));
-            }
-        }
+        // upstream: options.c:2734-2741 - --iconv forwarding (post-comma half
+        // of iconv_opt when a comma is present, else the whole spec) is
+        // emitted immediately before the protect_args NULL cutoff, so it
+        // belongs in the protected head (`Self::build_head_args`/
+        // `Self::iconv_arg`), not here.
 
         // upstream: options.c:3004-3011 - remote_options[] are appended after
         // all other server arguments. Each -M value is forwarded verbatim.
