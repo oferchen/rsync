@@ -51,13 +51,13 @@ impl FileListWriter {
     /// | `XMIT_NO_CONTENT_DIR` | 8 | Directory has no content (protocol 30+, directories) |
     /// | `XMIT_HLINKED` | 9 | Entry is a hardlink (protocol 28+) |
     /// | `XMIT_SAME_DEV_PRE30` | 10 | Same hardlink device (protocol 28-29) |
-    /// | `XMIT_RDEV_MINOR_8_PRE30` | 10 | Rdev minor fits in byte (protocol 28-29) |
-    /// | `XMIT_USER_NAME_FOLLOWS` | 11 | User name follows UID (protocol 30+) |
+    /// | `XMIT_USER_NAME_FOLLOWS` | 10 | User name follows UID (protocol 30+) |
+    /// | `XMIT_RDEV_MINOR_8_PRE30` | 11 | Rdev minor fits in byte (protocol 28-29) |
+    /// | `XMIT_GROUP_NAME_FOLLOWS` | 11 | Group name follows GID (protocol 30+) |
     /// | `XMIT_HLINK_FIRST` | 12 | First occurrence of hardlink (protocol 30+) |
     /// | `XMIT_IO_ERROR_ENDLIST` | 12 | End marker with I/O error (protocol 31+) |
-    /// | `XMIT_GROUP_NAME_FOLLOWS` | 13 | Group name follows GID (protocol 30+) |
-    /// | `XMIT_MOD_NSEC` | 14 | Mtime has nanoseconds (protocol 31+) |
-    /// | `XMIT_SAME_ATIME` | 15 | Atime unchanged (when preserving atimes) |
+    /// | `XMIT_MOD_NSEC` | 13 | Mtime has nanoseconds (protocol 31+) |
+    /// | `XMIT_SAME_ATIME` | 14 | Atime unchanged (when preserving atimes) |
     ///
     /// # Arguments
     ///
