@@ -28,8 +28,9 @@ pub struct ParsedSize {
     /// Byte count after suffix scaling and the optional `+1`/`-1` adjustment.
     pub bytes: u128,
     /// Unit granularity implied by the suffix: `1` for a byte suffix, `1000`
-    /// for a decimal suffix (`KB`/`MB`/...), `1024` otherwise. Callers that
-    /// round to whole units (e.g. `--bwlimit`) use this; size limits ignore it.
+    /// for a decimal suffix (`KB`/`MB`/...), `1024` otherwise. Reported for
+    /// callers that need the suffix granularity; the byte-oriented size limits
+    /// and `--bwlimit` (which quantizes to whole KiB) do not consume it.
     pub unit: u128,
 }
 
