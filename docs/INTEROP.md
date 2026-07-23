@@ -1,9 +1,9 @@
 # oc-rsync Interoperability Tests
 
-**Last Updated**: 2025-11-25
+**Last Updated**: 2026-07-23
 **Status**: RESTORED TO CI PIPELINE
 
-This document defines the upstream compatibility test scenarios used to validate oc-rsync's parity with rsync 2.6.9, 3.0.9, 3.1.3, 3.4.1, and 3.4.2.
+This document defines the upstream compatibility test scenarios used to validate oc-rsync's parity with rsync 2.6.9, 3.0.9, 3.1.3, and 3.4.4.
 
 ---
 
@@ -12,8 +12,7 @@ This document defines the upstream compatibility test scenarios used to validate
 - `rsync-2.6.9` (always built from source; protocol-28 cutoff peer)
 - `rsync-3.0.9` (via old-releases.ubuntu.com or source build)
 - `rsync-3.1.3` (via archive.ubuntu.com or source build)
-- `rsync-3.4.1` (via deb.debian.org or source build)
-- `rsync-3.4.2` (via deb.debian.org or source build)
+- `rsync-3.4.4` (built from source; latest release, supersedes 3.4.1/3.4.2/3.4.3)
 
 ---
 
@@ -26,7 +25,7 @@ This document defines the upstream compatibility test scenarios used to validate
 | Remote copy via SSH (sender/recv)   | `-av host:/src /dest`                     | ✅        | Native SSH transport integrated |
 | Daemon transfer (host::module)      | `-av rsync://host/module/ /dest`         | ✅        | Auth + transfers fixed in Phase 3 |
 | Filters (include/exclude/filter)    | Deep ruleset match                        | ✅        | Comprehensive coverage |
-| Compression level                   | `-z --compress-level=9`                  | ✅        | Verified against rsync 3.4.1 |
+| Compression level                   | `-z --compress-level=9`                  | ✅        | Verified against rsync 3.4.4 |
 | Metadata flags                      | `-aHAX --numeric-ids`                    | ✅        | POSIX ACLs (access+default, mask, named user/group) wire-faithful vs upstream on Linux/macOS/FreeBSD; Windows DACL supported (SACL/inheritance deferred) |
 | Delete options                      | `--delete-excluded`, etc.                | ✅        | All variants working |
 | File list diffing                   | Match order, mtime, permission checks     | ✅        | Deterministic ordering |
@@ -46,8 +45,8 @@ This document defines the upstream compatibility test scenarios used to validate
 - **Runs**: Bidirectional interop tests against upstream rsync versions
 - **Script**: `tools/ci/run_interop.sh`
 - **Tests**:
-  - Upstream rsync 3.0.9/3.1.3/3.4.1 client → oc-rsync daemon
-  - oc-rsync client → Upstream rsync 3.0.9/3.1.3/3.4.1 daemon
+  - Upstream rsync 3.0.9/3.1.3/3.4.4 client → oc-rsync daemon
+  - oc-rsync client → Upstream rsync 3.0.9/3.1.3/3.4.4 daemon
 - **Result validation**:
   - File transfer success
   - Payload file existence
@@ -120,7 +119,7 @@ Upstream binaries are obtained via multi-tier fallback:
 1. **Try Debian/Ubuntu packages** (fastest, most reliable)
    - 3.0.9: old-releases.ubuntu.com
    - 3.1.3: archive.ubuntu.com
-   - 3.4.1: deb.debian.org
+   - 3.4.4: source build (no Debian package yet; falls through to tarball/git)
 2. **Try release tarballs** from rsync.samba.org
 3. **Try git clone** from github.com/RsyncProject/rsync
 4. **Build from source** with `./configure && make && make install`
@@ -167,11 +166,11 @@ bash scripts/rsync-interop-client.sh
 # Build oc-rsync
 cargo build --profile dist --bin oc-rsync
 
-# Ensure upstream rsync 3.4.1 is available
-rsync_341=/path/to/upstream/rsync-3.4.1/bin/rsync
+# Ensure upstream rsync 3.4.4 is available
+rsync_344=/path/to/upstream/rsync-3.4.4/bin/rsync
 
 # Test oc-rsync client → upstream daemon
-$rsync_341 --daemon --config=test.conf --no-detach --port=2873 &
+$rsync_344 --daemon --config=test.conf --no-detach --port=2873 &
 sleep 1
 ./target/dist/oc-rsync -av /source/ rsync://127.0.0.1:2873/module/
 kill %1
@@ -179,7 +178,7 @@ kill %1
 # Test upstream client → oc-rsync daemon
 ./target/dist/oc-rsync --daemon --config=test.conf --port=2873 &
 sleep 1
-$rsync_341 -av /source/ rsync://127.0.0.1:2873/module/
+$rsync_344 -av /source/ rsync://127.0.0.1:2873/module/
 kill %1
 ```
 
