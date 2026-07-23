@@ -483,20 +483,24 @@ pub struct ServerConfig {
     /// When true, store privileged metadata (uid/gid, devices, special files) in
     /// the `user.rsync.%stat` xattr instead of applying it directly to inodes.
     ///
-    /// Sourced from the daemon module's `fake super = yes` directive in
-    /// `rsyncd.conf(5)`. Lets a non-root daemon receive ownership and special-file
-    /// metadata from a privileged client by recording it in xattrs that a later
-    /// privileged restore can replay.
+    /// Set either by the client's own `--fake-super` flag (for whichever role
+    /// the local process plays over SSH/daemon transport - see
+    /// `core::client::remote::flags::apply_common_server_flags`) or by the
+    /// daemon module's `fake super = yes` directive in `rsyncd.conf(5)`, which
+    /// lets a non-root daemon receive ownership and special-file metadata from
+    /// a privileged client by recording it in xattrs that a later privileged
+    /// restore can replay.
     ///
-    /// Mirrors upstream's behaviour where a daemon module with `fake super = yes`
-    /// demotes the receiver's `am_root` to the fake-super marker (`-1`) and
-    /// rewrites a client's `--fake-super` so the daemon honours the directive
-    /// even when the client did not request it. The directive is purely
-    /// daemon-config-driven; this flag is set by the daemon when constructing
-    /// [`ServerConfig`] and is never populated from a client `--fake-super` arg.
+    /// Mirrors upstream's behaviour where `--fake-super` "only affects the
+    /// side where the option is used" (`rsync.1`) and is never sent over the
+    /// wire, and where a daemon module with `fake super = yes` independently
+    /// demotes the receiver's `am_root` to the fake-super marker (`-1`) even
+    /// when the client did not request it.
     ///
     /// # Upstream Reference
     ///
+    /// - `options.c` `set_fake_super()` - `--fake-super` sets `am_root = -1`
+    ///   on the process where the option was given
     /// - `clientserver.c:1120-1121` - daemon `fake super = yes` demotes
     ///   `am_root` and forces `--fake-super` semantics on the receiver
     /// - `loadparm.c` - `fake super` module parameter

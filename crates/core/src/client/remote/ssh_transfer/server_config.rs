@@ -685,6 +685,30 @@ mod tests {
         assert!(!server_config.flags.mkpath);
     }
 
+    /// On an ssh pull the local client IS the receiver, so `--fake-super`
+    /// (upstream rsync.1: "only affects the side where the option is used")
+    /// applies directly without riding the wire. Regression guard: the receiver
+    /// config previously never carried this flag, so an ssh pull never stashed
+    /// `user.rsync.%stat` even though the local-copy path did.
+    #[test]
+    fn receiver_config_propagates_fake_super() {
+        let config = ClientConfig::builder().fake_super(true).build();
+        let server_config =
+            build_server_config_for_receiver(&config, &["dest".to_owned()]).unwrap();
+
+        assert!(server_config.fake_super);
+    }
+
+    /// Without `--fake-super` the receiver config leaves the flag clear.
+    #[test]
+    fn receiver_config_without_fake_super_stays_clear() {
+        let config = ClientConfig::builder().build();
+        let server_config =
+            build_server_config_for_receiver(&config, &["dest".to_owned()]).unwrap();
+
+        assert!(!server_config.fake_super);
+    }
+
     /// On an ssh push the local client IS the sender and applies `--chmod`
     /// itself as it builds each outgoing flist entry (upstream flist.c:1580-1581
     /// send_file_name() -> tweak_mode()). `--chmod` is never forwarded to the
@@ -712,5 +736,30 @@ mod tests {
             build_server_config_for_generator(&config, &["/tmp/source".to_owned()]).unwrap();
 
         assert!(server_config.chmod.is_none());
+    }
+
+    /// On an ssh push the local client IS the sender, so `--fake-super`
+    /// (upstream rsync.1: "only affects the side where the option is used")
+    /// applies directly: the generator reads back a source's `user.rsync.%stat`
+    /// override instead of the raw inode (transfer/generator/file_list/entry/
+    /// create.rs `fake_super_override`). Regression guard: the generator config
+    /// previously never carried this flag.
+    #[test]
+    fn generator_config_propagates_fake_super() {
+        let config = ClientConfig::builder().fake_super(true).build();
+        let server_config =
+            build_server_config_for_generator(&config, &["/tmp/source".to_owned()]).unwrap();
+
+        assert!(server_config.fake_super);
+    }
+
+    /// Without `--fake-super` the generator config leaves the flag clear.
+    #[test]
+    fn generator_config_without_fake_super_stays_clear() {
+        let config = ClientConfig::builder().build();
+        let server_config =
+            build_server_config_for_generator(&config, &["/tmp/source".to_owned()]).unwrap();
+
+        assert!(!server_config.fake_super);
     }
 }
