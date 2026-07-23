@@ -166,10 +166,16 @@ impl GeneratorContext {
 
         // Place initial entries first (move, not clone).
         for tagged in &initial_entries {
-            self.file_list
-                .push(file_entries[tagged.file_idx].take().unwrap());
-            self.source_bases
-                .push(bases[tagged.file_idx].take().unwrap());
+            self.file_list.push(
+                file_entries[tagged.file_idx]
+                    .take()
+                    .expect("flist entry present at its tagged index"),
+            );
+            self.source_bases.push(
+                bases[tagged.file_idx]
+                    .take()
+                    .expect("source base present at its tagged index"),
+            );
         }
         self.incremental.initial_segment_count = Some(initial_entries.len());
 
@@ -214,10 +220,16 @@ impl GeneratorContext {
 
             for child in &seg.children {
                 let child_flat = self.file_list.len();
-                self.file_list
-                    .push(file_entries[child.file_idx].take().unwrap());
-                self.source_bases
-                    .push(bases[child.file_idx].take().unwrap());
+                self.file_list.push(
+                    file_entries[child.file_idx]
+                        .take()
+                        .expect("flist entry present at its tagged index"),
+                );
+                self.source_bases.push(
+                    bases[child.file_idx]
+                        .take()
+                        .expect("source base present at its tagged index"),
+                );
 
                 if let Some(child_nid) = child.node_id {
                     node_to_wire[child_nid] = wire_dir_ndx;

@@ -159,8 +159,13 @@ pub(crate) fn capture_batch_file_entry(
         LocalCopyError::io("encode batch flist entry", relative_path.to_path_buf(), e)
     })?;
 
-    let batch_writer_arc = context.batch_writer().unwrap().clone();
-    let mut writer_guard = batch_writer_arc.lock().unwrap();
+    let batch_writer_arc = context
+        .batch_writer()
+        .expect("batch writer set on the write-batch path")
+        .clone();
+    let mut writer_guard = batch_writer_arc
+        .lock()
+        .expect("batch writer mutex poisoned");
     writer_guard.write_data(&buf).map_err(|e| {
         LocalCopyError::io(
             "write batch file entry",

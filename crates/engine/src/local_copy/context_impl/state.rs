@@ -40,14 +40,14 @@ impl<'a> CopyContext<'a> {
             .map(|_| std::io::Cursor::new(Vec::new()));
 
         let batch_ndx_codec = options.get_batch_writer().map(|batch_writer_arc| {
-            let guard = batch_writer_arc.lock().unwrap();
+            let guard = batch_writer_arc.lock().expect("batch writer mutex poisoned");
             let proto_version = guard.config().protocol_version;
             drop(guard);
             protocol::codec::NdxCodecEnum::new(proto_version as u8)
         });
 
         let batch_flist_writer = options.get_batch_writer().map(|batch_writer_arc| {
-            let guard = batch_writer_arc.lock().unwrap();
+            let guard = batch_writer_arc.lock().expect("batch writer mutex poisoned");
             let proto_version = guard.config().protocol_version;
             let compat_flags_val = guard.config().compat_flags;
             drop(guard);

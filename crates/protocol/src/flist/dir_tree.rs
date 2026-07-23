@@ -132,7 +132,9 @@ impl DirectoryTree {
             self.nodes[actual_parent].first_child = Some(node_idx);
         } else {
             // Walk to last sibling
-            let mut sibling = self.nodes[actual_parent].first_child.unwrap();
+            let mut sibling = self.nodes[actual_parent]
+                .first_child
+                .expect("parent has a first child during sibling walk");
             while let Some(next) = self.nodes[sibling].next_sibling {
                 sibling = next;
             }

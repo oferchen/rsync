@@ -54,7 +54,7 @@ impl<'a> CopyContext<'a> {
             Some(w) => w.clone(),
             None => return Ok(()),
         };
-        let mut writer_guard = batch_writer_arc.lock().unwrap();
+        let mut writer_guard = batch_writer_arc.lock().expect("batch writer mutex poisoned");
         writer_guard.write_data(&buf).map_err(|e| {
             crate::local_copy::LocalCopyError::io(
                 "write batch flist end marker",
@@ -90,7 +90,7 @@ impl<'a> CopyContext<'a> {
         };
 
         let (proto, compat_flags, preserve_uid, preserve_gid, preserve_acls) = {
-            let cfg = batch_writer_arc.lock().unwrap();
+            let cfg = batch_writer_arc.lock().expect("batch writer mutex poisoned");
             let flags = cfg.stream_flags();
             (
                 cfg.config().protocol_version,
@@ -145,7 +145,7 @@ impl<'a> CopyContext<'a> {
             })?;
         }
 
-        let mut writer_guard = batch_writer_arc.lock().unwrap();
+        let mut writer_guard = batch_writer_arc.lock().expect("batch writer mutex poisoned");
         writer_guard.write_data(&buf).map_err(|e| {
             crate::local_copy::LocalCopyError::io(
                 "write batch id lists",
@@ -189,8 +189,8 @@ impl<'a> CopyContext<'a> {
 
         // upstream: rsync.c:383 - write iflags (u16 LE) for protocol >= 29.
         // ITEM_TRANSFER (0x8000) indicates delta data follows.
-        let batch_writer_arc = self.options.get_batch_writer().unwrap().clone();
-        let proto = batch_writer_arc.lock().unwrap().config().protocol_version;
+        let batch_writer_arc = self.options.get_batch_writer().expect("batch writer set on the write-batch path").clone();
+        let proto = batch_writer_arc.lock().expect("batch writer mutex poisoned").config().protocol_version;
         if proto >= 29 {
             const ITEM_TRANSFER: u16 = 0x8000;
             delta_file
@@ -333,7 +333,7 @@ impl<'a> CopyContext<'a> {
         use std::io::Write;
 
         let delta_file = match self.batch_delta_buf.as_mut() {
-            Some(_) => self.batch_delta_buf.as_mut().unwrap(),
+            Some(_) => self.batch_delta_buf.as_mut().expect("batch_delta_buf is Some in this arm"),
             None => return Ok(()),
         };
 
@@ -447,7 +447,7 @@ impl<'a> CopyContext<'a> {
                     )
                 },
             )?;
-            let mut writer_guard = batch_writer_arc.lock().unwrap();
+            let mut writer_guard = batch_writer_arc.lock().expect("batch writer mutex poisoned");
             writer_guard.write_data(&ndx_buf).map_err(|e| {
                 crate::local_copy::LocalCopyError::io(
                     "write batch NDX",
@@ -472,7 +472,7 @@ impl<'a> CopyContext<'a> {
         // protocol >= 29, max_phase=2, so recv_files needs 3 NDX_DONEs
         // to break (phase 0->1->2->3, breaks when phase > max_phase).
         // For protocol < 29, max_phase=1, needs 2 NDX_DONEs.
-        let proto = batch_writer_arc.lock().unwrap().config().protocol_version;
+        let proto = batch_writer_arc.lock().expect("batch writer mutex poisoned").config().protocol_version;
         let ndx_done_count = if proto >= 29 { 3 } else { 2 };
 
         for _ in 0..ndx_done_count {
@@ -484,7 +484,7 @@ impl<'a> CopyContext<'a> {
                     e,
                 )
             })?;
-            let mut writer_guard = batch_writer_arc.lock().unwrap();
+            let mut writer_guard = batch_writer_arc.lock().expect("batch writer mutex poisoned");
             writer_guard.write_data(&done_buf).map_err(|e| {
                 crate::local_copy::LocalCopyError::io(
                     "write batch NDX_DONE",
