@@ -591,6 +591,111 @@ fn group_override_non_root_chown_to_foreign_group_is_skipped_not_fatal() {
     );
 }
 
+// GAP M8b: the symlink ownership path (apply_symlink_ownership_from_entry) is a
+// distinct code path from the regular-file one - it targets the link itself via
+// AT_SYMLINK_NOFOLLOW and skips fake-super xattr storage - but shares the same
+// privilege gate. A non-root process must have an explicit --chown on a symlink
+// skipped, not surfaced as a fatal EPERM. (On BSD/macOS a symlink carries its
+// own owner, so lchown is meaningful there; the am_root gate short-circuits
+// before it on every Unix, so the observable result - link owner unchanged, no
+// error - is identical across platforms.)
+#[cfg(unix)]
+#[test]
+fn symlink_owner_override_non_root_chown_is_skipped_not_fatal() {
+    use protocol::flist::FileEntry;
+    use std::os::unix::fs::symlink;
+
+    if rustix::process::geteuid().is_root() {
+        // Root can lchown freely; this test asserts the non-root gate only.
+        return;
+    }
+
+    let temp = tempdir().expect("tempdir");
+    let target = temp.path().join("target.txt");
+    let dest_link = temp.path().join("dest-link");
+    fs::write(&target, b"data").expect("write target");
+    symlink(&target, &dest_link).expect("create dest link");
+
+    let original_uid = fs::symlink_metadata(&dest_link)
+        .expect("dest link metadata")
+        .uid();
+    let cached_meta = fs::symlink_metadata(&dest_link).ok();
+
+    // owner_override bypasses the entry's own uid, so the entry is a placeholder.
+    let entry = FileEntry::new_symlink("dest-link".into(), "target.txt".into());
+
+    // Explicit `--chown=root:...` (uid 0) as non-root: upstream never attempts
+    // the do_lchown (change_uid requires am_root), so oc-rsync must complete
+    // without error and leave the link's ownership untouched.
+    super::ownership::apply_symlink_ownership_from_entry(
+        &dest_link,
+        &entry,
+        &MetadataOptions::new()
+            .preserve_owner(true)
+            .with_owner_override(Some(0)),
+        cached_meta.as_ref(),
+    )
+    .expect("non-root symlink --chown to an unreachable uid must be skipped, not fatal");
+
+    let dest_meta = fs::symlink_metadata(&dest_link).expect("dest link metadata");
+    assert_eq!(
+        dest_meta.uid(),
+        original_uid,
+        "symlink ownership must be unchanged when the lchown was skipped for lack of privilege"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn symlink_group_override_non_root_chown_to_foreign_group_is_skipped_not_fatal() {
+    use protocol::flist::FileEntry;
+    use std::os::unix::fs::symlink;
+
+    if rustix::process::geteuid().is_root() {
+        return;
+    }
+
+    // Pick a gid the current process is provably not a member of, reusing the
+    // same membership check the production gate uses.
+    let egid = rustix::process::getegid().as_raw();
+    let foreign_gid = (1u32..=4096)
+        .map(|delta| egid.wrapping_add(delta))
+        .find(|candidate| !super::ownership::process_in_group(ownership::gid_from_raw(*candidate)))
+        .expect("must find a gid outside the process's groups");
+
+    let temp = tempdir().expect("tempdir");
+    let target = temp.path().join("target-grp.txt");
+    let dest_link = temp.path().join("dest-link-grp");
+    fs::write(&target, b"data").expect("write target");
+    symlink(&target, &dest_link).expect("create dest link");
+
+    let original_gid = fs::symlink_metadata(&dest_link)
+        .expect("dest link metadata")
+        .gid();
+    let cached_meta = fs::symlink_metadata(&dest_link).ok();
+
+    let entry = FileEntry::new_symlink("dest-link-grp".into(), "target-grp.txt".into());
+
+    // Explicit `--chown=:<foreign-group>` as non-root: FLAG_SKIP_GROUP drops the
+    // do_lchown before it runs, so the link's group must be left untouched.
+    super::ownership::apply_symlink_ownership_from_entry(
+        &dest_link,
+        &entry,
+        &MetadataOptions::new()
+            .preserve_group(true)
+            .with_group_override(Some(foreign_gid)),
+        cached_meta.as_ref(),
+    )
+    .expect("non-root symlink --chown to a foreign group must be skipped, not fatal");
+
+    let dest_meta = fs::symlink_metadata(&dest_link).expect("dest link metadata");
+    assert_eq!(
+        dest_meta.gid(),
+        original_gid,
+        "symlink group must be unchanged when the lchown was skipped for lack of privilege"
+    );
+}
+
 // Sub-100ns nanosecond preservation requires filesystem granularity finer than
 // NTFS's 100ns FILETIME, so the exact-equality assertion is Unix-only.
 #[cfg(unix)]
