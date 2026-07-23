@@ -88,6 +88,12 @@ impl FilterSet {
         let mut include_exclude = Vec::new();
         let mut protect_risk = Vec::new();
         let mut xattr = Vec::new();
+        // upstream: exclude.c keeps every rule in one list that check_filter()
+        // walks first-match-wins. We partition into two chains for matching but
+        // stamp each compiled rule with its position in the original stream so
+        // the deletion decision can merge the two first-matches back into a
+        // single source-ordered pass.
+        let mut order = 0usize;
 
         for rule in rules.into_iter() {
             // upstream: exclude.c:914 rule_matches() - an `x`-modifier rule
@@ -102,10 +108,16 @@ impl FilterSet {
             }
             match rule.action {
                 FilterAction::Include | FilterAction::Exclude => {
-                    include_exclude.push(CompiledRule::new(rule)?);
+                    let mut compiled = CompiledRule::new(rule)?;
+                    compiled.order = order;
+                    order += 1;
+                    include_exclude.push(compiled);
                 }
                 FilterAction::Protect | FilterAction::Risk => {
-                    protect_risk.push(CompiledRule::new(rule)?);
+                    let mut compiled = CompiledRule::new(rule)?;
+                    compiled.order = order;
+                    order += 1;
+                    protect_risk.push(compiled);
                 }
                 FilterAction::Clear => {
                     apply_clear_rule(
