@@ -275,11 +275,27 @@ fn validate_client_paths_in_module(
     _ctx: &mut ModuleRequestContext<'_>,
     module: &ModuleRuntime,
     client_args: &[String],
+    privilege_outcome: &PrivilegeOutcome,
 ) -> io::Result<Option<ValidatedClientPaths>> {
-    let Ok(module_root) = module.path.canonicalize() else {
-        // Module path failed to canonicalize - the existence check above
-        // already succeeded, so this is a race or a permission problem; let
-        // the transfer continue and fail with a more precise error later.
+    // chroot + the privilege drop already ran pre-OK. After a chroot the process
+    // root IS the module dir, so a client's absolute --link-dest/--temp-dir path
+    // resolves under the post-chroot root ("/" or the `/./` inner remainder);
+    // validate against that (the kernel chroot already contains every in-module
+    // path). Without chroot (unset + rootless fallback, `use chroot = no`, or a
+    // non-Linux build) validate against the real module path so SEC-1.p still
+    // rejects out-of-tree basis dirs.
+    let root_source = if privilege_outcome.chroot_applied {
+        privilege_outcome
+            .inner_module_path
+            .as_deref()
+            .unwrap_or_else(|| Path::new("/"))
+    } else {
+        module.path.as_path()
+    };
+    let Ok(module_root) = root_source.canonicalize() else {
+        // Root path failed to canonicalize - the existence check above already
+        // succeeded, so this is a race or a permission problem; let the transfer
+        // continue and fail with a more precise error later.
         return Ok(Some(ValidatedClientPaths::default()));
     };
 
