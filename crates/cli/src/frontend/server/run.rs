@@ -55,10 +55,11 @@ where
     let mut stdin = io::stdin().lock();
 
     // When secluded-args is active, the client splits its argv: the
-    // server-options head (--server, --sender, packed flag string, and
-    // value-bearing long flags) travels on the command line, while the
-    // trailing positional args (the `.` separator and path arguments)
-    // stream over stdin as NUL-delimited bytes terminated by an empty
+    // server-options head (--server, --sender, the packed compact flag
+    // string with the capability suffix, and --iconv when configured)
+    // travels on the command line, while everything else (the remaining
+    // long-form options, the `.` separator, and the path arguments)
+    // streams over stdin as NUL-delimited bytes terminated by an empty
     // string. Keep the command-line argv tail and append the stdin
     // payload, skipping the synthetic "rsync" arg0 the wire prepends.
     //
