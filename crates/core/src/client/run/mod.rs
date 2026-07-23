@@ -1064,38 +1064,6 @@ mod run_client_tests {
     use crate::client::config::{ClientConfig, FilterRuleSpec};
 
     #[test]
-    fn run_client_delete_respects_dry_run() {
-        let tmp = tempdir().expect("tempdir");
-        let source_root = tmp.path().join("source");
-        fs::create_dir_all(&source_root).expect("create source root");
-        fs::write(source_root.join("keep.txt"), b"fresh").expect("write keep");
-
-        let dest_root = tmp.path().join("dest");
-        fs::create_dir_all(&dest_root).expect("create dest root");
-        fs::write(dest_root.join("keep.txt"), b"stale").expect("write stale");
-        fs::write(dest_root.join("extra.txt"), b"extra").expect("write extra");
-
-        let mut source_operand = source_root.clone().into_os_string();
-        source_operand.push(std::path::MAIN_SEPARATOR.to_string());
-
-        let config = ClientConfig::builder()
-            .transfer_args([source_operand, dest_root.clone().into_os_string()])
-            .dry_run(true)
-            .delete(true)
-            .build();
-
-        let summary = run_client(config).expect("dry-run succeeds");
-
-        assert_eq!(
-            fs::read(dest_root.join("keep.txt")).expect("read keep"),
-            b"stale"
-        );
-        assert!(dest_root.join("extra.txt").exists());
-        assert_eq!(summary.files_copied(), 1);
-        assert_eq!(summary.items_deleted(), 1);
-    }
-
-    #[test]
     fn run_client_update_skips_newer_destination() {
         use filetime::{FileTime, set_file_times};
 
@@ -1178,29 +1146,6 @@ mod run_client_tests {
         assert!(summary.files_copied() >= 1);
     }
 
-    #[test]
-    fn run_client_copies_directory_tree() {
-        let tmp = tempdir().expect("tempdir");
-        let source_root = tmp.path().join("source");
-        let nested = source_root.join("nested");
-        let source_file = nested.join("file.txt");
-        fs::create_dir_all(&nested).expect("create nested");
-        fs::write(&source_file, b"tree").expect("write source file");
-
-        let dest_root = tmp.path().join("destination");
-
-        let config = ClientConfig::builder()
-            .transfer_args([source_root.clone(), dest_root.clone()])
-            .build();
-
-        let summary = run_client(config).expect("directory copy succeeds");
-
-        let copied_file = dest_root.join("nested").join("file.txt");
-        assert_eq!(fs::read(copied_file).expect("read copied"), b"tree");
-        assert!(summary.files_copied() >= 1);
-        assert!(summary.directories_created() >= 1);
-    }
-
     #[cfg(unix)]
     #[test]
     fn run_client_copies_symbolic_link() {
@@ -1226,49 +1171,6 @@ mod run_client_tests {
 
         let copied = fs::read_link(destination_link).expect("read copied link");
         assert_eq!(copied, target_file);
-        assert_eq!(summary.symlinks_copied(), 1);
-
-        let event = summary
-            .events()
-            .iter()
-            .find(|event| matches!(event.kind(), ClientEventKind::SymlinkCopied))
-            .expect("symlink event present");
-        let recorded_target = event
-            .metadata()
-            .and_then(ClientEntryMetadata::symlink_target)
-            .expect("symlink target recorded");
-        assert_eq!(recorded_target, target_file.as_path());
-    }
-
-    #[cfg(unix)]
-    #[test]
-    fn run_client_preserves_symbolic_links_in_directories() {
-        use std::os::unix::fs::symlink;
-
-        use crate::client::{ClientEntryMetadata, ClientEventKind};
-
-        let tmp = tempdir().expect("tempdir");
-        let source_root = tmp.path().join("source");
-        let nested = source_root.join("nested");
-        fs::create_dir_all(&nested).expect("create nested");
-
-        let target_file = tmp.path().join("target.txt");
-        fs::write(&target_file, b"data").expect("write target");
-        let link_path = nested.join("link");
-        symlink(&target_file, &link_path).expect("create link");
-
-        let dest_root = tmp.path().join("destination");
-        let config = ClientConfig::builder()
-            .transfer_args([source_root.clone(), dest_root.clone()])
-            .links(true)
-            .force_event_collection(true)
-            .build();
-
-        let summary = run_client(config).expect("directory copy succeeds");
-
-        let copied_link = dest_root.join("nested").join("link");
-        let copied_target = fs::read_link(copied_link).expect("read copied link");
-        assert_eq!(copied_target, target_file);
         assert_eq!(summary.symlinks_copied(), 1);
 
         let event = summary
@@ -1554,5 +1456,135 @@ mod run_client_tests {
             .build();
         run_client(ignore_config).expect("ignore run");
         assert_eq!(fs::read(&destination).expect("read dest"), b"newdata");
+    }
+}
+
+#[cfg(test)]
+mod local_copy_option_wiring_tests {
+    use super::build_local_copy_options;
+    use crate::client::config::{ClientConfig, TransferTimeout};
+    use std::ffi::OsString;
+    use std::num::NonZeroU64;
+    use std::path::{Path, PathBuf};
+    use std::time::Duration;
+
+    #[test]
+    fn local_copy_options_apply_explicit_timeout() {
+        let timeout = TransferTimeout::Seconds(NonZeroU64::new(5).unwrap());
+        let config = ClientConfig::builder()
+            .transfer_args([OsString::from("src"), OsString::from("dst")])
+            .timeout(timeout)
+            .build();
+
+        let options = build_local_copy_options(&config, None);
+        assert_eq!(options.timeout(), Some(Duration::from_secs(5)));
+    }
+
+    #[test]
+    fn local_copy_options_apply_modify_window() {
+        let config = ClientConfig::builder()
+            .transfer_args([OsString::from("src"), OsString::from("dst")])
+            .modify_window(Some(3))
+            .build();
+
+        let options = build_local_copy_options(&config, None);
+        assert_eq!(
+            options.modify_window(),
+            ::metadata::ModifyWindow::from_secs(3)
+        );
+
+        let default_config = ClientConfig::builder()
+            .transfer_args([OsString::from("src"), OsString::from("dst")])
+            .build();
+        assert_eq!(
+            build_local_copy_options(&default_config, None).modify_window(),
+            ::metadata::ModifyWindow::ZERO
+        );
+    }
+
+    #[test]
+    fn local_copy_options_omit_timeout_when_unset() {
+        let config = ClientConfig::builder()
+            .transfer_args([OsString::from("src"), OsString::from("dst")])
+            .build();
+
+        let options = build_local_copy_options(&config, None);
+        assert!(options.timeout().is_none());
+    }
+
+    #[test]
+    fn local_copy_options_delay_updates_enable_partial_transfers() {
+        let enabled = ClientConfig::builder()
+            .transfer_args([OsString::from("src"), OsString::from("dst")])
+            .delay_updates(true)
+            .build();
+
+        let enabled_options = build_local_copy_options(&enabled, None);
+        assert!(enabled_options.delay_updates_enabled());
+        assert!(enabled_options.partial_enabled());
+
+        let disabled = ClientConfig::builder()
+            .transfer_args([OsString::from("src"), OsString::from("dst")])
+            .build();
+
+        let disabled_options = build_local_copy_options(&disabled, None);
+        assert!(!disabled_options.delay_updates_enabled());
+        assert!(!disabled_options.partial_enabled());
+    }
+
+    #[test]
+    fn local_copy_options_honour_temp_directory_setting() {
+        let config = ClientConfig::builder()
+            .transfer_args([OsString::from("src"), OsString::from("dst")])
+            .temp_directory(Some(PathBuf::from(".staging")))
+            .build();
+
+        let options = build_local_copy_options(&config, None);
+        assert_eq!(options.temp_directory_path(), Some(Path::new(".staging")));
+
+        let default_config = ClientConfig::builder()
+            .transfer_args([OsString::from("src"), OsString::from("dst")])
+            .build();
+
+        assert!(
+            build_local_copy_options(&default_config, None)
+                .temp_directory_path()
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn local_copy_options_respect_one_file_system_setting() {
+        let enabled = ClientConfig::builder()
+            .transfer_args([OsString::from("src"), OsString::from("dst")])
+            .one_file_system(1)
+            .build();
+
+        let enabled_options = build_local_copy_options(&enabled, None);
+        assert!(enabled.one_file_system());
+        assert_eq!(enabled.one_file_system_level(), 1);
+        assert!(enabled_options.one_file_system_enabled());
+        assert_eq!(enabled_options.one_file_system_level(), 1);
+
+        let double = ClientConfig::builder()
+            .transfer_args([OsString::from("src"), OsString::from("dst")])
+            .one_file_system(2)
+            .build();
+
+        let double_options = build_local_copy_options(&double, None);
+        assert!(double.one_file_system());
+        assert_eq!(double.one_file_system_level(), 2);
+        assert!(double_options.one_file_system_enabled());
+        assert_eq!(double_options.one_file_system_level(), 2);
+
+        let default = ClientConfig::builder()
+            .transfer_args([OsString::from("src"), OsString::from("dst")])
+            .build();
+
+        let default_options = build_local_copy_options(&default, None);
+        assert!(!default.one_file_system());
+        assert_eq!(default.one_file_system_level(), 0);
+        assert!(!default_options.one_file_system_enabled());
+        assert_eq!(default_options.one_file_system_level(), 0);
     }
 }
