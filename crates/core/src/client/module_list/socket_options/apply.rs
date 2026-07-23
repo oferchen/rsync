@@ -150,7 +150,10 @@ mod tests {
     fn apply_socket_options_warns_and_continues_on_unknown_name() {
         let (socket, handle) = connected_socket();
 
-        apply_socket_options(&socket, std::ffi::OsStr::new("SO_NOTREAL=1,SO_SNDBUF=32768"));
+        apply_socket_options(
+            &socket,
+            std::ffi::OsStr::new("SO_NOTREAL=1,SO_SNDBUF=32768"),
+        );
 
         assert!(
             socket.send_buffer_size().expect("query send buffer size") >= 32768,
