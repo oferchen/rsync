@@ -506,22 +506,29 @@ impl<'a> RemoteInvocationBuilder<'a> {
             )));
         }
 
-        if let Some(dir) = self.config.partial_directory() {
-            let mut arg = OsString::from("--partial-dir=");
-            arg.push(dir.as_os_str());
-            args.push(arg);
-        }
-
-        // upstream: options.c:2884-2893 - `if (partial_dir && am_sender) {
-        // --partial-dir ... } else if (keep_partial && am_sender) --partial`.
-        // Bare --partial is emitted only when the client is the sender (PUSH)
-        // and no --partial-dir is configured; the partial-dir branch above
-        // already conveys keep_partial otherwise. There is no compact 'P'.
-        if self.role == RemoteRole::Sender
-            && self.config.partial()
-            && self.config.partial_directory().is_none()
-        {
-            args.push(OsString::from("--partial"));
+        // upstream: options.c:2886-2894 server_options() -
+        //   if (partial_dir && am_sender) {
+        //       if (partial_dir != tmp_partialdir) --partial-dir <dir>;
+        //       if (delay_updates) --delay-updates;
+        //   } else if (keep_partial && am_sender) --partial
+        // The whole group is am_sender (PUSH) only. --delay-updates implies an
+        // implicit tmp partial_dir upstream, so it is emitted even without an
+        // explicit --partial-dir; config.partial_directory() holds only an
+        // explicit dir, mirroring the `partial_dir != tmp_partialdir` guard.
+        // There is no compact 'P'.
+        if am_sender {
+            if let Some(dir) = self.config.partial_directory() {
+                let mut arg = OsString::from("--partial-dir=");
+                arg.push(dir.as_os_str());
+                args.push(arg);
+                if self.config.delay_updates() {
+                    args.push(OsString::from("--delay-updates"));
+                }
+            } else if self.config.delay_updates() {
+                args.push(OsString::from("--delay-updates"));
+            } else if self.config.partial() {
+                args.push(OsString::from("--partial"));
+            }
         }
 
         // upstream: options.c:2925-2928 - `if (tmpdir) { --temp-dir; ... }`
@@ -534,7 +541,11 @@ impl<'a> RemoteInvocationBuilder<'a> {
             args.push(arg);
         }
 
-        if self.config.inplace() {
+        // upstream: options.c:2951-2960 server_options() - `if (append_mode)
+        // { --append... } else if (inplace) { --inplace }`. append_mode takes
+        // precedence, so --inplace is suppressed when appending (the receiver
+        // derives inplace from append); the two are mutually exclusive.
+        if self.config.inplace() && !self.config.append() {
             args.push(OsString::from("--inplace"));
         }
 
@@ -713,10 +724,6 @@ impl<'a> RemoteInvocationBuilder<'a> {
         // matching upstream's `am_sender` branch (see `am_sender` above).
         if self.config.mkpath() && self.role == RemoteRole::Sender {
             args.push(OsString::from("--mkpath"));
-        }
-
-        if self.config.delay_updates() {
-            args.push(OsString::from("--delay-updates"));
         }
 
         // upstream: options.c:2648-2649 - bare `make_backups` is emitted as the
