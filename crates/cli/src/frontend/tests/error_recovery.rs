@@ -5,8 +5,8 @@
 //!
 //! References:
 //! - upstream: errcode.h - RERR_VANISHED = 24
-//! - upstream: flist.c:1314-1322 - vanished file handling during file list build
-//! - upstream: main.c:1356-1363 - io_error to exit code mapping
+//! - upstream: flist.c:1286-1294 - vanished file handling during file list build
+//! - upstream: main.c:1338-1345 - io_error to exit code mapping
 
 use super::common::*;
 use super::*;

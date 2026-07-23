@@ -143,18 +143,18 @@ pub(crate) struct ConfigInputs {
     pub(crate) link_dests: Vec<PathBuf>,
     pub(crate) remove_source_files: bool,
     /// `--remove-sent-files` - deprecated alias; forwarded verbatim on the wire.
-    /// upstream: options.c:3000-3003.
+    /// upstream: options.c:2982-2985.
     pub(crate) remove_sent_files: bool,
     /// Resolved out-format string carries `%i`; forwards `--log-format=%i`.
     /// Mirrors upstream `stdout_format_has_i`, derived from the resolved format
-    /// string rather than the `-i` flag. upstream: options.c:2363-2376,2790-2793.
+    /// string rather than the `-i` flag. upstream: options.c:2345-2358,2772-2775.
     pub(crate) out_format_forwards_i: bool,
     /// Explicit `--out-format` / `--log-format` contains `%o` but not `%i`;
-    /// forwards `--log-format=%o`. upstream: options.c:2794-2795.
+    /// forwards `--log-format=%o`. upstream: options.c:2776-2777.
     pub(crate) out_format_has_operation: bool,
     /// Explicit `--out-format` / `--log-format` was given with neither `%i` nor
     /// `%o`; forwards the placeholder `--log-format=X` for a non-verbose client.
-    /// upstream: options.c:2796-2797.
+    /// upstream: options.c:2778-2779.
     pub(crate) out_format_placeholder: bool,
     pub(crate) inplace: bool,
     pub(crate) append: bool,
@@ -237,7 +237,7 @@ pub(crate) fn build_base_config(mut inputs: ConfigInputs) -> ClientConfigBuilder
         .quiet(inputs.quiet)
         .msgs2stderr(inputs.msgs2stderr)
         .recursive(inputs.recursive)
-        // upstream: options.c:2217-2221 - `else if (recurse) xfer_dirs = 1;
+        // upstream: options.c:2199-2203 - `else if (recurse) xfer_dirs = 1;
         // else if (xfer_dirs < 0) xfer_dirs = list_only ? 1 : 0;`. When neither
         // -r nor an explicit -d/--no-dirs is given, --list-only still transfers
         // (lists) a bare directory operand's own entry.
@@ -246,9 +246,9 @@ pub(crate) fn build_base_config(mut inputs: ConfigInputs) -> ClientConfigBuilder
         } else {
             inputs.dirs.unwrap_or(inputs.list_only)
         })
-        // upstream: options.c:2233-2235 - delete mode is enabled only by an
+        // upstream: options.c:2215-2217 - delete mode is enabled only by an
         // explicit `--delete*` or `--delete-excluded`. `--max-delete` merely caps
-        // the count (options.c:2200-2203) and must never enable deletion.
+        // the count (options.c:2182-2185) and must never enable deletion.
         .delete(inputs.delete_mode.is_enabled() || inputs.delete_excluded)
         .delete_excluded(inputs.delete_excluded)
         .delete_missing_args(inputs.delete_missing_args)
@@ -435,7 +435,7 @@ pub(crate) fn build_base_config(mut inputs: ConfigInputs) -> ClientConfigBuilder
     };
 
     builder = builder.itemize_changes(inputs.itemize_changes);
-    // upstream: generator.c:582-583 - emit itemize rows for unchanged entries
+    // upstream: generator.c:575-576 - emit itemize rows for unchanged entries
     // when `-ii` / `--info=name2` / `-vv` raised the level. The parser folds
     // all three into `NameOutputLevel::UpdatedAndUnchanged`.
     builder = builder.itemize_unchanged(matches!(

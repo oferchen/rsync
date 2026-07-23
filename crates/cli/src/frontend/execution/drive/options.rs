@@ -112,7 +112,7 @@ struct InfoFlagsResult {
 
 /// Applies upstream's `--progress` ⇒ `--info=name` implication.
 ///
-/// upstream: options.c:2369-2373 - when the `--progress`/`-P` flag set
+/// upstream: options.c:2351-2355 - when the `--progress`/`-P` flag set
 /// `do_progress` (and the run is not a server), an unset NAME level is bumped to
 /// 1 via `parse_output_words("name", DEFAULT_PRIORITY)`. That `DEFAULT_PRIORITY`
 /// assignment cannot override a USER_PRIORITY one, so an explicit `--info=name0`
@@ -202,7 +202,7 @@ where
             // upstream: options.c set_output_verbosity / parse_output_words
             settings.apply_to_thread_local();
 
-            // upstream: options.c:2965 make_output_option() - forward the
+            // upstream: options.c:2947 make_output_option() - forward the
             // explicitly-set info categories to the peer. Normalize to
             // `name{level}` tokens; the remote builders apply the role `where`
             // filter.
@@ -335,7 +335,7 @@ where
         None => None,
     };
 
-    // upstream: options.c:1708-1711 - `--block-size=0` yields no override and
+    // upstream: options.c:1692-1695 - `--block-size=0` yields no override and
     // falls back to the default, so a `None` here covers both "unset" and
     // "explicit 0".
     let block_size_override = match inputs.block_size.as_ref() {
@@ -427,7 +427,7 @@ where
                 compress_level_setting = Some(CompressLevelArg::Disable);
                 compress_disabled_by_choice = true;
             }
-            // upstream: options.c:2031-2034 - `--compress-choice=auto` is nulled
+            // upstream: options.c:2013-2016 - `--compress-choice=auto` is nulled
             // out, so it behaves as if `--compress-choice` had not been given:
             // no forced codec, no disable, normal negotiation.
             Ok(CompressChoice::Auto) => {}
@@ -481,9 +481,9 @@ where
         compress_choice_name = None;
     }
 
-    // upstream: options.c:160 - the `skip_compress` global is NULL unless the
+    // upstream: options.c:150 - the `skip_compress` global is NULL unless the
     // `--skip-compress` option is given, and only that explicit value is
-    // forwarded to the remote sender (options.c:2876-2878). The
+    // forwarded to the remote sender (options.c:2858-2860). The
     // `RSYNC_SKIP_COMPRESS` environment fallback is an oc extension that still
     // applies locally, but - like upstream - it is not forwarded on the wire.
     let mut skip_compress_spec = None;

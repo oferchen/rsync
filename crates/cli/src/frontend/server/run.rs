@@ -65,7 +65,7 @@ where
     // upstream: main.c::read_args() merges cmdline args with stdin args
     // under --protect-args / secluded-args. rsync.c:283
     // send_protected_args() rewrites args[i] to "rsync" at the NULL
-    // split inserted by options.c:2763; io.c:1324 read_args() then
+    // split inserted by options.c:2745; io.c:1308 read_args() then
     // re-runs parse_arguments() on the server side.
     let effective_args: Vec<OsString>;
     let effective_slice: &[OsString] = if secluded_args {
@@ -120,7 +120,7 @@ where
             }
         };
 
-    // upstream: main.c:1289 - "keep_dirlinks = 0; /* Must be disabled on the
+    // upstream: main.c:1271 - "keep_dirlinks = 0; /* Must be disabled on the
     // sender. */". keep-dirlinks is a receiver-only feature (it follows a
     // destination dir-symlink); the sender reads the source, never the
     // destination, so force it off whenever this process is the sender
@@ -137,11 +137,11 @@ where
     }
 
     // upstream: options.c set_output_verbosity - the packed `-v` count maps to
-    // info/debug levels via info_verbosity[] (options.c:249-253) before any
+    // info/debug levels via info_verbosity[] (options.c:239-243) before any
     // explicit --info override is layered on. Without this, the server thread's
     // thread-local verbosity stays at the zero default, so `-vv` never raises
     // info.name to 2 and the itemize line for an unchanged entry
-    // (INFO_GTE(NAME, 2), generator.c:589-590) is suppressed - exactly the
+    // (INFO_GTE(NAME, 2), generator.c:582-583) is suppressed - exactly the
     // gap that fails the upstream `itemize` test under SSH `--server` mode,
     // where `-vv` arrives as packed `v` letters rather than `--info=name2`.
     if config.flags.verbose_level > 0 {
@@ -171,11 +171,11 @@ where
         }
     }
 
-    // upstream: options.c:1793 / 485 - the client forwards explicitly-set debug
+    // upstream: options.c:1777 / 475 - the client forwards explicitly-set debug
     // levels (`--debug=hlink4`) the same way it forwards `--info`. Apply each
     // forwarded token to the thread-local debug config so debug_log! callsites on
     // the server side honour the client's request. Unknown tokens are silently
-    // ignored because `am_server` (options.c:485), so a newer client can forward
+    // ignored because `am_server` (options.c:475), so a newer client can forward
     // categories this build has not learned yet without aborting the transfer.
     for value in &long_flags.debug {
         let text = value.to_string_lossy();
@@ -193,63 +193,63 @@ where
     config.write.io_uring_policy = long_flags.io_uring_policy;
     config.write.zero_copy_policy = long_flags.zero_copy_policy;
     config.write.write_devices = long_flags.write_devices;
-    // upstream: options.c:2511 - server always trusts sender (am_server implies trust)
+    // upstream: options.c:2493 - server always trusts sender (am_server implies trust)
     config.trust_sender = true;
     config.qsort = long_flags.qsort;
     config.file_selection.files_from_path = long_flags.files_from;
     config.file_selection.from0 = long_flags.from0;
     config.write.inplace = long_flags.inplace;
-    // upstream: options.c:2418-2430 - append mode implies inplace; the transfer
+    // upstream: options.c:2400-2412 - append mode implies inplace; the transfer
     // layer derives that internally (transfer_ops.rs `use_inplace = inplace ||
     // append`), so only the append flags need forwarding. append_verify
     // (append_mode == 2) folds the on-disk prefix into the whole-file checksum
-    // (receiver.c:464, match.c:373). Mirrors the daemon long-form parser.
+    // (receiver.c:357, match.c:373). Mirrors the daemon long-form parser.
     config.flags.append = long_flags.append;
     config.flags.append_verify = long_flags.append_verify;
-    // upstream: receiver.c:390 - a server receiver that was passed --preallocate
+    // upstream: receiver.c:320 - a server receiver that was passed --preallocate
     // fallocate()s each destination file to its eventual length before writing.
     config.flags.preallocate = long_flags.preallocate;
     config.file_selection.size_only = long_flags.size_only;
-    // upstream: options.c:3011-3012 - `--open-noatime` forwarded to the sender so
+    // upstream: options.c:2993-2994 - `--open-noatime` forwarded to the sender so
     // it opens source files with O_NOATIME (do_open), leaving atime untouched.
     config.write.open_noatime = long_flags.open_noatime;
-    // upstream: options.c:2886-2889 - `--delete-missing-args` (missing_args == 2)
+    // upstream: options.c:2868-2871 - `--delete-missing-args` (missing_args == 2)
     // and `--ignore-missing-args` (missing_args == 1) govern how a vanished
     // top-level source arg is handled when building the file list. Mirrors the
     // daemon long-form parser (long_form_args.rs).
     config.file_selection.delete_missing_args = long_flags.delete_missing_args;
     config.file_selection.ignore_missing_args = long_flags.ignore_missing_args;
-    // upstream: options.c:2911 - bare --partial (no compact 'P' letter) tells the
+    // upstream: options.c:2893 - bare --partial (no compact 'P' letter) tells the
     // receiver to keep interrupted temp files. OR with the compact value so a
     // legacy client that still packs 'P' is not clobbered.
     if long_flags.partial {
         config.flags.partial = true;
     }
-    // upstream: options.c:2778-2783 - --specials / --no-specials override the
+    // upstream: options.c:2760-2765 - --specials / --no-specials override the
     // specials bit that the compact 'D' letter set to preserve_devices's value.
     if let Some(specials) = long_flags.specials {
         config.flags.specials = specials;
     }
     config.file_selection.ignore_existing = long_flags.ignore_existing;
     config.file_selection.existing_only = long_flags.existing_only;
-    // upstream: options.c:2994-2995 / flist.c:2503 - `--no-implied-dirs` is
+    // upstream: options.c:2976-2977 / flist.c:2468 - `--no-implied-dirs` is
     // forwarded to the sender on a pull. As the server-side sender this process
     // must omit the implied parent dirs from the flist at protocol < 30; at
-    // protocol >= 30 they are always sent (flist.c:2292-2293).
+    // protocol >= 30 they are always sent (flist.c:2257-2258).
     config.flags.no_implied_dirs = long_flags.no_implied_dirs;
-    // upstream: options.c:633 / 2768-2771 - `--no-r` clears `recurse` via the
+    // upstream: options.c:623 / 2750-2753 - `--no-r` clears `recurse` via the
     // server popt table. The client emits it under `-d --delete` so the remote
     // can delete with `-d` sans `-r`. It overrides the compact `r` letter that
     // `ParsedServerFlags::parse` set, so apply it only when forwarded.
     if long_flags.no_recurse {
         config.flags.recursive = false;
     }
-    // upstream: options.c:756 / 2973-2977 - `--no-W` clears `whole_file` so
+    // upstream: options.c:746 / 2955-2959 - `--no-W` clears `whole_file` so
     // `--inplace --sparse` streams a delta. Overrides the compact `W` letter.
     if long_flags.no_whole_file {
         config.flags.whole_file = false;
     }
-    // upstream: options.c:110-111 / 378-379 - relative mode arrives as the
+    // upstream: options.c:109-110 / 368-369 - relative mode arrives as the
     // compact `R` letter (already parsed into config.flags.relative) or as the
     // long `--no-relative`. Apply the long form when present so an explicit
     // `--no-relative` (which the peer sends without the `R` letter) forces
@@ -259,38 +259,38 @@ where
     }
     config.flags.numeric_ids = core::server::NumericIds::from_client(long_flags.numeric_ids);
     config.flags.delete = long_flags.delete;
-    // upstream: generator.c:125 - --delete-after / --delete-delay both defer the
+    // upstream: generator.c:124 - --delete-after / --delete-delay both defer the
     // goodbye del-stats emission.
     config.deletion.late_delete = long_flags.late_delete;
-    // upstream: generator.c:2444-2445 - only --delete-after defers the delete
+    // upstream: generator.c:2427-2428 - only --delete-after defers the delete
     // *decision* to after the transfer, so the per-directory `.rsync-filter`
     // merge files it just received protect matching destination entries at delete
     // time. --delete-delay decides during the walk and only defers the unlink.
     config.deletion.delete_after = long_flags.delete_after;
-    // upstream: options.c:2982-2983 - `--remove-source-files` is forwarded
+    // upstream: options.c:2964-2965 - `--remove-source-files` is forwarded
     // long-form when the client requested sender-side removal. The flag is
     // consumed by the sender's `successful_send()` after each transferred
     // file is acknowledged.
     config.flags.remove_source_files = long_flags.remove_source_files;
-    // upstream: options.c:3005 / flist.c:1451 - `--copy-devices` is forwarded to
+    // upstream: options.c:2987 / flist.c:1419 - `--copy-devices` is forwarded to
     // the remote sender on a pull. As the server-side sender, this process must
     // convert each block/char device into a regular file and stream its bytes.
     config.flags.copy_devices = long_flags.copy_devices;
-    // upstream: options.c:3014-3015 - `--mkpath` is forwarded long-form to the
+    // upstream: options.c:2996-2997 - `--mkpath` is forwarded long-form to the
     // server receiver on a push. The receiver gates dest-arg path creation on
     // this flag: without it, a missing ancestor chain is an error
-    // (`main.c:797` single `do_mkdir`); with it, the whole chain is created
-    // (`main.c:745` `make_path`).
+    // (`main.c:788` single `do_mkdir`); with it, the whole chain is created
+    // (`main.c:736` `make_path`).
     config.flags.mkpath = long_flags.mkpath;
-    // upstream: options.c:2765-2766 / generator.c:1261 - `--list-only` forwarded
+    // upstream: options.c:2747-2748 / generator.c:1249 - `--list-only` forwarded
     // by the client tells the server to render the flist without writing to the
     // destination (`TransferFlags::skip_dest_writes`).
     config.flags.list_only = long_flags.list_only;
-    // upstream: options.c:2868-2869 / main.c:1863 - a push sender forwards
+    // upstream: options.c:2850-2851 / main.c:1839 - a push sender forwards
     // `--only-write-batch=X`; on the receiver, `write_batch < 0` forces
     // `dry_run = 1` (no destination writes) while `do_xfers` stays 1 so the
     // generator still sends real block checksums. The client records the batch
-    // locally and streams no delta data over the wire (sender.c:221), so the
+    // locally and streams no delta data over the wire (sender.c:217), so the
     // receiver runs the dedicated only-write-batch loop: send sum heads, read
     // the bare NDX+attrs echo, write nothing to the destination. Only the
     // receiver role ever sees this flag - server_options() emits it inside the
@@ -299,18 +299,18 @@ where
         config.flags.only_write_batch = true;
         config.flags.dry_run = true;
     }
-    // upstream: options.c:2064-2066 - do_stats sets info_levels[INFO_STATS] >= 2.
+    // upstream: options.c:2046-2048 - do_stats sets info_levels[INFO_STATS] >= 2.
     // The server-side flag must be set so the generator emits NDX_DEL_STATS
-    // during the goodbye phase (generator.c:2394,2439).
+    // during the goodbye phase (generator.c:2377,2422).
     config.do_stats = long_flags.stats;
     config.reference_directories = long_flags.reference_directories;
-    // upstream: options.c:2830-2831 - server_options() emits `--suffix=SUFFIX`
+    // upstream: options.c:2812-2813 - server_options() emits `--suffix=SUFFIX`
     // (safe_arg) when the backup suffix differs from the default. The server's
     // backup path honours it via effective_backup_suffix().
     if let Some(suffix) = &long_flags.backup_suffix {
         config.backup_suffix = Some(suffix.clone());
     }
-    // upstream: options.c:2930-2931 / 2933-2934 - `--usermap=SPEC` / `--groupmap=SPEC`
+    // upstream: options.c:2912-2913 / 2915-2916 - `--usermap=SPEC` / `--groupmap=SPEC`
     // are emitted in the am_sender block so the server receiver maps ownership.
     // A malformed spec leaves the field unset (mirroring the daemon path,
     // module_access/client_args/long_form_args.rs, and upstream's fall-through
@@ -325,16 +325,16 @@ where
     {
         config.group_mapping = Some(mapping);
     }
-    // upstream: options.c:2877-2878 - `--skip-compress=LIST` is forwarded to the
-    // server sender, but token.c:226 set_compression()'s per-file suffix lookup
+    // upstream: options.c:2859-2860 - `--skip-compress=LIST` is forwarded to the
+    // server sender, but token.c:225 set_compression()'s per-file suffix lookup
     // is compiled out under `#if 0` ("No compression algorithms currently allow
     // mid-stream changing of the level."). So a negotiated codec frames EVERY
-    // file (token.c:1095 send_token() dispatches on the global do_compression);
+    // file (token.c:1065 send_token() dispatches on the global do_compression);
     // the suffix list never switches framing per file. Applying it here would
     // emit plain tokens for a skip-matched file and desync the client-receiver's
     // session-level codec reader. The arg is accepted for compatibility but has
     // no per-file wire effect.
-    // upstream: options.c:2904-2908 - `--partial-dir DIR` forwarded by the
+    // upstream: options.c:2886-2890 - `--partial-dir DIR` forwarded by the
     // sender. The server-side receiver moves interrupted temp files into this
     // directory and looks for resume basis files there. Without applying this
     // value, transfers that pin `--protocol=28` (where the client cannot
@@ -347,17 +347,17 @@ where
         config.partial_dir = Some(path);
         config.has_partial_dir = true;
     }
-    // upstream: options.c:2909-2910 - `--delay-updates` rides alongside
+    // upstream: options.c:2891-2892 - `--delay-updates` rides alongside
     // `--partial-dir` whenever both are active.
     if long_flags.delay_updates {
         config.write.delay_updates = true;
     }
 
-    // upstream: options.c:2363-2366 - the server parses --log-format to set
+    // upstream: options.c:2345-2348 - the server parses --log-format to set
     // stdout_format_has_i, which controls generator itemize output. `%i` sets
     // has_i = 1 (itemize significant items); `%I` sets has_i = 2, the `-ii`
     // level that also itemizes unchanged entries. The client forwards
-    // `--log-format=%i%I` for `-ii` (options.c:174-185 server_options), so a
+    // `--log-format=%i%I` for `-ii` (options.c:164-175 server_options), so a
     // server that sees `%I` must also emit unchanged rows.
     if let Some(fmt) = &long_flags.log_format {
         if fmt.contains("%i") || fmt.contains("%I") {
@@ -370,7 +370,7 @@ where
 
     // upstream: rsync.c:85-147 setup_iconv() - server opens iconv against the
     // wire's UTF-8 charset using the local-side spec forwarded by the client
-    // (options.c:2734-2741). Without this wiring the receiver/generator skip
+    // (options.c:2716-2723). Without this wiring the receiver/generator skip
     // the iconv hook and write/read raw bytes verbatim, breaking transfers
     // with --iconv=LOCAL,REMOTE where the on-disk filenames differ between
     // the two sides.
@@ -389,7 +389,7 @@ where
         }
     }
 
-    // upstream: options.c:2818-2823 - `--compress-choice`, `--new-compress`, and
+    // upstream: options.c:2800-2805 - `--compress-choice`, `--new-compress`, and
     // `--old-compress` carry the explicit codec when the negotiated algorithm is
     // not the default CPRES_ZLIB. Without forwarding it into `ServerConfig`, the
     // SSH server path skips compression entirely (handshake.client_args is None
@@ -410,7 +410,7 @@ where
         }
     }
 
-    // upstream: options.c:2772-2776 - `--compress-level=N` forwarded by the
+    // upstream: options.c:2754-2758 - `--compress-level=N` forwarded by the
     // client sets `do_compression_level` on the server so its codec compresses
     // at the same level. The value is the numeric 0-9 that the client already
     // clamped before forwarding.
@@ -465,7 +465,7 @@ where
                     let mut allowed = vec![root];
 
                     // UTS-V3-D: a remote files-from path (upstream
-                    // `options.c:2962` -> server gets `--files-from <path>`)
+                    // `options.c:2944` -> server gets `--files-from <path>`)
                     // sits outside the destination tree. The receiver
                     // opens it in `forward_files_from_to_sender` to push
                     // filenames back to the sender; the landlock allowlist
@@ -486,7 +486,7 @@ where
                         }
                     }
 
-                    // upstream: generator.c:1368 - with --keep-dirlinks the
+                    // upstream: generator.c:1356 - with --keep-dirlinks the
                     // receiver follows a destination symlink that resolves to a
                     // directory and writes through it, which upstream permits
                     // even when the target lives outside the transfer root. The
@@ -518,7 +518,7 @@ where
         }
     }
 
-    // upstream: main.c:1280 `start_server()` returns into `exit_cleanup(0)`,
+    // upstream: main.c:1262 `start_server()` returns into `exit_cleanup(0)`,
     // which on a clean exit just runs `close_all()` + `exit()`. The kernel
     // closes the inherited stdio descriptors as the process tears down, and
     // the peer (whether upstream rsync over SSH, lsh.sh, or `--rsh=fake_rsh`)
@@ -554,7 +554,7 @@ where
 /// entries so a hostile or pathological destination tree cannot stall receiver
 /// startup. Mirrors upstream's `--keep-dirlinks` trust model: the destination
 /// symlinks the user pre-established are followed even when their targets sit
-/// outside the transfer root (`generator.c:1368`).
+/// outside the transfer root (`generator.c:1356`).
 fn collect_keep_dirlink_targets(root: &std::path::Path, out: &mut Vec<std::path::PathBuf>) {
     const MAX_DEPTH: usize = 32;
     const MAX_ENTRIES: usize = 100_000;
@@ -662,18 +662,18 @@ fn apply_value_flags<Err: Write>(
         }
     }
 
-    // upstream: options.c:1959-1966 - server-side `--max-alloc` is parsed and
+    // upstream: options.c:1943-1950 - server-side `--max-alloc` is parsed and
     // applied to the local allocator. We forward it from the client and
     // enforce the cap on the server's buffer pool.
     if let Some(alloc_str) = &long_flags.max_alloc {
         match super::super::execution::parse_max_alloc_argument(std::ffi::OsStr::new(alloc_str)) {
             Ok(limit) => {
                 if limit == 0 {
-                    // upstream: options.c:1982 `if (!max_alloc) max_alloc =
+                    // upstream: options.c:1966 `if (!max_alloc) max_alloc =
                     // SIZE_MAX;` - a forwarded `--max-alloc=0` means unlimited.
                     protocol::set_max_alloc(usize::MAX);
                 } else if let Ok(limit_usize) = usize::try_from(limit) {
-                    // upstream: options.c:1975-1981 - the server rewrites its own
+                    // upstream: options.c:1959-1965 - the server rewrites its own
                     // `max_alloc` global from the forwarded `--max-alloc`, which
                     // bounds the xattr datum decoders on the receive path
                     // (util2.c:75).

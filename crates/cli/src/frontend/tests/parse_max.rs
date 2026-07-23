@@ -9,7 +9,7 @@ fn parse_max_delete_argument_accepts_zero() {
 
 #[test]
 fn parse_max_delete_argument_clamps_negative_to_zero() {
-    // upstream: options.c:2200-2203 - a negative `--max-delete` is clamped to a
+    // upstream: options.c:2182-2185 - a negative `--max-delete` is clamped to a
     // 0 cap ("no deletions") rather than rejected.
     let limit = parse_max_delete_argument(OsStr::new("-4")).expect("negative clamps to zero");
     assert_eq!(limit, 0);

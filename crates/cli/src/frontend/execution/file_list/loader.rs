@@ -95,8 +95,8 @@ pub(crate) fn read_file_list_from_reader<R: BufRead>(
                 buffer.pop();
             }
 
-            // upstream: flist.c:2284 sets RL_DUMP_COMMENTS independent of
-            // eol_nulls, and io.c:1279 read_line() strips leading '#'/';'
+            // upstream: flist.c:2249 sets RL_DUMP_COMMENTS independent of
+            // eol_nulls, and io.c:1276 read_line() strips leading '#'/';'
             // comment lines even with NUL delimiters. Strip them here too.
             if buffer
                 .first()
