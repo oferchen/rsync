@@ -172,7 +172,9 @@ pub(crate) fn parse_proxy_spec(spec: &str) -> Result<ProxyConfig, ClientError> {
         let (userinfo, host_part) = spec.split_at(idx);
 
         let mut segments = userinfo.splitn(2, ':');
-        let username = segments.next().unwrap();
+        let username = segments
+            .next()
+            .expect("splitn always yields at least one segment");
         let password = segments.next().ok_or_else(|| {
             proxy_configuration_error("invalid proxy specification: should be USER:PASS@HOST:PORT")
         })?;
