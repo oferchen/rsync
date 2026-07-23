@@ -9,14 +9,33 @@ fn parse_bandwidth_accepts_binary_units() {
 
 #[test]
 fn parse_bandwidth_accepts_decimal_units() {
+    // 12 MB = 12_000_000 bytes (decimal), rounded to whole KiB for pacing
+    // (options.c:1718 `bwlimit = (size + 512) / 1024` -> 11_719 KiB).
     let limit = parse_bandwidth_argument("12MB").expect("parse succeeds");
-    assert_eq!(limit, NonZeroU64::new(12_000_000));
+    assert_eq!(limit, NonZeroU64::new(12_000_256));
+}
+
+#[test]
+fn parse_bandwidth_quantizes_effective_rate_to_whole_kib() {
+    // upstream: options.c:1718 `bwlimit = (size + 512) / 1024`, then every pacing
+    // calculation uses that whole-KiB value (io.c:2115,2120,2133). A byte or
+    // decimal suffix must therefore pace at the KiB-rounded rate, not its exact
+    // parsed byte count, or oc would throttle at a different speed than upstream.
+    // `1500B` -> 1 KiB, `1MB` -> 977 KiB.
+    let byte_rate = parse_bandwidth_argument("1500B").expect("parse succeeds");
+    assert_eq!(byte_rate, NonZeroU64::new(1024));
+
+    let mega = parse_bandwidth_argument("1MB").expect("parse succeeds");
+    assert_eq!(mega, NonZeroU64::new(977 * 1024));
+    assert_eq!(mega, NonZeroU64::new(1_000_448));
 }
 
 #[test]
 fn parse_bandwidth_accepts_explicit_byte_suffix() {
+    // A byte suffix skips the suffix multiplier; the accepted 512-byte floor
+    // then rounds up to the 1 KiB pacing rate (options.c:1718).
     let limit = parse_bandwidth_argument("512b").expect("parse succeeds");
-    assert_eq!(limit, NonZeroU64::new(512));
+    assert_eq!(limit, NonZeroU64::new(1024));
 
     let uppercase = parse_bandwidth_argument("512B").expect("parse succeeds");
     assert_eq!(uppercase, limit);
@@ -118,11 +137,13 @@ fn parse_bandwidth_accepts_leading_plus_sign() {
 
 #[test]
 fn parse_bandwidth_honours_postfix_adjustments_for_byte_suffix() {
+    // The +1/-1 adjustment applies exactly (601 / 599 bytes); both sub-KiB
+    // rates then round to the 1 KiB pacing floor (options.c:1718).
     let incremented = parse_bandwidth_argument("600b+1").expect("parse succeeds");
-    assert_eq!(incremented, NonZeroU64::new(601));
+    assert_eq!(incremented, NonZeroU64::new(1024));
 
     let decremented = parse_bandwidth_argument("600b-1").expect("parse succeeds");
-    assert_eq!(decremented, NonZeroU64::new(599));
+    assert_eq!(decremented, NonZeroU64::new(1024));
 }
 
 #[test]
@@ -292,9 +313,10 @@ fn parse_bandwidth_rejects_whitespace_only() {
 
 #[test]
 fn parse_bandwidth_boundary_minimum_value() {
-    // 512 bytes is the minimum allowed
+    // 512 bytes is the minimum accepted input; it rounds up to the 1 KiB pacing
+    // rate (options.c:1718).
     let at_minimum = parse_bandwidth_argument("512b").expect("parse succeeds");
-    assert_eq!(at_minimum, NonZeroU64::new(512));
+    assert_eq!(at_minimum, NonZeroU64::new(1024));
 
     // 511 bytes should be rejected
     let below_minimum = parse_bandwidth_argument("511b").unwrap_err();
@@ -326,14 +348,14 @@ fn parse_bandwidth_accepts_mixed_case_suffix() {
 
 #[test]
 fn parse_bandwidth_accepts_decimal_suffix_case_variations() {
-    // Decimal suffixes: KB, Kb, kB, kb should all be 1000-based
+    // Decimal suffixes: KB, Kb, kB, kb are all 1000-based (1000 bytes), then
+    // rounded to the 1 KiB pacing rate (options.c:1718 `(1000 + 512) / 1024`).
     let upper = parse_bandwidth_argument("1KB").expect("parse succeeds");
     let mixed1 = parse_bandwidth_argument("1Kb").expect("parse succeeds");
     let mixed2 = parse_bandwidth_argument("1kB").expect("parse succeeds");
     let lower = parse_bandwidth_argument("1kb").expect("parse succeeds");
 
-    // All should equal 1000 bytes
-    let expected = NonZeroU64::new(1000);
+    let expected = NonZeroU64::new(1024);
     assert_eq!(upper, expected);
     assert_eq!(mixed1, expected);
     assert_eq!(mixed2, expected);
@@ -430,9 +452,9 @@ fn parse_bandwidth_fractional_with_adjustment_edge_cases() {
     let at_half = parse_bandwidth_argument("0.5K").expect("parse succeeds");
     assert_eq!(at_half, NonZeroU64::new(1024));
 
-    // 512b = 512 bytes exactly at minimum (byte suffix has 1-byte alignment)
+    // 512b = 512 bytes (accepted floor), rounded to the 1 KiB pacing rate
     let at_min = parse_bandwidth_argument("512b").expect("parse succeeds");
-    assert_eq!(at_min, NonZeroU64::new(512));
+    assert_eq!(at_min, NonZeroU64::new(1024));
 
     // 512b-1 = 511 bytes, below minimum
     let below_min = parse_bandwidth_argument("512b-1").unwrap_err();
@@ -455,12 +477,13 @@ fn parse_bandwidth_handles_all_large_unit_suffixes_with_values() {
 
 #[test]
 fn parse_bandwidth_handles_decimal_b_variants() {
-    // Test decimal base variants (b suffix after K/M/G etc)
-    // GB = 1000^3 bytes
+    // Decimal base variants (b suffix after K/M/G etc), rounded to whole KiB for
+    // pacing (options.c:1718 `bwlimit = (size + 512) / 1024`).
+    // GB = 1000^3 bytes -> 976_563 KiB.
     let gb = parse_bandwidth_argument("1GB").expect("parse succeeds");
-    assert_eq!(gb, NonZeroU64::new(1_000_000_000));
+    assert_eq!(gb, NonZeroU64::new(1_000_000_512));
 
-    // TB = 1000^4 bytes
+    // TB = 1000^4 bytes, already an exact multiple of 1024, so it is unchanged.
     let tb = parse_bandwidth_argument("1TB").expect("parse succeeds");
     assert_eq!(tb, NonZeroU64::new(1_000_000_000_000));
 }
@@ -544,9 +567,10 @@ fn parse_bandwidth_rejects_exponent_after_trailing_decimal() {
 
 #[test]
 fn parse_bandwidth_handles_adjustment_boundary_at_minimum() {
-    // 513b-1 = 512b, exactly at minimum
+    // 513b-1 = 512 bytes, the accepted floor, which rounds to the 1 KiB pacing
+    // rate (options.c:1718).
     let result = parse_bandwidth_argument("513b-1").expect("parse succeeds");
-    assert_eq!(result, NonZeroU64::new(512));
+    assert_eq!(result, NonZeroU64::new(1024));
 }
 
 #[test]

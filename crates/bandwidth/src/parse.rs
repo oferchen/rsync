@@ -91,16 +91,19 @@ pub fn parse_bandwidth_argument(text: &str) -> Result<Option<NonZeroU64>, Bandwi
         return Err(BandwidthParseError::TooSmall);
     }
 
-    // upstream rounds bwlimit to whole KiB via `(size + 512) / 1024`; oc rounds
-    // to the granularity implied by the suffix (bytes/decimal/binary).
-    let alignment = parsed.unit;
-    let rounded = bytes
-        .checked_add(alignment / 2)
+    // upstream: options.c:1718 `bwlimit = (size + 512) / 1024` rounds the parsed
+    // byte rate to whole KiB, and every pacing calculation then uses that KiB
+    // value (io.c:2115,2120,2133). Quantize identically so a byte or decimal
+    // suffix paces at the same rate as upstream rather than at its exact parsed
+    // byte count: `1500B` -> 1 KiB (1024 B/s), `1MB` -> 977 KiB (1000448 B/s). A
+    // default `K` suffix is already a whole-KiB multiple, so it is unaffected.
+    // The `< 512` minimum is enforced above (as upstream's `parse_size_arg`
+    // floor), so `kib` is always >= 1 here and the result is never zero.
+    let kib = bytes
+        .checked_add(512)
         .ok_or(BandwidthParseError::TooLarge)?
-        / alignment;
-    let rounded_bytes = rounded
-        .checked_mul(alignment)
-        .ok_or(BandwidthParseError::TooLarge)?;
+        / 1024;
+    let rounded_bytes = kib.checked_mul(1024).ok_or(BandwidthParseError::TooLarge)?;
 
     let bytes_u64 = u64::try_from(rounded_bytes).map_err(|_| BandwidthParseError::TooLarge)?;
     NonZeroU64::new(bytes_u64)

@@ -139,19 +139,21 @@ mod rate_with_k_suffix {
 
     #[test]
     fn bwlimit_1k_decimal_kb() {
-        // KB suffix uses decimal (1000) instead of binary (1024)
+        // KB suffix uses decimal (1000), then upstream rounds the rate to whole
+        // KiB for pacing (options.c:1718 `(1000 + 512) / 1024` = 1 KiB).
         let limit = parse_bandwidth_argument("1KB")
             .expect("parse succeeds")
             .expect("limit available");
-        assert_eq!(limit.get(), 1000);
+        assert_eq!(limit.get(), 1024);
     }
 
     #[test]
     fn bwlimit_10kb_decimal() {
+        // 10 KB decimal = 10_000 bytes -> 10 KiB pacing (options.c:1718).
         let limit = parse_bandwidth_argument("10KB")
             .expect("parse succeeds")
             .expect("limit available");
-        assert_eq!(limit.get(), 10 * 1000);
+        assert_eq!(limit.get(), 10 * 1024);
     }
 
     #[test]
@@ -217,18 +219,20 @@ mod rate_with_m_suffix {
 
     #[test]
     fn bwlimit_1mb_decimal() {
+        // 1 MB decimal = 1_000_000 bytes -> 977 KiB pacing (options.c:1718).
         let limit = parse_bandwidth_argument("1MB")
             .expect("parse succeeds")
             .expect("limit available");
-        assert_eq!(limit.get(), 1_000_000);
+        assert_eq!(limit.get(), 1_000_448);
     }
 
     #[test]
     fn bwlimit_10mb_decimal() {
+        // 10 MB decimal = 10_000_000 bytes -> 9766 KiB pacing (options.c:1718).
         let limit = parse_bandwidth_argument("10MB")
             .expect("parse succeeds")
             .expect("limit available");
-        assert_eq!(limit.get(), 10_000_000);
+        assert_eq!(limit.get(), 10_000_384);
     }
 
     #[test]
@@ -301,10 +305,12 @@ mod rate_with_g_suffix {
 
     #[test]
     fn bwlimit_1gb_decimal() {
+        // 1 GB decimal = 1_000_000_000 bytes -> 976_563 KiB pacing
+        // (options.c:1718).
         let limit = parse_bandwidth_argument("1GB")
             .expect("parse succeeds")
             .expect("limit available");
-        assert_eq!(limit.get(), 1_000_000_000);
+        assert_eq!(limit.get(), 1_000_000_512);
     }
 
     #[test]
@@ -426,11 +432,12 @@ mod very_low_rates {
 
     #[test]
     fn bwlimit_minimum_512_bytes() {
-        // Minimum allowed is 512 bytes/second
+        // 512 bytes is the accepted minimum input; upstream rounds it up to the
+        // 1 KiB pacing rate (options.c:1718 `(512 + 512) / 1024` = 1 KiB).
         let limit = parse_bandwidth_argument("512b")
             .expect("parse succeeds")
             .expect("limit available");
-        assert_eq!(limit.get(), 512);
+        assert_eq!(limit.get(), 1024);
     }
 
     #[test]
