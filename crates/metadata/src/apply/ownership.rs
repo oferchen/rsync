@@ -222,7 +222,7 @@ fn post_chown_bookkeeping(
 /// where `gate_preserved_group` short-circuits on the faked-root euid.
 #[cfg(unix)]
 #[allow(unsafe_code)]
-fn process_in_group(gid: unix_fs::Gid) -> bool {
+pub(super) fn process_in_group(gid: unix_fs::Gid) -> bool {
     if nix::unistd::getegid() == nix::unistd::Gid::from_raw(gid.as_raw()) {
         return true;
     }
