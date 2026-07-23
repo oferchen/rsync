@@ -210,7 +210,7 @@ impl LocalCopyChangeSet {
     ///
     /// # Upstream Reference
     ///
-    /// - `generator.c:574-576` - `iflags & (SIGNIFICANT_ITEM_FLAGS|ITEM_REPORT_XATTR)`
+    /// - `generator.c:581-583` - `iflags & (SIGNIFICANT_ITEM_FLAGS|ITEM_REPORT_XATTR)`
     #[must_use]
     pub const fn has_any_change(&self) -> bool {
         self.checksum_changed

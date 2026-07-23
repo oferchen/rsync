@@ -50,7 +50,7 @@ pub(crate) fn copy_device(
     #[cfg(not(all(any(unix, windows), feature = "acl")))]
     let _ = mode;
 
-    // upstream: generator.c:558-563 / 550-556 - a replace itemize reports
+    // upstream: generator.c:565-570 / 550-556 - a replace itemize reports
     // ITEM_REPORT_XATTR / ITEM_REPORT_ACL when those features are active and the
     // basis differs. Mirror the enabled flags across all platforms so the
     // recreate change-set is derivable without cfg branching at the record site.
@@ -111,7 +111,7 @@ pub(crate) fn copy_device(
         return Ok(());
     }
 
-    // upstream: generator.c:1627-1630 - a device whose destination already
+    // upstream: generator.c:1639-1642 - a device whose destination already
     // holds another device (same FT_DEVICE bucket) is recreated rather than
     // treated as new; quick_check_ok() (generator.c:661-671) compares st_rdev
     // to decide. Snapshot the existing device and its rdev-difference before
@@ -419,7 +419,7 @@ pub(crate) fn copy_device(
                 Some(metadata_snapshot),
             );
             let record = if let Some(existing) = replaced_device.as_ref() {
-                // upstream: generator.c:1665-1669 - a device replacing another
+                // upstream: generator.c:1677-1681 - a device replacing another
                 // device of the same FT_DEVICE bucket recreates it and itemizes
                 // via ITEM_LOCAL_CHANGE|ITEM_REPORT_CHANGE (`cDc.T.`), not
                 // ITEM_IS_NEW. Derive the change-set from the rdev comparison.

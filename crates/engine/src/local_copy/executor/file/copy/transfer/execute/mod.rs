@@ -424,7 +424,7 @@ pub(in crate::local_copy) fn execute_transfer(
         let file = match open_source_file(override_path, context.open_noatime_enabled()) {
             Ok(file) => file,
             Err(error) => {
-                // upstream: generator.c:919 - rsyserr(FINFO, errno,
+                // upstream: generator.c:931 - rsyserr(FINFO, errno,
                 // "copy_file %s => %s", full_fname(src), copy_to) under
                 // INFO_GTE(COPY, 1). The override path is the alt-base
                 // (`--copy-dest` / `--link-dest` after cross-device degrade)

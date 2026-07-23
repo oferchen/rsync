@@ -836,7 +836,7 @@ fn one_file_system_emits_info_mount_notice() {
 
 /// Verifies that the default verbosity configuration (no `--info=MOUNT`)
 /// suppresses the notice, matching upstream's `INFO_GTE(MOUNT, 1)` gate
-/// (flist.c:1319). MOUNT is not in `info_verbosity[0]`, so it stays silent
+/// (flist.c:1347). MOUNT is not in `info_verbosity[0]`, so it stays silent
 /// unless explicitly enabled.
 #[test]
 fn one_file_system_default_verbosity_suppresses_info_mount_notice() {

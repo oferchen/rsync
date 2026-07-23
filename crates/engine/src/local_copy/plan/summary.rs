@@ -122,7 +122,7 @@ pub struct LocalCopySummary {
     fifos_created: u64,
     // Per-type counts of entries whose destination did NOT previously exist,
     // mirroring upstream's `stats.created_{files,symlinks,devices,specials}`
-    // accounting (receiver.c:733-746 / sender.c:295-308): every ITEM_IS_NEW
+    // accounting (receiver.c:733-746 / sender.c:301-314): every ITEM_IS_NEW
     // entry bumps the created counter for its type, whether or not it moved
     // file data. Kept distinct from the "copied" tallies above, which also
     // count in-place updates of pre-existing files/symlinks/nodes. `created_dirs`
@@ -506,7 +506,7 @@ impl LocalCopySummary {
 
     /// Returns `true` when the transfer materialised the destination root directory.
     ///
-    /// upstream: main.c:798-799 - `rprintf(FINFO, "created directory %s\n", dest_path)`
+    /// upstream: main.c:807-808 - `rprintf(FINFO, "created directory %s\n", dest_path)`
     /// gated on `INFO_GTE(NAME, 1) || stdout_format_has_i`. The CLI mirrors this
     /// gate to emit the notice ahead of the per-entry itemize lines so the
     /// upstream `testsuite/itemize.test` golden matches.

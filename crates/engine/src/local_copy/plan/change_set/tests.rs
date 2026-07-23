@@ -469,7 +469,7 @@ fn for_file_times_not_changed_existing_no_write() {
     assert!(change_set.time_change().is_none());
 }
 
-/// upstream: generator.c:526 - the ITEM_REPORT_TIME (`t`) glyph is gated by
+/// upstream: generator.c:533 - the ITEM_REPORT_TIME (`t`) glyph is gated by
 /// `!same_time(...)`, which honours `--modify-window`. A same-size file whose
 /// mtime drifts by less than the window must therefore leave the time slot
 /// blank so the itemize line is suppressed. Guards the itemize path exercised
@@ -698,7 +698,7 @@ fn for_existing_directory_flags_time_change_when_mtimes_differ() {
     assert!(change_set.has_any_change());
 }
 
-/// upstream: generator.c:526 via same_time() (util1.c:1478) - directory
+/// upstream: generator.c:533 via same_time() (util1.c:1478) - directory
 /// itemize compares whole seconds under modify_window == 0, so a sub-second
 /// mtime drift within the same whole second must NOT report a time change.
 /// This mirrors the file/symlink paths, which already ignore sub-second drift.
@@ -956,7 +956,7 @@ fn for_recreated_device_sets_checksum_and_time_when_content_differs() {
         false,
     );
 
-    // upstream: generator.c:1668-1669 rdev/type diff drives ITEM_REPORT_CHANGE
+    // upstream: generator.c:1680-1681 rdev/type diff drives ITEM_REPORT_CHANGE
     // (`c`); with preserve-times and a differing mtime, ITEM_REPORT_TIME renders
     // `t` (`cDc.t.....`). Devices never report size.
     assert!(change_set.checksum_changed());

@@ -168,7 +168,7 @@ pub(super) fn handle_directory_copy(
         return Ok(());
     }
 
-    // upstream: main.c:778 get_local_name() - when `file_total > 1 ||
+    // upstream: main.c:787 get_local_name() - when `file_total > 1 ||
     // trailing_slash` the destination is treated as a directory and the source
     // directory name is kept as a path component. For a no-trailing-slash
     // directory source `file_total > 1` holds exactly when the directory is

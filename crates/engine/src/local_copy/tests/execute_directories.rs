@@ -1916,7 +1916,7 @@ fn execute_directory_source_deep_missing_dest_errors_without_mkpath() {
     assert!(!dest_root.exists());
 }
 
-// upstream: main.c:787 - a single missing final component is created by the lone
+// upstream: main.c:796 - a single missing final component is created by the lone
 // do_mkdir(dest_path) even without --mkpath (rsync always makes the immediate
 // destination directory). Only a missing PARENT is fatal.
 #[test]

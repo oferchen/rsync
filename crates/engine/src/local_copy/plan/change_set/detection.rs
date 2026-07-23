@@ -138,7 +138,7 @@ impl LocalCopyChangeSet {
 
     /// Computes a change set for an existing destination directory.
     ///
-    /// Mirrors upstream `itemize()` (`generator.c:511-572`) for the directory
+    /// Mirrors upstream `itemize()` (`generator.c:518-579`) for the directory
     /// branch reached via `generator.c:1480-1483` when `statret == 0`: the
     /// receiver flags `ITEM_REPORT_TIME` when `mtime_differs` (gated by
     /// `!omit_dir_times`), `ITEM_REPORT_PERMS` when the masked mode bits
@@ -161,7 +161,7 @@ impl LocalCopyChangeSet {
         if times_preserved {
             let new_mtime = metadata_modified_time(source);
             let old_mtime = metadata_modified_time(existing);
-            // upstream: generator.c:526 - itemize() sets ITEM_REPORT_TIME via
+            // upstream: generator.c:533 - itemize() sets ITEM_REPORT_TIME via
             // `!same_time(file->modtime, 0, &sxp->st)`. same_time() (util1.c:1478)
             // compares whole seconds under `--modify-window`, so a sub-second
             // mtime drift on a directory must NOT light the `t` glyph. This is
@@ -219,7 +219,7 @@ impl LocalCopyChangeSet {
     ///
     /// The mtime comparison uses `same_time()` semantics via
     /// `system_time_within_window`, not exact equality: upstream `itemize()` at
-    /// `generator.c:526-527` calls `mtime_differs()` ->
+    /// `generator.c:533-534` calls `mtime_differs()` ->
     /// `same_time(stp->st_mtime, ..., file->modtime, ...)` (util1.c:1478), which
     /// with the default `modify_window == 0` compares WHOLE SECONDS only
     /// (`f1_sec == f2_sec`) and ignores the fractional part. Two links whose
@@ -259,7 +259,7 @@ impl LocalCopyChangeSet {
     /// Computes a change set for a device or special file whose existing
     /// destination is being recreated because it differs from the source.
     ///
-    /// Mirrors upstream `generator.c:1665-1670`: after `atomic_create()`
+    /// Mirrors upstream `generator.c:1677-1682`: after `atomic_create()`
     /// recreates the node, `itemize()` runs with
     /// `ITEM_LOCAL_CHANGE|ITEM_REPORT_CHANGE` and `statret == 0`.
     /// `ITEM_REPORT_CHANGE` lights the position-2 `c` glyph; its source is the
@@ -271,7 +271,7 @@ impl LocalCopyChangeSet {
     /// (rendered `t` when preserving mtimes and they differ, `T` when mtimes
     /// are not preserved because `ITEM_LOCAL_CHANGE` marks a fresh recreate),
     /// `ITEM_REPORT_PERMS`, and owner/group. Size is never reported because
-    /// `S_ISREG` is false for device and special nodes (`generator.c:514`).
+    /// `S_ISREG` is false for device and special nodes (`generator.c:521`).
     #[allow(clippy::too_many_arguments)]
     pub fn for_recreated_device(
         source: &fs::Metadata,
@@ -284,7 +284,7 @@ impl LocalCopyChangeSet {
     ) -> Self {
         let mut change_set = Self::new();
 
-        // upstream: generator.c:1668-1669 - the recreate path passes
+        // upstream: generator.c:1680-1681 - the recreate path passes
         // ITEM_REPORT_CHANGE, but it is only reached because quick_check_ok()
         // found a differing device number / special type. Light the `c` glyph
         // from that same comparison.
@@ -292,7 +292,7 @@ impl LocalCopyChangeSet {
             change_set = change_set.with_checksum_changed(true);
         }
 
-        // upstream: generator.c:519-523 - with preserve_mtimes (`keep_time`),
+        // upstream: generator.c:526-530 - with preserve_mtimes (`keep_time`),
         // ITEM_REPORT_TIME fires only when the mtime differs (rendered `t`).
         // Without preserve_mtimes, the ITEM_LOCAL_CHANGE branch sets
         // ITEM_REPORT_TIME unconditionally for a freshly recreated node
@@ -364,7 +364,7 @@ fn determine_time_change(
         let new_mtime = metadata_modified_time(metadata);
         let old_mtime = existing.and_then(metadata_modified_time);
 
-        // upstream: generator.c:526 - the ITEM_REPORT_TIME bit is set via
+        // upstream: generator.c:533 - the ITEM_REPORT_TIME bit is set via
         // `!same_time(file->modtime, 0, &sxp->st)`. same_time() (util1.c:1478)
         // treats two mtimes as equal when their whole-second delta is within
         // `--modify-window`, so a sub-window drift must NOT light the `t` glyph.
