@@ -129,7 +129,7 @@ pub unsafe fn digest_x4(inputs: &[&[u8]; 4]) -> [Digest; 4] {
                     i32::from_le_bytes(
                         padded_storage[lane][word_offset..word_offset + 4]
                             .try_into()
-                            .unwrap(),
+                            .expect("4-byte word slice"),
                     )
                 } else {
                     0

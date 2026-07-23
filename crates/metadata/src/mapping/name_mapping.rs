@@ -165,7 +165,7 @@ impl NameMapping {
                 if cached_name.is_none() {
                     cached_name = Some(self.lookup_name(identifier)?);
                 }
-                Ok(cached_name.as_ref().unwrap().clone())
+                Ok(cached_name.as_ref().expect("cached_name set above").clone())
             })?;
 
             if matches {

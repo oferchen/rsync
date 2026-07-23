@@ -66,7 +66,7 @@ impl RuntimeOptions {
             } else if argument == "--no-bwlimit" {
                 options.set_bandwidth_limit(None, None)?;
             } else if argument == "--once" {
-                options.set_max_sessions(NonZeroUsize::new(1).unwrap())?;
+                options.set_max_sessions(NonZeroUsize::new(1).expect("1 is nonzero"))?;
             } else if argument == "--no-detach" {
                 options.detach = false;
             } else if argument == "--detach" {

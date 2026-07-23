@@ -90,7 +90,7 @@ fn process_block(state: &mut [u32; 4], block: &[u8]) {
 
     let mut m = [0u32; 16];
     for (i, chunk) in block.chunks_exact(4).enumerate() {
-        m[i] = u32::from_le_bytes(chunk.try_into().unwrap());
+        m[i] = u32::from_le_bytes(chunk.try_into().expect("chunk is exactly 4 bytes"));
     }
 
     let [mut a, mut b, mut c, mut d] = *state;

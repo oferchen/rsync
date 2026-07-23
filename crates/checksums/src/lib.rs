@@ -357,6 +357,7 @@
 #![cfg_attr(docsrs, feature(doc_cfg))]
 #![deny(missing_docs)]
 #![deny(rustdoc::broken_intra_doc_links)]
+#![cfg_attr(not(test), warn(clippy::unwrap_used))]
 
 pub mod cpu_features;
 /// CRC32C hardware-accelerated checksum for fast file change detection.

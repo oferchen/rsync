@@ -171,7 +171,11 @@ pub unsafe fn digest_x16(inputs: &[&[u8]; 16]) -> [Digest; 16] {
             let word_offset = block_offset + word_idx * 4;
             for (lane, padded) in padded_storage.iter().enumerate() {
                 m_word.0[lane] = if word_offset + 4 <= padded.len() {
-                    u32::from_le_bytes(padded[word_offset..word_offset + 4].try_into().unwrap())
+                    u32::from_le_bytes(
+                        padded[word_offset..word_offset + 4]
+                            .try_into()
+                            .expect("4-byte word slice"),
+                    )
                 } else {
                     0
                 };
