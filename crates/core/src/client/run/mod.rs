@@ -1053,3 +1053,538 @@ mod cow_policy_wiring_tests {
         );
     }
 }
+
+#[cfg(test)]
+mod run_client_tests {
+    use std::fs;
+
+    use tempfile::tempdir;
+
+    use super::run_client;
+    use crate::client::config::{ClientConfig, FilterRuleSpec};
+
+    #[test]
+    fn run_client_update_skips_newer_destination() {
+        use filetime::{FileTime, set_file_times};
+
+        let tmp = tempdir().expect("tempdir");
+        let source = tmp.path().join("source-update.txt");
+        let destination = tmp.path().join("dest-update.txt");
+        fs::write(&source, b"fresh").expect("write source");
+        fs::write(&destination, b"existing").expect("write destination");
+
+        let older = FileTime::from_unix_time(1_700_000_000, 0);
+        let newer = FileTime::from_unix_time(1_700_000_100, 0);
+        set_file_times(&source, older, older).expect("set source times");
+        set_file_times(&destination, newer, newer).expect("set dest times");
+
+        let summary = run_client(
+            ClientConfig::builder()
+                .transfer_args([
+                    source.clone().into_os_string(),
+                    destination.clone().into_os_string(),
+                ])
+                .update(true)
+                .build(),
+        )
+        .expect("run client");
+
+        assert_eq!(summary.files_copied(), 0);
+        assert_eq!(summary.regular_files_skipped_newer(), 1);
+        assert_eq!(
+            fs::read(destination).expect("read destination"),
+            b"existing"
+        );
+    }
+
+    #[test]
+    fn run_client_respects_filter_rules() {
+        let tmp = tempdir().expect("tempdir");
+        let source_root = tmp.path().join("source");
+        let dest_root = tmp.path().join("dest");
+        fs::create_dir_all(&source_root).expect("create source root");
+        fs::create_dir_all(&dest_root).expect("create dest root");
+        fs::write(source_root.join("keep.txt"), b"keep").expect("write keep");
+        fs::write(source_root.join("skip.tmp"), b"skip").expect("write skip");
+
+        let config = ClientConfig::builder()
+            .transfer_args([source_root.clone(), dest_root.clone()])
+            .extend_filter_rules([FilterRuleSpec::exclude("*.tmp".to_string())])
+            .build();
+
+        let summary = run_client(config).expect("copy succeeds");
+
+        assert!(dest_root.join("source").join("keep.txt").exists());
+        assert!(!dest_root.join("source").join("skip.tmp").exists());
+        assert!(summary.files_copied() >= 1);
+    }
+
+    #[test]
+    fn run_client_filter_clear_resets_previous_rules() {
+        let tmp = tempdir().expect("tempdir");
+        let source_root = tmp.path().join("source");
+        let dest_root = tmp.path().join("dest");
+        fs::create_dir_all(&source_root).expect("create source root");
+        fs::create_dir_all(&dest_root).expect("create dest root");
+        fs::write(source_root.join("keep.txt"), b"keep").expect("write keep");
+        fs::write(source_root.join("skip.tmp"), b"skip").expect("write skip");
+
+        let config = ClientConfig::builder()
+            .transfer_args([source_root.clone(), dest_root.clone()])
+            .extend_filter_rules([
+                FilterRuleSpec::exclude("*.tmp".to_string()),
+                FilterRuleSpec::clear(),
+                FilterRuleSpec::exclude("keep.txt".to_string()),
+            ])
+            .build();
+
+        let summary = run_client(config).expect("copy succeeds");
+
+        let copied_root = dest_root.join("source");
+        assert!(copied_root.join("skip.tmp").exists());
+        assert!(!copied_root.join("keep.txt").exists());
+        assert!(summary.files_copied() >= 1);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn run_client_copies_symbolic_link() {
+        use std::os::unix::fs::symlink;
+
+        use crate::client::{ClientEntryMetadata, ClientEventKind};
+
+        let tmp = tempdir().expect("tempdir");
+        let target_file = tmp.path().join("target.txt");
+        fs::write(&target_file, b"symlink target").expect("write target");
+
+        let source_link = tmp.path().join("source-link");
+        symlink(&target_file, &source_link).expect("create source symlink");
+
+        let destination_link = tmp.path().join("dest-link");
+        let config = ClientConfig::builder()
+            .transfer_args([source_link.clone(), destination_link.clone()])
+            .links(true)
+            .force_event_collection(true)
+            .build();
+
+        let summary = run_client(config).expect("link copy succeeds");
+
+        let copied = fs::read_link(destination_link).expect("read copied link");
+        assert_eq!(copied, target_file);
+        assert_eq!(summary.symlinks_copied(), 1);
+
+        let event = summary
+            .events()
+            .iter()
+            .find(|event| matches!(event.kind(), ClientEventKind::SymlinkCopied))
+            .expect("symlink event present");
+        let recorded_target = event
+            .metadata()
+            .and_then(ClientEntryMetadata::symlink_target)
+            .expect("symlink target recorded");
+        assert_eq!(recorded_target, target_file.as_path());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn run_client_preserves_file_metadata() {
+        use filetime::{FileTime, set_file_times};
+        use std::os::unix::fs::PermissionsExt;
+
+        let tmp = tempdir().expect("tempdir");
+        let source = tmp.path().join("source-metadata.txt");
+        let destination = tmp.path().join("dest-metadata.txt");
+        fs::write(&source, b"metadata").expect("write source");
+
+        let mode = 0o640;
+        fs::set_permissions(&source, PermissionsExt::from_mode(mode))
+            .expect("set source permissions");
+        let atime = FileTime::from_unix_time(1_700_000_000, 123_000_000);
+        let mtime = FileTime::from_unix_time(1_700_000_100, 456_000_000);
+        set_file_times(&source, atime, mtime).expect("set source timestamps");
+
+        let source_metadata = fs::metadata(&source).expect("source metadata");
+        assert_eq!(source_metadata.permissions().mode() & 0o777, mode);
+        let src_atime = FileTime::from_last_access_time(&source_metadata);
+        let src_mtime = FileTime::from_last_modification_time(&source_metadata);
+        assert_eq!(src_atime, atime);
+        assert_eq!(src_mtime, mtime);
+
+        let config = ClientConfig::builder()
+            .transfer_args([source.clone(), destination.clone()])
+            .permissions(true)
+            .times(true)
+            .build();
+
+        let summary = run_client(config).expect("copy succeeds");
+
+        let dest_metadata = fs::metadata(&destination).expect("dest metadata");
+        assert_eq!(dest_metadata.permissions().mode() & 0o777, mode);
+        let dest_atime = FileTime::from_last_access_time(&dest_metadata);
+        let dest_mtime = FileTime::from_last_modification_time(&dest_metadata);
+        // upstream: rsync.c:588-589 - without --atimes/-U the access time is left
+        // unchanged (ATTRS_SKIP_ATIME); permissions and mtime are preserved.
+        assert_ne!(dest_atime, atime, "atime must not be preserved without -U");
+        assert_eq!(dest_mtime, mtime);
+        assert_eq!(summary.files_copied(), 1);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn run_client_preserves_directory_metadata() {
+        use filetime::{FileTime, set_file_times};
+        use std::os::unix::fs::PermissionsExt;
+
+        let tmp = tempdir().expect("tempdir");
+        let source_dir = tmp.path().join("source-dir");
+        fs::create_dir(&source_dir).expect("create source dir");
+
+        let mode = 0o751;
+        fs::set_permissions(&source_dir, PermissionsExt::from_mode(mode))
+            .expect("set directory permissions");
+        let atime = FileTime::from_unix_time(1_700_010_000, 0);
+        let mtime = FileTime::from_unix_time(1_700_020_000, 789_000_000);
+        set_file_times(&source_dir, atime, mtime).expect("set directory timestamps");
+
+        let destination_dir = tmp.path().join("dest-dir");
+        let config = ClientConfig::builder()
+            .transfer_args([source_dir.clone(), destination_dir.clone()])
+            .permissions(true)
+            .times(true)
+            .build();
+
+        assert!(config.preserve_permissions());
+        assert!(config.preserve_times());
+
+        let summary = run_client(config).expect("directory copy succeeds");
+
+        let dest_metadata = fs::metadata(&destination_dir).expect("dest metadata");
+        assert!(dest_metadata.is_dir());
+        assert_eq!(dest_metadata.permissions().mode() & 0o777, mode);
+        let dest_atime = FileTime::from_last_access_time(&dest_metadata);
+        let dest_mtime = FileTime::from_last_modification_time(&dest_metadata);
+        // upstream: rsync.c:588-589 - directories always skip atime (S_ISDIR sets
+        // ATTRS_SKIP_ATIME); permissions and mtime are preserved.
+        assert_ne!(dest_atime, atime, "directory atime must never be preserved");
+        assert_eq!(dest_mtime, mtime);
+        assert!(summary.directories_created() >= 1);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn run_client_updates_existing_directory_metadata() {
+        use filetime::{FileTime, set_file_times};
+        use std::os::unix::fs::PermissionsExt;
+
+        let tmp = tempdir().expect("tempdir");
+        let source_dir = tmp.path().join("source-tree");
+        let source_nested = source_dir.join("nested");
+        fs::create_dir_all(&source_nested).expect("create source tree");
+
+        let source_mode = 0o745;
+        fs::set_permissions(&source_nested, PermissionsExt::from_mode(source_mode))
+            .expect("set source nested permissions");
+        let source_atime = FileTime::from_unix_time(1_700_030_000, 1_000_000);
+        let source_mtime = FileTime::from_unix_time(1_700_040_000, 2_000_000);
+        set_file_times(&source_nested, source_atime, source_mtime)
+            .expect("set source nested timestamps");
+
+        let dest_root = tmp.path().join("dest-root");
+        fs::create_dir(&dest_root).expect("create dest root");
+        let dest_dir = dest_root.join("source-tree");
+        let dest_nested = dest_dir.join("nested");
+        fs::create_dir_all(&dest_nested).expect("pre-create destination tree");
+
+        let dest_mode = 0o711;
+        fs::set_permissions(&dest_nested, PermissionsExt::from_mode(dest_mode))
+            .expect("set dest nested permissions");
+        let dest_atime = FileTime::from_unix_time(1_600_000_000, 0);
+        let dest_mtime = FileTime::from_unix_time(1_600_100_000, 0);
+        set_file_times(&dest_nested, dest_atime, dest_mtime).expect("set dest nested timestamps");
+
+        let config = ClientConfig::builder()
+            .transfer_args([source_dir.clone(), dest_root.clone()])
+            .permissions(true)
+            .times(true)
+            .build();
+
+        assert!(config.preserve_permissions());
+        assert!(config.preserve_times());
+
+        let _summary = run_client(config).expect("directory copy succeeds");
+
+        let copied_nested = dest_root.join("source-tree").join("nested");
+        let copied_metadata = fs::metadata(&copied_nested).expect("dest metadata");
+        assert!(copied_metadata.is_dir());
+        assert_eq!(copied_metadata.permissions().mode() & 0o777, source_mode);
+        let copied_atime = FileTime::from_last_access_time(&copied_metadata);
+        let copied_mtime = FileTime::from_last_modification_time(&copied_metadata);
+        // upstream: rsync.c:588-589 - directories always skip atime; the existing
+        // directory's permissions and mtime are updated to the source values.
+        assert_ne!(
+            copied_atime, source_atime,
+            "directory atime must never be preserved"
+        );
+        assert_eq!(copied_mtime, source_mtime);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn run_client_sparse_copy_creates_holes() {
+        use std::io::{Seek, SeekFrom, Write};
+        use std::os::unix::fs::MetadataExt;
+
+        let tmp = tempdir().expect("tempdir");
+        let source = tmp.path().join("sparse-source.bin");
+        let mut source_file = fs::File::create(&source).expect("create source");
+        source_file.write_all(&[0x11]).expect("write leading");
+        source_file
+            .seek(SeekFrom::Start(1024 * 1024))
+            .expect("seek to hole");
+        source_file.write_all(&[0x22]).expect("write middle");
+        source_file
+            .seek(SeekFrom::Start(4 * 1024 * 1024))
+            .expect("seek to tail");
+        source_file.write_all(&[0x33]).expect("write tail");
+        source_file.set_len(6 * 1024 * 1024).expect("extend source");
+
+        let dense_dest = tmp.path().join("dense.bin");
+        let sparse_dest = tmp.path().join("sparse.bin");
+
+        let dense_config = ClientConfig::builder()
+            .transfer_args([
+                source.clone().into_os_string(),
+                dense_dest.clone().into_os_string(),
+            ])
+            .permissions(true)
+            .times(true)
+            .build();
+        let summary = run_client(dense_config).expect("dense copy succeeds");
+        assert!(summary.events().is_empty());
+
+        let sparse_config = ClientConfig::builder()
+            .transfer_args([
+                source.into_os_string(),
+                sparse_dest.clone().into_os_string(),
+            ])
+            .permissions(true)
+            .times(true)
+            .sparse(true)
+            .build();
+        let summary = run_client(sparse_config).expect("sparse copy succeeds");
+        assert!(summary.events().is_empty());
+
+        let dense_meta = fs::metadata(&dense_dest).expect("dense metadata");
+        let sparse_meta = fs::metadata(&sparse_dest).expect("sparse metadata");
+
+        assert_eq!(dense_meta.len(), sparse_meta.len());
+
+        let dense_blocks = dense_meta.blocks();
+        let sparse_blocks = sparse_meta.blocks();
+
+        // On filesystems with compression or automatic hole punching (APFS, btrfs, ZFS, etc.)
+        // a "dense" write of zeros can already be stored efficiently. In that case the sparse
+        // copy may use the same number of blocks as the dense copy. The portable guarantee
+        // we care about is that a sparse copy never uses *more* blocks than a dense copy of
+        // the same contents.
+        assert!(
+            sparse_blocks <= dense_blocks,
+            "sparse copy must not use more blocks than dense copy (sparse={sparse_blocks}, dense={dense_blocks})",
+        );
+    }
+
+    #[test]
+    fn run_client_merges_directory_contents_when_trailing_separator_present() {
+        let tmp = tempdir().expect("tempdir");
+        let source_root = tmp.path().join("source");
+        let nested = source_root.join("nested");
+        fs::create_dir_all(&nested).expect("create nested");
+        let file_path = nested.join("file.txt");
+        fs::write(&file_path, b"contents").expect("write file");
+
+        let dest_root = tmp.path().join("dest");
+        let mut source_arg = source_root.clone().into_os_string();
+        source_arg.push(std::path::MAIN_SEPARATOR.to_string());
+
+        let config = ClientConfig::builder()
+            .transfer_args([source_arg, dest_root.clone().into_os_string()])
+            .build();
+
+        let summary = run_client(config).expect("directory contents copy succeeds");
+
+        assert!(dest_root.is_dir());
+        assert!(dest_root.join("nested").is_dir());
+        assert_eq!(
+            fs::read(dest_root.join("nested").join("file.txt")).expect("read copied"),
+            b"contents"
+        );
+        assert!(!dest_root.join("source").exists());
+        assert!(summary.files_copied() >= 1);
+    }
+
+    #[test]
+    fn sequential_runs_respect_ignore_times() {
+        use std::time::Duration;
+
+        use filetime::{FileTime, set_file_times};
+
+        let temp = tempdir().expect("tempdir");
+        let source = temp.path().join("source.txt");
+        let destination = temp.path().join("destination.txt");
+        fs::write(&source, b"newdata").expect("write source");
+        fs::write(&destination, b"olddata").expect("write destination");
+
+        let timestamp = std::time::UNIX_EPOCH + Duration::from_secs(1_700_200_000);
+        let filetime = FileTime::from_system_time(timestamp);
+        set_file_times(&source, filetime, filetime).expect("source times");
+        set_file_times(&destination, filetime, filetime).expect("dest times");
+
+        let operands = vec![
+            source.clone().into_os_string(),
+            destination.clone().into_os_string(),
+        ];
+
+        let baseline_config = ClientConfig::builder()
+            .transfer_args(operands.clone())
+            .build();
+        run_client(baseline_config).expect("baseline run");
+        assert_eq!(fs::read(&destination).expect("read dest"), b"olddata");
+
+        let ignore_config = ClientConfig::builder()
+            .transfer_args(operands)
+            .ignore_times(true)
+            .build();
+        run_client(ignore_config).expect("ignore run");
+        assert_eq!(fs::read(&destination).expect("read dest"), b"newdata");
+    }
+}
+
+#[cfg(test)]
+mod local_copy_option_wiring_tests {
+    use super::build_local_copy_options;
+    use crate::client::config::{ClientConfig, TransferTimeout};
+    use std::ffi::OsString;
+    use std::num::NonZeroU64;
+    use std::path::{Path, PathBuf};
+    use std::time::Duration;
+
+    #[test]
+    fn local_copy_options_apply_explicit_timeout() {
+        let timeout = TransferTimeout::Seconds(NonZeroU64::new(5).unwrap());
+        let config = ClientConfig::builder()
+            .transfer_args([OsString::from("src"), OsString::from("dst")])
+            .timeout(timeout)
+            .build();
+
+        let options = build_local_copy_options(&config, None);
+        assert_eq!(options.timeout(), Some(Duration::from_secs(5)));
+    }
+
+    #[test]
+    fn local_copy_options_apply_modify_window() {
+        let config = ClientConfig::builder()
+            .transfer_args([OsString::from("src"), OsString::from("dst")])
+            .modify_window(Some(3))
+            .build();
+
+        let options = build_local_copy_options(&config, None);
+        assert_eq!(
+            options.modify_window(),
+            ::metadata::ModifyWindow::from_secs(3)
+        );
+
+        let default_config = ClientConfig::builder()
+            .transfer_args([OsString::from("src"), OsString::from("dst")])
+            .build();
+        assert_eq!(
+            build_local_copy_options(&default_config, None).modify_window(),
+            ::metadata::ModifyWindow::ZERO
+        );
+    }
+
+    #[test]
+    fn local_copy_options_omit_timeout_when_unset() {
+        let config = ClientConfig::builder()
+            .transfer_args([OsString::from("src"), OsString::from("dst")])
+            .build();
+
+        let options = build_local_copy_options(&config, None);
+        assert!(options.timeout().is_none());
+    }
+
+    #[test]
+    fn local_copy_options_delay_updates_enable_partial_transfers() {
+        let enabled = ClientConfig::builder()
+            .transfer_args([OsString::from("src"), OsString::from("dst")])
+            .delay_updates(true)
+            .build();
+
+        let enabled_options = build_local_copy_options(&enabled, None);
+        assert!(enabled_options.delay_updates_enabled());
+        assert!(enabled_options.partial_enabled());
+
+        let disabled = ClientConfig::builder()
+            .transfer_args([OsString::from("src"), OsString::from("dst")])
+            .build();
+
+        let disabled_options = build_local_copy_options(&disabled, None);
+        assert!(!disabled_options.delay_updates_enabled());
+        assert!(!disabled_options.partial_enabled());
+    }
+
+    #[test]
+    fn local_copy_options_honour_temp_directory_setting() {
+        let config = ClientConfig::builder()
+            .transfer_args([OsString::from("src"), OsString::from("dst")])
+            .temp_directory(Some(PathBuf::from(".staging")))
+            .build();
+
+        let options = build_local_copy_options(&config, None);
+        assert_eq!(options.temp_directory_path(), Some(Path::new(".staging")));
+
+        let default_config = ClientConfig::builder()
+            .transfer_args([OsString::from("src"), OsString::from("dst")])
+            .build();
+
+        assert!(
+            build_local_copy_options(&default_config, None)
+                .temp_directory_path()
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn local_copy_options_respect_one_file_system_setting() {
+        let enabled = ClientConfig::builder()
+            .transfer_args([OsString::from("src"), OsString::from("dst")])
+            .one_file_system(1)
+            .build();
+
+        let enabled_options = build_local_copy_options(&enabled, None);
+        assert!(enabled.one_file_system());
+        assert_eq!(enabled.one_file_system_level(), 1);
+        assert!(enabled_options.one_file_system_enabled());
+        assert_eq!(enabled_options.one_file_system_level(), 1);
+
+        let double = ClientConfig::builder()
+            .transfer_args([OsString::from("src"), OsString::from("dst")])
+            .one_file_system(2)
+            .build();
+
+        let double_options = build_local_copy_options(&double, None);
+        assert!(double.one_file_system());
+        assert_eq!(double.one_file_system_level(), 2);
+        assert!(double_options.one_file_system_enabled());
+        assert_eq!(double_options.one_file_system_level(), 2);
+
+        let default = ClientConfig::builder()
+            .transfer_args([OsString::from("src"), OsString::from("dst")])
+            .build();
+
+        let default_options = build_local_copy_options(&default, None);
+        assert!(!default.one_file_system());
+        assert_eq!(default.one_file_system_level(), 0);
+        assert!(!default_options.one_file_system_enabled());
+        assert_eq!(default_options.one_file_system_level(), 0);
+    }
+}

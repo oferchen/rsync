@@ -526,3 +526,122 @@ mod cork_tests {
         assert_eq!(&reader.join().expect("reader"), b"abc");
     }
 }
+
+#[cfg(test)]
+mod connect_timeout_tests {
+    use super::*;
+    use std::io::{BufRead, BufReader};
+    use std::net::TcpListener;
+    use std::num::NonZeroU64;
+    use std::thread;
+
+    #[test]
+    fn resolve_connect_timeout_prefers_explicit_setting() {
+        // --contimeout=N bounds the connect phase (upstream: socket.c:274-277).
+        let explicit = TransferTimeout::Seconds(NonZeroU64::new(5).unwrap());
+        assert_eq!(
+            resolve_connect_timeout(explicit),
+            Some(Duration::from_secs(5))
+        );
+    }
+
+    #[test]
+    fn resolve_connect_timeout_ignores_transfer_timeout() {
+        // --timeout must never bound connect; only --contimeout does. With
+        // --contimeout unset the connect stays unbounded regardless of --timeout.
+        assert_eq!(resolve_connect_timeout(TransferTimeout::Default), None);
+    }
+
+    #[test]
+    fn resolve_connect_timeout_disables_when_requested() {
+        // --contimeout=0 (Disabled) and the unset default both leave connect
+        // unbounded, matching upstream's default connect_timeout=0 (options.c:125).
+        assert!(resolve_connect_timeout(TransferTimeout::Disabled).is_none());
+        assert!(resolve_connect_timeout(TransferTimeout::Default).is_none());
+    }
+
+    #[test]
+    fn connect_direct_applies_io_timeout() {
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind listener");
+        let addr = listener.local_addr().expect("listener addr");
+        let daemon_addr =
+            DaemonAddress::new(addr.ip().to_string(), addr.port()).expect("daemon addr");
+
+        let handle = thread::spawn(move || {
+            if let Ok((mut stream, _)) = listener.accept() {
+                let mut buf = [0u8; 1];
+                let _ = stream.read(&mut buf);
+            }
+        });
+
+        let timeout = Some(Duration::from_secs(4));
+        let mut stream = connect_direct(
+            &daemon_addr,
+            Some(Duration::from_secs(10)),
+            timeout,
+            AddressMode::Default,
+            None,
+            crate::client::TcpFastOpenMode::Auto,
+            None,
+        )
+        .expect("connect directly");
+
+        assert_eq!(stream.read_timeout().expect("read timeout"), timeout);
+        assert_eq!(stream.write_timeout().expect("write timeout"), timeout);
+
+        let _ = stream.write_all(&[0]);
+        handle.join().expect("listener thread");
+    }
+
+    #[test]
+    fn connect_via_proxy_applies_io_timeout() {
+        let proxy_listener = TcpListener::bind("127.0.0.1:0").expect("bind proxy");
+        let proxy_addr = proxy_listener.local_addr().expect("proxy addr");
+        let proxy = ProxyConfig {
+            host: proxy_addr.ip().to_string(),
+            port: proxy_addr.port(),
+            credentials: None,
+        };
+
+        let target = DaemonAddress::new(String::from("daemon.example"), 873).expect("daemon addr");
+
+        let handle = thread::spawn(move || {
+            if let Ok((stream, _)) = proxy_listener.accept() {
+                let mut reader = BufReader::new(stream);
+                loop {
+                    let mut line = String::new();
+                    if reader.read_line(&mut line).expect("read request") == 0 {
+                        return;
+                    }
+                    if line == "\r\n" || line == "\n" {
+                        break;
+                    }
+                }
+
+                let mut stream = reader.into_inner();
+                stream
+                    .write_all(b"HTTP/1.0 200 Connection established\r\n\r\n")
+                    .expect("respond to connect");
+                let _ = stream.flush();
+            }
+        });
+
+        let timeout = Some(Duration::from_secs(6));
+        let stream = connect_via_proxy(
+            &target,
+            &proxy,
+            Some(Duration::from_secs(9)),
+            timeout,
+            None,
+            crate::client::TcpFastOpenMode::Auto,
+            None,
+        )
+        .expect("proxy connect");
+
+        assert_eq!(stream.read_timeout().expect("read timeout"), timeout);
+        assert_eq!(stream.write_timeout().expect("write timeout"), timeout);
+
+        drop(stream);
+        handle.join().expect("proxy thread");
+    }
+}
