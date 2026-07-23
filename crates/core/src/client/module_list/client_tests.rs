@@ -7,7 +7,9 @@
 //! individual parser units (those live beside their sources).
 
 use std::env;
-use std::ffi::{OsStr, OsString};
+#[cfg(unix)]
+use std::ffi::OsStr;
+use std::ffi::OsString;
 use std::io::{self, BufRead, BufReader, Write};
 use std::net::{Shutdown, TcpListener, TcpStream};
 use std::sync::{Mutex, OnceLock, mpsc};
@@ -55,6 +57,10 @@ impl EnvGuard {
         Self { key, previous }
     }
 
+    // Only the #[cfg(unix)] connect-program test uses set_os/remove (the
+    // RSYNC_CONNECT_PROG/RSYNC_SHELL/RSYNC_PROXY env vars), so gate them to unix
+    // to avoid a dead-code error on Windows under -D warnings.
+    #[cfg(unix)]
     fn set_os(key: &'static str, value: &OsStr) -> Self {
         let previous = env::var_os(key);
         #[allow(unsafe_code)]
@@ -65,6 +71,7 @@ impl EnvGuard {
         Self { key, previous }
     }
 
+    #[cfg(unix)]
     fn remove(key: &'static str) -> Self {
         let previous = env::var_os(key);
         #[allow(unsafe_code)]
