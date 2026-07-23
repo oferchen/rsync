@@ -2,8 +2,8 @@ impl<'a> CopyContext<'a> {
     /// Records a skip event for a non-regular file (e.g. socket, unknown type).
     ///
     /// Emits an `--info=NONREG` notice mirroring upstream rsync 3.4.1
-    /// (generator.c:1684) under `INFO_GTE(NONREG, 1)`. NONREG is part of
-    /// `info_verbosity[0]` (options.c:240), so the flag is enabled by
+    /// (generator.c:1696) under `INFO_GTE(NONREG, 1)`. NONREG is part of
+    /// `info_verbosity[0]` (options.c:250), so the flag is enabled by
     /// default and fires regardless of `-v`. The wording matches upstream
     /// byte-for-byte: `skipping non-regular file "%s"`.
     pub(super) fn record_skipped_non_regular(&mut self, relative: Option<&Path>) {

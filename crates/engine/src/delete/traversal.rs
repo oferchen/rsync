@@ -1,7 +1,7 @@
 //! [`DirTraversalCursor`] - yields directories in upstream traversal order.
 //!
 //! The cursor reproduces upstream rsync's depth-first walk over the
-//! sender's flist (`generator.c:2282-2354`,
+//! sender's flist (`generator.c:2299-2371`,
 //! `do_delete_pass`/`delete_in_dir`). Each parent's child directories are
 //! emitted in `f_name_cmp` ascending order, the root is emitted first,
 //! and the cursor descends fully into one subtree before moving on to the

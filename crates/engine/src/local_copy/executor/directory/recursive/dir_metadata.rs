@@ -78,7 +78,7 @@ pub(super) fn apply_final_directory_metadata(
         context.record_finalized_directory(destination, mtime, restore_mode);
     }
 
-    // upstream: generator.c:1410 - implied parent dirs are finalized via
+    // upstream: generator.c:1422 - implied parent dirs are finalized via
     // set_file_attrs() when --implied-dirs is active (the default). With
     // --no-implied-dirs upstream skips them via FLAG_IMPLIED_DIR.
     if let Some(rel) = relative
@@ -159,7 +159,7 @@ fn keep_directory_writable(
 /// Reproduces upstream's transfer-root self-lock when a `--chmod` strips the
 /// root directory's owner-execute bit.
 ///
-/// upstream: generator.c:1503-1520 - the generator chmods a directory to its
+/// upstream: generator.c:1515-1532 - the generator chmods a directory to its
 /// tweaked mode and then re-adds owner-`rwx` (`do_chmod_at(fname, mode | S_IRWXU)`)
 /// so it can write the directory's contents. The transfer root is addressed as
 /// `dst/.`, so that re-add chmod must resolve `.` *inside* `dst`; a tweak that

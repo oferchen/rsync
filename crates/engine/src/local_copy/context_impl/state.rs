@@ -244,7 +244,7 @@ impl<'a> CopyContext<'a> {
     /// `SetNamedSecurityInfoW`) O(1) per cohort instead of O(N) per follower.
     ///
     /// upstream: hlink.c::hard_link_check returns 1 for followers so
-    /// generator.c:1540 exits before `set_file_attrs()` and therefore never
+    /// generator.c:1552 exits before `set_file_attrs()` and therefore never
     /// calls `set_acl()` on a follower alias.
     #[cfg(all(any(unix, windows), feature = "acl"))]
     pub(super) fn register_acl_cohort_leader(&mut self, reference: &Path) -> bool {
@@ -570,11 +570,11 @@ impl<'a> CopyContext<'a> {
     /// exactly matches the source node, returning its path so the receiver can
     /// hard-link it into place (`hD`/`hS` + blank) instead of recreating it.
     ///
-    /// Mirrors upstream `generator.c:1052-1140` try_dests_non(): a `LINK_DEST`
+    /// Mirrors upstream `generator.c:1064-1152` try_dests_non(): a `LINK_DEST`
     /// basis entry of the same file-type bucket (`FT_DEVICE`/`FT_SPECIAL`) whose
     /// device number (devices) or `_S_IFMT` (specials) matches
-    /// (`generator.c:657-671` quick_check_ok) AND whose preserved attributes are
-    /// unchanged (`generator.c:461-500` unchanged_attrs) reaches match_level 3
+    /// (`generator.c:664-678` quick_check_ok) AND whose preserved attributes are
+    /// unchanged (`generator.c:468-507` unchanged_attrs) reaches match_level 3
     /// and is hard-linked, itemizing as an exact match. `CAN_HARDLINK_SPECIAL`
     /// is defined on Linux, so devices and specials participate.
     #[cfg(unix)]
@@ -631,7 +631,7 @@ impl<'a> CopyContext<'a> {
                 continue;
             }
 
-            // upstream: generator.c:461-500 unchanged_attrs - preserved mtime,
+            // upstream: generator.c:468-507 unchanged_attrs - preserved mtime,
             // perms and ownership must match for the match_level-3 hard-link.
             if metadata_options.times()
                 && !mtimes_within_window(metadata, &candidate_metadata, modify_window)

@@ -74,7 +74,7 @@ pub(crate) fn ensure_destination_directory(
         return Ok(true);
     }
 
-    // upstream: main.c:736 vs main.c:787 - `--mkpath` runs `make_path()` (full
+    // upstream: main.c:736 vs main.c:796 - `--mkpath` runs `make_path()` (full
     // chain) while the plain path does a single `do_mkdir(dest_path)` that fails
     // with ENOENT when a leading directory is absent.
     let outcome = if mkpath {

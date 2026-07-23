@@ -21,7 +21,7 @@ impl LocalCopyOptionsBuilder {
             });
         }
 
-        // upstream: options.c:2382 - --append cannot be used with --whole-file.
+        // upstream: options.c:2400 - --append cannot be used with --whole-file.
         // Only an explicit `whole_file = Some(true)` conflicts; the default
         // (None) and `--no-whole-file` (Some(false)) are accepted.
         if self.append && self.whole_file == Some(true) {

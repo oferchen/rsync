@@ -836,7 +836,7 @@ fn modify_window_dry_run_reports_correctly() {
 }
 
 /// A dry-run itemize must apply `--modify-window` to the quick check exactly
-/// as a real run does. Upstream `generator.c:526,645` runs `same_time()` in
+/// as a real run does. Upstream `generator.c:533,652` runs `same_time()` in
 /// both modes, so a destination whose only drift is a sub-window mtime
 /// difference is up-to-date and is NOT reported as a transfer. This is the
 /// exact scenario the upstream `compare` testsuite exercises with

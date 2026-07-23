@@ -141,7 +141,7 @@ pub(crate) fn copy_file(
 
     // upstream: generator.c:1704-1719 recv_generator() - the max-size/min-size
     // filter runs after the "not creating new" (--existing) check at
-    // generator.c:1368, so an out-of-range file absent from the destination
+    // generator.c:1380, so an out-of-range file absent from the destination
     // reports "not creating new file" rather than a size skip.
     //
     // Record the skip as a client event rather than emitting it via `info_log!`

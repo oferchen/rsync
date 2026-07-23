@@ -220,7 +220,7 @@ pub(crate) fn copy_symlink(
     // If the link is unsafe but we were told to copy what it points to, do that.
     if unsafe_target {
         if context.copy_unsafe_links_enabled() {
-            // upstream: flist.c:217 - INFO_GTE(SYMSAFE, 1) fires before
+            // upstream: flist.c:229 - INFO_GTE(SYMSAFE, 1) fires before
             // an unsafe symlink is dereferenced into a regular entry.
             info_log!(
                 Symsafe,

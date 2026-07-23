@@ -15,7 +15,7 @@
 //!
 //! # Upstream Reference
 //!
-//! - `flist.c:1579-1603` `send_file_name()` - `iconvbufs(ic_send, ...)`
+//! - `flist.c:1615-1639` `send_file_name()` - `iconvbufs(ic_send, ...)`
 //!   transcodes the filename before it leaves the sender.
 //! - `flist.c:738-754` `recv_file_entry()` - `iconvbufs(ic_recv, ...)`
 //!   transcodes the filename before the receiver hits the filesystem.

@@ -133,7 +133,7 @@ impl LocalCopyOptions {
     /// path, mirroring upstream's `am_root < 0` sentinel.
     // upstream: options.c:89 - am_root tri-state: 0 normal, 1 root, 2 --super,
     //                          -1 --fake-super (negative is "fake")
-    // upstream: clientserver.c:1102-1105 - daemon `fake super = yes` forces am_root=-1
+    // upstream: clientserver.c:1116-1119 - daemon `fake super = yes` forces am_root=-1
     // upstream: syscall.c do_mknod() - am_root<0 sentinel substitutes 0600 placeholder
     #[must_use]
     pub fn am_root(&self) -> bool {

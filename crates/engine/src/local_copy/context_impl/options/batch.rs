@@ -243,7 +243,7 @@ impl<'a> CopyContext<'a> {
     /// (protocol >= 30), sum_init ignores the seed - the checksum is plain
     /// MD5 of the file bytes.
     ///
-    /// upstream: receiver.c:408 - read_buf(f_in, sender_file_sum, xfer_sum_len)
+    /// upstream: receiver.c:515 - read_buf(f_in, sender_file_sum, xfer_sum_len)
     pub(crate) fn finalize_batch_file_delta(
         &mut self,
         source: &std::path::Path,

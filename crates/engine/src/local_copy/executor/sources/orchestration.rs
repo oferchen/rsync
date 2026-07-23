@@ -77,7 +77,7 @@ pub(crate) fn copy_sources(
                 destination_state.is_dir = true;
             }
 
-            // upstream: main.c:794-799 - the receiver pre-flight-mkdirs the
+            // upstream: main.c:803-808 - the receiver pre-flight-mkdirs the
             // destination root, flags the synthetic "." flist entry with
             // FLAG_DIR_CREATED, and emits `created directory %s\n` when
             // INFO_GTE(NAME, 1) || stdout_format_has_i. Surface the same
@@ -104,7 +104,7 @@ pub(crate) fn copy_sources(
                 )?;
             }
 
-            // upstream: main.c:778 get_local_name() - `if (file_total > 1 ||
+            // upstream: main.c:787 get_local_name() - `if (file_total > 1 ||
             // trailing_slash) { do_mkdir(dest_path); ... }`. The transfer-level
             // decision is made ONCE, from the flist entry count. For a single
             // no-trailing-slash directory source `file_total > 1` requires the
@@ -170,7 +170,7 @@ pub(crate) fn copy_sources(
                 );
                 if let Err(error) = result {
                     if error.is_vanished_error() {
-                        // upstream: flist.c:1289 - vanished files produce a warning
+                        // upstream: flist.c:1317 - vanished files produce a warning
                         // and set IOERR_VANISHED, but transfer continues.
                         // full_fname() wraps the path in double quotes (util1.c:1228).
                         eprintln!("file has vanished: \"{}\"", source.path().display());
@@ -203,7 +203,7 @@ pub(crate) fn copy_sources(
             }
 
             // Write the flist end-of-list marker, ID lists, then delta data.
-            // upstream: flist.c:2513-2514 - without INC_RECURSE, send_id_lists()
+            // upstream: flist.c:2548-2549 - without INC_RECURSE, send_id_lists()
             // writes uid/gid name mappings after the flist end marker.
             // Since names are already embedded inline via XMIT_USER_NAME_FOLLOWS,
             // the ID lists are empty (just varint30(0) terminators), but they
@@ -374,7 +374,7 @@ fn process_single_source(
                                 .as_deref()
                                 .and_then(|p| non_empty_path(p))
                                 .or_else(|| source_path.file_name().map(Path::new));
-                            // upstream: flist.c:1319 - INFO_GTE(MOUNT, 1) gates
+                            // upstream: flist.c:1347 - INFO_GTE(MOUNT, 1) gates
                             // `rprintf(FINFO, "[%s] skipping mount-point dir %s", who_am_i(),
                             // thisname)` when `-xx` prunes a root-level mount-point source.
                             // The role prefix is added downstream by the renderer.

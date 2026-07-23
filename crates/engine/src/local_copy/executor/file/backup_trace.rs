@@ -16,7 +16,7 @@
 //! - `backup.c:299-300` - `"make_backup: SYMLINK %s successful.\n"`
 //! - `backup.c:333-334` - `"make_backup: COPY %s successful.\n"`
 //!
-//! The flag table entry at `options.c:289` is
+//! The flag table entry at `options.c:299` is
 //! `DEBUG_WORD(BACKUP, W_REC, "Debug backup actions (levels 1-2)")`.
 //! Upstream's help text mentions a level 2 but only level 1 sites exist
 //! in `backup.c`; this module mirrors that reality. `%s` is the source

@@ -420,7 +420,7 @@ pub(crate) fn plan_directory_entries<'a>(
 ///
 /// The reorder is skipped entirely when a `--link-dest`/`--copy-dest`/
 /// `--compare-dest` basis is configured. Upstream's LAST-member deferral lives
-/// at `generator.c:1803`, *after* the alt-dest handling (`generator.c:995-1052`
+/// at `generator.c:1803`, *after* the alt-dest handling (`generator.c:1007-1064`
 /// try_dests_reg); a cohort member satisfied from a basis is placed in name
 /// order and never reaches the deferral, so the FIRST name-sorted member stays
 /// the holder (e.g. `hf f1` / `hf f2 => f1`). Reordering those would swap the
