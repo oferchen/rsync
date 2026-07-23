@@ -22,9 +22,7 @@ validated for every version on every CI run.
 | rsync 2.6.9      | 28-29    | Always source-built | Non-blocking |
 | rsync 3.0.9      | 30       | Ubuntu package or source | Required |
 | rsync 3.1.3      | 31       | Ubuntu package or source | Required |
-| rsync 3.4.1      | 32       | Debian package or source | Required |
-| rsync 3.4.2      | 32       | Debian package or source | Required |
-| rsync 3.4.3      | 32       | Source-built (security release) | Required |
+| rsync 3.4.4      | 32       | Source-built (latest release) | Required |
 
 Upstream binaries are obtained via multi-tier fallback: Debian/Ubuntu packages
 first, then release tarballs from rsync.samba.org, then source build from
@@ -79,8 +77,8 @@ transfers. Without it, transfers fall back to MD5.
 ## Transfer Modes
 
 All tested bidirectionally (oc-rsync client to upstream daemon, upstream client
-to oc-rsync daemon) against 3.0.9, 3.1.3, and 3.4.x. Versions 3.4.2 and 3.4.3
-share protocol 32 with 3.4.1 and pass the identical test matrix.
+to oc-rsync daemon) against 3.0.9, 3.1.3, and 3.4.4. 3.4.4 supersedes the
+3.4.1/3.4.2/3.4.3 point releases on the same protocol (32).
 
 | Feature | Flags | 3.0.9 | 3.1.3 | 3.4.x |
 |---------|-------|-------|-------|-------|
@@ -180,8 +178,8 @@ the codec.
 
 | Direction | Versions Tested |
 |-----------|-----------------|
-| oc-rsync client -> upstream daemon (push) | 2.6.9, 3.0.9, 3.1.3, 3.4.1, 3.4.2, 3.4.3 |
-| Upstream client -> oc-rsync daemon (pull) | 2.6.9, 3.0.9, 3.1.3, 3.4.1, 3.4.2, 3.4.3 |
+| oc-rsync client -> upstream daemon (push) | 2.6.9, 3.0.9, 3.1.3, 3.4.4 |
+| Upstream client -> oc-rsync daemon (pull) | 2.6.9, 3.0.9, 3.1.3, 3.4.4 |
 
 ### SSH Transport
 
@@ -211,7 +209,7 @@ reads these files correctly.
 
 ## Upstream rsync Testsuite
 
-oc-rsync runs upstream rsync's own `testsuite/*.test` corpus (from rsync 3.4.2)
+oc-rsync runs upstream rsync's own `testsuite/*.test` corpus (from rsync 3.4.4)
 with oc-rsync substituted as `$RSYNC`. This is the canonical "does oc-rsync
 look like rsync from upstream's perspective" check. The harness reuses
 upstream's `rsync.fns`, `tls`, `getgroups`, and `support/lsh.sh` helper tools.

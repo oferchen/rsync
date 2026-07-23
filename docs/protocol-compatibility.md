@@ -2,7 +2,7 @@
 
 This document describes oc-rsync's wire protocol compatibility with upstream
 rsync across protocol versions 28-32 and upstream releases 2.6.9, 3.0.9,
-3.1.3, 3.4.1, and 3.4.2. All claims are backed by automated CI tests that
+3.1.3, and 3.4.4. All claims are backed by automated CI tests that
 run on every pull request and nightly.
 
 ---
@@ -49,12 +49,11 @@ Every CI run tests both directions for each upstream version:
 | rsync 2.6.9      | 29       | Non-blocking (RP28.d) | Non-blocking (RP28.c) |
 | rsync 3.0.9      | 30       | Pass                  | Pass                  |
 | rsync 3.1.3      | 31       | Pass                  | Pass                  |
-| rsync 3.4.1      | 32       | Pass                  | Pass                  |
-| rsync 3.4.2      | 32       | Pass                  | Pass                  |
+| rsync 3.4.4      | 32       | Pass                  | Pass                  |
 
 ### SSH Transport Interop
 
-SSH interop is tested with upstream rsync 3.4.1 on the PATH:
+SSH interop is tested with upstream rsync 3.4.4 on the PATH:
 
 | Direction                          | Status |
 |------------------------------------|--------|
@@ -78,15 +77,15 @@ Batch files written by one implementation can be read by the other:
 
 The table below lists every feature tested in the comprehensive interop suite.
 Each feature is tested bidirectionally (upstream client -> oc-rsync daemon and
-oc-rsync client -> upstream daemon) against 3.0.9, 3.1.3, and 3.4.1. Rsync
-3.4.2 uses the same protocol (32) as 3.4.1 and passes the identical test
-matrix - it is not shown separately. Rsync 2.6.9 (protocol 29) interop is
+oc-rsync client -> upstream daemon) against 3.0.9, 3.1.3, and 3.4.4. Rsync
+3.4.4 supersedes the 3.4.1/3.4.2/3.4.3 point releases on the same protocol
+(32), so those intermediate releases are not tested separately. Rsync 2.6.9 (protocol 29) interop is
 validated via dedicated daemon push/pull cells (RP28.c/RP28.d) rather than
 the full feature matrix below.
 
 ### Transfer Modes
 
-| Feature              | Flags                     | 3.0.9 | 3.1.3 | 3.4.1 |
+| Feature              | Flags                     | 3.0.9 | 3.1.3 | 3.4.4 |
 |----------------------|---------------------------|-------|-------|-------|
 | Archive mode         | `-av`                     | Pass  | Pass  | Pass  |
 | Recursive only       | `-rv`                     | Pass  | Pass  | Pass  |
@@ -107,7 +106,7 @@ the full feature matrix below.
 
 ### Metadata and Attributes
 
-| Feature              | Flags                     | 3.0.9 | 3.1.3 | 3.4.1 |
+| Feature              | Flags                     | 3.0.9 | 3.1.3 | 3.4.4 |
 |----------------------|---------------------------|-------|-------|-------|
 | Permissions          | `-rlpv`                   | Pass  | Pass  | Pass  |
 | Numeric IDs          | `-av --numeric-ids`       | Pass  | Pass  | Pass  |
@@ -117,7 +116,7 @@ the full feature matrix below.
 
 ### Links
 
-| Feature              | Flags                     | 3.0.9 | 3.1.3 | 3.4.1 |
+| Feature              | Flags                     | 3.0.9 | 3.1.3 | 3.4.4 |
 |----------------------|---------------------------|-------|-------|-------|
 | Symlinks             | `-rlptv`                  | Pass  | Pass  | Pass  |
 | Hard links           | `-avH`                    | Pass  | Pass  | Pass  |
@@ -127,7 +126,7 @@ the full feature matrix below.
 
 ### Comparison and Selection
 
-| Feature              | Flags                     | 3.0.9 | 3.1.3 | 3.4.1 |
+| Feature              | Flags                     | 3.0.9 | 3.1.3 | 3.4.4 |
 |----------------------|---------------------------|-------|-------|-------|
 | Checksum mode        | `-avc`                    | Pass  | Pass  | Pass  |
 | Checksum skip        | `-avc` (identical files)  | Pass  | Pass  | Pass  |
@@ -139,7 +138,7 @@ the full feature matrix below.
 
 ### Delete and Backup
 
-| Feature              | Flags                     | 3.0.9 | 3.1.3 | 3.4.1 |
+| Feature              | Flags                     | 3.0.9 | 3.1.3 | 3.4.4 |
 |----------------------|---------------------------|-------|-------|-------|
 | Delete               | `-av --delete`            | Pass  | Pass  | Pass  |
 | Delete after         | `-av --delete-after`      | Pass  | Pass  | Pass  |
@@ -151,7 +150,7 @@ the full feature matrix below.
 
 ### Filters and Paths
 
-| Feature              | Flags                     | 3.0.9 | 3.1.3 | 3.4.1 |
+| Feature              | Flags                     | 3.0.9 | 3.1.3 | 3.4.4 |
 |----------------------|---------------------------|-------|-------|-------|
 | Exclude pattern      | `-av --exclude=*.log`     | Pass  | Pass  | Pass  |
 | Relative paths       | `-avR`                    | Pass  | Pass  | Pass  |
@@ -159,13 +158,13 @@ the full feature matrix below.
 
 ### Output
 
-| Feature              | Flags                     | 3.0.9 | 3.1.3 | 3.4.1 |
+| Feature              | Flags                     | 3.0.9 | 3.1.3 | 3.4.4 |
 |----------------------|---------------------------|-------|-------|-------|
 | Itemize changes      | `-avi`                    | Known limitation | Known limitation | Known limitation |
 
 ### Protocol Forcing
 
-| Feature              | Flags                     | 3.4.1 |
+| Feature              | Flags                     | 3.4.4 |
 |----------------------|---------------------------|-------|
 | Force protocol 28    | `-av --protocol=28`       | Known limitation (daemon transfers) |
 | Force protocol 29    | `-av --protocol=29`       | Known limitation (daemon transfers) |
@@ -239,7 +238,7 @@ Interop testing is distributed across several CI workflows:
 
 | Workflow                        | File                                  | Scope |
 |---------------------------------|---------------------------------------|-------|
-| CI (interop job)                | `.github/workflows/ci.yml`            | Basic bidirectional daemon + SSH interop for 3.0.9, 3.1.3, 3.4.1. Comprehensive scenarios for all features. Protocol forcing for v28-v32. Standalone tests. |
+| CI (interop job)                | `.github/workflows/ci.yml`            | Basic bidirectional daemon + SSH interop for 3.0.9, 3.1.3, 3.4.4. Comprehensive scenarios for all features. Protocol forcing for v28-v32. Standalone tests. |
 | Interop Validation              | `.github/workflows/interop-validation.yml` | Exit code validation, message format validation, behavior comparison, batch mode interop. Runs on push, PR, and nightly. |
 | Interop Tests (reusable)        | `.github/workflows/_interop.yml`      | Reusable workflow called by CI. Builds upstream binaries, sets up SSH loopback, runs full interop suite. |
 
@@ -252,4 +251,4 @@ Interop testing is distributed across several CI workflows:
 - Interop test details: [docs/INTEROP.md](INTEROP.md)
 - Interop testing guide: [docs/interop_testing.md](interop_testing.md)
 - Interop test script: `tools/ci/run_interop.sh`
-- Upstream rsync source: `target/interop/upstream-src/rsync-3.4.1/`
+- Upstream rsync source: `target/interop/upstream-src/rsync-3.4.4/`
