@@ -24,6 +24,8 @@
 //! ```
 
 mod auth;
+#[cfg(test)]
+mod client_tests;
 mod connect;
 mod errors;
 mod listing;
