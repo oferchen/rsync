@@ -931,6 +931,53 @@ fn includes_delay_updates_long_arg() {
 }
 
 #[test]
+fn partial_dir_not_forwarded_on_pull_receiver() {
+    // upstream: options.c:2886 - `if (partial_dir && am_sender)`. On a pull the
+    // client is the receiver, so --partial-dir stays local and must NOT be
+    // forwarded to the remote sender (upstream turns it into an implied exclude
+    // of that dir on the sender, so forwarding it would change file selection).
+    let config = ClientConfig::builder()
+        .partial_directory(Some(".rsync-partial"))
+        .build();
+    let args = RemoteInvocationBuilder::new(&config, RemoteRole::Receiver).build("/path");
+    assert!(
+        !args
+            .iter()
+            .any(|a| a.to_string_lossy().starts_with("--partial-dir")),
+        "--partial-dir must not be forwarded on a pull (receiver): {args:?}"
+    );
+}
+
+#[test]
+fn delay_updates_not_forwarded_on_pull_receiver() {
+    // upstream: options.c:2891 - --delay-updates is emitted only inside the
+    // `partial_dir && am_sender` block. On a pull the receiver applies it
+    // locally and must not forward it to the remote sender.
+    let config = ClientConfig::builder().delay_updates(true).build();
+    let args = RemoteInvocationBuilder::new(&config, RemoteRole::Receiver).build("/path");
+    assert!(
+        !args.iter().any(|a| a == "--delay-updates"),
+        "--delay-updates must not be forwarded on a pull (receiver): {args:?}"
+    );
+}
+
+#[test]
+fn inplace_suppressed_when_append_mode() {
+    // upstream: options.c:2951-2956 - `if (append_mode) {...} else if (inplace)`.
+    // append_mode takes precedence, so --inplace must not accompany --append.
+    let config = ClientConfig::builder().inplace(true).append(true).build();
+    let args = RemoteInvocationBuilder::new(&config, RemoteRole::Sender).build("/path");
+    assert!(
+        !args.iter().any(|a| a == "--inplace"),
+        "--inplace must be suppressed when --append is set: {args:?}"
+    );
+    assert!(
+        args.iter().any(|a| a == "--append"),
+        "--append must still be emitted: {args:?}"
+    );
+}
+
+#[test]
 fn includes_remove_source_files_long_arg() {
     let config = ClientConfig::builder().remove_source_files(true).build();
     let builder = RemoteInvocationBuilder::new(&config, RemoteRole::Sender);
