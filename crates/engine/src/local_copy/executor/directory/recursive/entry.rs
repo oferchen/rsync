@@ -56,7 +56,7 @@ pub(super) fn process_planned_entry(
             return Ok(true);
         }
         EntryAction::SkipMountPoint => {
-            // upstream: flist.c:1319 - INFO_GTE(MOUNT, 1) gates
+            // upstream: flist.c:1347 - INFO_GTE(MOUNT, 1) gates
             // `rprintf(FINFO, "[%s] skipping mount-point dir %s", who_am_i(), thisname)`
             // when `--one-file-system` (`-xx`) prunes a cross-device directory.
             // The role prefix (`[sender]`) is added downstream by the renderer.

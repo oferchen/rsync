@@ -88,7 +88,7 @@ pub(crate) fn copy_directory_recursive(
 
 /// Walks a directory's immediate children even when global recursion is off.
 ///
-/// Mirrors upstream `flist.c:2442` which honours `(xfer_dirs && name_type != NORMAL_NAME)`
+/// Mirrors upstream `flist.c:2477` which honours `(xfer_dirs && name_type != NORMAL_NAME)`
 /// to walk one level beneath SLASH_ENDING_NAME / DOTDIR_NAME source arguments
 /// (and `--files-from` entries with the corresponding markers). Subdirectories
 /// encountered during this one-level walk are NOT recursed into further,
@@ -222,7 +222,7 @@ fn copy_directory_recursive_inner(
     let mut created_directory_on_disk = false;
     let creation_record_pending = destination_missing && relative.is_some();
     let mut record_emitted = false;
-    // upstream: main.c:794-796 + generator.c:566-572 - when the receiver
+    // upstream: main.c:803-805 + generator.c:566-572 - when the receiver
     // mkdirs the destination root, `flist->files[0]->flags |= FLAG_DIR_CREATED`
     // and `itemize()` emits `cd+++++++++ ./` for the synthesized "." entry.
     // Synthesize a "." relative path for the root when the destination root
@@ -231,7 +231,7 @@ fn copy_directory_recursive_inner(
     // Subsequent runs against an existing destination still see relative=None
     // here, so no record is synthesized and the `-i` output omits the `./`
     // entry as upstream does (test line 74-79).
-    // upstream: main.c:794-796 + generator.c:566-572 - when the receiver
+    // upstream: main.c:803-805 + generator.c:566-572 - when the receiver
     // mkdirs the destination root, `flist->files[0]->flags |= FLAG_DIR_CREATED`
     // and `itemize()` emits `cd+++++++++ ./` for the synthesized "." entry.
     // The root flist entry has relative=None here because `non_empty_path("")`
@@ -314,7 +314,7 @@ fn copy_directory_recursive_inner(
     // the context flags `emit_unchanged` (mirroring `INFO_GTE(NAME, 2)`), so
     // non-verbose runs continue to omit unchanged dirs while `-vv` surfaces
     // them as `.d` rows.
-    // upstream: generator.c:1480-1535 - for an existing directory the itemize
+    // upstream: generator.c:1492-1547 - for an existing directory the itemize
     // row precedes the child transfer rows, but a `--delete-before`/`during`
     // sweep of that directory's extraneous entries is emitted BEFORE the
     // directory's own row (do_delete_pass runs first for `before`;
@@ -435,7 +435,7 @@ fn copy_directory_recursive_inner(
         Ok(())
     };
 
-    // upstream: flist.c:2442 - global recursion off AND not a trailing-slash
+    // upstream: flist.c:2477 - global recursion off AND not a trailing-slash
     // / DOTDIR source: emit the directory entry only and stop. Trailing-slash
     // sources (`force_walk_one_level`) fall through to walk one level so
     // upstream's `(xfer_dirs && name_type != NORMAL_NAME)` semantics hold.
@@ -559,7 +559,7 @@ fn copy_directory_recursive_inner(
                 }
             }
             Err(error) if error.is_vanished_error() => {
-                // upstream: flist.c:1289 / sender.c:358 - vanished files produce
+                // upstream: flist.c:1317 / sender.c:389 - vanished files produce
                 // a warning and set IOERR_VANISHED (exit code 24).
                 // full_fname() wraps the path in double quotes (util1.c:1228).
                 eprintln!("file has vanished: \"{}\"", planned.entry.path.display());

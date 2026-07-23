@@ -194,7 +194,7 @@ impl LocalCopyMetadata {
     /// reporting, so `--list-only` and itemized output show `-rw-...` with the
     /// device's readable byte length instead of `brw-...`/`crw-...` and `0`.
     ///
-    /// Mirrors upstream `flist.c:1419-1428 make_file()`, which rewrites the
+    /// Mirrors upstream `flist.c:1451-1460 make_file()`, which rewrites the
     /// device stat to `S_IFREG | (mode & ACCESSPERMS)` with `get_device_size()`
     /// before the entry is ever itemized. A no-op for non-device kinds.
     #[must_use]

@@ -63,7 +63,7 @@ pub(crate) struct ReferenceQuery<'a> {
 }
 
 /// Reports whether a reference basis already carries the source's preserved
-/// attributes, mirroring upstream `generator.c:468 unchanged_attrs()`.
+/// attributes, mirroring upstream `generator.c:475 unchanged_attrs()`.
 ///
 /// A `true` result is upstream match_level 3 (data and attributes both match):
 /// the basis is hard-linked (`--link-dest`) or treated as up-to-date
@@ -77,7 +77,7 @@ pub(crate) struct ReferenceQuery<'a> {
 /// permission bits (`perms_differ`), owner/group (`ownership_differs`), mtime
 /// (`any_time_differs`), and, when `-X` is active, the transferable extended
 /// attributes (`xattrs_differ`), each gated on the corresponding preserve option.
-// upstream: generator.c:468-502 unchanged_attrs - perms/ownership/time/xattr.
+// upstream: generator.c:475-509 unchanged_attrs - perms/ownership/time/xattr.
 pub(crate) fn reference_attrs_unchanged(
     basis: &Path,
     source: &Path,
@@ -96,7 +96,7 @@ pub(crate) fn reference_attrs_unchanged(
         return false;
     }
 
-    // upstream: generator.c:485 any_time_differs - the mtime must match for a
+    // upstream: generator.c:492 any_time_differs - the mtime must match for a
     // level-3 basis. Compared through `SystemTime` (like the quick-check
     // `unchanged_file` path) so the check holds on every platform, not just Unix
     // where `st_mtime` is available.
@@ -107,7 +107,7 @@ pub(crate) fn reference_attrs_unchanged(
         }
     }
 
-    // upstream: generator.c:487 perms_differ - Unix compares the full permission
+    // upstream: generator.c:494 perms_differ - Unix compares the full permission
     // bits; on platforms without POSIX modes (Windows) the only preserved
     // permission is the read-only attribute, matching how oc applies and
     // quick-checks permissions there.
@@ -166,7 +166,7 @@ fn reference_permissions_match(source_meta: &fs::Metadata, basis_meta: &fs::Meta
 /// picks an earlier data-only basis over a later exact one, forcing an
 /// unnecessary copy/transfer and (for `--link-dest`) reapplying attrs onto a
 /// shared basis inode. The winning level then drives the action
-/// (generator.c:995-1054):
+/// (generator.c:1007-1066):
 ///
 /// - `--compare-dest`: level 3 is up-to-date (skip, no write); level 2 copies the
 ///   basis in and reapplies attrs (`copy_altdest_file`).

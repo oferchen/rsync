@@ -702,7 +702,7 @@ fn itemize_size_change_detected_correctly() {
     let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
 
     // The position-2 `c` glyph (ITEM_REPORT_CHANGE) only fires under
-    // --checksum (upstream: generator.c:1929 - `if (always_checksum > 0)
+    // --checksum (upstream: generator.c:1942 - `if (always_checksum > 0)
     // iflags |= ITEM_REPORT_CHANGE`), so enable checksum mode to assert
     // `checksum_changed()` below.
     let options = LocalCopyOptions::default()

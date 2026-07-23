@@ -196,7 +196,7 @@ fn execute_without_specials_records_skip_event() {
 /// Verifies that skipping a non-regular source emits the upstream
 /// `--info=NONREG` notice through the diagnostic event queue.
 ///
-/// NONREG sits in upstream's `info_verbosity[0]` table (options.c:240) and
+/// NONREG sits in upstream's `info_verbosity[0]` table (options.c:250) and
 /// is therefore enabled by default at level 1, independent of `-v`. The
 /// emitted wording mirrors `generator.c:1687`:
 /// `skipping non-regular file "<path>"`.
@@ -248,7 +248,7 @@ fn skipping_non_regular_emits_info_nonreg_notice() {
 }
 
 /// Verifies that `--info=nononreg` (level 0) suppresses the NONREG notice,
-/// matching upstream's `INFO_GTE(NONREG, 1)` gate (generator.c:1684).
+/// matching upstream's `INFO_GTE(NONREG, 1)` gate (generator.c:1696).
 #[cfg(unix)]
 #[test]
 fn nononreg_suppresses_info_nonreg_notice() {
@@ -1870,7 +1870,7 @@ fn copy_unsafe_links_emits_info_symsafe_notice() {
 
 /// Verifies that the default verbosity configuration (no `--info=SYMSAFE`)
 /// suppresses the notice during a `--copy-unsafe-links` dereference,
-/// matching upstream's `INFO_GTE(SYMSAFE, 1)` gate (flist.c:216).
+/// matching upstream's `INFO_GTE(SYMSAFE, 1)` gate (flist.c:228).
 #[cfg(unix)]
 #[test]
 fn copy_unsafe_links_default_verbosity_suppresses_info_symsafe_notice() {

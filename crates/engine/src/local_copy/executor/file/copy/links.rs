@@ -198,7 +198,7 @@ pub(super) fn process_links(
             link_target.display()
         );
 
-        // upstream: hlink.c:215-224 / generator.c:1008-1013 - a `--link-dest`
+        // upstream: hlink.c:215-224 / generator.c:1020-1025 - a `--link-dest`
         // cluster member is linked from the basis, so it ends up sharing the
         // same inode as its already-placed in-transfer leader. `maybe_hard_link`
         // then takes the same-inode branch, itemizing with an empty xname and
@@ -626,7 +626,7 @@ pub(super) fn process_links(
     {
         match decision {
             ReferenceDecision::Skip(basis) => {
-                // upstream: generator.c:1010,1133 / rsync.c:676 - "is uptodate"
+                // upstream: generator.c:1022,1145 / rsync.c:676 - "is uptodate"
                 // emitted at INFO_GTE(NAME, 2) when a reference-directory match
                 // means no transfer is needed. Rendered by the CLI from the
                 // MetadataReused event (cli::frontend::progress::render) so
@@ -771,7 +771,7 @@ pub(super) fn process_links(
                     // shared inode and followers inherit for free.
                     //
                     // upstream: hlink.c::hard_link_check returns 1 for
-                    // followers; generator.c:1540 exits before
+                    // followers; generator.c:1552 exits before
                     // set_file_attrs() so set_acl() is never invoked on a
                     // follower alias.
                     #[cfg(all(any(unix, windows), feature = "acl"))]
