@@ -23,7 +23,6 @@ use crate::daemon::{
     FEATURE_UNAVAILABLE_EXIT_CODE,
     HostPattern,
     LEGACY_CONFIG_ENV,
-    MODULE_ABORT_EXIT_CODE,
     ModuleConnectionError,
     ModuleDefinition,
     ModuleRuntime,
@@ -70,6 +69,11 @@ use crate::daemon::{
     set_test_hostname_override,
     set_test_netgroup_members,
 };
+
+// Only the unix-only post-xfer-exec abort test references this constant, so
+// keep the import unix-gated to avoid an unused-import error on Windows.
+#[cfg(unix)]
+use crate::daemon::MODULE_ABORT_EXIT_CODE;
 
 use core::{
     bandwidth::{BandwidthLimiter, LimiterChange},
