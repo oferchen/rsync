@@ -382,7 +382,14 @@ impl StrongDigest for Md5 {
             pending_seed: None,
         };
 
-        if let Some(value) = seed.value {
+        // upstream: checksum.c:get_checksum2() guards the seed bytes with
+        // `if (checksum_seed)` in both the proper (30+) and legacy paths, so a
+        // zero seed hashes the data only. Match that (the MD4 arm already skips
+        // seed==0) - without it an oc<->upstream transfer with --checksum-seed=0
+        // computes different block sums and no blocks match.
+        if let Some(value) = seed.value
+            && value != 0
+        {
             if seed.proper_order {
                 // upstream: checksum.c:get_checksum2() - CHECKSUM_SEED_FIX (protocol 30+)
                 md5.update(&value.to_le_bytes());
@@ -508,6 +515,25 @@ mod tests {
             to_hex(&unseeded_digest),
             "Seeded hash should differ from unseeded"
         );
+    }
+
+    #[test]
+    fn md5_zero_seed_hashes_data_only() {
+        // upstream: checksum.c:get_checksum2() guards the seed with
+        // `if (checksum_seed)`, so a zero seed is equivalent to no seed in both
+        // orderings. A Some(0) Md5Seed must produce the unseeded digest.
+        let data = b"test data";
+        let unseeded = to_hex(&Md5::digest(data));
+
+        for seed in [Md5Seed::proper(0), Md5Seed::legacy(0)] {
+            let mut hasher = Md5::with_seed(seed);
+            hasher.update(data);
+            assert_eq!(
+                to_hex(&hasher.finalize()),
+                unseeded,
+                "zero seed must hash data only (== unseeded)"
+            );
+        }
     }
 
     #[test]

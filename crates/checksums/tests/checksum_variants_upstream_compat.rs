@@ -453,7 +453,11 @@ fn md5_seed_legacy_order_is_suffix() {
 fn md5_seed_proper_vs_legacy_differ() {
     let data = b"checksum seed fix test";
 
-    for seed_value in [0, 1, -1, 0x7FFF_FFFF, -0x7FFF_FFFF, 0x1234_5678] {
+    // Seed 0 is excluded: upstream get_checksum2() guards the seed with
+    // `if (checksum_seed)`, so a zero seed places no bytes in either ordering
+    // and proper == legacy == unseeded (covered by md5_zero_seed_hashes_data_only).
+    // The proper-vs-legacy ordering only differs when there is a seed to place.
+    for seed_value in [1, -1, 0x7FFF_FFFF, -0x7FFF_FFFF, 0x1234_5678] {
         let proper = Md5::digest_with_seed(Md5Seed::proper(seed_value), data);
         let legacy = Md5::digest_with_seed(Md5Seed::legacy(seed_value), data);
 
@@ -477,16 +481,20 @@ fn md5_seed_none_equals_unseeded() {
 }
 
 #[test]
-fn md5_seed_zero_differs_from_none() {
+fn md5_seed_zero_equals_none() {
     let data = b"seed zero vs none";
 
     let none = Md5::digest_with_seed(Md5Seed::none(), data);
     let zero_proper = Md5::digest_with_seed(Md5Seed::proper(0), data);
+    let zero_legacy = Md5::digest_with_seed(Md5Seed::legacy(0), data);
 
-    // Seed value 0 should still hash the 4 zero bytes, differing from no seed
-    assert_ne!(
-        none, zero_proper,
-        "Seed value 0 should differ from no seed (4 zero bytes are hashed)"
+    // upstream: get_checksum2() guards the seed with `if (checksum_seed)`, so a
+    // zero seed places no bytes and hashes the data only - identical to no seed,
+    // in both proper and legacy orderings.
+    assert_eq!(none, zero_proper, "seed value 0 must equal no seed");
+    assert_eq!(
+        none, zero_legacy,
+        "seed value 0 must equal no seed (legacy)"
     );
 }
 
@@ -1223,7 +1231,10 @@ fn strategy_selector_different_seeds_different_results_for_seeded_algorithms() {
 fn md5_seeded_empty_data_produces_valid_digest() {
     let empty = b"";
 
-    for seed in [0_i32, 1, -1, i32::MAX, i32::MIN, 0x1234_5678] {
+    // Seed 0 excluded: it hashes no seed bytes (upstream `if (checksum_seed)`),
+    // so proper(0, "")/legacy(0, "") equal the unseeded empty digest - the
+    // "seeded differs from unseeded" assertion below only holds for a real seed.
+    for seed in [1_i32, -1, i32::MAX, i32::MIN, 0x1234_5678] {
         let proper = Md5::digest_with_seed(Md5Seed::proper(seed), empty);
         let legacy = Md5::digest_with_seed(Md5Seed::legacy(seed), empty);
 
