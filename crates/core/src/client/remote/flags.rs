@@ -552,6 +552,17 @@ pub(crate) fn apply_common_server_flags(config: &ClientConfig, server_config: &m
     {
         server_config.connection.compress_choice = Some(algo);
     }
+    // upstream: options.c set_fake_super() -> am_root = -1. rsync.1: "The
+    // --fake-super option only affects the side where the option is used. To
+    // affect the remote side of a remote-shell connection, use the
+    // --remote-option (-M) option." It is therefore never sent over the wire
+    // (see fake_super_not_forwarded_on_pull/push in invocation/tests.rs), but
+    // the local client itself plays one of the two roles in-process for both
+    // SSH and daemon transfers, exactly like preallocate/remove_source_files
+    // above. Without this, --fake-super was a silent no-op on every
+    // remote-shell/daemon transfer even though the local-copy path (and the
+    // daemon's own `fake super = yes` module directive) honoured it.
+    server_config.fake_super = config.fake_super();
 }
 
 #[cfg(test)]
@@ -716,6 +727,27 @@ mod tests {
         apply_common_server_flags(&config, &mut server_config);
         assert!(!server_config.flags.copy_links);
         assert!(!server_config.flags.copy_dirlinks);
+    }
+
+    // upstream: rsync.1 "--fake-super ... only affects the side where the
+    // option is used." The local client plays one of the two roles in-process
+    // for both SSH and daemon transfers, so its own --fake-super must land on
+    // the local ServerConfig even though it is never forwarded to the remote
+    // peer (see fake_super_not_forwarded_on_pull/push in invocation/tests.rs).
+    #[test]
+    fn apply_common_server_flags_propagates_fake_super() {
+        let config = ClientConfig::builder().fake_super(true).build();
+        let mut server_config = ServerConfig::default();
+        apply_common_server_flags(&config, &mut server_config);
+        assert!(server_config.fake_super);
+    }
+
+    #[test]
+    fn apply_common_server_flags_fake_super_default_false() {
+        let config = ClientConfig::default();
+        let mut server_config = ServerConfig::default();
+        apply_common_server_flags(&config, &mut server_config);
+        assert!(!server_config.fake_super);
     }
 
     #[test]
