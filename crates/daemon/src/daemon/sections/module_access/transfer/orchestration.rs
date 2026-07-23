@@ -200,6 +200,48 @@ fn process_approved_module(
         }
     }
 
+    // upstream: clientserver.c:983-1053 - chroot + setgid + setuid run BEFORE
+    // `@RSYNCD: OK` (1071), so their `@ERROR: chroot/setgid/setuid failed`
+    // replies are raw pre-OK lines the client reads before it switches to the
+    // multiplexed input stream. Run them here, then emit OK, so a failure can
+    // never desync the client's multiplex decoder. Client args are not yet
+    // available (the client blocks on OK before sending its argv), so the
+    // post-xfer-exec hook fires with an empty arg list - matching upstream's
+    // pre-read_args fork position (clientserver.c:908).
+    if !validate_module_path(ctx, module)? {
+        // upstream: clientserver.c:992-993 - the change_dir() into the module
+        // path is post-fork, so a missing/unreachable path still hooks.
+        let host_owned = ctx.effective_host().map(str::to_owned);
+        run_post_xfer_finalizer(
+            ctx,
+            module,
+            host_owned.as_deref(),
+            auth_user.as_deref(),
+            &[],
+            MODULE_ABORT_EXIT_CODE,
+        );
+        return Ok(());
+    }
+
+    // Split into separate steps so each failure sends the correct upstream
+    // error message: `@ERROR: chroot failed` vs `@ERROR: setgid failed` etc.
+    // After chroot the effective module path becomes the post-chroot inner
+    // directory (see `config_module` below).
+    let privilege_outcome = match apply_privilege_restrictions_with_upstream_errors(
+        ctx,
+        module,
+        auth_user.as_deref(),
+        &[],
+    )? {
+        Some(outcome) => outcome,
+        None => return Ok(()),
+    };
+
+    // upstream: clientserver.c:1071 - emit `@RSYNCD: OK` now that chroot and the
+    // privilege drop have succeeded; the client then switches to multiplexed
+    // input and sends its argv, which we read next.
+    send_daemon_ok(ctx.reader.get_mut(), ctx.limiter, ctx.messages)?;
+
     let client_args = match read_and_log_client_args(ctx, negotiated_protocol)? {
         Some(args) => args,
         None => return Ok(()),
@@ -309,22 +351,6 @@ fn process_approved_module(
         return result;
     }
 
-    if !validate_module_path(ctx, module)? {
-        // upstream: clientserver.c:992-993 - change_dir() into the module
-        // path runs after the post-xfer-exec fork point, so a missing/
-        // unreachable path is a child exit the waiting parent still hooks.
-        let host_owned = ctx.effective_host().map(str::to_owned);
-        run_post_xfer_finalizer(
-            ctx,
-            module,
-            host_owned.as_deref(),
-            auth_user.as_deref(),
-            &client_args,
-            MODULE_ABORT_EXIT_CODE,
-        );
-        return Ok(());
-    }
-
     // SEC-1.p: harvest the in-module --temp-dir / --partial-dir /
     // --backup-dir / --compare-dest / --copy-dest / --link-dest paths the
     // operator's configuration permits, so the Landlock allowlist below can
@@ -333,26 +359,15 @@ fn process_approved_module(
     // retain block - upstream `main.c:841 check_alt_basis_dirs` warns on
     // a missing/out-of-tree basis but never aborts, and the standalone
     // link-dest / copy-dest interop fixtures rely on that contract.
-    let Some(validated_client_paths) = validate_client_paths_in_module(ctx, module, &client_args)?
+    //
+    // chroot + the privilege drop already ran pre-OK above, so validate against
+    // the post-chroot root (the process root is now the module dir) when the
+    // module is chrooted, else the real module path. `privilege_outcome` records
+    // which applies.
+    let Some(validated_client_paths) =
+        validate_client_paths_in_module(ctx, module, &client_args, &privilege_outcome)?
     else {
         return Ok(());
-    };
-
-    // Apply chroot and privilege restrictions before building server config.
-    // After chroot the effective module path becomes "/" since the process root
-    // is now the module directory itself.
-    // upstream: clientserver.c:rsync_module() - chroot + setuid/setgid happen
-    // after auth and arg reading but before the transfer starts.
-    // Split into separate steps so each failure sends the correct upstream
-    // error message: `@ERROR: chroot failed` vs `@ERROR: setuid failed` etc.
-    let privilege_outcome = match apply_privilege_restrictions_with_upstream_errors(
-        ctx,
-        module,
-        auth_user.as_deref(),
-        &client_args,
-    )? {
-        Some(outcome) => outcome,
-        None => return Ok(()),
     };
 
     // upstream: clientserver.c:964-971 - spawn name converter after privilege

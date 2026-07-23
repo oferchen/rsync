@@ -424,7 +424,9 @@ fn handle_authentication(
     protocol_version: Option<ProtocolVersion>,
 ) -> io::Result<Option<(Option<String>, UserAccessLevel)>> {
     if !module.requires_authentication() {
-        send_daemon_ok(ctx.reader.get_mut(), ctx.limiter, ctx.messages)?;
+        // `@RSYNCD: OK` is deferred to the caller: upstream emits it only after
+        // chroot + privilege drop succeed (clientserver.c:1071), so those
+        // failures stay raw pre-OK lines instead of desyncing the client.
         // upstream: authenticate.c:238-239 - an empty/absent `auth users` list
         // lets anyone in with no access-level override, so `read only` stays.
         return Ok(Some((None, UserAccessLevel::Default)));
@@ -462,7 +464,8 @@ fn handle_authentication(
             if let Some(log) = ctx.log_sink {
                 log_module_auth_success(log, ctx.effective_host(), ctx.peer_ip, ctx.request);
             }
-            send_daemon_ok(ctx.reader.get_mut(), ctx.limiter, ctx.messages)?;
+            // `@RSYNCD: OK` is deferred to the caller (see the no-auth path
+            // above): it is emitted only after chroot + privilege drop succeed.
             Ok(Some((Some(username), access_level)))
         }
     }
