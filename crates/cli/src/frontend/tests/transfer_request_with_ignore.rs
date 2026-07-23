@@ -53,7 +53,7 @@ fn ignore_existing_verbose_reports_exists_in_upstream_format() {
     let out = String::from_utf8_lossy(&stdout);
 
     assert_eq!(code, 0, "transfer should succeed: {out}");
-    // upstream: generator.c:1421 - `rprintf(FINFO, "%s exists\n", fname)`.
+    // upstream: generator.c:1409 - `rprintf(FINFO, "%s exists\n", fname)`.
     assert!(
         out.lines().any(|l| l == "keep.txt exists"),
         "expected upstream `keep.txt exists` line: {out}"

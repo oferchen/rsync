@@ -23,7 +23,7 @@ pub(crate) fn render_module_list<W: Write, E: Write>(
         }
     }
 
-    // upstream: clientserver.c:1268 - `io_printf(fd, "%-15s\t%s\n", name, comment)`
+    // upstream: clientserver.c:1254 - `io_printf(fd, "%-15s\t%s\n", name, comment)`
     // always emits the name, a tab, then the (possibly empty) comment. The name
     // already carries its `%-15s` padding (preserved by the `\t` split in
     // ModuleListEntry::from_line), so a comment-less module renders as

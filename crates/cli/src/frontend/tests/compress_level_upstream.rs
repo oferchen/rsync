@@ -408,7 +408,7 @@ fn parse_compress_level_argument_threads_negative_zstd_to_encoder() {
     // (parse -> CompressionSetting -> CompressionLevel) and map to the raw
     // signed level the zstd encoder feeds to ZSTD_c_compressionLevel. The
     // historical unsigned NonZeroU8 clamp collapsed every negative to 1 here,
-    // long before the resolver saw it. upstream: token.c:74,803.
+    // long before the resolver saw it. upstream: token.c:73,748.
     let resolved = |raw: &str| {
         let setting = parse_compress_level_argument(OsStr::new(raw), CompressionAlgorithm::Zstd)
             .unwrap_or_else(|_| panic!("zstd level {raw} should clamp, not error"));

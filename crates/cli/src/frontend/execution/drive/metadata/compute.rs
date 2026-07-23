@@ -158,7 +158,7 @@ fn parse_chmod_specs(
                 }
             }
             Err(_error) => {
-                // upstream: options.c:1778-1782 - a rejected spec yields
+                // upstream: options.c:1762-1766 - a rejected spec yields
                 // `Invalid argument passed to --chmod (%s)` (raw arg) then
                 // exit_cleanup(RERR_SYNTAX).
                 let formatted = format!("Invalid argument passed to --chmod ({spec_text})");

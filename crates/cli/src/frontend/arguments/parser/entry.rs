@@ -37,14 +37,14 @@ use super::{
 /// `--copy-dest`, and `--link-dest` combined.
 ///
 /// The three options share a single `basis_dir[]` array, so the cap is on their
-/// combined total. A separate conflict rule (upstream: options.c:1757-1761,
+/// combined total. A separate conflict rule (upstream: options.c:1741-1745,
 /// mirrored by `conflicts_with_all` on the args) forbids mixing the types, so in
 /// practice the array only ever holds one type. upstream: rsync.h:196
 /// `#define MAX_BASIS_DIRS 20`.
 const MAX_BASIS_DIRS: usize = 20;
 
 /// Maximum length of a `--write-batch`/`--only-write-batch`/`--read-batch`
-/// file name. upstream: options.c:235 `#define MAX_BATCH_NAME_LEN 256`
+/// file name. upstream: options.c:225 `#define MAX_BATCH_NAME_LEN 256`
 /// ("Must be less than MAXPATHLEN-13"). A longer name is rejected by
 /// `parse_arguments()` with `RERR_SYNTAX` (1). All three batch options write
 /// the same upstream `batch_name` variable, so the cap applies to whichever
@@ -53,7 +53,7 @@ pub(super) const MAX_BATCH_NAME_LEN: usize = 256;
 
 /// Enforces upstream's [`MAX_BASIS_DIRS`] cap on alt-dest directories.
 ///
-/// upstream: options.c:1765-1770 rejects the arg that would push the shared
+/// upstream: options.c:1749-1754 rejects the arg that would push the shared
 /// `basis_dir[]` array past `MAX_BASIS_DIRS`, reporting the alt-dest option in
 /// effect and exiting `RERR_SYNTAX` (1). The reported option is the first
 /// alt-dest option on the command line, mirroring upstream's `alt_dest_opt(0)`,
@@ -123,9 +123,9 @@ where
     let show_lsm_status = matches.get_flag("lsm-status");
 
     // Handle human-readable: `-h`/`--human-readable` take no argument and are
-    // repeatable, so we count occurrences. upstream: options.c:112 defaults
-    // `human_readable` to 1 (rendered as the None case here), options.c:1589
-    // increments it per -h, and options.c:627 resets it to 0 for --no-h. A
+    // repeatable, so we count occurrences. upstream: options.c:111 defaults
+    // `human_readable` to 1 (rendered as the None case here), options.c:1573
+    // increments it per -h, and options.c:617 resets it to 0 for --no-h. A
     // single -h selects base-1000 units; -hh (or more) selects base-1024.
     let mut human_readable = None;
     let h_count = matches.get_count("human-readable");
@@ -149,8 +149,8 @@ where
         tri_state_flag_negative_first(&matches, "omit-link-times", "no-omit-link-times");
     let atimes = leveled_flag_pair(&matches, "atimes", "no-atimes");
     let crtimes = tri_state_flag_negative_first(&matches, "crtimes", "no-crtimes");
-    // upstream: options.c:2384-2385 - only `dry_run` sets `do_xfers = 0` (and
-    // thus the compact `n` letter); `list_only` does NOT (options.c:2652 "Note:
+    // upstream: options.c:2366-2367 - only `dry_run` sets `do_xfers = 0` (and
+    // thus the compact `n` letter); `list_only` does NOT (options.c:2634 "Note:
     // NOT dry_run!"). The receiver skips destination writes under `list_only`
     // independently (see `run_client` mode selection and
     // `TransferFlags::skip_dest_writes`), so we must not conflate the two here.
@@ -201,7 +201,7 @@ where
     let blocking_io = tri_state_flag_positive_first(&matches, "blocking-io", "no-blocking-io");
     let archive = matches.get_flag("archive");
     // Last command-line index of `-a`, used to resolve every archive-implied
-    // dimension in argv order (upstream: options.c:1562 `case 'a'`). Gated on
+    // dimension in argv order (upstream: options.c:1546 `case 'a'`). Gated on
     // `archive` because clap's `SetTrue` args carry an implicit default whose
     // synthetic index `indices_of` reports even when `-a` was never supplied.
     let archive_index = if archive {
@@ -209,13 +209,13 @@ where
     } else {
         None
     };
-    // upstream: options.c:641-642 - `--old-dirs`/`--old-d` set xfer_dirs=4, and
-    // options.c:2215-2217 resolves that to `recurse = xfer_dirs = 1`
+    // upstream: options.c:631-632 - `--old-dirs`/`--old-d` set xfer_dirs=4, and
+    // options.c:2197-2199 resolves that to `recurse = xfer_dirs = 1`
     // unconditionally (after the argv scan), so it forces recursion on even over
     // a `--no-recursive`, and appends the `- /*/*` filter rule (injected below).
     let old_dirs = matches.get_flag("old-dirs");
     let recursive_override = tri_state_flag_negative_first(&matches, "recursive", "no-recursive");
-    // upstream: options.c:1562 `case 'a'` runs `if (!recurse) recurse = 1` in
+    // upstream: options.c:1546 `case 'a'` runs `if (!recurse) recurse = 1` in
     // argv order, so a `--no-recursive` that precedes `-a` is re-enabled by the
     // later `-a`, while one that follows it wins.
     let recursive = if old_dirs {
@@ -284,7 +284,7 @@ where
     let modify_window = match matches.remove_one::<OsString>("modify-window") {
         Some(value) => {
             let s = value.to_string_lossy();
-            // upstream: options.c:670 parses `--modify-window`/`-@` as a signed
+            // upstream: options.c:660 parses `--modify-window`/`-@` as a signed
             // int (`POPT_ARG_INT`); a negative value is valid and requests
             // nanosecond-exact comparison (util1.c:1482), so accept any integer.
             match s.parse::<i32>() {
@@ -300,10 +300,10 @@ where
         None => None,
     };
 
-    // upstream: options.c:2228 - the multiple-delete-WHEN check counts
+    // upstream: options.c:2210 - the multiple-delete-WHEN check counts
     // `delete_before + !!delete_during + delete_after`, where both
     // `--delete-during`/`--del` and `--delete-delay` write the single
-    // `delete_during` counter (options.c:734-735). Combining `--del` with
+    // `delete_during` counter (options.c:724-725). Combining `--del` with
     // `--delete-delay` therefore selects one "during" term and is NOT an error;
     // only distinct WHEN phases (before/during/after) conflict.
     let delete_mode_conflicts = [
@@ -322,7 +322,7 @@ where
         ));
     }
 
-    // upstream: options.c:2200-2203,2233-2235 - a negative `--max-delete` is
+    // upstream: options.c:2182-2185,2215-2217 - a negative `--max-delete` is
     // clamped to 0 ("no deletions") but NEVER enables deletion; delete mode is
     // turned on only by an explicit `--delete*`/`--delete-excluded`.
     let mut delete_mode = if delete_before_flag {
@@ -346,7 +346,7 @@ where
     let mut backup = matches.get_flag("backup");
     let backup_dir = matches.remove_one::<OsString>("backup-dir");
     let backup_suffix = matches.remove_one::<OsString>("suffix");
-    // upstream: options.c:2323-2325 - only `--backup-dir` implies `--backup`
+    // upstream: options.c:2305-2307 - only `--backup-dir` implies `--backup`
     // (`make_backups = 1`). `--suffix` alone merely sets the suffix string and
     // never enables backups, so it must not flip `backup` on here.
     if backup_dir.is_some() {
@@ -361,7 +361,7 @@ where
     let open_noatime = if no_open_noatime {
         false
     } else {
-        // upstream: options.c:1600-1602 `case 'U': if (++preserve_atimes > 1)
+        // upstream: options.c:1584-1586 `case 'U': if (++preserve_atimes > 1)
         // open_noatime = 1;` - a doubled `-U` (`-UU`, atimes level 2) implies
         // `--open-noatime`.
         open_noatime_flag || atimes == Some(2)
@@ -416,7 +416,7 @@ where
         compress = !setting.is_disabled();
     }
     let no_iconv = matches.get_flag("no-iconv");
-    // upstream: options.c:1393-1394 - `if (!am_daemon && protect_args <= 0 &&
+    // upstream: options.c:1377-1378 - `if (!am_daemon && protect_args <= 0 &&
     // (arg = getenv("RSYNC_ICONV")) != NULL && *arg) iconv_opt = strdup(arg);`.
     // RSYNC_ICONV seeds the default --iconv value when the option is absent,
     // unless the caller explicitly enabled protect_args (`protect_args > 0`,
@@ -535,7 +535,7 @@ where
     let implied_dirs = tri_state_flag_positive_first(&matches, "implied-dirs", "no-implied-dirs");
     let msgs_to_stderr = tri_state_flag_positive_first(&matches, "msgs2stderr", "no-msgs2stderr");
     let stderr_mode = matches.remove_one::<OsString>("stderr");
-    // upstream: options.c:1928 OPT_STDERR rejects any value that is not a
+    // upstream: options.c:1912 OPT_STDERR rejects any value that is not a
     // non-empty prefix of "errors", "all", or "client" with this exact message.
     if let Some(value) = stderr_mode.as_ref() {
         let valid = value
@@ -552,7 +552,7 @@ where
         }
     }
     let outbuf = matches.remove_one::<OsString>("outbuf");
-    // upstream: options.c:1970-1973 - `if (!max_alloc_arg) { max_alloc_arg =
+    // upstream: options.c:1954-1957 - `if (!max_alloc_arg) { max_alloc_arg =
     // getenv("RSYNC_MAX_ALLOC"); ... }`. RSYNC_MAX_ALLOC supplies the default
     // cap when --max-alloc is absent; an empty value is treated as unset.
     let max_alloc = matches
@@ -658,7 +658,7 @@ where
     } else if let Some(dir) = partial_dir_cli {
         Some(dir)
     } else if partial_flag {
-        // upstream: options.c:2466-2472 - RSYNC_PARTIAL_DIR is consulted only
+        // upstream: options.c:2448-2454 - RSYNC_PARTIAL_DIR is consulted only
         // when keep_partial is set (--partial/-P) and no explicit --partial-dir
         // was given. An empty value or a literal "." is treated as unset.
         env::var_os("RSYNC_PARTIAL_DIR")
@@ -689,16 +689,16 @@ where
     let link_destinations = link_dest_args;
     let remove_source_files =
         matches.get_flag("remove-source-files") || matches.get_flag("remove-sent-files");
-    // upstream: options.c:740,3000-3003 - the deprecated `--remove-sent-files`
+    // upstream: options.c:730,2982-2985 - the deprecated `--remove-sent-files`
     // spelling is forwarded verbatim. The two flags `.overrides_with` each other
     // (transfer_behavior_options.rs), so `get_flag` yields the effective
     // last-wins spelling, matching upstream's popt `remove_source_files = 2`.
     let remove_sent_files = matches.get_flag("remove-sent-files");
     let inplace = tri_state_flag_positive_first(&matches, "inplace", "no-inplace");
-    // upstream: options.c:1738-1742 - OPT_APPEND increments append_mode only on
+    // upstream: options.c:1722-1726 - OPT_APPEND increments append_mode only on
     // the server (`am_server`); a non-server invocation caps it at 1. A second
     // `--append` on the server wire is the encoding of `--append-verify`
-    // (append_mode == 2). `--append-verify` sets it directly (options.c:729).
+    // (append_mode == 2). `--append-verify` sets it directly (options.c:719).
     let append_count = matches.get_count("append");
     let append_verify_flag =
         matches.get_flag("append-verify") || (server_mode && append_count >= 2);
@@ -720,9 +720,9 @@ where
             ProgressSetting::Unspecified
         };
     let itemize_changes_flag = matches.get_count("itemize-changes") > 0;
-    // upstream: options.c:1597 increments itemize_changes per `-i`, and
-    // options.c:2372 sets `stdout_format_has_i = itemize_changes`; the
-    // emit gate at generator.c:589 fires on `stdout_format_has_i > 1`, i.e.
+    // upstream: options.c:1581 increments itemize_changes per `-i`, and
+    // options.c:2354 sets `stdout_format_has_i = itemize_changes`; the
+    // emit gate at generator.c:582 fires on `stdout_format_has_i > 1`, i.e.
     // the `-i` flag given at least twice.
     let itemize_changes_repeated =
         matches.get_count("itemize-changes") > 1 && !matches.get_flag("no-itemize-changes");
@@ -780,7 +780,7 @@ where
     let compress_choice = matches.remove_one::<OsString>("compress-choice");
     let compress_threads = matches.remove_one::<OsString>("compress-threads");
     let old_compress = matches.get_flag("old-compress");
-    // upstream: options.c:2018 - if (!compress_choice && do_compression > 1)
+    // upstream: options.c:2002 - if (!compress_choice && do_compression > 1)
     //   compress_choice = "zlibx"; -zz selects new-style compression.
     let new_compress = matches.get_flag("new-compress")
         || (compress_count >= 2 && compress_choice.is_none() && !old_compress);
@@ -833,7 +833,7 @@ where
             _ => None,
         })
         .collect();
-    // upstream: options.c:2215-2217 - once the argv scan is complete, xfer_dirs>=4
+    // upstream: options.c:2197-2199 - once the argv scan is complete, xfer_dirs>=4
     // (set by --old-dirs/--old-d) appends `- /*/*` to the TAIL of the filter list
     // via parse_filter_str(&filter_list, "- /*/*", ...). exclude.c:parse_filter_str
     // appends each rule at the end, so this rule evaluates AFTER every user
@@ -857,7 +857,7 @@ where
         .remove_many::<OsString>("info")
         .map(Iterator::collect)
         .unwrap_or_default();
-    // upstream: generator.c:589-590 - the itemize line for an unchanged entry
+    // upstream: generator.c:582-583 - the itemize line for an unchanged entry
     // is emitted only when `INFO_GTE(NAME, 2)` is in effect, which `-vv` and
     // `--info=name2` both set. Resolve the effective NAME info level the same
     // way the logging config does (verbose count + any `--info=` override) so
@@ -875,7 +875,7 @@ where
         cfg.info.get(logging::InfoFlag::Name)
     };
     let name_level = if itemize_changes_flag && !no_itemize_changes_flag {
-        // upstream: generator.c:582-583 - the itemize emit gate fires for an
+        // upstream: generator.c:575-576 - the itemize emit gate fires for an
         // unchanged entry when `stdout_format_has_i > 1` (i.e. `-i` given at
         // least twice, captured by `itemize_changes_repeated`) OR
         // `INFO_GTE(NAME, 2)` (`-vv` / `--info=name2`, captured by
@@ -915,7 +915,7 @@ where
         no_motd = false;
     }
 
-    // upstream: options.c:2144-2148 - `--fake-super` (am_root < 0) conflicts with
+    // upstream: options.c:2126-2130 - `--fake-super` (am_root < 0) conflicts with
     // `-XX` (preserve_xattrs > 1); `-X`/`-XX` map to xattr levels 1/2 here.
     if fake_super == Some(true) && xattrs == Some(2) {
         return Err(clap::Error::raw(
@@ -924,7 +924,7 @@ where
         ));
     }
 
-    // upstream: options.c:2176-2185 - `--read-batch` cannot be combined with
+    // upstream: options.c:2158-2167 - `--read-batch` cannot be combined with
     // `--files-from` or `--remove-source-files`/`--remove-sent-files`.
     if read_batch.is_some() {
         if !files_from.is_empty() {
@@ -942,7 +942,7 @@ where
         }
     }
 
-    // upstream: options.c:2187-2192 - the shared `batch_name` (set by
+    // upstream: options.c:2169-2174 - the shared `batch_name` (set by
     // --write-batch, --only-write-batch, or --read-batch) must be at most
     // MAX_BATCH_NAME_LEN bytes, else parse_arguments() aborts with
     // RERR_SYNTAX (1). Length is measured in bytes (strlen), matching
@@ -959,7 +959,7 @@ where
         ));
     }
 
-    // upstream: options.c:2317-2322 - a `--suffix` containing a slash is rejected
+    // upstream: options.c:2299-2304 - a `--suffix` containing a slash is rejected
     // regardless of `--backup-dir`.
     if let Some(suffix) = backup_suffix.as_ref()
         && suffix.to_string_lossy().contains('/')
@@ -973,7 +973,7 @@ where
         ));
     }
 
-    // upstream: options.c:2346-2353 - an empty `--suffix` is only valid together
+    // upstream: options.c:2328-2335 - an empty `--suffix` is only valid together
     // with a `--backup-dir`; otherwise it is rejected.
     if backup_dir.is_none()
         && backup_suffix
@@ -986,10 +986,10 @@ where
         ));
     }
 
-    // upstream: options.c:2205-2221,2248-2252 - `--delete` needs `--recursive`
+    // upstream: options.c:2187-2203,2230-2234 - `--delete` needs `--recursive`
     // (-r) or `--dirs` (-d), gated on the RESOLVED xfer_dirs. When neither -r nor
-    // an explicit -d is given, `--files-from` (options.c:2208-2209) and
-    // `--list-only` (options.c:2221) still set xfer_dirs, so `--delete` is
+    // an explicit -d is given, `--files-from` (options.c:2190-2191) and
+    // `--list-only` (options.c:2203) still set xfer_dirs, so `--delete` is
     // permitted in those cases.
     if delete_mode.is_enabled() {
         let xfer_dirs = if recursive || old_dirs {

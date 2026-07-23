@@ -47,7 +47,7 @@ fn tick_throttled(last: Option<Instant>, now: Instant, interval: Duration, is_fi
 /// before any non-progress message. We go further: when the output is not
 /// a terminal, we use `\n` instead of `\r` so piped output is readable.
 ///
-/// upstream: options.c:2030-2052 `--outbuf` controls stdout buffering via
+/// upstream: options.c:2012-2034 `--outbuf` controls stdout buffering via
 /// `setvbuf`. We mirror this by flushing after each progress tick when
 /// the mode is unbuffered or line-buffered.
 #[derive(Clone, Copy, Debug)]
@@ -242,7 +242,7 @@ impl<'a> ClientProgressObserver for LiveProgress<'a> {
             return;
         }
 
-        // upstream: receiver.c:786-788 - the NDX_DONE end_progress(0) summary
+        // upstream: receiver.c:674-676 - the NDX_DONE end_progress(0) summary
         // is emitted only under --info=progress2. Per-file progress mode has no
         // terminal summary line, so drop the synthetic transfer-complete tick.
         if update.is_transfer_complete() && matches!(self.mode, ProgressMode::PerFile) {
@@ -433,7 +433,7 @@ impl<'a> ClientProgressObserver for LiveProgress<'a> {
                     if final_tick {
                         // upstream: progress.c:131-134 - the very last file's
                         // final tick emits a newline. For progress2, the newline
-                        // is deferred until the summary (main.c:461). We emit
+                        // is deferred until the summary (main.c:452). We emit
                         // it here to separate from the summary block.
                         writeln!(self.writer)?;
                         self.line_active = false;

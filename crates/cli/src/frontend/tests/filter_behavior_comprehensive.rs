@@ -794,7 +794,7 @@ fn filter_order_stops_at_double_dash() {
 
 #[test]
 fn filter_order_interleaves_short_f_and_uppercase_f() {
-    // upstream: options.c:1605-1614 - `-F` expands to a directive inserted at
+    // upstream: options.c:1589-1598 - `-F` expands to a directive inserted at
     // its argv position, so it interleaves with explicit `-f` rules in order.
     let parsed = parse_args([
         OsString::from(RSYNC),

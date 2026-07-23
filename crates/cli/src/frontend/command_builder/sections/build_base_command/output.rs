@@ -33,9 +33,9 @@ pub(super) fn add_output_args(command: ClapCommand) -> ClapCommand {
                 .overrides_with("verbose"),
         )
         .arg(
-            // upstream: options.c:626 `{"human-readable", 'h', POPT_ARG_NONE, ...}`
+            // upstream: options.c:616 `{"human-readable", 'h', POPT_ARG_NONE, ...}`
             // takes no argument, so `--human-readable=N` is rejected. Each -h
-            // increments the level (options.c:1589): -h => base-1000 units,
+            // increments the level (options.c:1573): -h => base-1000 units,
             // -hh => base-1024 units.
             Arg::new("human-readable")
                 .short('h')
