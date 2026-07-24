@@ -242,6 +242,35 @@ impl FilterSet {
             .has_matching_rule(path, is_dir, DecisionContext::Deletion)
     }
 
+    /// Returns the source-stream `order` of the sender-side rule that decides a
+    /// traversal transfer check, or `None` when no rule matches.
+    ///
+    /// The per-directory [`FilterChain`](crate::FilterChain) uses this to
+    /// interleave a `dir-merge` scope against these global rules by source
+    /// order, mirroring upstream `check_filter()` (exclude.c:1046-1050).
+    #[must_use]
+    pub(crate) fn transfer_match_order_during_traversal(
+        &self,
+        path: &Path,
+        is_dir: bool,
+    ) -> Option<usize> {
+        self.inner.transfer_match_order(path, is_dir)
+    }
+
+    /// Returns the source-stream `order` of the receiver-side rule that decides
+    /// a traversal deletion check, or `None` when no rule matches.
+    ///
+    /// Counterpart of [`Self::transfer_match_order_during_traversal`] for the
+    /// deletion path.
+    #[must_use]
+    pub(crate) fn deletion_match_order_during_traversal(
+        &self,
+        path: &Path,
+        is_dir: bool,
+    ) -> Option<usize> {
+        self.inner.deletion_match_order(path, is_dir)
+    }
+
     /// Returns `true` when a directory is excluded by a non-directory-specific rule.
     ///
     /// This is used by `--prune-empty-dirs` to decide whether to still descend
