@@ -157,6 +157,13 @@ pub(crate) struct OutFormatContext {
     /// `<` for sender (push), `>` for receiver (pull).
     /// (upstream: log.c:704 - uses `<` when am_sender && !am_server)
     pub(super) is_sender: bool,
+    /// Whether the transfer is a pull (at least one remote source).
+    ///
+    /// Drives the `%o` operation word: upstream's `op` is `recv` on the
+    /// receiving client (a pull) and `send` otherwise (a push or a local copy),
+    /// which is a different split than the `<`/`>` itemize arrow above - a local
+    /// copy renders `>` yet reports `send`.
+    pub(super) is_pull: bool,
     /// Whether `INFO_GTE(NAME, 2)` is in effect (i.e. `-vv` or
     /// `--info=name2`).
     ///
@@ -214,6 +221,14 @@ impl OutFormatContext {
             is_sender,
             ..Self::default()
         }
+    }
+
+    /// Records whether the transfer is a pull, so `%o` reports `recv` (pull) or
+    /// `send` (push / local copy), matching upstream `log.c`'s `op`.
+    #[must_use]
+    pub(crate) fn with_is_pull(mut self, is_pull: bool) -> Self {
+        self.is_pull = is_pull;
+        self
     }
 
     /// Sets the `INFO_GTE(NAME, 2)` flag (`-vv` / `--info=name2`).
@@ -446,6 +461,7 @@ mod tests {
             module_name: Some("backup".to_owned()),
             module_path: Some("/var/backup".to_owned()),
             is_sender: false,
+            is_pull: false,
             emit_unchanged: false,
             itemize_repeated: false,
             eight_bit_output: false,
