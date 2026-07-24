@@ -606,25 +606,20 @@ fn out_format_rejects_trailing_percent() {
 }
 
 #[test]
-fn out_format_rejects_unsupported_placeholder() {
-    let error = parse_out_format(OsStr::new("%z")).unwrap_err();
-    assert!(
-        error
-            .to_string()
-            .contains("unsupported --out-format placeholder")
-    );
+fn out_format_passes_unsupported_placeholder_through_literally() {
+    // upstream log.c:756 copies an unrecognized %escape through verbatim.
+    let format = parse_out_format(OsStr::new("%z")).expect("parse out-format");
+    assert!(!format.is_empty());
 }
 
 #[test]
-fn out_format_rejects_invalid_placeholders() {
-    let invalid_placeholders = vec!["%x", "%y", "%Q", "%@", "%#", "%$"];
+fn out_format_passes_unrecognized_placeholders_through_literally() {
+    let unrecognized = vec!["%x", "%y", "%Q", "%@", "%#", "%$"];
 
-    for placeholder in invalid_placeholders {
-        let error = parse_out_format(OsStr::new(placeholder)).unwrap_err();
-        assert!(
-            error.to_string().contains("unsupported --out-format"),
-            "Expected error for {placeholder}, got: {error}"
-        );
+    for placeholder in unrecognized {
+        let format = parse_out_format(OsStr::new(placeholder))
+            .unwrap_or_else(|error| panic!("expected literal passthrough for {placeholder}, got: {error}"));
+        assert!(!format.is_empty(), "expected a literal token for {placeholder}");
     }
 }
 

@@ -8,7 +8,7 @@
 use std::time::SystemTime;
 
 use crate::frontend::escape::escape_path;
-use crate::{LIST_TIMESTAMP_FORMAT, describe_event_kind, format_list_permissions, platform};
+use crate::{LIST_TIMESTAMP_FORMAT, describe_event_kind, format_list_permissions};
 use core::client::{ClientEntryKind, ClientEntryMetadata, ClientEvent, ClientEventKind};
 
 use crate::frontend::out_format::tokens::{
@@ -51,17 +51,6 @@ pub(super) fn render_placeholder_value(
     let allow_8bit = context.eight_bit_output;
     match spec.kind {
         OutFormatPlaceholder::FileName => Some(render_path(event, true, allow_8bit)),
-        OutFormatPlaceholder::FileNameWithSymlinkTarget => {
-            let mut rendered = render_path(event, true, allow_8bit);
-            if let Some(target) = event
-                .metadata()
-                .and_then(ClientEntryMetadata::symlink_target)
-            {
-                rendered.extend_from_slice(symlink_target_connector(event).as_bytes());
-                rendered.extend_from_slice(&escape_path(target, allow_8bit));
-            }
-            Some(rendered)
-        }
         OutFormatPlaceholder::FullPath => Some(render_path(event, false, allow_8bit)),
         OutFormatPlaceholder::ItemizedChanges => {
             Some(format_itemized_changes(event, context.is_sender).into_bytes())
@@ -114,8 +103,6 @@ pub(super) fn render_placeholder_value(
                 .map(|width| vec![b' '; 4 + width.min(MAX_PLACEHOLDER_WIDTH)]),
         },
         OutFormatPlaceholder::CurrentTime => Some(format_current_timestamp().into_bytes()),
-        OutFormatPlaceholder::OwnerName => Some(format_owner_name(event.metadata()).into_bytes()),
-        OutFormatPlaceholder::GroupName => Some(format_group_name(event.metadata()).into_bytes()),
         OutFormatPlaceholder::OwnerUid => Some(
             event
                 .metadata()
@@ -262,28 +249,6 @@ fn format_out_format_permissions(metadata: Option<&ClientEntryMetadata>) -> Stri
         .unwrap_or_else(|| "---------".to_owned())
 }
 
-/// Resolves the owner name for a uid, falling back to the numeric string.
-fn format_owner_name(metadata: Option<&ClientEntryMetadata>) -> String {
-    metadata
-        .and_then(ClientEntryMetadata::uid)
-        .map_or_else(|| "0".to_owned(), resolve_user_name)
-}
-
-/// Resolves the group name for a gid, falling back to the numeric string.
-fn format_group_name(metadata: Option<&ClientEntryMetadata>) -> String {
-    metadata
-        .and_then(ClientEntryMetadata::gid)
-        .map_or_else(|| "0".to_owned(), resolve_group_name)
-}
-
-fn resolve_user_name(uid: u32) -> String {
-    platform::display_user_name(uid).unwrap_or_else(|| uid.to_string())
-}
-
-fn resolve_group_name(gid: u32) -> String {
-    platform::display_group_name(gid).unwrap_or_else(|| gid.to_string())
-}
-
 /// Formats the current wall-clock time using the list timestamp format.
 fn format_current_timestamp() -> String {
     let now = crate::frontend::local_time::to_local(SystemTime::now());
@@ -320,16 +285,6 @@ mod tests {
     #[test]
     fn format_out_format_permissions_none() {
         assert_eq!(format_out_format_permissions(None), "---------");
-    }
-
-    #[test]
-    fn format_owner_name_none() {
-        assert_eq!(format_owner_name(None), "0");
-    }
-
-    #[test]
-    fn format_group_name_none() {
-        assert_eq!(format_group_name(None), "0");
     }
 
     #[test]
