@@ -29,6 +29,13 @@ const MAX_OPEN_ATTEMPTS: u32 = 100;
 /// Maximum filename component length (NAME_MAX on most POSIX systems).
 const NAME_MAX: usize = 255;
 
+/// Maximum full-path length (MAXPATHLEN). Upstream resolves this from the
+/// system's `sys/param.h`; on the platforms rsync targets it is the POSIX
+/// `PATH_MAX` (4096 on Linux). We pin the same 4096 so the dual cap in
+/// `get_tmpname` behaves identically across platforms (`libc::PATH_MAX` is not
+/// linked on Windows builds of this crate).
+const MAXPATHLEN: usize = 4096;
+
 /// Generates a temporary file path following upstream rsync's naming convention.
 ///
 /// The pattern is `.filename.XXXXXX` where `XXXXXX` is replaced with random
@@ -39,8 +46,9 @@ const NAME_MAX: usize = 255;
 /// - A leading dot is added to hide the temp file from directory listings.
 /// - For dotfiles (`.bashrc`), the original leading dot is consumed to avoid
 ///   double-dot prefixes (upstream macOS compatibility).
-/// - Long filenames are truncated to respect `NAME_MAX` (255), with UTF-8
-///   multi-byte sequence safety.
+/// - Long filenames are truncated under a dual cap so both the basename stays
+///   within `NAME_MAX` (255) and the full path within `MAXPATHLEN`, with UTF-8
+///   multi-byte sequence safety (upstream `receiver.c:195-196`).
 /// - When `temp_dir` is provided, the temp file is placed there without an
 ///   extra leading dot (matching upstream `--temp-dir` behavior).
 ///
@@ -72,14 +80,28 @@ fn get_tmpname(dest: &Path, temp_dir: Option<&Path>) -> io::Result<PathBuf> {
         format!(".{name}.XXXXXX")
     };
 
-    let max_name_len = NAME_MAX;
+    let dir = temp_dir.unwrap_or_else(|| dest.parent().unwrap_or(Path::new(".")));
+
+    // upstream: receiver.c:195-196 - the basename is bounded by a DUAL cap:
+    //   maxname = MIN(MAXPATHLEN - length - TMPNAME_SUFFIX_LEN,
+    //                 NAME_MAX - 1 - TMPNAME_SUFFIX_LEN)
+    // `length` is the directory-prefix byte count (including the path
+    // separator) plus the leading dot we prepend for in-place temps; the
+    // NAME_MAX term gets an extra -1 for that leading dot. `maxname` bounds the
+    // name content between the leading dot and the `.XXXXXX` suffix, so the full
+    // temp path stays within MAXPATHLEN and the basename within NAME_MAX.
+    let lead = usize::from(temp_dir.is_none());
+    let length = dir.as_os_str().len() + 1 + lead;
+    let name_budget = MAXPATHLEN
+        .saturating_sub(length + TMPNAME_SUFFIX_LEN)
+        .min(NAME_MAX - 1 - TMPNAME_SUFFIX_LEN);
+    let max_name_len = lead + TMPNAME_SUFFIX_LEN + name_budget;
     let truncated = if temp_name.len() > max_name_len {
         truncate_utf8_safe(&temp_name, max_name_len)
     } else {
         temp_name
     };
 
-    let dir = temp_dir.unwrap_or_else(|| dest.parent().unwrap_or(Path::new(".")));
     Ok(dir.join(truncated))
 }
 
@@ -717,6 +739,41 @@ mod tests {
         assert!(name.len() <= NAME_MAX);
         assert!(name.ends_with("XXXXXX"));
         assert!(!name.contains('\u{FFFD}'), "broken UTF-8: {name}");
+    }
+
+    #[test]
+    fn tmpname_deep_dir_bounds_full_path_and_basename() {
+        // upstream: receiver.c:195-196 - the MAXPATHLEN term of the dual cap
+        // must bind when the directory prefix is long, keeping the full temp
+        // path within MAXPATHLEN even though the basename alone would fit under
+        // NAME_MAX. Build a directory prefix long enough that the path budget
+        // (MAXPATHLEN - length - 7) is the smaller of the two caps.
+        let deep = format!("/{}", "d/".repeat(1950)); // ~3901 bytes, < MAXPATHLEN
+        assert!(deep.len() < MAXPATHLEN && deep.len() > MAXPATHLEN - 256);
+        let long_name = "a".repeat(400);
+        let dest = PathBuf::from(format!("{deep}{long_name}"));
+
+        let result = get_tmpname(&dest, None).unwrap();
+
+        assert!(
+            result.as_os_str().len() <= MAXPATHLEN,
+            "full temp path exceeds MAXPATHLEN: {}",
+            result.as_os_str().len()
+        );
+
+        let name = result.file_name().unwrap().to_string_lossy();
+        assert!(name.starts_with('.'), "leading dot lost: {name}");
+        assert!(name.ends_with(".XXXXXX"), "suffix lost: {name}");
+        // Name content between the leading dot and the ".XXXXXX" suffix.
+        let content = name
+            .strip_prefix('.')
+            .and_then(|n| n.strip_suffix(".XXXXXX"))
+            .unwrap();
+        assert!(
+            content.len() <= NAME_MAX - 1 - TMPNAME_SUFFIX_LEN,
+            "basename content {} exceeds NAME_MAX-1-7",
+            content.len()
+        );
     }
 
     #[test]
