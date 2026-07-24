@@ -52,6 +52,7 @@ impl crate::server::ItemizeCallback for ItemizeEventSink {
             self.events
                 .push(ClientEvent::from_remote_itemize(RemoteItemizeFields {
                     relative_path: row.name.to_path_buf(),
+                    source_prefix: row.source_prefix.map(std::path::Path::to_path_buf),
                     itemize: row.itemize.to_owned(),
                     mode: row.mode,
                     size: row.size,

@@ -5,6 +5,7 @@
 //! Maps each `OutFormatPlaceholder` variant to its rendered string value
 //! by inspecting the event, its metadata, and the rendering context.
 
+use std::path::Path;
 use std::time::SystemTime;
 
 use crate::frontend::escape::escape_path;
@@ -50,8 +51,8 @@ pub(super) fn render_placeholder_value(
 ) -> Option<Vec<u8>> {
     let allow_8bit = context.eight_bit_output;
     match spec.kind {
-        OutFormatPlaceholder::FileName => Some(render_path(event, true, allow_8bit)),
-        OutFormatPlaceholder::FullPath => Some(render_path(event, false, allow_8bit)),
+        OutFormatPlaceholder::FileName => Some(render_name(event, allow_8bit)),
+        OutFormatPlaceholder::FullPath => Some(render_full_path(event, allow_8bit)),
         OutFormatPlaceholder::ItemizedChanges => Some(match event.itemize_override() {
             // A remote transfer supplies the sender's already-correct 11-char
             // itemize string; a local event derives it from its change set.
@@ -199,26 +200,32 @@ fn transfer_byte_count(event: &ClientEvent, is_sender: bool, want_checksum: bool
     }
 }
 
-/// Renders the path from an event as raw bytes, optionally appending a trailing
-/// slash for directories.
-fn render_path(event: &ClientEvent, ensure_trailing_slash: bool, allow_8bit: bool) -> Vec<u8> {
-    let mut rendered = escape_path(event.relative_path(), allow_8bit);
-    // upstream: flist.c / log.c - itemize and out-format paths use POSIX
-    // forward-slash separators regardless of host OS. Normalize Windows
-    // native backslashes here at the rendering boundary; storage retains
-    // the platform-native form.
+/// Escapes a path to raw output bytes, normalizing Windows separators.
+///
+/// upstream: flist.c / log.c - itemize and out-format paths use POSIX
+/// forward-slash separators regardless of host OS. Storage retains the
+/// platform-native form; this normalizes only at the rendering boundary.
+fn escape_render_path(path: &Path, allow_8bit: bool) -> Vec<u8> {
+    let rendered = escape_path(path, allow_8bit);
     #[cfg(windows)]
-    {
-        for byte in rendered.iter_mut() {
+    let rendered = {
+        let mut bytes = rendered;
+        for byte in bytes.iter_mut() {
             if *byte == b'\\' {
                 *byte = b'/';
             }
         }
-    }
-    if ensure_trailing_slash
-        && rendered.last() != Some(&b'/')
+        bytes
+    };
+    rendered
+}
+
+/// Renders `%n`: the transfer-relative name, with a trailing slash for a
+/// directory (upstream `log.c:639-640`).
+fn render_name(event: &ClientEvent, allow_8bit: bool) -> Vec<u8> {
+    let mut rendered = escape_render_path(event.relative_path(), allow_8bit);
+    if rendered.last() != Some(&b'/')
         && event.metadata().map(ClientEntryMetadata::kind).map_or_else(
-            // upstream: log.c:639-640 - %n appends `/` for any directory entry.
             // `EntryDeleted` rows carry no metadata snapshot, so fall back to the
             // record's directory bit (set by the engine cleanup pass) alongside
             // the freshly-created-directory case.
@@ -227,6 +234,23 @@ fn render_path(event: &ClientEvent, ensure_trailing_slash: bool, allow_8bit: boo
         )
     {
         rendered.push(b'/');
+    }
+    rendered
+}
+
+/// Renders `%f`: on a push the full source-side path the sender supplied
+/// (upstream `pathjoin(F_PATHNAME(file), f_name(file))` with a single leading
+/// `/` stripped, `log.c`), otherwise the transfer-relative name. Unlike `%n`, no
+/// trailing slash is appended for directories.
+fn render_full_path(event: &ClientEvent, allow_8bit: bool) -> Vec<u8> {
+    let path = match event.source_prefix() {
+        Some(prefix) => prefix,
+        None => event.relative_path(),
+    };
+    let mut rendered = escape_render_path(path, allow_8bit);
+    // upstream: log.c `%f` strips a single leading '/' from the joined path.
+    if rendered.first() == Some(&b'/') {
+        rendered.remove(0);
     }
     rendered
 }
