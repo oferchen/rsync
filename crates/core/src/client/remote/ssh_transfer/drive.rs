@@ -5,7 +5,7 @@
 //! server over the SSH pipes and reaps the remote child. This mirrors the flow
 //! in upstream `main.c:do_cmd()` / `main.c:client_run()`.
 
-use std::io::{BufReader, Write};
+use std::io::BufReader;
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
@@ -20,12 +20,13 @@ use super::super::super::error::{
     ClientError, invalid_argument_error, invalid_argument_error_typed_with_role, remote_exit_error,
 };
 use super::super::super::progress::ClientProgressObserver;
-use super::super::super::summary::{ClientEvent, ClientSummary, RemoteItemizeFields};
+use super::super::super::summary::{ClientEvent, ClientSummary};
 use super::super::batch_support::{BatchContext, build_batch_context, build_batch_recording};
 use super::super::files_from_forwarding::read_local_files_from_for_forwarding;
 use super::super::flags;
 use super::super::implied_source::implied_source_args_for_pull;
 use super::super::invocation::{RemoteOperands, RemoteRole, TransferSpec, determine_transfer_role};
+use super::super::itemize_sink::ItemizeEventSink;
 use super::connection::build_ssh_connection;
 use super::exit_status::{
     convert_server_stats_to_summary, format_stderr_context, map_child_exit_status,
@@ -289,61 +290,6 @@ fn run_proxy_transfer(
     run_remote_to_remote_transfer(config, remote_sources, remote_dest)
 }
 
-/// Sink for the sender's client-visible itemize rows on an SSH push.
-///
-/// With a custom `--out-format` active (`collect`), each row is captured as a
-/// metadata-bearing [`ClientEvent`] so the CLI renders it through the same
-/// out-format path as a local transfer. Otherwise the server's pre-formatted
-/// line is written straight to stdout, preserving the default `-v`/`-i` output
-/// byte-for-byte (upstream `log_item(FCLIENT, ...)`).
-struct ItemizeEventSink {
-    collect: bool,
-    events: Vec<ClientEvent>,
-}
-
-impl ItemizeEventSink {
-    const fn new(collect: bool) -> Self {
-        Self {
-            collect,
-            events: Vec::new(),
-        }
-    }
-
-    fn write_line(line: &str) {
-        let mut out = std::io::stdout().lock();
-        let _ = out.write_all(line.as_bytes());
-    }
-}
-
-impl crate::server::ItemizeCallback for ItemizeEventSink {
-    fn on_itemize(&mut self, line: &str) {
-        Self::write_line(line);
-    }
-
-    fn on_itemize_row(&mut self, row: &crate::server::ItemizeRow<'_>) {
-        if self.collect {
-            self.events
-                .push(ClientEvent::from_remote_itemize(RemoteItemizeFields {
-                    relative_path: row.name.to_path_buf(),
-                    itemize: row.itemize.to_owned(),
-                    mode: row.mode,
-                    size: row.size,
-                    mtime: row.mtime,
-                    mtime_nsec: row.mtime_nsec,
-                    uid: row.uid,
-                    gid: row.gid,
-                    is_dir: row.is_dir,
-                    is_symlink: row.is_symlink,
-                    symlink_target: row.symlink_target.map(std::path::Path::to_path_buf),
-                    is_new: row.is_new,
-                    is_deletion: row.is_deletion,
-                }));
-        } else {
-            Self::write_line(row.line);
-        }
-    }
-}
-
 /// Runs server over an SSH connection using split read/write halves.
 ///
 /// This uses `SshConnection::split` to obtain separate reader and writer handles,
@@ -493,7 +439,7 @@ fn run_server_over_ssh_connection(
     // Close the writer to signal EOF so the remote process can exit.
     drop(writer);
 
-    let collected_events = std::mem::take(&mut itemize_sink.events);
+    let collected_events = itemize_sink.take_events();
 
     // upstream: main.c wait_process_with_flush() - wait for child and map status.
     let (child_exit_code, stderr_text) = match child_handle.wait_with_stderr() {

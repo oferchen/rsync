@@ -208,6 +208,12 @@ fn apply_common_daemon_config(
     server_config.connection.filter_rules = filter_rules;
 
     server_config.flags.verbose = config.verbosity() > 0;
+    // A custom `--out-format` makes the local sender/receiver emit one
+    // metadata-bearing itemize event per logged entry so the CLI renders the
+    // template (see InfoFlags::out_format_active). The daemon push/pull drivers
+    // drain and render these; keep the two wired together so a config that sets
+    // this always has a draining driver.
+    server_config.flags.info_flags.out_format_active = config.render_out_format_locally();
 
     // upstream: numeric_ids and delete are --numeric-ids / --delete-* long-form args only.
     server_config.flags.numeric_ids = crate::server::NumericIds::from_client(config.numeric_ids());
