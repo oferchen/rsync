@@ -3,7 +3,6 @@ use core::client::run_client;
 use std::fs;
 use std::os::unix::fs::{MetadataExt, PermissionsExt};
 use tempfile::tempdir;
-use uzers::{get_group_by_gid, get_user_by_uid, gid_t, uid_t};
 
 #[test]
 fn out_format_renders_permission_and_identity_placeholders() {
@@ -17,14 +16,6 @@ fn out_format_renders_permission_and_identity_placeholders() {
 
     let expected_uid = fs::metadata(&source).expect("source metadata").uid();
     let expected_gid = fs::metadata(&source).expect("source metadata").gid();
-    let expected_user = get_user_by_uid(expected_uid as uid_t).map_or_else(
-        || expected_uid.to_string(),
-        |user| user.name().to_string_lossy().into_owned(),
-    );
-    let expected_group = get_group_by_gid(expected_gid as gid_t).map_or_else(
-        || expected_gid.to_string(),
-        |group| group.name().to_string_lossy().into_owned(),
-    );
 
     let mut permissions = fs::metadata(&source)
         .expect("source metadata")
@@ -83,16 +74,18 @@ fn out_format_renders_permission_and_identity_placeholders() {
     assert_eq!(output, format!("{expected_gid}\n").as_bytes());
 
     output.clear();
+    // %u is the daemon auth user; off-daemon (client) it renders literally.
     parse_out_format(OsStr::new("%u"))
         .expect("parse %u")
         .render(event, &OutFormatContext::default(), &mut output)
         .expect("render %u");
-    assert_eq!(output, format!("{expected_user}\n").as_bytes());
+    assert_eq!(output, b"%u\n");
 
     output.clear();
+    // upstream has no %g code; it renders literally.
     parse_out_format(OsStr::new("%g"))
         .expect("parse %g")
         .render(event, &OutFormatContext::default(), &mut output)
         .expect("render %g");
-    assert_eq!(output, format!("{expected_group}\n").as_bytes());
+    assert_eq!(output, b"%g\n");
 }

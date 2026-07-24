@@ -74,10 +74,12 @@ fn out_format_renders_combined_name_and_target_placeholder() {
         .expect("symlink event present");
 
     let mut output = Vec::new();
+    // upstream has no %N code (it uses %n for the name and %L for the ` -> `
+    // target); %N therefore renders literally.
     parse_out_format(OsStr::new("%N"))
         .expect("parse %N")
         .render(event, &OutFormatContext::default(), &mut output)
         .expect("render %N");
 
-    assert_eq!(output, b"src/link.txt -> file.txt\n");
+    assert_eq!(output, b"%N\n");
 }
