@@ -438,17 +438,22 @@ impl ReceiverContext {
         }
     }
 
-    /// Emits itemize output for a symlink, device, special, or hardlink follower
-    /// while carrying its flist index, so a custom `--out-format` collects the
-    /// row in flist order alongside regular files.
+    /// Emits a hardlink-follower itemize row while carrying its flist index, so a
+    /// custom `--out-format` collects the row in flist order alongside regular
+    /// files.
     ///
-    /// These file types reach the generator on the immediate (non-pipelined)
+    /// Hardlink followers reach the generator on the immediate (non-pipelined)
     /// path, so [`emit_itemize`](Self::emit_itemize) alone cannot buffer them for
     /// the flist-index-order drain and suppresses them. Threading the index here
     /// lets [`record_itemize`](Self::record_itemize) key the event exactly as it
-    /// does for regular files. Upstream itemizes every file type from the single
-    /// `generate_files` walk (`generator.c:2329`), each with its own `ndx`, so a
-    /// device/FIFO/symlink row renders in the same order as its neighbours.
+    /// does for regular files.
+    ///
+    /// Unlike symlinks and specials (which route through
+    /// [`emit_or_record_itemize`](Self::emit_or_record_itemize) so their default
+    /// `-i` rows also defer into flist order), a follower's default `-i` row keeps
+    /// the immediate path: its deferred string form cannot yet reproduce the
+    /// ` => leader` xname suffix, and its leader-selection order is a separate
+    /// divergence, so deferring it would change more than ordering.
     ///
     /// Off a custom `--out-format` this defers to the unchanged immediate path.
     pub(in crate::receiver) fn emit_itemize_indexed<W: crate::writer::MsgInfoSender + ?Sized>(

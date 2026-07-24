@@ -144,7 +144,7 @@ impl ReceiverContext {
                     }
                     // upstream: generator.c:1565 - symlink up-to-date, metadata only
                     let iflags = ItemFlags::from_raw(0);
-                    let _ = self.emit_itemize_indexed(writer, flist_idx, &iflags, entry);
+                    let _ = self.emit_or_record_itemize(writer, flist_idx, &iflags, entry);
                     // upstream: log.c log_item / send_directory NAME emissions
                     // upstream: generator.c:1145 - "%s is uptodate" at INFO_GTE(NAME, 2)
                     info_log!(Name, 2, "{} is uptodate", relative_path.display());
@@ -328,7 +328,7 @@ impl ReceiverContext {
             }
             // upstream: generator.c:1594 - itemize new symlink after creation
             let iflags = ItemFlags::from_raw(ItemFlags::ITEM_LOCAL_CHANGE | ItemFlags::ITEM_IS_NEW);
-            let _ = self.emit_itemize_indexed(writer, flist_idx, &iflags, entry);
+            let _ = self.emit_or_record_itemize(writer, flist_idx, &iflags, entry);
             if !dest_existed {
                 // upstream: receiver.c:740-741 - a newly created symlink
                 // (destination was absent) bumps stats.created_symlinks.
@@ -442,7 +442,7 @@ impl ReceiverContext {
                     }
                     // upstream: generator.c:1565 - symlink up-to-date, metadata only
                     let iflags = ItemFlags::from_raw(0);
-                    let _ = self.emit_itemize_indexed(writer, flist_idx, &iflags, entry);
+                    let _ = self.emit_or_record_itemize(writer, flist_idx, &iflags, entry);
                     // upstream: generator.c:1145 - "%s is uptodate" at INFO_GTE(NAME, 2)
                     info_log!(Name, 2, "{} is uptodate", relative_path.display());
                     continue;
@@ -545,7 +545,7 @@ impl ReceiverContext {
             }
             // upstream: generator.c:1594 - itemize new symlink after creation
             let iflags = ItemFlags::from_raw(ItemFlags::ITEM_LOCAL_CHANGE | ItemFlags::ITEM_IS_NEW);
-            let _ = self.emit_itemize_indexed(writer, flist_idx, &iflags, entry);
+            let _ = self.emit_or_record_itemize(writer, flist_idx, &iflags, entry);
             if !dest_existed {
                 // upstream: receiver.c:740-741 - a newly created symlink
                 // (destination was absent) bumps stats.created_symlinks.
