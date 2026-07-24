@@ -91,6 +91,10 @@ pub struct ClientConfig {
     /// upstream: options.c:2345-2358 (`stdout_format_has_i`) and
     /// options.c:2772-2775 (emit `--log-format=%i`).
     pub(super) out_format_forwards_i: bool,
+    /// A custom `--out-format` template was given, so remote per-file output is
+    /// routed through the client's out-format renderer (collected as events)
+    /// rather than printed as the server's default preformatted line.
+    pub(super) render_out_format_locally: bool,
     /// `%o` (operation) directive but not `%i`. Drives the `--log-format=%o`
     /// server arg so the remote emits matching operation output.
     ///
@@ -360,6 +364,7 @@ impl Default for ClientConfig {
             remove_source_files: false,
             remove_sent_files: false,
             out_format_forwards_i: false,
+            render_out_format_locally: false,
             out_format_has_operation: false,
             out_format_placeholder: false,
             bandwidth_limit: None,

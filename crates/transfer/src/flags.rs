@@ -402,6 +402,14 @@ pub struct InfoFlags {
     /// (generator.c:575-576): an up-to-date file whose `iflags` carry no
     /// significant bits still prints a `.f         ` / `.d         ` row.
     pub itemize_unchanged: bool,
+    /// A custom client `--out-format` is active, so the client renders per-file
+    /// output from collected events.
+    ///
+    /// On a push the local sender must emit an itemize row for every logged
+    /// entry (not just under `-i`/`-v`) so the client can apply the template,
+    /// mirroring upstream `log_item()` firing whenever `stdout_format` is set
+    /// (log.c:822-823).
+    pub out_format_active: bool,
     /// Log format active (`L` info flag).
     pub log_format: bool,
     /// Statistics enabled (`s` info flag).

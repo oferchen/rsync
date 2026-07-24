@@ -37,7 +37,9 @@ mod event;
 mod metadata;
 
 pub use self::event::{ClientEvent, ClientEventKind};
-pub use self::metadata::{ClientEntryKind, ClientEntryMetadata, ListOnlyEntryFields};
+pub use self::metadata::{
+    ClientEntryKind, ClientEntryMetadata, ListOnlyEntryFields, RemoteItemizeFields,
+};
 
 use std::path::Path;
 use std::sync::Arc;

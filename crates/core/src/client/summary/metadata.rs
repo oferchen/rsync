@@ -43,6 +43,43 @@ pub struct ListOnlyEntryFields {
     pub is_symlink: bool,
 }
 
+/// Raw itemize-row fields needed to build a remote-transfer `ClientEvent`.
+///
+/// A parameter object for [`ClientEntryMetadata::from_remote_itemize`] and
+/// [`super::ClientEvent::from_remote_itemize`], keeping both constructors to a
+/// single argument and decoupling the summary layer from the transfer crate's
+/// `ItemizeRow` (mirrors [`ListOnlyEntryFields`]). `itemize` is the sender's
+/// already-correct 11-character `%i` string, carried verbatim because a remote
+/// transfer has no local change-set to re-derive it from.
+pub struct RemoteItemizeFields {
+    /// Transfer-relative path of the entry.
+    pub relative_path: PathBuf,
+    /// The 11-character `%i` itemize string computed by the sender.
+    pub itemize: String,
+    /// POSIX mode bits (type + permissions).
+    pub mode: u32,
+    /// File length in bytes.
+    pub size: u64,
+    /// Modification time, whole seconds since the Unix epoch.
+    pub mtime: i64,
+    /// Modification time sub-second component, nanoseconds.
+    pub mtime_nsec: u32,
+    /// Owner uid, when `-o`/`--owner` carried it in the file list.
+    pub uid: Option<u32>,
+    /// Group gid, when `-g`/`--group` carried it in the file list.
+    pub gid: Option<u32>,
+    /// Whether the entry is a directory.
+    pub is_dir: bool,
+    /// Whether the entry is a symlink.
+    pub is_symlink: bool,
+    /// Symlink target, when the entry is a symlink.
+    pub symlink_target: Option<PathBuf>,
+    /// Whether the entry is newly created (`ITEM_IS_NEW`).
+    pub is_new: bool,
+    /// Whether the entry is a deletion.
+    pub is_deletion: bool,
+}
+
 /// Kind of entry described by [`ClientEntryMetadata`].
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ClientEntryKind {
@@ -186,6 +223,42 @@ impl ClientEntryMetadata {
             gid: None,
             nlink: None,
             symlink_target: entry.symlink_target.clone(),
+        }
+    }
+
+    /// Constructs metadata for a remote-transfer itemize row.
+    ///
+    /// Mirrors [`Self::from_list_only_entry`]'s mode-based type classification
+    /// but carries the owner/group ids the sender put in the file list (`-o`/
+    /// `-g`), which the `%U`/`%G` placeholders need. `atime`/`crtime` are not
+    /// carried on the itemize path, so `accessed`/`created` stay unset.
+    #[must_use]
+    pub fn from_remote_itemize(fields: &RemoteItemizeFields) -> Self {
+        let kind = if fields.is_symlink {
+            ClientEntryKind::Symlink
+        } else {
+            match fields.mode & 0o170000 {
+                0o040000 => ClientEntryKind::Directory,
+                0o120000 => ClientEntryKind::Symlink,
+                0o010000 => ClientEntryKind::Fifo,
+                0o020000 => ClientEntryKind::CharDevice,
+                0o060000 => ClientEntryKind::BlockDevice,
+                0o140000 => ClientEntryKind::Socket,
+                0o100000 => ClientEntryKind::File,
+                _ => ClientEntryKind::Other,
+            }
+        };
+        Self {
+            kind,
+            length: fields.size,
+            modified: secs_nsec_to_system_time(fields.mtime, fields.mtime_nsec),
+            accessed: None,
+            created: None,
+            mode: Some(fields.mode),
+            uid: fields.uid,
+            gid: fields.gid,
+            nlink: None,
+            symlink_target: fields.symlink_target.clone(),
         }
     }
 
