@@ -1939,6 +1939,89 @@ fn backup_delete_multiple_extraneous_in_subdirs() {
 }
 
 #[test]
+fn backup_delete_recurses_into_extraneous_directory() {
+    // upstream delete.c:delete_dir_contents recurses into an extraneous
+    // directory and backs up every file it contains before removal. A wholesale
+    // `remove_dir_all` peel would silently drop those backups (data loss), so
+    // --backup must route through the leaf-granular executor that backs up each
+    // recursively-deleted file.
+    let ctx = test_helpers::setup_copy_test();
+    fs::create_dir_all(&ctx.dest).expect("create dest");
+
+    fs::write(ctx.source.join("keep.txt"), b"keep").expect("write keep");
+
+    let dest_root = ctx.dest.join("source");
+    test_helpers::create_test_tree(&dest_root, &[
+        ("keep.txt", Some(b"old keep")),
+        ("gone/top.txt", Some(b"top")),
+        ("gone/nested/deep.txt", Some(b"deep")),
+    ]);
+
+    let backup_dir = ctx.dest.join("backups");
+
+    let operands = vec![
+        ctx.source.into_os_string(),
+        ctx.dest.clone().into_os_string(),
+    ];
+    let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
+    let options = LocalCopyOptions::default()
+        .delete(true)
+        .with_backup_directory(Some(backup_dir.clone()))
+        // Mirror upstream `--backup-dir`: an empty suffix (options.c:2296-2297).
+        .with_backup_suffix(None::<std::ffi::OsString>);
+
+    plan.execute_with_options(LocalCopyExecution::Apply, options)
+        .expect("copy succeeds");
+
+    // The extraneous directory and its contents are gone from the destination.
+    assert!(!dest_root.join("gone").exists(), "extraneous directory not deleted");
+
+    // Every recursively-deleted file is preserved in the backup tree.
+    let backup_top = backup_dir.join("source/gone/top.txt");
+    let backup_deep = backup_dir.join("source/gone/nested/deep.txt");
+    assert!(backup_top.exists(), "top-level file not backed up at {}", backup_top.display());
+    assert!(backup_deep.exists(), "nested file not backed up at {}", backup_deep.display());
+    assert_eq!(fs::read(&backup_top).expect("read top"), b"top");
+    assert_eq!(fs::read(&backup_deep).expect("read deep"), b"deep");
+}
+
+#[test]
+fn backup_delete_suffix_keeps_directory_holding_inplace_backup() {
+    // Suffix backups (--backup without --backup-dir) rename an extraneous file to
+    // name~ in place. The directory that held it is then non-empty and cannot be
+    // removed - upstream delete_dir_contents reports the benign DR_NOT_EMPTY
+    // (delete.c:117): the directory and its ~ backup survive, and the run still
+    // exits 0 (no I/O error).
+    let ctx = test_helpers::setup_copy_test();
+    fs::create_dir_all(&ctx.dest).expect("create dest");
+
+    fs::write(ctx.source.join("keep.txt"), b"keep").expect("write keep");
+
+    let dest_root = ctx.dest.join("source");
+    test_helpers::create_test_tree(&dest_root, &[
+        ("keep.txt", Some(b"old keep")),
+        ("gone/f.txt", Some(b"content")),
+    ]);
+
+    let operands = vec![
+        ctx.source.into_os_string(),
+        ctx.dest.clone().into_os_string(),
+    ];
+    let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
+    let options = LocalCopyOptions::default().delete(true).backup(true);
+
+    plan.execute_with_options(LocalCopyExecution::Apply, options)
+        .expect("copy succeeds without an I/O error");
+
+    // The in-place backup survives inside the directory, which is therefore kept.
+    let inplace_backup = dest_root.join("gone/f.txt~");
+    assert!(inplace_backup.exists(), "in-place backup missing at {}", inplace_backup.display());
+    assert_eq!(fs::read(&inplace_backup).expect("read backup"), b"content");
+    assert!(!dest_root.join("gone/f.txt").exists(), "original should be renamed away");
+    assert!(dest_root.join("gone").is_dir(), "non-empty directory must be kept");
+}
+
+#[test]
 fn backup_delete_with_suffix_only() {
     let ctx = test_helpers::setup_copy_test();
     fs::create_dir_all(&ctx.dest).expect("create dest");
