@@ -495,6 +495,133 @@ mod tests {
         );
     }
 
+    /// A global rule written BEFORE a `dir-merge` directive wins over the merge
+    /// file's rules under upstream's single-list first-match (exclude.c:1043-1064
+    /// recurses into the per-dir merge AT the directive's source position). The
+    /// program lays the global segment ahead of the `DirMerge` instruction, so
+    /// the segment latches the transfer verdict before the merge layer is
+    /// consulted: `- *.tmp` then `dir-merge .rsf` excludes `keep.tmp` even though
+    /// the merge file says `+ keep.tmp`.
+    #[test]
+    fn global_rule_before_dir_merge_wins_transfer() {
+        let mut merge_layer = FilterSegment::default();
+        merge_layer
+            .push_rule(FilterRule::include("keep.tmp"))
+            .expect("add merge include");
+        let dir_layers = vec![vec![merge_layer]];
+
+        let program = FilterProgram::new([
+            FilterProgramEntry::Rule(FilterRule::exclude("*.tmp")),
+            FilterProgramEntry::DirMerge(DirMergeRule::new(".rsf".to_owned(), Default::default())),
+        ])
+        .unwrap();
+
+        let outcome = program.evaluate(
+            Path::new("keep.tmp"),
+            false,
+            &dir_layers,
+            None,
+            FilterContext::Transfer,
+        );
+        assert!(
+            !outcome.allows_transfer(),
+            "global `- *.tmp` before the dir-merge must exclude keep.tmp"
+        );
+    }
+
+    /// The mirror of [`global_rule_before_dir_merge_wins_transfer`]: a `dir-merge`
+    /// directive written BEFORE a global rule lets the merge file win, because
+    /// its `DirMerge` instruction precedes the trailing global segment and
+    /// latches the verdict first. `dir-merge .rsf` then `- *.tmp` includes
+    /// `keep.tmp` via the merge file's `+ keep.tmp`.
+    #[test]
+    fn dir_merge_before_global_rule_wins_transfer() {
+        let mut merge_layer = FilterSegment::default();
+        merge_layer
+            .push_rule(FilterRule::include("keep.tmp"))
+            .expect("add merge include");
+        let dir_layers = vec![vec![merge_layer]];
+
+        let program = FilterProgram::new([
+            FilterProgramEntry::DirMerge(DirMergeRule::new(".rsf".to_owned(), Default::default())),
+            FilterProgramEntry::Rule(FilterRule::exclude("*.tmp")),
+        ])
+        .unwrap();
+
+        let outcome = program.evaluate(
+            Path::new("keep.tmp"),
+            false,
+            &dir_layers,
+            None,
+            FilterContext::Transfer,
+        );
+        assert!(
+            outcome.allows_transfer(),
+            "dir-merge before the global `- *.tmp` must include keep.tmp"
+        );
+    }
+
+    /// Source position governs the deletion verdict identically to transfer: a
+    /// global rule ahead of the `dir-merge` directive latches the unified
+    /// first-match deletion decision, so `- *.tmp` before `dir-merge .rsf`
+    /// protects `keep.tmp` from deletion (upstream exclude.c:1043-1064).
+    #[test]
+    fn global_rule_before_dir_merge_wins_deletion() {
+        let mut merge_layer = FilterSegment::default();
+        merge_layer
+            .push_rule(FilterRule::include("keep.tmp"))
+            .expect("add merge include");
+        let dir_layers = vec![vec![merge_layer]];
+
+        let program = FilterProgram::new([
+            FilterProgramEntry::Rule(FilterRule::exclude("*.tmp")),
+            FilterProgramEntry::DirMerge(DirMergeRule::new(".rsf".to_owned(), Default::default())),
+        ])
+        .unwrap();
+
+        let outcome = program.evaluate(
+            Path::new("keep.tmp"),
+            false,
+            &dir_layers,
+            None,
+            FilterContext::Deletion,
+        );
+        assert!(
+            !outcome.allows_deletion(),
+            "global `- *.tmp` before the dir-merge must protect keep.tmp from deletion"
+        );
+    }
+
+    /// The deletion mirror: `dir-merge .rsf` before the global `- *.tmp` lets the
+    /// merge file's `+ keep.tmp` decide first, so `keep.tmp` stays deletable
+    /// (its unified verdict is include/deletable).
+    #[test]
+    fn dir_merge_before_global_rule_wins_deletion() {
+        let mut merge_layer = FilterSegment::default();
+        merge_layer
+            .push_rule(FilterRule::include("keep.tmp"))
+            .expect("add merge include");
+        let dir_layers = vec![vec![merge_layer]];
+
+        let program = FilterProgram::new([
+            FilterProgramEntry::DirMerge(DirMergeRule::new(".rsf".to_owned(), Default::default())),
+            FilterProgramEntry::Rule(FilterRule::exclude("*.tmp")),
+        ])
+        .unwrap();
+
+        let outcome = program.evaluate(
+            Path::new("keep.tmp"),
+            false,
+            &dir_layers,
+            None,
+            FilterContext::Deletion,
+        );
+        assert!(
+            outcome.allows_deletion(),
+            "dir-merge before the global `- *.tmp` leaves keep.tmp deletable"
+        );
+    }
+
     #[cfg(all(any(unix, windows), feature = "xattr"))]
     #[test]
     fn xattr_rules_are_first_match_wins() {
