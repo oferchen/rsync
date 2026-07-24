@@ -868,6 +868,11 @@ mod itemize_order_tests {
     /// `ITEM_REPORT_TIME`. Regression guard for a receiver path that omitted the
     /// atime comparison, so remote `-a -U -i` printed no row where upstream emits
     /// `.f......u..`.
+    ///
+    /// Gated to unix: the atime comparison in `itemize_existing_flags` lives in
+    /// a `#[cfg(unix)]` block (it reads `MetadataExt::atime`), matching the
+    /// perms/owner/group report bits, so the reported flag only exists on unix.
+    #[cfg(unix)]
     #[test]
     fn itemize_existing_flags_reports_atime_only_under_dash_u() {
         use crate::generator::ItemFlags;
