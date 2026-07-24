@@ -164,6 +164,13 @@ pub(crate) struct OutFormatContext {
     /// which is a different split than the `<`/`>` itemize arrow above - a local
     /// copy renders `>` yet reports `send`.
     pub(super) is_pull: bool,
+    /// Whether `-o`/`--owner` is active (upstream `uid_ndx`). `%U` renders the
+    /// numeric uid only when set, and `0` otherwise (log.c:570-573).
+    pub(super) preserve_owner: bool,
+    /// Whether `-g`/`--group` is active (upstream `gid_ndx`). `%G` renders the
+    /// numeric gid only when set, and the literal `DEFAULT` otherwise
+    /// (log.c:574-576).
+    pub(super) preserve_group: bool,
     /// Whether `INFO_GTE(NAME, 2)` is in effect (i.e. `-vv` or
     /// `--info=name2`).
     ///
@@ -228,6 +235,19 @@ impl OutFormatContext {
     #[must_use]
     pub(crate) fn with_is_pull(mut self, is_pull: bool) -> Self {
         self.is_pull = is_pull;
+        self
+    }
+
+    /// Records `-o`/`-g` (upstream `uid_ndx`/`gid_ndx`) so `%U`/`%G` render the
+    /// numeric id only when the id is being preserved, matching upstream `log.c`.
+    #[must_use]
+    pub(crate) fn with_id_preservation(
+        mut self,
+        preserve_owner: bool,
+        preserve_group: bool,
+    ) -> Self {
+        self.preserve_owner = preserve_owner;
+        self.preserve_group = preserve_group;
         self
     }
 
@@ -462,6 +482,8 @@ mod tests {
             module_path: Some("/var/backup".to_owned()),
             is_sender: false,
             is_pull: false,
+            preserve_owner: false,
+            preserve_group: false,
             emit_unchanged: false,
             itemize_repeated: false,
             eight_bit_output: false,

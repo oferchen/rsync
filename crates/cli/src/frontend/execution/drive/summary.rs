@@ -125,6 +125,10 @@ where
     // `send` otherwise (a push or a local copy) - a different split than the
     // itemize arrow, so it needs its own signal rather than `is_sender`.
     let is_pull = config.is_pull();
+    // upstream: log.c %U/%G render the numeric id only under -o/-g (uid_ndx/
+    // gid_ndx); otherwise 0 / "DEFAULT".
+    let preserve_owner = config.preserve_owner();
+    let preserve_group = config.preserve_group();
     // upstream: flist.c:2251 emits "sending incremental file list" only when
     // `inc_recurse && INFO_GTE(FLIST, 1) && !am_server`. Mirror each gate:
     // - compat.c:172 disables inc_recurse when `!recurse`, so a single-file
@@ -179,6 +183,7 @@ where
             let emit_unchanged = matches!(name_level, NameOutputLevel::UpdatedAndUnchanged);
             let out_format_context = OutFormatContext::with_is_sender(is_sender)
                 .with_is_pull(is_pull)
+                .with_id_preservation(preserve_owner, preserve_group)
                 .with_emit_unchanged(emit_unchanged)
                 .with_itemize_repeated(itemize_repeated)
                 .with_eight_bit_output(eight_bit_output)
@@ -228,6 +233,8 @@ where
                     human_readable_mode,
                     is_sender,
                     is_pull,
+                    preserve_owner,
+                    preserve_group,
                     itemize_repeated,
                     show_atimes,
                     show_crtimes,
@@ -283,6 +290,9 @@ struct EmitLogOutputParams<'a> {
     is_sender: bool,
     /// Whether the transfer is a pull; drives the `%o` operation word.
     is_pull: bool,
+    /// `-o`/`-g` (upstream uid_ndx/gid_ndx): gate the numeric `%U`/`%G`.
+    preserve_owner: bool,
+    preserve_group: bool,
     /// `-ii` (the `-i` flag repeated) - upstream `stdout_format_has_i > 1`.
     /// Forces unchanged itemize rows in the log file as it does on stdout.
     itemize_repeated: bool,
@@ -316,6 +326,8 @@ fn emit_log_output(params: EmitLogOutputParams<'_>) -> io::Result<()> {
         human_readable_mode,
         is_sender,
         is_pull,
+        preserve_owner,
+        preserve_group,
         itemize_repeated,
         show_atimes,
         show_crtimes,
@@ -331,6 +343,7 @@ fn emit_log_output(params: EmitLogOutputParams<'_>) -> io::Result<()> {
     let emit_unchanged = matches!(name_level, NameOutputLevel::UpdatedAndUnchanged);
     let context = OutFormatContext::with_is_sender(is_sender)
         .with_is_pull(is_pull)
+        .with_id_preservation(preserve_owner, preserve_group)
         .with_emit_unchanged(emit_unchanged)
         .with_itemize_repeated(itemize_repeated)
         .with_eight_bit_output(eight_bit_output)
