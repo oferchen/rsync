@@ -289,6 +289,17 @@ pub struct ReceiverContext {
     /// redo re-itemizing an entry. `RefCell` suffices: every emit site runs on
     /// the main driver thread (rayon workers never touch this).
     pub(in crate::receiver) itemize_rows: RefCell<BTreeMap<usize, Vec<String>>>,
+    /// Metadata-bearing itemize rows keyed by flist index, collected instead of
+    /// [`Self::itemize_rows`] when a custom `--out-format` is active on a pulling
+    /// client (`info_flags.out_format_active` and `client_mode`). Drained in
+    /// ascending key order after the transfer by the SSH/daemon driver, which
+    /// hands each row to the client `ItemizeCallback` so the CLI renders the
+    /// user's template - the receiver's own stdout string path is suppressed in
+    /// this mode. Upstream renders `--out-format` inline via `log_item`; oc-rsync
+    /// routes the raw fields to the CLI's out-format layer to preserve crate
+    /// layering (`cli -> core -> transfer`).
+    pub(in crate::receiver) event_rows:
+        RefCell<BTreeMap<usize, Vec<crate::progress::OwnedItemizeRow>>>,
     /// When set, plain `-v` (name-only, no `-i`) client-mode file names are
     /// emitted in flist-index order as each file is reached in the transfer
     /// loop - interleaved with `--progress` - instead of being buffered in the
@@ -420,6 +431,7 @@ impl ReceiverContext {
             hardlink_lookahead_target: 500,
             defer_itemize: false,
             itemize_rows: RefCell::new(BTreeMap::new()),
+            event_rows: RefCell::new(BTreeMap::new()),
             interleave_names: false,
             name_rows: RefCell::new(BTreeMap::new()),
             names_to_stderr: false,

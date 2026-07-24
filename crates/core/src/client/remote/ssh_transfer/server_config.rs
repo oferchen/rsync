@@ -175,6 +175,14 @@ pub(in crate::client::remote) fn build_server_config_for_receiver(
     // mode while the local copy executor honoured -E.
     server_config.flags.preserve_executability = config.preserve_executability();
 
+    // A custom `--out-format` makes the local receiver buffer a metadata event
+    // per logged entry (instead of writing its own itemize string) so the client
+    // can render the template - the pull counterpart of the sender-side flag set
+    // for a push (see InfoFlags::out_format_active). The SSH pull driver drains
+    // and renders these; a path that sets this without draining would suppress
+    // the receiver's default output, so keep the two wired together.
+    server_config.flags.info_flags.out_format_active = config.render_out_format_locally();
+
     flags::apply_common_server_flags(config, &mut server_config);
     Ok(server_config)
 }
