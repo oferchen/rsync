@@ -182,6 +182,10 @@ pub(in crate::client::remote) fn build_server_config_for_receiver(
     // and renders these; a path that sets this without draining would suppress
     // the receiver's default output, so keep the two wired together.
     server_config.flags.info_flags.out_format_active = config.render_out_format_locally();
+    // upstream stdout_format_has_i - gates the receiver's `created directory`
+    // notice on a dest-creating pull (main.c:807-808). True under `-i` or a
+    // custom `--out-format` carrying `%i`; false for a `%i`-less template.
+    server_config.flags.info_flags.out_format_forwards_i = config.out_format_forwards_i();
 
     flags::apply_common_server_flags(config, &mut server_config);
     Ok(server_config)
@@ -490,6 +494,21 @@ mod tests {
             build_server_config_for_receiver(&config, &["dest".to_owned()]).unwrap();
 
         assert!(server_config.write.write_devices);
+    }
+
+    /// upstream stdout_format_has_i gates the receiver's `created directory`
+    /// notice on a dest-creating pull. A custom `--out-format` carrying `%i`
+    /// sets it; the flag must reach the receiver's InfoFlags so the notice
+    /// fires without the `-i` flag (previously it was tied to `info_flags.itemize`).
+    #[test]
+    fn receiver_config_propagates_out_format_forwards_i() {
+        let with_i = ClientConfig::builder().out_format_forwards_i(true).build();
+        let sc = build_server_config_for_receiver(&with_i, &["dest".to_owned()]).unwrap();
+        assert!(sc.flags.info_flags.out_format_forwards_i);
+
+        let without = ClientConfig::builder().out_format_forwards_i(false).build();
+        let sc = build_server_config_for_receiver(&without, &["dest".to_owned()]).unwrap();
+        assert!(!sc.flags.info_flags.out_format_forwards_i);
     }
 
     /// On an ssh pull the local client IS the receiver and follows a

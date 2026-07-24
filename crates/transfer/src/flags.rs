@@ -410,6 +410,16 @@ pub struct InfoFlags {
     /// mirroring upstream `log_item()` firing whenever `stdout_format` is set
     /// (log.c:822-823).
     pub out_format_active: bool,
+    /// The client's resolved per-file format carries the `%i` directive
+    /// (upstream `stdout_format_has_i`): true under `-i` with the default
+    /// `"%i %n%L"`, or a custom `--out-format` whose string contains `%i`, and
+    /// false for an explicit `--out-format` that omits `%i` even under `-i`.
+    ///
+    /// Gates the receiver's `created directory <dest>` notice, which upstream
+    /// prints on a dest-creating pull when `INFO_GTE(NAME,1) || stdout_format_has_i`
+    /// (main.c:807-808). Without this the notice was tied to the `-i` flag alone
+    /// and was dropped under a custom `%i`-bearing `--out-format`.
+    pub out_format_forwards_i: bool,
     /// Log format active (`L` info flag).
     pub log_format: bool,
     /// Statistics enabled (`s` info flag).
