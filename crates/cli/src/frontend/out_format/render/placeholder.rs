@@ -8,7 +8,7 @@
 use std::time::SystemTime;
 
 use crate::frontend::escape::escape_path;
-use crate::{LIST_TIMESTAMP_FORMAT, describe_event_kind, format_list_permissions};
+use crate::{LIST_TIMESTAMP_FORMAT, format_list_permissions};
 use core::client::{ClientEntryKind, ClientEntryMetadata, ClientEvent, ClientEventKind};
 
 use crate::frontend::out_format::tokens::{
@@ -73,9 +73,11 @@ pub(super) fn render_placeholder_value(
             )
             .into_bytes(),
         ),
-        OutFormatPlaceholder::Operation => {
-            Some(describe_event_kind(event.kind()).to_owned().into_bytes())
-        }
+        OutFormatPlaceholder::Operation => Some(
+            upstream_operation(event.kind(), context.is_pull)
+                .as_bytes()
+                .to_vec(),
+        ),
         OutFormatPlaceholder::ModifyTime => {
             Some(format_out_format_mtime(event.metadata()).into_bytes())
         }
@@ -247,6 +249,23 @@ fn format_out_format_permissions(metadata: Option<&ClientEntryMetadata>) -> Stri
             perms
         })
         .unwrap_or_else(|| "---------".to_owned())
+}
+
+/// Maps a transfer event to upstream's `%o` operation word.
+///
+/// upstream log.c `case 'o': n = op` - `op` is `"del."` for a deletion
+/// (`log_delete`) and otherwise the transfer direction `s_or_r` from
+/// `log_item`: `"recv"` on the receiving client (a pull) and `"send"` otherwise
+/// (a push or a local copy). This split differs from the `<`/`>` itemize arrow -
+/// a local copy renders `>` yet reports `send` - so it keys on the pull flag
+/// rather than the sender role. oc's richer event kinds collapse to these three
+/// so drop-in `--out-format=%o` output matches byte-for-byte.
+fn upstream_operation(kind: &ClientEventKind, is_pull: bool) -> &'static str {
+    match kind {
+        ClientEventKind::EntryDeleted => "del.",
+        _ if is_pull => "recv",
+        _ => "send",
+    }
 }
 
 /// Formats the current wall-clock time using the list timestamp format.

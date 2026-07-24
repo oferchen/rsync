@@ -393,7 +393,7 @@ fn out_format_complex_upstream_format_renders_all_fields() {
         "should contain itemize: {rendered:?}"
     );
     assert!(
-        rendered.contains("copied"),
+        rendered.contains("send"),
         "should contain operation: {rendered:?}"
     );
     assert!(
