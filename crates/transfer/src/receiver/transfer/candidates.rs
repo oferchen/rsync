@@ -599,6 +599,16 @@ impl ReceiverContext {
         #[cfg(unix)]
         {
             use std::os::unix::fs::MetadataExt;
+            // upstream: generator.c:531-533 - atimes_ndx && !S_ISDIR && !S_ISLNK
+            //   && !same_time(F_ATIME(file), 0, st_atime, 0). same_time with a
+            //   zero nsec compares whole seconds, matching the mtime check above.
+            if self.config.flags.atimes
+                && !entry.is_dir()
+                && !entry.is_symlink()
+                && dest_meta.atime() != entry.atime()
+            {
+                iflags |= ItemFlags::ITEM_REPORT_ATIME;
+            }
             // upstream: generator.c:547-549 - preserve_perms && CHMOD_BITS differ
             if self.config.flags.perms {
                 const CHMOD_BITS: u32 = 0o7777;
@@ -849,6 +859,65 @@ mod itemize_order_tests {
         };
         config.connection.client_mode = true;
         config
+    }
+
+    /// upstream: generator.c:531-533. Under `--atimes` (`-U`), an otherwise
+    /// up-to-date regular file whose source atime differs from the destination's
+    /// still itemizes an `ITEM_REPORT_ATIME` (`u`) row. Without `-U` the same
+    /// atime difference is invisible, and matching mtimes must not add
+    /// `ITEM_REPORT_TIME`. Regression guard for a receiver path that omitted the
+    /// atime comparison, so remote `-a -U -i` printed no row where upstream emits
+    /// `.f......u..`.
+    ///
+    /// Gated to unix: the atime comparison in `itemize_existing_flags` lives in
+    /// a `#[cfg(unix)]` block (it reads `MetadataExt::atime`), matching the
+    /// perms/owner/group report bits, so the reported flag only exists on unix.
+    #[cfg(unix)]
+    #[test]
+    fn itemize_existing_flags_reports_atime_only_under_dash_u() {
+        use crate::generator::ItemFlags;
+
+        let dir = test_support::create_tempdir();
+        let path = dir.path().join("f.txt");
+        std::fs::write(&path, b"x").unwrap();
+        // Destination: mtime matches the entry, atime does not.
+        filetime::set_file_times(
+            &path,
+            filetime::FileTime::from_unix_time(1_600_000_000, 0),
+            filetime::FileTime::from_unix_time(1_700_000_000, 0),
+        )
+        .unwrap();
+        let meta = std::fs::symlink_metadata(&path).unwrap();
+
+        let mut entry = FileEntry::new_file("f.txt".into(), 1, 0o644);
+        entry.set_mtime(1_700_000_000, 0);
+        entry.set_atime(1_650_000_000);
+
+        let hs = handshake();
+
+        let mut with_u = itemize_client_config();
+        with_u.flags.times = true;
+        with_u.flags.atimes = true;
+        let ctx = ReceiverContext::new_for_test(&hs, with_u);
+        let flags = ctx.itemize_existing_flags(&entry, &meta, 0);
+        assert!(
+            flags & ItemFlags::ITEM_REPORT_ATIME != 0,
+            "atime row missing under -U: {flags:#06x}"
+        );
+        assert!(
+            flags & ItemFlags::ITEM_REPORT_TIME == 0,
+            "matching mtime must not set ITEM_REPORT_TIME: {flags:#06x}"
+        );
+
+        let mut without_u = itemize_client_config();
+        without_u.flags.times = true;
+        without_u.flags.atimes = false;
+        let ctx = ReceiverContext::new_for_test(&hs, without_u);
+        let flags = ctx.itemize_existing_flags(&entry, &meta, 0);
+        assert!(
+            flags & ItemFlags::ITEM_REPORT_ATIME == 0,
+            "atime row must be gated on --atimes: {flags:#06x}"
+        );
     }
 
     /// The deferred flush must interleave directory and file itemize rows in
