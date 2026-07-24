@@ -48,8 +48,9 @@ fn apply_chroot(_module_path: &Path, _log_sink: &SharedLogSink) -> io::Result<()
 /// Drops process privileges to the specified uid and gid.
 ///
 /// Delegates to `platform::privilege::drop_privileges()`. The underlying call
-/// sequence is `setgroups` -> `setgid` -> `setuid`, matching the POSIX ordering
-/// required for setuid to be irreversible. Any failure is propagated; the
+/// sequence is `setgid` -> `setgroups` -> `setuid` (upstream
+/// clientserver.c:1022-1047), with the irreversible `setuid` last. Any failure
+/// is propagated; the
 /// daemon must refuse to serve rather than continue as root.
 ///
 /// Caveat: on Linux the setuid system call is propagated to every thread of
