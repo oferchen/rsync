@@ -439,7 +439,12 @@ impl GeneratorContext {
         xname: Option<&[u8]>,
         itemize_cb: &mut Option<&mut dyn super::super::ItemizeCallback>,
     ) -> io::Result<()> {
-        if !self.config.flags.info_flags.itemize {
+        // upstream: log.c:822-823 - log_item renders `stdout_format` (a custom
+        // `--out-format`) whenever it is set, independent of `-i`. So the sender
+        // emits the itemize row under `-i` OR a custom out-format; the client
+        // renders `line` (default) or its template (out-format).
+        if !self.config.flags.info_flags.itemize && !self.config.flags.info_flags.out_format_active
+        {
             return Ok(());
         }
         // upstream: generator.c:582-583 - the gate is the OR of four
@@ -474,7 +479,12 @@ impl GeneratorContext {
             // to stdout. In a pull the local client is the receiver and this
             // Generator(sender) callback path surfaces the client-side row.
             if let Some(cb) = itemize_cb.as_mut() {
-                cb.on_itemize(&line);
+                // Hand the callback the structured row (the 11-char `%i` plus the
+                // entry metadata) so a client rendering a custom `--out-format`
+                // can rebuild a rich event; the default impl prints `line`.
+                let itemize = super::itemize::format_iflags(iflags, entry, true, &ctx);
+                let row = super::itemize::build_itemize_row(entry, iflags, &line, &itemize);
+                cb.on_itemize_row(&row);
             }
             Ok(())
         } else {
@@ -539,9 +549,13 @@ impl GeneratorContext {
         itemize_cb: &mut Option<&mut dyn super::super::ItemizeCallback>,
         is_transfer: bool,
     ) -> io::Result<()> {
-        // Under `-i` the itemize row already carries `%n%L`; only plain `-v`
-        // (no `-i`) prints a bare name here.
-        if self.config.flags.info_flags.itemize || !self.config.flags.verbose {
+        // Under `-i` (or a custom `--out-format`, which emits the full itemize
+        // row via maybe_emit_itemize) the row already carries `%n%L`; only plain
+        // `-v` without either prints a bare name here.
+        if self.config.flags.info_flags.itemize
+            || self.config.flags.info_flags.out_format_active
+            || !self.config.flags.verbose
+        {
             return Ok(());
         }
         // upstream: log.c:822 - rwrite() forwards FCLIENT to stdout only when
@@ -561,7 +575,14 @@ impl GeneratorContext {
         let entry = &self.file_list[ndx];
         let line = super::itemize::format_name_line(entry, xname, iflags);
         if let Some(cb) = itemize_cb.as_mut() {
-            cb.on_itemize(&line);
+            // Provide the structured row for custom-`--out-format` clients; a
+            // plain-`-v` client's default callback still prints the bare name.
+            // `%i` is computed for the row even on the name path so a template
+            // mixing `%i` with other codes renders the correct itemize string.
+            let ctx = self.itemize_context();
+            let itemize = super::itemize::format_iflags(iflags, entry, true, &ctx);
+            let row = super::itemize::build_itemize_row(entry, iflags, &line, &itemize);
+            cb.on_itemize_row(&row);
         }
         Ok(())
     }

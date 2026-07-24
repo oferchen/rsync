@@ -62,10 +62,58 @@ impl<F: FnMut(&TransferProgressEvent<'_>)> TransferProgressCallback for F {
 pub trait ItemizeCallback {
     /// Called with a pre-formatted itemize line (including trailing newline).
     fn on_itemize(&mut self, line: &str);
+
+    /// Called with the structured per-file itemize data.
+    ///
+    /// The default implementation forwards the pre-formatted [`ItemizeRow::line`]
+    /// to [`ItemizeCallback::on_itemize`], preserving the plain server-side print
+    /// path. A client that renders a custom `--out-format` overrides this to
+    /// build a metadata-bearing event from the structured fields instead.
+    fn on_itemize_row(&mut self, row: &ItemizeRow<'_>) {
+        self.on_itemize(row.line);
+    }
 }
 
 impl<F: FnMut(&str)> ItemizeCallback for F {
     fn on_itemize(&mut self, line: &str) {
         self(line);
     }
+}
+
+/// Structured per-file data for one client-visible itemize/name emission.
+///
+/// Carries both the pre-formatted default line (`%i %n%L` or `%n%L`) and the raw
+/// fields a client needs to render an arbitrary `--out-format` template, so the
+/// callback can either print the line verbatim or reconstruct a rich event
+/// without depending on the sender's `FileEntry` internals.
+#[derive(Debug, Clone, Copy)]
+pub struct ItemizeRow<'a> {
+    /// The pre-formatted default line, including trailing newline.
+    pub line: &'a str,
+    /// The 11-character `%i` itemize string (upstream `YXcstpoguax`).
+    pub itemize: &'a str,
+    /// Transfer-relative path of the entry.
+    pub name: &'a std::path::Path,
+    /// File length in bytes.
+    pub size: u64,
+    /// Modification time, whole seconds since the Unix epoch.
+    pub mtime: i64,
+    /// Modification time sub-second component, nanoseconds.
+    pub mtime_nsec: u32,
+    /// POSIX mode bits (type + permissions).
+    pub mode: u32,
+    /// Owner uid, when carried by the file list (`-o`).
+    pub uid: Option<u32>,
+    /// Owner gid, when carried by the file list (`-g`).
+    pub gid: Option<u32>,
+    /// Whether the entry is a directory.
+    pub is_dir: bool,
+    /// Whether the entry is a symlink.
+    pub is_symlink: bool,
+    /// Symlink target, when the entry is a symlink.
+    pub symlink_target: Option<&'a std::path::Path>,
+    /// Whether the entry is newly created at the destination (`ITEM_IS_NEW`).
+    pub is_new: bool,
+    /// Whether the row reports a deletion (`ITEM_DELETED`).
+    pub is_deletion: bool,
 }

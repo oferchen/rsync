@@ -52,9 +52,12 @@ pub(super) fn render_placeholder_value(
     match spec.kind {
         OutFormatPlaceholder::FileName => Some(render_path(event, true, allow_8bit)),
         OutFormatPlaceholder::FullPath => Some(render_path(event, false, allow_8bit)),
-        OutFormatPlaceholder::ItemizedChanges => {
-            Some(format_itemized_changes(event, context.is_sender).into_bytes())
-        }
+        OutFormatPlaceholder::ItemizedChanges => Some(match event.itemize_override() {
+            // A remote transfer supplies the sender's already-correct 11-char
+            // itemize string; a local event derives it from its change set.
+            Some(itemize) => itemize.as_bytes().to_vec(),
+            None => format_itemized_changes(event, context.is_sender).into_bytes(),
+        }),
         OutFormatPlaceholder::FileLength => {
             let length = event.metadata().map_or(0, ClientEntryMetadata::length);
             Some(format_numeric_value(length as i64, &spec.format).into_bytes())

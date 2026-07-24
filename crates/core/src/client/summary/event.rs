@@ -10,7 +10,7 @@ use std::time::Duration;
 
 use engine::local_copy::{LocalCopyAction, LocalCopyChangeSet, LocalCopyRecord};
 
-use super::metadata::{ClientEntryKind, ClientEntryMetadata};
+use super::metadata::{ClientEntryKind, ClientEntryMetadata, RemoteItemizeFields};
 
 /// Describes a transfer action performed by the local copy engine.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -116,6 +116,12 @@ pub struct ClientEvent {
     change_set: LocalCopyChangeSet,
     hardlink_uptodate: bool,
     is_directory: bool,
+    /// Pre-rendered `%i` itemize string supplied by a remote transfer.
+    ///
+    /// Local events derive `%i` from [`Self::change_set`]; a remote transfer has
+    /// no `LocalCopyChangeSet`, so it carries the sender's already-correct
+    /// 11-character itemize string here for the renderer to emit verbatim.
+    precomputed_itemize: Option<String>,
 }
 
 impl ClientEvent {
@@ -210,6 +216,7 @@ impl ClientEvent {
             change_set,
             hardlink_uptodate,
             is_directory,
+            precomputed_itemize: None,
         }
     }
 
@@ -234,6 +241,7 @@ impl ClientEvent {
             change_set: LocalCopyChangeSet::new(),
             hardlink_uptodate: false,
             is_directory: false,
+            precomputed_itemize: None,
         }
     }
 
@@ -272,6 +280,44 @@ impl ClientEvent {
             change_set: LocalCopyChangeSet::new(),
             hardlink_uptodate: false,
             is_directory,
+            precomputed_itemize: None,
+        }
+    }
+
+    /// Builds an event from a remote transfer's per-file itemize row.
+    ///
+    /// A remote transfer has no engine `LocalCopyRecord`/`LocalCopyChangeSet`, so
+    /// this carries the sender's already-correct 11-character `%i` string in
+    /// `precomputed_itemize` and reconstructs the metadata the other `--out-format`
+    /// placeholders need from the flat wire fields. The `%o` operation word is
+    /// derived by the renderer from the transfer direction, not from `kind`, so
+    /// `kind` only needs to distinguish a deletion from a transferred entry.
+    #[must_use]
+    pub fn from_remote_itemize(fields: RemoteItemizeFields) -> Self {
+        let metadata = ClientEntryMetadata::from_remote_itemize(&fields);
+        let kind = if fields.is_deletion {
+            ClientEventKind::EntryDeleted
+        } else if fields.is_dir {
+            ClientEventKind::DirectoryCreated
+        } else if fields.is_symlink {
+            ClientEventKind::SymlinkCopied
+        } else {
+            ClientEventKind::DataCopied
+        };
+        Self {
+            relative_path: fields.relative_path,
+            kind,
+            bytes_transferred: 0,
+            total_bytes: Some(fields.size),
+            elapsed: Duration::ZERO,
+            metadata: Some(metadata),
+            created: fields.is_new,
+            destination_root: Arc::from(Path::new("")),
+            destination_path: PathBuf::new(),
+            change_set: LocalCopyChangeSet::new(),
+            hardlink_uptodate: false,
+            is_directory: fields.is_dir,
+            precomputed_itemize: Some(fields.itemize),
         }
     }
 
@@ -337,6 +383,14 @@ impl ClientEvent {
     #[must_use]
     pub const fn change_set(&self) -> LocalCopyChangeSet {
         self.change_set
+    }
+
+    /// Returns the pre-rendered `%i` itemize string, when this event came from a
+    /// remote transfer (see [`Self::from_remote_itemize`]). Local events return
+    /// `None` and derive `%i` from [`Self::change_set`].
+    #[must_use]
+    pub fn itemize_override(&self) -> Option<&str> {
+        self.precomputed_itemize.as_deref()
     }
 
     /// Returns whether this event describes an entry that is already up to date
@@ -412,6 +466,7 @@ impl ClientEvent {
             change_set,
             hardlink_uptodate: false,
             is_directory: false,
+            precomputed_itemize: None,
         }
     }
 
@@ -470,6 +525,53 @@ impl ClientEvent {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn from_remote_itemize_carries_override_and_metadata() {
+        let event = ClientEvent::from_remote_itemize(RemoteItemizeFields {
+            relative_path: PathBuf::from("sub/f.txt"),
+            itemize: ">f+++++++++".to_owned(),
+            mode: 0o100_644,
+            size: 42,
+            mtime: 1_700_000_000,
+            mtime_nsec: 0,
+            uid: Some(1000),
+            gid: Some(1000),
+            is_dir: false,
+            is_symlink: false,
+            symlink_target: None,
+            is_new: true,
+            is_deletion: false,
+        });
+        assert_eq!(event.itemize_override(), Some(">f+++++++++"));
+        assert_eq!(event.relative_path(), Path::new("sub/f.txt"));
+        assert!(event.was_created());
+        assert!(matches!(event.kind(), ClientEventKind::DataCopied));
+        let metadata = event.metadata().expect("metadata present");
+        assert_eq!(metadata.length(), 42);
+        assert_eq!(metadata.uid(), Some(1000));
+    }
+
+    #[test]
+    fn from_remote_itemize_deletion_maps_to_entry_deleted() {
+        let event = ClientEvent::from_remote_itemize(RemoteItemizeFields {
+            relative_path: PathBuf::from("gone.txt"),
+            itemize: "*deleting  ".to_owned(),
+            mode: 0o100_644,
+            size: 0,
+            mtime: 0,
+            mtime_nsec: 0,
+            uid: None,
+            gid: None,
+            is_dir: false,
+            is_symlink: false,
+            symlink_target: None,
+            is_new: false,
+            is_deletion: true,
+        });
+        assert!(matches!(event.kind(), ClientEventKind::EntryDeleted));
+        assert_eq!(event.itemize_override(), Some("*deleting  "));
+    }
 
     #[test]
     fn client_event_kind_is_progress_returns_true_for_data_copied() {

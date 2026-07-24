@@ -101,6 +101,14 @@ impl ClientConfig {
         self.force_event_collection
     }
 
+    /// Reports whether a custom `--out-format` template is active, so a remote
+    /// transfer collects per-file events for client-side rendering instead of
+    /// printing the server's default preformatted line.
+    #[must_use]
+    pub const fn render_out_format_locally(&self) -> bool {
+        self.render_out_format_locally
+    }
+
     /// Returns whether the configuration requires collection of transfer events.
     #[must_use]
     pub const fn collect_events(&self) -> bool {
