@@ -204,9 +204,14 @@ impl FilterChain {
 
     /// Returns `true` if the path should be included in the transfer.
     ///
-    /// Evaluates per-directory scopes from innermost to outermost, then
-    /// global rules. First matching rule wins. Paths that match no rule
-    /// are included by default.
+    /// Global rules and per-directory scopes are interleaved by source order:
+    /// a global rule defined before a `dir-merge` directive is consulted before
+    /// that scope's rules, and one defined after is consulted afterwards
+    /// (`directive_order` records the split). Within one merge config, scopes
+    /// are evaluated innermost-to-outermost. First matching rule wins; paths
+    /// that match no rule are included by default. Mirrors upstream
+    /// `exclude.c:check_filter()` walking one list and recursing into a
+    /// `FILTRULE_PERDIR_MERGE` entry at its own position.
     ///
     /// This is the traversal-driven sender entry point: synthetic
     /// `pattern/**` descendant matchers (produced for anchored excludes
@@ -223,25 +228,64 @@ impl FilterChain {
     /// `is_dir` should be `true` when the path refers to a directory.
     #[must_use]
     pub fn allows(&self, path: &Path, is_dir: bool) -> bool {
+        // upstream: exclude.c:1046-1050 check_filter() walks one list and
+        // consults a FILTRULE_PERDIR_MERGE entry at its own position. A global
+        // rule defined BEFORE the dir-merge directive (smaller order than the
+        // directive's recorded position) therefore wins over the merge file's
+        // rules; one defined at or after the directive loses to them. Compare
+        // the winning scope's directive position against the global first-match
+        // order to reproduce that interleaving.
+        match self.best_scope(path, is_dir, false) {
+            Some(scope)
+                if self
+                    .global
+                    .transfer_match_order_during_traversal(path, is_dir)
+                    .is_none_or(|global_order| scope.directive_order <= global_order) =>
+            {
+                scope.filter_set.allows_during_traversal(path, is_dir)
+            }
+            _ => self.global.allows_during_traversal(path, is_dir),
+        }
+    }
+
+    /// Selects the per-directory scope whose rules win under upstream's
+    /// source-ordered first-match, or `None` when no applicable scope matches.
+    ///
+    /// Scopes are scanned innermost-first. Among matching scopes the one with
+    /// the smallest [`directive_order`](DirScope::directive_order) wins: an
+    /// earlier `dir-merge` directive sits earlier in upstream's single rule
+    /// list. Ties (scopes of the same merge config across nested directories)
+    /// keep the innermost, preserving upstream's local-before-inherited order
+    /// within one mergelist.
+    fn best_scope(&self, path: &Path, is_dir: bool, deletion: bool) -> Option<&DirScope> {
+        let mut best: Option<&DirScope> = None;
         for scope in self.scopes.iter().rev() {
-            if !self.scope_applies_here(scope) {
+            if !self.scope_applies_here(scope) || scope.filter_set.is_empty() {
                 continue;
             }
-            if !scope.filter_set.is_empty()
-                && scope_has_transfer_match(&scope.filter_set, path, is_dir)
-            {
-                return scope.filter_set.allows_during_traversal(path, is_dir);
+            let matched = if deletion {
+                scope_has_deletion_match(&scope.filter_set, path, is_dir)
+            } else {
+                scope_has_transfer_match(&scope.filter_set, path, is_dir)
+            };
+            if !matched {
+                continue;
+            }
+            match best {
+                Some(current) if current.directive_order <= scope.directive_order => {}
+                _ => best = Some(scope),
             }
         }
-
-        self.global.allows_during_traversal(path, is_dir)
+        best
     }
 
     /// Returns `true` if deleting the path on the receiver is permitted.
     ///
-    /// Evaluates per-directory scopes from innermost to outermost, then
-    /// global rules. A path may be deleted when it is included by
-    /// receiver-side rules and no protect rule matches.
+    /// Global rules and per-directory scopes are interleaved by source order
+    /// exactly as in [`allows`](Self::allows): a global rule before a
+    /// `dir-merge` directive wins over the merge file's rules, one after loses.
+    /// A path may be deleted when the deciding rule includes it (or leaves it
+    /// unmatched) and no protect rule matches.
     ///
     /// Non-inheriting scopes follow the same depth-restricted lookup as
     /// [`allows`](Self::allows).
@@ -253,31 +297,33 @@ impl FilterChain {
         // still protects it). Mirror that by OR-ing in the
         // "excluded-removed" decision whenever `delete_excluded` is set, on
         // whichever scope (or the global set) decides the path.
-        let result = (|| {
-            for scope in self.scopes.iter().rev() {
-                if !self.scope_applies_here(scope) {
-                    continue;
-                }
-                if !scope.filter_set.is_empty()
-                    && scope_has_deletion_match(&scope.filter_set, path, is_dir)
-                {
-                    let base = scope
-                        .filter_set
-                        .allows_deletion_during_traversal(path, is_dir);
-                    return base
-                        || (self.delete_excluded
-                            && scope
-                                .filter_set
-                                .allows_deletion_when_excluded_removed(path, is_dir));
-                }
-            }
-
-            let base = self.global.allows_deletion(path, is_dir);
-            base || (self.delete_excluded
-                && self
+        // upstream: exclude.c:1046-1050 - as on the transfer path, a global rule
+        // preceding the dir-merge directive wins over the merge file's rules. The
+        // scope decides only when its directive position is at or before the
+        // global deletion first-match order.
+        let result = match self.best_scope(path, is_dir, true) {
+            Some(scope)
+                if self
                     .global
-                    .allows_deletion_when_excluded_removed(path, is_dir))
-        })();
+                    .deletion_match_order_during_traversal(path, is_dir)
+                    .is_none_or(|global_order| scope.directive_order <= global_order) =>
+            {
+                let base = scope
+                    .filter_set
+                    .allows_deletion_during_traversal(path, is_dir);
+                base || (self.delete_excluded
+                    && scope
+                        .filter_set
+                        .allows_deletion_when_excluded_removed(path, is_dir))
+            }
+            _ => {
+                let base = self.global.allows_deletion(path, is_dir);
+                base || (self.delete_excluded
+                    && self
+                        .global
+                        .allows_deletion_when_excluded_removed(path, is_dir))
+            }
+        };
 
         logging::debug_log!(
             Filter,
@@ -476,6 +522,7 @@ impl FilterChain {
             // Capture before the mutable-borrow clear below drops the `config`
             // reference into `self.merge_configs`.
             let config_inherits = config.inherits();
+            let config_directive_order = config.directive_order();
 
             let filter_set = match FilterSet::from_rules(modified_rules) {
                 Ok(set) => set,
@@ -505,6 +552,7 @@ impl FilterChain {
                     filter_set,
                     inherits: config_inherits,
                     config_index: Some(config_index),
+                    directive_order: config_directive_order,
                 });
                 pushed_count += 1;
             }
@@ -664,6 +712,8 @@ impl FilterChain {
             .merge_configs
             .iter()
             .position(|c| c.filename() == descriptor.filename);
+        let directive_order =
+            config_index.map_or(0, |index| self.merge_configs[index].directive_order());
 
         // upstream: exclude.c:1248-1254 - `:C` implies FILTRULE_NO_INHERIT,
         // so the loaded rules apply only to the directory containing the
@@ -674,6 +724,7 @@ impl FilterChain {
             filter_set,
             inherits: !descriptor.no_inherit,
             config_index,
+            directive_order,
         });
         Ok(1)
     }
@@ -792,6 +843,7 @@ impl FilterChain {
                 filter_set,
                 inherits: true,
                 config_index: None,
+                directive_order: 0,
             });
         }
         DirFilterGuard {

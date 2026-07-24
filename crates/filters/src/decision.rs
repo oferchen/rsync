@@ -231,6 +231,67 @@ impl FilterSetInner {
         decision
     }
 
+    /// Returns the `order` of the sender-side include/exclude rule that wins a
+    /// traversal transfer check, or `None` when no rule matches.
+    ///
+    /// This exposes the source-stream position of the rule
+    /// [`allows_during_traversal`](crate::FilterSet::allows_during_traversal)
+    /// acts on, so the per-directory chain can interleave a `dir-merge` scope
+    /// against global rules by source order. Descendant matchers are suppressed
+    /// (`check_descendants == false`), matching the traversal transfer path.
+    ///
+    /// upstream: exclude.c:1046-1050 check_filter()
+    pub(crate) fn transfer_match_order(&self, path: &Path, is_dir: bool) -> Option<usize> {
+        first_matching_rule(
+            &self.include_exclude,
+            path,
+            is_dir,
+            |rule| rule.applies_to_sender,
+            true,
+            false,
+            false,
+        )
+        .map(|rule| rule.order)
+    }
+
+    /// Returns the `order` of the receiver-side rule that decides a traversal
+    /// deletion check, or `None` when no rule matches.
+    ///
+    /// The winner is the earlier (by `order`) of the include/exclude and
+    /// protect/risk first-matches, reproducing the single-list first-match that
+    /// upstream `check_filter()` performs and that
+    /// [`deletion_first_match_deletable`] resolves the verdict from. Used by the
+    /// chain to interleave a `dir-merge` scope against global rules by source
+    /// order on the deletion path.
+    ///
+    /// upstream: exclude.c:1038 check_filter()
+    pub(crate) fn deletion_match_order(&self, path: &Path, is_dir: bool) -> Option<usize> {
+        let include_exclude = first_matching_rule(
+            &self.include_exclude,
+            path,
+            is_dir,
+            |rule| rule.applies_to_receiver,
+            true,
+            false,
+            true,
+        );
+        let protect_risk = first_matching_rule(
+            &self.protect_risk,
+            path,
+            is_dir,
+            |rule| rule.applies_to_receiver,
+            true,
+            false,
+            true,
+        );
+        match (include_exclude, protect_risk) {
+            (Some(ie), Some(pr)) => Some(ie.order.min(pr.order)),
+            (Some(ie), None) => Some(ie.order),
+            (None, Some(pr)) => Some(pr.order),
+            (None, None) => None,
+        }
+    }
+
     /// Returns `true` when any rule in this set (in the supplied direction)
     /// matches the path.
     ///
