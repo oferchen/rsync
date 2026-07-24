@@ -533,6 +533,147 @@ mod flist_deserialization_tests {
         assert_eq!(reader.io_error(), 0);
     }
 
+    /// Under `--numeric-ids` the sender emits no post-flist id-lists
+    /// (upstream `flist.c:2548` requires `numeric_ids <= 0`), so the reader
+    /// must not try to consume them even though `preserve_uid`/`preserve_gid`
+    /// are set. Reading them would decode the following delta bytes as a
+    /// varint id-list and desync the stream. WHY: this guards the exact
+    /// upstream `uidlist.c:465,473` `numeric_ids <= 0` gate.
+    #[test]
+    fn numeric_ids_skips_id_list_reads() {
+        let temp_dir = TempDir::new().unwrap();
+        let batch_path = temp_dir.path().join("flist_numeric.batch");
+        let protocol_version = 31;
+
+        let write_config = BatchConfig::new(
+            BatchMode::Write,
+            batch_path.to_string_lossy().to_string(),
+            protocol_version,
+        );
+
+        let mut writer = BatchWriter::new(write_config).unwrap();
+        let flags = BatchFlags {
+            preserve_uid: true,
+            preserve_gid: true,
+            ..Default::default()
+        };
+        writer.write_header(flags).unwrap();
+
+        let protocol = protocol::ProtocolVersion::try_from(protocol_version as u8).unwrap();
+        let mut flist_writer = FileListWriter::new(protocol)
+            .with_preserve_uid(true)
+            .with_preserve_gid(true);
+
+        let mut entry = ProtocolFileEntry::new_file("alpha.txt".into(), 1024, 0o644);
+        entry.set_mtime(1_700_000_000, 0);
+        entry.set_uid(1000);
+        entry.set_gid(1000);
+
+        let mut buf = Vec::new();
+        flist_writer.write_entry(&mut buf, &entry).unwrap();
+        writer.write_data(&buf).unwrap();
+
+        let mut end_buf = Vec::new();
+        flist_writer.write_end(&mut end_buf, None).unwrap();
+        writer.write_data(&end_buf).unwrap();
+
+        // No id-lists follow (as under --numeric-ids); the next byte is a
+        // sentinel standing in for the delta stream.
+        writer.write_data(&[0xAB]).unwrap();
+        writer.finalize().unwrap();
+
+        let read_config = BatchConfig::new(
+            BatchMode::Read,
+            batch_path.to_string_lossy().to_string(),
+            protocol_version,
+        )
+        .with_numeric_ids(true);
+        let mut reader = BatchReader::new(read_config).unwrap();
+        reader.read_header().unwrap();
+
+        let read_entries = reader.read_protocol_flist().unwrap();
+        assert_eq!(read_entries.len(), 1);
+        assert_eq!(read_entries[0].name(), "alpha.txt");
+
+        // The sentinel must still be the next byte: the reader did not consume
+        // any id-list bytes.
+        let mut next = [0u8; 1];
+        reader.read_exact(&mut next).unwrap();
+        assert_eq!(next[0], 0xAB, "reader consumed bytes past the flist");
+    }
+
+    /// Without `--numeric-ids`, the sender emits empty uid/gid id-lists after
+    /// the flist (`uidlist.c:465,473` with `numeric_ids <= 0`), so the reader
+    /// must consume them to stay aligned for delta replay. WHY: proves the
+    /// `numeric_ids` gate does not regress the default id-list-consuming path.
+    #[test]
+    fn non_numeric_ids_consumes_id_lists() {
+        let temp_dir = TempDir::new().unwrap();
+        let batch_path = temp_dir.path().join("flist_non_numeric.batch");
+        let protocol_version = 31;
+
+        let write_config = BatchConfig::new(
+            BatchMode::Write,
+            batch_path.to_string_lossy().to_string(),
+            protocol_version,
+        );
+
+        let mut writer = BatchWriter::new(write_config).unwrap();
+        let flags = BatchFlags {
+            preserve_uid: true,
+            preserve_gid: true,
+            ..Default::default()
+        };
+        writer.write_header(flags).unwrap();
+
+        let protocol = protocol::ProtocolVersion::try_from(protocol_version as u8).unwrap();
+        let mut flist_writer = FileListWriter::new(protocol)
+            .with_preserve_uid(true)
+            .with_preserve_gid(true);
+
+        let mut entry = ProtocolFileEntry::new_file("alpha.txt".into(), 1024, 0o644);
+        entry.set_mtime(1_700_000_000, 0);
+        entry.set_uid(1000);
+        entry.set_gid(1000);
+
+        let mut buf = Vec::new();
+        flist_writer.write_entry(&mut buf, &entry).unwrap();
+        writer.write_data(&buf).unwrap();
+
+        let mut end_buf = Vec::new();
+        flist_writer.write_end(&mut end_buf, None).unwrap();
+        writer.write_data(&end_buf).unwrap();
+
+        // Empty uid and gid id-lists (terminator-only), then a delta sentinel.
+        let mut id_buf = Vec::new();
+        protocol::idlist::IdList::new()
+            .write(&mut id_buf, false, protocol_version as u8)
+            .unwrap();
+        protocol::idlist::IdList::new()
+            .write(&mut id_buf, false, protocol_version as u8)
+            .unwrap();
+        writer.write_data(&id_buf).unwrap();
+        writer.write_data(&[0xAB]).unwrap();
+        writer.finalize().unwrap();
+
+        let read_config = BatchConfig::new(
+            BatchMode::Read,
+            batch_path.to_string_lossy().to_string(),
+            protocol_version,
+        )
+        .with_numeric_ids(false);
+        let mut reader = BatchReader::new(read_config).unwrap();
+        reader.read_header().unwrap();
+
+        let read_entries = reader.read_protocol_flist().unwrap();
+        assert_eq!(read_entries.len(), 1);
+
+        // The id-list terminators were consumed, so the sentinel is next.
+        let mut next = [0u8; 1];
+        reader.read_exact(&mut next).unwrap();
+        assert_eq!(next[0], 0xAB, "reader did not consume the id-lists");
+    }
+
     /// Validates that `always_checksum` (--checksum / -c) is correctly wired
     /// to the flist reader. When this flag is set, each regular file entry
     /// in the flist carries a trailing checksum. If the reader doesn't consume

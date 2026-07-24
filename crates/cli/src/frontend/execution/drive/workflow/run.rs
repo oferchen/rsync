@@ -729,6 +729,10 @@ where
     // --numeric-ids) from raw_argv, eliding the filename operands. Capture the
     // raw argv and operands so the batch script generator can re-emit them.
     let batch_config = batch_config.map(|cfg| {
+        // upstream: flist.c:2548 - the writer omits the post-flist id-lists under
+        // --numeric-ids (numeric_ids is not a recorded stream flag), so carry it
+        // into the batch config for both write and read modes.
+        let cfg = cfg.with_numeric_ids(numeric_ids);
         if cfg.is_write_mode() {
             let replay_args: Vec<String> = std::env::args_os()
                 .map(|a| a.to_string_lossy().into_owned())

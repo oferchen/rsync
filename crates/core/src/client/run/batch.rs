@@ -345,10 +345,13 @@ fn replay_batch(
 
     // upstream: batch.c:120 check_batch_flags() reconciles the active options
     // against the batch header during replay, so carry the current flag state
-    // into the reader.
+    // into the reader. numeric_ids is not a recorded stream flag (batch.c:59-76);
+    // it comes from the replay invocation and gates the post-flist id-list region
+    // (uidlist.c:465,473 `numeric_ids <= 0`).
     let replay_cfg = batch_cfg
         .clone()
-        .with_active_flags(config_batch_flags(config));
+        .with_active_flags(config_batch_flags(config))
+        .with_numeric_ids(config.numeric_ids());
 
     let result = engine::batch::replay::replay(&replay_cfg, &dest_root, config.verbosity().into())
         .map_err(|e| match e {
