@@ -224,7 +224,7 @@ pub fn send_sender_xattr_response<W: Write>(
 /// - `xattrs.c:275-281` - `sum_init(xattr_sum_nni, checksum_seed)` over the datum.
 /// - `checksum.c:588-597` - `sum_init()` `CSUM_MD5` case: `md5_begin()`, no seed.
 /// - `compat.c:824-825` - `xattr_sum_nni` / `xattr_sum_len` fixed to md5 (16 bytes).
-pub(super) fn compute_xattr_checksum(
+pub(crate) fn compute_xattr_checksum(
     data: &[u8],
     checksum_seed: i32,
 ) -> [u8; MAX_XATTR_DIGEST_LEN] {
