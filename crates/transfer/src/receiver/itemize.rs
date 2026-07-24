@@ -368,6 +368,10 @@ impl ReceiverContext {
             line,
             itemize,
             name: entry.path().to_path_buf(),
+            // upstream log.c: `%f` only joins F_PATHNAME when am_sender. On a pull
+            // the local client is the receiver, so `%f` is the relative name (==
+            // `%n` minus a directory's trailing slash) - no source prefix.
+            source_prefix: None,
             size: entry.size(),
             mtime: entry.mtime(),
             mtime_nsec: entry.mtime_nsec(),

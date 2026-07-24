@@ -483,7 +483,17 @@ impl GeneratorContext {
                 // entry metadata) so a client rendering a custom `--out-format`
                 // can rebuild a rich event; the default impl prints `line`.
                 let itemize = super::itemize::format_iflags(iflags, entry, true, &ctx);
-                let row = super::itemize::build_itemize_row(entry, iflags, &line, &itemize);
+                // upstream: log.c `%f` joins F_PATHNAME(file) with the name on a
+                // push (am_sender); source_prefix_for supplies the equivalent full
+                // source path, or None off the sender path (falls back to %n).
+                let source_prefix = self.source_prefix_for(ndx);
+                let row = super::itemize::build_itemize_row(
+                    entry,
+                    iflags,
+                    &line,
+                    &itemize,
+                    source_prefix.as_deref(),
+                );
                 cb.on_itemize_row(&row);
             }
             Ok(())
@@ -581,7 +591,14 @@ impl GeneratorContext {
             // mixing `%i` with other codes renders the correct itemize string.
             let ctx = self.itemize_context();
             let itemize = super::itemize::format_iflags(iflags, entry, true, &ctx);
-            let row = super::itemize::build_itemize_row(entry, iflags, &line, &itemize);
+            let source_prefix = self.source_prefix_for(ndx);
+            let row = super::itemize::build_itemize_row(
+                entry,
+                iflags,
+                &line,
+                &itemize,
+                source_prefix.as_deref(),
+            );
             cb.on_itemize_row(&row);
         }
         Ok(())

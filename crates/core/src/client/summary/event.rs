@@ -122,6 +122,10 @@ pub struct ClientEvent {
     /// no `LocalCopyChangeSet`, so it carries the sender's already-correct
     /// 11-character itemize string here for the renderer to emit verbatim.
     precomputed_itemize: Option<String>,
+    /// Full source-side path supplied by a remote push sender, for the `%f`
+    /// placeholder (upstream `F_PATHNAME` joined with the name). `None` on a pull
+    /// or local copy, where `%f` falls back to [`Self::relative_path`].
+    source_prefix: Option<PathBuf>,
 }
 
 impl ClientEvent {
@@ -217,6 +221,7 @@ impl ClientEvent {
             hardlink_uptodate,
             is_directory,
             precomputed_itemize: None,
+            source_prefix: None,
         }
     }
 
@@ -242,6 +247,7 @@ impl ClientEvent {
             hardlink_uptodate: false,
             is_directory: false,
             precomputed_itemize: None,
+            source_prefix: None,
         }
     }
 
@@ -281,6 +287,7 @@ impl ClientEvent {
             hardlink_uptodate: false,
             is_directory,
             precomputed_itemize: None,
+            source_prefix: None,
         }
     }
 
@@ -318,6 +325,7 @@ impl ClientEvent {
             hardlink_uptodate: false,
             is_directory: fields.is_dir,
             precomputed_itemize: Some(fields.itemize),
+            source_prefix: fields.source_prefix,
         }
     }
 
@@ -325,6 +333,13 @@ impl ClientEvent {
     #[must_use]
     pub fn relative_path(&self) -> &Path {
         &self.relative_path
+    }
+
+    /// Returns the full source-side path for the `%f` placeholder, when a remote
+    /// push sender supplied one. `None` on a pull or local copy.
+    #[must_use]
+    pub fn source_prefix(&self) -> Option<&Path> {
+        self.source_prefix.as_deref()
     }
 
     /// Returns the action recorded by this event.
@@ -467,6 +482,7 @@ impl ClientEvent {
             hardlink_uptodate: false,
             is_directory: false,
             precomputed_itemize: None,
+            source_prefix: None,
         }
     }
 
@@ -530,6 +546,7 @@ mod tests {
     fn from_remote_itemize_carries_override_and_metadata() {
         let event = ClientEvent::from_remote_itemize(RemoteItemizeFields {
             relative_path: PathBuf::from("sub/f.txt"),
+            source_prefix: Some(PathBuf::from("srcroot/docs/sub/f.txt")),
             itemize: ">f+++++++++".to_owned(),
             mode: 0o100_644,
             size: 42,
@@ -545,6 +562,11 @@ mod tests {
         });
         assert_eq!(event.itemize_override(), Some(">f+++++++++"));
         assert_eq!(event.relative_path(), Path::new("sub/f.txt"));
+        // A push sender's full source path rides along for the `%f` placeholder.
+        assert_eq!(
+            event.source_prefix(),
+            Some(Path::new("srcroot/docs/sub/f.txt"))
+        );
         assert!(event.was_created());
         assert!(matches!(event.kind(), ClientEventKind::DataCopied));
         let metadata = event.metadata().expect("metadata present");
@@ -556,6 +578,7 @@ mod tests {
     fn from_remote_itemize_deletion_maps_to_entry_deleted() {
         let event = ClientEvent::from_remote_itemize(RemoteItemizeFields {
             relative_path: PathBuf::from("gone.txt"),
+            source_prefix: None,
             itemize: "*deleting  ".to_owned(),
             mode: 0o100_644,
             size: 0,

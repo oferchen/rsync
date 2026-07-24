@@ -122,6 +122,52 @@ pub fn pull_into(
     run(cmd)
 }
 
+/// Push `src/` into `dst` with the client under test as the *sender*, over one
+/// transport. The remote *receiver* is always upstream rsync (via `--rsync-path`
+/// for ssh/russh, an upstream writable `--daemon` module for `rsync://`), so only
+/// the client sender varies between two runs of a cell. This is the direction
+/// that exercises sender-only rendering such as `--out-format` `%f`.
+pub fn push_into(
+    transport: Transport,
+    client: &Path,
+    upstream: &Path,
+    src: &Path,
+    dst: &Path,
+    flags: &[String],
+    work: &Path,
+) -> TaskResult<Output> {
+    reset_dir(dst)?;
+    let src_arg = format!("{}/", src.display());
+    let mut cmd = Command::new(client);
+    cmd.args(flags);
+
+    match transport {
+        Transport::Local => {
+            cmd.arg(&src_arg).arg(format!("{}/", dst.display()));
+        }
+        Transport::SshSubprocess => {
+            cmd.arg(format!("--rsync-path={}", upstream.display()))
+                .arg("-e")
+                .arg("ssh -o BatchMode=yes -o StrictHostKeyChecking=no")
+                .arg(&src_arg)
+                .arg(format!("localhost:{}/", dst.display()));
+        }
+        Transport::Russh => {
+            cmd.arg(format!("--rsync-path={}", upstream.display()))
+                .arg(&src_arg)
+                .arg(format!("ssh://localhost{}/", dst.display()));
+        }
+        Transport::Daemon => {
+            let daemon = DaemonHandle::start_writable(upstream, dst, work)?;
+            cmd.arg(&src_arg).arg(daemon.module_url());
+            let out = run(cmd)?;
+            drop(daemon);
+            return Ok(out);
+        }
+    }
+    run(cmd)
+}
+
 /// Run a prepared command, capturing combined output.
 fn run(mut cmd: Command) -> TaskResult<Output> {
     cmd.output()
@@ -149,13 +195,34 @@ pub struct DaemonHandle {
 }
 
 impl DaemonHandle {
-    /// Start `daemon_bin --daemon` exporting `export_dir` (read-only, no chroot)
+    /// Start `daemon_bin --daemon` exporting `export_dir` read-only (no chroot)
     /// on a free loopback port. Waits until the port accepts connections.
     pub fn start(daemon_bin: &Path, export_dir: &Path, work: &Path) -> TaskResult<DaemonHandle> {
+        Self::start_with(daemon_bin, export_dir, work, true)
+    }
+
+    /// Start a daemon exporting `export_dir` writable, so a client can push into
+    /// the module. Used by [`push_into`] to route an rsync:// push at an upstream
+    /// receiver.
+    pub fn start_writable(
+        daemon_bin: &Path,
+        export_dir: &Path,
+        work: &Path,
+    ) -> TaskResult<DaemonHandle> {
+        Self::start_with(daemon_bin, export_dir, work, false)
+    }
+
+    fn start_with(
+        daemon_bin: &Path,
+        export_dir: &Path,
+        work: &Path,
+        read_only: bool,
+    ) -> TaskResult<DaemonHandle> {
         let port = free_port()?;
         let conf = work.join(format!("rsyncd-{port}.conf"));
+        let read_only = if read_only { "true" } else { "false" };
         let body = format!(
-            "use chroot = no\nport = {port}\n[m]\n    path = {}\n    read only = true\n    numeric ids = yes\n",
+            "use chroot = no\nport = {port}\n[m]\n    path = {}\n    read only = {read_only}\n    numeric ids = yes\n",
             export_dir.display()
         );
         std::fs::write(&conf, body)
