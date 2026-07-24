@@ -54,6 +54,10 @@ pub struct ListOnlyEntryFields {
 pub struct RemoteItemizeFields {
     /// Transfer-relative path of the entry.
     pub relative_path: PathBuf,
+    /// Full source-side path (upstream `F_PATHNAME` joined with the name), set
+    /// only on a push where the local side is the sender. Renders the `%f`
+    /// placeholder; `None` on a pull, where `%f` falls back to `relative_path`.
+    pub source_prefix: Option<PathBuf>,
     /// The 11-character `%i` itemize string computed by the sender.
     pub itemize: String,
     /// POSIX mode bits (type + permissions).

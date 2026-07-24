@@ -463,6 +463,30 @@ impl GeneratorContext {
         join_source_path(&self.source_bases[ndx], self.file_list[ndx].path())
     }
 
+    /// Returns the full source path for entry `ndx` for the `%f` out-format
+    /// placeholder, mirroring upstream `log.c` `pathjoin(F_PATHNAME(file),
+    /// f_name(file))`.
+    ///
+    /// `source_bases` is populated only by the sender's local walk
+    /// ([`push_file_item`](Self::push_file_item)); on a pull the flist arrives over
+    /// the wire and the array is empty, so this returns `None` and `%f` falls back
+    /// to the transfer-relative name - matching upstream, where `%f` only joins
+    /// `F_PATHNAME(file)` when `am_sender`.
+    ///
+    /// This is a literal component join, distinct from
+    /// [`reconstruct_source_path`](Self::reconstruct_source_path): the latter
+    /// collapses a `.` transfer-root name to the bare base so it opens the same
+    /// inode, whereas upstream `%f` keeps the `.` (rendering `<base>/.`), so the
+    /// join here must not special-case it.
+    pub(crate) fn source_prefix_for(&self, ndx: usize) -> Option<PathBuf> {
+        if ndx >= self.source_bases.len() {
+            return None;
+        }
+        let mut path = self.source_bases[ndx].to_path_buf();
+        path.extend(self.file_list[ndx].path().components());
+        Some(path)
+    }
+
     /// Clears both the file list and the source-base array.
     ///
     /// This method maintains the invariant that both arrays are cleared together

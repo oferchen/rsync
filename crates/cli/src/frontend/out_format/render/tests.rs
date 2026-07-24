@@ -5,7 +5,7 @@
 
 use std::path::PathBuf;
 
-use core::client::{ClientEntryKind, ClientEvent, ClientEventKind};
+use core::client::{ClientEntryKind, ClientEvent, ClientEventKind, RemoteItemizeFields};
 use engine::local_copy::{LocalCopyChangeSet, TimeChange};
 
 use crate::frontend::out_format::parser::parse_out_format;
@@ -1396,6 +1396,50 @@ fn render_percent_f_no_trailing_slash_for_directory() {
         !rendered.trim().ends_with('/'),
         "%%f should not add trailing slash: {rendered:?}"
     );
+}
+
+/// Builds a remote push event whose sender supplied a full source path.
+fn remote_event_with_source_prefix(relative: &str, source_prefix: Option<&str>) -> ClientEvent {
+    ClientEvent::from_remote_itemize(RemoteItemizeFields {
+        relative_path: PathBuf::from(relative),
+        source_prefix: source_prefix.map(PathBuf::from),
+        itemize: ">f+++++++++".to_owned(),
+        mode: 0o100_644,
+        size: 4,
+        mtime: 1_700_000_000,
+        mtime_nsec: 0,
+        uid: None,
+        gid: None,
+        is_dir: false,
+        is_symlink: false,
+        symlink_target: None,
+        is_new: true,
+        is_deletion: false,
+    })
+}
+
+#[test]
+fn render_percent_f_uses_push_source_prefix() {
+    // upstream log.c: on a push `%f` is pathjoin(F_PATHNAME, f_name); the sender
+    // supplies the full source path while `%n` stays transfer-relative.
+    let event = remote_event_with_source_prefix("afile.txt", Some("srcroot/docs/afile.txt"));
+    assert_eq!(render_format("%f", &event), "srcroot/docs/afile.txt\n");
+    assert_eq!(render_format("%n", &event), "afile.txt\n");
+}
+
+#[test]
+fn render_percent_f_strips_single_leading_slash() {
+    // upstream log.c: `%f` strips a single leading '/' from the joined path.
+    let event = remote_event_with_source_prefix("afile.txt", Some("/abs/docs/afile.txt"));
+    assert_eq!(render_format("%f", &event), "abs/docs/afile.txt\n");
+}
+
+#[test]
+fn render_percent_f_falls_back_to_relative_without_source_prefix() {
+    // On a pull the sender supplies no source path, so `%f` is the relative name
+    // (upstream's else branch: just f_name, no F_PATHNAME join).
+    let event = remote_event_with_source_prefix("docs/afile.txt", None);
+    assert_eq!(render_format("%f", &event), "docs/afile.txt\n");
 }
 
 #[test]

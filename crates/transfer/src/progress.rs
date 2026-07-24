@@ -94,6 +94,10 @@ pub struct ItemizeRow<'a> {
     pub itemize: &'a str,
     /// Transfer-relative path of the entry.
     pub name: &'a std::path::Path,
+    /// Full source-side path of the entry (upstream `F_PATHNAME` joined with the
+    /// file name), set only on a push where the local side is the sender. Renders
+    /// the `%f` placeholder; `None` on a pull, where `%f` falls back to `name`.
+    pub source_prefix: Option<&'a std::path::Path>,
     /// File length in bytes.
     pub size: u64,
     /// Modification time, whole seconds since the Unix epoch.
@@ -134,6 +138,8 @@ pub struct OwnedItemizeRow {
     pub itemize: String,
     /// Owned copy of [`ItemizeRow::name`].
     pub name: std::path::PathBuf,
+    /// Owned copy of [`ItemizeRow::source_prefix`].
+    pub source_prefix: Option<std::path::PathBuf>,
     /// See [`ItemizeRow::size`].
     pub size: u64,
     /// See [`ItemizeRow::mtime`].
@@ -166,6 +172,7 @@ impl OwnedItemizeRow {
             line: &self.line,
             itemize: &self.itemize,
             name: &self.name,
+            source_prefix: self.source_prefix.as_deref(),
             size: self.size,
             mtime: self.mtime,
             mtime_nsec: self.mtime_nsec,

@@ -30,6 +30,7 @@ mod metadata;
 mod mkpath;
 mod modify_window;
 mod one_file_system;
+mod out_format;
 mod progress;
 mod protected_regular;
 mod prune_empty_dirs;
@@ -84,6 +85,7 @@ pub fn all() -> Vec<Box<dyn Check>> {
         Box::new(progress::Progress),
         Box::new(verbosity::Verbosity),
         Box::new(itemize::Itemize),
+        Box::new(out_format::OutFormat),
         Box::new(dry_run::DryRun),
         Box::new(banner::Banner),
         Box::new(stats::Stats),
