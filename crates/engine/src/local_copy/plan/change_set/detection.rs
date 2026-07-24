@@ -88,6 +88,30 @@ impl LocalCopyChangeSet {
         // follows the link, so a symlink's own perms cannot be changed and
         // upstream rsync never reports ITEM_REPORT_PERMS for them.
         let is_symlink = metadata.file_type().is_symlink();
+
+        // upstream: generator.c:531-533 - itemize() sets ITEM_REPORT_ATIME when
+        // `atimes_ndx` (`-U`) is active for a non-dir, non-symlink whose access
+        // time differs from the destination. same_time() is called with a zero
+        // nanosecond component for both sides (F_ATIME(file) and st_atime), so
+        // this is a whole-second comparison honouring `--modify-window`. The
+        // `for_file` constructor only ever handles regular files and symlinks,
+        // so `!is_symlink` matches upstream's `!S_ISLNK` guard; a fresh
+        // destination is instead covered by the ITEM_IS_NEW `+` fill.
+        #[cfg(unix)]
+        if !is_symlink
+            && metadata_options.atimes()
+            && destination_previously_existed
+            && let Some(existing_metadata) = existing
+            && !modify_window.same_time(
+                metadata_access_secs(metadata),
+                0,
+                metadata_access_secs(existing_metadata),
+                0,
+            )
+        {
+            change_set = change_set.with_access_time_changed(true);
+        }
+
         if !is_symlink
             && metadata_options.permissions()
             && permissions_changed(metadata, existing, destination_previously_existed)
@@ -459,6 +483,16 @@ fn group_changed(
 /// Extracts the modification time from filesystem metadata.
 fn metadata_modified_time(metadata: &fs::Metadata) -> Option<SystemTime> {
     metadata.modified().ok()
+}
+
+/// Extracts the whole-second access time from filesystem metadata.
+///
+/// upstream: generator.c:532 compares `st_atime` via `same_time(..., 0, ..., 0)`
+/// - a zero nanosecond component on both sides - so only whole seconds matter.
+#[cfg(unix)]
+fn metadata_access_secs(metadata: &fs::Metadata) -> i64 {
+    use std::os::unix::fs::MetadataExt;
+    metadata.atime()
 }
 
 /// Extracts the Unix permission mode from filesystem metadata.
