@@ -149,6 +149,9 @@ pub(crate) struct ConfigInputs {
     /// Mirrors upstream `stdout_format_has_i`, derived from the resolved format
     /// string rather than the `-i` flag. upstream: options.c:2345-2358,2772-2775.
     pub(crate) out_format_forwards_i: bool,
+    /// A custom `--out-format` template was given, so remote per-file output is
+    /// rendered client-side from collected events instead of the server line.
+    pub(crate) render_out_format_locally: bool,
     /// Explicit `--out-format` / `--log-format` contains `%o` but not `%i`;
     /// forwards `--log-format=%o`. upstream: options.c:2776-2777.
     pub(crate) out_format_has_operation: bool,
@@ -347,6 +350,7 @@ pub(crate) fn build_base_config(mut inputs: ConfigInputs) -> ClientConfigBuilder
         .remove_source_files(inputs.remove_source_files)
         .remove_sent_files(inputs.remove_sent_files)
         .out_format_forwards_i(inputs.out_format_forwards_i)
+        .render_out_format_locally(inputs.render_out_format_locally)
         .out_format_has_operation(inputs.out_format_has_operation)
         .out_format_placeholder(inputs.out_format_placeholder)
         .inplace(inputs.inplace)

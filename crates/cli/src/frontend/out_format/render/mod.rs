@@ -68,6 +68,12 @@ impl OutFormat {
 /// | ITEM_REPORT_XATTR) || INFO_GTE(NAME, 2) || stdout_format_has_i > 1
 /// || (xname && *xname)`.
 fn should_suppress_event(event: &ClientEvent, context: &OutFormatContext) -> bool {
+    if event.itemize_override().is_some() {
+        // A remote transfer supplies a row only when the sender's own emit gate
+        // fired (generator.c:582-583 on the remote side), and it has no local
+        // `change_set` to re-derive the gate from - so never re-suppress it.
+        return false;
+    }
     if context.emit_unchanged() || context.itemize_repeated() {
         // upstream: generator.c:582-583 - two separate arms force the itemize
         // line for unchanged entries: `INFO_GTE(NAME, 2)` (`-vv`, threaded as

@@ -10,9 +10,43 @@
 //! - `log.c:695-746` - `%i` expansion in `log_formatted()`
 //! - `rsync.h:214-236` - `ITEM_*` flag definitions
 
+use std::path::PathBuf;
+
 use protocol::flist::FileEntry;
 
 use super::item_flags::ItemFlags;
+use crate::progress::ItemizeRow;
+
+/// Assembles the structured [`ItemizeRow`] handed to a client itemize callback.
+///
+/// Borrows the entry's path/target and the caller-owned `line`/`itemize`
+/// strings, and copies out the scalar metadata a client needs to render an
+/// arbitrary `--out-format` template (`%l`/`%M`/`%B`/`%U`/`%G`) without touching
+/// the sender's `FileEntry` internals.
+pub(crate) fn build_itemize_row<'a>(
+    entry: &'a FileEntry,
+    iflags: &ItemFlags,
+    line: &'a str,
+    itemize: &'a str,
+) -> ItemizeRow<'a> {
+    let raw = iflags.raw();
+    ItemizeRow {
+        line,
+        itemize,
+        name: entry.path().as_path(),
+        size: entry.size(),
+        mtime: entry.mtime(),
+        mtime_nsec: entry.mtime_nsec(),
+        mode: entry.mode(),
+        uid: entry.uid(),
+        gid: entry.gid(),
+        is_dir: entry.is_dir(),
+        is_symlink: entry.is_symlink(),
+        symlink_target: entry.link_target().map(PathBuf::as_path),
+        is_new: raw & ItemFlags::ITEM_IS_NEW != 0,
+        is_deletion: raw & ItemFlags::ITEM_DELETED != 0,
+    }
+}
 
 /// Context needed for correct time-position rendering in itemize output.
 ///
@@ -43,7 +77,6 @@ impl Default for ItemizeContext {
     }
 }
 
-#[cfg(test)]
 /// Formats the 11-character itemize string from raw item flags and file entry.
 ///
 /// Produces the upstream `YXcstpoguax` string where:
@@ -69,139 +102,11 @@ pub(crate) fn format_iflags(
     is_sender: bool,
     ctx: &ItemizeContext,
 ) -> String {
-    let raw = iflags.raw();
-
-    // upstream: log.c:696-698 - deleted items
-    if raw & ItemFlags::ITEM_DELETED != 0 {
-        return "*deleting  ".to_owned();
-    }
-
-    let mut c = ['.'; 11];
-
-    // Position 0: update type
-    // upstream: log.c:701-704
-    c[0] = if raw & ItemFlags::ITEM_LOCAL_CHANGE != 0 {
-        if raw & ItemFlags::ITEM_XNAME_FOLLOWS != 0 {
-            'h'
-        } else {
-            'c'
-        }
-    } else if raw & ItemFlags::ITEM_TRANSFER == 0 {
-        '.'
-    } else if is_sender {
-        '<'
-    } else {
-        '>'
-    };
-
-    // Position 1: file type
-    // upstream: log.c:705-714
-    let is_symlink = entry.is_symlink();
-    c[1] = if is_symlink {
-        'L'
-    } else if entry.is_dir() {
-        'd'
-    } else if entry.is_special() {
-        'S'
-    } else if entry.is_device() {
-        'D'
-    } else {
-        'f'
-    };
-
-    // Positions 2-10: attribute change indicators
-    // upstream: log.c:719 - checksum
-    c[2] = if raw & ItemFlags::ITEM_REPORT_CHANGE != 0 {
-        'c'
-    } else {
-        '.'
-    };
-
-    // upstream: log.c:707,715 - symlinks never report size
-    c[3] = if is_symlink {
-        '.'
-    } else if raw & ItemFlags::ITEM_REPORT_SIZE != 0 {
-        's'
-    } else {
-        '.'
-    };
-
-    // upstream: log.c:708-710,716-717 - time with T/t distinction
-    c[4] = if raw & ItemFlags::ITEM_REPORT_TIME == 0 {
-        '.'
-    } else if is_symlink {
-        // upstream: log.c:709-710 - symlink: T when !preserve_mtimes,
-        // !receiver_symlink_times, or ITEM_REPORT_TIMEFAIL (bit 2)
-        if !ctx.preserve_mtimes
-            || !ctx.receiver_symlink_times
-            || (raw & ItemFlags::ITEM_REPORT_TIMEFAIL != 0)
-        {
-            'T'
-        } else {
-            't'
-        }
-    } else {
-        // upstream: log.c:716-717 - non-symlink: T when !preserve_mtimes
-        if !ctx.preserve_mtimes { 'T' } else { 't' }
-    };
-
-    // upstream: log.c:720-722 - perms, owner, group
-    c[5] = if raw & ItemFlags::ITEM_REPORT_PERMS != 0 {
-        'p'
-    } else {
-        '.'
-    };
-    c[6] = if raw & ItemFlags::ITEM_REPORT_OWNER != 0 {
-        'o'
-    } else {
-        '.'
-    };
-    c[7] = if raw & ItemFlags::ITEM_REPORT_GROUP != 0 {
-        'g'
-    } else {
-        '.'
-    };
-
-    // upstream: log.c:723-725 - atime/crtime
-    let has_atime = raw & ItemFlags::ITEM_REPORT_ATIME != 0;
-    let has_crtime = raw & ItemFlags::ITEM_REPORT_CRTIME != 0;
-    c[8] = match (has_atime, has_crtime) {
-        (true, true) => 'b',
-        (true, false) => 'u',
-        (false, true) => 'n',
-        (false, false) => '.',
-    };
-
-    // upstream: log.c:726-727 - ACL, xattr
-    c[9] = if raw & ItemFlags::ITEM_REPORT_ACL != 0 {
-        'a'
-    } else {
-        '.'
-    };
-    c[10] = if raw & ItemFlags::ITEM_REPORT_XATTR != 0 {
-        'x'
-    } else {
-        '.'
-    };
-
-    // upstream: log.c:730-734 - new items fill with '+', missing data with '?'
-    if raw & (ItemFlags::ITEM_IS_NEW | ItemFlags::ITEM_MISSING_DATA) != 0 {
-        let ch = if raw & ItemFlags::ITEM_IS_NEW != 0 {
-            '+'
-        } else {
-            '?'
-        };
-        for slot in c[2..].iter_mut() {
-            *slot = ch;
-        }
-    } else if matches!(c[0], '.' | 'h' | 'c') && c[2..].iter().all(|&ch| ch == '.') {
-        // upstream: log.c:735-744 - collapse trailing dots to spaces
-        for slot in c[2..].iter_mut() {
-            *slot = ' ';
-        }
-    }
-
-    c.iter().collect()
+    // Delegates to the single buffer-based implementation so the string and
+    // buffer forms of the itemize row can never drift.
+    let mut buf = String::with_capacity(11);
+    write_iflags_into(&mut buf, iflags, entry, is_sender, ctx);
+    buf
 }
 
 /// Formats a complete itemize output line for MSG_INFO emission.

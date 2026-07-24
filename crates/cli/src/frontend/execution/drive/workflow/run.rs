@@ -863,6 +863,9 @@ where
     let out_format_placeholder = out_format
         .as_ref()
         .is_some_and(|fmt| !log_format_has(fmt, 'i') && !log_format_has(fmt, 'o'));
+    // A custom `--out-format` was supplied: route remote per-file output through
+    // the client's out-format renderer (default `-v`/`-i` keep the server line).
+    let render_out_format_locally = out_format.is_some();
 
     let config_inputs = config::ConfigInputs {
         transfer_operands,
@@ -979,6 +982,7 @@ where
         remove_source_files,
         remove_sent_files,
         out_format_forwards_i,
+        render_out_format_locally,
         out_format_has_operation,
         out_format_placeholder,
         inplace: inplace_enabled,

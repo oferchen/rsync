@@ -125,7 +125,7 @@ pub use self::progress::{ClientProgressObserver, ClientProgressUpdate};
 pub use self::run::{run_client, run_client_with_observer};
 pub use self::summary::{
     ClientEntryKind, ClientEntryMetadata, ClientEvent, ClientEventKind, ClientSummary,
-    ListOnlyEntryFields,
+    ListOnlyEntryFields, RemoteItemizeFields,
 };
 pub use engine::SkipCompressList;
 pub use engine::batch::{BatchConfig, BatchMode};

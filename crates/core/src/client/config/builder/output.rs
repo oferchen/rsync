@@ -76,6 +76,16 @@ impl ClientConfigBuilder {
         self
     }
 
+    /// Records that a custom `--out-format` template is active, so a remote
+    /// transfer collects per-file events for the client's out-format renderer
+    /// rather than printing the server's default preformatted line.
+    #[must_use]
+    #[doc(alias = "--out-format")]
+    pub const fn render_out_format_locally(mut self, enabled: bool) -> Self {
+        self.render_out_format_locally = enabled;
+        self
+    }
+
     /// Records that the explicit `--out-format` / `--log-format` string contains
     /// the `%o` (operation) directive without `%i`, so the remote is told via
     /// `--log-format=%o`.
