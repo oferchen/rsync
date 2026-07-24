@@ -36,9 +36,9 @@ pub(super) const IOERR_VANISHED_ONLY: i32 = 1 << 1;
 ///   suppressed by `ignore_errors`) and moves on to the next entry. When
 ///   `false`, the first non-fatal failure also stops the drain.
 ///
-/// Fatal classifications (see `DeleteEmitter::is_fatal_error`) always
-/// abort the drain regardless of these flags so the caller can surface
-/// the failure with a non-zero exit code.
+/// The emitter never aborts the pass on a per-entry errno on its own
+/// (mirroring upstream `delete.c:86-210`); only `continue_on_error: false`
+/// turns the first failure into an aborting error.
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
 pub struct EmitterErrorPolicy {
     /// Suppress the `io_error` flag for non-fatal failures.

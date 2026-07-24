@@ -23,7 +23,8 @@ use std::sync::Arc;
 const PARALLEL_DELETION_MATCH_THRESHOLD: usize = 64;
 
 use crate::delete::{
-    DeleteContext, DeleteEntry, DeleteEntryKind, DeleteFs, DeletePlan, DeletePlanMap, RealDeleteFs,
+    DeleteContext, DeleteEntry, DeleteEntryKind, DeleteFs, DeletePlan, DeletePlanMap,
+    EMITTER_PARTIAL_EXIT_CODE, RealDeleteFs,
 };
 use crate::local_copy::{CopyContext, LocalCopyAction, LocalCopyError, LocalCopyRecord};
 
@@ -277,9 +278,17 @@ where
     apply_delete_side_effects(context, destination, relative, &plan)?;
 
     if !context.mode().is_dry_run() {
-        let _outcome = ctx.emit_one(fs).map_err(|error| {
+        let outcome = ctx.emit_one(fs).map_err(|error| {
             LocalCopyError::io("emit delete plan", destination.to_path_buf(), error)
         })?;
+        // The emitter never aborts on a per-entry errno; a swallowed
+        // unlink/rmdir error surfaces as exit code 23 in the outcome. Fold
+        // it into the copy context so the run finishes RERR_PARTIAL while the
+        // pass keeps deleting the rest of the tree (upstream delete.c:86-210
+        // FERROR_XFER + `io_error |= IOERR_GENERAL`).
+        if outcome.exit_code == EMITTER_PARTIAL_EXIT_CODE {
+            context.record_delete_io_error();
+        }
     }
 
     Ok(())
