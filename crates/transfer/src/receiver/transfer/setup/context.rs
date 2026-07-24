@@ -364,7 +364,15 @@ impl ReceiverContext {
             // notice for local-mode transfers via the local-copy summary, so
             // gating here on client_mode keeps the upstream itemize.test
             // golden satisfied without breaking SSH/daemon paths.
-            if self.config.flags.info_flags.itemize && self.config.connection.client_mode {
+            //
+            // The itemize half of the gate is `stdout_format_has_i`
+            // (`out_format_forwards_i`), not the `-i` flag: `-i` sets it via the
+            // default `"%i %n%L"` format, a custom `--out-format` carrying `%i`
+            // sets it without `-i`, and a `%i`-less `--out-format` clears it even
+            // under `-i` - matching upstream, which drops the notice there.
+            if self.config.flags.info_flags.out_format_forwards_i
+                && self.config.connection.client_mode
+            {
                 println!("created directory {}", dest_dir.display());
             }
         }
