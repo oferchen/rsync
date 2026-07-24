@@ -62,6 +62,19 @@ pub struct DirMergeConfig {
     /// any whitespace with each token parsed as its own rule, rather than one
     /// rule per line.
     word_split: bool,
+    /// Number of order-bearing global rules that preceded this `dir-merge`
+    /// directive in the source rule stream.
+    ///
+    /// upstream: exclude.c:1046-1050 - `check_filter()` walks one list and
+    /// consults a `FILTRULE_PERDIR_MERGE` entry at its own position, so a global
+    /// rule defined before the directive is checked before the merge file's
+    /// rules and one defined after is checked afterwards. This index records
+    /// that position (measured in the same units as `CompiledRule::order`) so
+    /// the chain can interleave global rules and this scope by source order.
+    /// Defaults to `0` (directive precedes all global rules), which reproduces
+    /// the historical "per-directory scope always overrides global" behaviour
+    /// for callers that do not record a position.
+    directive_order: usize,
 }
 
 impl DirMergeConfig {
@@ -83,7 +96,29 @@ impl DirMergeConfig {
             no_prefixes: false,
             no_prefixes_include: false,
             word_split: false,
+            directive_order: 0,
         }
+    }
+
+    /// Records the source-stream position of this `dir-merge` directive.
+    ///
+    /// `order` is the count of order-bearing global rules (include/exclude/
+    /// protect/risk) that preceded the directive, matching the units of
+    /// `CompiledRule::order`. Global rules with a smaller order are checked
+    /// before this scope's rules; those with an equal-or-greater order are
+    /// checked after. Mirrors upstream `exclude.c:1046-1050`, where a
+    /// `FILTRULE_PERDIR_MERGE` entry is consulted at its own list position.
+    #[must_use]
+    pub const fn with_directive_order(mut self, order: usize) -> Self {
+        self.directive_order = order;
+        self
+    }
+
+    /// Returns the source-stream position recorded by
+    /// [`with_directive_order`](Self::with_directive_order).
+    #[must_use]
+    pub(super) const fn directive_order(&self) -> usize {
+        self.directive_order
     }
 
     /// Sets whether rules from this merge file are inherited by subdirectories.

@@ -27,7 +27,7 @@ use protocol::filters::{FilterRuleWireFormat, RuleType, read_filter_list};
 use crate::role_trailer::error_location;
 
 use super::GeneratorContext;
-use ::filters::FilterRule;
+use ::filters::{FilterAction, FilterRule};
 
 /// A resolved `--files-from` entry split into a walk base and a full path.
 ///
@@ -443,7 +443,16 @@ impl GeneratorContext {
                     // upstream: exclude.c - dir-merge rules register a per-directory
                     // merge file that is read during walk_path(). The FilterChain
                     // handles reading and scoping.
-                    let config = wire_rule_to_dir_merge_config(wire_rule, cvs_perishable);
+                    //
+                    // upstream: exclude.c:1046-1050 - check_filter() consults the
+                    // FILTRULE_PERDIR_MERGE entry at its own list position, so
+                    // record how many order-bearing global rules precede this
+                    // directive (matching FilterSet::from_rules' `order` count)
+                    // so the chain checks earlier global rules before the merge
+                    // file's rules and later ones after.
+                    let directive_order = rules.iter().filter(|r| is_order_bearing(r)).count();
+                    let config = wire_rule_to_dir_merge_config(wire_rule, cvs_perishable)
+                        .with_directive_order(directive_order);
                     merge_configs.push(config);
                     continue;
                 }
@@ -493,6 +502,24 @@ impl GeneratorContext {
 
         Ok((filter_set, merge_configs))
     }
+}
+
+/// Reports whether a parsed rule receives a source-order stamp in
+/// [`FilterSet::from_rules`](filters::FilterSet::from_rules).
+///
+/// Only include/exclude and protect/risk rules that are not xattr-name rules
+/// increment the `order` counter there; clear, merge, and dir-merge directives
+/// do not. Counting the same set here keeps a `dir-merge` directive's recorded
+/// position aligned with `CompiledRule::order`.
+fn is_order_bearing(rule: &FilterRule) -> bool {
+    !rule.is_xattr_only()
+        && matches!(
+            rule.action(),
+            FilterAction::Include
+                | FilterAction::Exclude
+                | FilterAction::Protect
+                | FilterAction::Risk
+        )
 }
 
 /// Reassembles the pattern body with leading/trailing `/` modifiers re-applied.
