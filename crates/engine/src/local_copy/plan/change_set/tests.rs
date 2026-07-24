@@ -1030,3 +1030,72 @@ fn for_recreated_device_no_change_when_content_and_time_match() {
     assert_eq!(change_set.time_change(), None);
     assert!(!change_set.has_any_change());
 }
+
+/// upstream: generator.c:531-533 - with `-U` (`atimes_ndx`), an up-to-date
+/// regular file (size+mtime match, quick-check skips the data transfer) whose
+/// access time differs from the destination lights `ITEM_REPORT_ATIME`. The
+/// change surfaces `access_time_changed`, which the itemize renderer maps to
+/// the `u` glyph and which `has_any_change()` uses to stop suppressing the
+/// otherwise metadata-only row. Without this, oc applies the atime but prints
+/// no `.f......u..` line, diverging from upstream's observable output.
+#[cfg(unix)]
+#[test]
+fn for_file_atimes_differing_access_time_sets_u_glyph() {
+    use filetime::{FileTime, set_file_atime, set_file_mtime};
+
+    let temp = tempfile::tempdir().expect("tempdir");
+    let src = temp.path().join("src");
+    let dst = temp.path().join("dst");
+    fs::write(&src, b"same").expect("write src");
+    fs::write(&dst, b"same").expect("write dst");
+
+    // Identical size and mtime: the transfer is quick-check skipped.
+    let mtime = FileTime::from_unix_time(1_600_000_000, 0);
+    set_file_mtime(&src, mtime).expect("set src mtime");
+    set_file_mtime(&dst, mtime).expect("set dst mtime");
+    // Access times differ by whole seconds.
+    set_file_atime(&src, FileTime::from_unix_time(1_600_000_500, 0)).expect("set src atime");
+    set_file_atime(&dst, FileTime::from_unix_time(1_600_000_100, 0)).expect("set dst atime");
+
+    let src_meta = fs::metadata(&src).expect("src meta");
+    let dst_meta = fs::metadata(&dst).expect("dst meta");
+
+    let options = MetadataOptions::new()
+        .preserve_times(true)
+        .preserve_atimes(true);
+    let change_set = LocalCopyChangeSet::for_file(
+        &src_meta,
+        Some(&dst_meta),
+        &options,
+        true,
+        false,
+        false,
+        false,
+        ModifyWindow::ZERO,
+    );
+
+    assert!(
+        change_set.access_time_changed(),
+        "differing atime under -U must set access_time_changed (the `u` glyph)"
+    );
+    assert!(
+        change_set.has_any_change(),
+        "the atime-only change must surface a row instead of being suppressed"
+    );
+
+    // Without -U the same differing atime is ignored, matching upstream's
+    // `atimes_ndx` gate: no `u` glyph, no row.
+    let no_u = MetadataOptions::new().preserve_times(true);
+    let change_set = LocalCopyChangeSet::for_file(
+        &src_meta,
+        Some(&dst_meta),
+        &no_u,
+        true,
+        false,
+        false,
+        false,
+        ModifyWindow::ZERO,
+    );
+    assert!(!change_set.access_time_changed());
+    assert!(!change_set.has_any_change());
+}
