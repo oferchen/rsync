@@ -210,3 +210,85 @@ fn sandbox_with_missing_plan_directory_falls_back_to_path_dispatch() {
     assert_eq!(emitter.stats().files, 0);
     assert_ne!(emitter.io_error(), 0);
 }
+
+#[test]
+fn peel_stepped_over_child_error_sets_io_error_exit_23() {
+    // A directory whose recursive peel stepped over a genuine child error
+    // (an EACCES the walker logged and skipped, upstream FERROR_XFER) must
+    // set io_error and map to RERR_PARTIAL (23), even though the pass kept
+    // going. The scripted residue models the walker's report: the root is
+    // left non-empty because the un-removable child survived.
+    use super::super::EMITTER_PARTIAL_EXIT_CODE;
+    use super::ScriptedDeleteFs;
+    use fast_io::UnlinkResidue;
+
+    let tmp = tempfile::tempdir().expect("tempdir");
+    std::fs::create_dir(tmp.path().join("d")).expect("mkdir d");
+
+    // rmdir_at yields ENOTEMPTY (no nested plan), so the emitter peels via
+    // remove_dir_all_at, which returns a residue reporting a stepped-over
+    // child error plus a surviving (non-empty) root.
+    let fs = ScriptedDeleteFs::new()
+        .fail("locked", std::io::ErrorKind::DirectoryNotEmpty)
+        .peel(
+            "locked",
+            UnlinkResidue {
+                not_empty: true,
+                had_errors: true,
+            },
+        );
+    let plans = DeletePlanMap::new();
+    plans.insert(plan("d", vec![entry("locked", DeleteEntryKind::Dir)]));
+    let mut cursor = DirTraversalCursor::new(PathBuf::from("d"));
+    cursor.observe_segment(PathBuf::from("d"), &[]);
+
+    let mut emitter = DeleteEmitter::new(fs, plans, cursor).with_sandbox(sandbox_for(tmp.path()));
+    emitter.emit_all().expect("stepped-over error is non-fatal");
+
+    assert_ne!(
+        emitter.io_error(),
+        0,
+        "a genuine swallowed error must set io_error"
+    );
+    assert_eq!(emitter.exit_code(), EMITTER_PARTIAL_EXIT_CODE);
+    // The surviving directory is not counted as deleted.
+    assert_eq!(emitter.stats().dirs, 0);
+}
+
+#[test]
+fn peel_non_empty_without_error_stays_exit_0() {
+    // A directory left non-empty with NO stepped-over child error - the
+    // legitimate case where content was moved to --backup, filtered, or
+    // protected - is upstream DR_NOT_EMPTY: the notice prints but the run
+    // stays exit 0. The residue reports not_empty without had_errors.
+    use super::ScriptedDeleteFs;
+    use fast_io::UnlinkResidue;
+
+    let tmp = tempfile::tempdir().expect("tempdir");
+    std::fs::create_dir(tmp.path().join("d")).expect("mkdir d");
+
+    let fs = ScriptedDeleteFs::new()
+        .fail("kept", std::io::ErrorKind::DirectoryNotEmpty)
+        .peel(
+            "kept",
+            UnlinkResidue {
+                not_empty: true,
+                had_errors: false,
+            },
+        );
+    let plans = DeletePlanMap::new();
+    plans.insert(plan("d", vec![entry("kept", DeleteEntryKind::Dir)]));
+    let mut cursor = DirTraversalCursor::new(PathBuf::from("d"));
+    cursor.observe_segment(PathBuf::from("d"), &[]);
+
+    let mut emitter = DeleteEmitter::new(fs, plans, cursor).with_sandbox(sandbox_for(tmp.path()));
+    emitter.emit_all().expect("non-empty dir is benign");
+
+    assert_eq!(
+        emitter.io_error(),
+        0,
+        "a backup-emptied / filtered non-empty dir must not set io_error"
+    );
+    assert_eq!(emitter.exit_code(), 0);
+    assert_eq!(emitter.stats().dirs, 0);
+}

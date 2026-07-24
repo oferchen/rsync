@@ -54,6 +54,11 @@ pub(super) fn dir_child(parent: &str, name: &str) -> FileEntry {
 pub(super) struct ScriptedDeleteFs {
     inner: RecordingDeleteFs,
     rules: Mutex<Vec<(PathBuf, io::ErrorKind)>>,
+    /// Scripted [`UnlinkResidue`] values returned by `remove_dir_all_at`,
+    /// keyed on the leaf name, so tests can model a recursive peel that
+    /// stepped over a child error or left the root non-empty.
+    #[cfg(unix)]
+    peel: Mutex<Vec<(PathBuf, fast_io::UnlinkResidue)>>,
 }
 
 impl ScriptedDeleteFs {
@@ -64,6 +69,22 @@ impl ScriptedDeleteFs {
     pub(super) fn fail(self, path: &str, kind: io::ErrorKind) -> Self {
         lock_or_recover(&self.rules).push((PathBuf::from(path), kind));
         self
+    }
+
+    /// Scripts the [`UnlinkResidue`](fast_io::UnlinkResidue) the next
+    /// `remove_dir_all_at` call against `name` returns, modelling a
+    /// recursive peel outcome.
+    #[cfg(unix)]
+    pub(super) fn peel(self, name: &str, residue: fast_io::UnlinkResidue) -> Self {
+        lock_or_recover(&self.peel).push((PathBuf::from(name), residue));
+        self
+    }
+
+    #[cfg(unix)]
+    fn maybe_peel(&self, name: &Path) -> Option<fast_io::UnlinkResidue> {
+        let mut peel = lock_or_recover(&self.peel);
+        let position = peel.iter().position(|(p, _)| p == name)?;
+        Some(peel.remove(position).1)
     }
 
     pub(super) fn events(&self) -> Vec<DeleteEvent> {
@@ -162,10 +183,15 @@ impl DeleteFs for ScriptedDeleteFs {
     }
 
     #[cfg(unix)]
-    fn remove_dir_all_at(&self, parent_fd: BorrowedFd<'_>, name: &OsStr) -> io::Result<()> {
+    fn remove_dir_all_at(
+        &self,
+        parent_fd: BorrowedFd<'_>,
+        name: &OsStr,
+    ) -> io::Result<fast_io::UnlinkResidue> {
         if let Some(err) = self.maybe_fail(Path::new(name)) {
             return Err(err);
         }
-        self.inner.remove_dir_all_at(parent_fd, name)
+        let residue = self.inner.remove_dir_all_at(parent_fd, name)?;
+        Ok(self.maybe_peel(Path::new(name)).unwrap_or(residue))
     }
 }
