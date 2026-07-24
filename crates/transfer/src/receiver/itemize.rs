@@ -17,7 +17,12 @@ impl ReceiverContext {
     /// and the push row is printed by the client's sender instead.
     #[must_use]
     pub(in crate::receiver) const fn should_emit_itemize(&self) -> bool {
-        self.config.flags.info_flags.itemize
+        // A custom `--out-format` on a pull also drives one client-visible row
+        // per logged entry (upstream `log_item` fires whenever `stdout_format`
+        // is set, log.c:822), so the same itemize call sites must run; the row
+        // is then collected as an event rather than written as a string (see
+        // [`Self::record_itemize`] / [`Self::collect_out_format_events`]).
+        self.config.flags.info_flags.itemize || self.collect_out_format_events()
     }
 
     /// Classifies the received file list into the per-type counts the pulling
@@ -252,6 +257,29 @@ impl ReceiverContext {
         iflags: &crate::generator::ItemFlags,
         entry: &protocol::flist::FileEntry,
     ) -> Option<String> {
+        let effective_iflags = self.itemize_effective_flags(iflags, entry)?;
+        let ctx = self.itemize_context();
+        Some(crate::generator::itemize::format_itemize_line(
+            &effective_iflags,
+            entry,
+            self.itemize_is_sender(),
+            &ctx,
+            None,
+        ))
+    }
+
+    /// Applies the created-root override and the significance gate to raw item
+    /// flags, returning the effective flags to render or `None` when the entry
+    /// is unchanged and unchanged rows are not requested.
+    ///
+    /// Shared by [`Self::render_itemize_line`] (default string output) and
+    /// [`Self::build_event_row`] (custom `--out-format` events) so both apply an
+    /// identical gate and glyph.
+    fn itemize_effective_flags(
+        &self,
+        iflags: &crate::generator::ItemFlags,
+        entry: &protocol::flist::FileEntry,
+    ) -> Option<crate::generator::ItemFlags> {
         // upstream: main.c:803-805 - when the receiver pre-flight-mkdirs the
         // destination root, `flist->files[0]->flags |= FLAG_DIR_CREATED`. The
         // generator's `itemize()` then sees `statret < 0` for the root entry,
@@ -273,7 +301,7 @@ impl ReceiverContext {
         if !is_created_root_dir && !show_unchanged && !iflags.has_significant_flags() {
             return None;
         }
-        let effective_iflags = if is_created_root_dir {
+        Some(if is_created_root_dir {
             // upstream: generator.c:1480-1483 + generator.c:573-579 - a root that
             // the pre-flight mkdir created this run is itemize()'d with
             // `statret < 0`, which takes the `else` branch and ORs
@@ -288,27 +316,81 @@ impl ReceiverContext {
             )
         } else {
             *iflags
-        };
+        })
+    }
+
+    /// Direction of the `%i` glyph for this receiver.
+    ///
+    /// upstream: log.c:707-710 - the direction glyph is `<` when
+    /// `!local_server && *op == 's'` (this side's peer is the sender's client)
+    /// and `>` otherwise. `op` is `am_sender ? "send" : "recv"` (log.c:820), and
+    /// the client-visible itemize is always produced by the non-`am_server`
+    /// side. A server-mode receiver is only ever the remote end of a push (the
+    /// client is the sender), so it renders `<`; a client-mode receiver is a
+    /// local pull and renders `>`.
+    const fn itemize_is_sender(&self) -> bool {
+        !self.config.connection.client_mode
+    }
+
+    /// Whether a custom `--out-format` should collect metadata-bearing events
+    /// for the CLI to render instead of writing the receiver's own itemize
+    /// string to stdout. True only on a pulling client (`client_mode`) with
+    /// `info_flags.out_format_active` set.
+    pub(in crate::receiver) const fn collect_out_format_events(&self) -> bool {
+        self.config.flags.info_flags.out_format_active && self.config.connection.client_mode
+    }
+
+    /// Builds the owned metadata row for a custom `--out-format` event, applying
+    /// the same significance gate and `%i` glyph as [`Self::render_itemize_line`].
+    ///
+    /// The receiver-side generator computes iflags locally rather than reading
+    /// them off the wire, so no alternate-basis xname is available; the
+    /// hard-link ` => leader` suffix is owned by the push sender renderer.
+    fn build_event_row(
+        &self,
+        iflags: &crate::generator::ItemFlags,
+        entry: &protocol::flist::FileEntry,
+    ) -> Option<crate::progress::OwnedItemizeRow> {
+        let effective_iflags = self.itemize_effective_flags(iflags, entry)?;
         let ctx = self.itemize_context();
-        // upstream: log.c:707-710 - the direction glyph is `<` when
-        // `!local_server && *op == 's'` (this side's peer is the sender's
-        // client) and `>` otherwise. `op` is `am_sender ? "send" : "recv"`
-        // (log.c:820), and the client-visible itemize is always produced by the
-        // non-`am_server` side. A server-mode receiver is only ever the remote
-        // end of a push (the client is the sender), so it renders `<`; a
-        // client-mode receiver is a local pull and renders `>`.
-        let is_sender = !self.config.connection.client_mode;
-        // The receiver-side generator computes iflags locally rather than reading
-        // them off the wire, so no alternate-basis xname is available here; the
-        // hard-link ` => leader` suffix is owned by the push sender renderer
-        // (generator/transfer/transfer_loop.rs::maybe_emit_itemize).
-        Some(crate::generator::itemize::format_itemize_line(
+        let is_sender = self.itemize_is_sender();
+        let line = crate::generator::itemize::format_itemize_line(
             &effective_iflags,
             entry,
             is_sender,
             &ctx,
             None,
-        ))
+        );
+        let itemize =
+            crate::generator::itemize::format_iflags(&effective_iflags, entry, is_sender, &ctx);
+        let raw = effective_iflags.raw();
+        Some(crate::progress::OwnedItemizeRow {
+            line,
+            itemize,
+            name: entry.path().to_path_buf(),
+            size: entry.size(),
+            mtime: entry.mtime(),
+            mtime_nsec: entry.mtime_nsec(),
+            mode: entry.mode(),
+            uid: entry.uid(),
+            gid: entry.gid(),
+            is_dir: entry.is_dir(),
+            is_symlink: entry.is_symlink(),
+            symlink_target: entry.link_target().cloned(),
+            is_new: raw & crate::generator::ItemFlags::ITEM_IS_NEW != 0,
+            is_deletion: raw & crate::generator::ItemFlags::ITEM_DELETED != 0,
+        })
+    }
+
+    /// Drains every buffered `--out-format` event row in ascending flist-index
+    /// order (the same order [`Self::flush_itemize_rows`] uses for strings).
+    /// Called once by the client driver after the transfer, which hands each row
+    /// to the `ItemizeCallback` so the CLI renders the user's template.
+    pub(crate) fn drain_event_rows(&self) -> Vec<crate::progress::OwnedItemizeRow> {
+        std::mem::take(&mut *self.event_rows.borrow_mut())
+            .into_values()
+            .flatten()
+            .collect()
     }
 
     /// Emits itemize output for a file entry to the client-visible sink.
@@ -335,6 +417,15 @@ impl ReceiverContext {
         entry: &protocol::flist::FileEntry,
     ) -> std::io::Result<()> {
         if !self.should_emit_itemize() {
+            return Ok(());
+        }
+        // A custom `--out-format` renders through the CLI from collected events
+        // (see [`Self::collect_out_format_events`]); the receiver's own default
+        // string must not also reach stdout. This immediate path carries no
+        // flist index, so device/FIFO/hardlink-follower rows are suppressed
+        // rather than collected - they already produced no client-visible row
+        // without `-i`, so no default output is lost.
+        if self.collect_out_format_events() {
             return Ok(());
         }
         let Some(line) = self.render_itemize_line(iflags, entry) else {
@@ -462,7 +553,7 @@ impl ReceiverContext {
         iflags: &crate::generator::ItemFlags,
         entry: &protocol::flist::FileEntry,
     ) -> std::io::Result<()> {
-        if self.defer_itemize {
+        if self.defer_itemize || self.collect_out_format_events() {
             self.record_itemize(flist_idx, iflags, entry);
             Ok(())
         } else {
@@ -486,7 +577,23 @@ impl ReceiverContext {
         iflags: &crate::generator::ItemFlags,
         entry: &protocol::flist::FileEntry,
     ) {
-        if !self.should_emit_itemize() || !self.config.connection.client_mode {
+        if !self.config.connection.client_mode {
+            return;
+        }
+        // Custom `--out-format`: buffer the metadata-bearing event instead of the
+        // rendered default string (mutually exclusive - the string path is
+        // suppressed so the CLI renders the user's template from these events).
+        if self.collect_out_format_events() {
+            if let Some(row) = self.build_event_row(iflags, entry) {
+                self.event_rows
+                    .borrow_mut()
+                    .entry(flist_idx)
+                    .or_default()
+                    .push(row);
+            }
+            return;
+        }
+        if !self.should_emit_itemize() {
             return;
         }
         if let Some(line) = self.render_itemize_line(iflags, entry) {
@@ -529,6 +636,13 @@ impl ReceiverContext {
     /// off the client.
     fn emit_name_line(&self, line: &str) -> std::io::Result<()> {
         use std::io::Write as _;
+        // Under a custom `--out-format`, upstream logs exactly one templated line
+        // per entry via `log_item`; the plain `-v` name would double it. The
+        // per-entry line is produced from collected events instead (see
+        // [`Self::collect_out_format_events`]).
+        if self.collect_out_format_events() {
+            return Ok(());
+        }
         if self.names_to_stderr {
             std::io::stderr().write_all(line.as_bytes())
         } else {
