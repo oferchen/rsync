@@ -60,7 +60,6 @@ impl PlaceholderToken {
 #[derive(Clone, Copy, Debug)]
 pub(super) enum OutFormatPlaceholder {
     FileName,
-    FileNameWithSymlinkTarget,
     FullPath,
     ItemizedChanges,
     FileLength,
@@ -71,8 +70,6 @@ pub(super) enum OutFormatPlaceholder {
     PermissionString,
     CurrentTime,
     SymlinkTarget,
-    OwnerName,
-    GroupName,
     OwnerUid,
     OwnerGid,
     ProcessId,

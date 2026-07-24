@@ -16,17 +16,24 @@ use super::tokens::{
 
 /// Parses the optional modifiers preceding a placeholder letter: apostrophes
 /// (humanization), an optional `-` (left align), and a digit run (width).
-fn parse_placeholder_format(chars: &mut Peekable<Chars<'_>>) -> PlaceholderFormat {
+///
+/// Every consumed modifier char is appended to `raw` so the caller can
+/// reproduce the escape verbatim when the trailing letter turns out to be
+/// unrecognized (upstream emits such an escape literally).
+fn parse_placeholder_format(
+    chars: &mut Peekable<Chars<'_>>,
+    raw: &mut String,
+) -> PlaceholderFormat {
     let mut apostrophes = 0usize;
     while matches!(chars.peek(), Some('\'')) {
         apostrophes += 1;
-        chars.next();
+        raw.push(chars.next().expect("peeked apostrophe"));
     }
 
     let mut align = PlaceholderAlignment::Right;
     if matches!(chars.peek(), Some('-')) {
         align = PlaceholderAlignment::Left;
-        chars.next();
+        raw.push(chars.next().expect("peeked '-'"));
     }
 
     let mut width_value: usize = 0;
@@ -37,7 +44,7 @@ fn parse_placeholder_format(chars: &mut Peekable<Chars<'_>>) -> PlaceholderForma
             width_value = width_value
                 .saturating_mul(10)
                 .saturating_add(digit as usize);
-            chars.next();
+            raw.push(chars.next().expect("peeked digit"));
         } else {
             break;
         }
@@ -45,7 +52,7 @@ fn parse_placeholder_format(chars: &mut Peekable<Chars<'_>>) -> PlaceholderForma
 
     while matches!(chars.peek(), Some('\'')) {
         apostrophes += 1;
-        chars.next();
+        raw.push(chars.next().expect("peeked apostrophe"));
     }
 
     let width = if saw_width {
@@ -81,7 +88,8 @@ pub(crate) fn parse_out_format(value: &OsStr) -> Result<OutFormat, Message> {
             continue;
         }
 
-        let format_spec = parse_placeholder_format(&mut chars);
+        let mut raw = String::from("%");
+        let format_spec = parse_placeholder_format(&mut chars, &mut raw);
         let Some(next) = chars.next() else {
             return Err(
                 rsync_error!(1, "--out-format value may not end with '%'").with_role(Role::Client)
@@ -93,13 +101,14 @@ pub(crate) fn parse_out_format(value: &OsStr) -> Result<OutFormat, Message> {
             continue;
         }
 
-        if !literal.is_empty() {
-            tokens.push(OutFormatToken::Literal(std::mem::take(&mut literal)));
-        }
-
+        // upstream log.c:756 - a `%` escape whose letter has no case (and `%u`
+        // off-daemon, where `auth_user` is empty) leaves `n` NULL and is copied
+        // through verbatim. `%u` is the daemon auth user (handled by the daemon
+        // log formatter), never the file owner; `%g`/`%N` are not upstream
+        // codes. Emit any such escape literally instead of resolving an
+        // oc-specific owner/group/symlink placeholder or rejecting the format.
         let placeholder = match next {
             'n' => OutFormatPlaceholder::FileName,
-            'N' => OutFormatPlaceholder::FileNameWithSymlinkTarget,
             'f' => OutFormatPlaceholder::FullPath,
             'i' => OutFormatPlaceholder::ItemizedChanges,
             'l' => OutFormatPlaceholder::FileLength,
@@ -110,8 +119,6 @@ pub(crate) fn parse_out_format(value: &OsStr) -> Result<OutFormat, Message> {
             'B' => OutFormatPlaceholder::PermissionString,
             'L' => OutFormatPlaceholder::SymlinkTarget,
             't' => OutFormatPlaceholder::CurrentTime,
-            'u' => OutFormatPlaceholder::OwnerName,
-            'g' => OutFormatPlaceholder::GroupName,
             'U' => OutFormatPlaceholder::OwnerUid,
             'G' => OutFormatPlaceholder::OwnerGid,
             'p' => OutFormatPlaceholder::ProcessId,
@@ -121,13 +128,15 @@ pub(crate) fn parse_out_format(value: &OsStr) -> Result<OutFormat, Message> {
             'P' => OutFormatPlaceholder::ModulePath,
             'C' => OutFormatPlaceholder::FullChecksum,
             other => {
-                return Err(rsync_error!(
-                    1,
-                    format!("unsupported --out-format placeholder '%{other}'"),
-                )
-                .with_role(Role::Client));
+                raw.push(other);
+                literal.push_str(&raw);
+                continue;
             }
         };
+
+        if !literal.is_empty() {
+            tokens.push(OutFormatToken::Literal(std::mem::take(&mut literal)));
+        }
 
         tokens.push(OutFormatToken::Placeholder(PlaceholderToken::new(
             placeholder,
@@ -412,15 +421,15 @@ mod tests {
     }
 
     #[test]
-    fn parse_out_format_unsupported_placeholder_error() {
-        let result = parse_out_format(&os("%z"));
-        assert!(result.is_err());
+    fn parse_out_format_unrecognized_placeholder_is_literal() {
+        // upstream log.c:756 copies an unrecognized %escape through verbatim.
+        assert_single_literal("%z", "%z");
     }
 
     #[test]
     fn parse_placeholder_format_no_modifiers() {
         let mut chars = "n".chars().peekable();
-        let format = parse_placeholder_format(&mut chars);
+        let format = parse_placeholder_format(&mut chars, &mut String::new());
         assert_eq!(format.width(), None);
         assert_eq!(format.align(), PlaceholderAlignment::Right);
         assert_eq!(format.humanize(), HumanizeMode::None);
@@ -429,14 +438,14 @@ mod tests {
     #[test]
     fn parse_placeholder_format_width_only() {
         let mut chars = "15n".chars().peekable();
-        let format = parse_placeholder_format(&mut chars);
+        let format = parse_placeholder_format(&mut chars, &mut String::new());
         assert_eq!(format.width(), Some(15));
     }
 
     #[test]
     fn parse_placeholder_format_left_align_and_width() {
         let mut chars = "-20n".chars().peekable();
-        let format = parse_placeholder_format(&mut chars);
+        let format = parse_placeholder_format(&mut chars, &mut String::new());
         assert_eq!(format.width(), Some(20));
         assert_eq!(format.align(), PlaceholderAlignment::Left);
     }
@@ -444,7 +453,7 @@ mod tests {
     #[test]
     fn parse_placeholder_format_apostrophe_before_width() {
         let mut chars = "'10n".chars().peekable();
-        let format = parse_placeholder_format(&mut chars);
+        let format = parse_placeholder_format(&mut chars, &mut String::new());
         assert_eq!(format.width(), Some(10));
         assert_eq!(format.humanize(), HumanizeMode::Separator);
     }
@@ -452,7 +461,7 @@ mod tests {
     #[test]
     fn parse_placeholder_format_apostrophe_after_width() {
         let mut chars = "10'n".chars().peekable();
-        let format = parse_placeholder_format(&mut chars);
+        let format = parse_placeholder_format(&mut chars, &mut String::new());
         assert_eq!(format.width(), Some(10));
         assert_eq!(format.humanize(), HumanizeMode::Separator);
     }
@@ -460,7 +469,7 @@ mod tests {
     #[test]
     fn parse_placeholder_format_width_clamped() {
         let mut chars = "99999n".chars().peekable();
-        let format = parse_placeholder_format(&mut chars);
+        let format = parse_placeholder_format(&mut chars, &mut String::new());
         // Width should be clamped to MAX_PLACEHOLDER_WIDTH
         assert!(format.width().unwrap() <= MAX_PLACEHOLDER_WIDTH);
     }
@@ -468,21 +477,21 @@ mod tests {
     #[test]
     fn parse_placeholder_format_zero_width() {
         let mut chars = "0n".chars().peekable();
-        let format = parse_placeholder_format(&mut chars);
+        let format = parse_placeholder_format(&mut chars, &mut String::new());
         assert_eq!(format.width(), Some(0));
     }
 
     #[test]
     fn parse_placeholder_format_two_apostrophes() {
         let mut chars = "''n".chars().peekable();
-        let format = parse_placeholder_format(&mut chars);
+        let format = parse_placeholder_format(&mut chars, &mut String::new());
         assert_eq!(format.humanize(), HumanizeMode::DecimalUnits);
     }
 
     #[test]
     fn parse_placeholder_format_three_apostrophes() {
         let mut chars = "'''n".chars().peekable();
-        let format = parse_placeholder_format(&mut chars);
+        let format = parse_placeholder_format(&mut chars, &mut String::new());
         assert_eq!(format.humanize(), HumanizeMode::BinaryUnits);
     }
 
@@ -490,7 +499,7 @@ mod tests {
     fn parse_placeholder_format_four_apostrophes() {
         // 4+ apostrophes should still be BinaryUnits
         let mut chars = "''''n".chars().peekable();
-        let format = parse_placeholder_format(&mut chars);
+        let format = parse_placeholder_format(&mut chars, &mut String::new());
         assert_eq!(format.humanize(), HumanizeMode::BinaryUnits);
     }
 
@@ -526,6 +535,16 @@ mod tests {
         }
     }
 
+    fn assert_single_literal(input: &str, expected: &str) {
+        let format = parse_out_format(&os(input)).unwrap_or_else(|_| panic!("parse {input}"));
+        let tokens: Vec<_> = format.tokens().collect();
+        assert_eq!(tokens.len(), 1, "expected 1 token for {input}");
+        match &tokens[0] {
+            OutFormatToken::Literal(text) => assert_eq!(text, expected, "for {input}"),
+            other => panic!("expected literal for {input}, got {other:?}"),
+        }
+    }
+
     #[test]
     fn parse_token_content_filename() {
         assert_single_placeholder("%n", OutFormatPlaceholder::FileName);
@@ -533,7 +552,8 @@ mod tests {
 
     #[test]
     fn parse_token_content_filename_with_symlink_target() {
-        assert_single_placeholder("%N", OutFormatPlaceholder::FileNameWithSymlinkTarget);
+        // upstream has no %N code; it passes through literally.
+        assert_single_literal("%N", "%N");
     }
 
     #[test]
@@ -588,12 +608,14 @@ mod tests {
 
     #[test]
     fn parse_token_content_owner_name() {
-        assert_single_placeholder("%u", OutFormatPlaceholder::OwnerName);
+        // %u is the daemon auth user; off-daemon it passes through literally.
+        assert_single_literal("%u", "%u");
     }
 
     #[test]
     fn parse_token_content_group_name() {
-        assert_single_placeholder("%g", OutFormatPlaceholder::GroupName);
+        // upstream has no %g code; it passes through literally.
+        assert_single_literal("%g", "%g");
     }
 
     #[test]
@@ -698,7 +720,7 @@ mod tests {
     #[test]
     fn parse_placeholder_format_apostrophe_before_and_after_width() {
         let mut chars = "'10'n".chars().peekable();
-        let format = parse_placeholder_format(&mut chars);
+        let format = parse_placeholder_format(&mut chars, &mut String::new());
         assert_eq!(format.width(), Some(10));
         // 1 apostrophe before + 1 after = 2 total = DecimalUnits
         assert_eq!(format.humanize(), HumanizeMode::DecimalUnits);
@@ -707,24 +729,21 @@ mod tests {
     #[test]
     fn parse_placeholder_format_two_before_one_after_width() {
         let mut chars = "''10'n".chars().peekable();
-        let format = parse_placeholder_format(&mut chars);
+        let format = parse_placeholder_format(&mut chars, &mut String::new());
         assert_eq!(format.width(), Some(10));
         // 2 apostrophes before + 1 after = 3 total = BinaryUnits
         assert_eq!(format.humanize(), HumanizeMode::BinaryUnits);
     }
 
     #[test]
-    fn parse_out_format_unsupported_placeholder_includes_letter_in_error() {
-        let err = parse_out_format(&os("%z")).unwrap_err();
-        let msg = err.to_string();
-        assert!(msg.contains("%z"), "error should mention '%z', got: {msg}",);
+    fn parse_out_format_unrecognized_placeholder_keeps_modifiers() {
+        // The whole escape, including modifiers, is preserved verbatim.
+        assert_single_literal("%-10z", "%-10z");
     }
 
     #[test]
-    fn parse_out_format_unsupported_uppercase_placeholder_includes_letter() {
-        let err = parse_out_format(&os("%Q")).unwrap_err();
-        let msg = err.to_string();
-        assert!(msg.contains("%Q"), "error should mention '%Q', got: {msg}",);
+    fn parse_out_format_unrecognized_uppercase_placeholder_is_literal() {
+        assert_single_literal("%Q", "%Q");
     }
 
     #[test]
