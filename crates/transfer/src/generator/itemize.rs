@@ -28,12 +28,14 @@ pub(crate) fn build_itemize_row<'a>(
     iflags: &ItemFlags,
     line: &'a str,
     itemize: &'a str,
+    source_prefix: Option<&'a std::path::Path>,
 ) -> ItemizeRow<'a> {
     let raw = iflags.raw();
     ItemizeRow {
         line,
         itemize,
         name: entry.path().as_path(),
+        source_prefix,
         size: entry.size(),
         mtime: entry.mtime(),
         mtime_nsec: entry.mtime_nsec(),
