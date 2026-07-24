@@ -438,6 +438,33 @@ impl ReceiverContext {
         }
     }
 
+    /// Emits itemize output for a symlink, device, special, or hardlink follower
+    /// while carrying its flist index, so a custom `--out-format` collects the
+    /// row in flist order alongside regular files.
+    ///
+    /// These file types reach the generator on the immediate (non-pipelined)
+    /// path, so [`emit_itemize`](Self::emit_itemize) alone cannot buffer them for
+    /// the flist-index-order drain and suppresses them. Threading the index here
+    /// lets [`record_itemize`](Self::record_itemize) key the event exactly as it
+    /// does for regular files. Upstream itemizes every file type from the single
+    /// `generate_files` walk (`generator.c:2329`), each with its own `ndx`, so a
+    /// device/FIFO/symlink row renders in the same order as its neighbours.
+    ///
+    /// Off a custom `--out-format` this defers to the unchanged immediate path.
+    pub(in crate::receiver) fn emit_itemize_indexed<W: crate::writer::MsgInfoSender + ?Sized>(
+        &self,
+        writer: &mut W,
+        flist_idx: usize,
+        iflags: &crate::generator::ItemFlags,
+        entry: &protocol::flist::FileEntry,
+    ) -> std::io::Result<()> {
+        if self.collect_out_format_events() {
+            self.record_itemize(flist_idx, iflags, entry);
+            return Ok(());
+        }
+        self.emit_itemize(writer, iflags, entry)
+    }
+
     /// Emits over-the-wire itemize records for every hardlink follower so a
     /// pushing client's sender renders the `hf...` / `=> leader` row.
     ///
