@@ -168,7 +168,7 @@ fn delete_extraneous_entries_via_emitter<S: AsRef<OsStr>, F>(
 where
     F: DeleteFs + Sync + Send + 'static,
 {
-    // Route through the leaf-granular serial executor when either condition
+    // Route through the leaf-granular serial executor when any condition
     // holds; the wholesale `remove_dir_all` emitter below cannot serve them:
     //
     // 1. `--max-delete`: the cap must count every filesystem entry actually
@@ -185,7 +185,17 @@ where
     //    / `is_delete_mount_point`), so it never removes across a mount. With no
     //    `--max-delete` the cap is absent, so `cap_reached` is always false and
     //    the pass never reports a limit hit.
-    if context.options().max_deletion_limit().is_some() || context.one_file_system_enabled() {
+    // 3. `--backup`: every extraneous file must be backed up before removal
+    //    (upstream delete.c:165-171 `make_backup` inside `delete_item`, invoked
+    //    for each entry `delete_dir_contents` recurses over). The emitter peels
+    //    a directory wholesale with `remove_dir_all`, which never backs up the
+    //    contents - a silent data-loss gap. The leaf executor recurses
+    //    depth-first and calls `delete_leaf`, which backs up each file, matching
+    //    upstream's per-entry recursion.
+    if context.options().max_deletion_limit().is_some()
+        || context.one_file_system_enabled()
+        || context.options().backup_enabled()
+    {
         return delete_extraneous_entries_capped(context, destination, relative, source_entries);
     }
 
@@ -220,13 +230,16 @@ where
 {
     // Under --one-file-system the wholesale `remove_dir_all` emitter must not
     // run at all: it would recurse across a mount boundary nested inside a
-    // doomed subtree and destroy the mounted filesystem. Route the already-built
-    // plan through the boundary-aware leaf executor, which preserves such a
-    // mount and pins its parent. The immediate `--delete*` modes reach the leaf
-    // executor via the dispatch in `delete_extraneous_entries_via_emitter`; this
-    // guard covers the deferred `--delete-delay` plan, whose decided extras are
-    // consumed here rather than rescanned.
-    if context.one_file_system_enabled() {
+    // doomed subtree and destroy the mounted filesystem. Under --backup it would
+    // peel a directory's contents without backing them up (upstream
+    // delete.c:165-171 backs up every entry `delete_dir_contents` recurses
+    // over). Route the already-built plan through the leaf executor, which
+    // preserves a mount, pins its parent, and backs up each file before removal.
+    // The immediate `--delete*` modes reach the leaf executor via the dispatch
+    // in `delete_extraneous_entries_via_emitter`; this guard covers the deferred
+    // `--delete-delay` plan, whose decided extras are consumed here rather than
+    // rescanned.
+    if context.one_file_system_enabled() || context.options().backup_enabled() {
         let boundary_dev = delete_boundary_device(context, destination);
         let mut skipped = 0u64;
         for entry in &plan.extras {
@@ -536,12 +549,14 @@ fn remove_entry_capped(
         if !all_children_removed {
             // Contents survived because the cap was reached, so the directory
             // cannot be removed. upstream: delete.c:117 prints this once per
-            // non-empty directory without flagging an I/O error.
+            // non-empty directory without flagging an I/O error. upstream
+            // delete.c:117 prints the transfer-relative name (`f_name`), not the
+            // absolute destination path.
             info_log!(
                 Nonreg,
                 1,
                 "cannot delete non-empty directory: {}",
-                path.display().to_string().replace('\\', "/")
+                entry_relative.display().to_string().replace('\\', "/")
             );
             // A NESTED non-empty directory is still reached by upstream's
             // `delete_item(..., DEL_DIR_IS_EMPTY)` (delete.c:107): with
@@ -621,32 +636,64 @@ fn delete_leaf(
         context.backup_existing_entry(path, Some(entry_relative), file_type, true)?;
     }
 
-    if !context.options().is_itemize_active() {
-        if is_dir {
+    // A directory can survive its own delete when in-place suffix backups
+    // (`--backup` without `--backup-dir`) renamed its contents to `name~`,
+    // leaving it non-empty. Upstream `delete_dir_contents` reports this as the
+    // benign `DR_NOT_EMPTY` (delete.c:117): print the notice, keep the
+    // directory, do not flag an I/O error or count a deletion. The rmdir must
+    // therefore run before the "deleting" line so the line is only emitted for a
+    // directory that is actually removed. Files keep the print-before-unlink
+    // order (the backup already renamed them; the unlink cannot leave a
+    // survivor).
+    if is_dir {
+        if !context.mode().is_dry_run() {
+            match RealDeleteFs.rmdir(path) {
+                Ok(()) => {}
+                Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+                Err(error) if is_dir_not_empty(&error) => {
+                    // upstream delete.c:117 prints the transfer-relative name
+                    // (`f_name`), not the absolute destination path.
+                    info_log!(
+                        Nonreg,
+                        1,
+                        "cannot delete non-empty directory: {}",
+                        entry_relative.display().to_string().replace('\\', "/")
+                    );
+                    return Ok(());
+                }
+                Err(error) => {
+                    return Err(LocalCopyError::io(
+                        "delete extraneous destination entry",
+                        path.to_path_buf(),
+                        error,
+                    ));
+                }
+            }
+        }
+        if !context.options().is_itemize_active() {
             info_log!(Del, 1, "deleting {}/", entry_relative.display());
-        } else {
+        }
+    } else {
+        if !context.options().is_itemize_active() {
             info_log!(Del, 1, "deleting {}", entry_relative.display());
         }
-    }
-
-    if !context.mode().is_dry_run() {
-        let fs = RealDeleteFs;
-        let result = if is_dir {
-            fs.rmdir(path)
-        } else if file_type.is_symlink() {
-            fs.unlink_symlink(path)
-        } else {
-            fs.unlink_file(path)
-        };
-        if let Err(error) = result {
-            // A vanished entry is a benign no-op (upstream ENOENT path); any
-            // other failure surfaces so the exit code reflects it.
-            if error.kind() != io::ErrorKind::NotFound {
-                return Err(LocalCopyError::io(
-                    "delete extraneous destination entry",
-                    path.to_path_buf(),
-                    error,
-                ));
+        if !context.mode().is_dry_run() {
+            let fs = RealDeleteFs;
+            let result = if file_type.is_symlink() {
+                fs.unlink_symlink(path)
+            } else {
+                fs.unlink_file(path)
+            };
+            if let Err(error) = result {
+                // A vanished entry is a benign no-op (upstream ENOENT path); any
+                // other failure surfaces so the exit code reflects it.
+                if error.kind() != io::ErrorKind::NotFound {
+                    return Err(LocalCopyError::io(
+                        "delete extraneous destination entry",
+                        path.to_path_buf(),
+                        error,
+                    ));
+                }
             }
         }
     }
@@ -665,6 +712,14 @@ fn delete_leaf(
     );
     context.register_progress();
     Ok(())
+}
+
+/// Whether an `rmdir` error means the directory was left non-empty (upstream
+/// `DR_NOT_EMPTY`). ENOTEMPTY is 39 on Linux and 66 on BSD/macOS; the raw errno
+/// check keeps this platform-independent without a libc dependency.
+fn is_dir_not_empty(error: &io::Error) -> bool {
+    error.kind() == io::ErrorKind::DirectoryNotEmpty
+        || matches!(error.raw_os_error(), Some(39) | Some(66))
 }
 
 /// Builds the per-directory [`DeletePlan`] used by
