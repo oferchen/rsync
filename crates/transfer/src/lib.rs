@@ -194,7 +194,7 @@ pub use pipeline::{
     DEFAULT_PIPELINE_WINDOW, MAX_PIPELINE_WINDOW, MIN_PIPELINE_WINDOW, PendingTransfer,
     PipelineConfig, PipelineState,
 };
-pub use progress::{ItemizeCallback, TransferProgressCallback, TransferProgressEvent};
+pub use progress::{ItemizeCallback, ItemizeRow, TransferProgressCallback, TransferProgressEvent};
 pub use transfer_state::{InvalidTransition, TransferPhase, TransferPipeline};
 
 /// Batch recording configuration for protocol stream teeing.

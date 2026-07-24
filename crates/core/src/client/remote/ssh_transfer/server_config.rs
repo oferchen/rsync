@@ -225,6 +225,10 @@ pub(in crate::client::remote) fn build_server_config_for_generator(
     // while local copies and pulls applied --chmod correctly.
     server_config.chmod = config.chmod().cloned();
 
+    // A custom `--out-format` makes the sender emit an itemize row per logged
+    // entry so the client can render the template (see InfoFlags::out_format_active).
+    server_config.flags.info_flags.out_format_active = config.render_out_format_locally();
+
     apply_files_from_for_sender(config, &mut server_config);
 
     flags::apply_common_server_flags(config, &mut server_config);

@@ -20,7 +20,7 @@ use super::super::super::error::{
     ClientError, invalid_argument_error, invalid_argument_error_typed_with_role, remote_exit_error,
 };
 use super::super::super::progress::ClientProgressObserver;
-use super::super::super::summary::ClientSummary;
+use super::super::super::summary::{ClientEvent, ClientSummary, RemoteItemizeFields};
 use super::super::batch_support::{BatchContext, build_batch_context, build_batch_recording};
 use super::super::files_from_forwarding::read_local_files_from_for_forwarding;
 use super::super::flags;
@@ -203,8 +203,10 @@ fn run_pull_transfer(
     let progress: Option<&mut dyn TransferProgressCallback> = adapter
         .as_mut()
         .map(|a| a as &mut dyn TransferProgressCallback);
-    let (server_stats, negotiated_protocol) =
-        run_server_over_ssh_connection(server_config, connection, progress, batch_ctx)?;
+    // Pull renders per-file output through the receiver, not this generator
+    // callback, so client-side out-format collection is a later increment.
+    let (server_stats, negotiated_protocol, _events) =
+        run_server_over_ssh_connection(server_config, connection, progress, batch_ctx, false)?;
     let elapsed = start.elapsed();
 
     let mut summary = convert_server_stats_to_summary(server_stats, elapsed);
@@ -240,11 +242,21 @@ fn run_push_transfer(
     let progress: Option<&mut dyn TransferProgressCallback> = adapter
         .as_mut()
         .map(|a| a as &mut dyn TransferProgressCallback);
-    let (server_stats, negotiated_protocol) =
-        run_server_over_ssh_connection(server_config, connection, progress, batch_ctx)?;
+    let (server_stats, negotiated_protocol, events) = run_server_over_ssh_connection(
+        server_config,
+        connection,
+        progress,
+        batch_ctx,
+        config.render_out_format_locally(),
+    )?;
     let elapsed = start.elapsed();
 
     let mut summary = convert_server_stats_to_summary(server_stats, elapsed);
+    // A custom `--out-format` collected per-file events for the CLI to render;
+    // otherwise the sender already printed the default lines to stdout.
+    if !events.is_empty() {
+        summary = summary.with_events(events);
+    }
     summary.set_protocol_version(negotiated_protocol);
     Ok(summary)
 }
@@ -268,6 +280,61 @@ fn run_proxy_transfer(
     run_remote_to_remote_transfer(config, remote_sources, remote_dest)
 }
 
+/// Sink for the sender's client-visible itemize rows on an SSH push.
+///
+/// With a custom `--out-format` active (`collect`), each row is captured as a
+/// metadata-bearing [`ClientEvent`] so the CLI renders it through the same
+/// out-format path as a local transfer. Otherwise the server's pre-formatted
+/// line is written straight to stdout, preserving the default `-v`/`-i` output
+/// byte-for-byte (upstream `log_item(FCLIENT, ...)`).
+struct ItemizeEventSink {
+    collect: bool,
+    events: Vec<ClientEvent>,
+}
+
+impl ItemizeEventSink {
+    const fn new(collect: bool) -> Self {
+        Self {
+            collect,
+            events: Vec::new(),
+        }
+    }
+
+    fn write_line(line: &str) {
+        let mut out = std::io::stdout().lock();
+        let _ = out.write_all(line.as_bytes());
+    }
+}
+
+impl crate::server::ItemizeCallback for ItemizeEventSink {
+    fn on_itemize(&mut self, line: &str) {
+        Self::write_line(line);
+    }
+
+    fn on_itemize_row(&mut self, row: &crate::server::ItemizeRow<'_>) {
+        if self.collect {
+            self.events
+                .push(ClientEvent::from_remote_itemize(RemoteItemizeFields {
+                    relative_path: row.name.to_path_buf(),
+                    itemize: row.itemize.to_owned(),
+                    mode: row.mode,
+                    size: row.size,
+                    mtime: row.mtime,
+                    mtime_nsec: row.mtime_nsec,
+                    uid: row.uid,
+                    gid: row.gid,
+                    is_dir: row.is_dir,
+                    is_symlink: row.is_symlink,
+                    symlink_target: row.symlink_target.map(std::path::Path::to_path_buf),
+                    is_new: row.is_new,
+                    is_deletion: row.is_deletion,
+                }));
+        } else {
+            Self::write_line(row.line);
+        }
+    }
+}
+
 /// Runs server over an SSH connection using split read/write halves.
 ///
 /// This uses `SshConnection::split` to obtain separate reader and writer handles,
@@ -289,7 +356,8 @@ fn run_server_over_ssh_connection(
     connection: SshConnection,
     progress: Option<&mut dyn crate::server::TransferProgressCallback>,
     batch_ctx: Option<BatchContext>,
-) -> Result<(crate::server::ServerStats, u8), ClientError> {
+    render_out_format_locally: bool,
+) -> Result<(crate::server::ServerStats, u8, Vec<ClientEvent>), ClientError> {
     let (reader, mut writer, mut child_handle) = connection
         .split()
         .map_err(|e| invalid_argument_error(&format!("failed to split SSH connection: {e}"), 23))?;
@@ -384,13 +452,12 @@ fn run_server_over_ssh_connection(
     // remote generator never forwards either itself (log.c:822 gates FCLIENT on
     // `!am_server`). On a pull the local side is the receiver, which prints via
     // receiver::emit_itemize / emit_name, so no sender callback is needed there.
+    // A custom `--out-format` also wants the per-file rows even without `-v`/`-i`
+    // so the client can render them; otherwise honor the plain verbose/itemize
+    // gates (upstream: sender.c:215 `itemizing = stdout_format_has_i`).
     let wants_client_output = config.role == ServerRole::Generator
-        && (config.flags.info_flags.itemize || config.flags.verbose);
-    let stdout_handle = std::io::stdout();
-    let mut itemize_cb = move |line: &str| {
-        let mut out = stdout_handle.lock();
-        let _ = out.write_all(line.as_bytes());
-    };
+        && (config.flags.info_flags.itemize || config.flags.verbose || render_out_format_locally);
+    let mut itemize_sink = ItemizeEventSink::new(render_out_format_locally);
 
     let transfer_result = crate::server::run_server_with_handshake(
         config,
@@ -400,7 +467,7 @@ fn run_server_over_ssh_connection(
         progress,
         batch_recording,
         if wants_client_output {
-            Some(&mut itemize_cb as &mut dyn crate::server::ItemizeCallback)
+            Some(&mut itemize_sink as &mut dyn crate::server::ItemizeCallback)
         } else {
             None
         },
@@ -408,6 +475,8 @@ fn run_server_over_ssh_connection(
 
     // Close the writer to signal EOF so the remote process can exit.
     drop(writer);
+
+    let collected_events = std::mem::take(&mut itemize_sink.events);
 
     // upstream: main.c wait_process_with_flush() - wait for child and map status.
     let (child_exit_code, stderr_text) = match child_handle.wait_with_stderr() {
@@ -422,7 +491,7 @@ fn run_server_over_ssh_connection(
         Ok(stats) => {
             // upstream: take MAX of transfer and child exit codes.
             if child_exit_code.is_success() {
-                Ok((stats, negotiated_protocol))
+                Ok((stats, negotiated_protocol, collected_events))
             } else {
                 // upstream: log.c:912 log_exit() renders the winning child code
                 // by its rerr_name tagged with the local role, not "client".
