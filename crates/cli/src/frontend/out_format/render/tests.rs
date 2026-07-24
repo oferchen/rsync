@@ -1489,7 +1489,21 @@ fn render_percent_o_shows_operation() {
         Some(ClientEntryKind::File),
         LocalCopyChangeSet::new(),
     );
-    assert_eq!(render_format("%o", &event), "copied\n");
+    // Default context is not a pull (push / local copy) -> upstream "send".
+    assert_eq!(render_format("%o", &event), "send\n");
+}
+
+#[test]
+fn render_percent_o_shows_recv_on_pull() {
+    // upstream log.c `%o` reports "recv" on the receiving client (a pull).
+    let event = make_event(
+        ClientEventKind::DataCopied,
+        true,
+        Some(ClientEntryKind::File),
+        LocalCopyChangeSet::new(),
+    );
+    let context = OutFormatContext::default().with_is_pull(true);
+    assert_eq!(render_format_with_context("%o", &event, &context), "recv\n");
 }
 
 #[test]
@@ -1500,7 +1514,7 @@ fn render_percent_o_shows_deleted_for_entry_deleted() {
         None,
         LocalCopyChangeSet::new(),
     );
-    assert_eq!(render_format("%o", &event), "deleted\n");
+    assert_eq!(render_format("%o", &event), "del.\n");
 }
 
 #[test]
@@ -1677,7 +1691,7 @@ fn render_multiple_codes_in_format_string() {
         LocalCopyChangeSet::new(),
     );
     let rendered = render_format("[%n] %b bytes %o", &event);
-    assert_eq!(rendered, "[test.txt] 0 bytes copied\n");
+    assert_eq!(rendered, "[test.txt] 0 bytes send\n");
 }
 
 #[test]
@@ -1706,6 +1720,7 @@ fn render_remote_host_with_context_populated() {
         module_name: Some("backup".to_owned()),
         module_path: Some("/var/backup".to_owned()),
         is_sender: false,
+        is_pull: false,
         emit_unchanged: false,
         itemize_repeated: false,
         eight_bit_output: false,
@@ -1733,6 +1748,7 @@ fn render_remote_address_with_context_populated() {
         module_name: None,
         module_path: None,
         is_sender: false,
+        is_pull: false,
         emit_unchanged: false,
         itemize_repeated: false,
         eight_bit_output: false,
@@ -1760,6 +1776,7 @@ fn render_module_name_with_context_populated() {
         module_name: Some("data".to_owned()),
         module_path: None,
         is_sender: false,
+        is_pull: false,
         emit_unchanged: false,
         itemize_repeated: false,
         eight_bit_output: false,
@@ -1784,6 +1801,7 @@ fn render_module_path_with_context_populated() {
         module_name: None,
         module_path: Some("/srv/data".to_owned()),
         is_sender: false,
+        is_pull: false,
         emit_unchanged: false,
         itemize_repeated: false,
         eight_bit_output: false,
@@ -1811,6 +1829,7 @@ fn render_all_remote_placeholders_with_full_context() {
         module_name: Some("mod".to_owned()),
         module_path: Some("/path".to_owned()),
         is_sender: false,
+        is_pull: false,
         emit_unchanged: false,
         itemize_repeated: false,
         eight_bit_output: false,

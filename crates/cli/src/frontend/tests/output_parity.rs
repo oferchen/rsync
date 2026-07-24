@@ -834,43 +834,6 @@ fn parity_verbose_v2_emits_bare_name_per_upstream() {
 }
 
 #[test]
-fn parity_verbose_skipped_file_messages_use_upstream_format() {
-    // Verify that skip messages match upstream rsync format:
-    // "skipping non-regular file \"name\""
-    // "skipping existing file \"name\""
-    // etc.
-    let event = ClientEvent::for_test(
-        PathBuf::from("skip_me.txt"),
-        ClientEventKind::SkippedExisting,
-        false,
-        Some(ClientEvent::test_metadata(ClientEntryKind::File)),
-        LocalCopyChangeSet::new(),
-    );
-
-    let events = [event];
-    let summary_with_skip = {
-        // Create a dummy summary by running a trivial transfer, then we test the
-        // emit_verbose rendering manually on the skip event
-        let mut rendered = Vec::new();
-        // emit_verbose is crate-internal; access through emit_transfer_summary with
-        // the skip event in context doesn't work since we can't inject events.
-        // Instead, verify the skip message format by using run_with_args or direct format.
-        //
-        // For direct verification, we test the %i format for skip events:
-        let format = parse_out_format(OsStr::new("%o %n")).expect("parse");
-        format
-            .render(&events[0], &OutFormatContext::default(), &mut rendered)
-            .expect("render");
-        String::from_utf8(rendered).expect("utf8")
-    };
-
-    assert_eq!(
-        summary_with_skip, "skipped existing file skip_me.txt\n",
-        "skip message format should match upstream"
-    );
-}
-
-#[test]
 fn parity_itemize_new_file_format_matches_upstream() {
     // Upstream rsync: ">f+++++++++ file.txt"
     let event = ClientEvent::for_test(
