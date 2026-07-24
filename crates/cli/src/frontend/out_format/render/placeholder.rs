@@ -105,23 +105,33 @@ pub(super) fn render_placeholder_value(
                 .map(|width| vec![b' '; 4 + width.min(MAX_PLACEHOLDER_WIDTH)]),
         },
         OutFormatPlaceholder::CurrentTime => Some(format_current_timestamp().into_bytes()),
+        // upstream: log.c:570-573 - `case 'U'` renders `uid_ndx ? F_OWNER : 0`,
+        // so the numeric uid appears only under `-o`/`--owner`; otherwise `0`.
         OutFormatPlaceholder::OwnerUid => Some(
-            event
-                .metadata()
-                .and_then(ClientEntryMetadata::uid)
-                .map_or_else(|| "0".to_owned(), |value| value.to_string())
-                .into_bytes(),
+            if context.preserve_owner {
+                event
+                    .metadata()
+                    .and_then(ClientEntryMetadata::uid)
+                    .map_or_else(|| "0".to_owned(), |value| value.to_string())
+            } else {
+                "0".to_owned()
+            }
+            .into_bytes(),
         ),
         // upstream: log.c:574-576 - `case 'G'` renders the literal "DEFAULT"
         // when `!gid_ndx || file->flags & FLAG_SKIP_GROUP`; only an available
-        // gid is formatted numerically. This differs from `%U` (log.c:570-573),
-        // which renders 0 for an unavailable uid.
+        // gid under `-g`/`--group` is formatted numerically. This differs from
+        // `%U` (log.c:570-573), which renders 0 for an unavailable uid.
         OutFormatPlaceholder::OwnerGid => Some(
-            event
-                .metadata()
-                .and_then(ClientEntryMetadata::gid)
-                .map_or_else(|| "DEFAULT".to_owned(), |value| value.to_string())
-                .into_bytes(),
+            if context.preserve_group {
+                event
+                    .metadata()
+                    .and_then(ClientEntryMetadata::gid)
+                    .map_or_else(|| "DEFAULT".to_owned(), |value| value.to_string())
+            } else {
+                "DEFAULT".to_owned()
+            }
+            .into_bytes(),
         ),
         OutFormatPlaceholder::ProcessId => Some(std::process::id().to_string().into_bytes()),
         OutFormatPlaceholder::RemoteHost => {
