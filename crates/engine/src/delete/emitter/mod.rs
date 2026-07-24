@@ -308,12 +308,12 @@ impl<F: DeleteFs> DeleteEmitter<F> {
     ///
     /// # Errors
     ///
-    /// Surfaces an [`io::Error`] only on a fatal classification (see
-    /// `Self::is_fatal_error`) or when
-    /// [`EmitterErrorPolicy::continue_on_error`] is `false` and a
-    /// non-fatal failure occurs. Non-fatal failures under the default
-    /// policy set [`Self::io_error`] and the drain continues, matching
-    /// upstream `delete.c:178-207`.
+    /// Surfaces an [`io::Error`] only when
+    /// [`EmitterErrorPolicy::continue_on_error`] is `false` and a per-entry
+    /// failure occurs. Under the default policy every failure other than
+    /// ENOENT and dir-ENOTEMPTY sets [`Self::io_error`] and the drain
+    /// continues, matching upstream `delete.c:86-210` which never aborts the
+    /// pass on a per-entry errno.
     pub fn emit_all(&mut self) -> io::Result<()> {
         loop {
             let dir = match self.pending.take() {
@@ -450,12 +450,13 @@ impl<F: DeleteFs> DeleteEmitter<F> {
                     );
                     return Ok(());
                 }
-                if Self::is_fatal_error(&err) {
-                    // Fatal: abort the drain. Upstream maps these to
-                    // RERR_PARTIAL via `rsyserr(FERROR_XFER, ...)` plus
-                    // `exit_cleanup` in `delete.c:201-205`.
-                    return Err(err);
-                }
+                // upstream: delete.c:86-210 `delete_dir_contents` /
+                // `delete_item` never abort the pass on a per-entry errno.
+                // Every failure other than ENOENT (idempotent) and
+                // dir-ENOTEMPTY (DR_NOT_EMPTY) is logged via FERROR_XFER,
+                // sets `io_error |= IOERR_GENERAL`, and the pass keeps
+                // deleting siblings. Record the non-fatal error and continue
+                // under the default `continue_on_error` policy.
                 self.record_nonfatal(&err);
                 if !self.policy.continue_on_error {
                     return Err(err);
@@ -558,7 +559,27 @@ impl<F: DeleteFs> DeleteEmitter<F> {
                     }
                 } else {
                     match parent_fd {
-                        Some(fd) => self.fs.remove_dir_all_at(fd, leaf),
+                        Some(fd) => {
+                            // Sandbox-anchored recursive peel. The descent
+                            // steps over per-child errors (upstream
+                            // `delete_dir_contents`), so it reports the
+                            // outcome instead of aborting: `had_errors`
+                            // means a genuine child unlink/rmdir failure was
+                            // logged and skipped, which upstream reflects as
+                            // `io_error |= IOERR_GENERAL` (exit 23). A
+                            // residual `not_empty` alone stays benign - it is
+                            // re-surfaced as ENOTEMPTY so `run_entry` prints
+                            // the "cannot delete non-empty directory" notice.
+                            let residue = self.fs.remove_dir_all_at(fd, leaf)?;
+                            if residue.had_errors && !self.policy.ignore_errors {
+                                self.io_error |= IOERR_GENERAL;
+                            }
+                            if residue.not_empty {
+                                Err(io::Error::from(io::ErrorKind::DirectoryNotEmpty))
+                            } else {
+                                Ok(())
+                            }
+                        }
                         None => self.fs.remove_dir_all(path),
                     }
                 }
@@ -597,18 +618,6 @@ impl<F: DeleteFs> DeleteEmitter<F> {
         } else {
             self.io_error |= IOERR_GENERAL;
         }
-    }
-
-    /// Classifies an error as fatal. Fatal classifications abort the
-    /// drain and surface to the caller verbatim.
-    ///
-    /// Upstream treats `EPERM` and `EACCES` on the destination as
-    /// fatal-class errors during the delete pass: they signal the
-    /// receiver cannot make progress and the run should exit with
-    /// `RERR_PARTIAL` immediately rather than spinning through the rest
-    /// of the plan (see `delete.c:201-205` rsyserr + `cleanup_and_exit`).
-    fn is_fatal_error(err: &io::Error) -> bool {
-        matches!(err.kind(), io::ErrorKind::PermissionDenied)
     }
 
     fn increment_stat(stats: &mut DeleteStats, kind: DeleteEntryKind) {

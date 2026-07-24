@@ -194,9 +194,12 @@ fn nonfatal_error_in_middle_keeps_draining_and_sets_io_error() {
 }
 
 #[test]
-fn fatal_eperm_aborts_drain_and_returns_err() {
-    // EPERM on the destination is fatal under upstream's policy:
-    // the drain must stop and the caller must surface the error.
+fn eperm_is_nonfatal_and_continues() {
+    // EPERM on a destination entry is NOT fatal: upstream
+    // (delete.c:86-210) logs FERROR_XFER, sets io_error |= IOERR_GENERAL,
+    // and keeps deleting the remaining siblings. The drain must therefore
+    // process `third`, record IOERR_GENERAL, and finish without surfacing
+    // an aborting error.
     let fs = ScriptedDeleteFs::new().fail("d/second", io::ErrorKind::PermissionDenied);
     let plans = DeletePlanMap::new();
     plans.insert(plan(
@@ -211,10 +214,9 @@ fn fatal_eperm_aborts_drain_and_returns_err() {
     cursor.observe_segment(PathBuf::from("d"), &[]);
 
     let mut emitter = DeleteEmitter::new(fs, plans, cursor);
-    let err = emitter
+    emitter
         .emit_all()
-        .expect_err("fatal classification aborts drain");
-    assert_eq!(err.kind(), io::ErrorKind::PermissionDenied);
+        .expect("EPERM is non-fatal and the drain continues");
 
     let paths: Vec<PathBuf> = emitter
         .fs()
@@ -222,9 +224,15 @@ fn fatal_eperm_aborts_drain_and_returns_err() {
         .iter()
         .map(|e| e.path.clone())
         .collect();
-    // `third` is never reached because the drain aborted.
-    assert_eq!(paths, vec![PathBuf::from("d/first")]);
-    assert_eq!(emitter.stats().files, 1);
+    // `second` errored before the recording branch; `first` and `third`
+    // both succeeded because the drain did not abort.
+    assert_eq!(
+        paths,
+        vec![PathBuf::from("d/first"), PathBuf::from("d/third")]
+    );
+    assert_eq!(emitter.io_error(), IOERR_GENERAL);
+    assert_eq!(emitter.exit_code(), EMITTER_PARTIAL_EXIT_CODE);
+    assert_eq!(emitter.stats().files, 2);
 }
 
 #[test]

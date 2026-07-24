@@ -79,10 +79,10 @@ pub mod at_syscalls;
 mod tests;
 
 pub use at_syscalls::{
-    AtMetadata, DirEntryView, EntryKind, LstatOutcome, ReadDirOutcome, UnlinkFlags, fchmodat,
-    fchmodat_via_sandbox_or_fallback, fchownat, fchownat_via_sandbox_or_fallback, fstatat_nofollow,
-    linkat, linkat_via_sandbox_or_fallback, lstat_via_sandbox_or_fallback, mkdirat,
-    mkdirat_via_sandbox_or_fallback, openat, openat_via_sandbox_or_fallback,
+    AtMetadata, DirEntryView, EntryKind, LstatOutcome, ReadDirOutcome, UnlinkFlags, UnlinkResidue,
+    fchmodat, fchmodat_via_sandbox_or_fallback, fchownat, fchownat_via_sandbox_or_fallback,
+    fstatat_nofollow, linkat, linkat_via_sandbox_or_fallback, lstat_via_sandbox_or_fallback,
+    mkdirat, mkdirat_via_sandbox_or_fallback, openat, openat_via_sandbox_or_fallback,
     read_dir_via_sandbox_or_fallback, readlinkat, readlinkat_via_sandbox_or_fallback,
     recursive_unlinkat, recursive_unlinkat_via_sandbox_or_fallback, renameat,
     renameat_via_sandbox_or_fallback, secure_chmod_at, secure_chown_at, secure_utimes_at,

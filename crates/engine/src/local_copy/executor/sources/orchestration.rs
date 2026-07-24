@@ -279,6 +279,14 @@ pub(crate) fn copy_sources(
             if context.sender_remove_error_occurred() {
                 return Err(LocalCopyError::partial_transfer());
             }
+            // upstream: delete.c:86-210 - the delete pass logs each
+            // un-removable entry via `rsyserr(FERROR_XFER, ...)` and sets
+            // `io_error |= IOERR_GENERAL` without aborting; main.c then exits
+            // RERR_PARTIAL (23). The per-entry notice was already printed by
+            // the emitter, so surface only the summary error here.
+            if context.io_error_requires_partial_exit() {
+                return Err(LocalCopyError::partial_transfer());
+            }
             Ok(())
         })()
     };

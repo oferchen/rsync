@@ -60,7 +60,7 @@ pub use open::{
 pub use read_dir::{DirEntryView, EntryKind, ReadDirOutcome, read_dir_via_sandbox_or_fallback};
 pub use rename::{renameat, renameat_via_sandbox_or_fallback};
 pub use unlink::{
-    UnlinkFlags, recursive_unlinkat, recursive_unlinkat_via_sandbox_or_fallback,
+    UnlinkFlags, UnlinkResidue, recursive_unlinkat, recursive_unlinkat_via_sandbox_or_fallback,
     unlink_via_sandbox_or_fallback, unlinkat,
 };
 

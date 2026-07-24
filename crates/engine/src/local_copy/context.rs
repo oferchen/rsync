@@ -200,6 +200,14 @@ pub(crate) struct CopyContext<'a> {
     /// sets `got_xfer_error` without aborting the transfer.
     // upstream: sender.c:131-182 successful_send(); log.c:311 got_xfer_error
     sender_remove_error: bool,
+    /// Set when the delete emitter reported a genuine swallowed unlink/rmdir
+    /// error during the recursive peel (an `EACCES` and friends the walker
+    /// logged and stepped over). The pass keeps deleting the rest of the
+    /// tree, but this flag drives the final `RERR_PARTIAL` (exit 23) exit
+    /// code, mirroring upstream `delete.c:86-210` where each such
+    /// `rsyserr(FERROR_XFER, ...)` sets `io_error |= IOERR_GENERAL` without
+    /// aborting the pass.
+    delete_io_error: bool,
     /// `true` when the active plan carries more than one source operand.
     /// Used to switch `--delete-during` to a deferred sweep so the per-source
     /// keep lists can be merged before any extraneous unlink fires; upstream
