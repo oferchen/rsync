@@ -62,7 +62,7 @@ impl ReceiverContext {
             return Ok(());
         }
 
-        for entry in &self.file_list {
+        for (flist_idx, entry) in self.file_list.iter().enumerate() {
             if !entry.is_symlink() {
                 continue;
             }
@@ -144,7 +144,7 @@ impl ReceiverContext {
                     }
                     // upstream: generator.c:1565 - symlink up-to-date, metadata only
                     let iflags = ItemFlags::from_raw(0);
-                    let _ = self.emit_itemize(writer, &iflags, entry);
+                    let _ = self.emit_itemize_indexed(writer, flist_idx, &iflags, entry);
                     // upstream: log.c log_item / send_directory NAME emissions
                     // upstream: generator.c:1145 - "%s is uptodate" at INFO_GTE(NAME, 2)
                     info_log!(Name, 2, "{} is uptodate", relative_path.display());
@@ -328,7 +328,7 @@ impl ReceiverContext {
             }
             // upstream: generator.c:1594 - itemize new symlink after creation
             let iflags = ItemFlags::from_raw(ItemFlags::ITEM_LOCAL_CHANGE | ItemFlags::ITEM_IS_NEW);
-            let _ = self.emit_itemize(writer, &iflags, entry);
+            let _ = self.emit_itemize_indexed(writer, flist_idx, &iflags, entry);
             if !dest_existed {
                 // upstream: receiver.c:740-741 - a newly created symlink
                 // (destination was absent) bumps stats.created_symlinks.
@@ -369,7 +369,7 @@ impl ReceiverContext {
         // borrow of `self.file_list` never overlaps the mutable field write.
         let mut unsupported_skip = false;
 
-        for entry in &self.file_list {
+        for (flist_idx, entry) in self.file_list.iter().enumerate() {
             if !entry.is_symlink() {
                 continue;
             }
@@ -442,7 +442,7 @@ impl ReceiverContext {
                     }
                     // upstream: generator.c:1565 - symlink up-to-date, metadata only
                     let iflags = ItemFlags::from_raw(0);
-                    let _ = self.emit_itemize(writer, &iflags, entry);
+                    let _ = self.emit_itemize_indexed(writer, flist_idx, &iflags, entry);
                     // upstream: generator.c:1145 - "%s is uptodate" at INFO_GTE(NAME, 2)
                     info_log!(Name, 2, "{} is uptodate", relative_path.display());
                     continue;
@@ -545,7 +545,7 @@ impl ReceiverContext {
             }
             // upstream: generator.c:1594 - itemize new symlink after creation
             let iflags = ItemFlags::from_raw(ItemFlags::ITEM_LOCAL_CHANGE | ItemFlags::ITEM_IS_NEW);
-            let _ = self.emit_itemize(writer, &iflags, entry);
+            let _ = self.emit_itemize_indexed(writer, flist_idx, &iflags, entry);
             if !dest_existed {
                 // upstream: receiver.c:740-741 - a newly created symlink
                 // (destination was absent) bumps stats.created_symlinks.
@@ -656,7 +656,7 @@ impl ReceiverContext {
         }
 
         // Protocol 30+: use HardlinkApplyTracker for leader/follower resolution.
-        // Take the tracker temporarily to avoid borrow conflicts with self.emit_itemize().
+        // Take the tracker temporarily to avoid borrow conflicts with itemize emission.
         if let Some(mut tracker) = self.hardlink_tracker.take() {
             // First pass: ensure all leaders are recorded in the tracker.
             // Leaders committed during pipelined transfer are already recorded;
@@ -789,7 +789,8 @@ impl ReceiverContext {
                             {
                                 // upstream: hlink.c - hardlink already correct, metadata only
                                 let iflags = ItemFlags::from_raw(0);
-                                let _ = self.emit_itemize(writer, &iflags, entry);
+                                let _ =
+                                    self.emit_itemize_indexed(writer, follower_ndx, &iflags, entry);
                                 // upstream: hlink.c:223 - "%s is uptodate"
                                 // emitted at INFO_GTE(NAME, 2) when the
                                 // destination already hard-links to the leader.
@@ -897,7 +898,7 @@ impl ReceiverContext {
                         | ItemFlags::ITEM_XNAME_FOLLOWS
                         | ItemFlags::ITEM_IS_NEW,
                 );
-                let _ = self.emit_itemize(writer, &iflags, entry);
+                let _ = self.emit_itemize_indexed(writer, follower_ndx, &iflags, entry);
                 // upstream: hlink.c:236 - "%s => %s" at INFO_GTE(NAME, 1)
                 // when a hardlink follower is linked to its leader.
                 info_log!(

@@ -256,6 +256,100 @@ fn out_format_inactive_uses_string_path() {
 }
 
 #[test]
+fn out_format_collects_symlink_via_indexed_emit() {
+    // A symlink reaches the generator on the immediate (non-pipelined) path, so
+    // it is itemized through `emit_itemize_indexed`. Under a custom `--out-format`
+    // the index is carried into the collect buffer instead of suppressing the row
+    // (the plain `emit_itemize` no-op), so a pulling client renders the template
+    // for the symlink in flist order alongside regular files - matching upstream's
+    // single generate_files walk (generator.c:2329).
+    let handshake = test_handshake();
+    let mut config = test_config();
+    config.flags.info_flags.itemize = false;
+    config.flags.info_flags.out_format_active = true;
+    config.connection.client_mode = true;
+    let ctx = ReceiverContext::new_for_test(&handshake, config);
+    let mut writer = MockMsgInfoWriter::new();
+
+    let entry = FileEntry::new_symlink("mylink".into(), "target".into());
+    let iflags = ItemFlags::from_raw(ItemFlags::ITEM_LOCAL_CHANGE | ItemFlags::ITEM_IS_NEW);
+
+    ctx.emit_itemize_indexed(&mut writer, 5, &iflags, &entry)
+        .unwrap();
+
+    // No immediate MSG_INFO string is written; the event is buffered instead.
+    assert!(writer.messages.is_empty());
+    assert!(ctx.itemize_rows.borrow().is_empty());
+    let rows = ctx.drain_event_rows();
+    assert_eq!(rows.len(), 1);
+    let row = &rows[0];
+    assert_eq!(row.name, std::path::Path::new("mylink"));
+    assert!(row.is_symlink);
+    assert_eq!(
+        row.symlink_target.as_deref(),
+        Some(std::path::Path::new("target"))
+    );
+    assert!(row.is_new);
+    // upstream log.c - a newly created symlink shows the `c` local-change glyph
+    // and the `L` symlink type; the row is the fixed 11-char `%i`.
+    assert_eq!(row.itemize.len(), 11);
+    assert!(row.itemize.starts_with("cL"), "itemize = {:?}", row.itemize);
+}
+
+#[test]
+fn out_format_collects_special_via_indexed_emit() {
+    // A FIFO (special) is created on the same immediate path as a symlink, so it
+    // must also flow through `emit_itemize_indexed` into the collect buffer under
+    // a custom `--out-format` rather than being dropped.
+    let handshake = test_handshake();
+    let mut config = test_config();
+    config.flags.info_flags.itemize = false;
+    config.flags.info_flags.out_format_active = true;
+    config.connection.client_mode = true;
+    let ctx = ReceiverContext::new_for_test(&handshake, config);
+    let mut writer = MockMsgInfoWriter::new();
+
+    let entry = FileEntry::new_fifo("apipe".into(), 0o644);
+    let iflags = ItemFlags::from_raw(ItemFlags::ITEM_LOCAL_CHANGE | ItemFlags::ITEM_IS_NEW);
+
+    ctx.emit_itemize_indexed(&mut writer, 2, &iflags, &entry)
+        .unwrap();
+
+    assert!(writer.messages.is_empty());
+    let rows = ctx.drain_event_rows();
+    assert_eq!(rows.len(), 1);
+    let row = &rows[0];
+    assert_eq!(row.name, std::path::Path::new("apipe"));
+    assert!(row.is_new);
+    // upstream log.c - a newly created special shows the `c` local-change glyph
+    // and the `S` special type.
+    assert_eq!(row.itemize.len(), 11);
+    assert!(row.itemize.starts_with("cS"), "itemize = {:?}", row.itemize);
+}
+
+#[test]
+fn out_format_inactive_indexed_emit_uses_immediate_path() {
+    // Off a custom `--out-format`, `emit_itemize_indexed` must behave exactly like
+    // the immediate `emit_itemize`: with `-i` on a server receiver it renders no
+    // client row (the row travels as wire iflags), and nothing is collected.
+    let handshake = test_handshake();
+    let config = receiver_config_with_itemize();
+    let ctx = ReceiverContext::new_for_test(&handshake, config);
+    let mut writer = MockMsgInfoWriter::new();
+
+    let entry = FileEntry::new_symlink("mylink".into(), "target".into());
+    let iflags = ItemFlags::from_raw(ItemFlags::ITEM_LOCAL_CHANGE | ItemFlags::ITEM_IS_NEW);
+
+    ctx.emit_itemize_indexed(&mut writer, 1, &iflags, &entry)
+        .unwrap();
+
+    // Server-mode receiver writes no client-visible row and collects nothing.
+    assert!(writer.messages.is_empty());
+    assert!(ctx.drain_event_rows().is_empty());
+    assert!(ctx.itemize_rows.borrow().is_empty());
+}
+
+#[test]
 fn emit_itemize_skipped_without_itemize_flag() {
     let handshake = test_handshake();
     let mut config = test_config();
