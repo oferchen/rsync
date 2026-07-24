@@ -203,13 +203,22 @@ fn run_pull_transfer(
     let progress: Option<&mut dyn TransferProgressCallback> = adapter
         .as_mut()
         .map(|a| a as &mut dyn TransferProgressCallback);
-    // Pull renders per-file output through the receiver, not this generator
-    // callback, so client-side out-format collection is a later increment.
-    let (server_stats, negotiated_protocol, _events) =
-        run_server_over_ssh_connection(server_config, connection, progress, batch_ctx, false)?;
+    // A custom `--out-format` makes the receiver buffer metadata events that the
+    // CLI renders; otherwise the receiver prints its own default `-v`/`-i` output
+    // to stdout and no events are collected.
+    let (server_stats, negotiated_protocol, events) = run_server_over_ssh_connection(
+        server_config,
+        connection,
+        progress,
+        batch_ctx,
+        config.render_out_format_locally(),
+    )?;
     let elapsed = start.elapsed();
 
     let mut summary = convert_server_stats_to_summary(server_stats, elapsed);
+    if !events.is_empty() {
+        summary = summary.with_events(events);
+    }
     summary.set_protocol_version(negotiated_protocol);
     Ok(summary)
 }
@@ -450,13 +459,21 @@ fn run_server_over_ssh_connection(
     // the iflags the remote receiver's generator writes over the wire,
     // generator.c:583-599) or, under plain `-v`, the bare `%n%L` name. The
     // remote generator never forwards either itself (log.c:822 gates FCLIENT on
-    // `!am_server`). On a pull the local side is the receiver, which prints via
-    // receiver::emit_itemize / emit_name, so no sender callback is needed there.
-    // A custom `--out-format` also wants the per-file rows even without `-v`/`-i`
-    // so the client can render them; otherwise honor the plain verbose/itemize
-    // gates (upstream: sender.c:215 `itemizing = stdout_format_has_i`).
-    let wants_client_output = config.role == ServerRole::Generator
-        && (config.flags.info_flags.itemize || config.flags.verbose || render_out_format_locally);
+    // `!am_server`). A custom `--out-format` also wants the per-file rows even
+    // without `-v`/`-i` so the client can render them; otherwise honor the plain
+    // verbose/itemize gates (upstream: sender.c:215 `itemizing =
+    // stdout_format_has_i`).
+    //
+    // On a pull the local side is the receiver, which prints its own default
+    // `-v`/`-i` output to stdout and needs no callback - EXCEPT under a custom
+    // `--out-format`, where it buffers metadata events the CLI renders, drained
+    // into this callback after the receive loop (transfer/lib.rs receiver branch).
+    let wants_client_output = match config.role {
+        ServerRole::Generator => {
+            config.flags.info_flags.itemize || config.flags.verbose || render_out_format_locally
+        }
+        ServerRole::Receiver => render_out_format_locally,
+    };
     let mut itemize_sink = ItemizeEventSink::new(render_out_format_locally);
 
     let transfer_result = crate::server::run_server_with_handshake(

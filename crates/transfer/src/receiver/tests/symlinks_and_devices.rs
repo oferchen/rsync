@@ -197,6 +197,65 @@ fn emit_itemize_client_mode_uses_stdout_not_msg_info() {
 }
 
 #[test]
+fn out_format_collects_events_and_suppresses_string_path() {
+    // A pulling client with a custom `--out-format` (out_format_active, no `-i`)
+    // buffers a metadata-bearing event per logged entry instead of writing its
+    // own itemize string, so the CLI can render the user's template. The default
+    // string buffer stays empty and the drained event carries the raw fields
+    // plus the client-direction (`>`) `%i` glyph.
+    let handshake = test_handshake();
+    let mut config = test_config();
+    config.flags.info_flags.itemize = false;
+    config.flags.info_flags.out_format_active = true;
+    config.connection.client_mode = true;
+    let ctx = ReceiverContext::new_for_test(&handshake, config);
+
+    let entry = FileEntry::new_file("docs/readme.txt".into(), 1024, 0o644);
+    let iflags = ItemFlags::from_raw(ItemFlags::ITEM_TRANSFER | ItemFlags::ITEM_IS_NEW);
+
+    ctx.record_itemize(3, &iflags, &entry);
+
+    // String path suppressed; event path populated.
+    assert!(ctx.itemize_rows.borrow().is_empty());
+    let rows = ctx.drain_event_rows();
+    assert_eq!(rows.len(), 1);
+    let row = &rows[0];
+    assert_eq!(row.name, std::path::Path::new("docs/readme.txt"));
+    assert_eq!(row.size, 1024);
+    // Full mode (type + perms) is carried so the CLI can render `%B`/`%M`.
+    assert_eq!(row.mode, 0o100_644);
+    assert_eq!(row.mode & 0o777, 0o644);
+    assert!(row.is_new);
+    assert!(!row.is_dir);
+    // upstream log.c:707-710 - a client-mode (pull) receiver renders the `>`
+    // receive-direction glyph; the string is the fixed 11-char `%i`.
+    assert_eq!(row.itemize.len(), 11);
+    assert!(row.itemize.starts_with(">f"), "itemize = {:?}", row.itemize);
+    // Drain is idempotent (buffer taken).
+    assert!(ctx.drain_event_rows().is_empty());
+}
+
+#[test]
+fn out_format_inactive_uses_string_path() {
+    // Without out_format_active the pull receiver keeps its default behaviour:
+    // `-i` rows buffer as strings and no events are collected.
+    let handshake = test_handshake();
+    let mut config = test_config();
+    config.flags.info_flags.itemize = true;
+    config.flags.info_flags.out_format_active = false;
+    config.connection.client_mode = true;
+    let ctx = ReceiverContext::new_for_test(&handshake, config);
+
+    let entry = FileEntry::new_file("test.txt".into(), 100, 0o644);
+    let iflags = ItemFlags::from_raw(ItemFlags::ITEM_TRANSFER | ItemFlags::ITEM_IS_NEW);
+
+    ctx.record_itemize(0, &iflags, &entry);
+
+    assert!(ctx.drain_event_rows().is_empty());
+    assert_eq!(ctx.itemize_rows.borrow().len(), 1);
+}
+
+#[test]
 fn emit_itemize_skipped_without_itemize_flag() {
     let handshake = test_handshake();
     let mut config = test_config();

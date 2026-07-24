@@ -194,7 +194,9 @@ pub use pipeline::{
     DEFAULT_PIPELINE_WINDOW, MAX_PIPELINE_WINDOW, MIN_PIPELINE_WINDOW, PendingTransfer,
     PipelineConfig, PipelineState,
 };
-pub use progress::{ItemizeCallback, ItemizeRow, TransferProgressCallback, TransferProgressEvent};
+pub use progress::{
+    ItemizeCallback, ItemizeRow, OwnedItemizeRow, TransferProgressCallback, TransferProgressEvent,
+};
 pub use transfer_state::{InvalidTransition, TransferPhase, TransferPipeline};
 
 /// Batch recording configuration for protocol stream teeing.
@@ -899,6 +901,17 @@ pub fn run_server_with_handshake_adopting<W: Write>(
             // wire bytes, not the post-decompression literal byte total.
             stats.bytes_received =
                 bytes_received_counter.load(std::sync::atomic::Ordering::Relaxed);
+
+            // A custom `--out-format` on a pull buffered its per-file rows as
+            // metadata events (the receiver suppressed its own stdout). Hand each
+            // one to the client callback in flist-index order so the CLI renders
+            // the user's template - mirroring how the push sender feeds the same
+            // callback. No-op unless the client set `out_format_active`.
+            if let Some(cb) = itemize {
+                for row in ctx.drain_event_rows() {
+                    cb.on_itemize_row(&row.as_row());
+                }
+            }
 
             Ok(ServerStats::Receiver(stats))
         }
