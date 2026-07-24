@@ -33,7 +33,7 @@ use std::sync::Mutex;
 use std::ffi::OsStr;
 
 #[cfg(unix)]
-use fast_io::UnlinkFlags;
+use fast_io::{UnlinkFlags, UnlinkResidue};
 
 use super::super::DeleteEntryKind;
 use crate::util::poison::lock_or_recover;
@@ -144,8 +144,18 @@ pub trait DeleteFs: std::fmt::Debug {
     /// per-entry descent refuses to follow a symlink at the leaf
     /// (`O_DIRECTORY | O_NOFOLLOW`) and the final
     /// `unlinkat(AT_REMOVEDIR)` is anchored on `parent_fd`.
+    ///
+    /// Returns an [`UnlinkResidue`] so the emitter can mirror upstream's
+    /// post-peel exit-code decision: `not_empty` drives the "cannot delete
+    /// non-empty directory" notice, `had_errors` drives `io_error |=
+    /// IOERR_GENERAL` (exit 23) when the descent stepped over a genuine
+    /// child failure.
     #[cfg(unix)]
-    fn remove_dir_all_at(&self, parent_fd: BorrowedFd<'_>, name: &OsStr) -> io::Result<()>;
+    fn remove_dir_all_at(
+        &self,
+        parent_fd: BorrowedFd<'_>,
+        name: &OsStr,
+    ) -> io::Result<UnlinkResidue>;
 }
 
 /// Production [`DeleteFs`] implementation backed by `std::fs` (path
@@ -212,7 +222,11 @@ impl DeleteFs for RealDeleteFs {
     }
 
     #[cfg(unix)]
-    fn remove_dir_all_at(&self, parent_fd: BorrowedFd<'_>, name: &OsStr) -> io::Result<()> {
+    fn remove_dir_all_at(
+        &self,
+        parent_fd: BorrowedFd<'_>,
+        name: &OsStr,
+    ) -> io::Result<UnlinkResidue> {
         // SEC-1.s carrier: drives the recursive peel directly off
         // `parent_fd` with O_DIRECTORY | O_NOFOLLOW so a symlink at the
         // root is refused and the kernel anchors every per-entry
@@ -275,7 +289,11 @@ impl<F: DeleteFs + ?Sized> DeleteFs for &F {
     }
 
     #[cfg(unix)]
-    fn remove_dir_all_at(&self, parent_fd: BorrowedFd<'_>, name: &OsStr) -> io::Result<()> {
+    fn remove_dir_all_at(
+        &self,
+        parent_fd: BorrowedFd<'_>,
+        name: &OsStr,
+    ) -> io::Result<UnlinkResidue> {
         (*self).remove_dir_all_at(parent_fd, name)
     }
 }
@@ -396,8 +414,12 @@ impl DeleteFs for RecordingDeleteFs {
     }
 
     #[cfg(unix)]
-    fn remove_dir_all_at(&self, _parent_fd: BorrowedFd<'_>, name: &OsStr) -> io::Result<()> {
+    fn remove_dir_all_at(
+        &self,
+        _parent_fd: BorrowedFd<'_>,
+        name: &OsStr,
+    ) -> io::Result<UnlinkResidue> {
         self.record(Path::new(name), DeleteEntryKind::Dir);
-        Ok(())
+        Ok(UnlinkResidue::default())
     }
 }

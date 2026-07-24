@@ -293,11 +293,11 @@ impl<F: DeleteFs + Sync + Send + 'static> ParallelDeleteEmitter<F> {
     ///
     /// # Errors
     ///
-    /// Surfaces a fatal [`io::Error`] when the [`EmitterErrorPolicy`]
-    /// classifies a dispatch failure as fatal (mirrors
-    /// [`super::emitter::DeleteEmitter::emit_all`] behaviour). Non-fatal
-    /// errors accumulate into the returned outcome's `io_error` bitmask
-    /// and the drain continues.
+    /// Surfaces an [`io::Error`] only when
+    /// [`EmitterErrorPolicy::continue_on_error`] is `false` and a dispatch
+    /// fails (mirrors [`super::emitter::DeleteEmitter::emit_all`]). Under the
+    /// default policy every per-entry failure accumulates into the returned
+    /// outcome's `io_error` bitmask and the drain continues.
     pub fn run(self) -> io::Result<ParallelDrainOutcome<F>> {
         #[cfg(unix)]
         let consumer_sandbox = self.sandbox.clone();
@@ -466,22 +466,31 @@ fn dispatch_cohort<F: DeleteFs + Sync + Send>(
     let parent_fd = parent_handle.as_ref().map(std::os::fd::AsFd::as_fd);
 
     #[cfg(unix)]
-    let results: Vec<io::Result<DeleteEntryKind>> = ops
+    let results: Vec<io::Result<(DeleteEntryKind, bool)>> = ops
         .par_iter()
         .map(|op| dispatch_one(fs.as_ref(), op, parent_fd))
         .collect();
     #[cfg(not(unix))]
-    let results: Vec<io::Result<DeleteEntryKind>> = ops
+    let results: Vec<io::Result<(DeleteEntryKind, bool)>> = ops
         .par_iter()
         .map(|op| dispatch_one(fs.as_ref(), op))
         .collect();
     for result in results {
         match result {
-            Ok(kind) => increment_stat(&mut summary.stats, kind),
-            Err(err) => {
-                if is_fatal_error(&err) {
-                    return Err(err);
+            Ok((kind, had_errors)) => {
+                increment_stat(&mut summary.stats, kind);
+                if had_errors && !policy.ignore_errors {
+                    // A recursive peel stepped over a genuine child error
+                    // (upstream FERROR_XFER + `io_error |= IOERR_GENERAL`);
+                    // record it so the run exits 23 while the pass keeps
+                    // deleting siblings.
+                    summary.io_error |= IOERR_GENERAL;
                 }
+            }
+            Err(err) => {
+                // upstream: delete.c:86-210 never aborts the pass on a
+                // per-entry errno; record it and keep going under the
+                // default continue-on-error policy.
                 accumulate_nonfatal(&mut summary.io_error, policy, &err);
                 if !policy.continue_on_error {
                     return Err(err);
@@ -497,38 +506,42 @@ fn dispatch_cohort<F: DeleteFs + Sync + Send>(
 /// otherwise. `op.leaf` is the single-component leaf name anchored against
 /// `parent_fd`; `op.path` is the absolute reconstruction used by the
 /// fallback.
+///
+/// Returns the op's kind paired with whether a recursive peel stepped over
+/// a genuine child error (`had_errors`). Only the directory path can raise
+/// the flag; every other kind reports `false`.
 #[cfg(unix)]
 fn dispatch_one<F: DeleteFs>(
     fs: &F,
     op: &DeleteOperation,
     parent_fd: Option<std::os::fd::BorrowedFd<'_>>,
-) -> io::Result<DeleteEntryKind> {
+) -> io::Result<(DeleteEntryKind, bool)> {
     let leaf = op.leaf.as_os_str();
-    let outcome = match (op.kind, parent_fd) {
-        (DeleteEntryKind::File, Some(fd)) => fs.unlink_file_at(fd, leaf),
-        (DeleteEntryKind::Symlink, Some(fd)) => fs.unlink_symlink_at(fd, leaf),
-        (DeleteEntryKind::Device, Some(fd)) => fs.unlink_device_at(fd, leaf),
-        (DeleteEntryKind::Special, Some(fd)) => fs.unlink_special_at(fd, leaf),
+    let had_errors = match (op.kind, parent_fd) {
+        (DeleteEntryKind::File, Some(fd)) => fs.unlink_file_at(fd, leaf).map(|()| false),
+        (DeleteEntryKind::Symlink, Some(fd)) => fs.unlink_symlink_at(fd, leaf).map(|()| false),
+        (DeleteEntryKind::Device, Some(fd)) => fs.unlink_device_at(fd, leaf).map(|()| false),
+        (DeleteEntryKind::Special, Some(fd)) => fs.unlink_special_at(fd, leaf).map(|()| false),
         (DeleteEntryKind::Dir, Some(fd)) => dispatch_dir_at(fs, fd, leaf),
-        (DeleteEntryKind::File, None) => fs.unlink_file(&op.path),
-        (DeleteEntryKind::Symlink, None) => fs.unlink_symlink(&op.path),
-        (DeleteEntryKind::Device, None) => fs.unlink_device(&op.path),
-        (DeleteEntryKind::Special, None) => fs.unlink_special(&op.path),
-        (DeleteEntryKind::Dir, None) => dispatch_dir(fs, &op.path),
-    };
-    outcome.map(|()| op.kind)
+        (DeleteEntryKind::File, None) => fs.unlink_file(&op.path).map(|()| false),
+        (DeleteEntryKind::Symlink, None) => fs.unlink_symlink(&op.path).map(|()| false),
+        (DeleteEntryKind::Device, None) => fs.unlink_device(&op.path).map(|()| false),
+        (DeleteEntryKind::Special, None) => fs.unlink_special(&op.path).map(|()| false),
+        (DeleteEntryKind::Dir, None) => dispatch_dir(fs, &op.path).map(|()| false),
+    }?;
+    Ok((op.kind, had_errors))
 }
 
 #[cfg(not(unix))]
-fn dispatch_one<F: DeleteFs>(fs: &F, op: &DeleteOperation) -> io::Result<DeleteEntryKind> {
-    let outcome = match op.kind {
-        DeleteEntryKind::File => fs.unlink_file(&op.path),
-        DeleteEntryKind::Dir => dispatch_dir(fs, &op.path),
-        DeleteEntryKind::Symlink => fs.unlink_symlink(&op.path),
-        DeleteEntryKind::Device => fs.unlink_device(&op.path),
-        DeleteEntryKind::Special => fs.unlink_special(&op.path),
+fn dispatch_one<F: DeleteFs>(fs: &F, op: &DeleteOperation) -> io::Result<(DeleteEntryKind, bool)> {
+    match op.kind {
+        DeleteEntryKind::File => fs.unlink_file(&op.path)?,
+        DeleteEntryKind::Dir => dispatch_dir(fs, &op.path)?,
+        DeleteEntryKind::Symlink => fs.unlink_symlink(&op.path)?,
+        DeleteEntryKind::Device => fs.unlink_device(&op.path)?,
+        DeleteEntryKind::Special => fs.unlink_special(&op.path)?,
     };
-    outcome.map(|()| op.kind)
+    Ok((op.kind, false))
 }
 
 fn dispatch_dir<F: DeleteFs>(fs: &F, path: &std::path::Path) -> io::Result<()> {
@@ -541,26 +554,24 @@ fn dispatch_dir<F: DeleteFs>(fs: &F, path: &std::path::Path) -> io::Result<()> {
 
 /// Dirfd-anchored directory removal: `rmdir_at` first, then the recursive
 /// `remove_dir_all_at` peel on `ENOTEMPTY`, mirroring the path-based
-/// [`dispatch_dir`] but anchored against `parent_fd`.
+/// [`dispatch_dir`] but anchored against `parent_fd`. Returns whether the
+/// peel stepped over a genuine child error; a residual non-empty root
+/// without such an error stays benign (upstream `DR_NOT_EMPTY`).
 #[cfg(unix)]
 fn dispatch_dir_at<F: DeleteFs>(
     fs: &F,
     parent_fd: std::os::fd::BorrowedFd<'_>,
     leaf: &std::ffi::OsStr,
-) -> io::Result<()> {
+) -> io::Result<bool> {
     match fs.rmdir_at(parent_fd, leaf) {
-        Ok(()) => Ok(()),
-        Err(err) if is_not_empty(&err) => fs.remove_dir_all_at(parent_fd, leaf),
+        Ok(()) => Ok(false),
+        Err(err) if is_not_empty(&err) => Ok(fs.remove_dir_all_at(parent_fd, leaf)?.had_errors),
         Err(err) => Err(err),
     }
 }
 
 fn is_not_empty(err: &io::Error) -> bool {
     matches!(err.kind(), io::ErrorKind::DirectoryNotEmpty)
-}
-
-fn is_fatal_error(err: &io::Error) -> bool {
-    matches!(err.kind(), io::ErrorKind::PermissionDenied)
 }
 
 /// Mirrors [`super::emitter::policy`] `IOERR_GENERAL` (bit 0) so the
@@ -935,7 +946,7 @@ mod tests {
                 &self,
                 _parent_fd: std::os::fd::BorrowedFd<'_>,
                 _name: &std::ffi::OsStr,
-            ) -> io::Result<()> {
+            ) -> io::Result<fast_io::UnlinkResidue> {
                 unreachable!()
             }
         }

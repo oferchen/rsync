@@ -141,6 +141,7 @@ impl<'a> CopyContext<'a> {
             iconv_conversion_error: false,
             unsupported_operation_skipped: false,
             sender_remove_error: false,
+            delete_io_error: false,
             multi_source: false,
             verified_parents: HashMap::new(),
             batch_flist_writer,
@@ -1358,6 +1359,25 @@ impl<'a> CopyContext<'a> {
     /// even though every other entry was copied.
     pub(super) const fn sender_remove_error_occurred(&self) -> bool {
         self.sender_remove_error
+    }
+
+    /// Records that the delete emitter stepped over a genuine unlink/rmdir
+    /// error during a recursive peel. The pass still deletes the rest of the
+    /// tree; this flag only forces the final `RERR_PARTIAL` (exit 23) exit
+    /// code.
+    ///
+    /// upstream: `delete.c:86-210` - `delete_dir_contents` / `delete_item`
+    /// log each un-removable entry via `rsyserr(FERROR_XFER, ...)` and set
+    /// `io_error |= IOERR_GENERAL`; `main.c` then exits `RERR_PARTIAL`.
+    pub(super) fn record_delete_io_error(&mut self) {
+        self.delete_io_error = true;
+    }
+
+    /// Reports whether a swallowed delete-pass error must force
+    /// `RERR_PARTIAL` (exit 23). `--ignore-errors` suppresses it, matching
+    /// upstream where the flag clears `IOERR_GENERAL` for the delete pass.
+    pub(super) const fn io_error_requires_partial_exit(&self) -> bool {
+        self.delete_io_error && !self.options.ignore_errors_enabled()
     }
 
     /// Reports whether deletions should proceed despite I/O errors.
