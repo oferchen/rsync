@@ -43,8 +43,8 @@ pub mod test_utils {
 pub(crate) use frontend::password;
 #[allow(unused_imports)] // REASON: convenience re-export; not all items used in every module
 pub(crate) use frontend::{
-    LIST_TIMESTAMP_FORMAT, OutFormat, OutFormatContext, describe_event_kind, emit_out_format,
-    format_list_permissions, parse_out_format,
+    LIST_TIMESTAMP_FORMAT, OutFormat, OutFormatContext, emit_out_format, format_list_permissions,
+    parse_out_format,
 };
 
 #[cfg(test)]

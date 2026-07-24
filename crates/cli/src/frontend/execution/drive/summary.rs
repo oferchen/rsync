@@ -121,6 +121,10 @@ where
     // Threaded into `OutFormatContext` so the itemize renderer picks the correct
     // direction arrow (upstream: log.c:701-704 - `<` for sender, `>` otherwise).
     let is_sender = config.is_local_sender();
+    // upstream: log.c `%o` reports `recv` on the receiving client (a pull) and
+    // `send` otherwise (a push or a local copy) - a different split than the
+    // itemize arrow, so it needs its own signal rather than `is_sender`.
+    let is_pull = config.is_pull();
     // upstream: flist.c:2251 emits "sending incremental file list" only when
     // `inc_recurse && INFO_GTE(FLIST, 1) && !am_server`. Mirror each gate:
     // - compat.c:172 disables inc_recurse when `!recurse`, so a single-file
@@ -174,6 +178,7 @@ where
             // rows for unchanged dirs, files, and symlinks.
             let emit_unchanged = matches!(name_level, NameOutputLevel::UpdatedAndUnchanged);
             let out_format_context = OutFormatContext::with_is_sender(is_sender)
+                .with_is_pull(is_pull)
                 .with_emit_unchanged(emit_unchanged)
                 .with_itemize_repeated(itemize_repeated)
                 .with_eight_bit_output(eight_bit_output)
@@ -222,6 +227,7 @@ where
                     name_overridden,
                     human_readable_mode,
                     is_sender,
+                    is_pull,
                     itemize_repeated,
                     show_atimes,
                     show_crtimes,
@@ -275,6 +281,8 @@ struct EmitLogOutputParams<'a> {
     /// Whether the local client is the sender. Threaded through so the
     /// itemize direction arrow matches upstream `log.c:701-704`.
     is_sender: bool,
+    /// Whether the transfer is a pull; drives the `%o` operation word.
+    is_pull: bool,
     /// `-ii` (the `-i` flag repeated) - upstream `stdout_format_has_i > 1`.
     /// Forces unchanged itemize rows in the log file as it does on stdout.
     itemize_repeated: bool,
@@ -307,6 +315,7 @@ fn emit_log_output(params: EmitLogOutputParams<'_>) -> io::Result<()> {
         name_overridden,
         human_readable_mode,
         is_sender,
+        is_pull,
         itemize_repeated,
         show_atimes,
         show_crtimes,
@@ -321,6 +330,7 @@ fn emit_log_output(params: EmitLogOutputParams<'_>) -> io::Result<()> {
     // (`stdout_format_has_i > 1`) arm forces them independently of `-vv`.
     let emit_unchanged = matches!(name_level, NameOutputLevel::UpdatedAndUnchanged);
     let context = OutFormatContext::with_is_sender(is_sender)
+        .with_is_pull(is_pull)
         .with_emit_unchanged(emit_unchanged)
         .with_itemize_repeated(itemize_repeated)
         .with_eight_bit_output(eight_bit_output)
