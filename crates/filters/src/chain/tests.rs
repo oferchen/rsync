@@ -723,6 +723,7 @@ fn filter_chain_non_inheriting_scope_falls_through_to_outer_inherited() {
         filter_set: inner_set,
         inherits: false,
         config_index: None,
+        directive_order: 0,
     });
 
     // At depth 2 with a no-inherit inner scope that does not match

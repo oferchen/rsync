@@ -35,6 +35,14 @@ pub(super) struct DirScope {
     /// the scopes of the same `config_index` (`exclude.c:pop_filter_list()`
     /// operates on one `listp`).
     pub(super) config_index: Option<usize>,
+    /// Source-stream position of the `dir-merge` directive that produced this
+    /// scope (see [`DirMergeConfig`](super::DirMergeConfig)). All scopes of one
+    /// merge config share this value; the chain uses it to decide whether a
+    /// global rule (compared by `CompiledRule::order`) is checked before or
+    /// after this scope, mirroring upstream `check_filter()` consulting a
+    /// `FILTRULE_PERDIR_MERGE` entry at its own list position
+    /// (exclude.c:1046-1050).
+    pub(super) directive_order: usize,
 }
 
 /// An ancestor scope removed from the stack by a `!` (clear-list) rule.
