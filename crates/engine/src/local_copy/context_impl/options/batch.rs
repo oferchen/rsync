@@ -89,17 +89,26 @@ impl<'a> CopyContext<'a> {
             None => return Ok(()),
         };
 
-        let (proto, compat_flags, preserve_uid, preserve_gid, preserve_acls) = {
+        let (proto, compat_flags, numeric_ids, preserve_uid, preserve_gid, preserve_acls) = {
             let cfg = batch_writer_arc.lock().expect("batch writer mutex poisoned");
             let flags = cfg.stream_flags();
             (
                 cfg.config().protocol_version,
                 cfg.config().compat_flags,
+                cfg.config().numeric_ids,
                 flags.preserve_uid,
                 flags.preserve_gid,
                 flags.preserve_acls,
             )
         };
+
+        // upstream: flist.c:2548 - `if (numeric_ids <= 0 && !inc_recurse)
+        // send_id_lists(f)`. Under --numeric-ids no id-lists are emitted, so the
+        // reader (reader/flist.rs) must find none. numeric_ids is not a stream
+        // flag; it is carried in the batch config from the invocation.
+        if numeric_ids {
+            return Ok(());
+        }
 
         // upstream: flist.c:2548 - skip send_id_lists() under INC_RECURSE.
         let inc_recurse = compat_flags
