@@ -3,7 +3,6 @@
 //! Orchestrates the transfer lifecycle by configuring server infrastructure,
 //! establishing the handshake result, and delegating to `run_server_with_handshake`.
 
-use std::io::Write;
 use std::path::Path;
 use std::sync::Arc;
 use std::time::Instant;
@@ -21,6 +20,7 @@ use crate::client::progress::ClientProgressObserver;
 use crate::client::remote::batch_support::{BatchContext, build_batch_recording};
 use crate::client::remote::flags;
 use crate::client::remote::implied_source::implied_source_args_for_pull;
+use crate::client::remote::itemize_sink::ItemizeEventSink;
 use crate::client::summary::ClientSummary;
 use crate::exit_code::ExitCode;
 use crate::message::Role;
@@ -111,6 +111,17 @@ pub(crate) fn run_pull_transfer(
     // adopt it and re-apply to the live socket. Build the re-apply hook from the
     // split socket halves; connect-program (pipe) transports yield None.
     let io_timeout_reapply = build_io_timeout_reapply(reader, writer);
+    // A custom `--out-format` makes the receiver buffer metadata events (it
+    // suppresses its own stdout); collect them for the CLI to render. Otherwise
+    // the receiver prints its own default `-v`/`-i` output and no callback is
+    // needed (mirrors the SSH pull driver).
+    let render_out_format = config.render_out_format_locally();
+    let mut itemize_sink = ItemizeEventSink::new(render_out_format);
+    let itemize: Option<&mut dyn crate::server::ItemizeCallback> = if render_out_format {
+        Some(&mut itemize_sink)
+    } else {
+        None
+    };
     let server_stats = crate::server::run_server_with_handshake_adopting(
         server_config,
         handshake,
@@ -119,7 +130,7 @@ pub(crate) fn run_pull_transfer(
         crate::server::ServerTransferHooks {
             progress,
             batch: batch_recording,
-            itemize: None,
+            itemize,
             io_timeout_reapply,
         },
     )
@@ -127,6 +138,10 @@ pub(crate) fn run_pull_transfer(
     let elapsed = start.elapsed();
 
     let mut summary = convert_server_stats_to_summary(server_stats, elapsed);
+    let events = itemize_sink.take_events();
+    if !events.is_empty() {
+        summary = summary.with_events(events);
+    }
     summary.set_protocol_version(protocol.as_u8());
     Ok(summary)
 }
@@ -187,13 +202,14 @@ pub(crate) fn run_push_transfer(
     // forwards oc's itemize.
     // upstream: sender.c:449 - plain `-v` (no `-i`) prints the bare `%n%L` name
     // per file too, so the callback must be wired whenever the sender has any
-    // client-visible per-file output, not only under `-i`.
-    let wants_client_output = config.itemize_changes() || config.verbosity() >= 1;
-    let stdout_handle = std::io::stdout();
-    let mut itemize_cb = move |line: &str| {
-        let mut out = stdout_handle.lock();
-        let _ = out.write_all(line.as_bytes());
-    };
+    // client-visible per-file output, not only under `-i`. A custom
+    // `--out-format` also wants the rows even without `-v`/`-i` so the client can
+    // render the template; the sink then collects metadata events instead of
+    // writing the default line (mirrors the SSH push driver).
+    let render_out_format = config.render_out_format_locally();
+    let wants_client_output =
+        config.itemize_changes() || config.verbosity() >= 1 || render_out_format;
+    let mut itemize_sink = ItemizeEventSink::new(render_out_format);
 
     let result = crate::server::run_server_with_handshake(
         server_config,
@@ -203,7 +219,7 @@ pub(crate) fn run_push_transfer(
         progress,
         batch_recording,
         if wants_client_output {
-            Some(&mut itemize_cb as &mut dyn crate::server::ItemizeCallback)
+            Some(&mut itemize_sink as &mut dyn crate::server::ItemizeCallback)
         } else {
             None
         },
@@ -213,6 +229,10 @@ pub(crate) fn run_push_transfer(
         Ok(server_stats) => {
             let elapsed = start.elapsed();
             let mut summary = convert_server_stats_to_summary(server_stats, elapsed);
+            let events = itemize_sink.take_events();
+            if !events.is_empty() {
+                summary = summary.with_events(events);
+            }
             summary.set_protocol_version(protocol.as_u8());
             Ok(summary)
         }
