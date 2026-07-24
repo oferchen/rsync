@@ -69,7 +69,7 @@ impl ReceiverContext {
             return Ok(());
         }
 
-        for entry in &self.file_list {
+        for (flist_idx, entry) in self.file_list.iter().enumerate() {
             let is_device = entry.is_device();
             let is_special = entry.is_special();
             if is_device {
@@ -248,14 +248,14 @@ impl ReceiverContext {
             if up_to_date {
                 // upstream: generator.c:1145 - "%s is uptodate" at INFO_GTE(NAME, 2)
                 let iflags = ItemFlags::from_raw(0);
-                let _ = self.emit_itemize(writer, &iflags, entry);
+                let _ = self.emit_itemize_indexed(writer, flist_idx, &iflags, entry);
                 info_log!(Name, 2, "{} is uptodate", relative_path.display());
             } else {
                 // upstream: generator.c:1462 itemize() sets ITEM_IS_NEW when the
                 // receiver newly materialises the node via do_mknod().
                 let iflags =
                     ItemFlags::from_raw(ItemFlags::ITEM_LOCAL_CHANGE | ItemFlags::ITEM_IS_NEW);
-                let _ = self.emit_itemize(writer, &iflags, entry);
+                let _ = self.emit_itemize_indexed(writer, flist_idx, &iflags, entry);
                 if !dest_existed {
                     // upstream: receiver.c:743-746 - a newly created device
                     // (created_devices) or FIFO/socket (created_specials),
