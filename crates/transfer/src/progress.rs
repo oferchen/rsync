@@ -117,3 +117,66 @@ pub struct ItemizeRow<'a> {
     /// Whether the row reports a deletion (`ITEM_DELETED`).
     pub is_deletion: bool,
 }
+
+/// Owned counterpart of [`ItemizeRow`] for buffering a client-visible row until
+/// the end of a transfer.
+///
+/// A pulling client's receiver renders its itemize rows in flist-index order and
+/// only flushes them after the transfer loop finishes (see the receiver's
+/// `event_rows` buffer). The borrowed [`ItemizeRow`] cannot outlive the
+/// per-entry `FileEntry`, so the owned fields are copied here and re-borrowed via
+/// [`OwnedItemizeRow::as_row`] when the callback is finally invoked.
+#[derive(Debug, Clone)]
+pub struct OwnedItemizeRow {
+    /// Owned copy of [`ItemizeRow::line`].
+    pub line: String,
+    /// Owned copy of [`ItemizeRow::itemize`].
+    pub itemize: String,
+    /// Owned copy of [`ItemizeRow::name`].
+    pub name: std::path::PathBuf,
+    /// See [`ItemizeRow::size`].
+    pub size: u64,
+    /// See [`ItemizeRow::mtime`].
+    pub mtime: i64,
+    /// See [`ItemizeRow::mtime_nsec`].
+    pub mtime_nsec: u32,
+    /// See [`ItemizeRow::mode`].
+    pub mode: u32,
+    /// See [`ItemizeRow::uid`].
+    pub uid: Option<u32>,
+    /// See [`ItemizeRow::gid`].
+    pub gid: Option<u32>,
+    /// See [`ItemizeRow::is_dir`].
+    pub is_dir: bool,
+    /// See [`ItemizeRow::is_symlink`].
+    pub is_symlink: bool,
+    /// Owned copy of [`ItemizeRow::symlink_target`].
+    pub symlink_target: Option<std::path::PathBuf>,
+    /// See [`ItemizeRow::is_new`].
+    pub is_new: bool,
+    /// See [`ItemizeRow::is_deletion`].
+    pub is_deletion: bool,
+}
+
+impl OwnedItemizeRow {
+    /// Borrows the owned fields into an [`ItemizeRow`] for a callback invocation.
+    #[must_use]
+    pub fn as_row(&self) -> ItemizeRow<'_> {
+        ItemizeRow {
+            line: &self.line,
+            itemize: &self.itemize,
+            name: &self.name,
+            size: self.size,
+            mtime: self.mtime,
+            mtime_nsec: self.mtime_nsec,
+            mode: self.mode,
+            uid: self.uid,
+            gid: self.gid,
+            is_dir: self.is_dir,
+            is_symlink: self.is_symlink,
+            symlink_target: self.symlink_target.as_deref(),
+            is_new: self.is_new,
+            is_deletion: self.is_deletion,
+        }
+    }
+}
