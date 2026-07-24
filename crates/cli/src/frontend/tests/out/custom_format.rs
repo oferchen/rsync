@@ -617,9 +617,13 @@ fn out_format_passes_unrecognized_placeholders_through_literally() {
     let unrecognized = vec!["%x", "%y", "%Q", "%@", "%#", "%$"];
 
     for placeholder in unrecognized {
-        let format = parse_out_format(OsStr::new(placeholder))
-            .unwrap_or_else(|error| panic!("expected literal passthrough for {placeholder}, got: {error}"));
-        assert!(!format.is_empty(), "expected a literal token for {placeholder}");
+        let format = parse_out_format(OsStr::new(placeholder)).unwrap_or_else(|error| {
+            panic!("expected literal passthrough for {placeholder}, got: {error}")
+        });
+        assert!(
+            !format.is_empty(),
+            "expected a literal token for {placeholder}"
+        );
     }
 }
 
