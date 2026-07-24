@@ -59,17 +59,21 @@ fn out_format_renders_permission_and_identity_placeholders() {
     let expected_pid = format!("{}\n", std::process::id());
     assert_eq!(output, expected_pid.as_bytes());
 
+    // %U/%G render the numeric id only under -o/-g (upstream uid_ndx/gid_ndx);
+    // enable id preservation on the context so the numeric ids appear.
+    let id_context = OutFormatContext::default().with_id_preservation(true, true);
+
     output.clear();
     parse_out_format(OsStr::new("%U"))
         .expect("parse %U")
-        .render(event, &OutFormatContext::default(), &mut output)
+        .render(event, &id_context, &mut output)
         .expect("render %U");
     assert_eq!(output, format!("{expected_uid}\n").as_bytes());
 
     output.clear();
     parse_out_format(OsStr::new("%G"))
         .expect("parse %G")
-        .render(event, &OutFormatContext::default(), &mut output)
+        .render(event, &id_context, &mut output)
         .expect("render %G");
     assert_eq!(output, format!("{expected_gid}\n").as_bytes());
 
