@@ -214,6 +214,10 @@ fn apply_common_daemon_config(
     // drain and render these; keep the two wired together so a config that sets
     // this always has a draining driver.
     server_config.flags.info_flags.out_format_active = config.render_out_format_locally();
+    // upstream stdout_format_has_i - gates the receiver's `created directory`
+    // notice (main.c:807-808) on a dest-creating pull; see the SSH receiver
+    // builder. Set on both roles here; only the receiver consults it.
+    server_config.flags.info_flags.out_format_forwards_i = config.out_format_forwards_i();
 
     // upstream: numeric_ids and delete are --numeric-ids / --delete-* long-form args only.
     server_config.flags.numeric_ids = crate::server::NumericIds::from_client(config.numeric_ids());
