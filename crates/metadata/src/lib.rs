@@ -149,6 +149,8 @@ pub use device_size::device_readable_size;
 /// would otherwise escape the module root.
 pub mod symlink_munge;
 
+pub mod xattr_send;
+
 #[cfg(all(feature = "xattr", any(unix, windows)))]
 mod xattr;
 
@@ -281,6 +283,8 @@ pub use special::{
     create_device_node, create_device_node_from_parts, create_device_node_with_fake_super,
     create_fifo, create_fifo_node_from_parts, create_fifo_with_fake_super,
 };
+
+pub use xattr_send::XattrSendOptions;
 
 #[cfg(all(feature = "xattr", any(unix, windows)))]
 pub use xattr::{

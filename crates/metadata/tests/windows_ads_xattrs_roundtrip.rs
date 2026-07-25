@@ -50,7 +50,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use metadata::read_xattrs_for_wire;
+use metadata::{XattrSendOptions, read_xattrs_for_wire};
 use tempfile::tempdir;
 
 /// Bare stream name written via the NTFS `path:streamname` path syntax.
@@ -157,7 +157,14 @@ fn read_stream_bytes(file: &Path, stream: &str) -> std::io::Result<Vec<u8>> {
 /// own enumeration path (FindFirstStreamW + FindNextStreamW) instead of
 /// trusting an isolated stream read.
 fn assert_wire_entry(path: &Path, wire_name: &[u8], expected: &[u8]) {
-    let list = read_xattrs_for_wire(path, false, true, 0).expect("read xattrs back");
+    let list = read_xattrs_for_wire(
+        path,
+        &XattrSendOptions {
+            am_root: true,
+            ..XattrSendOptions::default()
+        },
+    )
+    .expect("read xattrs back");
     let entry = list
         .iter()
         .find(|e| e.name() == wire_name)
@@ -290,7 +297,14 @@ fn ads_multi_stream_round_trips() {
     // rather than the seeding step. Both names round-trip through
     // `local_to_wire`, which prepends `user.` on non-Linux peers per
     // upstream xattrs.c:518-530.
-    let src_wire = read_xattrs_for_wire(&src_file, false, true, 0).expect("list source streams");
+    let src_wire = read_xattrs_for_wire(
+        &src_file,
+        &XattrSendOptions {
+            am_root: true,
+            ..XattrSendOptions::default()
+        },
+    )
+    .expect("list source streams");
     let src_names: Vec<String> = src_wire
         .iter()
         .map(|e| String::from_utf8_lossy(e.name()).into_owned())

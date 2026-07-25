@@ -58,7 +58,7 @@ use std::path::Path;
 
 use metadata::apply_xattrs_from_list;
 #[cfg(unix)]
-use metadata::read_xattrs_for_wire;
+use metadata::{XattrSendOptions, read_xattrs_for_wire};
 use protocol::xattr::{XattrEntry, XattrList};
 use tempfile::tempdir;
 
@@ -141,7 +141,14 @@ fn xattrs_supported(path: &Path) -> bool {
 /// platform.
 #[cfg(unix)]
 fn read_back(path: &Path) -> Vec<(Vec<u8>, Vec<u8>)> {
-    let list = read_xattrs_for_wire(path, false, true, 0).expect("read xattrs back");
+    let list = read_xattrs_for_wire(
+        path,
+        &XattrSendOptions {
+            am_root: true,
+            ..XattrSendOptions::default()
+        },
+    )
+    .expect("read xattrs back");
     list.iter()
         .map(|entry| (entry.name().to_vec(), entry.datum().to_vec()))
         .collect()

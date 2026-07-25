@@ -632,6 +632,9 @@ impl ReceiverContext {
         .with_preserve_hard_links(self.config.flags.hard_links)
         .with_preserve_acls(self.config.flags.acls)
         .with_preserve_xattrs(self.config.flags.xattrs)
+        // upstream: xattrs.c:849 - receive_xattr() keeps rsync.%FOO only at
+        // preserve_xattrs >= 2, so the level has to reach the reader.
+        .with_xattr_level(u32::from(self.config.flags.xattrs_level))
         .with_preserve_atimes(self.config.flags.atimes)
         .with_delete_missing_args(self.config.file_selection.delete_missing_args)
         .with_relative_paths(self.config.flags.relative);

@@ -41,13 +41,18 @@ use super::SYSTEM_PREFIX;
 
 /// Translates an xattr name from local format to wire format.
 ///
-/// On every platform the local name is emitted verbatim once it has
-/// passed the rsync-internal filter. This matches the upstream sender
-/// (`xattrs.c:send_xattr()`), which writes the bytes returned by
-/// `listxattr(2)` directly into the protocol stream. Upstream's only
+/// On every platform the local name is emitted verbatim. This matches the
+/// upstream sender (`xattrs.c:send_xattr()`), which writes the bytes returned
+/// by `listxattr(2)` directly into the protocol stream. Upstream's only
 /// transformation is the fake-super (`am_root < 0`) prefix strip; we do
 /// not model that here because the sender currently runs with
 /// `am_root = false` (see `transfer/generator/file_list/entry.rs`).
+///
+/// This function performs namespace and prefix translation only. The
+/// `rsync.%FOO` internal-attribute gate is *not* applied here: upstream
+/// evaluates it per attribute with the `-X` level, the role, and the
+/// fake-super state in hand (`xattrs.c:260-267`), so it belongs to the
+/// collection loop in `metadata::xattr::read_xattrs_for_wire`.
 ///
 /// Namespace filtering for non-root senders is performed earlier in
 /// `metadata::xattr::list_attributes` via `is_xattr_permitted`; this
@@ -58,26 +63,25 @@ use super::SYSTEM_PREFIX;
 /// # Arguments
 ///
 /// * `name` - Local xattr name
-/// * `am_root` - Whether the sender has root privileges (gates `system.*`)
+/// * `allow_system_namespace` - Whether `system.*` may reach the wire. True for
+///   a root caller, and also when an `x`-modifier filter is present, because
+///   upstream's namespace test is the `else` branch of the filter test and is
+///   therefore not evaluated at all when a filter governs the selection
+///   (`xattrs.c:250-257`).
 ///
 /// # Returns
 ///
 /// The wire-format name, or `None` if this xattr should be skipped.
-pub fn local_to_wire(name: &[u8], am_root: bool) -> Option<Vec<u8>> {
+pub fn local_to_wire(name: &[u8], allow_system_namespace: bool) -> Option<Vec<u8>> {
     let name_str = match std::str::from_utf8(name) {
         Ok(s) => s,
-        // Non-UTF8 names cannot be rsync-internal markers, so pass them
+        // Non-UTF8 names cannot carry an ASCII namespace prefix, so pass them
         // through verbatim.
         Err(_) => return Some(name.to_vec()),
     };
 
-    // upstream: xattrs.c:261-267 - rsync.%FOO internals are never sent.
-    if is_rsync_internal(name_str) {
-        return None;
-    }
-
     // upstream: xattrs.c:256 - non-root never exposes the system namespace.
-    if name_str.starts_with(SYSTEM_PREFIX) && !am_root {
+    if name_str.starts_with(SYSTEM_PREFIX) && !allow_system_namespace {
         return None;
     }
 
@@ -196,23 +200,46 @@ pub fn wire_to_local(wire_name: &[u8], am_root: bool) -> Option<Vec<u8>> {
     }
 }
 
+/// Returns the text following the `rsync.%` internal-attribute marker, or
+/// `None` when `name` is not an rsync internal attribute.
+///
+/// Both the Linux (`user.rsync.%`) and the non-Linux / wire (`rsync.%`)
+/// spellings are recognised. The returned suffix is what upstream compares
+/// against `XSTAT_SUFFIX` / `XACC_ACL_SUFFIX` / `XDEF_ACL_SUFFIX` to identify
+/// the three fake-super store attributes.
+///
+/// # Upstream Reference
+///
+/// `xattrs.c:261` - `name[RPRE_LEN] == '%' && HAS_PREFIX(name, RSYNC_PREFIX)`,
+/// then `xattrs.c:264-266` compares `name + RPRE_LEN + 1`.
+pub fn rsync_internal_suffix(name: &str) -> Option<&str> {
+    name.strip_prefix("user.rsync.%")
+        .or_else(|| name.strip_prefix("rsync.%"))
+}
+
+/// Reports whether `name` is one of the three fake-super store attributes.
+///
+/// Upstream drops `rsync.%stat`, `rsync.%aacl`, and `rsync.%dacl` whenever
+/// `--fake-super` is active (`am_root < 0`), regardless of role or `-X` level,
+/// because they describe the local fake-super store rather than the file's own
+/// metadata.
+///
+/// # Upstream Reference
+///
+/// `xattrs.c:263-266` - `am_root < 0 && (strcmp(..., XSTAT_SUFFIX) == 0 || ...)`
+pub fn is_fake_super_store_attr(name: &str) -> bool {
+    matches!(rsync_internal_suffix(name), Some("stat" | "aacl" | "dacl"))
+}
+
 /// Checks if an xattr name is an rsync internal attribute.
 ///
 /// Rsync internal attributes use the pattern `rsync.%suffix` or `user.rsync.%suffix`.
 /// These are used for storing metadata like stat info and ACLs (the fake-super
-/// `%stat`/`%aacl`/`%dacl` channel). Upstream never transfers them as -X data:
-/// the sender skips them (`xattrs.c:261-267`, `am_sender && preserve_xattrs < 2`),
-/// so a local copy must exclude them from both the copy and the delete pass.
+/// `%stat`/`%aacl`/`%dacl` channel). A sender transfers them only under `-XX`
+/// (`xattrs.c:261-267`, `am_sender && preserve_xattrs < 2`), and a local copy
+/// excludes them from both the copy and the delete pass.
 pub fn is_rsync_internal(name: &str) -> bool {
-    // Check for user.rsync.% pattern (Linux)
-    if let Some(suffix) = name.strip_prefix("user.rsync.") {
-        return suffix.starts_with('%');
-    }
-    // Check for rsync.% pattern (non-Linux or wire format)
-    if let Some(suffix) = name.strip_prefix("rsync.") {
-        return suffix.starts_with('%');
-    }
-    false
+    rsync_internal_suffix(name).is_some()
 }
 
 #[cfg(test)]
@@ -227,6 +254,30 @@ mod tests {
         assert!(!is_rsync_internal("user.rsync.normal"));
         assert!(!is_rsync_internal("rsync.normal"));
         assert!(!is_rsync_internal("user.foo"));
+    }
+
+    /// The suffix drives the `--fake-super` gate at `xattrs.c:264-266`, which
+    /// compares `name + RPRE_LEN + 1` against `stat`/`aacl`/`dacl`. Returning
+    /// the wrong slice would either leak the fake-super store under
+    /// `--fake-super` or drop an unrelated `rsync.%` name.
+    #[test]
+    fn rsync_internal_suffix_strips_both_spellings() {
+        assert_eq!(rsync_internal_suffix("user.rsync.%stat"), Some("stat"));
+        assert_eq!(rsync_internal_suffix("rsync.%dacl"), Some("dacl"));
+        assert_eq!(rsync_internal_suffix("user.rsync.normal"), None);
+        assert_eq!(rsync_internal_suffix("user.foo"), None);
+    }
+
+    /// Only the three store attributes are suppressed by `--fake-super`; any
+    /// other `rsync.%` name is governed by the `-X` level alone
+    /// (`xattrs.c:263-266`).
+    #[test]
+    fn fake_super_store_attrs_are_exactly_stat_aacl_dacl() {
+        assert!(is_fake_super_store_attr("user.rsync.%stat"));
+        assert!(is_fake_super_store_attr("user.rsync.%aacl"));
+        assert!(is_fake_super_store_attr("rsync.%dacl"));
+        assert!(!is_fake_super_store_attr("user.rsync.%other"));
+        assert!(!is_fake_super_store_attr("user.foo"));
     }
 
     #[test]
@@ -270,10 +321,17 @@ mod tests {
             assert_eq!(result, Some(b"user.rsync.system.foo".to_vec()));
         }
 
+        /// `local_to_wire` does namespace translation only. Whether an
+        /// `rsync.%FOO` name reaches the wire depends on the `-X` level, the
+        /// role, and `--fake-super` (`xattrs.c:260-267`), none of which this
+        /// function can see, so it must NOT drop the name on its own -
+        /// otherwise `-XX` can never transmit the fake-super store.
         #[test]
-        fn local_to_wire_skips_internal() {
-            let result = local_to_wire(b"user.rsync.%stat", false);
-            assert_eq!(result, None);
+        fn local_to_wire_leaves_the_internal_gate_to_the_caller() {
+            assert_eq!(
+                local_to_wire(b"user.rsync.%stat", false),
+                Some(b"user.rsync.%stat".to_vec()),
+            );
         }
 
         #[test]

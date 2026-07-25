@@ -123,8 +123,18 @@ pub struct ParsedServerFlags {
     pub hard_links: bool,
     /// Preserve ACLs (`A` flag, `--acls`).
     pub acls: bool,
-    /// Preserve extended attributes (`X` flag, `--xattrs`).
+    /// Preserve extended attributes (`X` flag, `--xattrs`). True when at least
+    /// one `X` is present; see [`xattrs_level`](Self::xattrs_level) for the count.
     pub xattrs: bool,
+    /// Count of `X` flags in the packed server flag string, capped at 2.
+    ///
+    /// Upstream keeps `preserve_xattrs` as a counter (`options.c:1877`
+    /// `preserve_xattrs++`) and doubles the compact letter for the remote
+    /// (`options.c:2699-2702`), so the level rides the flag string rather than
+    /// a side channel. `-XX` (level 2) transfers the `rsync.%FOO` fake-super
+    /// store; collapsing to the `xattrs` bool alone makes `-XX` behave
+    /// identically to `-X` (`xattrs.c:262`, `am_sender && preserve_xattrs < 2`).
+    pub xattrs_level: u8,
     /// Numeric IDs mode (long-form `--numeric-ids`, or daemon `numeric ids`).
     ///
     /// Not part of the compact flag string; set via long-form args, client
@@ -480,6 +490,7 @@ impl ParsedServerFlags {
         #[cfg(not(all(unix, feature = "xattr")))]
         if self.xattrs {
             self.xattrs = false;
+            self.xattrs_level = 0;
             cleared.push("xattrs");
         }
 
@@ -550,7 +561,14 @@ impl ParsedServerFlags {
             b'H' => self.hard_links = true,
             b'I' => self.ignore_times = true,
             b'A' => self.acls = true,
-            b'X' => self.xattrs = true,
+            // upstream: options.c:1877 `preserve_xattrs++` - the level is a
+            // count, doubled onto the wire as `-XX` by options.c:2699-2702.
+            b'X' => {
+                self.xattrs = true;
+                if self.xattrs_level < 2 {
+                    self.xattrs_level += 1;
+                }
+            }
             // upstream: 'n' = dry_run (!do_xfers), NOT numeric_ids.
             // numeric_ids is long-form only (options.c:2905 sends --numeric-ids).
             b'n' => self.dry_run = true,
@@ -689,6 +707,30 @@ mod tests {
     fn rejects_missing_leading_dash() {
         let result = ParsedServerFlags::parse("logDtpre");
         assert_eq!(result.unwrap_err(), ParseFlagError::MissingLeadingDash);
+    }
+
+    /// `-XX` must survive the flag string as a level, not collapse onto the
+    /// `xattrs` bool: the sender consults `preserve_xattrs < 2` to decide
+    /// whether the `rsync.%FOO` fake-super store reaches the wire
+    /// (`xattrs.c:262`). Losing the count here makes `-XX` a synonym for `-X`.
+    #[test]
+    fn xattrs_level_counts_doubled_x() {
+        assert_eq!(ParsedServerFlags::parse("-rlt").unwrap().xattrs_level, 0);
+
+        let single = ParsedServerFlags::parse("-rltX").unwrap();
+        assert!(single.xattrs);
+        assert_eq!(single.xattrs_level, 1);
+
+        let double = ParsedServerFlags::parse("-rltXX").unwrap();
+        assert!(double.xattrs);
+        assert_eq!(double.xattrs_level, 2);
+    }
+
+    /// Upstream caps the transmitted level at two letters (options.c:2699-2702),
+    /// so a peer that sends more must not overflow the counter.
+    #[test]
+    fn xattrs_level_saturates_at_two() {
+        assert_eq!(ParsedServerFlags::parse("-XXXX").unwrap().xattrs_level, 2);
     }
 
     #[test]

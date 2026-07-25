@@ -35,7 +35,9 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use metadata::windows::classify_path;
-use metadata::{apply_xattrs_from_list, read_dacl_sddl, read_xattrs_for_wire, write_dacl_sddl};
+use metadata::{
+    XattrSendOptions, apply_xattrs_from_list, read_dacl_sddl, read_xattrs_for_wire, write_dacl_sddl,
+};
 use protocol::xattr::{XattrEntry, XattrList};
 use tempfile::tempdir;
 
@@ -192,7 +194,8 @@ fn long_path_ads_round_trip() {
     // `xattr_windows::path_to_wide` feeding `FindFirstStreamW`. The wire
     // encoder prefixes the local stream name with `user.` on non-Linux
     // peers (matches upstream xattrs.c:518-530).
-    let wire = read_xattrs_for_wire(&file, false, false, 0).expect("read ADS on long path");
+    let wire =
+        read_xattrs_for_wire(&file, &XattrSendOptions::default()).expect("read ADS on long path");
     let expected_wire_name: &[u8] = b"user.Zone.Identifier";
     let entry = wire
         .iter()
