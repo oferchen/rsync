@@ -195,7 +195,11 @@ impl ReceiverContext {
             temp_dir: self.config.temp_dir.as_ref().map(PathBuf::from),
             file_list: Some(file_list_arc),
             metadata_opts: Some(setup.metadata_opts.clone()),
-            backup,
+            // upstream: generator.c:2187 `make_backups = -make_backups`
+            // negates make_backups during the redo pass so the inplace
+            // pre-image copy does not overwrite the good phase-1 backup
+            // with the now-corrupted destination.
+            backup: if is_redo_pass { None } else { backup },
             acl_cache: setup.acl_cache.clone(),
             acl_id_map: setup.acl_id_map.clone(),
             xattr_filter: self.xattr_name_filter_arc(),

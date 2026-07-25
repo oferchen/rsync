@@ -3233,6 +3233,77 @@ fn pipelined_backup_with_backup_dir_reports_destination_relative_paths() {
     h.join_handle.join().unwrap();
 }
 
+/// Redo pass with `backup: None` must not create a backup even under inplace.
+///
+/// upstream: generator.c:2187 `make_backups = -make_backups` negates the flag
+/// during the redo pass so the inplace pre-image copy is not repeated. If the
+/// backup were re-taken, it would overwrite the good phase-1 backup with the
+/// now-corrupted destination data - a data-loss bug.
+///
+/// This test simulates the redo scenario: the destination already has a backup
+/// from phase 1, then a second inplace write (the redo) runs with `backup: None`
+/// (as pipeline.rs now sets it). The phase-1 backup must survive intact.
+#[test]
+fn inplace_redo_pass_does_not_overwrite_phase1_backup() {
+    let _registry_lock = test_support::cleanup_registry_test_guard();
+    let dir = test_support::create_tempdir();
+    let dest_dir = dir.path().to_path_buf();
+    let file_path = dest_dir.join("target.dat");
+    let backup_path = dest_dir.join("target.dat~");
+
+    // Phase 1 left behind: destination with corrupted data, backup with original.
+    fs::write(&file_path, b"corrupted-in-place").unwrap();
+    fs::write(&backup_path, b"original-pre-image").unwrap();
+
+    // Redo pass: backup is None (pipeline.rs clears it for redo).
+    let config = DiskCommitConfig {
+        dest_dir: Some(dest_dir.clone()),
+        backup: None,
+        ..DiskCommitConfig::default()
+    };
+    let h = spawn_disk_thread(config).unwrap();
+
+    h.file_tx
+        .send(FileMessage::Begin(Box::new(BeginMessage {
+            file_path: file_path.clone(),
+            target_size: 12,
+            file_entry_index: 0,
+            checksum_verifier: None,
+            is_device_target: false,
+            is_inplace: true,
+            append_offset: 0,
+            xattr_list: None,
+        })))
+        .unwrap();
+    h.file_tx
+        .send(FileMessage::Chunk(b"correct-data".to_vec()))
+        .unwrap();
+    h.file_tx
+        .send(FileMessage::Commit {
+            expected_checksum: Default::default(),
+        })
+        .unwrap();
+
+    let result = h.result_rx.recv().unwrap().unwrap();
+    assert_eq!(result.bytes_written, 12);
+    assert!(
+        result.backup_notice.is_none(),
+        "redo pass must not produce a backup notice"
+    );
+
+    // Destination now holds the corrected data from the redo.
+    assert_eq!(fs::read(&file_path).unwrap(), b"correct-data");
+    // The phase-1 backup must be untouched - still the original pre-image.
+    assert_eq!(
+        fs::read(&backup_path).unwrap(),
+        b"original-pre-image",
+        "redo pass must not overwrite the phase-1 backup"
+    );
+
+    h.file_tx.send(FileMessage::Shutdown).unwrap();
+    h.join_handle.join().unwrap();
+}
+
 /// Builds the expected whole-file checksum the disk thread verifies against,
 /// using the same MD5 algorithm as [`md5_verifier`].
 fn expected_md5(data: &[u8]) -> crate::pipeline::messages::ExpectedChecksum {
