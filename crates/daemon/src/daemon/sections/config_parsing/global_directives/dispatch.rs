@@ -793,6 +793,16 @@ fn apply_global_directive(
                 state.module_defaults.dont_compress = Some(value.to_owned());
             }
         }
+        "tempdir" => {
+            // upstream: daemon-parm.txt marks `temp dir` P_LOCAL, so a value in
+            // the global section becomes the default every module inherits
+            // (loadparm.c init_section copies Vars.l). P_PATH: trailing slashes
+            // are stripped. Without this arm a global `temp dir` fell through to
+            // the unknown-directive warning and modules never inherited it.
+            if !value.is_empty() {
+                state.module_defaults.temp_dir = Some(strip_trailing_slashes(value));
+            }
+        }
         "readonly" => {
             if let Some(parsed) =
                 apply_boolean_directive(value, false, "read only", path, line_number)
