@@ -35,6 +35,11 @@ fn daemon_negotiation_module_list_sends_listing_directly() {
     reader.read_line(&mut line).expect("greeting");
     assert!(line.starts_with("@RSYNCD:"), "Expected greeting, got: {line}");
 
+    // upstream: clientserver.c:180-184 - the client's version banner must
+    // precede any request; a bare `#list` draws the protocol startup error.
+    stream
+        .write_all(legacy_daemon_greeting().as_bytes())
+        .expect("send client greeting");
     stream.write_all(b"#list\n").expect("send list request");
     stream.flush().expect("flush");
 
@@ -96,6 +101,11 @@ fn daemon_negotiation_module_list_respects_listable_flag() {
     let mut line = String::new();
     reader.read_line(&mut line).expect("greeting");
 
+    // upstream: clientserver.c:180-184 - the client's version banner must
+    // precede any request; a bare `#list` draws the protocol startup error.
+    stream
+        .write_all(legacy_daemon_greeting().as_bytes())
+        .expect("send client greeting");
     stream.write_all(b"#list\n").expect("send list request");
     stream.flush().expect("flush");
 
@@ -158,6 +168,11 @@ fn daemon_negotiation_module_list_includes_comments() {
     let mut line = String::new();
     reader.read_line(&mut line).expect("greeting");
 
+    // upstream: clientserver.c:180-184 - the client's version banner must
+    // precede any request; a bare `#list` draws the protocol startup error.
+    stream
+        .write_all(legacy_daemon_greeting().as_bytes())
+        .expect("send client greeting");
     stream.write_all(b"#list\n").expect("send list request");
     stream.flush().expect("flush");
 
@@ -200,6 +215,11 @@ fn daemon_negotiation_module_list_empty_when_no_modules() {
     let mut line = String::new();
     reader.read_line(&mut line).expect("greeting");
 
+    // upstream: clientserver.c:180-184 - the client's version banner must
+    // precede any request; a bare `#list` draws the protocol startup error.
+    stream
+        .write_all(legacy_daemon_greeting().as_bytes())
+        .expect("send client greeting");
     stream.write_all(b"#list\n").expect("send list request");
     stream.flush().expect("flush");
 
