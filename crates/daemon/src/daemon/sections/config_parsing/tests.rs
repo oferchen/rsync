@@ -110,6 +110,77 @@ mod config_parsing_tests {
         assert_eq!(result.modules[1].name, "mod2");
     }
 
+    #[test]
+    fn parse_global_section_returns_to_global_scope() {
+        // upstream loadparm.c:do_section:497-510 - a "[global]" header (case-
+        // insensitive) returns to global scope instead of defining a module, so
+        // only the real module is created and directives after it apply globally.
+        let dir = TempDir::new().expect("create temp dir");
+        let mpath = dir.path().join("data");
+        fs::create_dir(&mpath).expect("create module dir");
+        let config = format!("[Global]\ntimeout = 30\n[mod]\npath = {}\n", mpath.display());
+        let file = write_config(&config);
+        let result = parse_config_modules(file.path()).expect("parse succeeds");
+        assert_eq!(result.modules.len(), 1, "[global] must not create a module");
+        assert_eq!(result.modules[0].name, "mod");
+    }
+
+    #[test]
+    fn parse_global_temp_dir_inherited_by_module() {
+        // upstream: temp dir is P_LOCAL; a global value is the default every
+        // module inherits.
+        let dir = TempDir::new().expect("create temp dir");
+        let mpath = dir.path().join("data");
+        fs::create_dir(&mpath).expect("create module dir");
+        let config = format!("temp dir = /var/tmp\n[mod]\npath = {}\n", mpath.display());
+        let file = write_config(&config);
+        let result = parse_config_modules(file.path()).expect("parse succeeds");
+        assert_eq!(result.modules[0].temp_dir.as_deref(), Some("/var/tmp"));
+    }
+
+    #[test]
+    fn parse_path_strips_trailing_slash() {
+        // upstream loadparm.c:443-449 P_PATH strips trailing '/'.
+        let dir = TempDir::new().expect("create temp dir");
+        let mpath = dir.path().join("data");
+        fs::create_dir(&mpath).expect("create module dir");
+        let config = format!("[mod]\npath = {}/\n", mpath.display());
+        let file = write_config(&config);
+        let result = parse_config_modules(file.path()).expect("parse succeeds");
+        assert_eq!(result.modules[0].path, mpath, "trailing slash must be stripped");
+    }
+
+    #[test]
+    fn parse_syslog_facility_numeric_stored_raw() {
+        // upstream loadparm.c:456-467 P_ENUM - an unrecognised name that is a
+        // positive integer is stored as that raw numeric facility.
+        let dir = TempDir::new().expect("create temp dir");
+        let mpath = dir.path().join("data");
+        fs::create_dir(&mpath).expect("create module dir");
+        let config = format!(
+            "[mod]\npath = {}\nsyslog facility = 17\n",
+            mpath.display()
+        );
+        let file = write_config(&config);
+        let result = parse_config_modules(file.path()).expect("parse succeeds");
+        assert_eq!(result.modules[0].syslog_facility.as_deref(), Some("17"));
+    }
+
+    #[test]
+    fn parse_syslog_facility_unknown_name_leaves_default() {
+        // upstream P_ENUM - an unrecognised non-numeric name leaves the inherited
+        // value unchanged (no config error).
+        let dir = TempDir::new().expect("create temp dir");
+        let mpath = dir.path().join("data");
+        fs::create_dir(&mpath).expect("create module dir");
+        let config = format!(
+            "[mod]\npath = {}\nsyslog facility = bogus\n",
+            mpath.display()
+        );
+        let file = write_config(&config);
+        let result = parse_config_modules(file.path()).expect("parse succeeds");
+        assert_eq!(result.modules[0].syslog_facility, None);
+    }
 
     #[test]
     fn parse_unterminated_module_header() {
@@ -3021,6 +3092,12 @@ mod config_parsing_tests {
     // global-only, while representative P_LOCAL params - including the ones oc
     // currently accepts only in the global section (reverse lookup, lock file,
     // syslog tag, syslog facility) - are never treated as global-only.
+    //
+    // The parser always normalizes a directive key (folding whitespace, lower-
+    // casing) before classifying it, so this test feeds each name through
+    // `normalize_param_name` exactly as production does; a multi-word name like
+    // `daemon chroot` only ever reaches `is_global_only_directive` in its folded
+    // `daemonchroot` form.
     #[test]
     fn global_only_classification_matches_upstream_parm_table() {
         for global in [
@@ -3036,7 +3113,7 @@ mod config_parsing_tests {
             "proxy protocol",
         ] {
             assert!(
-                is_global_only_directive(global),
+                is_global_only_directive(&normalize_param_name(global)),
                 "'{global}' is P_GLOBAL in upstream daemon-parm.txt and must be global-only",
             );
         }
@@ -3053,7 +3130,7 @@ mod config_parsing_tests {
             "syslog facility",
         ] {
             assert!(
-                !is_global_only_directive(local),
+                !is_global_only_directive(&normalize_param_name(local)),
                 "'{local}' is P_LOCAL in upstream daemon-parm.txt and is valid per-module",
             );
         }

@@ -215,6 +215,21 @@ pub(crate) fn apply_boolean_directive(
     }
 }
 
+/// Strips trailing `/` characters from a `P_PATH` value, keeping at least one
+/// character.
+///
+/// upstream: loadparm.c:443-449 `case P_PATH` - `while (len > 1 && ptr[len-1] ==
+/// '/') len--`, so `/srv/data/` is stored as `/srv/data`, `//` becomes `/`, and
+/// a bare `/` is left unchanged. Applied to the `path` and `temp dir` directives.
+pub(crate) fn strip_trailing_slashes(value: &str) -> String {
+    let bytes = value.as_bytes();
+    let mut len = bytes.len();
+    while len > 1 && bytes[len - 1] == b'/' {
+        len -= 1;
+    }
+    value[..len].to_string()
+}
+
 /// Parses the leading integer of a config value the way C `atoi()` does.
 ///
 /// upstream: loadparm.c:431-433 stores `atoi(parmvalue)` for P_INTEGER

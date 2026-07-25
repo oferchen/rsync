@@ -108,6 +108,17 @@ fn parse_config_modules_inner(
                     state.modules.push(finish_module_builder(builder, path, &state)?);
                 }
 
+                // upstream: loadparm.c:do_section:497-510 - a section named
+                // "global" (whitespace/case-insensitive via strwiEQ) returns to
+                // the daemon-wide global scope instead of defining a module:
+                // bInGlobalSection = True and no module is added, so directives
+                // that follow apply as global defaults. Leaving `current` as None
+                // routes them through the global dispatch path, exactly as the
+                // directives before the first `[module]` header are handled.
+                if normalize_param_name(name) == "global" {
+                    continue;
+                }
+
                 current = Some(ModuleDefinitionBuilder::new(name.to_owned(), line_number));
                 continue;
             }
