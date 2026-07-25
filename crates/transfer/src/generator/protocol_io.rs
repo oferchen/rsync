@@ -394,17 +394,19 @@ impl GeneratorContext {
         error: &io::Error,
         path_display: &str,
     ) -> io::Result<()> {
+        let fname = crate::full_fname::full_fname(path_display, self.daemon_module());
         if error.kind() == io::ErrorKind::NotFound {
             self.io_error |= super::io_error_flags::IOERR_VANISHED;
             // upstream: sender.c:387-390 - rprintf(c, "file has vanished: %s\n", full_fname(...)).
             // `c` is FERROR only for a protocol < 28 daemon; oc's protocol floor
-            // is 28, so this is always FWARNING.
-            self.emit_sender_warning(writer, &format!("file has vanished: \"{path_display}\"\n"))?;
+            // is 28, so this is always FWARNING. `fname` is already quoted and
+            // carries the daemon module suffix (util1.c:1273 full_fname).
+            self.emit_sender_warning(writer, &format!("file has vanished: {fname}\n"))?;
         } else {
             self.io_error |= super::io_error_flags::IOERR_GENERAL;
             // upstream: sender.c:393 - rsyserr(FERROR_XFER, errno, "send_files failed to open %s", ...)
             let text = format!(
-                "rsync: [sender] send_files failed to open \"{path_display}\": {}\n",
+                "rsync: [sender] send_files failed to open {fname}: {}\n",
                 engine::local_copy::upstream_io_error(error),
             );
             // MSG_ERROR_XFER exists at every supported protocol, so it carries
@@ -443,9 +445,13 @@ impl GeneratorContext {
         path_display: &str,
     ) -> io::Result<()> {
         // upstream: sender.c:422 - rprintf(FWARNING, "skipped diminished file: %s\n", ...)
+        // full_fname quotes the path and appends the daemon module suffix.
         self.emit_sender_warning(
             writer,
-            &format!("skipped diminished file: \"{path_display}\"\n"),
+            &format!(
+                "skipped diminished file: {}\n",
+                crate::full_fname::full_fname(path_display, self.daemon_module()),
+            ),
         )?;
         if self.protocol.supports_generator_messages() {
             writer.send_no_send(ndx)?;

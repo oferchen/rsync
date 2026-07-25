@@ -73,6 +73,13 @@ fn clamped_verbose_level(flag_string: &str) -> u8 {
 ///   `NumericIds::DaemonForced`, distinct from the client's explicit
 ///   `NumericIds::Explicit` which also drops the wire list.
 fn apply_module_transfer_directives(module: &ModuleDefinition, cfg: &mut ServerConfig) {
+    // upstream: clientserver.c:769 `module_id = i` - selecting a module makes
+    // `module_id >= 0` for the rest of the server process, and that is the sole
+    // condition under which `full_fname()` (util1.c:1290) appends
+    // ` (in MODULE)` after the closing quote of every path it renders into an
+    // error or warning. Record the name so the transfer layer reproduces it.
+    cfg.connection.daemon_module = Some(module.name.clone());
+
     // upstream: clientserver.c:1111-1112
     if module.ignore_errors {
         cfg.deletion.ignore_errors = true;

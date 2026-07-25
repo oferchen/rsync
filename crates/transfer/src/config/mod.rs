@@ -155,6 +155,19 @@ pub struct ConnectionConfig {
     pub client_mode: bool,
     /// Indicates the transfer is over a daemon (rsync://) connection.
     pub is_daemon_connection: bool,
+    /// Name of the daemon module this server process is serving, when any.
+    ///
+    /// Mirrors upstream's `module_id` global: it is set exactly once, when the
+    /// daemon selects a module for the connection, and gates the ` (in MODULE)`
+    /// suffix that `full_fname()` appends to every quoted path in an error or
+    /// warning. `None` for clients and for non-daemon (SSH) server processes,
+    /// matching upstream's `module_id < 0`.
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `clientserver.c:769` - `module_id = i` in `rsync_module()`.
+    /// - `util1.c:1290` - `if (module_id >= 0)` in `full_fname()`.
+    pub daemon_module: Option<String>,
     /// Filter rules to send to remote daemon (client_mode only).
     pub filter_rules: Vec<FilterRuleWireFormat>,
     /// Optional filename encoding converter for `--iconv` support.
