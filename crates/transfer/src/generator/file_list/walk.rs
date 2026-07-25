@@ -16,6 +16,7 @@ use std::path::{Path, PathBuf};
 
 use logging::info_log;
 
+use crate::full_fname::full_fname_path;
 use crate::role_trailer::error_location;
 
 use super::super::GeneratorContext;
@@ -118,8 +119,8 @@ impl GeneratorContext {
                         // FFV-4: emit the correct error message and error flag
                         // for a source that never existed at flist build time.
                         eprintln!(
-                            "rsync: [sender] link_stat \"{}\" failed: {}",
-                            path.display(),
+                            "rsync: [sender] link_stat {} failed: {}",
+                            full_fname_path(path, self.daemon_module()),
                             engine::local_copy::upstream_io_error(&e),
                         );
                         self.add_io_error(io_error_flags::IOERR_GENERAL);
@@ -290,8 +291,8 @@ impl GeneratorContext {
                 Err(e) => {
                     // upstream: flist.c:1878 - rsyserr(FERROR_XFER, errno, "opendir %s failed", ...)
                     eprintln!(
-                        "rsync: [sender] opendir \"{}\" failed: {}",
-                        path.display(),
+                        "rsync: [sender] opendir {} failed: {}",
+                        full_fname_path(&path, self.daemon_module()),
                         engine::local_copy::upstream_io_error(&e),
                     );
                     self.record_io_error(&e);
@@ -389,8 +390,8 @@ impl GeneratorContext {
             Err(e) => {
                 // upstream: flist.c:1878 - rsyserr(FERROR_XFER, errno, "opendir %s failed", ...)
                 eprintln!(
-                    "rsync: [sender] opendir \"{}\" failed: {}",
-                    dir_path.display(),
+                    "rsync: [sender] opendir {} failed: {}",
+                    full_fname_path(dir_path, self.daemon_module()),
                     engine::local_copy::upstream_io_error(&e),
                 );
                 self.record_io_error(&e);
@@ -417,8 +418,8 @@ impl GeneratorContext {
                 Err(e) => {
                     // upstream: flist.c:1924 - rsyserr(FERROR_XFER, errno, "readdir(%s)", ...)
                     eprintln!(
-                        "rsync: [sender] readdir(\"{}\"): {}",
-                        dir_path.display(),
+                        "rsync: [sender] readdir({}): {}",
+                        full_fname_path(dir_path, self.daemon_module()),
                         engine::local_copy::upstream_io_error(&e),
                     );
                     self.record_io_error(&e);
@@ -509,14 +510,14 @@ impl GeneratorContext {
     /// Distinguishes between vanished files (ENOENT) and general stat errors,
     /// matching upstream `flist.c:1286-1294` error reporting.
     fn log_stat_error(&self, path: &Path, e: &io::Error) {
+        let fname = full_fname_path(path, self.daemon_module());
         if e.kind() == io::ErrorKind::NotFound {
             // upstream: flist.c:1317 - rprintf(c, "file has vanished: %s\n", full_fname(...))
-            eprintln!("file has vanished: \"{}\"", path.display());
+            eprintln!("file has vanished: {fname}");
         } else {
             // upstream: flist.c:1846 - rsyserr(FERROR_XFER, errno, "link_stat %s failed", ...)
             eprintln!(
-                "rsync: [sender] link_stat \"{}\" failed: {}",
-                path.display(),
+                "rsync: [sender] link_stat {fname} failed: {}",
                 engine::local_copy::upstream_io_error(e),
             );
         }
@@ -648,6 +649,32 @@ mod rsyserr_wording_tests {
                 "template {template:?} did not match upstream wording"
             );
         }
+    }
+
+    /// The same lines rendered from a daemon server process must carry
+    /// upstream's ` (in MODULE)` suffix outside the closing quote, because
+    /// upstream builds the path with `full_fname()` and `module_id >= 0`
+    /// there. Ground truth captured from rsync 3.4.4 serving module `mymod`:
+    /// `send_files failed to open "sub/denied.txt" (in mymod): ...`.
+    #[test]
+    fn rsyserr_wording_carries_daemon_module_suffix() {
+        use crate::full_fname::full_fname_path;
+        use std::path::Path;
+
+        let quoted = full_fname_path(Path::new("/p"), Some("mymod"));
+        assert_eq!(quoted, "\"/p\" (in mymod)");
+        assert_eq!(
+            format!("rsync: [sender] link_stat {quoted} failed: No such file or directory (2)"),
+            "rsync: [sender] link_stat \"/p\" (in mymod) failed: No such file or directory (2)",
+        );
+        assert_eq!(
+            format!("rsync: [sender] readdir({quoted}): Input/output error (5)"),
+            "rsync: [sender] readdir(\"/p\" (in mymod)): Input/output error (5)",
+        );
+        assert_eq!(
+            format!("file has vanished: {quoted}"),
+            "file has vanished: \"/p\" (in mymod)",
+        );
     }
 }
 

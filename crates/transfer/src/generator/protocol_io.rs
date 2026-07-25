@@ -360,15 +360,16 @@ impl GeneratorContext {
         error: &io::Error,
         path_display: &str,
     ) -> io::Result<()> {
+        let fname = crate::full_fname::full_fname(path_display, self.daemon_module());
         if error.kind() == io::ErrorKind::NotFound {
             self.io_error |= super::io_error_flags::IOERR_VANISHED;
             // upstream: sender.c:389 - rprintf(c, "file has vanished: %s\n", full_fname(...))
-            eprintln!("file has vanished: \"{path_display}\"");
+            eprintln!("file has vanished: {fname}");
         } else {
             self.io_error |= super::io_error_flags::IOERR_GENERAL;
             // upstream: sender.c:393 - rsyserr(FERROR_XFER, errno, "send_files failed to open %s", ...)
             eprintln!(
-                "rsync: [sender] send_files failed to open \"{path_display}\": {}",
+                "rsync: [sender] send_files failed to open {fname}: {}",
                 engine::local_copy::upstream_io_error(error),
             );
         }
@@ -400,7 +401,10 @@ impl GeneratorContext {
         path_display: &str,
     ) -> io::Result<()> {
         // upstream: sender.c:422 - rprintf(FWARNING, "skipped diminished file: %s\n", ...)
-        eprintln!("skipped diminished file: \"{path_display}\"");
+        eprintln!(
+            "skipped diminished file: {}",
+            crate::full_fname::full_fname(path_display, self.daemon_module()),
+        );
         if self.protocol.supports_generator_messages() {
             writer.send_no_send(ndx)?;
         }
