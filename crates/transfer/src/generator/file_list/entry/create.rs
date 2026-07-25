@@ -348,12 +348,22 @@ impl GeneratorContext {
             if should_read {
                 // Follow symlinks only for non-symlink entries (lgetxattr for symlinks)
                 let follow = !file_type.is_symlink();
-                match metadata::read_xattrs_for_wire(
-                    full_path,
-                    follow,
-                    false, // am_root: sender on Linux non-root reads user.* only
-                    self.checksum_seed,
-                ) {
+                let xattr_filter = self.xattr_name_filter();
+                let predicate =
+                    xattr_filter.map(|set| move |name: &str| set.xattr_name_allowed(name));
+                let opts = metadata::XattrSendOptions {
+                    follow_symlinks: follow,
+                    // upstream: xattrs.c:237 - the sender sets user_only = 0 and
+                    // never claims root, so system.* stays local.
+                    am_root: false,
+                    // upstream: xattrs.c:262 - `am_sender && preserve_xattrs < 2`
+                    // strips the rsync.%FOO store; -XX transmits it.
+                    preserve_xattrs: self.config.flags.xattrs_level,
+                    fake_super: self.config.fake_super,
+                    filter: predicate.as_ref().map(|f| f as &dyn Fn(&str) -> bool),
+                    checksum_seed: self.checksum_seed,
+                };
+                match metadata::read_xattrs_for_wire(full_path, &opts) {
                     Ok(list) => {
                         if !list.is_empty() {
                             entry.set_xattr_list(list);
