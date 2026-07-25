@@ -141,6 +141,17 @@ pub struct GeneratorContext {
 }
 
 impl GeneratorContext {
+    /// Returns the daemon module name gating the ` (in MODULE)` suffix that
+    /// [`crate::full_fname::full_fname`] appends to quoted paths, or `None`
+    /// outside a daemon server process.
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `util1.c:1290` - `if (module_id >= 0)` in `full_fname()`.
+    pub(crate) fn daemon_module(&self) -> Option<&str> {
+        self.config.connection.daemon_module.as_deref()
+    }
+
     /// Creates a new generator context from a completed handshake and server config.
     ///
     /// Initializes protocol state, INC_RECURSE NDX offset, and empty file list.

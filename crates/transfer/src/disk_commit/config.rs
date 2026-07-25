@@ -198,6 +198,17 @@ pub struct DiskCommitConfig {
     ///
     /// - `receiver.c:357-373` - `if (append_mode == 2 && mapbuf)` prefix `sum_update`
     pub append_verify: bool,
+    /// Name of the daemon module this server process is serving, when any.
+    ///
+    /// Only used to render diagnostics: upstream's `full_fname()` appends
+    /// ` (in MODULE)` after the closing quote of every path it quotes while
+    /// `module_id >= 0`, which covers the receiver's `mkstemp %s failed` line.
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `util1.c:1290` - `if (module_id >= 0)` in `full_fname()`.
+    /// - `receiver.c:297` - `rsyserr(FERROR_XFER, errno, "mkstemp %s failed", ...)`
+    pub daemon_module: Option<String>,
 }
 
 impl Default for DiskCommitConfig {
@@ -223,6 +234,7 @@ impl Default for DiskCommitConfig {
             partial_mode: PartialMode::None,
             delay_updates: false,
             append_verify: false,
+            daemon_module: None,
         }
     }
 }

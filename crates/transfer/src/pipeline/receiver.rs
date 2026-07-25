@@ -23,6 +23,7 @@ use crate::pipeline::spsc::{self, TryRecvError};
 
 use crate::delta_apply::ChecksumVerifier;
 use crate::disk_commit::{DiskCommitConfig, PartialMode, spawn_disk_thread};
+use crate::full_fname::full_fname_path;
 use crate::pipeline::messages::{CommitResult, FileMessage};
 
 /// Expected checksum for a pending file, used for deferred verification.
@@ -110,6 +111,12 @@ pub struct PipelinedReceiver {
     ///
     /// upstream: receiver.c:1073-1078 - `keep_partial`/`partial_dir` gating.
     partial_mode: PartialMode,
+    /// Daemon module served by this process, captured from the disk-commit
+    /// config. Gates the ` (in MODULE)` suffix that `full_fname()` appends to
+    /// the quoted path in the `mkstemp` failure line.
+    ///
+    /// upstream: util1.c:1290 - `if (module_id >= 0)` in `full_fname()`.
+    daemon_module: Option<String>,
 }
 
 /// Selects the upstream verification-failure `keptstr` wording for a file.
@@ -139,6 +146,7 @@ impl PipelinedReceiver {
     /// commit thread cannot be spawned (typically `EAGAIN`/`RLIMIT_NPROC`).
     pub fn new(config: DiskCommitConfig) -> io::Result<Self> {
         let partial_mode = config.partial_mode.clone();
+        let daemon_module = config.daemon_module.clone();
         let h = spawn_disk_thread(config)?;
         Ok(Self {
             file_tx: h.file_tx,
@@ -154,6 +162,7 @@ impl PipelinedReceiver {
             delayed_updates: Vec::new(),
             success_indices: Vec::new(),
             partial_mode,
+            daemon_module,
         })
     }
 
@@ -231,15 +240,17 @@ impl PipelinedReceiver {
                         let path = pending.map(|p| p.file_path).unwrap_or_default();
                         // upstream: receiver.c:297 - rsyserr(FERROR_XFER, errno,
                         // "mkstemp %s failed", full_fname(fnametmp)); full_fname()
-                        // wraps the path in double quotes (util1.c:1228). Emitting
-                        // this as FERROR_XFER (not FINFO) makes the peer's rwrite()
-                        // set got_xfer_error, so the run exits 23 (RERR_PARTIAL)
-                        // instead of 0 when the output mkstemp() was denied.
+                        // wraps the path in double quotes and appends
+                        // " (in MODULE)" when serving a daemon module
+                        // (util1.c:1273). Emitting this as FERROR_XFER (not
+                        // FINFO) makes the peer's rwrite() set got_xfer_error,
+                        // so the run exits 23 (RERR_PARTIAL) instead of 0 when
+                        // the output mkstemp() was denied.
                         self.warnings.push((
                             MessageCode::ErrorXfer,
                             format!(
-                                "rsync: [receiver] mkstemp \"{}\" failed: Permission denied (13)",
-                                path.display(),
+                                "rsync: [receiver] mkstemp {} failed: Permission denied (13)",
+                                full_fname_path(&path, self.daemon_module.as_deref()),
                             ),
                         ));
                         meta_errors.push((path, e.to_string()));
@@ -298,15 +309,17 @@ impl PipelinedReceiver {
                         let path = pending.map(|p| p.file_path).unwrap_or_default();
                         // upstream: receiver.c:297 - rsyserr(FERROR_XFER, errno,
                         // "mkstemp %s failed", full_fname(fnametmp)); full_fname()
-                        // wraps the path in double quotes (util1.c:1228). Emitting
-                        // this as FERROR_XFER (not FINFO) makes the peer's rwrite()
-                        // set got_xfer_error, so the run exits 23 (RERR_PARTIAL)
-                        // instead of 0 when the output mkstemp() was denied.
+                        // wraps the path in double quotes and appends
+                        // " (in MODULE)" when serving a daemon module
+                        // (util1.c:1273). Emitting this as FERROR_XFER (not
+                        // FINFO) makes the peer's rwrite() set got_xfer_error,
+                        // so the run exits 23 (RERR_PARTIAL) instead of 0 when
+                        // the output mkstemp() was denied.
                         self.warnings.push((
                             MessageCode::ErrorXfer,
                             format!(
-                                "rsync: [receiver] mkstemp \"{}\" failed: Permission denied (13)",
-                                path.display(),
+                                "rsync: [receiver] mkstemp {} failed: Permission denied (13)",
+                                full_fname_path(&path, self.daemon_module.as_deref()),
                             ),
                         ));
                         meta_errors.push((path, e.to_string()));
@@ -1152,6 +1165,80 @@ mod tests {
             warnings[0].1.contains("mkstemp"),
             "message should mirror upstream receiver.c:297 \"mkstemp %s failed\": {}",
             warnings[0].1
+        );
+        // Outside a daemon module upstream's module_id is -1, so full_fname()
+        // emits the bare quoted path with no suffix (util1.c:1290).
+        assert!(
+            !warnings[0].1.contains(" (in "),
+            "non-daemon run must not carry a module suffix: {}",
+            warnings[0].1
+        );
+
+        let _ = std::fs::set_permissions(&readonly_dir, PermissionsExt::from_mode(0o755));
+        drop(pr);
+    }
+
+    /// Serving a daemon module, upstream's `full_fname()` appends
+    /// ` (in MODULE)` after the closing quote, so the receiver's `mkstemp`
+    /// failure names the module the client asked for. Without it a client
+    /// syncing several modules cannot tell which one refused the write.
+    ///
+    /// upstream: util1.c:1290 `if (module_id >= 0)` inside `full_fname()`,
+    /// reached from receiver.c:297 `rsyserr(..., "mkstemp %s failed", ...)`.
+    #[cfg(unix)]
+    #[test]
+    fn output_open_failure_names_daemon_module() {
+        use std::os::unix::fs::PermissionsExt;
+
+        if std::env::var("USER").is_ok_and(|u| u == "root") {
+            return;
+        }
+
+        let dir = test_support::create_tempdir();
+        let readonly_dir = dir.path().join("readonly");
+        std::fs::create_dir(&readonly_dir).unwrap();
+        std::fs::set_permissions(&readonly_dir, PermissionsExt::from_mode(0o555)).unwrap();
+
+        let file_path = readonly_dir.join("denied.dat");
+        let mut pr = PipelinedReceiver::new(DiskCommitConfig {
+            daemon_module: Some("mymod".to_string()),
+            ..DiskCommitConfig::default()
+        })
+        .unwrap();
+
+        pr.file_sender()
+            .send(FileMessage::WholeFile {
+                begin: Box::new(BeginMessage {
+                    file_path: file_path.clone(),
+                    target_size: 9,
+                    file_entry_index: 0,
+                    checksum_verifier: None,
+                    is_device_target: false,
+                    is_inplace: false,
+                    append_offset: 0,
+                    xattr_list: None,
+                }),
+                data: b"test data".to_vec(),
+                expected_checksum: Default::default(),
+            })
+            .unwrap();
+        pr.note_commit_sent(
+            [0u8; ChecksumVerifier::MAX_DIGEST_LEN],
+            0,
+            file_path.clone(),
+            0,
+            false,
+        );
+
+        let (_bytes, _errors) = pr.drain_all_results().unwrap();
+        let warnings = pr.drain_warnings();
+        assert_eq!(warnings.len(), 1);
+        assert_eq!(
+            warnings[0].1,
+            format!(
+                "rsync: [receiver] mkstemp \"{}\" (in mymod) failed: Permission denied (13)",
+                file_path.display()
+            ),
         );
 
         let _ = std::fs::set_permissions(&readonly_dir, PermissionsExt::from_mode(0o755));
