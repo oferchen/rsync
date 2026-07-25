@@ -104,6 +104,47 @@ impl GeneratorContext {
             .advance_to(TransferPhase::DeltaTransfer)
             .map_err(crate::fsm_error)?;
 
+        // upstream: main.c:968-974 do_server_sender() -
+        //   flist = send_file_list(f_out, argc, argv);
+        //   if (!flist || flist->used == 0) { io_end_buffering_in(0); exit_cleanup(0); }
+        //
+        // An empty file list means every requested path failed to be listed
+        // (missing source, unreadable directory, everything filtered out). The
+        // peer's client_run() mirrors this: with an empty list it skips do_recv()
+        // entirely (main.c:1379-1391), so it never sends an ndx, never sends
+        // NDX_DONE, and never joins the goodbye handshake - it just reports the
+        // io_error we already sent and waits in noop_io_until_death() for our FIN.
+        // Entering send_files() here would block forever reading an ndx the peer
+        // is never going to write. Returning now lets the caller tear the
+        // connection down, which is what releases the peer.
+        //
+        // Server-side only, exactly as upstream: a client-mode sender (push)
+        // runs send_files() unconditionally from client_run() (main.c:1343).
+        if file_count == 0 && !self.config.connection.client_mode {
+            // upstream: exit_cleanup(0) -> io_flush(FULL_FLUSH) before _exit.
+            writer.flush_all_pending()?;
+            self.pipeline
+                .advance_to(TransferPhase::Finalization)
+                .map_err(crate::fsm_error)?;
+            self.pipeline
+                .advance_to(TransferPhase::Complete)
+                .map_err(crate::fsm_error)?;
+            return Ok(GeneratorStats {
+                files_listed: 0,
+                flist_buildtime_ms: calculate_duration_ms(
+                    self.timing.flist_build_start,
+                    self.timing.flist_build_end,
+                ),
+                flist_xfertime_ms: calculate_duration_ms(
+                    self.timing.flist_xfer_start,
+                    self.timing.flist_xfer_end,
+                ),
+                flist_first_byte_latency: self.timing.flist_first_byte_latency,
+                io_error: self.io_error,
+                ..GeneratorStats::default()
+            });
+        }
+
         // INC_RECURSE sub-lists are sent lazily inside the loop via
         // SegmentScheduler, matching upstream sender.c:227,261 cadence.
         let transfer_result = {
