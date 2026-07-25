@@ -37,7 +37,14 @@ impl ClientConfigBuilder {
         /// Enables or disables recursive traversal of source directories.
         recursive: bool,
         /// Enables or disables copying of directory entries when recursion is disabled.
+        ///
+        /// This is upstream's resolved `xfer_dirs != 0`; see [`Self::dirs_explicit`]
+        /// for the stronger "the user actually passed `-d`" signal.
         dirs: bool,
+        /// Records that `--dirs`/`-d` was passed explicitly (upstream
+        /// `xfer_dirs >= 2`) rather than implied by recursion, `--files-from`, or
+        /// `--list-only`.
+        dirs_explicit: bool,
         /// Sets the filesystem boundary traversal level (0=off, 1=single -x, 2=double -xx).
         one_file_system: u8,
         /// Enables destination path creation prior to copying.

@@ -69,7 +69,7 @@ where
         blocking_io,
         archive,
         recursive,
-        recursive_override: _,
+        recursive_override,
         inc_recursive,
         dirs,
         delete_mode,
@@ -554,19 +554,32 @@ where
 
     let implied_dirs_option = implied_dirs;
 
-    // upstream: options.c:2169-2177 - --files-from disables default recursion,
-    // enables xfer_dirs, and implies --relative.
+    // upstream: options.c:2188-2191 - `if (files_from) { if (recurse == 1)
+    // recurse = 0; ... }`. Only the value `-a` implies (recurse == 1,
+    // options.c:1546 `if (!recurse) recurse = 1`) is cleared; an explicit `-r`
+    // sets recurse == 2 (options.c:621 `POPT_ARG_VAL, &recurse, 2`) and
+    // SURVIVES --files-from, so upstream still recurses into a directory named
+    // in the list and still packs the compact `r` letter (options.c:2705).
     //
-    // Otherwise honour the parser-computed `recursive` flag, which mirrors
-    // upstream's `recurse` default of 0 (options.c:112) and the `-r` / `-a` /
-    // `--no-recursive` precedence rules (parser/mod.rs:152-158).
+    // `recursive_override` is `Some(true)` exactly for the forms whose recursion
+    // outlives a files-from list (explicit `-r`, and `--old-dirs`), and `None`
+    // when recursion is only implied by `-a`. Clearing recursion unconditionally
+    // here dropped every directory named in a --files-from list: the transfer
+    // silently copied nothing where upstream copied the whole subtree.
     let recursive_effective = if files_from_active {
-        false // upstream: options.c:2174 - if (recurse == 1) recurse = 0
+        recursive && recursive_override == Some(true)
     } else {
         recursive
     };
 
-    // upstream: options.c:2176-2177 - xfer_dirs = 1 when files_from is active
+    // upstream: options.c:628 - `-d` sets `xfer_dirs = 2`. Capture that before
+    // the files-from default below folds the implied `xfer_dirs = 1` into the
+    // same flag, because the compact `d` letter is packed only for the explicit
+    // level (options.c:2638-2640).
+    let dirs_explicit = dirs == Some(true);
+
+    // upstream: options.c:2190-2191 - `if (xfer_dirs < 0) xfer_dirs = 1;` when
+    // files_from is active. This is the implied level, not an explicit `-d`.
     let dirs = if files_from_active { Some(true) } else { dirs };
 
     // upstream: compat.c:710-748 - local transfers negotiate compat_flags
@@ -883,6 +896,7 @@ where
         msgs2stderr: msgs_to_stderr_option,
         recursive: recursive_effective,
         dirs,
+        dirs_explicit,
         delete_mode,
         delete_excluded,
         delete_missing_args,

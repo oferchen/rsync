@@ -340,12 +340,11 @@ impl<'a> RemoteInvocationBuilder<'a> {
         // remote receiver must be told recursion is off: the compact flag string
         // carries 'd' but no 'r', and older receivers gained `--no-r` at the
         // same time as `-d`, so the explicit negation guarantees the remote does
-        // not re-enable recursion. `--files-from` resolves to xfer_dirs=1,
-        // recurse=0 (options.c:2188-2191), matching `effective_*` below.
-        let files_from_active = self.config.files_from().is_active();
-        let effective_recursive = self.config.recursive() && !files_from_active;
-        let effective_dirs = self.config.dirs() || files_from_active;
-        if am_sender && effective_dirs && !effective_recursive && self.config.delete() {
+        // not re-enable recursion. `--files-from` resolves to xfer_dirs=1 and
+        // clears only the recursion `-a` implied (options.c:2188-2191), so an
+        // explicit `-r` keeps `recurse` set and suppresses `--no-r` here just as
+        // it keeps the compact `r` letter.
+        if am_sender && self.config.dirs() && !self.config.recursive() && self.config.delete() {
             args.push(OsString::from("--no-r"));
         }
 
@@ -910,11 +909,14 @@ impl<'a> RemoteInvocationBuilder<'a> {
     fn build_flag_string(&self) -> String {
         let mut flags = String::from("-");
 
-        // upstream: options.c:2187-2206 - when --files-from is active, upstream
-        // sets recurse=0, xfer_dirs=1, relative_paths=1. Suppress 'r' and imply
-        // 'R' to match this behaviour.
-        let files_from_active = self.config.files_from().is_active();
-        let effective_recursive = self.config.recursive() && !files_from_active;
+        // upstream: options.c:2188-2191 - `if (files_from) { if (recurse == 1)
+        // recurse = 0; if (xfer_dirs < 0) xfer_dirs = 1; }`. Only the recursion
+        // `-a` implies is cleared; an explicit `-r` (recurse == 2) survives
+        // --files-from. The CLI performs that resolution once, so
+        // `config.recursive()` is already upstream's post-resolution
+        // `recurse != 0` and must not be re-cleared here.
+        // options.c:2205-2206 - relative_paths defaults to 1 under --files-from.
+        let effective_recursive = self.config.recursive();
         // upstream: options.c:109-110 - server_options() packs the compact `R`
         // letter for the RESOLVED relative_paths. `relative_paths()` already
         // folds in the --files-from default (options.c:2205-2206: relative
@@ -924,7 +926,6 @@ impl<'a> RemoteInvocationBuilder<'a> {
         // emitted below and making the remote sender keep the leading path
         // components (`sub/file` instead of `file`).
         let effective_relative = self.config.relative_paths();
-        let effective_dirs = self.config.dirs() || files_from_active;
         // upstream: options.c:2641 / :2655 - several compact letters live in a
         // direction-specific branch. `am_sender` is true when the local process
         // is the sender (push); false on a pull. RemoteRole::Sender == push.
@@ -965,10 +966,16 @@ impl<'a> RemoteInvocationBuilder<'a> {
         if self.config.links() {
             flags.push('l');
         }
-        // upstream: options.c:2638-2640 - 'd' = --dirs (xfer_dirs without
-        // recursion). When --files-from is active, upstream sets xfer_dirs=1 and
-        // recurse=0, so 'd' is emitted.
-        if effective_dirs && !effective_recursive {
+        // upstream: options.c:2638-2640 - `if ((xfer_dirs >= 2 && xfer_dirs < 4)
+        // || (xfer_dirs && !recurse && (list_only || (delete_mode && am_sender))))
+        // argstr[x++] = 'd';`. The letter tracks an EXPLICIT `-d`
+        // (xfer_dirs == 2), not the `xfer_dirs = 1` that --files-from or
+        // recursion implies.
+        if self.config.dirs_explicit()
+            || (self.config.dirs()
+                && !effective_recursive
+                && (self.config.list_only() || (self.config.delete() && am_sender)))
+        {
             flags.push('d');
         }
         if am_sender {

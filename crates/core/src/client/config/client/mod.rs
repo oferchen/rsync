@@ -66,6 +66,7 @@ pub struct ClientConfig {
     pub(super) max_delete: Option<u64>,
     pub(super) recursive: bool,
     pub(super) dirs: bool,
+    pub(super) dirs_explicit: bool,
     pub(super) min_file_size: Option<u64>,
     pub(super) max_file_size: Option<u64>,
     pub(super) block_size_override: Option<NonZeroU32>,
@@ -354,6 +355,7 @@ impl Default for ClientConfig {
             max_delete: None,
             recursive: false,
             dirs: false,
+            dirs_explicit: false,
             min_file_size: None,
             max_file_size: None,
             block_size_override: None,
@@ -547,6 +549,23 @@ impl ClientConfig {
     #[doc(alias = "-d")]
     pub const fn dirs(&self) -> bool {
         self.dirs || self.files_from.is_active()
+    }
+
+    /// Whether `--dirs`/`-d` was requested explicitly, i.e. upstream
+    /// `xfer_dirs >= 2` rather than the `xfer_dirs = 1` that `--files-from`,
+    /// recursion, or `--list-only` implies.
+    ///
+    /// [`Self::dirs`] answers "is `xfer_dirs` non-zero", which is what the
+    /// traversal paths need. The compact `d` letter needs the stronger question,
+    /// because upstream packs it for an explicit `-d` but not for the implied
+    /// level (`options.c:2638-2640`).
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `options.c:628` - `{"dirs", 'd', POPT_ARG_VAL, &xfer_dirs, 2, ...}`
+    #[must_use]
+    pub const fn dirs_explicit(&self) -> bool {
+        self.dirs_explicit
     }
 }
 
