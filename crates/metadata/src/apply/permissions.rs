@@ -495,8 +495,15 @@ pub(super) fn apply_permissions_with_chmod(
             existing,
             destination.parent(),
         ) {
-            // upstream: syscall.c:do_chmod_at() - symlink-race-safe variant.
-            chmod_path_honoring_keep_dirlinks(destination, new_mode, options, "apply dest_mode")?;
+            // upstream: syscall.c:do_chmod():800-802 - when neither --perms
+            // nor --executability is active, chmod failure is non-fatal.
+            // upstream returns 0 so set_file_attrs() continues.
+            let _ = chmod_path_honoring_keep_dirlinks(
+                destination,
+                new_mode,
+                options,
+                "apply dest_mode",
+            );
         }
     }
 
@@ -586,11 +593,18 @@ pub(super) fn apply_permissions_with_chmod_fd(
         existing,
         destination.parent(),
     ) {
+        // upstream: syscall.c:do_chmod():800-802 - when neither --perms
+        // nor --executability is active, chmod failure is non-fatal.
+        // upstream returns 0 so set_file_attrs() continues.
         if let Some(fd) = fd {
-            fchmod_libc(fd, new_mode, destination, "apply dest_mode")?;
+            let _ = fchmod_libc(fd, new_mode, destination, "apply dest_mode");
         } else {
-            // upstream: syscall.c:do_chmod_at() - symlink-race-safe variant.
-            chmod_path_honoring_keep_dirlinks(destination, new_mode, options, "apply dest_mode")?;
+            let _ = chmod_path_honoring_keep_dirlinks(
+                destination,
+                new_mode,
+                options,
+                "apply dest_mode",
+            );
         }
     }
 
@@ -894,12 +908,15 @@ pub(super) fn apply_permissions_from_entry(
                     &fresh_meta
                 };
                 if (current_meta.permissions().mode() & 0o7777) != (new_mode & 0o7777) {
-                    chmod_path_honoring_keep_dirlinks(
+                    // upstream: syscall.c:do_chmod():800-802 - when neither
+                    // --perms nor --executability is active, chmod failure is
+                    // non-fatal. upstream returns 0 so set_file_attrs() continues.
+                    let _ = chmod_path_honoring_keep_dirlinks(
                         destination,
                         new_mode,
                         options,
                         "apply dest_mode",
-                    )?;
+                    );
                 }
             } else if entry.file_type().is_dir() {
                 // upstream: generator.c:1466-1467 - even when !preserve_perms
@@ -936,12 +953,15 @@ pub(super) fn apply_permissions_from_entry(
                 // !perms path leave such a directory at its umask default
                 // (owner-writable) rather than chmod'ing it non-writable.
                 if (new_mode & 0o700) == 0o700 && (current_mode & 0o7777) != (new_mode & 0o7777) {
-                    chmod_path_honoring_keep_dirlinks(
+                    // upstream: syscall.c:do_chmod():800-802 - when neither
+                    // --perms nor --executability is active, chmod failure is
+                    // non-fatal. upstream returns 0 so set_file_attrs() continues.
+                    let _ = chmod_path_honoring_keep_dirlinks(
                         destination,
                         new_mode,
                         options,
                         "apply dest_mode",
-                    )?;
+                    );
                 }
             }
             return Ok(());
@@ -1102,4 +1122,59 @@ pub(super) fn apply_permissions_from_entry(
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+#[cfg(unix)]
+mod tests {
+    use super::*;
+    use crate::MetadataOptions;
+    use tempfile::tempdir;
+
+    /// upstream: syscall.c:do_chmod():800-802 - when neither --perms nor
+    /// --executability is active, do_chmod returns 0 on failure.
+    /// Verify that a chmod ENOENT is swallowed in the !perms path.
+    #[test]
+    fn chmod_failure_swallowed_without_perms_or_executability() {
+        let dir = tempdir().expect("tempdir");
+        let source = dir.path().join("src.txt");
+        std::fs::write(&source, b"data").expect("write");
+
+        let source_meta = std::fs::metadata(&source).expect("metadata");
+
+        // Destination that does not exist - chmod will fail with ENOENT.
+        let dest = dir.path().join("nonexistent.txt");
+
+        let options = MetadataOptions::new()
+            .preserve_permissions(false)
+            .preserve_executability(false)
+            .preserve_times(false)
+            .with_destination_is_new(true);
+
+        // With the fix, this should succeed because chmod failure is non-fatal
+        // when neither -p nor -E is set.
+        let result = apply_permissions_with_chmod(&dest, &source_meta, &options, None);
+        assert!(result.is_ok(), "expected Ok, got: {result:?}");
+    }
+
+    /// When --perms IS active, chmod failure must propagate.
+    #[test]
+    fn chmod_failure_propagates_with_perms() {
+        let dir = tempdir().expect("tempdir");
+        let source = dir.path().join("src.txt");
+        std::fs::write(&source, b"data").expect("write");
+
+        let source_meta = std::fs::metadata(&source).expect("metadata");
+
+        let dest = dir.path().join("nonexistent.txt");
+
+        let options = MetadataOptions::new()
+            .preserve_permissions(true)
+            .preserve_executability(false)
+            .preserve_times(false)
+            .with_destination_is_new(true);
+
+        let result = apply_permissions_with_chmod(&dest, &source_meta, &options, None);
+        assert!(result.is_err(), "expected Err with -p active, got Ok");
+    }
 }
