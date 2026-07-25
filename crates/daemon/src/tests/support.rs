@@ -183,6 +183,23 @@ pub(super) fn allocate_test_port() -> (u16, TcpListener) {
     (port, listener)
 }
 
+/// Sends the client's `@RSYNCD:` version banner, completing the half of the
+/// handshake a test performs before it issues a request.
+///
+/// upstream: clientserver.c:180-184 - the daemon reads the client's banner
+/// first and answers `@ERROR: protocol startup error` when the line is not one,
+/// so a request that arrives before the banner is refused rather than served.
+/// Verified against rsync 3.4.4 for `#list`, a bare module name, an empty
+/// (list-all) line, and an HTTP probe.
+///
+/// Tests that deliberately send something else in the banner's place (the
+/// startup-error and panic-isolation cases) write it themselves instead.
+pub(super) fn send_client_greeting(stream: &mut TcpStream) {
+    stream
+        .write_all(legacy_daemon_greeting().as_bytes())
+        .expect("send client greeting");
+}
+
 pub(super) fn run_with_args<I, S>(args: I) -> (i32, Vec<u8>, Vec<u8>)
 where
     I: IntoIterator<Item = S>,

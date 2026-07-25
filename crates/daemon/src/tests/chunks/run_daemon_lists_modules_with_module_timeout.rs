@@ -44,6 +44,7 @@ fn run_daemon_lists_modules_with_module_timeout() {
     assert_eq!(line, expected_greeting);
 
     // upstream: clientserver.c:1423 - an empty request lists modules.
+    send_client_greeting(&mut stream);
     stream.write_all(b"\n").expect("send empty request");
     stream.flush().expect("flush empty request");
 

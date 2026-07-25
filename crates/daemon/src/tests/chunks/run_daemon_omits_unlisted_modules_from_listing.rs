@@ -35,6 +35,7 @@ fn run_daemon_omits_unlisted_modules_from_listing() {
     reader.read_line(&mut line).expect("greeting");
     assert_eq!(line, expected_greeting);
 
+    send_client_greeting(&mut stream);
     stream.write_all(b"#list\n").expect("send list request");
     stream.flush().expect("flush list request");
 

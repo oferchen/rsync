@@ -58,7 +58,7 @@ use logging_sink::MessageSink;
 use protocol::{
     LEGACY_DAEMON_PREFIX_LEN, LegacyDaemonMessage, MessageCode, MessageFrame, ProtocolVersion,
     filters::FilterRuleWireFormat, format_legacy_daemon_message, iconv::FilenameConverter,
-    missing_greeting_token, parse_legacy_daemon_message,
+    is_version_banner, missing_greeting_token, parse_legacy_daemon_message,
 };
 
 use crate::{
@@ -151,6 +151,11 @@ pub(crate) const AUTH_FAILED_PAYLOAD: &str = "@ERROR: auth failed on module {mod
 ///
 /// upstream: clientserver.c:732 - `@ERROR: Unknown module '%s'\n`
 pub(crate) const UNKNOWN_MODULE_PAYLOAD: &str = "@ERROR: Unknown module '{module}'";
+/// Error payload returned when the client's first line is not a version banner.
+///
+/// upstream: clientserver.c:180-184 - `if (sscanf(buf, "@RSYNCD: %d.%d", ...) < 1)`
+/// the server writes `@ERROR: protocol startup error\n` and drops the connection.
+pub(crate) const PROTOCOL_STARTUP_ERROR_PAYLOAD: &str = "@ERROR: protocol startup error";
 /// Error payload returned when a `#`-prefixed request is not a recognized command.
 ///
 /// A `#`-prefixed line (e.g. `#bogus`) that is neither `#list` nor the

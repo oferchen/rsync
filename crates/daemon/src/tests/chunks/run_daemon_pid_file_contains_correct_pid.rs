@@ -65,6 +65,7 @@ fn run_daemon_pid_file_contains_correct_pid() {
     reader.read_line(&mut line).expect("greeting");
     assert_eq!(line, legacy_daemon_greeting());
 
+    send_client_greeting(&mut stream);
     stream.write_all(b"#list\n").expect("send list request");
     stream.flush().expect("flush list request");
 
