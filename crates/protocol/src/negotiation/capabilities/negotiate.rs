@@ -191,6 +191,15 @@ pub fn negotiate_capabilities_with_override(
         // version, so the server still validates a forced choice against the env
         // list. No vstring exchange runs here, so ordering is irrelevant.
         validate_forced_choices(is_server, checksum_override, compression_override)?;
+        // upstream: negotiate_the_strings still runs for legacy protocols; the
+        // prefilled default is "md4" (compat.c:553) here.
+        validate_fallback_defaults(
+            is_server,
+            ChecksumAlgorithm::MD4,
+            send_compression,
+            checksum_override,
+            compression_override,
+        )?;
         // When user forced a checksum on a legacy protocol, honour it directly
         // since there is no wire negotiation to perform.
         let checksum = checksum_override.unwrap_or(ChecksumAlgorithm::MD4);
@@ -224,6 +233,18 @@ pub fn negotiate_capabilities_with_override(
         // do_negotiated_strings == 0, so the server validates a forced choice
         // against the env list. No vstring exchange runs, so ordering is moot.
         validate_forced_choices(is_server, checksum_override, compression_override)?;
+        // upstream: negotiate_the_strings runs even when do_negotiated_strings
+        // == 0 - send_negotiate_str populates the env-restricted saw list and
+        // recv_negotiate_str validates the prefilled "md5" default against it
+        // (compat.c:550-554), aborting with RERR_UNSUPPORTED when the operator's
+        // env excludes it. Without a forced choice this is the only env check.
+        validate_fallback_defaults(
+            is_server,
+            ChecksumAlgorithm::MD5,
+            send_compression,
+            checksum_override,
+            compression_override,
+        )?;
         // Use protocol 30+ defaults without sending or reading anything.
         // upstream: compat.c:194 - when -z is active but no vstring negotiation,
         // parse_compress_choice() defaults to CPRES_ZLIB.
@@ -467,6 +488,41 @@ fn validate_forced_choices(
     }
     if let Some(forced) = compression_override {
         env_list::validate_compress_choice(forced.as_str())?;
+    }
+    Ok(())
+}
+
+/// Refuses the forced fallback default checksum/compression on the
+/// non-negotiated path when `RSYNC_CHECKSUM_LIST`/`RSYNC_COMPRESS_LIST` excludes
+/// it.
+///
+/// upstream: `compat.c:541-565 negotiate_the_strings` - when the peer cannot
+/// negotiate (legacy protocol or missing 'v' capability), `send_negotiate_str`
+/// still parses the env list into `nno->saw` for each category that was not
+/// forced, then `recv_negotiate_str` validates the prefilled default against it:
+/// `"md5"`/`"md4"` for the checksum (`compat.c:553`) and `"zlib"` for
+/// compression (`compat.c:563`). A default absent from the operator's env list
+/// aborts with `RERR_UNSUPPORTED`. This runs on both peers (the `&` split
+/// selects the caller's half via `is_server`), and only for a category with no
+/// forced override - a forced choice skips `send_negotiate_str`, leaving `saw`
+/// NULL so `recv_negotiate_str` is not called; [`validate_forced_choices`]
+/// covers that case instead. Compression is gated on `send_compression`,
+/// matching upstream's `do_compression` guard at `compat.c:544`.
+///
+/// A strict no-op when neither variable is set: [`env_list`] returns early,
+/// leaving the common (default) path unchanged.
+fn validate_fallback_defaults(
+    is_server: bool,
+    checksum_default: ChecksumAlgorithm,
+    send_compression: bool,
+    checksum_override: Option<ChecksumAlgorithm>,
+    compression_override: Option<CompressionAlgorithm>,
+) -> io::Result<()> {
+    if checksum_override.is_none() {
+        env_list::validate_default_checksum(checksum_default.as_str(), is_server)?;
+    }
+    if send_compression && compression_override.is_none() {
+        env_list::validate_default_compress(CompressionAlgorithm::Zlib.as_str(), is_server)?;
     }
     Ok(())
 }
