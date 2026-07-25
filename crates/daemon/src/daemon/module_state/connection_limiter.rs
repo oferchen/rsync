@@ -1,6 +1,5 @@
 use std::fs::{File, OpenOptions};
 use std::io;
-use std::num::NonZeroU32;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -17,6 +16,7 @@ use core::rsync_error;
 
 use crate::error::DaemonError;
 
+use super::max_connections::MaxConnections;
 use super::runtime::ModuleConnectionError;
 
 /// Exit code used when daemon functionality is unavailable.
@@ -99,17 +99,21 @@ impl ConnectionLimiter {
     /// (rsyncd.conf(5), "lock file"). Isolation is obtained by giving a module
     /// its own `lock file`, exactly as upstream does.
     ///
-    /// upstream: connection.c:37-40 - scan `[0, max_connections)` and return the
-    /// first range that locks; a failed lock (`errno` unset) means capacity.
+    /// upstream: connection.c:31 opens the lock file before the scan, so an
+    /// unopenable file is an open failure whatever the limit says.
+    /// connection.c:37-40 then scans `[0, max_connections)` and returns the
+    /// first range that locks; a failed lock (`errno` unset) means capacity. A
+    /// disabling (negative) limit scans nothing and refuses here, matching the
+    /// `close(fd); errno = 0; return 0` fall-through at connection.c:44-46.
     pub(crate) fn acquire(
         self: &Arc<Self>,
         module: &str,
-        limit: NonZeroU32,
+        limit: MaxConnections,
     ) -> Result<ConnectionLockGuard, ModuleConnectionError> {
         let _ = module;
         let file = self.open_file().map_err(ModuleConnectionError::io)?;
 
-        for slot in 0..limit.get() {
+        for slot in 0..limit.slot_count() {
             let lock = slot_lock(i64::from(slot) * SLOT_LEN);
             loop {
                 match nix::fcntl::fcntl(&file, setlk_arg(&lock)) {
@@ -131,7 +135,7 @@ impl ConnectionLimiter {
             }
         }
 
-        Err(ModuleConnectionError::Limit(limit))
+        Err(ModuleConnectionError::Limit(limit.display_value()))
     }
 }
 
@@ -188,11 +192,12 @@ impl ConnectionLimiter {
     ///
     /// Windows lacks a byte-range-lock-on-death primitive, so the count is kept
     /// in the lock file and serialised with an exclusive `flock`, with a RAII
-    /// guard restoring the count on drop.
+    /// guard restoring the count on drop. The lock file is opened first for
+    /// every non-zero limit, matching connection.c:31.
     pub(crate) fn acquire(
         self: &Arc<Self>,
         module: &str,
-        limit: NonZeroU32,
+        limit: MaxConnections,
     ) -> Result<ConnectionLockGuard, ModuleConnectionError> {
         let mut file = self.open_file().map_err(ModuleConnectionError::io)?;
         file.lock_exclusive().map_err(ModuleConnectionError::io)?;
@@ -216,16 +221,19 @@ impl ConnectionLimiter {
     }
 
     /// Increments the module count in the lock file, failing if the limit is reached.
+    ///
+    /// A disabling (negative) limit contributes no slots, so the very first
+    /// connection is refused - the counterpart of upstream's empty slot scan.
     fn increment_count(
         &self,
         file: &mut File,
         module: &str,
-        limit: NonZeroU32,
+        limit: MaxConnections,
     ) -> Result<(), ModuleConnectionError> {
         let mut counts = self.read_counts(file)?;
         let current = counts.get(module).copied().unwrap_or(0);
-        if current >= limit.get() {
-            return Err(ModuleConnectionError::Limit(limit));
+        if current >= limit.slot_count() {
+            return Err(ModuleConnectionError::Limit(limit.display_value()));
         }
 
         counts.insert(module.to_owned(), current.saturating_add(1));

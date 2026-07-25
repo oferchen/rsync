@@ -41,7 +41,7 @@ fn runtime_options_per_module_max_connections_overrides_global() {
         .expect("[capped] module present");
     assert_eq!(
         capped.max_connections(),
-        NonZeroU32::new(1),
+        MaxConnections::Limited(NonZeroU32::new(1).expect("non-zero")),
         "per-module 'max connections = 1' overrides the higher global cap",
     );
 
@@ -52,8 +52,9 @@ fn runtime_options_per_module_max_connections_overrides_global() {
         .iter()
         .find(|m| m.name == "uncapped")
         .expect("[uncapped] module present");
-    assert!(
-        uncapped.max_connections().is_none(),
+    assert_eq!(
+        uncapped.max_connections(),
+        MaxConnections::Unlimited,
         "modules without 'max connections' must not inherit the global cap as a per-module value",
     );
 }

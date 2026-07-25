@@ -11,5 +11,8 @@ fn runtime_options_max_connections_atoi_leniency() {
     ])
     .expect("atoi-lenient max connections must not abort the load");
 
-    assert!(options.modules()[0].max_connections().is_none());
+    assert_eq!(
+        options.modules()[0].max_connections(),
+        MaxConnections::Unlimited
+    );
 }

@@ -3,7 +3,7 @@ fn log_module_limit_logs_cap_reached() {
     let dir = tempdir().expect("log dir");
     let path = dir.path().join("daemon.log");
     let log = open_log_sink(&path, Brand::Oc).expect("open log");
-    let limit = NonZeroU32::new(4).expect("non-zero limit");
+    let limit = MaxConnections::Limited(NonZeroU32::new(4).expect("non-zero limit")).display_value();
 
     log_module_limit(
         &log,

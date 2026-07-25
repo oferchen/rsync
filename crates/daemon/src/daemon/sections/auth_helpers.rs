@@ -81,15 +81,16 @@ fn log_module_request(log: &SharedLogSink, host: Option<&str>, peer_ip: IpAddr, 
 /// [`log_max_connections_rejection`] so operators see one consistent
 /// shape across both admission paths. Fields are stable and named:
 /// `which` carries the module name (sanitised to strip control chars),
-/// `peer` records the rejected client IP, `cap` is the limit that
-/// triggered the refusal, and `current` is the active connection count
-/// observed at the refusal moment.
+/// `peer` records the rejected client IP, `cap` is the configured limit
+/// that triggered the refusal (negative when the directive disables the
+/// module), and `current` is the active connection count observed at the
+/// refusal moment.
 pub(crate) fn log_module_limit(
     log: &SharedLogSink,
     host: Option<&str>,
     peer_ip: IpAddr,
     module: &str,
-    limit: NonZeroU32,
+    limit: i32,
     current: u32,
 ) {
     let display = format_host(host, peer_ip);

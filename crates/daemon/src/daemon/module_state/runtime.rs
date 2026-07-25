@@ -7,7 +7,7 @@ use std::sync::atomic::{AtomicU32, Ordering};
 
 use crate::error::DaemonError;
 
-use super::{ConnectionLimiter, ConnectionLockGuard, ModuleDefinition};
+use super::{ConnectionLimiter, ConnectionLockGuard, MaxConnections, ModuleDefinition};
 
 /// Pairs each module definition with the connection limiter that enforces its
 /// `max connections` cap, honouring a per-module `lock file` override.
@@ -60,8 +60,10 @@ pub(crate) struct ModuleRuntime {
 /// Error returned when a module connection cannot be established.
 #[derive(Debug)]
 pub(crate) enum ModuleConnectionError {
-    /// The module's connection limit has been reached.
-    Limit(NonZeroU32),
+    /// The module's connection limit has been reached. Carries the configured
+    /// number verbatim, so a module disabled with a negative `max connections`
+    /// reports its minus sign exactly as upstream's `%d` does.
+    Limit(i32),
     /// An I/O error occurred while managing connection state.
     Io(io::Error),
 }
@@ -92,25 +94,37 @@ impl ModuleRuntime {
         }
     }
 
-    /// Attempts to acquire a connection slot, respecting max_connections limits.
+    /// Attempts to acquire a connection slot, honouring the module's
+    /// `max connections` setting.
+    ///
+    /// The step order mirrors upstream: connection.c:claim_connection:26-46
+    /// returns success for a zero limit *before* the lock file is opened, opens
+    /// the lock file for every other value (so an unopenable file reports the
+    /// open failure rather than the cap), and only then scans
+    /// `[0, max_connections)`. A negative limit runs no iterations, so it
+    /// consumes no slot and falls through to the refusal after the descriptor
+    /// is closed - the drop of `lock_guard` on the error path below.
     pub(in crate::daemon) fn try_acquire_connection(
         &self,
     ) -> Result<ModuleConnectionGuard<'_>, ModuleConnectionError> {
-        if let Some(limit) = self.definition.max_connections() {
-            if let Some(limiter) = &self.connection_limiter {
-                match limiter.acquire(&self.definition.name, limit) {
-                    Ok(lock_guard) => {
-                        self.acquire_local_slot(limit)?;
-                        return Ok(ModuleConnectionGuard::limited(self, Some(lock_guard)));
-                    }
-                    Err(error) => return Err(error),
-                }
-            }
+        let configured = self.definition.max_connections();
+        let slots = match configured {
+            MaxConnections::Unlimited => return Ok(ModuleConnectionGuard::unlimited()),
+            MaxConnections::Limited(limit) => Some(limit),
+            MaxConnections::Disabled(_) => None,
+        };
 
-            self.acquire_local_slot(limit)?;
-            Ok(ModuleConnectionGuard::limited(self, None))
-        } else {
-            Ok(ModuleConnectionGuard::unlimited())
+        let lock_guard = match &self.connection_limiter {
+            Some(limiter) => Some(limiter.acquire(&self.definition.name, configured)?),
+            None => None,
+        };
+
+        match slots {
+            Some(limit) => {
+                self.acquire_local_slot(limit)?;
+                Ok(ModuleConnectionGuard::limited(self, lock_guard))
+            }
+            None => Err(ModuleConnectionError::Limit(configured.display_value())),
         }
     }
 
@@ -120,7 +134,9 @@ impl ModuleRuntime {
         let mut current = self.active_connections.load(Ordering::Acquire);
         loop {
             if current >= limit_value {
-                return Err(ModuleConnectionError::Limit(limit));
+                return Err(ModuleConnectionError::Limit(
+                    MaxConnections::Limited(limit).display_value(),
+                ));
             }
 
             match self.active_connections.compare_exchange(
@@ -136,8 +152,14 @@ impl ModuleRuntime {
     }
 
     /// Releases a connection slot, decrementing the active count.
+    ///
+    /// Only a positive `max connections` ever takes a local slot, so the
+    /// unlimited and disabled settings have nothing to give back.
     pub(in crate::daemon) fn release(&self) {
-        if self.definition.max_connections().is_some() {
+        if matches!(
+            self.definition.max_connections(),
+            MaxConnections::Limited(_)
+        ) {
             self.active_connections.fetch_sub(1, Ordering::AcqRel);
         }
     }

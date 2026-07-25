@@ -336,23 +336,36 @@ fn set_timeout_rejects_duplicate() {
 #[test]
 fn set_max_connections_stores_value() {
     let mut builder = ModuleDefinitionBuilder::new("mod".to_owned(), 1);
-    let max = NonZeroU32::new(10);
+    let max = MaxConnections::Limited(NonZeroU32::new(10).expect("non-zero"));
     builder.set_max_connections(max, &test_config_path(), 5).unwrap();
     assert_eq!(builder.max_connections, Some(max));
 }
 
 #[test]
-fn set_max_connections_allows_none() {
+fn set_max_connections_allows_unlimited() {
+    // upstream: connection.c:claim_connection:27 - `max connections = 0` is a
+    // valid setting meaning unlimited, distinct from the directive being unset.
     let mut builder = ModuleDefinitionBuilder::new("mod".to_owned(), 1);
-    builder.set_max_connections(None, &test_config_path(), 5).unwrap();
-    assert_eq!(builder.max_connections, Some(None));
+    builder.set_max_connections(MaxConnections::Unlimited, &test_config_path(), 5).unwrap();
+    assert_eq!(builder.max_connections, Some(MaxConnections::Unlimited));
+}
+
+#[test]
+fn set_max_connections_allows_disabled() {
+    // upstream: rsyncd.conf.5 - "A negative value disables the module". The
+    // builder must retain the sign so the refusal echoes it verbatim.
+    let mut builder = ModuleDefinitionBuilder::new("mod".to_owned(), 1);
+    builder.set_max_connections(MaxConnections::Disabled(-1), &test_config_path(), 5).unwrap();
+    assert_eq!(builder.max_connections, Some(MaxConnections::Disabled(-1)));
 }
 
 #[test]
 fn set_max_connections_rejects_duplicate() {
     let mut builder = ModuleDefinitionBuilder::new("mod".to_owned(), 1);
-    builder.set_max_connections(NonZeroU32::new(10), &test_config_path(), 5).unwrap();
-    let result = builder.set_max_connections(NonZeroU32::new(20), &test_config_path(), 10);
+    let first = MaxConnections::Limited(NonZeroU32::new(10).expect("non-zero"));
+    let second = MaxConnections::Limited(NonZeroU32::new(20).expect("non-zero"));
+    builder.set_max_connections(first, &test_config_path(), 5).unwrap();
+    let result = builder.set_max_connections(second, &test_config_path(), 10);
     assert!(result.is_err());
 }
 
@@ -680,7 +693,13 @@ fn finish_transfers_all_set_values() {
         .set_gid(GidSetting::List(vec![100]), &test_config_path(), 9)
         .unwrap();
     builder.set_timeout(NonZeroU64::new(300), &test_config_path(), 10).unwrap();
-    builder.set_max_connections(NonZeroU32::new(5), &test_config_path(), 11).unwrap();
+    builder
+        .set_max_connections(
+            MaxConnections::Limited(NonZeroU32::new(5).expect("non-zero")),
+            &test_config_path(),
+            11,
+        )
+        .unwrap();
     builder.set_bandwidth_limit(
         NonZeroU64::new(1000),
         NonZeroU64::new(2000),
@@ -703,7 +722,10 @@ fn finish_transfers_all_set_values() {
     assert_eq!(def.uid, Some(1000));
     assert_eq!(def.gid, Some(GidSetting::List(vec![100])));
     assert_eq!(def.timeout, NonZeroU64::new(300));
-    assert_eq!(def.max_connections, NonZeroU32::new(5));
+    assert_eq!(
+        def.max_connections,
+        MaxConnections::Limited(NonZeroU32::new(5).expect("non-zero"))
+    );
     assert_eq!(def.bandwidth_limit, NonZeroU64::new(1000));
     assert_eq!(def.bandwidth_burst, NonZeroU64::new(2000));
     assert!(def.bandwidth_burst_specified);
@@ -732,7 +754,7 @@ fn finish_uses_default_values_for_unset_fields() {
     assert!(def.uid.is_none());
     assert!(def.gid.is_none());
     assert!(def.timeout.is_none());
-    assert!(def.max_connections.is_none());
+    assert_eq!(def.max_connections, MaxConnections::Unlimited);
     assert!(def.bandwidth_limit.is_none());
     assert!(!def.bandwidth_limit_specified);
     assert!(!def.bandwidth_limit_configured);
