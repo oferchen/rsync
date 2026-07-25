@@ -31,6 +31,27 @@ fn normalize_param_name(name: &str) -> String {
         .to_ascii_lowercase()
 }
 
+/// Collapses a `[section]` header name the way upstream's config scanner does:
+/// leading and trailing whitespace is dropped and every internal whitespace run
+/// becomes exactly one space (0x20).
+///
+/// upstream: params.c:Section() - `EatWhitespace()` skips the run right after
+/// the '[', the `end`/`i` split drops the run before the ']', and the
+/// `isspace(c)` arm of the character switch writes a single ' ' per whitespace
+/// region before eating the rest of that region. `[my   module]` therefore
+/// defines the module named `my module`, which upstream loads without any
+/// warning and serves under exactly that single-spaced name.
+fn collapse_section_name(name: &str) -> String {
+    // upstream: params.c:Section() tests C `isspace()` on single bytes, which
+    // covers the same ASCII set as `normalize_param_name` (including the
+    // vertical tab that `char::is_ascii_whitespace` omits) and never matches a
+    // multi-byte character.
+    name.split([' ', '\t', '\n', '\x0B', '\x0C', '\r'])
+        .filter(|part| !part.is_empty())
+        .collect::<Vec<&str>>()
+        .join(" ")
+}
+
 /// Parses the `rsyncd.conf` at `path` into module definitions and global settings.
 pub(crate) fn parse_config_modules(path: &Path) -> Result<ParsedConfigModules, DaemonError> {
     let mut stack = Vec::new();
@@ -81,7 +102,8 @@ fn parse_config_modules_inner(
                 let end = line.find(']').ok_or_else(|| {
                     config_parse_error(path, line_number, "unterminated module header")
                 })?;
-                let name = line[1..end].trim();
+                let collapsed = collapse_section_name(&line[1..end]);
+                let name = collapsed.as_str();
 
                 if name.is_empty() {
                     return Err(config_parse_error(
@@ -91,7 +113,7 @@ fn parse_config_modules_inner(
                     ));
                 }
 
-                ensure_valid_module_name(name)
+                ensure_valid_section_name(name)
                     .map_err(|msg| config_parse_error(path, line_number, msg))?;
 
                 let trailing = line[end + 1..].trim();
