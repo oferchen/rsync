@@ -5,6 +5,29 @@
 // config file parsing and result merging, the daemon-wide socket/auth/logging
 // directives, and the P_LOCAL parameter defaults inherited by all modules.
 
+/// Records a global-section directive value, overwriting whatever an earlier
+/// occurrence of the same directive stored.
+///
+/// upstream: loadparm.c:379-470 do_parameter() - the parameter pointer is
+/// resolved from parm_table and assigned unconditionally, with no seen-set and
+/// no duplicate check, so a directive repeated in one config file keeps its
+/// last value. Routing every global slot through this one helper keeps that
+/// policy identical across directives.
+fn store_global_directive<T>(
+    slot: &mut Option<(T, ConfigDirectiveOrigin)>,
+    value: T,
+    canonical: &Path,
+    line_number: usize,
+) {
+    *slot = Some((
+        value,
+        ConfigDirectiveOrigin {
+            path: canonical.to_path_buf(),
+            line: line_number,
+        },
+    ));
+}
+
 /// Applies a single global-section directive, updating `state` accordingly.
 ///
 /// The `stack` parameter is threaded through for recursive `include` handling.
@@ -34,17 +57,10 @@ fn apply_global_directive(
                 )
             })?;
 
-            if let Some(existing_line) = state.global_refuse_line {
-                return Err(config_parse_error(
-                    path,
-                    line_number,
-                    format!(
-                        "duplicate 'refuse options' directive in global section (previously defined on line {existing_line})"
-                    ),
-                ));
-            }
-
-            state.global_refuse_line = Some(line_number);
+            // The list is not additive: a second `refuse options` directive
+            // replaces the first, leaving exactly one global entry for the
+            // modules to inherit.
+            state.global_refuse_directives.clear();
             state.global_refuse_directives.push((
                 options,
                 ConfigDirectiveOrigin {
@@ -83,12 +99,25 @@ fn apply_global_directive(
                 )
             })?;
 
-            for raw_line in contents.lines() {
-                state.motd_lines.push(raw_line.trim_end_matches('\r').to_owned());
-            }
+            // upstream: loadparm.c `motd_file` is a P_STRING slot written with
+            // string_set(), so a second `motd file` directive replaces the
+            // first rather than appending to it - only the last file's lines
+            // are greeted with.
+            state.motd_lines = contents
+                .lines()
+                .map(|raw_line| raw_line.trim_end_matches('\r').to_owned())
+                .collect();
         }
         "motd" => {
-            state.motd_lines.push(value.trim_end_matches(['\r', '\n']).to_owned());
+            // `motd` has NO upstream counterpart - daemon-parm.txt declares only
+            // `motd_file`, so loadparm.c's last-wins rule says nothing about how
+            // an inline value composes with a file. Appending is this
+            // implementation's established behaviour and is left untouched here;
+            // only the upstream-backed `motd file` slot gained last-wins
+            // semantics.
+            state
+                .motd_lines
+                .push(value.trim_end_matches(['\r', '\n']).to_owned());
         }
         "pidfile" => {
             let trimmed = value.trim();
@@ -101,26 +130,7 @@ fn apply_global_directive(
             }
 
             let resolved = resolve_config_relative_path(path, trimmed);
-            if let Some((existing, origin)) = &state.pid_file {
-                if existing != &resolved {
-                    let existing_line = origin.line;
-                    return Err(config_parse_error(
-                        path,
-                        line_number,
-                        format!(
-                            "duplicate 'pid file' directive in global section (previously defined on line {existing_line})"
-                        ),
-                    ));
-                }
-            } else {
-                state.pid_file = Some((
-                    resolved,
-                    ConfigDirectiveOrigin {
-                        path: canonical.to_path_buf(),
-                        line: line_number,
-                    },
-                ));
-            }
+            store_global_directive(&mut state.pid_file, resolved, canonical, line_number);
         }
         "reverselookup" => {
             let Some(parsed) =
@@ -129,25 +139,7 @@ fn apply_global_directive(
                 return Ok(());
             };
 
-            let origin = ConfigDirectiveOrigin {
-                path: canonical.to_path_buf(),
-                line: line_number,
-            };
-
-            if let Some((existing, existing_origin)) = &state.reverse_lookup {
-                if *existing != parsed {
-                    let existing_line = existing_origin.line;
-                    return Err(config_parse_error(
-                        path,
-                        line_number,
-                        format!(
-                            "duplicate 'reverse lookup' directive in global section (previously defined on line {existing_line})"
-                        ),
-                    ));
-                }
-            } else {
-                state.reverse_lookup = Some((parsed, origin));
-            }
+            store_global_directive(&mut state.reverse_lookup, parsed, canonical, line_number);
             // upstream: loadparm.c - `reverse lookup` is P_LOCAL, so a value in
             // the global section becomes the default every later module inherits
             // (init_section copies Vars.l). state.reverse_lookup above is the
@@ -164,25 +156,7 @@ fn apply_global_directive(
             }
 
             let components = parse_config_bwlimit(value, path, line_number)?;
-            let origin = ConfigDirectiveOrigin {
-                path: canonical.to_path_buf(),
-                line: line_number,
-            };
-
-            if let Some((existing, existing_origin)) = &state.global_bwlimit {
-                if existing != &components {
-                    let existing_line = existing_origin.line;
-                    return Err(config_parse_error(
-                        &origin.path,
-                        origin.line,
-                        format!(
-                            "duplicate 'bwlimit' directive in global section (previously defined on line {existing_line})"
-                        ),
-                    ));
-                }
-            } else {
-                state.global_bwlimit = Some((components, origin));
-            }
+            store_global_directive(&mut state.global_bwlimit, components, canonical, line_number);
         }
         "secretsfile" => {
             let trimmed = value.trim();
@@ -196,25 +170,12 @@ fn apply_global_directive(
 
             let resolved = resolve_config_relative_path(path, trimmed);
             let validated = validate_secrets_file(&resolved, path, line_number)?;
-            let origin = ConfigDirectiveOrigin {
-                path: canonical.to_path_buf(),
-                line: line_number,
-            };
-
-            if let Some((existing, existing_origin)) = &state.global_secrets_file {
-                if existing != &validated {
-                    let existing_line = existing_origin.line;
-                    return Err(config_parse_error(
-                        path,
-                        line_number,
-                        format!(
-                            "duplicate 'secrets file' directive in global section (previously defined on line {existing_line})"
-                        ),
-                    ));
-                }
-            } else {
-                state.global_secrets_file = Some((validated, origin));
-            }
+            store_global_directive(
+                &mut state.global_secrets_file,
+                validated,
+                canonical,
+                line_number,
+            );
         }
         "incomingchmod" | "incoming-chmod" => {
             if value.is_empty() {
@@ -225,27 +186,12 @@ fn apply_global_directive(
                 ));
             }
 
-            let origin = ConfigDirectiveOrigin {
-                path: canonical.to_path_buf(),
-                line: line_number,
-            };
-
-            if let Some((existing, existing_origin)) = &state.global_incoming_chmod {
-                if existing != value {
-                    let existing_line = existing_origin.line;
-                    return Err(config_parse_error(
-                        path,
-                        line_number,
-                        format!(
-                            "duplicate 'incoming chmod' directive in global section (previously defined on line {existing_line})"
-                        ),
-                    ));
-                }
-            } else {
-                let mut owned = String::new();
-                value.clone_into(&mut owned);
-                state.global_incoming_chmod = Some((owned, origin));
-            }
+            store_global_directive(
+                &mut state.global_incoming_chmod,
+                value.to_owned(),
+                canonical,
+                line_number,
+            );
         }
         "outgoingchmod" | "outgoing-chmod" => {
             if value.is_empty() {
@@ -256,27 +202,12 @@ fn apply_global_directive(
                 ));
             }
 
-            let origin = ConfigDirectiveOrigin {
-                path: canonical.to_path_buf(),
-                line: line_number,
-            };
-
-            if let Some((existing, existing_origin)) = &state.global_outgoing_chmod {
-                if existing != value {
-                    let existing_line = existing_origin.line;
-                    return Err(config_parse_error(
-                        path,
-                        line_number,
-                        format!(
-                            "duplicate 'outgoing chmod' directive in global section (previously defined on line {existing_line})"
-                        ),
-                    ));
-                }
-            } else {
-                let mut owned = String::new();
-                value.clone_into(&mut owned);
-                state.global_outgoing_chmod = Some((owned, origin));
-            }
+            store_global_directive(
+                &mut state.global_outgoing_chmod,
+                value.to_owned(),
+                canonical,
+                line_number,
+            );
         }
         "lockfile" => {
             let trimmed = value.trim();
@@ -289,25 +220,7 @@ fn apply_global_directive(
             }
 
             let resolved = resolve_config_relative_path(path, trimmed);
-            let origin = ConfigDirectiveOrigin {
-                path: canonical.to_path_buf(),
-                line: line_number,
-            };
-
-            if let Some((existing, existing_origin)) = &state.lock_file {
-                if existing != &resolved {
-                    let existing_line = existing_origin.line;
-                    return Err(config_parse_error(
-                        path,
-                        line_number,
-                        format!(
-                            "duplicate 'lock file' directive in global section (previously defined on line {existing_line})"
-                        ),
-                    ));
-                }
-            } else {
-                state.lock_file = Some((resolved, origin));
-            }
+            store_global_directive(&mut state.lock_file, resolved, canonical, line_number);
         }
         // upstream: loadparm.c - use chroot is valid in the global section as a
         // default that applies to all modules which do not override it explicitly.
@@ -318,25 +231,7 @@ fn apply_global_directive(
                 return Ok(());
             };
 
-            let origin = ConfigDirectiveOrigin {
-                path: canonical.to_path_buf(),
-                line: line_number,
-            };
-
-            if let Some((existing, existing_origin)) = &state.global_use_chroot {
-                if *existing != parsed {
-                    let existing_line = existing_origin.line;
-                    return Err(config_parse_error(
-                        path,
-                        line_number,
-                        format!(
-                            "duplicate 'use chroot' directive in global section (previously defined on line {existing_line})"
-                        ),
-                    ));
-                }
-            } else {
-                state.global_use_chroot = Some((parsed, origin));
-            }
+            store_global_directive(&mut state.global_use_chroot, parsed, canonical, line_number);
         }
         // upstream: loadparm.c - syslog facility sets the syslog facility
         // for daemon log messages (e.g., "daemon", "local0"-"local7").
@@ -349,32 +244,17 @@ fn apply_global_directive(
                 ));
             }
 
-            let origin = ConfigDirectiveOrigin {
-                path: canonical.to_path_buf(),
-                line: line_number,
-            };
-
-            if let Some((existing, existing_origin)) = &state.syslog_facility {
-                if existing != value {
-                    let existing_line = existing_origin.line;
-                    return Err(config_parse_error(
-                        path,
-                        line_number,
-                        format!(
-                            "duplicate 'syslog facility' directive in global section (previously defined on line {existing_line})"
-                        ),
-                    ));
-                }
-            } else {
-                let mut owned = String::new();
-                value.clone_into(&mut owned);
-                // upstream: loadparm.c - `syslog facility` is P_LOCAL, so a
-                // global-section value becomes the default every later module
-                // inherits (init_section copies Vars.l). state.syslog_facility
-                // is the daemon-wide value read as `lp_syslog_facility(-1)`.
-                state.module_defaults.syslog_facility = Some(owned.clone());
-                state.syslog_facility = Some((owned, origin));
-            }
+            // upstream: loadparm.c - `syslog facility` is P_LOCAL, so a
+            // global-section value becomes the default every later module
+            // inherits (init_section copies Vars.l). state.syslog_facility is
+            // the daemon-wide value read as `lp_syslog_facility(-1)`.
+            state.module_defaults.syslog_facility = Some(value.to_owned());
+            store_global_directive(
+                &mut state.syslog_facility,
+                value.to_owned(),
+                canonical,
+                line_number,
+            );
         }
         // upstream: loadparm.c - syslog tag sets the syslog ident prefix.
         "syslogtag" => {
@@ -386,30 +266,10 @@ fn apply_global_directive(
                 ));
             }
 
-            let origin = ConfigDirectiveOrigin {
-                path: canonical.to_path_buf(),
-                line: line_number,
-            };
-
-            if let Some((existing, existing_origin)) = &state.syslog_tag {
-                if existing != value {
-                    let existing_line = existing_origin.line;
-                    return Err(config_parse_error(
-                        path,
-                        line_number,
-                        format!(
-                            "duplicate 'syslog tag' directive in global section (previously defined on line {existing_line})"
-                        ),
-                    ));
-                }
-            } else {
-                let mut owned = String::new();
-                value.clone_into(&mut owned);
-                // upstream: loadparm.c - `syslog tag` is P_LOCAL; the
-                // global-section value seeds every module's inherited default.
-                state.module_defaults.syslog_tag = Some(owned.clone());
-                state.syslog_tag = Some((owned, origin));
-            }
+            // upstream: loadparm.c - `syslog tag` is P_LOCAL; the
+            // global-section value seeds every module's inherited default.
+            state.module_defaults.syslog_tag = Some(value.to_owned());
+            store_global_directive(&mut state.syslog_tag, value.to_owned(), canonical, line_number);
         }
         // upstream: loadparm.c - `address` sets the bind address for
         // the daemon listener.
@@ -431,25 +291,7 @@ fn apply_global_directive(
                     )
                 })?;
 
-            let origin = ConfigDirectiveOrigin {
-                path: canonical.to_path_buf(),
-                line: line_number,
-            };
-
-            if let Some((existing, existing_origin)) = &state.bind_address {
-                if *existing != parsed_addr {
-                    let existing_line = existing_origin.line;
-                    return Err(config_parse_error(
-                        path,
-                        line_number,
-                        format!(
-                            "duplicate 'address' directive in global section (previously defined on line {existing_line})"
-                        ),
-                    ));
-                }
-            } else {
-                state.bind_address = Some((parsed_addr, origin));
-            }
+            store_global_directive(&mut state.bind_address, parsed_addr, canonical, line_number);
         }
         // upstream: daemon-parm.txt `Locals:` `uid` is P_LOCAL. A value in the
         // global section is the default `lp_uid(module_id)` every module
@@ -498,27 +340,7 @@ fn apply_global_directive(
                 ));
             }
 
-            let origin = ConfigDirectiveOrigin {
-                path: canonical.to_path_buf(),
-                line: line_number,
-            };
-
-            if let Some((existing, existing_origin)) = &state.daemon_uid {
-                if existing != value {
-                    let existing_line = existing_origin.line;
-                    return Err(config_parse_error(
-                        path,
-                        line_number,
-                        format!(
-                            "duplicate 'daemon uid' directive in global section (previously defined on line {existing_line})"
-                        ),
-                    ));
-                }
-            } else {
-                let mut owned = String::new();
-                value.clone_into(&mut owned);
-                state.daemon_uid = Some((owned, origin));
-            }
+            store_global_directive(&mut state.daemon_uid, value.to_owned(), canonical, line_number);
         }
         // upstream: clientserver.c:1363 `lp_daemon_gid` - `daemon gid` sets the
         // process-wide gid the listener drops to before the accept loop.
@@ -531,52 +353,14 @@ fn apply_global_directive(
                 ));
             }
 
-            let origin = ConfigDirectiveOrigin {
-                path: canonical.to_path_buf(),
-                line: line_number,
-            };
-
-            if let Some((existing, existing_origin)) = &state.daemon_gid {
-                if existing != value {
-                    let existing_line = existing_origin.line;
-                    return Err(config_parse_error(
-                        path,
-                        line_number,
-                        format!(
-                            "duplicate 'daemon gid' directive in global section (previously defined on line {existing_line})"
-                        ),
-                    ));
-                }
-            } else {
-                let mut owned = String::new();
-                value.clone_into(&mut owned);
-                state.daemon_gid = Some((owned, origin));
-            }
+            store_global_directive(&mut state.daemon_gid, value.to_owned(), canonical, line_number);
         }
         // upstream: daemon-parm.txt - listen_backlog INTEGER, default 5.
         // Controls the backlog argument passed to listen(2).
         "listenbacklog" => {
             let parsed = parse_atoi(value).max(0) as u32;
 
-            let origin = ConfigDirectiveOrigin {
-                path: canonical.to_path_buf(),
-                line: line_number,
-            };
-
-            if let Some((existing, existing_origin)) = &state.listen_backlog {
-                if *existing != parsed {
-                    let existing_line = existing_origin.line;
-                    return Err(config_parse_error(
-                        path,
-                        line_number,
-                        format!(
-                            "duplicate 'listen backlog' directive in global section (previously defined on line {existing_line})"
-                        ),
-                    ));
-                }
-            } else {
-                state.listen_backlog = Some((parsed, origin));
-            }
+            store_global_directive(&mut state.listen_backlog, parsed, canonical, line_number);
         }
         // oc-rsync extension - number of SO_REUSEPORT listener replicas to bind
         // per address family (default 1). Has no upstream equivalent; changes
@@ -597,50 +381,14 @@ fn apply_global_directive(
                 )
             })?;
 
-            let origin = ConfigDirectiveOrigin {
-                path: canonical.to_path_buf(),
-                line: line_number,
-            };
-
-            if let Some((existing, existing_origin)) = &state.acceptor_threads {
-                if *existing != threads {
-                    let existing_line = existing_origin.line;
-                    return Err(config_parse_error(
-                        path,
-                        line_number,
-                        format!(
-                            "duplicate 'acceptor threads' directive in global section (previously defined on line {existing_line})"
-                        ),
-                    ));
-                }
-            } else {
-                state.acceptor_threads = Some((threads, origin));
-            }
+            store_global_directive(&mut state.acceptor_threads, threads, canonical, line_number);
         }
         // upstream: daemon-parm.txt - port INTEGER, P_GLOBAL, default 0.
         // Controls the TCP port the daemon listens on.
         "port" | "rsyncport" => {
             let parsed = parse_atoi(value).clamp(0, i32::from(u16::MAX)) as u16;
 
-            let origin = ConfigDirectiveOrigin {
-                path: canonical.to_path_buf(),
-                line: line_number,
-            };
-
-            if let Some((existing, existing_origin)) = &state.rsync_port {
-                if *existing != parsed {
-                    let existing_line = existing_origin.line;
-                    return Err(config_parse_error(
-                        path,
-                        line_number,
-                        format!(
-                            "conflicting 'port' directive in global section (previously defined as {existing} on line {existing_line})"
-                        ),
-                    ));
-                }
-            } else {
-                state.rsync_port = Some((parsed, origin));
-            }
+            store_global_directive(&mut state.rsync_port, parsed, canonical, line_number);
         }
         // upstream: daemon-parm.txt - socket options STRING.
         // Comma-separated TCP/IP socket options for the listener.
@@ -654,25 +402,12 @@ fn apply_global_directive(
                 ));
             }
 
-            let origin = ConfigDirectiveOrigin {
-                path: canonical.to_path_buf(),
-                line: line_number,
-            };
-
-            if let Some((existing, existing_origin)) = &state.socket_options {
-                if existing != trimmed {
-                    let existing_line = existing_origin.line;
-                    return Err(config_parse_error(
-                        path,
-                        line_number,
-                        format!(
-                            "duplicate 'socket options' directive in global section (previously defined on line {existing_line})"
-                        ),
-                    ));
-                }
-            } else {
-                state.socket_options = Some((trimmed.to_string(), origin));
-            }
+            store_global_directive(
+                &mut state.socket_options,
+                trimmed.to_owned(),
+                canonical,
+                line_number,
+            );
         }
         "proxyprotocol" => {
             let Some(parsed) =
@@ -681,25 +416,7 @@ fn apply_global_directive(
                 return Ok(());
             };
 
-            let origin = ConfigDirectiveOrigin {
-                path: canonical.to_path_buf(),
-                line: line_number,
-            };
-
-            if let Some((existing, existing_origin)) = &state.proxy_protocol {
-                if *existing != parsed {
-                    let existing_line = existing_origin.line;
-                    return Err(config_parse_error(
-                        path,
-                        line_number,
-                        format!(
-                            "duplicate 'proxy protocol' directive in global section (previously defined on line {existing_line})"
-                        ),
-                    ));
-                }
-            } else {
-                state.proxy_protocol = Some((parsed, origin));
-            }
+            store_global_directive(&mut state.proxy_protocol, parsed, canonical, line_number);
         }
         "daemonchroot" => {
             let trimmed = value.trim();
@@ -711,25 +428,12 @@ fn apply_global_directive(
                 ));
             }
 
-            let origin = ConfigDirectiveOrigin {
-                path: canonical.to_path_buf(),
-                line: line_number,
-            };
-
-            if let Some((existing, existing_origin)) = &state.daemon_chroot {
-                if existing != Path::new(trimmed) {
-                    let existing_line = existing_origin.line;
-                    return Err(config_parse_error(
-                        path,
-                        line_number,
-                        format!(
-                            "duplicate 'daemon chroot' directive in global section (previously defined on line {existing_line})"
-                        ),
-                    ));
-                }
-            } else {
-                state.daemon_chroot = Some((PathBuf::from(trimmed), origin));
-            }
+            store_global_directive(
+                &mut state.daemon_chroot,
+                PathBuf::from(trimmed),
+                canonical,
+                line_number,
+            );
         }
         // upstream: loadparm.c - P_LOCAL directives in the global section set
         // default values inherited by all modules that don't override them.

@@ -1,9 +1,9 @@
 /// Builder for constructing validated `ModuleDefinition` instances.
 ///
 /// Accumulates per-module directives from `rsyncd.conf` and produces a
-/// `ModuleDefinition` via [`finish`](Self::finish). Each setter enforces
-/// duplicate-detection so the same directive cannot appear twice within a
-/// single module section.
+/// `ModuleDefinition` via [`finish`](Self::finish). A directive repeated inside
+/// one module section overwrites the value the earlier occurrence stored, so the
+/// last assignment wins.
 ///
 /// upstream: loadparm.c - per-module parameter accumulation.
 struct ModuleDefinitionBuilder {
