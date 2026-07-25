@@ -2,7 +2,7 @@
 //
 // Parses runtime and config-file `bwlimit` values and builds the `DaemonError`
 // instances used throughout daemon configuration parsing: config errors,
-// parse/IO errors, duplicate-detection errors, module-name validation, and
+// parse/IO errors, repeated-CLI-argument errors, module-name validation, and
 // network (bind/accept/stream) errors. Exit codes mirror upstream rsync.
 
 fn parse_runtime_bwlimit(value: &OsString) -> Result<BandwidthLimitComponents, DaemonError> {
@@ -138,6 +138,14 @@ fn duplicate_argument(option: &str) -> DaemonError {
     config_error(format!("duplicate daemon argument '{option}'"))
 }
 
+/// Reports two CLI `--module NAME=PATH` specs claiming the same module name, or
+/// a CLI spec colliding with a module the config file already defined.
+///
+/// This is deliberately not reachable from a config file alone: a repeated
+/// `[name]` header re-opens the section the first header created
+/// (loadparm.c:add_a_section:320-339), so the two blocks merge into one module.
+/// `--module` has no upstream equivalent, and two specs for one name have no
+/// merge order to follow, so the collision stays an error there.
 fn duplicate_module(name: &str) -> DaemonError {
     config_error(format!("duplicate module definition '{name}'"))
 }

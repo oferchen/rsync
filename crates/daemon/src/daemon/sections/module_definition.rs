@@ -1,8 +1,8 @@
 // Module definition builder for rsyncd.conf module sections.
 //
 // Constructs validated `ModuleDefinition` instances from per-module directives.
-// Each setter enforces duplicate detection so the same directive cannot appear
-// twice within a single module section.
+// A directive repeated inside one module section overwrites the value the
+// earlier occurrence stored, matching upstream loadparm.c:do_parameter().
 
 include!("module_definition/builder.rs");
 
