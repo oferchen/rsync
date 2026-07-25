@@ -145,11 +145,11 @@ pub struct BatchFlags {
     pub xfer_dirs: bool,
     /// Bit 8: --compress (-z) [protocol >= 29] - upstream: batch.c:68 `&do_compression`
     ///
-    /// When true, the batch body contains compressed token data and the
-    /// reader must decompress using CPRES_ZLIB (upstream compat.c:194-195).
-    /// oc-rsync always writes `false` here because it records uncompressed
-    /// data, avoiding the upstream limitation where the batch format does
-    /// not record the actual compression algorithm.
+    /// When true, the batch body carries compressed token data and the reader
+    /// must decompress it. The codec is always zlib: upstream
+    /// `compat.c:414 getenv_nstr()` pins the compression list to "zlib" while
+    /// `write_batch` is set, and `compat.c:194-195 parse_compress_choice()`
+    /// resolves a bare `do_compression` to CPRES_ZLIB on `--read-batch`.
     pub do_compression: bool,
     /// Bit 9: --iconv [protocol >= 30] - upstream: batch.c:69 `&tweaked_iconv`
     pub iconv: bool,

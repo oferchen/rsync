@@ -79,6 +79,28 @@ impl<'a> CopyContext<'a> {
                 .with_name_follows(true)
         });
 
+        // upstream: batch.c:68 - stream-flag bit 8 records `do_compression`, and
+        // the batch file is a tee of the wire stream, so a batch written under
+        // `-z` carries `token.c:send_deflated_token()` framing. The codec is
+        // always zlib: `compat.c:414 getenv_nstr()` forces the compression list
+        // to "zlib" whenever `write_batch` is set ("When writing a batch file,
+        // we always negotiate an old-style choice"), which is also what
+        // `compat.c:194-195 parse_compress_choice()` assumes on `--read-batch`.
+        let batch_token_encoder = options.get_batch_writer().and_then(|batch_writer_arc| {
+            if !options.compress_enabled() {
+                return None;
+            }
+            let proto_version = batch_writer_arc
+                .lock()
+                .expect("batch writer mutex poisoned")
+                .config()
+                .protocol_version;
+            Some(protocol::wire::CompressedTokenEncoder::new(
+                options.compression_level(),
+                proto_version as u32,
+            ))
+        });
+
         let adaptive_level = if options.compress_enabled() && options.adaptive_compress_enabled() {
             let initial = options.compression_level();
             let level_i32 = match initial {
@@ -151,6 +173,7 @@ impl<'a> CopyContext<'a> {
             batch_current_delta_idx: 0,
             batch_flist_index: 0,
             batch_ndx_codec,
+            batch_token_encoder,
             readdir_buf: Vec::new(),
             adaptive_level,
         }

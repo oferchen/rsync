@@ -202,7 +202,11 @@ impl<'a> CopyContext<'a> {
                             LocalCopyError::io("copy file", destination, error)
                         })?;
                     }
-                    self.capture_batch_block_match(&matched, destination)?;
+                    self.write_batch_block_match_token(
+                        matched.descriptor().index() as u32,
+                        matched_bytes,
+                        destination,
+                    )?;
                     output_position = output_position.saturating_add(block_len as u64);
                 } else {
                     self.copy_matched_block(
@@ -307,7 +311,11 @@ impl<'a> CopyContext<'a> {
                         LocalCopyError::io("copy file", destination, error)
                     })?;
                 }
-                self.capture_batch_block_match(&matched, destination)?;
+                self.write_batch_block_match_token(
+                    matched.descriptor().index() as u32,
+                    matched_bytes,
+                    destination,
+                )?;
                 output_position = output_position.saturating_add(block_len as u64);
             } else {
                 self.copy_matched_block(
@@ -436,21 +444,9 @@ impl<'a> CopyContext<'a> {
 
         // Capture LITERAL operation to the batch delta buffer if active.
         // upstream: token.c:simple_send_token() - literals are written as
-        // write_int(length) + raw bytes, chunked to CHUNK_SIZE (32KB).
-        if let Some(delta_writer) = self.batch_delta_writer() {
-            let mut encoded = Vec::new();
-            protocol::wire::delta::write_token_literal(&mut encoded, chunk).map_err(|e| {
-                LocalCopyError::io(
-                    "encode batch literal token",
-                    destination.to_path_buf(),
-                    e,
-                )
-            })?;
-
-            delta_writer.write_all(&encoded).map_err(|e| {
-                LocalCopyError::io("write batch literal token", destination.to_path_buf(), e)
-            })?;
-        }
+        // write_int(length) + raw bytes, chunked to CHUNK_SIZE (32KB); under
+        // -z the batch tee records send_deflated_token()'s framing instead.
+        self.write_batch_literal_token(chunk, destination)?;
 
         let written = if sparse {
             write_sparse_chunk(writer, state, chunk, destination)?
@@ -479,34 +475,39 @@ impl<'a> CopyContext<'a> {
     /// Records a block-match token to the batch delta stream, if active.
     ///
     /// Mirrors upstream `token.c:simple_send_token()` which encodes a block
-    /// reference as `write_int(-(token+1))`.
+    /// reference as `write_int(-(token+1))`. Under `-z` the compressed encoder
+    /// additionally needs the matched bytes: `token.c:471-484` feeds them into
+    /// the deflate history so the receiver's dictionary stays in sync, so the
+    /// block is read back from `existing` (the basis) for that call only.
     fn capture_batch_block_match(
         &mut self,
+        existing: &mut fs::File,
         matched: &MatchedBlock<'_>,
         destination: &Path,
     ) -> Result<(), LocalCopyError> {
-        if let Some(delta_writer) = self.batch_delta_writer() {
-            let block_index = matched.descriptor().index();
+        if self.batch_delta_buf.is_none() {
+            return Ok(());
+        }
 
-            let mut encoded = Vec::new();
-            protocol::wire::delta::write_token_block_match(&mut encoded, block_index as u32)
-                .map_err(|e| {
-                    LocalCopyError::io(
-                        "encode batch block match token",
-                        destination.to_path_buf(),
-                        e,
-                    )
-                })?;
+        let block_index = matched.descriptor().index() as u32;
 
-            delta_writer.write_all(&encoded).map_err(|e| {
+        let mut see_data = Vec::new();
+        if self.batch_token_encoder.is_some() {
+            see_data.resize(matched.descriptor().len(), 0);
+            let basis_err = |e: io::Error| {
                 LocalCopyError::io(
-                    "write batch block match token",
+                    "read basis block for batch token history",
                     destination.to_path_buf(),
                     e,
                 )
-            })?;
+            };
+            existing
+                .seek(SeekFrom::Start(matched.offset()))
+                .map_err(basis_err)?;
+            existing.read_exact(&mut see_data).map_err(basis_err)?;
         }
-        Ok(())
+
+        self.write_batch_block_match_token(block_index, &see_data, destination)
     }
 
     /// Copies a matched basis block from `existing` to `writer` at the
@@ -526,7 +527,7 @@ impl<'a> CopyContext<'a> {
         let offset = matched.offset();
         let block_length = matched.descriptor().len();
 
-        self.capture_batch_block_match(&matched, destination)?;
+        self.capture_batch_block_match(existing, &matched, destination)?;
 
         // REFLINK-3/4: attempt a same-filesystem FICLONERANGE reflink before
         // falling back to the read+write copy loop. On a CoW filesystem this

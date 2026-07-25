@@ -166,6 +166,92 @@ impl<'a> CopyContext<'a> {
         Ok(())
     }
 
+    /// Appends a literal token for the current file to the batch delta buffer.
+    ///
+    /// upstream: `token.c:1065 send_token()` dispatches on `do_compression`.
+    /// With `-z` (stream-flag bit 8, `batch.c:68`) the batch tee records
+    /// `send_deflated_token()` framing; without it, `simple_send_token()`'s
+    /// plain 4-byte length prefix. A no-op when batch mode is inactive.
+    pub(super) fn write_batch_literal_token(
+        &mut self,
+        chunk: &[u8],
+        path: &std::path::Path,
+    ) -> Result<(), crate::local_copy::LocalCopyError> {
+        let Some(delta_file) = self.batch_delta_buf.as_mut() else {
+            return Ok(());
+        };
+        match self.batch_token_encoder.as_mut() {
+            Some(encoder) => encoder.send_literal(delta_file, chunk),
+            None => protocol::wire::delta::write_token_literal(delta_file, chunk),
+        }
+        .map_err(|e| {
+            crate::local_copy::LocalCopyError::io(
+                "write batch literal token",
+                path.to_path_buf(),
+                e,
+            )
+        })
+    }
+
+    /// Appends a block-match token for the current file to the batch delta
+    /// buffer.
+    ///
+    /// upstream: `token.c:simple_send_token()` writes `write_int(-(token+1))`;
+    /// `token.c:send_deflated_token()` emits the run-length encoded form. Under
+    /// CPRES_ZLIB the sender must also feed the matched bytes into the deflate
+    /// history (`token.c:471-484`) so the receiver's inflate dictionary stays in
+    /// sync; `see_data` carries those bytes for that purpose.
+    pub(super) fn write_batch_block_match_token(
+        &mut self,
+        block_index: u32,
+        see_data: &[u8],
+        path: &std::path::Path,
+    ) -> Result<(), crate::local_copy::LocalCopyError> {
+        let Some(delta_file) = self.batch_delta_buf.as_mut() else {
+            return Ok(());
+        };
+        let result = match self.batch_token_encoder.as_mut() {
+            Some(encoder) => match encoder.send_block_match(delta_file, block_index) {
+                Ok(()) => encoder.see_token(see_data),
+                Err(e) => Err(e),
+            },
+            None => protocol::wire::delta::write_token_block_match(delta_file, block_index),
+        };
+        result.map_err(|e| {
+            crate::local_copy::LocalCopyError::io(
+                "write batch block match token",
+                path.to_path_buf(),
+                e,
+            )
+        })
+    }
+
+    /// Appends the end-of-file token for the current file to the batch delta
+    /// buffer, flushing any pending compressed output.
+    ///
+    /// upstream: `token.c:simple_send_token()` writes `write_int(0)`;
+    /// `token.c:468-470 send_deflated_token()` writes `END_FLAG` after draining
+    /// the deflate stream.
+    fn write_batch_token_end(
+        &mut self,
+        path: &std::path::Path,
+    ) -> Result<(), crate::local_copy::LocalCopyError> {
+        let Some(delta_file) = self.batch_delta_buf.as_mut() else {
+            return Ok(());
+        };
+        match self.batch_token_encoder.as_mut() {
+            Some(encoder) => encoder.finish(delta_file),
+            None => protocol::wire::delta::write_token_end(delta_file),
+        }
+        .map_err(|e| {
+            crate::local_copy::LocalCopyError::io(
+                "write batch token end marker",
+                path.to_path_buf(),
+                e,
+            )
+        })
+    }
+
     /// Writes the iflags + sum_head preamble for a file's delta data
     /// to the per-file batch delta buffer.
     ///
@@ -191,6 +277,13 @@ impl<'a> CopyContext<'a> {
 
         delta_file.get_mut().clear();
         delta_file.set_position(0);
+
+        // upstream: token.c:387 - send_deflated_token() reinitialises the
+        // deflate context at the start of every file, so the batch's per-file
+        // token streams stay independently decodable.
+        if let Some(encoder) = self.batch_token_encoder.as_mut() {
+            encoder.reset();
+        }
 
         // NDX is remapped to sorted order at flush time; record the
         // traversal index here.
@@ -259,27 +352,11 @@ impl<'a> CopyContext<'a> {
     ) -> Result<(), crate::local_copy::LocalCopyError> {
         use std::io::{Read, Write};
 
-        let delta_file = match self.batch_delta_buf.as_mut() {
-            Some(f) => f,
-            None => return Ok(()),
-        };
+        if self.batch_delta_buf.is_none() {
+            return Ok(());
+        }
 
-        // upstream: token.c - end-of-file marker is write_int(0)
-        let mut buf = Vec::with_capacity(4);
-        protocol::wire::delta::write_token_end(&mut buf).map_err(|e| {
-            crate::local_copy::LocalCopyError::io(
-                "write batch token end marker",
-                std::path::PathBuf::new(),
-                e,
-            )
-        })?;
-        delta_file.write_all(&buf).map_err(|e| {
-            crate::local_copy::LocalCopyError::io(
-                "write batch token end marker",
-                std::path::PathBuf::new(),
-                e,
-            )
-        })?;
+        self.write_batch_token_end(source)?;
 
         // upstream: match.c:370-411 - compute MD5 of source file content.
         // For MD5 (protocol >= 30), sum_init() ignores checksum_seed.
@@ -307,6 +384,9 @@ impl<'a> CopyContext<'a> {
                 hasher.update(&chunk[..n]);
             }
             hasher.finalize()
+        };
+        let Some(delta_file) = self.batch_delta_buf.as_mut() else {
+            return Ok(());
         };
         delta_file.write_all(&file_sum).map_err(|e| {
             crate::local_copy::LocalCopyError::io(
@@ -339,12 +419,9 @@ impl<'a> CopyContext<'a> {
         source: &std::path::Path,
         file_size: u64,
     ) -> Result<(), crate::local_copy::LocalCopyError> {
-        use std::io::Write;
-
-        let delta_file = match self.batch_delta_buf.as_mut() {
-            Some(_) => self.batch_delta_buf.as_mut().expect("batch_delta_buf is Some in this arm"),
-            None => return Ok(()),
-        };
+        if self.batch_delta_buf.is_none() {
+            return Ok(());
+        }
 
         let mut reader = std::fs::File::open(source).map_err(|e| {
             crate::local_copy::LocalCopyError::io(
@@ -372,22 +449,7 @@ impl<'a> CopyContext<'a> {
             }
             remaining = remaining.saturating_sub(n as u64);
 
-            let mut encoded = Vec::with_capacity(n + 4);
-            protocol::wire::delta::write_token_literal(&mut encoded, &buf[..n]).map_err(|e| {
-                crate::local_copy::LocalCopyError::io(
-                    "encode batch literal token",
-                    source.to_path_buf(),
-                    e,
-                )
-            })?;
-
-            delta_file.write_all(&encoded).map_err(|e| {
-                crate::local_copy::LocalCopyError::io(
-                    "write batch literal token",
-                    source.to_path_buf(),
-                    e,
-                )
-            })?;
+            self.write_batch_literal_token(&buf[..n], source)?;
         }
 
         Ok(())
@@ -534,16 +596,6 @@ impl<'a> CopyContext<'a> {
         }
 
         traversal_to_sorted
-    }
-
-    /// Returns a mutable reference to the batch delta buffer file.
-    ///
-    /// Used by `flush_literal_chunk` and `copy_matched_block` to redirect
-    /// token writes to the delta buffer instead of the batch writer.
-    pub(super) fn batch_delta_writer(
-        &mut self,
-    ) -> Option<&mut io::Cursor<Vec<u8>>> {
-        self.batch_delta_buf.as_mut()
     }
 
     /// Increments the batch flist index counter.

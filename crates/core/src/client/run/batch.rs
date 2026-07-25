@@ -96,17 +96,15 @@ fn config_batch_flags(config: &ClientConfig) -> engine::batch::BatchFlags {
         preserve_hard_links: config.preserve_hard_links(),
         always_checksum: config.checksum(),
         xfer_dirs: config.dirs(),
-        // upstream: batch.c:68 - do_compression is bit 8 in stream flags.
-        // Upstream tees the raw (pre-decompression) wire bytes to
-        // batch_fd via write_batch_monitor_in in io.c:read_buf(),
-        // so its batch files contain compressed tokens and the header
-        // says do_compression=true.
-        // oc-rsync captures post-decompression (uncompressed) data at
-        // the CompressedReader layer, so the batch body is always
-        // uncompressed. Setting do_compression=false ensures that both
-        // oc-rsync and upstream rsync replay the file without trying to
-        // decompress already-uncompressed tokens.
-        do_compression: false,
+        // upstream: batch.c:68 - do_compression is bit 8 in stream flags, set
+        // whenever compression is active (batch.c:96-113 write_stream_flags()
+        // gates the bit on protocol >= 29, which BatchFlags::to_bitmap applies).
+        // Upstream tees the raw wire bytes to batch_fd via
+        // write_batch_monitor_in in io.c:read_buf(), so a batch recorded under
+        // -z carries token.c:send_deflated_token() framing and the header must
+        // advertise it. The codec is always zlib: compat.c:414 getenv_nstr()
+        // pins the compression list to "zlib" while write_batch is set.
+        do_compression: config.compress(),
         // upstream: batch.c:69,101-103 - bit 9 records tweaked_iconv
         // (iconv_opt != NULL). --no-iconv and an unset --iconv both leave
         // iconv_opt NULL, so only an explicit charset request sets the bit.
@@ -454,30 +452,45 @@ mod tests {
         assert!(handle_batch_read(&batch_cfg, &config).is_none());
     }
 
-    /// Batch header must always have do_compression=false because oc-rsync
-    /// captures post-decompression (uncompressed) data in the batch file.
-    /// upstream tees pre-decompression data and sets do_compression=true,
-    /// but our approach avoids that complexity.
-    #[test]
-    fn write_batch_header_never_sets_do_compression() {
+    /// Reads back the stream flags recorded by `write_batch_header`.
+    fn recorded_flags(compress: bool, proto: i32) -> engine::batch::BatchFlags {
         let temp = tempfile::TempDir::new().unwrap();
         let path = temp.path().join("test.batch");
-        let batch_cfg = BatchConfig::new(BatchMode::Write, path.to_string_lossy().to_string(), 31)
-            .with_checksum_seed(1);
+        let batch_cfg =
+            BatchConfig::new(BatchMode::Write, path.to_string_lossy().to_string(), proto)
+                .with_checksum_seed(1);
 
         let writer_arc = create_batch_writer(&batch_cfg).unwrap();
-
-        let config = config_with_compress(true);
-        write_batch_header(&writer_arc, &config).unwrap();
+        write_batch_header(&writer_arc, &config_with_compress(compress)).unwrap();
         drop(writer_arc);
 
-        let read_cfg = BatchConfig::new(BatchMode::Read, path.to_string_lossy().to_string(), 31);
+        let read_cfg = BatchConfig::new(BatchMode::Read, path.to_string_lossy().to_string(), proto);
         let mut reader = engine::batch::BatchReader::new(read_cfg).unwrap();
-        let flags = reader.read_header().unwrap();
-        assert!(
-            !flags.do_compression,
-            "do_compression must be false - oc-rsync captures uncompressed data"
-        );
+        reader.read_header().unwrap()
+    }
+
+    /// upstream: batch.c:68 `&do_compression` occupies stream-flag bit 8 and
+    /// batch.c:96-113 `write_stream_flags()` sets it whenever the option is
+    /// active. A batch recorded under `-z` therefore has to advertise the bit
+    /// so `--read-batch` decodes the deflated tokens instead of plain ones.
+    #[test]
+    fn write_batch_header_sets_do_compression_under_compress() {
+        assert!(recorded_flags(true, 31).do_compression);
+    }
+
+    /// upstream: batch.c:96-113 - a flag that is off contributes no bit, so a
+    /// batch written without `-z` keeps bit 8 clear and its body stays in
+    /// `token.c:simple_send_token()` framing.
+    #[test]
+    fn write_batch_header_leaves_do_compression_clear_without_compress() {
+        assert!(!recorded_flags(false, 31).do_compression);
+    }
+
+    /// upstream: batch.c:124-125 - `flag_ptr[7]` is NULL below protocol 29, so
+    /// bits 7 and 8 do not exist in a proto-28 batch even with `-z` active.
+    #[test]
+    fn write_batch_header_omits_do_compression_below_protocol_29() {
+        assert!(!recorded_flags(true, 28).do_compression);
     }
 
     #[test]

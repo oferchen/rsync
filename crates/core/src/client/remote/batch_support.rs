@@ -44,19 +44,14 @@ pub(crate) fn build_batch_context(
         preserve_hard_links: config.preserve_hard_links(),
         always_checksum: config.checksum(),
         xfer_dirs: config.dirs(),
-        // upstream tees raw (compressed) wire bytes to the batch file
-        // and sets do_compression=true in stream flags. On read-batch,
-        // upstream's parse_compress_choice() (compat.c:194-195) maps
-        // do_compression=1 to CPRES_ZLIB regardless of the actual
-        // algorithm used during write. This causes upstream to fail
-        // reading its own batch files when the original transfer
-        // auto-negotiated zstd (rsync 3.4.1 with SUPPORT_ZSTD).
-        //
-        // oc-rsync avoids this upstream limitation by capturing
-        // post-decompression data. Always false so replay reads
-        // uncompressed tokens correctly and batch files are portable
-        // across all compression backends.
-        do_compression: false,
+        // upstream: batch.c:68 - do_compression is stream-flag bit 8, set by
+        // batch.c:96-113 write_stream_flags() whenever the option is active.
+        // The recorder is attached to the multiplex layer, so it tees the raw
+        // (still compressed) wire bytes exactly like upstream's
+        // write_batch_monitor_in in io.c:read_buf(). The bit must therefore
+        // track the option, otherwise `--read-batch` would decode deflated
+        // tokens as plain ones.
+        do_compression: config.compress(),
         preserve_acls,
         preserve_xattrs,
         inplace: config.inplace(),
@@ -142,39 +137,13 @@ impl std::io::Write for BatchWriteAdapter {
 mod tests {
     use super::*;
 
-    /// Verifies that `build_batch_context` always sets `do_compression=false`,
-    /// even when the client configuration has compression enabled. oc-rsync
-    /// captures post-decompression data, so the batch file body is always
-    /// uncompressed. This avoids an upstream rsync 3.4.1 limitation where
-    /// batch files written with zstd compression are unreadable because
-    /// read-batch forces CPRES_ZLIB (upstream compat.c:194-195).
+    /// upstream: batch.c:68 puts `do_compression` at stream-flag bit 8 and
+    /// batch.c:96-113 `write_stream_flags()` sets every active flag. The SSH
+    /// and daemon recorders tee the multiplexed wire bytes, which under `-z`
+    /// are `token.c:send_deflated_token()` output, so the bit has to follow the
+    /// option or `--read-batch` would misparse those tokens.
     #[test]
-    fn batch_context_never_sets_do_compression() {
-        let config = ClientConfig::builder().compress(true).build();
-        let temp = tempfile::TempDir::new().unwrap();
-        let path = temp.path().join("test.batch");
-        let batch_cfg = engine::batch::BatchConfig::new(
-            engine::batch::BatchMode::Write,
-            path.to_string_lossy().to_string(),
-            31,
-        );
-        let writer = Arc::new(Mutex::new(BatchWriter::new(batch_cfg).unwrap()));
-        let ctx = build_batch_context(&config, writer);
-        assert!(
-            !ctx.flags.do_compression,
-            "do_compression must be false - oc-rsync captures uncompressed data"
-        );
-    }
-
-    /// Verifies do_compression is false for all compression-related configs.
-    ///
-    /// This documents that oc-rsync's batch design avoids the upstream rsync
-    /// 3.4.1 limitation where the batch format does not record which
-    /// compression algorithm was used. Upstream's read-batch always assumes
-    /// CPRES_ZLIB (compat.c:194-195), but the write-batch may have used
-    /// zstd, lz4, or zlibx - causing unreadable batch files.
-    #[test]
-    fn batch_context_do_compression_false_regardless_of_compress_config() {
+    fn batch_context_tracks_the_compress_option() {
         for compress_enabled in [true, false] {
             let config = ClientConfig::builder().compress(compress_enabled).build();
             let temp = tempfile::TempDir::new().unwrap();
@@ -186,9 +155,9 @@ mod tests {
             );
             let writer = Arc::new(Mutex::new(BatchWriter::new(batch_cfg).unwrap()));
             let ctx = build_batch_context(&config, writer);
-            assert!(
-                !ctx.flags.do_compression,
-                "do_compression must always be false (compress={compress_enabled})"
+            assert_eq!(
+                ctx.flags.do_compression, compress_enabled,
+                "bit 8 must mirror --compress (compress={compress_enabled})"
             );
         }
     }

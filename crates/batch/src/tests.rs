@@ -894,16 +894,13 @@ mod integration {
         assert_eq!(content, b"Hello, batch!");
     }
 
-    /// Verifies that batch files with `do_compression=true` flag store raw
-    /// (uncompressed) protocol data and can be read back correctly.
+    /// Verifies that [`BatchWriter::write_data`] stays a verbatim passthrough
+    /// even when the recorded flags carry `do_compression=true`.
     ///
-    /// PR #3051 fixed a bug where compression was applied to batch file data.
-    /// Batch files must always contain uncompressed data regardless of the
-    /// `do_compression` flag - that flag only records that the original
-    /// transfer used compression, so --read-batch knows to set the flag
-    /// when replaying. The actual batch file body is a raw tee of the
-    /// uncompressed protocol stream.
-    /// upstream: batch.c - batch file body is always uncompressed
+    /// Compression lives in the token encoder that produces the bytes handed
+    /// to the writer (upstream `token.c:send_deflated_token()`); the writer
+    /// itself is only the `batch_fd` tee from `io.c:read_buf()` and must never
+    /// re-encode what it is given.
     #[test]
     fn test_batch_roundtrip_with_compression_flag() {
         let temp_dir = TempDir::new().unwrap();
