@@ -253,6 +253,15 @@ pub(crate) struct CopyContext<'a> {
     /// NDX codec for writing file indices to the batch delta stream.
     /// Persists across files to maintain delta-encoding state (proto >= 30).
     batch_ndx_codec: Option<protocol::codec::NdxCodecEnum>,
+    /// Compressed-token encoder for the batch delta stream.
+    ///
+    /// `Some` exactly when `--write-batch` is combined with an active `-z`,
+    /// which is the same condition that sets stream-flag bit 8
+    /// (upstream: `batch.c:68 &do_compression`). The batch file is a tee of
+    /// the wire stream, so its tokens must carry the framing
+    /// `token.c:send_token()` would have produced. `None` keeps the plain
+    /// `token.c:simple_send_token()` framing byte-for-byte.
+    batch_token_encoder: Option<protocol::wire::CompressedTokenEncoder>,
     /// Reusable buffer for directory enumeration in `read_directory_entries_sorted`.
     ///
     /// Cleared and refilled at each directory level, avoiding a fresh heap
