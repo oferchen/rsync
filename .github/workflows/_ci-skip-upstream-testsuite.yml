@@ -12,3 +12,13 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - run: echo "Skipped — no relevant changes"
+
+  # _upstream-testsuite.yml declares both `upstream testsuite` and
+  # `upstream testsuite (root)`, and both are required status checks. The
+  # stand-in must mirror every job the real workflow publishes, or the missing
+  # context leaves a skipped pull request permanently unmergeable.
+  upstream-testsuite-root:
+    name: upstream testsuite (root)
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "Skipped — no relevant changes"
