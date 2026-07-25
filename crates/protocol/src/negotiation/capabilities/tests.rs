@@ -3563,4 +3563,158 @@ mod env_list_overrides {
 
         assert_eq!(result.checksum, ChecksumAlgorithm::MD5);
     }
+
+    // -- fallback-default validation on the non-negotiated path --
+    //
+    // upstream compat.c:541-565: even when the peer cannot negotiate strings,
+    // negotiate_the_strings populates the env-restricted saw list and validates
+    // the prefilled "md5"/"md4"/"zlib" default against it, aborting with
+    // RERR_UNSUPPORTED when the operator's env excludes the default.
+
+    // (a) Unit: env unset - the fallback default is accepted (strict no-op that
+    // guards the common case). upstream: getenv_nstr returns NULL, saw stays the
+    // built-in default order, which always contains md5/md4/zlib.
+    #[test]
+    fn validate_default_accepts_when_env_unset() {
+        let _lock = ENV_LOCK.lock().unwrap();
+        let _cs = EnvGuard::remove(CHECKSUM_ENV);
+        let _cp = EnvGuard::remove(COMPRESS_ENV);
+        env_list::validate_default_checksum("md5", false).expect("unset env accepts md5");
+        env_list::validate_default_checksum("md5", true).expect("unset env accepts md5");
+        env_list::validate_default_checksum("md4", true).expect("unset env accepts md4");
+        env_list::validate_default_compress("zlib", true).expect("unset env accepts zlib");
+    }
+
+    // (b) Unit: env includes the default - accepted.
+    #[test]
+    fn validate_default_accepts_when_default_in_list() {
+        let _lock = ENV_LOCK.lock().unwrap();
+        let _cs = EnvGuard::set(CHECKSUM_ENV, OsStr::new("xxh3 md5"));
+        let _cp = EnvGuard::set(COMPRESS_ENV, OsStr::new("zlib zlibx"));
+        env_list::validate_default_checksum("md5", true).expect("md5 is in the list");
+        env_list::validate_default_compress("zlib", true).expect("zlib is in the list");
+    }
+
+    // (c) Unit: env excludes the default - refused with upstream's
+    // recv_negotiate_str wording and ErrorKind::Unsupported (exit 4 in core).
+    #[test]
+    fn validate_default_refuses_checksum_when_excluded() {
+        let _lock = ENV_LOCK.lock().unwrap();
+        let _cs = EnvGuard::set(CHECKSUM_ENV, OsStr::new("xxh3 xxh128"));
+        let err = env_list::validate_default_checksum("md5", true).unwrap_err();
+        assert_eq!(err.kind(), std::io::ErrorKind::Unsupported);
+        assert_eq!(err.to_string(), "Failed to negotiate a checksum choice.");
+    }
+
+    #[test]
+    fn validate_default_refuses_compress_when_excluded() {
+        let _lock = ENV_LOCK.lock().unwrap();
+        let _cp = EnvGuard::set(COMPRESS_ENV, OsStr::new("zstd"));
+        let err = env_list::validate_default_compress("zlib", true).unwrap_err();
+        assert_eq!(err.kind(), std::io::ErrorKind::Unsupported);
+        assert_eq!(err.to_string(), "Failed to negotiate a compress choice.");
+    }
+
+    /// Drives the non-negotiated branch (`do_negotiation = false`, peer lacks
+    /// the 'v' capability). No wire I/O runs, so an empty stdin suffices.
+    fn negotiate_nonego(is_server: bool, send_compression: bool) -> io::Result<NegotiationResult> {
+        let protocol = ProtocolVersion::try_from(31).unwrap();
+        let mut stdin = &b""[..];
+        let mut stdout = Vec::new();
+        negotiate_capabilities_with_override(
+            protocol,
+            &mut stdin,
+            &mut stdout,
+            &NegotiationConfig {
+                do_negotiation: false,
+                send_compression,
+                is_daemon_mode: false,
+                is_server,
+                checksum_override: None,
+                compression_override: None,
+                compression_level: crate::nstr::CLVL_NOT_SPECIFIED,
+            },
+        )
+    }
+
+    // (d) End-to-end common case: env unset, non-negotiated path returns the
+    // md5 default unchanged. This is the strict no-op regression guard.
+    #[test]
+    fn nonego_returns_md5_default_when_env_unset() {
+        let _lock = ENV_LOCK.lock().unwrap();
+        let _cs = EnvGuard::remove(CHECKSUM_ENV);
+        let _cp = EnvGuard::remove(COMPRESS_ENV);
+        let result = negotiate_nonego(true, false).expect("unset env is a no-op");
+        assert_eq!(result.checksum, ChecksumAlgorithm::MD5);
+        assert_eq!(result.compression, CompressionAlgorithm::None);
+    }
+
+    // (e) End-to-end: server env excludes md5 + no forced choice + non-negotiated
+    // path aborts with RERR_UNSUPPORTED (exit 4), where before it proceeded with
+    // md5. WHY this matters: an operator RSYNC_CHECKSUM_LIST restriction must be
+    // honoured against an old peer exactly as upstream honours it.
+    #[test]
+    fn nonego_refuses_md5_default_when_env_excludes_it() {
+        let _lock = ENV_LOCK.lock().unwrap();
+        let _cs = EnvGuard::set(CHECKSUM_ENV, OsStr::new("xxh3 xxh128"));
+        let _cp = EnvGuard::remove(COMPRESS_ENV);
+        let err = negotiate_nonego(true, false).unwrap_err();
+        assert_eq!(err.kind(), std::io::ErrorKind::Unsupported);
+        assert_eq!(err.to_string(), "Failed to negotiate a checksum choice.");
+    }
+
+    // (f) End-to-end: env includes md5 - the default is returned.
+    #[test]
+    fn nonego_returns_md5_default_when_env_includes_it() {
+        let _lock = ENV_LOCK.lock().unwrap();
+        let _cs = EnvGuard::set(CHECKSUM_ENV, OsStr::new("md5 xxh3"));
+        let _cp = EnvGuard::remove(COMPRESS_ENV);
+        let result = negotiate_nonego(true, false).expect("md5 is in the list");
+        assert_eq!(result.checksum, ChecksumAlgorithm::MD5);
+    }
+
+    // (g) End-to-end compress: with -z active, a server env excluding zlib aborts
+    // the non-negotiated path.
+    #[test]
+    fn nonego_refuses_zlib_default_when_env_excludes_it() {
+        let _lock = ENV_LOCK.lock().unwrap();
+        let _cs = EnvGuard::remove(CHECKSUM_ENV);
+        let _cp = EnvGuard::set(COMPRESS_ENV, OsStr::new("zstd"));
+        let err = negotiate_nonego(true, true).unwrap_err();
+        assert_eq!(err.kind(), std::io::ErrorKind::Unsupported);
+        assert_eq!(err.to_string(), "Failed to negotiate a compress choice.");
+    }
+
+    // (h) End-to-end compress: env includes zlib - the default is returned.
+    #[test]
+    fn nonego_returns_zlib_default_when_env_includes_it() {
+        let _lock = ENV_LOCK.lock().unwrap();
+        let _cs = EnvGuard::remove(CHECKSUM_ENV);
+        let _cp = EnvGuard::set(COMPRESS_ENV, OsStr::new("zlib zlibx"));
+        let result = negotiate_nonego(true, true).expect("zlib is in the list");
+        assert_eq!(result.compression, CompressionAlgorithm::Zlib);
+    }
+
+    // (i) A compress-list restriction that excludes zlib does NOT abort when
+    // compression is off (send_compression = false): upstream gates the compress
+    // recv on do_compression (compat.c:544), so no validation runs.
+    #[test]
+    fn nonego_ignores_compress_env_when_compression_off() {
+        let _lock = ENV_LOCK.lock().unwrap();
+        let _cs = EnvGuard::remove(CHECKSUM_ENV);
+        let _cp = EnvGuard::set(COMPRESS_ENV, OsStr::new("zstd"));
+        negotiate_nonego(true, false).expect("compress env is not checked when -z is off");
+    }
+
+    // (j) The check runs on the client too (upstream negotiate_the_strings is not
+    // am_server-gated): a client whose env excludes md5 aborts against an old
+    // peer just like the server.
+    #[test]
+    fn nonego_refuses_md5_default_on_client_side() {
+        let _lock = ENV_LOCK.lock().unwrap();
+        let _cs = EnvGuard::set(CHECKSUM_ENV, OsStr::new("xxh3"));
+        let _cp = EnvGuard::remove(COMPRESS_ENV);
+        let err = negotiate_nonego(false, false).unwrap_err();
+        assert_eq!(err.kind(), std::io::ErrorKind::Unsupported);
+    }
 }
