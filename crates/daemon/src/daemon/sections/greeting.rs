@@ -59,17 +59,24 @@ pub(crate) fn cached_legacy_daemon_greeting() -> &'static [u8] {
     GREETING.get_or_init(|| legacy_daemon_greeting().into_bytes().into_boxed_slice())
 }
 
-/// Validates a client's `@RSYNCD:` version greeting the way an rsync daemon
-/// does, returning the fatal `@ERROR:` line to emit when it is malformed.
+/// Validates the client's FIRST line - its `@RSYNCD:` version greeting - the way
+/// an rsync daemon does, returning the fatal `@ERROR:` line to emit when it is
+/// unacceptable.
 ///
-/// Returns `Some(payload)` (including the `@ERROR:` prefix) when the greeting
-/// announces a protocol version but omits a token the protocol requires: the
-/// `.subprotocol` suffix for protocol >= 30, or the digest-name list for
-/// protocol > 31. The caller must write the payload, close the connection, and
-/// stop. Returns `None` when the line is a well-formed greeting or is not a
-/// version banner at all, in which case normal parsing proceeds.
+/// Call this only before a protocol version has been negotiated; every later
+/// line is a module request and is parsed normally. Returns `Some(payload)`
+/// (including the `@ERROR:` prefix) for the two refusals upstream distinguishes:
 ///
-/// upstream: clientserver.c:182-213 `exchange_protocols()` with `am_client == 0`.
+/// - the line is not a version banner at all (`sscanf(...) < 1`) -
+///   `@ERROR: protocol startup error`,
+/// - it announces a protocol version but omits a required token - the
+///   `.subprotocol` suffix for protocol >= 30, or the digest-name list for
+///   protocol > 31.
+///
+/// The caller writes the payload, closes the connection, and stops. `None` means
+/// the greeting is well-formed and parsing proceeds.
+///
+/// upstream: clientserver.c:180-213 `exchange_protocols()` with `am_client == 0`.
 /// The daemon reads the protocol number with `sscanf(buf, "@RSYNCD: %d.%d", ...)`;
 /// a missing `.subprotocol` leaves `remote_sub < 0` and, for `remote_protocol >= 30`,
 /// yields `@ERROR: your client omitted the subprotocol value: %s`. A missing digest
@@ -81,6 +88,16 @@ pub(crate) fn cached_legacy_daemon_greeting() -> &'static [u8] {
 /// daemon (`am_client == 0`) and the client (`am_client == 1`) enforce the exact
 /// same upstream thresholds; only the diagnostic wording differs by role.
 pub(crate) fn reject_malformed_client_greeting(line: &str) -> Option<String> {
+    // upstream: clientserver.c:180-184 - `if (sscanf(buf, "@RSYNCD: %d.%d", ...)
+    // < 1)` the daemon answers `@ERROR: protocol startup error`. The client's
+    // first line must be a version banner, so a bare module name, an empty
+    // request, or an HTTP probe is refused here rather than being taken for a
+    // module name. A banner that parses but omits a required token falls through
+    // to the token check below, which is upstream's later, distinct refusal.
+    if !is_version_banner(line) {
+        return Some(PROTOCOL_STARTUP_ERROR_PAYLOAD.to_owned());
+    }
+
     let token = missing_greeting_token(line)?;
     Some(format!(
         "@ERROR: your client omitted the {}: {line}",
@@ -133,6 +150,42 @@ pub(crate) fn advertised_capability_lines(modules: &[ModuleRuntime]) -> Vec<Stri
 #[cfg(test)]
 mod greeting_validation_tests {
     use super::reject_malformed_client_greeting;
+
+    // upstream draws two DISTINCT refusals and the order matters:
+    // clientserver.c:180-184 rejects a line that is not a version banner at all
+    // with `@ERROR: protocol startup error`, while :190-213 rejects a banner
+    // that parses but omits a required token. A banner missing only its
+    // subprotocol still satisfies `sscanf(...) >= 1`, so it must reach the
+    // token check rather than the startup error.
+    #[test]
+    fn distinguishes_startup_error_from_missing_token() {
+        // Every form a client might send in the banner's place: a list request,
+        // an empty (list-all) line, a module name, an HTTP probe, a bare prefix,
+        // a non-numeric protocol, and a server-side keyword echoed back.
+        for not_a_banner in [
+            "#list",
+            "",
+            "module",
+            "somemodule",
+            "GET / HTTP/1.0",
+            "@RSYNCD:",
+            "@RSYNCD: x",
+            "@RSYNCD: OK",
+        ] {
+            assert_eq!(
+                reject_malformed_client_greeting(not_a_banner).as_deref(),
+                Some("@ERROR: protocol startup error"),
+                "not a version banner: {not_a_banner:?}"
+            );
+        }
+
+        // Parses as a banner (protocol number present), so the refusal is the
+        // token diagnostic, not the startup error.
+        assert_eq!(
+            reject_malformed_client_greeting("@RSYNCD: 32").as_deref(),
+            Some("@ERROR: your client omitted the subprotocol value: @RSYNCD: 32"),
+        );
+    }
 
     // upstream: clientserver.c:190-199 - a protocol >= 30 greeting without a
     // ".subprotocol" suffix leaves remote_sub < 0 and is fatal. The @ERROR line
@@ -187,29 +240,27 @@ mod greeting_validation_tests {
         );
     }
 
-    // Non-version lines (module names, control keywords) are not greetings and
-    // pass through so the normal message parser handles them.
+    // Regression for #6604: the daemon refusal delegates to the shared
+    // `missing_greeting_token` gate, so the @ERROR wording and the exact set of
+    // refused greetings stay byte-identical. A banner the gate accepts must
+    // return `None` here so `parse_legacy_daemon_message` handles it next - the
+    // daemon must never double-reject a greeting the shared gate cleared.
+    //
+    // Scoped to lines that ARE version banners: upstream refuses a non-banner
+    // first line earlier, at the `sscanf(...) < 1` guard, which the token gate
+    // deliberately does not model. `distinguishes_startup_error_from_missing_token`
+    // covers that separate refusal.
     #[test]
-    fn ignores_non_version_lines() {
-        assert_eq!(reject_malformed_client_greeting("module"), None);
-        assert_eq!(reject_malformed_client_greeting("@RSYNCD: OK"), None);
-        assert_eq!(reject_malformed_client_greeting("#list"), None);
-    }
-
-    // Regression for #6604: the daemon refusal now delegates to the shared
-    // `missing_greeting_token` gate, but the @ERROR wording and the exact set of
-    // refused greetings must stay byte-identical. A greeting the gate accepts
-    // must return `None` here so `parse_legacy_daemon_message` handles it next -
-    // the daemon must never double-reject a greeting the shared gate cleared.
-    #[test]
-    fn daemon_refusal_agrees_with_shared_gate() {
+    fn daemon_refusal_agrees_with_shared_gate_on_banners() {
         for line in [
             "@RSYNCD: 32.0 sha512 sha256 sha1 md5 md4",
             "@RSYNCD: 31.0",
             "@RSYNCD: 29",
-            "@RSYNCD: OK",
-            "module",
         ] {
+            assert!(
+                protocol::is_version_banner(line),
+                "test input {line:?} must be a version banner",
+            );
             assert_eq!(
                 protocol::missing_greeting_token(line).is_none(),
                 reject_malformed_client_greeting(line).is_none(),

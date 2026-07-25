@@ -18,7 +18,7 @@ pub use parse::{
 };
 pub use tokens::DigestListTokens;
 pub use types::{LegacyDaemonGreeting, LegacyDaemonGreetingOwned};
-pub use validate::{MissingGreetingToken, missing_greeting_token};
+pub use validate::{MissingGreetingToken, is_version_banner, missing_greeting_token};
 
 #[cfg(test)]
 mod tests;

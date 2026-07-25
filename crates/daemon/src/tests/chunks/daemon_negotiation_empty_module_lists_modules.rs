@@ -39,6 +39,7 @@ fn daemon_negotiation_empty_module_lists_modules() {
 
     // Send only a bare newline. upstream: clientserver.c:1423 treats this
     // as equivalent to `#list`.
+    send_client_greeting(&mut stream);
     stream.write_all(b"\n").expect("send empty request");
     stream.flush().expect("flush empty request");
 

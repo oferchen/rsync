@@ -40,13 +40,42 @@ impl MissingGreetingToken {
     }
 }
 
+/// Scans a newline-stripped line for the `@RSYNCD: <digits>` head, returning the
+/// text after the prefix and how many leading digits the protocol number has.
+///
+/// This is upstream's `sscanf(buf, "@RSYNCD: %d.%d", ...) >= 1` test: the
+/// literal prefix must match and at least one digit must follow (`%d` skips
+/// leading whitespace first). `None` means the line is not a version banner.
+fn scan_protocol_digits(trimmed: &str) -> Option<(&str, usize)> {
+    let after_prefix = trimmed.strip_prefix(LEGACY_DAEMON_PREFIX)?;
+    let rest = after_prefix.trim_start();
+    let digits = rest
+        .as_bytes()
+        .iter()
+        .take_while(|byte| byte.is_ascii_digit())
+        .count();
+    (digits > 0).then_some((rest, digits))
+}
+
+/// Reports whether `line` is an `@RSYNCD:` version banner at all.
+///
+/// Mirrors upstream's `sscanf(buf, "@RSYNCD: %d.%d", ...) < 1` guard
+/// (`clientserver.c:180`), which the daemon answers with
+/// `@ERROR: protocol startup error`. A banner that parses but omits a required
+/// token is a *different* refusal - see [`missing_greeting_token`].
+#[doc(alias = "@RSYNCD")]
+#[must_use]
+pub fn is_version_banner(line: &str) -> bool {
+    scan_protocol_digits(line.trim_end_matches(['\r', '\n'])).is_some()
+}
+
 /// Applies upstream `exchange_protocols()`'s presence gates to a raw `@RSYNCD:`
 /// greeting line, returning the token the peer omitted, if any.
 ///
 /// Returns `None` when the line is a well-formed greeting, is not an `@RSYNCD:`
-/// version banner at all, or is a legacy (`protocol < 30`) greeting that needs
-/// neither token. The detection is byte-faithful to upstream
-/// `clientserver.c:180-211`:
+/// version banner at all (see [`is_version_banner`] for that distinct case), or
+/// is a legacy (`protocol < 30`) greeting that needs neither token. The
+/// detection is byte-faithful to upstream `clientserver.c:180-211`:
 ///
 /// - the subprotocol is parsed with the equivalent of
 ///   `sscanf(buf, "@RSYNCD: %d.%d", ...)`; a missing `.subprotocol` leaves the
@@ -63,20 +92,7 @@ impl MissingGreetingToken {
 #[must_use]
 pub fn missing_greeting_token(line: &str) -> Option<MissingGreetingToken> {
     let trimmed = line.trim_end_matches(['\r', '\n']);
-
-    let after_prefix = trimmed.strip_prefix(LEGACY_DAEMON_PREFIX)?;
-
-    // upstream: sscanf `%d` skips leading whitespace before the protocol number.
-    let rest = after_prefix.trim_start();
-    let digits = rest
-        .as_bytes()
-        .iter()
-        .take_while(|byte| byte.is_ascii_digit())
-        .count();
-    if digits == 0 {
-        // sscanf(...) < 1: not a version banner - the caller keeps parsing.
-        return None;
-    }
+    let (rest, digits) = scan_protocol_digits(trimmed)?;
     let remote_protocol: u32 = rest[..digits].parse().unwrap_or(u32::MAX);
 
     // upstream: `remote_sub` stays < 0 unless a ".NNN" suffix follows the number.

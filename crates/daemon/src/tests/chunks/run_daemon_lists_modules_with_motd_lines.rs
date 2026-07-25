@@ -38,6 +38,7 @@ fn run_daemon_lists_modules_with_motd_lines() {
     reader.read_line(&mut line).expect("greeting");
     assert_eq!(line, expected_greeting);
 
+    send_client_greeting(&mut stream);
     stream.write_all(b"#list\n").expect("send list request");
     stream.flush().expect("flush list request");
 
