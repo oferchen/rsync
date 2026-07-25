@@ -90,10 +90,12 @@ pub fn generate_script_with_filters(
     }
 
     // upstream: batch.c:300-304 - destination placeholder
-    // write_opt("${1:-", NULL) + write_arg(dest) + "}"
+    // write_opt("${1:-", NULL) + write_arg(dest) + "}". The operand is passed
+    // through check_for_hostspec so only the local path (not any host: prefix)
+    // lands in the ${1:-<dest>} default.
     write!(file, " ${{1:-")?;
     match destination {
-        Some(dest) if !dest.is_empty() => write!(file, "{}", shell_quote(dest))?,
+        Some(dest) if !dest.is_empty() => write!(file, "{}", shell_quote(strip_hostspec(dest)))?,
         _ => write!(file, ".")?,
     }
     write!(file, "}}")?;
@@ -233,7 +235,7 @@ pub fn generate_script_with_args(
     // write_opt("${1:-", NULL) + write_arg(dest) + "}"
     write!(file, " ${{1:-")?;
     if let Some(dest) = find_destination(original_args) {
-        write!(file, "{}", shell_quote(dest))?;
+        write!(file, "{}", shell_quote(strip_hostspec(dest)))?;
     }
     write!(file, "}}")?;
 
@@ -365,6 +367,103 @@ fn find_destination(args: &[String]) -> Option<&str> {
         .map(|s| s.as_str())
 }
 
+/// Strip a `host:` / `host::` / `rsync://` prefix from a destination operand,
+/// returning only the local path portion written into the generated `.sh`
+/// `${1:-<dest>}` default. Local paths (absolute or relative) are returned
+/// unchanged.
+///
+/// Mirrors upstream's `check_for_hostspec` path extraction:
+/// - `host:/path` -> `/path`
+/// - `host::mod/path` -> `mod/path`
+/// - `rsync://host/path` -> `path`
+/// - `/local/path`, `rel/path`, `dest` -> unchanged
+///
+// upstream: options.c:check_for_hostspec / batch.c:300
+fn strip_hostspec(dest: &str) -> &str {
+    const URL_PREFIX: &str = "rsync://";
+    // upstream: options.c:3134 - an rsync:// URL is matched case-insensitively.
+    if dest.len() >= URL_PREFIX.len()
+        && dest.as_bytes()[..URL_PREFIX.len()].eq_ignore_ascii_case(URL_PREFIX.as_bytes())
+    {
+        let rest = &dest[URL_PREFIX.len()..];
+        if let Some(off) = parse_hostspec_path(rest, true) {
+            return &rest[off..];
+        }
+    }
+    // upstream: options.c:3143 - parse_hostspec(s, &path, NULL).
+    match parse_hostspec_path(dest, false) {
+        Some(off) => {
+            // upstream: options.c:3146-3147 - a leading ':' (the daemon '::'
+            // separator) is stripped from the returned path.
+            let path = &dest[off..];
+            path.strip_prefix(':').unwrap_or(path)
+        }
+        None => dest,
+    }
+}
+
+/// Locate the path portion of a `[user@]host[:port]` spec, mirroring upstream
+/// `parse_hostspec` (options.c:3073). Returns the byte offset in `s` where the
+/// path begins when `s` starts with a valid host, or `None` otherwise.
+/// `is_url` mirrors upstream's non-NULL `port_ptr` (parsing an `rsync://` host).
+fn parse_hostspec_path(s: &str, is_url: bool) -> Option<usize> {
+    let b = s.as_bytes();
+    let mut host_start = 0usize;
+    let mut i = 0usize;
+    loop {
+        if i >= b.len() {
+            // upstream: running out of string is only OK for an rsync:// URL.
+            return if is_url { Some(i) } else { None };
+        }
+        match b[i] {
+            b':' | b'/' => {
+                let was_slash = b[i] == b'/';
+                i += 1;
+                if was_slash {
+                    if !is_url {
+                        return None;
+                    }
+                } else if is_url {
+                    // upstream: atoi(port), then require '/' or end after digits.
+                    while i < b.len() && b[i].is_ascii_digit() {
+                        i += 1;
+                    }
+                    if i < b.len() {
+                        let ch = b[i];
+                        i += 1;
+                        if ch != b'/' {
+                            return None;
+                        }
+                    }
+                }
+                return Some(i);
+            }
+            b'@' => host_start = i + 1,
+            b'[' => {
+                // upstream: the '[' must be the first host character; the host
+                // is an IPv6 literal terminated by ']'.
+                if i != host_start {
+                    return None;
+                }
+                host_start += 1;
+                i += 1;
+                while i < b.len() && b[i] != b']' && b[i] != b'/' {
+                    i += 1;
+                }
+                let hostlen = i - host_start;
+                let at_bracket = i < b.len() && b[i] == b']';
+                let next_ok = i + 1 >= b.len() || matches!(b[i + 1], b'/' | b':');
+                if !at_bracket || !next_ok || hostlen == 0 {
+                    return None;
+                }
+                // Fall through: the outer i += 1 steps past the ']'.
+            }
+            _ => {}
+        }
+        i += 1;
+    }
+}
+
 /// Set script file permissions to match upstream rsync.
 ///
 /// Upstream rsync opens the `.sh` file with `S_IRUSR | S_IWUSR | S_IXUSR`
@@ -417,6 +516,67 @@ mod tests {
             "src".to_owned(),
         ];
         assert_eq!(find_destination(&args2), Some("src"));
+    }
+
+    /// Verify `strip_hostspec` mirrors upstream `check_for_hostspec`, writing
+    /// only the local path into the generated `.sh` `${1:-<dest>}` default.
+    ///
+    /// upstream: batch.c:300 passes the last operand through check_for_hostspec
+    /// so a batch captured against a remote destination does not embed the
+    /// `host:` prefix in the replay script.
+    #[test]
+    fn test_strip_hostspec() {
+        // Local paths are returned unchanged.
+        assert_eq!(strip_hostspec("/path/to/dest"), "/path/to/dest");
+        assert_eq!(strip_hostspec("dest"), "dest");
+        assert_eq!(strip_hostspec("rel/path"), "rel/path");
+        assert_eq!(strip_hostspec("./dir"), "./dir");
+
+        // Remote shell form: host:/path -> /path.
+        assert_eq!(strip_hostspec("host:/path"), "/path");
+        assert_eq!(strip_hostspec("user@host:/path"), "/path");
+        assert_eq!(strip_hostspec("host:rel"), "rel");
+
+        // Daemon form: host::module/path -> module/path.
+        assert_eq!(strip_hostspec("host::mod/path"), "mod/path");
+        assert_eq!(strip_hostspec("user@host::mod/path"), "mod/path");
+
+        // URL form: rsync://host/path -> path (leading slash is the separator).
+        assert_eq!(strip_hostspec("rsync://host/path"), "path");
+        assert_eq!(strip_hostspec("rsync://host:873/mod/path"), "mod/path");
+        assert_eq!(strip_hostspec("RSYNC://host/path"), "path");
+
+        // IPv6 literal hosts have the bracketed address stripped.
+        assert_eq!(strip_hostspec("[::1]:/path"), "/path");
+    }
+
+    /// Verify a batch written against a remote destination operand strips the
+    /// `host:` prefix from the generated `${1:-<dest>}` default.
+    ///
+    /// upstream: batch.c:300-304 write_batch_shell_file passes the destination
+    /// through check_for_hostspec before writing it.
+    #[test]
+    fn test_generate_script_strips_remote_destination() {
+        let temp_dir = TempDir::new().unwrap();
+        let batch_path = temp_dir.path().join("test.batch");
+
+        let config = BatchConfig::new(
+            BatchMode::Write,
+            batch_path.to_string_lossy().to_string(),
+            31,
+        );
+
+        generate_script_with_filters(&config, None, Some("host:/remote/dest")).unwrap();
+
+        let content = fs::read_to_string(config.script_file_path()).unwrap();
+        assert!(
+            content.contains("${1:-/remote/dest}"),
+            "remote host: prefix must be stripped from the default: {content}"
+        );
+        assert!(
+            !content.contains("host:"),
+            "generated script must not embed the host: prefix: {content}"
+        );
     }
 
     #[test]
