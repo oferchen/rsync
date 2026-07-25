@@ -306,6 +306,22 @@ jobs:
             echo "----- client stderr: distinct messages with counts -----"
             sed -E 's/\([0-9]+\)$//' "$RESULTS/pull-stderr.log" 2>/dev/null \
               | sort | uniq -c | sort -rn | head -n 20 || echo "(empty)"
+            # How far did the failed connections get? The client only reports
+            # ECONNRESET, which cannot distinguish a close before the greeting
+            # from one after it: the client writes its own greeting first
+            # (upstream clientserver.c:157 output_daemon_greeting runs for both
+            # sides), so any abortive close leaves unread input and yields RST,
+            # and an incoming RST also discards data already buffered locally.
+            # Counting how many connections reached each daemon-side milestone
+            # is what actually localises the failure.
+            echo "----- daemon-side connection accounting -----"
+            expected=$(( SOAK_CONNECTIONS * SOAK_RUNS ))
+            reached_args=$(grep -c 'client args:' "$WORK/oc-rsyncd.log" 2>/dev/null || echo 0)
+            completed=$(grep -c 'status=success' "$WORK/oc-rsyncd.log" 2>/dev/null || echo 0)
+            printf 'expected pulls      : %s\n' "$expected"
+            printf 'reached arg-read    : %s\n' "$reached_args"
+            printf 'completed status=ok : %s\n' "$completed"
+            printf 'failed pulls        : %s\n' "$TOTAL_FAIL"
             echo "----- daemon log: severity counts -----"
             grep -oE 'oc-rsync (info|warning|error):' "$WORK/oc-rsyncd.log" 2>/dev/null \
               | sort | uniq -c || echo "(empty)"
