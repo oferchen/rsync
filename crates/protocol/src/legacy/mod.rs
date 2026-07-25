@@ -49,8 +49,8 @@ pub use greeting::write_legacy_daemon_greeting;
 pub use greeting::{
     DigestListTokens, LegacyDaemonGreeting, LegacyDaemonGreetingOwned, MissingGreetingToken,
     format_legacy_daemon_greeting, is_version_banner, missing_greeting_token,
-    parse_legacy_daemon_greeting,
-    parse_legacy_daemon_greeting_details, parse_legacy_daemon_greeting_owned,
+    parse_legacy_daemon_greeting, parse_legacy_daemon_greeting_details,
+    parse_legacy_daemon_greeting_owned,
 };
 #[allow(unused_imports)] // REASON: convenience re-export; not all items used in every consumer
 pub use lines::{
