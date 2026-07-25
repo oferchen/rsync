@@ -412,6 +412,17 @@ pub(crate) fn apply_common_server_flags(config: &ClientConfig, server_config: &m
         .unwrap_or(protocol::ProtocolVersion::NEWEST);
     server_config.trust_sender = config.trust_sender();
     server_config.qsort = config.qsort();
+    // upstream: options.c:2190-2203 - `xfer_dirs` is resolved locally by each
+    // side (`--files-from`, recursion and `--list-only` all imply level 1), and
+    // the compact `d` letter is packed only for an EXPLICIT `-d`
+    // (options.c:2638-2640), so the peer re-derives the implied level itself and
+    // it never needs to ride the wire.
+    //
+    // oc's in-process half is parsed back out of that same flag string, so the
+    // implied level would otherwise be lost: an `-a --files-from` transfer packs
+    // neither `d` nor `r`, leaving the local sender at xfer_dirs = 0 with no
+    // directory in the file list at all. Carry the resolved value directly.
+    server_config.flags.dirs = config.dirs();
     server_config.write.inplace = config.inplace();
     // upstream: receiver.c:968 - append mode implies inplace; the sum_head
     // block-skip (generator.c:786) and flength derivation (sender.c:89) on both
