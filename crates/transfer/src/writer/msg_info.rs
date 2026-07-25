@@ -48,6 +48,24 @@ pub trait MsgInfoSender {
         Ok(())
     }
 
+    /// Sends a `MSG_WARNING` frame through the multiplexed output stream.
+    ///
+    /// Mirrors upstream `rprintf(FWARNING, ...)` from a server-side sender: the
+    /// text is framed instead of being written to the local stderr, so a client
+    /// on the far end of a daemon or SSH connection renders it. Callers must
+    /// downgrade to [`Self::send_msg_info`] below protocol 30, matching
+    /// `log.c:332-337`.
+    ///
+    /// The default implementation is a no-op, matching [`Self::send_msg_info`].
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `log.c:330-346` - `rwrite()` sends `MSG_WARNING` when `am_server`
+    /// - `log.c:332-337` - `protocol_version < 30` maps `MSG_WARNING` to `MSG_INFO`
+    fn send_msg_warning(&mut self, _data: &[u8]) -> io::Result<()> {
+        Ok(())
+    }
+
     /// Sends a `MSG_DELETED` frame carrying the raw name of a deleted entry.
     ///
     /// A server generator emits one frame per deletion so the client renders the
@@ -125,6 +143,14 @@ impl<W: Write> MsgInfoSender for ServerWriter<W> {
         }
     }
 
+    fn send_msg_warning(&mut self, data: &[u8]) -> io::Result<()> {
+        if self.is_multiplexed() {
+            self.send_message(MessageCode::Warning, data)
+        } else {
+            Ok(())
+        }
+    }
+
     fn send_msg_deleted(&mut self, data: &[u8]) -> io::Result<()> {
         // upstream: log.c:866-869 - the MSG_DELETED path only exists on a
         // multiplexed server stream; plain mode never reaches this branch.
@@ -167,6 +193,10 @@ impl<T: MsgInfoSender + ?Sized> MsgInfoSender for &mut T {
         (**self).send_msg_error_xfer(data)
     }
 
+    fn send_msg_warning(&mut self, data: &[u8]) -> io::Result<()> {
+        (**self).send_msg_warning(data)
+    }
+
     fn send_msg_deleted(&mut self, data: &[u8]) -> io::Result<()> {
         (**self).send_msg_deleted(data)
     }
@@ -187,6 +217,10 @@ impl<W: MsgInfoSender> MsgInfoSender for CountingWriter<W> {
 
     fn send_msg_error_xfer(&mut self, data: &[u8]) -> io::Result<()> {
         self.inner_ref_mut().send_msg_error_xfer(data)
+    }
+
+    fn send_msg_warning(&mut self, data: &[u8]) -> io::Result<()> {
+        self.inner_ref_mut().send_msg_warning(data)
     }
 
     fn send_msg_deleted(&mut self, data: &[u8]) -> io::Result<()> {
