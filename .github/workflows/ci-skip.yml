@@ -22,6 +22,19 @@ on:
       - '.gitignore'
       - '.gitattributes'
       - 'deny.toml'
+      # Workflow-only changes need the same stand-in contexts. Without this, a
+      # pull request touching only a workflow matches neither ci.yml's paths
+      # nor this list, so none of the required checks ever report and the pull
+      # request can never become mergeable. The negations are exactly the files
+      # ci.yml itself watches: those changes run the real matrix, and letting
+      # both workflows fire would publish two check runs per required context.
+      - '.github/workflows/**'
+      - '!.github/workflows/ci.yml'
+      - '!.github/workflows/_test-features.yml'
+      - '!.github/workflows/_interop.yml'
+      - '!.github/workflows/_interop-macos.yml'
+      - '!.github/workflows/_interop-windows.yml'
+      - '!.github/workflows/_upstream-testsuite.yml'
 
 concurrency:
   group: ci-skip-${{ github.ref }}
