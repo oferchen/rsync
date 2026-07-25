@@ -34,9 +34,11 @@
 
 use std::env;
 use std::fs;
+use std::io::Read;
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output, Stdio};
+use std::thread;
 use std::time::{Duration, Instant};
 
 const RUN_TIMEOUT: Duration = Duration::from_secs(120);
@@ -93,16 +95,38 @@ fn spawn_with_timeout(mut cmd: Command, timeout: Duration) -> Option<Output> {
         .stderr(Stdio::piped())
         .spawn()
         .ok()?;
+    // Drain both pipes on their own threads. Polling try_wait() while the pipes
+    // fill would deadlock: the child blocks writing into a full OS pipe buffer
+    // and therefore never exits. Draining also preserves the child's output so a
+    // real failure is reported instead of being swallowed by the timeout.
+    let mut child_stdout = child.stdout.take()?;
+    let mut child_stderr = child.stderr.take()?;
+    let stdout_reader = thread::spawn(move || {
+        let mut buf = Vec::new();
+        let _ = child_stdout.read_to_end(&mut buf);
+        buf
+    });
+    let stderr_reader = thread::spawn(move || {
+        let mut buf = Vec::new();
+        let _ = child_stderr.read_to_end(&mut buf);
+        buf
+    });
     let deadline = Instant::now() + timeout;
     loop {
         match child.try_wait().ok()? {
-            Some(_) => return child.wait_with_output().ok(),
+            Some(status) => {
+                return Some(Output {
+                    status,
+                    stdout: stdout_reader.join().unwrap_or_default(),
+                    stderr: stderr_reader.join().unwrap_or_default(),
+                });
+            }
             None if Instant::now() >= deadline => {
                 let _ = child.kill();
                 let _ = child.wait();
                 return None;
             }
-            None => std::thread::sleep(Duration::from_millis(50)),
+            None => thread::sleep(Duration::from_millis(50)),
         }
     }
 }
