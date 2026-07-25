@@ -580,9 +580,11 @@ impl<'a> RemoteInvocationBuilder<'a> {
         if self.config.safe_links() {
             args.push(OsString::from("--safe-links"));
         }
-        if self.config.munge_links() {
-            args.push(OsString::from("--munge-links"));
-        }
+        // upstream: `--munge-links` is deliberately absent from server_options()
+        // (options.c) - it is a local-side option applied where the symlink is
+        // written (options.c:2254 gates it on `!am_daemon`), so the remote is
+        // never told about it. Forwarding it made oc's server invocation differ
+        // from upstream's for every `--munge-links` transfer.
 
         // upstream: options.c:2905-2906 - --numeric-ids is long-form only.
         if self.config.numeric_ids() {
