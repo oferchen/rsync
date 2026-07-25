@@ -214,7 +214,17 @@ where
     // unconditionally (after the argv scan), so it forces recursion on even over
     // a `--no-recursive`, and appends the `- /*/*` filter rule (injected below).
     let old_dirs = matches.get_flag("old-dirs");
-    let recursive_override = tri_state_flag_negative_first(&matches, "recursive", "no-recursive");
+    // Recursion that survives `--files-from`. Upstream clears only the value
+    // `-a` implies (options.c:2189 `if (recurse == 1) recurse = 0`), so
+    // `Some(true)` here marks the two ways recursion outlives a files-from list:
+    // an explicit `-r` (recurse == 2, options.c:621) and `--old-dirs`, whose
+    // `xfer_dirs = 4` re-forces `recurse = 1` at options.c:2197-2199 - after the
+    // files-from clearing has already run.
+    let recursive_override = if old_dirs {
+        Some(true)
+    } else {
+        tri_state_flag_negative_first(&matches, "recursive", "no-recursive")
+    };
     // upstream: options.c:1546 `case 'a'` runs `if (!recurse) recurse = 1` in
     // argv order, so a `--no-recursive` that precedes `-a` is re-enabled by the
     // later `-a`, while one that follows it wins.
