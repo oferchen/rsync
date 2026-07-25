@@ -300,10 +300,18 @@ jobs:
             # of this failure was reported as an unexplained count.
             echo "----- failed-pull exit codes per run -----"
             cat "$RESULTS/pull-failure-codes.log" 2>/dev/null || echo "(none recorded)"
-            echo "----- client stderr (last 40 lines) -----"
-            tail -n 40 "$RESULTS/pull-stderr.log" 2>/dev/null || echo "(empty)"
-            echo "----- daemon log (last 40 lines) -----"
-            tail -n 40 "$WORK/oc-rsyncd.log" 2>/dev/null || echo "(empty)"
+            # Summarise rather than tail: the logs hold thousands of lines for a
+            # 3x1000 soak, so a blind tail only shows the last few connections
+            # and cannot say whether the failures were logged at all.
+            echo "----- client stderr: distinct messages with counts -----"
+            sed -E 's/\([0-9]+\)$//' "$RESULTS/pull-stderr.log" 2>/dev/null \
+              | sort | uniq -c | sort -rn | head -n 20 || echo "(empty)"
+            echo "----- daemon log: severity counts -----"
+            grep -oE 'oc-rsync (info|warning|error):' "$WORK/oc-rsyncd.log" 2>/dev/null \
+              | sort | uniq -c || echo "(empty)"
+            echo "----- daemon log: every warning and error -----"
+            grep -E 'oc-rsync (warning|error):' "$WORK/oc-rsyncd.log" 2>/dev/null \
+              | tail -n 40 || echo "(none)"
             echo "----- daemon stderr (last 40 lines) -----"
             tail -n 40 "$WORK/oc-rsyncd.stderr" 2>/dev/null || echo "(empty)"
             echo "::error::soak saw $TOTAL_FAIL failed pulls (D10K-7)"; exit 1
