@@ -478,8 +478,9 @@ fn handle_binary_session_internal(
         HANDSHAKE_ERROR_PAYLOAD.as_bytes().to_vec(),
     )?
     .encode_into_writer(&mut frames)?;
+    // upstream: io.c:send_msg_int — SIVAL is little-endian
     let exit_code = u32::try_from(FEATURE_UNAVAILABLE_EXIT_CODE).unwrap_or_default();
-    MessageFrame::new(MessageCode::ErrorExit, exit_code.to_be_bytes().to_vec())?
+    MessageFrame::new(MessageCode::ErrorExit, exit_code.to_le_bytes().to_vec())?
         .encode_into_writer(&mut frames)?;
     write_limited(&mut stream, &mut limiter, &frames)?;
     stream.flush()?;
