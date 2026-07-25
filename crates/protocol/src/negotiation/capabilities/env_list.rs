@@ -110,16 +110,81 @@ pub(super) fn validate_compress_choice(choice: &str) -> io::Result<()> {
     validate_choice(COMPRESS_LIST_ENV, "compress", choice, resolve_compression)
 }
 
-/// Shared refusal check for both choice kinds.
+/// Refuses the forced fallback default checksum on the non-negotiated path when
+/// `RSYNC_CHECKSUM_LIST` excludes it.
 ///
-/// Reuses [`parse_env`] with `is_server = true` (only the server validates) so
-/// the env list is parsed exactly once, with the same `&` split, tokenising,
-/// alias canonicalisation and de-duplication used to build the advertised list -
-/// no separate parse. When the variable is unset or empty, [`parse_env`] returns
-/// `None` and the choice is accepted. Otherwise the forced canonical name must
-/// appear in the parsed candidate set (an empty set - the `INVALID` sentinel -
-/// never contains it, so a value whose names were all unrecognised refuses every
-/// choice, matching upstream).
+/// upstream: `compat.c:541-555 negotiate_the_strings` - when the peer is too old
+/// to negotiate (`do_negotiated_strings == 0`) and no `--checksum-choice` is
+/// forced, `send_negotiate_str` still parses the env list into `nno->saw`, then
+/// `recv_negotiate_str` runs `parse_negotiate_str` with the prefilled default
+/// (`"md5"` for protocol >= 30, else `"md4"`). When `saw` lacks the default the
+/// parse fails and upstream aborts with `RERR_UNSUPPORTED` (`compat.c:406`).
+/// Unlike [`validate_checksum_choice`] this runs on both sides, so pass the
+/// caller's `is_server`; the `&` split then selects the caller's half.
+pub(super) fn validate_default_checksum(default: &str, is_server: bool) -> io::Result<()> {
+    validate_default(
+        CHECKSUM_LIST_ENV,
+        "checksum",
+        default,
+        is_server,
+        resolve_checksum,
+    )
+}
+
+/// Refuses the forced fallback default `zlib` compression on the non-negotiated
+/// path when `RSYNC_COMPRESS_LIST` excludes it.
+///
+/// The compression counterpart of [`validate_default_checksum`], mirroring the
+/// `valid_compressions.saw` / `"zlib"` prefill branch (`compat.c:557-564`). Only
+/// reached when compression is active (`do_compression`), matching upstream's
+/// gate on `send_negotiate_str` at `compat.c:544`.
+pub(super) fn validate_default_compress(default: &str, is_server: bool) -> io::Result<()> {
+    validate_default(
+        COMPRESS_LIST_ENV,
+        "compress",
+        default,
+        is_server,
+        resolve_compression,
+    )
+}
+
+/// Membership of a single algorithm in the env-parsed candidate list.
+enum EnvMembership {
+    /// The variable is unset or all-whitespace - no restriction applies.
+    Unset,
+    /// The variable restricts the list and the algorithm is a member.
+    Present,
+    /// The variable restricts the list and the algorithm is absent.
+    Absent,
+}
+
+/// Parses the env list once and reports whether `algo` survives it.
+///
+/// Shared by the forced-choice refusal ([`validate_choice`]) and the
+/// fallback-default refusal ([`validate_default`]) so both use the identical
+/// `&`-split, tokenising, alias canonicalisation and de-duplication from
+/// [`parse_env`] - the single source of truth for the candidate set. An empty
+/// set (the `INVALID` sentinel) never contains `algo`, so a value whose names
+/// were all unrecognised reports [`EnvMembership::Absent`], matching upstream.
+fn env_membership(
+    key: &str,
+    is_server: bool,
+    algo: &str,
+    resolve: impl Fn(&str) -> Option<&'static str>,
+) -> EnvMembership {
+    match parse_env(key, is_server, resolve) {
+        None => EnvMembership::Unset,
+        Some(env) if env.candidates.contains(&algo) => EnvMembership::Present,
+        Some(_) => EnvMembership::Absent,
+    }
+}
+
+/// Shared refusal check for both forced-choice kinds.
+///
+/// Only the server validates a forced `--checksum-choice`/`--compress-choice`,
+/// so it always parses with `is_server = true`. When the variable is unset or
+/// empty the choice is accepted; otherwise the forced canonical name must be a
+/// member of the parsed candidate set.
 ///
 /// On refusal, emits the byte-exact upstream message and fails with an
 /// [`io::ErrorKind::Unsupported`] error, which the core exit-code mapper turns
@@ -131,24 +196,42 @@ fn validate_choice(
     choice: &str,
     resolve: impl Fn(&str) -> Option<&'static str>,
 ) -> io::Result<()> {
-    // upstream: compat.c:432-433 - an unset or all-whitespace list_str returns
-    // early, leaving the choice unvalidated (accepted).
-    let Some(env) = parse_env(key, true, resolve) else {
-        return Ok(());
-    };
-
-    // upstream: compat.c:445 - saw[num] must be set for the forced choice(s).
-    if env.candidates.contains(&choice) {
-        return Ok(());
+    // upstream: compat.c:432-445 - unset/blank accepts; saw[num] must be set.
+    match env_membership(key, true, choice, resolve) {
+        EnvMembership::Unset | EnvMembership::Present => Ok(()),
+        // upstream: compat.c:446-448 rprintf(FERROR, "Your --%s-choice value
+        // (%s) was refused by the server.\n", ...). The trailing newline is
+        // added by the diagnostic layer, not embedded in the message.
+        EnvMembership::Absent => Err(io::Error::new(
+            io::ErrorKind::Unsupported,
+            format!("Your --{kind}-choice value ({choice}) was refused by the server."),
+        )),
     }
+}
 
-    // upstream: compat.c:446-448 rprintf(FERROR, "Your --%s-choice value (%s)
-    // was refused by the server.\n", ...). The trailing newline is added by the
-    // diagnostic layer, not embedded in the message, matching oc convention.
-    Err(io::Error::new(
-        io::ErrorKind::Unsupported,
-        format!("Your --{kind}-choice value ({choice}) was refused by the server."),
-    ))
+/// Refuses the prefilled fallback default that upstream validates in
+/// `recv_negotiate_str` when the env list excludes it.
+///
+/// A no-op when the variable is unset or the default is a member. On refusal,
+/// emits upstream's `recv_negotiate_str` wording (`compat.c:387` "Failed to
+/// negotiate a %s choice.", where `%s` is the nno `type`, `"checksum"` or
+/// `"compress"`) with [`io::ErrorKind::Unsupported`], which the core exit-code
+/// mapper turns into `RERR_UNSUPPORTED` (exit 4), matching
+/// `exit_cleanup(RERR_UNSUPPORTED)` at `compat.c:406`.
+fn validate_default(
+    key: &str,
+    kind: &str,
+    default: &str,
+    is_server: bool,
+    resolve: impl Fn(&str) -> Option<&'static str>,
+) -> io::Result<()> {
+    match env_membership(key, is_server, default, resolve) {
+        EnvMembership::Unset | EnvMembership::Present => Ok(()),
+        EnvMembership::Absent => Err(io::Error::new(
+            io::ErrorKind::Unsupported,
+            format!("Failed to negotiate a {kind} choice."),
+        )),
+    }
 }
 
 /// Resolves a checksum name to its canonical wire spelling, or `None` when the
