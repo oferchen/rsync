@@ -1,7 +1,7 @@
-use std::num::{NonZeroU32, NonZeroU64};
+use std::num::NonZeroU64;
 use std::path::{Path, PathBuf};
 
-use super::AuthUser;
+use super::{AuthUser, MaxConnections};
 // HostPattern is defined in the parent daemon module (via include!() of config_helpers.rs).
 use crate::daemon::HostPattern;
 
@@ -74,7 +74,7 @@ pub(crate) struct ModuleDefinition {
     ///
     /// upstream: clientserver.c:833-840 `rsync_module()`.
     pub(crate) use_chroot_explicit: bool,
-    pub(crate) max_connections: Option<NonZeroU32>,
+    pub(crate) max_connections: MaxConnections,
     pub(crate) incoming_chmod: Option<String>,
     pub(crate) outgoing_chmod: Option<String>,
     /// When true, stores privileged metadata (uid/gid, devices) in xattrs instead of applying.
@@ -332,8 +332,8 @@ impl ModuleDefinition {
         super::authorize_auth_user(&self.auth_users, username, &super::SystemGroupMembership)
     }
 
-    /// Returns the maximum number of concurrent connections allowed.
-    pub(crate) const fn max_connections(&self) -> Option<NonZeroU32> {
+    /// Returns the configured `max connections` setting.
+    pub(crate) const fn max_connections(&self) -> MaxConnections {
         self.max_connections
     }
 

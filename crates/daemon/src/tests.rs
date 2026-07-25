@@ -23,6 +23,7 @@ use crate::daemon::{
     FEATURE_UNAVAILABLE_EXIT_CODE,
     HostPattern,
     LEGACY_CONFIG_ENV,
+    MaxConnections,
     ModuleConnectionError,
     ModuleDefinition,
     ModuleRuntime,
@@ -189,7 +190,7 @@ include!("tests/chunks/oc_version_flag_renders_report.rs");
 include!("tests/chunks/parse_auth_user_list_trims_and_deduplicates_case_insensitively.rs");
 include!("tests/chunks/parse_boolean_directive_interprets_common_forms.rs");
 include!("tests/chunks/parse_config_modules_detects_recursive_include.rs");
-include!("tests/chunks/parse_max_connections_directive_handles_zero_and_positive.rs");
+include!("tests/chunks/parse_max_connections_directive_handles_zero_positive_and_negative.rs");
 include!("tests/chunks/parse_numeric_identifier_rejects_blank_or_invalid_input.rs");
 include!("tests/chunks/parse_refuse_option_list_normalises_and_deduplicates.rs");
 include!("tests/chunks/parse_timeout_seconds_supports_zero_and_non_zero_values.rs");

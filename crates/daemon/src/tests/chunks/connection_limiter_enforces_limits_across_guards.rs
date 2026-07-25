@@ -13,23 +13,23 @@ fn connection_limiter_enforces_limits_across_guards() {
     let limit = NonZeroU32::new(2).expect("non-zero");
 
     let first = limiter
-        .acquire("docs", limit)
+        .acquire("docs", MaxConnections::Limited(limit))
         .expect("first connection allowed");
     let second = limiter
-        .acquire("docs", limit)
+        .acquire("docs", MaxConnections::Limited(limit))
         .expect("second connection allowed");
     assert!(matches!(
-        limiter.acquire("docs", limit),
-        Err(ModuleConnectionError::Limit(l)) if l == limit
+        limiter.acquire("docs", MaxConnections::Limited(limit)),
+        Err(ModuleConnectionError::Limit(l)) if l == MaxConnections::Limited(limit).display_value()
     ));
 
     drop(second);
     let third = limiter
-        .acquire("docs", limit)
+        .acquire("docs", MaxConnections::Limited(limit))
         .expect("slot released after guard drop");
 
     drop(third);
     drop(first);
-    assert!(limiter.acquire("docs", limit).is_ok());
+    assert!(limiter.acquire("docs", MaxConnections::Limited(limit)).is_ok());
 }
 

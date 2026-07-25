@@ -20,12 +20,12 @@ fn connection_limiter_reclaims_slot_on_close_without_decrement() {
     let limiter = Arc::new(ConnectionLimiter::open(lock_path.clone()).expect("open lock file"));
     let limit = NonZeroU32::new(1).expect("non-zero");
 
-    let held = limiter.acquire("docs", limit).expect("first slot claimed");
+    let held = limiter.acquire("docs", MaxConnections::Limited(limit)).expect("first slot claimed");
 
     // At capacity: the sole slot's byte range is locked.
     assert!(matches!(
-        limiter.acquire("docs", limit),
-        Err(ModuleConnectionError::Limit(l)) if l == limit
+        limiter.acquire("docs", MaxConnections::Limited(limit)),
+        Err(ModuleConnectionError::Limit(l)) if l == MaxConnections::Limited(limit).display_value()
     ));
 
     // No count is persisted, so a crash here would leave nothing to inflate the
@@ -41,7 +41,7 @@ fn connection_limiter_reclaims_slot_on_close_without_decrement() {
     drop(held);
 
     limiter
-        .acquire("docs", limit)
+        .acquire("docs", MaxConnections::Limited(limit))
         .expect("slot reclaimed after descriptor closed");
 
     assert_eq!(

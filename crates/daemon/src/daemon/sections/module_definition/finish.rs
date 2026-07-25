@@ -173,7 +173,10 @@ impl ModuleDefinitionBuilder {
             listable: self.listable.or(defaults.listable).unwrap_or(true),
             use_chroot,
             use_chroot_explicit,
-            max_connections: self.max_connections.or(defaults.max_connections).unwrap_or(None),
+            max_connections: self
+                .max_connections
+                .or(defaults.max_connections)
+                .unwrap_or(MaxConnections::Unlimited),
             incoming_chmod: self
                 .incoming_chmod
                 .unwrap_or_else(|| default_incoming_chmod.map(str::to_string)),
