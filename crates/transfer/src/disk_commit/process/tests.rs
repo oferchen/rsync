@@ -348,11 +348,70 @@ fn make_backup_returns_destination_relative_notice() {
         .expect("notice produced when an existing file is backed up");
 
     let backup_path = file_path.with_extension("bin~");
-    assert!(backup_path.exists(), "backup file must exist after rename");
-    assert!(!file_path.exists(), "original file must be renamed away");
+    assert!(
+        backup_path.exists(),
+        "backup file must exist after the backup"
+    );
+    // upstream: backup.c:201-206 - the hard-link tier returns 2 and rsync.c:741
+    // leaves `fname` alone; the temp->destination rename replaces it afterwards.
+    assert!(
+        file_path.exists(),
+        "the hard-link tier must leave the original in place (upstream ok == 2)"
+    );
 
     assert_eq!(notice.original, PathBuf::from("payload.bin"));
     assert_eq!(notice.backup, PathBuf::from("payload.bin~"));
+}
+
+/// Verifies the network regular-file basis backup takes upstream's hard-link
+/// tier and emits `make_backup: HLINK`, not `RENAME`.
+///
+/// `finish_transfer` calls `make_backup(fname, False)` (rsync.c:739), so
+/// `link_or_rename` tries `do_link_at` before `do_rename_at` and reports HLINK
+/// (backup.c:201-202). Inode identity cannot discriminate the two mechanisms -
+/// a same-filesystem rename and a hard link both leave the pre-image inode at
+/// the backup name - so the trace text is the assertion.
+#[test]
+fn make_backup_regular_file_traces_hlink() {
+    use logging::{DebugFlag, DiagnosticEvent, VerbosityConfig, drain_events, init};
+    use std::ffi::OsString;
+
+    let mut verbosity = VerbosityConfig::default();
+    verbosity.debug.backup = 1;
+    init(verbosity);
+    let _ = drain_events();
+
+    let dir = tempfile::tempdir().unwrap();
+    let file_path = dir.path().join("payload.bin");
+    fs::write(&file_path, b"pre-image").unwrap();
+
+    let config = BackupConfig {
+        dest_dir: dir.path().to_path_buf(),
+        backup_dir: None,
+        suffix: OsString::from("~"),
+    };
+    make_backup(&file_path, &config, &DiskCommitConfig::default())
+        .expect("make_backup succeeds")
+        .expect("notice produced when an existing file is backed up");
+
+    let traces: Vec<String> = drain_events()
+        .into_iter()
+        .filter_map(|event| match event {
+            DiagnosticEvent::Debug {
+                flag: DebugFlag::Backup,
+                message,
+                ..
+            } => Some(message),
+            _ => None,
+        })
+        .collect();
+    assert!(
+        traces.contains(&format!(
+            "make_backup: HLINK {} successful.",
+            file_path.display()
+        )),
+        "regular-file basis backup must trace HLINK, got {traces:?}"
+    );
 }
 
 /// Verifies `make_backup` succeeds when the backup path is on a different

@@ -11,7 +11,8 @@ use std::io;
 use std::path::{Path, PathBuf};
 
 use engine::{
-    CleanupManager, compute_backup_path, trace_make_backup_copy, trace_make_backup_rename,
+    CleanupManager, compute_backup_path, trace_make_backup_copy, trace_make_backup_hlink,
+    trace_make_backup_rename,
 };
 
 use crate::pipeline::messages::{BackupNotice, BeginMessage};
@@ -594,6 +595,61 @@ fn backup_rename_sandboxed(
     backup_rename_or_copy(old_path, new_path)
 }
 
+/// Issues the backup hard link, dirfd-anchoring the backup endpoint against the
+/// receiver's destination sandbox when the backup name is a single component
+/// under `dest_dir` (SEC-1.h shape, same as the hardlink-follower create).
+///
+/// Under `cfg(test)` the [`ForceExdev`] guard makes this report a cross-device
+/// error, matching a real `--backup-dir` on another mount where `link(2)` fails
+/// with `EXDEV` before `rename(2)` does.
+fn backup_hardlink_syscall(
+    config: &DiskCommitConfig,
+    old_path: &Path,
+    new_path: &Path,
+) -> io::Result<()> {
+    #[cfg(test)]
+    if force_exdev_active() {
+        return Err(simulated_cross_device_error());
+    }
+    #[cfg(unix)]
+    if let (Some(sandbox), Some(dest_dir)) = (config.sandbox.as_ref(), config.dest_dir.as_deref()) {
+        return fast_io::linkat_via_sandbox_or_fallback(
+            Some(sandbox.as_ref()),
+            old_path,
+            dest_dir,
+            new_path.strip_prefix(dest_dir).unwrap_or(new_path),
+            new_path,
+        );
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = config;
+    }
+    fast_io::hard_link(old_path, new_path)
+}
+
+/// Upstream's hard-link tier of `link_or_rename()` with `prefer_rename = 0`.
+///
+/// Returns `true` when the pre-image was duplicated into the backup area as a
+/// second link - upstream's `ret == 2`, which leaves the original in place for
+/// the temp->destination rename to replace. Any failure returns `false` so the
+/// caller falls through to the unchanged rename/copy tier.
+///
+/// upstream: `backup.c:200-207` - `do_link_at` success traces HLINK and returns
+/// 2; a link failure on a regular file falls through to `do_rename_at`.
+/// upstream: `backup.c:246-255` `make_backup()` - an `EEXIST`/`EISDIR` collision
+/// deletes the stale backup entry and retries `link_or_rename` once.
+fn backup_hardlink_tier(config: &DiskCommitConfig, old_path: &Path, new_path: &Path) -> bool {
+    match backup_hardlink_syscall(config, old_path, new_path) {
+        Ok(()) => true,
+        Err(e) if e.kind() == io::ErrorKind::AlreadyExists => {
+            fs::remove_file(new_path).is_ok()
+                && backup_hardlink_syscall(config, old_path, new_path).is_ok()
+        }
+        Err(_) => false,
+    }
+}
+
 /// SEC-1.j: create the `--backup-dir` parent, dirfd-anchoring the leaf `mkdir`
 /// against the receiver's destination sandbox when possible.
 ///
@@ -633,10 +689,14 @@ fn create_dir_all_sandboxed(_config: &DiskCommitConfig, parent: &Path) -> io::Re
 
 /// Creates a backup of the destination file before overwriting.
 ///
-/// Mirrors upstream `backup.c:make_backup()` which renames the existing file
-/// to the backup path. Parent directories are created if needed when using
-/// `--backup-dir`. On success, emits the upstream `--debug=BACKUP` RENAME
-/// notice (`backup.c:216-217`) and returns a [`BackupNotice`] carrying the
+/// Mirrors upstream `backup.c:make_backup()`, called from `rsync.c:739`
+/// `finish_transfer()` as `make_backup(fname, False)`: `link_or_rename()` tries
+/// `do_link_at` first (HLINK, upstream `ret == 2`, the original stays in place
+/// for the temp->destination rename to replace) and only falls back to
+/// `do_rename_at` (RENAME) or the cross-device copy tier (COPY) when the link
+/// cannot be made. Parent directories are created if needed when using
+/// `--backup-dir`. On success, emits the matching `--debug=BACKUP` mechanism
+/// notice (`backup.c:201-202`/`:216-217`/`:284`) and returns a [`BackupNotice`] carrying the
 /// destination-relative paths so the main thread can emit upstream's
 /// `INFO_GTE(BACKUP, 1)` line (`backup.c:352`). The disk thread cannot emit
 /// the info line directly because its thread-local [`logging::VerbosityConfig`]
@@ -664,6 +724,21 @@ pub(super) fn make_backup(
         }
     }
 
+    // upstream: backup.c:191-207 - `prefer_rename` is False here (rsync.c:739),
+    // so `do_link_at` runs first. The tier is limited to a regular pre-image:
+    // upstream gates symlinks and specials on CAN_HARDLINK_SYMLINK /
+    // CAN_HARDLINK_SPECIAL (backup.c:192-199), and this commit path only ever
+    // replaces a regular destination anyway.
+    let is_regular = fs::symlink_metadata(file_path).is_ok_and(|m| m.is_file());
+    if is_regular && backup_hardlink_tier(config, file_path, &backup_path) {
+        // upstream: backup.c:201-202 - DEBUG_GTE(BACKUP, 1) HLINK success. The
+        // original is deliberately left in place (upstream returns 2 and
+        // finish_transfer does not redirect fnamecmp); the temp->destination
+        // rename that follows replaces it.
+        trace_make_backup_hlink(&file_path.display().to_string());
+        return Ok(Some(backup_notice(backup_config, file_path, &backup_path)));
+    }
+
     let was_copy = backup_rename_sandboxed(config, file_path, &backup_path)?;
     if was_copy {
         // upstream: backup.c:284 - DEBUG_GTE(BACKUP, 1) "make_backup: COPY %s
@@ -674,23 +749,31 @@ pub(super) fn make_backup(
         // branch of link_or_rename.
         trace_make_backup_rename(&file_path.display().to_string());
     }
-    // upstream: backup.c:352 - INFO_GTE(BACKUP, 1) fires on success label for
-    // every successful backup. Paths are displayed relative to the destination
-    // root to match upstream test assertions (testsuite/backup.test). The
-    // actual `info_log!` emission happens on the main thread; see
-    // `crate::pipeline::receiver::emit_backup_notice`.
-    let file_rel = file_path
-        .strip_prefix(&backup_config.dest_dir)
-        .unwrap_or(file_path)
-        .to_path_buf();
-    let backup_rel = backup_path
-        .strip_prefix(&backup_config.dest_dir)
-        .unwrap_or(&backup_path)
-        .to_path_buf();
-    Ok(Some(BackupNotice {
-        original: file_rel,
-        backup: backup_rel,
-    }))
+    Ok(Some(backup_notice(backup_config, file_path, &backup_path)))
+}
+
+/// Builds the destination-relative [`BackupNotice`] for a completed backup.
+///
+/// upstream: `backup.c:352` - INFO_GTE(BACKUP, 1) fires on the `success:` label
+/// for every successful backup, whichever mechanism ran. Paths are displayed
+/// relative to the destination root to match upstream test assertions
+/// (`testsuite/backup.test`). The actual `info_log!` emission happens on the
+/// main thread; see `crate::pipeline::receiver::emit_backup_notice`.
+fn backup_notice(
+    backup_config: &BackupConfig,
+    file_path: &Path,
+    backup_path: &Path,
+) -> BackupNotice {
+    BackupNotice {
+        original: file_path
+            .strip_prefix(&backup_config.dest_dir)
+            .unwrap_or(file_path)
+            .to_path_buf(),
+        backup: backup_path
+            .strip_prefix(&backup_config.dest_dir)
+            .unwrap_or(backup_path)
+            .to_path_buf(),
+    }
 }
 
 /// Copies the destination's pre-transfer contents aside to the backup path,
