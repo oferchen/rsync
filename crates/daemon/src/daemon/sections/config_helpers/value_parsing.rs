@@ -386,10 +386,12 @@ pub(crate) fn parse_timeout_seconds(value: &str) -> Option<Option<NonZeroU64>> {
 ///
 /// upstream: `max connections` is a P_INTEGER directive (daemon-parm.h:292),
 /// so the value is read with `atoi()` leniency: a leading integer is parsed and
-/// trailing non-digits are tolerated. A non-positive result (including an empty
-/// or non-numeric value, which `atoi` maps to `0`) means unlimited, yielding
-/// `Some(None)`; a positive value yields `Some(Some(n))`. Never returns `None`.
-pub(crate) fn parse_max_connections_directive(value: &str) -> Option<Option<NonZeroU32>> {
-    let limit = parse_atoi(value).max(0) as u32;
-    Some(NonZeroU32::new(limit))
+/// trailing non-digits are tolerated. A zero result (including an empty or
+/// non-numeric value, which `atoi` maps to `0`) means unlimited and a positive
+/// result is a slot count. A negative value disables the module - upstream's
+/// slot scan in connection.c:claim_connection never runs, so every connection
+/// is refused - so the sign is preserved rather than clamped. Never returns
+/// `None`.
+pub(crate) fn parse_max_connections_directive(value: &str) -> Option<MaxConnections> {
+    Some(MaxConnections::from_configured(parse_atoi(value)))
 }

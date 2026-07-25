@@ -331,7 +331,7 @@ impl ModuleDefinitionBuilder {
 
     fn set_max_connections(
         &mut self,
-        max: Option<NonZeroU32>,
+        max: MaxConnections,
         config_path: &Path,
         line: usize,
     ) -> Result<(), DaemonError> {

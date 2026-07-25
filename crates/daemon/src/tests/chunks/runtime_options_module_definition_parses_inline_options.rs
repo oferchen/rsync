@@ -41,6 +41,9 @@ fn runtime_options_module_definition_parses_inline_options() {
     assert_eq!(module.uid(), Some(1000));
     assert_eq!(module.gid(), Some(2000));
     assert_eq!(module.timeout().map(NonZeroU64::get), Some(600));
-    assert_eq!(module.max_connections().map(NonZeroU32::get), Some(5));
+    assert_eq!(
+        module.max_connections(),
+        MaxConnections::Limited(NonZeroU32::new(5).expect("non-zero"))
+    );
 }
 

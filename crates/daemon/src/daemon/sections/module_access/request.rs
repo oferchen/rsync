@@ -147,13 +147,16 @@ fn send_daemon_ok(
 
 /// Handles max connections exceeded for a module.
 ///
-/// Sends an error message indicating the connection limit was reached and logs the event.
+/// Sends an error message indicating the connection limit was reached and logs
+/// the event. `limit` is the configured number rendered verbatim, so a module
+/// disabled with a negative `max connections` keeps its minus sign, matching
+/// upstream's `%d` in clientserver.c:746-757.
 fn handle_max_connections_exceeded(
     ctx: &mut ModuleRequestContext<'_>,
     module: &ModuleRuntime,
-    limit: NonZeroU32,
+    limit: i32,
 ) -> io::Result<()> {
-    let payload = MODULE_MAX_CONNECTIONS_PAYLOAD.replace("{limit}", &limit.get().to_string());
+    let payload = MODULE_MAX_CONNECTIONS_PAYLOAD.replace("{limit}", &limit.to_string());
     send_error(ctx.reader.get_mut(), ctx.limiter, &payload)?;
     if let Some(log) = ctx.log_sink {
         let current = module

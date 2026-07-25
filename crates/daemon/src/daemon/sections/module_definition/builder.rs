@@ -29,7 +29,7 @@ struct ModuleDefinitionBuilder {
     timeout: Option<Option<NonZeroU64>>,
     listable: Option<bool>,
     use_chroot: Option<bool>,
-    max_connections: Option<Option<NonZeroU32>>,
+    max_connections: Option<MaxConnections>,
     incoming_chmod: Option<Option<String>>,
     outgoing_chmod: Option<Option<String>>,
     fake_super: Option<bool>,

@@ -128,7 +128,7 @@ fn parse_module_definition(
         listable: true,
         use_chroot: true,
         use_chroot_explicit: false,
-        max_connections: None,
+        max_connections: MaxConnections::Unlimited,
         incoming_chmod: None,
         outgoing_chmod: None,
         fake_super: false,

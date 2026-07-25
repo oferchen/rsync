@@ -2,6 +2,7 @@
 //!
 //! This module defines the core types for rsync daemon module handling:
 //! - [`ModuleDefinition`] - static configuration for a single module
+//! - [`MaxConnections`] - tri-state `max connections` setting
 //! - [`ModuleRuntime`] - live state pairing configuration with connection tracking
 //! - [`ConnectionLimiter`] - cross-process connection limit enforcement via lock files
 //! - Hostname resolution utilities for host-based access control
@@ -14,6 +15,7 @@ mod auth;
 mod connection_limiter;
 mod definition;
 mod hostname;
+mod max_connections;
 mod runtime;
 #[cfg(test)]
 mod test_support;
@@ -25,6 +27,7 @@ pub(crate) use connection_limiter::{ConnectionLimiter, ConnectionLockGuard};
 pub(crate) use definition::{GidSetting, ModuleDefinition};
 pub(crate) use hostname::module_peer_hostname;
 pub(in crate::daemon) use hostname::{forward_resolve, netgroup_contains, resolve_peer_hostname};
+pub(crate) use max_connections::MaxConnections;
 pub(in crate::daemon) use runtime::build_module_runtimes;
 pub(crate) use runtime::{ModuleConnectionError, ModuleRuntime};
 

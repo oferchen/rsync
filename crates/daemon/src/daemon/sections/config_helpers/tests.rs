@@ -353,29 +353,60 @@ mod config_helpers_tests {
 
     #[test]
     fn parse_max_connections_directive_zero() {
-        assert_eq!(parse_max_connections_directive("0"), Some(None));
+        // upstream: connection.c:claim_connection:27 returns success for a zero
+        // limit before the lock file is opened, so zero means unlimited.
+        assert_eq!(
+            parse_max_connections_directive("0"),
+            Some(MaxConnections::Unlimited)
+        );
     }
 
     #[test]
     fn parse_max_connections_directive_positive() {
-        let result = parse_max_connections_directive("10").unwrap();
-        assert!(result.is_some());
-        assert_eq!(result.unwrap().get(), 10);
+        // upstream: connection.c:33 scans `[0, max_connections)`, so a positive
+        // value is a slot count.
+        assert_eq!(
+            parse_max_connections_directive("10"),
+            Some(MaxConnections::Limited(NonZeroU32::new(10).expect("non-zero")))
+        );
     }
 
     #[test]
     fn parse_max_connections_directive_empty_is_unlimited() {
         // upstream: `max connections` is P_INTEGER, so atoi("") == 0 (unlimited).
-        assert_eq!(parse_max_connections_directive(""), Some(None));
+        assert_eq!(
+            parse_max_connections_directive(""),
+            Some(MaxConnections::Unlimited)
+        );
+    }
+
+    #[test]
+    fn parse_max_connections_directive_negative_disables_module() {
+        // upstream: a negative limit never satisfies `i < max_connections`
+        // (connection.c:33), so the slot scan is empty and every connection is
+        // refused - rsyncd.conf.5: "A negative value disables the module".
+        // Clamping the sign away would silently serve the module unlimited.
+        assert_eq!(
+            parse_max_connections_directive("-1"),
+            Some(MaxConnections::Disabled(-1))
+        );
     }
 
     #[test]
     fn parse_max_connections_directive_atoi_leniency() {
-        // upstream: atoi("abc") == 0 (unlimited); atoi("10x") == 10.
-        assert_eq!(parse_max_connections_directive("abc"), Some(None));
+        // upstream: atoi("abc") == 0 (unlimited); atoi("10x") == 10; the same
+        // leniency applies to the disabling form, atoi("-7 trailing") == -7.
         assert_eq!(
-            parse_max_connections_directive("10x").unwrap().unwrap().get(),
-            10
+            parse_max_connections_directive("abc"),
+            Some(MaxConnections::Unlimited)
+        );
+        assert_eq!(
+            parse_max_connections_directive("10x"),
+            Some(MaxConnections::Limited(NonZeroU32::new(10).expect("non-zero")))
+        );
+        assert_eq!(
+            parse_max_connections_directive("-7 trailing"),
+            Some(MaxConnections::Disabled(-7))
         );
     }
 

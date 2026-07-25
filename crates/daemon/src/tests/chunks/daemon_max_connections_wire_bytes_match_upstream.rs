@@ -32,7 +32,12 @@ fn daemon_max_connections_wire_bytes_match_upstream() {
     // upstream's `io_printf` format and is appended by both call sites:
     //   - per-module: `send_error` writes `payload` then `\n`.
     //   - global cap: `format!("... ({limit}) ... later\n")`.
-    let cases: &[(u32, &[u8])] = &[
+    //
+    // The limit is the configured integer, which loadparm.c:431-433 reads with
+    // `atoi()` and clientserver.c:752 prints with `%d`, so the domain is signed
+    // and a module disabled by a negative value keeps its minus sign on the
+    // wire.
+    let cases: &[(i32, &[u8])] = &[
         (
             1,
             b"@ERROR: max connections (1) reached -- try again later\n",
@@ -46,8 +51,16 @@ fn daemon_max_connections_wire_bytes_match_upstream() {
             b"@ERROR: max connections (42) reached -- try again later\n",
         ),
         (
-            4294967295,
-            b"@ERROR: max connections (4294967295) reached -- try again later\n",
+            -1,
+            b"@ERROR: max connections (-1) reached -- try again later\n",
+        ),
+        (
+            -7,
+            b"@ERROR: max connections (-7) reached -- try again later\n",
+        ),
+        (
+            2147483647,
+            b"@ERROR: max connections (2147483647) reached -- try again later\n",
         ),
     ];
 

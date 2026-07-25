@@ -284,10 +284,75 @@ fn module_definition_bandwidth_accessors() {
 #[test]
 fn module_definition_max_connections() {
     let def = ModuleDefinition {
-        max_connections: NonZeroU32::new(10),
+        max_connections: MaxConnections::Limited(NonZeroU32::new(10).expect("non-zero")),
         ..Default::default()
     };
-    assert_eq!(def.max_connections(), NonZeroU32::new(10));
+    assert_eq!(
+        def.max_connections(),
+        MaxConnections::Limited(NonZeroU32::new(10).expect("non-zero"))
+    );
+}
+
+#[test]
+fn module_definition_max_connections_defaults_to_unlimited() {
+    // upstream: loadparm.c gives `max connections` a default of 0, and
+    // connection.c:claim_connection:27 returns success for 0 without taking a
+    // lock, so a module that never sets the directive is unlimited.
+    assert_eq!(
+        ModuleDefinition::default().max_connections(),
+        MaxConnections::Unlimited
+    );
+}
+
+#[test]
+fn negative_max_connections_refuses_every_connection() {
+    // upstream: connection.c:33 `for (i = 0; i < max_connections; i++)` cannot
+    // run for a negative limit, so claim_connection falls through to
+    // `errno = 0; return 0` and clientserver.c:746-757 refuses with the
+    // configured number echoed verbatim. rsyncd.conf.5: "A negative value
+    // disables the module". Clamping the sign to zero would invert this into
+    // "serve the module with no limit at all", so the refusal - and the sign
+    // carried into the diagnostic - is the behaviour under test.
+    let def = ModuleDefinition {
+        name: "disabled".to_owned(),
+        max_connections: MaxConnections::Disabled(-1),
+        ..Default::default()
+    };
+    let runtime: ModuleRuntime = def.into();
+
+    match runtime.try_acquire_connection() {
+        Err(ModuleConnectionError::Limit(limit)) => assert_eq!(limit, -1),
+        _ => panic!("a disabled module must refuse the first connection"),
+    }
+
+    // The refusal never enters upstream's slot loop, so no slot is consumed.
+    assert_eq!(runtime.active_connections.load(Ordering::Acquire), 0);
+}
+
+#[test]
+fn negative_max_connections_still_opens_the_lock_file_first() {
+    // upstream: connection.c:31 opens the lock file for every non-zero limit
+    // and only reaches the "max connections (%d) reached" fall-through at
+    // connection.c:44-46 afterwards. The two failures are distinguishable on
+    // the wire - an unopenable lock file reports "failed to open lock file" -
+    // so a disabled module must not short-circuit ahead of the open.
+    let dir = tempfile::tempdir().expect("tempdir");
+    let lock_path = dir.path().join("module.lock");
+    let limiter =
+        std::sync::Arc::new(ConnectionLimiter::open(lock_path.clone()).expect("lock file"));
+    std::fs::remove_file(&lock_path).expect("remove lock file");
+
+    let def = ModuleDefinition {
+        name: "disabled".to_owned(),
+        max_connections: MaxConnections::Disabled(-1),
+        ..Default::default()
+    };
+    let runtime = ModuleRuntime::new(def, Some(limiter));
+
+    match runtime.try_acquire_connection() {
+        Err(ModuleConnectionError::Io(_)) => (),
+        _ => panic!("a missing lock file must be reported as an I/O failure"),
+    }
 }
 
 #[test]
@@ -343,8 +408,7 @@ fn module_connection_error_from_io() {
 
 #[test]
 fn module_connection_error_debug() {
-    let limit = NonZeroU32::new(5).unwrap();
-    let err = ModuleConnectionError::Limit(limit);
+    let err = ModuleConnectionError::Limit(5);
     let debug = format!("{err:?}");
     assert!(debug.contains("Limit"));
 }
@@ -373,7 +437,7 @@ fn aborted_transfer_releases_connection_slot() {
     let limit = NonZeroU32::new(4).unwrap();
     let def = ModuleDefinition {
         name: "abort_release".to_owned(),
-        max_connections: Some(limit),
+        max_connections: MaxConnections::Limited(limit),
         ..Default::default()
     };
     let runtime: ModuleRuntime = def.into();
