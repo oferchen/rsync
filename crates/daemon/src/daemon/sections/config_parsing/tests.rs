@@ -739,18 +739,27 @@ mod config_parsing_tests {
     }
 
 
+    /// upstream: loadparm.c:379-470 do_parameter() assigns the parameter slot
+    /// unconditionally, so a repeated global directive keeps its last value
+    /// instead of aborting the load.
     #[test]
-    fn parse_duplicate_pid_file_errors() {
+    fn parse_duplicate_pid_file_last_wins() {
         let file = write_config("pid file = /var/run/a.pid\npid file = /var/run/b.pid\n");
-        let err = parse_config_modules(file.path()).expect_err("should fail");
-        assert!(err.to_string().contains("duplicate"));
+        let result = parse_config_modules(file.path()).expect("parse succeeds");
+        let (pid_file, _) = result.pid_file.expect("should have pid file");
+        // Last directive wins: the resolved path must point at b.pid, not a.pid.
+        // Assert the file name rather than the full path so the check holds on
+        // Windows, where a Unix-style "/var/run/..." is config-relative (drive
+        // prefixed) rather than absolute.
+        assert_eq!(pid_file.file_name().and_then(|n| n.to_str()), Some("b.pid"));
     }
 
     #[test]
-    fn parse_duplicate_reverse_lookup_errors() {
+    fn parse_duplicate_reverse_lookup_last_wins() {
         let file = write_config("reverse lookup = yes\nreverse lookup = no\n");
-        let err = parse_config_modules(file.path()).expect_err("should fail");
-        assert!(err.to_string().contains("duplicate"));
+        let result = parse_config_modules(file.path()).expect("parse succeeds");
+        let (reverse_lookup, _) = result.reverse_lookup.expect("should have reverse lookup");
+        assert!(!reverse_lookup);
     }
 
 
@@ -834,12 +843,12 @@ mod config_parsing_tests {
     }
 
     #[test]
-    fn parse_module_munge_symlinks_duplicate() {
+    fn parse_module_munge_symlinks_duplicate_last_wins() {
         let file = write_config(
             "[mod]\npath = /tmp\nmunge symlinks = yes\nmunge symlinks = no\n",
         );
-        let err = parse_config_modules(file.path()).expect_err("should fail");
-        assert!(err.to_string().contains("duplicate"));
+        let result = parse_config_modules(file.path()).expect("parse succeeds");
+        assert_eq!(result.modules[0].munge_symlinks, Some(false));
     }
 
 
@@ -1153,12 +1162,12 @@ mod config_parsing_tests {
     }
 
     #[test]
-    fn parse_module_strict_modes_duplicate() {
+    fn parse_module_strict_modes_duplicate_last_wins() {
         let file = write_config(
             "[mod]\npath = /tmp\nstrict modes = yes\nstrict modes = no\n",
         );
-        let err = parse_config_modules(file.path()).expect_err("should fail");
-        assert!(err.to_string().contains("duplicate"));
+        let result = parse_config_modules(file.path()).expect("parse succeeds");
+        assert!(!result.modules[0].strict_modes);
     }
 
 
@@ -1214,12 +1223,12 @@ mod config_parsing_tests {
     }
 
     #[test]
-    fn parse_module_open_noatime_duplicate() {
+    fn parse_module_open_noatime_duplicate_last_wins() {
         let file = write_config(
             "[mod]\npath = /tmp\nopen noatime = yes\nopen noatime = no\n",
         );
-        let err = parse_config_modules(file.path()).expect_err("should fail");
-        assert!(err.to_string().contains("duplicate"));
+        let result = parse_config_modules(file.path()).expect("parse succeeds");
+        assert!(!result.modules[0].open_noatime);
     }
 
     #[test]
@@ -1614,7 +1623,7 @@ mod config_parsing_tests {
     }
 
     #[test]
-    fn duplicate_module_reverse_lookup_errors() {
+    fn duplicate_module_reverse_lookup_last_wins() {
         let dir = TempDir::new().expect("create temp dir");
         let path = dir.path().join("data");
         fs::create_dir(&path).expect("create dir");
@@ -1624,8 +1633,8 @@ mod config_parsing_tests {
             path.display()
         );
         let file = write_config(&config);
-        let err = parse_config_modules(file.path()).expect_err("duplicate rejected");
-        assert!(err.to_string().contains("reverse lookup"));
+        let result = parse_config_modules(file.path()).expect("parse succeeds");
+        assert!(!result.modules[0].reverse_lookup);
     }
 
     // upstream: lock file is P_LOCAL (daemon-parm.h:46). A module value overrides
@@ -1670,18 +1679,23 @@ mod config_parsing_tests {
     }
 
     #[test]
-    fn duplicate_module_lock_file_errors() {
+    fn duplicate_module_lock_file_last_wins() {
         let dir = TempDir::new().expect("create temp dir");
         let path = dir.path().join("data");
         fs::create_dir(&path).expect("create dir");
 
         let config = format!(
-            "[mod]\npath = {}\nlock file = /tmp/a.lock\nlock file = /tmp/b.lock\n",
-            path.display()
+            "[mod]\npath = {}\nlock file = {}\nlock file = {}\n",
+            path.display(),
+            abs("/tmp/a.lock"),
+            abs("/tmp/b.lock")
         );
         let file = write_config(&config);
-        let err = parse_config_modules(file.path()).expect_err("duplicate rejected");
-        assert!(err.to_string().contains("lock file"));
+        let result = parse_config_modules(file.path()).expect("parse succeeds");
+        assert_eq!(
+            result.modules[0].lock_file,
+            Some(PathBuf::from(abs("/tmp/b.lock")))
+        );
     }
 
     #[test]
@@ -1959,33 +1973,43 @@ mod config_parsing_tests {
     }
 
     #[test]
-    fn exclude_from_duplicate_rejected() {
+    fn exclude_from_duplicate_last_wins() {
         let dir = TempDir::new().expect("create temp dir");
         let module_path = dir.path().join("data");
         fs::create_dir(&module_path).expect("create dir");
 
         let config = format!(
-            "[mod]\npath = {}\nexclude from = /a.txt\nexclude from = /b.txt\n",
-            module_path.display()
+            "[mod]\npath = {}\nexclude from = {}\nexclude from = {}\n",
+            module_path.display(),
+            abs("/a.txt"),
+            abs("/b.txt")
         );
         let file = write_config(&config);
-        let err = parse_config_modules(file.path()).expect_err("should fail on duplicate");
-        assert!(err.to_string().contains("duplicate"));
+        let result = parse_config_modules(file.path()).expect("parse succeeds");
+        assert_eq!(
+            result.modules[0].exclude_from,
+            Some(PathBuf::from(abs("/b.txt")))
+        );
     }
 
     #[test]
-    fn include_from_duplicate_rejected() {
+    fn include_from_duplicate_last_wins() {
         let dir = TempDir::new().expect("create temp dir");
         let module_path = dir.path().join("data");
         fs::create_dir(&module_path).expect("create dir");
 
         let config = format!(
-            "[mod]\npath = {}\ninclude from = /a.txt\ninclude from = /b.txt\n",
-            module_path.display()
+            "[mod]\npath = {}\ninclude from = {}\ninclude from = {}\n",
+            module_path.display(),
+            abs("/a.txt"),
+            abs("/b.txt")
         );
         let file = write_config(&config);
-        let err = parse_config_modules(file.path()).expect_err("should fail on duplicate");
-        assert!(err.to_string().contains("duplicate"));
+        let result = parse_config_modules(file.path()).expect("parse succeeds");
+        assert_eq!(
+            result.modules[0].include_from,
+            Some(PathBuf::from(abs("/b.txt")))
+        );
     }
 
     #[test]
@@ -2053,13 +2077,14 @@ mod config_parsing_tests {
     }
 
     #[test]
-    fn parse_syslog_facility_duplicate_different_value_rejected() {
-        let file = write_config(
-            "syslog facility = daemon\nsyslog facility = local0\n[mod]\npath = /tmp\n",
-        );
-        let err = parse_config_modules(file.path()).expect_err("should fail on duplicate");
-        assert!(err.to_string().contains("duplicate"));
-        assert!(err.to_string().contains("syslog facility"));
+    fn parse_syslog_facility_duplicate_different_value_last_wins() {
+        let file = write_config(&format!(
+            "syslog facility = daemon\nsyslog facility = local0\n[mod]\npath = {}\n",
+            abs("/tmp")
+        ));
+        let result = parse_config_modules(file.path()).expect("parse succeeds");
+        let (facility, _) = result.syslog_facility.expect("should have facility");
+        assert_eq!(facility, "local0");
     }
 
     // upstream: `syslog facility` is P_LOCAL (loadparm.c). A value inside a
@@ -2186,7 +2211,7 @@ mod config_parsing_tests {
     }
 
     #[test]
-    fn parse_module_duplicate_syslog_facility_rejected() {
+    fn parse_module_duplicate_syslog_facility_last_wins() {
         let dir = TempDir::new().expect("create temp dir");
         let path = dir.path().join("data");
         fs::create_dir(&path).expect("create dir");
@@ -2196,8 +2221,8 @@ mod config_parsing_tests {
             path.display()
         );
         let file = write_config(&config);
-        let err = parse_config_modules(file.path()).expect_err("should fail on duplicate");
-        assert!(err.to_string().contains("syslog facility"));
+        let result = parse_config_modules(file.path()).expect("parse succeeds");
+        assert_eq!(result.modules[0].syslog_facility.as_deref(), Some("local3"));
     }
 
 
@@ -2238,12 +2263,14 @@ mod config_parsing_tests {
     }
 
     #[test]
-    fn parse_syslog_tag_duplicate_different_value_rejected() {
-        let file =
-            write_config("syslog tag = rsyncd\nsyslog tag = custom\n[mod]\npath = /tmp\n");
-        let err = parse_config_modules(file.path()).expect_err("should fail on duplicate");
-        assert!(err.to_string().contains("duplicate"));
-        assert!(err.to_string().contains("syslog tag"));
+    fn parse_syslog_tag_duplicate_different_value_last_wins() {
+        let file = write_config(&format!(
+            "syslog tag = rsyncd\nsyslog tag = custom\n[mod]\npath = {}\n",
+            abs("/tmp")
+        ));
+        let result = parse_config_modules(file.path()).expect("parse succeeds");
+        let (tag, _) = result.syslog_tag.expect("should have tag");
+        assert_eq!(tag, "custom");
     }
 
     #[test]
@@ -2333,11 +2360,11 @@ mod config_parsing_tests {
     }
 
     #[test]
-    fn parse_address_duplicate_different_value() {
+    fn parse_address_duplicate_different_value_last_wins() {
         let file = write_config("address = 10.0.0.1\naddress = 10.0.0.2\n");
-        let err = parse_config_modules(file.path()).unwrap_err();
-        let msg = err.to_string();
-        assert!(msg.contains("duplicate 'address' directive"), "{msg}");
+        let result = parse_config_modules(file.path()).expect("parse succeeds");
+        let (addr, _) = result.bind_address.expect("should have bind_address");
+        assert_eq!(addr, IpAddr::V4(Ipv4Addr::new(10, 0, 0, 2)));
     }
 
 
@@ -2378,12 +2405,12 @@ mod config_parsing_tests {
     }
 
     #[test]
-    fn parse_socket_options_duplicate_different_value_rejected() {
+    fn parse_socket_options_duplicate_different_value_last_wins() {
         let file =
             write_config("socket options = SO_KEEPALIVE\nsocket options = TCP_NODELAY\n");
-        let err = parse_config_modules(file.path()).unwrap_err();
-        let msg = err.to_string();
-        assert!(msg.contains("duplicate 'socket options' directive"), "{msg}");
+        let result = parse_config_modules(file.path()).expect("parse succeeds");
+        let (opts, _) = result.socket_options.expect("should have socket_options");
+        assert_eq!(opts, "TCP_NODELAY");
     }
 
     #[test]
@@ -2668,7 +2695,7 @@ mod config_parsing_tests {
     }
 
     #[test]
-    fn parse_global_rsync_port_duplicate_conflict() {
+    fn parse_global_rsync_port_duplicate_last_wins() {
         let dir = TempDir::new().expect("create temp dir");
         let path = dir.path().join("data");
         fs::create_dir(&path).expect("create dir");
@@ -2678,8 +2705,8 @@ mod config_parsing_tests {
             path.display()
         );
         let file = write_config(&config);
-        let result = parse_config_modules(file.path());
-        assert!(result.is_err());
+        let result = parse_config_modules(file.path()).expect("parse succeeds");
+        assert_eq!(result.rsync_port.map(|(port, _)| port), Some(9999));
     }
 
     #[test]
@@ -2732,7 +2759,7 @@ mod config_parsing_tests {
     }
 
     #[test]
-    fn parse_global_acceptor_threads_duplicate_conflict() {
+    fn parse_global_acceptor_threads_duplicate_last_wins() {
         let dir = TempDir::new().expect("create temp dir");
         let path = dir.path().join("data");
         fs::create_dir(&path).expect("create dir");
@@ -2742,8 +2769,8 @@ mod config_parsing_tests {
             path.display()
         );
         let file = write_config(&config);
-        let result = parse_config_modules(file.path());
-        assert!(result.is_err());
+        let result = parse_config_modules(file.path()).expect("parse succeeds");
+        assert_eq!(result.acceptor_threads.map(|(n, _)| n.get()), Some(4));
     }
 
     #[test]
@@ -2793,18 +2820,23 @@ mod config_parsing_tests {
     }
 
     #[test]
-    fn parse_module_log_file_duplicate_rejected() {
+    fn parse_module_log_file_duplicate_last_wins() {
         let dir = TempDir::new().expect("create temp dir");
         let path = dir.path().join("data");
         fs::create_dir(&path).expect("create dir");
 
         let config = format!(
-            "[mod]\npath = {}\nlog file = /a.log\nlog file = /b.log\n",
-            path.display()
+            "[mod]\npath = {}\nlog file = {}\nlog file = {}\n",
+            path.display(),
+            abs("/a.log"),
+            abs("/b.log")
         );
         let file = write_config(&config);
-        let result = parse_config_modules(file.path());
-        assert!(result.is_err());
+        let result = parse_config_modules(file.path()).expect("parse succeeds");
+        assert_eq!(
+            result.modules[0].log_file,
+            Some(PathBuf::from(abs("/b.log")))
+        );
     }
 
     #[test]
@@ -3441,5 +3473,102 @@ mod config_parsing_tests {
                 "'{request}' must not resolve to 'my module' - lookup is exact",
             );
         }
+    }
+
+    /// A directive repeated inside one module section keeps its last value and
+    /// the config still loads.
+    ///
+    /// upstream: loadparm.c:379-470 do_parameter() has no seen-set and no
+    /// duplicate check - it resolves the parameter pointer from parm_table and
+    /// assigns unconditionally (`case P_STRING: string_set(parm_ptr,
+    /// parmvalue)`). rsync 3.4.4 starts and serves the second `path` for a
+    /// module that declares `path` twice, so rejecting the file would refuse a
+    /// configuration upstream accepts.
+    #[test]
+    fn repeated_module_directive_keeps_last_value() {
+        let dir = TempDir::new().expect("create temp dir");
+        let first = dir.path().join("first");
+        let second = dir.path().join("second");
+        fs::create_dir(&first).expect("create first");
+        fs::create_dir(&second).expect("create second");
+
+        let config = format!(
+            "[data]\npath = {}\npath = {}\n",
+            first.display(),
+            second.display()
+        );
+        let file = write_config(&config);
+        let result = parse_config_modules(file.path()).expect("parse succeeds");
+
+        assert_eq!(result.modules.len(), 1);
+        assert_eq!(result.modules[0].name, "data");
+        assert_eq!(result.modules[0].path, second);
+    }
+
+    /// A repeated `[section]` header re-opens the module the first header
+    /// created, so the two blocks merge into one module.
+    ///
+    /// upstream: loadparm.c:add_a_section:320-339 - "it might already exist":
+    /// `if (name) { i = getsectionbyname(name); if (i >= 0) return i; }` returns
+    /// the existing section index instead of adding a second one. rsync 3.4.4
+    /// starts and serves a single `data` module for a file that names `[data]`
+    /// twice.
+    #[test]
+    fn repeated_section_header_merges_into_one_module() {
+        let dir = TempDir::new().expect("create temp dir");
+        let data = dir.path().join("data");
+        let other = dir.path().join("other");
+        fs::create_dir(&data).expect("create data");
+        fs::create_dir(&other).expect("create other");
+
+        let config = format!(
+            "[data]\npath = {}\ncomment = first\n[other]\npath = {}\n[data]\ncomment = second\nread only = no\n",
+            data.display(),
+            other.display()
+        );
+        let file = write_config(&config);
+        let result = parse_config_modules(file.path()).expect("parse succeeds");
+
+        assert_eq!(result.modules.len(), 2);
+        let merged = result
+            .modules
+            .iter()
+            .find(|module| module.name == "data")
+            .expect("data module");
+        assert_eq!(merged.path, data);
+        assert_eq!(merged.comment.as_deref(), Some("second"));
+        assert!(!merged.read_only);
+        assert_eq!(
+            result.modules.iter().filter(|m| m.name == "data").count(),
+            1,
+            "the second header must re-open the module, not declare a new one"
+        );
+    }
+
+    /// A repeated global directive replaces the previous value rather than
+    /// accumulating alongside it.
+    ///
+    /// upstream: `motd_file` is a P_STRING slot written by
+    /// loadparm.c:452-454 `string_set(parm_ptr, parmvalue)`, so the daemon
+    /// greets with the last file only. rsync 3.4.4 prints "two" for a config
+    /// whose first `motd file` holds "one" and whose second holds "two";
+    /// printing "one two" would send bytes upstream never sends.
+    #[test]
+    fn repeated_global_motd_file_replaces_previous_value() {
+        let dir = TempDir::new().expect("create temp dir");
+        let first = dir.path().join("first.motd");
+        let second = dir.path().join("second.motd");
+        fs::write(&first, "one\n").expect("write first motd");
+        fs::write(&second, "two\n").expect("write second motd");
+
+        let config = format!(
+            "motd file = {}\nmotd file = {}\n",
+            first.display(),
+            second.display()
+        );
+        let file = write_config(&config);
+        let result = parse_config_modules(file.path()).expect("parse succeeds");
+
+        assert_eq!(result.motd_lines, vec!["two".to_owned()]);
     }
 }

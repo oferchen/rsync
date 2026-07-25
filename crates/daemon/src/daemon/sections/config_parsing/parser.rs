@@ -83,12 +83,13 @@ fn parse_config_modules_inner(
     // continues parsing against the shared `Vars` block, so modules declared
     // there inherit the parent's P_LOCAL defaults (use chroot, hosts allow,
     // secrets file, ...). Seed the child state from the parent so
-    // `finish_module_builder` resolves defaults the same way as upstream.
+    // `PendingModule` resolves defaults the same way as upstream.
     let mut state = match inherited {
         Some(parent) => GlobalParseState::inherited_from(parent),
         None => GlobalParseState::new(),
     };
-    let mut current: Option<ModuleDefinitionBuilder> = None;
+    let mut pending: Vec<PendingModule> = Vec::new();
+    let mut current: Option<usize> = None;
 
     let result = (|| -> Result<ParsedConfigModules, DaemonError> {
         for (line_number, logical_line) in logical_config_lines(&contents) {
@@ -126,9 +127,7 @@ fn parse_config_modules_inner(
                     ));
                 }
 
-                if let Some(builder) = current.take() {
-                    state.modules.push(finish_module_builder(builder, path, &state)?);
-                }
+                current = None;
 
                 // upstream: loadparm.c:do_section:497-510 - a section named
                 // "global" (whitespace/case-insensitive via strwiEQ) returns to
@@ -141,7 +140,16 @@ fn parse_config_modules_inner(
                     continue;
                 }
 
-                current = Some(ModuleDefinitionBuilder::new(name.to_owned(), line_number));
+                // upstream: loadparm.c:add_a_section:320-339 - "it might already
+                // exist": a repeated `[name]` header re-opens the section that
+                // header already created instead of adding a second one, so the
+                // directives that follow merge into the existing module.
+                current = Some(open_module_section(
+                    &mut pending,
+                    name,
+                    line_number,
+                    &state,
+                ));
                 continue;
             }
 
@@ -182,27 +190,31 @@ fn parse_config_modules_inner(
             // setter so the recursive include works after a `[name]` line.
             let is_amp_directive = key.starts_with('&');
             if !is_amp_directive
-                && let Some(builder) = current.as_mut()
+                && let Some(index) = current
             {
-                apply_module_directive(builder, &key, value, path, line_number, &canonical)?;
+                apply_module_directive(
+                    &mut pending[index].builder,
+                    &key,
+                    value,
+                    path,
+                    line_number,
+                    &canonical,
+                )?;
                 continue;
             }
 
-            // Finish the open module before recursing into an included file so
-            // the parent module is recorded ahead of any modules pulled in by
+            // Finish the open modules before recursing into an included file so
+            // they are recorded ahead of any modules pulled in by
             // `&include`/`&merge`, matching upstream's declaration order.
-            if is_amp_directive
-                && let Some(builder) = current.take()
-            {
-                state.modules.push(finish_module_builder(builder, path, &state)?);
+            if is_amp_directive {
+                current = None;
+                flush_pending_modules(&mut pending, &mut state, path)?;
             }
 
             apply_global_directive(&mut state, &key, value, path, line_number, &canonical, stack)?;
         }
 
-        if let Some(builder) = current {
-            state.modules.push(finish_module_builder(builder, path, &state)?);
-        }
+        flush_pending_modules(&mut pending, &mut state, path)?;
 
         Ok(state.into_result())
     })();
@@ -211,46 +223,110 @@ fn parse_config_modules_inner(
     result
 }
 
-/// Finalizes a module builder using the current global defaults.
+/// A module section that has been opened but not yet finalized, together with
+/// the global defaults captured when its `[name]` header was first seen.
 ///
-/// Explicit globals declared in the same file win over inherited values
-/// from a parent file (set when this state is the body of an
-/// `&include`/`&merge` target), matching upstream's shared-`Vars`
-/// semantics where the includer's defaults serve as fallbacks until the
-/// included file overrides them.
-fn finish_module_builder(
+/// upstream: loadparm.c:add_a_section:329 - a new section is initialized from
+/// `sDefault`, the running snapshot of the P_LOCAL defaults set in the global
+/// section. Later global directives (after a `[global]` header, say) update
+/// `sDefault` for sections created afterwards but never rewrite a section that
+/// already exists, so the defaults must be captured at creation time.
+struct PendingModule {
     builder: ModuleDefinitionBuilder,
-    path: &Path,
+    defaults: CapturedModuleDefaults,
+}
+
+/// The global defaults a module section inherits, snapshotted when the section
+/// is created.
+///
+/// Explicit globals declared in the same file win over inherited values from a
+/// parent file (set when the parse state is the body of an `&include`/`&merge`
+/// target), matching upstream's shared-`Vars` semantics where the includer's
+/// defaults serve as fallbacks until the included file overrides them.
+struct CapturedModuleDefaults {
+    secrets_file: Option<PathBuf>,
+    incoming_chmod: Option<String>,
+    outgoing_chmod: Option<String>,
+    use_chroot: Option<bool>,
+    module_defaults: GlobalModuleDefaults,
+}
+
+impl CapturedModuleDefaults {
+    /// Snapshots the defaults a module section created right now would inherit.
+    fn capture(state: &GlobalParseState) -> Self {
+        Self {
+            secrets_file: state
+                .global_secrets_file
+                .as_ref()
+                .map(|(value, _)| value.clone())
+                .or_else(|| state.inherited_secrets_file.clone()),
+            incoming_chmod: state
+                .global_incoming_chmod
+                .as_ref()
+                .map(|(value, _)| value.clone())
+                .or_else(|| state.inherited_incoming_chmod.clone()),
+            outgoing_chmod: state
+                .global_outgoing_chmod
+                .as_ref()
+                .map(|(value, _)| value.clone())
+                .or_else(|| state.inherited_outgoing_chmod.clone()),
+            use_chroot: state
+                .global_use_chroot
+                .as_ref()
+                .map(|(value, _)| *value)
+                .or(state.inherited_use_chroot),
+            module_defaults: state.module_defaults.clone(),
+        }
+    }
+}
+
+/// Returns the index of the open module section named `name`, creating it when
+/// this is the first `[name]` header in the file.
+///
+/// upstream: loadparm.c:add_a_section:320-339 - "it might already exist": the
+/// existing section index is returned instead of a second section being added,
+/// so a repeated header merges rather than conflicting.
+fn open_module_section(
+    pending: &mut Vec<PendingModule>,
+    name: &str,
+    line_number: usize,
     state: &GlobalParseState,
-) -> Result<ModuleDefinition, DaemonError> {
-    let default_secrets = state
-        .global_secrets_file
-        .as_ref()
-        .map(|(p, _)| p.as_path())
-        .or(state.inherited_secrets_file.as_deref());
-    let default_incoming = state
-        .global_incoming_chmod
-        .as_ref()
-        .map(|(value, _)| value.as_str())
-        .or(state.inherited_incoming_chmod.as_deref());
-    let default_outgoing = state
-        .global_outgoing_chmod
-        .as_ref()
-        .map(|(value, _)| value.as_str())
-        .or(state.inherited_outgoing_chmod.as_deref());
-    let default_use_chroot = state
-        .global_use_chroot
-        .as_ref()
-        .map(|(v, _)| *v)
-        .or(state.inherited_use_chroot);
-    builder.finish(
-        path,
-        default_secrets,
-        default_incoming,
-        default_outgoing,
-        default_use_chroot,
-        &state.module_defaults,
-    )
+) -> usize {
+    if let Some(index) = pending
+        .iter()
+        .position(|module| module.builder.name == name)
+    {
+        return index;
+    }
+
+    pending.push(PendingModule {
+        builder: ModuleDefinitionBuilder::new(name.to_owned(), line_number),
+        defaults: CapturedModuleDefaults::capture(state),
+    });
+    pending.len() - 1
+}
+
+/// Finalizes every open module section in declaration order and appends the
+/// resulting definitions to the parse state.
+fn flush_pending_modules(
+    pending: &mut Vec<PendingModule>,
+    state: &mut GlobalParseState,
+    path: &Path,
+) -> Result<(), DaemonError> {
+    for module in pending.drain(..) {
+        let defaults = module.defaults;
+        let definition = module.builder.finish(
+            path,
+            defaults.secrets_file.as_deref(),
+            defaults.incoming_chmod.as_deref(),
+            defaults.outgoing_chmod.as_deref(),
+            defaults.use_chroot,
+            &defaults.module_defaults,
+        )?;
+        state.modules.push(definition);
+    }
+
+    Ok(())
 }
 
 /// Splits `contents` into logical config lines, joining backslash-continued

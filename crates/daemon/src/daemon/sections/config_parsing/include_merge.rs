@@ -1,8 +1,9 @@
 // Include directive handling and result merging.
 //
 // Processes the global `include = <path>` directive by recursively parsing the
-// referenced file and merging its results into the current global state,
-// detecting duplicate conflicting directives across files.
+// referenced file and merging its results into the current global state. A
+// directive the included file also sets replaces the current value, the same
+// last-wins rule a repeated directive inside one file follows.
 
 /// Processes a global `include` directive, recursively parsing the target file
 /// and merging its results into the current parse state.
@@ -119,141 +120,64 @@ fn include_config_file(
     }
 
     // `&merge`: the scope is shared, so the included file's globals merge into
-    // the current state (later duplicate detection matches the shared `Vars`).
-    merge_included_globals(state, included)
+    // the current state, exactly as upstream keeps writing into the shared
+    // `Vars` block.
+    merge_included_globals(state, included);
+    Ok(())
 }
 
 /// Merges an included file's modules and global directives into `state`.
 ///
 /// Used for `&merge` (and directory entries pulled in via `&merge`), where the
 /// included file shares the current scope.
-fn merge_included_globals(
-    state: &mut GlobalParseState,
-    included: ParsedConfigModules,
-) -> Result<(), DaemonError> {
+fn merge_included_globals(state: &mut GlobalParseState, included: ParsedConfigModules) {
     if !included.modules.is_empty() {
         state.modules.extend(included.modules);
     }
 
+    // `motd file` and `refuse options` are single-valued slots, so the included
+    // file's value replaces the current one instead of appending to it.
     if !included.motd_lines.is_empty() {
-        state.motd_lines.extend(included.motd_lines);
+        state.motd_lines = included.motd_lines;
     }
 
     if !included.global_refuse_options.is_empty() {
-        state.global_refuse_directives.extend(included.global_refuse_options);
+        state.global_refuse_directives = included.global_refuse_options;
     }
 
-    merge_optional_directive(
-        &mut state.global_bwlimit,
-        included.global_bandwidth_limit,
-        "bwlimit",
-    )?;
-
-    merge_optional_directive(
-        &mut state.global_secrets_file,
-        included.global_secrets_file,
-        "secrets file",
-    )?;
-
+    merge_optional_directive(&mut state.global_bwlimit, included.global_bandwidth_limit);
+    merge_optional_directive(&mut state.global_secrets_file, included.global_secrets_file);
     merge_optional_directive(
         &mut state.global_incoming_chmod,
         included.global_incoming_chmod,
-        "incoming chmod",
-    )?;
-
+    );
     merge_optional_directive(
         &mut state.global_outgoing_chmod,
         included.global_outgoing_chmod,
-        "outgoing chmod",
-    )?;
-
-    merge_optional_directive(
-        &mut state.bind_address,
-        included.bind_address,
-        "address",
-    )?;
-
-    merge_optional_directive(
-        &mut state.daemon_uid,
-        included.daemon_uid,
-        "uid",
-    )?;
-
-    merge_optional_directive(
-        &mut state.daemon_gid,
-        included.daemon_gid,
-        "gid",
-    )?;
-
-    merge_optional_directive(
-        &mut state.listen_backlog,
-        included.listen_backlog,
-        "listen backlog",
-    )?;
-
-    merge_optional_directive(
-        &mut state.socket_options,
-        included.socket_options,
-        "socket options",
-    )?;
-
-    merge_optional_directive(
-        &mut state.proxy_protocol,
-        included.proxy_protocol,
-        "proxy protocol",
-    )?;
-
-    if let Some((port_val, origin)) = included.rsync_port {
-        if let Some((existing, existing_origin)) = &state.rsync_port {
-            if *existing != port_val {
-                let existing_line = existing_origin.line;
-                return Err(config_parse_error(
-                    &origin.path,
-                    origin.line,
-                    format!(
-                        "conflicting 'port' directive in global section (previously defined as {existing} on line {existing_line})"
-                    ),
-                ));
-            }
-        } else {
-            state.rsync_port = Some((port_val, origin));
-        }
-    }
-
-    merge_optional_directive(
-        &mut state.daemon_chroot,
-        included.daemon_chroot,
-        "daemon chroot",
-    )?;
-
-    Ok(())
+    );
+    merge_optional_directive(&mut state.bind_address, included.bind_address);
+    merge_optional_directive(&mut state.daemon_uid, included.daemon_uid);
+    merge_optional_directive(&mut state.daemon_gid, included.daemon_gid);
+    merge_optional_directive(&mut state.listen_backlog, included.listen_backlog);
+    merge_optional_directive(&mut state.socket_options, included.socket_options);
+    merge_optional_directive(&mut state.proxy_protocol, included.proxy_protocol);
+    merge_optional_directive(&mut state.rsync_port, included.rsync_port);
+    merge_optional_directive(&mut state.daemon_chroot, included.daemon_chroot);
 }
 
 /// Merges an optional directive from an included file into the current state.
 ///
-/// If the target slot is empty, the included value is adopted. If both the
-/// target and included value are present but differ, a duplicate error is
-/// reported using the directive name.
-fn merge_optional_directive<T: PartialEq>(
+/// A value the included file set replaces whatever the current state holds; a
+/// directive the included file never mentions leaves the current value alone.
+///
+/// upstream: loadparm.c:379-470 do_parameter() assigns the parameter slot
+/// unconditionally, and params.c:include_config keeps parsing into the same
+/// `Vars` block, so the file parsed last is simply the assignment made last.
+fn merge_optional_directive<T>(
     target: &mut Option<(T, ConfigDirectiveOrigin)>,
     incoming: Option<(T, ConfigDirectiveOrigin)>,
-    directive_name: &str,
-) -> Result<(), DaemonError> {
-    if let Some((new_val, origin)) = incoming {
-        if let Some((existing, existing_origin)) = target.as_ref() {
-            if existing != &new_val {
-                let existing_line = existing_origin.line;
-                return Err(config_parse_error(
-                    &origin.path,
-                    origin.line,
-                    format!(
-                        "duplicate '{directive_name}' directive in global section (previously defined on line {existing_line})"
-                    ),
-                ));
-            }
-        } else {
-            *target = Some((new_val, origin));
-        }
+) {
+    if incoming.is_some() {
+        *target = incoming;
     }
-    Ok(())
 }
