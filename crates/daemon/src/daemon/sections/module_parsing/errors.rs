@@ -111,6 +111,29 @@ fn ensure_valid_module_name(name: &str) -> Result<(), &'static str> {
     Ok(())
 }
 
+/// Validates an already-collapsed `rsyncd.conf` `[section]` header name.
+///
+/// Deliberately separate from `ensure_valid_module_name`: the whitespace
+/// collapse that makes a single interior space legal lives in
+/// params.c:Section(), which upstream runs only while scanning a config-file
+/// section header. The daemon's CLI `NAME=PATH` specs never pass through that
+/// scanner, so they keep the stricter no-whitespace rule.
+///
+/// The caller must pass a name produced by `collapse_section_name`, so the only
+/// whitespace it can still hold is a single interior space. Path separators
+/// stay fatal exactly as they are for a CLI spec.
+fn ensure_valid_section_name(name: &str) -> Result<(), &'static str> {
+    if name.is_empty() {
+        return Err("module name must be non-empty and cannot contain whitespace");
+    }
+
+    if name.chars().any(|ch| ch == '/' || ch == '\\') {
+        return Err("module name cannot contain whitespace or path separators");
+    }
+
+    Ok(())
+}
+
 fn duplicate_argument(option: &str) -> DaemonError {
     config_error(format!("duplicate daemon argument '{option}'"))
 }

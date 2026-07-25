@@ -3318,4 +3318,125 @@ mod config_parsing_tests {
             "a module-level 'auth users' overrides the global default",
         );
     }
+
+    /// A section name keeps its internal whitespace, collapsed to one space per
+    /// run, because that is the name clients must send to reach the module.
+    ///
+    /// upstream: params.c:Section() - the `isspace(c)` arm writes a single ' '
+    /// per whitespace region and then eats the rest of that region, so
+    /// `[my   module]` is the module `my module`. Verified against rsync 3.4.4:
+    /// the daemon starts without a warning and lists the name as `my module`.
+    #[test]
+    fn parse_section_name_collapses_internal_whitespace_run() {
+        let dir = TempDir::new().expect("create temp dir");
+        let mpath = dir.path().join("data");
+        fs::create_dir(&mpath).expect("create module dir");
+
+        let config = format!("[my   module]\npath = {}\n", mpath.display());
+        let file = write_config(&config);
+        let result = parse_config_modules(file.path()).expect("parse succeeds");
+
+        assert_eq!(result.modules.len(), 1);
+        assert_eq!(
+            result.modules[0].name, "my module",
+            "a whitespace run inside a section name collapses to exactly one space",
+        );
+    }
+
+    /// Whitespace between the brackets and the name is not part of the name.
+    ///
+    /// upstream: params.c:Section() - `EatWhitespace()` consumes the run after
+    /// the '[' and the `end`/`i` split drops the run before the ']'.
+    #[test]
+    fn parse_section_name_trims_surrounding_whitespace() {
+        let dir = TempDir::new().expect("create temp dir");
+        let mpath = dir.path().join("data");
+        fs::create_dir(&mpath).expect("create module dir");
+
+        let config = format!("[   spaced module \t ]\npath = {}\n", mpath.display());
+        let file = write_config(&config);
+        let result = parse_config_modules(file.path()).expect("parse succeeds");
+
+        assert_eq!(result.modules.len(), 1);
+        assert_eq!(result.modules[0].name, "spaced module");
+    }
+
+    /// Tabs and mixed runs collapse just like plain spaces.
+    ///
+    /// upstream: params.c:Section() branches on C `isspace()`, which treats a
+    /// tab, a form feed, and a vertical tab exactly like a space, so the run is
+    /// replaced by a single 0x20 regardless of what it was made of.
+    #[test]
+    fn parse_section_name_collapses_tabs_and_mixed_runs() {
+        let dir = TempDir::new().expect("create temp dir");
+        let mpath = dir.path().join("data");
+        fs::create_dir(&mpath).expect("create module dir");
+
+        let config = format!("[a\t \x0Bb \x0C c]\npath = {}\n", mpath.display());
+        let file = write_config(&config);
+        let result = parse_config_modules(file.path()).expect("parse succeeds");
+
+        assert_eq!(result.modules.len(), 1);
+        assert_eq!(result.modules[0].name, "a b c");
+    }
+
+    /// Collapsing is applied to the raw header text, never to a name that is
+    /// already free of whitespace.
+    ///
+    /// upstream: params.c:Section() copies every non-`isspace()` byte verbatim.
+    #[test]
+    fn collapse_section_name_matches_upstream_scanner() {
+        assert_eq!(collapse_section_name("my   module"), "my module");
+        assert_eq!(collapse_section_name("  padded  "), "padded");
+        assert_eq!(collapse_section_name("a\t\tb"), "a b");
+        assert_eq!(collapse_section_name("plain"), "plain");
+        assert_eq!(collapse_section_name("   "), "");
+    }
+
+    /// Collapsing must not turn an all-whitespace header into a nameless module.
+    ///
+    /// upstream: params.c:Section() rejects a zero-length name outright
+    /// ("Empty section name in config file."), and after collapsing `[   ]` has
+    /// exactly that.
+    #[test]
+    fn parse_whitespace_only_section_name_is_rejected() {
+        let file = write_config("[   ]\npath = /tmp\n");
+        let error = parse_config_modules(file.path()).expect_err("empty name is rejected");
+        assert!(
+            error.to_string().contains("module name must be non-empty"),
+            "unexpected error: {error}",
+        );
+    }
+
+    /// REGRESSION GUARD: module lookup stays byte-exact against the collapsed
+    /// name. Do not add whitespace-insensitive or case-insensitive matching.
+    ///
+    /// The collapse only changes how the `[section]` header is scanned; it does
+    /// not make the name fuzzy. Verified against rsync 3.4.4 with a module
+    /// declared as `[my   module]`: requesting `my module` transfers (exit 0)
+    /// while `mymodule`, `my   module`, `MY MODULE`, and `MyModule` each get
+    /// `@ERROR: Unknown module '<name>'` (exit 5). `strwiEQ` governs parameter
+    /// name matching (loadparm.c:282), never module lookup, which compares with
+    /// `strcmp` - mirrored by the `module.name == request` test in
+    /// `module_access/request.rs`.
+    #[test]
+    fn parse_section_name_lookup_stays_exact() {
+        let dir = TempDir::new().expect("create temp dir");
+        let mpath = dir.path().join("data");
+        fs::create_dir(&mpath).expect("create module dir");
+
+        let config = format!("[my   module]\npath = {}\n", mpath.display());
+        let file = write_config(&config);
+        let result = parse_config_modules(file.path()).expect("parse succeeds");
+
+        let lookup = |request: &str| result.modules.iter().any(|module| module.name == request);
+
+        assert!(lookup("my module"), "the collapsed name must resolve");
+        for request in ["mymodule", "my   module", "MY MODULE", "MyModule"] {
+            assert!(
+                !lookup(request),
+                "'{request}' must not resolve to 'my module' - lookup is exact",
+            );
+        }
+    }
 }
