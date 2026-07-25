@@ -2449,13 +2449,16 @@ fn includes_safe_links_long_arg() {
     );
 }
 
+/// upstream: `--munge-links` never appears in `server_options()` (options.c) -
+/// it is applied locally where the symlink is written and is gated on
+/// `!am_daemon` (options.c:2254), so the remote is never told about it.
 #[test]
-fn includes_munge_links_long_arg() {
+fn omits_munge_links_long_arg() {
     let config = ClientConfig::builder().munge_links(true).build();
     let args = build_sender_args(&config);
     assert!(
-        args.iter().any(|a| a == "--munge-links"),
-        "expected --munge-links in args: {args:?}"
+        !args.iter().any(|a| a == "--munge-links"),
+        "--munge-links must not be forwarded to the remote: {args:?}"
     );
 }
 
@@ -3134,7 +3137,6 @@ fn all_flags_enabled_produces_valid_invocation() {
         "--inplace",
         "--copy-unsafe-links",
         "--safe-links",
-        "--munge-links",
         "--size-only",
         "--ignore-existing",
         "--existing",
@@ -3152,6 +3154,14 @@ fn all_flags_enabled_produces_valid_invocation() {
             "all-flags test: missing {expected} in args: {args:?}"
         );
     }
+
+    // upstream: `--munge-links` is absent from server_options() entirely - it is
+    // applied locally where the symlink is written (options.c:2254, gated on
+    // !am_daemon), so it must never reach the remote.
+    assert!(
+        !args.iter().any(|a| a == "--munge-links"),
+        "all-flags test: --munge-links must not be forwarded to the remote: {args:?}"
+    );
 
     // upstream: options.c:2825,2852-2853 - the super flag is forwarded only in
     // the am_sender branch (to a remote receiver), so a remote-sender (pull)
