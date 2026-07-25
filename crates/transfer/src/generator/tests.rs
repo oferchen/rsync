@@ -5437,3 +5437,150 @@ fn remove_source_files_mid_commit_teardown_retains_unconfirmed_sources() {
         "the two unconfirmed removals stay pending after the drop"
     );
 }
+
+/// Splits the bytes a multiplexed `ServerWriter` produced into `(code, payload)`
+/// pairs so a test can pin both the frame tag and its exact text.
+fn decode_mux_frames(buf: &[u8]) -> Vec<(protocol::MessageCode, Vec<u8>)> {
+    let mut frames = Vec::new();
+    let mut offset = 0;
+    while offset + 4 <= buf.len() {
+        let header = protocol::MessageHeader::decode(&buf[offset..offset + 4]).unwrap();
+        let start = offset + 4;
+        let end = start + header.payload_len_usize();
+        frames.push((header.code(), buf[start..end].to_vec()));
+        offset = end;
+    }
+    frames
+}
+
+/// Runs `record_open_failure` against a multiplexed server writer and returns
+/// the frames it produced.
+fn open_failure_frames(
+    protocol_version: u8,
+    client_mode: bool,
+    error: io::Error,
+) -> Vec<(protocol::MessageCode, Vec<u8>)> {
+    let handshake = test_handshake_with_protocol(protocol_version);
+    let mut config = test_config();
+    config.protocol = ProtocolVersion::try_from(protocol_version).unwrap();
+    config.connection.client_mode = client_mode;
+    let mut ctx = GeneratorContext::new_for_test(&handshake, config);
+    let mut buf = Vec::new();
+    {
+        let mut writer = crate::writer::ServerWriter::new_plain(&mut buf)
+            .activate_multiplex()
+            .unwrap();
+        ctx.record_open_failure(&mut writer, 7, &error, "src/gone.txt")
+            .unwrap();
+    }
+    decode_mux_frames(&buf)
+}
+
+/// A daemon or SSH server has no stderr the client reads, so upstream's
+/// `rwrite()` (log.c:330-346) sends the vanished warning as a MSG frame
+/// *instead of* writing it locally. Without the frame the client never learns
+/// which file vanished.
+#[test]
+fn vanished_open_failure_frames_a_warning_in_server_mode() {
+    let frames = open_failure_frames(32, false, io::Error::from(io::ErrorKind::NotFound));
+    assert_eq!(
+        frames.len(),
+        2,
+        "the warning frame precedes MSG_NO_SEND: {frames:?}"
+    );
+    assert_eq!(frames[0].0, protocol::MessageCode::Warning);
+    assert_eq!(
+        frames[0].1, b"file has vanished: \"src/gone.txt\"\n",
+        "payload must be the upstream text including its trailing newline"
+    );
+    assert_eq!(
+        frames[1].0,
+        protocol::MessageCode::NoSend,
+        "the framed warning must not displace MSG_NO_SEND"
+    );
+}
+
+/// upstream log.c:332-337 - protocol < 30 has no MSG_WARNING, so FWARNING
+/// downgrades to MSG_INFO. Sending code 4 to a protocol-29 peer would abort it
+/// with an unknown-message error.
+#[test]
+fn vanished_open_failure_downgrades_to_info_below_protocol_30() {
+    let frames = open_failure_frames(29, false, io::Error::from(io::ErrorKind::NotFound));
+    assert_eq!(
+        frames.len(),
+        1,
+        "protocol 29 has no generator messages, so no MSG_NO_SEND: {frames:?}"
+    );
+    assert_eq!(frames[0].0, protocol::MessageCode::Info);
+    assert_eq!(frames[0].1, b"file has vanished: \"src/gone.txt\"\n");
+}
+
+/// upstream sender.c:393 uses `rsyserr(FERROR_XFER, ...)`, which the peer's
+/// `rwrite()` counts as a transfer error (exit 23). MSG_ERROR_XFER exists at
+/// every supported protocol, so it never downgrades.
+#[test]
+fn general_open_failure_frames_an_error_xfer_in_server_mode() {
+    let frames = open_failure_frames(32, false, io::Error::from(io::ErrorKind::PermissionDenied));
+    assert_eq!(frames.len(), 2, "error frame then MSG_NO_SEND: {frames:?}");
+    assert_eq!(frames[0].0, protocol::MessageCode::ErrorXfer);
+    let expected = format!(
+        "rsync: [sender] send_files failed to open \"src/gone.txt\": {}\n",
+        engine::local_copy::upstream_io_error(&io::Error::from(io::ErrorKind::PermissionDenied)),
+    );
+    assert_eq!(
+        String::from_utf8(frames[0].1.clone()).unwrap(),
+        expected,
+        "the framed text must stay byte-identical to the rsyserr rendering"
+    );
+    assert_eq!(frames[1].0, protocol::MessageCode::NoSend);
+}
+
+/// A client owns the terminal, so upstream's `!am_server` branch writes the
+/// text locally and frames nothing. Framing it as well would print twice.
+#[test]
+fn open_failure_emits_no_diagnostic_frame_in_client_mode() {
+    for error in [
+        io::Error::from(io::ErrorKind::NotFound),
+        io::Error::from(io::ErrorKind::PermissionDenied),
+    ] {
+        let frames = open_failure_frames(32, true, error);
+        assert_eq!(
+            frames.len(),
+            1,
+            "client mode writes stderr locally, leaving only MSG_NO_SEND: {frames:?}"
+        );
+        assert_eq!(frames[0].0, protocol::MessageCode::NoSend);
+    }
+}
+
+/// upstream sender.c:422 - the diminished skip is an FWARNING, so a server
+/// frames it for the client exactly like the vanished warning.
+#[test]
+fn diminished_skip_frames_a_warning_in_server_mode() {
+    let handshake = test_handshake();
+    let mut ctx = GeneratorContext::new_for_test(&handshake, test_config());
+    let mut buf = Vec::new();
+    {
+        let mut writer = crate::writer::ServerWriter::new_plain(&mut buf)
+            .activate_multiplex()
+            .unwrap();
+        ctx.record_diminished_skip(&mut writer, 4, "src/shrunk.bin")
+            .unwrap();
+    }
+    let frames = decode_mux_frames(&buf);
+    assert_eq!(
+        frames.len(),
+        2,
+        "warning frame then MSG_NO_SEND: {frames:?}"
+    );
+    assert_eq!(frames[0].0, protocol::MessageCode::Warning);
+    assert_eq!(
+        frames[0].1,
+        b"skipped diminished file: \"src/shrunk.bin\"\n"
+    );
+    assert_eq!(frames[1].0, protocol::MessageCode::NoSend);
+    assert_eq!(
+        ctx.io_error, 0,
+        "a diminished skip sets no io_error bit (upstream sender.c:421-429)"
+    );
+}
