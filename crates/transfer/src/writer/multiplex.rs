@@ -10,6 +10,27 @@ use std::time::{Duration, Instant};
 
 use protocol::{MessageCode, MessageHeader};
 
+/// Destination selector for bytes written through a batch-recording writer.
+///
+/// Upstream keeps two distinct batch wirings and this enum names them:
+/// `--write-batch` tees every socket write into `batch_fd`
+/// (`io.c:2282 write_batch_monitor_out`), while `--only-write-batch` sends the
+/// token stream to `batch_fd` *instead of* the socket
+/// (`sender.c:217 f_xfer = write_batch < 0 ? batch_fd : f_out`).
+///
+/// # Upstream Reference
+///
+/// - `io.c:2281-2283` - `if (f == write_batch_monitor_out) safe_write(batch_fd, ...)`
+/// - `sender.c:217` - `int f_xfer = write_batch < 0 ? batch_fd : f_out;`
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum BatchRoute {
+    /// Write to the wire and copy into the batch (upstream's tee monitor).
+    #[default]
+    Tee,
+    /// Write into the batch only, leaving the wire untouched.
+    Divert,
+}
+
 /// Writer that wraps data in multiplex `MSG_DATA` frames.
 ///
 /// Buffers writes to avoid sending tiny multiplex frames for every write call.
@@ -39,6 +60,9 @@ pub(crate) struct MultiplexWriter<W> {
     /// Optional recorder for batch mode - captures pre-mux data.
     /// upstream: `io.c` `write_batch_monitor_out` + `safe_write(batch_fd, buf, len)`
     pub(crate) batch_recorder: Option<Arc<Mutex<dyn Write + Send>>>,
+    /// Selects whether recorded bytes are also framed onto the wire.
+    /// upstream: `sender.c:217` `f_xfer = write_batch < 0 ? batch_fd : f_out`
+    pub(crate) batch_route: BatchRoute,
     /// Instant of the last actual write to `inner`, tracking upstream's
     /// `last_io_out`. A lull is measured from this point.
     last_io_out: Instant,
@@ -68,6 +92,7 @@ impl<W: Write> MultiplexWriter<W> {
             buffer_size: DEFAULT_BUFFER_SIZE,
             dirty: false,
             batch_recorder: None,
+            batch_route: BatchRoute::default(),
             last_io_out: Instant::now(),
             allowed_lull: None,
         }
@@ -129,6 +154,31 @@ impl<W: Write> MultiplexWriter<W> {
         Ok(true)
     }
 
+    /// Copies `chunks` into the attached batch recorder, reporting whether the
+    /// bytes have been consumed by the batch alone.
+    ///
+    /// A `true` return means the caller must skip the wire write entirely: the
+    /// batch file *is* the destination for this stream. Without a recorder
+    /// attached the route is irrelevant and nothing is ever dropped.
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `io.c:2255-2258` - `write_buf()` with `f != iobuf.out_fd` bypasses the
+    ///   multiplex buffer and writes straight to the fd (here, the batch).
+    /// - `io.c:2281-2283` - the tee into `batch_fd` for `--write-batch`.
+    fn record_to_batch<'b>(&self, chunks: impl Iterator<Item = &'b [u8]>) -> io::Result<bool> {
+        let Some(recorder) = self.batch_recorder.as_ref() else {
+            return Ok(false);
+        };
+        let mut rec = recorder
+            .lock()
+            .map_err(|_| io::Error::other("batch recorder lock poisoned"))?;
+        for chunk in chunks {
+            rec.write_all(chunk)?;
+        }
+        Ok(self.batch_route == BatchRoute::Divert)
+    }
+
     /// Flushes the internal buffer by sending it as a `MSG_DATA` frame.
     fn flush_buffer(&mut self) -> io::Result<()> {
         if !self.buffer.is_empty() {
@@ -185,12 +235,10 @@ impl<W: Write> Write for MultiplexWriter<W> {
             return Ok(0);
         }
 
-        // upstream: io.c:write_buf() - tee pre-mux data to batch_fd
-        if let Some(ref recorder) = self.batch_recorder {
-            let mut rec = recorder
-                .lock()
-                .map_err(|_| io::Error::other("batch recorder lock poisoned"))?;
-            rec.write_all(buf)?;
+        // upstream: io.c:write_buf() - tee pre-mux data to batch_fd, or divert
+        // to it entirely when this stream is upstream's `f_xfer`.
+        if self.record_to_batch(std::iter::once(buf))? {
+            return Ok(buf.len());
         }
 
         if self.buffer.len() + buf.len() > self.buffer_size {
@@ -226,14 +274,10 @@ impl<W: Write> Write for MultiplexWriter<W> {
             return Ok(0);
         }
 
-        // upstream: io.c:write_buf() - tee pre-mux data to batch_fd
-        if let Some(ref recorder) = self.batch_recorder {
-            let mut rec = recorder
-                .lock()
-                .map_err(|_| io::Error::other("batch recorder lock poisoned"))?;
-            for buf in bufs {
-                rec.write_all(buf)?;
-            }
+        // upstream: io.c:write_buf() - tee pre-mux data to batch_fd, or divert
+        // to it entirely when this stream is upstream's `f_xfer`.
+        if self.record_to_batch(bufs.iter().map(|b| &b[..]))? {
+            return Ok(total_len);
         }
 
         // Fast path: if everything fits in remaining buffer space, copy all at once

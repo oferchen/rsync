@@ -357,11 +357,7 @@ fn run_client_internal(
     // upstream: main.c:1841-1842 - `--only-write-batch` forces dry_run=1 so
     // that the transfer runs (populating the batch file) without creating the
     // destination directory or writing any files.
-    let is_only_write_batch = config
-        .batch_config()
-        .is_some_and(|bc| !bc.should_transfer());
-
-    let mode = if config.dry_run() || config.list_only() || is_only_write_batch {
+    let mode = if config.dry_run() || config.list_only() || config.only_write_batch() {
         LocalCopyExecution::DryRun
     } else {
         LocalCopyExecution::Apply
