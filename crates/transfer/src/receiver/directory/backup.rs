@@ -59,18 +59,35 @@ enum BackupPlacement {
     CopiedNode,
 }
 
-/// Places `existing` into `backup_path`, mirroring upstream `link_or_rename`
-/// with `prefer_rename = 0`: hard-link first, rename on fallback.
+/// Places `existing` into `backup_path`, mirroring upstream `link_or_rename`.
 ///
+/// With `prefer_rename = false` the hard-link tier runs first and the rename is
+/// the fallback; with `prefer_rename = true` the whole link tier is skipped and
+/// the entry is renamed straight into the backup area.
+///
+/// upstream: `backup.c:191` - `if (!prefer_rename)` gates the entire
+/// `do_link_at` tier, so `make_backup(fbuf, True)` (the `--delete` caller,
+/// `delete.c:167`) goes directly to `do_rename_at` and reports RENAME.
 /// upstream: `backup.c:200-219` - `do_link_at` then `do_rename_at`. A
 /// pre-existing backup (`EEXIST`) is removed and the link retried
 /// (`backup.c:247-256`).
 #[cfg(any(unix, windows))]
-fn place_existing_backup(existing: &Path, backup_path: &Path) -> io::Result<BackupPlacement> {
+fn place_existing_backup(
+    existing: &Path,
+    backup_path: &Path,
+    prefer_rename: bool,
+) -> io::Result<BackupPlacement> {
     if let Some(parent) = backup_path.parent() {
         if !parent.exists() {
             fs::create_dir_all(parent)?;
         }
+    }
+
+    // upstream: backup.c:191 - the caller's `prefer_rename` suppresses the
+    // hard-link tier entirely. Renaming is atomic, so the victim never exists
+    // under two names the way a link+unlink pair would leave it.
+    if prefer_rename {
+        return rename_or_copy_existing(existing, backup_path);
     }
 
     match fast_io::hard_link(existing, backup_path) {
@@ -196,7 +213,9 @@ pub(in crate::receiver::directory) fn is_backup_file(name: &OsStr, suffix: &str)
 /// Moves `existing` into its computed backup location, emits the trace, and
 /// clears the original path so the caller need not unlink again.
 ///
-/// Shared by the pre-replace and pre-delete backup callers. Only the hard-link
+/// Shared by the pre-replace and pre-delete backup callers, which differ only
+/// in `prefer_rename`: `generator.c:2018` passes `False` (hard-link first)
+/// while `delete.c:167` passes `True` (rename only). Only the hard-link
 /// placement leaves the original behind (upstream's copy tier, `ok == 2`); the
 /// rename and cross-device copy tiers already free the path.
 ///
@@ -210,9 +229,10 @@ fn place_report_and_clear(
     backup_dir: Option<&Path>,
     suffix: &OsStr,
     sandbox: Option<&fast_io::DirSandbox>,
+    prefer_rename: bool,
 ) -> io::Result<()> {
     let backup_path = engine::compute_backup_path(dest_dir, existing, None, backup_dir, suffix);
-    let placement = place_existing_backup(existing, &backup_path)?;
+    let placement = place_existing_backup(existing, &backup_path, prefer_rename)?;
     report_backup(&placement, existing, &backup_path, dest_dir);
     if matches!(placement, BackupPlacement::Hardlinked) {
         // upstream: delete.c:169-170 - the hard-link tier is upstream's `ok == 2`
@@ -237,9 +257,10 @@ fn place_report_and_clear(
     dest_dir: &Path,
     backup_dir: Option<&Path>,
     suffix: &OsStr,
+    prefer_rename: bool,
 ) -> io::Result<()> {
     let backup_path = engine::compute_backup_path(dest_dir, existing, None, backup_dir, suffix);
-    let placement = place_existing_backup(existing, &backup_path)?;
+    let placement = place_existing_backup(existing, &backup_path, prefer_rename)?;
     report_backup(&placement, existing, &backup_path, dest_dir);
     if matches!(placement, BackupPlacement::Hardlinked) {
         let _ = fs::remove_file(existing);
@@ -286,6 +307,9 @@ pub(in crate::receiver::directory) fn backup_victim(
     if fs::symlink_metadata(existing).is_err() {
         return Ok(false);
     }
+    // upstream: delete.c:167 - `make_backup(fbuf, True)`. The delete pass is the
+    // `prefer_rename` caller: the victim is renamed into the backup area, so the
+    // RENAME trace is emitted and no second link ever exists.
     place_report_and_clear(
         existing,
         relative_path,
@@ -293,6 +317,7 @@ pub(in crate::receiver::directory) fn backup_victim(
         backup_dir,
         OsStr::new(suffix),
         sandbox,
+        true,
     )?;
     Ok(true)
 }
@@ -319,7 +344,8 @@ pub(in crate::receiver::directory) fn backup_victim(
     if fs::symlink_metadata(existing).is_err() {
         return Ok(false);
     }
-    place_report_and_clear(existing, dest_dir, backup_dir, OsStr::new(suffix))?;
+    // upstream: delete.c:167 - `make_backup(fbuf, True)`, the rename-only caller.
+    place_report_and_clear(existing, dest_dir, backup_dir, OsStr::new(suffix), true)?;
     Ok(true)
 }
 
@@ -416,6 +442,8 @@ impl ReceiverContext {
             return Ok(false);
         }
 
+        // upstream: generator.c:2018 - `make_backup(fname, False)`, so the
+        // hard-link tier runs first for a symlink/special replacement.
         place_report_and_clear(
             existing,
             relative_path,
@@ -423,6 +451,7 @@ impl ReceiverContext {
             self.config.backup_dir.as_deref().map(Path::new),
             OsStr::new(self.config.effective_backup_suffix()),
             sandbox,
+            false,
         )?;
         Ok(true)
     }
@@ -443,11 +472,13 @@ impl ReceiverContext {
             return Ok(false);
         }
 
+        // upstream: generator.c:2018 - `make_backup(fname, False)`.
         place_report_and_clear(
             existing,
             dest_dir,
             self.config.backup_dir.as_deref().map(Path::new),
             OsStr::new(self.config.effective_backup_suffix()),
+            false,
         )?;
         Ok(true)
     }
@@ -496,7 +527,7 @@ mod tests {
         let backup = dir.path().join("link~");
         std::os::unix::fs::symlink("original/target", &link).unwrap();
 
-        let placement = place_existing_backup(&link, &backup).unwrap();
+        let placement = place_existing_backup(&link, &backup, false).unwrap();
 
         // On Linux `link(2)` does not dereference a symlink source, so the
         // backup is taken via hard-link and the HLINK trace is guaranteed.
@@ -552,11 +583,99 @@ mod tests {
         // mkfifo via metadata's safe wrapper needs no privilege.
         metadata::create_fifo_node_from_parts(&fifo, 0o644, false, false).unwrap();
 
-        place_existing_backup(&fifo, &backup).unwrap();
+        place_existing_backup(&fifo, &backup, false).unwrap();
 
         assert!(
             fs::symlink_metadata(&backup).unwrap().file_type().is_fifo(),
             "backup of a FIFO must itself be a FIFO"
+        );
+    }
+
+    /// The `--backup --delete` caller passes `prefer_rename = true`, so the
+    /// hard-link tier must be skipped entirely and the victim renamed into the
+    /// backup area: the mechanism is RENAME, the trace says RENAME, and the
+    /// original path is already free (no link+unlink window).
+    ///
+    /// Inode identity does not discriminate here - a same-filesystem rename and
+    /// a hard link both leave the pre-image inode at the backup name - so the
+    /// assertion is on the emitted mechanism, which is the observable upstream
+    /// difference (`make_backup: RENAME` vs `make_backup: HLINK`).
+    ///
+    /// upstream: delete.c:167 `make_backup(fbuf, True)` -> backup.c:191
+    /// `if (!prefer_rename)` skips `do_link_at`, so `do_rename_at` reports
+    /// "make_backup: RENAME %s successful." (backup.c:216-217).
+    #[test]
+    fn prefer_rename_skips_hard_link_tier() {
+        let mut cfg = VerbosityConfig::default();
+        cfg.debug.backup = 1;
+        init(cfg);
+        let _ = drain_events();
+
+        let dir = tempfile::tempdir().unwrap();
+        let victim = dir.path().join("extraneous");
+        let backup = dir.path().join("extraneous~");
+        fs::write(&victim, b"victim payload").unwrap();
+
+        let placement = place_existing_backup(&victim, &backup, true).unwrap();
+
+        assert!(
+            matches!(placement, BackupPlacement::Renamed),
+            "prefer_rename must take the RENAME branch, never HLINK"
+        );
+        assert!(
+            fs::symlink_metadata(&victim).is_err(),
+            "the rename must free the victim path outright"
+        );
+        assert_eq!(fs::read(&backup).unwrap(), b"victim payload");
+
+        report_backup(&placement, &victim, &backup, dir.path());
+        assert!(
+            backup_debug_messages().contains(&format!(
+                "make_backup: RENAME {} successful.",
+                victim.display()
+            )),
+            "the delete-pass backup must trace RENAME, not HLINK"
+        );
+    }
+
+    /// Control for [`prefer_rename_skips_hard_link_tier`]: the same fixture with
+    /// `prefer_rename = false` (the `generator.c:2018` pre-replace caller) takes
+    /// the hard-link tier instead, proving the flag - not the file type or the
+    /// filesystem - is what selects the mechanism.
+    ///
+    /// upstream: backup.c:201-202 - `do_link_at` success emits
+    /// "make_backup: HLINK %s successful." and returns 2, leaving the original
+    /// in place for the caller to replace.
+    #[test]
+    fn hard_link_tier_traces_hlink_for_regular_file() {
+        let mut cfg = VerbosityConfig::default();
+        cfg.debug.backup = 1;
+        init(cfg);
+        let _ = drain_events();
+
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("regular");
+        let backup = dir.path().join("regular~");
+        fs::write(&file, b"pre-image").unwrap();
+
+        let placement = place_existing_backup(&file, &backup, false).unwrap();
+
+        assert!(
+            matches!(placement, BackupPlacement::Hardlinked),
+            "a same-filesystem regular file must hard-link (HLINK branch)"
+        );
+        assert!(
+            fs::symlink_metadata(&file).is_ok(),
+            "the hard-link tier must leave the original in place (upstream ok == 2)"
+        );
+
+        report_backup(&placement, &file, &backup, dir.path());
+        assert!(
+            backup_debug_messages().contains(&format!(
+                "make_backup: HLINK {} successful.",
+                file.display()
+            )),
+            "the pre-replace backup must trace HLINK"
         );
     }
 
@@ -624,7 +743,7 @@ mod tests {
         let backup = dir.path().join("l~");
         std::os::unix::fs::symlink("t", &link).unwrap();
 
-        let placement = place_existing_backup(&link, &backup).unwrap();
+        let placement = place_existing_backup(&link, &backup, false).unwrap();
         report_backup(&placement, &link, &backup, dir.path());
 
         assert!(
