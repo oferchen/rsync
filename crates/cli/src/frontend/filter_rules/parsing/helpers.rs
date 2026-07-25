@@ -54,15 +54,18 @@ pub(super) fn split_short_rule_modifiers(text: &str) -> (&str, &str) {
 
 /// Splits a `.`/`:` merge directive's text into `(modifiers, pattern)`. Only
 /// recognised modifier bytes are consumed; the first unrecognised byte or
-/// separator ends the modifier run. `allow_extended` additionally accepts the
-/// dir-merge-only `e`/`n` modifiers.
-pub(super) fn split_short_merge_modifiers(text: &str, allow_extended: bool) -> (&str, &str) {
+/// separator ends the modifier run.
+///
+/// upstream: exclude.c:1256-1264 - the `e` and `n` modifiers are guarded solely
+/// by `FILTRULE_MERGE_FILE`, which `parse_rule_tok` sets for a plain merge (`.`,
+/// exclude.c:1186) as well as a dir-merge (`:`), so both directives accept them.
+pub(super) fn split_short_merge_modifiers(text: &str) -> (&str, &str) {
     if text.is_empty() {
         return ("", "");
     }
 
     if let Some(rest) = text.strip_prefix(',') {
-        let (modifiers, remainder) = split_short_merge_modifiers(rest, allow_extended);
+        let (modifiers, remainder) = split_short_merge_modifiers(rest);
         if modifiers.is_empty() {
             return ("", remainder);
         }
@@ -82,10 +85,10 @@ pub(super) fn split_short_merge_modifiers(text: &str, allow_extended: bool) -> (
         }
 
         let lower = ch.to_ascii_lowercase();
-        let base_modifier = matches!(lower, '+' | '-' | 'c' | 'w' | 's' | 'r' | 'p' | '/');
-        let extended_modifier = matches!(lower, 'e' | 'n');
-
-        if base_modifier || (allow_extended && extended_modifier) {
+        if matches!(
+            lower,
+            '+' | '-' | 'c' | 'w' | 's' | 'r' | 'p' | '/' | 'e' | 'n'
+        ) {
             end = idx + ch.len_utf8();
             continue;
         }
@@ -180,44 +183,40 @@ mod tests {
 
     #[test]
     fn split_short_merge_modifiers_empty() {
-        assert_eq!(split_short_merge_modifiers("", false), ("", ""));
-        assert_eq!(split_short_merge_modifiers("", true), ("", ""));
+        assert_eq!(split_short_merge_modifiers(""), ("", ""));
     }
 
     #[test]
     fn split_short_merge_modifiers_base() {
-        let (mods, rem) = split_short_merge_modifiers("+-cs pattern", false);
+        let (mods, rem) = split_short_merge_modifiers("+-cs pattern");
         assert_eq!(mods, "+-cs");
         assert_eq!(rem, "pattern");
     }
 
     #[test]
-    fn split_short_merge_modifiers_extended_disabled() {
-        // 'e' and 'n' not recognized without extended
-        let (mods, rem) = split_short_merge_modifiers("ce pattern", false);
-        assert_eq!(mods, "c");
-        assert_eq!(rem, "e pattern");
-    }
+    fn split_short_merge_modifiers_accepts_e_and_n() {
+        // upstream exclude.c:1256-1264 gates `e`/`n` on FILTRULE_MERGE_FILE,
+        // which a plain merge (`.`) sets too, so they are modifiers for both
+        // merge forms. Previously `e` ended the run, so `.e FILE` mis-parsed as
+        // the file name "e FILE".
+        let (mods, rem) = split_short_merge_modifiers("ce pattern");
+        assert_eq!(mods, "ce");
+        assert_eq!(rem, "pattern");
 
-    #[test]
-    fn split_short_merge_modifiers_extended_enabled() {
-        let (mods, rem) = split_short_merge_modifiers("cen pattern", true);
+        let (mods, rem) = split_short_merge_modifiers("cen pattern");
         assert_eq!(mods, "cen");
         assert_eq!(rem, "pattern");
     }
 
     #[test]
     fn split_short_merge_modifiers_whitespace_start() {
-        assert_eq!(
-            split_short_merge_modifiers(" pattern", false),
-            ("", "pattern")
-        );
+        assert_eq!(split_short_merge_modifiers(" pattern"), ("", "pattern"));
     }
 
     #[test]
     fn split_short_merge_modifiers_comma_prefix() {
         // 'p' is a valid modifier, so it's extracted
-        let (mods, rem) = split_short_merge_modifiers(",pattern", false);
+        let (mods, rem) = split_short_merge_modifiers(",pattern");
         assert_eq!(mods, "p");
         assert_eq!(rem, "attern");
     }
@@ -225,7 +224,7 @@ mod tests {
     #[test]
     fn split_short_merge_modifiers_comma_only_non_modifier() {
         // 'x' is not a valid modifier
-        let (mods, rem) = split_short_merge_modifiers(",xyz", false);
+        let (mods, rem) = split_short_merge_modifiers(",xyz");
         assert_eq!(mods, "");
         assert_eq!(rem, "xyz");
     }

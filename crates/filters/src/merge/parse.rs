@@ -384,11 +384,6 @@ impl ShortFormAction {
         }
     }
 
-    /// Whether this action supports modifiers.
-    const fn supports_mods(self) -> bool {
-        !matches!(self, Self::Merge)
-    }
-
     /// Whether this action is a merge-file rule (`.`/`:`/`merge`/`dir-merge`).
     ///
     /// upstream: `FILTRULE_MERGE_FILE` covers both plain and per-directory
@@ -461,12 +456,13 @@ fn try_parse_short_form(
         return Ok(None);
     }
 
+    // upstream: exclude.c:1214-1287 `parse_rule_tok` applies the parsed modifiers
+    // to every rule prefix, including a plain merge (`.`): the merge-file
+    // modifiers are gated on `FILTRULE_MERGE_FILE`, which `.` sets (exclude.c:1186)
+    // just as `:` does. Dropping them for `.` silently ignored `C`, `w`, `n`, `e`,
+    // side restrictions and anchoring on plain merges.
     let rule = action.to_rule(pattern);
-    Ok(Some(if action.supports_mods() {
-        mods.apply(rule)
-    } else {
-        rule
-    }))
+    Ok(Some(mods.apply(rule)))
 }
 
 /// Returns true for the characters upstream `isspace()` treats as whitespace in
@@ -535,11 +531,7 @@ fn try_parse_long_form(
                     line_num,
                 )?;
                 let rule = action.to_rule(pattern);
-                return Ok(Some(if action.supports_mods() {
-                    mods.apply(rule)
-                } else {
-                    rule
-                }));
+                return Ok(Some(mods.apply(rule)));
             }
             // upstream: rule_strcmp accepts isspace/`_` as terminating
             // separators; exactly one is consumed and the remainder is the
