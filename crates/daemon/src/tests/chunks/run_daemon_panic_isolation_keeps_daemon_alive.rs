@@ -29,9 +29,11 @@ fn run_daemon_panic_isolation_keeps_daemon_alive() {
     drop(held_listener);
     let daemon_handle = thread::spawn(move || run_daemon(config));
 
-    // The daemon reads the greeting it sent, parses the garbage as a module
-    // name, replies with @ERROR: and closes the connection, then keeps the
-    // accept loop running because catch_unwind isolates per-connection errors.
+    // The daemon refuses the garbage sent in place of the client's version
+    // banner (upstream clientserver.c:180-184 `@ERROR: protocol startup
+    // error`), closes the connection, and keeps the accept loop running because
+    // catch_unwind isolates per-connection errors. Only the @ERROR-then-EOF
+    // shape matters here, not which refusal it is.
     {
         let mut bad = connect_with_retries(port);
         let mut bad_reader = BufReader::new(bad.try_clone().expect("clone bad stream"));

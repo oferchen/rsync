@@ -179,8 +179,8 @@ pub use iconv::{
 pub use legacy::{
     DigestListTokens, LEGACY_DAEMON_PREFIX, LEGACY_DAEMON_PREFIX_BYTES, LEGACY_DAEMON_PREFIX_LEN,
     LegacyDaemonGreeting, LegacyDaemonGreetingOwned, LegacyDaemonMessage, MissingGreetingToken,
-    format_legacy_daemon_greeting, format_legacy_daemon_message, missing_greeting_token,
-    parse_legacy_daemon_greeting, parse_legacy_daemon_greeting_bytes,
+    format_legacy_daemon_greeting, format_legacy_daemon_message, is_version_banner,
+    missing_greeting_token, parse_legacy_daemon_greeting, parse_legacy_daemon_greeting_bytes,
     parse_legacy_daemon_greeting_bytes_details, parse_legacy_daemon_greeting_bytes_owned,
     parse_legacy_daemon_greeting_details, parse_legacy_daemon_greeting_owned,
     parse_legacy_daemon_message, parse_legacy_daemon_message_bytes, parse_legacy_error_message,

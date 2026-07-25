@@ -25,6 +25,7 @@ fn run_daemon_no_detach_serves_connection() {
     assert_eq!(line, expected_greeting);
 
     // Send list request to exercise the connection
+    send_client_greeting(&mut stream);
     stream.write_all(b"#list\n").expect("send list request");
     stream.flush().expect("flush list request");
 
