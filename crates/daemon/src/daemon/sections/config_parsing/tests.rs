@@ -747,7 +747,11 @@ mod config_parsing_tests {
         let file = write_config("pid file = /var/run/a.pid\npid file = /var/run/b.pid\n");
         let result = parse_config_modules(file.path()).expect("parse succeeds");
         let (pid_file, _) = result.pid_file.expect("should have pid file");
-        assert_eq!(pid_file, PathBuf::from("/var/run/b.pid"));
+        // Last directive wins: the resolved path must point at b.pid, not a.pid.
+        // Assert the file name rather than the full path so the check holds on
+        // Windows, where a Unix-style "/var/run/..." is config-relative (drive
+        // prefixed) rather than absolute.
+        assert_eq!(pid_file.file_name().and_then(|n| n.to_str()), Some("b.pid"));
     }
 
     #[test]
