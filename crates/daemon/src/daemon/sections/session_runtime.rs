@@ -287,6 +287,28 @@ fn handle_legacy_session(
                 let _ = conn_state.transition(ConnectionState::Closing);
                 return Ok(());
             }
+            // upstream: clientserver.c:180-184 - when `sscanf(buf, "@RSYNCD:
+            // %d.%d", ...) < 1` the server answers `@ERROR: protocol startup
+            // error` and returns. The first line a client sends must be its
+            // version banner, so anything else (a bare module name, an HTTP
+            // request, a port scan) is refused here instead of being taken for a
+            // module name - which is what made oc answer `@ERROR: Unknown module
+            // 'GET / HTTP/1.0'` where upstream reports the startup error.
+            if !matches!(
+                parse_legacy_daemon_message(&line),
+                Ok(LegacyDaemonMessage::Version(_))
+            ) {
+                write_limited(
+                    reader.get_mut(),
+                    &mut limiter,
+                    PROTOCOL_STARTUP_ERROR_PAYLOAD.as_bytes(),
+                )?;
+                write_limited(reader.get_mut(), &mut limiter, b"\n")?;
+                reader.get_mut().flush()?;
+                // FSM: -> Closing after the fatal @ERROR refusal.
+                let _ = conn_state.transition(ConnectionState::Closing);
+                return Ok(());
+            }
         }
         match parse_legacy_daemon_message(&line) {
             Ok(LegacyDaemonMessage::Version(version)) => {
