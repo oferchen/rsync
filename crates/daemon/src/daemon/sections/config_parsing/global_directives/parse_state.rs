@@ -10,7 +10,6 @@
 /// list on every call.
 struct GlobalParseState {
     global_refuse_directives: Vec<(Vec<String>, ConfigDirectiveOrigin)>,
-    global_refuse_line: Option<usize>,
     motd_lines: Vec<String>,
     pid_file: Option<(PathBuf, ConfigDirectiveOrigin)>,
     reverse_lookup: Option<(bool, ConfigDirectiveOrigin)>,
@@ -53,7 +52,6 @@ impl GlobalParseState {
     fn new() -> Self {
         Self {
             global_refuse_directives: Vec::new(),
-            global_refuse_line: None,
             motd_lines: Vec::new(),
             pid_file: None,
             reverse_lookup: None,
@@ -94,10 +92,9 @@ impl GlobalParseState {
     /// finalize against the live `Vars` state, which still carries the
     /// parent file's defaults until the matching `]pop` restores the
     /// snapshot. Mirror that by stashing the inheritable defaults into
-    /// dedicated fallback slots, leaving the duplicate-detection state
-    /// for explicit per-file directives untouched so the include can
-    /// still redeclare a global without colliding with the parent's
-    /// origin.
+    /// dedicated fallback slots, leaving the explicit per-file directive
+    /// slots empty so the include can redeclare a global without
+    /// inheriting the parent's origin.
     fn inherited_from(parent: &Self) -> Self {
         let mut state = Self::new();
         state.inherited_use_chroot = parent
