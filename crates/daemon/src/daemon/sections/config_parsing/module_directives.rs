@@ -14,17 +14,24 @@
 /// upstream: daemon-parm.txt `Globals:` - `parm_table[]` marks each of these
 /// `P_GLOBAL` (loadparm.c `parm_class`). Everything else is `P_LOCAL` and may
 /// be set per-module.
+///
+/// Entries are stored in the whitespace-folded, lowercase form produced by
+/// `normalize_param_name`, since `is_global_only_directive` is queried with an
+/// already-normalized key. Multi-word names (`daemon chroot`, `motd file`, ...)
+/// must appear without spaces or they would never match, and such a directive in
+/// a module section would fall through to the generic unknown-directive warning
+/// instead of the specific "Global parameter ... found in module section!" path.
 const GLOBAL_ONLY_DIRECTIVES: &[&str] = &[
     "address",
-    "daemon chroot",
-    "daemon gid",
-    "daemon uid",
-    "motd file",
-    "pid file",
-    "socket options",
-    "listen backlog",
+    "daemonchroot",
+    "daemongid",
+    "daemonuid",
+    "motdfile",
+    "pidfile",
+    "socketoptions",
+    "listenbacklog",
     "port",
-    "proxy protocol",
+    "proxyprotocol",
 ];
 
 /// Returns `true` when `key` names an upstream `P_GLOBAL` parameter that is
@@ -54,7 +61,11 @@ fn apply_module_directive(
                     "module path directive must not be empty",
                 ));
             }
-            builder.set_path(PathBuf::from(value), path, line_number)?;
+            builder.set_path(
+                PathBuf::from(strip_trailing_slashes(value)),
+                path,
+                line_number,
+            )?;
         }
         "comment" => {
             let comment = if value.is_empty() {
@@ -314,7 +325,7 @@ fn apply_module_directive(
             let dir = if value.is_empty() {
                 None
             } else {
-                Some(value.to_owned())
+                Some(strip_trailing_slashes(value))
             };
             builder.set_temp_dir(dir, path, line_number)?;
         }
@@ -436,12 +447,15 @@ fn apply_module_directive(
                     "'syslog facility' directive must not be empty",
                 ));
             }
-            // upstream: loadparm.c:456 `case P_ENUM` leaves the (inherited)
-            // value unchanged when the name matches no facility, so an
-            // unrecognised name silently falls back to the global/default
-            // facility rather than raising a config error.
+            // upstream: loadparm.c:456-467 `case P_ENUM` - a name that matches a
+            // facility is stored canonically; an unrecognised name that parses as
+            // a positive integer (`atoi(value) > 0`) is stored as that raw
+            // numeric facility; any other unrecognised name leaves the inherited
+            // value unchanged (no config error).
             if let Some(canonical) = logging_sink::canonical_syslog_facility(value) {
                 builder.set_syslog_facility(canonical.to_owned(), path, line_number)?;
+            } else if parse_atoi(value) > 0 {
+                builder.set_syslog_facility(value.to_owned(), path, line_number)?;
             }
         }
         _ if is_global_only_directive(key) => {
