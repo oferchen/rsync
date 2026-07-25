@@ -6,6 +6,7 @@
 //! can use the same API unconditionally.
 
 use crate::error::MetadataError;
+use crate::xattr_send::XattrSendOptions;
 use protocol::xattr::XattrList;
 use std::path::Path;
 use std::sync::Once;
@@ -60,9 +61,7 @@ pub fn strip_source_xattrs(
 /// On platforms without xattr support, returns an empty list.
 pub fn read_xattrs_for_wire(
     _path: &Path,
-    _follow_symlinks: bool,
-    _am_root: bool,
-    _checksum_seed: i32,
+    _opts: &XattrSendOptions<'_>,
 ) -> Result<XattrList, MetadataError> {
     Ok(XattrList::new())
 }
@@ -106,14 +105,21 @@ mod tests {
     #[test]
     fn read_xattrs_for_wire_returns_empty_list() {
         let path = Path::new("/nonexistent/file");
-        let result = read_xattrs_for_wire(path, false, false, 0).unwrap();
+        let result = read_xattrs_for_wire(path, &XattrSendOptions::default()).unwrap();
         assert!(result.is_empty());
     }
 
     #[test]
     fn read_xattrs_for_wire_as_root_returns_empty_list() {
         let path = Path::new("/nonexistent/file");
-        let result = read_xattrs_for_wire(path, true, true, 42).unwrap();
+        let opts = XattrSendOptions {
+            follow_symlinks: true,
+            am_root: true,
+            preserve_xattrs: 2,
+            checksum_seed: 42,
+            ..XattrSendOptions::default()
+        };
+        let result = read_xattrs_for_wire(path, &opts).unwrap();
         assert!(result.is_empty());
     }
 

@@ -21,6 +21,7 @@
 //! - `xattrs.c:64-68, 254-257` - permitted-namespace policy on Linux.
 
 use crate::error::MetadataError;
+use crate::xattr_send::XattrSendOptions;
 use protocol::xattr::XattrList;
 use std::collections::HashSet;
 use std::io;
@@ -96,20 +97,46 @@ fn map_xattr_error(context: &'static str, path: &Path, error: io::Error) -> Meta
     MetadataError::new(context, path, error)
 }
 
-/// Returns the byte-encoded xattr names present on `path`, filtered by
-/// [`is_xattr_permitted`].
+/// How [`list_attributes`] screens namespaces.
+///
+/// Upstream evaluates the namespace rule only as the `else` of the
+/// `x`-modifier filter rule, so the two are mutually exclusive
+/// (`xattrs.c:250-257`).
+#[derive(Clone, Copy)]
+enum NamespaceScreen {
+    /// Apply upstream's namespace rule with the given `user_only` value.
+    Apply { user_only: bool },
+    /// Skip the namespace rule: an `x`-modifier filter governs the selection
+    /// instead, exactly as upstream's `saw_xattr_filter` branch does.
+    Bypass,
+}
+
+/// Returns the byte-encoded xattr names present on `path`, screened per
+/// `screen` by [`is_xattr_permitted`].
 fn list_attributes(
     path: &Path,
     follow_symlinks: bool,
-    user_only: bool,
+    screen: NamespaceScreen,
 ) -> Result<Vec<Vec<u8>>, MetadataError> {
     let attrs = backend::list_attributes(path, follow_symlinks)
         .map_err(|error| map_xattr_error("list extended attributes", path, error))?;
     Ok(attrs
         .into_iter()
         .map(|name| backend::os_name_to_bytes(&name))
-        .filter(|bytes| is_xattr_permitted(&String::from_utf8_lossy(bytes), user_only))
+        .filter(|bytes| match screen {
+            NamespaceScreen::Apply { user_only } => {
+                is_xattr_permitted(&String::from_utf8_lossy(bytes), user_only)
+            }
+            NamespaceScreen::Bypass => true,
+        })
         .collect())
+}
+
+/// Shorthand for the receiver/local-copy namespace screen.
+fn receiver_screen() -> NamespaceScreen {
+    NamespaceScreen::Apply {
+        user_only: receiver_user_only(),
+    }
 }
 
 fn read_attribute(
@@ -138,11 +165,19 @@ fn remove_attribute(path: &Path, name: &[u8], follow_symlinks: bool) -> Result<(
 
 /// Reads xattr data from a file and returns it as a wire-format `XattrList`.
 ///
-/// Names are translated to wire format via `local_to_wire()`. Entries are
-/// sorted alphabetically by wire name, matching upstream rsync's
-/// `rsync_xal_get()` which sorts by name after collection. All values are
-/// stored as full data - abbreviation (checksum substitution for large values)
-/// is handled by the wire encoder at send time.
+/// Per attribute the selection reproduces `rsync_xal_get()` in upstream order:
+///
+/// 1. The `x`-modifier filter, if any, decides alone; otherwise the namespace
+///    rule applies. The two are mutually exclusive (`xattrs.c:250-257`).
+/// 2. The `rsync.%FOO` internal-attribute gate (`xattrs.c:260-267`): a sender
+///    below `-XX` drops them all, and `--fake-super` additionally drops the
+///    three store attributes at any level.
+/// 3. The surviving name is translated to wire format via `local_to_wire()`.
+///
+/// Entries are sorted alphabetically by wire name, matching upstream's qsort
+/// after collection. All values are stored as full data - abbreviation
+/// (checksum substitution for large values) is handled by the wire encoder at
+/// send time.
 ///
 /// # Upstream Reference
 ///
@@ -150,26 +185,55 @@ fn remove_attribute(path: &Path, name: &[u8], follow_symlinks: bool) -> Result<(
 /// - `xattrs.c:get_xattr()` - entry point called from `make_file()`
 pub fn read_xattrs_for_wire(
     path: &Path,
-    follow_symlinks: bool,
-    am_root: bool,
-    _checksum_seed: i32,
+    opts: &XattrSendOptions<'_>,
 ) -> Result<XattrList, MetadataError> {
-    use protocol::xattr::{XattrEntry, local_to_wire};
+    use protocol::xattr::{XattrEntry, is_fake_super_store_attr, is_rsync_internal, local_to_wire};
 
-    // upstream: xattrs.c:237 rsync_xal_get() - the sender sets user_only=0, so a
-    // non-root sender skips only the system.* namespace and still transmits
-    // user.*, security.* (e.g. SELinux labels), and trusted.* xattrs.
-    let attrs = list_attributes(path, follow_symlinks, false)?;
+    // upstream: xattrs.c:250-257 - the filter branch and the namespace branch
+    // are mutually exclusive, so a transfer carrying `x`-modifier rules never
+    // evaluates the namespace test at all.
+    let screen = if opts.filter.is_some() {
+        NamespaceScreen::Bypass
+    } else {
+        // upstream: xattrs.c:237 - the sender sets user_only=0, so a non-root
+        // sender skips only the system.* namespace and still transmits user.*,
+        // security.* (e.g. SELinux labels), and trusted.* xattrs.
+        NamespaceScreen::Apply { user_only: false }
+    };
+    let attrs = list_attributes(path, opts.follow_symlinks, screen)?;
     let mut entries = Vec::with_capacity(attrs.len());
 
     for name in &attrs {
-        // upstream: xattrs.c:509-528 - translate local name to wire format
-        let wire_name = match local_to_wire(name, am_root) {
+        let name_str = String::from_utf8_lossy(name);
+
+        // upstream: xattrs.c:250-252 - name_is_excluded(name, NAME_IS_XATTR,
+        // ALL_FILTERS) drops the attribute before it is ever read.
+        if let Some(filter) = opts.filter
+            && !filter(&name_str)
+        {
+            continue;
+        }
+
+        // upstream: xattrs.c:260-267 - no rsync.%FOO attribute is copied
+        // without two -X options, and the fake-super store attributes are
+        // never copied while --fake-super is active (am_root < 0), because
+        // they describe this side's store rather than the file's metadata.
+        if is_rsync_internal(&name_str)
+            && (opts.preserve_xattrs < 2
+                || (opts.fake_super && is_fake_super_store_attr(&name_str)))
+        {
+            continue;
+        }
+
+        // upstream: xattrs.c:509-528 - translate local name to wire format.
+        // `system.*` survives for a root sender, and also whenever a filter is
+        // present, since upstream then skips the namespace test entirely.
+        let wire_name = match local_to_wire(name, opts.am_root || opts.filter.is_some()) {
             Some(n) => n,
-            None => continue, // Filtered out (rsync internal, namespace issue)
+            None => continue, // Filtered out (namespace not exposable)
         };
 
-        let value = match read_attribute(path, name, follow_symlinks)? {
+        let value = match read_attribute(path, name, opts.follow_symlinks)? {
             Some(v) => v,
             None => continue,
         };
@@ -212,13 +276,13 @@ pub fn strip_source_xattrs(
     destination: &Path,
     follow_symlinks: bool,
 ) -> Result<(), MetadataError> {
-    let source_attrs = list_attributes(source, follow_symlinks, receiver_user_only())?;
+    let source_attrs = list_attributes(source, follow_symlinks, receiver_screen())?;
     if source_attrs.is_empty() {
         return Ok(());
     }
     let source_names: HashSet<Vec<u8>> = source_attrs.into_iter().collect();
 
-    for name in list_attributes(destination, follow_symlinks, receiver_user_only())? {
+    for name in list_attributes(destination, follow_symlinks, receiver_screen())? {
         if source_names.contains(&name) {
             remove_attribute(destination, &name, follow_symlinks)?;
         }
@@ -237,7 +301,7 @@ pub fn strip_source_xattrs(
 // upstream: xattrs.c xattrs_differ() via generator.c:468 unchanged_attrs()
 pub fn xattrs_match(a: &Path, b: &Path, follow_symlinks: bool) -> Result<bool, MetadataError> {
     let mut a_map: std::collections::BTreeMap<Vec<u8>, Vec<u8>> = std::collections::BTreeMap::new();
-    for name in list_attributes(a, follow_symlinks, receiver_user_only())? {
+    for name in list_attributes(a, follow_symlinks, receiver_screen())? {
         if protocol::xattr::is_rsync_internal(&String::from_utf8_lossy(&name)) {
             continue;
         }
@@ -247,7 +311,7 @@ pub fn xattrs_match(a: &Path, b: &Path, follow_symlinks: bool) -> Result<bool, M
     }
 
     let mut b_count = 0usize;
-    for name in list_attributes(b, follow_symlinks, receiver_user_only())? {
+    for name in list_attributes(b, follow_symlinks, receiver_screen())? {
         if protocol::xattr::is_rsync_internal(&String::from_utf8_lossy(&name)) {
             continue;
         }
@@ -278,7 +342,7 @@ pub fn sync_xattrs(
     follow_symlinks: bool,
     filter: Option<&dyn Fn(&str) -> bool>,
 ) -> Result<(), MetadataError> {
-    let source_attrs = list_attributes(source, follow_symlinks, receiver_user_only())?;
+    let source_attrs = list_attributes(source, follow_symlinks, receiver_screen())?;
     let mut retained: HashSet<Vec<u8>> = HashSet::with_capacity(source_attrs.len());
 
     for name in &source_attrs {
@@ -302,7 +366,7 @@ pub fn sync_xattrs(
         }
     }
 
-    let destination_attrs = list_attributes(destination, follow_symlinks, receiver_user_only())?;
+    let destination_attrs = list_attributes(destination, follow_symlinks, receiver_screen())?;
     for name in &destination_attrs {
         if retained.contains(name) {
             continue;
@@ -408,7 +472,7 @@ pub fn apply_xattrs_from_list(
     }
 
     // Remove destination xattrs not in the source list
-    let dest_attrs = list_attributes(destination, follow_symlinks, receiver_user_only())?;
+    let dest_attrs = list_attributes(destination, follow_symlinks, receiver_screen())?;
     for name in &dest_attrs {
         if !applied_names.contains(name) {
             let name_str = String::from_utf8_lossy(name);
@@ -457,6 +521,32 @@ mod tests {
         }
     }
 
+    /// Returns the local name of an `rsync.%<suffix>` internal attribute.
+    ///
+    /// Upstream's `RSYNC_PREFIX` is `user.rsync.` on Linux and `rsync.`
+    /// elsewhere (`xattrs.c:66-69`).
+    fn internal_xattr_name(suffix: &str) -> Vec<u8> {
+        #[cfg(target_os = "linux")]
+        {
+            format!("user.rsync.%{suffix}").into_bytes()
+        }
+        #[cfg(not(target_os = "linux"))]
+        {
+            format!("rsync.%{suffix}").into_bytes()
+        }
+    }
+
+    /// Reports whether the collected list carries the local name `name`.
+    ///
+    /// A non-Linux sender emits `user.`-prefixed wire names for anything not
+    /// already under `RSYNC_PREFIX` (`xattrs.c:518-530`), so the local name has
+    /// to be translated before the lookup.
+    fn wire_contains(list: &XattrList, name: &[u8]) -> bool {
+        let expected = protocol::xattr::local_to_wire(name, true)
+            .expect("test names are always representable on the wire");
+        list.entries().iter().any(|entry| entry.name() == expected)
+    }
+
     /// Returns the expected local xattr name for test entries.
     ///
     /// On Linux, names need the `user.` prefix. On other platforms (macOS,
@@ -484,7 +574,7 @@ mod tests {
             return;
         }
 
-        let attrs = list_attributes(&file, false, receiver_user_only()).expect("list attrs");
+        let attrs = list_attributes(&file, false, receiver_screen()).expect("list attrs");
         // May have system attributes, but should not error
         assert!(
             attrs
@@ -556,7 +646,7 @@ mod tests {
 
         strip_source_xattrs(&source, &dest, false).expect("strip");
 
-        let dest_attrs = list_attributes(&dest, false, receiver_user_only()).expect("list dest");
+        let dest_attrs = list_attributes(&dest, false, receiver_screen()).expect("list dest");
         assert!(
             !dest_attrs.contains(&shared),
             "source-originated attribute must be stripped from the destination"
@@ -566,8 +656,7 @@ mod tests {
             "filesystem-applied (dest-only) attribute must be preserved"
         );
         // The source is read-only input to the strip and must be untouched.
-        let source_attrs =
-            list_attributes(&source, false, receiver_user_only()).expect("list source");
+        let source_attrs = list_attributes(&source, false, receiver_screen()).expect("list source");
         assert!(source_attrs.contains(&shared), "source must be untouched");
     }
 
@@ -589,7 +678,7 @@ mod tests {
 
         strip_source_xattrs(&source, &dest, false).expect("strip with empty source");
 
-        let dest_attrs = list_attributes(&dest, false, receiver_user_only()).expect("list dest");
+        let dest_attrs = list_attributes(&dest, false, receiver_screen()).expect("list dest");
         assert!(
             dest_attrs.contains(&dest_only),
             "with no source attributes the destination is left untouched"
@@ -780,6 +869,220 @@ mod tests {
         );
     }
 
+    /// `-X` strips the fake-super store from the wire but `-XX` transmits it.
+    ///
+    /// This is the whole point of the doubled option: `--fake-super` writes a
+    /// file's real ownership and permissions into `rsync.%stat`, and only a
+    /// second `-X` moves that store to the peer so an unprivileged mirror can
+    /// be re-materialised later. Collapsing the level to a bool makes `-XX` a
+    /// silent synonym for `-X` while the help text still advertises the store.
+    ///
+    /// upstream: xattrs.c:261-263 - `if (name_len > RPRE_LEN && name[RPRE_LEN]
+    /// == '%' && HAS_PREFIX(name, RSYNC_PREFIX)) { if ((am_sender &&
+    /// preserve_xattrs < 2) ...) continue; }`
+    #[test]
+    fn sender_transmits_the_fake_super_store_only_at_level_two() {
+        let dir = tempdir().expect("create temp dir");
+        let file = dir.path().join("stored.txt");
+        fs::write(&file, "content").expect("write file");
+
+        if !xattrs_supported(&file) {
+            eprintln!("xattrs not supported, skipping test");
+            return;
+        }
+
+        let stat_name = internal_xattr_name("stat");
+        // A plausible fake-super payload: `MODE UID,GID MAJOR:MINOR`, the
+        // format upstream's set_stat_xattr() writes.
+        if write_attribute(&file, &stat_name, b"100644 0,0 0:0", false).is_err() {
+            eprintln!("filesystem rejects rsync.% names, skipping test");
+            return;
+        }
+        let plain = test_xattr_name("keepme");
+        write_attribute(&file, &plain, b"v", false).expect("write plain attr");
+
+        let single = read_xattrs_for_wire(
+            &file,
+            &XattrSendOptions {
+                preserve_xattrs: 1,
+                ..XattrSendOptions::default()
+            },
+        )
+        .expect("read at level 1");
+        assert!(
+            !wire_contains(&single, &stat_name),
+            "a single -X must strip the fake-super store",
+        );
+        assert!(
+            wire_contains(&single, &plain),
+            "a single -X must still carry ordinary attributes",
+        );
+
+        let double = read_xattrs_for_wire(
+            &file,
+            &XattrSendOptions {
+                preserve_xattrs: 2,
+                ..XattrSendOptions::default()
+            },
+        )
+        .expect("read at level 2");
+        assert!(
+            wire_contains(&double, &stat_name),
+            "-XX must transmit the fake-super store, otherwise it is a no-op alias for -X",
+        );
+    }
+
+    /// `--fake-super` suppresses the three store attributes at any level.
+    ///
+    /// With `--fake-super` active the local `rsync.%stat` / `%aacl` / `%dacl`
+    /// describe *this* side's emulated ownership, not the file's own metadata,
+    /// so copying them onward would hand the peer a stale store. Other
+    /// `rsync.%` names are unaffected and remain governed by the level alone.
+    ///
+    /// upstream: xattrs.c:263-266 - `am_root < 0 && (strcmp(..., XSTAT_SUFFIX)
+    /// == 0 || ... XACC_ACL_SUFFIX ... || ... XDEF_ACL_SUFFIX ...)`, where
+    /// `am_root < 0` is what `set_fake_super()` sets.
+    #[test]
+    fn fake_super_drops_the_store_attrs_even_at_level_two() {
+        let dir = tempdir().expect("create temp dir");
+        let file = dir.path().join("faked.txt");
+        fs::write(&file, "content").expect("write file");
+
+        if !xattrs_supported(&file) {
+            eprintln!("xattrs not supported, skipping test");
+            return;
+        }
+
+        let stat_name = internal_xattr_name("stat");
+        if write_attribute(&file, &stat_name, b"100644 0,0 0:0", false).is_err() {
+            eprintln!("filesystem rejects rsync.% names, skipping test");
+            return;
+        }
+        let aacl_name = internal_xattr_name("aacl");
+        write_attribute(&file, &aacl_name, b"acl", false).expect("write %aacl");
+        let dacl_name = internal_xattr_name("dacl");
+        write_attribute(&file, &dacl_name, b"acl", false).expect("write %dacl");
+        // Not one of the three store suffixes, so --fake-super leaves it alone.
+        let other_name = internal_xattr_name("other");
+        write_attribute(&file, &other_name, b"o", false).expect("write %other");
+
+        let list = read_xattrs_for_wire(
+            &file,
+            &XattrSendOptions {
+                preserve_xattrs: 2,
+                fake_super: true,
+                ..XattrSendOptions::default()
+            },
+        )
+        .expect("read under fake-super");
+
+        for name in [&stat_name, &aacl_name, &dacl_name] {
+            assert!(
+                !wire_contains(&list, name),
+                "--fake-super must suppress {} even at -XX",
+                String::from_utf8_lossy(name),
+            );
+        }
+        assert!(
+            wire_contains(&list, &other_name),
+            "--fake-super gates only %stat/%aacl/%dacl, not every rsync.% name",
+        );
+    }
+
+    /// An `x`-modifier filter screens the names the sender collects.
+    ///
+    /// upstream: xattrs.c:250-252 - `if (saw_xattr_filter) { if
+    /// (name_is_excluded(name, NAME_IS_XATTR, ALL_FILTERS)) continue; }`
+    #[test]
+    fn sender_applies_the_xattr_name_filter() {
+        let dir = tempdir().expect("create temp dir");
+        let file = dir.path().join("filtered.txt");
+        fs::write(&file, "content").expect("write file");
+
+        if !xattrs_supported(&file) {
+            eprintln!("xattrs not supported, skipping test");
+            return;
+        }
+
+        let dropped = test_xattr_name("foo");
+        let kept = test_xattr_name("bar");
+        write_attribute(&file, &dropped, b"d", false).expect("write foo");
+        write_attribute(&file, &kept, b"k", false).expect("write bar");
+
+        let dropped_str = String::from_utf8(dropped.clone()).expect("utf8 name");
+        let predicate = |name: &str| name != dropped_str;
+        let list = read_xattrs_for_wire(
+            &file,
+            &XattrSendOptions {
+                filter: Some(&predicate),
+                ..XattrSendOptions::default()
+            },
+        )
+        .expect("read with filter");
+
+        assert!(
+            !wire_contains(&list, &dropped),
+            "an excluded name must never be collected",
+        );
+        assert!(
+            wire_contains(&list, &kept),
+            "a name the filter admits must still be collected",
+        );
+    }
+
+    /// A filter replaces the namespace rule rather than stacking on top of it.
+    ///
+    /// Upstream's two branches are mutually exclusive: `if (saw_xattr_filter)
+    /// {...} else if (user_only ? ... : HAS_PREFIX(name, SYSTEM_PREFIX))
+    /// continue;` (xattrs.c:250-257). So with any `x`-modifier rule present a
+    /// `system.*` name that the namespace rule would have dropped is instead
+    /// judged by the filter alone. Screening on both would silently ignore an
+    /// admitting rule the user wrote.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn a_filter_bypasses_the_namespace_check() {
+        let dir = tempdir().expect("create temp dir");
+        let file = dir.path().join("ns.txt");
+        fs::write(&file, "content").expect("write file");
+
+        if !xattrs_supported(&file) {
+            eprintln!("xattrs not supported, skipping test");
+            return;
+        }
+
+        // system.* is writable only with privileges (and only on filesystems
+        // that back it), so treat an unwritable name as "cannot exercise".
+        let system_name = b"system.test_ns".to_vec();
+        if write_attribute(&file, &system_name, b"s", false).is_err() {
+            eprintln!("cannot set a system.* xattr here, skipping test");
+            return;
+        }
+
+        // Without a filter the namespace rule drops it (xattrs.c:256).
+        let unfiltered =
+            read_xattrs_for_wire(&file, &XattrSendOptions::default()).expect("read without filter");
+        assert!(
+            !wire_contains(&unfiltered, &system_name),
+            "the namespace rule drops system.* for a non-root sender",
+        );
+
+        // With a filter that admits everything, the namespace rule is not
+        // evaluated at all and the name survives.
+        let admit_all = |_name: &str| true;
+        let filtered = read_xattrs_for_wire(
+            &file,
+            &XattrSendOptions {
+                filter: Some(&admit_all),
+                ..XattrSendOptions::default()
+            },
+        )
+        .expect("read with filter");
+        assert!(
+            wire_contains(&filtered, &system_name),
+            "an x-modifier filter replaces the namespace rule, it does not stack with it",
+        );
+    }
+
     // upstream: xattrs.c:297-299 assigns each xattr num = sorted_position + 1
     // (ascending). The receiver re-derives the identical 1-based ascending num
     // in receive order (protocol::xattr::cache `for num in 1..=count`). The
@@ -805,7 +1108,7 @@ mod tests {
         write_attribute(&file, &test_xattr_name("mmm"), b"m", false).expect("write mmm");
         write_attribute(&file, &test_xattr_name("zzz"), b"z", false).expect("write zzz");
 
-        let list = read_xattrs_for_wire(&file, false, false, 0).expect("read xattrs");
+        let list = read_xattrs_for_wire(&file, &XattrSendOptions::default()).expect("read xattrs");
         let entries = list.entries();
         assert!(entries.len() >= 3, "expected at least our three xattrs");
 

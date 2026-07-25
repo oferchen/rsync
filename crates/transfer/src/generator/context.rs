@@ -333,6 +333,22 @@ impl GeneratorContext {
     }
 
     /// Creates a configured `FileListWriter` matching the current protocol and flags.
+    /// Returns the `x`-modifier xattr-name filter that screens which of a
+    /// source file's extended attributes are collected for the wire, or `None`
+    /// when the transfer carries no such rules.
+    ///
+    /// # Upstream Reference
+    ///
+    /// Mirrors upstream's `saw_xattr_filter` gate in `rsync_xal_get()`
+    /// (xattrs.c:250-252), which consults
+    /// `name_is_excluded(name, NAME_IS_XATTR, ALL_FILTERS)`. Note that when
+    /// this returns `Some`, upstream skips the namespace test entirely: the
+    /// two branches at xattrs.c:250-257 are mutually exclusive.
+    pub(crate) fn xattr_name_filter(&self) -> Option<&::filters::FilterSet> {
+        let global = self.filter_chain.global();
+        global.has_xattr_rules().then_some(global)
+    }
+
     pub(crate) fn build_flist_writer(&self) -> protocol::flist::FileListWriter {
         use crate::shared::ChecksumFactory;
 
