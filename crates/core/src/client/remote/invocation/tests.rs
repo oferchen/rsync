@@ -1717,6 +1717,28 @@ fn xattrs_level_two_emits_doubled_xx() {
     );
 }
 
+// The doubled letter is only useful if the server half recovers the level from
+// it: the sender gates the `rsync.%FOO` fake-super store on `preserve_xattrs <
+// 2` (xattrs.c:262). Both the in-process server config and a remote peer are
+// built by re-parsing this same string, so a level that survives emission but
+// not parsing still leaves `-XX` behaving as `-X`.
+#[cfg(all(unix, feature = "xattr"))]
+#[test]
+fn xattrs_level_survives_the_flag_string_round_trip() {
+    use transfer::ParsedServerFlags;
+
+    for (level, expected) in [(1u8, 1u8), (2, 2)] {
+        let config = ClientConfig::builder().xattrs(level).build();
+        let flag_string = sender_flag_string(&config);
+        let parsed = ParsedServerFlags::parse(&flag_string).expect("flag string must parse");
+        assert!(parsed.xattrs, "level {level} must set the xattrs bool");
+        assert_eq!(
+            parsed.xattrs_level, expected,
+            "level {level} must round-trip through {flag_string}"
+        );
+    }
+}
+
 // upstream: options.c:2709-2710 - `if (cvs_exclude) argstr[x++] = 'C';`. The
 // letter is forwarded unconditionally (outside the am_sender block) so the
 // remote peer runs get_cvs_excludes() itself. WHY: without the letter, an

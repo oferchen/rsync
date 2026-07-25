@@ -654,12 +654,18 @@ impl ReceiverContext {
     /// pre-transfer destination. A sender with no xattrs differs exactly when
     /// the destination still carries some.
     pub(in crate::receiver) fn dest_xattrs_differ(&self, entry: &FileEntry, path: &Path) -> bool {
-        let dest = match metadata::read_xattrs_for_wire(
-            path,
-            false,
-            metadata::am_root(),
-            self.checksum_seed,
-        ) {
+        let opts = metadata::XattrSendOptions {
+            follow_symlinks: false,
+            am_root: metadata::am_root(),
+            // upstream: xattrs.c:262 - the strip is gated on `am_sender`, and
+            // the generator is not the sender, so nothing is stripped here.
+            // Level 2 reproduces that without a separate role field.
+            preserve_xattrs: 2,
+            fake_super: self.config.fake_super,
+            filter: None,
+            checksum_seed: self.checksum_seed,
+        };
+        let dest = match metadata::read_xattrs_for_wire(path, &opts) {
             Ok(list) => list,
             Err(_) => return false,
         };
