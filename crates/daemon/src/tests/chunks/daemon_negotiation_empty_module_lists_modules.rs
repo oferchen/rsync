@@ -39,12 +39,7 @@ fn daemon_negotiation_empty_module_lists_modules() {
 
     // Send only a bare newline. upstream: clientserver.c:1423 treats this
     // as equivalent to `#list`.
-    // upstream: clientserver.c:180-184 - the client's version banner must
-    // precede any request; even an empty (list-all) request draws the
-    // protocol startup error without it.
-    stream
-        .write_all(legacy_daemon_greeting().as_bytes())
-        .expect("send client greeting");
+    send_client_greeting(&mut stream);
     stream.write_all(b"\n").expect("send empty request");
     stream.flush().expect("flush empty request");
 

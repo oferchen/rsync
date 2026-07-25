@@ -58,7 +58,7 @@ use logging_sink::MessageSink;
 use protocol::{
     LEGACY_DAEMON_PREFIX_LEN, LegacyDaemonMessage, MessageCode, MessageFrame, ProtocolVersion,
     filters::FilterRuleWireFormat, format_legacy_daemon_message, iconv::FilenameConverter,
-    missing_greeting_token, parse_legacy_daemon_message,
+    is_version_banner, missing_greeting_token, parse_legacy_daemon_message,
 };
 
 use crate::{

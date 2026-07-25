@@ -44,12 +44,7 @@ fn run_daemon_lists_modules_with_module_timeout() {
     assert_eq!(line, expected_greeting);
 
     // upstream: clientserver.c:1423 - an empty request lists modules.
-    // upstream: clientserver.c:180-184 - the client's version banner must
-    // precede any request; even an empty (list-all) request draws the
-    // protocol startup error without it.
-    stream
-        .write_all(legacy_daemon_greeting().as_bytes())
-        .expect("send client greeting");
+    send_client_greeting(&mut stream);
     stream.write_all(b"\n").expect("send empty request");
     stream.flush().expect("flush empty request");
 

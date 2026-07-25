@@ -56,13 +56,9 @@ fn run_daemon_serves_slow_handshake() {
     // handshake. The daemon must wait rather than abort the connection.
     std::thread::sleep(std::time::Duration::from_secs(11));
 
-    // upstream: clientserver.c:180-184 - the client's first line must be its
-    // version banner; anything else draws `@ERROR: protocol startup error`.
-    // Send the greeting before the request so this exercises the handshake
-    // timeout (what the test is for) rather than the startup-error path.
-    stream
-        .write_all(legacy_daemon_greeting().as_bytes())
-        .expect("send client greeting");
+    // Complete the handshake before requesting, so this exercises the timeout
+    // (what the test is for) rather than the startup-error path.
+    send_client_greeting(&mut stream);
     stream.write_all(b"#list\n").expect("send list request");
     stream.flush().expect("flush list request");
 

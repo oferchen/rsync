@@ -273,42 +273,22 @@ fn handle_legacy_session(
     fast_io::rearm_tcp_quickack(reader.get_ref().tcp_stream());
     while let Some(line) = read_trimmed_line(&mut reader)? {
         fast_io::rearm_tcp_quickack(reader.get_ref().tcp_stream());
-        // upstream: clientserver.c:182-213 exchange_protocols() (am_client == 0) -
-        // before proceeding the daemon validates the client's version greeting,
-        // refusing one that omits the subprotocol value (protocol >= 30) or the
-        // digest name list (protocol > 31). The refusal is a fatal pre-OK
-        // @ERROR line, after which the client returns and the socket closes.
-        if negotiated_protocol.is_none() {
-            if let Some(payload) = reject_malformed_client_greeting(&line) {
-                write_limited(reader.get_mut(), &mut limiter, payload.as_bytes())?;
-                write_limited(reader.get_mut(), &mut limiter, b"\n")?;
-                reader.get_mut().flush()?;
-                // FSM: -> Closing after the fatal @ERROR refusal.
-                let _ = conn_state.transition(ConnectionState::Closing);
-                return Ok(());
-            }
-            // upstream: clientserver.c:180-184 - when `sscanf(buf, "@RSYNCD:
-            // %d.%d", ...) < 1` the server answers `@ERROR: protocol startup
-            // error` and returns. The first line a client sends must be its
-            // version banner, so anything else (a bare module name, an HTTP
-            // request, a port scan) is refused here instead of being taken for a
-            // module name - which is what made oc answer `@ERROR: Unknown module
-            // 'GET / HTTP/1.0'` where upstream reports the startup error.
-            if !matches!(
-                parse_legacy_daemon_message(&line),
-                Ok(LegacyDaemonMessage::Version(_))
-            ) {
-                write_limited(
-                    reader.get_mut(),
-                    &mut limiter,
-                    PROTOCOL_STARTUP_ERROR_PAYLOAD.as_bytes(),
-                )?;
-                write_limited(reader.get_mut(), &mut limiter, b"\n")?;
-                reader.get_mut().flush()?;
-                // FSM: -> Closing after the fatal @ERROR refusal.
-                let _ = conn_state.transition(ConnectionState::Closing);
-                return Ok(());
-            }
+        // upstream: clientserver.c:180-213 exchange_protocols() (am_client == 0) -
+        // the daemon validates the client's version greeting before proceeding,
+        // refusing a line that is not a banner at all, or one that omits the
+        // subprotocol value (protocol >= 30) or the digest name list
+        // (protocol > 31). `reject_malformed_client_greeting` owns which of those
+        // applies; the refusal is a fatal pre-OK @ERROR line, after which the
+        // client returns and the socket closes.
+        if negotiated_protocol.is_none()
+            && let Some(payload) = reject_malformed_client_greeting(&line)
+        {
+            write_limited(reader.get_mut(), &mut limiter, payload.as_bytes())?;
+            write_limited(reader.get_mut(), &mut limiter, b"\n")?;
+            reader.get_mut().flush()?;
+            // FSM: -> Closing after the fatal @ERROR refusal.
+            let _ = conn_state.transition(ConnectionState::Closing);
+            return Ok(());
         }
         match parse_legacy_daemon_message(&line) {
             Ok(LegacyDaemonMessage::Version(version)) => {

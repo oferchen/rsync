@@ -36,11 +36,7 @@ fn run_daemon_loads_modules_from_inline_config_flag() {
     reader.read_line(&mut line).expect("greeting");
     assert_eq!(line, expected_greeting);
 
-    // upstream: clientserver.c:180-184 - the client's version banner must
-    // precede any request; a bare `#list` draws the protocol startup error.
-    stream
-        .write_all(legacy_daemon_greeting().as_bytes())
-        .expect("send client greeting");
+    send_client_greeting(&mut stream);
     stream.write_all(b"#list\n").expect("send list request");
     stream.flush().expect("flush list request");
 
