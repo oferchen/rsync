@@ -429,7 +429,10 @@ mod config_parsing_tests {
         let config = format!("[mod]\npath = {}\nmax connections = 10\n", path.display());
         let file = write_config(&config);
         let result = parse_config_modules(file.path()).expect("parse succeeds");
-        assert_eq!(result.modules[0].max_connections.unwrap().get(), 10);
+        assert_eq!(
+            result.modules[0].max_connections,
+            MaxConnections::Limited(NonZeroU32::new(10).expect("non-zero"))
+        );
     }
 
 
@@ -3078,8 +3081,8 @@ mod config_parsing_tests {
             let file = write_config(&config);
             let result = parse_config_modules(file.path()).expect("parse succeeds");
             assert_eq!(
-                result.modules[0].max_connections.map(NonZeroU32::get),
-                Some(10),
+                result.modules[0].max_connections,
+                MaxConnections::Limited(NonZeroU32::new(10).expect("non-zero")),
                 "'{spelling}' must resolve to the max connections parameter",
             );
         }

@@ -14,7 +14,7 @@ use std::time::{Duration, Instant};
 use std::os::unix::fs::PermissionsExt;
 
 use crate::daemon::{
-    HostPattern, ModuleDefinition, TEST_SECRETS_CANDIDATES, TEST_SECRETS_ENV,
+    HostPattern, MaxConnections, ModuleDefinition, TEST_SECRETS_CANDIDATES, TEST_SECRETS_ENV,
     TestSecretsEnvOverride,
 };
 pub(super) use crate::test_env::{ENV_LOCK, EnvGuard};
@@ -47,7 +47,7 @@ pub(super) fn base_module(name: &str) -> ModuleDefinition {
         listable: true,
         use_chroot: true,
         use_chroot_explicit: false,
-        max_connections: None,
+        max_connections: MaxConnections::Unlimited,
         incoming_chmod: None,
         outgoing_chmod: None,
         fake_super: false,
@@ -110,7 +110,7 @@ pub(super) fn module_with_host_patterns(allow: &[&str], deny: &[&str]) -> Module
         listable: true,
         use_chroot: true,
         use_chroot_explicit: false,
-        max_connections: None,
+        max_connections: MaxConnections::Unlimited,
         incoming_chmod: None,
         outgoing_chmod: None,
         fake_super: false,
