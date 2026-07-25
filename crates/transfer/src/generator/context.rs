@@ -344,6 +344,9 @@ impl GeneratorContext {
     /// `name_is_excluded(name, NAME_IS_XATTR, ALL_FILTERS)`. Note that when
     /// this returns `Some`, upstream skips the namespace test entirely: the
     /// two branches at xattrs.c:250-257 are mutually exclusive.
+    /// Only the unix xattr-collection path consults this; gating the
+    /// definition to match its sole caller keeps Windows free of dead code.
+    #[cfg(unix)]
     pub(crate) fn xattr_name_filter(&self) -> Option<&::filters::FilterSet> {
         let global = self.filter_chain.global();
         global.has_xattr_rules().then_some(global)
