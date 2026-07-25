@@ -22,6 +22,7 @@ use protocol::wire::SignatureBlock;
 
 use super::GeneratorContext;
 use super::item_flags::ItemFlags;
+use crate::writer::MsgInfoSender;
 
 /// Per-file NDX + item-flags header that precedes a file's `sum_head` / delta
 /// payload on the wire.
@@ -339,6 +340,39 @@ impl GeneratorContext {
         Ok(())
     }
 
+    /// Emits a sender-side `FWARNING` diagnostic, framing it for the peer when
+    /// this process is the server.
+    ///
+    /// Upstream `rwrite()` sends the multiplexed frame *instead of* writing the
+    /// text to the server's own stderr (`send_msg(...); return;`), so a client
+    /// behind a daemon or SSH connection renders the line exactly once. Doing
+    /// both would duplicate it over SSH, where the server's stderr is already
+    /// forwarded. `text` carries its trailing newline, as upstream's payload
+    /// does.
+    ///
+    /// Below protocol 30 there is no `MSG_WARNING`, so `FWARNING` rides
+    /// `MSG_INFO` instead.
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `log.c:330-346` - `am_server` sends the frame and returns
+    /// - `log.c:332-337` - `MSG_WARNING` -> `MSG_INFO` downgrade below protocol 30
+    fn emit_sender_warning<W: Write>(
+        &self,
+        writer: &mut super::super::writer::ServerWriter<W>,
+        text: &str,
+    ) -> io::Result<()> {
+        if self.config.connection.client_mode || !writer.is_multiplexed() {
+            eprint!("{text}");
+            return Ok(());
+        }
+        if self.protocol.supports_generator_messages() {
+            writer.send_msg_warning(text.as_bytes())
+        } else {
+            writer.send_msg_info(text.as_bytes())
+        }
+    }
+
     /// Records an I/O error, logs the appropriate warning/error, and sends
     /// MSG_NO_SEND for protocol >= 30.
     ///
@@ -363,15 +397,25 @@ impl GeneratorContext {
         let fname = crate::full_fname::full_fname(path_display, self.daemon_module());
         if error.kind() == io::ErrorKind::NotFound {
             self.io_error |= super::io_error_flags::IOERR_VANISHED;
-            // upstream: sender.c:389 - rprintf(c, "file has vanished: %s\n", full_fname(...))
-            eprintln!("file has vanished: {fname}");
+            // upstream: sender.c:387-390 - rprintf(c, "file has vanished: %s\n", full_fname(...)).
+            // `c` is FERROR only for a protocol < 28 daemon; oc's protocol floor
+            // is 28, so this is always FWARNING. `fname` is already quoted and
+            // carries the daemon module suffix (util1.c:1273 full_fname).
+            self.emit_sender_warning(writer, &format!("file has vanished: {fname}\n"))?;
         } else {
             self.io_error |= super::io_error_flags::IOERR_GENERAL;
             // upstream: sender.c:393 - rsyserr(FERROR_XFER, errno, "send_files failed to open %s", ...)
-            eprintln!(
-                "rsync: [sender] send_files failed to open {fname}: {}",
+            let text = format!(
+                "rsync: [sender] send_files failed to open {fname}: {}\n",
                 engine::local_copy::upstream_io_error(error),
             );
+            // MSG_ERROR_XFER exists at every supported protocol, so it carries
+            // no downgrade (upstream log.c:332-337 only remaps MSG_WARNING).
+            if self.config.connection.client_mode || !writer.is_multiplexed() {
+                eprint!("{text}");
+            } else {
+                writer.send_msg_error_xfer(text.as_bytes())?;
+            }
         }
         if self.protocol.supports_generator_messages() {
             writer.send_no_send(ndx)?;
@@ -401,10 +445,14 @@ impl GeneratorContext {
         path_display: &str,
     ) -> io::Result<()> {
         // upstream: sender.c:422 - rprintf(FWARNING, "skipped diminished file: %s\n", ...)
-        eprintln!(
-            "skipped diminished file: {}",
-            crate::full_fname::full_fname(path_display, self.daemon_module()),
-        );
+        // full_fname quotes the path and appends the daemon module suffix.
+        self.emit_sender_warning(
+            writer,
+            &format!(
+                "skipped diminished file: {}\n",
+                crate::full_fname::full_fname(path_display, self.daemon_module()),
+            ),
+        )?;
         if self.protocol.supports_generator_messages() {
             writer.send_no_send(ndx)?;
         }
