@@ -185,6 +185,7 @@ include!("tests/chunks/module_peer_hostname_skips_lookup_when_disabled.rs");
 include!("tests/chunks/module_peer_hostname_uses_override.rs");
 include!("tests/chunks/module_without_bwlimit_inherits_daemon_cap.rs");
 include!("tests/chunks/module_without_bwlimit_preserves_daemon_cap.rs");
+include!("tests/chunks/msg_error_exit_payload_uses_little_endian_encoding.rs");
 include!("tests/chunks/oc_help_flag_renders_branded_snapshot.rs");
 include!("tests/chunks/oc_version_flag_renders_report.rs");
 include!("tests/chunks/parse_auth_user_list_trims_and_deduplicates_case_insensitively.rs");
