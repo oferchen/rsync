@@ -42,7 +42,14 @@ fn main() -> ExitCode {
     #[cfg(all(target_os = "windows", target_env = "gnu"))]
     windows_gnu_eh::force_link();
 
-    let mut stdout = io::stdout().lock();
-    let mut stderr = io::stderr().lock();
+    // Do NOT hold `StdoutLock`/`StderrLock` here. Both are process-wide
+    // reentrant locks owned by the acquiring thread. In TCP-daemon mode `main`
+    // parks in the accept loop for the process lifetime while each session runs
+    // on a spawned worker thread; a worker's first `println!`/`eprintln!` would
+    // then block forever on a lock `main` never releases. `Stdout`/`Stderr`
+    // themselves implement `Write` and lock per write call, which is what the
+    // daemon workers need.
+    let mut stdout = io::stdout();
+    let mut stderr = io::stderr();
     client::run_with(env::args_os(), &mut stdout, &mut stderr)
 }
