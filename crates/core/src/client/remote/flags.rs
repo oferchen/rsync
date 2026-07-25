@@ -64,11 +64,16 @@ pub(crate) fn build_server_flag_string(config: &ClientConfig) -> String {
         flags.push('l');
     }
 
-    // upstream: options.c:2187-2191 - --files-from disables recursion and
-    // enables xfer_dirs. options.c:2205-2206 - --files-from defaults
-    // relative_paths=1.
-    let files_from_active = config.files_from().is_active();
-    let effective_recursive = config.recursive() && !files_from_active;
+    // upstream: options.c:2188-2191 - `if (files_from) { if (recurse == 1)
+    // recurse = 0; if (xfer_dirs < 0) xfer_dirs = 1; }`. Only the recursion `-a`
+    // implies is cleared; an explicit `-r` (recurse == 2) survives --files-from.
+    // That resolution happens once at the CLI, so `config.recursive()` is
+    // already upstream's post-resolution `recurse != 0` and must not be
+    // re-cleared here - doing so dropped the compact `r` letter AND, because the
+    // local half re-parses this same string, stopped the sender from recursing
+    // into a directory named in the list at all.
+    // options.c:2205-2206 - --files-from defaults relative_paths=1.
+    let effective_recursive = config.recursive();
     // upstream: options.c:2713-2714 - `if (relative_paths) argstr[x++] = 'R';`
     // packs the compact `R` for the RESOLVED relative_paths. `relative_paths()`
     // already folds in the --files-from default (options.c:2205-2206: relative
@@ -79,11 +84,19 @@ pub(crate) fn build_server_flag_string(config: &ClientConfig) -> String {
     // wire signal (`sub/file` implied dir instead of the flattened `file`).
     let effective_relative = config.relative_paths();
 
-    // upstream: 'd' = --dirs (xfer_dirs without recursion), NOT delete.
-    // delete variants are always sent as long-form --delete-* (options.c:2818-2827).
-    // upstream: options.c:2638 - xfer_dirs=1 when files_from is active.
-    let effective_dirs = config.dirs() || files_from_active;
-    if effective_dirs && !effective_recursive {
+    // upstream: options.c:2638-2640 - `if ((xfer_dirs >= 2 && xfer_dirs < 4) ||
+    // (xfer_dirs && !recurse && (list_only || (delete_mode && am_sender))))
+    // argstr[x++] = 'd';`. The letter tracks an EXPLICIT `-d` (xfer_dirs == 2),
+    // not the `xfer_dirs = 1` that --files-from or recursion implies - packing
+    // it for the implied level told the peer `--dirs` for every --files-from
+    // transfer. `d` = --dirs; the delete variants always travel long-form
+    // (options.c:2818-2827).
+    if config.dirs_explicit()
+        || (config.dirs()
+            && !effective_recursive
+            && (config.list_only()
+                || (config.delete_mode().is_enabled() && config.is_local_sender())))
+    {
         flags.push('d');
     }
 
@@ -1292,11 +1305,18 @@ mod tests {
     }
 
     #[test]
-    fn server_flag_string_files_from_suppresses_r_adds_d_and_r_upper() {
-        // upstream: options.c:2187-2191, 2205-2206 - --files-from sets
-        // recurse=0, xfer_dirs=1, and defaults relative_paths=1. The CLI layer
-        // (workflow/run.rs) folds that default into the resolved relative_paths
-        // passed here, so relative is explicit at this stage.
+    fn server_flag_string_files_from_keeps_explicit_r_and_omits_d() {
+        // upstream: options.c:2188-2191 - `if (files_from) { if (recurse == 1)
+        // recurse = 0; if (xfer_dirs < 0) xfer_dirs = 1; }`. Only the recursion
+        // `-a` implies (recurse == 1) is cleared; an explicit `-r` sets
+        // recurse == 2 (options.c:621) and survives, so the compact `r` is still
+        // packed (options.c:2705). The implied `xfer_dirs = 1` is NOT the
+        // explicit `-d` level (xfer_dirs >= 2), so no `d` is packed
+        // (options.c:2638-2640). `--files-from` defaults relative_paths=1
+        // (options.c:2205-2206), resolved by the CLI before this stage.
+        //
+        // `recursive(true)` here models the post-resolution `recurse != 0` the
+        // CLI hands over for an explicit `-r --files-from`.
         use crate::client::config::FilesFromSource;
 
         let config = ClientConfig::builder()
@@ -1307,12 +1327,12 @@ mod tests {
             .build();
         let flags = build_server_flag_string(&config);
         assert!(
-            !flags.contains('r'),
-            "should suppress 'r' with --files-from: {flags}"
+            flags.contains('r'),
+            "explicit -r survives --files-from: {flags}"
         );
         assert!(
-            flags.contains('d'),
-            "should add 'd' (xfer_dirs) with --files-from: {flags}"
+            !flags.contains('d'),
+            "implied xfer_dirs=1 must not pack 'd': {flags}"
         );
         assert!(
             flags.contains('R'),
@@ -1321,7 +1341,53 @@ mod tests {
     }
 
     #[test]
-    fn server_flag_string_files_from_no_relative_omits_r_keeps_d() {
+    fn server_flag_string_files_from_without_recursion_omits_r_and_d() {
+        // upstream: a bare `--files-from` (no `-r`, no `-d`) resolves recurse=0
+        // and xfer_dirs=1, so neither letter is packed - `d` needs the explicit
+        // level (xfer_dirs >= 2) or `list_only`/`delete_mode && am_sender`
+        // (options.c:2638-2640).
+        use crate::client::config::FilesFromSource;
+
+        // `ClientConfig::builder()` presets `recursive(true)`, so a bare
+        // --files-from (the CLI having cleared the `-a`-implied recursion) is
+        // modelled by turning it back off here.
+        let config = ClientConfig::builder()
+            .recursive(false)
+            .times(true)
+            .relative_paths(true)
+            .files_from(FilesFromSource::LocalFile("/tmp/list.txt".into()))
+            .build();
+        let flags = build_server_flag_string(&config);
+        assert!(!flags.contains('r'), "no recursion requested: {flags}");
+        assert!(
+            !flags.contains('d'),
+            "implied xfer_dirs=1 must not pack 'd': {flags}"
+        );
+    }
+
+    #[test]
+    fn server_flag_string_explicit_dirs_packs_d() {
+        // upstream: options.c:628 `-d` sets xfer_dirs = 2, and options.c:2638
+        // packs `d` for `xfer_dirs >= 2 && xfer_dirs < 4`.
+        use crate::client::config::FilesFromSource;
+
+        // `-d` without `-r`: builder() presets recursion, so clear it to model
+        // upstream's recurse=0, xfer_dirs=2.
+        let config = ClientConfig::builder()
+            .recursive(false)
+            .times(true)
+            .dirs(true)
+            .dirs_explicit(true)
+            .relative_paths(true)
+            .files_from(FilesFromSource::LocalFile("/tmp/list.txt".into()))
+            .build();
+        let flags = build_server_flag_string(&config);
+        assert!(flags.contains('d'), "explicit -d packs 'd': {flags}");
+        assert!(!flags.contains('r'), "no recursion requested: {flags}");
+    }
+
+    #[test]
+    fn server_flag_string_files_from_no_relative_omits_r_upper() {
         // upstream: options.c:2713-2714 - `if (relative_paths) argstr[x++] =
         // 'R';` packs the compact `R` only for the RESOLVED relative_paths.
         // Under --no-relative --files-from the CLI resolves relative_paths=0
@@ -1347,13 +1413,16 @@ mod tests {
             !flags.contains('R'),
             "should omit 'R' under --no-relative --files-from: {flags}"
         );
+        // The `d`/`r` letters are independent of `--no-relative`: the implied
+        // `xfer_dirs = 1` never packs `d`, and the explicit `-r` modelled here
+        // survives --files-from (options.c:2189, 2638-2640, 2705).
         assert!(
-            flags.contains('d'),
-            "should still add 'd' (xfer_dirs) with --files-from: {flags}"
+            !flags.contains('d'),
+            "implied xfer_dirs=1 must not pack 'd': {flags}"
         );
         assert!(
-            !flags.contains('r'),
-            "should still suppress 'r' with --files-from: {flags}"
+            flags.contains('r'),
+            "explicit -r survives --files-from: {flags}"
         );
     }
 

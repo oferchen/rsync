@@ -2107,6 +2107,12 @@ fn dirs_folds_in_files_from_when_flag_unset() {
         .build();
     assert!(!config.recursive());
     assert!(config.dirs());
+    // The fold supplies upstream's implied `xfer_dirs = 1`, never the explicit
+    // `-d` level (`xfer_dirs >= 2`) that packs the compact `d` letter.
+    assert!(
+        !config.dirs_explicit(),
+        "--files-from implies xfer_dirs=1, not an explicit -d"
+    );
 }
 
 // Absent a files-from source and without `-d`, xfer_dirs stays off, so the

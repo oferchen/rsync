@@ -39,6 +39,9 @@ pub(crate) struct ConfigInputs {
     pub(crate) msgs2stderr: Option<bool>,
     pub(crate) recursive: bool,
     pub(crate) dirs: Option<bool>,
+    /// Whether `-d` was passed explicitly (upstream `xfer_dirs >= 2`), as opposed
+    /// to the implied level that recursion, `--files-from`, or `--list-only` sets.
+    pub(crate) dirs_explicit: bool,
     pub(crate) delete_mode: DeleteMode,
     pub(crate) delete_excluded: bool,
     pub(crate) delete_missing_args: bool,
@@ -249,6 +252,7 @@ pub(crate) fn build_base_config(mut inputs: ConfigInputs) -> ClientConfigBuilder
         } else {
             inputs.dirs.unwrap_or(inputs.list_only)
         })
+        .dirs_explicit(inputs.dirs_explicit)
         // upstream: options.c:2215-2217 - delete mode is enabled only by an
         // explicit `--delete*` or `--delete-excluded`. `--max-delete` merely caps
         // the count (options.c:2182-2185) and must never enable deletion.
