@@ -189,3 +189,38 @@ mod clamped_verbosity_tests {
         .expect("clamp thread");
     }
 }
+
+#[cfg(test)]
+mod daemon_module_suffix_tests {
+    use super::{ModuleDefinition, ServerConfig, apply_module_transfer_directives};
+
+    /// Selecting a module is what makes upstream's `module_id >= 0`, and that
+    /// is the only condition under which `full_fname()` appends
+    /// ` (in MODULE)` to a quoted path. Recording the name here is what lets a
+    /// daemon-side `send_files failed to open` / `mkstemp failed` line name the
+    /// module the client asked for, exactly as upstream 3.4.4 does.
+    ///
+    /// upstream: clientserver.c:769 `module_id = i`; util1.c:1290
+    /// `if (module_id >= 0)`.
+    #[test]
+    fn module_selection_records_name_for_full_fname() {
+        let module = ModuleDefinition {
+            name: "mymod".to_string(),
+            ..ModuleDefinition::default()
+        };
+        let mut cfg = ServerConfig::default();
+        assert_eq!(cfg.connection.daemon_module, None);
+
+        apply_module_transfer_directives(&module, &mut cfg);
+
+        assert_eq!(cfg.connection.daemon_module.as_deref(), Some("mymod"));
+    }
+
+    /// A `ServerConfig` that never passed through module selection stays at
+    /// upstream's `module_id < 0`, so no suffix is rendered. This is the SSH
+    /// `--server` and client-side shape.
+    #[test]
+    fn config_without_module_selection_has_no_module_name() {
+        assert_eq!(ServerConfig::default().connection.daemon_module, None);
+    }
+}
