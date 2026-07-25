@@ -1451,6 +1451,53 @@ mod tests {
         );
     }
 
+    #[test]
+    fn server_flag_string_explicit_dirs_with_recursion_packs_d_and_r() {
+        // upstream: options.c:2638-2639 - clause 1 `(xfer_dirs >= 2 && xfer_dirs
+        // < 4)` packs `d` for an explicit `-d` (xfer_dirs == 2) regardless of
+        // recursion, so `-d -r` (xfer_dirs == 2, recurse == 1) emits BOTH letters.
+        // The `!recurse` guard belongs only to clause 2, not to clause 1; gating
+        // the whole condition on `!recurse` would wrongly suppress `d` here.
+        let config = ClientConfig::builder()
+            .recursive(true)
+            .dirs(true)
+            .dirs_explicit(true)
+            .build();
+        let flags = build_server_flag_string(&config);
+        assert!(
+            flags.contains('d'),
+            "explicit -d packs 'd' even with -r: {flags}"
+        );
+        assert!(flags.contains('r'), "-r still packs 'r': {flags}");
+    }
+
+    #[test]
+    fn server_flag_string_files_from_delete_sender_packs_d() {
+        // upstream: options.c:2639 - clause 2 `(xfer_dirs && !recurse &&
+        // (list_only || (delete_mode && am_sender)))` packs `d` when the implied
+        // `xfer_dirs = 1` (here from --files-from) rides with a delete sweep on
+        // the sender. A plain --files-from omits `d`, but --files-from --delete on
+        // a push must emit it.
+        use crate::client::config::FilesFromSource;
+        use std::ffi::OsString;
+
+        let config = ClientConfig::builder()
+            .recursive(false)
+            .delete(true)
+            .files_from(FilesFromSource::LocalFile("/tmp/list.txt".into()))
+            .transfer_args([OsString::from("src/"), OsString::from("host:dst/")])
+            .build();
+        assert!(
+            config.is_local_sender(),
+            "push must report the local side as sender"
+        );
+        let flags = build_server_flag_string(&config);
+        assert!(
+            flags.contains('d'),
+            "--files-from --delete (sender) packs 'd': {flags}"
+        );
+    }
+
     // upstream: options.c:2662-2666 - 'W' is only sent when whole_file > 0
     // (explicitly forced). The default for remote transfers is auto (-1),
     // which does NOT send 'W'. Sending 'W' unconditionally causes the
