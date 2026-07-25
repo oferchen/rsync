@@ -45,7 +45,7 @@ fn daemon_negotiation_empty_module_lists_modules() {
     stream
         .write_all(legacy_daemon_greeting().as_bytes())
         .expect("send client greeting");
-    stream.write_all(b"\\n").expect("send empty request");
+    stream.write_all(b"\n").expect("send empty request");
     stream.flush().expect("flush empty request");
 
     line.clear();

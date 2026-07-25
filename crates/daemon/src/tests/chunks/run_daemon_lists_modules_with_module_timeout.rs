@@ -50,7 +50,7 @@ fn run_daemon_lists_modules_with_module_timeout() {
     stream
         .write_all(legacy_daemon_greeting().as_bytes())
         .expect("send client greeting");
-    stream.write_all(b"\\n").expect("send empty request");
+    stream.write_all(b"\n").expect("send empty request");
     stream.flush().expect("flush empty request");
 
     line.clear();
