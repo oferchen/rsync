@@ -43,11 +43,11 @@ fn is_root() -> bool {
 /// Returns upstream's `user_only` value for the receiver/local xattr paths.
 ///
 /// upstream: xattrs.c:237 `int user_only = am_sender ? 0 : !am_root;` - the
-/// sender never restricts to the user namespace (see [`read_xattrs_for_wire`],
-/// which passes `user_only = false`); every receiver-side or local-copy path
-/// restricts a non-root process to the `user.*` namespace, matching upstream's
-/// non-root receiver behaviour (`xattrs.c:830` allows a non-root process to
-/// store only the user namespace).
+/// sender never restricts to the user namespace (see
+/// [`XattrRole::user_only`](crate::xattr_send::XattrRole::user_only)); every
+/// receiver-side or local-copy path restricts a non-root process to the
+/// `user.*` namespace, matching upstream's non-root receiver behaviour
+/// (`xattrs.c:830` allows a non-root process to store only the user namespace).
 fn receiver_user_only() -> bool {
     #[cfg(target_os = "linux")]
     {
@@ -168,7 +168,9 @@ fn remove_attribute(path: &Path, name: &[u8], follow_symlinks: bool) -> Result<(
 /// Per attribute the selection reproduces `rsync_xal_get()` in upstream order:
 ///
 /// 1. The `x`-modifier filter, if any, decides alone; otherwise the namespace
-///    rule applies. The two are mutually exclusive (`xattrs.c:250-257`).
+///    rule applies. The two are mutually exclusive (`xattrs.c:250-257`). The
+///    namespace rule keys on `user_only` (`xattrs.c:237`), which is `0` for
+///    the sender and `!am_root` for the generator.
 /// 2. The `rsync.%FOO` internal-attribute gate (`xattrs.c:260-267`): a sender
 ///    below `-XX` drops them all, and `--fake-super` additionally drops the
 ///    three store attributes at any level.
@@ -195,10 +197,14 @@ pub fn read_xattrs_for_wire(
     let screen = if opts.filter.is_some() {
         NamespaceScreen::Bypass
     } else {
-        // upstream: xattrs.c:237 - the sender sets user_only=0, so a non-root
+        // upstream: xattrs.c:237 - `user_only = am_sender ? 0 : !am_root`. The
         // sender skips only the system.* namespace and still transmits user.*,
-        // security.* (e.g. SELinux labels), and trusted.* xattrs.
-        NamespaceScreen::Apply { user_only: false }
+        // security.* (e.g. SELinux labels), and trusted.*; a non-root
+        // generator reading the destination to diff it keeps user.* alone, so
+        // a namespace it could never store cannot flip the itemize `x` column.
+        NamespaceScreen::Apply {
+            user_only: opts.user_only(),
+        }
     };
     let attrs = list_attributes(path, opts.follow_symlinks, screen)?;
     let mut entries = Vec::with_capacity(attrs.len());
@@ -219,7 +225,7 @@ pub fn read_xattrs_for_wire(
         // never copied while --fake-super is active (am_root < 0), because
         // they describe this side's store rather than the file's metadata.
         if is_rsync_internal(&name_str)
-            && (opts.preserve_xattrs < 2
+            && ((opts.role.is_sender() && opts.preserve_xattrs < 2)
                 || (opts.fake_super && is_fake_super_store_attr(&name_str)))
         {
             continue;
@@ -505,6 +511,7 @@ fn is_reserved_sddl_xattr(name: &[u8]) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::xattr_send::XattrRole;
     use protocol::xattr::XattrEntry;
     use std::fs;
     use tempfile::tempdir;
@@ -905,7 +912,7 @@ mod tests {
             &file,
             &XattrSendOptions {
                 preserve_xattrs: 1,
-                ..XattrSendOptions::default()
+                ..XattrSendOptions::new(XattrRole::Sender)
             },
         )
         .expect("read at level 1");
@@ -922,7 +929,7 @@ mod tests {
             &file,
             &XattrSendOptions {
                 preserve_xattrs: 2,
-                ..XattrSendOptions::default()
+                ..XattrSendOptions::new(XattrRole::Sender)
             },
         )
         .expect("read at level 2");
@@ -971,7 +978,7 @@ mod tests {
             &XattrSendOptions {
                 preserve_xattrs: 2,
                 fake_super: true,
-                ..XattrSendOptions::default()
+                ..XattrSendOptions::new(XattrRole::Sender)
             },
         )
         .expect("read under fake-super");
@@ -986,6 +993,103 @@ mod tests {
         assert!(
             wire_contains(&list, &other_name),
             "--fake-super gates only %stat/%aacl/%dacl, not every rsync.% name",
+        );
+    }
+
+    /// The generator keeps `rsync.%FOO` at a single `-X`, the sender does not.
+    ///
+    /// Upstream's strip is `am_sender && preserve_xattrs < 2`, so the role is
+    /// load-bearing: the generator reads the destination to diff it, and a
+    /// destination that already carries the store must compare equal to a
+    /// sender list that carries it too. Dropping it on the generator side
+    /// would make every `-XX` re-run report a phantom `x` change.
+    ///
+    /// upstream: xattrs.c:262 - `if ((am_sender && preserve_xattrs < 2) ...)`
+    #[test]
+    fn generator_keeps_the_rsync_store_at_a_single_x() {
+        let dir = tempdir().expect("create temp dir");
+        let file = dir.path().join("dest.txt");
+        fs::write(&file, "content").expect("write file");
+
+        if !xattrs_supported(&file) {
+            eprintln!("xattrs not supported, skipping test");
+            return;
+        }
+
+        let stat_name = internal_xattr_name("stat");
+        if write_attribute(&file, &stat_name, b"100644 0,0 0:0", false).is_err() {
+            eprintln!("filesystem rejects rsync.% names, skipping test");
+            return;
+        }
+
+        let generator = read_xattrs_for_wire(
+            &file,
+            &XattrSendOptions {
+                preserve_xattrs: 1,
+                ..XattrSendOptions::new(XattrRole::Generator)
+            },
+        )
+        .expect("read as the generator");
+        assert!(
+            wire_contains(&generator, &stat_name),
+            "the rsync.% strip is gated on am_sender, so the generator keeps it",
+        );
+
+        let sender = read_xattrs_for_wire(
+            &file,
+            &XattrSendOptions {
+                preserve_xattrs: 1,
+                ..XattrSendOptions::new(XattrRole::Sender)
+            },
+        )
+        .expect("read as the sender");
+        assert!(
+            !wire_contains(&sender, &stat_name),
+            "the sender must still strip the store below -XX",
+        );
+    }
+
+    /// A non-root generator screens away every namespace it could not store.
+    ///
+    /// This is what keeps the itemize `x` column honest: upstream's non-root
+    /// receiver can only write `user.*` (`xattrs.c:830`), so comparing a
+    /// `security.*` or `trusted.*` name it will never touch would report a
+    /// change that upstream does not report and that no transfer could ever
+    /// settle. The sender is exempt at any privilege level, which is why the
+    /// role - not `am_root` alone - decides.
+    ///
+    /// upstream: xattrs.c:237 - `int user_only = am_sender ? 0 : !am_root;`
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn non_root_generator_screens_out_non_user_namespaces() {
+        let cases = [
+            "user.mine",
+            "security.selinux",
+            "trusted.overlay.opaque",
+            "system.posix_acl_access",
+        ];
+
+        let permitted = |role: XattrRole, am_root: bool| {
+            cases
+                .into_iter()
+                .filter(|name| is_xattr_permitted(name, role.user_only(am_root)))
+                .collect::<Vec<_>>()
+        };
+
+        assert_eq!(
+            permitted(XattrRole::Generator, false),
+            vec!["user.mine"],
+            "a non-root generator diffs the user namespace alone",
+        );
+        assert_eq!(
+            permitted(XattrRole::Generator, true),
+            vec!["user.mine", "security.selinux", "trusted.overlay.opaque"],
+            "a root generator regains everything but system.*",
+        );
+        assert_eq!(
+            permitted(XattrRole::Sender, false),
+            vec!["user.mine", "security.selinux", "trusted.overlay.opaque"],
+            "am_sender pins user_only to 0, so an unprivileged sender is unchanged",
         );
     }
 
@@ -1015,7 +1119,7 @@ mod tests {
             &file,
             &XattrSendOptions {
                 filter: Some(&predicate),
-                ..XattrSendOptions::default()
+                ..XattrSendOptions::new(XattrRole::Sender)
             },
         )
         .expect("read with filter");
@@ -1059,8 +1163,8 @@ mod tests {
         }
 
         // Without a filter the namespace rule drops it (xattrs.c:256).
-        let unfiltered =
-            read_xattrs_for_wire(&file, &XattrSendOptions::default()).expect("read without filter");
+        let unfiltered = read_xattrs_for_wire(&file, &XattrSendOptions::new(XattrRole::Sender))
+            .expect("read without filter");
         assert!(
             !wire_contains(&unfiltered, &system_name),
             "the namespace rule drops system.* for a non-root sender",
@@ -1073,7 +1177,7 @@ mod tests {
             &file,
             &XattrSendOptions {
                 filter: Some(&admit_all),
-                ..XattrSendOptions::default()
+                ..XattrSendOptions::new(XattrRole::Sender)
             },
         )
         .expect("read with filter");
@@ -1108,7 +1212,8 @@ mod tests {
         write_attribute(&file, &test_xattr_name("mmm"), b"m", false).expect("write mmm");
         write_attribute(&file, &test_xattr_name("zzz"), b"z", false).expect("write zzz");
 
-        let list = read_xattrs_for_wire(&file, &XattrSendOptions::default()).expect("read xattrs");
+        let list = read_xattrs_for_wire(&file, &XattrSendOptions::new(XattrRole::Sender))
+            .expect("read xattrs");
         let entries = list.entries();
         assert!(entries.len() >= 3, "expected at least our three xattrs");
 

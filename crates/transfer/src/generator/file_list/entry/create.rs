@@ -352,8 +352,10 @@ impl GeneratorContext {
                 let predicate =
                     xattr_filter.map(|set| move |name: &str| set.xattr_name_allowed(name));
                 let opts = metadata::XattrSendOptions {
+                    role: metadata::XattrRole::Sender,
                     follow_symlinks: follow,
-                    // upstream: xattrs.c:237 - the sender sets user_only = 0 and
+                    // upstream: xattrs.c:237 - `am_sender` forces user_only = 0,
+                    // so the sender transmits every namespace but system.*, and
                     // never claims root, so system.* stays local.
                     am_root: false,
                     // upstream: xattrs.c:262 - `am_sender && preserve_xattrs < 2`
