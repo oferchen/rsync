@@ -56,14 +56,14 @@
 //!
 //! The test self-skips (prints `skipping:` and returns) when:
 //!
-//! - The workspace `oc-rsync` binary cannot be located (e.g., when this
-//!   file is built outside a `cargo nextest` invocation).
 //! - A loopback TCP port cannot be allocated.
 //! - The daemon fails to start accepting connections within the daemon boot
 //!   timeout.
 //!
 //! Hard failures (non-zero exit, missing destination files, empty batch
-//! file, failed replay) are real regressions.
+//! file, failed replay) are real regressions. A missing workspace
+//! `oc-rsync` binary is also a hard failure, naming the path that was
+//! expected, so the test can never pass without spawning the binary.
 //!
 //! # Upstream References
 //!
@@ -78,46 +78,12 @@
 
 #![cfg(unix)]
 
-use std::env;
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 
 use tempfile::{TempDir, tempdir};
-
-/// Locate the workspace `oc-rsync` binary the test runner built.
-///
-/// Prefers `CARGO_BIN_EXE_oc-rsync` when set; otherwise walks up from
-/// the test executable until a `target/` directory is found, then probes
-/// the `debug/` and `release/` subdirectories. Mirrors the lookup used
-/// by sibling integration tests (`uts_nextest_daemon_delete_stats.rs`,
-/// `v61d_2_daemon_push_increcurse_perf_regression.rs`).
-fn locate_oc_rsync() -> Option<PathBuf> {
-    if let Some(p) = env::var_os("CARGO_BIN_EXE_oc-rsync") {
-        let p = PathBuf::from(p);
-        if p.is_file() {
-            return Some(p);
-        }
-    }
-    let exe = env::current_exe().ok()?;
-    let mut dir = exe.parent()?;
-    let name = format!("oc-rsync{}", env::consts::EXE_SUFFIX);
-    while !dir.ends_with("target") {
-        let candidate = dir.join(&name);
-        if candidate.is_file() {
-            return Some(candidate);
-        }
-        dir = dir.parent()?;
-    }
-    for sub in ["debug", "release"] {
-        let candidate = dir.join(sub).join(&name);
-        if candidate.is_file() {
-            return Some(candidate);
-        }
-    }
-    None
-}
 
 /// Write an `rsyncd.conf` exposing one read-only module rooted at
 /// `module_root`. Read-only matches the pull-only shape this test
@@ -317,10 +283,7 @@ impl DaemonScratch {
 /// client-side argv along with the daemon-bound argv strip.
 #[test]
 fn daemon_pull_write_batch_records_and_replays() {
-    let Some(oc_bin) = locate_oc_rsync() else {
-        eprintln!("skipping: oc-rsync binary not found in target/");
-        return;
-    };
+    let oc_bin = test_support::oc_rsync_bin();
     let Some(scratch) = DaemonScratch::new() else {
         eprintln!("skipping: tempdir or test port allocation failed");
         return;

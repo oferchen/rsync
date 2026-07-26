@@ -56,14 +56,14 @@
 //!
 //! # Skip semantics
 //!
-//! Self-skips (prints `skipping:` and returns) when the workspace `oc-rsync`
-//! binary cannot be located, a loopback port cannot be allocated, or the daemon
-//! does not start within the daemon boot timeout. Non-zero exit,
-//! a diverged destination, or zero `Matched data` are real regressions.
+//! Self-skips (prints `skipping:` and returns) when a loopback port cannot be
+//! allocated or the daemon does not start within the daemon boot timeout. A
+//! missing workspace `oc-rsync` binary fails loudly instead, naming the path
+//! that was expected. Non-zero exit, a diverged destination, or zero
+//! `Matched data` are real regressions.
 
 #![cfg(unix)]
 
-use std::env;
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
@@ -74,33 +74,6 @@ use tempfile::{TempDir, tempdir};
 /// Size of the delta-bearing payload. Large enough to span many signature
 /// blocks so the preserved outer thirds yield multiple Copy tokens.
 const PAYLOAD_LEN: usize = 64 * 1024;
-
-/// Locate the workspace `oc-rsync` binary the test runner built.
-fn locate_oc_rsync() -> Option<PathBuf> {
-    if let Some(p) = env::var_os("CARGO_BIN_EXE_oc-rsync") {
-        let p = PathBuf::from(p);
-        if p.is_file() {
-            return Some(p);
-        }
-    }
-    let exe = env::current_exe().ok()?;
-    let mut dir = exe.parent()?;
-    let name = format!("oc-rsync{}", env::consts::EXE_SUFFIX);
-    while !dir.ends_with("target") {
-        let candidate = dir.join(&name);
-        if candidate.is_file() {
-            return Some(candidate);
-        }
-        dir = dir.parent()?;
-    }
-    for sub in ["debug", "release"] {
-        let candidate = dir.join(sub).join(&name);
-        if candidate.is_file() {
-            return Some(candidate);
-        }
-    }
-    None
-}
 
 /// Write an `rsyncd.conf` exposing one read-only module rooted at
 /// `module_root`. Binds loopback only and sets no `hosts allow` line, avoiding
@@ -309,10 +282,7 @@ impl DaemonScratch {
 /// daemon-sender generated a Copy/Literal token stream the client applied.
 #[test]
 fn reverse_daemon_delta_reconstructs_via_copy_tokens() {
-    let Some(oc_bin) = locate_oc_rsync() else {
-        eprintln!("skipping: oc-rsync binary not found in target/");
-        return;
-    };
+    let oc_bin = test_support::oc_rsync_bin();
     let Some(scratch) = DaemonScratch::new() else {
         eprintln!("skipping: tempdir or test port allocation failed");
         return;

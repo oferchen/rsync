@@ -5,10 +5,10 @@
 //! test can drive oc-rsync's remote-shell code paths locally. The path feeds
 //! either `--rsh <path>` on the argv or `RSYNC_RSH=<path>` in the environment.
 //!
-//! Resolution prefers Cargo's `CARGO_BIN_EXE_lsh-stub` (set when a crate's
-//! integration tests depend on `test-support`'s bin target) and falls back to
-//! [`crate::locate_workspace_binary`]. Missing binary is a loud typed error,
-//! not a silent skip; gate on [`crate::require_binary`] to self-skip.
+//! Resolution goes through [`crate::locate_workspace_binary`], which considers
+//! the single path the stub can occupy for the current Cargo profile. A
+//! missing binary is a loud typed error naming that path, not a silent skip;
+//! gate on [`crate::require_binary`] to self-skip.
 //!
 //! Unix-only: the stub itself depends on `sh`/`sudo`, and the remote-shell
 //! ports that consume it are `#[cfg(unix)]` (design section 5.4).
@@ -23,8 +23,8 @@ pub const LSH_STUB_BIN: &str = "lsh-stub";
 /// Error raised when the `lsh-stub` helper cannot be located.
 #[derive(Debug)]
 pub enum LshError {
-    /// The `lsh-stub` binary was not found via `CARGO_BIN_EXE_lsh-stub` nor in
-    /// `target/{debug,release}/`. Build the workspace (or the `test-support`
+    /// The `lsh-stub` binary was not present at the one path it can occupy for
+    /// the current Cargo profile. Build the workspace (or the `test-support`
     /// bin target) before running remote-shell ports.
     StubNotFound,
 }
@@ -34,7 +34,8 @@ impl std::fmt::Display for LshError {
         match self {
             LshError::StubNotFound => write!(
                 f,
-                "lsh-stub binary not found (set CARGO_BIN_EXE_lsh-stub or build test-support)"
+                "lsh-stub binary missing at {}; refusing to fall back to a stale build",
+                crate::bin_path::workspace_bin_path(LSH_STUB_BIN).display()
             ),
         }
     }
@@ -57,11 +58,7 @@ impl LshRunnerStub {
     /// Returns [`LshError::StubNotFound`] if the helper is not built, so the
     /// failure is loud rather than a silently-skipped remote-shell leg.
     pub fn locate() -> Result<Self, LshError> {
-        let path = std::env::var_os("CARGO_BIN_EXE_lsh-stub")
-            .map(PathBuf::from)
-            .filter(|p| p.is_file())
-            .or_else(|| locate_workspace_binary(LSH_STUB_BIN))
-            .ok_or(LshError::StubNotFound)?;
+        let path = locate_workspace_binary(LSH_STUB_BIN).ok_or(LshError::StubNotFound)?;
         Ok(Self { path })
     }
 
@@ -85,12 +82,18 @@ mod tests {
 
     #[test]
     fn locate_finds_the_built_stub_or_reports_loudly() {
-        // Why: the stub is a workspace [[bin]], so under `cargo test`
-        // CARGO_BIN_EXE_lsh-stub is set and locate() must succeed and return a
-        // real file. If it is somehow unbuilt the error must be the dedicated
-        // StubNotFound variant, never a silent None - Rule 12.
+        // Why: resolution must yield the single profile-dir path and nothing
+        // else, and a miss must be the dedicated StubNotFound variant rather
+        // than a silent None - Rule 12. The Err arm asserts that path really
+        // is absent, so the arm cannot pass vacuously.
+        let expected = crate::bin_path::workspace_bin_path(LSH_STUB_BIN);
         match LshRunnerStub::locate() {
             Ok(stub) => {
+                assert_eq!(
+                    stub.path(),
+                    expected,
+                    "resolution must not reach outside the current profile dir"
+                );
                 assert!(
                     stub.path().is_file(),
                     "located stub path must be a real file: {}",
@@ -101,11 +104,10 @@ mod tests {
                 assert_eq!(stub.rsh_env_value(), stub.path().as_os_str());
             }
             Err(LshError::StubNotFound) => {
-                // Acceptable only when the bin genuinely is not built; the
-                // env var proves whether cargo wired it.
                 assert!(
-                    std::env::var_os("CARGO_BIN_EXE_lsh-stub").is_none(),
-                    "CARGO_BIN_EXE_lsh-stub was set yet locate() failed"
+                    !expected.is_file(),
+                    "locate() reported StubNotFound yet {} exists",
+                    expected.display()
                 );
             }
         }

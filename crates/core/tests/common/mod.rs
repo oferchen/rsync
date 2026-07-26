@@ -34,24 +34,24 @@ pub const UPSTREAM_3_1_3: &str = "target/interop/upstream-install/3.1.3/bin/rsyn
 #[allow(dead_code)]
 pub const UPSTREAM_3_4_1: &str = "target/interop/upstream-install/3.4.1/bin/rsync";
 
-/// oc-rsync binary paths for daemon testing.
-#[allow(dead_code)]
-const OC_RSYNC_RELEASE: &str = "target/release/oc-rsync";
-#[allow(dead_code)]
-const OC_RSYNC_DEBUG: &str = "target/debug/oc-rsync";
-
 /// Selects which daemon binary to launch.
 #[allow(dead_code)]
 pub enum DaemonBinary {
     /// Upstream rsync binary at a specific path.
     Upstream(&'static str),
-    /// oc-rsync binary (auto-selects release or debug).
+    /// The `oc-rsync` binary built by the current Cargo invocation.
     OcRsync,
 }
 
 impl DaemonBinary {
     /// Resolve to an actual binary path.
-    fn resolve(&self) -> io::Result<&str> {
+    ///
+    /// The oc-rsync arm goes through [`test_support::oc_rsync_bin`], which
+    /// knows the profile directory Cargo is building into. The previous
+    /// `target/{release,debug}/oc-rsync` probe was both cwd-relative and
+    /// profile-guessing, so it could launch a daemon from a different
+    /// revision than the one under test.
+    fn resolve(&self) -> io::Result<PathBuf> {
         match self {
             DaemonBinary::Upstream(path) => {
                 if !Path::new(path).exists() {
@@ -60,22 +60,9 @@ impl DaemonBinary {
                         format!("upstream rsync binary not found at: {path}"),
                     ));
                 }
-                Ok(path)
+                Ok(PathBuf::from(path))
             }
-            DaemonBinary::OcRsync => {
-                if Path::new(OC_RSYNC_RELEASE).exists() {
-                    Ok(OC_RSYNC_RELEASE)
-                } else if Path::new(OC_RSYNC_DEBUG).exists() {
-                    Ok(OC_RSYNC_DEBUG)
-                } else {
-                    Err(io::Error::new(
-                        io::ErrorKind::NotFound,
-                        format!(
-                            "oc-rsync binary not found at {OC_RSYNC_RELEASE} or {OC_RSYNC_DEBUG}",
-                        ),
-                    ))
-                }
-            }
+            DaemonBinary::OcRsync => Ok(test_support::oc_rsync_bin()),
         }
     }
 

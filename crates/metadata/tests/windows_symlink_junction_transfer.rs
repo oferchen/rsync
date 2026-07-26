@@ -26,13 +26,11 @@
 //!   suite stays green on stock GitHub-hosted `windows-latest` runners
 //!   (which run as a non-admin user with developer mode disabled).
 //! - `mklink /j` works without elevation on Windows 10+, so the junction
-//!   test runs unconditionally; it skips only if the `oc-rsync.exe` binary
-//!   cannot be located.
-//! - The `oc-rsync.exe` binary location is probed through
-//!   `CARGO_BIN_EXE_oc-rsync` (set by cargo when tests live in the binary's
-//!   owning package; the metadata crate is not the binary's owner so this
-//!   is best-effort) and falls back to `target/{release,debug,dist}/oc-rsync.exe`
-//!   relative to the workspace root.
+//!   test runs unconditionally.
+//!
+//! A missing `oc-rsync.exe` is NOT a skip condition. It is resolved through
+//! [`test_support::oc_rsync_bin`], which panics naming the path it expected,
+//! so neither test can report success without spawning the binary.
 //!
 //! ## CI wire-up
 //!
@@ -55,7 +53,6 @@
 
 #![cfg(target_os = "windows")]
 
-use std::env;
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
@@ -138,36 +135,6 @@ impl Drop for JunctionFixture {
     }
 }
 
-/// Locate the `oc-rsync.exe` binary built for this workspace.
-///
-/// Order:
-/// 1. `CARGO_BIN_EXE_oc-rsync` (set by cargo for tests living in the
-///    binary's owning package; metadata tests do not get this for free, so
-///    this branch is best-effort).
-/// 2. `target/{release,debug,dist}/oc-rsync.exe` relative to the workspace
-///    root, walked from `CARGO_MANIFEST_DIR` (the metadata crate
-///    directory) up to the workspace root.
-fn locate_oc_rsync() -> Option<PathBuf> {
-    if let Some(env_path) = env::var_os("CARGO_BIN_EXE_oc-rsync") {
-        let p = PathBuf::from(env_path);
-        if p.is_file() {
-            return Some(p);
-        }
-    }
-    let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let workspace_root = manifest_dir.parent()?.parent()?;
-    for profile in ["release", "debug", "dist"] {
-        let candidate = workspace_root
-            .join("target")
-            .join(profile)
-            .join("oc-rsync.exe");
-        if candidate.is_file() {
-            return Some(candidate);
-        }
-    }
-    None
-}
-
 /// Logs a skip reason and returns cleanly. Matches the convention in
 /// `windows_ads_xattrs_roundtrip.rs`.
 fn skip(reason: &str) {
@@ -233,13 +200,7 @@ fn dir_symlink_push_preserves_link() {
         }
     };
 
-    let oc = match locate_oc_rsync() {
-        Some(p) => p,
-        None => {
-            skip("oc-rsync binary not found");
-            return;
-        }
-    };
+    let oc = test_support::oc_rsync_bin();
 
     run_oc_rsync_push(&oc, &src, &dst);
 
@@ -300,13 +261,7 @@ fn junction_push_preserves_junction() {
         }
     };
 
-    let oc = match locate_oc_rsync() {
-        Some(p) => p,
-        None => {
-            skip("oc-rsync binary not found");
-            return;
-        }
-    };
+    let oc = test_support::oc_rsync_bin();
 
     run_oc_rsync_push(&oc, &src, &dst);
 

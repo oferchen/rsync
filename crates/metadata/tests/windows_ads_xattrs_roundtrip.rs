@@ -39,13 +39,13 @@
 //! - The backing scratch volume does not support ADS (FAT32, exFAT, or
 //!   a non-NTFS mount). Probed by attempting to write a sentinel stream
 //!   to a temp file; failure means the volume rejects ADS.
-//! - The `oc-rsync` binary cannot be located via `CARGO_BIN_EXE_oc-rsync`
-//!   or `target/{release,debug,dist}/oc-rsync.exe` relative to the
-//!   workspace root.
+//!
+//! A missing `oc-rsync.exe` is NOT a skip condition. It is resolved through
+//! [`test_support::oc_rsync_bin`], which panics naming the path it expected,
+//! so neither test can report success without spawning the binary.
 
 #![cfg(all(target_os = "windows", feature = "xattr"))]
 
-use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -89,36 +89,6 @@ fn ads_path(base: &Path, stream: &str) -> PathBuf {
     s.push(":");
     s.push(stream);
     PathBuf::from(s)
-}
-
-/// Locate the oc-rsync binary built for this workspace.
-///
-/// Order:
-/// 1. `CARGO_BIN_EXE_oc-rsync` (set automatically by cargo for tests in
-///    the binary's owning package; metadata tests do not get this for
-///    free so we treat it as best-effort).
-/// 2. `target/{release,debug,dist}/oc-rsync.exe` relative to the
-///    workspace root (two directories above `CARGO_MANIFEST_DIR` which
-///    is the `metadata` crate dir).
-fn locate_oc_rsync() -> Option<PathBuf> {
-    if let Some(env_path) = env::var_os("CARGO_BIN_EXE_oc-rsync") {
-        let p = PathBuf::from(env_path);
-        if p.is_file() {
-            return Some(p);
-        }
-    }
-    let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let workspace_root = manifest_dir.parent()?.parent()?;
-    for profile in ["release", "debug", "dist"] {
-        let candidate = workspace_root
-            .join("target")
-            .join(profile)
-            .join("oc-rsync.exe");
-        if candidate.is_file() {
-            return Some(candidate);
-        }
-    }
-    None
 }
 
 /// Probes whether the volume behind `file` supports ADS. Writes a
@@ -221,13 +191,7 @@ fn ads_zone_identifier_round_trips_through_xattrs() {
     )
     .expect("seed Zone.Identifier on source");
 
-    let oc_rsync = match locate_oc_rsync() {
-        Some(p) => p,
-        None => {
-            skip("oc-rsync binary not found");
-            return;
-        }
-    };
+    let oc_rsync = test_support::oc_rsync_bin();
 
     let src_arg = format!("{}\\", src.display());
     let dst_arg = format!("{}\\", dst.display());
@@ -318,13 +282,7 @@ fn ads_multi_stream_round_trips() {
         "source missing user.oc_rsync_test_stream: {src_names:?}",
     );
 
-    let oc_rsync = match locate_oc_rsync() {
-        Some(p) => p,
-        None => {
-            skip("oc-rsync binary not found");
-            return;
-        }
-    };
+    let oc_rsync = test_support::oc_rsync_bin();
 
     let src_arg = format!("{}\\", src.display());
     let dst_arg = format!("{}\\", dst.display());
