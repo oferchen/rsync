@@ -6,7 +6,7 @@ mod module_access_tests {
     #[test]
     fn generate_auth_challenge_includes_ip_and_timestamp() {
         let peer_ip = "192.168.1.1".parse::<IpAddr>().unwrap();
-        let challenge = generate_auth_challenge(peer_ip, Some(ProtocolVersion::V32));
+        let challenge = generate_auth_challenge(peer_ip, DaemonAuthDigest::Md5);
 
         // Challenge should be base64-encoded hash (22 characters without padding)
         assert_eq!(challenge.len(), 22);
@@ -18,9 +18,9 @@ mod module_access_tests {
     }
 
     #[test]
-    fn generate_auth_challenge_uses_md4_for_legacy_protocol() {
+    fn generate_auth_challenge_uses_the_negotiated_md4_digest() {
         let peer_ip = "192.168.1.1".parse::<IpAddr>().unwrap();
-        let challenge = generate_auth_challenge(peer_ip, Some(ProtocolVersion::V29));
+        let challenge = generate_auth_challenge(peer_ip, DaemonAuthDigest::Md4);
 
         // MD4 also produces 16-byte hash = 22 base64 characters
         assert_eq!(challenge.len(), 22);
@@ -34,12 +34,12 @@ mod module_access_tests {
     #[test]
     fn generate_auth_challenge_produces_different_values() {
         let peer_ip = "10.0.0.1".parse::<IpAddr>().unwrap();
-        let challenge1 = generate_auth_challenge(peer_ip, Some(ProtocolVersion::V32));
+        let challenge1 = generate_auth_challenge(peer_ip, DaemonAuthDigest::Md5);
 
         // Retry until the microsecond timestamp changes (bounded)
         let mut challenge2 = challenge1.clone();
         for i in 0..200 {
-            challenge2 = generate_auth_challenge(peer_ip, Some(ProtocolVersion::V32));
+            challenge2 = generate_auth_challenge(peer_ip, DaemonAuthDigest::Md5);
             if challenge2 != challenge1 {
                 break;
             }
@@ -779,7 +779,7 @@ mod module_access_tests {
         // violation is an auth denial, not a fatal error: verify returns
         // Ok(false) so the daemon emits `@ERROR: auth failed on module X`
         // rather than dropping the socket mid-handshake.
-        let result = verify_secret_response(&module, "alice", None, "challenge", "response", None)
+        let result = verify_secret_response(&module, "alice", None, "challenge", "response", DaemonAuthDigest::Md5)
             .expect("strict-modes violation must be a denial, not an io error");
         assert!(
             !result,
@@ -804,7 +804,7 @@ mod module_access_tests {
 
         // With strict_modes disabled, the file is read even though it's world-readable.
         // Authentication will fail (wrong response), but no permission error is returned.
-        let result = verify_secret_response(&module, "alice", None, "challenge", "response", None)
+        let result = verify_secret_response(&module, "alice", None, "challenge", "response", DaemonAuthDigest::Md5)
             .expect("should not error on permissions");
         assert!(
             !result,
@@ -829,7 +829,7 @@ mod module_access_tests {
 
         // Permissions are fine, so the file is read. Auth will fail (wrong response)
         // but no permission error is returned.
-        let result = verify_secret_response(&module, "alice", None, "challenge", "response", None)
+        let result = verify_secret_response(&module, "alice", None, "challenge", "response", DaemonAuthDigest::Md5)
             .expect("should not error on permissions");
         assert!(!result, "auth should fail due to wrong response");
     }
@@ -870,13 +870,13 @@ mod module_access_tests {
 
         // Authorized via the `@devs` token: the group line is the credential.
         let granted =
-            verify_secret_response(&module, "alice", Some("devs"), challenge, &response, None)
+            verify_secret_response(&module, "alice", Some("devs"), challenge, &response, DaemonAuthDigest::Md5)
                 .expect("no io error");
         assert!(granted, "group member must authenticate via @devs shared secret");
 
         // upstream: authenticate.c:318 - a plain-username authorization passes a
         // NULL group, so `@group:` lines are never consulted. Denied here.
-        let denied = verify_secret_response(&module, "alice", None, challenge, &response, None)
+        let denied = verify_secret_response(&module, "alice", None, challenge, &response, DaemonAuthDigest::Md5)
             .expect("no io error");
         assert!(
             !denied,
@@ -908,7 +908,7 @@ mod module_access_tests {
 
         // The first `alice:` line mismatches, retiring the username; the later
         // `alice:rightpass` duplicate must NOT authenticate.
-        let denied = verify_secret_response(&module, "alice", None, challenge, &response, None)
+        let denied = verify_secret_response(&module, "alice", None, challenge, &response, DaemonAuthDigest::Md5)
             .expect("no io error");
         assert!(
             !denied,
@@ -924,7 +924,7 @@ mod module_access_tests {
             ..Default::default()
         };
         let granted =
-            verify_secret_response(&module_ok, "alice", None, challenge, &response, None)
+            verify_secret_response(&module_ok, "alice", None, challenge, &response, DaemonAuthDigest::Md5)
                 .expect("no io error");
         assert!(granted, "a correct first line must authenticate");
     }
