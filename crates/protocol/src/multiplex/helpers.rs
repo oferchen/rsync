@@ -98,24 +98,49 @@ pub(super) fn read_payload<R: Read>(reader: &mut R, len: usize) -> io::Result<Ve
 /// `false` for the empty-payload fast path (buffer left empty). This is the
 /// shared buffer-preparation seam used by both the blocking and async payload
 /// readers so their reuse, allocation, and length semantics stay identical.
-#[allow(unsafe_code)]
 pub(super) fn prepare_payload_buffer(buffer: &mut Vec<u8>, len: usize) -> io::Result<bool> {
-    buffer.clear();
+    stage_payload_buffer(buffer, len, 0)?;
+    Ok(len != 0)
+}
 
-    if len == 0 {
-        return Ok(false);
+/// Sizes `buffer` to exactly `len` bytes while preserving its first `valid`
+/// bytes, ready to be filled from `valid` onwards.
+///
+/// This is the resumable counterpart of [`prepare_payload_buffer`]: a frame
+/// read that stalls part-way truncates `buffer` to the bytes it actually
+/// received (so no uninitialised byte is ever observable), and the retry calls
+/// this to re-open the tail. Capacity survives a `truncate`, so re-staging
+/// never reallocates.
+#[allow(unsafe_code)]
+pub(super) fn stage_payload_buffer(
+    buffer: &mut Vec<u8>,
+    len: usize,
+    valid: usize,
+) -> io::Result<()> {
+    debug_assert!(valid <= len, "more valid bytes than the payload holds");
+    buffer.truncate(valid);
+
+    if len == valid {
+        return Ok(());
     }
 
     reserve_payload(buffer, len)?;
-    // SAFETY: `reserve_payload` ensures `capacity >= len`. Callers fill
-    // `buffer[0..len]` before any byte is exposed, and truncate to the
-    // only-written prefix on short read or error, so no uninitialized memory
-    // escapes.
+    // SAFETY: `reserve_payload` ensures `capacity >= len`. Only `buffer[..valid]`
+    // is ever read by anyone; the caller fills `buffer[valid..len]` before
+    // advancing its valid count, and truncates back to that count on any error.
     unsafe { buffer.set_len(len) };
 
-    Ok(true)
+    Ok(())
 }
 
+/// Fills `buffer` with exactly `len` payload bytes, retrying only `EINTR`.
+///
+/// This is the stateless reader used by [`recv_msg`](super::recv_msg) and
+/// [`recv_msg_into`](super::recv_msg_into): a frame is read start to finish in
+/// one call, so a reader that stalls part-way has nowhere to record its
+/// progress and the partial bytes are lost. Any caller that must survive a
+/// mid-frame stall - the transfer demultiplexer above all - uses
+/// [`FrameReader`](super::FrameReader), which keeps that progress across calls.
 pub(super) fn read_payload_into<R: Read>(
     reader: &mut R,
     buffer: &mut Vec<u8>,
