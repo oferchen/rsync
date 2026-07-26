@@ -22,6 +22,15 @@ enum AuthenticationStatus {
     },
     /// Authentication was denied (bad credentials or missing response).
     Denied,
+    /// No digest the client offered is implemented here, so the exchange cannot
+    /// start. The refusal line has already been written and no challenge was
+    /// sent.
+    ///
+    /// upstream: compat.c:871-875 - `negotiate_daemon_auth()` writes
+    /// `@ERROR: your client does not support one of our daemon-auth checksums`
+    /// and calls `exit_cleanup(RERR_UNSUPPORTED)` before `auth_server()` ever
+    /// reaches `gen_challenge()`.
+    DigestUnsupported,
 }
 
 /// Resolves the session's effective `read only` flag after authentication.
@@ -54,12 +63,16 @@ fn access_effective_read_only(module_read_only: bool, access: UserAccessLevel) -
 /// 2. Reads the client's response containing username and digest
 /// 3. Verifies the digest against the module's secrets file
 ///
-/// The `protocol_version` determines which digest algorithm to use for legacy
-/// (MD4/MD5) responses when the response length is ambiguous.
+/// `client_digests` is the digest name list the client advertised in its
+/// `@RSYNCD:` greeting; it fixes the single algorithm used for both the challenge
+/// and the verification.
 ///
-/// upstream: compat.c:858 - `protocol_version >= 30 ? "md5" : "md4"`
+/// upstream: authenticate.c:242 - `auth_server()` calls
+/// `negotiate_daemon_auth(f_out, 0)` *before* `gen_challenge()`, so a client with
+/// no acceptable digest is refused without ever receiving a challenge.
 ///
-/// Returns `Granted` if authentication succeeded, `Denied` otherwise.
+/// Returns `Granted` if authentication succeeded, `Denied` on bad credentials, or
+/// `DigestUnsupported` when negotiation found no mutual algorithm.
 fn perform_module_authentication(
     reader: &mut BufReader<DaemonStream>,
     limiter: &mut Option<BandwidthLimiter>,
@@ -67,8 +80,26 @@ fn perform_module_authentication(
     peer_ip: IpAddr,
     messages: &LegacyMessageCache,
     protocol_version: Option<ProtocolVersion>,
+    client_digests: Option<&str>,
 ) -> io::Result<AuthenticationStatus> {
-    let challenge = generate_auth_challenge(peer_ip, protocol_version);
+    // upstream: authenticate.c:76 `gen_challenge` and :90 `generate_hash` both
+    // call `sum_init(valid_auth_checksums.negotiated_nni, 0)`, so one negotiated
+    // digest drives both halves. Deriving it from the response instead would let
+    // the client choose which algorithm it is checked against.
+    let digest = match negotiate_server_daemon_digest(
+        client_digests,
+        protocol_version.map_or(ProtocolVersion::NEWEST.as_u8(), |v| v.as_u8()),
+    ) {
+        Ok(digest) => digest,
+        Err(_) => {
+            let payload = UNSUPPORTED_AUTH_DIGEST_PAYLOAD
+                .replace("{digests}", &supported_daemon_digest_list());
+            send_error(reader.get_mut(), limiter, &payload)?;
+            return Ok(AuthenticationStatus::DigestUnsupported);
+        }
+    };
+
+    let challenge = generate_auth_challenge(peer_ip, digest);
     {
         let stream = reader.get_mut();
         messages.write(
@@ -90,11 +121,11 @@ fn perform_module_authentication(
 
     let mut segments = response.splitn(2, |ch: char| ch.is_ascii_whitespace());
     let username = segments.next().unwrap_or_default();
-    let digest = segments.next().map_or("", |segment| {
+    let response_digest = segments.next().map_or("", |segment| {
         segment.trim_start_matches(|ch: char| ch.is_ascii_whitespace())
     });
 
-    if username.is_empty() || digest.is_empty() {
+    if username.is_empty() || response_digest.is_empty() {
         send_auth_failed(reader.get_mut(), module, limiter)?;
         return Ok(AuthenticationStatus::Denied);
     }
@@ -114,14 +145,7 @@ fn perform_module_authentication(
     // never match. The matched entry's verbatim token carries that group.
     let auth_group = auth_user.username.strip_prefix('@');
 
-    if !verify_secret_response(
-        module,
-        username,
-        auth_group,
-        &challenge,
-        digest,
-        protocol_version,
-    )? {
+    if !verify_secret_response(module, username, auth_group, &challenge, response_digest, digest)? {
         send_auth_failed(reader.get_mut(), module, limiter)?;
         return Ok(AuthenticationStatus::Denied);
     }
@@ -145,16 +169,15 @@ fn perform_module_authentication(
 /// Generates a unique authentication challenge string.
 ///
 /// The challenge is created by combining the peer IP address, current timestamp,
-/// and process ID, then hashing with the protocol-appropriate digest and encoding
-/// as base64. This produces a unique, time-sensitive challenge for each
+/// and process ID, then hashing with the negotiated digest and encoding as
+/// base64. This produces a unique, time-sensitive challenge for each
 /// authentication attempt.
 ///
-/// upstream: compat.c:858 - the digest used for the challenge depends on the
-/// negotiated protocol version: MD5 for protocol >= 30, MD4 for protocol < 30.
-fn generate_auth_challenge(
-    peer_ip: IpAddr,
-    protocol_version: Option<ProtocolVersion>,
-) -> String {
+/// upstream: authenticate.c:62-81 `gen_challenge()` - a 32-byte zeroed buffer
+/// holding `strlcpy(input, addr, 17)`, `SIVAL(input, 16, tv_sec)`,
+/// `SIVAL(input, 20, tv_usec)` and `SIVAL(input, 24, getpid())`, hashed with
+/// `valid_auth_checksums.negotiated_nni`. `SIVAL` is little-endian by definition.
+fn generate_auth_challenge(peer_ip: IpAddr, digest: DaemonAuthDigest) -> String {
     let mut input = [0u8; 32];
     let address_text = peer_ip.to_string();
     let address_bytes = address_text.as_bytes();
@@ -172,17 +195,7 @@ fn generate_auth_challenge(
     input[20..24].copy_from_slice(&micros.to_le_bytes());
     input[24..28].copy_from_slice(&pid.to_le_bytes());
 
-    let version = protocol_version.map_or(32, |v| v.as_u8());
-    let digest = if version >= 30 {
-        let mut hasher = Md5::new();
-        hasher.update(&input);
-        hasher.finalize().to_vec()
-    } else {
-        let mut hasher = Md4::new();
-        hasher.update(&input);
-        hasher.finalize().to_vec()
-    };
-    STANDARD_NO_PAD.encode(digest)
+    digest.base64_digest(&[&input])
 }
 
 /// Verifies a client's authentication response against the secrets file.
@@ -208,8 +221,9 @@ fn generate_auth_challenge(
 /// `(st.st_mode & 06) != 0`, and on a password mismatch sets `*ptr = NULL`
 /// ("Don't look for name again").
 ///
-/// The `protocol_version` is forwarded to `verify_daemon_auth_response` to
-/// select the correct digest for ambiguous MD4/MD5 responses.
+/// `digest` is the algorithm fixed by `negotiate_server_daemon_digest`; the same
+/// one that produced the challenge, exactly as upstream reuses
+/// `valid_auth_checksums.negotiated_nni` for both.
 ///
 /// Returns `true` if a matching key's digest matches, `false` otherwise.
 fn verify_secret_response(
@@ -218,7 +232,7 @@ fn verify_secret_response(
     group: Option<&str>,
     challenge: &str,
     response: &str,
-    protocol_version: Option<ProtocolVersion>,
+    digest: DaemonAuthDigest,
 ) -> io::Result<bool> {
     let secrets_path = match &module.secrets_file {
         Some(path) => path,
@@ -280,12 +294,7 @@ fn verify_secret_response(
         // upstream: authenticate.c:158-163 - the first key-matching line decides
         // the outcome; a digest match authenticates, a mismatch retires the key
         // (`*ptr = NULL`) so later duplicates cannot flip the denial.
-        if verify_daemon_auth_response(
-            secret.as_bytes(),
-            challenge,
-            response,
-            protocol_version.map(|v| v.as_u8()),
-        ) {
+        if verify_daemon_auth_response(secret.as_bytes(), challenge, response, digest) {
             return Ok(true);
         }
         *active = false;

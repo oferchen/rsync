@@ -29,15 +29,15 @@ fn bench_auth_challenge_response(c: &mut Criterion) {
 
     // Benchmark challenge generation for modern and legacy protocols
     group.bench_function("challenge_gen_md5", |b| {
-        b.iter(|| ChallengeGenerator::generate(peer_ip, Some(32)));
+        b.iter(|| ChallengeGenerator::generate(peer_ip, DaemonAuthDigest::Md5));
     });
 
     group.bench_function("challenge_gen_md4", |b| {
-        b.iter(|| ChallengeGenerator::generate(peer_ip, Some(29)));
+        b.iter(|| ChallengeGenerator::generate(peer_ip, DaemonAuthDigest::Md4));
     });
 
     // Benchmark response computation for each digest algorithm
-    let challenge = ChallengeGenerator::generate(peer_ip, Some(32));
+    let challenge = ChallengeGenerator::generate(peer_ip, DaemonAuthDigest::Md5);
     let digests = [
         ("sha512", DaemonAuthDigest::Sha512),
         ("sha256", DaemonAuthDigest::Sha256),
@@ -55,12 +55,21 @@ fn bench_auth_challenge_response(c: &mut Criterion) {
     // Benchmark full verify round-trip (compute + constant-time compare)
     let response_md5 = compute_auth_response(password, &challenge, DaemonAuthDigest::Md5);
     group.bench_function("verify_md5", |b| {
-        b.iter(|| verify_client_response(password, &challenge, &response_md5, Some(32)));
+        b.iter(|| {
+            verify_client_response(password, &challenge, &response_md5, DaemonAuthDigest::Md5)
+        });
     });
 
     let response_sha512 = compute_auth_response(password, &challenge, DaemonAuthDigest::Sha512);
     group.bench_function("verify_sha512", |b| {
-        b.iter(|| verify_client_response(password, &challenge, &response_sha512, Some(32)));
+        b.iter(|| {
+            verify_client_response(
+                password,
+                &challenge,
+                &response_sha512,
+                DaemonAuthDigest::Sha512,
+            )
+        });
     });
 
     group.finish();

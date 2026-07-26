@@ -108,19 +108,26 @@ fn handle_session(
 
     match style {
         SessionStyle::Binary => handle_binary_session(stream, daemon_limit, daemon_burst, log_sink),
-        SessionStyle::Legacy => handle_legacy_session(
-            stream,
-            peer_addr,
-            LegacySessionParams {
-                modules,
-                motd_lines,
-                daemon_limit,
-                daemon_burst,
-                log_sink,
-                peer_host,
-                reverse_lookup,
-            },
-        ),
+        SessionStyle::Legacy => {
+            // upstream: clientserver.c - the per-connection child owns its own
+            // `exit_cleanup()`, so a session-fatal refusal never reaches the
+            // listening parent. Drop the code here for the same reason: it must
+            // not tear down the accept loop.
+            handle_legacy_session(
+                stream,
+                peer_addr,
+                LegacySessionParams {
+                    modules,
+                    motd_lines,
+                    daemon_limit,
+                    daemon_burst,
+                    log_sink,
+                    peer_host,
+                    reverse_lookup,
+                },
+            )
+            .map(|_| ())
+        }
     }
 }
 
@@ -205,6 +212,33 @@ fn write_limited(
     }
 }
 
+/// Maps the outcome of a single-session daemon run onto a process exit status.
+///
+/// The stdio and inetd entry points serve exactly one connection, so the process
+/// plays the role of upstream's per-connection child: a session-fatal refusal
+/// becomes the exit status, exactly as `exit_cleanup()` ends that child. An I/O
+/// failure keeps the existing socket-IO code and `{context}: {error}` wording.
+pub(crate) fn single_session_exit(
+    outcome: io::Result<Option<ExitCode>>,
+    context: &str,
+) -> Result<(), DaemonError> {
+    match outcome {
+        Ok(None) => Ok(()),
+        Ok(Some(exit)) => {
+            let code = exit.as_i32();
+            Err(DaemonError::new(
+                code,
+                rsync_error!(code, exit.description()).with_role(Role::Daemon),
+            ))
+        }
+        Err(error) => Err(DaemonError::new(
+            SOCKET_IO_EXIT_CODE,
+            rsync_error!(SOCKET_IO_EXIT_CODE, format!("{context}: {error}"))
+                .with_role(Role::Daemon),
+        )),
+    }
+}
+
 /// Runs the legacy `@RSYNCD:` session protocol for a single connection.
 ///
 /// Sends the greeting with the protocol version and supported digest list,
@@ -215,12 +249,18 @@ fn write_limited(
 /// 1. Server sends `@RSYNCD: 32.0 sha512 sha256 sha1 md5 md4\n`
 /// 2. Client responds with `@RSYNCD: 32.0 sha512 sha256 sha1 md5 md4\n`
 /// 3. Client sends module name (or `#list`)
+///
+/// Returns `Some(code)` when the session ended the way upstream's per-connection
+/// child ends on `exit_cleanup()` (currently only compat.c:875's
+/// `RERR_UNSUPPORTED` auth-digest refusal). Upstream forks per connection, so the
+/// listening parent is unaffected; only the single-session entry points (stdio,
+/// inetd) turn the code into a process exit status.
 #[cfg_attr(feature = "tracing", instrument(skip(stream, params), fields(peer = %peer_addr), name = "legacy_session"))]
 fn handle_legacy_session(
     stream: DaemonStream,
     peer_addr: SocketAddr,
     params: LegacySessionParams<'_>,
-) -> io::Result<()> {
+) -> io::Result<Option<ExitCode>> {
     let LegacySessionParams {
         modules,
         motd_lines,
@@ -266,6 +306,8 @@ fn handle_legacy_session(
     let mut request = None;
     let mut refused_options = Vec::new();
     let mut negotiated_protocol = None;
+    let mut client_digests: Option<String> = None;
+    let mut session_exit_code: Option<ExitCode> = None;
     let mut early_input_data: Option<Vec<u8>> = None;
 
     // TCP_QUICKACK is one-shot; re-arm before each handshake read so every
@@ -288,10 +330,18 @@ fn handle_legacy_session(
             reader.get_mut().flush()?;
             // FSM: -> Closing after the fatal @ERROR refusal.
             let _ = conn_state.transition(ConnectionState::Closing);
-            return Ok(());
+            return Ok(None);
         }
         match parse_legacy_daemon_message(&line) {
             Ok(LegacyDaemonMessage::Version(version)) => {
+                // upstream: clientserver.c:199-203 exchange_protocols() -
+                // `daemon_auth_choices = strchr(buf + 9, ' ')` keeps the client's
+                // digest name list for negotiate_daemon_auth(). The Version
+                // variant carries only the version, so re-parse the raw line for
+                // the rest of it.
+                client_digests = parse_legacy_daemon_greeting_details(&line)
+                    .ok()
+                    .and_then(|greeting| greeting.digest_list().map(ToOwned::to_owned));
                 // Record the negotiated protocol version but do NOT send @RSYNCD: OK here.
                 // The OK is only sent after the module is selected and approved, not after
                 // the version exchange. Sending OK here causes the client to misinterpret
@@ -313,7 +363,7 @@ fn handle_legacy_session(
             Ok(LegacyDaemonMessage::Exit) => {
                 // FSM: -> Closing on client-initiated exit.
                 let _ = conn_state.transition(ConnectionState::Closing);
-                return Ok(());
+                return Ok(None);
             }
             Ok(
                 LegacyDaemonMessage::Ok
@@ -386,12 +436,14 @@ fn handle_legacy_session(
             reverse_lookup,
             messages,
             negotiated_protocol,
+            client_digests.as_deref(),
+            &mut session_exit_code,
             early_input_data,
             conn_state,
         )?;
     }
 
-    Ok(())
+    Ok(session_exit_code)
 }
 
 /// Command prefix for the early-input protocol message.
