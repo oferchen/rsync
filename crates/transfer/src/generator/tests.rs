@@ -3214,6 +3214,56 @@ mod files_from {
         );
     }
 
+    /// upstream: flist.c:1983-1985 send_implied_dirs() - `copy_links = xfer_dirs = 1`
+    /// is in force while the ancestor chain is emitted, so each implied parent is
+    /// stat-ed through symlinks. Stat-ing with `symlink_metadata` reports a
+    /// symlinked ancestor as a non-directory and emits nothing for it, so the
+    /// file list carries `link/file` with no `link`. A conformant receiver rejects
+    /// that with "ABORTING due to invalid path from sender" (flist.c:2691) and
+    /// exits 4 (RERR_UNSUPPORTED); upstream's sender lists `link` as a directory.
+    #[cfg(unix)]
+    #[test]
+    fn build_file_list_with_base_emits_symlinked_implied_parent() {
+        let temp_dir = TempDir::new().unwrap();
+        let src = temp_dir.path().join("src");
+        std::fs::create_dir_all(src.join("realdir")).unwrap();
+        std::fs::write(src.join("realdir/file.txt"), "hello").unwrap();
+        std::os::unix::fs::symlink("realdir", src.join("link")).unwrap();
+
+        let handshake = test_handshake();
+        let mut config = test_config();
+        config.args = vec![OsString::from(&src)];
+        config.flags.relative = true;
+        let mut ctx = GeneratorContext::new_for_test(&handshake, config);
+
+        ctx.build_file_list_with_base(
+            &src,
+            &files_from_entries(&src, vec![src.join("link/file.txt")]),
+        )
+        .unwrap();
+
+        let names: Vec<&str> = ctx.file_list().iter().map(|e| e.name()).collect();
+        assert!(
+            names.contains(&"link/file.txt"),
+            "expected the requested entry in {names:?}"
+        );
+        assert!(
+            names.contains(&"link"),
+            "symlinked implied parent must be listed, else the receiver aborts \
+             with \"invalid path from sender\": {names:?}"
+        );
+        let parent = ctx
+            .file_list()
+            .iter()
+            .find(|e| e.name() == "link")
+            .expect("implied parent entry");
+        assert!(
+            parent.is_dir(),
+            "implied parent must be sent as a directory (copy_links is on), \
+             not as a symlink"
+        );
+    }
+
     /// upstream: flist.c:1650-1674 send_file1() - a name that cannot be
     /// strictly transcoded under --iconv is dropped (io_error |= IOERR_GENERAL,
     /// "cannot convert filename", return NULL) so it never enters the file list.
