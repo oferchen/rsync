@@ -174,6 +174,9 @@ pub fn setup_protocol_with<'a>(
                     checksum_override: config.checksum_choice,
                     compression_override: config.compress_choice,
                     compression_level: config.compression_level,
+                    // upstream: compat.c:412-414 getenv_nstr() - `write_batch`
+                    // overrides both lists with the old-style choice.
+                    write_batch: config.write_batch,
                 },
             )?;
 

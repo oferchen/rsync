@@ -125,19 +125,43 @@ pub fn locate_upstream_rsync(version: UpstreamVersion) -> Option<PathBuf> {
 /// reason in stderr.
 #[must_use]
 pub fn require_upstream_rsync(version: UpstreamVersion) -> Option<UpstreamRsync> {
-    match locate_upstream_rsync(version) {
-        Some(binary) => Some(UpstreamRsync { binary, version }),
-        None => {
+    let Some(binary) = locate_upstream_rsync(version) else {
+        eprintln!(
+            "Skipping upstream-compat test: upstream rsync {} not installed at \
+             target/interop/upstream-install/{}/bin/rsync (override via {})",
+            version.directory(),
+            version.directory(),
+            version.env_var(),
+        );
+        return None;
+    };
+
+    // A path is not proof of provenance. `/usr/bin/rsync` on macOS is
+    // openrsync, which speaks protocol 29 and shares none of the batch
+    // format; silently testing against it would turn a wire-compat
+    // assertion into a no-op. Take the version from the banner instead.
+    let banner = match Command::new(&binary).arg("--version").output() {
+        Ok(out) if out.status.success() => String::from_utf8_lossy(&out.stdout).into_owned(),
+        other => {
             eprintln!(
-                "Skipping upstream-compat test: upstream rsync {} not installed at \
-                 target/interop/upstream-install/{}/bin/rsync (override via {})",
-                version.directory(),
-                version.directory(),
-                version.env_var(),
+                "Skipping upstream-compat test: `{} --version` did not run cleanly ({other:?})",
+                binary.display(),
             );
-            None
+            return None;
         }
+    };
+    let first_line = banner.lines().next().unwrap_or_default();
+    let expected = format!("rsync  version {}", version.directory());
+    if !first_line.starts_with(&expected) {
+        eprintln!(
+            "Skipping upstream-compat test: {} is not upstream rsync {} (banner: {first_line:?})",
+            binary.display(),
+            version.directory(),
+        );
+        return None;
     }
+
+    Some(UpstreamRsync { binary, version })
 }
 
 /// Resolve the workspace root from `CARGO_MANIFEST_DIR`.

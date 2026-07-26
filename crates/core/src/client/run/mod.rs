@@ -225,16 +225,16 @@ fn run_client_internal(
             remote::run_daemon_transfer(&config, observer, batch_writer.clone())?
         };
 
-        // upstream: main.c:374-383 - the client writes trailing batch stats and
-        // the NDX_DONE terminator after a successful transfer. The SSH and
-        // local-copy paths finalize here too; the daemon path previously
-        // returned early and relied on `BatchWriter` drop to flush, which left
-        // the batch file without its stats trailer (and, under load, races the
-        // header write into the recorder tee).
+        // Flush the batch file and emit the replay script. The daemon path
+        // previously returned early and relied on `BatchWriter` drop to flush,
+        // which left the batch truncated (and, under load, raced the header
+        // write into the recorder tee). The trailer itself is not written here:
+        // a remote transfer records it inside the transfer layer, at the point
+        // upstream's `handle_stats()` runs.
         if let Some(ref writer_arc) = batch_writer
             && let Some(batch_cfg) = config.batch_config()
         {
-            batch::finalize_batch(writer_arc, batch_cfg, &config, &summary)?;
+            batch::finalize_batch(writer_arc, batch_cfg, &config, &summary, false)?;
         }
 
         return Ok(summary);
@@ -262,7 +262,7 @@ fn run_client_internal(
                 if let Some(ref writer_arc) = batch_writer
                     && let Some(batch_cfg) = config.batch_config()
                 {
-                    batch::finalize_batch(writer_arc, batch_cfg, &config, &summary)?;
+                    batch::finalize_batch(writer_arc, batch_cfg, &config, &summary, false)?;
                 }
 
                 return Ok(summary);
@@ -286,7 +286,7 @@ fn run_client_internal(
         if let Some(ref writer_arc) = batch_writer
             && let Some(batch_cfg) = config.batch_config()
         {
-            batch::finalize_batch(writer_arc, batch_cfg, &config, &summary)?;
+            batch::finalize_batch(writer_arc, batch_cfg, &config, &summary, false)?;
         }
 
         return Ok(summary);
@@ -410,10 +410,14 @@ fn run_client_internal(
         adapter.finalize();
     }
 
+    // A local copy has no protocol stream to tee, so the synthesized batch has
+    // no trailer yet: this is the one path that writes it here. upstream reaches
+    // the same bytes through `handle_stats(-1)` + `read_final_goodbye()`, since
+    // its local mode is an ordinary client sender over a socketpair.
     if let Some(ref writer_arc) = batch_writer
         && let Some(batch_cfg) = config.batch_config()
     {
-        batch::finalize_batch(writer_arc, batch_cfg, &config, &summary)?;
+        batch::finalize_batch(writer_arc, batch_cfg, &config, &summary, true)?;
     }
 
     Ok(summary)

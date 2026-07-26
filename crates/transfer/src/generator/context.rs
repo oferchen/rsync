@@ -7,8 +7,8 @@
 //! workflow is driven by the `transfer` submodule via `GeneratorContext::run`.
 
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
 use std::sync::atomic::Ordering;
+use std::sync::{Arc, Mutex};
 
 use ::filters::FilterChain;
 use protocol::flist::{DualFileList, FileEntry};
@@ -168,6 +168,35 @@ pub struct GeneratorContext {
     /// advanced through `FileListTransfer`, `DeltaTransfer`, `Finalization`,
     /// and `Complete` as the generator progresses.
     pub(crate) pipeline: TransferPipeline,
+    /// Batch file to receive the `--write-batch` stats trailer, set only when
+    /// this process is a client SENDER recording a batch.
+    ///
+    /// This is upstream's `batch_fd`, deliberately distinct from the wire
+    /// writer: a client sender never puts its stats on the wire, it writes
+    /// them straight into the batch between the last transfer write and the
+    /// goodbye `NDX_DONE` (which does ride the wire, and so is teed).
+    /// Ordering is what makes the batch replayable, so the write has to happen
+    /// here rather than after the transfer returns.
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `main.c:374-383` - `handle_stats()` `else if (write_batch)` arm,
+    ///   reached only when `am_sender` and `!am_server`.
+    pub(crate) batch_stats_sink: Option<BatchStatsSink>,
+}
+
+/// Handle on the `--write-batch` file, held by a client sender so it can write
+/// the stats trailer without routing it through the wire writer.
+///
+/// A newtype only so the enclosing [`GeneratorContext`] can keep deriving
+/// `Debug`, which a bare `dyn Write` cannot.
+#[derive(Clone)]
+pub(crate) struct BatchStatsSink(pub(crate) Arc<Mutex<dyn std::io::Write + Send>>);
+
+impl std::fmt::Debug for BatchStatsSink {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("BatchStatsSink")
+    }
 }
 
 impl GeneratorContext {
@@ -242,6 +271,7 @@ impl GeneratorContext {
             parallel_thresholds: crate::parallel_io::ParallelThresholds::default(),
             curr_dir: None,
             pipeline,
+            batch_stats_sink: None,
         }
     }
 

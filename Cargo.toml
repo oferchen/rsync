@@ -141,6 +141,7 @@ libc = { workspace = true }
 tempfile = { workspace = true }
 checksums = { path = "crates/checksums" }
 protocol = { path = "crates/protocol" }
+test-support = { path = "crates/test-support" }
 
 [target.'cfg(unix)'.dev-dependencies]
 xattr = { workspace = true }

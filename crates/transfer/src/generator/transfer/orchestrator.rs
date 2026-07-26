@@ -166,14 +166,19 @@ impl GeneratorContext {
             .map_err(crate::fsm_error)?;
 
         // upstream: main.c:978-980 - do_server_sender() calls io_flush then handle_stats
-        // before read_final_goodbye. Server-sender writes transfer stats; client-sender
-        // handle_stats(-1) is a no-op (main.c:339-345).
+        // before read_final_goodbye. Server-sender writes transfer stats to the wire;
+        // client-sender handle_stats(-1) puts nothing on the wire but, under
+        // --write-batch, writes the same five values straight to batch_fd
+        // (main.c:374-383). Both land BEFORE read_final_goodbye tees the goodbye
+        // NDX_DONE, which is the order --read-batch parses them back in.
+        let flist_buildtime =
+            calculate_duration_ms(self.timing.flist_build_start, self.timing.flist_build_end);
+        let flist_xfertime =
+            calculate_duration_ms(self.timing.flist_xfer_start, self.timing.flist_xfer_end);
         if !self.config.connection.client_mode {
-            let flist_buildtime =
-                calculate_duration_ms(self.timing.flist_build_start, self.timing.flist_build_end);
-            let flist_xfertime =
-                calculate_duration_ms(self.timing.flist_xfer_start, self.timing.flist_xfer_end);
             self.send_stats(writer, &transfer_result, flist_buildtime, flist_xfertime)?;
+        } else {
+            self.record_batch_stats(&transfer_result, flist_buildtime, flist_xfertime)?;
         }
 
         let mut ndx_read_codec = transfer_result.ndx_read_codec;
