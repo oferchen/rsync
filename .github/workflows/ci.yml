@@ -156,10 +156,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # Nightly pinned to 2026-06-15 to dodge a rustc_ast attribute-parsing
-        # ICE in current nightly (compiler/rustc_ast/src/attr/mod.rs:307).
-        # Remove the date to track floating nightly once the regression lands.
-        toolchain: [stable, beta, nightly-2026-06-15]
+        toolchain: [stable, beta, nightly]
 
     steps:
       - name: Free disk space
@@ -245,10 +242,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # Nightly pinned to 2026-06-15 to dodge a rustc_ast attribute-parsing
-        # ICE in current nightly (compiler/rustc_ast/src/attr/mod.rs:307).
-        # Remove the date to track floating nightly once the regression lands.
-        toolchain: [stable, beta, nightly-2026-06-15]
+        toolchain: [stable, beta, nightly]
 
     steps:
       - name: Checkout
@@ -588,10 +582,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # Nightly pinned to 2026-06-15 to dodge a rustc_ast attribute-parsing
-        # ICE in current nightly (compiler/rustc_ast/src/attr/mod.rs:307).
-        # Remove the date to track floating nightly once the regression lands.
-        toolchain: [stable, beta, nightly-2026-06-15]
+        toolchain: [stable, beta, nightly]
 
     steps:
       - name: Checkout
@@ -656,10 +647,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # Nightly pinned to 2026-06-15 to dodge a rustc_ast attribute-parsing
-        # ICE in current nightly (compiler/rustc_ast/src/attr/mod.rs:307).
-        # Remove the date to track floating nightly once the regression lands.
-        toolchain: [stable, beta, nightly-2026-06-15]
+        toolchain: [stable, beta, nightly]
 
     steps:
       - name: Checkout
