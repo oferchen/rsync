@@ -30,13 +30,9 @@ use tracing::instrument;
 
 use std::process::{Command as ProcessCommand, Stdio};
 
-use base64::Engine as _;
-use base64::engine::general_purpose::STANDARD_NO_PAD;
-
 #[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
 
-use checksums::strong::{Md4, Md5};
 use clap::{Arg, ArgAction, Command, builder::OsStringValueParser};
 use core::client::TcpFastOpenMode;
 use core::{
