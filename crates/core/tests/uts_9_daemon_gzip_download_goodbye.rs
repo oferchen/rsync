@@ -69,7 +69,6 @@ fn generate_test_data(size: usize) -> Vec<u8> {
 /// `cargo test -- --ignored` during interop validation.
 #[cfg(unix)]
 #[test]
-#[ignore = "requires oc-rsync binary"]
 fn daemon_download_with_zz_completes_without_connection_drop() {
     let oc_rsync = test_support::oc_rsync_bin();
 
