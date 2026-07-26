@@ -676,6 +676,10 @@ pub fn run_server_with_handshake_adopting<W: Write>(
         // upstream: compat.c:751-753 - abort when --crtimes is requested but the
         // negotiated peer lacks CF_VARINT_FLIST_FLAGS (rsync < 3.2.0).
         preserve_crtimes: config.flags.crtimes,
+        // upstream: compat.c:412-414 getenv_nstr() - only the client sets
+        // `write_batch`, and only it needs to pin the negotiation lists; the
+        // remote server is never told about the batch at all.
+        write_batch: batch.is_some(),
     };
     let setup_result = setup::setup_protocol(&mut stdout, &mut chained_stdin, &setup_config)?;
 
@@ -875,6 +879,11 @@ pub fn run_server_with_handshake_adopting<W: Write>(
     // but before file list data flows. The callback writes the batch header with
     // negotiated protocol values, then the recorder is attached at the multiplex layer.
     let mut chained_reader = reader;
+    // upstream: main.c:374-383 - a client sender writes the batch stats trailer
+    // straight to `batch_fd`, so keep a second handle on the batch file for the
+    // generator role. `None` on a pull: there the whole trailer arrives over the
+    // wire and the read tee already records it.
+    let mut batch_stats_sink = None;
     if let Some(batch_recording) = batch {
         (batch_recording.on_setup_complete)(
             i32::from(handshake.protocol),
@@ -883,6 +892,9 @@ pub fn run_server_with_handshake_adopting<W: Write>(
         )?;
 
         if batch_recording.is_sender {
+            batch_stats_sink = Some(crate::generator::BatchStatsSink(
+                batch_recording.recorder.clone(),
+            ));
             writer.set_batch_recorder(batch_recording.recorder)?;
         } else {
             chained_reader.set_batch_recorder(batch_recording.recorder);
@@ -923,6 +935,7 @@ pub fn run_server_with_handshake_adopting<W: Write>(
             paths.extend(config.args.iter().map(std::path::PathBuf::from));
 
             let mut ctx = GeneratorContext::new(&handshake, config, pipeline);
+            ctx.batch_stats_sink = batch_stats_sink;
             let stats = ctx.run(chained_reader, &mut writer, &paths, progress, itemize)?;
 
             Ok(ServerStats::Generator(stats))

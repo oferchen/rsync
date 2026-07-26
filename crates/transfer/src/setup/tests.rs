@@ -80,6 +80,7 @@ fn ssh_server_flag_string_limits_compat_flags() {
         checksum_seed: Some(42),
         allow_inc_recurse: true,
         preserve_crtimes: false,
+        write_batch: false,
     };
 
     let mock = MockNegotiator::new();
@@ -118,6 +119,7 @@ fn ssh_server_flag_string_enables_advertised_caps() {
         checksum_seed: Some(42),
         allow_inc_recurse: true,
         preserve_crtimes: false,
+        write_batch: false,
     };
 
     let mock = MockNegotiator::new();
@@ -153,6 +155,7 @@ fn ssh_server_no_flag_string_uses_defaults() {
         checksum_seed: Some(42),
         allow_inc_recurse: false,
         preserve_crtimes: false,
+        write_batch: false,
     };
 
     let result = setup_protocol(&mut stdout, &mut stdin, &config)
@@ -198,6 +201,7 @@ fn client_honors_negotiated_inc_recurse_regardless_of_local_allow() {
         checksum_seed: Some(42),
         allow_inc_recurse: false,
         preserve_crtimes: false,
+        write_batch: false,
     };
 
     // The server hands back CF_INC_RECURSE among its negotiated flags.
@@ -357,6 +361,7 @@ fn setup_protocol_below_30_returns_none_for_algorithms_and_compat() {
         checksum_seed: None,
         allow_inc_recurse: false,
         preserve_crtimes: false,
+        write_batch: false,
     };
 
     let result =
@@ -399,6 +404,7 @@ fn setup_protocol_skip_compat_exchange_skips_flags() {
         checksum_seed: None,
         allow_inc_recurse: false,
         preserve_crtimes: false,
+        write_batch: false,
     };
 
     let result = setup_protocol(&mut stdout, &mut stdin, &config)
@@ -444,6 +450,7 @@ fn setup_protocol_server_writes_compat_flags_and_seed() {
         checksum_seed: None,
         allow_inc_recurse: false,
         preserve_crtimes: false,
+        write_batch: false,
     };
 
     let result =
@@ -502,6 +509,7 @@ fn setup_protocol_client_reads_compat_flags_from_server() {
         checksum_seed: None,
         allow_inc_recurse: false,
         preserve_crtimes: false,
+        write_batch: false,
     };
 
     let result =
@@ -548,6 +556,7 @@ fn setup_protocol_server_generates_deterministic_seeds() {
         checksum_seed: None,
         allow_inc_recurse: false,
         preserve_crtimes: false,
+        write_batch: false,
     };
 
     let mut stdout1 = Vec::new();
@@ -600,6 +609,7 @@ fn setup_protocol_ssh_mode_bidirectional_exchange() {
         checksum_seed: None,
         allow_inc_recurse: false,
         preserve_crtimes: false,
+        write_batch: false,
     };
 
     let result = setup_protocol(&mut stdout, &mut stdin, &config)
@@ -646,6 +656,7 @@ fn setup_protocol_client_args_affects_compat_flags() {
         checksum_seed: None,
         allow_inc_recurse: false,
         preserve_crtimes: false,
+        write_batch: false,
     };
 
     let result_minimal = setup_protocol(&mut stdout, &mut stdin, &config_minimal)
@@ -680,6 +691,7 @@ fn setup_protocol_client_args_affects_compat_flags() {
         checksum_seed: None,
         allow_inc_recurse: false,
         preserve_crtimes: false,
+        write_batch: false,
     };
 
     let result_full = setup_protocol(&mut stdout, &mut stdin, &config_full)
@@ -726,6 +738,7 @@ fn setup_protocol_protocol_30_minimum_for_compat_exchange() {
         checksum_seed: None,
         allow_inc_recurse: false,
         preserve_crtimes: false,
+        write_batch: false,
     };
 
     let result =
@@ -1116,6 +1129,7 @@ fn setup_protocol_server_v_flag_uses_single_byte_encoding() {
         checksum_seed: None,
         allow_inc_recurse: false,
         preserve_crtimes: false,
+        write_batch: false,
     };
 
     let result =
@@ -1165,6 +1179,7 @@ fn setup_protocol_server_v_flag_enables_negotiation() {
         checksum_seed: None,
         allow_inc_recurse: false,
         preserve_crtimes: false,
+        write_batch: false,
     };
 
     let result =
@@ -1200,6 +1215,7 @@ fn setup_protocol_server_v_flag_with_both_v_and_uppercase_v() {
         checksum_seed: Some(42),
         allow_inc_recurse: false,
         preserve_crtimes: false,
+        write_batch: false,
     };
 
     let result_v =
@@ -1222,6 +1238,7 @@ fn setup_protocol_server_v_flag_with_both_v_and_uppercase_v() {
         checksum_seed: Some(42),
         allow_inc_recurse: false,
         preserve_crtimes: false,
+        write_batch: false,
     };
 
     let result_both = setup_protocol(&mut stdout_both, &mut stdin, &config_both)
@@ -1421,6 +1438,7 @@ fn setup_protocol_with_mock_negotiator_server_mode() {
         checksum_seed: None,
         allow_inc_recurse: false,
         preserve_crtimes: false,
+        write_batch: false,
     };
 
     let mock = MockNegotiator::new();
@@ -1469,6 +1487,7 @@ fn setup_protocol_with_mock_negotiator_client_mode() {
         checksum_seed: None,
         allow_inc_recurse: false,
         preserve_crtimes: false,
+        write_batch: false,
     };
 
     let mock = MockNegotiator::new();
@@ -1766,6 +1785,7 @@ fn compress_choice_override_skips_vstring_and_uses_algorithm() {
         checksum_seed: Some(42),
         allow_inc_recurse: false,
         preserve_crtimes: false,
+        write_batch: false,
     };
 
     let mock = MockNegotiator::new();
@@ -1803,6 +1823,7 @@ fn compress_choice_none_allows_normal_negotiation() {
         checksum_seed: Some(42),
         allow_inc_recurse: false,
         preserve_crtimes: false,
+        write_batch: false,
     };
 
     let mock = MockNegotiator::new();
@@ -1840,6 +1861,7 @@ fn compress_choice_zlib_override_on_legacy_protocol() {
         checksum_seed: Some(42),
         allow_inc_recurse: false,
         preserve_crtimes: false,
+        write_batch: false,
     };
 
     let result = setup_protocol(&mut stdout, &mut stdin, &config)
@@ -1882,6 +1904,7 @@ fn checksum_choice_override_threads_into_negotiation() {
         checksum_seed: Some(42),
         allow_inc_recurse: false,
         preserve_crtimes: false,
+        write_batch: false,
     };
 
     let mock = MockNegotiator::new();
@@ -1919,6 +1942,7 @@ fn checksum_choice_none_allows_normal_negotiation() {
         checksum_seed: Some(42),
         allow_inc_recurse: false,
         preserve_crtimes: false,
+        write_batch: false,
     };
 
     let mock = MockNegotiator::new();

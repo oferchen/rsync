@@ -49,6 +49,16 @@ pub struct NegotiationConfig {
     /// value which stays `CLVL_NOT_SPECIFIED` (`INT_MIN`) unless
     /// `--compress-level` was passed (`options.c:88,767`).
     pub compression_level: i32,
+    /// Whether this process is recording a `--write-batch` file.
+    ///
+    /// Upstream pins both negotiation lists to their old-style choice while
+    /// `write_batch` is set, because a `--read-batch` replay never negotiates:
+    /// it has only the batch header, which records no algorithm. Advertising
+    /// the full default order would let a modern peer pick XXH3, leaving a
+    /// batch whose whole-file checksums no `--read-batch` can verify.
+    ///
+    /// upstream: `compat.c:412-414 getenv_nstr()`.
+    pub write_batch: bool,
 }
 
 /// Outcome of the protocol 30+ capability negotiation.
@@ -148,6 +158,7 @@ pub fn negotiate_capabilities(
             checksum_override: None,
             compression_override: None,
             compression_level: CLVL_NOT_SPECIFIED,
+            write_batch: false,
         },
     )
 }
@@ -184,6 +195,7 @@ pub fn negotiate_capabilities_with_override(
         checksum_override,
         compression_override,
         compression_level,
+        write_batch,
     } = *config;
     // Protocol < 30 doesn't support negotiation, use defaults
     if protocol.uses_fixed_encoding() {
@@ -333,12 +345,12 @@ pub fn negotiate_capabilities_with_override(
     // local candidate list used for selection; an empty value falls through to
     // get_default_nno_list() so the default wire bytes are unchanged.
     let checksum_env = if send_checksum {
-        env_list::checksum_candidates(is_server)
+        env_list::checksum_candidates(is_server, write_batch, protocol.as_u8())
     } else {
         None
     };
     let compression_env = if send_compression {
-        env_list::compression_candidates(is_server)
+        env_list::compression_candidates(is_server, write_batch)
     } else {
         None
     };

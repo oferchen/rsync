@@ -49,4 +49,47 @@ impl GeneratorContext {
         writer.flush()?;
         Ok(())
     }
+
+    /// Writes the `--write-batch` stats trailer into the batch file.
+    ///
+    /// A client sender puts nothing on the wire here, so the same five
+    /// varlong30 values a server sender would send are written straight to the
+    /// batch instead. No-op unless this process is a client sender recording a
+    /// batch (`batch_stats_sink` is `None` on a pull, where the trailer arrives
+    /// over the wire and the read tee already captured it).
+    ///
+    /// Position matters as much as content: `--read-batch` reads the five
+    /// values and then expects the goodbye `NDX_DONE`, so the trailer has to be
+    /// written before the goodbye exchange tees that byte, not after the
+    /// transfer returns.
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `main.c:374-383` - `handle_stats()` `else if (write_batch)` arm
+    /// - `main.c:1345-1347` - `handle_stats(-1)` then `read_final_goodbye()`
+    pub(super) fn record_batch_stats(
+        &self,
+        transfer_result: &TransferLoopResult,
+        flist_buildtime_ms: u64,
+        flist_xfertime_ms: u64,
+    ) -> io::Result<()> {
+        let Some(sink) = self.batch_stats_sink.as_ref() else {
+            return Ok(());
+        };
+
+        let stats = TransferStats::with_bytes(
+            self.timing.total_bytes_read,
+            transfer_result.bytes_sent,
+            self.flist_send_stats.total_size,
+        )
+        .with_flist_times(flist_buildtime_ms, flist_xfertime_ms);
+
+        let mut guard = sink
+            .0
+            .lock()
+            .map_err(|_| io::Error::other("batch recorder lock poisoned"))?;
+        let mut batch: &mut dyn Write = &mut *guard;
+        stats.write_to(&mut batch, self.protocol)?;
+        batch.flush()
+    }
 }

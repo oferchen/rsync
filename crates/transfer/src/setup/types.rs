@@ -146,6 +146,14 @@ pub struct ProtocolSetupConfig<'a> {
     ///
     /// Mirrors `preserve_crtimes` in upstream `compat.c:751-753`.
     pub preserve_crtimes: bool,
+    /// Whether this process is recording a `--write-batch` file.
+    ///
+    /// Pins both negotiation lists to their old-style choice so the recording
+    /// stays decodable by a `--read-batch` replay, which negotiates nothing.
+    ///
+    /// Mirrors upstream's `write_batch` global as read by
+    /// `compat.c:412-414 getenv_nstr()`.
+    pub write_batch: bool,
 }
 
 impl<'a> ProtocolSetupConfig<'a> {
@@ -179,6 +187,7 @@ impl<'a> ProtocolSetupConfig<'a> {
             checksum_seed: None,
             allow_inc_recurse: false,
             preserve_crtimes: false,
+            write_batch: false,
         }
     }
 

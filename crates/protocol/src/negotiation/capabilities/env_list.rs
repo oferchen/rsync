@@ -58,13 +58,33 @@ pub(super) struct EnvOverride {
 /// Returns the checksum candidate override from `RSYNC_CHECKSUM_LIST`, or
 /// `None` when the variable is unset or holds only whitespace - in which case
 /// the caller keeps the built-in default order.
-pub(super) fn checksum_candidates(is_server: bool) -> Option<EnvOverride> {
+///
+/// `write_batch` replaces the variable outright with the single old-style
+/// choice, so a `--write-batch` recording is decodable by a `--read-batch`
+/// replay - which negotiates nothing and has only the batch header to go on.
+/// upstream: `compat.c:412-414 getenv_nstr()`.
+pub(super) fn checksum_candidates(
+    is_server: bool,
+    write_batch: bool,
+    protocol: u8,
+) -> Option<EnvOverride> {
+    if write_batch {
+        let forced = if protocol >= 30 { "md5" } else { "md4" };
+        return parse_list(forced, resolve_checksum);
+    }
     parse_env(CHECKSUM_LIST_ENV, is_server, resolve_checksum)
 }
 
 /// Returns the compression candidate override from `RSYNC_COMPRESS_LIST`, or
 /// `None` when the variable is unset or holds only whitespace.
-pub(super) fn compression_candidates(is_server: bool) -> Option<EnvOverride> {
+///
+/// `write_batch` pins the list to `zlib` for the same reason
+/// [`checksum_candidates`] pins the checksum.
+/// upstream: `compat.c:412-414 getenv_nstr()`.
+pub(super) fn compression_candidates(is_server: bool, write_batch: bool) -> Option<EnvOverride> {
+    if write_batch {
+        return parse_list("zlib", resolve_compression);
+    }
     parse_env(COMPRESS_LIST_ENV, is_server, resolve_compression)
 }
 
@@ -287,6 +307,15 @@ fn parse_env(
         None => raw.as_str(),
     };
 
+    parse_list(scoped, resolve)
+}
+
+/// Resolves one already-scoped whitespace-separated name list.
+///
+/// Split out of [`parse_env`] so the `write_batch` pin can feed a literal list
+/// through the same `parse_nni_str()` semantics upstream applies to the
+/// environment value.
+fn parse_list(scoped: &str, resolve: impl Fn(&str) -> Option<&'static str>) -> Option<EnvOverride> {
     // upstream: compat.c:435-438 / 512,519 - an empty or all-whitespace value is
     // treated as unset, leaving the built-in default order in place.
     scoped.split_whitespace().next()?;

@@ -2,7 +2,8 @@
 //!
 //! Handles both writing batch files during a transfer and replaying
 //! previously recorded batch files. Mirrors upstream `main.c:read_batch()`
-//! for replay and `main.c:374-383` for batch stats finalization.
+//! for replay and, for a local copy only, `main.c:374-383` for the stats
+//! trailer.
 
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
@@ -141,19 +142,33 @@ pub(crate) fn write_batch_header(
     Ok(())
 }
 
-/// Writes trailing stats, flushes the batch file, and generates the replay script.
+/// Flushes the batch file and generates the replay script, optionally
+/// appending the stats trailer first.
 ///
 /// When filter rules are active in `config`, the replay script embeds them
 /// using the same heredoc format as upstream `batch.c:write_filter_rules()`,
 /// ensuring the replay applies identical filters.
 ///
-/// Called after a successful transfer to finalize the batch recording.
-/// Mirrors upstream `main.c:374-383` for stats writing.
+/// `write_trailer` says whether this call owns the batch trailer - the five
+/// varlong30 stats of upstream `main.c:374-383` plus the goodbye `NDX_DONE`.
+/// Only the local-copy path does, because it has no protocol stream to record
+/// from. Every remote transfer produces the trailer inside the transfer layer,
+/// where upstream produces it too:
+///
+/// - PUSH: `handle_stats(-1)` writes the stats to `batch_fd` before
+///   `read_final_goodbye()` tees the goodbye `NDX_DONE` (`main.c:1345-1347`).
+/// - PULL: both the stats (`main.c:364-373`) and the goodbye `NDX_DONE`
+///   (`main.c:904`) arrive over the wire, so the read tee records them.
+///
+/// Appending a second copy here would leave the batch with a trailer upstream
+/// `--read-batch` cannot parse: its `read_final_goodbye()` reads one `NDX_DONE`
+/// too many and aborts with `RERR_PROTOCOL`.
 pub(crate) fn finalize_batch(
     writer_arc: &Arc<Mutex<BatchWriter>>,
     batch_cfg: &BatchConfig,
     config: &ClientConfig,
     summary: &ClientSummary,
+    write_trailer: bool,
 ) -> Result<(), ClientError> {
     {
         let mut writer = writer_arc.lock().map_err(|_| {
@@ -163,46 +178,48 @@ pub(crate) fn finalize_batch(
             )
         })?;
 
-        // upstream: main.c:374-383 - write_varlong30(batch_fd, stats.total_read, 3)
-        let proto = batch_cfg.protocol_version;
-        let stats = BatchStats {
-            total_read: summary.bytes_received() as i64,
-            total_written: summary.bytes_sent() as i64,
-            total_size: summary.total_source_bytes() as i64,
-            flist_buildtime: if proto >= 29 {
-                Some(summary.file_list_generation_time().as_millis() as i64)
-            } else {
-                None
-            },
-            flist_xfertime: if proto >= 29 {
-                Some(summary.file_list_transfer_time().as_millis() as i64)
-            } else {
-                None
-            },
-        };
-        if let Err(e) = writer.write_stats(&stats) {
-            let msg = format!("failed to write batch stats: {e}");
-            return Err(ClientError::new(
-                1,
-                rsync_error!(1, "{}", msg).with_role(Role::Client),
-            ));
-        }
+        if write_trailer {
+            // upstream: main.c:374-383 - write_varlong30(batch_fd, stats.total_read, 3)
+            let proto = batch_cfg.protocol_version;
+            let stats = BatchStats {
+                total_read: summary.bytes_received() as i64,
+                total_written: summary.bytes_sent() as i64,
+                total_size: summary.total_source_bytes() as i64,
+                flist_buildtime: if proto >= 29 {
+                    Some(summary.file_list_generation_time().as_millis() as i64)
+                } else {
+                    None
+                },
+                flist_xfertime: if proto >= 29 {
+                    Some(summary.file_list_transfer_time().as_millis() as i64)
+                } else {
+                    None
+                },
+            };
+            if let Err(e) = writer.write_stats(&stats) {
+                let msg = format!("failed to write batch stats: {e}");
+                return Err(ClientError::new(
+                    1,
+                    rsync_error!(1, "{}", msg).with_role(Role::Client),
+                ));
+            }
 
-        // upstream: main.c:1119-1122 - write_ndx(f_out, NDX_DONE) as final
-        // goodbye after stats. read_final_goodbye() (main.c:875-906) reads
-        // this from the batch file. For protocol >= 30, NDX_DONE = 0x00
-        // (single byte). For protocol < 30, NDX_DONE = 0xFFFFFFFF (4 bytes).
-        let goodbye_bytes: &[u8] = if proto >= 30 {
-            &[0x00]
-        } else {
-            &[0xFF, 0xFF, 0xFF, 0xFF]
-        };
-        if let Err(e) = writer.write_data(goodbye_bytes) {
-            let msg = format!("failed to write batch goodbye NDX_DONE: {e}");
-            return Err(ClientError::new(
-                1,
-                rsync_error!(1, "{}", msg).with_role(Role::Client),
-            ));
+            // upstream: main.c:907 - write_ndx(f_out, NDX_DONE) inside
+            // read_final_goodbye() is the last thing a sender records, after
+            // the stats. For protocol >= 30, NDX_DONE = 0x00 (single byte);
+            // for protocol < 30 it is 0xFFFFFFFF (4 bytes).
+            let goodbye_bytes: &[u8] = if proto >= 30 {
+                &[0x00]
+            } else {
+                &[0xFF, 0xFF, 0xFF, 0xFF]
+            };
+            if let Err(e) = writer.write_data(goodbye_bytes) {
+                let msg = format!("failed to write batch goodbye NDX_DONE: {e}");
+                return Err(ClientError::new(
+                    1,
+                    rsync_error!(1, "{}", msg).with_role(Role::Client),
+                ));
+            }
         }
 
         if let Err(e) = writer.flush() {
@@ -639,7 +656,7 @@ mod tests {
         write_batch_header(&writer_arc, &config).unwrap();
 
         let summary = ClientSummary::from_summary(engine::local_copy::LocalCopySummary::default());
-        let result = finalize_batch(&writer_arc, &batch_cfg, &config, &summary);
+        let result = finalize_batch(&writer_arc, &batch_cfg, &config, &summary, true);
         assert!(result.is_ok());
 
         let script_path = batch_cfg.script_file_path();
@@ -673,7 +690,7 @@ mod tests {
         write_batch_header(&writer_arc, &config).unwrap();
 
         let summary = ClientSummary::from_summary(engine::local_copy::LocalCopySummary::default());
-        let result = finalize_batch(&writer_arc, &batch_cfg, &config, &summary);
+        let result = finalize_batch(&writer_arc, &batch_cfg, &config, &summary, true);
         assert!(result.is_ok());
 
         let script_path = batch_cfg.script_file_path();

@@ -95,6 +95,7 @@ mod tests;
 mod timing;
 mod transfer;
 
+pub(crate) use self::context::BatchStatsSink;
 pub use self::context::GeneratorContext;
 pub use self::delta::{generate_delta_from_signature, generate_delta_from_signature_chunked};
 pub use self::diagnostics::{
