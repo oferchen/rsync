@@ -47,6 +47,15 @@ impl ReceiverContext {
         let (mut reader, file_count, setup) = self.setup_transfer(reader, writer)?;
         let reader = &mut reader;
 
+        // upstream: main.c:1383-1392 - a client handed an empty list skips
+        // do_recv() entirely and reports the io_error the end marker carried.
+        // Same gate as the two pipelined drivers; `setup_transfer` already
+        // suppressed the pre-flight dest-root mkdir for this case, so entering
+        // the loop here would leave the two halves inconsistent.
+        if self.is_empty_client_flist(file_count) {
+            return self.finish_empty_client_flist(reader, writer);
+        }
+
         let PipelineSetup {
             dest_dir,
             metadata_opts,

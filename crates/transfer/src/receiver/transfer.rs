@@ -68,6 +68,74 @@ impl ReceiverContext {
         }
     }
 
+    /// True when this receiver is a *client* that was handed an empty file
+    /// list, i.e. every requested source path failed to be listed (missing
+    /// source, unreadable directory, everything filtered out).
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `main.c:1383-1392` - `client_run()` gates the entire receive on
+    ///   `if (flist && flist->used > 0)`. With no entries it takes the `else`
+    ///   arm (`handle_stats(-1); output_summary();`) and returns without ever
+    ///   calling `do_recv()`.
+    /// - `main.c:968-974` - the peer sender bailed out at
+    ///   `if (!flist || flist->used == 0) exit_cleanup(0)` (mirrored in
+    ///   `generator::transfer::orchestrator`), so it never reads an ndx, never
+    ///   writes its stats trailer, and never joins the goodbye handshake.
+    ///
+    /// Client-side only, exactly as upstream: `do_server_recv()` has no such
+    /// gate and calls `do_recv()` unconditionally (`main.c:1201-1245`).
+    pub(in crate::receiver) const fn is_empty_client_flist(&self, file_count: usize) -> bool {
+        file_count == 0 && self.config.connection.client_mode
+    }
+
+    /// Ends a client receive that was handed an empty file list, without
+    /// entering the transfer loop or the finalization exchange.
+    ///
+    /// Mirrors the `else` arm of `main.c:1389-1392`: no ndx is written, no
+    /// stats trailer is read, and the goodbye handshake is skipped, because the
+    /// peer sender already exited. Reading for any of them would block until
+    /// the connection died, which is how this surfaced - the client reported
+    /// `failed to fill whole buffer` (exit 12) instead of the summary.
+    ///
+    /// The returned stats carry every `io_error` bit the sender managed to
+    /// deliver before it exited, from both wire encodings upstream uses:
+    ///
+    /// - the file-list end marker, when the peer negotiated a safe incremental
+    ///   file list (`flist.c:2508-2517` -> `write_end_of_flist(f, 1)`), and
+    /// - a `MSG_IO_ERROR` frame otherwise (`flist.c:2553-2555`), which arrives
+    ///   interleaved with the list itself and has therefore already been folded
+    ///   into the reader by the time the list ends - exactly how upstream's
+    ///   global `io_error` picks it up before `client_run()` tests the list.
+    ///
+    /// `cleanup.c:217-218` turns `IOERR_GENERAL` into exit 23 (`RERR_PARTIAL`),
+    /// while a genuinely empty-but-clean list still exits 0. Byte counters stay
+    /// at whatever this process itself observed, matching `handle_stats(-1)`,
+    /// which skips the wire read for `f < 0 && !am_sender` (`main.c:362-363`).
+    pub(in crate::receiver) fn finish_empty_client_flist<R: Read, W: Write + ?Sized>(
+        &mut self,
+        reader: &mut crate::reader::ServerReader<R>,
+        writer: &mut W,
+    ) -> io::Result<TransferStats> {
+        // upstream: exit_cleanup() -> io_flush(FULL_FLUSH); nothing more is
+        // written to the peer after this point.
+        writer.flush()?;
+
+        self.pipeline
+            .advance_to(crate::transfer_state::TransferPhase::Finalization)
+            .map_err(crate::fsm_error)?;
+        self.pipeline
+            .advance_to(crate::transfer_state::TransferPhase::Complete)
+            .map_err(crate::fsm_error)?;
+
+        Ok(TransferStats {
+            io_error: self.flist_reader_cache.as_ref().map_or(0, |r| r.io_error())
+                | self.flist_io_error
+                | reader.take_io_error(),
+            ..TransferStats::default()
+        })
+    }
+
     /// Finalizes a completed transfer's delayed updates and hardlink followers,
     /// in the order upstream mandates.
     ///

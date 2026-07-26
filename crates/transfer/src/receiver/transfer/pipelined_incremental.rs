@@ -46,6 +46,15 @@ impl ReceiverContext {
         let (mut reader, file_count, mut setup) = self.setup_transfer(reader, writer)?;
         let reader = &mut reader;
 
+        // upstream: main.c:1383-1392 - a client handed an empty list skips
+        // do_recv() entirely and reports the io_error the end marker carried.
+        // Checked before the sub-list fetch below because upstream's own
+        // `if (inc_recurse && file_total == 1) recv_additional_file_list()`
+        // (main.c:1380-1381) cannot fire with a file_total of 0 either.
+        if self.is_empty_client_flist(file_count) {
+            return self.finish_empty_client_flist(reader, writer);
+        }
+
         // Materialize any INC_RECURSE sub-list segments the setup no longer
         // drains. No-op without INC_RECURSE (`flist_eof` already set).
         // upstream: generator.c:2299-2368 fetches sub-lists on demand.
