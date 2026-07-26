@@ -795,20 +795,14 @@ impl ReceiverContext {
             );
         }
 
-        // Under `-i`/`-vi` the itemize row already carries the directory name
-        // (upstream `-vi` uses `%i %n`), so the bare `-v` name is suppressed to
-        // avoid a duplicate line; only plain `-v` emits it.
-        if self.config.flags.verbose
-            && self.config.connection.client_mode
-            && !self.should_emit_itemize()
-        {
-            if relative_path.as_os_str() == "." {
-                info_log!(Name, 1, "./");
-            } else {
-                info_log!(Name, 1, "{}/", relative_path.display());
-            }
-        }
-
+        // The plain-`-v` directory name is NOT emitted here. Its caller
+        // (`run_pipelined_incremental`) decides it from `verbose_dir_name_lines`
+        // against the pre-transfer stat, exactly as `run_pipelined` does, so an
+        // unchanged directory stays silent (upstream names a directory only when
+        // `set_file_attrs()` changed it, generator.c:1503-1505) and the name can
+        // be interleaved with `--progress` in flist order. Naming it here also
+        // ran after this call's own metadata apply, which is too late to observe
+        // the pre-transfer state.
         Ok(Some((is_new, iflags)))
     }
 

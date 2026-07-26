@@ -16,7 +16,7 @@ use crate::pipeline::PipelineConfig;
 use crate::receiver::stats::TransferStats;
 use crate::receiver::{REDO_CHECKSUM_LENGTH, ReceiverContext};
 
-use super::candidates::new_dir_count;
+use super::mode::ReceiverMode;
 
 impl ReceiverContext {
     /// Runs the pipelined receiver transfer loop.
@@ -48,15 +48,13 @@ impl ReceiverContext {
         // Interleave plain `-v` (name-only, no `-i`) client-mode file names
         // with --progress in flist order, matching upstream log_before_transfer
         // (receiver.c:1008-1012). `-i`/`-vi` itemize output is unaffected (it
-        // flows through the deferred itemize_rows path). Skips the non-transfer
-        // dispatches (list-only, dry-run, only-write-batch) so their existing
-        // emission order is untouched.
+        // flows through the deferred itemize_rows path). Every non-transfer mode
+        // is excluded via the shared `select_mode`, so a mode added there cannot
+        // silently acquire the interleaving.
         self.interleave_names = self.config.flags.verbose
             && self.config.connection.client_mode
             && !self.should_emit_itemize()
-            && !self.config.flags.list_only
-            && !self.config.flags.dry_run
-            && !self.config.flags.only_write_batch;
+            && matches!(self.select_mode(), ReceiverMode::Transfer);
         self.names_to_stderr = self.config.flags.msgs_to_stderr;
         self.progress_active = progress.is_some();
         let (mut reader, file_count, mut setup) = self.setup_transfer(reader, writer)?;
@@ -167,9 +165,10 @@ impl ReceiverContext {
             setup.acl_id_map.as_deref(),
         );
 
-        let mut files_transferred: usize = 0;
+        // Both assigned by every arm of the mode match below.
         // upstream: receiver.c:784 total_transferred_size, summed with files_transferred.
-        let mut transferred_file_size: u64 = 0;
+        let mut files_transferred: usize;
+        let mut transferred_file_size: u64;
         let mut bytes_received: u64 = 0;
         let mut literal_data: u64 = 0;
         let mut matched_data: u64 = 0;
@@ -187,120 +186,101 @@ impl ReceiverContext {
             }
         }
 
-        // upstream: generator.c:1249 - list-only renders every flist entry via
-        // list_file_entry() and sends NO per-file NDX request. Only the existing
-        // post-loop phase markers (NDX_DONE) and the goodbye handshake cross the
-        // wire. This branch must precede the dry_run check: list-only is not
-        // dry-run (dry-run streams an NDX request per file).
-        if self.config.flags.list_only {
-            stats.list_only_entries = self.collect_list_only_entries();
-            writer.flush()?;
-        } else if self.config.flags.only_write_batch {
-            // upstream: main.c:1839 `write_batch < 0` forces dry_run but leaves
-            // do_xfers = 1, so unlike a plain `-n` the generator still sends
-            // real block checksums while the receiver writes nothing to the
-            // destination (receiver.c:811-817). Checked before `dry_run`
-            // because only-write-batch sets both flags. A push receiver reads
-            // no delta (the client sender records it into its own batch fd,
-            // sender.c:217); a pull receiver drains the sender's delta via
-            // discard_receive_data() (receiver.c:813-814).
-            // Same shared reporting pass as the plain dry run below; only the
-            // wire loop differs (real block checksums, no plan).
-            let plan = self.plan_dry_run(&setup.dest_dir, &files_to_transfer);
-            stats.directories_created = new_dir_count(&plan);
-            self.run_only_write_batch_loop(reader, writer, &files_to_transfer, &setup)?;
-        } else if self.config.flags.dry_run {
-            // upstream: recv_generator() itemizes every entry and the receiver
-            // tallies every ITEM_IS_NEW even under --dry-run (only the data
-            // transfer and filesystem mutation are skipped). The
-            // directory-creation, symlink, and candidate passes above
-            // early-return under skip_dest_writes(), so plan_dry_run is the one
-            // place the rows and created-file counts are produced - shared with
-            // run_pipelined_incremental so the two drivers cannot drift.
-            // Read-only: nothing is written to the destination.
-            let plan = self.plan_dry_run(&setup.dest_dir, &files_to_transfer);
-            stats.directories_created = new_dir_count(&plan);
-            (files_transferred, transferred_file_size) =
-                self.run_dry_run_loop(reader, writer, &plan)?;
-        } else {
-            let total_files = files_to_transfer.len();
-            let redo_config = pipeline_config.clone();
-            let redo_indices;
-            let delayed;
-            (
-                files_transferred,
-                transferred_file_size,
-                bytes_received,
-                literal_data,
-                matched_data,
-                redo_indices,
-                delayed,
-            ) = self.run_pipeline_loop_decoupled(
-                reader,
-                writer,
-                pipeline_config,
-                &setup,
-                files_to_transfer,
-                &mut metadata_errors,
-                false,
-                total_files,
-                &mut progress,
-            )?;
-            all_delayed_updates.extend(delayed);
-
-            // Phase 2: redo pass for files that failed checksum verification.
-            redo_count = redo_indices.len();
-            if !redo_indices.is_empty() {
-                setup.checksum_length = REDO_CHECKSUM_LENGTH;
-
-                // upstream: generator.c:1939 - the phase-2 redo re-itemizes with
-                // ITEM_TRANSFER; the basis comparison is not re-run for the retry.
-                let redo_files: Vec<(usize, &FileEntry, PathBuf, u32)> = redo_indices
-                    .iter()
-                    .filter_map(|&idx| {
-                        self.file_list.get(idx).map(|entry| {
-                            let p = entry.path();
-                            let file_path = if p.as_os_str() == "." {
-                                setup.dest_dir.clone()
-                            } else {
-                                setup.dest_dir.join(p)
-                            };
-                            (
-                                idx,
-                                entry,
-                                file_path,
-                                crate::generator::ItemFlags::ITEM_TRANSFER,
-                            )
-                        })
-                    })
-                    .collect();
-
-                let (
-                    redo_transferred,
-                    redo_transferred_size,
-                    redo_bytes,
-                    redo_literal,
-                    redo_matched,
-                    _,
-                    redo_delayed,
+        // One shared decision (see `mode.rs`) with one shared body per
+        // non-transfer mode, so this driver and run_pipelined_incremental cannot
+        // drift again. The match is exhaustive by design: a new ReceiverMode
+        // variant is a compile error in every driver that does not handle it.
+        match self.select_mode() {
+            ReceiverMode::NonTransfer(non_transfer) => {
+                (files_transferred, transferred_file_size) = self.run_non_transfer_mode(
+                    non_transfer,
+                    reader,
+                    writer,
+                    &setup,
+                    &files_to_transfer,
+                    &mut stats,
+                )?;
+            }
+            ReceiverMode::Transfer => {
+                let total_files = files_to_transfer.len();
+                let redo_config = pipeline_config.clone();
+                let redo_indices;
+                let delayed;
+                (
+                    files_transferred,
+                    transferred_file_size,
+                    bytes_received,
+                    literal_data,
+                    matched_data,
+                    redo_indices,
+                    delayed,
                 ) = self.run_pipeline_loop_decoupled(
                     reader,
                     writer,
-                    redo_config,
+                    pipeline_config,
                     &setup,
-                    redo_files,
+                    files_to_transfer,
                     &mut metadata_errors,
-                    true,
+                    false,
                     total_files,
                     &mut progress,
                 )?;
+                all_delayed_updates.extend(delayed);
 
-                files_transferred += redo_transferred;
-                transferred_file_size += redo_transferred_size;
-                bytes_received += redo_bytes;
-                literal_data += redo_literal;
-                matched_data += redo_matched;
-                all_delayed_updates.extend(redo_delayed);
+                // Phase 2: redo pass for files that failed checksum verification.
+                redo_count = redo_indices.len();
+                if !redo_indices.is_empty() {
+                    setup.checksum_length = REDO_CHECKSUM_LENGTH;
+
+                    // upstream: generator.c:1939 - the phase-2 redo re-itemizes with
+                    // ITEM_TRANSFER; the basis comparison is not re-run for the retry.
+                    let redo_files: Vec<(usize, &FileEntry, PathBuf, u32)> = redo_indices
+                        .iter()
+                        .filter_map(|&idx| {
+                            self.file_list.get(idx).map(|entry| {
+                                let p = entry.path();
+                                let file_path = if p.as_os_str() == "." {
+                                    setup.dest_dir.clone()
+                                } else {
+                                    setup.dest_dir.join(p)
+                                };
+                                (
+                                    idx,
+                                    entry,
+                                    file_path,
+                                    crate::generator::ItemFlags::ITEM_TRANSFER,
+                                )
+                            })
+                        })
+                        .collect();
+
+                    let (
+                        redo_transferred,
+                        redo_transferred_size,
+                        redo_bytes,
+                        redo_literal,
+                        redo_matched,
+                        _,
+                        redo_delayed,
+                    ) = self.run_pipeline_loop_decoupled(
+                        reader,
+                        writer,
+                        redo_config,
+                        &setup,
+                        redo_files,
+                        &mut metadata_errors,
+                        true,
+                        total_files,
+                        &mut progress,
+                    )?;
+
+                    files_transferred += redo_transferred;
+                    transferred_file_size += redo_transferred_size;
+                    bytes_received += redo_bytes;
+                    literal_data += redo_literal;
+                    matched_data += redo_matched;
+                    all_delayed_updates.extend(redo_delayed);
+                }
             }
         }
 

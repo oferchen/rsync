@@ -12,8 +12,11 @@
 //! - `phases` - protocol phase exchange and goodbye handshake.
 //! - `candidates` - candidate-file selection for the pipelined paths.
 //! - `pipeline` - the inner `run_pipeline_loop_decoupled` plus dry-run loop.
+//! - `mode` - the single drive-mode decision both pipelined drivers share, plus
+//!   the one implementation of every mode that moves no file data.
 
 mod candidates;
+pub(in crate::receiver) mod mode;
 mod phases;
 mod pipeline;
 mod pipelined;

@@ -11,6 +11,9 @@
 //!   symlinks, and other special entries.
 //! - [`partial_resume`] - temp-file guard, relative-parent creation, and
 //!   reference-directory lookups used during partial/resume transfers.
+//! - [`mode_dispatch`] - the shared drive-mode decision and the wire shape of
+//!   each mode that moves no file data, asserted under both `incremental-flist`
+//!   settings.
 //! - [`errors_and_timeouts`] - error categorization, failed-directory
 //!   propagation, legacy goodbye handling, input-multiplex activation,
 //!   daemon filter set, and path-traversal rejection.
@@ -25,6 +28,7 @@ mod file_list;
 mod generator_keepalive;
 mod hard_links;
 mod incremental_flist_banner;
+mod mode_dispatch;
 #[cfg(unix)]
 mod munge_symlinks;
 mod parallel_delta_notice;

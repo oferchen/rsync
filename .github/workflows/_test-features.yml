@@ -171,8 +171,26 @@ jobs:
             args: "-p checksums -p flist --features parallel"
             apt: ""
             needs_bin: false
-          - name: incremental-flist
-            args: "-p transfer --features incremental-flist"
+          # `incremental-flist` is in `transfer`'s own `default` list, so a row
+          # of the form `-p transfer --features incremental-flist` turns nothing
+          # on that was not already on - it re-tests the default configuration
+          # under a name that claims otherwise. The feature IS covered on:
+          # the `default-features` row above, the main `--all-features` test
+          # job, and every library consumer.
+          #
+          # What was NOT covered anywhere is the feature OFF. That matters more
+          # than the ON case: `bin` pins `transfer` with
+          # `default-features = false` (root Cargo.toml), so the SHIPPED BINARY
+          # runs the off-path receiver while every other job runs the on-path
+          # one. Production took one code path and CI tested the other, which is
+          # how four successive receiver-dispatch divergences reached master.
+          #
+          # The feature list is the musl job's (ci.yml), which is the only other
+          # place in the repo that builds with defaults off. Bare
+          # `--no-default-features` would also drop zstd/lz4/xattr and test a
+          # different question.
+          - name: no-incremental-flist
+            args: "--workspace --no-default-features --features zstd,lz4,xattr,iconv,parallel,copy_file_range"
             apt: ""
             needs_bin: true
           - name: compression
