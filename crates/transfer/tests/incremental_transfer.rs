@@ -29,7 +29,7 @@ fn transfer_stats_incremental_fields_exist() {
         total_source_bytes: 5000,
         metadata_errors: vec![],
         io_error: 0,
-        error_count: 0,
+        got_xfer_error: false,
         entries_received: 10,
         directories_created: 3,
         directories_failed: 1,

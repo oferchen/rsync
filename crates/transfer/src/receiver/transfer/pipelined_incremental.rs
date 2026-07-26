@@ -399,6 +399,11 @@ impl ReceiverContext {
         // alone only skips the file and carries no exit-code bits.
         stats.io_error |= reader.take_io_error();
 
+        // upstream: log.c:310-311 - every MSG_ERROR_XFER read off the wire sets
+        // got_xfer_error, the only report an ENOENT source argument produces
+        // (flist.c:2431 withholds IOERR_GENERAL for it).
+        stats.got_xfer_error = reader.xfer_error_count() > 0;
+
         Ok(stats)
     }
 }

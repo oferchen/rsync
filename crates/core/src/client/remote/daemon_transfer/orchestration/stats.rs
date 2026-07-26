@@ -48,7 +48,7 @@ pub(super) fn convert_server_stats_to_summary(
         ServerStats::Generator(_) => Vec::new(),
     };
 
-    let (local_summary, io_error, error_count) = match stats {
+    let (local_summary, io_error, got_xfer_error) = match stats {
         ServerStats::Receiver(ref transfer_stats) => {
             // Daemon-pull: local side ran the receiver and its `--delete`
             // sweep. The per-type counters live on `delete_stats`.
@@ -71,7 +71,7 @@ pub(super) fn convert_server_stats_to_summary(
                     specials: transfer_stats.num_specials,
                 },
             );
-            (s, transfer_stats.io_error, transfer_stats.error_count)
+            (s, transfer_stats.io_error, transfer_stats.got_xfer_error)
         }
         ServerStats::Generator(ref generator_stats) => {
             // Daemon-upload: local side ran the sender/generator. The remote
@@ -97,7 +97,7 @@ pub(super) fn convert_server_stats_to_summary(
                     specials: generator_stats.num_specials,
                 },
             );
-            (s, generator_stats.io_error, 0u32)
+            (s, generator_stats.io_error, generator_stats.got_xfer_error)
         }
     };
 
@@ -110,8 +110,11 @@ pub(super) fn convert_server_stats_to_summary(
     let exit_code = io_error_flags::to_exit_code(io_error);
     if exit_code != 0 {
         summary.set_io_error_exit_code(exit_code);
-    } else if error_count > 0 {
-        // Remote sender reported errors via MSG_ERROR - treat as RERR_PARTIAL (23).
+    } else if got_xfer_error {
+        // upstream: cleanup.c:217-218 - `io_error & IOERR_GENERAL ||
+        // got_xfer_error` lifts a zero exit to RERR_PARTIAL. This is the only
+        // arm a missing source argument reaches, since `flist.c:2431` withholds
+        // IOERR_GENERAL for ENOENT.
         summary.set_io_error_exit_code(23);
     }
 

@@ -120,10 +120,16 @@ impl GeneratorContext {
                         self.emit_delete_sentinel(base, path)?;
                         Ok(true)
                     }
-                    // upstream: flist.c:1846 - default: link_stat failed + IOERR_GENERAL
+                    // upstream: flist.c:2428-2436 - default: link_stat failed.
                     _ => {
-                        // FFV-4: emit the correct error message and error flag
-                        // for a source that never existed at flist build time.
+                        // upstream: flist.c:2431 - `if (errno != ENOENT)` guards
+                        // the `io_error |= IOERR_GENERAL`, so a source that
+                        // never existed deliberately leaves io_error clear: that
+                        // bit travels to the receiver and would inhibit its
+                        // deletions, and upstream only wants that "if we might
+                        // be omitting an existing file". The exit code comes
+                        // from got_xfer_error instead, set by the FERROR_XFER
+                        // below on both this side and the peer (log.c:310-311).
                         // upstream: flist.c:2433 - rsyserr(FERROR_XFER, ...)
                         let text = format!(
                             "rsync: [sender] link_stat {} failed: {}\n",
@@ -131,7 +137,6 @@ impl GeneratorContext {
                             engine::local_copy::upstream_io_error(&e),
                         );
                         self.queue_flist_diagnostic(SenderDiagnostic::ErrorXfer, text);
-                        self.add_io_error(io_error_flags::IOERR_GENERAL);
                         Ok(false)
                     }
                 }
