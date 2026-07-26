@@ -86,6 +86,13 @@ jobs:
           Expand-Archive -Force -Path $zip -DestinationPath $cargoBin
           & "$cargoBin\cargo-nextest.exe" --version
 
+      # Both ADS round-trip tests spawn `oc-rsync.exe` as a subprocess. A
+      # package-scoped `-p metadata` run never builds it, and the tests
+      # resolve exactly one path and abort when it is absent, so build it
+      # here. Default features carry the xattr backend under test.
+      - name: Build oc-rsync (for subprocess integration tests)
+        run: cargo build --locked -p bin --bin oc-rsync
+
       # Filter targets the metadata-crate ADS coverage. The test names
       # `ads_zone_identifier_round_trips_through_xattrs` and
       # `ads_multi_stream_round_trips` in
