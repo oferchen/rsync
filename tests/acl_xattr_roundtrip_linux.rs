@@ -123,13 +123,7 @@ impl TestContext {
                 return None;
             }
         }
-        let oc_bin = match locate_oc_rsync() {
-            Some(p) => p,
-            None => {
-                skip("oc-rsync binary not located");
-                return None;
-            }
-        };
+        let oc_bin = locate_oc_rsync();
         let upstream_bin = match locate_upstream_rsync() {
             Some(p) => p,
             None => {

@@ -269,8 +269,18 @@ fn binary_command(name: &str) -> Command {
 
 /// Locate a test binary built by Cargo.
 ///
-/// Resolution order:
-/// 1. `CARGO_BIN_EXE_<name>` environment variable set by Cargo.
+/// `PROGRAM_NAME` is the crate's own `[[bin]]` target, so Cargo hands its path
+/// to the compiler as `CARGO_BIN_EXE_oc-rsync`. That is a COMPILE-time
+/// variable and must be read with `env!`: at run time it is unset, and a
+/// `env::var_os` lookup would fall through to whatever stale
+/// `target/debug/oc-rsync` happens to be on disk.
+///
+/// The compatibility wrappers (`rsync`, `oc-rsyncd`, `rsyncd`) are not Cargo
+/// bin targets, so they keep the search-based resolution and stay optional.
+///
+/// Resolution order for the wrappers:
+/// 1. `CARGO_BIN_EXE_<name>` environment variable, when something in the
+///    harness exports one.
 /// 2. Walk upwards from the current executable looking for a `target`
 ///    directory and common `{debug,release}` subdirectories.
 /// 3. Fallback to a sibling of the current executable, stripping a trailing
@@ -280,6 +290,16 @@ fn binary_command(name: &str) -> Command {
 /// binaries (for example, `/usr/bin/rsync`) that do not match oc-rsync
 /// behaviour, which would make the tests environment-dependent.
 fn locate_binary(name: &str) -> Option<PathBuf> {
+    if name == PROGRAM_NAME {
+        let built = PathBuf::from(env!("CARGO_BIN_EXE_oc-rsync"));
+        assert!(
+            built.is_file(),
+            "oc-rsync binary missing at {}; refusing to fall back to a stale build",
+            built.display()
+        );
+        return Some(built);
+    }
+
     let env_var = format!("CARGO_BIN_EXE_{name}");
     if let Some(path) = env::var_os(&env_var) {
         let path = PathBuf::from(path);

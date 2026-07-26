@@ -41,24 +41,20 @@ const RUN_TIMEOUT: Duration = Duration::from_secs(60);
 /// stream dies well before clean completion.
 const STREAM_BYTE_CAP: u64 = 256;
 
+/// Locates the binary under test.
+///
+/// `CARGO_BIN_EXE_oc-rsync` is a COMPILE-time variable, so it must be read with
+/// `env!`, not `env::var_os`: at run time it is unset and the lookup would fall
+/// through to whatever stale `target/debug/oc-rsync` happens to be on disk -
+/// silently testing a different build than the one just compiled.
 fn oc_rsync_binary() -> PathBuf {
-    if let Some(env_path) = env::var_os("CARGO_BIN_EXE_oc-rsync") {
-        let path = PathBuf::from(env_path);
-        if path.is_file() {
-            return path;
-        }
-    }
-    let manifest_dir = env!("CARGO_MANIFEST_DIR");
-    for profile in ["debug", "release", "dist"] {
-        let candidate = PathBuf::from(manifest_dir)
-            .join("target")
-            .join(profile)
-            .join("oc-rsync");
-        if candidate.is_file() {
-            return candidate;
-        }
-    }
-    PathBuf::from("oc-rsync")
+    let built = PathBuf::from(env!("CARGO_BIN_EXE_oc-rsync"));
+    assert!(
+        built.is_file(),
+        "oc-rsync binary missing at {}; refusing to fall back to a stale build",
+        built.display()
+    );
+    built
 }
 
 /// Locate an upstream rsync binary, returning `None` if the test should skip.
@@ -210,10 +206,6 @@ fn delete_during_survives_sender_stream_truncation() {
         return;
     }
     let oc_rsync = oc_rsync_binary();
-    if !oc_rsync.is_file() {
-        eprintln!("skipping #1895 interop: oc-rsync binary not built");
-        return;
-    }
 
     let tmp = tempfile::tempdir().expect("create tempdir");
     let root = tmp.path();

@@ -49,7 +49,7 @@ fn rsync_with_timeout(args: &[&str], timeout_secs: u64) -> std::process::Output 
     use std::process::{Command, Stdio};
     use std::time::Duration;
 
-    let binary = locate_oc_rsync().expect("oc-rsync binary must be available");
+    let binary = locate_oc_rsync();
 
     let mut child = Command::new(&binary)
         .args(args)
@@ -78,39 +78,20 @@ fn rsync_with_timeout(args: &[&str], timeout_secs: u64) -> std::process::Output 
         .expect("failed to collect oc-rsync output")
 }
 
-fn locate_oc_rsync() -> Option<std::path::PathBuf> {
-    use std::env;
-    use std::path::PathBuf;
-
-    // Try CARGO_BIN_EXE_oc-rsync first
-    if let Some(path) = env::var_os("CARGO_BIN_EXE_oc-rsync") {
-        let path = PathBuf::from(path);
-        if path.is_file() {
-            return Some(path);
-        }
-    }
-
-    let binary_name = format!("oc-rsync{}", std::env::consts::EXE_SUFFIX);
-    let current_exe = env::current_exe().ok()?;
-    let mut dir = current_exe.parent()?;
-
-    // Walk up, checking each ancestor (handles cross-compilation target dirs)
-    while !dir.ends_with("target") {
-        let candidate = dir.join(&binary_name);
-        if candidate.is_file() {
-            return Some(candidate);
-        }
-        dir = dir.parent()?;
-    }
-
-    for subdir in ["debug", "release"] {
-        let candidate = dir.join(subdir).join(&binary_name);
-        if candidate.is_file() {
-            return Some(candidate);
-        }
-    }
-
-    None
+/// Locates the binary under test.
+///
+/// `CARGO_BIN_EXE_oc-rsync` is a COMPILE-time variable, so it must be read with
+/// `env!`, not `env::var_os`: at run time it is unset and the lookup would fall
+/// through to whatever stale `target/debug/oc-rsync` happens to be on disk -
+/// silently testing a different build than the one just compiled.
+fn locate_oc_rsync() -> std::path::PathBuf {
+    let built = std::path::PathBuf::from(env!("CARGO_BIN_EXE_oc-rsync"));
+    assert!(
+        built.is_file(),
+        "oc-rsync binary missing at {}; refusing to fall back to a stale build",
+        built.display()
+    );
+    built
 }
 
 #[test]

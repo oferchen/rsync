@@ -63,20 +63,21 @@ const RUN_TIMEOUT: Duration = Duration::from_secs(120);
 /// silently testing a different build than the one just compiled.
 fn oc_rsync_binary() -> PathBuf {
     let built = PathBuf::from(env!("CARGO_BIN_EXE_oc-rsync"));
-    if built.is_file() {
-        return built;
-    }
-    let manifest_dir = env!("CARGO_MANIFEST_DIR");
-    for profile in ["debug", "release", "dist"] {
-        let candidate = PathBuf::from(manifest_dir)
-            .join("target")
-            .join(profile)
-            .join("oc-rsync");
-        if candidate.is_file() {
-            return candidate;
-        }
-    }
-    PathBuf::from("oc-rsync")
+    assert!(
+        built.is_file(),
+        "oc-rsync binary missing at {}; refusing to fall back to a stale build",
+        built.display()
+    );
+    let mode = fs::metadata(&built)
+        .expect("stat oc-rsync binary")
+        .permissions()
+        .mode();
+    assert!(
+        mode & 0o111 != 0,
+        "oc-rsync at {} is not executable (mode {mode:o})",
+        built.display()
+    );
+    built
 }
 
 /// Writes the `--rsh` shim.
@@ -214,10 +215,6 @@ fn run_pull(shim: &Path, binary: &Path, batch_flag: &str, src: &Path, dest: &Pat
 #[test]
 fn only_write_batch_pull_leaves_the_destination_untouched() {
     let binary = oc_rsync_binary();
-    if !binary.is_file() {
-        eprintln!("skip: oc-rsync binary not built at {}", binary.display());
-        return;
-    }
     let (temp, src, dest, batch) = setup("only");
     let shim = write_rsh_shim(temp.path());
 
@@ -277,10 +274,6 @@ fn only_write_batch_pull_leaves_the_destination_untouched() {
 #[test]
 fn write_batch_pull_still_transfers_and_records() {
     let binary = oc_rsync_binary();
-    if !binary.is_file() {
-        eprintln!("skip: oc-rsync binary not built at {}", binary.display());
-        return;
-    }
     let (temp, src, dest, batch) = setup("plain");
     let shim = write_rsh_shim(temp.path());
 

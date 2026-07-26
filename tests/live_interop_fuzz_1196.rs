@@ -400,30 +400,20 @@ fn upstream_binary() -> Option<PathBuf> {
     None
 }
 
-fn locate_oc_rsync() -> Option<PathBuf> {
-    if let Some(p) = env::var_os("CARGO_BIN_EXE_oc-rsync") {
-        let p = PathBuf::from(p);
-        if p.is_file() {
-            return Some(p);
-        }
-    }
-    let exe = env::current_exe().ok()?;
-    let mut dir = exe.parent()?;
-    let name = format!("oc-rsync{}", env::consts::EXE_SUFFIX);
-    while !dir.ends_with("target") {
-        let candidate = dir.join(&name);
-        if candidate.is_file() {
-            return Some(candidate);
-        }
-        dir = dir.parent()?;
-    }
-    for sub in ["debug", "release"] {
-        let candidate = dir.join(sub).join(&name);
-        if candidate.is_file() {
-            return Some(candidate);
-        }
-    }
-    None
+/// Locates the binary under test.
+///
+/// `CARGO_BIN_EXE_oc-rsync` is a COMPILE-time variable, so it must be read with
+/// `env!`, not `env::var_os`: at run time it is unset and the lookup would fall
+/// through to whatever stale `target/debug/oc-rsync` happens to be on disk -
+/// silently testing a different build than the one just compiled.
+fn locate_oc_rsync() -> PathBuf {
+    let built = PathBuf::from(env!("CARGO_BIN_EXE_oc-rsync"));
+    assert!(
+        built.is_file(),
+        "oc-rsync binary missing at {}; refusing to fall back to a stale build",
+        built.display()
+    );
+    built
 }
 
 // ============================================================================
@@ -623,13 +613,7 @@ fn seed_for_run() -> u64 {
 /// Run the fuzzer until the time budget elapses. Used by both the smoke and
 /// extended tiers; the only difference is the budget and tree shape mix.
 fn run_until_budget(budget: Duration, shapes: &[TreeShape]) {
-    let oc_bin = match locate_oc_rsync() {
-        Some(p) => p,
-        None => {
-            eprintln!("skip: oc-rsync binary not located");
-            return;
-        }
-    };
+    let oc_bin = locate_oc_rsync();
     let up_bin = match upstream_binary() {
         Some(p) => p,
         None => {

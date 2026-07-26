@@ -66,7 +66,6 @@ mod integration;
 
 use integration::helpers::{TestDir, upstream_rsync_binary};
 
-use std::env;
 use std::fs;
 use std::io::{self, Read, Write};
 use std::path::{Path, PathBuf};
@@ -94,32 +93,20 @@ const FIXED_CHECKSUM_SEED: &str = "--checksum-seed=12345";
 const FIXTURE_MTIME_SECS: i64 = 1_700_000_000;
 const FIXTURE_MTIME_NSECS: u32 = 0;
 
-/// Locate the oc-rsync binary built with the current feature set.
-/// Same shape as ISI.c/ISI.d.
-fn locate_oc_rsync() -> Option<PathBuf> {
-    if let Some(p) = env::var_os("CARGO_BIN_EXE_oc-rsync") {
-        let p = PathBuf::from(p);
-        if p.is_file() {
-            return Some(p);
-        }
-    }
-    let exe = env::current_exe().ok()?;
-    let mut dir = exe.parent()?;
-    let name = format!("oc-rsync{}", env::consts::EXE_SUFFIX);
-    while !dir.ends_with("target") {
-        let candidate = dir.join(&name);
-        if candidate.is_file() {
-            return Some(candidate);
-        }
-        dir = dir.parent()?;
-    }
-    for sub in ["debug", "release"] {
-        let candidate = dir.join(sub).join(&name);
-        if candidate.is_file() {
-            return Some(candidate);
-        }
-    }
-    None
+/// Locates the binary under test.
+///
+/// `CARGO_BIN_EXE_oc-rsync` is a COMPILE-time variable, so it must be read with
+/// `env!`, not `env::var_os`: at run time it is unset and the lookup would fall
+/// through to whatever stale `target/debug/oc-rsync` happens to be on disk -
+/// silently testing a different build than the one just compiled.
+fn locate_oc_rsync() -> PathBuf {
+    let built = PathBuf::from(env!("CARGO_BIN_EXE_oc-rsync"));
+    assert!(
+        built.is_file(),
+        "oc-rsync binary missing at {}; refusing to fall back to a stale build",
+        built.display()
+    );
+    built
 }
 
 /// Apply the fixed mtime to every regular file in `root` recursively.
@@ -383,13 +370,7 @@ fn assert_wire_parity(label: &str, oc_bytes: &[u8], upstream_bytes: &[u8]) {
 /// matching the convention used by every other interop test under
 /// `tests/`.
 fn locate_binaries_or_skip() -> Option<(PathBuf, PathBuf)> {
-    let oc_bin = match locate_oc_rsync() {
-        Some(p) => p,
-        None => {
-            eprintln!("skip: oc-rsync binary not located");
-            return None;
-        }
-    };
+    let oc_bin = locate_oc_rsync();
     let up_bin = match upstream_rsync_binary("3.4.1") {
         Some(p) => p,
         None => {
