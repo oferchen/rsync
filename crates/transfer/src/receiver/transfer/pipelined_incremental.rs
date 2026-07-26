@@ -168,6 +168,16 @@ impl ReceiverContext {
         if self.config.flags.list_only {
             stats.list_only_entries = self.collect_list_only_entries();
             writer.flush()?;
+        } else if self.config.flags.only_write_batch {
+            // upstream: main.c:1839 `write_batch < 0` forces dry_run but leaves
+            // do_xfers = 1, so unlike a plain `-n` the generator still sends
+            // real block checksums and the sender expects a sum head per file
+            // (sender.c:442-443). Checked before `dry_run` because
+            // only-write-batch sets both flags; falling through to
+            // `run_dry_run_loop` would send a bare NDX+iflags request with no
+            // sum head, leaving the sender blocked on a read that never
+            // completes while this loop blocks on the echo.
+            self.run_only_write_batch_loop(reader, writer, &files_to_transfer, &setup)?;
         } else if self.config.flags.dry_run {
             self.run_dry_run_loop(reader, writer, &files_to_transfer)?;
         } else {

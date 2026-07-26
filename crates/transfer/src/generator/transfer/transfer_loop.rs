@@ -28,6 +28,71 @@ use super::super::{
 };
 use crate::delta_config::DeltaGeneratorConfig;
 use crate::receiver::SumHead;
+use crate::writer::{BatchRoute, MsgInfoSender};
+
+/// Scoped view of the sender's transfer stream, upstream's `f_xfer`.
+///
+/// upstream `sender.c:217` picks the destination of a file's sum head, tokens
+/// and trailing file checksum once per `send_files()` run:
+///
+/// ```c
+/// int f_xfer = write_batch < 0 ? batch_fd : f_out;
+/// ```
+///
+/// Under `--only-write-batch` that stream goes into the batch file *instead of*
+/// the wire, which is what lets the remote receiver run with `dry_run = 1`
+/// (`main.c:1839`) and never read a byte of delta. The NDX+attrs header
+/// (`sender.c:442`) always stays on the wire, so the divert is scoped to the
+/// payload and reverted on drop. Under `--write-batch` (or with no batch at
+/// all) the route is unchanged and the recorder keeps teeing (`io.c:2282`).
+struct XferSink<'w, W: Write + MsgInfoSender + ?Sized> {
+    writer: &'w mut W,
+    diverted: bool,
+}
+
+impl<'w, W: Write + MsgInfoSender + ?Sized> XferSink<'w, W> {
+    /// Borrows `writer`, diverting it into the batch when `divert` is set.
+    fn new(writer: &'w mut W, divert: bool) -> Self {
+        if divert {
+            writer.set_batch_route(BatchRoute::Divert);
+        }
+        Self {
+            writer,
+            diverted: divert,
+        }
+    }
+}
+
+impl<W: Write + MsgInfoSender + ?Sized> Write for XferSink<'_, W> {
+    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+        self.writer.write(buf)
+    }
+
+    fn write_vectored(&mut self, bufs: &[io::IoSlice<'_>]) -> io::Result<usize> {
+        self.writer.write_vectored(bufs)
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        self.writer.flush()
+    }
+}
+
+impl<W: Write + MsgInfoSender + ?Sized> Drop for XferSink<'_, W> {
+    fn drop(&mut self) {
+        if self.diverted {
+            self.writer.set_batch_route(BatchRoute::Tee);
+        }
+    }
+}
+
+/// Narrows a payload byte count to the part that actually reached the wire.
+///
+/// upstream: `io.c:2255-2258` - a `write_buf()` aimed at `batch_fd` takes the
+/// `safe_write()` shortcut and returns before `total_data_written += len`, so
+/// bytes diverted into the batch never count towards "sent N bytes".
+const fn sent_bytes(counted: u64, diverted: bool) -> u64 {
+    if diverted { 0 } else { counted }
+}
 
 /// Minimum source size before the opt-in parallel delta scan is considered.
 ///
@@ -76,6 +141,34 @@ fn open_source_mmap(path: &std::path::Path, use_noatime: bool) -> io::Result<fas
 }
 
 impl GeneratorContext {
+    /// Writes one file's NDX + iflags (+ optional xattr response) header and the
+    /// sum head that follows it.
+    ///
+    /// The two go to different destinations under `--only-write-batch`: the
+    /// header is what the receiver still reads (`receiver.c:811-817` logs the
+    /// item and moves on), while the sum head opens the payload stream and
+    /// therefore belongs to the batch. `divert` selects that split; when it is
+    /// `false` both land on the wire exactly as before.
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `sender.c:184-200` - `write_ndx_and_attrs()` body (calls
+    ///   `send_xattr_request(fname, file, f_out)` when ITEM_REPORT_XATTR set)
+    /// - `sender.c:442-443` - `write_ndx_and_attrs(f_out, ...)` followed by
+    ///   `write_sum_head(f_xfer, s)`
+    fn write_ndx_attrs_and_sum_head<W: Write + MsgInfoSender>(
+        &self,
+        writer: &mut W,
+        ndx_codec: &mut impl NdxCodec,
+        attrs: &NdxAttrs<'_>,
+        sum_head: &SumHead,
+        xattr_response: Option<&mut protocol::xattr::XattrList>,
+        divert: bool,
+    ) -> io::Result<()> {
+        self.write_ndx_iflags_and_xattr_response(writer, ndx_codec, attrs, xattr_response)?;
+        sum_head.write(&mut XferSink::new(writer, divert))
+    }
+
     /// Runs the main file transfer loop, reading NDX requests from receiver.
     ///
     /// This method processes file transfer requests in phases until all phases complete.
@@ -175,6 +268,16 @@ impl GeneratorContext {
         // stream stored at level 0, still deflated framing). The framing decision is
         // therefore one session-level constant, not a per-file boolean.
         let use_compression = token_encoder.is_some();
+
+        // upstream: sender.c:217 - `int f_xfer = write_batch < 0 ? batch_fd :
+        // f_out`. Under `--only-write-batch` the sum head, tokens and file
+        // checksum are recorded into the batch INSTEAD of being sent, so the
+        // remote receiver - which server_options() put into `dry_run` via the
+        // `--only-write-batch=X` placeholder (options.c:2850, main.c:1839) and
+        // which therefore reads no payload (receiver.c:811-817) - never has an
+        // unread stream backing up behind it. Constant for the whole run,
+        // exactly like upstream's single `f_xfer` binding.
+        let divert_xfer = self.config.flags.only_write_batch;
 
         // upstream: io.c:2244-2245 - separate read/write NDX state
         let mut ndx_read_codec = create_ndx_codec(self.protocol.as_u8());
@@ -600,7 +703,7 @@ impl GeneratorContext {
                     }
                 };
 
-                self.write_ndx_and_attrs(
+                self.write_ndx_attrs_and_sum_head(
                     &mut *writer,
                     &mut ndx_write_codec,
                     &NdxAttrs {
@@ -611,13 +714,17 @@ impl GeneratorContext {
                     },
                     &sum_head,
                     pending_xattr_response.as_mut(),
+                    divert_xfer,
                 )?;
 
                 let checksum_algorithm = self.get_checksum_algorithm();
                 let flength = sum_head.flength().min(file_size);
                 let append_verify = self.config.flags.append_verify;
                 let wire_bytes = {
-                    let mut cw = crate::writer::CountingWriter::new(&mut *writer);
+                    let mut cw = crate::writer::CountingWriter::new(XferSink::new(
+                        &mut *writer,
+                        divert_xfer,
+                    ));
                     let result = stream_append_transfer(
                         &mut cw,
                         source,
@@ -635,7 +742,7 @@ impl GeneratorContext {
                         &mut stream_buf,
                     )?;
                     cw.write_all(&result.checksum_buf[..result.checksum_len])?;
-                    cw.bytes_written()
+                    sent_bytes(cw.bytes_written(), divert_xfer)
                 };
                 bytes_sent += wire_bytes;
                 literal_data += file_size.saturating_sub(flength);
@@ -716,7 +823,7 @@ impl GeneratorContext {
                     )?,
                 };
 
-                self.write_ndx_and_attrs(
+                self.write_ndx_attrs_and_sum_head(
                     &mut *writer,
                     &mut ndx_write_codec,
                     &NdxAttrs {
@@ -727,6 +834,7 @@ impl GeneratorContext {
                     },
                     &sum_head,
                     pending_xattr_response.as_mut(),
+                    divert_xfer,
                 )?;
 
                 let checksum_algorithm = self.get_checksum_algorithm();
@@ -749,7 +857,10 @@ impl GeneratorContext {
                 // (reconstructed size) trips the testsuite's "delta did not
                 // engage" assertion on delta pushes.
                 let wire_bytes = {
-                    let mut cw = crate::writer::CountingWriter::new(&mut *writer);
+                    let mut cw = crate::writer::CountingWriter::new(XferSink::new(
+                        &mut *writer,
+                        divert_xfer,
+                    ));
                     let result = write_delta_with_inline_checksum(
                         &mut cw,
                         &wire_ops,
@@ -768,7 +879,7 @@ impl GeneratorContext {
                     cw.write_all(&result.checksum_buf[..result.checksum_len])?;
                     matched_data += result.matched_data;
                     literal_data += result.literal_data;
-                    cw.bytes_written()
+                    sent_bytes(cw.bytes_written(), divert_xfer)
                 };
                 bytes_sent += wire_bytes;
             } else {
@@ -786,7 +897,7 @@ impl GeneratorContext {
                     }
                 };
 
-                self.write_ndx_and_attrs(
+                self.write_ndx_attrs_and_sum_head(
                     &mut *writer,
                     &mut ndx_write_codec,
                     &NdxAttrs {
@@ -797,6 +908,7 @@ impl GeneratorContext {
                     },
                     &sum_head,
                     pending_xattr_response.as_mut(),
+                    divert_xfer,
                 )?;
 
                 let checksum_algorithm = self.get_checksum_algorithm();
@@ -826,7 +938,10 @@ impl GeneratorContext {
                     None::<super::super::delta::ServeFds>
                 };
                 let wire_bytes = {
-                    let mut cw = crate::writer::CountingWriter::new(&mut *writer);
+                    let mut cw = crate::writer::CountingWriter::new(XferSink::new(
+                        &mut *writer,
+                        divert_xfer,
+                    ));
                     let result = stream_whole_file_transfer(
                         &mut cw,
                         source,
@@ -843,7 +958,7 @@ impl GeneratorContext {
                         serve_fds,
                     )?;
                     cw.write_all(&result.checksum_buf[..result.checksum_len])?;
-                    cw.bytes_written()
+                    sent_bytes(cw.bytes_written(), divert_xfer)
                 };
                 bytes_sent += wire_bytes;
                 // Whole-file transfer: the entire body is sent as literal data

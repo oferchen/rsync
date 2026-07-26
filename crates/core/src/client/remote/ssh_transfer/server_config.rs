@@ -242,6 +242,7 @@ pub(in crate::client::remote) fn build_server_config_for_generator(
     server_config.flags.info_flags.out_format_active = config.render_out_format_locally();
 
     apply_files_from_for_sender(config, &mut server_config);
+    flags::apply_only_write_batch_for_sender(config, &mut server_config);
 
     flags::apply_common_server_flags(config, &mut server_config);
     Ok(server_config)
@@ -281,6 +282,43 @@ fn apply_files_from_for_sender(config: &ClientConfig, server_config: &mut Server
 mod tests {
     use super::*;
     use crate::client::config::ReferenceDirectoryKind;
+
+    /// Builds a `ClientConfig` carrying the requested batch mode.
+    fn config_with_batch_mode(mode: engine::batch::BatchMode) -> ClientConfig {
+        ClientConfig::builder()
+            .batch_config(Some(engine::batch::BatchConfig::new(
+                mode,
+                "/tmp/batch".to_owned(),
+                32,
+            )))
+            .build()
+    }
+
+    /// upstream `sender.c:217` binds `f_xfer` from the global `write_batch`
+    /// before the send loop starts. oc's sender reads that decision off its
+    /// in-process `ServerConfig`, which is parsed from the compact flag string
+    /// and never sees this long-form-only option, so the push builder has to
+    /// carry it explicitly. Without the flag the sender keeps streaming tokens
+    /// at a remote receiver that `--only-write-batch=X` just put into dry-run
+    /// and which reads none of them - the transfer stalls out at exit 12.
+    #[test]
+    fn generator_config_carries_only_write_batch() {
+        let config = config_with_batch_mode(engine::batch::BatchMode::OnlyWrite);
+        let server_config =
+            build_server_config_for_generator(&config, &["src".to_owned()]).unwrap();
+        assert!(server_config.flags.only_write_batch);
+    }
+
+    /// `--write-batch` (upstream `write_batch > 0`) performs a real transfer AND
+    /// records it, so the token stream must keep its wire route and only be teed
+    /// (`io.c:2282`). Diverting here would starve the live remote receiver.
+    #[test]
+    fn generator_config_leaves_plain_write_batch_on_the_wire() {
+        let config = config_with_batch_mode(engine::batch::BatchMode::Write);
+        let server_config =
+            build_server_config_for_generator(&config, &["src".to_owned()]).unwrap();
+        assert!(!server_config.flags.only_write_batch);
+    }
 
     /// On an ssh pull the local client IS the receiver, and the alt-dest args
     /// (--compare-dest / --copy-dest / --link-dest) are never sent over the wire

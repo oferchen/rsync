@@ -66,6 +66,20 @@ impl ClientConfig {
         self.batch_config.as_ref()
     }
 
+    /// Reports whether `--only-write-batch` is in effect (upstream's
+    /// `write_batch < 0`).
+    ///
+    /// The batch is still recorded in full, but no destination is updated:
+    /// `main.c:1839` turns the flag into `dry_run = 1` and `sender.c:217`
+    /// points the token stream at the batch file instead of the wire.
+    #[doc(alias = "--only-write-batch")]
+    #[must_use]
+    pub fn only_write_batch(&self) -> bool {
+        self.batch_config
+            .as_ref()
+            .is_some_and(|cfg| !cfg.should_transfer())
+    }
+
     /// Returns `true` when the local client should emit the sender-side `<`
     /// itemize direction arrow (push over a remote shell or daemon).
     ///

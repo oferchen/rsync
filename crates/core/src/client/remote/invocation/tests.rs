@@ -658,6 +658,67 @@ fn includes_delete_excluded_long_arg() {
     );
 }
 
+/// Builds a `ClientConfig` carrying the requested batch mode.
+fn config_with_batch_mode(mode: engine::batch::BatchMode) -> ClientConfig {
+    ClientConfig::builder()
+        .batch_config(Some(engine::batch::BatchConfig::new(
+            mode,
+            "/tmp/batch".to_owned(),
+            32,
+        )))
+        .build()
+}
+
+/// upstream: `options.c:2850-2851` - the sender half of `server_options()` emits
+/// the literal `--only-write-batch=X` placeholder. It is the only signal that
+/// puts the remote receiver into `dry_run` (`main.c:1839`), which is what stops
+/// it from updating the destination and from waiting on a token stream the
+/// sender is diverting into its batch file (`sender.c:217`). Without this
+/// argument a `--only-write-batch` push writes the remote destination.
+#[test]
+fn only_write_batch_sender_emits_placeholder_arg() {
+    let config = config_with_batch_mode(engine::batch::BatchMode::OnlyWrite);
+    let builder = RemoteInvocationBuilder::new(&config, RemoteRole::Sender);
+    let args = builder.build("/path");
+
+    assert!(
+        args.iter().any(|a| a == "--only-write-batch=X"),
+        "expected the --only-write-batch=X placeholder in args: {args:?}"
+    );
+}
+
+/// upstream: `options.c:2850-2851` sits inside the `if (am_sender)` block, so a
+/// PULL never forwards it. Leaking it would put the remote SENDER into dry-run
+/// and it would stop sending file data entirely.
+#[test]
+fn only_write_batch_is_not_forwarded_on_a_pull() {
+    let config = config_with_batch_mode(engine::batch::BatchMode::OnlyWrite);
+    let builder = RemoteInvocationBuilder::new(&config, RemoteRole::Receiver);
+    let args = builder.build("/path");
+
+    assert!(
+        !args.iter().any(|a| a == "--only-write-batch=X"),
+        "--only-write-batch=X must stay inside the am_sender block: {args:?}"
+    );
+}
+
+/// upstream gates the placeholder on `write_batch < 0`, so plain
+/// `--write-batch` (`write_batch > 0`) forwards nothing: that mode performs a
+/// real transfer AND records it, and the remote receiver must stay live.
+#[test]
+fn plain_write_batch_sender_emits_no_placeholder_arg() {
+    let config = config_with_batch_mode(engine::batch::BatchMode::Write);
+    let builder = RemoteInvocationBuilder::new(&config, RemoteRole::Sender);
+    let args = builder.build("/path");
+
+    assert!(
+        !args
+            .iter()
+            .any(|a| a.to_string_lossy().starts_with("--only-write-batch")),
+        "--write-batch must not put the remote receiver into dry-run: {args:?}"
+    );
+}
+
 #[test]
 fn includes_timeout_long_arg() {
     use std::num::NonZeroU64;

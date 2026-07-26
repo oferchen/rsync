@@ -7,7 +7,7 @@ use protocol::MessageCode;
 
 use super::counting::CountingWriter;
 use super::msg_info::MsgInfoSender;
-use super::multiplex::MultiplexWriter;
+use super::multiplex::{BatchRoute, MultiplexWriter};
 use super::server::ServerWriter;
 
 #[test]
@@ -611,6 +611,68 @@ fn multiplex_writer_no_recorder_still_works() {
     mux.flush().unwrap();
 
     assert!(!wire.is_empty());
+}
+
+/// upstream `sender.c:217` picks the token stream's destination:
+/// `f_xfer = write_batch < 0 ? batch_fd : f_out`. Under `--only-write-batch`
+/// the payload goes into the batch INSTEAD of the socket, which is what allows
+/// the remote receiver to run dry and read nothing. Teeing it as well would
+/// leave a stream nobody drains, stalling the transfer.
+#[test]
+fn batch_route_divert_writes_only_to_the_recorder() {
+    let mut wire = Vec::new();
+    let mut mux = MultiplexWriter::new(&mut wire);
+    let recorder_buf = Arc::new(Mutex::new(Vec::<u8>::new()));
+    let recorder: Arc<Mutex<dyn Write + Send>> = recorder_buf.clone();
+    mux.batch_recorder = Some(recorder);
+
+    mux.write_all(b"header").unwrap();
+    mux.batch_route = BatchRoute::Divert;
+    mux.write_all(b"payload").unwrap();
+    let vectored = mux
+        .write_vectored(&[IoSlice::new(b"more"), IoSlice::new(b"tokens")])
+        .unwrap();
+    assert_eq!(
+        vectored, 10,
+        "a diverted vectored write consumes every byte"
+    );
+    mux.batch_route = BatchRoute::Tee;
+    mux.write_all(b"trailer").unwrap();
+    mux.flush().unwrap();
+
+    // The batch keeps the full stream in order: teed header, diverted payload,
+    // teed trailer - byte-identical to upstream's single batch_fd.
+    assert_eq!(
+        &*recorder_buf.lock().unwrap(),
+        b"headerpayloadmoretokenstrailer"
+    );
+    // The wire carries only the teed bytes, framed as MSG_DATA.
+    let mut framed = io::Cursor::new(&wire);
+    let mut on_wire = Vec::new();
+    while let Ok(frame) = protocol::recv_msg(&mut framed) {
+        assert_eq!(frame.code(), MessageCode::Data);
+        on_wire.extend_from_slice(frame.payload());
+    }
+    assert_eq!(
+        on_wire, b"headertrailer",
+        "diverted bytes must never reach the wire"
+    );
+}
+
+/// With no recorder attached the route is inert, so a stray `Divert` can never
+/// silently drop bytes on the floor.
+#[test]
+fn batch_route_divert_without_recorder_still_writes_the_wire() {
+    let mut wire = Vec::new();
+    let mut mux = MultiplexWriter::new(&mut wire);
+    mux.batch_route = BatchRoute::Divert;
+
+    mux.write_all(b"payload").unwrap();
+    mux.flush().unwrap();
+
+    let frame = protocol::recv_msg(&mut io::Cursor::new(&wire)).unwrap();
+    assert_eq!(frame.code(), MessageCode::Data);
+    assert_eq!(frame.payload(), b"payload");
 }
 
 #[test]

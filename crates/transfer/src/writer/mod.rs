@@ -19,6 +19,7 @@ mod server;
 
 pub use self::counting::CountingWriter;
 pub use self::msg_info::MsgInfoSender;
+pub use self::multiplex::BatchRoute;
 pub use self::server::{ServerWriter, shutdown_send_side};
 
 #[cfg(test)]
