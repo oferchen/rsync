@@ -182,7 +182,6 @@ impl GeneratorContext {
     ///
     /// Returns the per-file `XattrList` with `XSTATE_TODO` entries marked for
     /// the indices the generator requested, ready to be passed to
-    /// [`Self::write_ndx_and_attrs`] or
     /// [`Self::write_ndx_iflags_and_xattr_response`]. Returns `None` when no
     /// xattr request is expected on the wire.
     ///
@@ -241,33 +240,6 @@ impl GeneratorContext {
         // matching entries and consumes the stream up to the 0 terminator.
         let _indices = protocol::xattr::recv_xattr_request(reader, &mut list)?;
         Ok(Some(list))
-    }
-
-    /// Writes NDX, iflags, optional xattr response, and sum_head for one file.
-    ///
-    /// Combines upstream's `write_ndx_and_attrs()` (NDX + iflags + optional
-    /// xattr_request body) with the immediately following `write_sum_head()`
-    /// call. When `xattr_response` is `Some` and the file has entries the
-    /// generator requested, the full xattr values are written between iflags
-    /// and sum_head, matching the byte order of upstream sender.c:442-443.
-    ///
-    /// # Upstream Reference
-    ///
-    /// - `sender.c:184-200` - `write_ndx_and_attrs()` body (calls
-    ///   `send_xattr_request(fname, file, f_out)` when ITEM_REPORT_XATTR set)
-    /// - `sender.c:442-443` - `write_ndx_and_attrs()` followed by
-    ///   `write_sum_head(f_xfer, s)`
-    pub(super) fn write_ndx_and_attrs<W: Write>(
-        &self,
-        writer: &mut W,
-        ndx_codec: &mut impl NdxCodec,
-        attrs: &NdxAttrs<'_>,
-        sum_head: &SumHead,
-        xattr_response: Option<&mut protocol::xattr::XattrList>,
-    ) -> io::Result<()> {
-        self.write_ndx_iflags_and_xattr_response(writer, ndx_codec, attrs, xattr_response)?;
-        sum_head.write(writer)?;
-        Ok(())
     }
 
     /// Writes NDX, iflags, and optional xattr response without a sum_head.

@@ -396,6 +396,31 @@ fn split_pattern_modifiers(raw: &str) -> (String, bool, bool) {
     (raw[start..end].to_owned(), anchored, directory_only)
 }
 
+/// Carries `--only-write-batch` onto a remote-shell PUSH sender's config.
+///
+/// Upstream binds `f_xfer` once per `send_files()` run from the global
+/// `write_batch` (`sender.c:217`); oc's sender reads the same decision off its
+/// in-process `ServerConfig`, which is parsed from the compact flag string and
+/// so never sees this long-form-only option. Without it the sender would keep
+/// streaming tokens at a remote receiver that `--only-write-batch=X` has just
+/// put into `dry_run` and which therefore reads none of them.
+///
+/// Scoped to the remote-shell sender on purpose: `server_options()` emits the
+/// placeholder inside its `am_sender` block, so a pull sender-server never sees
+/// it, and the daemon path deliberately strips client-only batch flags from the
+/// module argument list - its receiver stays live and must keep reading tokens.
+///
+/// # Upstream Reference
+///
+/// - `options.c:2850-2851` - `if (write_batch < 0) "--only-write-batch=X"`
+/// - `main.c:1839` - `if (write_batch < 0) dry_run = 1`
+pub(crate) fn apply_only_write_batch_for_sender(
+    config: &ClientConfig,
+    server_config: &mut ServerConfig,
+) {
+    server_config.flags.only_write_batch = config.only_write_batch();
+}
+
 /// Applies common server flags from client configuration to a server config.
 ///
 /// Sets the fields that are shared across both SSH and daemon transfer paths

@@ -9,6 +9,7 @@ use std::io::{self, Write};
 use protocol::MessageCode;
 
 use super::counting::CountingWriter;
+use super::multiplex::BatchRoute;
 use super::server::ServerWriter;
 
 /// Trait for writers that can send `MSG_INFO` multiplexed messages.
@@ -122,6 +123,20 @@ pub trait MsgInfoSender {
     fn maybe_send_keepalive(&mut self) -> io::Result<bool> {
         Ok(false)
     }
+
+    /// Selects where a batch-recorded stream lands: teed alongside the wire, or
+    /// diverted into the batch instead of it.
+    ///
+    /// The sender flips to [`BatchRoute::Divert`] for the duration of a file's
+    /// sum head + token stream under `--only-write-batch`, then back to
+    /// [`BatchRoute::Tee`] so the NDX+attrs echo keeps reaching the receiver.
+    /// The default implementation is a no-op, matching [`Self::send_msg_info`];
+    /// writers with no batch recorder have nothing to route.
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `sender.c:217` - `int f_xfer = write_batch < 0 ? batch_fd : f_out;`
+    fn set_batch_route(&mut self, _route: BatchRoute) {}
 }
 
 impl<W: Write> MsgInfoSender for ServerWriter<W> {
@@ -182,6 +197,12 @@ impl<W: Write> MsgInfoSender for ServerWriter<W> {
             Self::Plain(_) | Self::Taken => Ok(false),
         }
     }
+
+    fn set_batch_route(&mut self, route: BatchRoute) {
+        // Duplicating the inherent method's name here keeps the call at the
+        // sender unambiguous; the inherent method owns the variant match.
+        ServerWriter::set_batch_route(self, route);
+    }
 }
 
 impl<T: MsgInfoSender + ?Sized> MsgInfoSender for &mut T {
@@ -208,6 +229,10 @@ impl<T: MsgInfoSender + ?Sized> MsgInfoSender for &mut T {
     fn maybe_send_keepalive(&mut self) -> io::Result<bool> {
         (**self).maybe_send_keepalive()
     }
+
+    fn set_batch_route(&mut self, route: BatchRoute) {
+        (**self).set_batch_route(route);
+    }
 }
 
 impl<W: MsgInfoSender> MsgInfoSender for CountingWriter<W> {
@@ -233,5 +258,9 @@ impl<W: MsgInfoSender> MsgInfoSender for CountingWriter<W> {
 
     fn maybe_send_keepalive(&mut self) -> io::Result<bool> {
         self.inner_ref_mut().maybe_send_keepalive()
+    }
+
+    fn set_batch_route(&mut self, route: BatchRoute) {
+        self.inner_ref_mut().set_batch_route(route);
     }
 }

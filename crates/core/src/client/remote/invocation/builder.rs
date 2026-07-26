@@ -413,6 +413,19 @@ impl<'a> RemoteInvocationBuilder<'a> {
             if self.config.force_replacements() {
                 args.push(OsString::from("--force"));
             }
+
+            // upstream: options.c:2850-2851 - `if (write_batch < 0) args[ac++] =
+            // "--only-write-batch=X"`. The literal `X` is upstream's own
+            // placeholder: the remote never opens a batch file, it only needs
+            // `write_batch < 0` so `main.c:1839` sets `dry_run = 1`. That leaves
+            // `do_xfers` at 1, so its generator still computes and sends real
+            // block checksums while the receiver writes nothing to the
+            // destination (receiver.c:811-817). The real batch is recorded by
+            // the local sender, which diverts the token stream into it rather
+            // than onto the wire (sender.c:217).
+            if self.config.only_write_batch() {
+                args.push(OsString::from("--only-write-batch=X"));
+            }
         }
 
         // upstream: options.c:2863-2864 - `--max-alloc=arg` is forwarded to
