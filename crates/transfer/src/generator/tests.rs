@@ -416,6 +416,58 @@ fn inc_recurse_gap_ndx_round_trip_preserves_original() {
     );
 }
 
+/// An INC_RECURSE entry whose parent directory is absent from the file list
+/// cannot be placed in a sub-list. Upstream's receiver treats the resulting
+/// wire shape as fatal - an initial-list entry must have an empty dirname
+/// (`flist.c:2682-2697`) or it prints "ABORTING due to invalid path from
+/// sender" and calls `exit_cleanup(RERR_UNSUPPORTED)` (exit 4). Salvaging the
+/// entry into the initial segment without a word means oc emits a file list a
+/// conformant peer rejects and still exits 0, so the operator sees a remote
+/// abort with no local explanation. This pins the diagnostic, not the salvage.
+#[test]
+fn inc_recurse_orphan_entry_is_reported_not_silently_emitted() {
+    use protocol::CompatibilityFlags;
+    use protocol::flist::FileEntry;
+
+    let mut handshake = test_handshake_with_protocol(32);
+    handshake.compat_flags = Some(CompatibilityFlags::INC_RECURSE);
+    let mut ctx = GeneratorContext::new_for_test(&handshake, test_config());
+    assert!(ctx.inc_recurse());
+
+    // `link/file` with no `link` entry - exactly the list a --files-from build
+    // produced when a symlinked implied parent was stat-ed with lstat.
+    let empty_base: std::sync::Arc<Path> = std::sync::Arc::from(Path::new(""));
+    for entry in [
+        FileEntry::new_directory(".".into(), 0o755),
+        FileEntry::new_file("link/file".into(), 6, 0o644),
+    ] {
+        ctx.file_list.push(entry);
+        ctx.source_bases.push(std::sync::Arc::clone(&empty_base));
+    }
+
+    ctx.partition_file_list_for_inc_recurse();
+
+    let queued: Vec<&str> = ctx
+        .pending_flist_diagnostics
+        .iter()
+        .map(|(_, text)| text.as_str())
+        .collect();
+    assert!(
+        queued.iter().any(|t| t.contains("link/file")),
+        "the orphaned entry must be named on stderr, not emitted silently: {queued:?}"
+    );
+    assert!(
+        ctx.pending_flist_diagnostics
+            .iter()
+            .any(|(kind, _)| *kind == super::protocol_io::SenderDiagnostic::ErrorXfer),
+        "must be an FERROR_XFER so the run cannot exit 0 with a list the peer rejects"
+    );
+    assert_ne!(
+        ctx.io_error, 0,
+        "an unsendable file list is an I/O error, not a clean run"
+    );
+}
+
 #[test]
 fn inc_recurse_gap_ndx_itemizes_parent_directory() {
     // upstream: generator.c:2306-2313 - under INC_RECURSE every directory is

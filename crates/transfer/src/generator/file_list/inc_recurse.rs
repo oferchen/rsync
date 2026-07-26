@@ -27,6 +27,8 @@ use std::path::Path;
 use logging::debug_log;
 use protocol::flist::FileEntry;
 
+use super::super::io_error_flags;
+use super::super::protocol_io::SenderDiagnostic;
 use super::super::{DirSegment, GeneratorContext, PendingSegment, TaggedIndex};
 
 impl GeneratorContext {
@@ -35,12 +37,27 @@ impl GeneratorContext {
     /// Reorders `file_list` and `source_bases` so that initial (top-level)
     /// entries come first, then sub-directory entries in depth-first order. This
     /// makes NDX values correspond directly to indices in the reordered list.
+    ///
+    /// An entry whose parent directory is missing from the list cannot be
+    /// segmented; it is reported as a transfer error rather than emitted
+    /// silently, because the resulting initial-list row carries a non-empty
+    /// dirname and a conformant receiver aborts on it (`flist.c:2682-2697`).
     pub(in crate::generator) fn partition_file_list_for_inc_recurse(&mut self) {
         if !self.inc_recurse() || self.file_list.is_empty() {
             return;
         }
 
         let classification = Self::classify_file_list_entries(self.file_list.as_slice());
+        for name in &classification.orphans {
+            // upstream: flist.c:2691 - the receiver's wording for the same
+            // condition. Reported here, on the side that can name the offending
+            // source, and as FERROR_XFER so the run cannot exit 0 with a file
+            // list the peer will reject.
+            let text =
+                format!("rsync: [sender] parent directory is missing from the file list: {name}\n");
+            self.queue_flist_diagnostic(SenderDiagnostic::ErrorXfer, text);
+            self.add_io_error(io_error_flags::IOERR_GENERAL);
+        }
         self.reorder_and_build_segments(classification);
 
         debug_log!(
@@ -66,6 +83,7 @@ impl GeneratorContext {
         let mut dir_map: HashMap<String, (usize, usize, usize)> = HashMap::new();
         let mut initial_entries: Vec<TaggedIndex> = Vec::new();
         let mut segments: Vec<DirSegment> = Vec::new();
+        let mut orphans: Vec<String> = Vec::new();
         let mut node_id_counter: usize = 0;
 
         for (i, entry) in file_list.iter().enumerate() {
@@ -116,6 +134,19 @@ impl GeneratorContext {
                     node_id,
                 });
             } else {
+                // The parent directory is not in the file list, so there is no
+                // segment to attach this entry to. Upstream cannot reach this
+                // state - send_implied_dirs() emits every ancestor before its
+                // children - and its receiver treats it as fatal: an initial-list
+                // entry must have an empty dirname (flist.c:2682-2697) or the
+                // peer prints "ABORTING due to invalid path from sender" and
+                // exit_cleanup(RERR_UNSUPPORTED). Salvage the entry into the
+                // initial segment so the run does not desync here, but record it
+                // so the caller can report it instead of silently emitting a
+                // file list a conformant receiver rejects. A directory landing
+                // here is never registered in `dir_map`, so all of its children
+                // follow it in.
+                orphans.push(name.to_string());
                 initial_entries.push(TaggedIndex {
                     file_idx: i,
                     node_id: None,
@@ -128,6 +159,7 @@ impl GeneratorContext {
             segments,
             tree,
             num_dirs: node_id_counter,
+            orphans,
         }
     }
 
@@ -146,6 +178,7 @@ impl GeneratorContext {
             segments,
             mut tree,
             num_dirs,
+            orphans: _,
         } = cr;
 
         // Wrap in Option<T> for safe move-out by index.
@@ -275,4 +308,10 @@ struct ClassificationResult {
     tree: protocol::flist::DirectoryTree,
     /// Total number of directories (for pre-allocating dense lookup Vecs).
     num_dirs: usize,
+    /// Names of entries whose parent directory is absent from the file list.
+    ///
+    /// Always empty for a well-formed list: `send_implied_dirs()` guarantees
+    /// every ancestor precedes its children. See
+    /// [`GeneratorContext::partition_file_list_for_inc_recurse`].
+    orphans: Vec<String>,
 }
