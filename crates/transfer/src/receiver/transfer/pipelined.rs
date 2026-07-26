@@ -195,7 +195,10 @@ impl ReceiverContext {
             // no delta (the client sender records it into its own batch fd,
             // sender.c:217); a pull receiver drains the sender's delta via
             // discard_receive_data() (receiver.c:813-814).
-            let _ = self.plan_dry_run(&setup.dest_dir, &files_to_transfer);
+            // Same shared reporting pass as the plain dry run below; only the
+            // wire loop differs (real block checksums, no plan).
+            let plan = self.plan_dry_run(&setup.dest_dir, &files_to_transfer);
+            stats.directories_created = new_dir_count(&plan);
             self.run_only_write_batch_loop(reader, writer, &files_to_transfer, &setup)?;
         } else if self.config.flags.dry_run {
             // upstream: recv_generator() itemizes every entry and the receiver
