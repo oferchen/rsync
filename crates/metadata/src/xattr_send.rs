@@ -7,7 +7,48 @@
 //! same inputs travel as an explicit options record rather than a long
 //! positional parameter list.
 
-/// Inputs that steer sender-side xattr collection.
+/// Which side of the transfer is collecting the attributes.
+///
+/// Upstream reads this from the `am_sender` global in two places:
+/// `xattrs.c:237` (`user_only`) and `xattrs.c:262` (the `rsync.%FOO` strip).
+/// Both consult the role, so it cannot be folded into another field.
+///
+/// The enum deliberately has no `Default`: the two roles select different
+/// namespaces for a non-root process, so a call site that omits the role would
+/// silently collect the wrong set of attributes.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum XattrRole {
+    /// Upstream's `am_sender != 0`: the file-list builder describing a source
+    /// file to the peer.
+    Sender,
+    /// Upstream's `am_sender == 0`: the generator reading the destination in
+    /// order to diff it against the sender's list, and every other
+    /// receiver-side read.
+    Generator,
+}
+
+impl XattrRole {
+    /// Upstream's `user_only` for this role at the given privilege level.
+    ///
+    /// upstream: `xattrs.c:237` - `int user_only = am_sender ? 0 : !am_root;`
+    /// The sender never restricts to the `user.*` namespace; a non-root
+    /// generator always does.
+    #[must_use]
+    pub fn user_only(self, am_root: bool) -> bool {
+        match self {
+            Self::Sender => false,
+            Self::Generator => !am_root,
+        }
+    }
+
+    /// Whether this role is upstream's `am_sender`.
+    #[must_use]
+    pub fn is_sender(self) -> bool {
+        matches!(self, Self::Sender)
+    }
+}
+
+/// Inputs that steer xattr collection for the wire.
 ///
 /// Mirrors the globals consulted by upstream `xattrs.c:rsync_xal_get()`
 /// (lines 231-300).
@@ -20,19 +61,21 @@
 /// - `xattrs.c:260-267` - the `rsync.%FOO` internal-attribute gate
 #[derive(Clone, Copy)]
 pub struct XattrSendOptions<'a> {
+    /// Which side is reading (upstream's `am_sender`).
+    pub role: XattrRole,
     /// Resolve a symlink before reading (`getxattr`) instead of reading the
     /// link itself (`lgetxattr`).
     pub follow_symlinks: bool,
-    /// Whether the reading process is privileged, which is what lets the
-    /// `system.*` namespace reach the wire.
+    /// Whether the reading process is privileged (upstream's `am_root`).
+    ///
+    /// It decides two things: whether a generator read is confined to the
+    /// `user.*` namespace (`xattrs.c:237`), and whether the `system.*`
+    /// namespace can reach the wire at all.
     pub am_root: bool,
     /// Xattr preservation level: 1 for `-X`, 2 for `-XX`.
     ///
     /// Upstream gates the `rsync.%FOO` strip on `am_sender && preserve_xattrs
-    /// < 2`. There is no separate `am_sender` field here: a caller that is not
-    /// the sender (upstream's generator comparing the destination) passes level
-    /// 2, which reproduces `am_sender == 0` exactly, because the strip is the
-    /// only place the role is consulted.
+    /// < 2`, so this only matters for [`XattrRole::Sender`].
     pub preserve_xattrs: u8,
     /// Whether `--fake-super` is active (upstream's `am_root < 0`).
     ///
@@ -52,14 +95,21 @@ pub struct XattrSendOptions<'a> {
     pub checksum_seed: i32,
 }
 
-impl Default for XattrSendOptions<'_> {
-    /// A plain single `-X` read: unprivileged, no fake-super, no filter.
+impl XattrSendOptions<'_> {
+    /// Base options for `role`: a plain single `-X` read by an unprivileged
+    /// process, with no fake-super and no filter.
     ///
-    /// The level defaults to 1 rather than 0 so that a caller which forgets to
-    /// set it gets the conservative `-X` behaviour (strip `rsync.%FOO`) instead
-    /// of silently transmitting the fake-super store.
-    fn default() -> Self {
+    /// Intended as the tail of a struct-update expression so that every call
+    /// site names its role. There is deliberately no `Default`, because the
+    /// role has no safe default.
+    ///
+    /// The level starts at 1 rather than 0 so that a caller which does not set
+    /// it gets the conservative `-X` behaviour (strip `rsync.%FOO`) instead of
+    /// silently transmitting the fake-super store.
+    #[must_use]
+    pub fn new(role: XattrRole) -> Self {
         Self {
+            role,
             follow_symlinks: false,
             am_root: false,
             preserve_xattrs: 1,
@@ -67,5 +117,58 @@ impl Default for XattrSendOptions<'_> {
             filter: None,
             checksum_seed: 0,
         }
+    }
+
+    /// Upstream's `user_only` for these options (`xattrs.c:237`).
+    #[must_use]
+    pub fn user_only(&self) -> bool {
+        self.role.user_only(self.am_root)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{XattrRole, XattrSendOptions};
+
+    /// `user_only` is a function of the role first and privilege second.
+    ///
+    /// Reading it off `am_root` alone would confine an unprivileged *sender*
+    /// to `user.*` and drop SELinux labels from the wire; reading it off the
+    /// role alone would let a root generator ignore namespaces it can store.
+    ///
+    /// upstream: xattrs.c:237 - `int user_only = am_sender ? 0 : !am_root;`
+    #[test]
+    fn user_only_mirrors_the_upstream_ternary() {
+        assert!(!XattrRole::Sender.user_only(false));
+        assert!(!XattrRole::Sender.user_only(true));
+        assert!(XattrRole::Generator.user_only(false));
+        assert!(!XattrRole::Generator.user_only(true));
+    }
+
+    /// The options record derives `user_only` from the fields it carries, so a
+    /// call site cannot set the privilege level and forget the role.
+    #[test]
+    fn options_derive_user_only_from_role_and_privilege() {
+        let generator = XattrSendOptions::new(XattrRole::Generator);
+        assert!(generator.user_only(), "unprivileged generator");
+        assert!(
+            !XattrSendOptions {
+                am_root: true,
+                ..generator
+            }
+            .user_only(),
+            "root generator",
+        );
+        assert!(!XattrSendOptions::new(XattrRole::Sender).user_only());
+    }
+
+    /// The role also drives the `rsync.%FOO` strip, which is why it is a field
+    /// rather than something inferred from the preservation level.
+    ///
+    /// upstream: xattrs.c:262 - `am_sender && preserve_xattrs < 2`
+    #[test]
+    fn is_sender_reports_the_upstream_am_sender_global() {
+        assert!(XattrRole::Sender.is_sender());
+        assert!(!XattrRole::Generator.is_sender());
     }
 }
