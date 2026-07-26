@@ -153,6 +153,7 @@ pub(crate) fn build_server_config_for_receiver(
     // existing mode while the local copy executor honoured -E.
     server_config.flags.preserve_executability = config.preserve_executability();
 
+    flags::apply_only_write_batch_for_receiver(config, &mut server_config);
     flags::apply_common_server_flags(config, &mut server_config);
     Ok(server_config)
 }

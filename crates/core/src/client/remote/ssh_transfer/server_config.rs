@@ -187,6 +187,7 @@ pub(in crate::client::remote) fn build_server_config_for_receiver(
     // custom `--out-format` carrying `%i`; false for a `%i`-less template.
     server_config.flags.info_flags.out_format_forwards_i = config.out_format_forwards_i();
 
+    flags::apply_only_write_batch_for_receiver(config, &mut server_config);
     flags::apply_common_server_flags(config, &mut server_config);
     Ok(server_config)
 }

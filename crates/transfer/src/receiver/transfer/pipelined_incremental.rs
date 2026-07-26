@@ -176,7 +176,11 @@ impl ReceiverContext {
             // only-write-batch sets both flags; falling through to
             // `run_dry_run_loop` would send a bare NDX+iflags request with no
             // sum head, leaving the sender blocked on a read that never
-            // completes while this loop blocks on the echo.
+            // completes while this loop blocks on the echo. A push receiver
+            // reads no delta (the client sender diverted it into its own batch
+            // fd, sender.c:217); a pull receiver drains the remote sender's
+            // delta via discard_receive_data() (receiver.c:813-814).
+            self.record_dry_run_itemize(&setup.dest_dir);
             self.run_only_write_batch_loop(reader, writer, &files_to_transfer, &setup)?;
         } else if self.config.flags.dry_run {
             self.run_dry_run_loop(reader, writer, &files_to_transfer)?;

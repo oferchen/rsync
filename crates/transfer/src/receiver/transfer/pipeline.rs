@@ -641,18 +641,30 @@ impl ReceiverContext {
         Ok(())
     }
 
-    /// Server-receiver loop for `--only-write-batch=X` (upstream `write_batch
-    /// < 0`).
+    /// Receiver loop for `--only-write-batch=X` (upstream `write_batch < 0`).
     ///
     /// Unlike [`run_dry_run_loop`](Self::run_dry_run_loop), the generator sends
     /// REAL block checksums (a full sum head + signature per file), because
     /// upstream forces `dry_run = 1` only after `do_xfers` is computed
     /// (main.c:1839), so `do_xfers` stays 1 and the sender needs the checksums
-    /// to build its batch. The push sender writes each delta to its own batch
-    /// fd rather than the wire (sender.c:217 `f_xfer = write_batch < 0 ?
-    /// batch_fd : f_out`), so this loop reads only the bare NDX+attrs echo the
-    /// sender emits via `write_ndx_and_attrs(f_out, ...)` (sender.c:442) and
-    /// writes nothing to the destination.
+    /// to build its batch. Nothing is written to the destination either way -
+    /// upstream's `write_batch < 0` arm logs the item and `continue`s
+    /// (receiver.c:811-817) - but where the sender's delta goes differs by
+    /// direction, and so does what this loop must read back:
+    ///
+    /// - PUSH (this side is the remote server receiver, `am_server`): the
+    ///   client sender diverted its token stream into its own batch fd
+    ///   (sender.c:217 `f_xfer = write_batch < 0 ? batch_fd : f_out`), so only
+    ///   the bare NDX+attrs echo from `write_ndx_and_attrs(f_out, ...)`
+    ///   (sender.c:442) reaches the wire. Reading further would block forever.
+    /// - PULL (this side is the local client receiver, `!am_server`): upstream
+    ///   never forwards the flag to the remote sender (options.c:2850 sits in
+    ///   the `am_sender` block), so that sender is an ordinary one writing sum
+    ///   head + delta + file checksum onto the wire. Upstream drains it with
+    ///   `discard_receive_data()` (receiver.c:813-814); skipping the read would
+    ///   desync the connection - the next NDX read would parse delta bytes as a
+    ///   frame header. The batch is recorded by the local tee on the read side
+    ///   (io.c `write_batch_monitor_in`), so the stream must actually flow.
     ///
     /// Requests are sent one file at a time, flushing before each echo read, so
     /// there is no risk of a buffer-fill deadlock against a large signature.
@@ -661,7 +673,9 @@ impl ReceiverContext {
     ///
     /// - `main.c:1839` - `if (write_batch < 0) dry_run = 1` (do_xfers stays 1)
     /// - `sender.c:442-443` - `write_ndx_and_attrs(f_out); write_sum_head(f_xfer)`
-    /// - `receiver.c:811-817` - `write_batch < 0` path: log, no dest write
+    /// - `receiver.c:811-817` - `write_batch < 0`: log, `if (!am_server)`
+    ///   `discard_receive_data()`, no dest write
+    /// - `receiver.c:524-527` - `discard_receive_data()`
     pub(in crate::receiver) fn run_only_write_batch_loop<
         R: Read,
         W: Write + crate::writer::MsgInfoSender + ?Sized,
@@ -708,6 +722,28 @@ impl ReceiverContext {
             append_verify: self.config.flags.append_verify,
         };
 
+        // upstream: receiver.c:813 `if (!am_server) discard_receive_data(...)`.
+        // `client_mode` is oc's `!am_server`, so only a pull drains a delta.
+        let discard_sender_data = self.config.connection.client_mode;
+        // upstream: token.c keeps one decompression context for the whole
+        // session (the zstd DCtx must survive file boundaries), so build the
+        // reader once and `reset()` it per file.
+        let mut token_reader = if discard_sender_data {
+            Some(request_config.create_token_reader()?)
+        } else {
+            None
+        };
+        // upstream: receiver.c:515 - `receive_data()` always trails the token
+        // stream with `read_buf(f_in, sender_file_sum, xfer_sum_len)`, even on
+        // the discard path where there is nothing to verify against.
+        let discard_checksum_len = ChecksumVerifier::new(
+            self.negotiated_algorithms.as_ref(),
+            self.protocol,
+            self.checksum_seed,
+            self.compat_flags.as_ref(),
+        )
+        .digest_len();
+
         for &(file_idx, file_entry, ref file_path, base_iflags) in files_to_transfer {
             // upstream: generator.c:1961-1969 - compute the basis signature and
             // send a real sum head so the sender can diff against the receiver's
@@ -745,13 +781,11 @@ impl ReceiverContext {
             )?;
 
             // Flush before blocking on the echo so the sender has the full
-            // request. It reads the sum head, writes the delta into its own
-            // batch fd, and echoes only NDX+attrs back to us.
+            // request. On a push it reads the sum head, writes the delta into
+            // its own batch fd, and echoes only NDX+attrs back to us.
             writer.flush()?;
 
             // upstream: sender.c:442 - write_ndx_and_attrs(f_out, ...) echo.
-            // No delta follows (it went to the batch fd), so we stop here and
-            // write nothing to the destination.
             let (_echoed_ndx, _sender_attrs) =
                 crate::receiver::wire::SenderAttrs::read_with_codec_xattr(
                     reader,
@@ -759,6 +793,30 @@ impl ReceiverContext {
                     preserve_xattrs,
                     want_xattr_optim,
                 )?;
+
+            if let Some(token_reader) = token_reader.as_mut() {
+                // upstream: sender.c:443 write_sum_head(f_xfer, s) - on a pull
+                // `f_xfer == f_out`, so the sum head and the whole delta land
+                // on the wire and must be consumed to keep the sender in
+                // lockstep (receiver.c:813-814 discard_receive_data()).
+                let _echoed_sum_head = crate::receiver::wire::SumHead::read(reader)?;
+                token_reader.reset();
+                crate::delta_apply::discard_delta_stream(
+                    reader,
+                    token_reader,
+                    discard_checksum_len,
+                )?;
+            }
+
+            // upstream: receiver.c:812 log_item(FCLIENT, file, iflags, NULL) -
+            // the item is still logged even though nothing is written. Under
+            // `-i`/`-vi` the deferred itemize row already carries the name.
+            if self.config.flags.verbose
+                && self.config.connection.client_mode
+                && !self.should_emit_itemize()
+            {
+                info_log!(Name, 1, "{}", file_entry.path().display());
+            }
         }
 
         writer.flush()?;
