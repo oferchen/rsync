@@ -96,25 +96,20 @@ const BUCKETS: &[(&str, usize)] = &[
     ("100MB", 100 * 1024 * 1024),
 ];
 
-/// Resolve the oc-rsync binary path the same way other root-level tests do.
-fn oc_rsync_binary() -> Option<PathBuf> {
-    if let Some(env_path) = std::env::var_os("CARGO_BIN_EXE_oc-rsync") {
-        let path = PathBuf::from(env_path);
-        if path.is_file() {
-            return Some(path);
-        }
-    }
-    let manifest_dir = env!("CARGO_MANIFEST_DIR");
-    for profile in ["release", "dist", "debug"] {
-        let path = PathBuf::from(manifest_dir)
-            .join("target")
-            .join(profile)
-            .join("oc-rsync");
-        if path.is_file() {
-            return Some(path);
-        }
-    }
-    None
+/// Locates the binary under test.
+///
+/// `CARGO_BIN_EXE_oc-rsync` is a COMPILE-time variable, so it must be read with
+/// `env!`, not `env::var_os`: at run time it is unset and the lookup would fall
+/// through to whatever stale `target/debug/oc-rsync` happens to be on disk -
+/// silently testing a different build than the one just compiled.
+fn oc_rsync_binary() -> PathBuf {
+    let built = PathBuf::from(env!("CARGO_BIN_EXE_oc-rsync"));
+    assert!(
+        built.is_file(),
+        "oc-rsync binary missing at {}; refusing to fall back to a stale build",
+        built.display()
+    );
+    built
 }
 
 /// Resolve the upstream rsync binary. Honours `UPSTREAM_RSYNC` when set,
@@ -274,10 +269,7 @@ fn median_push(binary: &Path, src: &Path, target: &str, dst: &Path) -> Option<Du
 #[test]
 #[ignore = "expensive (100MB SSH loopback); runs in nightly --run-ignored=only cell"]
 fn ssh_push_throughput_regression_ssr1() {
-    let Some(oc_rsync) = oc_rsync_binary() else {
-        eprintln!("SSR-1 skip: oc-rsync binary not found under target/{{release,dist,debug}}");
-        return;
-    };
+    let oc_rsync = oc_rsync_binary();
     let Some(upstream) = upstream_rsync_binary() else {
         eprintln!("SSR-1 skip: upstream rsync not on PATH (set UPSTREAM_RSYNC to override)");
         return;

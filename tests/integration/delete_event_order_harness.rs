@@ -177,14 +177,7 @@ pub fn run_pair_capture(
             ));
         }
     };
-    let oc_bin = match locate_oc_rsync() {
-        Some(p) => p,
-        None => {
-            return Ok(PairOutcome::Skipped(
-                "oc-rsync binary not located".to_string(),
-            ));
-        }
-    };
+    let oc_bin = locate_oc_rsync();
 
     let upstream = run_one_capture(scenario, &upstream_bin, delete_mode_flags, extra_flags)?;
     let oc_rsync = run_one_capture(scenario, &oc_bin, delete_mode_flags, extra_flags)?;
@@ -590,23 +583,20 @@ pub fn command_on_path(cmd: &str) -> bool {
         .unwrap_or(false)
 }
 
-/// Locate the oc-rsync binary built by cargo. Walks the standard places
-/// nextest exposes plus the workspace `target/{debug,release}` layout.
-pub fn locate_oc_rsync() -> Option<PathBuf> {
-    if let Some(env_path) = env::var_os("CARGO_BIN_EXE_oc-rsync") {
-        let path = PathBuf::from(env_path);
-        if path.is_file() {
-            return Some(path);
-        }
-    }
-    let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    for profile in ["debug", "release", "dist"] {
-        let candidate = manifest_dir.join("target").join(profile).join("oc-rsync");
-        if candidate.is_file() {
-            return Some(candidate);
-        }
-    }
-    None
+/// Locates the binary under test.
+///
+/// `CARGO_BIN_EXE_oc-rsync` is a COMPILE-time variable, so it must be read with
+/// `env!`, not `env::var_os`: at run time it is unset and the lookup would fall
+/// through to whatever stale `target/debug/oc-rsync` happens to be on disk -
+/// silently testing a different build than the one just compiled.
+pub fn locate_oc_rsync() -> PathBuf {
+    let built = PathBuf::from(env!("CARGO_BIN_EXE_oc-rsync"));
+    assert!(
+        built.is_file(),
+        "oc-rsync binary missing at {}; refusing to fall back to a stale build",
+        built.display()
+    );
+    built
 }
 
 /// Locate an upstream rsync binary. Honours `OC_RSYNC_UPSTREAM`, then the

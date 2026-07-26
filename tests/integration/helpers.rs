@@ -158,8 +158,7 @@ pub struct RsyncCommand {
 impl RsyncCommand {
     /// Create a new command for the oc-rsync binary.
     pub fn new() -> Self {
-        let binary = locate_binary("oc-rsync")
-            .expect("oc-rsync binary must be available for integration tests");
+        let binary = oc_rsync_binary();
         Self {
             binary,
             args: Vec::new(),
@@ -236,39 +235,20 @@ impl RsyncCommand {
     }
 }
 
-/// Locate the test binary.
-fn locate_binary(name: &str) -> Option<PathBuf> {
-    // Try CARGO_BIN_EXE_<name> first
-    let env_var = format!("CARGO_BIN_EXE_{name}");
-    if let Some(path) = env::var_os(&env_var) {
-        let path = PathBuf::from(path);
-        if path.is_file() {
-            return Some(path);
-        }
-    }
-
-    let binary_name = format!("{name}{}", std::env::consts::EXE_SUFFIX);
-    let current_exe = env::current_exe().ok()?;
-    let mut dir = current_exe.parent()?;
-
-    // Walk up, checking each ancestor (handles cross-compilation target dirs)
-    while !dir.ends_with("target") {
-        let candidate = dir.join(&binary_name);
-        if candidate.is_file() {
-            return Some(candidate);
-        }
-        dir = dir.parent()?;
-    }
-
-    // Check common locations under target/
-    for subdir in ["debug", "release"] {
-        let candidate = dir.join(subdir).join(&binary_name);
-        if candidate.is_file() {
-            return Some(candidate);
-        }
-    }
-
-    None
+/// Locates the binary under test.
+///
+/// `CARGO_BIN_EXE_oc-rsync` is a COMPILE-time variable, so it must be read with
+/// `env!`, not `env::var_os`: at run time it is unset and the lookup would fall
+/// through to whatever stale `target/debug/oc-rsync` happens to be on disk -
+/// silently testing a different build than the one just compiled.
+fn oc_rsync_binary() -> PathBuf {
+    let built = PathBuf::from(env!("CARGO_BIN_EXE_oc-rsync"));
+    assert!(
+        built.is_file(),
+        "oc-rsync binary missing at {}; refusing to fall back to a stale build",
+        built.display()
+    );
+    built
 }
 
 /// Get cargo target runner if configured.
@@ -464,7 +444,7 @@ impl ServerModeTest {
 
     /// Create a new server-mode test with explicit version specification.
     pub fn with_version(upstream_binary: &Path, version: &str) -> Option<Self> {
-        let oc_rsync_binary = locate_binary("oc-rsync")?;
+        let oc_rsync_binary = oc_rsync_binary();
         if !upstream_binary.is_file() {
             return None;
         }
