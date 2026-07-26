@@ -734,19 +734,29 @@ impl ReceiverContext {
     /// the destination still carries some, which the empty-list case expresses
     /// without a second code path.
     pub(in crate::receiver) fn dest_xattrs_differ(&self, entry: &FileEntry, path: &Path) -> bool {
+        // upstream: xattrs.c:250-252 - `saw_xattr_filter` is a global consulted
+        // on every `rsync_xal_get()` call, so the generator's destination read
+        // screens names through the same `x`-modifier rules the sender applied
+        // to its side. Without it an excluded name survives on the destination
+        // list alone and flips the itemize `x` column upstream leaves clear.
+        let filter = self
+            .xattr_name_filter()
+            .map(|set| move |name: &str| set.xattr_name_allowed(name));
         let opts = metadata::XattrSendOptions {
             role: metadata::XattrRole::Generator,
             follow_symlinks: false,
             // upstream: xattrs.c:237 - `user_only = am_sender ? 0 : !am_root`,
             // so a non-root generator sees only the `user.*` namespace here. A
             // `security.*` or `trusted.*` difference it could never store must
-            // not raise the itemize `x` column.
+            // not raise the itemize `x` column. When a filter is present
+            // upstream skips this test entirely (xattrs.c:250-257 are the two
+            // arms of one `if`/`else if`), which `read_xattrs_for_wire` honours.
             am_root: metadata::am_root(),
             // upstream: xattrs.c:262 - the strip is gated on `am_sender`, so
             // the generator keeps rsync.%FOO at either level.
             preserve_xattrs: self.config.flags.xattrs_level,
             fake_super: self.config.fake_super,
-            filter: None,
+            filter: filter.as_ref().map(|f| f as &dyn Fn(&str) -> bool),
             checksum_seed: self.checksum_seed,
         };
         let sender = self.resolve_xattr_list(entry).unwrap_or_default();
