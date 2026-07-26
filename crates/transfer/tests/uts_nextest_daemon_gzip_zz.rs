@@ -72,7 +72,6 @@
 
 #![cfg(unix)]
 
-use std::env;
 use std::fs;
 use std::io::{self, Read, Write};
 use std::path::{Path, PathBuf};
@@ -91,39 +90,6 @@ use tempfile::{TempDir, tempdir};
 /// deterministic PRNG stream. Total source size is ~1 MB.
 const COMPRESSIBLE_BYTES: usize = 512 * 1024;
 const INCOMPRESSIBLE_BYTES: usize = 512 * 1024;
-
-/// Locate the workspace `oc-rsync` binary the test runner built.
-///
-/// Mirrors the sibling helper used by
-/// `uts_nextest_hardlinks_inc_recurse.rs` and
-/// `v61d_2_daemon_push_increcurse_perf_regression.rs`: prefer the cargo
-/// injection, otherwise walk up from the test executable until a
-/// `target/` directory is found.
-fn locate_oc_rsync() -> Option<PathBuf> {
-    if let Some(p) = env::var_os("CARGO_BIN_EXE_oc-rsync") {
-        let p = PathBuf::from(p);
-        if p.is_file() {
-            return Some(p);
-        }
-    }
-    let exe = env::current_exe().ok()?;
-    let mut dir = exe.parent()?;
-    let name = format!("oc-rsync{}", env::consts::EXE_SUFFIX);
-    while !dir.ends_with("target") {
-        let candidate = dir.join(&name);
-        if candidate.is_file() {
-            return Some(candidate);
-        }
-        dir = dir.parent()?;
-    }
-    for sub in ["debug", "release"] {
-        let candidate = dir.join(sub).join(&name);
-        if candidate.is_file() {
-            return Some(candidate);
-        }
-    }
-    None
-}
 
 /// Guard that kills the oc-rsync daemon on drop. Mirrors the pattern from
 /// `v61d_2_daemon_push_increcurse_perf_regression.rs` and keeps a
@@ -273,14 +239,14 @@ struct GzipDaemonFixture {
 }
 
 impl GzipDaemonFixture {
-    /// Spin up the daemon. Returns `Ok(Some)` on success; `Ok(None)` if
-    /// the oc-rsync binary is missing (the test then logs and skips
-    /// rather than failing - the same pattern the sibling nextest tests
-    /// use for binary-absent environments).
-    fn start() -> io::Result<Option<Self>> {
-        let Some(bin) = locate_oc_rsync() else {
-            return Ok(None);
-        };
+    /// Spin up the daemon.
+    ///
+    /// The binary is resolved with [`test_support::oc_rsync_bin`], which
+    /// panics naming the path it expected rather than reporting "absent" for
+    /// the caller to turn into a vacuous skip; `Err` is reserved for a genuine
+    /// spawn or fixture-setup failure.
+    fn start() -> io::Result<Self> {
+        let bin = test_support::oc_rsync_bin();
         let workdir = tempdir()?;
         let module_root = workdir.path().join("module");
         fs::create_dir_all(&module_root)?;
@@ -291,12 +257,12 @@ impl GzipDaemonFixture {
 
         let (daemon, port) = spawn_oc_rsync_daemon(&bin, &config_path)?;
 
-        Ok(Some(Self {
+        Ok(Self {
             _workdir: workdir,
             module_root,
             port,
             _daemon: daemon,
-        }))
+        })
     }
 
     /// Module-local path for fixture authoring (used by the download
@@ -323,9 +289,7 @@ impl GzipDaemonFixture {
 /// `time_push` helper but emits the full `Output` since both direction
 /// tests need to inspect stderr for the goodbye signature.
 fn run_client(args: &[&std::ffi::OsStr]) -> io::Result<std::process::Output> {
-    let bin = locate_oc_rsync().ok_or_else(|| {
-        io::Error::other("oc-rsync binary not found via CARGO_BIN_EXE_oc-rsync or target/")
-    })?;
+    let bin = test_support::oc_rsync_bin();
     Command::new(bin)
         .args(args)
         .stdin(Stdio::null())
@@ -359,11 +323,7 @@ fn read_all(path: &Path) -> Vec<u8> {
 #[test]
 fn daemon_gzip_zz_download_byte_identical() {
     let fixture = match GzipDaemonFixture::start() {
-        Ok(Some(f)) => f,
-        Ok(None) => {
-            eprintln!("skip: oc-rsync binary not located");
-            return;
-        }
+        Ok(f) => f,
         Err(e) => {
             eprintln!("skip: could not start oc-rsync daemon: {e}");
             return;
@@ -448,11 +408,7 @@ fn daemon_gzip_zz_download_byte_identical() {
 #[test]
 fn daemon_gzip_zz_upload_byte_identical() {
     let fixture = match GzipDaemonFixture::start() {
-        Ok(Some(f)) => f,
-        Ok(None) => {
-            eprintln!("skip: oc-rsync binary not located");
-            return;
-        }
+        Ok(f) => f,
         Err(e) => {
             eprintln!("skip: could not start oc-rsync daemon: {e}");
             return;
@@ -530,11 +486,7 @@ fn daemon_gzip_zz_upload_byte_identical() {
 #[test]
 fn daemon_gzip_z_vs_zz_negotiation() {
     let fixture = match GzipDaemonFixture::start() {
-        Ok(Some(f)) => f,
-        Ok(None) => {
-            eprintln!("skip: oc-rsync binary not located");
-            return;
-        }
+        Ok(f) => f,
         Err(e) => {
             eprintln!("skip: could not start oc-rsync daemon: {e}");
             return;
@@ -617,16 +569,9 @@ fn daemon_gzip_z_vs_zz_negotiation() {
 /// exclusively own the port.
 #[test]
 fn second_daemon_on_the_same_port_is_refused_no_co_bind() {
-    let Some(bin) = locate_oc_rsync() else {
-        eprintln!("skip: oc-rsync binary not located");
-        return;
-    };
+    let bin = test_support::oc_rsync_bin();
     let fixture = match GzipDaemonFixture::start() {
-        Ok(Some(f)) => f,
-        Ok(None) => {
-            eprintln!("skip: oc-rsync binary not located");
-            return;
-        }
+        Ok(f) => f,
         Err(e) => {
             eprintln!("skip: could not start oc-rsync daemon: {e}");
             return;
@@ -705,18 +650,11 @@ fn second_daemon_on_the_same_port_is_refused_no_co_bind() {
 /// is deterministic.
 #[test]
 fn concurrent_fixtures_get_distinct_ports_and_do_not_cross_talk() {
-    if locate_oc_rsync().is_none() {
-        eprintln!("skip: oc-rsync binary not located");
-        return;
-    }
-
     const FIXTURES: usize = 6;
     let handles: Vec<_> = (0..FIXTURES)
         .map(|idx| {
             thread::spawn(move || {
-                let fixture = GzipDaemonFixture::start()
-                    .expect("start fixture")
-                    .expect("oc-rsync binary present");
+                let fixture = GzipDaemonFixture::start().expect("start fixture");
 
                 // A payload unique to this fixture so a cross-talk landing is
                 // detectable by content, not just presence.
@@ -796,10 +734,7 @@ fn concurrent_fixtures_get_distinct_ports_and_do_not_cross_talk() {
 /// codec framing and the pull round-trips byte-identically.
 #[test]
 fn daemon_dont_compress_suffix_keeps_codec_framing() {
-    let Some(bin) = locate_oc_rsync() else {
-        eprintln!("skip: oc-rsync binary not located");
-        return;
-    };
+    let bin = test_support::oc_rsync_bin();
 
     let workdir = tempdir().expect("workdir");
     let module_root = workdir.path().join("module");

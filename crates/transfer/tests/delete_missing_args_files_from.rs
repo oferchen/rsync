@@ -20,44 +20,11 @@
 //! - `options.c:765` / `options.c:768` - `--delete-missing-args` and
 //!   `--ignore-missing-args` flag definitions.
 
-use std::env;
 use std::fs;
 use std::path::PathBuf;
 use std::process::Command;
 
 use tempfile::tempdir;
-
-/// Locates the workspace `oc-rsync` binary the test runner built.
-///
-/// Mirrors the lookup logic in
-/// `tests/remove_source_files_local_copy.rs`: prefer Cargo's
-/// `CARGO_BIN_EXE_oc-rsync` when set, otherwise walk up from the test
-/// executable until a `target/` directory is found.
-fn locate_oc_rsync() -> Option<PathBuf> {
-    if let Some(p) = env::var_os("CARGO_BIN_EXE_oc-rsync") {
-        let p = PathBuf::from(p);
-        if p.is_file() {
-            return Some(p);
-        }
-    }
-    let exe = env::current_exe().ok()?;
-    let mut dir = exe.parent()?;
-    let name = format!("oc-rsync{}", env::consts::EXE_SUFFIX);
-    while !dir.ends_with("target") {
-        let candidate = dir.join(&name);
-        if candidate.is_file() {
-            return Some(candidate);
-        }
-        dir = dir.parent()?;
-    }
-    for sub in ["debug", "release"] {
-        let candidate = dir.join(sub).join(&name);
-        if candidate.is_file() {
-            return Some(candidate);
-        }
-    }
-    None
-}
 
 /// Builds the upstream-shaped fixture: a source directory with `keep.txt`
 /// present, a `files-from` list referencing both `keep.txt` and a vanished
@@ -106,10 +73,7 @@ fn build_fixture() -> Fixture {
 /// pins the production fix from UTS-19 / UTS-DD-files-from.3.
 #[test]
 fn delete_missing_args_files_from_removes_vanished_destination() {
-    let Some(rsync_bin) = locate_oc_rsync() else {
-        eprintln!("skipping: oc-rsync binary not found in target/");
-        return;
-    };
+    let rsync_bin = test_support::oc_rsync_bin();
 
     let fx = build_fixture();
     let source_arg = {
@@ -152,10 +116,7 @@ fn delete_missing_args_files_from_removes_vanished_destination() {
 /// sentinel entirely (`flist.c:2436-2437`).
 #[test]
 fn ignore_missing_args_files_from_preserves_destination() {
-    let Some(rsync_bin) = locate_oc_rsync() else {
-        eprintln!("skipping: oc-rsync binary not found in target/");
-        return;
-    };
+    let rsync_bin = test_support::oc_rsync_bin();
 
     let fx = build_fixture();
     let source_arg = {

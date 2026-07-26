@@ -16,49 +16,17 @@
 //! - `flist.c:2239` - `int flags = recurse ? FLAG_CONTENT_DIR : 0;` (the root is
 //!   a content dir only for a recursive transfer).
 
-use std::env;
 use std::fs;
-use std::path::PathBuf;
 use std::process::Command;
 
 use tempfile::tempdir;
-
-/// Locates the workspace `oc-rsync` binary the test runner built.
-fn locate_oc_rsync() -> Option<PathBuf> {
-    if let Some(p) = env::var_os("CARGO_BIN_EXE_oc-rsync") {
-        let p = PathBuf::from(p);
-        if p.is_file() {
-            return Some(p);
-        }
-    }
-    let exe = env::current_exe().ok()?;
-    let mut dir = exe.parent()?;
-    let name = format!("oc-rsync{}", env::consts::EXE_SUFFIX);
-    while !dir.ends_with("target") {
-        let candidate = dir.join(&name);
-        if candidate.is_file() {
-            return Some(candidate);
-        }
-        dir = dir.parent()?;
-    }
-    for sub in ["debug", "release"] {
-        let candidate = dir.join(sub).join(&name);
-        if candidate.is_file() {
-            return Some(candidate);
-        }
-    }
-    None
-}
 
 /// `--delete --files-from`: a stale destination-root file that is absent from
 /// the file list must survive, because the `--files-from` root is not a content
 /// directory and upstream never delete-scans it.
 #[test]
 fn files_from_delete_preserves_stale_dest_root_file() {
-    let Some(oc) = locate_oc_rsync() else {
-        eprintln!("oc-rsync binary not found; skipping");
-        return;
-    };
+    let oc = test_support::oc_rsync_bin();
 
     let tmp = tempdir().unwrap();
     let root = tmp.path();
@@ -98,10 +66,7 @@ fn files_from_delete_preserves_stale_dest_root_file() {
 /// normal delete pass.
 #[test]
 fn recursive_delete_still_removes_stale_dest_root_file() {
-    let Some(oc) = locate_oc_rsync() else {
-        eprintln!("oc-rsync binary not found; skipping");
-        return;
-    };
+    let oc = test_support::oc_rsync_bin();
 
     let tmp = tempdir().unwrap();
     let root = tmp.path();

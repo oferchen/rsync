@@ -30,9 +30,11 @@
 //! - An upstream `rsync` binary cannot be located (the `OC_RSYNC_UPSTREAM`
 //!   env var, then `target/interop/upstream-install/<ver>/bin/rsync`, then
 //!   `command -v rsync`).
-//! - The `oc-rsync` binary cannot be located.
 //! - The backing filesystem refuses POSIX ACL writes (no `acl` mount
 //!   option on `/tmp` is the common case; skip rather than fail).
+//!
+//! A missing `oc-rsync` binary is NOT a skip condition: it fails the test
+//! loudly, naming the path that was expected.
 //!
 //! ## Companion: ACL-2.b non-root unmappable-id leg
 //!
@@ -87,34 +89,6 @@ fn skip(reason: &str) {
 /// `crates/metadata/tests/acl_handling.rs:1172`.
 fn is_root() -> bool {
     rustix::process::geteuid().as_raw() == 0
-}
-
-/// Locate the oc-rsync binary built by cargo for this workspace.
-///
-/// Order:
-/// 1. `CARGO_BIN_EXE_oc-rsync` (set automatically by cargo for tests in
-///    the binary's owning package; metadata tests do not get this for
-///    free so we treat it as best-effort).
-/// 2. `target/{release,debug,dist}/oc-rsync` relative to the workspace
-///    root (one directory above `CARGO_MANIFEST_DIR` which is the
-///    `metadata` crate dir).
-fn locate_oc_rsync() -> Option<PathBuf> {
-    if let Some(env_path) = env::var_os("CARGO_BIN_EXE_oc-rsync") {
-        let p = PathBuf::from(env_path);
-        if p.is_file() {
-            return Some(p);
-        }
-    }
-    let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    // crates/metadata -> workspace root is two parents up.
-    let workspace_root = manifest_dir.parent()?.parent()?;
-    for profile in ["release", "debug", "dist"] {
-        let candidate = workspace_root.join("target").join(profile).join("oc-rsync");
-        if candidate.is_file() {
-            return Some(candidate);
-        }
-    }
-    None
 }
 
 /// Locate an upstream rsync binary.
@@ -443,10 +417,7 @@ impl Harness {
             skip("requires root (geteuid() != 0); root-to-root invariant cannot be exercised");
             return None;
         }
-        let Some(oc_bin) = locate_oc_rsync() else {
-            skip("oc-rsync binary not located; build it before running this test");
-            return None;
-        };
+        let oc_bin = test_support::oc_rsync_bin();
         let Some(upstream_bin) = locate_upstream_rsync() else {
             skip(
                 "upstream rsync not located (set OC_RSYNC_UPSTREAM, populate \
@@ -645,10 +616,7 @@ impl NonRootHarness {
             ));
             return None;
         }
-        let Some(oc_bin) = locate_oc_rsync() else {
-            skip("oc-rsync binary not located; build it before running this test");
-            return None;
-        };
+        let oc_bin = test_support::oc_rsync_bin();
         let Some(upstream_bin) = locate_upstream_rsync() else {
             skip(
                 "upstream rsync not located (set OC_RSYNC_UPSTREAM, populate \
@@ -777,10 +745,7 @@ impl ReverseHarness {
             ));
             return None;
         }
-        let Some(oc_bin) = locate_oc_rsync() else {
-            skip("oc-rsync binary not located; build it before running this test");
-            return None;
-        };
+        let oc_bin = test_support::oc_rsync_bin();
         let Some(upstream_bin) = locate_upstream_rsync() else {
             skip(
                 "upstream rsync not located (set OC_RSYNC_UPSTREAM, populate \
