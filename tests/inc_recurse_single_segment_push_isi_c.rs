@@ -59,7 +59,6 @@ mod integration;
 use integration::helpers::{TestDir, upstream_rsync_binary};
 
 use std::collections::BTreeMap;
-use std::env;
 use std::fs;
 use std::io::{self, Read, Write};
 use std::path::{Path, PathBuf};
@@ -76,36 +75,20 @@ use transfer::setup::build_capability_string;
 /// Mirrors `flags_for_version("3.4.1")` in the sister fuzz harness.
 const UPSTREAM_FLAGS_341: &str = "-vlogDtprze.iLsfxCIvu";
 
-/// Locate the oc-rsync binary built with the current feature set.
+/// Locates the binary under test.
 ///
-/// Prefers the Cargo-provided `CARGO_BIN_EXE_oc-rsync` env var so the
-/// binary used matches whatever feature flags the test run was launched
-/// with. Falls back to walking up from the test executable, matching
-/// the pattern in `inc_recurse_sender_fuzz_1863.rs::locate_oc_rsync`.
-fn locate_oc_rsync() -> Option<PathBuf> {
-    if let Some(p) = env::var_os("CARGO_BIN_EXE_oc-rsync") {
-        let p = PathBuf::from(p);
-        if p.is_file() {
-            return Some(p);
-        }
-    }
-    let exe = env::current_exe().ok()?;
-    let mut dir = exe.parent()?;
-    let name = format!("oc-rsync{}", env::consts::EXE_SUFFIX);
-    while !dir.ends_with("target") {
-        let candidate = dir.join(&name);
-        if candidate.is_file() {
-            return Some(candidate);
-        }
-        dir = dir.parent()?;
-    }
-    for sub in ["debug", "release"] {
-        let candidate = dir.join(sub).join(&name);
-        if candidate.is_file() {
-            return Some(candidate);
-        }
-    }
-    None
+/// `CARGO_BIN_EXE_oc-rsync` is a COMPILE-time variable, so it must be read with
+/// `env!`, not `env::var_os`: at run time it is unset and the lookup would fall
+/// through to whatever stale `target/debug/oc-rsync` happens to be on disk -
+/// silently testing a different build than the one just compiled.
+fn locate_oc_rsync() -> PathBuf {
+    let built = PathBuf::from(env!("CARGO_BIN_EXE_oc-rsync"));
+    assert!(
+        built.is_file(),
+        "oc-rsync binary missing at {}; refusing to fall back to a stale build",
+        built.display()
+    );
+    built
 }
 
 /// Deterministic 10-file flat tree.
@@ -315,13 +298,7 @@ fn no_inc_recursive_override_suppresses_inc_recurse_bit() {
 /// `bash tools/ci/run_interop.sh` to populate the tree.
 #[test]
 fn single_segment_push_to_upstream_3_4_1_byte_identical() {
-    let oc_bin = match locate_oc_rsync() {
-        Some(p) => p,
-        None => {
-            eprintln!("skip: oc-rsync binary not located");
-            return;
-        }
-    };
+    let oc_bin = locate_oc_rsync();
     let up_bin = match upstream_rsync_binary("3.4.1") {
         Some(p) => p,
         None => {

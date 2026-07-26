@@ -50,26 +50,20 @@ use tempfile::TempDir;
 /// after recording its argv, so any single test should finish in milliseconds.
 const RUN_TIMEOUT: Duration = Duration::from_secs(30);
 
-/// Resolve the oc-rsync binary path the same way other root-tests do
-/// (search the workspace `target/{debug,release,dist}` directories).
+/// Locates the binary under test.
+///
+/// `CARGO_BIN_EXE_oc-rsync` is a COMPILE-time variable, so it must be read with
+/// `env!`, not `env::var_os`: at run time it is unset and the lookup would fall
+/// through to whatever stale `target/debug/oc-rsync` happens to be on disk -
+/// silently testing a different build than the one just compiled.
 fn oc_rsync_binary() -> PathBuf {
-    if let Some(env_path) = std::env::var_os("CARGO_BIN_EXE_oc-rsync") {
-        let path = PathBuf::from(env_path);
-        if path.is_file() {
-            return path;
-        }
-    }
-    let manifest_dir = env!("CARGO_MANIFEST_DIR");
-    for profile in ["debug", "release", "dist"] {
-        let path = PathBuf::from(manifest_dir)
-            .join("target")
-            .join(profile)
-            .join("oc-rsync");
-        if path.is_file() {
-            return path;
-        }
-    }
-    PathBuf::from("oc-rsync")
+    let built = PathBuf::from(env!("CARGO_BIN_EXE_oc-rsync"));
+    assert!(
+        built.is_file(),
+        "oc-rsync binary missing at {}; refusing to fall back to a stale build",
+        built.display()
+    );
+    built
 }
 
 /// Create a POSIX shell-script "ssh" wrapper inside `dir` that writes its
