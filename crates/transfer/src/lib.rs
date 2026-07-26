@@ -731,15 +731,17 @@ pub fn run_server_with_handshake_adopting<W: Write>(
     // Flush raw-mode data before wrapping in multiplexed writer.
     stdout.flush()?;
 
-    // upstream: io.c iobuf.in is 32KB circular; BufReader serves the same role,
-    // batching small reads (4-byte multiplex headers) into fewer recvfrom syscalls.
+    // upstream: io.c:1401 iobuf.in is a fixed 32KB circular buffer that is never
+    // resized (io.c:579). IoBufReader is that buffer, and it sits beneath the
+    // multiplex demuxer so no decoder ever touches the descriptor - the layering
+    // upstream enforces with `assert(fd != iobuf.in_fd)` (io.c:243).
     // The CountingReader wraps the raw transport (below the multiplex demuxer and
     // token decompression) so the running total reflects compressed wire bytes,
     // matching upstream's `stats.total_read` (io.c:820).
     let counting_stdin = reader::CountingReader::new(chained_stdin);
     let bytes_received_counter = counting_stdin.counter();
     let mut reader =
-        reader::ServerReader::new_plain(io::BufReader::with_capacity(64 * 1024, counting_stdin));
+        reader::ServerReader::new_plain(protocol::iobuf::IoBufReader::new(counting_stdin));
 
     // upstream: io.c:1551-1561 - only the client receiver adopts a
     // daemon-advertised MSG_IO_TIMEOUT (`am_server || am_generator` treat it as
