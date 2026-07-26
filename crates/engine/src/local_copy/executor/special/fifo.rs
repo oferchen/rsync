@@ -58,8 +58,19 @@ pub(crate) fn copy_fifo(
     // ITEM_REPORT_XATTR / ITEM_REPORT_ACL when those features are active and the
     // basis differs. Surface the enabled flags on all platforms so the recreate
     // change-set is derivable without cfg branching at the record site.
+    // upstream: generator.c:566-572 - itemize() lights ITEM_REPORT_XATTR from
+    // xattr_diff(), not from `preserve_xattrs`. Compare here, before the node is
+    // unlinked and recreated, so the diff sees the destination that the row
+    // reports against.
     #[cfg(all(unix, feature = "xattr"))]
-    let itemize_xattrs = preserve_xattrs;
+    let itemize_xattrs = preserve_xattrs
+        && crate::local_copy::xattrs_differ_from_source(
+            source,
+            destination,
+            false,
+            metadata_options.fake_super_enabled(),
+            context.filter_program(),
+        );
     #[cfg(not(all(unix, feature = "xattr")))]
     let itemize_xattrs = false;
     #[cfg(all(any(unix, windows), feature = "acl"))]

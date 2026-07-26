@@ -257,6 +257,23 @@ pub(crate) fn copy_file(
         return Ok(true);
     }
 
+    // upstream: generator.c:566-572 - itemize() lights ITEM_REPORT_XATTR only
+    // when xattr_diff() finds the destination's attributes differ from the
+    // sender's. Capture that here, before the transfer or the metadata apply
+    // can write the source attributes onto the destination; comparing after the
+    // sync would always report "same" and never report a real drift.
+    #[cfg(all(any(unix, windows), feature = "xattr"))]
+    let xattrs_changed = preserve_xattrs
+        && crate::local_copy::xattrs_differ_from_source(
+            source,
+            destination,
+            false,
+            metadata_options.fake_super_enabled(),
+            context.filter_program(),
+        );
+    #[cfg(not(all(any(unix, windows), feature = "xattr")))]
+    let xattrs_changed = false;
+
     let transfer_flags = TransferFlags {
         append_allowed,
         append_verify,
@@ -270,6 +287,7 @@ pub(crate) fn copy_file(
         checksum_enabled,
         #[cfg(all(any(unix, windows), feature = "xattr"))]
         preserve_xattrs,
+        xattrs_changed,
         #[cfg(all(any(unix, windows), feature = "acl"))]
         preserve_acls,
     };

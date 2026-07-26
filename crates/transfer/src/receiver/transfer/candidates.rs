@@ -725,13 +725,14 @@ impl ReceiverContext {
     /// Whether the destination's extended attributes differ from the sender's,
     /// for the `ITEM_REPORT_XATTR` (`x`) itemize column.
     ///
-    /// Mirrors upstream `generator.c:566-572`: with `preserve_xattrs` it reads
-    /// the destination's current xattrs (`get_xattr`) and compares them against
-    /// the received flist list (`xattr_diff`). Callers gate this on the `-X`
-    /// itemize path so the extra read matches upstream's lazy `get_xattr`, and
-    /// invoke it before applying the sender's xattrs so the comparison sees the
+    /// Resolves the sender's list from the flist and hands both sides to
+    /// [`metadata::dest_xattrs_differ`], the shared comparison that the
+    /// local-copy executor also uses. Callers gate this on the `-X` itemize path
+    /// so the extra read matches upstream's lazy `get_xattr`, and invoke it
+    /// before applying the sender's xattrs so the comparison sees the
     /// pre-transfer destination. A sender with no xattrs differs exactly when
-    /// the destination still carries some.
+    /// the destination still carries some, which the empty-list case expresses
+    /// without a second code path.
     pub(in crate::receiver) fn dest_xattrs_differ(&self, entry: &FileEntry, path: &Path) -> bool {
         let opts = metadata::XattrSendOptions {
             role: metadata::XattrRole::Generator,
@@ -748,14 +749,8 @@ impl ReceiverContext {
             filter: None,
             checksum_seed: self.checksum_seed,
         };
-        let dest = match metadata::read_xattrs_for_wire(path, &opts) {
-            Ok(list) => list,
-            Err(_) => return false,
-        };
-        match self.resolve_xattr_list(entry) {
-            Some(sender) => protocol::xattr::xattr_diff(&sender, &dest, self.checksum_seed),
-            None => !dest.is_empty(),
-        }
+        let sender = self.resolve_xattr_list(entry).unwrap_or_default();
+        metadata::dest_xattrs_differ(&sender, path, &opts)
     }
 
     /// Emits the upstream size-bound SKIP notice for a candidate whose flist

@@ -56,6 +56,14 @@ pub(super) struct TransferFlags {
     /// decide whether to keep or strip the streams the kernel copied.
     #[cfg(all(any(unix, windows), feature = "xattr"))]
     pub preserve_xattrs: bool,
+    /// Whether the destination's extended attributes differed from the
+    /// source's before the copy touched them.
+    ///
+    /// Drives the itemize `x` column. upstream: `generator.c:566-572` sets
+    /// `ITEM_REPORT_XATTR` from `xattr_diff()`, never from `preserve_xattrs`
+    /// alone, so this is captured once in `copy_file` while the destination is
+    /// still untouched and carried down to every record site.
+    pub xattrs_changed: bool,
     /// Whether to preserve ACLs (Unix only).
     #[cfg(all(any(unix, windows), feature = "acl"))]
     pub preserve_acls: bool,
@@ -64,16 +72,19 @@ pub(super) struct TransferFlags {
 impl TransferFlags {
     /// Returns whether xattrs preservation is effectively enabled,
     /// accounting for compile-time feature flags.
+    ///
+    /// The sole caller is `wincopy::reconcile_copied_ads`, itself
+    /// `#[cfg(feature = "xattr")]` inside the `#[cfg(target_os = "windows")]`
+    /// `wincopy` module: it decides whether to keep or strip the Alternate Data
+    /// Streams `CopyFileExW` copied. The gate is that intersection exactly,
+    /// because `-D warnings` makes an unused method fatal.
+    ///
+    /// The itemize `x` column is driven by `xattrs_changed` instead, because
+    /// upstream reports it from a comparison rather than from the flag.
+    #[cfg(all(target_os = "windows", feature = "xattr"))]
     #[inline]
     pub(super) const fn xattrs_enabled(self) -> bool {
-        #[cfg(all(any(unix, windows), feature = "xattr"))]
-        {
-            self.preserve_xattrs
-        }
-        #[cfg(not(all(any(unix, windows), feature = "xattr")))]
-        {
-            false
-        }
+        self.preserve_xattrs
     }
 
     /// Returns whether ACL preservation is effectively enabled,
