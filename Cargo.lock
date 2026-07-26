@@ -269,6 +269,7 @@ dependencies = [
  "mimalloc",
  "protocol",
  "tempfile",
+ "test-support",
  "tikv-jemallocator",
  "transfer",
  "windows-gnu-eh",

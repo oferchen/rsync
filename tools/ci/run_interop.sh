@@ -2067,18 +2067,74 @@ CONF
     return 1
   fi
 
-  # Step 5: replay the batch file to a fresh destination
-  if ! timeout "$hard_timeout" "$oc_bin" -av \
+  # Step 5: replay the batch file to a fresh destination with UPSTREAM rsync.
+  # oc-rsync replaying its own batch is not an oracle for wire compatibility:
+  # its --read-batch stops once it has the file data, so a trailer with a
+  # duplicated stats block or a stray NDX_DONE replays clean. Upstream's
+  # read_final_goodbye() (main.c:893-924) reads one more index after the
+  # goodbye and aborts with RERR_PROTOCOL unless that read hits EOF.
+  local rc_daemon=0
+  timeout "$hard_timeout" "$upstream_binary" -av \
       --read-batch="$batch_daemon" --timeout=10 \
       "${replay_dest}/" \
-      >"${log}.read-batch-daemon.out" 2>"${log}.read-batch-daemon.err"; then
-    echo "    read-batch failed (daemon batch replay, exit=$?)"
+      >"${log}.read-batch-daemon.out" 2>"${log}.read-batch-daemon.err" || rc_daemon=$?
+  if [[ $rc_daemon -ne 0 ]]; then
+    echo "    read-batch failed (upstream reads daemon-push batch, exit=$rc_daemon)"
+    head -5 "${log}.read-batch-daemon.err" 2>/dev/null | sed 's/^/    stderr: /'
     return 1
   fi
 
   # Verify replayed destination matches source
   if ! comp_verify_transfer "$src_dir" "$replay_dest"; then
     echo "    content mismatch after daemon batch replay"
+    return 1
+  fi
+
+  # --- Daemon PULL roundtrip ---
+  # The push leg above records the batch on the sender side; a pull records it
+  # on the receiver side, from the read tee, which is a different code path and
+  # produced a different (unreadable) trailer. Both directions need the oracle.
+  local pull_replay_dest="${batch_dir}/pull-replay-dest"
+  local batch_daemon_pull="${batch_dir}/batch-daemon-pull.rsync"
+  local pull_dest="${batch_dir}/pull-dest"
+  mkdir -p "$pull_replay_dest" "$pull_dest"
+
+  start_oc_daemon "$daemon_conf" "$daemon_log" "$upstream_binary" "$daemon_pid" "$oc_port"
+
+  if ! timeout "$hard_timeout" "$oc_bin" -av \
+      --write-batch="$batch_daemon_pull" --timeout=10 \
+      "rsync://127.0.0.1:${oc_port}/interop/" "${pull_dest}/" \
+      >"${log}.write-batch-daemon-pull.out" 2>"${log}.write-batch-daemon-pull.err"; then
+    echo "    write-batch failed (daemon pull, exit=$?)"
+    stop_oc_daemon
+    return 1
+  fi
+
+  stop_oc_daemon
+
+  if [[ ! -f "$batch_daemon_pull" ]]; then
+    echo "    daemon pull batch file not created"
+    return 1
+  fi
+
+  if ! comp_verify_transfer "$src_dir" "$pull_dest"; then
+    echo "    content mismatch after daemon pull"
+    return 1
+  fi
+
+  local rc_pull=0
+  timeout "$hard_timeout" "$upstream_binary" -av \
+      --read-batch="$batch_daemon_pull" --timeout=10 \
+      "${pull_replay_dest}/" \
+      >"${log}.read-batch-daemon-pull.out" 2>"${log}.read-batch-daemon-pull.err" || rc_pull=$?
+  if [[ $rc_pull -ne 0 ]]; then
+    echo "    read-batch failed (upstream reads daemon-pull batch, exit=$rc_pull)"
+    head -5 "${log}.read-batch-daemon-pull.err" 2>/dev/null | sed 's/^/    stderr: /'
+    return 1
+  fi
+
+  if ! comp_verify_transfer "$src_dir" "$pull_replay_dest"; then
+    echo "    content mismatch after daemon pull batch replay"
     return 1
   fi
 

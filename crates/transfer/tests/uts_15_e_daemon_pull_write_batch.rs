@@ -43,6 +43,12 @@
 //! 4. A subsequent `oc-rsync --read-batch=FILE DEST_REPLAY/` (no remote
 //!    URL) reconstructs the same source tree from the batch file alone,
 //!    so the recorded batch is functional, not just non-empty.
+//! 5. Genuine upstream `rsync --read-batch=FILE` reconstructs the same
+//!    tree. Assertions 1-4 all passed while the recorded trailer was
+//!    unreadable by upstream, because oc's own `--read-batch` stops as
+//!    soon as it has the file data. Only upstream's
+//!    `read_final_goodbye()` (`main.c:893-924`) validates the tail.
+//!    Skipped with a printed reason when no genuine 3.4.4 is installed.
 //!
 //! # Platform gate
 //!
@@ -425,4 +431,58 @@ fn daemon_pull_write_batch_records_and_replays() {
         &replay_dir,
         "replay destination",
     );
+
+    replay_with_upstream(
+        &module_root,
+        &batch_path,
+        &scratch.root.join("replay-upstream"),
+    );
+}
+
+/// Replays `batch_path` with genuine upstream rsync and asserts it reconstructs
+/// `source`.
+///
+/// oc-rsync replaying its own batch is not an oracle for wire compatibility:
+/// its `--read-batch` stops as soon as it has what it needs, so a trailer with
+/// a duplicated stats block or an extra `NDX_DONE` replays clean. Upstream's
+/// `read_final_goodbye()` (`main.c:893-924`) does not - it reads one more index
+/// after the goodbye and aborts with `RERR_PROTOCOL` on anything but EOF. Only
+/// upstream can tell the two apart, which is why a batch recorded over a daemon
+/// pull was unreadable by `rsync --read-batch` while every oc-side assertion
+/// above passed.
+///
+/// Skips with a printed reason when no genuine 3.4.4 is installed - the
+/// interop cell (`tools/ci/run_interop.sh`) is the one that guarantees it.
+fn replay_with_upstream(source: &Path, batch_path: &Path, dest: &Path) {
+    let Some(upstream) =
+        test_support::require_upstream_rsync(test_support::UpstreamVersion::V3_4_4)
+    else {
+        return;
+    };
+
+    fs::create_dir_all(dest).expect("create upstream replay destination");
+    let mut read_batch_arg = std::ffi::OsString::from("--read-batch=");
+    read_batch_arg.push(batch_path.as_os_str());
+    let mut dest_arg = dest.to_path_buf().into_os_string();
+    dest_arg.push("/");
+
+    let output = upstream
+        .command()
+        .arg("--recursive")
+        .arg("--times")
+        .arg(&read_batch_arg)
+        .arg(&dest_arg)
+        .stdin(Stdio::null())
+        .output()
+        .expect("spawn upstream rsync (--read-batch)");
+
+    assert!(
+        output.status.success(),
+        "upstream rsync {} rejected the batch recorded over a daemon pull: {:?}\nstderr:\n{}",
+        upstream.version().directory(),
+        output.status.code(),
+        String::from_utf8_lossy(&output.stderr),
+    );
+
+    assert_trees_match(source, "daemon source", dest, "upstream replay destination");
 }

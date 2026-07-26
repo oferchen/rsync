@@ -302,4 +302,47 @@ fn write_batch_pull_still_transfers_and_records() {
         "--write-batch must record a non-empty batch at {}",
         batch.display()
     );
+
+    replay_with_upstream(&batch, &src, &temp.path().join("replay-upstream"));
+}
+
+/// Replays `batch` with genuine upstream rsync and asserts it reconstructs
+/// `source`.
+///
+/// The oc-side replay above is not an oracle for wire compatibility: oc's
+/// `--read-batch` stops once it has the file data, so a trailer carrying a
+/// duplicated stats block or a stray `NDX_DONE` still replays clean. Upstream's
+/// `read_final_goodbye()` (`main.c:893-924`) reads one more index after the
+/// goodbye and aborts with `RERR_PROTOCOL` unless that read hits EOF, so only
+/// upstream can tell a well-formed trailer from a malformed one.
+///
+/// Skips with a printed reason when no genuine 3.4.4 is installed; the interop
+/// cell (`tools/ci/run_interop.sh`) is the one that guarantees it.
+fn replay_with_upstream(batch: &Path, source: &Path, dest: &Path) {
+    let Some(upstream) =
+        test_support::require_upstream_rsync(test_support::UpstreamVersion::V3_4_4)
+    else {
+        return;
+    };
+
+    fs::create_dir_all(dest).expect("create upstream replay destination");
+    let mut cmd = Command::new(upstream.binary());
+    cmd.arg("-a")
+        .arg(format!("--read-batch={}", batch.display()))
+        .arg(format!("{}/", dest.display()));
+    let output = spawn_with_timeout(cmd, RUN_TIMEOUT)
+        .expect("upstream --read-batch did not finish within the timeout");
+
+    assert!(
+        output.status.success(),
+        "upstream rsync {} rejected the batch recorded over a remote pull: {:?}\nstderr: {}",
+        upstream.version().directory(),
+        output.status.code(),
+        String::from_utf8_lossy(&output.stderr),
+    );
+    assert_eq!(
+        file_tree(dest),
+        file_tree(source),
+        "upstream --read-batch must reconstruct the source tree from an oc-recorded pull batch"
+    );
 }

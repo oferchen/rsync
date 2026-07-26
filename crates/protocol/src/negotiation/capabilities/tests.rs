@@ -339,6 +339,7 @@ fn test_no_negotiation_client_emits_resolved_fallback_summaries() {
             checksum_override: None,
             compression_override: None,
             compression_level: crate::nstr::CLVL_NOT_SPECIFIED,
+            write_batch: false,
         },
     )
     .unwrap();
@@ -420,6 +421,7 @@ fn test_negotiate_nstr_compress_summary_renders_explicit_level() {
             checksum_override: None,
             compression_override: None,
             compression_level: 9,
+            write_batch: false,
         },
     )
     .unwrap();
@@ -476,6 +478,7 @@ fn test_negotiate_nstr_summary_omits_negotiated_when_forced() {
             checksum_override: Some(ChecksumAlgorithm::MD5),
             compression_override: None,
             compression_level: crate::nstr::CLVL_NOT_SPECIFIED,
+            write_batch: false,
         },
     )
     .unwrap();
@@ -535,6 +538,7 @@ fn test_checksum_override_forces_chosen_algorithm() {
             checksum_override: Some(ChecksumAlgorithm::XXH128),
             compression_override: None,
             compression_level: crate::nstr::CLVL_NOT_SPECIFIED,
+            write_batch: false,
         },
     )
     .unwrap();
@@ -3081,6 +3085,7 @@ fn compression_override_used_on_legacy_protocol() {
             checksum_override: None,
             compression_override: Some(CompressionAlgorithm::Zstd),
             compression_level: crate::nstr::CLVL_NOT_SPECIFIED,
+            write_batch: false,
         },
     )
     .unwrap();
@@ -3109,6 +3114,7 @@ fn compression_override_used_without_negotiation() {
             checksum_override: None,
             compression_override: Some(CompressionAlgorithm::LZ4),
             compression_level: crate::nstr::CLVL_NOT_SPECIFIED,
+            write_batch: false,
         },
     )
     .unwrap();
@@ -3137,6 +3143,7 @@ fn compression_override_none_falls_through_to_normal_negotiation() {
             checksum_override: None,
             compression_override: None,
             compression_level: crate::nstr::CLVL_NOT_SPECIFIED,
+            write_batch: false,
         },
     )
     .unwrap();
@@ -3184,10 +3191,10 @@ mod env_list_overrides {
         let _cs = EnvGuard::remove(CHECKSUM_ENV);
         let _cp = EnvGuard::remove(COMPRESS_ENV);
 
-        assert!(env_list::checksum_candidates(false).is_none());
-        assert!(env_list::checksum_candidates(true).is_none());
-        assert!(env_list::compression_candidates(false).is_none());
-        assert!(env_list::compression_candidates(true).is_none());
+        assert!(env_list::checksum_candidates(false, false, 32).is_none());
+        assert!(env_list::checksum_candidates(true, false, 32).is_none());
+        assert!(env_list::compression_candidates(false, false).is_none());
+        assert!(env_list::compression_candidates(true, false).is_none());
     }
 
     // (a') Unset env - a full negotiation advertises the built-in default list
@@ -3216,11 +3223,11 @@ mod env_list_overrides {
         let _lock = ENV_LOCK.lock().unwrap();
         let _cs = EnvGuard::set(CHECKSUM_ENV, OsStr::new("md5 xxh3"));
 
-        let client = env_list::checksum_candidates(false).unwrap();
+        let client = env_list::checksum_candidates(false, false, 32).unwrap();
         assert_eq!(client.candidates, vec!["md5", "xxh3"]);
         assert_eq!(client.advertised, "md5 xxh3");
 
-        let server = env_list::checksum_candidates(true).unwrap();
+        let server = env_list::checksum_candidates(true, false, 32).unwrap();
         assert_eq!(server.candidates, vec!["md5", "xxh3"]);
         assert_eq!(server.advertised, "md5 xxh3");
     }
@@ -3255,7 +3262,7 @@ mod env_list_overrides {
         let _lock = ENV_LOCK.lock().unwrap();
         let _cp = EnvGuard::set(COMPRESS_ENV, OsStr::new("zlib zlibx"));
 
-        let client = env_list::compression_candidates(false).unwrap();
+        let client = env_list::compression_candidates(false, false).unwrap();
         assert_eq!(client.candidates, vec!["zlib", "zlibx"]);
         assert_eq!(client.advertised, "zlib zlibx");
     }
@@ -3292,7 +3299,7 @@ mod env_list_overrides {
         let _lock = ENV_LOCK.lock().unwrap();
         let _cs = EnvGuard::set(CHECKSUM_ENV, OsStr::new("bogus md5 alsobad xxh3"));
 
-        let over = env_list::checksum_candidates(false).unwrap();
+        let over = env_list::checksum_candidates(false, false, 32).unwrap();
         assert_eq!(over.candidates, vec!["md5", "xxh3"]);
         assert_eq!(over.advertised, "md5 xxh3");
     }
@@ -3304,7 +3311,7 @@ mod env_list_overrides {
         let _lock = ENV_LOCK.lock().unwrap();
         let _cs = EnvGuard::set(CHECKSUM_ENV, OsStr::new("bogus notreal"));
 
-        let over = env_list::checksum_candidates(false).unwrap();
+        let over = env_list::checksum_candidates(false, false, 32).unwrap();
         assert!(over.candidates.is_empty());
         assert_eq!(over.advertised, "INVALID");
 
@@ -3320,7 +3327,7 @@ mod env_list_overrides {
     fn whitespace_only_env_is_treated_as_unset() {
         let _lock = ENV_LOCK.lock().unwrap();
         let _cs = EnvGuard::set(CHECKSUM_ENV, OsStr::new("   \t "));
-        assert!(env_list::checksum_candidates(false).is_none());
+        assert!(env_list::checksum_candidates(false, false, 32).is_none());
     }
 
     // Duplicate names are removed, keeping first occurrence (upstream dedup).
@@ -3328,7 +3335,7 @@ mod env_list_overrides {
     fn duplicate_names_are_deduped() {
         let _lock = ENV_LOCK.lock().unwrap();
         let _cs = EnvGuard::set(CHECKSUM_ENV, OsStr::new("md5 xxh3 md5 xxh3"));
-        let over = env_list::checksum_candidates(false).unwrap();
+        let over = env_list::checksum_candidates(false, false, 32).unwrap();
         assert_eq!(over.candidates, vec!["md5", "xxh3"]);
     }
 
@@ -3338,7 +3345,7 @@ mod env_list_overrides {
     fn xxhash_alias_is_canonicalised() {
         let _lock = ENV_LOCK.lock().unwrap();
         let _cs = EnvGuard::set(CHECKSUM_ENV, OsStr::new("xxhash md5"));
-        let over = env_list::checksum_candidates(false).unwrap();
+        let over = env_list::checksum_candidates(false, false, 32).unwrap();
         assert_eq!(over.candidates, vec!["xxh64", "md5"]);
         assert_eq!(over.advertised, "xxh64 md5");
     }
@@ -3350,7 +3357,7 @@ mod env_list_overrides {
     fn mixed_case_non_alias_preserves_original_bytes() {
         let _lock = ENV_LOCK.lock().unwrap();
         let _cs = EnvGuard::set(CHECKSUM_ENV, OsStr::new("MD5 XXH3"));
-        let over = env_list::checksum_candidates(false).unwrap();
+        let over = env_list::checksum_candidates(false, false, 32).unwrap();
         // Advertised bytes preserve the operator's casing.
         assert_eq!(over.advertised, "MD5 XXH3");
         // Candidates are canonical for case-insensitive selection.
@@ -3358,7 +3365,7 @@ mod env_list_overrides {
 
         // A mixed-case alias still canonicalises (case-insensitive match).
         let _cs2 = EnvGuard::set(CHECKSUM_ENV, OsStr::new("XxHaSh"));
-        let alias = env_list::checksum_candidates(false).unwrap();
+        let alias = env_list::checksum_candidates(false, false, 32).unwrap();
         assert_eq!(alias.advertised, "xxh64");
         assert_eq!(alias.candidates, vec!["xxh64"]);
     }
@@ -3370,10 +3377,10 @@ mod env_list_overrides {
         let _lock = ENV_LOCK.lock().unwrap();
         let _cs = EnvGuard::set(CHECKSUM_ENV, OsStr::new("md5 & xxh3 xxh128"));
 
-        let client = env_list::checksum_candidates(false).unwrap();
+        let client = env_list::checksum_candidates(false, false, 32).unwrap();
         assert_eq!(client.candidates, vec!["md5"]);
 
-        let server = env_list::checksum_candidates(true).unwrap();
+        let server = env_list::checksum_candidates(true, false, 32).unwrap();
         assert_eq!(server.candidates, vec!["xxh3", "xxh128"]);
     }
 
@@ -3521,6 +3528,7 @@ mod env_list_overrides {
                 checksum_override: Some(ChecksumAlgorithm::MD5),
                 compression_override: None,
                 compression_level: crate::nstr::CLVL_NOT_SPECIFIED,
+                write_batch: false,
             },
         )
         .unwrap_err();
@@ -3557,6 +3565,7 @@ mod env_list_overrides {
                 checksum_override: Some(ChecksumAlgorithm::MD5),
                 compression_override: None,
                 compression_level: crate::nstr::CLVL_NOT_SPECIFIED,
+                write_batch: false,
             },
         )
         .expect("client does not validate the choice against the env list");
@@ -3633,6 +3642,7 @@ mod env_list_overrides {
                 checksum_override: None,
                 compression_override: None,
                 compression_level: crate::nstr::CLVL_NOT_SPECIFIED,
+                write_batch: false,
             },
         )
     }
