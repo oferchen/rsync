@@ -707,12 +707,16 @@ impl ReceiverContext {
     /// the destination still carries some.
     pub(in crate::receiver) fn dest_xattrs_differ(&self, entry: &FileEntry, path: &Path) -> bool {
         let opts = metadata::XattrSendOptions {
+            role: metadata::XattrRole::Generator,
             follow_symlinks: false,
+            // upstream: xattrs.c:237 - `user_only = am_sender ? 0 : !am_root`,
+            // so a non-root generator sees only the `user.*` namespace here. A
+            // `security.*` or `trusted.*` difference it could never store must
+            // not raise the itemize `x` column.
             am_root: metadata::am_root(),
-            // upstream: xattrs.c:262 - the strip is gated on `am_sender`, and
-            // the generator is not the sender, so nothing is stripped here.
-            // Level 2 reproduces that without a separate role field.
-            preserve_xattrs: 2,
+            // upstream: xattrs.c:262 - the strip is gated on `am_sender`, so
+            // the generator keeps rsync.%FOO at either level.
+            preserve_xattrs: self.config.flags.xattrs_level,
             fake_super: self.config.fake_super,
             filter: None,
             checksum_seed: self.checksum_seed,
