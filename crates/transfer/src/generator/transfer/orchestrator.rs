@@ -81,13 +81,20 @@ impl GeneratorContext {
         // upstream: flist.c:2227 - send_file_list()
         let file_count = {
             let _t = PhaseTimer::new("file-list-build-send");
-            if files_from_entries.is_empty() {
-                self.build_file_list(paths)?;
+            let build = if files_from_entries.is_empty() {
+                self.build_file_list(paths)
             } else {
                 // upstream: flist.c:2240-2244 - argv[0] is the base for --files-from
                 let base_dir = paths.first().cloned().unwrap_or_else(|| PathBuf::from("."));
-                self.build_file_list_with_base(&base_dir, &files_from_entries)?;
-            }
+                self.build_file_list_with_base(&base_dir, &files_from_entries)
+            };
+            // upstream reports walk failures from inside send_file_list() via
+            // rwrite(), which reaches f_out directly. oc has no writer during
+            // the walk, so the queued lines go out here - still before the
+            // first file-list byte, and before an aborted walk propagates, so
+            // the client learns why either way.
+            self.flush_flist_diagnostics(writer)?;
+            build?;
             self.partition_file_list_for_inc_recurse();
             self.send_file_list(writer)?
         };

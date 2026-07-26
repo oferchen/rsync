@@ -21,6 +21,7 @@ use crate::role_trailer::error_location;
 
 use super::super::GeneratorContext;
 use super::super::io_error_flags;
+use super::super::protocol_io::SenderDiagnostic;
 use super::batch_stat::{StatResult, batch_stat_dir_entries};
 
 impl GeneratorContext {
@@ -118,11 +119,13 @@ impl GeneratorContext {
                     _ => {
                         // FFV-4: emit the correct error message and error flag
                         // for a source that never existed at flist build time.
-                        eprintln!(
-                            "rsync: [sender] link_stat {} failed: {}",
+                        // upstream: flist.c:2433 - rsyserr(FERROR_XFER, ...)
+                        let text = format!(
+                            "rsync: [sender] link_stat {} failed: {}\n",
                             full_fname_path(path, self.daemon_module()),
                             engine::local_copy::upstream_io_error(&e),
                         );
+                        self.queue_flist_diagnostic(SenderDiagnostic::ErrorXfer, text);
                         self.add_io_error(io_error_flags::IOERR_GENERAL);
                         Ok(false)
                     }
@@ -265,11 +268,12 @@ impl GeneratorContext {
             Ok(e) => e,
             Err(e) => {
                 // upstream: flist.c - rsyserr for make_file() failures
-                eprintln!(
-                    "rsync: [sender] make_file failed for \"{}\": {}",
+                let text = format!(
+                    "rsync: [sender] make_file failed for \"{}\": {}\n",
                     path.display(),
                     engine::local_copy::upstream_io_error(&e),
                 );
+                self.queue_flist_diagnostic(SenderDiagnostic::ErrorXfer, text);
                 self.add_io_error(io_error_flags::IOERR_GENERAL);
                 return Ok(());
             }
@@ -290,11 +294,12 @@ impl GeneratorContext {
                 Ok(entries) => Some(entries),
                 Err(e) => {
                     // upstream: flist.c:1878 - rsyserr(FERROR_XFER, errno, "opendir %s failed", ...)
-                    eprintln!(
-                        "rsync: [sender] opendir {} failed: {}",
+                    let text = format!(
+                        "rsync: [sender] opendir {} failed: {}\n",
                         full_fname_path(&path, self.daemon_module()),
                         engine::local_copy::upstream_io_error(&e),
                     );
+                    self.queue_flist_diagnostic(SenderDiagnostic::ErrorXfer, text);
                     self.record_io_error(&e);
                     None
                 }
@@ -389,11 +394,12 @@ impl GeneratorContext {
             Ok(entries) => self.process_dir_entries_batched(base, dir_path, entries),
             Err(e) => {
                 // upstream: flist.c:1878 - rsyserr(FERROR_XFER, errno, "opendir %s failed", ...)
-                eprintln!(
-                    "rsync: [sender] opendir {} failed: {}",
+                let text = format!(
+                    "rsync: [sender] opendir {} failed: {}\n",
                     full_fname_path(dir_path, self.daemon_module()),
                     engine::local_copy::upstream_io_error(&e),
                 );
+                self.queue_flist_diagnostic(SenderDiagnostic::ErrorXfer, text);
                 self.record_io_error(&e);
                 Ok(())
             }
@@ -417,11 +423,12 @@ impl GeneratorContext {
                 Ok(de) => child_paths.push(de.path()),
                 Err(e) => {
                     // upstream: flist.c:1924 - rsyserr(FERROR_XFER, errno, "readdir(%s)", ...)
-                    eprintln!(
-                        "rsync: [sender] readdir({}): {}",
+                    let text = format!(
+                        "rsync: [sender] readdir({}): {}\n",
                         full_fname_path(dir_path, self.daemon_module()),
                         engine::local_copy::upstream_io_error(&e),
                     );
+                    self.queue_flist_diagnostic(SenderDiagnostic::ErrorXfer, text);
                     self.record_io_error(&e);
                 }
             }
@@ -508,19 +515,29 @@ impl GeneratorContext {
     /// Logs a stat failure with the appropriate upstream error format.
     ///
     /// Distinguishes between vanished files (ENOENT) and general stat errors,
-    /// matching upstream `flist.c:1286-1294` error reporting.
-    fn log_stat_error(&self, path: &Path, e: &io::Error) {
+    /// matching upstream `flist.c:1286-1294` error reporting. The two cases
+    /// carry different log classes upstream, so they queue different frame
+    /// types: the vanished notice is an `FWARNING`, the stat failure an
+    /// `FERROR_XFER`.
+    fn log_stat_error(&mut self, path: &Path, e: &io::Error) {
         let fname = full_fname_path(path, self.daemon_module());
-        if e.kind() == io::ErrorKind::NotFound {
-            // upstream: flist.c:1317 - rprintf(c, "file has vanished: %s\n", full_fname(...))
-            eprintln!("file has vanished: {fname}");
+        let (kind, text) = if e.kind() == io::ErrorKind::NotFound {
+            // upstream: flist.c:1314-1318 - rprintf(FWARNING, "file has vanished: %s\n", ...)
+            (
+                SenderDiagnostic::Warning,
+                format!("file has vanished: {fname}\n"),
+            )
         } else {
             // upstream: flist.c:1846 - rsyserr(FERROR_XFER, errno, "link_stat %s failed", ...)
-            eprintln!(
-                "rsync: [sender] link_stat {fname} failed: {}",
-                engine::local_copy::upstream_io_error(e),
-            );
-        }
+            (
+                SenderDiagnostic::ErrorXfer,
+                format!(
+                    "rsync: [sender] link_stat {fname} failed: {}\n",
+                    engine::local_copy::upstream_io_error(e),
+                ),
+            )
+        };
+        self.queue_flist_diagnostic(kind, text);
     }
 
     /// Resolves symlink metadata following upstream `flist.c:readlink_stat()`.

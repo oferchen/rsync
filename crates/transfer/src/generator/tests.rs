@@ -5584,3 +5584,146 @@ fn diminished_skip_frames_a_warning_in_server_mode() {
         "a diminished skip sets no io_error bit (upstream sender.c:421-429)"
     );
 }
+
+/// Walks `base` recursively as a daemon module server and returns the frames
+/// the queued file-list diagnostics produce on a multiplexed writer.
+///
+/// `client_mode` selects upstream's `!am_server` branch (log.c:330), where the
+/// text goes to the local terminal and nothing is framed.
+#[cfg(unix)]
+fn flist_walk_frames(
+    base: &Path,
+    client_mode: bool,
+) -> (Vec<(protocol::MessageCode, Vec<u8>)>, i32) {
+    let handshake = test_handshake();
+    let mut config = test_config();
+    config.args = vec![OsString::from(base)];
+    config.flags.recursive = true;
+    config.connection.client_mode = client_mode;
+    config.connection.daemon_module = Some("mymod".to_owned());
+    let mut ctx = GeneratorContext::new_for_test(&handshake, config);
+    build_file_list_for(&mut ctx, base);
+
+    let mut buf = Vec::new();
+    {
+        let mut writer = crate::writer::ServerWriter::new_plain(&mut buf)
+            .activate_multiplex()
+            .unwrap();
+        ctx.flush_flist_diagnostics(&mut writer).unwrap();
+    }
+    (decode_mux_frames(&buf), ctx.io_error)
+}
+
+/// Creates `<dir>/denied` with mode 000 so the recursive walk's `read_dir`
+/// fails with EACCES, and returns its path.
+#[cfg(unix)]
+fn unreadable_subdir(dir: &Path) -> PathBuf {
+    use std::os::unix::fs::PermissionsExt;
+    let denied = dir.join("denied");
+    fs::create_dir(&denied).unwrap();
+    fs::set_permissions(&denied, fs::Permissions::from_mode(0o000)).unwrap();
+    denied
+}
+
+/// Restores traversal permission so `TempDir::drop` can remove the tree.
+#[cfg(unix)]
+fn restore_subdir(denied: &Path) {
+    use std::os::unix::fs::PermissionsExt;
+    fs::set_permissions(denied, fs::Permissions::from_mode(0o755)).unwrap();
+}
+
+/// upstream flist.c:1878 - `rsyserr(FERROR_XFER, errno, "opendir %s failed",
+/// full_fname(fbuf))`, and `rwrite()` (log.c:330-340) re-sends an `am_server`
+/// diagnostic as a MSG frame instead of writing it to the server's own stderr.
+/// A daemon's stderr goes to its log, not to the client, so without the frame
+/// the client sees a bare exit 23 and no reason for it.
+#[cfg(unix)]
+#[test]
+fn flist_opendir_failure_frames_an_error_xfer_in_server_mode() {
+    let temp = TempDir::new().unwrap();
+    let denied = unreadable_subdir(temp.path());
+
+    let (frames, io_error) = flist_walk_frames(temp.path(), false);
+    restore_subdir(&denied);
+
+    assert_eq!(frames.len(), 1, "one opendir diagnostic: {frames:?}");
+    assert_eq!(
+        frames[0].0,
+        protocol::MessageCode::ErrorXfer,
+        "FERROR_XFER never downgrades, so it frames as MSG_ERROR_XFER"
+    );
+    assert_eq!(
+        String::from_utf8(frames[0].1.clone()).unwrap(),
+        format!(
+            "rsync: [sender] opendir \"{}\" (in mymod) failed: Permission denied (13)\n",
+            denied.display()
+        ),
+        "the framed text must stay byte-identical to the rsyserr rendering, \
+         daemon module suffix and trailing newline included"
+    );
+    assert_eq!(
+        io_error,
+        super::io_error_flags::IOERR_GENERAL,
+        "upstream flist.c:1877 sets IOERR_GENERAL, which lands the run on exit 23"
+    );
+}
+
+/// A client owns the terminal, so upstream's `!am_server` branch writes the
+/// text locally and frames nothing. Framing it as well would double-print over
+/// SSH, where the server's stderr already reaches the user.
+#[cfg(unix)]
+#[test]
+fn flist_opendir_failure_emits_no_frame_in_client_mode() {
+    let temp = TempDir::new().unwrap();
+    let denied = unreadable_subdir(temp.path());
+
+    let (frames, io_error) = flist_walk_frames(temp.path(), true);
+    restore_subdir(&denied);
+
+    assert!(
+        frames.is_empty(),
+        "client mode writes stderr locally and frames nothing: {frames:?}"
+    );
+    assert_eq!(
+        io_error,
+        super::io_error_flags::IOERR_GENERAL,
+        "the transport choice must not change the exit-code accounting"
+    );
+}
+
+/// upstream log.c:332-337 - protocol < 30 has no MSG_WARNING, so the FWARNING
+/// the walk raises for a vanished entry (flist.c:1314-1318) must ride MSG_INFO.
+/// Sending code 4 to a protocol-29 peer would abort it with an unknown-message
+/// error.
+#[test]
+fn flist_vanished_warning_downgrades_to_info_below_protocol_30() {
+    for (protocol_version, expected) in [
+        (29u8, protocol::MessageCode::Info),
+        (32u8, protocol::MessageCode::Warning),
+    ] {
+        let handshake = test_handshake_with_protocol(protocol_version);
+        let mut config = test_config();
+        config.protocol = ProtocolVersion::try_from(protocol_version).unwrap();
+        let mut ctx = GeneratorContext::new_for_test(&handshake, config);
+        ctx.queue_flist_diagnostic(
+            super::protocol_io::SenderDiagnostic::Warning,
+            "file has vanished: \"src/gone.txt\"\n".to_owned(),
+        );
+
+        let mut buf = Vec::new();
+        {
+            let mut writer = crate::writer::ServerWriter::new_plain(&mut buf)
+                .activate_multiplex()
+                .unwrap();
+            ctx.flush_flist_diagnostics(&mut writer).unwrap();
+        }
+        let frames = decode_mux_frames(&buf);
+        assert_eq!(frames.len(), 1, "protocol {protocol_version}: {frames:?}");
+        assert_eq!(frames[0].0, expected, "protocol {protocol_version}");
+        assert_eq!(frames[0].1, b"file has vanished: \"src/gone.txt\"\n");
+        assert!(
+            ctx.pending_flist_diagnostics.is_empty(),
+            "the flush must drain the queue so a later flush cannot repeat it"
+        );
+    }
+}
