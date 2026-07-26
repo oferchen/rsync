@@ -305,19 +305,32 @@ impl GeneratorContext {
                             continue;
                         }
                         let full = entry.base.join(&ancestor);
-                        if let Ok(meta) = std::fs::symlink_metadata(&full) {
-                            if meta.is_dir() {
-                                if let Ok(mut file_entry) =
-                                    self.create_entry(&full, ancestor.clone(), &meta)
-                                {
-                                    // upstream: flist.c:1949 - implied parents clear
-                                    // FLAG_CONTENT_DIR so a real upstream receiver does
-                                    // not scan them for --delete (over-delete data loss).
-                                    mark_implied_dir(&mut file_entry);
-                                    self.push_file_item(file_entry, full);
-                                }
-                            }
-                        }
+                        // upstream: flist.c:1983-1985 - send_implied_dirs() sets
+                        // `copy_links = xfer_dirs = 1` around the ancestor loop, so
+                        // the implied-parent stat FOLLOWS symlinks. symlink_metadata
+                        // reports a symlinked ancestor as a non-directory and drops
+                        // it, leaving the receiver with `link/file` and no `link`;
+                        // an upstream receiver rejects that with "ABORTING due to
+                        // invalid path from sender" (flist.c:2691, exit 4).
+                        let meta = match std::fs::metadata(&full) {
+                            Ok(m) if m.is_dir() => m,
+                            _ => continue,
+                        };
+                        let Ok(mut file_entry) = self.create_entry(&full, ancestor.clone(), &meta)
+                        else {
+                            continue;
+                        };
+                        // upstream: flist.c:1949 - implied parents clear
+                        // FLAG_CONTENT_DIR so a real upstream receiver does
+                        // not scan them for --delete (over-delete data loss).
+                        mark_implied_dir(&mut file_entry);
+                        self.push_file_item(file_entry, full);
+                        // Record the ancestor only once an entry has actually been
+                        // emitted. Marking a skipped ancestor as handled suppresses
+                        // every later retry AND adds it to `implied_only_dirs`, which
+                        // then suppresses the explicit top-level walk that could still
+                        // have emitted it - so the parent disappears from the list
+                        // entirely.
                         emitted_dirs.insert(key);
                     }
                 }
