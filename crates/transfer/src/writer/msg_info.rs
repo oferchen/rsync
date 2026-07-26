@@ -49,6 +49,26 @@ pub trait MsgInfoSender {
         Ok(())
     }
 
+    /// Sends a `MSG_ERROR` frame through the multiplexed output stream.
+    ///
+    /// Mirrors upstream `rprintf(FERROR, ...)`: the text reaches the peer's
+    /// stderr, but - unlike [`Self::send_msg_error_xfer`] - it leaves the peer's
+    /// `got_xfer_error` clear, so on its own it never changes the exit code. Used
+    /// for the follow-up notice a failed or refused directory prints before its
+    /// contents are dropped.
+    ///
+    /// The default implementation is a no-op, matching [`Self::send_msg_info`].
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `generator.c:1492` - `rprintf(FERROR, "*** Skipping any contents from
+    ///   this failed directory ***\n")`
+    /// - `log.c:305-309` - `FERROR` maps to `MSG_ERROR` without touching
+    ///   `got_xfer_error`
+    fn send_msg_error(&mut self, _data: &[u8]) -> io::Result<()> {
+        Ok(())
+    }
+
     /// Sends a `MSG_WARNING` frame through the multiplexed output stream.
     ///
     /// Mirrors upstream `rprintf(FWARNING, ...)` from a server-side sender: the
@@ -158,6 +178,14 @@ impl<W: Write> MsgInfoSender for ServerWriter<W> {
         }
     }
 
+    fn send_msg_error(&mut self, data: &[u8]) -> io::Result<()> {
+        if self.is_multiplexed() {
+            self.send_message(MessageCode::Error, data)
+        } else {
+            Ok(())
+        }
+    }
+
     fn send_msg_warning(&mut self, data: &[u8]) -> io::Result<()> {
         if self.is_multiplexed() {
             self.send_message(MessageCode::Warning, data)
@@ -214,6 +242,10 @@ impl<T: MsgInfoSender + ?Sized> MsgInfoSender for &mut T {
         (**self).send_msg_error_xfer(data)
     }
 
+    fn send_msg_error(&mut self, data: &[u8]) -> io::Result<()> {
+        (**self).send_msg_error(data)
+    }
+
     fn send_msg_warning(&mut self, data: &[u8]) -> io::Result<()> {
         (**self).send_msg_warning(data)
     }
@@ -242,6 +274,10 @@ impl<W: MsgInfoSender> MsgInfoSender for CountingWriter<W> {
 
     fn send_msg_error_xfer(&mut self, data: &[u8]) -> io::Result<()> {
         self.inner_ref_mut().send_msg_error_xfer(data)
+    }
+
+    fn send_msg_error(&mut self, data: &[u8]) -> io::Result<()> {
+        self.inner_ref_mut().send_msg_error(data)
     }
 
     fn send_msg_warning(&mut self, data: &[u8]) -> io::Result<()> {
