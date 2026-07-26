@@ -123,12 +123,20 @@ pub struct TransferStats {
     ///
     /// - `flist.c:2553`: `write_int(f, ignore_errors ? 0 : io_error);`
     pub io_error: i32,
-    /// Number of `MSG_ERROR` messages received from the remote sender.
+    /// Upstream's `got_xfer_error`: at least one `MSG_ERROR_XFER` frame arrived
+    /// from the peer.
     ///
-    /// When the sender encounters per-file errors it sends `MSG_ERROR` frames
-    /// that the receiver tallies here. A non-zero count causes the exit code
-    /// to report a partial transfer (`RERR_PARTIAL`, exit 23).
-    pub error_count: u32,
+    /// This is the only thing that reports a missing source argument: upstream
+    /// deliberately leaves `io_error` clear for `ENOENT` (`flist.c:2431`), so
+    /// the sender's `FERROR_XFER` frame is the sole carrier of the failure and
+    /// this flag is what turns it into exit 23.
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `io.c:1660`: `MSG_ERROR_XFER` -> `rwrite(FERROR_XFER, ...)`
+    /// - `log.c:310-311`: `case FERROR_XFER: got_xfer_error = 1;`
+    /// - `cleanup.c:217-218`: `io_error & IOERR_GENERAL || got_xfer_error` -> 23
+    pub got_xfer_error: bool,
 
     // Incremental mode statistics
     /// Total entries received from wire (incremental mode).

@@ -349,12 +349,18 @@ impl GeneratorContext {
     ///
     /// - `log.c:330-346` - `am_server` sends the frame and returns
     /// - `log.c:332-337` - `MSG_WARNING` -> `MSG_INFO` downgrade below protocol 30
+    /// - `log.c:310-311` - `case FERROR_XFER: got_xfer_error = 1;`, set before
+    ///   the frame is handed to the peer and regardless of server-vs-client, so
+    ///   a sender that only *reports* the error still exits `RERR_PARTIAL`
     pub(super) fn emit_sender_diagnostic<W: Write>(
-        &self,
+        &mut self,
         writer: &mut super::super::writer::ServerWriter<W>,
         kind: SenderDiagnostic,
         text: &str,
     ) -> io::Result<()> {
+        if kind == SenderDiagnostic::ErrorXfer {
+            self.got_xfer_error = true;
+        }
         if self.config.connection.client_mode || !writer.is_multiplexed() {
             eprint!("{text}");
             return Ok(());

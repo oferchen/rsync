@@ -186,6 +186,19 @@ pub struct GeneratorStats {
     ///
     /// - `main.c:1338-1345`: `log_exit()` maps `io_error` to `RERR_VANISHED` (24).
     pub io_error: i32,
+    /// Upstream's `got_xfer_error`: a per-file transfer error was reported by
+    /// this sender or by the peer via `MSG_ERROR_XFER`.
+    ///
+    /// Unlike `io_error` this carries no wire meaning; it only forces a zero
+    /// exit code up to `RERR_PARTIAL` (23). A missing source argument is the
+    /// case that needs it, because `flist.c:2431` deliberately withholds
+    /// `IOERR_GENERAL` for `ENOENT`.
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `log.c:310-311`: `case FERROR_XFER: got_xfer_error = 1;`
+    /// - `cleanup.c:217-218`: `io_error & IOERR_GENERAL || got_xfer_error` -> 23
+    pub got_xfer_error: bool,
 }
 
 /// Returns `true` when the I/O error indicates an early connection close.

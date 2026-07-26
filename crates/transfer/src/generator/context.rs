@@ -108,6 +108,18 @@ pub struct GeneratorContext {
     /// I/O error flags accumulated during file list building and transfer.
     /// Uses [`io_error_flags`] constants (IOERR_GENERAL, IOERR_VANISHED, etc.).
     pub(crate) io_error: i32,
+    /// Set once any `FERROR_XFER` diagnostic has been raised by this side or
+    /// received from the peer.
+    ///
+    /// Distinct from [`Self::io_error`]: `io_error` is a wire field the sender
+    /// hands the receiver to inhibit deletions, whereas this flag never leaves
+    /// the process and only decides the final exit code.
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `log.c:310-311` - `case FERROR_XFER: got_xfer_error = 1;`
+    /// - `cleanup.c:217-218` - `got_xfer_error` maps a zero exit to `RERR_PARTIAL`
+    pub(crate) got_xfer_error: bool,
     /// Diagnostics raised by the file-list walk, paired with the upstream log
     /// class that decides how a server frames them.
     ///
@@ -221,6 +233,7 @@ impl GeneratorContext {
             uid_list: IdList::new(),
             gid_list: IdList::new(),
             io_error: 0,
+            got_xfer_error: false,
             pending_flist_diagnostics: Vec::new(),
             pending_source_removals: super::pending_removal::PendingSourceRemovals::default(),
             incremental: IncrementalState::new(initial_ndx_start),
@@ -642,6 +655,16 @@ impl GeneratorContext {
     #[must_use]
     pub const fn io_error(&self) -> i32 {
         self.io_error
+    }
+
+    /// Returns whether any `FERROR_XFER` diagnostic has been seen.
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `log.c:310-311` - `case FERROR_XFER: got_xfer_error = 1;`
+    #[must_use]
+    pub const fn got_xfer_error(&self) -> bool {
+        self.got_xfer_error
     }
 
     /// Returns the checksum algorithm to use for file transfer checksums.

@@ -26,7 +26,7 @@ pub(in crate::client::remote) fn convert_server_stats_to_summary(
     use engine::local_copy::LocalCopySummary;
     use transfer::io_error_flags;
 
-    let (local_summary, io_error, error_count) = match stats {
+    let (local_summary, io_error, got_xfer_error) = match stats {
         ServerStats::Receiver(ref transfer_stats) => {
             // SSH-pull: local side ran the receiver and its `--delete` sweep.
             let s = LocalCopySummary::from_receiver_stats(
@@ -48,7 +48,7 @@ pub(in crate::client::remote) fn convert_server_stats_to_summary(
                     specials: transfer_stats.num_specials,
                 },
             );
-            (s, transfer_stats.io_error, transfer_stats.error_count)
+            (s, transfer_stats.io_error, transfer_stats.got_xfer_error)
         }
         ServerStats::Generator(ref generator_stats) => {
             // SSH-push: local side ran the sender/generator; the remote
@@ -72,7 +72,7 @@ pub(in crate::client::remote) fn convert_server_stats_to_summary(
                     specials: generator_stats.num_specials,
                 },
             );
-            (s, generator_stats.io_error, 0u32)
+            (s, generator_stats.io_error, generator_stats.got_xfer_error)
         }
     };
 
@@ -82,8 +82,11 @@ pub(in crate::client::remote) fn convert_server_stats_to_summary(
     let exit_code = io_error_flags::to_exit_code(io_error);
     if exit_code != 0 {
         summary.set_io_error_exit_code(exit_code);
-    } else if error_count > 0 {
-        // Remote sender reported errors via MSG_ERROR - treat as RERR_PARTIAL.
+    } else if got_xfer_error {
+        // upstream: cleanup.c:217-218 - `io_error & IOERR_GENERAL ||
+        // got_xfer_error` lifts a zero exit to RERR_PARTIAL. This is the only
+        // arm a missing source argument reaches, since `flist.c:2431` withholds
+        // IOERR_GENERAL for ENOENT.
         summary.set_io_error_exit_code(23);
     }
 

@@ -160,7 +160,7 @@ fn transfer_stats_has_incremental_fields() {
         total_source_bytes: 0,
         metadata_errors: vec![],
         io_error: 0,
-        error_count: 0,
+        got_xfer_error: false,
         entries_received: 100,
         directories_created: 10,
         directories_failed: 2,
