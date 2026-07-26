@@ -565,11 +565,44 @@ fn metrics_drain_batch_histogram_accumulates() {
 
 // ---- SpillableReorderBuffer wiring tests (task #1884) ----
 
+/// Blocks until the consumer's live telemetry reports that the reorder
+/// buffer has spilled. Callers withhold the head-of-line item until this
+/// returns, so the spill precondition is established rather than raced
+/// against a fixed sleep on a loaded machine.
+///
+/// Both spill counters are polled so that a regression in either plumbing
+/// path fails on the assertion naming it instead of stalling until the
+/// deadline.
+///
+/// # Panics
+///
+/// Panics once the deadline elapses: with the head withheld, no contiguous
+/// run can drain, so the buffer's byte usage only grows and a timeout means
+/// the spill telemetry never reached [`DeltaConsumer::stats`].
+fn await_spill(consumer: &DeltaConsumer) {
+    const SPILL_WAIT: std::time::Duration = std::time::Duration::from_secs(30);
+    const POLL_INTERVAL: std::time::Duration = std::time::Duration::from_millis(1);
+
+    let deadline = std::time::Instant::now() + SPILL_WAIT;
+    loop {
+        let stats = consumer.stats();
+        if stats.spill_events > 0 || stats.spill_activations > 0 {
+            return;
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "no spill observed within {SPILL_WAIT:?} while the head-of-line item \
+             was withheld against a tight byte threshold"
+        );
+        std::thread::sleep(POLL_INTERVAL);
+    }
+}
+
 /// Drives a 1000-item workload through the spill-enabled consumer with
-/// a deliberately delayed head-of-line item so the reorder buffer fills
-/// up before any contiguous run can be drained. A tight 1 KiB byte
-/// budget guarantees the spill machinery engages while delivery remains
-/// strictly in submission order.
+/// a withheld head-of-line item so the reorder buffer fills up before any
+/// contiguous run can be drained. A tight 1 KiB byte budget guarantees the
+/// spill machinery engages while delivery remains strictly in submission
+/// order.
 #[test]
 fn spillable_consumer_preserves_order_under_pressure() {
     const COUNT: u32 = 1000;
@@ -577,29 +610,27 @@ fn spillable_consumer_preserves_order_under_pressure() {
     const THRESHOLD: u64 = 1024;
 
     let (tx, rx) = work_queue::bounded_with_capacity(COUNT as usize);
-
-    // Send sequences 1..COUNT first so the reorder buffer fills with
-    // out-of-order items, then send seq 0 last so the head is missing
-    // until the very end. Memory pressure exceeds the threshold long
-    // before delivery becomes possible, forcing repeated spills.
-    let producer = std::thread::spawn(move || {
-        for seq in 1..COUNT {
-            let work =
-                DeltaWork::whole_file(seq, PathBuf::from("/dst"), 64).with_sequence(u64::from(seq));
-            tx.send(work).unwrap();
-        }
-        // Small pause to let the reorder thread build up the buffer
-        // before the head-of-line item unblocks the drain.
-        std::thread::sleep(std::time::Duration::from_millis(50));
-        tx.send(DeltaWork::whole_file(0u32, PathBuf::from("/dst"), 64).with_sequence(0))
-            .unwrap();
-    });
-
     let cfg = ConcurrentDeltaConfig::with_spill_threshold(THRESHOLD);
     let consumer = DeltaConsumer::spawn_with_config(rx, COUNT as usize, cfg);
+
+    // Send sequences 1..COUNT first so the reorder buffer fills with
+    // out-of-order items; the queue is bounded at COUNT so no send blocks.
+    // Seq 0 is held back until the telemetry confirms the byte budget was
+    // exceeded, so the spill happens before delivery can begin.
+    for seq in 1..COUNT {
+        let work =
+            DeltaWork::whole_file(seq, PathBuf::from("/dst"), 64).with_sequence(u64::from(seq));
+        tx.send(work).unwrap();
+    }
+
+    await_spill(&consumer);
+
+    tx.send(DeltaWork::whole_file(0u32, PathBuf::from("/dst"), 64).with_sequence(0))
+        .unwrap();
+    drop(tx);
+
     let results: Vec<DeltaResult> = consumer.iter().collect();
     let stats = consumer.stats();
-    producer.join().unwrap();
 
     assert_eq!(results.len(), COUNT as usize, "all items must be delivered");
     for (i, r) in results.iter().enumerate() {
