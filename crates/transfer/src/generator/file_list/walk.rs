@@ -82,6 +82,11 @@ impl GeneratorContext {
         // exclude.c add_rule XFLG_ANCHORED2ABS). Idempotent across source
         // entries; `base` is the same root for the whole walk.
         self.filter_chain.set_transfer_root(base.to_path_buf());
+        // upstream: flist.c:2411 `push_dir(dir, 0)` - the sender chdir's into
+        // the `dir` half of the positional's `dir`/`fn` split before walking
+        // it, which is the `curr_dir` every `full_fname()` in the walk renders
+        // against (util1.c:1285). `base` is that same directory.
+        self.curr_dir = Some(base.to_path_buf());
         // upstream: flist.c:2425 - link_stat() once, then pass &st to
         // send_file_name(). Reuse the metadata to avoid a redundant stat
         // inside walk_path_with_metadata.
@@ -122,7 +127,7 @@ impl GeneratorContext {
                         // upstream: flist.c:2433 - rsyserr(FERROR_XFER, ...)
                         let text = format!(
                             "rsync: [sender] link_stat {} failed: {}\n",
-                            full_fname_path(path, self.daemon_module()),
+                            full_fname_path(path, self.daemon_paths()),
                             engine::local_copy::upstream_io_error(&e),
                         );
                         self.queue_flist_diagnostic(SenderDiagnostic::ErrorXfer, text);
@@ -296,7 +301,7 @@ impl GeneratorContext {
                     // upstream: flist.c:1878 - rsyserr(FERROR_XFER, errno, "opendir %s failed", ...)
                     let text = format!(
                         "rsync: [sender] opendir {} failed: {}\n",
-                        full_fname_path(&path, self.daemon_module()),
+                        full_fname_path(&path, self.daemon_paths()),
                         engine::local_copy::upstream_io_error(&e),
                     );
                     self.queue_flist_diagnostic(SenderDiagnostic::ErrorXfer, text);
@@ -396,7 +401,7 @@ impl GeneratorContext {
                 // upstream: flist.c:1878 - rsyserr(FERROR_XFER, errno, "opendir %s failed", ...)
                 let text = format!(
                     "rsync: [sender] opendir {} failed: {}\n",
-                    full_fname_path(dir_path, self.daemon_module()),
+                    full_fname_path(dir_path, self.daemon_paths()),
                     engine::local_copy::upstream_io_error(&e),
                 );
                 self.queue_flist_diagnostic(SenderDiagnostic::ErrorXfer, text);
@@ -425,7 +430,7 @@ impl GeneratorContext {
                     // upstream: flist.c:1924 - rsyserr(FERROR_XFER, errno, "readdir(%s)", ...)
                     let text = format!(
                         "rsync: [sender] readdir({}): {}\n",
-                        full_fname_path(dir_path, self.daemon_module()),
+                        full_fname_path(dir_path, self.daemon_paths()),
                         engine::local_copy::upstream_io_error(&e),
                     );
                     self.queue_flist_diagnostic(SenderDiagnostic::ErrorXfer, text);
@@ -520,7 +525,7 @@ impl GeneratorContext {
     /// types: the vanished notice is an `FWARNING`, the stat failure an
     /// `FERROR_XFER`.
     fn log_stat_error(&mut self, path: &Path, e: &io::Error) {
-        let fname = full_fname_path(path, self.daemon_module());
+        let fname = full_fname_path(path, self.daemon_paths());
         let (kind, text) = if e.kind() == io::ErrorKind::NotFound {
             // upstream: flist.c:1314-1318 - rprintf(FWARNING, "file has vanished: %s\n", ...)
             (
@@ -669,28 +674,51 @@ mod rsyserr_wording_tests {
     }
 
     /// The same lines rendered from a daemon server process must carry
-    /// upstream's ` (in MODULE)` suffix outside the closing quote, because
-    /// upstream builds the path with `full_fname()` and `module_id >= 0`
-    /// there. Ground truth captured from rsync 3.4.4 serving module `mymod`:
-    /// `send_files failed to open "sub/denied.txt" (in mymod): ...`.
+    /// upstream's ` (in MODULE)` suffix outside the closing quote and name the
+    /// path relative to the module root, because upstream builds the path with
+    /// `full_fname()` after `chdir()`ing into the module (`clientserver.c:993`)
+    /// and `module_id >= 0`. Ground truth captured from rsync 3.4.4 serving
+    /// module `mod` rooted at `/tmp/modrel/mod`:
+    /// `rsync: [sender] opendir "denied" (in mod) failed: Permission denied (13)`.
     #[test]
     fn rsyserr_wording_carries_daemon_module_suffix() {
-        use crate::full_fname::full_fname_path;
+        use crate::full_fname::{DaemonPaths, full_fname_path};
         use std::path::Path;
 
-        let quoted = full_fname_path(Path::new("/p"), Some("mymod"));
-        assert_eq!(quoted, "\"/p\" (in mymod)");
+        let daemon = DaemonPaths {
+            module: "mymod",
+            module_root: Path::new("/srv/mod"),
+            curr_dir: Path::new("/srv/mod"),
+        };
+        let quoted = full_fname_path(Path::new("/srv/mod/p"), Some(daemon));
+        assert_eq!(quoted, "\"p\" (in mymod)");
         assert_eq!(
             format!("rsync: [sender] link_stat {quoted} failed: No such file or directory (2)"),
-            "rsync: [sender] link_stat \"/p\" (in mymod) failed: No such file or directory (2)",
+            "rsync: [sender] link_stat \"p\" (in mymod) failed: No such file or directory (2)",
         );
         assert_eq!(
             format!("rsync: [sender] readdir({quoted}): Input/output error (5)"),
-            "rsync: [sender] readdir(\"/p\" (in mymod)): Input/output error (5)",
+            "rsync: [sender] readdir(\"p\" (in mymod)): Input/output error (5)",
         );
         assert_eq!(
             format!("file has vanished: {quoted}"),
-            "file has vanished: \"/p\" (in mymod)",
+            "file has vanished: \"p\" (in mymod)",
+        );
+    }
+
+    /// A client or SSH server process (`module_id < 0`) must keep the absolute
+    /// path it has always printed: upstream neither strips a prefix nor
+    /// appends a suffix there, so a local or SSH run's stderr is unchanged.
+    #[test]
+    fn rsyserr_wording_outside_a_daemon_stays_absolute() {
+        use crate::full_fname::full_fname_path;
+        use std::path::Path;
+
+        let quoted = full_fname_path(Path::new("/srv/mod/p"), None);
+        assert_eq!(quoted, "\"/srv/mod/p\"");
+        assert_eq!(
+            format!("rsync: [sender] opendir {quoted} failed: Permission denied (13)"),
+            "rsync: [sender] opendir \"/srv/mod/p\" failed: Permission denied (13)",
         );
     }
 }

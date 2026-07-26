@@ -209,6 +209,7 @@ impl ReceiverContext {
             delay_updates: self.config.write.delay_updates,
             append_verify: self.config.flags.append_verify && !is_redo_pass,
             daemon_module: self.config.connection.daemon_module.clone(),
+            daemon_module_root: self.config.connection.daemon_module_root.clone(),
             ..DiskCommitConfig::default()
         };
         let mut pipelined_receiver = PipelinedReceiver::new(disk_config)?;

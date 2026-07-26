@@ -7,6 +7,7 @@ pub use builder::ServerConfigBuilder;
 pub use error::BuilderError;
 
 use std::ffi::OsString;
+use std::path::PathBuf;
 use std::time::SystemTime;
 
 use compress::zlib::CompressionLevel;
@@ -168,6 +169,22 @@ pub struct ConnectionConfig {
     /// - `clientserver.c:769` - `module_id = i` in `rsync_module()`.
     /// - `util1.c:1290` - `if (module_id >= 0)` in `full_fname()`.
     pub daemon_module: Option<String>,
+    /// Absolute on-disk root of the daemon module this server process serves.
+    ///
+    /// Mirrors upstream's `module_dir`/`module_dirlen` pair: the daemon
+    /// `chdir()`s here before serving, so every path it later reports is
+    /// rendered relative to this root and the server's real filesystem layout
+    /// never reaches the client. oc-rsync does not `chdir()`, so the root is
+    /// carried explicitly and stripped by
+    /// [`crate::full_fname::full_fname`]. `None` outside a daemon server
+    /// process, alongside [`daemon_module`](Self::daemon_module).
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `clientserver.c:864` - `module_chdir = normalize_path(module_dir, ..)`
+    /// - `clientserver.c:993` - `change_dir(module_chdir, CD_NORMAL)`
+    /// - `util1.c:1285` - `p1 = curr_dir + module_dirlen`
+    pub daemon_module_root: Option<PathBuf>,
     /// Filter rules to send to remote daemon (client_mode only).
     pub filter_rules: Vec<FilterRuleWireFormat>,
     /// Optional filename encoding converter for `--iconv` support.

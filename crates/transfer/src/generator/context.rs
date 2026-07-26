@@ -140,6 +140,15 @@ pub struct GeneratorContext {
     /// Different operations have different overhead profiles: CPU-bound signature
     /// computation benefits from parallelism at lower counts than I/O-bound stat calls.
     pub(crate) parallel_thresholds: crate::parallel_io::ParallelThresholds,
+    /// Directory the sender is serving from, i.e. upstream's `curr_dir`.
+    ///
+    /// Upstream's sender `push_dir()`s into the `dir` half of each positional's
+    /// `dir`/`fn` split (flist.c:2338-2349) before walking it, and
+    /// `full_fname()` renders every diagnostic path relative to that directory.
+    /// oc-rsync never `chdir()`s, so the same directory - the walk `base` - is
+    /// recorded here as each source entry is walked and consumed by
+    /// [`daemon_paths`](Self::daemon_paths).
+    pub(crate) curr_dir: Option<PathBuf>,
     /// Transfer pipeline FSM tracking the current protocol phase.
     ///
     /// Enforces the linear phase progression through the transfer lifecycle.
@@ -150,15 +159,27 @@ pub struct GeneratorContext {
 }
 
 impl GeneratorContext {
-    /// Returns the daemon module name gating the ` (in MODULE)` suffix that
-    /// [`crate::full_fname::full_fname`] appends to quoted paths, or `None`
+    /// Returns the daemon path context that makes
+    /// [`crate::full_fname::full_fname`] render a quoted path the way upstream
+    /// does - module-relative, with the ` (in MODULE)` suffix - or `None`
     /// outside a daemon server process.
+    ///
+    /// The module root falls back to the module itself as `curr_dir` until the
+    /// walk records one, matching a server that has only `chdir()`ed into the
+    /// module root (`clientserver.c:993`) and not yet into a source argument.
     ///
     /// # Upstream Reference
     ///
-    /// - `util1.c:1290` - `if (module_id >= 0)` in `full_fname()`.
-    pub(crate) fn daemon_module(&self) -> Option<&str> {
-        self.config.connection.daemon_module.as_deref()
+    /// - `util1.c:1285-1290` - `p1 = curr_dir + module_dirlen` and
+    ///   `if (module_id >= 0)` in `full_fname()`.
+    pub(crate) fn daemon_paths(&self) -> Option<crate::full_fname::DaemonPaths<'_>> {
+        let module = self.config.connection.daemon_module.as_deref()?;
+        let module_root = self.config.connection.daemon_module_root.as_deref()?;
+        Some(crate::full_fname::DaemonPaths {
+            module,
+            module_root,
+            curr_dir: self.curr_dir.as_deref().unwrap_or(module_root),
+        })
     }
 
     /// Creates a new generator context from a completed handshake and server config.
@@ -206,6 +227,7 @@ impl GeneratorContext {
             delete_stats: DeleteStats::new(),
             flist_send_stats: super::FlistSendStats::default(),
             parallel_thresholds: crate::parallel_io::ParallelThresholds::default(),
+            curr_dir: None,
             pipeline,
         }
     }

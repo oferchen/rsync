@@ -80,6 +80,13 @@ fn apply_module_transfer_directives(module: &ModuleDefinition, cfg: &mut ServerC
     // error or warning. Record the name so the transfer layer reproduces it.
     cfg.connection.daemon_module = Some(module.name.clone());
 
+    // upstream: clientserver.c:864,993 - `module_chdir` is the normalized
+    // module path and the server `chdir()`s into it before serving, which is
+    // why `full_fname()` (util1.c:1285) only ever prints the part of a path
+    // below `module_dirlen`. oc-rsync keeps absolute paths, so record the root
+    // and let the transfer layer strip it.
+    cfg.connection.daemon_module_root = Some(module.path.clone());
+
     // upstream: clientserver.c:1111-1112
     if module.ignore_errors {
         cfg.deletion.ignore_errors = true;
