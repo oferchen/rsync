@@ -419,10 +419,14 @@ jobs:
         run: |
           set -euo pipefail
           OC_RSYNC="target/dist/oc-rsync"
+          # --rsync-path is resolved by the REMOTE shell, whose cwd is $HOME,
+          # so the oc-rsync path handed to upstream has to be absolute.
+          OC_RSYNC_ABS="$(pwd)/${OC_RSYNC}"
           SRC=$(mktemp -d)
           DST=$(mktemp -d)
           DST2=$(mktemp -d)
-          trap 'rm -rf "$SRC" "$DST" "$DST2"' EXIT
+          DST3=$(mktemp -d)
+          trap 'rm -rf "$SRC" "$DST" "$DST2" "$DST3"' EXIT
 
           # Create test data
           for i in $(seq 1 10); do
@@ -431,10 +435,18 @@ jobs:
           mkdir -p "$SRC/subdir"
           echo "nested" > "$SRC/subdir/nested.txt"
 
-          # Verify binaries
+          # Verify binaries. The upstream peer is only an oracle if it really
+          # is upstream 3.4.4, so assert on the --version banner and never on
+          # the path: if the install step above found no freshly built binary,
+          # `rsync` on PATH is silently the distro build instead.
+          UP_BANNER="$(rsync --version 2>&1 | head -1)"
           echo "oc-rsync: $($OC_RSYNC --version 2>&1 | head -1)"
-          echo "upstream rsync: $(rsync --version 2>&1 | head -1)"
+          echo "upstream rsync: $UP_BANNER"
           echo "upstream rsync path: $(which rsync)"
+          case "$UP_BANNER" in
+            "rsync  version 3.4.4 "*) ;;
+            *) echo "expected upstream rsync 3.4.4 on PATH, got: $UP_BANNER" >&2; exit 1 ;;
+          esac
 
           # Baseline: upstream rsync → upstream rsync via SSH
           echo "=== Baseline: upstream rsync SSH pull ==="
@@ -502,6 +514,17 @@ jobs:
           # SSH pull no-change
           timeout 60 "$OC_RSYNC" -av --timeout=30 "localhost:$SRC/" "$DST/"
           echo "PASS: SSH pull no-change sync"
+
+          # SSH pull with oc-rsync as the REMOTE SENDER: upstream rsync is the
+          # client and spawns oc-rsync as `--server --sender` over SSH. Every
+          # other SSH leg here runs oc-rsync as the client, so without this one
+          # oc-rsync's server-sender wire output has no upstream oracle: an
+          # oc<->oc transfer cannot see a divergence that both sides share.
+          echo "=== SSH pull: upstream rsync client <- oc-rsync remote sender ==="
+          timeout 60 rsync -av --timeout=30 --rsync-path="$OC_RSYNC_ABS" \
+            "localhost:$SRC/" "$DST3/" 2>&1
+          diff -r "$SRC" "$DST3"
+          echo "PASS: SSH pull with oc-rsync as remote sender"
 
           echo "All SSH interop tests passed."
 
