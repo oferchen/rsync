@@ -627,14 +627,19 @@ impl Drop for TempFileGuard {
 }
 
 impl TempFileGuard {
-    /// Removes this guard's path from the global [`engine::CleanupManager`]
-    /// registry when it was registered. Idempotent: `HashSet::remove` is a
-    /// no-op for an absent key, so a double-unregister (e.g. an explicit
-    /// pre-`keep` unregister followed by this Drop) is harmless.
+    /// Removes this guard's path from both global [`engine::CleanupManager`]
+    /// registries when it was registered. Idempotent: `HashSet::remove` and
+    /// `Vec::retain` are both no-ops for an absent key, so a double-unregister
+    /// (e.g. an explicit pre-`keep` unregister followed by this Drop) is
+    /// harmless.
     #[inline]
     fn unregister(&self) {
         if self.registered {
             engine::CleanupManager::global().unregister_temp_file(&self.path);
+            // The partial entry names where this temp would be moved on an
+            // abort. Once the guard has committed or unlinked the temp there is
+            // nothing left to move, so the entry must go too.
+            engine::CleanupManager::global().unregister_partial(&self.path);
         }
     }
 }

@@ -15,6 +15,8 @@ use std::io::{self, Read};
 use std::net::{TcpListener, TcpStream};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -292,5 +294,239 @@ pub fn require_upstream(binary_path: &str) {
     if !Path::new(binary_path).exists() {
         eprintln!("Skipping: upstream rsync binary not found at {binary_path}");
         panic!("upstream binary required for this test");
+    }
+}
+
+/// Candidate locations for a real upstream rsync, most specific first.
+///
+/// The interop harness installs versioned builds under `target/`; a developer
+/// machine usually only has the packaged binary. Both are acceptable as long
+/// as the binary is genuinely upstream, which [`upstream_rsync`] verifies from
+/// `--version` rather than from the path it was found at.
+#[allow(dead_code)]
+const UPSTREAM_CANDIDATES: &[&str] = &[
+    UPSTREAM_3_4_1,
+    "/opt/homebrew/bin/rsync",
+    "/usr/local/bin/rsync",
+    "/usr/bin/rsync",
+    "/bin/rsync",
+];
+
+/// Locates an upstream rsync binary, or panics naming every path tried.
+///
+/// A missing upstream binary must fail the test rather than silently return:
+/// a cross-implementation assertion that quietly asserts nothing is worse than
+/// no test at all. Verifying the `--version` banner also rules out an
+/// `oc-rsync` shim earlier on `PATH` masquerading as upstream.
+#[allow(dead_code)]
+pub fn upstream_rsync() -> PathBuf {
+    for candidate in UPSTREAM_CANDIDATES {
+        let path = Path::new(candidate);
+        if !path.exists() {
+            continue;
+        }
+        let Ok(output) = Command::new(path).arg("--version").output() else {
+            continue;
+        };
+        let banner = String::from_utf8_lossy(&output.stdout);
+        let first = banner.lines().next().unwrap_or_default();
+        if first.starts_with("rsync  version") && first.contains("protocol version") {
+            return path.to_path_buf();
+        }
+    }
+    panic!(
+        "no upstream rsync binary found; tried: {}. Build one with \
+         `bash tools/ci/run_interop.sh` or install the packaged rsync.",
+        UPSTREAM_CANDIDATES.join(", ")
+    );
+}
+
+/// A TCP proxy that forwards a bounded number of bytes from the daemon to the
+/// client and then stalls forever with both sockets still open.
+///
+/// This is what makes a mid-transfer interrupt test deterministic. Throttling
+/// the client with `--bwlimit` does not work: upstream only throttles socket
+/// *writes* (`io.c:861`), so on a daemon pull the limit has to be applied by
+/// the daemon and is inert client-side. Capping the bytes instead means the
+/// transfer is structurally unable to complete, so the kill can be gated on
+/// observed on-disk progress rather than on a timing guess.
+#[allow(dead_code)]
+pub struct CappingProxy {
+    port: u16,
+    forwarded: Arc<AtomicU64>,
+    stop: Arc<AtomicBool>,
+}
+
+#[allow(dead_code)]
+impl CappingProxy {
+    /// Starts a proxy in front of `target_port` that forwards at most `cap`
+    /// bytes downstream.
+    pub fn start(target_port: u16, cap: u64) -> io::Result<Self> {
+        let listener = TcpListener::bind("127.0.0.1:0")?;
+        let port = listener.local_addr()?.port();
+        listener.set_nonblocking(true)?;
+
+        let forwarded = Arc::new(AtomicU64::new(0));
+        let stop = Arc::new(AtomicBool::new(false));
+        let accept_forwarded = Arc::clone(&forwarded);
+        let accept_stop = Arc::clone(&stop);
+
+        thread::spawn(move || {
+            while !accept_stop.load(Ordering::Relaxed) {
+                match listener.accept() {
+                    Ok((client, _)) => {
+                        let Ok(daemon) = TcpStream::connect(("127.0.0.1", target_port)) else {
+                            continue;
+                        };
+                        let _ = client.set_nonblocking(false);
+                        let (Ok(client_rx), Ok(daemon_rx)) =
+                            (client.try_clone(), daemon.try_clone())
+                        else {
+                            continue;
+                        };
+                        let up_stop = Arc::clone(&accept_stop);
+                        thread::spawn(move || pump(client_rx, daemon, u64::MAX, None, up_stop));
+                        let down_counter = Arc::clone(&accept_forwarded);
+                        let down_stop = Arc::clone(&accept_stop);
+                        thread::spawn(move || {
+                            pump(daemon_rx, client, cap, Some(down_counter), down_stop);
+                        });
+                    }
+                    Err(ref e) if e.kind() == io::ErrorKind::WouldBlock => {
+                        thread::sleep(Duration::from_millis(10));
+                    }
+                    Err(_) => return,
+                }
+            }
+        });
+
+        Ok(Self {
+            port,
+            forwarded,
+            stop,
+        })
+    }
+
+    /// The port clients should connect to.
+    pub fn port(&self) -> u16 {
+        self.port
+    }
+
+    /// Bytes forwarded daemon -> client so far.
+    pub fn forwarded(&self) -> u64 {
+        self.forwarded.load(Ordering::Relaxed)
+    }
+}
+
+impl Drop for CappingProxy {
+    fn drop(&mut self) {
+        self.stop.store(true, Ordering::Relaxed);
+    }
+}
+
+/// Copies `src` into `dst` until `cap` bytes have moved, then parks with both
+/// sockets open so the peer blocks instead of seeing EOF.
+fn pump(
+    mut src: TcpStream,
+    mut dst: TcpStream,
+    cap: u64,
+    counter: Option<Arc<AtomicU64>>,
+    stop: Arc<AtomicBool>,
+) {
+    use std::io::Write;
+
+    let mut moved: u64 = 0;
+    let mut buf = [0u8; 65536];
+    while moved < cap {
+        let want = ((cap - moved) as usize).min(buf.len());
+        let read = match src.read(&mut buf[..want]) {
+            Ok(0) | Err(_) => return,
+            Ok(n) => n,
+        };
+        if dst.write_all(&buf[..read]).is_err() {
+            return;
+        }
+        moved += read as u64;
+        if let Some(ref counter) = counter {
+            counter.fetch_add(read as u64, Ordering::Relaxed);
+        }
+    }
+    // Cap reached: hold both sockets open and forward nothing more.
+    while !stop.load(Ordering::Relaxed) {
+        thread::sleep(Duration::from_millis(25));
+    }
+}
+
+/// Waits until some file under `root` has a non-zero length.
+///
+/// Gates the interrupt on real progress instead of a sleep, so the test cannot
+/// kill the client before the receiver has opened and written its temp file.
+#[allow(dead_code)]
+pub fn wait_for_progress(root: &Path, timeout: Duration) -> bool {
+    let deadline = Instant::now() + timeout;
+    loop {
+        if tree_has_data(root) {
+            return true;
+        }
+        if Instant::now() >= deadline {
+            return false;
+        }
+        thread::sleep(Duration::from_millis(25));
+    }
+}
+
+fn tree_has_data(root: &Path) -> bool {
+    let Ok(entries) = fs::read_dir(root) else {
+        return false;
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.is_dir() {
+            if tree_has_data(&path) {
+                return true;
+            }
+        } else if entry.metadata().map(|m| m.len()).unwrap_or(0) > 0 {
+            return true;
+        }
+    }
+    false
+}
+
+/// Background readers for a child's piped stdout/stderr.
+///
+/// A child whose pipes nobody reads blocks once the pipe buffer fills, which
+/// would deadlock against the very interrupt the test is measuring.
+#[allow(dead_code)]
+pub struct PipeDrain {
+    stdout: thread::JoinHandle<String>,
+    stderr: thread::JoinHandle<String>,
+}
+
+#[allow(dead_code)]
+impl PipeDrain {
+    /// Takes the child's pipes and starts draining them.
+    pub fn start(child: &mut Child) -> Self {
+        let mut out = child.stdout.take().expect("stdout piped");
+        let mut err = child.stderr.take().expect("stderr piped");
+        Self {
+            stdout: thread::spawn(move || {
+                let mut buf = String::new();
+                let _ = out.read_to_string(&mut buf);
+                buf
+            }),
+            stderr: thread::spawn(move || {
+                let mut buf = String::new();
+                let _ = err.read_to_string(&mut buf);
+                buf
+            }),
+        }
+    }
+
+    /// Joins both readers, returning `(stdout, stderr)`.
+    pub fn join(self) -> (String, String) {
+        (
+            self.stdout.join().unwrap_or_default(),
+            self.stderr.join().unwrap_or_default(),
+        )
     }
 }

@@ -20,12 +20,64 @@ use crate::temp_guard::open_tmpfile;
 #[cfg(unix)]
 use crate::temp_guard::open_tmpfile_sandboxed;
 
-use super::super::config::DiskCommitConfig;
+use super::super::config::{DiskCommitConfig, PartialMode};
 use super::super::writer::{ReusableBufWriter, Writer};
 use super::commit::{
     SparseFinalize, commit_file, finalize_sparse, make_backup_copy, retain_partial_file,
 };
 use super::metadata::{apply_file_metadata, finalize_checksum};
+
+/// Registers a network temp file with both global cleanup registries.
+///
+/// `register_temp_file` covers the orphan case (an abort that never runs the
+/// guard's `Drop` must not leave a `.name.XXXXXX` behind).
+/// `register_partial` covers the retention case: it records where an
+/// interrupted temp should end up so the process-wide abort path
+/// (`CleanupManager::finalize_partials`, driven by a second interrupt signal)
+/// honours `--partial` / `--partial-dir` without needing the disk thread to
+/// unwind.
+///
+/// `partial_dest` is `None` until literal data has actually been received,
+/// mirroring upstream's `cleanup_got_literal` gate (`cleanup.c:159`) - a temp
+/// file with no bytes in it is unlinked, never promoted to a partial.
+///
+/// upstream: `cleanup.c:cleanup_set()` records the `cleanup_fname` /
+/// `cleanup_new_fname` pair for exactly this purpose.
+fn register_temp_with_cleanup(
+    config: &DiskCommitConfig,
+    guard: &mut TempFileGuard,
+    dest_path: &std::path::Path,
+    got_literal: bool,
+) {
+    let temp = guard.path().to_path_buf();
+    CleanupManager::global().register_temp_file(temp.clone());
+    let (partial_dest, tweak_mtime) = if got_literal {
+        partial_destination(config, dest_path)
+    } else {
+        (None, false)
+    };
+    CleanupManager::global().register_partial(temp, partial_dest, tweak_mtime);
+    guard.mark_registered();
+}
+
+/// Resolves where an interrupted temp file should be moved, mirroring the
+/// branches of [`retain_partial_file`].
+///
+/// `--partial` renames onto the destination itself and stamps mtime 0 so
+/// `--update` will not skip the stub (`cleanup.c:174-178`); `--partial-dir`
+/// moves into the partial dir and leaves the mtime alone.
+fn partial_destination(
+    config: &DiskCommitConfig,
+    dest_path: &std::path::Path,
+) -> (Option<std::path::PathBuf>, bool) {
+    match &config.partial_mode {
+        PartialMode::None => (None, false),
+        PartialMode::Partial => (Some(dest_path.to_path_buf()), true),
+        PartialMode::PartialDir(dir) => {
+            (crate::temp_guard::partial_dir_fname(dest_path, dir), false)
+        }
+    }
+}
 
 /// Folds the existing on-disk prefix into the whole-file checksum for
 /// `--append-verify` (append_mode == 2).
@@ -173,15 +225,15 @@ pub(in crate::disk_commit) fn process_file(
             return discard_file_on_open_failure(file_rx, buf_return_tx, open_err);
         }
     };
-    // Register the temp file with the global cleanup manager so a SIGKILL
-    // (which bypasses Drop) still removes orphaned temp files on restart.
-    // Only temp+rename paths produce actual temp files; inplace and device
-    // writes operate on the final destination. The guard records its
-    // registration so its Drop unregisters the path on both success and error,
-    // preventing a per-errored-file PathBuf leak into the global set.
+    // Register the temp file with the global cleanup manager so an abort that
+    // bypasses Drop still removes orphaned temp files (and honours --partial
+    // once literal data arrives). Only temp+rename paths produce actual temp
+    // files; inplace and device writes operate on the final destination. The
+    // guard records its registration so its Drop unregisters the path on both
+    // success and error, preventing a per-errored-file PathBuf leak into the
+    // global set.
     if needs_rename {
-        CleanupManager::global().register_temp_file(cleanup_guard.path().to_path_buf());
-        cleanup_guard.mark_registered();
+        register_temp_with_cleanup(config, &mut cleanup_guard, &begin.file_path, false);
     }
 
     // Pre-existing basis length for sparse hole-punching: only in-place writes
@@ -227,6 +279,9 @@ pub(in crate::disk_commit) fn process_file(
     sum_append_prefix(config, &begin, &mut checksum_verifier)?;
 
     let mut bytes_written: u64 = 0;
+    // Tracks whether the temp's cleanup entry has been upgraded to name a
+    // partial destination (see the `cleanup_got_literal` gate at the loop tail).
+    let mut partial_registered = false;
 
     loop {
         let msg = match file_rx.recv() {
@@ -442,6 +497,16 @@ pub(in crate::disk_commit) fn process_file(
                 ));
             }
         }
+
+        // upstream: cleanup.c:159 `cleanup_got_literal` - only once bytes have
+        // landed does an interrupted temp become a partial worth keeping. Same
+        // gate the Abort/Shutdown/disconnect branches above apply; recorded in
+        // the registry here so the process-wide abort path reaches the same
+        // decision without the disk thread unwinding.
+        if needs_rename && !partial_registered && bytes_written > 0 {
+            register_temp_with_cleanup(config, &mut cleanup_guard, &begin.file_path, true);
+            partial_registered = true;
+        }
     }
 }
 
@@ -472,8 +537,15 @@ pub(in crate::disk_commit) fn process_whole_file(
 
     let (file, mut cleanup_guard, needs_rename) = open_output_file(&begin, config)?;
     if needs_rename {
-        CleanupManager::global().register_temp_file(cleanup_guard.path().to_path_buf());
-        cleanup_guard.mark_registered();
+        // The coalesced path carries its whole payload inline, so the
+        // `cleanup_got_literal` question is already settled: a non-empty
+        // WholeFile has literal bytes, an empty one has none.
+        register_temp_with_cleanup(
+            config,
+            &mut cleanup_guard,
+            &begin.file_path,
+            !data.is_empty(),
+        );
     }
 
     // Pre-existing basis length for sparse hole-punching (see process_file).

@@ -15,6 +15,7 @@ use crate::client::config::ClientConfig;
 use crate::client::error::{ClientError, invalid_argument_error, remote_exit_error};
 use crate::client::module_list::{
     DaemonStreamGuard, DaemonStreamReader, DaemonStreamWriter, build_io_timeout_reapply,
+    register_shutdown_wake,
 };
 use crate::client::progress::ClientProgressObserver;
 use crate::client::remote::batch_support::{BatchContext, build_batch_recording};
@@ -111,6 +112,9 @@ pub(crate) fn run_pull_transfer(
     // adopt it and re-apply to the live socket. Build the re-apply hook from the
     // split socket halves; connect-program (pipe) transports yield None.
     let io_timeout_reapply = build_io_timeout_reapply(reader, writer);
+    // Let an interrupt release a receive blocked on the wire. Held for the
+    // duration of the transfer; dropping it deregisters the socket.
+    let _wake_guard = register_shutdown_wake(reader);
     // A custom `--out-format` makes the receiver buffer metadata events (it
     // suppresses its own stdout); collect them for the CLI to render. Otherwise
     // the receiver prints its own default `-v`/`-i` output and no callback is
@@ -178,6 +182,9 @@ pub(crate) fn run_push_transfer(
 
     let server_config = build_server_config_for_generator(config, local_paths, filter_rules)?;
     let dry_run = config.dry_run();
+
+    // Let an interrupt release a send blocked on the wire (see run_pull_transfer).
+    let _wake_guard = register_shutdown_wake(reader);
 
     // Push: local side is Generator (sender); batch records outgoing data (is_sender=true).
     let batch_recording = batch_ctx
@@ -264,6 +271,13 @@ pub(crate) fn run_push_transfer(
 /// upstream: io.c:1663-1701 - `MSG_ERROR_EXIT` drives the NORETURN
 /// `_exit_cleanup(val)`, so the client's final exit code is the peer's code.
 fn map_server_transfer_error(error: std::io::Error, role: Role) -> ClientError {
+    // An interrupted transfer surfaces as whatever I/O failure the teardown
+    // produced (a truncated multiplex frame, a closed socket). Upstream never
+    // reports that: `rsync.c:709-716 sig_int()` short-circuits to
+    // `exit_cleanup(RERR_SIGNAL)`, so the one diagnostic is the signal itself.
+    if crate::signal::is_shutdown_requested() {
+        return crate::client::error::signal_interrupt_error(role);
+    }
     if let Some(code) = remote_exit_code(&error) {
         let exit = ExitCode::from_i32(code).unwrap_or(ExitCode::PartialTransfer);
         return remote_exit_error(exit, role, "");
@@ -463,5 +477,28 @@ mod map_server_transfer_error_tests {
         );
         assert_eq!(err.exit_code(), 23);
         assert!(err.to_string().contains("transfer failed"), "{err}");
+    }
+
+    /// A signal-driven teardown must report the signal, not the I/O failure it
+    /// caused. Upstream emits exactly one line for an interrupt
+    /// (`rsync.c:716` -> `log.c:log_exit()` with `RERR_SIGNAL`); reporting the
+    /// truncated frame instead would show the user a protocol error and code
+    /// 23 for something they asked for.
+    #[test]
+    fn signalled_teardown_reports_the_signal_not_the_io_failure() {
+        crate::signal::reset_for_testing();
+        crate::signal::request_shutdown(crate::signal::ShutdownReason::Terminated);
+        let err = map_server_transfer_error(
+            std::io::Error::new(std::io::ErrorKind::UnexpectedEof, "multiplex truncated"),
+            Role::Receiver,
+        );
+        crate::signal::reset_for_testing();
+        assert_eq!(err.exit_code(), 20);
+        let rendered = err.to_string();
+        assert!(
+            rendered.contains("received SIGINT, SIGTERM, or SIGHUP"),
+            "{rendered}"
+        );
+        assert!(!rendered.contains("multiplex truncated"), "{rendered}");
     }
 }

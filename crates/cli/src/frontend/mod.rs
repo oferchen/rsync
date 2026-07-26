@@ -436,11 +436,26 @@ fn clap_parse_error_exit_code(error: &clap::Error) -> i32 {
     }
 }
 
-/// Installs client-side signal handlers and a watcher that, on a second
-/// (abort) interrupt, finalises in-progress `--partial` temp files and exits
-/// with the rsync signal code. A single interrupt is handled gracefully by the
-/// copy loop, which stops mid-file and lets each transfer's guard finalise its
-/// partial during normal unwinding.
+/// Interval at which the signal watcher re-checks the shutdown flags.
+///
+/// It also bounds how long a transfer parked in a blocking transport read can
+/// stay parked after the first interrupt, so it doubles as the responsiveness
+/// budget for Ctrl-C during a network transfer.
+const SIGNAL_WATCH_INTERVAL: std::time::Duration = std::time::Duration::from_millis(50);
+
+/// Installs client-side signal handlers and a watcher that reacts to them
+/// outside signal context.
+///
+/// On the first interrupt the watcher fires every registered I/O waker
+/// ([`core::signal::wake_blocked_io`]), which releases a transfer blocked on
+/// the transport so it observes the shutdown flag and unwinds normally -
+/// finalising each in-progress `--partial` temp file through its guard. On a
+/// second (abort) interrupt it finalises the partial registry directly and
+/// exits with the rsync signal code, because no unwinding is going to happen.
+///
+/// upstream: `rsync.c:684 sig_int()` only records the signal and lets the
+/// normal I/O path shut the transfer down (`io.c:750 got_kill_signal` ->
+/// `handle_kill_signal` -> `cleanup.c:_exit_cleanup(RERR_SIGNAL)`).
 fn install_client_signal_handling() {
     use std::sync::atomic::{AtomicBool, Ordering};
     static INSTALLED: AtomicBool = AtomicBool::new(false);
@@ -460,7 +475,12 @@ fn install_client_signal_handling() {
                     });
                 std::process::exit(code);
             }
-            std::thread::sleep(std::time::Duration::from_millis(50));
+            if core::signal::is_shutdown_requested() {
+                // Repeated deliberately: a transfer that registers its socket
+                // after the first interrupt still gets woken on the next tick.
+                core::signal::wake_blocked_io();
+            }
+            std::thread::sleep(SIGNAL_WATCH_INTERVAL);
         }
     });
 }

@@ -7,10 +7,13 @@
 //!
 //! - [`ChecksumFactory`] - Factory for creating signature algorithms from negotiated parameters
 //! - [`TransferDeadline`] - Monotonic deadline for `--stop-at` / `--stop-after` enforcement
+//! - [`check_shutdown`] - Cooperative interrupt check for the transfer loops
 
 pub mod checksum;
 /// Deadline enforcement for `--stop-at` / `--stop-after` / `--time-limit`.
 pub mod deadline;
+pub mod interrupt;
 
 pub use checksum::ChecksumFactory;
 pub use deadline::TransferDeadline;
+pub use interrupt::check_shutdown;
