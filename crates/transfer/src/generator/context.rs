@@ -108,6 +108,15 @@ pub struct GeneratorContext {
     /// I/O error flags accumulated during file list building and transfer.
     /// Uses [`io_error_flags`] constants (IOERR_GENERAL, IOERR_VANISHED, etc.).
     pub(crate) io_error: i32,
+    /// Diagnostics raised by the file-list walk, paired with the upstream log
+    /// class that decides how a server frames them.
+    ///
+    /// The walk runs before any writer is in scope, so the text is held here
+    /// and drained by
+    /// [`flush_flist_diagnostics`](Self::flush_flist_diagnostics) once the
+    /// orchestrator can reach the wire. Each entry already carries its trailing
+    /// newline, matching upstream's `rwrite()` payload.
+    pub(crate) pending_flist_diagnostics: Vec<(super::protocol_io::SenderDiagnostic, String)>,
     /// Flat file-list indices whose `--remove-source-files` unlink is deferred
     /// until the peer confirms the commit via `MSG_SUCCESS`. Empty and unused
     /// unless `--remove-source-files` is active.
@@ -191,6 +200,7 @@ impl GeneratorContext {
             uid_list: IdList::new(),
             gid_list: IdList::new(),
             io_error: 0,
+            pending_flist_diagnostics: Vec::new(),
             pending_source_removals: super::pending_removal::PendingSourceRemovals::default(),
             incremental: IncrementalState::new(initial_ndx_start),
             delete_stats: DeleteStats::new(),
@@ -589,6 +599,21 @@ impl GeneratorContext {
         } else {
             self.add_io_error(io_error_flags::IOERR_GENERAL);
         }
+    }
+
+    /// Queues a file-list-walk diagnostic for delivery by
+    /// [`flush_flist_diagnostics`](Self::flush_flist_diagnostics).
+    ///
+    /// The walk cannot reach the transfer writer, so writing here instead of to
+    /// stderr is what lets a daemon or SSH server forward the line to the
+    /// client the way upstream's `rwrite()` does. `text` must carry its
+    /// trailing newline.
+    pub(crate) fn queue_flist_diagnostic(
+        &mut self,
+        kind: super::protocol_io::SenderDiagnostic,
+        text: String,
+    ) {
+        self.pending_flist_diagnostics.push((kind, text));
     }
 
     /// Returns the current I/O error flags.
