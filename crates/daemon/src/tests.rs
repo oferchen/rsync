@@ -33,6 +33,7 @@ use crate::daemon::{
     // From runtime_options.rs
     RuntimeOptions,
     TestSecretsEnvOverride,
+    UNSUPPORTED_AUTH_DIGEST_EXIT_CODE,
     advertised_capability_lines,
     // From sections/module_access.rs
     apply_module_bandwidth_limit,
@@ -69,6 +70,8 @@ use crate::daemon::{
     set_test_forward_override,
     set_test_hostname_override,
     set_test_netgroup_members,
+    // From sections/session_runtime.rs
+    single_session_exit,
 };
 
 // Only the unix-only post-xfer-exec abort test references this constant, so
@@ -77,6 +80,7 @@ use crate::daemon::{
 use crate::daemon::MODULE_ABORT_EXIT_CODE;
 
 use core::{
+    auth::DaemonAuthDigest,
     bandwidth::{BandwidthLimiter, LimiterChange},
     branding::{self, Brand},
     exit_code::ExitCode,
@@ -280,6 +284,7 @@ include!("tests/chunks/daemon_delta_transfer.rs");
 include!("tests/chunks/daemon_negotiation_module_listing.rs");
 include!("tests/chunks/daemon_module_implicit_list_only.rs");
 include!("tests/chunks/daemon_negotiation_empty_module_lists_modules.rs");
+include!("tests/chunks/daemon_auth_digest_negotiation.rs");
 include!("tests/chunks/daemon_negotiation_authentication.rs");
 include!("tests/chunks/daemon_negotiation_version.rs");
 include!("tests/chunks/daemon_negotiation_error_handling.rs");

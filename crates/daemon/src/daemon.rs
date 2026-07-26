@@ -30,17 +30,16 @@ use tracing::instrument;
 
 use std::process::{Command as ProcessCommand, Stdio};
 
-use base64::Engine as _;
-use base64::engine::general_purpose::STANDARD_NO_PAD;
-
 #[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
 
-use checksums::strong::{Md4, Md5};
 use clap::{Arg, ArgAction, Command, builder::OsStringValueParser};
 use core::client::TcpFastOpenMode;
 use core::{
-    auth::{digests_for_protocol, verify_daemon_auth_response},
+    auth::{
+        DaemonAuthDigest, digests_for_protocol, negotiate_server_daemon_digest,
+        supported_daemon_digest_list, verify_daemon_auth_response,
+    },
     bandwidth::{
         BandwidthLimitComponents, BandwidthLimiter, BandwidthParseError, LimiterChange,
         parse_bandwidth_limit,
@@ -58,7 +57,8 @@ use logging_sink::MessageSink;
 use protocol::{
     LEGACY_DAEMON_PREFIX_LEN, LegacyDaemonMessage, MessageCode, MessageFrame, ProtocolVersion,
     filters::FilterRuleWireFormat, format_legacy_daemon_message, iconv::FilenameConverter,
-    is_version_banner, missing_greeting_token, parse_legacy_daemon_message,
+    is_version_banner, missing_greeting_token, parse_legacy_daemon_greeting_details,
+    parse_legacy_daemon_message,
 };
 
 use crate::{
@@ -147,6 +147,21 @@ pub(crate) const ACCESS_DENIED_PAYLOAD: &str =
 ///
 /// upstream: clientserver.c:764 - `@ERROR: auth failed on module %s\n`
 pub(crate) const AUTH_FAILED_PAYLOAD: &str = "@ERROR: auth failed on module {module}";
+/// Error payload sent when no digest the client offered is supported here.
+///
+/// `{digests}` is replaced with this build's own daemon-auth list, exactly as
+/// upstream re-renders `get_default_nno_list()` into the message.
+///
+/// upstream: compat.c:872-874 - `@ERROR: your client does not support one of our
+/// daemon-auth checksums: %s\n`, followed by `exit_cleanup(RERR_UNSUPPORTED)`.
+pub(crate) const UNSUPPORTED_AUTH_DIGEST_PAYLOAD: &str =
+    "@ERROR: your client does not support one of our daemon-auth checksums: {digests}";
+/// Exit code used when the client and daemon share no auth digest.
+///
+/// upstream: compat.c:875 - `exit_cleanup(RERR_UNSUPPORTED)`. The refusal happens
+/// in the per-connection child, so the listening parent is unaffected; only the
+/// single-session modes (stdio, inetd) surface it as the process exit status.
+pub(crate) const UNSUPPORTED_AUTH_DIGEST_EXIT_CODE: ExitCode = ExitCode::Unsupported;
 /// Error payload returned when a requested module does not exist.
 ///
 /// upstream: clientserver.c:732 - `@ERROR: Unknown module '%s'\n`
@@ -430,7 +445,7 @@ pub fn run_daemon_stdio(config: DaemonConfig) -> Result<(), DaemonError> {
         log_connection(log, peer_host.as_deref(), peer_addr);
     }
 
-    handle_legacy_session(
+    let outcome = handle_legacy_session(
         stream,
         peer_addr,
         LegacySessionParams {
@@ -442,17 +457,9 @@ pub fn run_daemon_stdio(config: DaemonConfig) -> Result<(), DaemonError> {
             peer_host,
             reverse_lookup,
         },
-    )
-    .map_err(|error| {
-        DaemonError::new(
-            SOCKET_IO_EXIT_CODE,
-            rsync_error!(
-                SOCKET_IO_EXIT_CODE,
-                format!("stdio daemon session failed: {error}")
-            )
-            .with_role(Role::Daemon),
-        )
-    })
+    );
+
+    single_session_exit(outcome, "stdio daemon session failed")
 }
 
 /// Runs the daemon orchestration using the hybrid tokio listener.

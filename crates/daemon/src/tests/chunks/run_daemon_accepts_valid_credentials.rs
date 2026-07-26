@@ -66,10 +66,18 @@ fn run_daemon_accepts_valid_credentials() {
         .strip_prefix("@RSYNCD: AUTHREQD ")
         .expect("challenge prefix");
 
-    let mut hasher = Md5::new();
-    hasher.update(b"password");
-    hasher.update(challenge.as_bytes());
-    let digest = STANDARD_NO_PAD.encode(hasher.finalize());
+    // The greeting above offers sha512 first, and upstream's server takes the
+    // first client-offered name it supports rather than the strongest
+    // (compat.c:354 - `if (best == 1 || am_server) break;`), so the exchange is
+    // SHA-512. Verified against rsync 3.4.4: the same greeting yields an
+    // 86-character challenge and an MD5 response is refused.
+    assert_eq!(
+        challenge.len(),
+        DaemonAuthDigest::Sha512.base64_len(),
+        "sha512 leads the offered list, so it must be the negotiated digest"
+    );
+    let digest =
+        core::auth::compute_daemon_auth_response(b"password", challenge, DaemonAuthDigest::Sha512);
     let response_line = format!("alice {digest}\n");
     stream
         .write_all(response_line.as_bytes())
@@ -90,8 +98,14 @@ fn run_daemon_accepts_valid_credentials() {
     drop(stream);
     drop(reader);
 
-    // Verify the daemon thread completes successfully (no panic or timeout)
-    let result = handle.join().expect("daemon thread");
-    assert!(result.is_ok(), "daemon should handle connection close gracefully");
+    // Verify the daemon thread completes successfully (no panic or timeout).
+    // Bound the join: on Windows the accept loop can linger past the disconnect,
+    // so detach rather than wedge until nextest's 360s slow-timeout.
+    if let Some(result) = finish_daemon(handle) {
+        assert!(
+            result.is_ok(),
+            "daemon should handle connection close gracefully: {result:?}"
+        );
+    }
 }
 

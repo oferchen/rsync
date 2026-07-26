@@ -111,7 +111,7 @@ pub fn run_stdio_session(
     // loopback address as the synthetic peer for log messages and access checks.
     let peer_addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 0);
 
-    handle_legacy_session(
+    let outcome = handle_legacy_session(
         stream,
         peer_addr,
         LegacySessionParams {
@@ -123,12 +123,7 @@ pub fn run_stdio_session(
             peer_host: Some("localhost".to_owned()),
             reverse_lookup,
         },
-    )
-    .map_err(|error| {
-        DaemonError::new(
-            SOCKET_IO_EXIT_CODE,
-            rsync_error!(SOCKET_IO_EXIT_CODE, format!("stdio daemon session failed: {error}"))
-                .with_role(Role::Daemon),
-        )
-    })
+    );
+
+    single_session_exit(outcome, "stdio daemon session failed")
 }
