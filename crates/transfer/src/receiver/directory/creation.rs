@@ -142,8 +142,12 @@ impl ReceiverContext {
             return Ok(Vec::new());
         }
 
-        // upstream: generator.c:1273-1274 - check_filter(&daemon_filter_list, ...)
-        // skips daemon-excluded directories before creation.
+        // upstream: generator.c:1273-1287 - check_filter(&daemon_filter_list, ...)
+        // skips daemon-excluded directories before creation, reporting
+        // `ERROR: daemon refused to receive directory "%s"` as FERROR_XFER
+        // (generator.c:1281-1283) before the `skipping_dir_contents` jump. A
+        // server receiver forwards that frame to the pushing client instead of
+        // writing it to the daemon's own stderr.
         let daemon_filters = self.daemon_filter_set();
         let dir_entries: Vec<(usize, PathBuf, PathBuf)> = self
             .file_list
@@ -154,7 +158,27 @@ impl ReceiverContext {
                 if let Some(filters) = daemon_filters {
                     let name = e.name();
                     if name != "." && !name.is_empty() {
-                        return filters.allows(Path::new(name), true);
+                        // upstream: generator.c:1258-1266 - a directory below an
+                        // already-refused one is dropped in silence; only the
+                        // outermost refusal is reported.
+                        if crate::receiver::daemon_filter_refuses_ancestor(filters, name) {
+                            return false;
+                        }
+                        if !filters.allows(Path::new(name), true) {
+                            let _ = self.emit_error_xfer_line(
+                                writer,
+                                &format!("ERROR: daemon refused to receive directory \"{name}\"\n"),
+                            );
+                            // upstream: generator.c:1284-1285 jumps to
+                            // `skipping_dir_contents`, whose FERROR notice
+                            // (generator.c:1492) announces that the directory's
+                            // contents are being dropped.
+                            let _ = self.emit_error_line(
+                                writer,
+                                "*** Skipping any contents from this failed directory ***\n",
+                            );
+                            return false;
+                        }
                     }
                 }
                 true

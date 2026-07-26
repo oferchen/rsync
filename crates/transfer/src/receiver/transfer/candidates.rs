@@ -150,15 +150,34 @@ impl ReceiverContext {
             .filter(|(_, e)| e.is_file())
             .filter(|(_, e)| !is_hardlink_follower(e))
             .filter(|(_, e)| {
-                // upstream: receiver.c:711-716 - check_filter(&daemon_filter_list, ...)
+                // upstream: generator.c:1273-1287 - check_filter(&daemon_filter_list, ...)
                 // rejects daemon-excluded files before accepting transfer data.
+                // The refusal is never silent: generator.c:1281-1283 reports
+                // `ERROR: daemon refused to receive file "%s"` as FERROR_XFER,
+                // which a server receiver forwards to the pushing client rather
+                // than writing to the daemon's own stderr. Dropping the file
+                // without that frame would let a push of module-excluded files
+                // exit 0 with no diagnostic at all.
                 if has_daemon_filters {
                     let filters =
                         daemon_filters.expect("daemon_filters is Some when has_daemon_filters");
                     let name = e.name();
-                    if name != "." && !filters.allows(Path::new(name), false) {
-                        stats.files_skipped += 1;
-                        return false;
+                    if name != "." {
+                        // upstream: generator.c:1258-1266 - the `skip_dir` check
+                        // runs before the filter check, so a file below an
+                        // already-refused directory is dropped in silence.
+                        if crate::receiver::daemon_filter_refuses_ancestor(filters, name) {
+                            stats.files_skipped += 1;
+                            return false;
+                        }
+                        if !filters.allows(Path::new(name), false) {
+                            let _ = self.emit_error_xfer_line(
+                                writer,
+                                &format!("ERROR: daemon refused to receive file \"{name}\"\n"),
+                            );
+                            stats.files_skipped += 1;
+                            return false;
+                        }
                     }
                 }
                 if has_failed_dirs {
