@@ -182,11 +182,25 @@ fn sum_head_accepts_empty_whole_file() {
 
 #[test]
 fn sender_attrs_read_protocol_28_returns_default_iflags() {
-    // Protocol 28 just reads the NDX byte, no iflags
+    // Protocol 28 just reads the NDX byte, no iflags.
+    //
+    // The value is a bare ITEM_TRANSFER, deliberately NOT upstream's
+    // `ITEM_TRANSFER | ITEM_MISSING_DATA` (rsync.c:383-384). ITEM_MISSING_DATA
+    // is `1<<16` (rsync.h:254), a log-only bit that does not fit this u16 and
+    // that upstream itself masks off before the wire (`iflags &= 0xffff`,
+    // generator.c:581). These attrs only select which trailing wire fields to
+    // parse and are echoed back - they never reach a renderer - so the display
+    // bit would be dead state here. The generator's decode-to-display path
+    // (ItemFlags::read) is the one that carries it.
     let data = vec![0x05u8]; // NDX byte only
     let attrs = SenderAttrs::read(&mut Cursor::new(data), 28).unwrap();
 
     assert_eq!(attrs.iflags, SenderAttrs::ITEM_TRANSFER);
+    assert_eq!(
+        attrs.iflags & (1 << 10),
+        0,
+        "ITEM_REPORT_CRTIME must not stand in for the log-only missing-data bit"
+    );
     assert!(attrs.fnamecmp_type.is_none());
     assert!(attrs.xname.is_none());
 }

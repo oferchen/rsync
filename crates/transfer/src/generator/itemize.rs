@@ -389,6 +389,47 @@ mod tests {
         assert_eq!(result, ">f+++++++++");
     }
 
+    /// A pre-29 peer sends no iflags, so the row must read `?` ("the sender did
+    /// not say what changed"), never `.` ("nothing changed") - a claim no side
+    /// ever made.
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `rsync.c:383-384` - synthesises `ITEM_TRANSFER | ITEM_MISSING_DATA`
+    /// - `log.c:736-737` - `ITEM_MISSING_DATA` fills columns 2..10 with `?`
+    #[test]
+    fn format_protocol_28_missing_data_is_unknown() {
+        let iflags = ItemFlags::read(&mut std::io::Cursor::new(&[][..]), 28).unwrap();
+        let entry = make_file_entry("test.txt");
+        assert_eq!(
+            format_iflags(&iflags, &entry, false, &default_ctx()),
+            ">f?????????"
+        );
+        assert_eq!(
+            format_iflags(&iflags, &entry, true, &default_ctx()),
+            "<f?????????"
+        );
+    }
+
+    /// `ITEM_IS_NEW` outranks `ITEM_MISSING_DATA`: a file the receiver is
+    /// creating is fully known to be new, so it stays `+++++++++` even on a
+    /// pre-29 link where the missing-data bit is also set.
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `log.c:735-737` - `ch = iflags & ITEM_IS_NEW ? '+' : '?'`
+    #[test]
+    fn format_is_new_outranks_missing_data() {
+        let iflags = ItemFlags::from_raw(
+            ItemFlags::ITEM_TRANSFER | ItemFlags::ITEM_MISSING_DATA | ItemFlags::ITEM_IS_NEW,
+        );
+        let entry = make_file_entry("test.txt");
+        assert_eq!(
+            format_iflags(&iflags, &entry, false, &default_ctx()),
+            ">f+++++++++"
+        );
+    }
+
     #[test]
     fn format_metadata_only_no_changes() {
         let iflags = ItemFlags::from_raw(0);

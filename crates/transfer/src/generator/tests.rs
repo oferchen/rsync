@@ -1229,13 +1229,24 @@ fn item_flags_read_protocol_29_plus() {
 
 #[test]
 fn item_flags_read_protocol_28() {
-    // Protocol 28 and older defaults to ITEM_TRANSFER without reading
-    let data: [u8; 0] = [];
-    let mut cursor = Cursor::new(&data[..]);
+    // upstream: rsync.c:383-384 - protocol 28 and older carry no iflags on the
+    // wire, so the peer never says what changed. Upstream synthesises
+    // ITEM_TRANSFER | ITEM_MISSING_DATA rather than a bare ITEM_TRANSFER: the
+    // missing-data bit is what makes the itemize row read `?` ("unknown")
+    // instead of `.` ("unchanged"), which would be an assertion the sender
+    // never made.
+    for proto in [20u8, 28] {
+        let data: [u8; 0] = [];
+        let mut cursor = Cursor::new(&data[..]);
 
-    let flags = ItemFlags::read(&mut cursor, 28).unwrap();
-    assert_eq!(flags.raw(), ItemFlags::ITEM_TRANSFER);
-    assert!(flags.needs_transfer());
+        let flags = ItemFlags::read(&mut cursor, proto).unwrap();
+        assert_eq!(
+            flags.raw(),
+            ItemFlags::ITEM_TRANSFER | ItemFlags::ITEM_MISSING_DATA,
+            "protocol {proto} must synthesise ITEM_TRANSFER | ITEM_MISSING_DATA"
+        );
+        assert!(flags.needs_transfer());
+    }
 }
 
 #[test]

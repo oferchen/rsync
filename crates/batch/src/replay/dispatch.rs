@@ -28,8 +28,8 @@ pub(super) const ITEM_BASIS_TYPE_FOLLOWS: u16 = 1 << 11;
 /// upstream: rsync.c:403-418
 pub(super) const ITEM_XNAME_FOLLOWS: u16 = 1 << 12;
 /// ITEM_TRANSFER - delta data follows after the per-file metadata block.
-/// upstream: rsync.c
-pub(super) const ITEM_TRANSFER: u16 = 0x8000;
+/// upstream: rsync.h:252 - `#define ITEM_TRANSFER (1<<15)`
+pub(super) const ITEM_TRANSFER: u16 = 1 << 15;
 
 /// Read the per-file iflags word and consume any optional trailing fields.
 ///
@@ -55,8 +55,12 @@ pub(super) fn read_iflags_and_skip_meta(
         })?;
         u16::from_le_bytes(buf)
     } else {
-        // upstream: rsync.c:384 - default to ITEM_TRANSFER | ITEM_MISSING_DATA
-        0x8000 | 0x0400
+        // upstream: rsync.c:383-384 - `ITEM_TRANSFER | ITEM_MISSING_DATA`.
+        // ITEM_MISSING_DATA is `1<<16` (rsync.h:254), a log-only bit that never
+        // fits this u16 framing word and that no consumer here inspects: the
+        // replay loop only tests ITEM_TRANSFER / ITEM_BASIS_TYPE_FOLLOWS /
+        // ITEM_XNAME_FOLLOWS to decide which trailing fields to consume.
+        ITEM_TRANSFER
     };
 
     if iflags & ITEM_BASIS_TYPE_FOLLOWS != 0 {

@@ -89,7 +89,8 @@ impl ProtocolVersion {
 
     /// Returns `true` if this protocol version sends iflags after NDX.
     ///
-    /// - Protocol < 29: iflags default to `ITEM_TRANSFER`
+    /// - Protocol < 29: no iflags on the wire; the reader synthesises
+    ///   `ITEM_TRANSFER | ITEM_MISSING_DATA` (`rsync.c:383-384`)
     /// - Protocol >= 29: 2-byte iflags follow each NDX on the wire
     ///
     /// # Upstream Reference
