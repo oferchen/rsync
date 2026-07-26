@@ -15,6 +15,7 @@ use crate::client::config::ClientConfig;
 use crate::client::error::{ClientError, invalid_argument_error, remote_exit_error};
 use crate::client::module_list::{
     DaemonStreamGuard, DaemonStreamReader, DaemonStreamWriter, build_io_timeout_reapply,
+    register_shutdown_wake,
 };
 use crate::client::progress::ClientProgressObserver;
 use crate::client::remote::batch_support::{BatchContext, build_batch_recording};
@@ -111,6 +112,9 @@ pub(crate) fn run_pull_transfer(
     // adopt it and re-apply to the live socket. Build the re-apply hook from the
     // split socket halves; connect-program (pipe) transports yield None.
     let io_timeout_reapply = build_io_timeout_reapply(reader, writer);
+    // Let an interrupt release a receive blocked on the wire. Held for the
+    // duration of the transfer; dropping it deregisters the socket.
+    let _wake_guard = register_shutdown_wake(reader);
     // A custom `--out-format` makes the receiver buffer metadata events (it
     // suppresses its own stdout); collect them for the CLI to render. Otherwise
     // the receiver prints its own default `-v`/`-i` output and no callback is
@@ -178,6 +182,9 @@ pub(crate) fn run_push_transfer(
 
     let server_config = build_server_config_for_generator(config, local_paths, filter_rules)?;
     let dry_run = config.dry_run();
+
+    // Let an interrupt release a send blocked on the wire (see run_pull_transfer).
+    let _wake_guard = register_shutdown_wake(reader);
 
     // Push: local side is Generator (sender); batch records outgoing data (is_sender=true).
     let batch_recording = batch_ctx

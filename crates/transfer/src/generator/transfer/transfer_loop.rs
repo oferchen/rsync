@@ -323,6 +323,11 @@ impl GeneratorContext {
         let tolerant = self.config.flags.dry_run;
 
         loop {
+            // upstream: io.c:750 - the sender's I/O loop acts on
+            // got_kill_signal only at a frame boundary. Checking before the
+            // next NDX read means a shutdown never truncates a delta already
+            // being written to the wire.
+            crate::shared::check_shutdown()?;
             // upstream: sender.c:227 - send extra file lists at top of loop
             if inc_recurse {
                 // upstream: flist.c:2139 - file_total - file_old_total < at_least

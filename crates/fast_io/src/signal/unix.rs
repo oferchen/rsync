@@ -3,19 +3,25 @@
 //! Encapsulates the single unsafe FFI block. The caller supplies the signal
 //! number and an async-signal-safe `extern "C"` handler; this module
 //! zero-initialises a `sigaction` struct, points `sa_sigaction` at the
-//! handler, sets `SA_RESTART`, and submits it. On failure the underlying
-//! `errno` is returned via `io::Error::last_os_error()`.
+//! handler, and submits it with no flags. On failure the underlying `errno`
+//! is returned via `io::Error::last_os_error()`.
 
 use std::io;
 use std::os::raw::c_int;
 
 use super::SignalHandlerFn;
 
-/// Installs `handler` for `signum` with `SA_RESTART`.
+/// Installs `handler` for `signum` with no `sa_flags`.
 ///
-/// `SA_RESTART` matches upstream rsync's `sig_int`/`sig_term` setup
-/// (`main.c`) so blocking syscalls (`read`, `write`, `select`, `poll`)
-/// resume after the handler returns instead of failing with `EINTR`.
+/// upstream: `rsync.h:1258` defines `SIGACTION(n,h)` as
+/// `sigact.sa_handler = (h), sigaction((n), &sigact, NULL)` over a
+/// file-static `struct sigaction sigact` (`main.c:133`, `cleanup.c:43`) that
+/// is never given any flags, so `sa_flags == 0` and `SA_RESTART` is *not*
+/// set. Upstream depends on that: a signal aborts the blocking `select()` in
+/// `perform_io()` with `EINTR`, which `io.c:766-779` treats exactly like a
+/// timeout, and the next loop iteration observes `got_kill_signal`
+/// (`io.c:750`). Installing with `SA_RESTART` instead would restart the
+/// blocked syscall and the flag would never be read.
 ///
 /// The handler must be async-signal-safe: only atomic stores against
 /// statically allocated atomics, no allocation, no locking, no calls into
@@ -28,14 +34,13 @@ use super::SignalHandlerFn;
 pub fn install_signal_handler(signum: c_int, handler: SignalHandlerFn) -> io::Result<()> {
     // SAFETY: `libc::sigaction` is zero-initialised (valid POD layout);
     // `sa_sigaction` is set to a `'static extern "C" fn(c_int)`, which has
-    // the ABI `sigaction(2)` expects; the empty signal mask and `SA_RESTART`
-    // flag mirror upstream rsync. The caller contract requires `handler` to
-    // be async-signal-safe.
+    // the ABI `sigaction(2)` expects; the empty signal mask and zero
+    // `sa_flags` mirror upstream rsync's file-static `sigact`. The caller
+    // contract requires `handler` to be async-signal-safe.
     #[allow(unsafe_code)]
     unsafe {
         let mut action: libc::sigaction = std::mem::zeroed();
         action.sa_sigaction = handler as *const () as libc::sighandler_t;
-        action.sa_flags = libc::SA_RESTART;
         libc::sigemptyset(&mut action.sa_mask as *mut libc::sigset_t);
 
         if libc::sigaction(signum, &action, std::ptr::null_mut()) != 0 {

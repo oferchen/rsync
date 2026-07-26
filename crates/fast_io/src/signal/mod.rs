@@ -3,8 +3,9 @@
 //! Unix uses `libc::sigaction`; non-Unix targets use a no-op stub. Callers
 //! pass an `extern "C" fn(c_int)` handler that must be async-signal-safe
 //! (atomic stores only, no allocation, no locking). The wrapper installs the
-//! handler with `SA_RESTART` so interrupted syscalls auto-retry, matching
-//! upstream rsync's `sigaction` setup in `main.c`.
+//! handler with `sa_flags == 0`, matching upstream rsync's `SIGACTION` macro
+//! (`rsync.h:1258`) over its never-flagged file-static `sigact`, so a blocked
+//! syscall fails with `EINTR` instead of restarting.
 //!
 //! This module exists so the `core` crate can keep `#![deny(unsafe_code)]`
 //! while still installing real Unix signal handlers. The unsafe FFI calls
