@@ -385,7 +385,14 @@ impl SenderAttrs {
             reader.read_exact(&mut iflags_buf)?;
             u16::from_le_bytes(iflags_buf)
         } else {
-            Self::ITEM_TRANSFER // Default for older protocols
+            // upstream: rsync.c:383-384 - `ITEM_TRANSFER | ITEM_MISSING_DATA`.
+            // ITEM_MISSING_DATA is `1<<16` (rsync.h:254), a log-only bit that
+            // does not fit this u16 framing word. It is deliberately omitted:
+            // this value only selects which trailing wire fields to parse and
+            // is echoed back, never rendered, so the display bit would be dead
+            // state here. Upstream likewise masks `iflags &= 0xffff` before the
+            // wire (generator.c:581).
+            Self::ITEM_TRANSFER
         };
 
         // Read optional fields based on iflags
@@ -470,7 +477,14 @@ impl SenderAttrs {
             reader.read_exact(&mut iflags_buf)?;
             u16::from_le_bytes(iflags_buf)
         } else {
-            Self::ITEM_TRANSFER // Default for older protocols
+            // upstream: rsync.c:383-384 - `ITEM_TRANSFER | ITEM_MISSING_DATA`.
+            // ITEM_MISSING_DATA is `1<<16` (rsync.h:254), a log-only bit that
+            // does not fit this u16 framing word. It is deliberately omitted:
+            // this value only selects which trailing wire fields to parse and
+            // is echoed back, never rendered, so the display bit would be dead
+            // state here. Upstream likewise masks `iflags &= 0xffff` before the
+            // wire (generator.c:581).
+            Self::ITEM_TRANSFER
         };
 
         // Read optional fields based on iflags

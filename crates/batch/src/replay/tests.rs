@@ -199,3 +199,50 @@ fn cpres_zlib_false_for_zstd_codec() {
     let codec = CompressionCodec::Zstd;
     assert!(Some(codec) != Some(CompressionCodec::Zlib));
 }
+
+/// A pre-29 batch stream carries no iflags word, so the replay loop must
+/// synthesise one without consuming any bytes - consuming two here would
+/// desync every following field.
+///
+/// The value is `ITEM_TRANSFER` alone. Upstream's `ITEM_TRANSFER |
+/// ITEM_MISSING_DATA` (rsync.c:383-384) adds a log-only bit at `1<<16`
+/// (rsync.h:254) that cannot fit this u16 framing word and that replay never
+/// renders. It must not be approximated by `1<<10`, which is
+/// `ITEM_REPORT_CRTIME` (rsync.h:247) and would be a different flag entirely.
+#[test]
+fn read_iflags_pre_29_synthesises_item_transfer_without_reading() {
+    let dir = TempDir::new().expect("tempdir");
+    let path = dir.path().join("stream");
+    fs::write(&path, [0xAA, 0xBB]).expect("write stream");
+    let mut stream = std::io::BufReader::new(fs::File::open(&path).expect("open stream"));
+
+    for proto in [28, 27, 20] {
+        let iflags = super::dispatch::read_iflags_and_skip_meta(&mut stream, proto)
+            .expect("pre-29 fallback must not read");
+        assert_eq!(
+            iflags,
+            1 << 15,
+            "proto {proto} must yield bare ITEM_TRANSFER"
+        );
+        assert_eq!(iflags & (1 << 10), 0, "ITEM_REPORT_CRTIME must not be set");
+    }
+
+    // Nothing was consumed: the two bytes are still there for the real reader.
+    let mut rest = Vec::new();
+    std::io::Read::read_to_end(&mut stream, &mut rest).expect("read rest");
+    assert_eq!(rest, vec![0xAA, 0xBB]);
+}
+
+/// Protocol 29+ reads the 16-bit little-endian iflags word off the wire.
+///
+/// upstream: rsync.c:383 - `read_shortint(f_in)`
+#[test]
+fn read_iflags_proto_29_reads_shortint() {
+    let dir = TempDir::new().expect("tempdir");
+    let path = dir.path().join("stream");
+    fs::write(&path, [0x00, 0x80]).expect("write stream");
+    let mut stream = std::io::BufReader::new(fs::File::open(&path).expect("open stream"));
+
+    let iflags = super::dispatch::read_iflags_and_skip_meta(&mut stream, 29).expect("read iflags");
+    assert_eq!(iflags, 1 << 15);
+}
