@@ -159,14 +159,27 @@ impl ItemFlags {
     /// Reads item flags from the wire.
     ///
     /// For protocol >= 29, reads 2 bytes little-endian (16-bit wire format).
-    /// For older protocols, returns ITEM_TRANSFER as default.
+    /// Protocol 28 and older carry no iflags on the wire, so the peer never
+    /// says what changed. Upstream synthesises `ITEM_TRANSFER |
+    /// ITEM_MISSING_DATA` for those protocols; `ITEM_MISSING_DATA` is a
+    /// log-only bit (bit 16, never sent on the wire) that makes
+    /// [`crate::generator::itemize`] fill columns 2..10 with `?` rather than
+    /// asserting `.` (nothing changed), yielding `>f?????????`.
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `rsync.c:383-384` - `iflags = protocol_version >= 29 ?
+    ///   read_shortint(f_in) : ITEM_TRANSFER | ITEM_MISSING_DATA`
+    /// - `log.c:736-737` - `ITEM_MISSING_DATA` renders `?` in columns 2..10
     pub fn read<R: Read>(reader: &mut R, protocol_version: u8) -> io::Result<Self> {
         if protocol_version >= 29 {
             let mut buf = [0u8; 2];
             reader.read_exact(&mut buf)?;
             Ok(Self::from_raw(u16::from_le_bytes(buf) as u32))
         } else {
-            Ok(Self::from_raw(Self::ITEM_TRANSFER))
+            Ok(Self::from_raw(
+                Self::ITEM_TRANSFER | Self::ITEM_MISSING_DATA,
+            ))
         }
     }
 
