@@ -8884,8 +8884,17 @@ CONF
   timeout "$filter_timeout" "$upstream_binary" -av --timeout=10 \
       "${sf_src}/" "rsync://127.0.0.1:${oc_port}/filtered" \
       >"${log}.server-filter-push.out" 2>"${log}.server-filter-push.err" || push_exit=$?
-  if [[ "$push_exit" -ne 0 ]]; then
+  # The source carries files this module excludes, so upstream's verdict for
+  # this push is exit 23: the daemon reports each refusal as FERROR_XFER
+  # (generator.c:1281-1283) and the client's got_xfer_error lifts the exit to
+  # RERR_PARTIAL. Requiring 0 would pass only while the refusals were silent.
+  if [[ "$push_exit" -ne 0 && "$push_exit" -ne 23 ]]; then
     echo "    server-filter push failed (exit=$push_exit)"
+    stop_oc_daemon
+    return 1
+  fi
+  if ! grep -q 'daemon refused to receive' "${log}.server-filter-push.err"; then
+    echo "    server-filter push: missing 'daemon refused to receive' report"
     stop_oc_daemon
     return 1
   fi
@@ -9738,8 +9747,17 @@ CONF
       >"${log}.filter-push-oc.out" 2>"${log}.filter-push-oc.err" || exit_code=$?
   stop_oc_daemon
 
-  if [[ "$exit_code" -ne 0 ]]; then
+  # Exit 23 is the same verdict the upstream-daemon arm below records: a daemon
+  # that refuses a pushed file reports it as FERROR_XFER (generator.c:1281-1283),
+  # which sets the pushing client's got_xfer_error and lifts the exit to
+  # RERR_PARTIAL. Accepting only 0 here would pass exactly when the oc daemon
+  # dropped the excluded files in silence.
+  if [[ "$exit_code" -ne 0 && "$exit_code" -ne 23 ]]; then
     echo "    oc-push failed (exit=$exit_code)"
+    return 1
+  fi
+  if ! grep -q 'daemon refused to receive' "${log}.filter-push-oc.err"; then
+    echo "    oc-push: missing 'daemon refused to receive' report"
     return 1
   fi
   _filter_push_verify "oc-push" "$fp_dest_oc" || return 1
