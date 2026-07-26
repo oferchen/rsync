@@ -32,19 +32,20 @@ fn setup_test_directory() -> TempDir {
     temp_dir
 }
 
-/// Test helper to get the path to the oc-rsync binary.
+/// Locates the binary under test.
+///
+/// `CARGO_BIN_EXE_oc-rsync` is a COMPILE-time variable, so it must be read with
+/// `env!`, not `env::var_os`: at run time it is unset and the lookup would fall
+/// through to whatever stale `target/debug/oc-rsync` happens to be on disk -
+/// silently testing a different build than the one just compiled.
 fn oc_rsync_binary() -> PathBuf {
-    let manifest_dir = env!("CARGO_MANIFEST_DIR");
-    for profile in ["debug", "release", "dist"] {
-        let path = PathBuf::from(manifest_dir)
-            .join("target")
-            .join(profile)
-            .join("oc-rsync");
-        if path.exists() {
-            return path;
-        }
-    }
-    PathBuf::from("oc-rsync")
+    let built = PathBuf::from(env!("CARGO_BIN_EXE_oc-rsync"));
+    assert!(
+        built.is_file(),
+        "oc-rsync binary missing at {}; refusing to fall back to a stale build",
+        built.display()
+    );
+    built
 }
 
 /// Returns `--rsync-path=<binary>` so the SSH remote side uses our binary.
