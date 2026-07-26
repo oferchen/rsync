@@ -1,0 +1,50 @@
+# Guard: no CI test cell may reach the oc-rsync binary resolver without
+# building the binary first.
+#
+# Integration tests spawn `oc-rsync` through one resolver in `test-support`.
+# It considers exactly one path - the profile directory Cargo baked in via
+# `OUT_DIR` - and aborts when nothing is there. Cargo only produces the
+# binary when the package selection reaches the root `bin` package, so a
+# package-scoped `cargo nextest run -p engine` never builds it.
+#
+# Before the resolver was unified, those helpers returned `Option` and callers
+# printed `skip:` and returned, so an uncovered cell reported
+# `2 passed; 0 failed; finished in 0.00s` - green, having spawned nothing.
+# `tools/ci/check_bin_build_coverage.py` expands every workflow matrix and
+# replays each job's steps in order so that class of vacuous cell cannot come
+# back through a new matrix row, an un-ignored test or a widened `-E` filter.
+#
+# YAML-only, no cargo build, no network: seconds, and required-eligible.
+
+name: Bin build coverage
+
+on:
+  pull_request:
+  push:
+    branches:
+      - master
+
+permissions:
+  contents: read
+
+concurrency:
+  group: bin-build-coverage-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    name: Test cells build oc-rsync
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+
+      - name: Run check_bin_build_coverage.py
+        run: python3 tools/ci/check_bin_build_coverage.py --verbose
+
+      - name: Self-test check_bin_build_coverage.py
+        # Exercises the guard against synthetic covered/uncovered workflows so
+        # a regression in the matcher, the matrix expansion or the crate
+        # derivation surfaces here instead of as a silent gap.
+        run: bash tools/ci/tests/test_check_bin_build_coverage.sh
