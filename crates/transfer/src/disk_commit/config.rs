@@ -209,6 +209,18 @@ pub struct DiskCommitConfig {
     /// - `util1.c:1290` - `if (module_id >= 0)` in `full_fname()`.
     /// - `receiver.c:297` - `rsyserr(FERROR_XFER, errno, "mkstemp %s failed", ...)`
     pub daemon_module: Option<String>,
+    /// Absolute on-disk root of the daemon module this server process serves.
+    ///
+    /// Paired with [`daemon_module`](Self::daemon_module) and
+    /// [`dest_dir`](Self::dest_dir) it lets the `mkstemp` diagnostic render its
+    /// path module-relative, the way a chdir'ed upstream daemon does, instead
+    /// of leaking the server's filesystem layout.
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `clientserver.c:993` - `change_dir(module_chdir, CD_NORMAL)`
+    /// - `util1.c:1285` - `p1 = curr_dir + module_dirlen`
+    pub daemon_module_root: Option<PathBuf>,
 }
 
 impl Default for DiskCommitConfig {
@@ -235,6 +247,7 @@ impl Default for DiskCommitConfig {
             delay_updates: false,
             append_verify: false,
             daemon_module: None,
+            daemon_module_root: None,
         }
     }
 }
