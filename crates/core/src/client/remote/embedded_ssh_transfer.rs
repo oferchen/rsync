@@ -700,6 +700,7 @@ fn build_server_config_for_generator(
         server_config.file_selection.files_from_path = Some(path);
         server_config.file_selection.from0 = plan.sender_from0;
     }
+    flags::apply_only_write_batch_for_sender(config, &mut server_config);
 
     flags::apply_common_server_flags(config, &mut server_config);
     Ok(server_config)

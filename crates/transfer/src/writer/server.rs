@@ -13,7 +13,7 @@ use compress::algorithm::CompressionAlgorithm;
 use compress::zlib::CompressionLevel;
 use protocol::MessageCode;
 
-use super::multiplex::MultiplexWriter;
+use super::multiplex::{BatchRoute, MultiplexWriter};
 use crate::compressed_writer::CompressedWriter;
 use crate::is_early_close_error;
 
@@ -338,6 +338,20 @@ impl<W: Write> ServerWriter<W> {
                 io::ErrorKind::InvalidInput,
                 "batch recorder requires multiplex mode",
             )),
+        }
+    }
+
+    /// Selects whether the attached batch recorder tees the stream or owns it.
+    ///
+    /// A no-op without an attached recorder (`Plain` / `Taken` can never carry
+    /// one), so the default transfer path stays byte-for-byte identical.
+    ///
+    /// upstream: `sender.c:217` - `f_xfer = write_batch < 0 ? batch_fd : f_out`
+    pub fn set_batch_route(&mut self, route: BatchRoute) {
+        match self {
+            Self::Multiplex(mux) => mux.batch_route = route,
+            Self::Compressed(compressed) => compressed.inner_mut().batch_route = route,
+            Self::Plain(_) | Self::Taken => {}
         }
     }
 
