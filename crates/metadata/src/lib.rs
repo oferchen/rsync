@@ -284,7 +284,7 @@ pub use special::{
     create_fifo, create_fifo_node_from_parts, create_fifo_with_fake_super,
 };
 
-pub use xattr_send::{XattrRole, XattrSendOptions};
+pub use xattr_send::{XattrRole, XattrSendOptions, dest_xattrs_differ};
 
 #[cfg(all(feature = "xattr", any(unix, windows)))]
 pub use xattr::{

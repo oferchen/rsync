@@ -6,6 +6,14 @@
 //! `preserve_xattrs`, and `saw_xattr_filter`. This crate has no globals, so the
 //! same inputs travel as an explicit options record rather than a long
 //! positional parameter list.
+//!
+//! The module also hosts [`dest_xattrs_differ`], the single destination-side
+//! comparison behind the itemize `x` column, shared by the network receiver and
+//! the local-copy executor.
+
+use std::path::Path;
+
+use protocol::xattr::{XattrList, xattr_diff};
 
 /// Which side of the transfer is collecting the attributes.
 ///
@@ -124,6 +132,43 @@ impl XattrSendOptions<'_> {
     pub fn user_only(&self) -> bool {
         self.role.user_only(self.am_root)
     }
+}
+
+/// Whether `destination`'s extended attributes differ from the `sender` set,
+/// for the `ITEM_REPORT_XATTR` (`x`) column of `--itemize-changes`.
+///
+/// Mirrors upstream `generator.c:566-572`: with `preserve_xattrs` the generator
+/// reads the destination's current attributes (`get_xattr`) and compares them
+/// against the sender's list (`xattr_diff`). `dest_opts` must therefore describe
+/// a *generator* read - [`XattrRole::Generator`] - so `user_only`
+/// (`xattrs.c:237`) confines an unprivileged process to `user.*` and a
+/// namespace it could never store cannot raise the column.
+///
+/// Callers must invoke this before applying the sender's attributes, so the
+/// comparison sees the pre-transfer destination. A destination that cannot be
+/// read (missing, or a filesystem without xattr support) reports no difference:
+/// upstream's `get_xattr` failure path likewise leaves the receiver list empty
+/// rather than inventing a change, and a missing destination is itemized as
+/// `ITEM_IS_NEW` where every column renders `+`.
+///
+/// Both the network receiver (sender list decoded from the flist) and the
+/// local-copy executor (sender list read from the source with
+/// [`XattrRole::Sender`]) route through here, so there is exactly one
+/// destination-side comparison in the codebase.
+#[must_use]
+pub fn dest_xattrs_differ(
+    sender: &XattrList,
+    destination: &Path,
+    dest_opts: &XattrSendOptions<'_>,
+) -> bool {
+    debug_assert!(
+        !dest_opts.role.is_sender(),
+        "the itemize xattr comparison reads the destination as the generator",
+    );
+    let Ok(dest) = crate::read_xattrs_for_wire(destination, dest_opts) else {
+        return false;
+    };
+    xattr_diff(sender, &dest, dest_opts.checksum_seed)
 }
 
 #[cfg(test)]
