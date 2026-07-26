@@ -16,6 +16,8 @@ use crate::pipeline::PipelineConfig;
 use crate::receiver::stats::TransferStats;
 use crate::receiver::{REDO_CHECKSUM_LENGTH, ReceiverContext};
 
+use super::candidates::new_dir_count;
+
 impl ReceiverContext {
     /// Runs the pipelined receiver transfer loop.
     ///
@@ -193,17 +195,24 @@ impl ReceiverContext {
             // no delta (the client sender records it into its own batch fd,
             // sender.c:217); a pull receiver drains the sender's delta via
             // discard_receive_data() (receiver.c:813-814).
-            self.record_dry_run_itemize(&setup.dest_dir);
+            // Same shared reporting pass as the plain dry run below; only the
+            // wire loop differs (real block checksums, no plan).
+            let plan = self.plan_dry_run(&setup.dest_dir, &files_to_transfer);
+            stats.directories_created = new_dir_count(&plan);
             self.run_only_write_batch_loop(reader, writer, &files_to_transfer, &setup)?;
         } else if self.config.flags.dry_run {
-            // upstream: recv_generator() itemizes every entry even under
-            // --dry-run (only the data transfer and filesystem mutation are
-            // skipped). The directory-creation and candidate passes above
-            // early-return under skip_dest_writes(), so record the deferred
-            // itemize rows here in flist-index order; flush_itemize_rows below
-            // drains them. Read-only: nothing is written to the destination.
-            self.record_dry_run_itemize(&setup.dest_dir);
-            self.run_dry_run_loop(reader, writer, &files_to_transfer)?;
+            // upstream: recv_generator() itemizes every entry and the receiver
+            // tallies every ITEM_IS_NEW even under --dry-run (only the data
+            // transfer and filesystem mutation are skipped). The
+            // directory-creation, symlink, and candidate passes above
+            // early-return under skip_dest_writes(), so plan_dry_run is the one
+            // place the rows and created-file counts are produced - shared with
+            // run_pipelined_incremental so the two drivers cannot drift.
+            // Read-only: nothing is written to the destination.
+            let plan = self.plan_dry_run(&setup.dest_dir, &files_to_transfer);
+            stats.directories_created = new_dir_count(&plan);
+            (files_transferred, transferred_file_size) =
+                self.run_dry_run_loop(reader, writer, &plan)?;
         } else {
             let total_files = files_to_transfer.len();
             let redo_config = pipeline_config.clone();
