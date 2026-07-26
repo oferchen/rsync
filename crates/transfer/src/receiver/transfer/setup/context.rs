@@ -324,24 +324,34 @@ impl ReceiverContext {
         // no `MSG_*` frame is emitted on the wire, matching upstream's
         // `get_local_name()` which calls `do_mkdir()` directly against the
         // local filesystem.
-        let created_dest_root = ensure_dest_root_exists(
-            &dest_dir,
-            file_count,
-            trailing_slash,
-            self.config.flags.skip_dest_writes(),
-            self.config.flags.mkpath,
-        )
-        .map_err(|e| {
-            io::Error::new(
-                e.kind(),
-                format!(
-                    "failed to create destination root {}: {e} {}{}",
-                    dest_dir.display(),
-                    crate::role_trailer::error_location!(),
-                    crate::role_trailer::receiver()
-                ),
+        // upstream: main.c:1383-1388 - `get_local_name()`, and with it the
+        // pre-flight mkdir at main.c:778-792, lives inside the non-empty-list
+        // arm of client_run(). A client handed an empty list must not create
+        // the destination directory: `rsync host:/missing /new/` leaves
+        // `/new/` absent. `do_server_recv()` calls `get_local_name()`
+        // unconditionally (main.c:1212-1213), so the gate is client-side only.
+        let created_dest_root = if self.is_empty_client_flist(file_count) {
+            false
+        } else {
+            ensure_dest_root_exists(
+                &dest_dir,
+                file_count,
+                trailing_slash,
+                self.config.flags.skip_dest_writes(),
+                self.config.flags.mkpath,
             )
-        })?;
+            .map_err(|e| {
+                io::Error::new(
+                    e.kind(),
+                    format!(
+                        "failed to create destination root {}: {e} {}{}",
+                        dest_dir.display(),
+                        crate::role_trailer::error_location!(),
+                        crate::role_trailer::receiver()
+                    ),
+                )
+            })?
+        };
         // upstream: main.c:794-796 - record whether the pre-flight mkdir
         // created the dest root so the root entry's itemize row can OR in
         // ITEM_IS_NEW (cd+++++++++ ./) only when it was actually created.
