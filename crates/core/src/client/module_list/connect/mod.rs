@@ -222,6 +222,30 @@ pub(crate) fn build_io_timeout_reapply(
     )))
 }
 
+/// Registers a shutdown wake hook for the daemon socket.
+///
+/// The hook half-closes the socket, so a transfer parked in a blocking read
+/// returns at once and unwinds through the same path a dropped connection
+/// takes - which is what makes `--partial` / `--partial-dir` retention and
+/// temp-file cleanup identical on the signal path and the connection-loss
+/// path. Returns `None` for connect-program (pipe) transports, which own no
+/// socket to shut down.
+///
+/// upstream: `io.c:750` polls `got_kill_signal` from `perform_io()` once its
+/// `select()` returns; a multi-threaded process cannot rely on the signal
+/// reaching the thread that is blocked on the wire, so the socket is closed
+/// from the watcher instead.
+pub(crate) fn register_shutdown_wake(
+    reader: &DaemonStreamReader,
+) -> Option<crate::signal::IoWakerGuard> {
+    let socket = reader.try_clone_tcp()?;
+    crate::signal::register_io_waker(std::sync::Arc::new(move || {
+        // Best-effort: the peer may already have closed the connection, in
+        // which case shutdown(2) reports ENOTCONN and there is nothing to wake.
+        let _ = socket.shutdown(std::net::Shutdown::Both);
+    }))
+}
+
 /// Opens a plain TCP connection to a daemon.
 ///
 /// Respects `RSYNC_CONNECT_PROG` and `RSYNC_PROXY` environment
