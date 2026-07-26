@@ -96,6 +96,10 @@ impl GeneratorContext {
             self.flush_flist_diagnostics(writer)?;
             build?;
             self.partition_file_list_for_inc_recurse();
+            // Partitioning can report an entry whose parent is missing from the
+            // list. Drain again so that line also precedes the first file-list
+            // byte; the queue was emptied above, so this is a no-op otherwise.
+            self.flush_flist_diagnostics(writer)?;
             self.send_file_list(writer)?
         };
 
