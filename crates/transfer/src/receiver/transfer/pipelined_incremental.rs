@@ -8,13 +8,15 @@
 use std::io::{self, Read, Write};
 use std::path::PathBuf;
 
-use logging::{PhaseTimer, debug_log};
+use logging::{PhaseTimer, debug_log, info_log};
 use protocol::codec::create_ndx_codec;
 use protocol::flist::FileEntry;
 
 use crate::pipeline::PipelineConfig;
 use crate::receiver::stats::TransferStats;
 use crate::receiver::{REDO_CHECKSUM_LENGTH, ReceiverContext};
+
+use super::candidates::new_dir_count;
 
 impl ReceiverContext {
     /// Runs the receiver with incremental directory creation and failed-dir tracking.
@@ -66,8 +68,34 @@ impl ReceiverContext {
         // upstream: generator.c:1329-1338 - make_path() for relative_paths
         self.ensure_relative_parents(&setup.dest_dir);
 
+        // A dry run reports its directories from the shared `plan_dry_run` pass
+        // below, exactly like `run_pipelined`. Running this walk too would
+        // record every directory row and created-dir tally twice; it creates
+        // nothing under `skip_dest_writes()` anyway (#6947). `--list-only` does
+        // not set `dry_run`, so its walk is untouched. Only the plain-`-v` name
+        // lines the walk emits as a side effect (creation.rs:777-786) are
+        // reproduced here, since `plan_dry_run` deals in itemize rows.
+        let walk_dirs = !self.config.flags.dry_run;
+        if !walk_dirs
+            && self.config.flags.verbose
+            && self.config.connection.client_mode
+            && !self.should_emit_itemize()
+        {
+            for rel in self
+                .file_list
+                .iter()
+                .filter(|entry| entry.is_dir())
+                .map(protocol::flist::FileEntry::path)
+            {
+                if rel.as_os_str() == "." {
+                    info_log!(Name, 1, "./");
+                } else {
+                    info_log!(Name, 1, "{}/", rel.display());
+                }
+            }
+        }
         for (flist_idx, file_entry) in self.file_list.iter().enumerate() {
-            if file_entry.is_dir() {
+            if walk_dirs && file_entry.is_dir() {
                 let result = self.create_directory_incremental(
                     &setup.dest_dir,
                     file_entry,
@@ -180,10 +208,17 @@ impl ReceiverContext {
             // reads no delta (the client sender diverted it into its own batch
             // fd, sender.c:217); a pull receiver drains the remote sender's
             // delta via discard_receive_data() (receiver.c:813-814).
-            self.record_dry_run_itemize(&setup.dest_dir);
+            let _ = self.plan_dry_run(&setup.dest_dir, &files_to_transfer);
             self.run_only_write_batch_loop(reader, writer, &files_to_transfer, &setup)?;
         } else if self.config.flags.dry_run {
-            self.run_dry_run_loop(reader, writer, &files_to_transfer)?;
+            // The same shared dry-run pass `run_pipelined` uses. This driver
+            // previously produced only the directory rows its creation walk
+            // emitted as a side effect - no regular-file or symlink row at all -
+            // because it never had a reporting pass of its own.
+            let plan = self.plan_dry_run(&setup.dest_dir, &files_to_transfer);
+            stats.directories_created = new_dir_count(&plan);
+            (files_transferred, transferred_file_size) =
+                self.run_dry_run_loop(reader, writer, &plan)?;
         } else {
             let total_files = files_to_transfer.len();
             let redo_config = pipeline_config.clone();
