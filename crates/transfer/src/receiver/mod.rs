@@ -60,6 +60,7 @@ pub use self::dest_root::ensure_dest_root_exists;
 pub use self::file_list::IncrementalFileListReceiver;
 pub(in crate::receiver) use self::pipeline_setup::{
     PipelineSetup, apply_acls_from_receiver_cache, compile_daemon_filter_set,
+    daemon_filter_refuses_ancestor,
 };
 pub use self::stats::{ListOnlyEntry, SenderStats, TransferStats};
 pub use self::wire::{

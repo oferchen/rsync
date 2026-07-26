@@ -343,6 +343,18 @@ pub struct ReceiverContext {
     ///
     /// upstream: receiver.c:733-746 - `stats.created_*++` under `ITEM_IS_NEW`.
     pub(in crate::receiver) created_stats: std::cell::Cell<protocol::stats::CreatedStats>,
+    /// Upstream's `got_xfer_error` as set by this receiver's *own*
+    /// `FERROR_XFER` diagnostics, as opposed to the ones read off the wire.
+    ///
+    /// A daemon module's filter rules are enforced here, so a refused push is
+    /// reported by the receiver rather than by the peer; upstream still sets
+    /// `got_xfer_error` locally at the `rwrite()` call (before the `am_server`
+    /// branch), which is what lifts the run to `RERR_PARTIAL`. Folded into
+    /// `TransferStats::got_xfer_error` alongside the wire-side count. `Cell`
+    /// because the emit sites run behind a `&self` receiver method.
+    ///
+    /// upstream: log.c:310-311 - `case FERROR_XFER: got_xfer_error = 1;`.
+    pub(in crate::receiver) got_xfer_error: std::cell::Cell<bool>,
     /// Extraneous-entry victims decided during the transfer walk for a
     /// `--delete-delay` run, awaiting execution after the transfer completes.
     ///
@@ -438,6 +450,7 @@ impl ReceiverContext {
             progress_active: false,
             hardlink_follower_echoes: std::cell::Cell::new(0),
             created_stats: std::cell::Cell::new(protocol::stats::CreatedStats::new()),
+            got_xfer_error: std::cell::Cell::new(false),
             delayed_delete_victims: Vec::new(),
         }
     }

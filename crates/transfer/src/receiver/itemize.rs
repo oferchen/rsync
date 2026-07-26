@@ -223,6 +223,65 @@ impl ReceiverContext {
         }
     }
 
+    /// Routes an already-formatted `FERROR_XFER` diagnostic to the correct
+    /// sink and records it as this run's `got_xfer_error`.
+    ///
+    /// A server receiver (the daemon side of a push) frames the text as
+    /// `MSG_ERROR_XFER` *instead of* writing it to its own stderr, exactly as
+    /// upstream's `rwrite()` does under `am_server`: the pushing client renders
+    /// the line and its `got_xfer_error` lifts the run to `RERR_PARTIAL`. A
+    /// client receiver (pull) writes to stderr directly.
+    ///
+    /// The flag is set on both sides regardless of the sink, because upstream
+    /// sets `got_xfer_error` in `rwrite()` before the server-vs-client branch -
+    /// a daemon that only *reports* the refusal still exits `RERR_PARTIAL`.
+    ///
+    /// `line` carries its trailing newline, as upstream's payload does.
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `log.c:310-311` - `case FERROR_XFER: got_xfer_error = 1;`, before the
+    ///   `am_server` branch
+    /// - `log.c:330-346` - `am_server` sends the frame and returns
+    /// - `io.c:1660` - the peer maps `MSG_ERROR_XFER` back to `FERROR_XFER`
+    /// - `cleanup.c:217-218` - `got_xfer_error` lifts a zero exit to `RERR_PARTIAL`
+    pub(in crate::receiver) fn emit_error_xfer_line<W: crate::writer::MsgInfoSender + ?Sized>(
+        &self,
+        writer: &mut W,
+        line: &str,
+    ) -> std::io::Result<()> {
+        self.got_xfer_error.set(true);
+        if self.config.connection.client_mode {
+            use std::io::Write as _;
+            std::io::stderr().write_all(line.as_bytes())
+        } else {
+            writer.send_msg_error_xfer(line.as_bytes())
+        }
+    }
+
+    /// Routes an already-formatted `FERROR` diagnostic to the correct sink.
+    ///
+    /// Same routing as [`Self::emit_error_xfer_line`], but the peer's
+    /// `got_xfer_error` stays clear: upstream reserves that flag for
+    /// `FERROR_XFER`, so a bare `FERROR` notice never changes the exit code on
+    /// its own.
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `log.c:305-309` - `FERROR` -> `MSG_ERROR`, no `got_xfer_error`
+    pub(in crate::receiver) fn emit_error_line<W: crate::writer::MsgInfoSender + ?Sized>(
+        &self,
+        writer: &mut W,
+        line: &str,
+    ) -> std::io::Result<()> {
+        if self.config.connection.client_mode {
+            use std::io::Write as _;
+            std::io::stderr().write_all(line.as_bytes())
+        } else {
+            writer.send_msg_error(line.as_bytes())
+        }
+    }
+
     /// Builds the display context for itemize time-position rendering.
     ///
     /// # Upstream Reference
