@@ -35,6 +35,8 @@ pub use codec::MultiplexCodec;
 pub use frame::MessageFrame;
 #[cfg(feature = "tokio-transfer")]
 pub use io::recv_msg_into_async;
-pub use io::{recv_msg, recv_msg_into, send_frame, send_keepalive, send_msg, send_msgs_vectored};
+pub use io::{
+    FrameReader, recv_msg, recv_msg_into, send_frame, send_keepalive, send_msg, send_msgs_vectored,
+};
 pub use reader::MplexReader;
 pub use writer::MplexWriter;

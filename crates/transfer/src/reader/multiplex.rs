@@ -127,6 +127,12 @@ impl DeletedRender {
 ///   otherwise forwards to the generator.
 pub(crate) struct MultiplexReader<R> {
     inner: R,
+    /// Resumable frame decoder. It keeps a partially received frame's progress
+    /// across calls, so a reader that stops mid-frame is retried rather than
+    /// dropping the bytes already in `buffer` and resynchronising on the wrong
+    /// byte. upstream needs no equivalent because its decoders never touch the
+    /// descriptor (io.c:789 is the sole `read()`).
+    frames: protocol::FrameReader,
     pub(super) buffer: Vec<u8>,
     pub(super) pos: usize,
     /// Accumulated I/O error flags from `MSG_IO_ERROR` messages.
@@ -243,6 +249,7 @@ impl<R> MultiplexReader<R> {
     pub(super) fn new(inner: R) -> Self {
         Self {
             inner,
+            frames: protocol::FrameReader::new(),
             buffer: Vec::with_capacity(MULTIPLEX_READER_BUFFER_CAPACITY),
             pos: 0,
             batch_recorder: None,
@@ -661,6 +668,20 @@ impl<R> MultiplexReader<R> {
 }
 
 impl<R: Read> MultiplexReader<R> {
+    /// Reads the next multiplex frame into `buffer`, resuming one that a
+    /// previous call left partially received.
+    ///
+    /// The frame's progress lives in `frames`, not in this call, so a reader
+    /// that stalls part-way through a header or a payload is retried from the
+    /// exact byte it stopped on. Before this existed the partial bytes were
+    /// discarded and the error propagated, which resynchronised the
+    /// demultiplexer on the middle of a frame.
+    fn next_frame(&mut self) -> io::Result<protocol::MessageCode> {
+        let code = self.frames.read_frame(&mut self.inner, &mut self.buffer)?;
+        self.pos = 0;
+        Ok(code)
+    }
+
     /// Attempts to borrow exactly `len` bytes from the internal frame buffer.
     ///
     /// Returns `Some(&[u8])` if the current frame buffer has at least `len` bytes
@@ -684,12 +705,11 @@ impl<R: Read> MultiplexReader<R> {
     /// reach the batch file, leaving `--write-batch` outputs from daemon and
     /// SSH transfers missing their delta payloads.
     pub(super) fn try_borrow_exact(&mut self, len: usize) -> io::Result<Option<&[u8]>> {
-        if self.pos >= self.buffer.len() {
+        // A frame left partially received owns `buffer`; its bytes are not
+        // deliverable payload until the frame completes.
+        if self.frames.in_progress() || self.pos >= self.buffer.len() {
             loop {
-                self.buffer.clear();
-                self.pos = 0;
-
-                let code = protocol::recv_msg_into(&mut self.inner, &mut self.buffer)?;
+                let code = self.next_frame()?;
 
                 if self.dispatch_message(code) {
                     break;
@@ -772,16 +792,15 @@ impl<R> MultiplexReader<R> {
 
 impl<R: Read> Read for MultiplexReader<R> {
     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
-        if self.pos < self.buffer.len() {
+        // A frame left partially received owns `buffer`; its bytes are not
+        // deliverable payload until the frame completes.
+        if !self.frames.in_progress() && self.pos < self.buffer.len() {
             return self.drain_buffered(buf);
         }
 
         // Loop until we get a MSG_DATA message
         loop {
-            self.buffer.clear();
-            self.pos = 0;
-
-            let code = protocol::recv_msg_into(&mut self.inner, &mut self.buffer)?;
+            let code = self.next_frame()?;
 
             if self.dispatch_message(code) {
                 // upstream: io.c io_start_multiplex_out() sends a length-0
@@ -1070,5 +1089,112 @@ mod success_dispatch_tests {
             reader.dispatch_message_with(protocol::MessageCode::Success, &mut RealSink);
         }
         assert_eq!(reader.take_success_indices(), vec![1, 5, 9]);
+    }
+}
+
+/// Tests for the demultiplexer's resumption across a stalled read.
+///
+/// A reader that stops part-way through a frame must not cost the bytes it has
+/// already delivered: dropping them makes the next call resynchronise on the
+/// middle of a frame, which is a silent desync rather than a recoverable error.
+#[cfg(test)]
+mod resume_tests {
+    use super::*;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    /// Reader that yields one byte per call and reports `WouldBlock` once a
+    /// shared budget runs out, so the stall can be placed at any byte offset.
+    struct StallingDribble {
+        data: Vec<u8>,
+        pos: usize,
+        budget: Arc<AtomicUsize>,
+    }
+
+    impl Read for StallingDribble {
+        fn read(&mut self, out: &mut [u8]) -> io::Result<usize> {
+            if self.budget.load(Ordering::SeqCst) == 0 {
+                return Err(io::Error::new(io::ErrorKind::WouldBlock, "stalled"));
+            }
+            if self.pos >= self.data.len() || out.is_empty() {
+                return Ok(0);
+            }
+            out[0] = self.data[self.pos];
+            self.pos += 1;
+            self.budget.fetch_sub(1, Ordering::SeqCst);
+            Ok(1)
+        }
+    }
+
+    fn frame(payload: &[u8]) -> Vec<u8> {
+        let mut out = Vec::new();
+        protocol::send_msg(&mut out, protocol::MessageCode::Data, payload).unwrap();
+        out
+    }
+
+    /// Whatever offset the wire stalls at, the demultiplexer resumes on the
+    /// exact byte it stopped on and delivers the concatenated payloads
+    /// unchanged - no byte duplicated, dropped, or reinterpreted as a header.
+    #[test]
+    fn stall_at_any_offset_resumes_without_desync() {
+        let first: Vec<u8> = (0..100u16).map(|i| (i * 3) as u8).collect();
+        let second: Vec<u8> = (0..37u16).map(|i| (i * 11 + 1) as u8).collect();
+        let mut wire = frame(&first);
+        wire.extend_from_slice(&frame(&second));
+
+        let mut expected = first.clone();
+        expected.extend_from_slice(&second);
+
+        for stall_at in 0..wire.len() {
+            let budget = Arc::new(AtomicUsize::new(stall_at));
+            let mut reader = MultiplexReader::new(StallingDribble {
+                data: wire.clone(),
+                pos: 0,
+                budget: Arc::clone(&budget),
+            });
+
+            let mut got = Vec::new();
+            let mut chunk = [0u8; 16];
+            let mut released = false;
+            loop {
+                match reader.read(&mut chunk) {
+                    Ok(0) => break,
+                    Ok(n) => got.extend_from_slice(&chunk[..n]),
+                    Err(ref err) if err.kind() == io::ErrorKind::WouldBlock => {
+                        assert!(!released, "the stall must happen at most once");
+                        released = true;
+                        budget.store(usize::MAX, Ordering::SeqCst);
+                    }
+                    // Running out of wire at a frame boundary ends the stream,
+                    // exactly as it did before the decoder became resumable.
+                    Err(ref err) if err.kind() == io::ErrorKind::UnexpectedEof => break,
+                    Err(err) => panic!("stalled at {stall_at}: {err}"),
+                }
+            }
+
+            assert_eq!(got, expected, "stalled at offset {stall_at}");
+        }
+    }
+
+    /// A stall inside the payload must not let the partially received bytes
+    /// escape as delivered data; only a completed frame is deliverable.
+    #[test]
+    fn partial_payload_is_never_delivered_early() {
+        let payload: Vec<u8> = (0..64u8).collect();
+        let wire = frame(&payload);
+        // Stop six bytes into the payload.
+        let budget = Arc::new(AtomicUsize::new(protocol::MESSAGE_HEADER_LEN + 6));
+        let mut reader = MultiplexReader::new(StallingDribble {
+            data: wire,
+            pos: 0,
+            budget: Arc::clone(&budget),
+        });
+
+        let mut chunk = [0u8; 64];
+        let err = reader.read(&mut chunk).expect_err("must stall");
+        assert_eq!(err.kind(), io::ErrorKind::WouldBlock);
+
+        budget.store(usize::MAX, Ordering::SeqCst);
+        let n = reader.read(&mut chunk).unwrap();
+        assert_eq!(&chunk[..n], &payload[..], "the whole frame lands at once");
     }
 }
