@@ -33,6 +33,25 @@ use crate::writer::MsgInfoSender;
 /// them as a single parameter object keeps the two writer methods below at a
 /// manageable arity and prevents the four fields from drifting apart at call
 /// sites.
+/// Log class of a sender-side diagnostic, mirroring upstream's `enum logcode`.
+///
+/// The class selects the multiplexed message code a server frames the text
+/// with; [`GeneratorContext::emit_sender_diagnostic`] owns that mapping.
+///
+/// # Upstream Reference
+///
+/// - `log.c:309-328` - `rwrite()` maps `FWARNING` / `FERROR_XFER` to stderr
+/// - `log.c:330-340` - `am_server` re-sends the same code as a `MSG_*` frame
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum SenderDiagnostic {
+    /// Upstream `FWARNING`. Downgrades to `MSG_INFO` below protocol 30, which
+    /// has no `MSG_WARNING` (`log.c:332-337`).
+    Warning,
+    /// Upstream `FERROR_XFER`. `MSG_ERROR_XFER` exists at every supported
+    /// protocol, so it never downgrades.
+    ErrorXfer,
+}
+
 pub(super) struct NdxAttrs<'a> {
     /// Wire NDX of the file (diff-encoded by the NDX codec).
     pub ndx: i32,
@@ -312,8 +331,8 @@ impl GeneratorContext {
         Ok(())
     }
 
-    /// Emits a sender-side `FWARNING` diagnostic, framing it for the peer when
-    /// this process is the server.
+    /// Emits a sender-side diagnostic, framing it for the peer when this
+    /// process is the server.
     ///
     /// Upstream `rwrite()` sends the multiplexed frame *instead of* writing the
     /// text to the server's own stderr (`send_msg(...); return;`), so a client
@@ -322,27 +341,56 @@ impl GeneratorContext {
     /// forwarded. `text` carries its trailing newline, as upstream's payload
     /// does.
     ///
-    /// Below protocol 30 there is no `MSG_WARNING`, so `FWARNING` rides
-    /// `MSG_INFO` instead.
+    /// This is the single place the server-vs-client and the protocol-30
+    /// downgrade rules are applied; every sender diagnostic - per-file
+    /// (`sender.c`) and file-list walk (`flist.c`) alike - routes through here.
     ///
     /// # Upstream Reference
     ///
     /// - `log.c:330-346` - `am_server` sends the frame and returns
     /// - `log.c:332-337` - `MSG_WARNING` -> `MSG_INFO` downgrade below protocol 30
-    fn emit_sender_warning<W: Write>(
+    pub(super) fn emit_sender_diagnostic<W: Write>(
         &self,
         writer: &mut super::super::writer::ServerWriter<W>,
+        kind: SenderDiagnostic,
         text: &str,
     ) -> io::Result<()> {
         if self.config.connection.client_mode || !writer.is_multiplexed() {
             eprint!("{text}");
             return Ok(());
         }
-        if self.protocol.supports_generator_messages() {
-            writer.send_msg_warning(text.as_bytes())
-        } else {
-            writer.send_msg_info(text.as_bytes())
+        match kind {
+            SenderDiagnostic::Warning if !self.protocol.supports_generator_messages() => {
+                writer.send_msg_info(text.as_bytes())
+            }
+            SenderDiagnostic::Warning => writer.send_msg_warning(text.as_bytes()),
+            SenderDiagnostic::ErrorXfer => writer.send_msg_error_xfer(text.as_bytes()),
         }
+    }
+
+    /// Delivers the diagnostics that the file-list walk queued while no writer
+    /// was in scope.
+    ///
+    /// Upstream reports these inline from `send_file_list()` because `rwrite()`
+    /// reaches `f_out` directly. oc builds the whole list in memory before
+    /// `send_file_list()` writes a byte, so draining the queue here - after the
+    /// walk, before the list - puts the frames on the wire in the same order a
+    /// peer would have seen them.
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `flist.c:1846`, `flist.c:2433` - `link_stat %s failed` (FERROR_XFER)
+    /// - `flist.c:1878` - `opendir %s failed` (FERROR_XFER)
+    /// - `flist.c:1924` - `readdir(%s)` (FERROR_XFER)
+    /// - `flist.c:1317` - `file has vanished: %s` (FWARNING)
+    pub(super) fn flush_flist_diagnostics<W: Write>(
+        &mut self,
+        writer: &mut super::super::writer::ServerWriter<W>,
+    ) -> io::Result<()> {
+        for (kind, text) in std::mem::take(&mut self.pending_flist_diagnostics) {
+            self.emit_sender_diagnostic(writer, kind, &text)?;
+        }
+        Ok(())
     }
 
     /// Records an I/O error, logs the appropriate warning/error, and sends
@@ -373,7 +421,11 @@ impl GeneratorContext {
             // `c` is FERROR only for a protocol < 28 daemon; oc's protocol floor
             // is 28, so this is always FWARNING. `fname` is already quoted and
             // carries the daemon module suffix (util1.c:1273 full_fname).
-            self.emit_sender_warning(writer, &format!("file has vanished: {fname}\n"))?;
+            self.emit_sender_diagnostic(
+                writer,
+                SenderDiagnostic::Warning,
+                &format!("file has vanished: {fname}\n"),
+            )?;
         } else {
             self.io_error |= super::io_error_flags::IOERR_GENERAL;
             // upstream: sender.c:393 - rsyserr(FERROR_XFER, errno, "send_files failed to open %s", ...)
@@ -381,13 +433,7 @@ impl GeneratorContext {
                 "rsync: [sender] send_files failed to open {fname}: {}\n",
                 engine::local_copy::upstream_io_error(error),
             );
-            // MSG_ERROR_XFER exists at every supported protocol, so it carries
-            // no downgrade (upstream log.c:332-337 only remaps MSG_WARNING).
-            if self.config.connection.client_mode || !writer.is_multiplexed() {
-                eprint!("{text}");
-            } else {
-                writer.send_msg_error_xfer(text.as_bytes())?;
-            }
+            self.emit_sender_diagnostic(writer, SenderDiagnostic::ErrorXfer, &text)?;
         }
         if self.protocol.supports_generator_messages() {
             writer.send_no_send(ndx)?;
@@ -419,12 +465,7 @@ impl GeneratorContext {
             crate::full_fname::full_fname(path_display, self.daemon_module()),
             engine::local_copy::upstream_io_error(error),
         );
-        if self.config.connection.client_mode || !writer.is_multiplexed() {
-            eprint!("{text}");
-        } else {
-            writer.send_msg_error_xfer(text.as_bytes())?;
-        }
-        Ok(())
+        self.emit_sender_diagnostic(writer, SenderDiagnostic::ErrorXfer, &text)
     }
 
     /// Skips a source that has shrunk below its file-list length in append
@@ -450,8 +491,9 @@ impl GeneratorContext {
     ) -> io::Result<()> {
         // upstream: sender.c:422 - rprintf(FWARNING, "skipped diminished file: %s\n", ...)
         // full_fname quotes the path and appends the daemon module suffix.
-        self.emit_sender_warning(
+        self.emit_sender_diagnostic(
             writer,
+            SenderDiagnostic::Warning,
             &format!(
                 "skipped diminished file: {}\n",
                 crate::full_fname::full_fname(path_display, self.daemon_module()),
