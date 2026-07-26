@@ -161,10 +161,165 @@ pub(super) struct ServeFds {
 /// the sender appends after the token stream. The wire byte count is tracked by
 /// the caller's `CountingWriter` (post-compression), so it is not duplicated here.
 pub(super) struct StreamResult {
-    /// Whole-file checksum computed during streaming.
+    /// Whole-file checksum computed during streaming. Not yet poisoned: the
+    /// caller owns the single [`poison_file_checksum`] call so a scan-side and
+    /// a stream-side read error cannot poison the same digest twice.
     pub checksum_buf: [u8; ChecksumVerifier::MAX_DIGEST_LEN],
     /// Number of valid bytes in `checksum_buf`.
     pub checksum_len: usize,
+    /// First source read error hit while streaming, if any. The window that
+    /// failed was zero-filled and the token stream still finished normally.
+    pub read_error: Option<io::Error>,
+}
+
+/// The error upstream records when a source `read()` returns 0 mid-file.
+///
+/// # Upstream Reference
+///
+/// - `fileio.c:302` - `map->status = nread ? errno : ENODATA`
+fn short_read_error() -> io::Error {
+    #[cfg(unix)]
+    {
+        io::Error::from_raw_os_error(libc::ENODATA)
+    }
+    #[cfg(not(unix))]
+    {
+        io::Error::from(io::ErrorKind::UnexpectedEof)
+    }
+}
+
+/// Fills `dst` from `source`, mirroring upstream `map_ptr()`'s read loop.
+///
+/// A `read()` that returns `<= 0` is not fatal upstream: the error is recorded
+/// on the map, the rest of the window is zeroed, and the sender keeps streaming
+/// that (now zeroed) window. Returns the error instead of propagating it so the
+/// caller can finish the token stream and poison the file checksum.
+///
+/// `Interrupted` is retried rather than recorded, matching the `read_exact`
+/// semantics this replaced; every other failure zero-fills and returns.
+///
+/// # Upstream Reference
+///
+/// - `fileio.c:299-306` - `if (nread <= 0) { status = ...; memset(...); break; }`
+fn read_window<R: Read>(source: &mut R, dst: &mut [u8]) -> Option<io::Error> {
+    let mut filled = 0;
+    while filled < dst.len() {
+        match source.read(&mut dst[filled..]) {
+            Ok(0) => {
+                dst[filled..].fill(0);
+                return Some(short_read_error());
+            }
+            Ok(n) => filled += n,
+            Err(ref e) if e.kind() == io::ErrorKind::Interrupted => {}
+            Err(e) => {
+                dst[filled..].fill(0);
+                return Some(e);
+            }
+        }
+    }
+    None
+}
+
+/// Replaces a whole-file checksum with the "bad checksum" upstream sends after
+/// a source read error, so the receiver's verify fails and the file is redone
+/// instead of being silently committed from partly-zeroed data.
+///
+/// The rule is all bits off, unless the true digest already was all zero, in
+/// which case the last byte is incremented to 1.
+///
+/// Must be called at most once per digest: poisoning an already-poisoned
+/// (all-zero) digest would turn it into the `0x..01` form and no longer match
+/// what upstream sends.
+///
+/// # Upstream Reference
+///
+/// - `match.c:414-423` - `for (i = 0; i < xfer_sum_len && sender_file_sum[i] == 0; i++) {}`
+///   / `memset(sender_file_sum, 0, xfer_sum_len)` / `if (i == xfer_sum_len) sender_file_sum[i-1]++`
+pub(super) fn poison_file_checksum(checksum_buf: &mut [u8], checksum_len: usize) {
+    let sum = &mut checksum_buf[..checksum_len];
+    let was_all_zero = sum.iter().all(|&b| b == 0);
+    sum.fill(0);
+    if was_all_zero {
+        if let Some(last) = sum.last_mut() {
+            *last = last.wrapping_add(1);
+        }
+    }
+}
+
+/// Source adapter that gives the sender's delta scan upstream's `map_ptr()`
+/// read-error behaviour.
+///
+/// Upstream has no separate scan pass - `match_sums()` scans and emits tokens
+/// over the same `map_ptr()` window, so a failed read zero-fills that window and
+/// the scan still runs to the file's length. oc scans first and writes tokens
+/// second, so the scan needs the same tolerance: the failing window is served as
+/// zeros, the error is remembered instead of propagated, and the scan is carried
+/// on to `file_size`.
+///
+/// A clean EOF is *not* an error here. Upstream maps the size it fstat'ed at
+/// send time (`sender.c:404`), so a source that shrank after the file list was
+/// built is simply sent short; the scan must keep stopping at the real EOF and
+/// leave the digest untouched.
+///
+/// # Upstream Reference
+///
+/// - `fileio.c:299-306 map_ptr()` - zero-fill and continue on a failed read
+pub(super) struct ScanSource<R> {
+    inner: R,
+    /// File-list size, used only after an error to know how far to zero-fill.
+    expected: u64,
+    consumed: u64,
+    read_error: Option<io::Error>,
+}
+
+impl<R: Read> ScanSource<R> {
+    /// Wraps `inner`; `file_size` is the length recorded in the file list.
+    pub(super) fn new(inner: R, file_size: u64) -> Self {
+        Self {
+            inner,
+            expected: file_size,
+            consumed: 0,
+            read_error: None,
+        }
+    }
+
+    /// Consumes the adapter, returning the first read error it absorbed.
+    pub(super) fn into_read_error(self) -> Option<io::Error> {
+        self.read_error
+    }
+
+    /// Serves zeros for what is left of the expected length after a read error,
+    /// mirroring the zeroed `map_ptr()` window the upstream scan would see.
+    fn fill_zeros(&mut self, out: &mut [u8]) -> usize {
+        let want = out.len().min(
+            usize::try_from(self.expected.saturating_sub(self.consumed)).unwrap_or(usize::MAX),
+        );
+        out[..want].fill(0);
+        self.consumed += want as u64;
+        want
+    }
+}
+
+impl<R: Read> Read for ScanSource<R> {
+    fn read(&mut self, out: &mut [u8]) -> io::Result<usize> {
+        if self.read_error.is_some() {
+            return Ok(self.fill_zeros(out));
+        }
+        loop {
+            match self.inner.read(out) {
+                // A genuine EOF, not a failure: end the scan where the source ends.
+                Ok(n) => {
+                    self.consumed += n as u64;
+                    return Ok(n);
+                }
+                Err(ref e) if e.kind() == io::ErrorKind::Interrupted => {}
+                Err(e) => {
+                    self.read_error = Some(e);
+                    return Ok(self.fill_zeros(out));
+                }
+            }
+        }
+    }
 }
 
 /// Generates a delta script from a received signature.
@@ -484,12 +639,18 @@ pub(super) fn stream_whole_file_transfer<R: Read, W: Write>(
     let read_size = (file_size as usize).clamp(1, MAX_READ_SIZE);
 
     let mut remaining = file_size;
+    // upstream: fileio.c:299-306 - a failed source read zeroes the window and
+    // the send continues; the error only surfaces later as a poisoned file
+    // checksum plus `read errors mapping` (sender.c:464-471).
+    let mut read_error: Option<io::Error> = None;
 
     if let Some(encoder) = encoder {
         buf.resize(read_size, 0);
         while remaining > 0 {
             let to_read = buf.len().min(remaining as usize);
-            source.read_exact(&mut buf[..to_read])?;
+            if let Some(e) = read_window(&mut source, &mut buf[..to_read]) {
+                read_error.get_or_insert(e);
+            }
             verifier.update(&buf[..to_read]);
             encoder.send_literal(writer, &buf[..to_read])?;
             remaining -= to_read as u64;
@@ -505,7 +666,9 @@ pub(super) fn stream_whole_file_transfer<R: Read, W: Write>(
         buf.resize(4 + read_size, 0);
         while remaining > 0 {
             let to_read = (buf.len() - 4).min(remaining as usize);
-            source.read_exact(&mut buf[4..4 + to_read])?;
+            if let Some(e) = read_window(&mut source, &mut buf[4..4 + to_read]) {
+                read_error.get_or_insert(e);
+            }
             verifier.update(&buf[4..4 + to_read]);
             // Write wire chunks with combined [length_prefix + data].
             // For offset 0, the prefix uses the reserved buf[0..4].
@@ -528,6 +691,7 @@ pub(super) fn stream_whole_file_transfer<R: Read, W: Write>(
     Ok(StreamResult {
         checksum_buf,
         checksum_len,
+        read_error,
     })
 }
 
@@ -567,11 +731,16 @@ pub(super) fn stream_append_transfer<R: Read, W: Write>(
     // folds it into the whole-file checksum (verify); append_mode == 1 skips the
     // sum (trust). Either way the prefix bytes are never sent as tokens.
     let mut prefix_remaining = flength.min(file_size);
+    // upstream: fileio.c:299-306 - a failed source read zeroes the window and
+    // the send continues; the error surfaces as a poisoned file checksum.
+    let mut read_error: Option<io::Error> = None;
     if prefix_remaining > 0 {
         buf.resize((prefix_remaining as usize).clamp(1, MAX_READ_SIZE), 0);
         while prefix_remaining > 0 {
             let to_read = buf.len().min(prefix_remaining as usize);
-            source.read_exact(&mut buf[..to_read])?;
+            if let Some(e) = read_window(&mut source, &mut buf[..to_read]) {
+                read_error.get_or_insert(e);
+            }
             if append_verify {
                 verifier.update(&buf[..to_read]);
             }
@@ -587,7 +756,9 @@ pub(super) fn stream_append_transfer<R: Read, W: Write>(
         buf.resize(read_size, 0);
         while remaining > 0 {
             let to_read = buf.len().min(remaining as usize);
-            source.read_exact(&mut buf[..to_read])?;
+            if let Some(e) = read_window(&mut source, &mut buf[..to_read]) {
+                read_error.get_or_insert(e);
+            }
             verifier.update(&buf[..to_read]);
             encoder.send_literal(writer, &buf[..to_read])?;
             remaining -= to_read as u64;
@@ -597,7 +768,9 @@ pub(super) fn stream_append_transfer<R: Read, W: Write>(
         buf.resize(4 + read_size, 0);
         while remaining > 0 {
             let to_read = (buf.len() - 4).min(remaining as usize);
-            source.read_exact(&mut buf[4..4 + to_read])?;
+            if let Some(e) = read_window(&mut source, &mut buf[4..4 + to_read]) {
+                read_error.get_or_insert(e);
+            }
             verifier.update(&buf[4..4 + to_read]);
             let mut wire_off = 0;
             while wire_off < to_read {
@@ -617,6 +790,7 @@ pub(super) fn stream_append_transfer<R: Read, W: Write>(
     Ok(StreamResult {
         checksum_buf,
         checksum_len,
+        read_error,
     })
 }
 
@@ -741,7 +915,8 @@ pub(super) fn write_delta_with_compression<W: Write>(
 
 /// Result of writing a delta to the wire with inline checksum computation.
 pub(super) struct InlineChecksumResult {
-    /// Whole-file checksum computed during the wire-write pass.
+    /// Whole-file checksum computed during the wire-write pass. Not yet
+    /// poisoned - see [`StreamResult::checksum_buf`].
     pub checksum_buf: [u8; ChecksumVerifier::MAX_DIGEST_LEN],
     /// Number of valid bytes in `checksum_buf`.
     pub checksum_len: usize,
@@ -751,6 +926,9 @@ pub(super) struct InlineChecksumResult {
     /// Bytes sent as literal data on this file.
     /// upstream: `match.c:330` `stats.literal_data += s->sums[j].len`.
     pub literal_data: u64,
+    /// First source read error hit while re-reading matched blocks, if any.
+    /// The failed window was zeroed and the token stream still finished.
+    pub read_error: Option<io::Error>,
 }
 
 /// Writes delta tokens to the wire and computes the file checksum in a single pass.
@@ -802,6 +980,9 @@ pub(super) fn write_delta_with_inline_checksum<W: Write>(
     // and stats.literal_data as each token is emitted on the sender.
     let mut matched_data: u64 = 0;
     let mut literal_data: u64 = 0;
+    // upstream: fileio.c:299-306 - a failed source read zeroes the window and
+    // token emission continues; the file checksum is poisoned by the caller.
+    let mut read_error: Option<io::Error> = None;
 
     match encoder {
         Some(encoder) => {
@@ -826,8 +1007,13 @@ pub(super) fn write_delta_with_inline_checksum<W: Write>(
                         read_buf.clear();
                         read_buf.resize(len, 0);
                         if let Some(ref mut file) = source_file {
+                            // upstream: fileio.c:288-294 - an lseek failure is
+                            // still fatal (exit_cleanup(RERR_FILEIO)); only the
+                            // read is tolerated.
                             file.seek(SeekFrom::Start(source_offset))?;
-                            file.read_exact(&mut read_buf)?;
+                            if let Some(e) = read_window(file, &mut read_buf) {
+                                read_error.get_or_insert(e);
+                            }
                         }
                         verifier.update(&read_buf);
                         if needs_dict_sync {
@@ -867,8 +1053,13 @@ pub(super) fn write_delta_with_inline_checksum<W: Write>(
                         read_buf.clear();
                         read_buf.resize(len, 0);
                         if let Some(ref mut file) = source_file {
+                            // upstream: fileio.c:288-294 - an lseek failure is
+                            // still fatal (exit_cleanup(RERR_FILEIO)); only the
+                            // read is tolerated.
                             file.seek(SeekFrom::Start(source_offset))?;
-                            file.read_exact(&mut read_buf)?;
+                            if let Some(e) = read_window(file, &mut read_buf) {
+                                read_error.get_or_insert(e);
+                            }
                         }
                         verifier.update(&read_buf);
                         source_offset += u64::from(*length);
@@ -888,6 +1079,7 @@ pub(super) fn write_delta_with_inline_checksum<W: Write>(
         checksum_len,
         matched_data,
         literal_data,
+        read_error,
     })
 }
 
@@ -1192,6 +1384,10 @@ mod tests {
         let mut expected_buf = [0u8; ChecksumVerifier::MAX_DIGEST_LEN];
         let expected_len = expected.finalize_into(&mut expected_buf);
 
+        assert!(
+            result.read_error.is_none(),
+            "a clean source read must not arm the poison"
+        );
         assert_eq!(
             result.checksum_len, expected_len,
             "checksum length mismatch"
@@ -1521,6 +1717,272 @@ mod tests {
                 .iter()
                 .any(|t| matches!(t, DeltaToken::Literal(_))),
             "the suppressed backward block must reappear as a literal",
+        );
+    }
+
+    /// A source that serves `good` bytes and then fails every read, standing in
+    /// for a device that starts returning EIO partway through a file. The
+    /// leading `interrupts` reads fail with `Interrupted`, which must be
+    /// retried rather than treated as a read error.
+    struct FailingReader {
+        good: Vec<u8>,
+        pos: usize,
+        interrupts: u8,
+    }
+
+    impl FailingReader {
+        fn new(good: Vec<u8>, interrupts: u8) -> Self {
+            Self {
+                good,
+                pos: 0,
+                interrupts,
+            }
+        }
+    }
+
+    impl Read for FailingReader {
+        fn read(&mut self, out: &mut [u8]) -> io::Result<usize> {
+            if self.interrupts > 0 {
+                self.interrupts -= 1;
+                return Err(io::Error::from(io::ErrorKind::Interrupted));
+            }
+            if self.pos >= self.good.len() {
+                return Err(io::Error::other("simulated device read error"));
+            }
+            let n = out.len().min(self.good.len() - self.pos);
+            out[..n].copy_from_slice(&self.good[self.pos..self.pos + n]);
+            self.pos += n;
+            Ok(n)
+        }
+    }
+
+    /// WHY: the receiver decides whether to keep a transferred file by matching
+    /// the trailing sender checksum. Upstream deliberately makes that match
+    /// impossible after a source read error so the partly-zeroed file is
+    /// discarded, and the exact byte rule is what the receiver's compare sees:
+    /// all bits off, unless the true digest already was all zero, in which case
+    /// the last byte is bumped to 1 so the poisoned value still differs.
+    ///
+    /// upstream: match.c:414-423.
+    #[test]
+    fn poison_file_checksum_matches_upstream_byte_rule() {
+        let mut buf = [0u8; ChecksumVerifier::MAX_DIGEST_LEN];
+        buf[..4].copy_from_slice(&[1, 2, 3, 4]);
+        buf[4] = 0xAA;
+        poison_file_checksum(&mut buf, 4);
+        assert_eq!(
+            &buf[..4],
+            &[0, 0, 0, 0],
+            "a real digest poisons to all zero"
+        );
+        assert_eq!(
+            buf[4], 0xAA,
+            "poison must not reach past checksum_len (xfer_sum_len)"
+        );
+
+        let mut zero = [0u8; ChecksumVerifier::MAX_DIGEST_LEN];
+        poison_file_checksum(&mut zero, 16);
+        let mut expected = [0u8; 16];
+        expected[15] = 1;
+        assert_eq!(
+            &zero[..16],
+            &expected[..],
+            "an already-all-zero digest gets its last byte incremented"
+        );
+    }
+
+    /// WHY: upstream's scan and its token emission share one map_ptr() window,
+    /// so a read error zero-fills that window and the scan still covers
+    /// st.st_size. oc scans in a separate pass, so the adapter must reproduce
+    /// both halves: the caller sees exactly file_size bytes (zeros where the
+    /// device failed) and the error is remembered instead of propagated.
+    ///
+    /// upstream: fileio.c:299-306.
+    #[test]
+    fn scan_source_zero_fills_and_records_the_read_error() {
+        let mut inner = FailingReader::new(vec![7u8; 100], 1);
+        let mut scan = ScanSource::new(&mut inner, 256);
+        let mut out = Vec::new();
+        let n = scan
+            .read_to_end(&mut out)
+            .expect("a source read error must not surface to the delta scan");
+
+        assert_eq!(n, 256, "the scan must still see exactly file_size bytes");
+        assert_eq!(
+            &out[..100],
+            &[7u8; 100][..],
+            "readable bytes survive intact"
+        );
+        assert!(
+            out[100..].iter().all(|&b| b == 0),
+            "the unreadable window is zero-filled, never garbage"
+        );
+        let err = scan.into_read_error().expect("the read error is recorded");
+        assert_eq!(err.kind(), io::ErrorKind::Other);
+    }
+
+    /// WHY: upstream maps the size it fstat'ed at send time (sender.c:404), so a
+    /// source that shrank after the file list was built is simply sent short and
+    /// verifies normally. Treating that clean EOF as a read error would poison
+    /// - and so discard - every legitimately shrinking file.
+    #[test]
+    fn scan_source_clean_eof_is_not_a_read_error() {
+        let mut scan = ScanSource::new(io::Cursor::new(vec![3u8; 40]), 256);
+        let mut out = Vec::new();
+        scan.read_to_end(&mut out).expect("short read");
+
+        assert_eq!(
+            out.len(),
+            40,
+            "the scan stops at the real end of the source"
+        );
+        assert!(
+            scan.into_read_error().is_none(),
+            "a source that shrank is not a device read error"
+        );
+    }
+
+    /// WHY: a mid-file read error used to propagate out of the whole-file
+    /// sender and abort the entire run. Upstream finishes the token stream so
+    /// the peer stays in lockstep, then poisons the checksum so the receiver
+    /// discards the file and the run continues to the next entry (exit 23).
+    ///
+    /// upstream: fileio.c:299-306 (zero-fill and continue), match.c:414-423
+    /// (poison), sender.c:464-471 (io_error |= IOERR_GENERAL, keep going).
+    #[test]
+    fn stream_whole_file_transfer_survives_a_read_error_and_poisons() {
+        let file_size: u64 = 8 * 1024;
+        let mut src = FailingReader::new(vec![0x5A; 1024], 1);
+        let mut wire = Vec::new();
+        let mut buf = Vec::new();
+
+        let result = stream_whole_file_transfer(
+            &mut wire,
+            &mut src,
+            file_size,
+            ChecksumAlgorithm::MD5,
+            0,
+            proto(31),
+            None,
+            &mut buf,
+            None,
+        )
+        .expect("a source read error must not abort the sender");
+
+        let err = result.read_error.expect("the read error is reported back");
+        assert_eq!(err.kind(), io::ErrorKind::Other);
+        assert_eq!(
+            wire.len(),
+            4 + file_size as usize + 4,
+            "the full file_size is still framed, so the peer stays in lockstep"
+        );
+        assert_eq!(
+            &wire[wire.len() - 4..],
+            &[0, 0, 0, 0],
+            "the token stream is still terminated by write_int(0)"
+        );
+        assert!(
+            wire[4 + 1024..wire.len() - 4].iter().all(|&b| b == 0),
+            "the unreadable window is sent as zeros, never stale buffer bytes"
+        );
+
+        let mut poisoned = result.checksum_buf;
+        poison_file_checksum(&mut poisoned, result.checksum_len);
+        assert!(
+            poisoned[..result.checksum_len].iter().all(|&b| b == 0),
+            "the receiver must be handed a checksum that cannot verify"
+        );
+        assert_ne!(
+            &poisoned[..result.checksum_len],
+            &result.checksum_buf[..result.checksum_len],
+            "poisoning must actually change the digest that goes on the wire"
+        );
+    }
+
+    /// WHY: poisoning that fired on a healthy transfer would discard every file.
+    /// The clean path must report no read error and emit the true digest.
+    #[test]
+    fn stream_whole_file_transfer_clean_read_keeps_the_true_digest() {
+        let data: Vec<u8> = (0..4096u32).map(|i| (i % 251) as u8).collect();
+        let mut wire = Vec::new();
+        let mut buf = Vec::new();
+
+        let result = stream_whole_file_transfer(
+            &mut wire,
+            io::Cursor::new(data.clone()),
+            data.len() as u64,
+            ChecksumAlgorithm::MD5,
+            0,
+            proto(31),
+            None,
+            &mut buf,
+            None,
+        )
+        .expect("clean whole-file stream");
+
+        assert!(
+            result.read_error.is_none(),
+            "a clean read must not arm the poison"
+        );
+        let mut expected = ChecksumVerifier::for_algorithm(ChecksumAlgorithm::MD5);
+        expected.update(&data);
+        let mut expected_buf = [0u8; ChecksumVerifier::MAX_DIGEST_LEN];
+        let expected_len = expected.finalize_into(&mut expected_buf);
+        assert_eq!(
+            &result.checksum_buf[..result.checksum_len],
+            &expected_buf[..expected_len],
+            "the unpoisoned digest must still be the true whole-file checksum"
+        );
+    }
+
+    /// WHY: the delta path re-reads matched blocks from the source to fold them
+    /// into the whole-file checksum. A block that cannot be read (here the
+    /// source is shorter than the script claims, which upstream records as
+    /// ENODATA) must zero-fill, finish the token stream and poison - not abort.
+    ///
+    /// upstream: fileio.c:302 `map->status = nread ? errno : ENODATA`.
+    #[test]
+    fn write_delta_inline_checksum_survives_a_read_error_and_poisons() {
+        use std::io::Write;
+        use tempfile::NamedTempFile;
+
+        let mut temp = NamedTempFile::new().expect("temp file");
+        temp.write_all(&[9u8; 32]).expect("write source");
+        temp.flush().expect("flush");
+
+        let ops = vec![DeltaOp::Copy {
+            block_index: 0,
+            length: 64,
+        }];
+        let mut wire = Vec::new();
+        let result = write_delta_with_inline_checksum(
+            &mut wire,
+            &ops,
+            None,
+            false,
+            temp.path(),
+            false,
+            ChecksumAlgorithm::MD5,
+            0,
+            proto(31),
+        )
+        .expect("a short source read must not abort the sender");
+
+        assert!(
+            result.read_error.is_some(),
+            "the truncated block read must be recorded"
+        );
+        assert_eq!(
+            &wire[wire.len() - 4..],
+            &[0, 0, 0, 0],
+            "the token stream is still terminated by write_int(0)"
+        );
+
+        let mut poisoned = result.checksum_buf;
+        poison_file_checksum(&mut poisoned, result.checksum_len);
+        assert!(
+            poisoned[..result.checksum_len].iter().all(|&b| b == 0),
+            "the receiver must be handed a checksum that cannot verify"
         );
     }
 }

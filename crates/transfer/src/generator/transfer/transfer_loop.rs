@@ -18,8 +18,9 @@ use protocol::codec::{
 use protocol::stats::DeleteStats;
 
 use super::super::delta::{
-    create_token_encoder, script_to_wire_delta, stream_append_transfer, stream_whole_file_transfer,
-    whole_stream_compression_level, write_delta_with_inline_checksum,
+    ScanSource, create_token_encoder, poison_file_checksum, script_to_wire_delta,
+    stream_append_transfer, stream_whole_file_transfer, whole_stream_compression_level,
+    write_delta_with_inline_checksum,
 };
 use super::super::item_flags::ItemFlags;
 use super::super::protocol_io::NdxAttrs;
@@ -689,6 +690,13 @@ impl GeneratorContext {
                 continue;
             }
 
+            // upstream: sender.c:462-471 - a source read error during
+            // match_sums() is not fatal. map_ptr() zeroed the unreadable window
+            // and the token stream ran to completion; the file checksum is
+            // poisoned (match.c:414-423) so the receiver redoes the file, and
+            // unmap_file()'s saved status is reported here, after log_item().
+            let mut read_error: Option<io::Error>;
+
             if is_append && has_basis {
                 // upstream: match.c:371-390 - append mode streams only the tail
                 // past the existing prefix; the sum_head's count/blength encode
@@ -741,7 +749,12 @@ impl GeneratorContext {
                         },
                         &mut stream_buf,
                     )?;
-                    cw.write_all(&result.checksum_buf[..result.checksum_len])?;
+                    read_error = result.read_error;
+                    let mut checksum_buf = result.checksum_buf;
+                    if read_error.is_some() {
+                        poison_file_checksum(&mut checksum_buf, result.checksum_len);
+                    }
+                    cw.write_all(&checksum_buf[..result.checksum_len])?;
                     sent_bytes(cw.bytes_written(), divert_xfer)
                 };
                 bytes_sent += wire_bytes;
@@ -811,6 +824,13 @@ impl GeneratorContext {
                     checksum_seed: self.checksum_seed,
                     updating_basis_file,
                 };
+                // Upstream scans and emits tokens over the same map_ptr()
+                // window, so a read error is absorbed by the scan too. oc scans
+                // in a separate pass, so ScanSource gives that pass the same
+                // zero-fill-and-continue behaviour (fileio.c:299-306). The mmap
+                // path has no io::Error to catch - a bad page raises SIGBUS -
+                // so it is left alone.
+                let mut scan_source = source_reader.map(|r| ScanSource::new(r, file_size));
                 let delta_script = match source_mmap.as_ref() {
                     Some(mmap) => generate_delta_from_signature_chunked(
                         mmap.as_slice(),
@@ -818,10 +838,13 @@ impl GeneratorContext {
                         cores.min(PARALLEL_DELTA_MAX_CHUNKS),
                     )?,
                     None => generate_delta_from_signature(
-                        source_reader.expect("sequential reader opened when mmap is absent"),
+                        scan_source
+                            .as_mut()
+                            .expect("sequential reader opened when mmap is absent"),
                         config,
                     )?,
                 };
+                read_error = scan_source.and_then(ScanSource::into_read_error);
 
                 self.write_ndx_attrs_and_sum_head(
                     &mut *writer,
@@ -876,7 +899,14 @@ impl GeneratorContext {
                         self.checksum_seed,
                         self.protocol,
                     )?;
-                    cw.write_all(&result.checksum_buf[..result.checksum_len])?;
+                    if read_error.is_none() {
+                        read_error = result.read_error;
+                    }
+                    let mut checksum_buf = result.checksum_buf;
+                    if read_error.is_some() {
+                        poison_file_checksum(&mut checksum_buf, result.checksum_len);
+                    }
+                    cw.write_all(&checksum_buf[..result.checksum_len])?;
                     matched_data += result.matched_data;
                     literal_data += result.literal_data;
                     sent_bytes(cw.bytes_written(), divert_xfer)
@@ -957,7 +987,12 @@ impl GeneratorContext {
                         &mut stream_buf,
                         serve_fds,
                     )?;
-                    cw.write_all(&result.checksum_buf[..result.checksum_len])?;
+                    read_error = result.read_error;
+                    let mut checksum_buf = result.checksum_buf;
+                    if read_error.is_some() {
+                        poison_file_checksum(&mut checksum_buf, result.checksum_len);
+                    }
+                    cw.write_all(&checksum_buf[..result.checksum_len])?;
                     sent_bytes(cw.bytes_written(), divert_xfer)
                 };
                 bytes_sent += wire_bytes;
@@ -1009,6 +1044,14 @@ impl GeneratorContext {
                     flist_eof,
                 };
                 cb.on_file_transferred(&event);
+            }
+
+            // upstream: sender.c:462-471 - once the file has been sent, logged
+            // and its progress ended, unmap_file() surfaces the saved read
+            // errno: set IOERR_GENERAL (exit 23), report it, and move on to the
+            // next file rather than aborting the run.
+            if let Some(err) = read_error.take() {
+                self.record_read_errors(&mut *writer, &err, &source_path_display)?;
             }
 
             // upstream: sender.c:261 - send extra file lists at bottom of loop
