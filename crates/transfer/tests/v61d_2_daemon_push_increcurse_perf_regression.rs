@@ -47,7 +47,6 @@
 
 #![cfg(all(unix, not(target_os = "macos")))]
 
-use std::env;
 use std::fs::{self, File};
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
@@ -80,38 +79,6 @@ const FILES_PER_DIR: usize = 64;
 /// have observed ~2x variance across consecutive `cargo nextest` runs
 /// on the same machine for sub-second push transfers).
 const MAX_SLOWDOWN_RATIO: f64 = 5.0;
-
-/// Locate the `oc-rsync` binary the test runner built.
-///
-/// Cargo injects `CARGO_BIN_EXE_oc-rsync` when the integration test sees
-/// the workspace binary as a dev-dependency; for the `transfer` crate
-/// that injection is not guaranteed, so fall back to walking the
-/// `target/` tree, mirroring `tests/inc_recurse_single_segment_push_isi_c.rs`.
-fn locate_oc_rsync() -> Option<PathBuf> {
-    if let Some(p) = env::var_os("CARGO_BIN_EXE_oc-rsync") {
-        let p = PathBuf::from(p);
-        if p.is_file() {
-            return Some(p);
-        }
-    }
-    let exe = env::current_exe().ok()?;
-    let mut dir = exe.parent()?;
-    let name = format!("oc-rsync{}", env::consts::EXE_SUFFIX);
-    while !dir.ends_with("target") {
-        let candidate = dir.join(&name);
-        if candidate.is_file() {
-            return Some(candidate);
-        }
-        dir = dir.parent()?;
-    }
-    for sub in ["debug", "release"] {
-        let candidate = dir.join(sub).join(&name);
-        if candidate.is_file() {
-            return Some(candidate);
-        }
-    }
-    None
-}
 
 /// Locate the upstream rsync binary for the requested version.
 ///
@@ -271,13 +238,7 @@ fn time_push(sender_bin: &Path, src: &Path, port: u16) -> io::Result<Duration> {
 /// gets a quick-check head start from leftover destination files.
 #[test]
 fn daemon_push_under_inc_recurse_stays_within_5x_of_upstream_sender_baseline() {
-    let oc_bin = match locate_oc_rsync() {
-        Some(p) => p,
-        None => {
-            eprintln!("skip: oc-rsync binary not located");
-            return;
-        }
-    };
+    let oc_bin = test_support::oc_rsync_bin();
     let up_bin = match upstream_rsync_binary("3.4.1") {
         Some(p) => p,
         None => {

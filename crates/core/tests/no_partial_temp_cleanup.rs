@@ -28,8 +28,6 @@ mod common;
 use common::{DaemonBinary, TestDaemon, create_test_file};
 
 #[cfg(unix)]
-use std::env;
-#[cfg(unix)]
 use std::fs;
 #[cfg(unix)]
 use std::path::PathBuf;
@@ -61,38 +59,6 @@ const KILL_DELAY: Duration = Duration::from_secs(3);
 /// Maximum time to wait for the client process to exit after signal.
 #[cfg(unix)]
 const EXIT_WAIT: Duration = Duration::from_secs(10);
-
-/// Locate the oc-rsync binary for subprocess spawning.
-#[cfg(unix)]
-fn locate_oc_rsync() -> Option<PathBuf> {
-    if let Some(path) = env::var_os("CARGO_BIN_EXE_oc-rsync") {
-        let path = PathBuf::from(path);
-        if path.is_file() {
-            return Some(path);
-        }
-    }
-
-    let binary_name = format!("oc-rsync{}", env::consts::EXE_SUFFIX);
-    let current_exe = env::current_exe().ok()?;
-    let mut dir = current_exe.parent()?;
-
-    while !dir.ends_with("target") {
-        let candidate = dir.join(&binary_name);
-        if candidate.is_file() {
-            return Some(candidate);
-        }
-        dir = dir.parent()?;
-    }
-
-    for subdir in ["debug", "release"] {
-        let candidate = dir.join(subdir).join(&binary_name);
-        if candidate.is_file() {
-            return Some(candidate);
-        }
-    }
-
-    None
-}
 
 /// Generate deterministic test data (repeating byte pattern).
 #[cfg(unix)]
@@ -197,13 +163,7 @@ fn assert_dest_clean(dest_dir: &std::path::Path, context: &str) {
 #[test]
 #[ignore = "requires oc-rsync binary"]
 fn no_partial_single_file_no_residue_on_kill() {
-    let oc_rsync = match locate_oc_rsync() {
-        Some(path) => path,
-        None => {
-            eprintln!("Skipping: oc-rsync binary not found");
-            return;
-        }
-    };
+    let oc_rsync = test_support::oc_rsync_bin();
 
     let daemon = TestDaemon::start(DaemonBinary::OcRsync).expect("start oc-rsync daemon");
 
@@ -257,13 +217,7 @@ fn no_partial_single_file_no_residue_on_kill() {
 #[test]
 #[ignore = "requires oc-rsync binary"]
 fn no_partial_multi_file_no_residue_on_kill() {
-    let oc_rsync = match locate_oc_rsync() {
-        Some(path) => path,
-        None => {
-            eprintln!("Skipping: oc-rsync binary not found");
-            return;
-        }
-    };
+    let oc_rsync = test_support::oc_rsync_bin();
 
     let daemon = TestDaemon::start(DaemonBinary::OcRsync).expect("start oc-rsync daemon");
 
@@ -334,13 +288,7 @@ fn no_partial_multi_file_no_residue_on_kill() {
 #[test]
 #[ignore = "requires oc-rsync binary"]
 fn no_partial_preserves_dirs_but_removes_temps() {
-    let oc_rsync = match locate_oc_rsync() {
-        Some(path) => path,
-        None => {
-            eprintln!("Skipping: oc-rsync binary not found");
-            return;
-        }
-    };
+    let oc_rsync = test_support::oc_rsync_bin();
 
     let daemon = TestDaemon::start(DaemonBinary::OcRsync).expect("start oc-rsync daemon");
 

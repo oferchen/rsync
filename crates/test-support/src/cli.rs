@@ -38,8 +38,8 @@ const POLL_INTERVAL: Duration = Duration::from_millis(10);
 /// the run never completed cleanly.
 #[derive(Debug)]
 pub enum RunnerError {
-    /// The `oc-rsync` binary could not be found in `target/{debug,release}/`
-    /// and `CARGO_BIN_EXE_oc-rsync` was unset or pointed at a missing file.
+    /// The `oc-rsync` binary was not present at the one path it can occupy
+    /// for this Cargo profile (see [`crate::workspace_bin_path`]).
     BinaryNotFound,
     /// The OS failed to spawn the child process.
     Spawn(std::io::Error),
@@ -59,7 +59,8 @@ impl std::fmt::Display for RunnerError {
         match self {
             RunnerError::BinaryNotFound => write!(
                 f,
-                "oc-rsync binary not found (set CARGO_BIN_EXE_oc-rsync or build the workspace)"
+                "oc-rsync binary missing at {}; refusing to fall back to a stale build",
+                crate::bin_path::workspace_bin_path("oc-rsync").display()
             ),
             RunnerError::Spawn(e) => write!(f, "failed to spawn oc-rsync: {e}"),
             RunnerError::Wait(e) => write!(f, "failed to collect child output: {e}"),
@@ -72,22 +73,6 @@ impl std::fmt::Display for RunnerError {
 }
 
 impl std::error::Error for RunnerError {}
-
-/// Locate the `oc-rsync` binary.
-///
-/// Prefers Cargo's `CARGO_BIN_EXE_oc-rsync` (set for integration tests of a
-/// crate that depends on the `oc-rsync` bin target) and falls back to
-/// [`locate_workspace_binary`] which walks the enclosing profile directory.
-#[must_use]
-fn locate_oc_rsync() -> Option<PathBuf> {
-    if let Some(p) = std::env::var_os("CARGO_BIN_EXE_oc-rsync") {
-        let p = PathBuf::from(p);
-        if p.is_file() {
-            return Some(p);
-        }
-    }
-    locate_workspace_binary("oc-rsync")
-}
 
 /// Builder + executor for a single `oc-rsync` invocation.
 ///
@@ -121,7 +106,7 @@ impl OcRsyncCliRunner {
     #[must_use]
     pub fn new() -> Self {
         Self {
-            binary: locate_oc_rsync(),
+            binary: locate_workspace_binary("oc-rsync"),
             args: Vec::new(),
             env: BTreeMap::new(),
             env_clear: false,

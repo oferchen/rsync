@@ -83,6 +83,13 @@ jobs:
           mkdir -p "$WORK/results"
           echo "WORK=$WORK" >> "$GITHUB_OUTPUT"
 
+      # `engine` owns a test that spawns the `oc-rsync` binary. It is filtered
+      # out of the run below today, but a package-scoped `-p engine` selection
+      # never builds the binary, so build it here rather than leaving the cell
+      # one filter edit away from a hard failure.
+      - name: Build oc-rsync (for subprocess integration tests)
+        run: cargo build --locked -p bin --bin oc-rsync
+
       - name: Run reorder-buffer spill regression tests
         env:
           WORK: ${{ steps.prep.outputs.WORK }}
