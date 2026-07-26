@@ -188,7 +188,7 @@ pub(super) fn record_metadata_only_skip(
         metadata_options,
         true,
         false,
-        flags.xattrs_enabled(),
+        flags.xattrs_changed,
         flags.acls_enabled(),
         context.options().modify_window(),
     );

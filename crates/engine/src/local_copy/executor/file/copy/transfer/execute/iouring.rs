@@ -132,7 +132,7 @@ pub(super) fn try_dispatch(
         &metadata_options,
         destination_previously_existed,
         true,
-        flags.xattrs_enabled(),
+        flags.xattrs_changed,
         flags.acls_enabled(),
         context.options().modify_window(),
     );
