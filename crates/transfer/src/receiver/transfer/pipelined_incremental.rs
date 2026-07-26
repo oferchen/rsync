@@ -511,4 +511,101 @@ mod itemize_order_tests {
             rows[3].1
         );
     }
+
+    /// A `--dry-run` receive must report the directory it *would* create without
+    /// creating it: no `mkdir` on the destination, but the `cd+++++++++` itemize
+    /// row and the created-directory tally are still produced.
+    ///
+    /// WHY all three assertions: upstream suppresses only the syscall, never the
+    /// reporting. `syscall.c:1010-1016 do_mkdir()` is `if (dry_run) return 0;`
+    /// and `rsync.c:498-499 set_file_attrs()` returns early, while
+    /// `generator.c:1480-1483 itemize()` and the receiver's `created_dirs`
+    /// counter (`receiver.c:732-737`) run unconditionally. Asserting only the
+    /// absent directory would let a future early-return silence output upstream
+    /// prints, trading one fidelity bug for another; asserting only the row
+    /// would let the mkdir come back.
+    ///
+    /// `create_directory_incremental` had no `skip_dest_writes()` guard at all,
+    /// unlike its non-incremental sibling `create_directories`, so a plain `-n`
+    /// on this driver (`incremental-flist`, the default feature set) mutated the
+    /// destination.
+    #[test]
+    fn dry_run_reports_the_directory_without_creating_it() {
+        let dir = test_support::create_tempdir();
+        let dest = dir.path();
+
+        let hs = handshake();
+        let mut config = itemize_client_config();
+        config.flags.dry_run = true;
+        let mut ctx = ReceiverContext::new_for_test(&hs, config);
+        ctx.defer_itemize = true;
+        ctx.file_list = vec![
+            FileEntry::new_directory("newdir".into(), 0o755),
+            FileEntry::new_file("newdir/f1".into(), 5, 0o644),
+        ];
+
+        let opts = metadata::MetadataOptions::default();
+        let mut writer = crate::writer::ServerWriter::new_plain(Vec::new());
+        let mut stats = TransferStats::default();
+        let mut failed_dirs = FailedDirectories::new();
+
+        // Mirror the directory pass of `run_pipelined_incremental` exactly: the
+        // itemize row and the created tally are the caller's bookkeeping, so a
+        // guard placed too early in the callee is only observable from here.
+        for (flist_idx, file_entry) in ctx.file_list.clone().iter().enumerate() {
+            if !file_entry.is_dir() {
+                continue;
+            }
+            let result = ctx
+                .create_directory_incremental(
+                    dest,
+                    file_entry,
+                    &opts,
+                    &mut failed_dirs,
+                    None,
+                    None,
+                    #[cfg(unix)]
+                    None,
+                )
+                .expect("create_directory_incremental succeeds");
+            let Some((is_new, iflags_raw)) = result else {
+                panic!("a dry run must still classify the directory, not skip it");
+            };
+            if is_new {
+                stats.directories_created += 1;
+                ctx.record_created(file_entry.mode());
+            }
+            let iflags = crate::generator::ItemFlags::from_raw(iflags_raw);
+            let _ = ctx.emit_or_record_itemize(&mut writer, flist_idx, &iflags, file_entry);
+        }
+
+        assert!(
+            !dest.join("newdir").exists(),
+            "--dry-run must not create {} on the destination",
+            dest.join("newdir").display()
+        );
+
+        let rows: Vec<String> = ctx
+            .itemize_rows
+            .borrow()
+            .values()
+            .map(|lines| lines[0].clone())
+            .collect();
+        assert_eq!(rows.len(), 1, "exactly one directory row: {rows:?}");
+        assert!(
+            rows[0].starts_with("cd+++++++++") && rows[0].contains("newdir"),
+            "the -n itemize row for the would-be directory must survive: {:?}",
+            rows[0]
+        );
+
+        assert_eq!(
+            stats.directories_created, 1,
+            "--dry-run must still count the directory it would create"
+        );
+        assert_eq!(
+            ctx.created_stats.get().dirs,
+            1,
+            "the created-directories stat feeding \"Number of created files\" must survive"
+        );
+    }
 }
