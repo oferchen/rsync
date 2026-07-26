@@ -92,7 +92,12 @@ impl ReceiverContext {
                 } else {
                     // upstream: generator.c:1454 - delete_item(fname, ...,
                     // DEL_FOR_DIR) removes the conflicting symlink before mkdir.
-                    fs::remove_file(dir_path)?;
+                    // upstream: syscall.c do_unlink() - `if (dry_run) return 0;`,
+                    // so delete_item() reports success without unlinking and the
+                    // caller still proceeds as if the destination became absent.
+                    if !self.config.flags.skip_dest_writes() {
+                        fs::remove_file(dir_path)?;
+                    }
                     Ok(DirDestination::ReplacedSymlink)
                 }
             }
@@ -597,11 +602,19 @@ impl ReceiverContext {
     /// `set_file_attrs` (`generator.c:1503`). Only returns `Err` for
     /// unrecoverable errors.
     ///
+    /// Under `--dry-run` / `--list-only` the destination is left untouched: no
+    /// `mkdir`, no symlink removal, no metadata. The classification, the
+    /// returned `iflags`, and the `is_new` flag that drives the caller's
+    /// created-directory tally are still computed, so a dry run reports exactly
+    /// what a real run would create.
+    ///
     /// # Upstream Reference
     ///
     /// - `generator.c:1432` - `recv_generator()` creates directories
     /// - `generator.c:1484-1487` - retry `mkdir` after `make_path()`
     /// - `generator.c:1480-1483` - `itemize()` before metadata application
+    /// - `syscall.c:1010-1016` - `do_mkdir()` is a no-op under `dry_run`, so
+    ///   `itemize()` and the receiver's `created_dirs` tally still run
     pub(in crate::receiver) fn create_directory_incremental(
         &self,
         dest_dir: &Path,
@@ -690,7 +703,16 @@ impl ReceiverContext {
         } else {
             self.existing_dir_iflags(entry, &dir_path)
         };
-        if is_new {
+        // upstream: syscall.c:1010-1016 - `do_mkdir()` (reached from
+        // `do_mkdir_at()`) returns 0 without touching the filesystem when
+        // `dry_run` is set, and `rsync.c:498-499 set_file_attrs()` returns early
+        // the same way, while `generator.c:1480-1483 itemize()` still runs above.
+        // A dry run therefore reports the directory it *would* create - itemize
+        // row and created-dir tally intact - without creating it. Placed after
+        // the classification and the `iflags` computation so both survive; an
+        // early return here would silence output upstream still prints.
+        let skip_dest_writes = self.config.flags.skip_dest_writes();
+        if is_new && !skip_dest_writes {
             #[cfg(unix)]
             let create_result = fast_io::mkdirat_via_sandbox_or_fallback(
                 sandbox,
@@ -736,9 +758,60 @@ impl ReceiverContext {
             }
         }
 
-        // Apply metadata (non-fatal errors)
-        // Skip the stat inside apply_metadata_from_file_entry: the
-        // directory was just created, so pass None to apply unconditionally.
+        // upstream: rsync.c:498-499 - `set_file_attrs()` returns early under
+        // dry_run, so no metadata, xattrs, or ACLs reach the destination.
+        if !skip_dest_writes {
+            self.apply_incremental_dir_metadata(
+                &dir_path,
+                entry,
+                metadata_opts,
+                is_new,
+                acl_cache,
+                acl_id_map,
+            );
+        }
+
+        // Under `-i`/`-vi` the itemize row already carries the directory name
+        // (upstream `-vi` uses `%i %n`), so the bare `-v` name is suppressed to
+        // avoid a duplicate line; only plain `-v` emits it.
+        if self.config.flags.verbose
+            && self.config.connection.client_mode
+            && !self.should_emit_itemize()
+        {
+            if relative_path.as_os_str() == "." {
+                info_log!(Name, 1, "./");
+            } else {
+                info_log!(Name, 1, "{}/", relative_path.display());
+            }
+        }
+
+        Ok(Some((is_new, iflags)))
+    }
+
+    /// Applies metadata, xattrs, and cached ACLs to one directory created or
+    /// reused by [`Self::create_directory_incremental`].
+    ///
+    /// Every failure is non-fatal and reported as a verbose warning, mirroring
+    /// upstream's `set_file_attrs()` error handling: the transfer continues with
+    /// the remaining entries.
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `generator.c:1503` - `set_file_attrs()` after the directory mkdir
+    /// - `generator.c:1465` - `dest_mode(..., statret == 0)` keeps an existing
+    ///   directory's own permission bits when `--perms` is not in effect
+    /// - `generator.c:1512-1520` - transient `u+rwx` grant, undone by
+    ///   [`Self::touch_up_dirs`]
+    /// - `xattrs.c:set_xattr()` - xattrs are applied after metadata
+    fn apply_incremental_dir_metadata(
+        &self,
+        dir_path: &Path,
+        entry: &FileEntry,
+        metadata_opts: &MetadataOptions,
+        is_new: bool,
+        acl_cache: Option<&AclCache>,
+        acl_id_map: Option<&AclIdMapper>,
+    ) {
         // upstream: generator.c:1512-1520 - grant a transient u+rwx to a
         // read-only directory so files can be written into it; the real mode
         // is restored in touch_up_dirs.
@@ -764,10 +837,10 @@ impl ReceiverContext {
         let pre_transfer = if is_new {
             None
         } else {
-            fs::metadata(&dir_path).ok()
+            fs::metadata(dir_path).ok()
         };
         if let Err(e) = apply_metadata_with_pre_transfer_stat(
-            &dir_path,
+            dir_path,
             apply_entry,
             metadata_opts,
             None,
@@ -788,8 +861,7 @@ impl ReceiverContext {
                 .xattr_name_filter()
                 .map(|set| move |name: &str| set.xattr_name_allowed(name));
             let filter_ref = filter.as_ref().map(|f| f as &dyn Fn(&str) -> bool);
-            if let Err(e) =
-                metadata::apply_xattrs_from_list(&dir_path, xattr_list, true, filter_ref)
+            if let Err(e) = metadata::apply_xattrs_from_list(dir_path, xattr_list, true, filter_ref)
             {
                 if self.config.flags.verbose && self.config.connection.client_mode {
                     info_log!(
@@ -803,9 +875,7 @@ impl ReceiverContext {
             }
         }
 
-        // Apply cached ACLs after metadata (non-fatal errors)
-        if let Err(e) =
-            apply_acls_from_receiver_cache(&dir_path, entry, acl_cache, acl_id_map, true)
+        if let Err(e) = apply_acls_from_receiver_cache(dir_path, entry, acl_cache, acl_id_map, true)
         {
             if self.config.flags.verbose && self.config.connection.client_mode {
                 info_log!(
@@ -817,22 +887,6 @@ impl ReceiverContext {
                 );
             }
         }
-
-        // Under `-i`/`-vi` the itemize row already carries the directory name
-        // (upstream `-vi` uses `%i %n`), so the bare `-v` name is suppressed to
-        // avoid a duplicate line; only plain `-v` emits it.
-        if self.config.flags.verbose
-            && self.config.connection.client_mode
-            && !self.should_emit_itemize()
-        {
-            if relative_path.as_os_str() == "." {
-                info_log!(Name, 1, "./");
-            } else {
-                info_log!(Name, 1, "{}/", relative_path.display());
-            }
-        }
-
-        Ok(Some((is_new, iflags)))
     }
 
     /// Restores directory permissions and mtimes after all file transfers
