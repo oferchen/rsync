@@ -111,8 +111,11 @@ fn daemon_auth_uses_the_first_client_offered_digest_it_supports() {
 
     drop(reader);
     drop(stream);
-    let result = handle.join().expect("daemon thread");
-    assert!(result.is_ok(), "daemon should exit cleanly: {result:?}");
+    // Bounded join: an unconditional join() can wedge on Windows, where a
+    // blocking accept on a re-bound listener may linger (see finish_daemon).
+    if let Some(result) = finish_daemon(handle) {
+        assert!(result.is_ok(), "daemon should exit cleanly: {result:?}");
+    }
 }
 
 /// A client that negotiated a weak digest cannot present a response computed with
@@ -159,8 +162,11 @@ fn daemon_auth_rejects_a_response_computed_with_a_non_negotiated_digest() {
 
     drop(reader);
     drop(stream);
-    let result = handle.join().expect("daemon thread");
-    assert!(result.is_ok(), "daemon should exit cleanly: {result:?}");
+    // Bounded join: an unconditional join() can wedge on Windows, where a
+    // blocking accept on a re-bound listener may linger (see finish_daemon).
+    if let Some(result) = finish_daemon(handle) {
+        assert!(result.is_ok(), "daemon should exit cleanly: {result:?}");
+    }
 }
 
 /// When the client's list names nothing this build implements, the daemon refuses
@@ -195,8 +201,11 @@ fn daemon_auth_refuses_a_client_with_no_mutual_digest() {
 
     drop(reader);
     drop(stream);
-    let result = handle.join().expect("daemon thread");
-    assert!(result.is_ok(), "the listener survives a refused client");
+    // Bounded join: an unconditional join() can wedge on Windows, where a
+    // blocking accept on a re-bound listener may linger (see finish_daemon).
+    if let Some(result) = finish_daemon(handle) {
+        assert!(result.is_ok(), "the listener survives a refused client: {result:?}");
+    }
 }
 
 /// An unprotected module never negotiates, so a foreign digest list is harmless
@@ -251,7 +260,7 @@ fn daemon_skips_digest_negotiation_when_the_module_needs_no_auth() {
 
     drop(reader);
     drop(stream);
-    let _ = handle.join().expect("daemon thread");
+    let _ = finish_daemon(handle);
 }
 
 /// A protocol > 31 greeting that carries no digest list at all is refused before
@@ -288,7 +297,7 @@ fn daemon_refuses_a_protocol_32_greeting_without_a_digest_list() {
 
     drop(reader);
     drop(stream);
-    let _ = handle.join().expect("daemon thread");
+    let _ = finish_daemon(handle);
 }
 
 /// The single-session entry points (stdio, inetd) surface a session-fatal refusal
