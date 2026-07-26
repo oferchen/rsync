@@ -5,6 +5,7 @@
 //! This crate provides helpers that multiple test suites need, avoiding
 //! duplicated retry logic and setup boilerplate across crates.
 
+pub mod bin_path;
 pub mod cli;
 pub mod daemon_port;
 pub mod dir_diff;
@@ -12,6 +13,7 @@ pub mod lsh;
 pub mod skip;
 pub mod upstream_compat;
 
+pub use bin_path::{oc_rsync_bin, target_profile_dir, workspace_bin, workspace_bin_path};
 pub use cli::{CliOutput, OcRsyncCliRunner, RunnerError};
 pub use daemon_port::{daemon_listen_port, spawn_daemon_on_free_port};
 pub use dir_diff::{DirDiff, DirDiffEntry, DirDiffError, DirDiffMismatch, DirDiffOptions};

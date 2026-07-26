@@ -180,10 +180,7 @@ impl Scratch {
 /// staging dir is never touched and survives.
 #[test]
 fn daemon_pull_delay_updates_stages_through_tmp_dir() {
-    let Some(oc_bin) = test_support::locate_workspace_binary("oc-rsync") else {
-        eprintln!("skipping: oc-rsync binary not found in target/");
-        return;
-    };
+    let oc_bin = test_support::oc_rsync_bin();
     let Some(scratch) = Scratch::new() else {
         eprintln!("skipping: tempdir allocation failed");
         return;

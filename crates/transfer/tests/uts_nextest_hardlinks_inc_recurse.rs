@@ -63,47 +63,12 @@
 
 #![cfg(unix)]
 
-use std::env;
 use std::fs;
 use std::os::unix::fs::MetadataExt;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::process::Command;
 
 use tempfile::{TempDir, tempdir};
-
-/// Locate the workspace `oc-rsync` binary the test runner built.
-///
-/// Prefers Cargo's injected `CARGO_BIN_EXE_oc-rsync` when set; otherwise
-/// walks up from the test executable until a `target/` directory is
-/// found. Mirrors the lookup used by sibling integration tests
-/// (`delete_missing_args_files_from.rs`,
-/// `remove_source_files_local_copy.rs`,
-/// `v61d_2_daemon_push_increcurse_perf_regression.rs`).
-fn locate_oc_rsync() -> Option<PathBuf> {
-    if let Some(p) = env::var_os("CARGO_BIN_EXE_oc-rsync") {
-        let p = PathBuf::from(p);
-        if p.is_file() {
-            return Some(p);
-        }
-    }
-    let exe = env::current_exe().ok()?;
-    let mut dir = exe.parent()?;
-    let name = format!("oc-rsync{}", env::consts::EXE_SUFFIX);
-    while !dir.ends_with("target") {
-        let candidate = dir.join(&name);
-        if candidate.is_file() {
-            return Some(candidate);
-        }
-        dir = dir.parent()?;
-    }
-    for sub in ["debug", "release"] {
-        let candidate = dir.join(sub).join(&name);
-        if candidate.is_file() {
-            return Some(candidate);
-        }
-    }
-    None
-}
 
 /// Returns the inode number of `path`. Used to assert hardlink sharing at
 /// the destination.
@@ -168,10 +133,7 @@ fn trailing_slash(dir: &Path) -> std::ffi::OsString {
 /// 4. All four files have the source's byte payload.
 #[test]
 fn flat_hardlink_pair_survives_inc_recurse_roundtrip() {
-    let Some(bin) = locate_oc_rsync() else {
-        eprintln!("skipping: oc-rsync binary not found in target/");
-        return;
-    };
+    let bin = test_support::oc_rsync_bin();
 
     let root: TempDir = tempdir().expect("tempdir");
     let fromdir = root.path().join("from");
@@ -287,10 +249,7 @@ fn flat_hardlink_pair_survives_inc_recurse_roundtrip() {
 /// 4. All touch-files exist at the destination.
 #[test]
 fn deep_subdir_hardlink_survives_inc_recurse_roundtrip() {
-    let Some(bin) = locate_oc_rsync() else {
-        eprintln!("skipping: oc-rsync binary not found in target/");
-        return;
-    };
+    let bin = test_support::oc_rsync_bin();
 
     let root: TempDir = tempdir().expect("tempdir");
     let fromdir = root.path().join("from");
@@ -400,10 +359,7 @@ fn deep_subdir_hardlink_survives_inc_recurse_roundtrip() {
 ///    members link to the shared `todir/` basis inode).
 #[test]
 fn link_dest_inherits_hardlinks_from_basis() {
-    let Some(bin) = locate_oc_rsync() else {
-        eprintln!("skipping: oc-rsync binary not found in target/");
-        return;
-    };
+    let bin = test_support::oc_rsync_bin();
 
     let root: TempDir = tempdir().expect("tempdir");
     let fromdir = root.path().join("from");

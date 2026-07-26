@@ -50,7 +50,6 @@
 
 #![cfg(unix)]
 
-use std::env;
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
@@ -68,33 +67,6 @@ const FILE_SIZES: [usize; 3] = [300, 150, 70];
 /// `Total transferred file size` line for a fresh (all-new) destination.
 fn expected_transferred_size() -> usize {
     FILE_SIZES.iter().sum()
-}
-
-/// Locate the workspace `oc-rsync` binary the test runner built.
-fn locate_oc_rsync() -> Option<PathBuf> {
-    if let Some(p) = env::var_os("CARGO_BIN_EXE_oc-rsync") {
-        let p = PathBuf::from(p);
-        if p.is_file() {
-            return Some(p);
-        }
-    }
-    let exe = env::current_exe().ok()?;
-    let mut dir = exe.parent()?;
-    let name = format!("oc-rsync{}", env::consts::EXE_SUFFIX);
-    while !dir.ends_with("target") {
-        let candidate = dir.join(&name);
-        if candidate.is_file() {
-            return Some(candidate);
-        }
-        dir = dir.parent()?;
-    }
-    for sub in ["debug", "release"] {
-        let candidate = dir.join(sub).join(&name);
-        if candidate.is_file() {
-            return Some(candidate);
-        }
-    }
-    None
 }
 
 /// Write an `rsyncd.conf` exposing a single module. `use chroot = false` lets
@@ -237,10 +209,7 @@ impl DaemonScratch {
 /// so all three files transfer and the summed length is deterministic.
 #[test]
 fn daemon_push_reports_total_transferred_file_size() {
-    let Some(oc_bin) = locate_oc_rsync() else {
-        eprintln!("skipping: oc-rsync binary not found in target/");
-        return;
-    };
+    let oc_bin = test_support::oc_rsync_bin();
     let Some(scratch) = DaemonScratch::new() else {
         eprintln!("skipping: tempdir or test port allocation failed");
         return;
@@ -296,10 +265,7 @@ fn daemon_push_reports_total_transferred_file_size() {
 /// the client summary. Regression guard for the opposite direction.
 #[test]
 fn daemon_pull_reports_total_transferred_file_size() {
-    let Some(oc_bin) = locate_oc_rsync() else {
-        eprintln!("skipping: oc-rsync binary not found in target/");
-        return;
-    };
+    let oc_bin = test_support::oc_rsync_bin();
     let Some(scratch) = DaemonScratch::new() else {
         eprintln!("skipping: tempdir or test port allocation failed");
         return;

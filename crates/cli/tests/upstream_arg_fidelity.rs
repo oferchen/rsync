@@ -685,32 +685,12 @@ fn temp_dir_short_equals_value_is_accepted() {
 // upstream-correct outcome. They run only under `--ignored` (never in the
 // default CI test set) and require `cargo build --release --bin oc-rsync`.
 
-/// Locates the `oc-rsync` binary (defined in the workspace-root package, so
-/// `CARGO_BIN_EXE_oc-rsync` is not set for this crate's tests).
-fn oc_binary() -> std::path::PathBuf {
-    if let Some(explicit) = std::env::var_os("CARGO_BIN_EXE_oc-rsync") {
-        return explicit.into();
-    }
-    let manifest = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let root = manifest
-        .parent()
-        .and_then(std::path::Path::parent)
-        .expect("crates/cli lives two levels below the workspace root");
-    for profile in ["release", "debug"] {
-        let candidate = root.join("target").join(profile).join("oc-rsync");
-        if candidate.exists() {
-            return candidate;
-        }
-    }
-    panic!("oc-rsync binary not found; run `cargo build --release --bin oc-rsync` first");
-}
-
 /// Runs `oc-rsync -n <args...> <tmp-src>/ <tmp-dst>/` over empty temp dirs so
 /// only argument handling (not I/O) determines the exit status.
 fn run_oc(args: &[&str]) -> std::process::ExitStatus {
     let src = tempfile::tempdir().expect("tempdir src");
     let dst = tempfile::tempdir().expect("tempdir dst");
-    std::process::Command::new(oc_binary())
+    std::process::Command::new(test_support::oc_rsync_bin())
         .arg("-n")
         .args(args)
         .arg(format!("{}/", src.path().display()))

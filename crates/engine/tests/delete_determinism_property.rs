@@ -20,7 +20,9 @@
 //! - `OC_RSYNC_DELETE_INTEROP` is unset (the DDP-E live emitter has not
 //!   landed yet, so the determinism guarantee is not in force).
 //! - `strace` is not available on `PATH`.
-//! - The `oc-rsync` binary cannot be located.
+//!
+//! A missing `oc-rsync` binary is NOT a skip condition: once the gate and
+//! `strace` are satisfied the test fails loudly, naming the path it expected.
 //!
 //! # Upstream Reference
 //!
@@ -203,8 +205,12 @@ struct TestContext {
 impl TestContext {
     fn try_new() -> Option<Self> {
         env::var_os(GATE_ENV)?;
-        let oc_rsync = locate_oc_rsync()?;
+        // strace first: its absence is a legitimate host-capability skip.
+        // The binary is then required, not probed - once the gate and strace
+        // are satisfied there is no reason for this test to pass without
+        // spawning oc-rsync.
         let strace = locate_strace()?;
+        let oc_rsync = test_support::oc_rsync_bin();
         Some(Self { oc_rsync, strace })
     }
 
@@ -397,35 +403,6 @@ fn run_directory_keys(map: &BTreeMap<PathBuf, Vec<UnlinkEvent>>) -> Vec<&Path> {
 // ---------------------------------------------------------------------------
 // Binary discovery
 // ---------------------------------------------------------------------------
-
-fn locate_oc_rsync() -> Option<PathBuf> {
-    if let Some(env_path) = env::var_os("CARGO_BIN_EXE_oc-rsync") {
-        let path = PathBuf::from(env_path);
-        if path.is_file() {
-            return Some(path);
-        }
-    }
-    if let Some(env_path) = env::var_os("OC_RSYNC_BIN") {
-        let path = PathBuf::from(env_path);
-        if path.is_file() {
-            return Some(path);
-        }
-    }
-
-    // Walk up from the engine crate manifest dir to the workspace target.
-    let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let mut cursor = manifest_dir.as_path();
-    while let Some(parent) = cursor.parent() {
-        for profile in ["debug", "release", "dist"] {
-            let candidate = parent.join("target").join(profile).join("oc-rsync");
-            if candidate.is_file() {
-                return Some(candidate);
-            }
-        }
-        cursor = parent;
-    }
-    None
-}
 
 fn locate_strace() -> Option<PathBuf> {
     if let Some(env_path) = env::var_os("OC_RSYNC_STRACE") {

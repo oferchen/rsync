@@ -27,7 +27,7 @@
 //!
 //! # Gating
 //!
-//! The test self-skips on three conditions:
+//! The test self-skips on two conditions:
 //!
 //! 1. `OC_RSYNC_UPSTREAM_COMPAT` env var is not `1` - the standard PR
 //!    nextest cell does not set this, so the test no-ops in well under
@@ -36,10 +36,9 @@
 //!    `target/interop/upstream-install/3.4.4/bin/rsync` (run
 //!    `tools/ci/run_interop.sh` to build it). The `OC_RSYNC_UPSTREAM_BIN_3_4_4`
 //!    env var overrides the path.
-//! 3. The oc-rsync binary cannot be located via `CARGO_BIN_EXE_oc-rsync`
-//!    or by walking up from the current test executable. CI builds it
-//!    before invoking nextest, so this only trips in pathological local
-//!    setups.
+//!
+//! A missing oc-rsync binary is NOT a skip condition: it fails the test
+//! loudly, naming the path that was expected.
 //!
 //! The test is `#[cfg(unix)]` because the daemon TCP layer assumes
 //! POSIX socket semantics. Windows daemon coverage lives in the daemon
@@ -47,7 +46,6 @@
 
 #![cfg(unix)]
 
-use std::env;
 use std::fs;
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
@@ -63,33 +61,6 @@ const COMPRESSIBLE_BYTES: usize = 512 * 1024;
 /// Incompressible tail keeps total wire bytes above the cutoff after
 /// compression engages.
 const INCOMPRESSIBLE_BYTES: usize = 512 * 1024;
-
-/// Locate the workspace `oc-rsync` binary the test runner built.
-fn locate_oc_rsync() -> Option<PathBuf> {
-    if let Some(p) = env::var_os("CARGO_BIN_EXE_oc-rsync") {
-        let p = PathBuf::from(p);
-        if p.is_file() {
-            return Some(p);
-        }
-    }
-    let exe = env::current_exe().ok()?;
-    let mut dir = exe.parent()?;
-    let name = format!("oc-rsync{}", env::consts::EXE_SUFFIX);
-    while !dir.ends_with("target") {
-        let candidate = dir.join(&name);
-        if candidate.is_file() {
-            return Some(candidate);
-        }
-        dir = dir.parent()?;
-    }
-    for sub in ["debug", "release"] {
-        let candidate = dir.join(sub).join(&name);
-        if candidate.is_file() {
-            return Some(candidate);
-        }
-    }
-    None
-}
 
 /// RAII guard that kills the oc-rsync daemon on drop so a panicking
 /// assertion does not leave a dangling listener.
@@ -237,10 +208,7 @@ fn daemon_gzip_goodbye_does_not_truncate() {
         return;
     };
 
-    let Some(oc_rsync) = locate_oc_rsync() else {
-        eprintln!("Skipping: oc-rsync binary not located via CARGO_BIN_EXE_oc-rsync or target/");
-        return;
-    };
+    let oc_rsync = test_support::oc_rsync_bin();
 
     let fixture = match Fixture::start(&oc_rsync) {
         Ok(f) => f,

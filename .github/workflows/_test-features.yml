@@ -39,17 +39,38 @@ jobs:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, macos-latest, windows-latest]
+        # `needs_bin` marks rows that need `oc-rsync` built before the test
+        # step. A package-scoped `cargo nextest run` never builds it - only
+        # `--workspace` pulls in the root `bin` package that owns the
+        # `[[bin]]` - and the tests that spawn it resolve exactly one path
+        # (`<target>/<profile>/oc-rsync`, baked in from `OUT_DIR`), so an
+        # unbuilt binary is a hard failure or, for the `require_binary`
+        # ports, a permanent self-skip.
+        #
+        # The flag is set per selected *crate*, not per currently-failing
+        # test: `cli`, `core`, `engine`, `metadata` and `transfer` are the
+        # crates whose test targets reference the resolver, so any row
+        # selecting one of them is true. Deciding per test would leave rows
+        # that only pass because their bin-spawning tests are `#[ignore]`d,
+        # env-gated or filtered out - one edit away from breaking. Re-derive
+        # with:
+        #   grep -rl 'oc_rsync_bin\|workspace_bin\|require_binary\|OcRsyncCliRunner' crates/
         row:
           - name: async
             args: "-p daemon -p core -p protocol -p engine --features async"
+            needs_bin: true
           - name: tracing
             args: "-p daemon -p core -p engine --features tracing"
+            needs_bin: true
           - name: serde
             args: "-p logging -p protocol -p flist --features serde"
+            needs_bin: false
           - name: concurrent-sessions
             args: "-p daemon --features concurrent-sessions"
+            needs_bin: false
           - name: iconv
             args: "-p protocol -p transfer -p engine -p core -p cli -p daemon --features iconv"
+            needs_bin: true
 
     env:
       CARGO_TERM_COLOR: always
@@ -98,6 +119,18 @@ jobs:
           Expand-Archive -Force -Path $zip -DestinationPath $cargoBin
           & "$cargoBin\cargo-nextest.exe" --version
 
+      # Built at the default feature set, which is both necessary and
+      # sufficient. Necessary: the root `bin` package declares no `tracing`,
+      # `serde`, `concurrent-sessions` or `incremental-flist` feature, so
+      # forwarding a row's `--features` would be a hard error. Sufficient:
+      # every feature these rows do exercise end-to-end through the binary
+      # (iconv, zstd, lz4, io_uring, and incremental-flist via `transfer`'s
+      # own defaults) is already on by default. The profile is unchanged, so
+      # the binary lands in exactly the directory the resolver derives.
+      - name: Build oc-rsync (for subprocess integration tests)
+        if: matrix.row.needs_bin
+        run: cargo build --locked -p bin --bin oc-rsync
+
       - name: Test (${{ matrix.row.name }})
         run: cargo nextest run --locked --profile ci ${{ matrix.row.args }}
 
@@ -122,6 +155,10 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
+        # Same `needs_bin` rule as the cross-OS matrix above: true for any row
+        # selecting `cli`, `core`, `engine`, `metadata` or `transfer`. The
+        # `default-features` row is `--workspace`, which already builds the
+        # root `bin` package, so it stays false.
         include:
           # PFF-6: Verify the default-features build compiles and passes
           # tests. The main CI test job uses --all-features which may mask
@@ -129,36 +166,47 @@ jobs:
           - name: default-features
             args: "--workspace"
             apt: ""
+            needs_bin: false
           - name: parallel
             args: "-p checksums -p flist --features parallel"
             apt: ""
+            needs_bin: false
           - name: incremental-flist
             args: "-p transfer --features incremental-flist"
             apt: ""
+            needs_bin: true
           - name: compression
             args: "-p compress -p protocol -p engine -p transfer --features zstd,lz4"
             apt: ""
+            needs_bin: true
           - name: io_uring
             args: "-p transfer -p fast_io --features io_uring"
             apt: ""
+            needs_bin: true
           - name: copy_file_range
             args: "-p fast_io --features copy_file_range"
             apt: ""
+            needs_bin: false
           - name: landlock
             args: "-p fast_io --features landlock"
             apt: ""
+            needs_bin: false
           - name: openssl
             args: "-p checksums --features openssl"
             apt: "libssl-dev pkg-config"
+            needs_bin: false
           - name: openssl-vendored
             args: "-p checksums --features openssl-vendored"
             apt: "pkg-config"
+            needs_bin: false
           - name: zlib-ng
             args: "-p compress -p protocol --features zlib-ng"
             apt: "zlib1g-dev"
+            needs_bin: false
           - name: zlib-rs
             args: "-p compress -p protocol --no-default-features --features zlib-rs"
             apt: ""
+            needs_bin: false
 
     env:
       CARGO_TERM_COLOR: always
@@ -212,6 +260,10 @@ jobs:
           Invoke-WebRequest -UseBasicParsing -Uri 'https://get.nexte.st/latest/windows' -OutFile $zip
           Expand-Archive -Force -Path $zip -DestinationPath $cargoBin
           & "$cargoBin\cargo-nextest.exe" --version
+
+      - name: Build oc-rsync (for subprocess integration tests)
+        if: matrix.needs_bin
+        run: cargo build --locked -p bin --bin oc-rsync
 
       - name: Test (${{ matrix.name }})
         run: cargo nextest run --locked --profile ci ${{ matrix.args }}

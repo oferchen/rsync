@@ -39,11 +39,7 @@ mod common;
 use common::{DaemonBinary, TestDaemon, create_test_file};
 
 #[cfg(unix)]
-use std::env;
-#[cfg(unix)]
 use std::fs;
-#[cfg(unix)]
-use std::path::PathBuf;
 #[cfg(unix)]
 use std::process::Command;
 
@@ -55,40 +51,6 @@ use tempfile::tempdir;
 /// test fast on CI runners.
 #[cfg(unix)]
 const TEST_FILE_SIZE: usize = 700 * 1024;
-
-/// Locate the oc-rsync binary for subprocess spawning. Mirrors the helper in
-/// `partial_mid_transfer_kill.rs`; kept inline to avoid touching shared
-/// `common::mod` from a regression test added late in the cycle.
-#[cfg(unix)]
-fn locate_oc_rsync() -> Option<PathBuf> {
-    if let Some(path) = env::var_os("CARGO_BIN_EXE_oc-rsync") {
-        let path = PathBuf::from(path);
-        if path.is_file() {
-            return Some(path);
-        }
-    }
-
-    let binary_name = format!("oc-rsync{}", env::consts::EXE_SUFFIX);
-    let current_exe = env::current_exe().ok()?;
-    let mut dir = current_exe.parent()?;
-
-    while !dir.ends_with("target") {
-        let candidate = dir.join(&binary_name);
-        if candidate.is_file() {
-            return Some(candidate);
-        }
-        dir = dir.parent()?;
-    }
-
-    for subdir in ["debug", "release"] {
-        let candidate = dir.join(subdir).join(&binary_name);
-        if candidate.is_file() {
-            return Some(candidate);
-        }
-    }
-
-    None
-}
 
 /// Deterministic byte pattern so the destination can be compared
 /// byte-for-byte without storing the full payload in the test binary.
@@ -109,13 +71,7 @@ fn generate_test_data(size: usize) -> Vec<u8> {
 #[test]
 #[ignore = "requires oc-rsync binary"]
 fn daemon_download_with_zz_completes_without_connection_drop() {
-    let oc_rsync = match locate_oc_rsync() {
-        Some(path) => path,
-        None => {
-            eprintln!("Skipping: oc-rsync binary not found");
-            return;
-        }
-    };
+    let oc_rsync = test_support::oc_rsync_bin();
 
     let daemon = TestDaemon::start(DaemonBinary::OcRsync).expect("start oc-rsync daemon");
 

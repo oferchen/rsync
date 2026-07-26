@@ -130,6 +130,13 @@ jobs:
       # this nightly cell. The synthetic-buffer unit tests still run
       # successfully and surface any regression in the reparse parser
       # logic, which is the load-bearing classifier.
+      # The two `windows_symlink_junction_transfer.rs` cases spawn
+      # `oc-rsync.exe` as a subprocess. A package-scoped `-p metadata` run
+      # never builds it, and the tests resolve exactly one path and abort
+      # when it is absent, so build it here.
+      - name: Build oc-rsync (for subprocess integration tests)
+        run: cargo build --locked -p bin --bin oc-rsync
+
       - name: Run metadata reparse + symlink Windows tests
         run: cargo nextest run --locked -p metadata --no-fail-fast -E 'test(reparse) or test(symlink) or test(junction) or test(mount_point)'
 

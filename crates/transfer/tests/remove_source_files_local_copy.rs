@@ -17,54 +17,17 @@
 //!   `--remove-source-files` forwarding to the server-side sender
 //! - `testsuite/delete.test` - end-to-end coverage
 
-use std::env;
 use std::fs;
-use std::path::PathBuf;
 use std::process::Command;
 
 use tempfile::tempdir;
-
-/// Locates the workspace `oc-rsync` binary the test runner built.
-///
-/// Mirrors the lookup logic in
-/// `tests/v61d_2_daemon_push_increcurse_perf_regression.rs`: prefer
-/// Cargo's `CARGO_BIN_EXE_oc-rsync` when it is set, otherwise walk up
-/// from the test executable until a `target/` directory is found.
-fn locate_oc_rsync() -> Option<PathBuf> {
-    if let Some(p) = env::var_os("CARGO_BIN_EXE_oc-rsync") {
-        let p = PathBuf::from(p);
-        if p.is_file() {
-            return Some(p);
-        }
-    }
-    let exe = env::current_exe().ok()?;
-    let mut dir = exe.parent()?;
-    let name = format!("oc-rsync{}", env::consts::EXE_SUFFIX);
-    while !dir.ends_with("target") {
-        let candidate = dir.join(&name);
-        if candidate.is_file() {
-            return Some(candidate);
-        }
-        dir = dir.parent()?;
-    }
-    for sub in ["debug", "release"] {
-        let candidate = dir.join(sub).join(&name);
-        if candidate.is_file() {
-            return Some(candidate);
-        }
-    }
-    None
-}
 
 /// `--remove-source-files` removes every transferred file from the source
 /// tree (including nested entries) while leaving the directory layout
 /// behind, mirroring upstream `successful_send()`.
 #[test]
 fn remove_source_files_unlinks_transferred_files() {
-    let Some(rsync_bin) = locate_oc_rsync() else {
-        eprintln!("skipping: oc-rsync binary not found in target/");
-        return;
-    };
+    let rsync_bin = test_support::oc_rsync_bin();
 
     let tmp = tempdir().expect("create tempdir");
     let from = tmp.path().join("from");
@@ -134,10 +97,7 @@ fn remove_source_files_unlinks_transferred_files() {
 /// combined with the global `do_xfers` gate).
 #[test]
 fn remove_source_files_dry_run_preserves_source() {
-    let Some(rsync_bin) = locate_oc_rsync() else {
-        eprintln!("skipping: oc-rsync binary not found in target/");
-        return;
-    };
+    let rsync_bin = test_support::oc_rsync_bin();
 
     let tmp = tempdir().expect("create tempdir");
     let from = tmp.path().join("from");

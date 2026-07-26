@@ -28,37 +28,9 @@
 //! dst/f0
 //! ```
 
-use std::env;
 use std::fs;
 use std::path::PathBuf;
 use std::process::Command;
-
-/// Locates the workspace `oc-rsync` binary the test runner built.
-fn locate_oc_rsync() -> Option<PathBuf> {
-    if let Some(p) = env::var_os("CARGO_BIN_EXE_oc-rsync") {
-        let p = PathBuf::from(p);
-        if p.is_file() {
-            return Some(p);
-        }
-    }
-    let exe = env::current_exe().ok()?;
-    let mut dir = exe.parent()?;
-    let name = format!("oc-rsync{}", env::consts::EXE_SUFFIX);
-    while !dir.ends_with("target") {
-        let candidate = dir.join(&name);
-        if candidate.is_file() {
-            return Some(candidate);
-        }
-        dir = dir.parent()?;
-    }
-    for sub in ["debug", "release"] {
-        let candidate = dir.join(sub).join(&name);
-        if candidate.is_file() {
-            return Some(candidate);
-        }
-    }
-    None
-}
 
 /// Builds `src/{f0, a/f1, a/b/f2}` under `root` and returns the source dir.
 fn build_three_level_tree(root: &std::path::Path) -> PathBuf {
@@ -75,10 +47,7 @@ fn build_three_level_tree(root: &std::path::Path) -> PathBuf {
 /// depth-2 files never transfer while the top-level file does.
 #[test]
 fn old_dirs_transfers_only_top_level() {
-    let Some(rsync_bin) = locate_oc_rsync() else {
-        eprintln!("skipping: oc-rsync binary not found in target/");
-        return;
-    };
+    let rsync_bin = test_support::oc_rsync_bin();
 
     let tmp = tempfile::tempdir().expect("create tempdir");
     let src = build_three_level_tree(tmp.path());
@@ -138,10 +107,7 @@ fn old_dirs_transfers_only_top_level() {
 /// pins the decoupling of `--old-dirs` from `--no-mkpath`.
 #[test]
 fn no_mkpath_still_copies_full_tree() {
-    let Some(rsync_bin) = locate_oc_rsync() else {
-        eprintln!("skipping: oc-rsync binary not found in target/");
-        return;
-    };
+    let rsync_bin = test_support::oc_rsync_bin();
 
     let tmp = tempfile::tempdir().expect("create tempdir");
     let src = build_three_level_tree(tmp.path());

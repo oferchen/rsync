@@ -26,44 +26,37 @@ pub fn require_unix() -> bool {
     }
 }
 
-/// Locate a workspace binary in `target/{debug,release}/`.
+/// Locate a workspace binary built by the current Cargo invocation.
 ///
-/// Resolution walks up from the current test executable to the enclosing
-/// `debug` or `release` profile directory and probes for `name` (with the
-/// platform executable suffix). Returns the first match, preferring the
-/// profile the test itself was built under.
+/// Exactly one path is considered: `name` inside
+/// [`crate::target_profile_dir`], the profile directory this crate's
+/// `build.rs` captured from `OUT_DIR`. There is deliberately no probe of a
+/// sibling profile - resolving a `debug` binary for a `release` test run is
+/// how a stale build silently ends up under test.
+///
+/// Returns `None` only when that one path does not exist, which callers must
+/// treat as "not built", never as "use something else".
 #[must_use]
 pub fn locate_workspace_binary(name: &str) -> Option<PathBuf> {
-    let exe = std::env::current_exe().ok()?;
-    // `.../target/<profile>/deps/<test-bin>` -> `.../target/<profile>`.
-    let profile_dir = exe.parent()?.parent()?;
-    let candidate = profile_dir.join(exe_name(name));
-    if candidate.is_file() {
-        return Some(candidate);
-    }
-
-    // Fall back to the sibling profile so a release test can still find a
-    // debug-built helper binary and vice versa.
-    let target_dir = profile_dir.parent()?;
-    for profile in ["debug", "release"] {
-        let candidate = target_dir.join(profile).join(exe_name(name));
-        if candidate.is_file() {
-            return Some(candidate);
-        }
-    }
-    None
+    let candidate = crate::bin_path::workspace_bin_path(name);
+    candidate.is_file().then_some(candidate)
 }
 
 /// Skip unless the workspace binary `name` is present.
 ///
-/// Wraps [`locate_workspace_binary`] with the self-skip convention: prints a
-/// reason and returns `false` when the binary is not built.
+/// Wraps [`locate_workspace_binary`] with the self-skip convention: prints the
+/// exact path that was probed and returns `false` when the binary is not
+/// built. Tests that must never be allowed to self-skip should call
+/// [`crate::workspace_bin`] instead, which panics.
 #[must_use]
 pub fn require_binary(name: &str) -> bool {
     if locate_workspace_binary(name).is_some() {
         true
     } else {
-        eprintln!("Skipping upstream-compat test: workspace binary '{name}' not built");
+        eprintln!(
+            "Skipping upstream-compat test: workspace binary '{name}' not built at {}",
+            crate::bin_path::workspace_bin_path(name).display()
+        );
         false
     }
 }
@@ -167,5 +160,16 @@ mod tests {
         // there is always at least the deps dir. A missing-name lookup must
         // return None rather than panic.
         assert!(locate_workspace_binary("definitely-not-built-xyzzy").is_none());
+    }
+
+    #[test]
+    fn locate_workspace_binary_considers_exactly_one_path() {
+        // Why: any second candidate is a route to a binary from another
+        // profile - i.e. another revision. When resolution succeeds it must
+        // be the single profile-dir path, never a sibling-profile match.
+        let name = "lsh-stub";
+        if let Some(found) = locate_workspace_binary(name) {
+            assert_eq!(found, crate::bin_path::workspace_bin_path(name));
+        }
     }
 }

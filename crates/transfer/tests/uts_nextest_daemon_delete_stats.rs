@@ -85,47 +85,12 @@
 
 #![cfg(unix)]
 
-use std::env;
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 
 use tempfile::{TempDir, tempdir};
-
-/// Locate the workspace `oc-rsync` binary the test runner built.
-///
-/// Prefers Cargo's injected `CARGO_BIN_EXE_oc-rsync` when set; otherwise
-/// walks up from the test executable until a `target/` directory is
-/// found, mirroring the lookup used by sibling integration tests
-/// (`v61d_2_daemon_push_increcurse_perf_regression.rs`,
-/// `uts_nextest_chdir_symlink_race.rs`,
-/// `uts_9_daemon_gzip_download_goodbye.rs`).
-fn locate_oc_rsync() -> Option<PathBuf> {
-    if let Some(p) = env::var_os("CARGO_BIN_EXE_oc-rsync") {
-        let p = PathBuf::from(p);
-        if p.is_file() {
-            return Some(p);
-        }
-    }
-    let exe = env::current_exe().ok()?;
-    let mut dir = exe.parent()?;
-    let name = format!("oc-rsync{}", env::consts::EXE_SUFFIX);
-    while !dir.ends_with("target") {
-        let candidate = dir.join(&name);
-        if candidate.is_file() {
-            return Some(candidate);
-        }
-        dir = dir.parent()?;
-    }
-    for sub in ["debug", "release"] {
-        let candidate = dir.join(sub).join(&name);
-        if candidate.is_file() {
-            return Some(candidate);
-        }
-    }
-    None
-}
 
 /// Write an `rsyncd.conf` exposing a single read-write module.
 ///
@@ -329,10 +294,7 @@ impl DaemonScratch {
 ///    `Number of deleted files: 1`.
 #[test]
 fn daemon_push_emits_ndx_del_stats_and_reports_count() {
-    let Some(oc_bin) = locate_oc_rsync() else {
-        eprintln!("skipping: oc-rsync binary not found in target/");
-        return;
-    };
+    let oc_bin = test_support::oc_rsync_bin();
     let Some(scratch) = DaemonScratch::new() else {
         eprintln!("skipping: tempdir or test port allocation failed");
         return;
@@ -401,10 +363,7 @@ fn daemon_push_emits_ndx_del_stats_and_reports_count() {
 ///    `Number of deleted files: 1`.
 #[test]
 fn daemon_pull_emits_ndx_del_stats_and_reports_count() {
-    let Some(oc_bin) = locate_oc_rsync() else {
-        eprintln!("skipping: oc-rsync binary not found in target/");
-        return;
-    };
+    let oc_bin = test_support::oc_rsync_bin();
     let Some(scratch) = DaemonScratch::new() else {
         eprintln!("skipping: tempdir or test port allocation failed");
         return;

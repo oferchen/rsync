@@ -105,6 +105,13 @@ jobs:
       # already covered by the WCI-2 IOCP cell. Both ACL and ADS
       # surfaces require the corresponding feature flags to be active
       # at compile time.
+      # `metadata` owns tests that spawn `oc-rsync.exe` as a subprocess. They
+      # are filtered out of the run below today, but a package-scoped `-p
+      # metadata` selection never builds the binary, so build it here rather
+      # than leaving the cell one filter edit away from a hard failure.
+      - name: Build oc-rsync (for subprocess integration tests)
+        run: cargo build --locked -p bin --bin oc-rsync
+
       - name: Run metadata long-path round-trip tests
         run: cargo nextest run --locked -p metadata --features acl,xattr --no-fail-fast -E 'test(long_path_)'
 

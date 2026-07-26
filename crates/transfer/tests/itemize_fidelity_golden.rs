@@ -26,10 +26,9 @@
 
 #![cfg(unix)]
 
-use std::env;
 use std::fs;
 use std::os::unix::fs::{PermissionsExt, symlink};
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::process::Command;
 
 use filetime::{FileTime, set_file_times, set_symlink_file_times};
@@ -38,37 +37,6 @@ use filetime::{FileTime, set_file_times, set_symlink_file_times};
 const T1: i64 = 1_577_836_800;
 /// 2023-06-06 12:00:00 UTC.
 const T2: i64 = 1_686_052_800;
-
-/// Locates the workspace `oc-rsync` binary the test runner built.
-///
-/// Prefers Cargo's `CARGO_BIN_EXE_oc-rsync`, otherwise walks up from the test
-/// executable until a `target/` directory is found (mirrors the lookup in the
-/// sibling integration tests).
-fn locate_oc_rsync() -> Option<PathBuf> {
-    if let Some(p) = env::var_os("CARGO_BIN_EXE_oc-rsync") {
-        let p = PathBuf::from(p);
-        if p.is_file() {
-            return Some(p);
-        }
-    }
-    let exe = env::current_exe().ok()?;
-    let mut dir = exe.parent()?;
-    let name = format!("oc-rsync{}", env::consts::EXE_SUFFIX);
-    while !dir.ends_with("target") {
-        let candidate = dir.join(&name);
-        if candidate.is_file() {
-            return Some(candidate);
-        }
-        dir = dir.parent()?;
-    }
-    for sub in ["debug", "release"] {
-        let candidate = dir.join(sub).join(&name);
-        if candidate.is_file() {
-            return Some(candidate);
-        }
-    }
-    None
-}
 
 /// Whole-second `FileTime` for a POSIX epoch second.
 fn ft(secs: i64) -> FileTime {
@@ -354,10 +322,7 @@ const SCENARIOS: &[Scenario] = &[
 
 #[test]
 fn itemize_rows_match_upstream_3_4_4_golden() {
-    let Some(bin) = locate_oc_rsync() else {
-        eprintln!("skipping: oc-rsync binary not found in target/");
-        return;
-    };
+    let bin = test_support::oc_rsync_bin();
     for scenario in SCENARIOS {
         run_scenario(&bin, scenario);
     }

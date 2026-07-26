@@ -277,6 +277,15 @@ jobs:
           Expand-Archive -Force -Path $zip -DestinationPath $cargoBin
           & "$cargoBin\cargo-nextest.exe" --version
 
+      # The steps below select individual packages, so Cargo never builds the
+      # `oc-rsync` binary as a side effect the way a `--workspace` run does.
+      # Integration tests that spawn the binary resolve exactly one path -
+      # `<target>/<profile>/oc-rsync` - and abort when it is absent, so it has
+      # to be built explicitly here. Default features match what the binary
+      # ships with.
+      - name: Build oc-rsync (for subprocess integration tests)
+        run: cargo build --locked -p bin --bin oc-rsync
+
       - name: Test
         run: |
           # Run Windows-specific crates only (core, engine, cli have platform code)
@@ -601,6 +610,12 @@ jobs:
         with:
           tool: cargo-nextest
 
+      # `core`, `engine`, `cli` and `metadata` all own tests that spawn the
+      # `oc-rsync` binary, and a package-scoped run never builds it. See the
+      # note on the Windows job above.
+      - name: Build oc-rsync (for subprocess integration tests)
+        run: rustup run ${{ matrix.toolchain }} cargo build --locked -p bin --bin oc-rsync
+
       # Invoke through `rustup run` to bypass the cargo proxy shim, which on
       # macOS GitHub runners can resolve to rustup-init directly and fail with
       # `error: unexpected argument 'build' found` when rust-toolchain.toml
@@ -842,6 +857,13 @@ jobs:
       # test under `#[cfg(feature = "dg-stress")]` is compiled in.
       - name: Build engine (--features dg-stress)
         run: cargo build --locked -p engine --tests --features dg-stress
+
+      # `engine` owns a test that spawns the `oc-rsync` binary. It is filtered
+      # out of the run below today, but a package-scoped selection never builds
+      # the binary, so build it here rather than leaving the cell one filter
+      # edit away from a hard failure. See the note on the Windows job above.
+      - name: Build oc-rsync (for subprocess integration tests)
+        run: cargo build --locked -p bin --bin oc-rsync
 
       # Run only the stress test. `--no-tests=pass` keeps the cell green if
       # the test ever gets renamed or moved (the filter would match zero
