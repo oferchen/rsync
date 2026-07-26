@@ -14,6 +14,8 @@
 //! - [`errors_and_timeouts`] - error categorization, failed-directory
 //!   propagation, legacy goodbye handling, input-multiplex activation,
 //!   daemon filter set, and path-traversal rejection.
+//! - [`xattr_filter`] - `x`-modifier filter screening on the generator's
+//!   destination xattr read.
 
 #[cfg(unix)]
 mod create_specials;
@@ -36,3 +38,5 @@ mod verbose_dir_names;
 mod windows_receiver_symlinks;
 #[cfg(windows)]
 mod windows_special_skip;
+#[cfg(unix)]
+mod xattr_filter;
