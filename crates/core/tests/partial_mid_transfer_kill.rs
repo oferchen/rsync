@@ -295,13 +295,16 @@ fn partial_dir_flag_retains_file_in_directory_on_kill() {
     );
 }
 
-/// The same three assertions against an upstream client, pinning oc's daemon
-/// side and giving the oc-client expectations a live reference.
+/// The same assertions against an upstream client, pinning oc's daemon side
+/// and giving the oc-client expectations a live reference.
 ///
-/// A missing upstream binary fails the test: an interop assertion that skips
-/// itself asserts nothing.
+/// Opt-in like every other upstream-requiring test here, because the standard
+/// test cells have no upstream rsync (macOS ships openrsync at
+/// `/usr/bin/rsync`). Once selected it never skips itself: [`upstream_rsync`]
+/// panics naming every path it tried rather than returning green.
 #[cfg(unix)]
 #[test]
+#[ignore = "requires an upstream rsync binary"]
 fn upstream_client_partial_retains_file_on_kill() {
     let upstream = upstream_rsync();
     let fixture = StalledTransfer::start();
