@@ -133,3 +133,46 @@ fn daemon_filter_rules_prepended_to_receiver_deletion_chain() {
         "public_data.bin should be allowed through daemon filter"
     );
 }
+
+/// Upstream reports a refused directory once and then sets `skip_dir`, so every
+/// entry below it leaves `recv_generator()` before the filter check is reached
+/// (`generator.c:1258-1266`). The ancestor probe reproduces that: it is what
+/// keeps oc from emitting a second "daemon refused" line - one upstream never
+/// prints - for each file inside an already-refused directory.
+#[test]
+fn refused_directory_swallows_its_contents_without_a_second_report() {
+    use protocol::filters::{FilterRuleWireFormat, RuleType};
+
+    use crate::receiver::daemon_filter_refuses_ancestor;
+
+    let handshake = test_handshake();
+    let mut config = test_config();
+    config.daemon_filter_rules = vec![FilterRuleWireFormat {
+        rule_type: RuleType::Exclude,
+        pattern: "*.secret".to_string(),
+        ..FilterRuleWireFormat::default()
+    }];
+    let ctx = ReceiverContext::new_for_test(&handshake, config);
+    let filters = ctx.daemon_filter_set().unwrap();
+
+    assert!(
+        daemon_filter_refuses_ancestor(filters, "dir.secret/inner.txt"),
+        "a file under a refused directory is dropped silently, not reported again"
+    );
+    assert!(
+        daemon_filter_refuses_ancestor(filters, "dir.secret/deep/inner.txt"),
+        "the skip applies at every depth below the refused directory"
+    );
+    assert!(
+        !daemon_filter_refuses_ancestor(filters, "sub/nested.secret"),
+        "the entry's own name is the outer refusal's business, not the ancestor probe's"
+    );
+    assert!(
+        !daemon_filter_refuses_ancestor(filters, "top.secret"),
+        "a top-level entry has no ancestor to inherit a refusal from"
+    );
+    assert!(
+        !daemon_filter_refuses_ancestor(filters, "sub/fine.txt"),
+        "an allowed tree must not be swallowed"
+    );
+}

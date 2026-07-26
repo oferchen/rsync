@@ -144,3 +144,34 @@ pub(in crate::receiver) fn compile_daemon_filter_set(
 
     FilterSet::from_rules(filter_rules).ok()
 }
+
+/// Reports whether any ancestor directory of `name` is refused by the daemon
+/// filter list, in which case the entry must be dropped without a diagnostic.
+///
+/// Upstream refuses the *directory* once, sets `skip_dir` to it, and every
+/// later entry below that directory returns from `recv_generator()` before the
+/// `daemon_filter_list` check is reached - so the contents are dropped in
+/// silence, with no second "daemon refused" line. Recomputing the ancestor
+/// verdict here reproduces that outcome without threading generator state
+/// across oc's separate directory and candidate passes.
+///
+/// `name` is a wire-format relative path, always `/`-separated.
+///
+/// # Upstream Reference
+///
+/// - `generator.c:1258-1266` - `if (skip_dir) { if (is_below(file, skip_dir)) ... return; }`
+/// - `generator.c:1284-1285` / `generator.c:1491-1495` - a refused directory
+///   jumps to `skipping_dir_contents`, which assigns `skip_dir = file`
+pub(in crate::receiver) fn daemon_filter_refuses_ancestor(filters: &FilterSet, name: &str) -> bool {
+    let mut cursor = name;
+    while let Some(sep) = cursor.rfind('/') {
+        cursor = &cursor[..sep];
+        if cursor.is_empty() {
+            break;
+        }
+        if !filters.allows(std::path::Path::new(cursor), true) {
+            return true;
+        }
+    }
+    false
+}
