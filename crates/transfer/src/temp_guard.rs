@@ -10,11 +10,53 @@
 //! - `receiver.c:get_tmpname()` - temp file path construction
 //! - `receiver.c:open_tmpfile()` → `syscall.c:do_mkstemp()` - atomic creation
 
+use std::fmt;
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
 #[cfg(unix)]
 use std::sync::Arc;
+
+/// Payload attached to a failed [`open_tmpfile`] so the caller can name the
+/// temp file the `mkstemp` attempt used.
+///
+/// Upstream reports the temp name, not the final destination:
+/// `rsyserr(FERROR_XFER, errno, "mkstemp %s failed", full_fname(fnametmp))`
+/// (receiver.c:297). The disk-commit thread hands the failure back as a plain
+/// [`io::Error`], so the attempted name rides along inside it and is recovered
+/// with [`attempted_temp_path`].
+///
+/// [`fmt::Display`] forwards to the underlying error verbatim, so a wrapped
+/// error still renders exactly like the unwrapped one.
+#[derive(Debug)]
+struct TempOpenError {
+    temp_path: PathBuf,
+    source: io::Error,
+}
+
+impl fmt::Display for TempOpenError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        fmt::Display::fmt(&self.source, f)
+    }
+}
+
+impl std::error::Error for TempOpenError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        Some(&self.source)
+    }
+}
+
+/// Returns the temp-file name a failed [`open_tmpfile`] attempted, when `error`
+/// came from that call.
+///
+/// `None` for every other error, so callers fall back to whatever name they
+/// already have.
+pub fn attempted_temp_path(error: &io::Error) -> Option<&Path> {
+    error
+        .get_ref()?
+        .downcast_ref::<TempOpenError>()
+        .map(|e| e.temp_path.as_path())
+}
 
 /// Length of the random suffix including the leading dot: `.XXXXXX` = 7 bytes.
 const TMPNAME_SUFFIX_LEN: usize = 7;
@@ -217,7 +259,18 @@ fn open_tmpfile_inner(
                 // surface the ENOENT verbatim to match upstream.
                 return Err(io::Error::new(e.kind(), e.to_string()));
             }
-            Err(e) => return Err(e),
+            // Carry the attempted name so the receiver's diagnostic can print
+            // `fnametmp` the way receiver.c:297 does. The wrapper keeps both
+            // `kind()` and the Display text of the original error.
+            Err(e) => {
+                return Err(io::Error::new(
+                    e.kind(),
+                    TempOpenError {
+                        temp_path: concrete_path,
+                        source: e,
+                    },
+                ));
+            }
         }
     }
 
@@ -591,6 +644,54 @@ mod tests {
     use super::*;
     use std::fs;
     use tempfile::tempdir;
+
+    /// upstream names `fnametmp`, not the destination, in the `mkstemp %s
+    /// failed` diagnostic (receiver.c:297), so a failed open must hand the
+    /// attempted `.name.XXXXXX` back to the caller while keeping the error's
+    /// `kind()` and rendered text untouched.
+    #[cfg(unix)]
+    #[test]
+    fn failed_open_reports_the_attempted_temp_name() {
+        use std::os::unix::fs::PermissionsExt;
+
+        if std::env::var("USER").is_ok_and(|u| u == "root") {
+            return;
+        }
+
+        let dir = tempdir().expect("create temp dir");
+        let readonly = dir.path().join("readonly");
+        fs::create_dir(&readonly).expect("create dir");
+        fs::set_permissions(&readonly, PermissionsExt::from_mode(0o555)).expect("chmod");
+
+        let dest = readonly.join("new.txt");
+        let error = open_tmpfile(&dest, None).expect_err("read-only dir must deny the create");
+
+        assert_eq!(error.kind(), io::ErrorKind::PermissionDenied);
+        assert_eq!(
+            error.to_string(),
+            io::Error::from_raw_os_error(libc::EACCES).to_string(),
+            "the wrapper must render exactly like the error it carries"
+        );
+        let attempted = attempted_temp_path(&error).expect("temp name attached");
+        assert_eq!(attempted.parent(), Some(readonly.as_path()));
+        let name = attempted
+            .file_name()
+            .and_then(|n| n.to_str())
+            .expect("temp name");
+        assert!(
+            name.starts_with(".new.txt.") && name.len() == ".new.txt.".len() + 6,
+            "upstream get_tmpname() shape `.<name>.XXXXXX`: {name}"
+        );
+
+        let _ = fs::set_permissions(&readonly, PermissionsExt::from_mode(0o755));
+    }
+
+    /// Every other error carries no temp name, so callers fall back to the
+    /// path they already have.
+    #[test]
+    fn unrelated_errors_carry_no_temp_name() {
+        assert!(attempted_temp_path(&io::Error::from_raw_os_error(2)).is_none());
+    }
 
     #[test]
     fn temp_file_deleted_on_drop() {

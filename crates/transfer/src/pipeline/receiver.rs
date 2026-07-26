@@ -117,6 +117,14 @@ pub struct PipelinedReceiver {
     ///
     /// upstream: util1.c:1290 - `if (module_id >= 0)` in `full_fname()`.
     daemon_module: Option<String>,
+    /// Module root and destination directory, i.e. upstream's `module_dir` and
+    /// the `curr_dir` the receiver `chdir()`ed into (`main.c:815`
+    /// `change_dir(dest_path, ..)`). Together they make the `mkstemp` failure
+    /// name its temp file relative to the module root.
+    ///
+    /// upstream: util1.c:1285 - `p1 = curr_dir + module_dirlen`.
+    daemon_module_root: Option<PathBuf>,
+    dest_dir: Option<PathBuf>,
 }
 
 /// Selects the upstream verification-failure `keptstr` wording for a file.
@@ -147,6 +155,8 @@ impl PipelinedReceiver {
     pub fn new(config: DiskCommitConfig) -> io::Result<Self> {
         let partial_mode = config.partial_mode.clone();
         let daemon_module = config.daemon_module.clone();
+        let daemon_module_root = config.daemon_module_root.clone();
+        let dest_dir = config.dest_dir.clone();
         let h = spawn_disk_thread(config)?;
         Ok(Self {
             file_tx: h.file_tx,
@@ -163,7 +173,42 @@ impl PipelinedReceiver {
             success_indices: Vec::new(),
             partial_mode,
             daemon_module,
+            daemon_module_root,
+            dest_dir,
         })
+    }
+
+    /// Returns the daemon path context `full_fname()` renders against, or
+    /// `None` outside a daemon server process (upstream `module_id < 0`).
+    fn daemon_paths(&self) -> Option<crate::full_fname::DaemonPaths<'_>> {
+        let module = self.daemon_module.as_deref()?;
+        let module_root = self.daemon_module_root.as_deref()?;
+        Some(crate::full_fname::DaemonPaths {
+            module,
+            module_root,
+            curr_dir: self.dest_dir.as_deref().unwrap_or(module_root),
+        })
+    }
+
+    /// Formats the receiver's temp-file creation failure the way upstream does.
+    ///
+    /// Upstream names the temp file it tried to create, not the destination it
+    /// would eventually have been renamed to, so a denied write into a module
+    /// reads `mkstemp ".new.txt.a2dBeL" (in romod) failed` - never the
+    /// server's absolute path. The attempted name rides along on the error
+    /// from [`crate::temp_guard::open_tmpfile`]; `dest` is the fallback for an
+    /// error raised anywhere else in the commit.
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `receiver.c:297` - `rsyserr(FERROR_XFER, errno, "mkstemp %s failed",
+    ///   full_fname(fnametmp))`
+    fn mkstemp_failure(&self, dest: &std::path::Path, error: &io::Error) -> String {
+        let named = crate::temp_guard::attempted_temp_path(error).unwrap_or(dest);
+        format!(
+            "rsync: [receiver] mkstemp {} failed: Permission denied (13)",
+            full_fname_path(named, self.daemon_paths()),
+        )
     }
 
     /// Returns a reference to the channel sender for `FileMessage` items.
@@ -239,20 +284,12 @@ impl PipelinedReceiver {
                     if is_permission_error(&e) {
                         let path = pending.map(|p| p.file_path).unwrap_or_default();
                         // upstream: receiver.c:297 - rsyserr(FERROR_XFER, errno,
-                        // "mkstemp %s failed", full_fname(fnametmp)); full_fname()
-                        // wraps the path in double quotes and appends
-                        // " (in MODULE)" when serving a daemon module
-                        // (util1.c:1273). Emitting this as FERROR_XFER (not
-                        // FINFO) makes the peer's rwrite() set got_xfer_error,
-                        // so the run exits 23 (RERR_PARTIAL) instead of 0 when
-                        // the output mkstemp() was denied.
-                        self.warnings.push((
-                            MessageCode::ErrorXfer,
-                            format!(
-                                "rsync: [receiver] mkstemp {} failed: Permission denied (13)",
-                                full_fname_path(&path, self.daemon_module.as_deref()),
-                            ),
-                        ));
+                        // "mkstemp %s failed", full_fname(fnametmp)). Emitting
+                        // this as FERROR_XFER (not FINFO) makes the peer's
+                        // rwrite() set got_xfer_error, so the run exits 23
+                        // (RERR_PARTIAL) instead of 0 when mkstemp() was denied.
+                        let message = self.mkstemp_failure(&path, &e);
+                        self.warnings.push((MessageCode::ErrorXfer, message));
                         meta_errors.push((path, e.to_string()));
                         self.permission_error_count += 1;
                     } else {
@@ -308,20 +345,12 @@ impl PipelinedReceiver {
                     if is_permission_error(&e) {
                         let path = pending.map(|p| p.file_path).unwrap_or_default();
                         // upstream: receiver.c:297 - rsyserr(FERROR_XFER, errno,
-                        // "mkstemp %s failed", full_fname(fnametmp)); full_fname()
-                        // wraps the path in double quotes and appends
-                        // " (in MODULE)" when serving a daemon module
-                        // (util1.c:1273). Emitting this as FERROR_XFER (not
-                        // FINFO) makes the peer's rwrite() set got_xfer_error,
-                        // so the run exits 23 (RERR_PARTIAL) instead of 0 when
-                        // the output mkstemp() was denied.
-                        self.warnings.push((
-                            MessageCode::ErrorXfer,
-                            format!(
-                                "rsync: [receiver] mkstemp {} failed: Permission denied (13)",
-                                full_fname_path(&path, self.daemon_module.as_deref()),
-                            ),
-                        ));
+                        // "mkstemp %s failed", full_fname(fnametmp)). Emitting
+                        // this as FERROR_XFER (not FINFO) makes the peer's
+                        // rwrite() set got_xfer_error, so the run exits 23
+                        // (RERR_PARTIAL) instead of 0 when mkstemp() was denied.
+                        let message = self.mkstemp_failure(&path, &e);
+                        self.warnings.push((MessageCode::ErrorXfer, message));
                         meta_errors.push((path, e.to_string()));
                         self.permission_error_count += 1;
                     } else {
@@ -1161,13 +1190,21 @@ mod tests {
             MessageCode::ErrorXfer,
             "output-open failure must be MSG_ERROR_XFER so the peer exits 23"
         );
+        // Outside a daemon module upstream's module_id is -1 and module_dirlen
+        // is 0, so full_fname() neither strips a prefix nor appends a suffix:
+        // the absolute temp path stays exactly as a local or SSH run prints it
+        // (util1.c:1285-1290).
+        let expected_prefix = format!(
+            "rsync: [receiver] mkstemp \"{}/.denied.dat.",
+            readonly_dir.display()
+        );
         assert!(
-            warnings[0].1.contains("mkstemp"),
-            "message should mirror upstream receiver.c:297 \"mkstemp %s failed\": {}",
+            warnings[0].1.starts_with(&expected_prefix)
+                && warnings[0].1.ends_with("\" failed: Permission denied (13)"),
+            "message should mirror upstream receiver.c:297 \"mkstemp %s failed\" \
+             with the absolute temp name: {}",
             warnings[0].1
         );
-        // Outside a daemon module upstream's module_id is -1, so full_fname()
-        // emits the bare quoted path with no suffix (util1.c:1290).
         assert!(
             !warnings[0].1.contains(" (in "),
             "non-daemon run must not carry a module suffix: {}",
@@ -1178,30 +1215,19 @@ mod tests {
         drop(pr);
     }
 
-    /// Serving a daemon module, upstream's `full_fname()` appends
-    /// ` (in MODULE)` after the closing quote, so the receiver's `mkstemp`
-    /// failure names the module the client asked for. Without it a client
-    /// syncing several modules cannot tell which one refused the write.
-    ///
-    /// upstream: util1.c:1290 `if (module_id >= 0)` inside `full_fname()`,
-    /// reached from receiver.c:297 `rsyserr(..., "mkstemp %s failed", ...)`.
+    /// Drives one denied `mkstemp` through the disk thread and returns the
+    /// single queued warning, with the module context the daemon would supply.
     #[cfg(unix)]
-    #[test]
-    fn output_open_failure_names_daemon_module() {
-        use std::os::unix::fs::PermissionsExt;
-
-        if std::env::var("USER").is_ok_and(|u| u == "root") {
-            return;
-        }
-
-        let dir = test_support::create_tempdir();
-        let readonly_dir = dir.path().join("readonly");
-        std::fs::create_dir(&readonly_dir).unwrap();
-        std::fs::set_permissions(&readonly_dir, PermissionsExt::from_mode(0o555)).unwrap();
-
+    fn denied_mkstemp_warning(
+        readonly_dir: &std::path::Path,
+        daemon_module_root: Option<PathBuf>,
+        dest_dir: Option<PathBuf>,
+    ) -> String {
         let file_path = readonly_dir.join("denied.dat");
         let mut pr = PipelinedReceiver::new(DiskCommitConfig {
             daemon_module: Some("mymod".to_string()),
+            daemon_module_root,
+            dest_dir,
             ..DiskCommitConfig::default()
         })
         .unwrap();
@@ -1225,24 +1251,80 @@ mod tests {
         pr.note_commit_sent(
             [0u8; ChecksumVerifier::MAX_DIGEST_LEN],
             0,
-            file_path.clone(),
+            file_path,
             0,
             false,
         );
 
         let (_bytes, _errors) = pr.drain_all_results().unwrap();
-        let warnings = pr.drain_warnings();
+        let mut warnings = pr.drain_warnings();
         assert_eq!(warnings.len(), 1);
-        assert_eq!(
-            warnings[0].1,
-            format!(
-                "rsync: [receiver] mkstemp \"{}\" (in mymod) failed: Permission denied (13)",
-                file_path.display()
-            ),
+        drop(pr);
+        warnings.remove(0).1
+    }
+
+    /// Serving a daemon module, upstream's `full_fname()` appends
+    /// ` (in MODULE)` after the closing quote and renders the path relative to
+    /// the module root, so the receiver's `mkstemp` failure names the module
+    /// the client asked for and never the server's real filesystem layout.
+    /// It also names the *temp* file, not the destination it would have been
+    /// renamed to.
+    ///
+    /// Ground truth, rsync 3.4.4 daemon, module `romod` at `/tmp/modrel/romod`,
+    /// `rsync -r src/new.txt rsync://h:p/romod/`:
+    ///
+    /// ```text
+    /// rsync: [receiver] mkstemp ".new.txt.a2dBeL" (in romod) failed: Permission denied (13)
+    /// ```
+    ///
+    /// upstream: util1.c:1285-1290 inside `full_fname()`, reached from
+    /// receiver.c:297 `rsyserr(..., "mkstemp %s failed", full_fname(fnametmp))`.
+    #[cfg(unix)]
+    #[test]
+    fn output_open_failure_names_daemon_module() {
+        use std::os::unix::fs::PermissionsExt;
+
+        if std::env::var("USER").is_ok_and(|u| u == "root") {
+            return;
+        }
+
+        let dir = test_support::create_tempdir();
+        let readonly_dir = dir.path().join("readonly");
+        std::fs::create_dir(&readonly_dir).unwrap();
+        std::fs::set_permissions(&readonly_dir, PermissionsExt::from_mode(0o555)).unwrap();
+
+        // The client pushed into the module root itself: upstream's curr_dir
+        // equals module_dir, so p1 is empty and the temp name is bare.
+        let at_root = denied_mkstemp_warning(
+            &readonly_dir,
+            Some(readonly_dir.clone()),
+            Some(readonly_dir.clone()),
+        );
+        assert!(
+            at_root.starts_with("rsync: [receiver] mkstemp \".denied.dat.")
+                && at_root.ends_with("\" (in mymod) failed: Permission denied (13)"),
+            "module-root push must name the bare temp file: {at_root}"
+        );
+
+        // The client pushed into `readonly/` under the module root: upstream's
+        // p1 is `/readonly` and p2 collapses to `/`, so the render is anchored
+        // at the module root with a leading slash.
+        let in_subdir = denied_mkstemp_warning(
+            &readonly_dir,
+            Some(dir.path().to_path_buf()),
+            Some(readonly_dir.clone()),
+        );
+        assert!(
+            in_subdir.starts_with("rsync: [receiver] mkstemp \"/readonly/.denied.dat.")
+                && in_subdir.ends_with("\" (in mymod) failed: Permission denied (13)"),
+            "sub-directory push must anchor at the module root: {in_subdir}"
+        );
+        assert!(
+            !in_subdir.contains(&dir.path().display().to_string()),
+            "the server's absolute path must never reach the client: {in_subdir}"
         );
 
         let _ = std::fs::set_permissions(&readonly_dir, PermissionsExt::from_mode(0o755));
-        drop(pr);
     }
 
     /// Pins the WARNING wording to upstream `receiver.c:965-968` verbatim.

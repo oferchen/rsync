@@ -5585,14 +5585,18 @@ fn diminished_skip_frames_a_warning_in_server_mode() {
     );
 }
 
-/// Walks `base` recursively as a daemon module server and returns the frames
-/// the queued file-list diagnostics produce on a multiplexed writer.
+/// Walks `base` recursively as a daemon module server rooted at `module_root`
+/// and returns the frames the queued file-list diagnostics produce on a
+/// multiplexed writer.
 ///
 /// `client_mode` selects upstream's `!am_server` branch (log.c:330), where the
-/// text goes to the local terminal and nothing is framed.
+/// text goes to the local terminal and nothing is framed. `module_root` is
+/// upstream's `module_dir`; a `None` root models a non-daemon server, whose
+/// `module_id < 0` leaves the absolute path untouched.
 #[cfg(unix)]
 fn flist_walk_frames(
     base: &Path,
+    module_root: Option<&Path>,
     client_mode: bool,
 ) -> (Vec<(protocol::MessageCode, Vec<u8>)>, i32) {
     let handshake = test_handshake();
@@ -5600,9 +5604,16 @@ fn flist_walk_frames(
     config.args = vec![OsString::from(base)];
     config.flags.recursive = true;
     config.connection.client_mode = client_mode;
-    config.connection.daemon_module = Some("mymod".to_owned());
+    if let Some(root) = module_root {
+        config.connection.daemon_module = Some("mymod".to_owned());
+        config.connection.daemon_module_root = Some(root.to_path_buf());
+    }
     let mut ctx = GeneratorContext::new_for_test(&handshake, config);
-    build_file_list_for(&mut ctx, base);
+    // A daemon hands the sender a trailing-slash source for `rsync://h/mod/`
+    // and `rsync://h/mod/sub/` alike (path_resolution.rs preserves it), which
+    // is what puts upstream's `curr_dir` at that directory (flist.c:2312-2322
+    // DOTDIR_NAME -> `push_dir(dir)`).
+    build_file_list_for_contents(&mut ctx, base);
 
     let mut buf = Vec::new();
     {
@@ -5643,7 +5654,7 @@ fn flist_opendir_failure_frames_an_error_xfer_in_server_mode() {
     let temp = TempDir::new().unwrap();
     let denied = unreadable_subdir(temp.path());
 
-    let (frames, io_error) = flist_walk_frames(temp.path(), false);
+    let (frames, io_error) = flist_walk_frames(temp.path(), Some(temp.path()), false);
     restore_subdir(&denied);
 
     assert_eq!(frames.len(), 1, "one opendir diagnostic: {frames:?}");
@@ -5654,17 +5665,70 @@ fn flist_opendir_failure_frames_an_error_xfer_in_server_mode() {
     );
     assert_eq!(
         String::from_utf8(frames[0].1.clone()).unwrap(),
-        format!(
-            "rsync: [sender] opendir \"{}\" (in mymod) failed: Permission denied (13)\n",
-            denied.display()
-        ),
-        "the framed text must stay byte-identical to the rsyserr rendering, \
-         daemon module suffix and trailing newline included"
+        "rsync: [sender] opendir \"denied\" (in mymod) failed: Permission denied (13)\n",
+        "the framed text must stay byte-identical to the rsyserr rendering: \
+         module-relative path, daemon module suffix and trailing newline"
     );
     assert_eq!(
         io_error,
         super::io_error_flags::IOERR_GENERAL,
         "upstream flist.c:1877 sets IOERR_GENERAL, which lands the run on exit 23"
+    );
+}
+
+/// A client that asked for a sub-path of the module (`rsync://h/mymod/sub/`)
+/// leaves upstream's `curr_dir` one level below `module_dir`, so `p1` is
+/// `/sub` and `p2` collapses to `/` (util1.c:1285-1291). Ground truth,
+/// rsync 3.4.4 daemon, module `mod` at `/tmp/modrel/mod`:
+///
+/// ```text
+/// rsync: [sender] opendir "/sub/denied2" (in mod) failed: Permission denied (13)
+/// ```
+///
+/// The daemon's own `/tmp/modrel/mod` prefix never appears on the wire.
+#[cfg(unix)]
+#[test]
+fn flist_opendir_failure_anchors_a_sub_path_at_the_module_root() {
+    let temp = TempDir::new().unwrap();
+    let sub = temp.path().join("sub");
+    fs::create_dir(&sub).unwrap();
+    let denied = unreadable_subdir(&sub);
+
+    let (frames, _io_error) = flist_walk_frames(&sub, Some(temp.path()), false);
+    restore_subdir(&denied);
+
+    assert_eq!(frames.len(), 1, "one opendir diagnostic: {frames:?}");
+    assert_eq!(
+        String::from_utf8(frames[0].1.clone()).unwrap(),
+        "rsync: [sender] opendir \"/sub/denied\" (in mymod) failed: Permission denied (13)\n"
+    );
+    assert!(
+        !String::from_utf8(frames[0].1.clone())
+            .unwrap()
+            .contains(&temp.path().display().to_string()),
+        "the daemon's filesystem layout must not reach the client"
+    );
+}
+
+/// Without a module (`module_id < 0`) upstream neither strips a prefix nor
+/// appends a suffix, so an SSH server's diagnostic keeps the absolute path it
+/// has always printed. This is the regression pin for the non-daemon output.
+#[cfg(unix)]
+#[test]
+fn flist_opendir_failure_stays_absolute_outside_a_daemon_module() {
+    let temp = TempDir::new().unwrap();
+    let denied = unreadable_subdir(temp.path());
+
+    let (frames, _io_error) = flist_walk_frames(temp.path(), None, false);
+    restore_subdir(&denied);
+
+    assert_eq!(frames.len(), 1, "one opendir diagnostic: {frames:?}");
+    assert_eq!(
+        String::from_utf8(frames[0].1.clone()).unwrap(),
+        format!(
+            "rsync: [sender] opendir \"{}\" failed: Permission denied (13)\n",
+            denied.display()
+        )
     );
 }
 
@@ -5677,7 +5741,7 @@ fn flist_opendir_failure_emits_no_frame_in_client_mode() {
     let temp = TempDir::new().unwrap();
     let denied = unreadable_subdir(temp.path());
 
-    let (frames, io_error) = flist_walk_frames(temp.path(), true);
+    let (frames, io_error) = flist_walk_frames(temp.path(), Some(temp.path()), true);
     restore_subdir(&denied);
 
     assert!(
