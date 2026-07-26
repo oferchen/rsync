@@ -373,7 +373,7 @@ impl ReceiverContext {
         // upstream: log.c:310-311 - every MSG_ERROR_XFER read off the wire sets
         // got_xfer_error, the only report an ENOENT source argument produces
         // (flist.c:2431 withholds IOERR_GENERAL for it).
-        stats.got_xfer_error = reader.xfer_error_count() > 0;
+        stats.got_xfer_error = reader.xfer_error_count() > 0 || self.got_xfer_error.get();
 
         let total_source_bytes: u64 = self.total_source_size();
 
