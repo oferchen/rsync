@@ -354,7 +354,7 @@ impl ReceiverContext {
                     // up-to-date file; the attr-comparison may still surface a
                     // metadata-only row (perms/owner/group differing while
                     // size+mtime match).
-                    let mut unchanged_iflags = self.itemize_existing_flags(entry, meta, 0);
+                    let mut unchanged_iflags = self.itemize_existing_flags(entry, Some(meta), 0);
                     // upstream: generator.c:566-572 - ITEM_REPORT_XATTR when the
                     // destination's xattrs differ from the sender's. Computed on
                     // the -X itemize path only (matching upstream's lazy
@@ -425,17 +425,11 @@ impl ReceiverContext {
             // changes against the pre-transfer destination. A non-existent dest
             // (statret < 0) is ITEM_IS_NEW; an existing one OR-s the per-attr
             // report bits onto ITEM_TRANSFER.
-            let base_iflags = match dest_meta {
-                Some(ref meta) => self.itemize_existing_flags(
-                    entry,
-                    meta,
-                    crate::generator::ItemFlags::ITEM_TRANSFER,
-                ),
-                None => {
-                    crate::generator::ItemFlags::ITEM_TRANSFER
-                        | crate::generator::ItemFlags::ITEM_IS_NEW
-                }
-            };
+            let base_iflags = self.itemize_existing_flags(
+                entry,
+                dest_meta.as_ref(),
+                crate::generator::ItemFlags::ITEM_TRANSFER,
+            );
             if base_iflags & crate::generator::ItemFlags::ITEM_IS_NEW != 0 {
                 // upstream: receiver.c:777-778 - a regular file being received
                 // whose destination was absent (ITEM_IS_NEW) bumps
@@ -620,15 +614,21 @@ impl ReceiverContext {
                     } else {
                         ItemFlags::ITEM_TRANSFER
                     };
-                    self.itemize_existing_flags(entry, &meta, base)
+                    self.itemize_existing_flags(entry, Some(&meta), base)
                 }
                 Err(_) => new_iflags(ItemFlags::ITEM_TRANSFER),
             }
         }
     }
 
-    /// Computes the attribute-comparison itemize flags for a destination file
-    /// that already exists, mirroring upstream `generator.c:515-556` `itemize()`.
+    /// Computes the itemize flags for `entry`, mirroring upstream `itemize()`
+    /// (`generator.c:511-579`).
+    ///
+    /// `dest_meta` models upstream's `statret`: `Some(meta)` is the
+    /// `statret >= 0` leg (`generator.c:515`) where the pre-transfer
+    /// destination stat is compared attribute by attribute, and `None` is the
+    /// `statret < 0` leg (`generator.c:573-578`) where the destination is
+    /// absent and the row is simply `ITEM_IS_NEW`.
     ///
     /// `base` is `ITEM_TRANSFER` for a file being transferred, or `0` for an
     /// up-to-date file (quick-check match). The returned raw flags OR `base`
@@ -643,11 +643,16 @@ impl ReceiverContext {
     pub(in crate::receiver) fn itemize_existing_flags(
         &self,
         entry: &FileEntry,
-        dest_meta: &fs::Metadata,
+        dest_meta: Option<&fs::Metadata>,
         base: u32,
     ) -> u32 {
         use crate::generator::ItemFlags;
         let mut iflags = base;
+        let Some(dest_meta) = dest_meta else {
+            // upstream: generator.c:578 - the `statret < 0` leg contributes only
+            // ITEM_IS_NEW; there is no destination stat to compare against.
+            return iflags | ItemFlags::ITEM_IS_NEW;
+        };
         // upstream: generator.c:521 - S_ISREG(file->mode) && F_LENGTH(file) != st_size
         if entry.is_file() && entry.size() != dest_meta.len() {
             iflags |= ItemFlags::ITEM_REPORT_SIZE;
@@ -687,8 +692,11 @@ impl ReceiverContext {
             {
                 iflags |= ItemFlags::ITEM_REPORT_ATIME;
             }
-            // upstream: generator.c:547-549 - preserve_perms && CHMOD_BITS differ
-            if self.config.flags.perms {
+            // upstream: generator.c:542-549 - `#ifndef CAN_CHMOD_SYMLINK` skips
+            // the whole perm compare for a symlink, because a platform without
+            // lchmod() can never change a symlink's own mode. Mirrors the same
+            // guard in engine's local-copy change-set detection.
+            if self.config.flags.perms && !entry.is_symlink() {
                 const CHMOD_BITS: u32 = 0o7777;
                 if (dest_meta.mode() & CHMOD_BITS) != (entry.mode() & CHMOD_BITS) {
                     iflags |= ItemFlags::ITEM_REPORT_PERMS;
@@ -1024,7 +1032,7 @@ mod itemize_order_tests {
         with_u.flags.times = true;
         with_u.flags.atimes = true;
         let ctx = ReceiverContext::new_for_test(&hs, with_u);
-        let flags = ctx.itemize_existing_flags(&entry, &meta, 0);
+        let flags = ctx.itemize_existing_flags(&entry, Some(&meta), 0);
         assert!(
             flags & ItemFlags::ITEM_REPORT_ATIME != 0,
             "atime row missing under -U: {flags:#06x}"
@@ -1038,7 +1046,7 @@ mod itemize_order_tests {
         without_u.flags.times = true;
         without_u.flags.atimes = false;
         let ctx = ReceiverContext::new_for_test(&hs, without_u);
-        let flags = ctx.itemize_existing_flags(&entry, &meta, 0);
+        let flags = ctx.itemize_existing_flags(&entry, Some(&meta), 0);
         assert!(
             flags & ItemFlags::ITEM_REPORT_ATIME == 0,
             "atime row must be gated on --atimes: {flags:#06x}"
