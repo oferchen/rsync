@@ -1,126 +1,118 @@
-//! Interop test: no --partial flag removes temp files on mid-transfer kill.
+//! Interop test: SIGTERM mid daemon transfer leaves no residue without `--partial`.
 //!
-//! Verifies that when a daemon transfer is interrupted mid-stream WITHOUT
-//! `--partial` (the default behavior), no temp files or partial files remain
-//! at the destination. This is the complementary test to PIR-6.a which
-//! verifies retention with `--partial`.
+//! Default rsync writes each file to `.name.XXXXXX` and renames it on
+//! completion. An interrupt must remove that temp: `cleanup.c:194-197` unlinks
+//! `cleanup_fname` whenever `keep_partial` is unset. The failure this guards
+//! against is an orphaned temp file - the destination looks clean in a casual
+//! `ls` while a hidden partial silently consumes the disk.
 //!
-//! Upstream rsync writes to a temp file (`.filename.XXXXXX`) during transfer
-//! and renames it to the final name on completion. On interrupt without
-//! `--partial`, `cleanup.c:do_unlink()` removes the temp file so no orphan
-//! remains. This test exercises that cleanup path end-to-end.
-//!
-//! Test scenarios:
-//! 1. Single file transfer killed mid-stream - no residue at destination
-//! 2. Multi-file transfer killed mid-stream - no residue for any file
-//! 3. Upstream rsync client against oc-rsync daemon - cross-implementation
-//! 4. Subdirectory structure preserved but no temp files remain
+//! The transfer is made structurally unable to complete by interposing
+//! [`common::CappingProxy`], which forwards a bounded number of daemon bytes
+//! and then stalls with the connection open, so the interrupt can be gated on
+//! observed on-disk progress rather than on a sleep.
 //!
 //! Upstream reference:
-//! - `cleanup.c:55-80` - `do_unlink()` removes temp file on interrupt
-//! - `cleanup.c:105-135` - only retains when `keep_partial && got_literal`
-//! - `receiver.c:490-510` - temp file naming pattern `.filename.XXXXXX`
+//! - `cleanup.c:159-197` - retention gate and the unlink that follows it
+//! - `receiver.c` - temp file naming pattern `.filename.XXXXXX`
+//! - `errcode.h` - `RERR_SIGNAL` is 20
 
 #[cfg(unix)]
 mod common;
 
 #[cfg(unix)]
-use common::{DaemonBinary, TestDaemon, create_test_file};
+use common::{
+    CappingProxy, DaemonBinary, PipeDrain, TestDaemon, create_test_file, upstream_rsync,
+    wait_for_progress,
+};
 
 #[cfg(unix)]
 use std::fs;
 #[cfg(unix)]
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 #[cfg(unix)]
-use std::process::{Child, Command, Stdio};
+use std::process::{Child, Command, ExitStatus, Stdio};
 #[cfg(unix)]
 use std::thread;
 #[cfg(unix)]
 use std::time::{Duration, Instant};
 
 #[cfg(unix)]
-use tempfile::tempdir;
+use tempfile::{TempDir, tempdir};
 
-/// Size of the test file (2 MB) - large enough that a bandwidth-limited
-/// transfer takes several seconds, giving a reliable kill window.
+/// Per-file payload size. Comfortably larger than [`FORWARD_CAP`].
 #[cfg(unix)]
 const TEST_FILE_SIZE: usize = 2 * 1024 * 1024;
 
-/// Bandwidth limit in KB/s for slowing the transfer.
-/// At 8 KB/s, a 2 MB file takes ~256 seconds - far longer than our kill delay.
+/// Daemon bytes the proxy forwards before stalling forever.
 #[cfg(unix)]
-const BWLIMIT_KBPS: u32 = 8;
+const FORWARD_CAP: u64 = 512 * 1024;
 
-/// How long to wait before interrupting the client (seconds).
-/// At 8 KB/s, ~24 KB should be received in 3 seconds.
+/// How long to wait for the receiver to put bytes on disk before interrupting.
 #[cfg(unix)]
-const KILL_DELAY: Duration = Duration::from_secs(3);
+const PROGRESS_WAIT: Duration = Duration::from_secs(20);
 
-/// Maximum time to wait for the client process to exit after signal.
+/// How long the client may take to exit after SIGTERM.
 #[cfg(unix)]
 const EXIT_WAIT: Duration = Duration::from_secs(10);
 
-/// Generate deterministic test data (repeating byte pattern).
+/// rsync's exit code for SIGINT/SIGTERM/SIGHUP (`errcode.h` `RERR_SIGNAL`).
+#[cfg(unix)]
+const RERR_SIGNAL: i32 = 20;
+
+/// Deterministic payload (repeating byte pattern).
 #[cfg(unix)]
 fn generate_test_data(size: usize) -> Vec<u8> {
     let pattern: Vec<u8> = (0..=255u8).collect();
     pattern.iter().copied().cycle().take(size).collect()
 }
 
-/// Send SIGTERM to a child process and wait for it to exit.
-///
-/// SIGTERM triggers cooperative shutdown so the cleanup code path runs
-/// before the process exits, removing temp files.
+/// Sends SIGTERM and waits for the child, failing the test if it does not go.
 #[cfg(unix)]
-fn sigterm_and_wait(child: &mut Child) {
+fn sigterm_and_wait(child: &mut Child) -> ExitStatus {
     let pid = child.id();
-
-    // SAFETY: sending a signal to a known child process.
+    // SAFETY: sending a signal to a child this process spawned and has not reaped.
     let ret = unsafe { libc::kill(pid as libc::pid_t, libc::SIGTERM) };
     assert_eq!(ret, 0, "failed to send SIGTERM to child pid {pid}");
 
     let deadline = Instant::now() + EXIT_WAIT;
     loop {
         match child.try_wait() {
-            Ok(Some(_status)) => return,
+            Ok(Some(status)) => return status,
             Ok(None) => {
                 if Instant::now() >= deadline {
                     let _ = child.kill();
                     let _ = child.wait();
-                    panic!("client pid {pid} did not exit within {EXIT_WAIT:?} after SIGTERM");
+                    panic!(
+                        "client pid {pid} ignored SIGTERM for {EXIT_WAIT:?}: the shutdown flag \
+                         is set but nothing on the network path acted on it"
+                    );
                 }
-                thread::sleep(Duration::from_millis(50));
+                thread::sleep(Duration::from_millis(20));
             }
             Err(e) => panic!("error waiting for client pid {pid}: {e}"),
         }
     }
 }
 
-/// Check whether a filename matches rsync's temp file pattern `.name.XXXXXX`.
-///
-/// Rsync creates temp files as `.originalname.XXXXXX` where XXXXXX is a
-/// random suffix. This helper detects such orphans in a directory listing.
+/// Whether a filename matches rsync's temp pattern `.name.XXXXXX`.
 #[cfg(unix)]
 fn is_temp_file_name(name: &str) -> bool {
-    // Temp files start with '.' and have a 6-char random suffix after the last '.'
-    if !name.starts_with('.') {
+    let Some(rest) = name.strip_prefix('.') else {
         return false;
-    }
-    // Strip leading dot, find the last dot, check suffix length
-    let rest = &name[1..];
-    if let Some(last_dot) = rest.rfind('.') {
-        let suffix = &rest[last_dot + 1..];
-        // Random suffix is exactly 6 alphanumeric characters
-        suffix.len() == 6 && suffix.chars().all(|c| c.is_ascii_alphanumeric())
-    } else {
-        false
+    };
+    match rest.rfind('.') {
+        // The random suffix is exactly 6 alphanumeric characters.
+        Some(last_dot) => {
+            let suffix = &rest[last_dot + 1..];
+            suffix.len() == 6 && suffix.chars().all(|c| c.is_ascii_alphanumeric())
+        }
+        None => false,
     }
 }
 
-/// Scan a directory tree recursively for any files matching rsync's temp
-/// file pattern. Returns paths of any orphaned temp files found.
+/// Recursively collects every path under `dir` that looks like an rsync temp.
 #[cfg(unix)]
-fn find_temp_files(dir: &std::path::Path) -> Vec<PathBuf> {
+fn find_temp_files(dir: &Path) -> Vec<PathBuf> {
     let mut temps = Vec::new();
     if let Ok(entries) = fs::read_dir(dir) {
         for entry in entries.flatten() {
@@ -137,270 +129,196 @@ fn find_temp_files(dir: &std::path::Path) -> Vec<PathBuf> {
     temps
 }
 
-/// Verify that a destination directory is completely clean - no final files,
-/// no temp files, no partial files.
+/// A daemon, a stalling proxy in front of it, and a destination directory.
 #[cfg(unix)]
-fn assert_dest_clean(dest_dir: &std::path::Path, context: &str) {
-    let entries: Vec<_> = fs::read_dir(dest_dir)
-        .expect("read dest dir")
-        .filter_map(|e| e.ok())
-        .collect();
-
-    assert!(
-        entries.is_empty(),
-        "{context}: destination should be empty after interrupt without --partial; \
-         found: {:?}",
-        entries.iter().map(|e| e.file_name()).collect::<Vec<_>>()
-    );
+struct StalledTransfer {
+    daemon: TestDaemon,
+    proxy: CappingProxy,
+    dest: TempDir,
 }
 
-/// Single-file transfer without --partial: verify the temp file is removed
-/// and no final file exists after mid-transfer SIGTERM.
-///
-/// This is the core no-partial cleanup test. Without --partial, rsync's
-/// cleanup handler calls `do_unlink()` on the temp file before exiting.
+#[cfg(unix)]
+impl StalledTransfer {
+    fn start() -> Self {
+        let daemon = TestDaemon::start(DaemonBinary::OcRsync).expect("start oc-rsync daemon");
+        let proxy =
+            CappingProxy::start(daemon.port(), FORWARD_CAP).expect("start byte-capping proxy");
+        Self {
+            daemon,
+            proxy,
+            dest: tempdir().expect("create dest dir"),
+        }
+    }
+
+    fn add_file(&self, name: &str, size: usize) {
+        create_test_file(
+            &self.daemon.module_path().join(name),
+            &generate_test_data(size),
+        );
+    }
+
+    fn module_url(&self) -> String {
+        format!("rsync://127.0.0.1:{}/testmodule", self.proxy.port())
+    }
+
+    fn dest_path(&self) -> &Path {
+        self.dest.path()
+    }
+
+    /// Runs `client` with `args`, waits for on-disk progress, sends SIGTERM,
+    /// and asserts the interrupted exit code.
+    fn interrupt(&self, client: &Path, args: &[String]) {
+        let mut child = Command::new(client)
+            .args(args)
+            .arg("--timeout=60")
+            .arg(self.dest_path().as_os_str())
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .expect("spawn client");
+        let drain = PipeDrain::start(&mut child);
+
+        assert!(
+            wait_for_progress(self.dest_path(), PROGRESS_WAIT),
+            "client wrote nothing to {} within {PROGRESS_WAIT:?}; proxy forwarded {} bytes; \
+             daemon log: {}",
+            self.dest_path().display(),
+            self.proxy.forwarded(),
+            self.daemon
+                .log_contents()
+                .unwrap_or_else(|_| "(unavailable)".into())
+        );
+
+        let status = sigterm_and_wait(&mut child);
+        let (_stdout, stderr) = drain.join();
+        assert_eq!(
+            status.code(),
+            Some(RERR_SIGNAL),
+            "interrupted transfer must exit {RERR_SIGNAL}; stderr: {stderr}"
+        );
+        thread::sleep(Duration::from_millis(200));
+    }
+}
+
+/// Single file, no `--partial`: neither the destination nor the temp survives.
 #[cfg(unix)]
 #[test]
-#[ignore = "requires oc-rsync binary"]
 fn no_partial_single_file_no_residue_on_kill() {
-    let oc_rsync = test_support::oc_rsync_bin();
-
-    let daemon = TestDaemon::start(DaemonBinary::OcRsync).expect("start oc-rsync daemon");
-
-    let test_data = generate_test_data(TEST_FILE_SIZE);
-    create_test_file(&daemon.module_path().join("large.bin"), &test_data);
-
-    let dest_dir = tempdir().expect("create dest dir");
-    let dest_file = dest_dir.path().join("large.bin");
-
-    // Spawn client WITHOUT --partial.
-    let mut child = Command::new(&oc_rsync)
-        .arg(format!("--bwlimit={BWLIMIT_KBPS}"))
-        .arg("--timeout=30")
-        .arg(format!("{}/large.bin", daemon.url()))
-        .arg(dest_dir.path().as_os_str())
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .expect("spawn oc-rsync client");
-
-    thread::sleep(KILL_DELAY);
-    sigterm_and_wait(&mut child);
-    thread::sleep(Duration::from_millis(500));
-
-    // The final destination file must not exist.
-    assert!(
-        !dest_file.exists(),
-        "without --partial, destination file must not exist after interrupt"
+    let fixture = StalledTransfer::start();
+    fixture.add_file("large.bin", TEST_FILE_SIZE);
+    fixture.interrupt(
+        &test_support::oc_rsync_bin(),
+        &[format!("{}/large.bin", fixture.module_url())],
     );
 
-    // No temp files matching rsync's `.filename.XXXXXX` pattern should remain.
-    let temp_orphans = find_temp_files(dest_dir.path());
     assert!(
-        temp_orphans.is_empty(),
-        "temp file orphans found in destination: {temp_orphans:?}",
+        !fixture.dest_path().join("large.bin").exists(),
+        "without --partial the destination file must not exist after an interrupt"
     );
-
-    // Destination directory must be completely empty.
-    assert_dest_clean(dest_dir.path(), "single file");
+    let orphans = find_temp_files(fixture.dest_path());
+    assert!(
+        orphans.is_empty(),
+        "temp file orphans left behind: {orphans:?}"
+    );
 }
 
-/// Multi-file recursive transfer without --partial: verify no temp files
-/// remain for any of the files after mid-transfer kill.
-///
-/// Exercises the cleanup path when multiple files are in-flight or queued.
-/// The kill arrives while at least one file is actively transferring;
-/// cleanup must remove the active temp file and leave no partial residue
-/// for any file.
+/// Recursive pull of several files: whatever completed may stay, but it must
+/// be complete, and no temp may survive anywhere in the tree.
 #[cfg(unix)]
 #[test]
-#[ignore = "requires oc-rsync binary"]
 fn no_partial_multi_file_no_residue_on_kill() {
-    let oc_rsync = test_support::oc_rsync_bin();
-
-    let daemon = TestDaemon::start(DaemonBinary::OcRsync).expect("start oc-rsync daemon");
-
-    // Create multiple files of varying sizes. The large files ensure the
-    // transfer is still in progress when we send SIGTERM.
     let files = [
         ("small.txt", 256_usize),
         ("medium.bin", 64 * 1024),
         ("large_a.bin", TEST_FILE_SIZE),
         ("large_b.bin", TEST_FILE_SIZE),
     ];
-
+    let fixture = StalledTransfer::start();
     for (name, size) in &files {
-        let data = generate_test_data(*size);
-        create_test_file(&daemon.module_path().join(name), &data);
+        fixture.add_file(name, *size);
     }
-
-    let dest_dir = tempdir().expect("create dest dir");
-
-    // Pull entire module recursively without --partial.
-    let mut child = Command::new(&oc_rsync)
-        .arg("-r")
-        .arg(format!("--bwlimit={BWLIMIT_KBPS}"))
-        .arg("--timeout=30")
-        .arg(format!("{}/", daemon.url()))
-        .arg(dest_dir.path().as_os_str())
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .expect("spawn oc-rsync client");
-
-    thread::sleep(KILL_DELAY);
-    sigterm_and_wait(&mut child);
-    thread::sleep(Duration::from_millis(500));
-
-    // No temp files should remain anywhere in the destination tree.
-    let temp_orphans = find_temp_files(dest_dir.path());
-    assert!(
-        temp_orphans.is_empty(),
-        "temp file orphans found after multi-file kill: {temp_orphans:?}",
+    fixture.interrupt(
+        &test_support::oc_rsync_bin(),
+        &["-r".to_string(), format!("{}/", fixture.module_url())],
     );
 
-    // Files that completed before the kill may exist (small files transfer
-    // quickly even with bwlimit). But any large file that was mid-transfer
-    // must not be present as a partial.
+    let orphans = find_temp_files(fixture.dest_path());
+    assert!(
+        orphans.is_empty(),
+        "temp file orphans found after multi-file kill: {orphans:?}"
+    );
+
     for (name, size) in &files {
-        let dest_file = dest_dir.path().join(name);
+        let dest_file = fixture.dest_path().join(name);
         if dest_file.exists() {
-            let actual_size = fs::metadata(&dest_file).expect("stat dest file").len() as usize;
-            // If the file exists, it must be complete (fully transferred before kill).
+            let actual = fs::metadata(&dest_file).expect("stat dest file").len() as usize;
             assert_eq!(
-                actual_size, *size,
-                "file {name} exists but is incomplete ({actual_size} vs {size} bytes) - \
-                 should have been cleaned up without --partial"
+                actual, *size,
+                "{name} survived the interrupt at {actual} of {size} bytes; without --partial \
+                 an incomplete file must be removed, not left looking finished"
             );
         }
     }
 }
 
-/// Subdirectory transfer without --partial: verify subdirectories are
-/// preserved but no temp files remain after kill.
-///
-/// Rsync creates directories immediately but writes files via temp files.
-/// After cleanup, directories may remain (they are not temp files) but
-/// no `.filename.XXXXXX` temp orphans should exist at any nesting level.
+/// Nested tree: directories are created eagerly and legitimately remain, but
+/// no `.name.XXXXXX` may be left at any depth.
 #[cfg(unix)]
 #[test]
-#[ignore = "requires oc-rsync binary"]
 fn no_partial_preserves_dirs_but_removes_temps() {
-    let oc_rsync = test_support::oc_rsync_bin();
-
-    let daemon = TestDaemon::start(DaemonBinary::OcRsync).expect("start oc-rsync daemon");
-
-    // Create nested directory structure with files at each level.
-    let test_data = generate_test_data(TEST_FILE_SIZE);
-    create_test_file(&daemon.module_path().join("root.bin"), &test_data);
-    create_test_file(&daemon.module_path().join("subdir/nested.bin"), &test_data);
-    create_test_file(
-        &daemon.module_path().join("subdir/deep/leaf.bin"),
-        &test_data,
-    );
-
-    let dest_dir = tempdir().expect("create dest dir");
-
-    let mut child = Command::new(&oc_rsync)
-        .arg("-r")
-        .arg(format!("--bwlimit={BWLIMIT_KBPS}"))
-        .arg("--timeout=30")
-        .arg(format!("{}/", daemon.url()))
-        .arg(dest_dir.path().as_os_str())
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .expect("spawn oc-rsync client");
-
-    thread::sleep(KILL_DELAY);
-    sigterm_and_wait(&mut child);
-    thread::sleep(Duration::from_millis(500));
-
-    // No temp files at any level of the directory tree.
-    let temp_orphans = find_temp_files(dest_dir.path());
-    assert!(
-        temp_orphans.is_empty(),
-        "temp file orphans found in nested directory tree: {temp_orphans:?}",
-    );
-
-    // Verify no incomplete files exist.
+    let fixture = StalledTransfer::start();
     for name in ["root.bin", "subdir/nested.bin", "subdir/deep/leaf.bin"] {
-        let dest_file = dest_dir.path().join(name);
+        fixture.add_file(name, TEST_FILE_SIZE);
+    }
+    fixture.interrupt(
+        &test_support::oc_rsync_bin(),
+        &["-r".to_string(), format!("{}/", fixture.module_url())],
+    );
+
+    let orphans = find_temp_files(fixture.dest_path());
+    assert!(
+        orphans.is_empty(),
+        "temp file orphans found in nested tree: {orphans:?}"
+    );
+
+    for name in ["root.bin", "subdir/nested.bin", "subdir/deep/leaf.bin"] {
+        let dest_file = fixture.dest_path().join(name);
         if dest_file.exists() {
-            let actual_size = fs::metadata(&dest_file).expect("stat").len() as usize;
+            let actual = fs::metadata(&dest_file).expect("stat").len() as usize;
             assert_eq!(
-                actual_size, TEST_FILE_SIZE,
-                "file {name} exists but is incomplete ({actual_size} bytes) - \
-                 should have been cleaned up without --partial"
+                actual, TEST_FILE_SIZE,
+                "{name} survived the interrupt at {actual} of {TEST_FILE_SIZE} bytes"
             );
         }
     }
 }
 
-/// Upstream rsync client against oc-rsync daemon without --partial:
-/// verify cross-implementation compatibility of temp file cleanup.
+/// The same expectation against an upstream client, pinning oc's daemon side.
 ///
-/// The oc-rsync daemon must cooperate correctly with an upstream rsync
-/// client that does not use --partial, ensuring the client's cleanup
-/// handler can remove the temp file without interference.
+/// A missing upstream binary fails the test: an interop assertion that skips
+/// itself asserts nothing.
 #[cfg(unix)]
 #[test]
-#[ignore = "requires upstream rsync 3.4.1 and oc-rsync binary"]
 fn upstream_client_no_partial_cleans_up_on_kill() {
-    let upstream_rsync = std::path::Path::new(common::UPSTREAM_3_4_1);
-    if !upstream_rsync.exists() {
-        eprintln!(
-            "Skipping: upstream rsync 3.4.1 not found at {}",
-            common::UPSTREAM_3_4_1
-        );
-        return;
-    }
+    let upstream = upstream_rsync();
+    let fixture = StalledTransfer::start();
+    fixture.add_file("large.bin", TEST_FILE_SIZE);
+    fixture.interrupt(&upstream, &[format!("{}/large.bin", fixture.module_url())]);
 
-    let daemon = TestDaemon::start(DaemonBinary::OcRsync).expect("start oc-rsync daemon");
-
-    let test_data = generate_test_data(TEST_FILE_SIZE);
-    create_test_file(&daemon.module_path().join("large.bin"), &test_data);
-
-    let dest_dir = tempdir().expect("create dest dir");
-    let dest_file = dest_dir.path().join("large.bin");
-
-    // Upstream rsync client without --partial pulling from oc-rsync daemon.
-    let mut child = Command::new(upstream_rsync)
-        .arg(format!("--bwlimit={BWLIMIT_KBPS}"))
-        .arg("--timeout=30")
-        .arg(format!("{}/large.bin", daemon.url()))
-        .arg(dest_dir.path().as_os_str())
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .expect("spawn upstream rsync client");
-
-    thread::sleep(KILL_DELAY);
-    sigterm_and_wait(&mut child);
-    thread::sleep(Duration::from_millis(500));
-
-    // Without --partial, the destination file must not exist.
     assert!(
-        !dest_file.exists(),
-        "upstream rsync without --partial must not leave destination file; \
-         daemon log: {}",
-        daemon
+        !fixture.dest_path().join("large.bin").exists(),
+        "upstream without --partial must not leave a destination file; daemon log: {}",
+        fixture
+            .daemon
             .log_contents()
             .unwrap_or_else(|_| "(unavailable)".into())
     );
-
-    // No temp files should remain.
-    let temp_orphans = find_temp_files(dest_dir.path());
+    let orphans = find_temp_files(fixture.dest_path());
     assert!(
-        temp_orphans.is_empty(),
-        "upstream rsync left temp file orphans: {temp_orphans:?}",
+        orphans.is_empty(),
+        "upstream left temp file orphans: {orphans:?}"
     );
-
-    assert_dest_clean(dest_dir.path(), "upstream client no-partial");
 }
 
 #[cfg(unix)]
@@ -408,6 +326,8 @@ fn upstream_client_no_partial_cleans_up_on_kill() {
 mod temp_file_pattern_tests {
     use super::is_temp_file_name;
 
+    /// The scanner must recognise the `.name.XXXXXX` shape rsync actually
+    /// produces, including names that already contain dots.
     #[test]
     fn detects_rsync_temp_pattern() {
         assert!(is_temp_file_name(".large.bin.a1b2c3"));
@@ -415,18 +335,15 @@ mod temp_file_pattern_tests {
         assert!(is_temp_file_name(".a.b.c.d.AbCdEf"));
     }
 
+    /// Ordinary dotfiles and short/long suffixes must not be reported as
+    /// orphans, or the cleanup assertions would fail on innocent files.
     #[test]
     fn rejects_non_temp_names() {
-        // Normal dotfiles
+        assert!(!is_temp_file_name(".bashrc"));
         assert!(!is_temp_file_name(".rsync-filter"));
-        assert!(!is_temp_file_name(".gitignore"));
-        // Non-dotfiles
         assert!(!is_temp_file_name("large.bin"));
-        assert!(!is_temp_file_name("file.txt"));
-        // Wrong suffix length
-        assert!(!is_temp_file_name(".file.abc"));
-        assert!(!is_temp_file_name(".file.abcdefg"));
-        // Non-alphanumeric suffix
-        assert!(!is_temp_file_name(".file.ab!cd_"));
+        assert!(!is_temp_file_name(".large.bin.a1b2c"));
+        assert!(!is_temp_file_name(".large.bin.a1b2c3d"));
+        assert!(!is_temp_file_name(".large.bin.a1b2c-"));
     }
 }

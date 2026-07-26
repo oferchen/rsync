@@ -290,7 +290,7 @@ pub(crate) fn map_local_copy_error(error: LocalCopyError) -> ClientError {
             let msg = rsync_error!(code.as_i32(), "{}", message).with_role(Role::Client);
             ClientError::with_code(code, msg)
         }
-        LocalCopyErrorKind::Interrupted => signal_interrupt_error(),
+        LocalCopyErrorKind::Interrupted => signal_interrupt_error(Role::Sender),
     }
 }
 
@@ -302,12 +302,13 @@ pub(crate) fn map_local_copy_error(error: LocalCopyError) -> ClientError {
 /// renders the fixed `rerr_names` entry for `RERR_SIGNAL` (log.c:95) as
 /// `rsync error: received SIGINT, SIGTERM, or SIGHUP (code 20) at ... [<role>]`.
 /// The three interrupt signals share one message; upstream never names the
-/// specific signal here. who_am_i() tags the sending half `[sender]`.
+/// specific signal here. `role` is the interrupted half, as who_am_i() would
+/// report it.
 #[cold]
-pub(crate) fn signal_interrupt_error() -> ClientError {
+pub(crate) fn signal_interrupt_error(role: Role) -> ClientError {
     let code = ExitCode::Signal;
     let message =
-        rsync_error!(code.as_i32(), "received SIGINT, SIGTERM, or SIGHUP").with_role(Role::Sender);
+        rsync_error!(code.as_i32(), "received SIGINT, SIGTERM, or SIGHUP").with_role(role);
     ClientError::with_code(code, message)
 }
 
@@ -844,7 +845,7 @@ mod tests {
 
         #[test]
         fn signal_interrupt_error_matches_map_output() {
-            let direct = signal_interrupt_error();
+            let direct = signal_interrupt_error(Role::Sender);
             assert_eq!(direct.code(), ExitCode::Signal);
             assert_eq!(
                 direct.to_string(),
