@@ -395,6 +395,38 @@ impl GeneratorContext {
         Ok(())
     }
 
+    /// Records a mid-file source read error after the file has already been
+    /// sent with a poisoned checksum.
+    ///
+    /// Unlike an open failure this carries no `MSG_NO_SEND`: upstream has
+    /// already streamed the (partly zeroed) token stream and logged the item,
+    /// so the receiver is expected to fail its checksum verify and redo the
+    /// file. Only `IOERR_GENERAL` is set, which lands the run on exit 23.
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `sender.c:464-471`: `j = unmap_file(mbuf); if (j) { io_error |= IOERR_GENERAL;
+    ///   rsyserr(FERROR_XFER, j, "read errors mapping %s", full_fname(fname)); }`
+    pub(super) fn record_read_errors<W: Write>(
+        &mut self,
+        writer: &mut super::super::writer::ServerWriter<W>,
+        error: &io::Error,
+        path_display: &str,
+    ) -> io::Result<()> {
+        self.io_error |= super::io_error_flags::IOERR_GENERAL;
+        let text = format!(
+            "rsync: [sender] read errors mapping {}: {}\n",
+            crate::full_fname::full_fname(path_display, self.daemon_module()),
+            engine::local_copy::upstream_io_error(error),
+        );
+        if self.config.connection.client_mode || !writer.is_multiplexed() {
+            eprint!("{text}");
+        } else {
+            writer.send_msg_error_xfer(text.as_bytes())?;
+        }
+        Ok(())
+    }
+
     /// Skips a source that has shrunk below its file-list length in append
     /// mode, warning and sending MSG_NO_SEND for protocol >= 30.
     ///
