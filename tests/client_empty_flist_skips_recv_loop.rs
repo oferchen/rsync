@@ -49,6 +49,11 @@ use std::time::{Duration, Instant};
 use tempfile::TempDir;
 
 /// Upstream `RERR_PARTIAL`: some files were not transferred (`errcode.h`).
+///
+/// Only the unreadable-source leg expects this code, and that leg is Unix-only
+/// (its trigger is a POSIX permission bit), so on Windows the constant has no
+/// use and `-D warnings` would reject it as dead code.
+#[cfg(unix)]
 const RERR_PARTIAL: i32 = 23;
 
 /// Wall-clock budget for one client run. Nothing is transferred in these
