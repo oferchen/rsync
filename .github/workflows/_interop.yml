@@ -439,13 +439,14 @@ jobs:
           # is upstream 3.4.4, so assert on the --version banner and never on
           # the path: if the install step above found no freshly built binary,
           # `rsync` on PATH is silently the distro build instead.
+          UP_BANNER="$(rsync --version 2>&1 | head -1)"
           echo "oc-rsync: $($OC_RSYNC --version 2>&1 | head -1)"
-          echo "upstream rsync: $(rsync --version 2>&1 | head -1)"
+          echo "upstream rsync: $UP_BANNER"
           echo "upstream rsync path: $(which rsync)"
-          rsync --version 2>&1 | head -1 | grep -qE '^rsync +version 3\.4\.4( |$)' || {
-            echo "expected upstream rsync 3.4.4 on PATH, got: $(rsync --version 2>&1 | head -1)" >&2
-            exit 1
-          }
+          case "$UP_BANNER" in
+            "rsync  version 3.4.4 "*) ;;
+            *) echo "expected upstream rsync 3.4.4 on PATH, got: $UP_BANNER" >&2; exit 1 ;;
+          esac
 
           # Baseline: upstream rsync → upstream rsync via SSH
           echo "=== Baseline: upstream rsync SSH pull ==="
