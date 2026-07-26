@@ -560,9 +560,23 @@ impl ReceiverContext {
     /// Dry-run transfer loop: sends NDX requests without data transfer.
     ///
     /// Mirrors upstream generator.c behavior during `!do_xfers`: sends NDX and
-    /// iflags for each file candidate, reads the echoed NDX+iflags from the
-    /// sender. No sum head or file data is exchanged. This allows the sender to
-    /// log each file name for verbose output.
+    /// iflags for each planned item, reads the echoed NDX+iflags from the
+    /// sender. No sum head or file data is exchanged. This is what makes a push
+    /// dry run print anything at all: on a push this side is the server
+    /// receiver, its rows never reach the user's terminal directly, and the
+    /// client sender renders them from exactly these iflags.
+    ///
+    /// The plan carries non-transfer items too - a new directory, a new symlink,
+    /// an attribute-only regular-file change - because upstream's `itemize()`
+    /// writes NDX + iflags for every entry with significant flags, not just the
+    /// ones with `ITEM_TRANSFER` (generator.c:581-600), and the peer's
+    /// `send_files()` echoes both kinds (sender.c:292-310 for non-transfer,
+    /// sender.c:347-350 for `!do_xfers` transfers).
+    ///
+    /// Returns `(transfer_items, transferred_size)` - upstream bumps
+    /// `stats.xferred_files` and `stats.total_transferred_size` before the
+    /// `if (!do_xfers)` continue (receiver.c:781-784), so a dry run reports the
+    /// same "Number of regular files transferred" as the real run would.
     ///
     /// upstream: generator.c:1858-1959 - `!do_xfers` path sends write_ndx() then
     /// goto cleanup, skipping write_sum_head(). sender.c:394-399 - `!do_xfers`
@@ -574,13 +588,15 @@ impl ReceiverContext {
         &self,
         reader: &mut crate::reader::ServerReader<R>,
         writer: &mut W,
-        files_to_transfer: &[(usize, &FileEntry, PathBuf, u32)],
-    ) -> io::Result<()> {
-        if files_to_transfer.is_empty() {
+        plan: &[super::candidates::DryRunItem<'_>],
+    ) -> io::Result<(usize, u64)> {
+        if plan.is_empty() {
             writer.flush()?;
-            return Ok(());
+            return Ok((0, 0));
         }
 
+        let mut transfer_items = 0usize;
+        let mut transferred_size = 0u64;
         let mut ndx_write_codec = MonotonicNdxWriter::new(self.protocol.as_u8());
         let mut ndx_read_codec = create_ndx_codec(self.protocol.as_u8());
         let write_iflags = self.protocol.supports_iflags();
@@ -593,19 +609,28 @@ impl ReceiverContext {
         // upstream: io.c perform_io() flushes output via select() while waiting
         // for input. We flush once before blocking on each response read, but
         // only when needed (the multiplex dirty-flag skips redundant syscalls).
-        for &(file_idx, file_entry, _, base_iflags) in files_to_transfer {
+        for &(file_idx, file_entry, item_iflags) in plan {
+            let needs_transfer = item_iflags & crate::generator::ItemFlags::ITEM_TRANSFER != 0;
+            if needs_transfer {
+                // upstream: receiver.c:783-784 - xferred_files and
+                // total_transferred_size are summed before the `!do_xfers`
+                // continue, so a dry run reports what the real run would move.
+                transfer_items += 1;
+                transferred_size += file_entry.size();
+            }
+
             // upstream: generator.c:1938 - write_ndx(f_out, ndx)
             let wire_ndx = self.flat_to_wire_ndx(file_idx);
             ndx_write_codec.write_ndx(&mut *writer, wire_ndx)?;
 
-            // upstream: generator.c:1937-1947 - iflags carry the full itemize
-            // bits (ITEM_TRANSFER plus the pre-transfer attribute diff, incl.
-            // ITEM_IS_NEW for a new dest) so the sender prints the right glyph
-            // (e.g. `<f+++++++++` for a new file) even in a dry run.
+            // upstream: generator.c:1937-1947 then itemize() at 581-600 - the
+            // iflags shortint carries the full itemize bits computed against the
+            // pre-transfer destination (ITEM_IS_NEW for an absent one, the
+            // attribute diff for an existing one). Sending a bare ITEM_TRANSFER
+            // here made every pushed file render as `<f.........` instead of
+            // `<f+++++++++` and left the peer's created-file tally at zero.
             if write_iflags {
-                use crate::receiver::wire::SenderAttrs;
-                let iflags = ((base_iflags & 0xFFFF) as u16) | SenderAttrs::ITEM_TRANSFER;
-                writer.write_all(&iflags.to_le_bytes())?;
+                writer.write_all(&((item_iflags & 0xFFFF) as u16).to_le_bytes())?;
             }
 
             // Flush before blocking on the sender's echo. The multiplex
@@ -629,7 +654,11 @@ impl ReceiverContext {
             // so emit the "updated" line at the post-decision point to
             // match upstream wire order. Under `-i`/`-vi` the itemize row
             // already carries the name, so the bare name is suppressed.
-            if self.config.flags.verbose
+            // Transfer items only: a directory's `-v` name line is produced by
+            // the deferred `verbose_dir_lines` buffer, so naming it here too
+            // would double it.
+            if needs_transfer
+                && self.config.flags.verbose
                 && self.config.connection.client_mode
                 && !self.should_emit_itemize()
             {
@@ -638,7 +667,7 @@ impl ReceiverContext {
         }
 
         writer.flush()?;
-        Ok(())
+        Ok((transfer_items, transferred_size))
     }
 
     /// Receiver loop for `--only-write-batch=X` (upstream `write_batch < 0`).

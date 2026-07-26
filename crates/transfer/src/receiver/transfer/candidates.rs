@@ -10,6 +10,7 @@
 //! - `generator.c:954` - `try_dests_reg()` for reference directory handling
 //! - `generator.c:624` - `quick_check_ok()` evaluation order
 
+use std::collections::HashSet;
 use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -25,6 +26,27 @@ use crate::receiver::quick_check::{
 };
 use crate::receiver::stats::{ListOnlyEntry, TransferStats};
 use crate::receiver::{ReceiverContext, apply_acls_from_receiver_cache};
+
+/// One entry as a `--dry-run` reports it: its flist index, the file-list entry,
+/// and the itemize flags a real run would have carried for it.
+///
+/// upstream: `generator.c:581-600` - `itemize()` writes `write_ndx(ndx)` plus
+/// the `iflags` shortint for every entry whose flags are significant, so a
+/// dry-run plan is exactly "the entries upstream would put on the wire".
+pub(in crate::receiver) type DryRunItem<'a> = (usize, &'a FileEntry, u32);
+
+/// Counts the directories a `--dry-run` plan would create, for the summary's
+/// `directories_created` field.
+///
+/// upstream: `receiver.c:736-738` - `stats.created_dirs++` under
+/// `iflags & ITEM_IS_NEW`, which runs whether or not the mkdir happened.
+pub(in crate::receiver) fn new_dir_count(plan: &[DryRunItem<'_>]) -> u64 {
+    plan.iter()
+        .filter(|(_, entry, iflags)| {
+            entry.is_dir() && iflags & crate::generator::ItemFlags::ITEM_IS_NEW != 0
+        })
+        .count() as u64
+}
 
 impl ReceiverContext {
     /// Snapshots every active file-list entry for `--list-only` rendering.
@@ -422,38 +444,54 @@ impl ReceiverContext {
         files_to_transfer
     }
 
-    /// Records the deferred itemize rows for a `--dry-run` receive, one per
-    /// file-list entry in flist-index order.
+    /// Reports a `--dry-run` receive and returns the items whose NDX + iflags
+    /// still have to cross the wire, in flist-index order.
     ///
-    /// Upstream runs the identical `recv_generator()` per-entry loop under
-    /// `--dry-run`; only the data transfer and the filesystem mutation are
-    /// suppressed (`set_file_attrs()` returns early when `dry_run`, rsync.c;
-    /// `do_mkdir`/`do_open` sit behind `if (!do_xfers) goto notify_others`).
-    /// The `itemize()` call itself always runs, so `-ni` prints a row for every
-    /// entry (`>f+++++++++`, `cd+++++++++`, `cL+++++++++`, ...). oc's shipped
-    /// remote receive path (`run_pipelined`) instead early-returns out of the
-    /// directory-creation and candidate passes when `skip_dest_writes()` is set,
-    /// so no itemize row was ever recorded on a network dry run. This read-only
-    /// pass restores the rows without writing anything to the destination.
+    /// This is the single dry-run reporting pass shared by both receiver
+    /// drivers (`run_pipelined` and `run_pipelined_incremental`). Upstream runs
+    /// the identical `recv_generator()` per-entry loop under `--dry-run`; only
+    /// the data transfer and the filesystem mutation are suppressed
+    /// (`set_file_attrs()` returns early when `dry_run`, rsync.c:498-499;
+    /// `do_mkdir`/`do_unlink` are `if (dry_run) return 0;`, syscall.c:1010-1016).
+    /// The `itemize()` call and the receiver's `created_files` tally always run,
+    /// so `-ni` prints a row for every changing entry (`>f+++++++++`,
+    /// `cd+++++++++`, `cL+++++++++`, ...) and `--stats` reports the counts a real
+    /// run would produce. oc's remote receive paths early-return out of the
+    /// directory-creation, symlink, and candidate passes when
+    /// `skip_dest_writes()` is set, so this read-only pass is the only place the
+    /// rows and tallies are produced. Nothing is written to the destination.
     ///
     /// Recording (not immediate emission) keeps the rows interleaved in
     /// flist-index order via the deferred flush (`flush_itemize_rows`), matching
-    /// upstream's single flist-index-order walk. `record_itemize` already gates
-    /// on `should_emit_itemize() && client_mode`, so this is a no-op for a plain
-    /// `-n` (no `-i`) and for a server-mode receiver (a push dry run, whose rows
-    /// travel as wire iflags and are printed by the client's sender).
+    /// upstream's single flist-index-order walk. `record_itemize` gates on
+    /// `should_emit_itemize() && client_mode`, so it is a no-op for a plain `-n`
+    /// (no `-i`) and for a server-mode receiver (a push dry run, whose rows
+    /// travel as wire iflags and are printed by the client's sender); the
+    /// created-file tally is deliberately outside that gate because upstream
+    /// counts it in the receiver regardless of `-i` (receiver.c:733-746).
+    ///
+    /// `candidates` is the regular-file candidate list from
+    /// [`Self::build_files_to_transfer`]; a regular file it dropped (daemon
+    /// filter, `--max-size`/`--min-size`) is neither reported nor requested,
+    /// mirroring upstream's `goto cleanup` before `notify_others`. Hard-link
+    /// followers are reported but never requested - the candidate pass excludes
+    /// them because upstream services them through `finish_hard_link()`.
     ///
     /// # Upstream Reference
     ///
-    /// - `generator.c:1481-1483` - directory `itemize()` (runs under dry-run).
+    /// - `generator.c:1480-1483` - directory `itemize()` (runs under dry-run).
     /// - `generator.c:1935-1947` - regular-file `itemize()` at `notify_others`,
     ///   reached even when `!do_xfers`.
     /// - `generator.c:1594` / `generator.c:1462` - symlink / special `itemize()`.
-    /// - `rsync.c` `set_file_attrs()` - `if (dry_run) return 1;` (no mutation).
-    pub(in crate::receiver) fn record_dry_run_itemize(&self, dest_dir: &Path) {
-        if !self.should_emit_itemize() || !self.config.connection.client_mode {
-            return;
-        }
+    /// - `generator.c:581-600` - `itemize()` writes NDX + iflags for every entry
+    ///   whose flags are significant, transfer or not.
+    /// - `receiver.c:732-746` / `sender.c:293-309` - `ITEM_IS_NEW` bumps
+    ///   `stats.created_files` plus the per-type counter.
+    pub(in crate::receiver) fn plan_dry_run<'a>(
+        &'a self,
+        dest_dir: &Path,
+        candidates: &[(usize, &'a FileEntry, PathBuf, u32)],
+    ) -> Vec<DryRunItem<'a>> {
         let preserve_times = self.config.flags.times && !self.config.flags.ignore_times;
         let size_only = self.config.file_selection.size_only;
         let modify_window = self.config.file_selection.modify_window;
@@ -462,23 +500,37 @@ impl ReceiverContext {
         } else {
             None
         };
+        let requestable: HashSet<usize> = candidates.iter().map(|&(idx, ..)| idx).collect();
+        let mut plan = Vec::with_capacity(candidates.len());
         for (idx, entry) in self.file_list.iter().enumerate() {
+            let is_candidate = !entry.is_file() || requestable.contains(&idx);
+            if !is_candidate && !is_hardlink_follower(entry) {
+                continue;
+            }
             let rel = entry.path();
             let dest_path = if rel.as_os_str() == "." {
                 dest_dir.to_path_buf()
             } else {
                 dest_dir.join(rel)
             };
-            let iflags = crate::generator::ItemFlags::from_raw(self.dry_run_entry_iflags(
+            let raw = self.dry_run_entry_iflags(
                 entry,
                 &dest_path,
                 preserve_times,
                 size_only,
                 always_checksum,
                 modify_window,
-            ));
+            );
+            let iflags = crate::generator::ItemFlags::from_raw(raw);
             self.record_itemize(idx, &iflags, entry);
+            if raw & crate::generator::ItemFlags::ITEM_IS_NEW != 0 {
+                self.record_created(entry.mode());
+            }
+            if is_candidate && iflags.has_significant_flags() {
+                plan.push((idx, entry, raw));
+            }
         }
+        plan
     }
 
     /// Computes the itemize flags a single entry would carry on a `--dry-run`
@@ -855,6 +907,7 @@ impl ReceiverContext {
 #[cfg(test)]
 mod itemize_order_tests {
     use std::ffi::OsString;
+    use std::path::Path;
 
     use protocol::ProtocolVersion;
     use protocol::flist::FileEntry;
@@ -1060,23 +1113,70 @@ mod itemize_order_tests {
         );
     }
 
-    /// A `--dry-run` remote pull must itemize every file-list entry, matching
-    /// upstream's per-entry `itemize()` which runs even when `!do_xfers`. The
-    /// shipped receive path early-returns out of the directory-creation and
-    /// candidate passes under `skip_dest_writes()`, so before the fix `-ni`
-    /// printed zero itemize lines over the network. `record_dry_run_itemize`
-    /// records one deferred row per entry (in flist-index order) without writing
-    /// anything to the destination.
+    /// The wire plan as `(flist index, iflags)` pairs.
+    type PlanFlags = Vec<(usize, u32)>;
+    /// The recorded itemize rows as `(flist index, rendered line)` pairs.
+    type Rows = Vec<(usize, String)>;
+
+    /// Runs the dry-run candidate + reporting passes exactly as both receiver
+    /// drivers do, and returns the wire plan alongside the recorded rows.
+    fn dry_run_pass(ctx: &ReceiverContext, dest: &Path) -> (PlanFlags, Rows) {
+        let mut writer = crate::writer::ServerWriter::new_plain(Vec::new());
+        let mut stats = TransferStats::default();
+        let mut metadata_errors = Vec::new();
+        let candidates = ctx.build_files_to_transfer(
+            &mut writer,
+            dest,
+            &metadata::MetadataOptions::default(),
+            None,
+            &mut metadata_errors,
+            &mut stats,
+            None,
+            None,
+        );
+        let plan = ctx.plan_dry_run(dest, &candidates);
+        let rows = ctx
+            .itemize_rows
+            .borrow()
+            .iter()
+            .map(|(idx, lines)| (*idx, lines[0].clone()))
+            .collect();
+        (
+            plan.into_iter()
+                .map(|(idx, _, iflags)| (idx, iflags))
+                .collect(),
+            rows,
+        )
+    }
+
+    /// A `--dry-run` receive must itemize every changing file-list entry, count
+    /// every entry it would create, and put the same NDX + iflags on the wire a
+    /// real run would - all without touching the destination.
     ///
-    /// upstream: generator.c:1481-1483 / :1935-1947 / :1594 - itemize() under
-    /// dry-run; rsync.c set_file_attrs() returns early when dry_run (no mutation).
+    /// Upstream gates only the mutations: `do_mkdir` is `if (dry_run) return 0;`
+    /// (syscall.c:1010-1016) and `set_file_attrs()` returns early (rsync.c:498),
+    /// while `itemize()` (generator.c:1480-1483) and `stats.created_files++`
+    /// (receiver.c:732-746) run unconditionally. oc's receive paths early-return
+    /// out of the directory-creation, symlink, and candidate passes under
+    /// `skip_dest_writes()`, so this shared pass is the only producer of all
+    /// three - and it is shared precisely so the two drivers cannot answer
+    /// differently.
+    ///
+    /// The `iflags` assertion is the load-bearing one for a PUSH: those exact
+    /// bits are what the peer sender renders. Sending a bare `ITEM_TRANSFER`
+    /// (what shipped) turned `>f+++++++++` into `<f.........` and left the
+    /// peer's created-file tally at zero.
     #[test]
-    fn dry_run_itemize_records_a_row_per_entry_without_writing() {
+    fn dry_run_plan_reports_rows_counts_and_wire_flags_without_writing() {
+        use crate::generator::ItemFlags;
+
         let dir = test_support::create_tempdir();
         let dest = dir.path();
 
         let hs = handshake();
-        let mut ctx = ReceiverContext::new_for_test(&hs, itemize_client_config());
+        let mut config = itemize_client_config();
+        config.flags.dry_run = true;
+        let mut ctx = ReceiverContext::new_for_test(&hs, config);
         ctx.defer_itemize = true;
         ctx.file_list = vec![
             FileEntry::new_directory("d".into(), 0o755),  // idx 0
@@ -1085,14 +1185,7 @@ mod itemize_order_tests {
         ];
 
         // Read-only pass against an empty destination: every entry is new.
-        ctx.record_dry_run_itemize(dest);
-
-        let rows: Vec<(usize, String)> = ctx
-            .itemize_rows
-            .borrow()
-            .iter()
-            .map(|(idx, lines)| (*idx, lines[0].clone()))
-            .collect();
+        let (plan, rows) = dry_run_pass(&ctx, dest);
 
         let keys: Vec<usize> = rows.iter().map(|(idx, _)| *idx).collect();
         assert_eq!(
@@ -1116,6 +1209,24 @@ mod itemize_order_tests {
             rows[2].1
         );
 
+        assert_eq!(
+            plan,
+            vec![
+                (0, ItemFlags::ITEM_LOCAL_CHANGE | ItemFlags::ITEM_IS_NEW),
+                (1, ItemFlags::ITEM_TRANSFER | ItemFlags::ITEM_IS_NEW),
+                (2, ItemFlags::ITEM_LOCAL_CHANGE | ItemFlags::ITEM_IS_NEW),
+            ],
+            "the wire plan must carry the directory and symlink too, each with \
+             the itemize flags a real run would have sent"
+        );
+
+        // upstream: receiver.c:732-746 - created_files counts every ITEM_IS_NEW
+        // entry; reg is the derived remainder (3 - 1 dir - 1 link = 1).
+        let created = ctx.created_stats.get();
+        assert_eq!(created.files, 3, "created_files");
+        assert_eq!(created.dirs, 1, "created_dirs");
+        assert_eq!(created.symlinks, 1, "created_symlinks");
+
         // The pass writes nothing: the destination stays empty.
         let entries: Vec<_> = std::fs::read_dir(dest)
             .expect("dest readable")
@@ -1127,27 +1238,73 @@ mod itemize_order_tests {
         );
     }
 
-    /// Without `-i`, the dry-run itemize pass records nothing (the bare `-v`
-    /// name path handles verbose output instead), and a server-mode receiver
-    /// (a push dry run) records nothing here either - its rows travel as wire
-    /// iflags printed by the client's sender.
+    /// Without `-i` the pass records no row - the bare `-v` name path handles
+    /// verbose output instead - but it must still count what it would create
+    /// and still plan the wire request.
+    ///
+    /// Upstream's `stats.created_files++` sits outside the itemize gate
+    /// (receiver.c:733 runs for every `ITEM_IS_NEW`, whether or not
+    /// `stdout_format_has_i`), so `-n --stats` without `-i` reports the same
+    /// "Number of created files" as `-ni --stats`. Folding the tally into the
+    /// `-i` gate is the easy mistake this pins.
     #[test]
-    fn dry_run_itemize_is_noop_without_itemize_flag() {
+    fn dry_run_plan_counts_creations_without_the_itemize_flag() {
         let dir = test_support::create_tempdir();
         let dest = dir.path();
 
         let hs = handshake();
         let mut config = itemize_client_config();
         config.flags.info_flags.itemize = false;
+        config.flags.dry_run = true;
         let mut ctx = ReceiverContext::new_for_test(&hs, config);
         ctx.defer_itemize = true;
         ctx.file_list = vec![FileEntry::new_file("f".into(), 1, 0o644)];
 
-        ctx.record_dry_run_itemize(dest);
+        let (plan, rows) = dry_run_pass(&ctx, dest);
 
-        assert!(
-            ctx.itemize_rows.borrow().is_empty(),
-            "no itemize rows recorded without -i"
+        assert!(rows.is_empty(), "no itemize rows recorded without -i");
+        assert_eq!(plan.len(), 1, "the file is still requested over the wire");
+        assert_eq!(
+            ctx.created_stats.get().files,
+            1,
+            "the created-file tally is independent of the -i gate"
+        );
+    }
+
+    /// A server-mode receiver (the remote end of a PUSH) records no local row -
+    /// upstream's `log.c:822` gates the `FCLIENT` write on `!am_server` and the
+    /// client's sender prints instead - but it must still classify every entry,
+    /// because those classifications ARE the push's output once they cross the
+    /// wire as iflags.
+    #[test]
+    fn dry_run_plan_on_a_server_receiver_still_classifies_for_the_wire() {
+        use crate::generator::ItemFlags;
+
+        let dir = test_support::create_tempdir();
+        let dest = dir.path();
+
+        let hs = handshake();
+        let mut config = itemize_client_config();
+        config.flags.dry_run = true;
+        config.connection.client_mode = false;
+        let mut ctx = ReceiverContext::new_for_test(&hs, config);
+        ctx.defer_itemize = true;
+        ctx.file_list = vec![
+            FileEntry::new_directory("d".into(), 0o755),
+            FileEntry::new_file("d/f1".into(), 5, 0o644),
+        ];
+
+        let (plan, rows) = dry_run_pass(&ctx, dest);
+
+        assert!(rows.is_empty(), "a server receiver prints no row itself");
+        assert_eq!(
+            plan,
+            vec![
+                (0, ItemFlags::ITEM_LOCAL_CHANGE | ItemFlags::ITEM_IS_NEW),
+                (1, ItemFlags::ITEM_TRANSFER | ItemFlags::ITEM_IS_NEW),
+            ],
+            "the client sender renders `cd+++++++++` / `<f+++++++++` from exactly \
+             these bits, so they must survive the server-mode row suppression"
         );
     }
 }
