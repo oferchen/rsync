@@ -378,7 +378,7 @@ impl ReceiverContext {
                     // compensation still fires `cd+++++++++ ./` when the
                     // pre-flight mkdir created the root.
                     let raw = match pre_mkdir_meta.get(pos).and_then(Option::as_ref) {
-                        Some(meta) => self.itemize_existing_flags(entry, meta, 0),
+                        Some(meta) => self.itemize_existing_flags(entry, Some(meta), 0),
                         None => self.existing_dir_iflags(entry, dir_path),
                     };
                     crate::generator::ItemFlags::from_raw(raw)
