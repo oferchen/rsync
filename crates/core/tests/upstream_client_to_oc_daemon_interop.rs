@@ -24,10 +24,14 @@ use common::{
 };
 
 use std::fs;
+// Used only by the Unix-gated daemon tests below.
+#[cfg(unix)]
 use std::io::{BufRead, BufReader, Write};
 use std::net::TcpStream;
 use std::path::Path;
 use std::process::Command;
+// Used only by the Unix-gated daemon tests below.
+#[cfg(unix)]
 use std::thread;
 use std::time::Duration;
 
@@ -37,8 +41,10 @@ use tempfile::tempdir;
 ///
 /// This is a smoke test to verify basic daemon functionality before
 /// running protocol-specific tests.
+// The oc-rsync daemon is Unix-only by design: `--daemon` on Windows exits 1 with
+// "daemon mode is not supported on this platform" (daemon.rs:208).
 #[test]
-#[ignore = "requires oc-rsync binary"]
+#[cfg(unix)]
 fn test_oc_daemon_starts_and_accepts_connections() {
     let daemon = TestDaemon::start(DaemonBinary::OcRsync).expect("start oc-rsync daemon");
 
@@ -51,8 +57,10 @@ fn test_oc_daemon_starts_and_accepts_connections() {
 ///
 /// Verifies the daemon implements the @RSYNCD: protocol greeting correctly.
 /// Upstream reference: clientserver.c:125-144 (daemon greeting format)
+// The oc-rsync daemon is Unix-only by design: `--daemon` on Windows exits 1 with
+// "daemon mode is not supported on this platform" (daemon.rs:208).
 #[test]
-#[ignore = "requires oc-rsync binary"]
+#[cfg(unix)]
 fn test_oc_daemon_sends_protocol_greeting() {
     let daemon = TestDaemon::start(DaemonBinary::OcRsync).expect("start oc-rsync daemon");
 
@@ -95,8 +103,10 @@ fn test_oc_daemon_sends_protocol_greeting() {
 /// Test daemon shutdown and cleanup.
 ///
 /// Verifies that daemon process terminates cleanly when dropped.
+// The oc-rsync daemon is Unix-only by design: `--daemon` on Windows exits 1 with
+// "daemon mode is not supported on this platform" (daemon.rs:208).
 #[test]
-#[ignore = "requires oc-rsync binary"]
+#[cfg(unix)]
 fn test_oc_daemon_shutdown_cleanup() {
     let port;
 
@@ -659,8 +669,10 @@ fn test_module_listing_from_upstream_client() {
 /// Verifies low-level protocol implementation directly.
 /// This is similar to test_oc_daemon_sends_protocol_greeting but goes further
 /// into the handshake sequence.
+// The oc-rsync daemon is Unix-only by design: `--daemon` on Windows exits 1 with
+// "daemon mode is not supported on this platform" (daemon.rs:208).
 #[test]
-#[ignore = "requires oc-rsync binary"]
+#[cfg(unix)]
 fn test_manual_protocol_handshake_with_oc_daemon() {
     let daemon = TestDaemon::start(DaemonBinary::OcRsync).expect("start oc-rsync daemon");
 

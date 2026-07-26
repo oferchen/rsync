@@ -14,6 +14,8 @@ use std::fs;
 use std::io::{self, Read};
 use std::net::{TcpListener, TcpStream};
 use std::path::{Path, PathBuf};
+#[cfg(unix)]
+use std::process::ExitStatus;
 use std::process::{Child, Command, Stdio};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -35,6 +37,8 @@ pub const UPSTREAM_3_0_9: &str = "target/interop/upstream-install/3.0.9/bin/rsyn
 pub const UPSTREAM_3_1_3: &str = "target/interop/upstream-install/3.1.3/bin/rsync";
 #[allow(dead_code)]
 pub const UPSTREAM_3_4_1: &str = "target/interop/upstream-install/3.4.1/bin/rsync";
+#[allow(dead_code)]
+pub const UPSTREAM_3_4_4: &str = "target/interop/upstream-install/3.4.4/bin/rsync";
 
 /// Selects which daemon binary to launch.
 #[allow(dead_code)]
@@ -303,8 +307,13 @@ pub fn require_upstream(binary_path: &str) {
 /// machine usually only has the packaged binary. Both are acceptable as long
 /// as the binary is genuinely upstream, which [`upstream_rsync`] verifies from
 /// `--version` rather than from the path it was found at.
+/// The reference version is 3.4.4; the harness build and the source-tree build
+/// come first so a machine with both uses the pinned one rather than whatever
+/// the package manager shipped.
 #[allow(dead_code)]
 const UPSTREAM_CANDIDATES: &[&str] = &[
+    UPSTREAM_3_4_4,
+    "target/interop/upstream-src/rsync-3.4.4/rsync",
     UPSTREAM_3_4_1,
     "/opt/homebrew/bin/rsync",
     "/usr/local/bin/rsync",
@@ -316,16 +325,20 @@ const UPSTREAM_CANDIDATES: &[&str] = &[
 ///
 /// A missing upstream binary must fail the test rather than silently return:
 /// a cross-implementation assertion that quietly asserts nothing is worse than
-/// no test at all. Verifying the `--version` banner also rules out an
-/// `oc-rsync` shim earlier on `PATH` masquerading as upstream.
+/// no test at all. The `--version` banner - not the path - decides, which is
+/// what rejects macOS's `/usr/bin/rsync` (`openrsync: protocol version 29`)
+/// and an `oc-rsync` shim earlier on `PATH` masquerading as upstream.
 #[allow(dead_code)]
 pub fn upstream_rsync() -> PathBuf {
+    let mut rejected = Vec::new();
     for candidate in UPSTREAM_CANDIDATES {
         let path = Path::new(candidate);
         if !path.exists() {
+            rejected.push(format!("{candidate} (absent)"));
             continue;
         }
         let Ok(output) = Command::new(path).arg("--version").output() else {
+            rejected.push(format!("{candidate} (--version failed)"));
             continue;
         };
         let banner = String::from_utf8_lossy(&output.stdout);
@@ -333,11 +346,12 @@ pub fn upstream_rsync() -> PathBuf {
         if first.starts_with("rsync  version") && first.contains("protocol version") {
             return path.to_path_buf();
         }
+        rejected.push(format!("{candidate} (not upstream: {first:?})"));
     }
     panic!(
         "no upstream rsync binary found; tried: {}. Build one with \
          `bash tools/ci/run_interop.sh` or install the packaged rsync.",
-        UPSTREAM_CANDIDATES.join(", ")
+        rejected.join(", ")
     );
 }
 
@@ -528,5 +542,226 @@ impl PipeDrain {
             self.stdout.join().unwrap_or_default(),
             self.stderr.join().unwrap_or_default(),
         )
+    }
+}
+
+/// Per-file payload size for the mid-transfer kill fixtures.
+///
+/// Comfortably larger than [`FORWARD_CAP`], so the transfer is structurally
+/// unable to finish before the proxy stalls.
+#[cfg(unix)]
+#[allow(dead_code)]
+pub const TEST_FILE_SIZE: usize = 2 * 1024 * 1024;
+
+/// Daemon bytes [`CappingProxy`] forwards before stalling forever.
+///
+/// Large enough that the receiver has certainly opened its temp file and
+/// written literal data (which is what arms upstream's `cleanup_got_literal`
+/// gate, `cleanup.c:159`), small enough that no file is anywhere near
+/// complete.
+#[cfg(unix)]
+#[allow(dead_code)]
+pub const FORWARD_CAP: u64 = 512 * 1024;
+
+/// How long to wait for the receiver to put bytes on disk before signalling.
+#[cfg(unix)]
+#[allow(dead_code)]
+pub const PROGRESS_WAIT: Duration = Duration::from_secs(20);
+
+/// How long the client may take to exit after the signal.
+///
+/// Upstream exits in ~0.4 s, dominated by the deliberate `msleep(400)` in
+/// `rsync.c:694`. Anything in seconds here means the signal was not observed
+/// while the transfer was parked in a blocking transport read - which is the
+/// whole behaviour these fixtures exist to pin.
+#[cfg(unix)]
+#[allow(dead_code)]
+pub const EXIT_WAIT: Duration = Duration::from_secs(10);
+
+/// rsync's exit code for SIGINT/SIGTERM/SIGHUP (`errcode.h` `RERR_SIGNAL`).
+#[cfg(unix)]
+#[allow(dead_code)]
+pub const RERR_SIGNAL: i32 = 20;
+
+/// Deterministic payload: a repeating byte pattern, so a retained partial can
+/// be checked to be a genuine prefix of the source rather than merely the
+/// right length.
+#[cfg(unix)]
+#[allow(dead_code)]
+pub fn generate_test_data(size: usize) -> Vec<u8> {
+    let pattern: Vec<u8> = (0..=255u8).collect();
+    pattern.iter().copied().cycle().take(size).collect()
+}
+
+/// Whether a filename matches rsync's temp pattern `.name.XXXXXX`.
+#[cfg(unix)]
+#[allow(dead_code)]
+pub fn is_temp_file_name(name: &str) -> bool {
+    let Some(rest) = name.strip_prefix('.') else {
+        return false;
+    };
+    match rest.rfind('.') {
+        // The random suffix is exactly 6 alphanumeric characters.
+        Some(last_dot) => {
+            let suffix = &rest[last_dot + 1..];
+            suffix.len() == 6 && suffix.chars().all(|c| c.is_ascii_alphanumeric())
+        }
+        None => false,
+    }
+}
+
+/// Recursively collects every path under `dir` that looks like an rsync temp.
+#[cfg(unix)]
+#[allow(dead_code)]
+pub fn find_temp_files(dir: &Path) -> Vec<PathBuf> {
+    let mut temps = Vec::new();
+    if let Ok(entries) = fs::read_dir(dir) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                temps.extend(find_temp_files(&path));
+            } else if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
+                if is_temp_file_name(name) {
+                    temps.push(path);
+                }
+            }
+        }
+    }
+    temps
+}
+
+/// An oc-rsync daemon, a stalling [`CappingProxy`] in front of it, and a
+/// destination directory: everything a mid-transfer kill test needs.
+///
+/// The proxy is what makes the kill deterministic. `--bwlimit` cannot be used
+/// to open the window because upstream throttles socket *writes*
+/// (`io.c:861`), so on a daemon pull the limit belongs to the daemon and is
+/// inert client-side. Capping the forwarded bytes instead means the transfer
+/// cannot complete at all, so the signal can be gated on observed on-disk
+/// progress rather than on a timing guess.
+#[cfg(unix)]
+pub struct StalledTransfer {
+    daemon: TestDaemon,
+    proxy: CappingProxy,
+    dest: TempDir,
+}
+
+#[cfg(unix)]
+#[allow(dead_code)]
+impl StalledTransfer {
+    /// Starts the daemon and the proxy. Add payloads with [`Self::add_file`].
+    pub fn start() -> Self {
+        let daemon = TestDaemon::start(DaemonBinary::OcRsync).expect("start oc-rsync daemon");
+        let proxy =
+            CappingProxy::start(daemon.port(), FORWARD_CAP).expect("start byte-capping proxy");
+        Self {
+            daemon,
+            proxy,
+            dest: tempdir().expect("create dest dir"),
+        }
+    }
+
+    /// Publishes `name` in the module and returns the bytes written, so a
+    /// retained partial can be compared against the true source prefix.
+    pub fn add_file(&self, name: &str, size: usize) -> Vec<u8> {
+        let data = generate_test_data(size);
+        create_test_file(&self.daemon.module_path().join(name), &data);
+        data
+    }
+
+    /// The `rsync://` URL of the module, routed through the stalling proxy.
+    pub fn module_url(&self) -> String {
+        format!("rsync://127.0.0.1:{}/testmodule", self.proxy.port())
+    }
+
+    /// The destination directory the client writes into.
+    pub fn dest_path(&self) -> &Path {
+        self.dest.path()
+    }
+
+    /// Daemon log contents, for failure messages.
+    pub fn daemon_log(&self) -> String {
+        self.daemon
+            .log_contents()
+            .unwrap_or_else(|_| "(unavailable)".into())
+    }
+
+    /// Runs `client` with `args` plus the destination, waits for on-disk
+    /// progress, delivers `signal`, and asserts the client exits
+    /// [`RERR_SIGNAL`].
+    ///
+    /// upstream: `rsync.c:684 sig_int()` records the signal and lets the
+    /// normal I/O path shut the transfer down via
+    /// `cleanup.c:_exit_cleanup(RERR_SIGNAL)`.
+    pub fn interrupt(&self, client: &Path, args: &[&str], signal: libc::c_int) -> ExitStatus {
+        let mut child = Command::new(client)
+            .args(args)
+            .arg("--timeout=60")
+            .arg(self.dest_path().as_os_str())
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .expect("spawn client");
+        let drain = PipeDrain::start(&mut child);
+
+        assert!(
+            wait_for_progress(self.dest_path(), PROGRESS_WAIT),
+            "client wrote nothing to {} within {PROGRESS_WAIT:?}; proxy forwarded {} bytes; \
+             daemon log: {}",
+            self.dest_path().display(),
+            self.proxy.forwarded(),
+            self.daemon_log()
+        );
+
+        let status = signal_and_wait(&mut child, signal);
+        let (_stdout, stderr) = drain.join();
+        assert!(
+            self.proxy.forwarded() <= FORWARD_CAP,
+            "proxy must not exceed its cap: forwarded {}",
+            self.proxy.forwarded()
+        );
+        assert_eq!(
+            status.code(),
+            Some(RERR_SIGNAL),
+            "interrupted transfer must exit {RERR_SIGNAL}; stderr: {stderr}"
+        );
+        // Give the retained rename a moment to land before the caller stats.
+        thread::sleep(Duration::from_millis(200));
+        status
+    }
+}
+
+/// Delivers `signal` to `child` and waits for it, failing the test if the
+/// child outlives [`EXIT_WAIT`].
+///
+/// The timeout is the load-bearing assertion: a client that sets its shutdown
+/// flag but never acts on it stays parked in the transport read forever, and
+/// this is what turns that into a red test instead of a hang.
+#[cfg(unix)]
+#[allow(dead_code)]
+pub fn signal_and_wait(child: &mut Child, signal: libc::c_int) -> ExitStatus {
+    let pid = child.id();
+    // SAFETY: sending a signal to a child this process spawned and has not reaped.
+    let ret = unsafe { libc::kill(pid as libc::pid_t, signal) };
+    assert_eq!(ret, 0, "failed to send signal {signal} to child pid {pid}");
+
+    let deadline = Instant::now() + EXIT_WAIT;
+    loop {
+        match child.try_wait() {
+            Ok(Some(status)) => return status,
+            Ok(None) => {
+                if Instant::now() >= deadline {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    panic!(
+                        "client pid {pid} ignored signal {signal} for {EXIT_WAIT:?}: the shutdown \
+                         flag is set but nothing on the network path acted on it"
+                    );
+                }
+                thread::sleep(Duration::from_millis(20));
+            }
+            Err(e) => panic!("error waiting for client pid {pid}: {e}"),
+        }
     }
 }
