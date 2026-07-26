@@ -13,17 +13,27 @@ use super::filter_program::{
 /// `"<strerror> (<errno>)"` (upstream `log.c:473` `": %s (%d)"`), rather than
 /// Rust's `std::io::Error` `Display`, which renders `" (os error <errno>)"`.
 /// Errors without an OS errno fall back to the `Display` string verbatim.
+///
+/// An [`io::Error`] built with [`io::Error::new`] around a custom payload
+/// reports no `raw_os_error()` even when the payload forwards the platform
+/// error's `Display`, so the trailing `" (os error N)"` is recovered from the
+/// rendered text as well. Without that, wrapping an error anywhere in the I/O
+/// stack would silently drop the errno upstream always prints.
 #[must_use]
 pub fn upstream_io_error(error: &io::Error) -> String {
-    match error.raw_os_error() {
-        Some(code) => {
-            let full = error.to_string();
-            let strerror = full
-                .strip_suffix(&format!(" (os error {code})"))
-                .unwrap_or(full.as_str());
-            format!("{strerror} ({code})")
-        }
-        None => error.to_string(),
+    let full = error.to_string();
+    if let Some(code) = error.raw_os_error() {
+        let strerror = full
+            .strip_suffix(&format!(" (os error {code})"))
+            .unwrap_or(full.as_str());
+        return format!("{strerror} ({code})");
+    }
+    match full.rsplit_once(" (os error ") {
+        Some((strerror, tail)) => match tail.strip_suffix(')') {
+            Some(code) if code.parse::<i32>().is_ok() => format!("{strerror} ({code})"),
+            _ => full,
+        },
+        None => full,
     }
 }
 
@@ -435,6 +445,45 @@ impl LocalCopyArgumentError {
 mod tests {
     use super::*;
     use std::io::ErrorKind;
+
+    /// upstream `rsyserr()` prints `"%s (%d)"` (log.c:473). An `io::Error`
+    /// built around a custom payload reports no `raw_os_error()`, so the errno
+    /// must still be recovered from the rendered text - otherwise wrapping an
+    /// error anywhere in the I/O stack silently drops it from the message.
+    #[test]
+    fn upstream_io_error_recovers_errno_from_a_wrapped_error() {
+        #[derive(Debug)]
+        struct Wrapper(io::Error);
+        impl std::fmt::Display for Wrapper {
+            fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                std::fmt::Display::fmt(&self.0, f)
+            }
+        }
+        impl std::error::Error for Wrapper {}
+
+        // The strerror text is the platform's, so pin the shape (a trailing
+        // ` (13)` and no ` (os error 13)`) rather than the wording.
+        let raw = io::Error::from_raw_os_error(13);
+        let expected = upstream_io_error(&raw);
+        assert!(
+            expected.ends_with(" (13)") && !expected.contains("os error"),
+            "rsyserr shape is `<strerror> (<errno>)`: {expected}"
+        );
+
+        let wrapped = io::Error::new(raw.kind(), Wrapper(io::Error::from_raw_os_error(13)));
+        assert_eq!(wrapped.raw_os_error(), None);
+        assert_eq!(upstream_io_error(&wrapped), expected);
+    }
+
+    /// A message that merely mentions the phrase, with no errno, is left alone.
+    #[test]
+    fn upstream_io_error_leaves_a_non_os_message_verbatim() {
+        let error = io::Error::other("no ftruncate for over-long pre-alloc");
+        assert_eq!(
+            upstream_io_error(&error),
+            "no ftruncate for over-long pre-alloc"
+        );
+    }
 
     #[test]
     fn local_copy_error_missing_operands() {
