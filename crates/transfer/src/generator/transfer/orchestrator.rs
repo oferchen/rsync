@@ -148,6 +148,7 @@ impl GeneratorContext {
                 ),
                 flist_first_byte_latency: self.timing.flist_first_byte_latency,
                 io_error: self.io_error,
+                got_xfer_error: self.got_xfer_error,
                 ..GeneratorStats::default()
             });
         }
@@ -352,14 +353,15 @@ impl GeneratorContext {
             .advance_to(TransferPhase::Complete)
             .map_err(crate::fsm_error)?;
 
-        // upstream: log.c:311 - each MSG_ERROR_XFER the peer sends sets
-        // got_xfer_error on receipt; main.c:1635 then _exit(RERR_PARTIAL).
-        // The receiver emits MSG_ERROR_XFER when it cannot open a file's output
-        // (e.g. mkstemp() denied by a read-only destination dir) and discards
-        // the delta. Fold that into io_error so this sender/generator reports
-        // exit 23 instead of a false success.
+        // upstream: log.c:310-311 - each MSG_ERROR_XFER the peer sends sets
+        // got_xfer_error on receipt; cleanup.c:217-218 then reports
+        // RERR_PARTIAL. The receiver emits MSG_ERROR_XFER when it cannot open a
+        // file's output (e.g. mkstemp() denied by a read-only destination dir)
+        // and discards the delta. Recorded as got_xfer_error rather than an
+        // io_error bit: io_error is a wire field with its own meaning for the
+        // peer, and by this point it has already been sent.
         if reader.xfer_error_count() > 0 {
-            self.add_io_error(super::super::io_error_flags::IOERR_GENERAL);
+            self.got_xfer_error = true;
         }
 
         // upstream: handle_stats() reports stats.total_size (main.c:351
@@ -390,6 +392,7 @@ impl GeneratorContext {
             delete_stats: self.delete_stats,
             created_stats: transfer_result.created_stats,
             io_error: self.io_error,
+            got_xfer_error: self.got_xfer_error,
         })
     }
 }

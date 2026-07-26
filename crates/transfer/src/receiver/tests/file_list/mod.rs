@@ -17,6 +17,8 @@
 //!   from deletion.
 //! - [`proto_io_error`] - protocol 28/29 trailing `io_error` int after
 //!   the file-list end marker.
+//! - [`xfer_error`] - `got_xfer_error`: a `MSG_ERROR_XFER` frame on an empty
+//!   file list is the only report a missing source argument produces.
 //! - [`ndx_convert`] - `flat_to_wire_ndx` / `wire_to_flat_ndx` counters
 //!   and round-trip coverage.
 //! - [`dedup`] - receiver duplicate-clean pass (`flist_sort_and_clean` step 2)
@@ -50,6 +52,7 @@ mod missing_args_sentinel;
 mod ndx_convert;
 mod proto_io_error;
 mod wire_attrs;
+mod xfer_error;
 
 use std::io::Cursor;
 

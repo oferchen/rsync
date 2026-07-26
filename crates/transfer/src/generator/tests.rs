@@ -3888,7 +3888,8 @@ mod files_from {
 
     #[test]
     fn build_file_list_with_base_skips_missing_files() {
-        // FFV-4: default mode emits link_stat error and sets IOERR_GENERAL (exit 23).
+        // Default mode emits the link_stat FERROR_XFER and leaves io_error
+        // clear; the exit code comes from got_xfer_error (upstream flist.c:2431).
         let temp_dir = TempDir::new().unwrap();
         let src = temp_dir.path().join("src");
         std::fs::create_dir_all(&src).unwrap();
@@ -3917,17 +3918,40 @@ mod files_from {
             "no implied root . for a non-anchored list"
         );
 
-        // upstream: flist.c:1846 - ENOENT for a --files-from entry that never
-        // existed should set IOERR_GENERAL (exit 23), not IOERR_VANISHED (exit 24).
-        assert_ne!(
-            ctx.io_error() & io_error_flags::IOERR_GENERAL,
-            0,
-            "missing source should set IOERR_GENERAL"
-        );
+        // upstream: flist.c:2431 - `if (errno != ENOENT) io_error |=
+        // IOERR_GENERAL`. A --files-from entry that never existed takes the
+        // ENOENT arm, so no io_error bit is raised at all: that bit reaches the
+        // receiver (flist.c:2553) and would inhibit its deletions, which
+        // upstream only wants "if we might be omitting an existing file".
+        // Ground truth, rsync 3.4.4, `--files-from` naming a missing entry:
+        // `link_stat ... failed` on stderr and exit 23, with the peer's
+        // deletions still performed.
         assert_eq!(
-            ctx.io_error() & io_error_flags::IOERR_VANISHED,
+            ctx.io_error(),
             0,
-            "missing source should NOT set IOERR_VANISHED"
+            "ENOENT must leave the wire-visible io_error clear"
+        );
+        // upstream: log.c:310-311 - the FERROR_XFER the walk queued is what
+        // sets got_xfer_error, and cleanup.c:217-218 turns that into exit 23.
+        // Set when the queued diagnostic is framed, mirroring `rwrite()`.
+        let mut buf = Vec::new();
+        {
+            let mut writer = crate::writer::ServerWriter::new_plain(&mut buf)
+                .activate_multiplex()
+                .unwrap();
+            ctx.flush_flist_diagnostics(&mut writer).unwrap();
+        }
+        let frames = decode_mux_frames(&buf);
+        assert_eq!(frames.len(), 1, "one link_stat diagnostic: {frames:?}");
+        assert_eq!(
+            frames[0].0,
+            protocol::MessageCode::ErrorXfer,
+            "the missing arg must ride MSG_ERROR_XFER - it is the peer's only \
+             evidence, since io_error stays clear"
+        );
+        assert!(
+            ctx.got_xfer_error(),
+            "framing FERROR_XFER must set got_xfer_error (exit 23)"
         );
     }
 
@@ -4126,8 +4150,12 @@ mod files_from {
     }
 
     #[test]
-    fn build_file_list_default_missing_source_sets_general_error() {
-        // FFV-4 for build_file_list: default mode emits IOERR_GENERAL, not VANISHED.
+    fn build_file_list_default_missing_source_reports_via_error_xfer_only() {
+        // upstream: flist.c:2428-2436 - a top-level source that never existed
+        // takes the `errno == ENOENT` path, which reports FERROR_XFER but skips
+        // `io_error |= IOERR_GENERAL` so the bit the receiver reads (and would
+        // inhibit its deletions on) stays clear. Exit 23 comes from
+        // got_xfer_error instead (log.c:310-311, cleanup.c:217-218).
         let temp_dir = TempDir::new().unwrap();
         let missing = temp_dir.path().join("nonexistent.txt");
 
@@ -4137,15 +4165,31 @@ mod files_from {
 
         ctx.build_file_list(&[missing]).unwrap();
 
-        assert_ne!(
-            ctx.io_error() & io_error_flags::IOERR_GENERAL,
-            0,
-            "default mode should set IOERR_GENERAL for missing source"
-        );
         assert_eq!(
-            ctx.io_error() & io_error_flags::IOERR_VANISHED,
+            ctx.io_error(),
             0,
-            "default mode should NOT set IOERR_VANISHED for top-level missing source"
+            "ENOENT must raise no io_error bit at all - neither IOERR_GENERAL \
+             nor IOERR_VANISHED, which is reserved for a file that vanished \
+             mid-scan (flist.c:1839-1847)"
+        );
+
+        let mut buf = Vec::new();
+        {
+            let mut writer = crate::writer::ServerWriter::new_plain(&mut buf)
+                .activate_multiplex()
+                .unwrap();
+            ctx.flush_flist_diagnostics(&mut writer).unwrap();
+        }
+        let frames = decode_mux_frames(&buf);
+        assert_eq!(frames.len(), 1, "one link_stat diagnostic: {frames:?}");
+        assert_eq!(
+            frames[0].0,
+            protocol::MessageCode::ErrorXfer,
+            "the frame is the peer's only evidence of the missing source"
+        );
+        assert!(
+            ctx.got_xfer_error(),
+            "framing FERROR_XFER must set got_xfer_error (exit 23)"
         );
     }
 

@@ -634,7 +634,10 @@ impl ReceiverContext {
             io_error: self.flist_reader_cache.as_ref().map_or(0, |r| r.io_error())
                 | self.flist_io_error
                 | sender_io_error,
-            error_count: 0,
+            // upstream: log.c:310-311 - every MSG_ERROR_XFER the sender framed
+            // sets got_xfer_error on receipt, which is what reports a source
+            // that failed to be listed (flist.c:2431 leaves io_error clear).
+            got_xfer_error: reader.xfer_error_count() > 0,
             entries_received: 0,
             directories_created: 0,
             directories_failed: 0,
