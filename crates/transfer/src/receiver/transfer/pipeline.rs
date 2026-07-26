@@ -227,6 +227,13 @@ impl ReceiverContext {
             let mut flushed_pending: usize = 0;
 
             loop {
+                // upstream: io.c:750 - perform_io() acts on got_kill_signal at
+                // its loop boundary, never mid-frame. Same here: a shutdown
+                // request between two file responses aborts the loop, and the
+                // `pipelined_receiver.shutdown()` below hands the disk thread
+                // its Shutdown message so the in-flight temp file is finalised
+                // per --partial / --partial-dir.
+                crate::shared::check_shutdown()?;
                 if let Some(ref dl) = deadline {
                     if dl.is_reached() {
                         break;
