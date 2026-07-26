@@ -461,9 +461,14 @@ mod tests {
         }
         impl std::error::Error for Wrapper {}
 
+        // The strerror text is the platform's, so pin the shape (a trailing
+        // ` (13)` and no ` (os error 13)`) rather than the wording.
         let raw = io::Error::from_raw_os_error(13);
         let expected = upstream_io_error(&raw);
-        assert_eq!(expected, "Permission denied (13)");
+        assert!(
+            expected.ends_with(" (13)") && !expected.contains("os error"),
+            "rsyserr shape is `<strerror> (<errno>)`: {expected}"
+        );
 
         let wrapped = io::Error::new(raw.kind(), Wrapper(io::Error::from_raw_os_error(13)));
         assert_eq!(wrapped.raw_os_error(), None);

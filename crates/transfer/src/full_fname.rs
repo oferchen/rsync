@@ -55,7 +55,7 @@
 //!   normalized module path and the server `chdir()`s there before serving.
 
 use std::fmt::Write as _;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 /// The daemon path context upstream keeps in globals, as seen by
 /// [`full_fname`].
@@ -83,25 +83,41 @@ impl DaemonPaths<'_> {
     /// `None` makes the caller fall back to the path as given, matching
     /// upstream's `*fn == '/'` branch: an absolute `fn` gets no prefix and is
     /// printed verbatim.
-    fn relativize(&self, path: &Path) -> Option<PathBuf> {
+    fn relativize(&self, path: &Path) -> Option<String> {
         // upstream's `fn` is relative to `curr_dir`, so recover it first.
-        let tail = path.strip_prefix(self.curr_dir).ok()?;
+        let tail = slash_join(path.strip_prefix(self.curr_dir).ok()?);
         // upstream: `p1 = curr_dir + module_dirlen` - the part of the working
         // directory below the module root.
-        let p1 = self.curr_dir.strip_prefix(self.module_root).ok()?;
+        let p1 = slash_join(self.curr_dir.strip_prefix(self.module_root).ok()?);
         // A DOTDIR source arg leaves `fn` as ".", never empty.
-        let tail = if tail.as_os_str().is_empty() {
-            Path::new(".")
+        let tail = if tail.is_empty() {
+            ".".to_owned()
         } else {
             tail
         };
-        if p1.as_os_str().is_empty() {
+        if p1.is_empty() {
             // upstream: p1 == "" and p2 == "" - the bare relative name.
-            return Some(tail.to_path_buf());
+            return Some(tail);
         }
         // upstream: p1 == "/sub" and p2 == "/" - module-root anchored.
-        Some(Path::new("/").join(p1).join(tail))
+        Some(format!("/{p1}/{tail}"))
     }
+}
+
+/// Renders a relative path with `/` separators.
+///
+/// The module-relative name upstream prints is the same `/`-separated name it
+/// puts on the wire, never a host-native one, so the separator must not follow
+/// the platform the daemon happens to run on.
+fn slash_join(relative: &Path) -> String {
+    let mut out = String::new();
+    for component in relative.components() {
+        if !out.is_empty() {
+            out.push('/');
+        }
+        out.push_str(&component.as_os_str().to_string_lossy());
+    }
+    out
 }
 
 /// Renders `fname` the way upstream `full_fname()` does: double quoted,
@@ -114,7 +130,7 @@ impl DaemonPaths<'_> {
 pub(crate) fn full_fname(fname: &str, daemon: Option<DaemonPaths<'_>>) -> String {
     match daemon {
         Some(paths) => match paths.relativize(Path::new(fname)) {
-            Some(rendered) => quote(&rendered.display().to_string(), Some(paths.module)),
+            Some(rendered) => quote(&rendered, Some(paths.module)),
             None => quote(fname, Some(paths.module)),
         },
         None => quote(fname, None),
@@ -124,11 +140,10 @@ pub(crate) fn full_fname(fname: &str, daemon: Option<DaemonPaths<'_>>) -> String
 /// [`full_fname`] for a [`Path`], using the platform's lossy display form.
 pub(crate) fn full_fname_path(path: &Path, daemon: Option<DaemonPaths<'_>>) -> String {
     match daemon {
-        Some(paths) => {
-            let rendered = paths.relativize(path);
-            let shown = rendered.as_deref().unwrap_or(path);
-            quote(&shown.display().to_string(), Some(paths.module))
-        }
+        Some(paths) => match paths.relativize(path) {
+            Some(rendered) => quote(&rendered, Some(paths.module)),
+            None => quote(&path.display().to_string(), Some(paths.module)),
+        },
         None => quote(&path.display().to_string(), None),
     }
 }
@@ -238,6 +253,30 @@ mod tests {
                 })
             ),
             "\"f\" (in )"
+        );
+    }
+
+    /// The module-relative name is the same `/`-separated name rsync puts on
+    /// the wire, so it must not pick up the host separator when the daemon
+    /// runs on Windows. Built with `PathBuf::join` so the input carries the
+    /// platform's own separator.
+    #[test]
+    fn rendered_name_uses_slash_separators_on_every_platform() {
+        use std::path::PathBuf;
+
+        let root = PathBuf::from("/srv/mod");
+        let curr = root.join("sub");
+        let path = curr.join("deep").join("denied.txt");
+        assert_eq!(
+            full_fname_path(
+                &path,
+                Some(DaemonPaths {
+                    module: "mymod",
+                    module_root: &root,
+                    curr_dir: &curr,
+                })
+            ),
+            "\"/sub/deep/denied.txt\" (in mymod)"
         );
     }
 
