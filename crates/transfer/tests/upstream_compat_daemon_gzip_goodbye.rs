@@ -195,18 +195,22 @@ impl Fixture {
 /// closed` (or a non-zero exit) when the oc-rsync daemon-sender drops
 /// the trailing frame before flushing the goodbye exchange.
 ///
-/// Skips silently when `OC_RSYNC_UPSTREAM_COMPAT` is unset or the
-/// upstream rsync 3.4.4 binary is missing - this keeps the standard PR
-/// nextest cell costless and macOS/Windows cells green.
+/// Opting out is a decision, opting in is a promise. With
+/// `OC_RSYNC_UPSTREAM_COMPAT` unset the test skips, which keeps the standard
+/// PR nextest cell costless and the macOS/Windows cells green. Once it is set
+/// the test must never report green without having run: a missing upstream
+/// 3.4.4 binary is a setup error and fails loudly rather than returning.
 #[test]
 fn daemon_gzip_goodbye_does_not_truncate() {
     if !upstream_compat_enabled() {
         return;
     }
 
-    let Some(upstream) = require_upstream_rsync(UpstreamVersion::V3_4_4) else {
-        return;
-    };
+    let upstream = require_upstream_rsync(UpstreamVersion::V3_4_4).expect(
+        "OC_RSYNC_UPSTREAM_COMPAT=1 selected this test but upstream rsync 3.4.4 is not \
+         installed; build it with `bash tools/ci/run_interop.sh` or point \
+         OC_RSYNC_UPSTREAM_BIN_3_4_4 at it",
+    );
 
     let oc_rsync = test_support::oc_rsync_bin();
 
