@@ -38,7 +38,6 @@ use tempfile::tempdir;
 /// This is a smoke test to verify basic daemon functionality before
 /// running protocol-specific tests.
 #[test]
-#[ignore = "requires oc-rsync binary"]
 fn test_oc_daemon_starts_and_accepts_connections() {
     let daemon = TestDaemon::start(DaemonBinary::OcRsync).expect("start oc-rsync daemon");
 
@@ -52,7 +51,6 @@ fn test_oc_daemon_starts_and_accepts_connections() {
 /// Verifies the daemon implements the @RSYNCD: protocol greeting correctly.
 /// Upstream reference: clientserver.c:125-144 (daemon greeting format)
 #[test]
-#[ignore = "requires oc-rsync binary"]
 fn test_oc_daemon_sends_protocol_greeting() {
     let daemon = TestDaemon::start(DaemonBinary::OcRsync).expect("start oc-rsync daemon");
 
@@ -96,7 +94,6 @@ fn test_oc_daemon_sends_protocol_greeting() {
 ///
 /// Verifies that daemon process terminates cleanly when dropped.
 #[test]
-#[ignore = "requires oc-rsync binary"]
 fn test_oc_daemon_shutdown_cleanup() {
     let port;
 
@@ -660,7 +657,6 @@ fn test_module_listing_from_upstream_client() {
 /// This is similar to test_oc_daemon_sends_protocol_greeting but goes further
 /// into the handshake sequence.
 #[test]
-#[ignore = "requires oc-rsync binary"]
 fn test_manual_protocol_handshake_with_oc_daemon() {
     let daemon = TestDaemon::start(DaemonBinary::OcRsync).expect("start oc-rsync daemon");
 
