@@ -55,12 +55,21 @@ fn bench_auth_challenge_response(c: &mut Criterion) {
     // Benchmark full verify round-trip (compute + constant-time compare)
     let response_md5 = compute_auth_response(password, &challenge, DaemonAuthDigest::Md5);
     group.bench_function("verify_md5", |b| {
-        b.iter(|| verify_client_response(password, &challenge, &response_md5, DaemonAuthDigest::Md5));
+        b.iter(|| {
+            verify_client_response(password, &challenge, &response_md5, DaemonAuthDigest::Md5)
+        });
     });
 
     let response_sha512 = compute_auth_response(password, &challenge, DaemonAuthDigest::Sha512);
     group.bench_function("verify_sha512", |b| {
-        b.iter(|| verify_client_response(password, &challenge, &response_sha512, DaemonAuthDigest::Sha512));
+        b.iter(|| {
+            verify_client_response(
+                password,
+                &challenge,
+                &response_sha512,
+                DaemonAuthDigest::Sha512,
+            )
+        });
     });
 
     group.finish();

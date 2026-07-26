@@ -30,7 +30,10 @@
 //!
 //! - **File permissions**: Must be readable only by owner (mode 0600 on Unix)
 //! - **Password storage**: Plain text (matching upstream rsync behavior)
-//! - **Challenge generation**: Uses cryptographically secure random + timestamp + PID
+//! - **Challenge generation**: Peer address + timestamp + PID, hashed with the
+//!   negotiated digest - upstream's `gen_challenge()` (authenticate.c:62-81)
+//!   verbatim. It is deliberately not a CSPRNG: matching upstream matters more
+//!   than the unobservable difference.
 //!
 //! # Supported Hash Algorithms
 //!
@@ -42,8 +45,12 @@
 //! - MD5 (historical default)
 //! - MD4 (legacy compatibility)
 //!
-//! The server advertises supported algorithms in the `@RSYNCD:` greeting, and clients
-//! select the strongest mutually supported algorithm.
+//! Both sides advertise their list in the `@RSYNCD:` greeting. A client picks the
+//! entry of the server's list that ranks highest in its own; a server takes the
+//! *first* entry of the client's list that it supports, so client preference wins
+//! (upstream: compat.c:333-356 `parse_negotiate_str`, whose `am_server` branch
+//! stops at the first acceptable client choice). The single winner then drives both
+//! the challenge and the verification.
 //!
 //! # Examples
 //!
@@ -101,8 +108,8 @@
 //!
 //! ## Improvements over upstream rsync
 //!
-//! - **Constant-time comparison**: Prevents timing attacks during response verification
-//! - **Cryptographically secure random**: Uses `getrandom` for challenge generation
+//! - **Constant-time comparison**: Prevents timing attacks during response
+//!   verification, where upstream uses a plain `strcmp()`. Not wire-observable.
 //!
 //! ## Known limitations (matching upstream)
 //!
@@ -135,7 +142,6 @@ use std::io;
 use std::net::IpAddr;
 use std::path::Path;
 use std::time::{SystemTime, UNIX_EPOCH};
-
 
 /// Generates authentication challenges for daemon mode.
 ///
@@ -588,7 +594,8 @@ mod tests {
     #[test]
     fn verify_client_response_ignores_a_non_negotiated_digest() {
         let password = b"secret";
-        let challenge = ChallengeGenerator::generate("10.0.0.1".parse().unwrap(), DaemonAuthDigest::Md5);
+        let challenge =
+            ChallengeGenerator::generate("10.0.0.1".parse().unwrap(), DaemonAuthDigest::Md5);
 
         let md4_resp = compute_auth_response(password, &challenge, DaemonAuthDigest::Md4);
         assert!(!verify_client_response(

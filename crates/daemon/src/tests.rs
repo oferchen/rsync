@@ -33,6 +33,7 @@ use crate::daemon::{
     // From runtime_options.rs
     RuntimeOptions,
     TestSecretsEnvOverride,
+    UNSUPPORTED_AUTH_DIGEST_EXIT_CODE,
     advertised_capability_lines,
     // From sections/module_access.rs
     apply_module_bandwidth_limit,
@@ -71,7 +72,6 @@ use crate::daemon::{
     set_test_netgroup_members,
     // From sections/session_runtime.rs
     single_session_exit,
-    UNSUPPORTED_AUTH_DIGEST_EXIT_CODE,
 };
 
 // Only the unix-only post-xfer-exec abort test references this constant, so
