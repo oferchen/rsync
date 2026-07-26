@@ -491,12 +491,24 @@ fi
 # Dry run should not create any files in the destination.
 if [[ "${up_daemon_available}" == "true" ]]; then
   reset_module_data "up"
-  run_wire "${OC_RSYNC}" -avn "${src}/" "${up_url}/" || true
+  # An empty destination is not evidence on its own: a refused connection
+  # leaves exactly the same empty tree as a correct dry run. Assert the exit
+  # code first, then assert output that only a session that really ran emits.
+  dry_out="$(run_wire "${OC_RSYNC}" -avn "${src}/" "${up_url}/")" \
+    || fail "dry-run: oc-rsync -> upstream daemon failed"
+  # `sending incremental file list` is emitted once the sender starts the
+  # file-list phase, and the `(DRY RUN)` totals line is only reached after the
+  # daemon has replied with its half of the session stats. Neither can appear
+  # if the connection was refused, so together they prove the run happened.
+  printf '%s\n' "${dry_out}" | grep -q '^sending incremental file list$' \
+    || fail "dry-run: oc-rsync -> upstream daemon never started the file list"
+  printf '%s\n' "${dry_out}" | grep -q '(DRY RUN)' \
+    || fail "dry-run: oc-rsync -> upstream daemon produced no dry-run summary"
   count="$(find "${workdir}/data-up" -type f 2>/dev/null | wc -l | tr -d ' ')"
   if [[ "${count}" -ne 0 ]]; then
     fail "dry-run: oc-rsync -> upstream daemon created files"
   fi
-  pass "dry-run: oc-rsync -> upstream daemon (no files created)"
+  pass "dry-run: oc-rsync -> upstream daemon (ran, created no files)"
 else
   echo "SKIP: dry-run: oc-rsync -> upstream daemon (upstream daemon unavailable on Windows)"
 fi

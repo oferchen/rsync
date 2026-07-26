@@ -1910,6 +1910,14 @@ is_known_failure() {
   is_known_failure_from_conf "$@"
 }
 
+# Dotted release version of an upstream rsync binary, read from its --version
+# banner. The install path is not authoritative: a directory named 3.4.4 may
+# hold any binary, and /usr/bin/rsync on macOS is openrsync.
+upstream_release_version() {
+  "$1" --version 2>/dev/null | head -n1 \
+    | sed -n 's/^rsync[[:space:]]\{1,\}version[[:space:]]\{1,\}\([0-9][0-9.]*\).*/\1/p'
+}
+
 # ============================================================================
 # Standalone Interop Test Scenarios (#876-#884)
 # These tests require custom daemon configs, special setup, or non-standard
@@ -1917,6 +1925,8 @@ is_known_failure() {
 # ============================================================================
 
 # Helper: check if a standalone test is a known failure and report accordingly.
+# Uses global $standalone_upstream_version so version-scoped known-failure
+# rules can tell which upstream release produced the failure.
 run_standalone_test() {
   local name=$1
   local test_func=$2
@@ -1927,7 +1937,8 @@ run_standalone_test() {
     echo "    PASS"
     return 0
   else
-    if is_known_failure "standalone" "$name" ""; then
+    if is_known_failure "standalone" "$name" "" \
+        "${standalone_upstream_version:-}"; then
       echo "    SKIP (known limitation)"
       return 2
     else
@@ -3788,7 +3799,7 @@ WRAPPER
       >"${log}.compress-ssh-up-oc.out" 2>"${log}.compress-ssh-up-oc.err" || rc2=$?
 
   if [[ $rc2 -ne 0 ]]; then
-    echo "    upstream -> oc-rsync SSH/local -z pull failed (exit=$rc2)"
+    echo "    upstream -> oc-rsync SSH/local -z push failed (exit=$rc2)"
     echo "    stderr: $(head -5 "${log}.compress-ssh-up-oc.err")"
     return 1
   fi
@@ -10940,6 +10951,10 @@ run_standalone_interop_tests() {
 
   local total=0 passed=0 known=0 unexpected=0
   local standalone_log="${workdir}/standalone"
+
+  # Global: consumed by run_standalone_test for version-scoped known failures.
+  standalone_upstream_version=$(upstream_release_version "$upstream_binary")
+  echo "  [standalone] upstream release: ${standalone_upstream_version:-unknown}"
 
   local test_names=(
     "write-batch-read-batch"
