@@ -15,7 +15,7 @@ use std::path::Path;
 ))]
 use super::LocalCopyExecution;
 
-#[cfg(all(unix, feature = "xattr"))]
+#[cfg(all(any(unix, windows), feature = "xattr"))]
 use super::FilterProgram;
 
 #[cfg(all(any(unix, windows), feature = "acl"))]
@@ -60,6 +60,84 @@ pub(crate) fn sync_xattrs_if_requested(
         }
     }
     Ok(())
+}
+
+/// Whether the destination's extended attributes differ from the source's, for
+/// the itemize `x` column.
+///
+/// Mirrors upstream `generator.c:566-572`, which calls `xattr_diff()` for every
+/// itemized entry under `preserve_xattrs`. In a local copy upstream still forks
+/// a sender and a generator, so the two sides collect their lists with
+/// different `rsync_xal_get()` globals: the sender with `am_sender = 1`
+/// (`user_only = 0`, plus the `rsync.%FOO` strip below `-XX`), the generator
+/// with `am_sender = 0` (`user_only = !am_root`, no strip). Reading each side
+/// with its own [`XattrRole`] reproduces that split; the comparison itself is
+/// [`::metadata::dest_xattrs_differ`], shared with the network receiver.
+///
+/// Call this before [`sync_xattrs_if_requested`] writes the source attributes
+/// onto the destination, or the comparison sees its own output and can never
+/// report a difference.
+///
+/// A source that cannot be read reports no difference, matching the destination
+/// side's failure handling: upstream's `get_xattr()` failure likewise leaves an
+/// empty list rather than inventing a change.
+#[cfg(all(unix, feature = "xattr"))]
+pub(crate) fn xattrs_differ_from_source(
+    source: &Path,
+    destination: &Path,
+    follow_symlinks: bool,
+    fake_super: bool,
+    filter_program: Option<&FilterProgram>,
+) -> bool {
+    let filter = filter_program
+        .filter(|program| program.has_xattr_rules())
+        .map(|program| move |name: &str| program.allows_xattr(name));
+    let sender_opts = ::metadata::XattrSendOptions {
+        role: ::metadata::XattrRole::Sender,
+        follow_symlinks,
+        am_root: ::metadata::am_root(),
+        // The local-copy options carry `-X` as a bool, so the `rsync.%FOO`
+        // strip always applies on the sender side. upstream: xattrs.c:260-267.
+        preserve_xattrs: 1,
+        fake_super,
+        filter: filter.as_ref().map(|f| f as &dyn Fn(&str) -> bool),
+        // Both lists are read from local disk with full values, so the
+        // abbreviation digest is never consulted. upstream: xattrs.c:584-594.
+        checksum_seed: 0,
+    };
+    let Ok(sender) = ::metadata::read_xattrs_for_wire(source, &sender_opts) else {
+        return false;
+    };
+    ::metadata::dest_xattrs_differ(
+        &sender,
+        destination,
+        &::metadata::XattrSendOptions {
+            role: ::metadata::XattrRole::Generator,
+            ..sender_opts
+        },
+    )
+}
+
+/// Reports no difference on Windows, whose `-X` maps onto NTFS Alternate Data
+/// Streams rather than POSIX extended attributes.
+///
+/// The `x` column describes upstream's POSIX extended attributes; without a
+/// comparison there is nothing to report, and claiming a change on every file
+/// is worse than staying silent.
+///
+/// The gate is the callers' (`all(any(unix, windows), feature = "xattr")`) minus
+/// the Unix half the real implementation above covers, so no build carries a
+/// definition it never calls - `-D warnings` makes an unused `pub(crate)` item
+/// fatal, which is exactly how this landed red on the Windows daemon job.
+#[cfg(all(windows, feature = "xattr"))]
+pub(crate) const fn xattrs_differ_from_source(
+    _source: &std::path::Path,
+    _destination: &std::path::Path,
+    _follow_symlinks: bool,
+    _fake_super: bool,
+    _filter_program: Option<&FilterProgram>,
+) -> bool {
+    false
 }
 
 /// Synchronizes POSIX/extended ACLs from source to destination if requested.

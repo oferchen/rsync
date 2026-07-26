@@ -165,7 +165,7 @@ pub(super) fn try_clone(
         &metadata_options,
         destination_previously_existed,
         true,
-        flags.xattrs_enabled(),
+        flags.xattrs_changed,
         flags.acls_enabled(),
         context.options().modify_window(),
     );

@@ -93,7 +93,7 @@ pub(in crate::local_copy) fn copy_special_as_regular_file(
         &metadata_options,
         destination_previously_existed,
         false,
-        flags.xattrs_enabled(),
+        flags.xattrs_changed,
         flags.acls_enabled(),
         context.options().modify_window(),
     );

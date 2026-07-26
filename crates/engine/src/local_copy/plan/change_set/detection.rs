@@ -23,7 +23,7 @@ impl LocalCopyChangeSet {
         metadata_options: &MetadataOptions,
         destination_previously_existed: bool,
         wrote_data: bool,
-        xattrs_enabled: bool,
+        xattrs_changed: bool,
         acls_enabled: bool,
         modify_window: ModifyWindow,
     ) -> Self {
@@ -33,7 +33,7 @@ impl LocalCopyChangeSet {
             metadata_options,
             destination_previously_existed,
             wrote_data,
-            xattrs_enabled,
+            xattrs_changed,
             acls_enabled,
             false,
             modify_window,
@@ -48,6 +48,13 @@ impl LocalCopyChangeSet {
     /// itemize line keeps `.` in slot 2. Callers that have an explicit
     /// `--checksum` flag should use this constructor and pass `true` only
     /// when checksum-mode is active.
+    ///
+    /// `xattrs_changed` is the *result* of the xattr comparison, not the `-X`
+    /// flag: upstream `generator.c:566-572` sets `ITEM_REPORT_XATTR` only when
+    /// `xattr_diff()` finds the destination's attributes differ from the
+    /// sender's. Compute it with
+    /// [`xattrs_differ_from_source`](crate::local_copy::xattrs_differ_from_source)
+    /// before anything writes the source attributes onto the destination.
     #[allow(clippy::too_many_arguments, clippy::fn_params_excessive_bools)]
     pub fn for_file_with_checksum(
         metadata: &fs::Metadata,
@@ -55,7 +62,7 @@ impl LocalCopyChangeSet {
         metadata_options: &MetadataOptions,
         destination_previously_existed: bool,
         wrote_data: bool,
-        xattrs_enabled: bool,
+        xattrs_changed: bool,
         acls_enabled: bool,
         checksum_enabled: bool,
         modify_window: ModifyWindow,
@@ -149,7 +156,7 @@ impl LocalCopyChangeSet {
             change_set = change_set.with_group_changed(true);
         }
 
-        if xattrs_enabled {
+        if xattrs_changed {
             change_set = change_set.with_xattr_changed(true);
         }
 
@@ -175,7 +182,7 @@ impl LocalCopyChangeSet {
         existing: &fs::Metadata,
         metadata_options: &MetadataOptions,
         omit_dir_times: bool,
-        xattrs_enabled: bool,
+        xattrs_changed: bool,
         acls_enabled: bool,
         modify_window: ModifyWindow,
     ) -> Self {
@@ -221,7 +228,7 @@ impl LocalCopyChangeSet {
             change_set = change_set.with_group_changed(true);
         }
 
-        if xattrs_enabled {
+        if xattrs_changed {
             change_set = change_set.with_xattr_changed(true);
         }
         if acls_enabled {
@@ -303,7 +310,7 @@ impl LocalCopyChangeSet {
         metadata_options: &MetadataOptions,
         modify_window: ModifyWindow,
         content_differs: bool,
-        xattrs_enabled: bool,
+        xattrs_changed: bool,
         acls_enabled: bool,
     ) -> Self {
         let mut change_set = Self::new();
@@ -359,7 +366,7 @@ impl LocalCopyChangeSet {
             change_set = change_set.with_group_changed(true);
         }
 
-        if xattrs_enabled {
+        if xattrs_changed {
             change_set = change_set.with_xattr_changed(true);
         }
         if acls_enabled {

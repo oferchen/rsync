@@ -93,6 +93,9 @@ pub(in crate::local_copy) fn execute_transfer(
         size_only_enabled: _,
         ignore_times_enabled: _,
         checksum_enabled: _,
+        // Read straight off `flags` at the record site below, which needs it
+        // after the transfer has run.
+        xattrs_changed: _,
         // Consumed by the standard-path finalize call below on Unix; on
         // Windows the `CopyFileExW` fast path reconciles ADS itself, so this
         // field is unused in the standard path there.
@@ -751,7 +754,7 @@ pub(in crate::local_copy) fn execute_transfer(
         &metadata_options,
         is_reference_copy || destination_previously_existed,
         wrote_data && !is_reference_copy,
-        flags.xattrs_enabled(),
+        flags.xattrs_changed,
         flags.acls_enabled(),
         flags.checksum_enabled,
         context.options().modify_window(),

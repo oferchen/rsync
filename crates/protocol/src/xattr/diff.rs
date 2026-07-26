@@ -6,26 +6,41 @@
 
 use std::cmp::Ordering;
 
+use crate::xattr::XattrList;
 use crate::xattr::wire::checksum_matches;
-use crate::xattr::{MAX_FULL_DATUM, XattrList};
 
 /// Returns `true` when the sender's extended-attribute list differs from the
 /// receiver's on-disk attributes.
 ///
 /// Mirrors upstream `xattrs.c:xattr_diff()`. `sender` is the flist xattr list as
-/// received: values longer than [`MAX_FULL_DATUM`] carry a checksum rather than
-/// the full datum (the abbreviation protocol). `receiver` holds the
-/// destination's current attributes with full values, as produced by
-/// `metadata::read_xattrs_for_wire`. Both lists must be sorted by name (the
-/// receiver sorts on read; the sender sorts before transmit).
+/// received: values longer than [`MAX_FULL_DATUM`](crate::xattr::MAX_FULL_DATUM)
+/// carry a checksum rather than the full datum (the abbreviation protocol).
+/// `receiver` holds the destination's current attributes with full values, as
+/// produced by `metadata::read_xattrs_for_wire`. Both lists must be sorted by
+/// name (the receiver sorts on read; the sender sorts before transmit).
 ///
 /// The comparison walks the two sorted lists in lockstep. A differing entry
-/// count means the sets differ. For a shared name, a value at or below
-/// `MAX_FULL_DATUM` is compared byte-for-byte, while a larger value is compared
-/// by checksum against the receiver's full datum - exactly upstream's split at
-/// `MAX_FULL_DATUM` (`xattrs.c:584-594`). The `find_all` bookkeeping upstream
-/// uses to mark entries for on-demand request does not affect the returned
-/// "do they differ" answer, so this stops at the first mismatch.
+/// count means the sets differ. For a shared name, an abbreviated sender value
+/// is compared by checksum against the receiver's full datum, while every value
+/// the sender carries in full is compared byte-for-byte - upstream's split at
+/// `MAX_FULL_DATUM` (`xattrs.c:584-594`), keyed on the sender entry's own
+/// abbreviation state rather than on its length.
+///
+/// Upstream can key that split on the length alone because `rsync_xal_get()`
+/// abbreviates on *both* sides (`xattrs.c:274-284`), so a long value is always
+/// checksum-vs-checksum there. oc keeps full data on the receiver side and
+/// abbreviates only on the wire, so a long value reaches this function
+/// abbreviated when it arrived over the wire and in full when both lists were
+/// read from local disk (the local-copy generator). Testing
+/// [`XattrEntry::is_abbreviated`](crate::xattr::XattrEntry::is_abbreviated)
+/// covers both: it is exactly `datum_len > MAX_FULL_DATUM` for a wire-received
+/// list, and it routes a locally-read long value to the byte-for-byte branch
+/// instead of hashing its plaintext against the peer's datum, which could never
+/// match.
+///
+/// The `find_all` bookkeeping upstream uses to mark entries for on-demand
+/// request does not affect the returned "do they differ" answer, so this stops
+/// at the first mismatch.
 #[must_use]
 pub fn xattr_diff(sender: &XattrList, receiver: &XattrList, checksum_seed: i32) -> bool {
     let snd = sender.entries();
@@ -49,12 +64,14 @@ pub fn xattr_diff(sender: &XattrList, receiver: &XattrList, checksum_seed: i32) 
 
         let same = if cmp == Ordering::Equal {
             let r = &rec[ri];
-            if s.datum_len() > MAX_FULL_DATUM {
-                // upstream: xattrs.c:584-587 - large values compare by checksum.
+            if s.is_abbreviated() {
+                // upstream: xattrs.c:584-587 - an abbreviated value compares by
+                // checksum.
                 s.datum_len() == r.datum_len()
                     && checksum_matches(s.datum(), r.datum(), checksum_seed)
             } else {
-                // upstream: xattrs.c:591-594 - small values compare byte-for-byte.
+                // upstream: xattrs.c:591-594 - a value carried in full compares
+                // byte-for-byte.
                 s.datum_len() == r.datum_len() && s.datum() == r.datum()
             }
         } else {
@@ -82,7 +99,7 @@ pub fn xattr_diff(sender: &XattrList, receiver: &XattrList, checksum_seed: i32) 
 mod tests {
     use super::*;
     use crate::xattr::wire::compute_xattr_checksum;
-    use crate::xattr::{XattrEntry, XattrList};
+    use crate::xattr::{MAX_FULL_DATUM, XattrEntry, XattrList};
 
     fn list(entries: Vec<XattrEntry>) -> XattrList {
         XattrList::with_entries(entries)
@@ -152,6 +169,28 @@ mod tests {
             sender_val.len(),
         )]);
         let receiver = list(vec![full("user.big", &receiver_val)]);
+        assert!(xattr_diff(&sender, &receiver, 0));
+    }
+
+    /// The local-copy generator reads both sides from disk, so a value over
+    /// `MAX_FULL_DATUM` arrives here in full on the sender side. Keying the
+    /// checksum branch off the length alone would hash-compare the plaintext
+    /// against the destination's identical plaintext and always report a
+    /// difference, lighting the itemize `x` column on every large xattr.
+    #[test]
+    fn identical_unabbreviated_large_values_do_not_differ() {
+        let big = vec![7u8; MAX_FULL_DATUM + 40];
+        let sender = list(vec![full("user.big", &big)]);
+        let receiver = list(vec![full("user.big", &big)]);
+        assert!(!xattr_diff(&sender, &receiver, 0));
+    }
+
+    /// The byte-for-byte branch must still catch a real difference in a large
+    /// value that both sides carry in full.
+    #[test]
+    fn differing_unabbreviated_large_values_differ() {
+        let sender = list(vec![full("user.big", &[7u8; MAX_FULL_DATUM + 40])]);
+        let receiver = list(vec![full("user.big", &[9u8; MAX_FULL_DATUM + 40])]);
         assert!(xattr_diff(&sender, &receiver, 0));
     }
 

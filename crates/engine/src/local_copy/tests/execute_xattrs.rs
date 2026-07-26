@@ -935,4 +935,230 @@ mod xattr_tests {
             .expect("xattr present");
         assert_eq!(copied, b"real_value");
     }
+
+    /// Builds a `src`/`dst` pair whose files are byte-identical and share the
+    /// same mtimes, then returns the itemize records of a second `-aX` run.
+    ///
+    /// The second run takes the quick-check skip path, which is where upstream
+    /// itemizes an up-to-date file (`generator.c:1816` -> `itemize()` with
+    /// `iflags = 0`) and where an unconditional xattr flag is visible on every
+    /// row.
+    fn itemize_second_pass(src: &Path, dst: &Path) -> Vec<(String, bool)> {
+        let operands = vec![
+            OsString::from(format!("{}/", src.display())),
+            dst.to_path_buf().into_os_string(),
+        ];
+        let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
+        let options = LocalCopyOptions::default()
+            .recursive(true)
+            .xattrs(true)
+            .permissions(true)
+            .times(true)
+            .collect_events(true);
+        let report = plan
+            .execute_with_report(LocalCopyExecution::Apply, options)
+            .expect("copy succeeds");
+        report
+            .records()
+            .iter()
+            .map(|record| {
+                (
+                    record.relative_path().display().to_string(),
+                    record.change_set().xattr_changed(),
+                )
+            })
+            // The transfer root carries a "." row that upstream itemizes
+            // separately (generator.c:1480-1483); the xattr column under test
+            // belongs to the file rows.
+            .filter(|(name, _)| name != ".")
+            .collect()
+    }
+
+    /// Fails the caller when the second pass did not itemize both seeded files,
+    /// so an assertion over "every record" can never pass vacuously.
+    fn assert_both_files_itemized(records: &[(String, bool)]) {
+        let mut names: Vec<&str> = records.iter().map(|(name, _)| name.as_str()).collect();
+        names.sort_unstable();
+        assert_eq!(
+            names,
+            vec!["a.txt", "b.txt"],
+            "the up-to-date pass must itemize both files: {records:?}"
+        );
+    }
+
+    /// Seeds `src` with two files carrying `user.color`, mirrors it into `dst`,
+    /// and returns the pair. `dst` is produced by a first `-aX` pass so both
+    /// sides agree on content, mtimes and xattrs.
+    fn seeded_tree(temp: &Path) -> Option<(std::path::PathBuf, std::path::PathBuf)> {
+        let src = temp.join("src");
+        let dst = temp.join("dst");
+        fs::create_dir_all(&src).expect("create src");
+        fs::write(src.join("a.txt"), b"alpha").expect("write a");
+        fs::write(src.join("b.txt"), b"beta").expect("write b");
+        if !xattrs_supported(&src.join("a.txt")) {
+            eprintln!("xattrs not supported, skipping test");
+            return None;
+        }
+        xattr::set(src.join("a.txt"), "user.color", b"red").expect("set a");
+        xattr::set(src.join("b.txt"), "user.color", b"blue").expect("set b");
+
+        seed_destination(&src, &dst);
+        Some((src, dst))
+    }
+
+    /// Runs a first `-aX` pass so `dst` mirrors `src` byte-for-byte, including
+    /// mtimes and xattrs.
+    fn seed_destination(src: &Path, dst: &Path) {
+        let operands = vec![
+            OsString::from(format!("{}/", src.display())),
+            dst.to_path_buf().into_os_string(),
+        ];
+        let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
+        plan.execute_with_options(
+            LocalCopyExecution::Apply,
+            LocalCopyOptions::default()
+                .recursive(true)
+                .xattrs(true)
+                .permissions(true)
+                .times(true),
+        )
+        .expect("seed copy succeeds");
+    }
+
+    /// Case 1: an unchanged tree whose xattrs already match must not light the
+    /// itemize `x` column anywhere.
+    ///
+    /// upstream: generator.c:566-572 - `itemize()` sets `ITEM_REPORT_XATTR`
+    /// only when `xattr_diff()` reports a difference, and `ITEM_REPORT_XATTR`
+    /// is itself part of the emit gate (generator.c:582), so a spurious flag
+    /// both adds an `x` and prints a row upstream omits entirely. Verified
+    /// against rsync 3.4.4 (protocol 32), which prints nothing for this tree.
+    #[test]
+    fn itemize_matching_xattrs_report_no_change() {
+        let temp = tempdir().expect("tempdir");
+        let Some((src, dst)) = seeded_tree(temp.path()) else {
+            return;
+        };
+
+        let records = itemize_second_pass(&src, &dst);
+        assert_both_files_itemized(&records);
+        for (name, xattr_changed) in &records {
+            assert!(
+                !xattr_changed,
+                "{name} must not report an xattr change when both sides match"
+            );
+        }
+    }
+
+    /// Case 2: a genuine `user.*` difference lights `x` on that file alone.
+    ///
+    /// Pins both halves of the comparison: the file whose value drifted reports
+    /// the change, and its unchanged sibling stays silent. A flag that merely
+    /// echoed `-X` would pass the first assertion and fail the second, which is
+    /// exactly how the defect hid.
+    #[test]
+    fn itemize_differing_xattr_value_reports_only_that_file() {
+        let temp = tempdir().expect("tempdir");
+        let Some((src, dst)) = seeded_tree(temp.path()) else {
+            return;
+        };
+
+        // Only the destination's value drifts; content and mtime are untouched,
+        // so the entry still takes the quick-check skip path.
+        xattr::set(dst.join("b.txt"), "user.color", b"magenta").expect("drift b");
+
+        let records = itemize_second_pass(&src, &dst);
+        assert_both_files_itemized(&records);
+        let changed: Vec<_> = records
+            .iter()
+            .filter(|(_, xattr_changed)| *xattr_changed)
+            .map(|(name, _)| name.clone())
+            .collect();
+        assert_eq!(
+            changed,
+            vec!["b.txt".to_string()],
+            "only the drifted file may light the x column; got {records:?}"
+        );
+    }
+
+    /// A dry run itemizes the same `x` column as the real run.
+    ///
+    /// upstream: generator.c:1816 - the generator itemizes an up-to-date file
+    /// whether or not `do_xfers` is set, so `-naXi` and `-aXi` must agree. The
+    /// dry-run skip path previously hardcoded "no xattr change", which hid a
+    /// genuine drift instead of inventing one.
+    #[test]
+    fn dry_run_itemize_matches_the_real_run() {
+        let temp = tempdir().expect("tempdir");
+        let Some((src, dst)) = seeded_tree(temp.path()) else {
+            return;
+        };
+        xattr::set(dst.join("b.txt"), "user.color", b"magenta").expect("drift b");
+
+        let operands = vec![
+            OsString::from(format!("{}/", src.display())),
+            dst.clone().into_os_string(),
+        ];
+        let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
+        let report = plan
+            .execute_with_report(
+                LocalCopyExecution::DryRun,
+                LocalCopyOptions::default()
+                    .recursive(true)
+                    .xattrs(true)
+                    .permissions(true)
+                    .times(true)
+                    .collect_events(true),
+            )
+            .expect("dry run succeeds");
+        let changed: Vec<String> = report
+            .records()
+            .iter()
+            .filter(|record| record.change_set().xattr_changed())
+            .map(|record| record.relative_path().display().to_string())
+            .collect();
+        assert_eq!(
+            changed,
+            vec!["b.txt".to_string()],
+            "a dry run must report the same x column as the real run"
+        );
+    }
+
+    /// A value longer than `MAX_FULL_DATUM` that is identical on both sides
+    /// must not report a change.
+    ///
+    /// The local-copy generator reads both lists from disk with full values,
+    /// while the network generator receives an abbreviated sender list. Keying
+    /// the comparison on length alone would hash the local plaintext against
+    /// the destination plaintext and never match, so every large xattr would
+    /// light `x` forever. upstream: xattrs.c:584-594.
+    #[test]
+    fn itemize_large_matching_xattr_value_reports_no_change() {
+        let temp = tempdir().expect("tempdir");
+        let src = temp.path().join("src");
+        let dst = temp.path().join("dst");
+        fs::create_dir_all(&src).expect("create src");
+        fs::write(src.join("big.txt"), b"payload").expect("write");
+        if !xattrs_supported(&src.join("big.txt")) {
+            eprintln!("xattrs not supported, skipping test");
+            return;
+        }
+        let large = vec![b'z'; 512];
+        xattr::set(src.join("big.txt"), "user.large", &large).expect("set large");
+
+        seed_destination(&src, &dst);
+
+        let records = itemize_second_pass(&src, &dst);
+        assert_eq!(
+            records.len(),
+            1,
+            "the up-to-date pass must itemize the file: {records:?}"
+        );
+        for (name, xattr_changed) in &records {
+            assert!(
+                !xattr_changed,
+                "{name} carries an identical large xattr and must stay silent"
+            );
+        }
+    }
 }

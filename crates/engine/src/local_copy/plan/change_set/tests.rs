@@ -289,26 +289,35 @@ fn for_file_wrote_data_sets_checksum_changed() {
     assert!(change_set.checksum_changed());
 }
 
+/// The `x` glyph reports the *outcome* of the xattr comparison, so the
+/// constructor must forward the caller's verdict verbatim in both directions.
+///
+/// upstream: generator.c:566-572 - `if (xattr_diff(file, sxp, 1)) iflags |=
+/// ITEM_REPORT_XATTR`. Passing `-X` itself would light `x` on every row of an
+/// unchanged tree, which upstream never prints.
 #[test]
-fn for_file_xattrs_enabled_sets_xattr_changed() {
+fn for_file_reports_xattr_change_only_when_the_comparison_found_one() {
     let temp = tempfile::tempdir().expect("tempdir");
     let path = temp.path().join("file.txt");
     fs::write(&path, b"content").expect("write");
     let metadata = fs::metadata(&path).expect("metadata");
     let options = MetadataOptions::new();
 
-    let change_set = LocalCopyChangeSet::for_file(
-        &metadata,
-        Some(&metadata),
-        &options,
-        true,
-        false,
-        true, // xattrs enabled
-        false,
-        ModifyWindow::ZERO,
-    );
+    let build = |xattrs_changed| {
+        LocalCopyChangeSet::for_file(
+            &metadata,
+            Some(&metadata),
+            &options,
+            true,
+            false,
+            xattrs_changed,
+            false,
+            ModifyWindow::ZERO,
+        )
+    };
 
-    assert!(change_set.xattr_changed());
+    assert!(build(true).xattr_changed());
+    assert!(!build(false).xattr_changed());
 }
 
 #[test]

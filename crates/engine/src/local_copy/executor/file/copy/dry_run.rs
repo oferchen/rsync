@@ -110,7 +110,14 @@ pub(super) fn handle_dry_run(
             modify_window: context.options().modify_window(),
             prefetched_match,
         }) {
-            record_dry_run_skip(context, metadata, destination, record_path, existing);
+            record_dry_run_skip(
+                context,
+                metadata,
+                source,
+                destination,
+                record_path,
+                existing,
+            );
             return Ok(());
         }
     }
@@ -179,10 +186,20 @@ pub(super) fn handle_dry_run(
     // `>f.st......`) rather than a blank `>f.........`. Mirror the real-run
     // change set from execute/mod.rs so `-ni` matches `-i` byte-for-byte.
     let wrote_data = bytes_transferred > 0;
-    #[cfg(all(unix, feature = "xattr"))]
-    let xattrs_enabled = context.xattrs_enabled();
-    #[cfg(not(all(unix, feature = "xattr")))]
-    let xattrs_enabled = false;
+    // upstream: generator.c:566-572 - itemize() runs xattr_diff() in a dry run
+    // exactly as in a real one, and a dry run never writes the destination, so
+    // the comparison always sees the pre-transfer state.
+    #[cfg(all(any(unix, windows), feature = "xattr"))]
+    let xattrs_changed = context.xattrs_enabled()
+        && crate::local_copy::xattrs_differ_from_source(
+            source,
+            destination,
+            false,
+            context.metadata_options().fake_super_enabled(),
+            context.filter_program(),
+        );
+    #[cfg(not(all(any(unix, windows), feature = "xattr")))]
+    let xattrs_changed = false;
     #[cfg(all(any(unix, windows), feature = "acl"))]
     let acls_enabled = context.acls_enabled();
     #[cfg(not(all(any(unix, windows), feature = "acl")))]
@@ -193,7 +210,7 @@ pub(super) fn handle_dry_run(
         &context.metadata_options(),
         destination_previously_existed,
         wrote_data,
-        xattrs_enabled,
+        xattrs_changed,
         acls_enabled,
         context.checksum_enabled(),
         context.options().modify_window(),
@@ -237,11 +254,30 @@ pub(super) fn handle_dry_run(
 fn record_dry_run_skip(
     context: &mut CopyContext,
     metadata: &fs::Metadata,
+    source: &Path,
     destination: &Path,
     record_path: &Path,
     existing: &fs::Metadata,
 ) {
     let metadata_options = context.metadata_options();
+    // upstream: generator.c:1816 -> itemize() with iflags=0. An up-to-date file
+    // still runs xattr_diff(), and ITEM_REPORT_XATTR is part of the emit gate
+    // (generator.c:582), so a drifted attribute prints `.f........x` even though
+    // nothing else changed - in a dry run exactly as in a real one.
+    #[cfg(all(any(unix, windows), feature = "xattr"))]
+    let xattrs_changed = context.xattrs_enabled()
+        && crate::local_copy::xattrs_differ_from_source(
+            source,
+            destination,
+            false,
+            metadata_options.fake_super_enabled(),
+            context.filter_program(),
+        );
+    #[cfg(not(all(any(unix, windows), feature = "xattr")))]
+    let xattrs_changed = {
+        let _ = source;
+        false
+    };
     context.record_hard_link(metadata, destination);
     context.summary_mut().record_regular_file_matched();
     let metadata_snapshot = LocalCopyMetadata::from_metadata(metadata, None);
@@ -252,7 +288,7 @@ fn record_dry_run_skip(
         &metadata_options,
         true,
         false,
-        false,
+        xattrs_changed,
         false,
         context.options().modify_window(),
     );
