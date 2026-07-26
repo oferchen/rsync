@@ -24,6 +24,7 @@
 
 use std::io::{self, Write};
 use std::path::PathBuf;
+use std::time::{Duration, Instant};
 
 use engine::concurrent_delta::{
     ConcurrentDeltaConfig, DeltaChunk, DeltaConsumer, DeltaWork, ParallelDeltaApplier, work_queue,
@@ -39,6 +40,39 @@ impl Write for NullSink {
     }
     fn flush(&mut self) -> io::Result<()> {
         Ok(())
+    }
+}
+
+/// Blocks until the consumer's live telemetry reports that the reorder
+/// buffer has spilled, so the caller releases the head-of-line item with
+/// the spill precondition already established instead of hoping a sleep
+/// outran the pipeline.
+///
+/// Both counters are polled: whichever one is still wired lets a broken
+/// plumbing path fail fast on the assertion that names it, rather than
+/// stalling until the deadline.
+///
+/// # Panics
+///
+/// Panics once `SPILL_WAIT` elapses with neither counter advancing - with
+/// the head withheld the buffer's byte usage only grows, so a timeout means
+/// the telemetry never reached [`DeltaConsumer::stats`].
+fn await_spill(consumer: &DeltaConsumer) {
+    const SPILL_WAIT: Duration = Duration::from_secs(30);
+    const POLL_INTERVAL: Duration = Duration::from_millis(1);
+
+    let deadline = Instant::now() + SPILL_WAIT;
+    loop {
+        let stats = consumer.stats();
+        if stats.spill_events > 0 || stats.spill_activations > 0 {
+            return;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "no spill observed within {SPILL_WAIT:?} while the head-of-line item \
+             was withheld against a tight byte threshold"
+        );
+        std::thread::sleep(POLL_INTERVAL);
     }
 }
 
@@ -125,38 +159,45 @@ fn in_order_submission_never_increments_saturation_counter() {
 }
 
 /// Drives a [`DeltaConsumer`] backed by a spillable reorder buffer with a
-/// deliberately delayed head-of-line item and a tight 1 KiB byte
-/// threshold, mirroring the pattern in the consumer-side spill regression
+/// withheld head-of-line item and a tight 1 KiB byte threshold, mirroring
+/// the pattern in the consumer-side spill regression
 /// (`spillable_consumer_preserves_order_under_pressure`). The new
 /// [`engine::concurrent_delta::DeltaConsumerStats::spill_activations`]
 /// counter must be non-zero by the time the consumer drains, proving that
 /// ROB-2's granularity-invariant activation counter is observable through
 /// the public consumer-side API.
+///
+/// The spill precondition is established, not raced: seq 0 is released only
+/// after the live [`DeltaConsumer::stats`] snapshot proves the byte budget
+/// was already exceeded. Without the head, no contiguous run can drain, so
+/// the buffer's byte usage only grows and the spill is guaranteed rather
+/// than timing-dependent.
 #[test]
 fn delta_consumer_stats_exposes_spill_activations() {
     const COUNT: u32 = 1000;
     const THRESHOLD: u64 = 1024;
 
     let (tx, rx) = work_queue::bounded_with_capacity(COUNT as usize);
-
-    // Sequences 1..COUNT first, then seq 0 last - the head stays missing
-    // long enough to overflow the byte budget and force repeated spills.
-    let producer = std::thread::spawn(move || {
-        for seq in 1..COUNT {
-            let work =
-                DeltaWork::whole_file(seq, PathBuf::from("/dst"), 64).with_sequence(u64::from(seq));
-            tx.send(work).expect("send out-of-order item");
-        }
-        std::thread::sleep(std::time::Duration::from_millis(50));
-        tx.send(DeltaWork::whole_file(0u32, PathBuf::from("/dst"), 64).with_sequence(0))
-            .expect("send head-of-line item");
-    });
-
     let cfg = ConcurrentDeltaConfig::with_spill_threshold(THRESHOLD);
     let consumer = DeltaConsumer::spawn_with_config(rx, COUNT as usize, cfg);
+
+    // Sequences 1..COUNT with the head withheld. The queue is bounded at
+    // COUNT so these sends never block, and the reorder buffer cannot
+    // deliver anything while seq 0 is missing.
+    for seq in 1..COUNT {
+        let work =
+            DeltaWork::whole_file(seq, PathBuf::from("/dst"), 64).with_sequence(u64::from(seq));
+        tx.send(work).expect("send out-of-order item");
+    }
+
+    await_spill(&consumer);
+
+    tx.send(DeltaWork::whole_file(0u32, PathBuf::from("/dst"), 64).with_sequence(0))
+        .expect("send head-of-line item");
+    drop(tx);
+
     let delivered: usize = consumer.iter().count();
     let stats = consumer.stats();
-    producer.join().expect("producer join");
     consumer.join().expect("consumer join");
 
     assert_eq!(
@@ -165,8 +206,8 @@ fn delta_consumer_stats_exposes_spill_activations() {
     );
     assert!(
         stats.spill_events > 0,
-        "ROB-2 prerequisite: tight threshold must produce spill events; \
-         got spill_events={}",
+        "ROB-2 prerequisite: the spill observed before the head was released \
+         must still be visible after the drain; got spill_events={}",
         stats.spill_events
     );
     assert!(
