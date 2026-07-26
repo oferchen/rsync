@@ -421,6 +421,40 @@ pub(crate) fn apply_only_write_batch_for_sender(
     server_config.flags.only_write_batch = config.only_write_batch();
 }
 
+/// Carries `--only-write-batch` onto the LOCAL receiver's config on a PULL.
+///
+/// On a pull the local client IS the receiver, and upstream never forwards the
+/// option to the remote sender (`server_options()` emits the `X` placeholder
+/// inside its `am_sender` block, options.c:2850). Instead `main.c:1839` turns
+/// `write_batch < 0` into `dry_run = 1` on this side - suppressing every
+/// filesystem mutation via the `do_mkdir`/`do_open`/`do_unlink` guards - while
+/// `do_xfers` stays 1 (it was computed before that assignment), so the remote
+/// sender is an ordinary one that still streams sum head, delta and file
+/// checksum. The receiver logs the item and calls `discard_receive_data()` to
+/// drain that stream without writing anything (receiver.c:811-817).
+///
+/// Both flags are needed: `only_write_batch` selects the drain-and-discard loop
+/// (which is checked ahead of `dry_run` in the receiver's dispatch), and
+/// `dry_run` drives `TransferFlags::skip_dest_writes()` so no directory,
+/// symlink, special file or deletion is applied either. Without this the pull
+/// updated the destination in full, contradicting "like --write-batch but w/o
+/// updating destination".
+///
+/// # Upstream Reference
+///
+/// - `main.c:1839` - `if (write_batch < 0) dry_run = 1`
+/// - `options.c:2850-2851` - placeholder forwarded on a push only
+/// - `receiver.c:811-817` - log the item, `discard_receive_data()`, no write
+pub(crate) fn apply_only_write_batch_for_receiver(
+    config: &ClientConfig,
+    server_config: &mut ServerConfig,
+) {
+    if config.only_write_batch() {
+        server_config.flags.only_write_batch = true;
+        server_config.flags.dry_run = true;
+    }
+}
+
 /// Applies common server flags from client configuration to a server config.
 ///
 /// Sets the fields that are shared across both SSH and daemon transfer paths
