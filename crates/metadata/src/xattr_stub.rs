@@ -83,6 +83,7 @@ pub fn apply_xattrs_from_list(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::xattr_send::XattrRole;
     use std::path::Path;
 
     #[test]
@@ -105,7 +106,7 @@ mod tests {
     #[test]
     fn read_xattrs_for_wire_returns_empty_list() {
         let path = Path::new("/nonexistent/file");
-        let result = read_xattrs_for_wire(path, &XattrSendOptions::default()).unwrap();
+        let result = read_xattrs_for_wire(path, &XattrSendOptions::new(XattrRole::Sender)).unwrap();
         assert!(result.is_empty());
     }
 
@@ -117,7 +118,7 @@ mod tests {
             am_root: true,
             preserve_xattrs: 2,
             checksum_seed: 42,
-            ..XattrSendOptions::default()
+            ..XattrSendOptions::new(XattrRole::Sender)
         };
         let result = read_xattrs_for_wire(path, &opts).unwrap();
         assert!(result.is_empty());

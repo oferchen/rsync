@@ -50,7 +50,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use metadata::{XattrSendOptions, read_xattrs_for_wire};
+use metadata::{XattrRole, XattrSendOptions, read_xattrs_for_wire};
 use tempfile::tempdir;
 
 /// Bare stream name written via the NTFS `path:streamname` path syntax.
@@ -131,7 +131,7 @@ fn assert_wire_entry(path: &Path, wire_name: &[u8], expected: &[u8]) {
         path,
         &XattrSendOptions {
             am_root: true,
-            ..XattrSendOptions::default()
+            ..XattrSendOptions::new(XattrRole::Sender)
         },
     )
     .expect("read xattrs back");
@@ -265,7 +265,7 @@ fn ads_multi_stream_round_trips() {
         &src_file,
         &XattrSendOptions {
             am_root: true,
-            ..XattrSendOptions::default()
+            ..XattrSendOptions::new(XattrRole::Sender)
         },
     )
     .expect("list source streams");
