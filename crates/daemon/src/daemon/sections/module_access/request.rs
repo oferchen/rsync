@@ -32,6 +32,19 @@ struct ModuleRequestContext<'a> {
     /// upstream: clientserver.c:583-584 - the daemon writes `early_input` to
     /// the pre-xfer exec script's stdin.
     early_input_data: Option<Vec<u8>>,
+    /// Digest name list the client advertised in its `@RSYNCD:` greeting.
+    ///
+    /// upstream: clientserver.c:199-211 - `exchange_protocols()` stores it in the
+    /// `daemon_auth_choices` global, which `negotiate_daemon_auth()` consumes at
+    /// authentication time (compat.c:857).
+    client_digests: Option<&'a str>,
+    /// Set when the session must end the way upstream's forked child would
+    /// `exit_cleanup()`, carrying that exit code.
+    ///
+    /// The listening parent is never torn down by it: only the single-session
+    /// modes (stdio, inetd), where the process *is* the connection, surface it as
+    /// the process exit status.
+    session_exit_code: &'a mut Option<ExitCode>,
     /// Typed FSM state tracking the connection lifecycle phase.
     ///
     /// Every phase transition goes through `ConnectionState::transition()`,
@@ -448,7 +461,18 @@ fn handle_authentication(
         ctx.peer_ip,
         ctx.messages,
         protocol_version,
+        ctx.client_digests,
     )? {
+        AuthenticationStatus::DigestUnsupported => {
+            // upstream: compat.c:875 - `exit_cleanup(RERR_UNSUPPORTED)` right
+            // after the refusal line, with no challenge and no auth-failure log.
+            *ctx.session_exit_code = Some(UNSUPPORTED_AUTH_DIGEST_EXIT_CODE);
+            ctx.conn_state = ctx
+                .conn_state
+                .transition(ConnectionState::Closing)
+                .map_err(transition_error)?;
+            Ok(None)
+        }
         AuthenticationStatus::Denied => {
             if let Some(log) = ctx.log_sink {
                 log_module_auth_failure(log, ctx.effective_host(), ctx.peer_ip, ctx.request);
@@ -539,6 +563,8 @@ fn respond_with_module_request(
     reverse_lookup: bool,
     messages: &LegacyMessageCache,
     negotiated_protocol: Option<ProtocolVersion>,
+    client_digests: Option<&str>,
+    session_exit_code: &mut Option<ExitCode>,
     early_input_data: Option<Vec<u8>>,
     conn_state: ConnectionState,
 ) -> io::Result<()> {
@@ -602,6 +628,8 @@ fn respond_with_module_request(
         log_sink,
         messages,
         early_input_data,
+        client_digests,
+        session_exit_code,
         conn_state,
     };
 

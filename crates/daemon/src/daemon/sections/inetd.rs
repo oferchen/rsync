@@ -122,7 +122,7 @@ fn serve_inetd_session(options: RuntimeOptions) -> Result<(), DaemonError> {
         log_connection(log, peer_host.as_deref(), peer_addr);
     }
 
-    handle_legacy_session(
+    let outcome = handle_legacy_session(
         stream,
         peer_addr,
         LegacySessionParams {
@@ -134,17 +134,9 @@ fn serve_inetd_session(options: RuntimeOptions) -> Result<(), DaemonError> {
             peer_host,
             reverse_lookup,
         },
-    )
-    .map_err(|error| {
-        DaemonError::new(
-            SOCKET_IO_EXIT_CODE,
-            rsync_error!(
-                SOCKET_IO_EXIT_CODE,
-                format!("inetd daemon session failed: {error}")
-            )
-            .with_role(Role::Daemon),
-        )
-    })
+    );
+
+    single_session_exit(outcome, "inetd daemon session failed")
 }
 
 #[cfg(test)]

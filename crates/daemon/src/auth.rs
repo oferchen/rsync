@@ -30,7 +30,10 @@
 //!
 //! - **File permissions**: Must be readable only by owner (mode 0600 on Unix)
 //! - **Password storage**: Plain text (matching upstream rsync behavior)
-//! - **Challenge generation**: Uses cryptographically secure random + timestamp + PID
+//! - **Challenge generation**: Peer address + timestamp + PID, hashed with the
+//!   negotiated digest - upstream's `gen_challenge()` (authenticate.c:62-81)
+//!   verbatim. It is deliberately not a CSPRNG: matching upstream matters more
+//!   than the unobservable difference.
 //!
 //! # Supported Hash Algorithms
 //!
@@ -42,14 +45,19 @@
 //! - MD5 (historical default)
 //! - MD4 (legacy compatibility)
 //!
-//! The server advertises supported algorithms in the `@RSYNCD:` greeting, and clients
-//! select the strongest mutually supported algorithm.
+//! Both sides advertise their list in the `@RSYNCD:` greeting. A client picks the
+//! entry of the server's list that ranks highest in its own; a server takes the
+//! *first* entry of the client's list that it supports, so client preference wins
+//! (upstream: compat.c:333-356 `parse_negotiate_str`, whose `am_server` branch
+//! stops at the first acceptable client choice). The single winner then drives both
+//! the challenge and the verification.
 //!
 //! # Examples
 //!
 //! ## Server-side authentication
 //!
 //! ```no_run
+//! use core::auth::{DaemonAuthDigest, negotiate_server_daemon_digest};
 //! use daemon::auth::{ChallengeGenerator, SecretsFile, verify_client_response};
 //! use std::net::IpAddr;
 //! use std::path::Path;
@@ -58,16 +66,20 @@
 //! // Load secrets file
 //! let secrets = SecretsFile::from_file(Path::new("/etc/rsyncd.secrets"))?;
 //!
+//! // Pin one digest for the whole exchange, from the client's greeting list.
+//! let digest = negotiate_server_daemon_digest(Some("sha512 md5"), 31)
+//!     .expect("client offered a supported digest");
+//!
 //! // Generate challenge
 //! let peer_ip: IpAddr = "192.168.1.1".parse().unwrap();
-//! let challenge = ChallengeGenerator::generate(peer_ip, Some(31));
+//! let challenge = ChallengeGenerator::generate(peer_ip, digest);
 //!
 //! // Client sends: "alice <response>"
 //! let client_response = "alice dGVzdHJlc3BvbnNl"; // Base64-encoded hash
 //!
-//! // Verify
+//! // Verify with the same negotiated digest
 //! if let Some(password) = secrets.lookup("alice") {
-//!     if verify_client_response(password.as_bytes(), &challenge, "dGVzdHJlc3BvbnNl", Some(31)) {
+//!     if verify_client_response(password.as_bytes(), &challenge, "dGVzdHJlc3BvbnNl", digest) {
 //!         println!("Authentication successful");
 //!     }
 //! }
@@ -96,8 +108,8 @@
 //!
 //! ## Improvements over upstream rsync
 //!
-//! - **Constant-time comparison**: Prevents timing attacks during response verification
-//! - **Cryptographically secure random**: Uses `getrandom` for challenge generation
+//! - **Constant-time comparison**: Prevents timing attacks during response
+//!   verification, where upstream uses a plain `strcmp()`. Not wire-observable.
 //!
 //! ## Known limitations (matching upstream)
 //!
@@ -118,8 +130,9 @@
 //! flow co-located with the module request handling code.
 
 pub use core::auth::{
-    DaemonAuthDigest, SUPPORTED_DAEMON_DIGESTS,
+    DaemonAuthDigest, NoMutualDaemonAuthDigest, SUPPORTED_DAEMON_DIGESTS,
     compute_daemon_auth_response as compute_auth_response, digests_for_protocol,
+    negotiate_server_daemon_digest, supported_daemon_digest_list,
     verify_daemon_auth_response as verify_client_response,
 };
 
@@ -129,10 +142,6 @@ use std::io;
 use std::net::IpAddr;
 use std::path::Path;
 use std::time::{SystemTime, UNIX_EPOCH};
-
-use base64::Engine as _;
-use base64::engine::general_purpose::STANDARD_NO_PAD;
-use checksums::strong::{Md4, Md5};
 
 /// Generates authentication challenges for daemon mode.
 ///
@@ -153,26 +162,27 @@ impl ChallengeGenerator {
     /// - Timestamp microseconds (4 bytes)
     /// - Process ID (4 bytes)
     ///
-    /// The digest algorithm depends on the negotiated protocol version:
-    /// - Protocol >= 30: MD5
-    /// - Protocol < 30: MD4
+    /// `digest` is the algorithm fixed by [`negotiate_server_daemon_digest`]; the
+    /// same one must verify the response.
     ///
-    /// upstream: compat.c:858 -- `protocol_version >= 30 ? "md5" : "md4"`
+    /// upstream: authenticate.c:76 `gen_challenge()` hashes the buffer with
+    /// `valid_auth_checksums.negotiated_nni`.
     ///
     /// # Examples
     ///
     /// ```
+    /// use core::auth::DaemonAuthDigest;
     /// use daemon::auth::ChallengeGenerator;
     /// use std::net::IpAddr;
     ///
     /// let peer_ip: IpAddr = "192.168.1.1".parse().unwrap();
-    /// let challenge = ChallengeGenerator::generate(peer_ip, Some(32));
+    /// let challenge = ChallengeGenerator::generate(peer_ip, DaemonAuthDigest::Md5);
     ///
     /// // Challenge is base64-encoded hash (22 characters without padding)
     /// assert_eq!(challenge.len(), 22);
     /// ```
     #[must_use]
-    pub fn generate(peer_ip: IpAddr, protocol_version: Option<u8>) -> String {
+    pub fn generate(peer_ip: IpAddr, digest: DaemonAuthDigest) -> String {
         let mut input = [0u8; 32];
 
         // First 16 bytes: IP address
@@ -194,18 +204,7 @@ impl ChallengeGenerator {
         let pid = std::process::id();
         input[24..28].copy_from_slice(&pid.to_le_bytes());
 
-        // Hash and encode using protocol-appropriate digest
-        let version = protocol_version.unwrap_or(32);
-        let digest = if version >= 30 {
-            let mut hasher = Md5::new();
-            hasher.update(&input);
-            hasher.finalize().to_vec()
-        } else {
-            let mut hasher = Md4::new();
-            hasher.update(&input);
-            hasher.finalize().to_vec()
-        };
-        STANDARD_NO_PAD.encode(digest)
+        digest.base64_digest(&[&input])
     }
 }
 
@@ -414,7 +413,7 @@ mod tests {
     #[test]
     fn challenge_generator_produces_valid_base64() {
         let peer_ip: IpAddr = "192.168.1.1".parse().unwrap();
-        let challenge = ChallengeGenerator::generate(peer_ip, Some(32));
+        let challenge = ChallengeGenerator::generate(peer_ip, DaemonAuthDigest::Md5);
 
         // MD5 hash is 16 bytes, base64 without padding is 22 characters
         assert_eq!(challenge.len(), 22);
@@ -430,7 +429,7 @@ mod tests {
     #[test]
     fn challenge_generator_produces_valid_base64_legacy_protocol() {
         let peer_ip: IpAddr = "192.168.1.1".parse().unwrap();
-        let challenge = ChallengeGenerator::generate(peer_ip, Some(29));
+        let challenge = ChallengeGenerator::generate(peer_ip, DaemonAuthDigest::Md4);
 
         // MD4 hash is also 16 bytes, base64 without padding is 22 characters
         assert_eq!(challenge.len(), 22);
@@ -445,12 +444,12 @@ mod tests {
     #[test]
     fn challenge_generator_produces_unique_values() {
         let peer_ip: IpAddr = "10.0.0.1".parse().unwrap();
-        let challenge1 = ChallengeGenerator::generate(peer_ip, Some(32));
+        let challenge1 = ChallengeGenerator::generate(peer_ip, DaemonAuthDigest::Md5);
 
         // Retry until the microsecond timestamp changes (bounded)
         let mut challenge2 = challenge1.clone();
         for i in 0..200 {
-            challenge2 = ChallengeGenerator::generate(peer_ip, Some(32));
+            challenge2 = ChallengeGenerator::generate(peer_ip, DaemonAuthDigest::Md5);
             if challenge2 != challenge1 {
                 break;
             }
@@ -524,15 +523,13 @@ mod tests {
         let password = b"mysecret";
         let challenge = "test_challenge";
 
-        // Compute response using MD5 (protocol >= 30 default)
         let response = compute_auth_response(password, challenge, DaemonAuthDigest::Md5);
 
-        // Verify should succeed with protocol 31
         assert!(verify_client_response(
             password,
             challenge,
             &response,
-            Some(31)
+            DaemonAuthDigest::Md5
         ));
     }
 
@@ -549,7 +546,7 @@ mod tests {
             wrong_password,
             challenge,
             &response,
-            Some(31),
+            DaemonAuthDigest::Md5,
         ));
     }
 
@@ -566,150 +563,55 @@ mod tests {
             password,
             challenge2,
             &response,
-            Some(31)
+            DaemonAuthDigest::Md5
         ));
     }
 
+    /// Every advertised digest must complete a full challenge/response round
+    /// trip when it is the one negotiation picked.
     #[test]
-    fn verify_client_response_supports_multiple_algorithms() {
-        let password = b"test";
-        let challenge = "ch";
-
-        // Test all supported algorithms (no protocol version restriction)
-        for &digest in SUPPORTED_DAEMON_DIGESTS {
-            let response = compute_auth_response(password, challenge, digest);
-            assert!(
-                verify_client_response(password, challenge, &response, None),
-                "Failed for digest: {digest:?}"
-            );
-        }
-    }
-
-    #[test]
-    fn verify_client_response_protocol_version_selects_correct_digest() {
-        let password = b"secret";
-        let challenge = "challenge";
-
-        // Protocol >= 30 should use MD5
-        let md5_resp = compute_auth_response(password, challenge, DaemonAuthDigest::Md5);
-        assert!(verify_client_response(
-            password,
-            challenge,
-            &md5_resp,
-            Some(30)
-        ));
-
-        let md4_resp = compute_auth_response(password, challenge, DaemonAuthDigest::Md4);
-        assert!(!verify_client_response(
-            password,
-            challenge,
-            &md4_resp,
-            Some(30)
-        ));
-
-        // Protocol < 30 should use MD4
-        assert!(verify_client_response(
-            password,
-            challenge,
-            &md4_resp,
-            Some(29)
-        ));
-        assert!(!verify_client_response(
-            password,
-            challenge,
-            &md5_resp,
-            Some(29)
-        ));
-    }
-
-    /// Validates the complete auth round trip at protocol 32 for all
-    /// unambiguous-length digests (SHA-512, SHA-256, SHA-1) plus MD5 (the
-    /// protocol-appropriate choice for the ambiguous MD4/MD5 length at v32).
-    /// MD4 is intentionally excluded: its base64 length matches MD5, so the
-    /// verifier disambiguates by protocol version and picks MD5 for v32.
-    #[test]
-    fn full_auth_roundtrip_protocol_32_all_digests() {
+    fn verify_client_response_supports_every_negotiated_algorithm() {
         let password = b"daemon_secret";
-        let challenge = ChallengeGenerator::generate("10.0.0.1".parse().unwrap(), Some(32));
 
-        // Digests that should verify at protocol 32: all except MD4
-        let verifiable = [
-            DaemonAuthDigest::Sha512,
-            DaemonAuthDigest::Sha256,
-            DaemonAuthDigest::Sha1,
-            DaemonAuthDigest::Md5,
-        ];
-        for digest in verifiable {
+        for &digest in SUPPORTED_DAEMON_DIGESTS {
+            let challenge = ChallengeGenerator::generate("10.0.0.1".parse().unwrap(), digest);
+            assert_eq!(challenge.len(), digest.base64_len());
+
             let response = compute_auth_response(password, &challenge, digest);
             assert!(
-                verify_client_response(password, &challenge, &response, Some(32)),
-                "protocol 32 roundtrip failed for {digest:?}"
+                verify_client_response(password, &challenge, &response, digest),
+                "round trip failed for {digest:?}"
             );
         }
-
-        // MD4 should be rejected at protocol 32 (ambiguous length, verifier picks MD5)
-        let md4_resp = compute_auth_response(password, &challenge, DaemonAuthDigest::Md4);
-        assert!(
-            !verify_client_response(password, &challenge, &md4_resp, Some(32)),
-            "protocol 32 should reject MD4 (ambiguous length)"
-        );
     }
 
-    /// Validates the complete auth round trip at protocol 30 (MD5 + MD4).
-    /// MD5 must succeed and MD4 must be rejected for ambiguous responses.
+    /// A client cannot pick the algorithm it is checked against by choosing its
+    /// response length: MD4 and MD5 share a base64 length, yet only the digest
+    /// negotiation settled on may verify.
+    ///
+    /// upstream: authenticate.c:76,90 - both halves use
+    /// `valid_auth_checksums.negotiated_nni`.
     #[test]
-    fn full_auth_roundtrip_protocol_30() {
-        let password = b"p30_secret";
-        let challenge = ChallengeGenerator::generate("172.16.0.1".parse().unwrap(), Some(30));
+    fn verify_client_response_ignores_a_non_negotiated_digest() {
+        let password = b"secret";
+        let challenge =
+            ChallengeGenerator::generate("10.0.0.1".parse().unwrap(), DaemonAuthDigest::Md5);
 
-        // MD5 should succeed
-        let md5_resp = compute_auth_response(password, &challenge, DaemonAuthDigest::Md5);
-        assert!(
-            verify_client_response(password, &challenge, &md5_resp, Some(30)),
-            "protocol 30 should accept MD5"
-        );
-
-        // MD4 should be rejected (ambiguous length, protocol picks MD5)
         let md4_resp = compute_auth_response(password, &challenge, DaemonAuthDigest::Md4);
-        assert!(
-            !verify_client_response(password, &challenge, &md4_resp, Some(30)),
-            "protocol 30 should reject MD4"
-        );
-
-        // SHA-256 and SHA-512 have unambiguous lengths and should verify
-        let sha256_resp = compute_auth_response(password, &challenge, DaemonAuthDigest::Sha256);
-        assert!(
-            verify_client_response(password, &challenge, &sha256_resp, Some(30)),
-            "protocol 30 should accept SHA-256 (unambiguous length)"
-        );
+        assert!(!verify_client_response(
+            password,
+            &challenge,
+            &md4_resp,
+            DaemonAuthDigest::Md5
+        ));
 
         let sha512_resp = compute_auth_response(password, &challenge, DaemonAuthDigest::Sha512);
-        assert!(
-            verify_client_response(password, &challenge, &sha512_resp, Some(30)),
-            "protocol 30 should accept SHA-512 (unambiguous length)"
-        );
-    }
-
-    /// Validates the complete auth round trip at protocol 29 (MD4 only).
-    /// MD4 must succeed and MD5 must be rejected for ambiguous responses.
-    #[test]
-    fn full_auth_roundtrip_protocol_29() {
-        let password = b"p29_secret";
-        let challenge = ChallengeGenerator::generate("192.168.1.100".parse().unwrap(), Some(29));
-
-        // MD4 should succeed
-        let md4_resp = compute_auth_response(password, &challenge, DaemonAuthDigest::Md4);
-        assert!(
-            verify_client_response(password, &challenge, &md4_resp, Some(29)),
-            "protocol 29 should accept MD4"
-        );
-
-        // MD5 should be rejected (ambiguous length, protocol picks MD4)
-        let md5_resp = compute_auth_response(password, &challenge, DaemonAuthDigest::Md5);
-        assert!(
-            !verify_client_response(password, &challenge, &md5_resp, Some(29)),
-            "protocol 29 should reject MD5"
-        );
+        assert!(!verify_client_response(
+            password,
+            &challenge,
+            &sha512_resp,
+            DaemonAuthDigest::Md5
+        ));
     }
 
     /// Validates that `digests_for_protocol` returns the correct set for each era.
