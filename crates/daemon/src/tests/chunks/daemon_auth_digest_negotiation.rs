@@ -33,6 +33,7 @@ fn start_auth_digest_daemon(dir: &Path) -> (TcpStream, thread::JoinHandle<Result
         .arguments([
             OsString::from("--port"),
             OsString::from(port.to_string()),
+            OsString::from("--no-detach"),
             OsString::from("--once"),
             OsString::from("--config"),
             config_path.as_os_str().to_os_string(),
@@ -228,6 +229,7 @@ fn daemon_skips_digest_negotiation_when_the_module_needs_no_auth() {
         .arguments([
             OsString::from("--port"),
             OsString::from(port.to_string()),
+            OsString::from("--no-detach"),
             OsString::from("--once"),
             OsString::from("--config"),
             config_path.as_os_str().to_os_string(),
