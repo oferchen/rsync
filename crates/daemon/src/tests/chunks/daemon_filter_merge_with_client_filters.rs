@@ -56,7 +56,7 @@ fn daemon_exclude_overrides_client_include() {
         ])
         .build();
 
-    let (probe_stream, daemon_handle) = start_daemon(daemon_config, port, held_listener);
+    let (probe_stream, daemon_handle) = start_daemon_pending_no_detach(daemon_config, port, held_listener);
     drop(probe_stream);
 
     let rsync_url = format!("rsync://127.0.0.1:{port}/mod/");
@@ -140,7 +140,7 @@ fn daemon_exclude_directory_blocks_subtree() {
         ])
         .build();
 
-    let (probe_stream, daemon_handle) = start_daemon(daemon_config, port, held_listener);
+    let (probe_stream, daemon_handle) = start_daemon_pending_no_detach(daemon_config, port, held_listener);
     drop(probe_stream);
 
     let rsync_url = format!("rsync://127.0.0.1:{port}/mod/");
@@ -223,7 +223,7 @@ fn daemon_include_then_exclude_all_keeps_only_included() {
         ])
         .build();
 
-    let (probe_stream, daemon_handle) = start_daemon(daemon_config, port, held_listener);
+    let (probe_stream, daemon_handle) = start_daemon_pending_no_detach(daemon_config, port, held_listener);
     drop(probe_stream);
 
     let rsync_url = format!("rsync://127.0.0.1:{port}/mod/");
@@ -307,7 +307,7 @@ fn daemon_exclude_from_file_matches_inline_exclude() {
         ])
         .build();
 
-    let (probe_stream, daemon_handle) = start_daemon(daemon_config, port, held_listener);
+    let (probe_stream, daemon_handle) = start_daemon_pending_no_detach(daemon_config, port, held_listener);
     drop(probe_stream);
 
     let rsync_url = format!("rsync://127.0.0.1:{port}/mod/");

@@ -220,6 +220,73 @@ pub(super) fn write_executable_script(path: &Path, contents: &str) {
     fs::set_permissions(path, permissions).expect("set script permissions");
 }
 
+/// Forces a test-started daemon to stay in the foreground.
+///
+/// `RuntimeOptions::detach` defaults to `true` on Unix
+/// (`daemon/runtime_options/types.rs`), so a daemon started with the arguments
+/// a test typically supplies calls `become_daemon()`, which forks. The parent
+/// of that fork is the test process itself, and it exits with status 0
+/// (`platform::daemonize::become_daemon`). The test binary therefore terminates
+/// successfully before a single assertion runs and the harness records a pass -
+/// an unconditional `assert!(false)` in such a test still reports PASSED.
+///
+/// Appending `--no-detach` after the caller's arguments makes that impossible:
+/// detach flags are applied in argument order and the last one wins
+/// (`daemon/runtime_options/parsing.rs`), so no caller-supplied argument can
+/// re-enable detaching. A caller that asks for `--detach` outright is rejected
+/// loudly rather than silently corrected, because that request can only be a
+/// mistake in a test.
+///
+/// upstream: clientserver.c:1513 - `become_daemon()`
+fn force_no_detach(config: crate::DaemonConfig) -> crate::DaemonConfig {
+    assert!(
+        !config
+            .arguments()
+            .iter()
+            .any(|argument| argument == "--detach"),
+        "daemon tests must never pass --detach: become_daemon() forks and the \
+         parent - this test process - exits 0 before any assertion runs, so the \
+         test would report a pass without proving anything"
+    );
+
+    let mut arguments = config.arguments().to_vec();
+    arguments.push(OsString::from("--no-detach"));
+    crate::DaemonConfigBuilder::from(config)
+        .arguments(arguments)
+        .build()
+}
+
+/// Spawns an in-process daemon thread that is guaranteed to stay in the
+/// foreground.
+///
+/// This is the only supported way for a test to run [`run_daemon`] on a thread;
+/// spawning it directly reintroduces the silent-pass defect described on
+/// [`force_no_detach`].
+pub(super) fn spawn_daemon(
+    config: crate::DaemonConfig,
+) -> thread::JoinHandle<Result<(), crate::DaemonError>> {
+    spawn_daemon_thread(force_no_detach(config))
+}
+
+/// Spawns a daemon thread without forcing `--no-detach`.
+///
+/// Temporary: the tests still calling this predate the foreground requirement
+/// and are vacuous on Unix for the reason described on [`force_no_detach`].
+/// They are migrated to [`spawn_daemon`] in separate slices so the assertions
+/// they start executing can be triaged a few at a time. Do not add call sites -
+/// `tools/ci/check_daemon_no_detach.sh` fails when the population grows.
+pub(super) fn spawn_daemon_pending_no_detach(
+    config: crate::DaemonConfig,
+) -> thread::JoinHandle<Result<(), crate::DaemonError>> {
+    spawn_daemon_thread(config)
+}
+
+fn spawn_daemon_thread(
+    config: crate::DaemonConfig,
+) -> thread::JoinHandle<Result<(), crate::DaemonError>> {
+    thread::spawn(move || run_daemon(config))
+}
+
 /// Spawn a daemon thread and connect, failing fast if the daemon exits early.
 ///
 /// Returns the connected stream and the daemon thread handle.  If the daemon
@@ -230,6 +297,10 @@ pub(super) fn write_executable_script(path: &Path, contents: &str) {
 /// The pre-bound `TcpListener` is passed directly to the daemon via
 /// `DaemonConfig`, eliminating the TOCTOU race between port allocation and
 /// daemon bind that previously caused flaky failures under CI load.
+///
+/// The daemon is forced into the foreground by [`force_no_detach`], so a caller
+/// that omits `--no-detach` still gets a test that actually runs its
+/// assertions.
 pub(super) fn start_daemon(
     config: crate::DaemonConfig,
     port: u16,
@@ -238,12 +309,53 @@ pub(super) fn start_daemon(
     TcpStream,
     thread::JoinHandle<Result<(), crate::DaemonError>>,
 ) {
-    // Inject the already-bound listener into the config so the daemon uses it
-    // directly instead of binding a new socket to the same port.
-    let config = crate::DaemonConfigBuilder::from(config)
+    connect_started_daemon(
+        spawn_daemon(with_pre_bound_listener(config, held_listener)),
+        port,
+    )
+}
+
+/// [`start_daemon`] without the foreground guarantee.
+///
+/// Temporary, for the same reason and with the same migration plan as
+/// [`spawn_daemon_pending_no_detach`]. Every call site is a test whose
+/// assertions do not run on Unix; Windows is the only platform where they do,
+/// because `become_daemon()` is `#[cfg(unix)]` and `detach` defaults to
+/// `cfg!(unix)`. These tests deliberately stay enabled on Windows: the daemon
+/// is supported there, and until the migration lands Windows is the only
+/// platform whose result means anything.
+pub(super) fn start_daemon_pending_no_detach(
+    config: crate::DaemonConfig,
+    port: u16,
+    held_listener: TcpListener,
+) -> (
+    TcpStream,
+    thread::JoinHandle<Result<(), crate::DaemonError>>,
+) {
+    connect_started_daemon(
+        spawn_daemon_pending_no_detach(with_pre_bound_listener(config, held_listener)),
+        port,
+    )
+}
+
+/// Injects an already-bound listener so the daemon reuses it instead of binding
+/// a new socket to the same port.
+fn with_pre_bound_listener(
+    config: crate::DaemonConfig,
+    held_listener: TcpListener,
+) -> crate::DaemonConfig {
+    crate::DaemonConfigBuilder::from(config)
         .pre_bound_listener(held_listener)
-        .build();
-    let handle = thread::spawn(move || run_daemon(config));
+        .build()
+}
+
+fn connect_started_daemon(
+    handle: thread::JoinHandle<Result<(), crate::DaemonError>>,
+    port: u16,
+) -> (
+    TcpStream,
+    thread::JoinHandle<Result<(), crate::DaemonError>>,
+) {
     let stream = connect_to_daemon(port, Some(&handle));
     (stream, handle)
 }
