@@ -116,6 +116,13 @@ jobs:
       - name: Shared-ring removal guard (IUR-6.c)
         run: bash tools/ci/check_shared_ring_removal.sh
 
+      # A daemon started from a test with detach enabled forks, and the parent -
+      # the test process - exits 0 before any assertion runs, so the test passes
+      # without proving anything. This lint keeps the foreground guard in the
+      # daemon test support module intact and stops the bypasses from regrowing.
+      - name: Daemon no-detach guard
+        run: bash tools/ci/check_daemon_no_detach.sh
+
   # ===========================================================================
   # Unsafe SAFETY Comment Audit - Informational (non-blocking) check
   # ---------------------------------------------------------------------------

@@ -17,7 +17,7 @@ fn run_daemon_honours_max_sessions() {
         .build();
 
     drop(held_listener);
-    let handle = thread::spawn(move || run_daemon(config));
+    let handle = spawn_daemon_pending_no_detach(config);
 
     let expected_greeting = legacy_daemon_greeting();
     for _ in 0..2 {

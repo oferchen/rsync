@@ -71,7 +71,7 @@ fn daemon_checksum_push_detects_content_change_despite_matching_mtime() {
         ])
         .build();
 
-    let (probe_stream, daemon_handle) = start_daemon(daemon_config, port, held_listener);
+    let (probe_stream, daemon_handle) = start_daemon_pending_no_detach(daemon_config, port, held_listener);
     drop(probe_stream);
 
     // Phase 1: Initial push (seeds destination with original content)
