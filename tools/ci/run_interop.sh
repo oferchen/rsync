@@ -1872,27 +1872,56 @@ comp_run_scenario() {
 # - up:size-only (do_compression check matched 'z' in --size-only long-form arg)
 # - up:compress-zstd (daemon --compress-choice parsing, zstd token codec, session-scoped TokenReader)
 #
-# SSH interop test: oc-rsync client transfers to localhost via SSH.
+# Locate a remote shell for the SSH interop leg.
+# Prefers upstream's support/lsh.sh, a local-shell stand-in that honours the
+# same "rsh [options] host command" contract as ssh and is what upstream's own
+# testsuite uses, so the leg runs on hosts without a reachable sshd. Falls back
+# to a real ssh loopback when the upstream source tree is unavailable.
+# Prints "<remote shell command>|<hostname>" on success.
+# upstream: support/lsh.sh
+resolve_remote_shell() {
+  local lsh
+  lsh=$(find "$upstream_src_root" -type f -name lsh.sh 2>/dev/null | head -n1 || true)
+  if [[ -n "$lsh" ]]; then
+    # "lh" is lsh.sh's no-cd hostname, so the absolute paths rsync hands to
+    # the server command are used verbatim.
+    printf '%s|%s\n' "bash ${lsh}" "lh"
+    return 0
+  fi
+  if command -v ssh >/dev/null 2>&1 \
+      && ssh -o BatchMode=yes -o StrictHostKeyChecking=no -o ConnectTimeout=5 \
+           localhost true >/dev/null 2>&1; then
+    printf '%s|%s\n' "ssh -o BatchMode=yes -o StrictHostKeyChecking=no" "localhost"
+    return 0
+  fi
+  return 1
+}
+
+# Remote-shell interop test: oc-rsync client -> oc-rsync server.
+# The destination carries a host prefix, which is the only thing that makes
+# rsync fork the remote shell; with two local paths the transfer degenerates
+# into a plain local copy and the remote-shell path is never exercised.
 run_ssh_interop_test() {
-  local oc_bin=$1 src_dir=$2 work_dir=$3 log=$4
+  local oc_bin=$1 src_dir=$2 work_dir=$3 log=$4 rsh=$5 rhost=$6
 
   local ssh_dest="${work_dir}/ssh_dest"
   rm -rf "$ssh_dest"
   mkdir -p "$ssh_dest"
 
   local transfer_log="${log}.ssh-transfer"
-  if ! timeout "$hard_timeout" "$oc_bin" -av \
-      -e "ssh -o StrictHostKeyChecking=no" \
+  local rc=0
+  timeout "$hard_timeout" "$oc_bin" -av \
+      -e "$rsh" \
+      --rsync-path="$oc_bin" \
       --timeout=10 \
-      "${src_dir}/" "${ssh_dest}/" \
-      >"$transfer_log.out" 2>"$transfer_log.err"; then
-    local rc=$?
-    cat "$transfer_log.err" >> "$log"
-    echo "    FAIL (SSH transfer error, exit=$rc)"
+      "${src_dir}/" "${rhost}:${ssh_dest}/" \
+      >"$transfer_log.out" 2>"$transfer_log.err" || rc=$?
+  cat "$transfer_log.err" >> "$log"
+  if (( rc != 0 )); then
+    echo "    FAIL (remote-shell transfer error, exit=$rc)"
     echo "    stderr: $(head -5 "$transfer_log.err")"
     return 1
   fi
-  cat "$transfer_log.err" >> "$log"
 
   if ! comp_verify_transfer "$src_dir" "$ssh_dest"; then
     echo "    dest contents: $(find "$ssh_dest" -type f | sort | head -20)"
@@ -2461,8 +2490,12 @@ test_compressed_batch_delta_interop() {
 # file format does not record which compression algorithm was used - only
 # that compression was active (bit 8 in stream flags).
 #
-# This test uses --compress-choice=zlib to ensure the roundtrip works.
-# Without it, upstream may fail reading its own batch on zstd-enabled builds.
+# This test pins --compress-choice=zlib so the failure is attributable: it
+# removes zstd auto-negotiation as a variable and leaves only the dictionary
+# desync. The roundtrip still fails - upstream writes a compressed delta batch
+# it cannot read back ("inflate returned -3", token.c(665), exit 12), verified
+# on Linux and macOS against 3.4.4 - which is why this leg is carried as a
+# version-scoped known failure in tools/ci/known_failures.conf.
 #
 # Key upstream source references:
 #   batch.c:59-76     - stream flags bitmap (bit 8 = do_compression)
@@ -11592,13 +11625,15 @@ run_comprehensive_interop_case() {
 
   stop_upstream_daemon
 
-  # SSH interop (only if SSH is available)
-  if command -v ssh >/dev/null 2>&1; then
+  # Remote-shell interop (only if a remote shell is usable)
+  local rsh_spec
+  if rsh_spec=$(resolve_remote_shell); then
+    local rsh="${rsh_spec%|*}" rhost="${rsh_spec##*|}"
     total=$((total + 1))
-    echo "  [oc-rsync SSH] local SSH transfer${sfx}"
+    echo "  [oc-rsync SSH] remote-shell transfer to ${rhost}${sfx}"
     local ssh_dir="${workdir}/ssh-${tag}"
     mkdir -p "$ssh_dir"
-    if run_ssh_interop_test "$oc_client" "$local_src" "$ssh_dir" "$olf"; then
+    if run_ssh_interop_test "$oc_client" "$local_src" "$ssh_dir" "$olf" "$rsh" "$rhost"; then
       echo "    PASS"
       passed=$((passed + 1))
     else
