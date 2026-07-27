@@ -4661,134 +4661,153 @@ fn server_mode_flushes_writer_before_filter_list_read() {
     );
 }
 
+/// Builds `count` sub-lists of `per_segment` entries each.
+#[cfg(test)]
+fn scheduler_with(count: usize, per_segment: usize) -> super::segments::SegmentScheduler {
+    use super::segments::{PendingSegment, SegmentScheduler};
+
+    let segments = (0..count)
+        .map(|i| PendingSegment {
+            parent_dir_ndx: i as i32,
+            parent_flat_idx: i,
+            flist_start: 1 + i * per_segment,
+            count: per_segment,
+        })
+        .collect();
+    SegmentScheduler::new(segments)
+}
+
 #[test]
-fn segment_scheduler_dispatches_when_remaining_below_threshold() {
-    // When remaining entries known to the receiver are below
-    // MIN_FILECNT_LOOKAHEAD, the scheduler should dispatch the next segment.
-    use super::segments::{MIN_FILECNT_LOOKAHEAD, PendingSegment, SegmentScheduler};
+fn segment_scheduler_starts_with_an_empty_lookahead() {
+    // upstream flist.c:2545-2546 - send_file_list() adds the initial list's
+    // `used` to BOTH file_total and file_old_total, so the very first
+    // send_extra_file_list() call sees a backlog of 0 and always dispatches.
+    // The initial list is `cur_flist`, never lookahead.
+    let mut scheduler = scheduler_with(1, 500);
 
-    let seg = PendingSegment {
-        parent_dir_ndx: 0,
-        parent_flat_idx: 0,
-        flist_start: 10,
-        count: 500,
-    };
-    let mut scheduler = SegmentScheduler::new(vec![seg]);
-
-    // remaining = 13 (a small initial segment), well below 1000
-    let result = scheduler.next_if_needed(13);
+    assert_eq!(scheduler.lookahead_total(), 0);
     assert!(
-        result.is_some(),
-        "scheduler must dispatch when remaining ({}) < MIN_FILECNT_LOOKAHEAD ({})",
-        13,
-        MIN_FILECNT_LOOKAHEAD,
+        scheduler.next_to_send().is_some(),
+        "an empty backlog must always admit the next sub-list"
     );
 }
 
 #[test]
-fn segment_scheduler_blocks_when_remaining_at_threshold() {
-    // When remaining equals MIN_FILECNT_LOOKAHEAD, upstream's condition
-    // `file_total - file_old_total < at_least` is false (1000 < 1000 is false),
-    // so no dispatch should occur.
-    use super::segments::{MIN_FILECNT_LOOKAHEAD, PendingSegment, SegmentScheduler};
+fn segment_scheduler_stops_the_burst_once_the_backlog_is_reached() {
+    // upstream flist.c:2139 - `while (file_total - file_old_total < at_least)`
+    // is re-tested every iteration, and file_total grows by each sub-list it
+    // sends. Two 500-entry sub-lists reach exactly MIN_FILECNT_LOOKAHEAD, and
+    // `1000 < 1000` is false, so the third must not go out.
+    //
+    // The WHY: this is the whole of the pacing contract. A scheduler that
+    // ignored its own dispatches would hand out every sub-list in one burst,
+    // which an upstream receiver that throttles cannot absorb.
+    use super::segments::MIN_FILECNT_LOOKAHEAD;
 
-    let seg = PendingSegment {
-        parent_dir_ndx: 0,
-        parent_flat_idx: 0,
-        flist_start: 10,
-        count: 500,
-    };
-    let mut scheduler = SegmentScheduler::new(vec![seg]);
+    let mut scheduler = scheduler_with(3, MIN_FILECNT_LOOKAHEAD / 2);
 
-    let result = scheduler.next_if_needed(MIN_FILECNT_LOOKAHEAD);
+    assert!(scheduler.next_to_send().is_some(), "backlog 0");
     assert!(
-        result.is_none(),
-        "scheduler must NOT dispatch when remaining == MIN_FILECNT_LOOKAHEAD"
+        scheduler.next_to_send().is_some(),
+        "backlog {} is still below the threshold",
+        MIN_FILECNT_LOOKAHEAD / 2
+    );
+    assert_eq!(scheduler.lookahead_total(), MIN_FILECNT_LOOKAHEAD);
+    assert!(
+        scheduler.next_to_send().is_none(),
+        "backlog == MIN_FILECNT_LOOKAHEAD must block, matching `1000 < 1000` == false"
+    );
+    assert_eq!(scheduler.dispatched_count(), 2);
+}
+
+#[test]
+fn segment_scheduler_dispatches_one_sub_list_below_the_threshold() {
+    // A backlog one entry short of the threshold still admits a sub-list, even
+    // when that one overshoots: upstream tests the condition before sending,
+    // never the post-send total (flist.c:2139).
+    use super::segments::MIN_FILECNT_LOOKAHEAD;
+
+    let mut scheduler = scheduler_with(2, MIN_FILECNT_LOOKAHEAD - 1);
+
+    assert!(scheduler.next_to_send().is_some());
+    assert_eq!(scheduler.lookahead_total(), MIN_FILECNT_LOOKAHEAD - 1);
+    assert!(
+        scheduler.next_to_send().is_some(),
+        "backlog {} is one below the threshold, so one more sub-list goes out",
+        MIN_FILECNT_LOOKAHEAD - 1
+    );
+    assert!(
+        scheduler.next_to_send().is_none(),
+        "the overshooting sub-list closes the window"
     );
 }
 
 #[test]
-fn segment_scheduler_blocks_when_remaining_above_threshold() {
-    // When remaining exceeds MIN_FILECNT_LOOKAHEAD, no dispatch.
-    use super::segments::{MIN_FILECNT_LOOKAHEAD, PendingSegment, SegmentScheduler};
+fn segment_scheduler_resumes_when_the_receiver_finishes_a_sub_list() {
+    // upstream sender.c:247-251 - on the receiver's NDX_DONE the sender frees
+    // the oldest file-list and re-points file_old_total at the new cur_flist,
+    // which drops the backlog by exactly that list's entry count and lets the
+    // next send_extra_file_list() call push one more sub-list.
+    //
+    // The WHY: without this feedback the sender would stall forever once the
+    // backlog first hit the threshold - the mirror-image failure of the burst.
+    use super::segments::MIN_FILECNT_LOOKAHEAD;
 
-    let seg = PendingSegment {
-        parent_dir_ndx: 0,
-        parent_flat_idx: 0,
-        flist_start: 10,
-        count: 500,
-    };
-    let mut scheduler = SegmentScheduler::new(vec![seg]);
+    let half = MIN_FILECNT_LOOKAHEAD / 2;
+    let mut scheduler = scheduler_with(4, half);
 
-    let result = scheduler.next_if_needed(MIN_FILECNT_LOOKAHEAD + 1);
-    assert!(
-        result.is_none(),
-        "scheduler must NOT dispatch when remaining > MIN_FILECNT_LOOKAHEAD"
+    while scheduler.next_to_send().is_some() {}
+    assert_eq!(
+        scheduler.dispatched_count(),
+        2,
+        "burst stops at the backlog"
     );
-}
 
-#[test]
-fn segment_scheduler_boundary_dispatches_at_999() {
-    // remaining = 999, which is < 1000, so dispatch must occur.
-    use super::segments::{MIN_FILECNT_LOOKAHEAD, PendingSegment, SegmentScheduler};
-
-    let seg = PendingSegment {
-        parent_dir_ndx: 0,
-        parent_flat_idx: 0,
-        flist_start: 10,
-        count: 500,
-    };
-    let mut scheduler = SegmentScheduler::new(vec![seg]);
-
-    let result = scheduler.next_if_needed(MIN_FILECNT_LOOKAHEAD - 1);
+    scheduler.retire_current_flist();
+    assert_eq!(scheduler.lookahead_total(), half);
     assert!(
-        result.is_some(),
-        "scheduler must dispatch when remaining == {} (one below threshold)",
-        MIN_FILECNT_LOOKAHEAD - 1,
+        scheduler.next_to_send().is_some(),
+        "retiring a sub-list must free room for the next one"
     );
+    assert!(scheduler.next_to_send().is_none());
+    assert_eq!(scheduler.dispatched_count(), 3);
 }
 
 #[test]
 fn segment_scheduler_many_files_deadlock_scenario() {
-    // Regression test for the many-files deadlock (#5085).
-    // Scenario: 1013 total entries, 13 in the initial segment, 1000 in a
-    // pending sub-list. Using dispatched_entry_count (13) instead of
-    // file_list.len() (1013) gives remaining=13 which triggers dispatch.
-    use super::segments::{PendingSegment, SegmentScheduler};
+    // Regression test for the many-files deadlock (#5085): a 13-entry initial
+    // list followed by a single 1000-entry sub-list. The initial list is
+    // cur_flist, so the backlog is 0 and the sub-list must go out; an earlier
+    // revision compared MIN_FILECNT_LOOKAHEAD against the total file count
+    // (1013), blocked, and never sent NDX_FLIST_EOF.
+    let mut scheduler = scheduler_with(1, 1000);
 
-    let seg = PendingSegment {
-        parent_dir_ndx: 1,
-        parent_flat_idx: 0,
-        flist_start: 13,
-        count: 1000,
-    };
-    let mut scheduler = SegmentScheduler::new(vec![seg]);
-
-    // Bug: old code computed remaining = file_list.len() - transferred = 1013 - 0 = 1013
-    // which is >= 1000, so no dispatch occurred. Deadlock.
-    let remaining_buggy = 1013usize;
-    let result_buggy = scheduler.next_if_needed(remaining_buggy);
     assert!(
-        result_buggy.is_none(),
-        "with total file count (buggy), scheduler incorrectly blocks"
+        scheduler.next_to_send().is_some(),
+        "the sole sub-list must be dispatched or the transfer deadlocks"
     );
+    assert!(scheduler.is_exhausted());
+}
 
-    // Fix: remaining = dispatched_entry_count - transferred = 13 - 0 = 13
-    // Reset scheduler for the corrected test.
-    let seg = PendingSegment {
-        parent_dir_ndx: 1,
-        parent_flat_idx: 0,
-        flist_start: 13,
-        count: 1000,
-    };
-    let mut scheduler = SegmentScheduler::new(vec![seg]);
+#[test]
+fn segment_scheduler_forced_drain_ignores_the_backlog() {
+    // The end-of-transfer flush must land every sub-list before NDX_FLIST_EOF:
+    // the receiver will not send its final NDX_DONE until it sees EOF, so no
+    // one is left to drain the backlog.
+    use super::segments::MIN_FILECNT_LOOKAHEAD;
 
-    let remaining_fixed = 13usize;
-    let result_fixed = scheduler.next_if_needed(remaining_fixed);
-    assert!(
-        result_fixed.is_some(),
-        "with dispatched_entry_count (fixed), scheduler correctly dispatches"
-    );
+    let mut scheduler = scheduler_with(5, MIN_FILECNT_LOOKAHEAD);
+
+    assert!(scheduler.next_to_send().is_some());
+    assert!(scheduler.next_to_send().is_none(), "throttled after one");
+
+    let mut forced = 0;
+    while scheduler.next_forced().is_some() {
+        forced += 1;
+    }
+    assert_eq!(forced, 4);
+    assert!(scheduler.is_exhausted());
+    assert_eq!(scheduler.dispatched_count(), 5);
 }
 
 #[test]
