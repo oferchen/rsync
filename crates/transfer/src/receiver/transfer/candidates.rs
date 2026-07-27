@@ -375,14 +375,12 @@ impl ReceiverContext {
                     // up-to-date file; the attr-comparison may still surface a
                     // metadata-only row (perms/owner/group differing while
                     // size+mtime match).
-                    let mut unchanged_iflags = self.itemize_existing_flags(entry, Some(meta), 0);
-                    // upstream: generator.c:566-572 - ITEM_REPORT_XATTR when the
-                    // destination's xattrs differ from the sender's. Computed on
-                    // the -X itemize path only (matching upstream's lazy
-                    // get_xattr) and before the apply below overwrites them.
-                    if emit_itemize && has_xattrs && self.dest_xattrs_differ(entry, &file_path) {
-                        unchanged_iflags |= crate::generator::ItemFlags::ITEM_REPORT_XATTR;
-                    }
+                    // The `x` column is now part of itemize_existing_flags
+                    // itself (upstream generator.c:564-571), and this call
+                    // still runs before the apply below overwrites the
+                    // destination's xattrs.
+                    let unchanged_iflags =
+                        self.itemize_existing_flags(entry, &file_path, Some(meta), 0);
                     self.apply_no_change_metadata(
                         writer,
                         idx,
@@ -448,6 +446,7 @@ impl ReceiverContext {
             // report bits onto ITEM_TRANSFER.
             let base_iflags = self.itemize_existing_flags(
                 entry,
+                &file_path,
                 dest_meta.as_ref(),
                 crate::generator::ItemFlags::ITEM_TRANSFER,
             );
@@ -635,7 +634,7 @@ impl ReceiverContext {
                     } else {
                         ItemFlags::ITEM_TRANSFER
                     };
-                    self.itemize_existing_flags(entry, Some(&meta), base)
+                    self.itemize_existing_flags(entry, dest_path, Some(&meta), base)
                 }
                 Err(_) => new_iflags(ItemFlags::ITEM_TRANSFER),
             }
@@ -664,14 +663,21 @@ impl ReceiverContext {
     pub(in crate::receiver) fn itemize_existing_flags(
         &self,
         entry: &FileEntry,
+        path: &Path,
         dest_meta: Option<&fs::Metadata>,
         base: u32,
     ) -> u32 {
         use crate::generator::ItemFlags;
         let mut iflags = base;
         let Some(dest_meta) = dest_meta else {
-            // upstream: generator.c:578 - the `statret < 0` leg contributes only
-            // ITEM_IS_NEW; there is no destination stat to compare against.
+            // upstream: generator.c:572-576 - the `statret < 0` leg is not
+            // ITEM_IS_NEW alone: it first runs `xattr_diff(file, NULL, 1)`,
+            // which compares the sender's list against an empty destination
+            // (xattrs.c:555-561 sets `rec_cnt = 0` for a NULL `sxp`), so a
+            // brand-new file carrying xattrs reports the `x` column too.
+            if self.xattr_itemize_active() && self.dest_xattrs_differ(entry, None) {
+                iflags |= ItemFlags::ITEM_REPORT_XATTR;
+            }
             return iflags | ItemFlags::ITEM_IS_NEW;
         };
         // upstream: generator.c:521 - S_ISREG(file->mode) && F_LENGTH(file) != st_size
@@ -760,7 +766,25 @@ impl ReceiverContext {
                 }
             }
         }
+        // upstream: generator.c:564-571 - the last thing the `statret >= 0` leg
+        // does is a lazy `get_xattr(fnamecmp, sxp)` followed by
+        // `xattr_diff(file, sxp, 1)`. It runs for every itemized entry, not
+        // just for one that was skipped as up to date.
+        if self.xattr_itemize_active() && self.dest_xattrs_differ(entry, Some(path)) {
+            iflags |= ItemFlags::ITEM_REPORT_XATTR;
+        }
         iflags
+    }
+
+    /// Whether the `x` column's destination read should run at all.
+    ///
+    /// `preserve_xattrs` is the only gate upstream places *inside* `itemize()`
+    /// (`generator.c:564`); the `itemizing` test sits at each of its call sites
+    /// (`generator.c:1816`, `:1939`). Folding both in here keeps the extra
+    /// `listxattr`/`getxattr` pair off the no-itemize scan path, where oc calls
+    /// this function for its `ITEM_IS_NEW` answer alone.
+    fn xattr_itemize_active(&self) -> bool {
+        self.config.flags.xattrs && self.should_emit_itemize()
     }
 
     /// Whether the destination's extended attributes differ from the sender's,
@@ -774,7 +798,16 @@ impl ReceiverContext {
     /// pre-transfer destination. A sender with no xattrs differs exactly when
     /// the destination still carries some, which the empty-list case expresses
     /// without a second code path.
-    pub(in crate::receiver) fn dest_xattrs_differ(&self, entry: &FileEntry, path: &Path) -> bool {
+    ///
+    /// `path` is `None` for upstream's `xattr_diff(file, NULL, 1)`
+    /// (`generator.c:573`): there is no destination to read, so the sender's
+    /// list is compared against an empty one and the answer is simply "does
+    /// the sender carry any xattrs".
+    pub(in crate::receiver) fn dest_xattrs_differ(
+        &self,
+        entry: &FileEntry,
+        path: Option<&Path>,
+    ) -> bool {
         // upstream: xattrs.c:250-252 - `saw_xattr_filter` is a global consulted
         // on every `rsync_xal_get()` call, so the generator's destination read
         // screens names through the same `x`-modifier rules the sender applied
@@ -801,7 +834,16 @@ impl ReceiverContext {
             checksum_seed: self.checksum_seed,
         };
         let sender = self.resolve_xattr_list(entry).unwrap_or_default();
-        metadata::dest_xattrs_differ(&sender, path, &opts)
+        match path {
+            Some(path) => metadata::dest_xattrs_differ(&sender, path, &opts),
+            // upstream: xattrs.c:555-561 - a NULL `sxp` yields `rec_cnt = 0`,
+            // so the count test at :574 already decides the answer.
+            None => protocol::xattr::xattr_diff(
+                &sender,
+                &protocol::xattr::XattrList::default(),
+                self.checksum_seed,
+            ),
+        }
     }
 
     /// Emits the upstream size-bound SKIP notice for a candidate whose flist
@@ -1068,7 +1110,7 @@ mod itemize_order_tests {
         with_u.flags.times = true;
         with_u.flags.atimes = true;
         let ctx = ReceiverContext::new_for_test(&hs, with_u);
-        let flags = ctx.itemize_existing_flags(&entry, Some(&meta), 0);
+        let flags = ctx.itemize_existing_flags(&entry, &path, Some(&meta), 0);
         assert!(
             flags & ItemFlags::ITEM_REPORT_ATIME != 0,
             "atime row missing under -U: {flags:#06x}"
@@ -1082,7 +1124,7 @@ mod itemize_order_tests {
         without_u.flags.times = true;
         without_u.flags.atimes = false;
         let ctx = ReceiverContext::new_for_test(&hs, without_u);
-        let flags = ctx.itemize_existing_flags(&entry, Some(&meta), 0);
+        let flags = ctx.itemize_existing_flags(&entry, &path, Some(&meta), 0);
         assert!(
             flags & ItemFlags::ITEM_REPORT_ATIME == 0,
             "atime row must be gated on --atimes: {flags:#06x}"
@@ -1128,19 +1170,21 @@ mod itemize_order_tests {
         no_times.flags.times = false;
         let ctx = ReceiverContext::new_for_test(&hs, no_times);
 
-        let transfer = ctx.itemize_existing_flags(&entry, Some(&meta), ItemFlags::ITEM_TRANSFER);
+        let transfer =
+            ctx.itemize_existing_flags(&entry, &path, Some(&meta), ItemFlags::ITEM_TRANSFER);
         assert!(
             transfer & ItemFlags::ITEM_REPORT_TIME != 0,
             "a transfer without --times must report the time as changed: {transfer:#06x}"
         );
 
-        let local = ctx.itemize_existing_flags(&entry, Some(&meta), ItemFlags::ITEM_LOCAL_CHANGE);
+        let local =
+            ctx.itemize_existing_flags(&entry, &path, Some(&meta), ItemFlags::ITEM_LOCAL_CHANGE);
         assert!(
             local & ItemFlags::ITEM_REPORT_TIME != 0,
             "ITEM_LOCAL_CHANGE is the second half of upstream's first conjunct: {local:#06x}"
         );
 
-        let metadata_only = ctx.itemize_existing_flags(&entry, Some(&meta), 0);
+        let metadata_only = ctx.itemize_existing_flags(&entry, &path, Some(&meta), 0);
         assert!(
             metadata_only & ItemFlags::ITEM_REPORT_TIME == 0,
             "an attribute-only row is neither a transfer nor a local change: {metadata_only:#06x}"
@@ -1150,10 +1194,105 @@ mod itemize_order_tests {
         let mut with_times = itemize_client_config();
         with_times.flags.times = true;
         let ctx = ReceiverContext::new_for_test(&hs, with_times);
-        let kept = ctx.itemize_existing_flags(&entry, Some(&meta), ItemFlags::ITEM_TRANSFER);
+        let kept = ctx.itemize_existing_flags(&entry, &path, Some(&meta), ItemFlags::ITEM_TRANSFER);
         assert!(
             kept & ItemFlags::ITEM_REPORT_TIME == 0,
             "--times with equal mtimes must leave the time column clear: {kept:#06x}"
+        );
+    }
+
+    /// upstream: generator.c:564-571 (`statret >= 0`) and :573-575
+    /// (`statret < 0`). Both legs of `itemize()` compare xattrs, so the `x`
+    /// column belongs on the *transfer* seed as much as on the up-to-date row.
+    ///
+    /// Why it matters: the comparison used to live at the quick-check skip site
+    /// alone, so `x` could only ever appear on a file that was NOT transferred.
+    /// A file whose data and xattrs both changed printed `>f.s.......` where
+    /// upstream prints `>f.s......x`.
+    ///
+    /// Linux-only: macOS attaches `com.apple.provenance` to every file, which
+    /// the sender and the generator-side read do not currently agree on (a
+    /// separate, pre-existing defect in the shared comparison), so the
+    /// destination-read half of this assertion is not stable there.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn itemize_existing_flags_reports_xattr_on_a_transfer() {
+        use crate::generator::ItemFlags;
+        use protocol::xattr::{XattrEntry, XattrList};
+
+        let dir = test_support::create_tempdir();
+        let path = dir.path().join("f.txt");
+        std::fs::write(&path, b"x").unwrap();
+        // The destination carries an xattr; the sender entry carries none, so
+        // upstream's `xattr_diff` reports a differing count.
+        let list = XattrList::with_entries(vec![XattrEntry::new(
+            b"user.itemize".to_vec(),
+            b"v".to_vec(),
+        )]);
+        if metadata::apply_xattrs_from_list(&path, &list, true, None).is_err() {
+            // A filesystem without user-namespace xattr support cannot
+            // exercise the comparison; skip rather than assert a false pass.
+            return;
+        }
+        let meta = std::fs::symlink_metadata(&path).unwrap();
+
+        let mut entry = FileEntry::new_file("f.txt".into(), 1, 0o644);
+        entry.set_mtime(1_600_000_000, 0);
+
+        let hs = handshake();
+        let mut with_x = itemize_client_config();
+        with_x.flags.times = true;
+        with_x.flags.xattrs = true;
+        let ctx = ReceiverContext::new_for_test(&hs, with_x);
+
+        let transfer =
+            ctx.itemize_existing_flags(&entry, &path, Some(&meta), ItemFlags::ITEM_TRANSFER);
+        assert!(
+            transfer & ItemFlags::ITEM_REPORT_XATTR != 0,
+            "a transferred file with differing xattrs must report `x`: {transfer:#06x}"
+        );
+
+        let skipped = ctx.itemize_existing_flags(&entry, &path, Some(&meta), 0);
+        assert!(
+            skipped & ItemFlags::ITEM_REPORT_XATTR != 0,
+            "the up-to-date row must keep reporting `x`: {skipped:#06x}"
+        );
+
+        // Without -X the destination is never read and the column stays clear.
+        let mut without_x = itemize_client_config();
+        without_x.flags.times = true;
+        without_x.flags.xattrs = false;
+        let ctx = ReceiverContext::new_for_test(&hs, without_x);
+        let off = ctx.itemize_existing_flags(&entry, &path, Some(&meta), ItemFlags::ITEM_TRANSFER);
+        assert!(
+            off & ItemFlags::ITEM_REPORT_XATTR == 0,
+            "the `x` column is gated on --xattrs: {off:#06x}"
+        );
+    }
+
+    /// upstream: generator.c:572-576. The `statret < 0` leg runs
+    /// `xattr_diff(file, NULL, 1)` before adding ITEM_IS_NEW, and a NULL `sxp`
+    /// means an empty receiver list (xattrs.c:555-561). A sender entry with no
+    /// xattrs must therefore leave the `x` column clear - otherwise every
+    /// brand-new file under `-X` would print `x` instead of `+`.
+    #[test]
+    fn itemize_existing_flags_absent_dest_reports_xattr_only_when_the_sender_has_some() {
+        use crate::generator::ItemFlags;
+
+        let dir = test_support::create_tempdir();
+        let path = dir.path().join("absent.txt");
+        let entry = FileEntry::new_file("absent.txt".into(), 1, 0o644);
+
+        let hs = handshake();
+        let mut with_x = itemize_client_config();
+        with_x.flags.xattrs = true;
+        let ctx = ReceiverContext::new_for_test(&hs, with_x);
+
+        let flags = ctx.itemize_existing_flags(&entry, &path, None, ItemFlags::ITEM_TRANSFER);
+        assert_eq!(
+            flags,
+            ItemFlags::ITEM_TRANSFER | ItemFlags::ITEM_IS_NEW,
+            "an absent destination with no sender xattrs is ITEM_IS_NEW alone: {flags:#06x}"
         );
     }
 
