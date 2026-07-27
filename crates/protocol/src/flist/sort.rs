@@ -16,7 +16,9 @@
 //! 4. Directory contents immediately follow the directory entry
 //!
 //! At protocol < 29, upstream uses plain lexicographic byte comparison
-//! without file-before-directory distinction or implicit trailing '/'.
+//! without file-before-directory distinction, implicit trailing '/', or the
+//! "."-sorts-first rule (that special case is gated on `t_PATH`, which pre-29
+//! never produces).
 //! upstream: flist.c:3258 - `protocol_version >= 29 ? t_PATH : t_ITEM`
 
 use std::cmp::Ordering;
@@ -97,16 +99,17 @@ pub fn compare_file_entries(a: &FileEntry, b: &FileEntry) -> Ordering {
 /// meaning directories are NOT treated specially - no implicit trailing
 /// slash, no files-before-dirs. This is a simple lexicographic sort.
 /// upstream: flist.c:3258 - `protocol_version >= 29 ? t_PATH : t_ITEM`
+///
+/// There is also NO "." sorts-first rule here. Upstream's special case
+/// (`flist.c:3275` and its `c2` twin at `:3287`) is gated on
+/// `type1 == t_PATH`, and `t_path` is `t_ITEM` below protocol 29, so the
+/// branch can never be taken. The root marker "." is compared as the plain
+/// byte 0x2E, which puts every name starting below 0x2E (`!"#$%&'()*+,-`
+/// and the control bytes) ahead of it. Sorting "." first regardless would
+/// shift every subsequent NDX against a real pre-29 peer.
 fn compare_with_keys_pre29(bytes_a: &[u8], bytes_b: &[u8]) -> Ordering {
-    // "." always comes first (even at protocol < 29)
-    match (bytes_a == b".", bytes_b == b".") {
-        (true, true) => return Ordering::Equal,
-        (true, false) => return Ordering::Less,
-        (false, true) => return Ordering::Greater,
-        (false, false) => {}
-    }
-
-    // Plain byte comparison - no file-before-dir, no implicit trailing '/'.
+    // Plain byte comparison - no file-before-dir, no implicit trailing '/',
+    // no "." special case.
     // upstream: f_name_cmp() with t_path = t_ITEM treats all entries identically.
     bytes_a.cmp(bytes_b)
 }
@@ -1022,20 +1025,73 @@ mod tests {
         assert_eq!(names, vec!["aardvark", "zebra.txt"]);
     }
 
-    /// Protocol < 29: "." still comes first.
+    /// Protocol < 29 has NO "."-sorts-first rule: "." is compared as the plain
+    /// byte 0x2E, so any name whose first byte is below 0x2E sorts BEFORE it.
+    ///
+    /// Upstream's special case (`flist.c:3275`, `:3287`) is gated on
+    /// `type1 == t_PATH`, and `t_path` is `t_ITEM` below protocol 29, so it can
+    /// never fire. Because "." is entry 0 of nearly every transfer
+    /// (`flist.c:2400`), hoisting it unconditionally would shift every later
+    /// NDX against a real pre-29 peer - wrong contents written under wrong
+    /// names, or "received non-regular file".
     #[test]
-    fn pre29_dot_first() {
-        let dot = make_dir(".");
-        let file = make_file("abc.txt");
-        let dot_bytes = dot.name_bytes();
-        let file_bytes = file.name_bytes();
+    fn pre29_dot_is_a_plain_byte_not_a_special_case() {
+        let dot = make_dir(".").name_bytes().to_vec();
+        // '!' (0x21), '-' (0x2D) and control bytes all sort below '.' (0x2E).
+        for earlier in ["!bang", "-dash", "+plus"] {
+            let other = make_file(earlier).name_bytes().to_vec();
+            assert_eq!(
+                compare_with_keys_pre29(&other, &dot),
+                Ordering::Less,
+                "{earlier} must sort before \".\" at protocol < 29"
+            );
+            assert_eq!(compare_with_keys_pre29(&dot, &other), Ordering::Greater);
+        }
+        // Names above 0x2E still sort after ".", as plain byte order dictates.
+        let later = make_file("abc.txt").name_bytes().to_vec();
+        assert_eq!(compare_with_keys_pre29(&dot, &later), Ordering::Less);
+        assert_eq!(compare_with_keys_pre29(&dot, &dot), Ordering::Equal);
+    }
+
+    /// Golden ordering captured from real upstream rsync 3.4.4 for the same
+    /// corpus, via `rsync --protocol=N -r --list-only`:
+    ///
+    /// ```text
+    /// protocol 28: !bang  -dash  .  abc.txt  sub  sub/x
+    /// protocol 32: .  !bang  -dash  abc.txt  sub  sub/x
+    /// ```
+    ///
+    /// At protocol 28 the "." root marker sits between `-dash` (0x2D) and
+    /// `abc.txt` (0x61) - exactly where plain byte order puts 0x2E. Only at
+    /// protocol 29+ is it hoisted to the front by the `t_PATH` special case.
+    #[test]
+    fn pre29_low_byte_name_sorts_ahead_of_dot_root() {
+        let build = || {
+            vec![
+                make_dir("."),
+                make_file("!bang"),
+                make_file("-dash"),
+                make_file("abc.txt"),
+                make_dir("sub"),
+                make_file("sub/x"),
+            ]
+        };
+
+        let mut pre29 = build();
+        sort_file_list(&mut pre29, false, true);
+        let names: Vec<&str> = pre29.iter().map(FileEntry::name).collect();
         assert_eq!(
-            compare_with_keys_pre29(&dot_bytes, &file_bytes),
-            Ordering::Less
+            names,
+            vec!["!bang", "-dash", ".", "abc.txt", "sub", "sub/x"]
         );
+
+        // Protocol 29+ keeps the "." special case (upstream flist.c:3275).
+        let mut modern = build();
+        sort_file_list(&mut modern, false, false);
+        let names: Vec<&str> = modern.iter().map(FileEntry::name).collect();
         assert_eq!(
-            compare_with_keys_pre29(&file_bytes, &dot_bytes),
-            Ordering::Greater
+            names,
+            vec![".", "!bang", "-dash", "abc.txt", "sub", "sub/x"]
         );
     }
 
