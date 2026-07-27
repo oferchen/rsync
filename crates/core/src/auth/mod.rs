@@ -222,13 +222,14 @@ pub fn compute_daemon_auth_response(
 /// upstream: compat.c:462 `get_default_nno_list()` walks
 /// `valid_auth_checksums_items[]` (checksum.c:71-84) in table order and joins the
 /// names with a single space. The list is never filtered by protocol version.
+///
+/// The names live in `protocol` because the client's `@RSYNCD:` greeting is built
+/// there and `protocol` sits below this crate. Deriving the string here instead
+/// would give the wire two producers that could drift apart;
+/// `advertised_digest_names_match_the_wire_table` pins them together.
 #[must_use]
 pub fn supported_daemon_digest_list() -> String {
-    SUPPORTED_DAEMON_DIGESTS
-        .iter()
-        .map(|digest| digest.name())
-        .collect::<Vec<_>>()
-        .join(" ")
+    protocol::daemon_auth_digest_list()
 }
 
 /// No digest offered by the client is supported by this implementation.
@@ -406,6 +407,21 @@ mod tests {
     #[test]
     fn advertised_digest_list_matches_upstream_order() {
         assert_eq!(supported_daemon_digest_list(), "sha512 sha256 sha1 md5 md4");
+    }
+
+    // The advertised names are spelled in `protocol` so the client greeting can
+    // reach them, while negotiation preference lives here in
+    // `SUPPORTED_DAEMON_DIGESTS`. The two orderings are the same fact, and a
+    // digest added to one but not the other would either be advertised and then
+    // refused, or supported and never offered. Neither is detectable from the
+    // list string alone, so compare the tables element by element.
+    #[test]
+    fn advertised_digest_names_match_the_wire_table() {
+        let preferred: Vec<&str> = SUPPORTED_DAEMON_DIGESTS
+            .iter()
+            .map(|digest| digest.name())
+            .collect();
+        assert_eq!(preferred, protocol::DAEMON_AUTH_DIGEST_NAMES.to_vec());
     }
 
     #[test]

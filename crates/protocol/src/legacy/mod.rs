@@ -47,7 +47,11 @@ pub use bytes::{
 pub use greeting::write_legacy_daemon_greeting;
 #[allow(unused_imports)] // REASON: convenience re-export; not all items used in every consumer
 pub use greeting::{
-    DigestListTokens, LegacyDaemonGreeting, LegacyDaemonGreetingOwned, MissingGreetingToken,
+    DAEMON_AUTH_DIGEST_NAMES, DigestListTokens, LegacyDaemonGreeting, LegacyDaemonGreetingOwned,
+    MissingGreetingToken, daemon_auth_digest_list, write_daemon_auth_digest_list,
+};
+#[allow(unused_imports)] // REASON: convenience re-export; not all items used in every consumer
+pub use greeting::{
     format_legacy_daemon_greeting, is_version_banner, missing_greeting_token,
     parse_legacy_daemon_greeting, parse_legacy_daemon_greeting_details,
     parse_legacy_daemon_greeting_owned,

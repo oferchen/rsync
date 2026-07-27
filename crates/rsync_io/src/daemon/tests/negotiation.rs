@@ -1,9 +1,9 @@
 use super::super::*;
-use super::common::MemoryTransport;
+use super::common::{MemoryTransport, client_greeting};
 use crate::RemoteProtocolAdvertisement;
 use protocol::{
     LEGACY_DAEMON_PREFIX_LEN, NegotiationError, NegotiationPrologue, NegotiationPrologueSniffer,
-    ProtocolVersion, format_legacy_daemon_greeting,
+    ProtocolVersion,
 };
 use std::io::{self, Read, Write};
 
@@ -31,7 +31,7 @@ fn negotiate_legacy_daemon_session_exchanges_banners() {
     assert!(!handshake.local_protocol_was_capped());
 
     let transport = handshake.into_stream().into_inner();
-    assert_eq!(transport.written(), b"@RSYNCD: 31.0\n");
+    assert_eq!(transport.written(), client_greeting(31));
     assert_eq!(transport.flushes(), 1);
 }
 
@@ -68,7 +68,7 @@ fn negotiate_respects_requested_protocol_cap() {
     );
 
     let transport = parts.into_handshake().into_stream().into_inner();
-    assert_eq!(transport.written(), b"@RSYNCD: 30.0\n");
+    assert_eq!(transport.written(), client_greeting(30));
 }
 
 #[test]
@@ -97,7 +97,7 @@ fn negotiate_clamps_future_advertisement() {
     );
 
     let transport = parts.into_handshake().into_stream().into_inner();
-    assert_eq!(transport.written(), b"@RSYNCD: 32.0\n");
+    assert_eq!(transport.written(), client_greeting(32));
 }
 
 #[test]
@@ -167,7 +167,10 @@ fn into_parts_round_trips_legacy_handshake() {
 
     let transport = rebuilt.into_stream().into_inner();
     assert_eq!(transport.flushes(), 2);
-    assert_eq!(transport.written(), b"@RSYNCD: 31.0\n@RSYNCD: OK\n");
+    assert_eq!(
+        transport.written(),
+        [client_greeting(31), b"@RSYNCD: OK\n".to_vec()].concat()
+    );
 }
 
 #[test]
@@ -257,10 +260,7 @@ fn into_stream_parts_exposes_legacy_state() {
 
     let transport = stream.into_inner();
     assert_eq!(transport.flushes(), 1);
-    assert_eq!(
-        transport.written(),
-        format_legacy_daemon_greeting(negotiated).as_bytes()
-    );
+    assert_eq!(transport.written(), client_greeting(negotiated.as_u8()));
 }
 
 #[test]
@@ -320,9 +320,12 @@ fn from_stream_parts_rehydrates_legacy_handshake() {
     let transport = rehydrated.into_stream().into_inner();
     assert_eq!(transport.flushes(), 2);
 
-    let mut expected = format_legacy_daemon_greeting(negotiated);
-    expected.push_str("@RSYNCD: OK\n");
-    assert_eq!(transport.written(), expected.as_bytes());
+    let expected = [
+        client_greeting(negotiated.as_u8()),
+        b"@RSYNCD: OK\n".to_vec(),
+    ]
+    .concat();
+    assert_eq!(transport.written(), expected);
 }
 
 #[test]
@@ -349,9 +352,22 @@ fn legacy_handshake_round_trips_from_components() {
     assert_eq!(rebuilt.stream().buffered(), expected_buffer.as_slice());
 }
 
+/// The client must advertise its own digest set, never the server's.
+///
+/// The stub restricts its advertisement to `sha512 md5`, which is what makes
+/// this test able to fail: a client that echoed would answer `sha512 md5`.
+/// Measured against rsync 3.4.4 driven at a stub sending this exact greeting -
+/// it answers with the full five-name list below, byte for byte.
+///
+/// This matters beyond formatting. The advertised list states which digests we
+/// have agreed to accept, so echoing lets a malicious or compromised server
+/// narrow the negotiation to a set it chose - it can advertise only weak
+/// algorithms and have the client confirm them as its own, removing the
+/// client's floor. Upstream cannot do this even accidentally: the greeting goes
+/// out at clientserver.c:157, before the server's is read at clientserver.c:174.
 #[test]
-fn legacy_client_greeting_echoes_digest_list() {
-    let transport = MemoryTransport::new(b"@RSYNCD: 31.0 sha512 sha256 sha1 md5 md4\n");
+fn legacy_client_greeting_advertises_our_digests_not_the_servers() {
+    let transport = MemoryTransport::new(b"@RSYNCD: 31.0 sha512 md5\n");
 
     let handshake = negotiate_legacy_daemon_session(transport, ProtocolVersion::NEWEST)
         .expect("handshake should succeed");
@@ -369,6 +385,29 @@ fn legacy_client_greeting_echoes_digest_list() {
     );
 }
 
+/// The narrowest restriction a server can attempt: a single weak digest.
+///
+/// Verified against rsync 3.4.4 under a stub advertising exactly `md5` - its
+/// greeting is unchanged from the unrestricted case.
+#[test]
+fn legacy_client_greeting_ignores_a_single_weak_server_digest() {
+    let transport = MemoryTransport::new(b"@RSYNCD: 31.0 md5\n");
+
+    let handshake = negotiate_legacy_daemon_session(transport, ProtocolVersion::NEWEST)
+        .expect("handshake should succeed");
+
+    let inner = handshake.into_stream().into_inner();
+    assert_eq!(
+        inner.written(),
+        b"@RSYNCD: 31.0 sha512 sha256 sha1 md5 md4\n"
+    );
+}
+
+/// Capping the protocol changes the version field and nothing else.
+///
+/// upstream: compat.c:838-842 emits `get_default_nno_list()` verbatim, so the
+/// list is never filtered by version. Verified against rsync 3.4.4:
+/// `--protocol=29` sends `@RSYNCD: 29.0 sha512 sha256 sha1 md5 md4`.
 #[test]
 fn legacy_client_greeting_respects_protocol_cap() {
     let desired = ProtocolVersion::from_supported(29).expect("protocol 29 supported");
@@ -386,6 +425,6 @@ fn legacy_client_greeting_respects_protocol_cap() {
     let inner = stream.into_inner();
     assert_eq!(
         inner.written(),
-        b"@RSYNCD: 29.0 sha512 sha256\n@RSYNCD: OK\n"
+        b"@RSYNCD: 29.0 sha512 sha256 sha1 md5 md4\n@RSYNCD: OK\n"
     );
 }
