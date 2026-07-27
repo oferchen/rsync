@@ -81,7 +81,7 @@ fn daemon_compare_dest_push_skips_unchanged_files() {
         ])
         .build();
 
-    let (probe_stream, daemon_handle) = start_daemon(daemon_config, port, held_listener);
+    let (probe_stream, daemon_handle) = start_daemon_pending_no_detach(daemon_config, port, held_listener);
     drop(probe_stream);
 
     let mut source_arg = source_dir.clone().into_os_string();
@@ -207,7 +207,7 @@ fn daemon_link_dest_push_creates_hardlinks() {
         ])
         .build();
 
-    let (probe_stream, daemon_handle) = start_daemon(daemon_config, port, held_listener);
+    let (probe_stream, daemon_handle) = start_daemon_pending_no_detach(daemon_config, port, held_listener);
     drop(probe_stream);
 
     let mut source_arg = source_dir.clone().into_os_string();
@@ -358,7 +358,7 @@ fn daemon_copy_dest_push_copies_from_reference() {
         ])
         .build();
 
-    let (probe_stream, daemon_handle) = start_daemon(daemon_config, port, held_listener);
+    let (probe_stream, daemon_handle) = start_daemon_pending_no_detach(daemon_config, port, held_listener);
     drop(probe_stream);
 
     let mut source_arg = source_dir.clone().into_os_string();

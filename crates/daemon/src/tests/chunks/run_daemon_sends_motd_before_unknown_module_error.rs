@@ -26,7 +26,7 @@ fn run_daemon_sends_motd_before_unknown_module_error() {
         ])
         .build();
 
-    let (mut stream, handle) = start_daemon(config, port, held_listener);
+    let (mut stream, handle) = start_daemon_pending_no_detach(config, port, held_listener);
     let mut reader = BufReader::new(stream.try_clone().expect("clone stream"));
 
     let expected_greeting = legacy_daemon_greeting();

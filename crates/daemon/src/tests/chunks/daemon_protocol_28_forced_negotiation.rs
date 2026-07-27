@@ -33,7 +33,7 @@ fn daemon_protocol_28_forced_client_greeting_accepted() {
         ])
         .build();
 
-    let (mut stream, handle) = start_daemon(config, port, held_listener);
+    let (mut stream, handle) = start_daemon_pending_no_detach(config, port, held_listener);
     let mut reader = BufReader::new(stream.try_clone().expect("clone"));
 
     // Read daemon greeting (server speaks newest protocol)
@@ -146,7 +146,7 @@ fn daemon_protocol_28_forced_version_negotiation_downgrade() {
         ])
         .build();
 
-    let (mut stream, handle) = start_daemon(config, port, held_listener);
+    let (mut stream, handle) = start_daemon_pending_no_detach(config, port, held_listener);
     let mut reader = BufReader::new(stream.try_clone().expect("clone"));
 
     // Daemon sends its greeting (protocol 32 with digest list)
@@ -224,7 +224,7 @@ fn daemon_protocol_28_forced_client_api_push() {
         ])
         .build();
 
-    let (probe_stream, daemon_handle) = start_daemon(daemon_config, port, held_listener);
+    let (probe_stream, daemon_handle) = start_daemon_pending_no_detach(daemon_config, port, held_listener);
     drop(probe_stream);
 
     let mut source_arg = source_dir.clone().into_os_string();
@@ -323,7 +323,7 @@ fn daemon_protocol_28_forced_client_api_pull() {
         ])
         .build();
 
-    let (probe_stream, daemon_handle) = start_daemon(daemon_config, port, held_listener);
+    let (probe_stream, daemon_handle) = start_daemon_pending_no_detach(daemon_config, port, held_listener);
     drop(probe_stream);
 
     let rsync_url = format!("rsync://127.0.0.1:{port}/pullmod/");
@@ -424,7 +424,7 @@ fn daemon_protocol_28_forced_push_then_pull_roundtrip() {
         ])
         .build();
 
-    let (probe_stream, daemon_handle) = start_daemon(daemon_config, port, held_listener);
+    let (probe_stream, daemon_handle) = start_daemon_pending_no_detach(daemon_config, port, held_listener);
     drop(probe_stream);
 
     // Phase 1: Push at forced protocol 28
@@ -552,7 +552,7 @@ fn daemon_protocol_28_forced_module_listing_works() {
         ])
         .build();
 
-    let (mut stream, handle) = start_daemon(config, port, held_listener);
+    let (mut stream, handle) = start_daemon_pending_no_detach(config, port, held_listener);
     let mut reader = BufReader::new(stream.try_clone().expect("clone"));
 
     let mut line = String::new();

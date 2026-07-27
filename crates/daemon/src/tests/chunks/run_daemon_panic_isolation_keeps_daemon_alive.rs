@@ -27,7 +27,7 @@ fn run_daemon_panic_isolation_keeps_daemon_alive() {
         .build();
 
     drop(held_listener);
-    let daemon_handle = thread::spawn(move || run_daemon(config));
+    let daemon_handle = spawn_daemon_pending_no_detach(config);
 
     // The daemon refuses the garbage sent in place of the client's version
     // banner (upstream clientserver.c:180-184 `@ERROR: protocol startup

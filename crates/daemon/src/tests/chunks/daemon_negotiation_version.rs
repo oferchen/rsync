@@ -21,7 +21,7 @@ fn daemon_negotiation_version_sends_greeting_first() {
         ])
         .build();
 
-    let (stream, handle) = start_daemon(config, port, held_listener);
+    let (stream, handle) = start_daemon_pending_no_detach(config, port, held_listener);
     stream
         .set_read_timeout(Some(Duration::from_secs(5)))
         .expect("set timeout");
@@ -58,7 +58,7 @@ fn daemon_negotiation_version_greeting_format() {
         ])
         .build();
 
-    let (stream, handle) = start_daemon(config, port, held_listener);
+    let (stream, handle) = start_daemon_pending_no_detach(config, port, held_listener);
     let mut reader = BufReader::new(stream.try_clone().expect("clone"));
 
     let mut line = String::new();
@@ -114,7 +114,7 @@ fn daemon_negotiation_version_accepts_older_client_version() {
         ])
         .build();
 
-    let (mut stream, handle) = start_daemon(config, port, held_listener);
+    let (mut stream, handle) = start_daemon_pending_no_detach(config, port, held_listener);
     let mut reader = BufReader::new(stream.try_clone().expect("clone"));
 
     let mut line = String::new();
@@ -162,7 +162,7 @@ fn daemon_negotiation_version_includes_digest_list_for_protocol_31_plus() {
         ])
         .build();
 
-    let (stream, handle) = start_daemon(config, port, held_listener);
+    let (stream, handle) = start_daemon_pending_no_detach(config, port, held_listener);
     let mut reader = BufReader::new(stream);
 
     let mut line = String::new();
@@ -224,7 +224,7 @@ fn daemon_negotiation_version_echoes_client_digests() {
         ])
         .build();
 
-    let (mut stream, handle) = start_daemon(config, port, held_listener);
+    let (mut stream, handle) = start_daemon_pending_no_detach(config, port, held_listener);
     let mut reader = BufReader::new(stream.try_clone().expect("clone"));
 
     let mut line = String::new();
@@ -270,7 +270,7 @@ fn daemon_negotiation_version_handles_whitespace_variations() {
         ])
         .build();
 
-    let (mut stream, handle) = start_daemon(config, port, held_listener);
+    let (mut stream, handle) = start_daemon_pending_no_detach(config, port, held_listener);
     let mut reader = BufReader::new(stream.try_clone().expect("clone"));
 
     let mut line = String::new();
@@ -315,7 +315,7 @@ fn daemon_negotiation_version_greeting_ends_with_newline() {
         ])
         .build();
 
-    let (stream, handle) = start_daemon(config, port, held_listener);
+    let (stream, handle) = start_daemon_pending_no_detach(config, port, held_listener);
     let mut reader = BufReader::new(stream);
 
     let mut line = String::new();

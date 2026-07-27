@@ -83,7 +83,7 @@ fn daemon_compress_push_transfers_files_with_compression() {
         ])
         .build();
 
-    let (probe_stream, daemon_handle) = start_daemon(daemon_config, port, held_listener);
+    let (probe_stream, daemon_handle) = start_daemon_pending_no_detach(daemon_config, port, held_listener);
     drop(probe_stream);
 
     let mut source_arg = source_dir.clone().into_os_string();
