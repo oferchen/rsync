@@ -31,10 +31,13 @@
 //! - [`delete_backup`] - `--backup` / `--backup-dir` preservation of each
 //!   extraneous file victim before the receiver's delete pass unlinks it,
 //!   across the immediate, delayed, and capped removal sites.
+//! - [`crtime_wire`] - receiver-side decoding of the `--crtimes` file-list
+//!   field, whose omission desynchronised the whole entry stream.
 //! - [`iconv_wire_order`] - regression coverage for the receiver-side
 //!   `--iconv` ordering invariant (file_list stays in sender wire-emit
 //!   order, never re-sorted on local-charset bytes).
 
+mod crtime_wire;
 mod dedup;
 #[cfg(unix)]
 mod delete_backup;

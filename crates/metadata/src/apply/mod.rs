@@ -9,6 +9,8 @@ mod ownership;
 mod permissions;
 mod timestamps;
 
+pub use ownership::group_is_settable;
+
 #[cfg(test)]
 mod tests;
 
