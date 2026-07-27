@@ -22,7 +22,7 @@ fn run_daemon_writes_and_removes_pid_file() {
 
     let pid_clone = pid_path.clone();
     drop(held_listener);
-    let handle = thread::spawn(move || run_daemon(config));
+    let handle = spawn_daemon_pending_no_detach(config);
 
     let start = Instant::now();
     while !pid_clone.exists() {

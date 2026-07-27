@@ -91,7 +91,7 @@ fn daemon_munge_symlinks_pull_strips_prefix() {
         ])
         .build();
 
-    let (probe_stream, daemon_handle) = start_daemon(daemon_config, port, held_listener);
+    let (probe_stream, daemon_handle) = start_daemon_pending_no_detach(daemon_config, port, held_listener);
     drop(probe_stream);
 
     let rsync_url = format!("rsync://127.0.0.1:{port}/mungemod/");

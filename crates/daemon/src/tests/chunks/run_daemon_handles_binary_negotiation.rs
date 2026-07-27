@@ -19,7 +19,7 @@ fn run_daemon_handles_binary_negotiation() {
         ])
         .build();
 
-    let (mut stream, handle) = start_daemon(config, port, held_listener);
+    let (mut stream, handle) = start_daemon_pending_no_detach(config, port, held_listener);
     stream
         .set_read_timeout(Some(Duration::from_secs(5)))
         .expect("set read timeout");

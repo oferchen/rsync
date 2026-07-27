@@ -52,7 +52,7 @@ fn launch_subpath_daemon(
             OsString::from("3"),
         ])
         .build();
-    start_daemon(daemon_config, port, held)
+    start_daemon_pending_no_detach(daemon_config, port, held)
 }
 
 #[cfg(unix)]

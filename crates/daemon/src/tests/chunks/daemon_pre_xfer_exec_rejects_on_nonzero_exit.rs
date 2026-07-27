@@ -32,7 +32,7 @@ fn daemon_pre_xfer_exec_rejects_on_nonzero_exit() {
         ])
         .build();
 
-    let (mut stream, handle) = start_daemon(config, port, held_listener);
+    let (mut stream, handle) = start_daemon_pending_no_detach(config, port, held_listener);
     let mut reader = BufReader::new(stream.try_clone().expect("clone stream"));
 
     let mut line = String::new();
