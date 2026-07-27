@@ -40,6 +40,27 @@ pub(in crate::receiver) type DryRunItem<'a> = (usize, &'a FileEntry, u32);
 ///
 /// upstream: `receiver.c:736-738` - `stats.created_dirs++` under
 /// `iflags & ITEM_IS_NEW`, which runs whether or not the mkdir happened.
+/// The itemize seed for a regular file the generator is about to request.
+///
+/// upstream: `generator.c:1940-1942`
+///
+/// ```c
+/// int iflags = ITEM_TRANSFER;
+/// if (always_checksum > 0)
+///     iflags |= ITEM_REPORT_CHANGE;
+/// ```
+///
+/// Shared by the live candidate pass and the `--dry-run` planner so `-i` and
+/// `-ni` cannot disagree about the `c` glyph.
+const fn transfer_seed(always_checksum: bool) -> u32 {
+    use crate::generator::ItemFlags;
+    if always_checksum {
+        ItemFlags::ITEM_TRANSFER | ItemFlags::ITEM_REPORT_CHANGE
+    } else {
+        ItemFlags::ITEM_TRANSFER
+    }
+}
+
 /// The destination's mtime in whole seconds since the epoch, as upstream's
 /// `sxp->st.st_mtime` supplies it to `mtime_differs()` (`generator.c:396`).
 ///
@@ -269,6 +290,14 @@ impl ReceiverContext {
         // per-file method dispatch for the common no-itemize case.
         let emit_itemize = self.should_emit_itemize();
 
+        // upstream: generator.c:1940-1942 - the seed the generator hands to
+        // itemize() at `notify_others` is `ITEM_TRANSFER`, plus
+        // `ITEM_REPORT_CHANGE` whenever `always_checksum > 0`. Under
+        // `--checksum` every transferred file therefore carries the position-2
+        // `c` glyph, because the checksum - not the mtime - is what decided the
+        // file changed.
+        let transfer_seed = transfer_seed(always_checksum.is_some());
+
         // Pre-compute whether ACLs and xattrs are enabled. When disabled
         // (the common case), the per-file function call overhead is avoided
         // entirely in the no-change path. At 100K files this eliminates
@@ -444,12 +473,8 @@ impl ReceiverContext {
             // changes against the pre-transfer destination. A non-existent dest
             // (statret < 0) is ITEM_IS_NEW; an existing one OR-s the per-attr
             // report bits onto ITEM_TRANSFER.
-            let base_iflags = self.itemize_existing_flags(
-                entry,
-                &file_path,
-                dest_meta.as_ref(),
-                crate::generator::ItemFlags::ITEM_TRANSFER,
-            );
+            let base_iflags =
+                self.itemize_existing_flags(entry, &file_path, dest_meta.as_ref(), transfer_seed);
             if base_iflags & crate::generator::ItemFlags::ITEM_IS_NEW != 0 {
                 // upstream: receiver.c:777-778 - a regular file being received
                 // whose destination was absent (ITEM_IS_NEW) bumps
@@ -632,11 +657,11 @@ impl ReceiverContext {
                     ) {
                         0
                     } else {
-                        ItemFlags::ITEM_TRANSFER
+                        transfer_seed(always_checksum.is_some())
                     };
                     self.itemize_existing_flags(entry, dest_path, Some(&meta), base)
                 }
-                Err(_) => new_iflags(ItemFlags::ITEM_TRANSFER),
+                Err(_) => new_iflags(transfer_seed(always_checksum.is_some())),
             }
         }
     }
@@ -721,6 +746,41 @@ impl ReceiverContext {
         };
         if report_time {
             iflags |= ItemFlags::ITEM_REPORT_TIME;
+        }
+        // upstream: generator.c:535-540 - under `--crtimes` the generator reads
+        // the destination's creation time and reports a difference through
+        // `same_time()`:
+        //
+        //     if (crtimes_ndx) {
+        //         if (sxp->crtime == 0)
+        //             sxp->crtime = get_create_time(fnamecmp, &sxp->st);
+        //         if (!same_time(sxp->crtime, 0, F_CRTIME(file), 0))
+        //             iflags |= ITEM_REPORT_CRTIME;
+        //     }
+        //
+        // `get_create_time()` yields 0 when the birth time cannot be read
+        // (utils.c), which `created()` returning `Err` reproduces: 0 differs
+        // from any real sender crtime, so the column reports a change - the
+        // same direction upstream takes. Upstream places this test between the
+        // atime and perms comparisons; the order of independently OR-ed bits is
+        // immaterial, and keeping it out of the `cfg(unix)` block below lets
+        // Windows (which does carry a creation time) report the column too.
+        if self.config.flags.crtimes {
+            let dest_crtime = dest_meta
+                .created()
+                .ok()
+                .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                .map_or(0, |d| d.as_secs() as i64);
+            // upstream: util1.c:1478 - `same_time()` honours `--modify-window`,
+            // and both crtime arguments carry a zero nsec component.
+            if !self.config.file_selection.modify_window.same_time(
+                dest_crtime,
+                0,
+                entry.crtime(),
+                0,
+            ) {
+                iflags |= ItemFlags::ITEM_REPORT_CRTIME;
+            }
         }
         #[cfg(unix)]
         {
@@ -1028,6 +1088,8 @@ mod itemize_order_tests {
     use std::ffi::OsString;
     use std::path::Path;
 
+    use super::transfer_seed;
+
     use protocol::ProtocolVersion;
     use protocol::flist::FileEntry;
 
@@ -1268,6 +1330,81 @@ mod itemize_order_tests {
             off & ItemFlags::ITEM_REPORT_XATTR == 0,
             "the `x` column is gated on --xattrs: {off:#06x}"
         );
+    }
+
+    /// upstream: generator.c:535-540. Under `--crtimes` the row reports the
+    /// destination's creation time against the sender's through `same_time()`.
+    ///
+    /// Why it matters: the `n` glyph (log.c:725) was rendered but never
+    /// produced on a network receive, so `-N -i` printed `.f.........` where
+    /// upstream prints `.f......n..`. The column is gated on `--crtimes`: a run
+    /// without it must never surface a birth-time difference.
+    #[test]
+    fn itemize_existing_flags_reports_crtime_only_under_dash_n() {
+        use crate::generator::ItemFlags;
+
+        let dir = test_support::create_tempdir();
+        let path = dir.path().join("f.txt");
+        std::fs::write(&path, b"x").unwrap();
+        let meta = std::fs::symlink_metadata(&path).unwrap();
+        let Ok(created) = meta.created() else {
+            // No birth time on this filesystem; upstream's get_create_time
+            // would return 0 here too, so there is nothing to compare.
+            return;
+        };
+        let created_secs = created
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |d| d.as_secs() as i64);
+
+        let mut entry = FileEntry::new_file("f.txt".into(), 1, 0o644);
+        entry.set_mtime(1_600_000_000, 0);
+        // Mirror the destination's mtime so only the crtime can differ.
+        let hs = handshake();
+        let mut with_n = itemize_client_config();
+        with_n.flags.times = false;
+        with_n.flags.crtimes = true;
+
+        entry.set_crtime(created_secs + 86_400);
+        let ctx = ReceiverContext::new_for_test(&hs, with_n.clone());
+        let differs = ctx.itemize_existing_flags(&entry, &path, Some(&meta), 0);
+        assert!(
+            differs & ItemFlags::ITEM_REPORT_CRTIME != 0,
+            "a differing crtime must report `n` under --crtimes: {differs:#06x}"
+        );
+
+        entry.set_crtime(created_secs);
+        let same = ctx.itemize_existing_flags(&entry, &path, Some(&meta), 0);
+        assert!(
+            same & ItemFlags::ITEM_REPORT_CRTIME == 0,
+            "an equal crtime must leave `n` clear: {same:#06x}"
+        );
+
+        entry.set_crtime(created_secs + 86_400);
+        let mut without_n = itemize_client_config();
+        without_n.flags.crtimes = false;
+        let ctx = ReceiverContext::new_for_test(&hs, without_n);
+        let off = ctx.itemize_existing_flags(&entry, &path, Some(&meta), 0);
+        assert!(
+            off & ItemFlags::ITEM_REPORT_CRTIME == 0,
+            "the `n` column is gated on --crtimes: {off:#06x}"
+        );
+    }
+
+    /// upstream: generator.c:1940-1942. `--checksum` seeds every transfer with
+    /// `ITEM_REPORT_CHANGE`, because the checksum - not the mtime - is what
+    /// decided the file changed, so `rsync -rtci` prints `>fc........`.
+    ///
+    /// The live pass and the `--dry-run` planner share this seed, so `-i` and
+    /// `-ni` cannot disagree about the `c` glyph.
+    #[test]
+    fn transfer_seed_carries_change_only_under_checksum() {
+        use crate::generator::ItemFlags;
+
+        assert_eq!(
+            transfer_seed(true),
+            ItemFlags::ITEM_TRANSFER | ItemFlags::ITEM_REPORT_CHANGE
+        );
+        assert_eq!(transfer_seed(false), ItemFlags::ITEM_TRANSFER);
     }
 
     /// upstream: generator.c:572-576. The `statret < 0` leg runs
