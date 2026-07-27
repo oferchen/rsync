@@ -1,5 +1,5 @@
 use super::super::*;
-use super::common::MemoryTransport;
+use super::common::{MemoryTransport, client_greeting};
 use crate::RemoteProtocolAdvertisement;
 use protocol::ProtocolVersion;
 use std::io::Write;
@@ -38,5 +38,8 @@ fn parts_stream_parts_mut_allows_inner_mutation() {
 
     let inner = parts.into_handshake().into_stream().into_inner();
     assert_eq!(inner.flushes(), 2);
-    assert_eq!(inner.written(), b"@RSYNCD: 31.0\n@RSYNCD: OK\n");
+    assert_eq!(
+        inner.written(),
+        [client_greeting(31), b"@RSYNCD: OK\n".to_vec()].concat()
+    );
 }
