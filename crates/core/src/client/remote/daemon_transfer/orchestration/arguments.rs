@@ -1685,6 +1685,10 @@ mod server_option_fidelity_tests {
             .relative_paths(true)
             .implied_dirs(false)
             .build();
+        // The 4th argument is the REMOTE's role, not ours: `is_sender: false`
+        // means the daemon is the receiver, i.e. we are the sender (a push).
+        // The polarity is inverted at the top of build_full_daemon_args
+        // (`let we_are_sender = !is_sender;`) - do not "correct" it here.
         let push_28 = build_full_daemon_args(&config, &request(), ProtocolVersion::V28, false);
         assert!(
             !push_28.iter().any(|a| a == "--no-implied-dirs"),
