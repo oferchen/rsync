@@ -90,10 +90,16 @@ impl LocalCopyChangeSet {
             modify_window,
         ));
 
-        // upstream: generator.c:542-549 - `#ifndef CAN_CHMOD_SYMLINK` skips
-        // the perm-compare entirely for symlinks. On Linux/macOS chmod
-        // follows the link, so a symlink's own perms cannot be changed and
-        // upstream rsync never reports ITEM_REPORT_PERMS for them.
+        // Symlinks are excluded from the perm compare because oc does not
+        // currently apply a symlink's mode (nothing calls lchmod/setattrlist),
+        // so reporting a `p` change would promise an action never performed.
+        // This is NOT upstream's rule: upstream skips the compare only where
+        // `CAN_CHMOD_SYMLINK` is undefined (rsync.h:438-440 defines it whenever
+        // HAVE_LCHMOD or HAVE_SETATTRLIST, both probed by configure.ac:911,918),
+        // so on glibc >= 2.32 and on macOS the `#ifndef` block at
+        // generator.c:542-544 compiles out and upstream DOES compare.
+        // Revisit together with applying symlink modes so report and action
+        // cannot drift apart.
         let is_symlink = metadata.file_type().is_symlink();
 
         // upstream: generator.c:531-533 - itemize() sets ITEM_REPORT_ATIME when
@@ -280,10 +286,13 @@ impl LocalCopyChangeSet {
             }
         }
 
-        // upstream: generator.c:542-549 - `#ifndef CAN_CHMOD_SYMLINK` skips
-        // perm/owner/group bits for symlinks on platforms where chmod follows
-        // the link. Linux and macOS both behave that way for symlinks, so the
-        // itemize line never reports symlink perm changes in those slots.
+        // No perm/owner/group slots are lit for a recreated symlink: oc does
+        // not currently apply a symlink's mode (nothing calls lchmod or
+        // setattrlist), so it must not report a change it will not make.
+        // Upstream is not the reason - it chmods every file type
+        // (rsync.c:658-668, no S_ISLNK gate) and handles symlink portability
+        // inside do_chmod (syscall.c:761), which tries lchmod then
+        // setattrlist(FSOPT_NOFOLLOW). Revisit with symlink-mode support.
         change_set
     }
 

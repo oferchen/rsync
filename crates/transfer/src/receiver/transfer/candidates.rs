@@ -692,10 +692,14 @@ impl ReceiverContext {
             {
                 iflags |= ItemFlags::ITEM_REPORT_ATIME;
             }
-            // upstream: generator.c:542-549 - `#ifndef CAN_CHMOD_SYMLINK` skips
-            // the whole perm compare for a symlink, because a platform without
-            // lchmod() can never change a symlink's own mode. Mirrors the same
-            // guard in engine's local-copy change-set detection.
+            // Symlinks are excluded because oc does not currently apply a
+            // symlink's own mode, so it must not report a `p` change it will
+            // not make. Not upstream's rule: `CAN_CHMOD_SYMLINK` is defined
+            // whenever HAVE_LCHMOD or HAVE_SETATTRLIST (rsync.h:438-440,
+            // probed at configure.ac:911,918), so on glibc >= 2.32 and macOS
+            // the `#ifndef` at generator.c:542-544 compiles out and upstream
+            // does compare. Mirrors the same guard in engine's local-copy
+            // change-set detection; revisit both with symlink-mode support.
             if self.config.flags.perms && !entry.is_symlink() {
                 const CHMOD_BITS: u32 = 0o7777;
                 if (dest_meta.mode() & CHMOD_BITS) != (entry.mode() & CHMOD_BITS) {

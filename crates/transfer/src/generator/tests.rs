@@ -3443,20 +3443,28 @@ mod files_from {
     }
 
     #[test]
-    fn build_file_list_with_base_deduplicates_explicit_dir_and_child_file() {
-        // UTS-21 regression: when --files-from contains both an explicit
-        // directory (e.g. `dir/subdir`) and a file inside it (e.g.
-        // `dir/subdir/child.txt`), the directory must appear in the wire
-        // file list exactly ONCE. Upstream's `implied_filter_list` check
-        // (flist.c:1026) rejects the second occurrence as
-        // "rejecting unrequested file-list name: dir/subdir", which broke
-        // upstream's `files-from.test` interop suite in the pull direction.
+    fn build_file_list_with_base_emits_explicit_dir_and_implied_parent() {
+        // WHY: when --files-from contains both an explicit directory
+        // (`dir/subdir`) and a file inside it (`dir/subdir/child.txt`),
+        // upstream emits the directory TWICE - once from
+        // `send_implied_dirs()` as the child's ancestor (flist.c:1990,
+        // ALL_FILTERS with the filter list cleared) and once from the
+        // argument loop for the explicit entry (flist.c:2483, NO_FILTERS).
+        // Verified against rsync 3.4.4: `--debug=FLIST2` prints
+        //   make_file(dir,*,2) make_file(dir/subdir,*,0)
+        //   make_file(dir,*,2) make_file(dir/subdir,*,2)
+        //   make_file(dir/subdir/child.txt,*,0)
+        // A non-incremental sender does not clean duplicates
+        // (flist.c:3039-3042), so both reach the wire and the receiver merges
+        // them in `flist_sort_and_clean()`. Collapsing the pair here made the
+        // implied-parent emission depend on the filtered top-level walk, so an
+        // `--exclude` matching the parent removed it from the list entirely
+        // (see `build_file_list_with_base_emits_implied_parent_matched_by_exclude`).
         //
-        // The implied-parent loop previously emitted `dir/subdir` because it
-        // is the parent of `child.txt`, and the top-level walk emitted it
-        // again because it is also an explicit --files-from entry. The fix
-        // pre-populates the explicit-dir set so the implied-parent loop
-        // skips it, leaving the top-level walk as the single emission site.
+        // The duplicate is not rejected by upstream's `implied_filter_list`
+        // check (flist.c:1026): that check tests the NAME, and a repeat of an
+        // accepted name is accepted. Confirmed by pulling this exact list
+        // through a real 3.4.4 receiver in both transfer directions.
         let temp_dir = TempDir::new().unwrap();
         let src = temp_dir.path().join("src");
         let nested = src.join("dir").join("subdir");
@@ -3466,6 +3474,9 @@ mod files_from {
         let handshake = test_handshake();
         let mut config = test_config();
         config.args = vec![OsString::from(&src)];
+        // upstream: options.c:2196 - --files-from turns --relative on, which is
+        // what gates the implied-parent emission (flist.c:2471).
+        config.flags.relative = true;
         config.flags.recursive = true;
         let mut ctx = GeneratorContext::new_for_test(&handshake, config);
 
@@ -3473,9 +3484,9 @@ mod files_from {
         ctx.build_file_list_with_base(&src, &files_from_entries(&src, file_paths))
             .unwrap();
 
-        // Count occurrences of every distinct relative name. The subdir
-        // must appear exactly once; duplicates would re-trigger the
-        // upstream rejection.
+        // Count occurrences of every distinct relative name. The subdir is
+        // both an implied parent and an explicit argument, so it appears
+        // twice - exactly as upstream sends it.
         let mut counts: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
         for entry in ctx.file_list().iter() {
             *counts.entry(entry.name().to_string()).or_insert(0) += 1;
@@ -3484,9 +3495,9 @@ mod files_from {
         let subdir_name = nested.strip_prefix(&src).unwrap().to_string_lossy();
         let subdir_count = counts.get(subdir_name.as_ref()).copied().unwrap_or(0);
         assert_eq!(
-            subdir_count, 1,
-            "explicit dir + child must emit subdir exactly once, got {subdir_count} \
-             across entries {counts:?}"
+            subdir_count, 2,
+            "explicit dir that is also an implied parent must emit twice like \
+             upstream, got {subdir_count} across entries {counts:?}"
         );
 
         // The child file must still be present so the receiver can transfer it.
@@ -3499,6 +3510,80 @@ mod files_from {
         assert!(
             counts.contains_key(&child_name),
             "child.txt must remain in the file list, got {counts:?}"
+        );
+    }
+
+    #[test]
+    fn build_file_list_with_base_emits_implied_parent_matched_by_exclude() {
+        // WHY: upstream's `send_implied_dirs()` clears the filter list before
+        // emitting ancestors - `filter_list.head = filter_list.tail = NULL;
+        // /* Don't filter implied dirs. */` (flist.c:1950) - so an implied
+        // parent reaches the wire even when an --exclude rule matches it. The
+        // receiver needs the directory entry before its contents arrive: a real
+        // rsync 3.4.4 receiver that sees `dir/file` without `dir` aborts with
+        // "ABORTING due to invalid path from sender: dir/file" (exit 4 at
+        // flist.c:2693 under inc-recurse, exit 2 at generator.c:1326 without
+        // it).
+        //
+        // `dir` here is BOTH an explicit --files-from entry and the implied
+        // parent of `dir/file`. Delegating its emission to the top-level walk -
+        // which does apply filters - let the --exclude drop it from the list
+        // entirely. Verified against rsync 3.4.4 for this exact input:
+        // `--debug=FLIST2` prints make_file(dir,*,2) then
+        // make_file(dir/file,*,0); the explicit `dir` argument is filtered out
+        // by `is_excluded()` (flist.c:2448) and only the unfiltered implied
+        // parent survives.
+        //
+        // Needs neither inc-recurse nor a remote peer: the missing entry is
+        // observable in the built file list itself.
+        let temp_dir = TempDir::new().unwrap();
+        let src = temp_dir.path().join("src");
+        std::fs::create_dir_all(src.join("dir")).unwrap();
+        std::fs::write(src.join("dir/file"), "payload").unwrap();
+
+        let handshake = test_handshake();
+        let mut config = test_config();
+        config.args = vec![OsString::from(&src)];
+        config.flags.relative = true;
+        config.flags.recursive = true;
+        let mut ctx = GeneratorContext::new_for_test(&handshake, config);
+        apply_filters(
+            &mut ctx,
+            vec![FilterRuleWireFormat::exclude("dir".to_owned())],
+        );
+
+        ctx.build_file_list_with_base(
+            &src,
+            &files_from_entries(&src, vec![src.join("dir"), src.join("dir/file")]),
+        )
+        .unwrap();
+
+        let names: Vec<&str> = ctx.file_list().iter().map(|e| e.name()).collect();
+        assert!(
+            names.contains(&"dir/file"),
+            "the requested file must stay in the list: {names:?}"
+        );
+        assert!(
+            names.contains(&"dir"),
+            "an --exclude matching an implied parent must not remove it: \
+             upstream never filters implied dirs (flist.c:1950) and a real \
+             receiver aborts on the orphaned child: {names:?}"
+        );
+        let parent = ctx
+            .file_list()
+            .iter()
+            .find(|e| e.name() == "dir")
+            .expect("implied parent entry");
+        assert!(
+            parent.is_dir(),
+            "implied parent must be sent as a directory"
+        );
+        // upstream: flist.c:1949 - implied parents clear FLAG_CONTENT_DIR so an
+        // upstream receiver does not scan them for --delete.
+        assert!(
+            !parent.content_dir(),
+            "the surviving entry must be the implied-parent emission, which \
+             clears CONTENT_DIR"
         );
     }
 
