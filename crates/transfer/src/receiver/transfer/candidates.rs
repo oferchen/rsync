@@ -40,6 +40,27 @@ pub(in crate::receiver) type DryRunItem<'a> = (usize, &'a FileEntry, u32);
 ///
 /// upstream: `receiver.c:736-738` - `stats.created_dirs++` under
 /// `iflags & ITEM_IS_NEW`, which runs whether or not the mkdir happened.
+/// The destination's mtime in whole seconds since the epoch, as upstream's
+/// `sxp->st.st_mtime` supplies it to `mtime_differs()` (`generator.c:396`).
+///
+/// A destination whose mtime predates the epoch or cannot be read compares as
+/// `0`, which differs from any real sender mtime and therefore reports the
+/// time as changed - the safe direction.
+fn dest_mtime_secs(meta: &fs::Metadata) -> i64 {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        meta.mtime()
+    }
+    #[cfg(not(unix))]
+    {
+        meta.modified()
+            .ok()
+            .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+            .map_or(0, |d| d.as_secs() as i64)
+    }
+}
+
 pub(in crate::receiver) fn new_dir_count(plan: &[DryRunItem<'_>]) -> u64 {
     plan.iter()
         .filter(|(_, entry, iflags)| {
@@ -657,27 +678,43 @@ impl ReceiverContext {
         if entry.is_file() && entry.size() != dest_meta.len() {
             iflags |= ItemFlags::ITEM_REPORT_SIZE;
         }
-        // upstream: generator.c:526-530 - keep_time ? mtime_differs(&st, file).
-        // For regular files keep_time == preserve_mtimes (`--times`).
-        if self.config.flags.times {
-            #[cfg(unix)]
-            {
-                use std::os::unix::fs::MetadataExt;
-                if dest_meta.mtime() != entry.mtime() {
-                    iflags |= ItemFlags::ITEM_REPORT_TIME;
-                }
-            }
-            #[cfg(not(unix))]
-            {
-                let dest_secs = dest_meta
-                    .modified()
-                    .ok()
-                    .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
-                    .map(|d| d.as_secs() as i64);
-                if dest_secs != Some(entry.mtime()) {
-                    iflags |= ItemFlags::ITEM_REPORT_TIME;
-                }
-            }
+        // upstream: generator.c:526-530 - REPORT_TIME is a TWO-branch ternary,
+        // not a single `keep_time &&` test:
+        //
+        //     } else if (keep_time
+        //      ? mtime_differs(&sxp->st, file)
+        //      : iflags & (ITEM_TRANSFER|ITEM_LOCAL_CHANGE) && !(iflags & ITEM_MATCHED)
+        //       && (!(iflags & ITEM_XNAME_FOLLOWS) || *xname))
+        //             iflags |= ITEM_REPORT_TIME;
+        //
+        // With `keep_time` the row reports a genuine mtime difference. Without
+        // it (no `--times`) every transfer/local-change row reports the time as
+        // changed, because the receiver is about to leave the destination mtime
+        // at "now" instead of the sender's value - which is what makes a plain
+        // `rsync -i src/ dst/` print `>f..T......` rather than `>f.........`.
+        let keep_time = self.config.flags.times;
+        let report_time = if keep_time {
+            dest_mtime_secs(dest_meta) != entry.mtime()
+        } else {
+            // upstream: generator.c:528-530 - all three conjuncts.
+            //
+            // ITEM_MATCHED (rsync.h:229, log-only bit 18) is set by upstream's
+            // `unchanged_attrs()`/hard-link bookkeeping; nothing in oc sets it
+            // yet, so this conjunct cannot fire today. It is written out
+            // anyway so the predicate stays a faithful transcription and
+            // starts working the moment the bit is produced.
+            //
+            // The third conjunct is `!(iflags & ITEM_XNAME_FOLLOWS) || *xname`.
+            // `xname` (the fuzzy-basis / hard-link-leader name) is not part of
+            // this function's inputs and no call site seeds
+            // ITEM_XNAME_FOLLOWS, so the `|| *xname` alternative is
+            // unreachable; the conservative `== 0` half is transcribed here.
+            iflags & (ItemFlags::ITEM_TRANSFER | ItemFlags::ITEM_LOCAL_CHANGE) != 0
+                && iflags & ItemFlags::ITEM_MATCHED == 0
+                && iflags & ItemFlags::ITEM_XNAME_FOLLOWS == 0
+        };
+        if report_time {
+            iflags |= ItemFlags::ITEM_REPORT_TIME;
         }
         #[cfg(unix)]
         {
@@ -1049,6 +1086,74 @@ mod itemize_order_tests {
         assert!(
             flags & ItemFlags::ITEM_REPORT_ATIME == 0,
             "atime row must be gated on --atimes: {flags:#06x}"
+        );
+    }
+
+    /// upstream: generator.c:526-530. REPORT_TIME is a two-branch ternary. The
+    /// `!keep_time` branch is what makes a plain `rsync -i` (no `--times`)
+    /// print `>f..T......` for every transferred file: the receiver is about to
+    /// leave the destination mtime at "now", so the time column reports a
+    /// change even though nothing was compared.
+    ///
+    /// Why it matters: without this branch the `T` glyph is unreachable on the
+    /// receiver, so `-i` without `-t` silently under-reports. Verified against
+    /// rsync 3.4.4, which prints `>f.sT......` where oc printed `>f.s.......`.
+    ///
+    /// The branch must stay inert for a metadata-only row (`base == 0`, no
+    /// ITEM_TRANSFER / ITEM_LOCAL_CHANGE) - upstream's first conjunct - and must
+    /// not fire when `--times` is on and the mtimes agree.
+    #[test]
+    fn itemize_existing_flags_reports_time_without_times_on_transfer() {
+        use crate::generator::ItemFlags;
+
+        let dir = test_support::create_tempdir();
+        let path = dir.path().join("f.txt");
+        std::fs::write(&path, b"x").unwrap();
+        filetime::set_file_times(
+            &path,
+            filetime::FileTime::from_unix_time(1_600_000_000, 0),
+            filetime::FileTime::from_unix_time(1_600_000_000, 0),
+        )
+        .unwrap();
+        let meta = std::fs::symlink_metadata(&path).unwrap();
+
+        // Source mtime deliberately equals the destination's, so the
+        // `keep_time` branch can never be the reason the bit appears.
+        let mut entry = FileEntry::new_file("f.txt".into(), 1, 0o644);
+        entry.set_mtime(1_600_000_000, 0);
+
+        let hs = handshake();
+
+        let mut no_times = itemize_client_config();
+        no_times.flags.times = false;
+        let ctx = ReceiverContext::new_for_test(&hs, no_times);
+
+        let transfer = ctx.itemize_existing_flags(&entry, Some(&meta), ItemFlags::ITEM_TRANSFER);
+        assert!(
+            transfer & ItemFlags::ITEM_REPORT_TIME != 0,
+            "a transfer without --times must report the time as changed: {transfer:#06x}"
+        );
+
+        let local = ctx.itemize_existing_flags(&entry, Some(&meta), ItemFlags::ITEM_LOCAL_CHANGE);
+        assert!(
+            local & ItemFlags::ITEM_REPORT_TIME != 0,
+            "ITEM_LOCAL_CHANGE is the second half of upstream's first conjunct: {local:#06x}"
+        );
+
+        let metadata_only = ctx.itemize_existing_flags(&entry, Some(&meta), 0);
+        assert!(
+            metadata_only & ItemFlags::ITEM_REPORT_TIME == 0,
+            "an attribute-only row is neither a transfer nor a local change: {metadata_only:#06x}"
+        );
+
+        // With --times the `keep_time` branch governs, and the mtimes agree.
+        let mut with_times = itemize_client_config();
+        with_times.flags.times = true;
+        let ctx = ReceiverContext::new_for_test(&hs, with_times);
+        let kept = ctx.itemize_existing_flags(&entry, Some(&meta), ItemFlags::ITEM_TRANSFER);
+        assert!(
+            kept & ItemFlags::ITEM_REPORT_TIME == 0,
+            "--times with equal mtimes must leave the time column clear: {kept:#06x}"
         );
     }
 
