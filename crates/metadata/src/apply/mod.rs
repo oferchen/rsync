@@ -413,9 +413,15 @@ pub fn apply_symlink_metadata(
 
 /// Applies symbolic link metadata using explicit [`MetadataOptions`].
 ///
-/// Only ownership and timestamps are applied - permissions are not preserved
-/// for symlinks because most systems ignore symlink permission bits.
-// upstream: rsync.c:set_file_attrs() - skips chmod for symlinks
+/// Only ownership and timestamps are applied. oc does not currently set a
+/// symlink's own mode, so permissions are skipped here.
+///
+/// This is an oc limitation, not upstream behaviour: `rsync.c:658-668` calls
+/// `do_chmod_at()` for every file type with no `S_ISLNK` gate (the comment at
+/// `rsync.c:667`, "ret == 1 if symlink could not be set", shows a failed
+/// symlink chmod is a soft outcome). All the portability lives in
+/// `syscall.c:761 do_chmod()`, which tries `lchmod()`, falls through to
+/// `setattrlist(FSOPT_NOFOLLOW)` for `S_ISLNK`, and only then gives up.
 pub fn apply_symlink_metadata_with_options(
     destination: &Path,
     metadata: &fs::Metadata,
@@ -433,9 +439,9 @@ pub fn apply_symlink_metadata_with_options(
 ///
 /// Mirrors [`apply_metadata_from_file_entry`] but uses `lstat` for the cached
 /// stat and `lutimes` / `utimensat(AT_SYMLINK_NOFOLLOW)` for timestamps so the
-/// link's own mtime is updated instead of the target's. Permissions are not
-/// preserved for symlinks because most systems ignore symlink permission bits;
-/// ownership (when applicable) is applied with `AT_SYMLINK_NOFOLLOW`.
+/// link's own mtime is updated instead of the target's. Permissions are
+/// skipped because oc does not currently set a symlink's own mode; ownership
+/// (when applicable) is applied with `AT_SYMLINK_NOFOLLOW`.
 ///
 /// This is the receiver-side counterpart to [`apply_symlink_metadata`] that
 /// works directly with `FileEntry` metadata from the wire protocol, so the
@@ -444,7 +450,10 @@ pub fn apply_symlink_metadata_with_options(
 ///
 /// # Upstream Reference
 ///
-/// - `rsync.c:set_file_attrs()` - skips chmod for symlinks
+/// - `rsync.c:658-668` - upstream chmods every file type with no `S_ISLNK`
+///   gate; skipping the mode here is an oc limitation, not upstream's rule.
+///   Symlink portability lives in `syscall.c:761 do_chmod()` (`lchmod()`, then
+///   `setattrlist(FSOPT_NOFOLLOW)`).
 /// - `rsync.c:set_times()` - uses `lutimes` when the target is a symlink
 /// - `generator.c:1604` - `set_file_attrs(fname, file, NULL, NULL, 0)` runs
 ///   after `atomic_create` -> `do_symlink` so the new symlink's mtime matches
