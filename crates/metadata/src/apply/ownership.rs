@@ -277,6 +277,33 @@ pub(super) fn gate_preserved_group(group: Option<unix_fs::Gid>) -> Option<unix_f
     group.filter(|gid| nix::unistd::geteuid().is_root() || process_in_group(*gid))
 }
 
+/// Whether this process may set a file's group to `gid`, i.e. whether upstream
+/// would leave `FLAG_SKIP_GROUP` clear for it.
+///
+/// upstream: `uidlist.c:284` - `flag = idlist_ptr == &gidlist && !am_root
+/// && !is_in_group(id2) ? FLAG_SKIP_GROUP : 0`. The flag is the negation of
+/// this predicate, and its consumers test `!(file->flags & FLAG_SKIP_GROUP)`:
+/// the group chown itself (`rsync.c:527`), the itemize `g` column
+/// (`generator.c:434`, `:555`), and the `-vv` name line (`log.c:575`). A
+/// non-root process that does not belong to `gid` can never set it, so
+/// upstream neither attempts the chown nor reports the group as changed.
+///
+/// Always `true` off unix, where there is no POSIX group to gate.
+#[must_use]
+pub fn group_is_settable(gid: u32) -> bool {
+    #[cfg(unix)]
+    {
+        // See `gate_preserved_group`: nix (libc `geteuid`) so a fakeroot euid
+        // counts as root, matching upstream's `am_root`.
+        nix::unistd::geteuid().is_root() || process_in_group(unix_fs::Gid::from_raw(gid))
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = gid;
+        true
+    }
+}
+
 /// Resolves the preserved owner of `entry` to a local uid.
 ///
 /// `--usermap` is consulted first on the raw sender id (its rules match numeric

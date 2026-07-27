@@ -838,9 +838,30 @@ impl ReceiverContext {
             // the `#ifndef` at generator.c:542-544 compiles out and upstream
             // does compare. Mirrors the same guard in engine's local-copy
             // change-set detection; revisit both with symlink-mode support.
-            if self.config.flags.perms && !entry.is_symlink() {
-                const CHMOD_BITS: u32 = 0o7777;
-                if (dest_meta.mode() & CHMOD_BITS) != (entry.mode() & CHMOD_BITS) {
+            //
+            // The compare itself is an if/else-if (generator.c:546-552), not a
+            // lone `preserve_perms` test:
+            //
+            //     if (preserve_perms) {
+            //         if (!BITS_EQUAL(sxp->st.st_mode, file->mode, CHMOD_BITS))
+            //             iflags |= ITEM_REPORT_PERMS;
+            //     } else if (preserve_executability
+            //      && ((sxp->st.st_mode & 0111 ? 1 : 0) ^ (file->mode & 0111 ? 1 : 0)))
+            //         iflags |= ITEM_REPORT_PERMS;
+            //
+            // Under `-E` without `-p` the receiver copies only the
+            // executability bit, so only a change in *whether* the file is
+            // executable is a permission change - the other mode bits stay as
+            // they are and must not raise the `p` column.
+            if !entry.is_symlink() {
+                if self.config.flags.perms {
+                    const CHMOD_BITS: u32 = 0o7777;
+                    if (dest_meta.mode() & CHMOD_BITS) != (entry.mode() & CHMOD_BITS) {
+                        iflags |= ItemFlags::ITEM_REPORT_PERMS;
+                    }
+                } else if self.config.flags.preserve_executability
+                    && (dest_meta.mode() & 0o111 != 0) != (entry.mode() & 0o111 != 0)
+                {
                     iflags |= ItemFlags::ITEM_REPORT_PERMS;
                 }
             }
@@ -852,10 +873,18 @@ impl ReceiverContext {
                     }
                 }
             }
-            // upstream: generator.c:555-556 - gid_ndx && !FLAG_SKIP_GROUP && gid differs
+            // upstream: generator.c:555-556 - `gid_ndx && !(file->flags &
+            // FLAG_SKIP_GROUP) && sxp->st.st_gid != (gid_t)F_GROUP(file)`.
+            //
+            // FLAG_SKIP_GROUP is stamped on the mapped id at uidlist.c:284
+            // (`!am_root && !is_in_group(id2)`), so a non-root receiver that
+            // does not belong to the sender's group neither chowns
+            // (rsync.c:527) nor reports the group as changed. Without this
+            // test an unprivileged pull printed `g` on every file whose group
+            // it could never set.
             if self.config.flags.group {
                 if let Some(gid) = entry.gid() {
-                    if dest_meta.gid() != gid {
+                    if dest_meta.gid() != gid && metadata::group_is_settable(gid) {
                         iflags |= ItemFlags::ITEM_REPORT_GROUP;
                     }
                 }
@@ -1365,6 +1394,132 @@ mod itemize_order_tests {
             off & ItemFlags::ITEM_REPORT_XATTR == 0,
             "the `x` column is gated on --xattrs: {off:#06x}"
         );
+    }
+
+    /// upstream: generator.c:542-552. The permission compare is an
+    /// `if (preserve_perms) ... else if (preserve_executability ...)`, so `-E`
+    /// without `-p` reports `p` only when the *executability* changes - the
+    /// only bit the receiver is going to copy.
+    ///
+    /// Why it matters: oc tested `preserve_perms` alone, so `-tE` never
+    /// produced a `p` column at all; rsync 3.4.4 prints `.f...p..... f` when
+    /// the exec bit differs and nothing when only the other mode bits do.
+    #[cfg(unix)]
+    #[test]
+    fn perms_column_follows_the_executability_leg_without_dash_p() {
+        use crate::generator::ItemFlags;
+        use std::os::unix::fs::PermissionsExt;
+
+        let dir = test_support::create_tempdir();
+        let path = dir.path().join("f.txt");
+        std::fs::write(&path, b"x").unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o644)).unwrap();
+        let meta = std::fs::symlink_metadata(&path).unwrap();
+
+        let hs = handshake();
+        let mut dash_e = itemize_client_config();
+        dash_e.flags.times = true;
+        dash_e.flags.perms = false;
+        dash_e.flags.preserve_executability = true;
+        let ctx = ReceiverContext::new_for_test(&hs, dash_e);
+
+        let mut executable = FileEntry::new_file("f.txt".into(), 1, 0o755);
+        executable.set_mtime(1_600_000_000, 0);
+        let flipped = ctx.itemize_existing_flags(&executable, &path, Some(&meta), 0);
+        assert!(
+            flipped & ItemFlags::ITEM_REPORT_PERMS != 0,
+            "-E reports a change in executability: {flipped:#06x}"
+        );
+
+        // Same executability, different other bits: nothing -E would copy.
+        let mut same_exec = FileEntry::new_file("f.txt".into(), 1, 0o640);
+        same_exec.set_mtime(1_600_000_000, 0);
+        let unchanged = ctx.itemize_existing_flags(&same_exec, &path, Some(&meta), 0);
+        assert!(
+            unchanged & ItemFlags::ITEM_REPORT_PERMS == 0,
+            "-E must ignore mode bits it does not copy: {unchanged:#06x}"
+        );
+
+        // -p takes the other branch and compares all CHMOD_BITS.
+        let mut with_p = itemize_client_config();
+        with_p.flags.times = true;
+        with_p.flags.perms = true;
+        let ctx = ReceiverContext::new_for_test(&hs, with_p);
+        let full = ctx.itemize_existing_flags(&same_exec, &path, Some(&meta), 0);
+        assert!(
+            full & ItemFlags::ITEM_REPORT_PERMS != 0,
+            "-p compares every CHMOD bit: {full:#06x}"
+        );
+
+        // Neither flag: no permission comparison at all.
+        let mut neither = itemize_client_config();
+        neither.flags.times = true;
+        let ctx = ReceiverContext::new_for_test(&hs, neither);
+        let off = ctx.itemize_existing_flags(&executable, &path, Some(&meta), 0);
+        assert!(
+            off & ItemFlags::ITEM_REPORT_PERMS == 0,
+            "without -p or -E the `p` column stays clear: {off:#06x}"
+        );
+    }
+
+    /// upstream: generator.c:555-556 + uidlist.c:284. FLAG_SKIP_GROUP is
+    /// stamped on any group a non-root process does not belong to, and the
+    /// itemize test is `!(file->flags & FLAG_SKIP_GROUP)`.
+    ///
+    /// Why it matters: an unprivileged pull of a root:wheel file reported
+    /// `.f.....g...` in oc for a group it could never set; rsync 3.4.4 prints
+    /// no row. Verified against a real `/usr/share/dict/propernames` (gid 0)
+    /// pull with the destination chgrp'd to a group the user does belong to.
+    ///
+    /// Running as root makes every group settable, so the negative half only
+    /// means something unprivileged; it is skipped under root rather than
+    /// asserted vacuously.
+    #[cfg(unix)]
+    #[test]
+    fn group_column_skips_a_group_the_process_cannot_set() {
+        use crate::generator::ItemFlags;
+        use std::os::unix::fs::MetadataExt;
+
+        let dir = test_support::create_tempdir();
+        let path = dir.path().join("f.txt");
+        std::fs::write(&path, b"x").unwrap();
+        let meta = std::fs::symlink_metadata(&path).unwrap();
+
+        let hs = handshake();
+        let mut config = itemize_client_config();
+        config.flags.times = true;
+        config.flags.group = true;
+        let ctx = ReceiverContext::new_for_test(&hs, config);
+
+        // A gid the process can set: its own, made to differ from the
+        // destination's by picking a different member group when possible.
+        let dest_gid = meta.gid();
+        let mut settable = FileEntry::new_file("f.txt".into(), 1, 0o644);
+        settable.set_mtime(1_600_000_000, 0);
+        settable.set_gid(dest_gid.wrapping_add(1));
+        if metadata::group_is_settable(dest_gid.wrapping_add(1)) {
+            let flags = ctx.itemize_existing_flags(&settable, &path, Some(&meta), 0);
+            assert!(
+                flags & ItemFlags::ITEM_REPORT_GROUP != 0,
+                "a settable, differing group reports `g`: {flags:#06x}"
+            );
+        }
+
+        if metadata::am_root() {
+            return;
+        }
+        // gid 0 (wheel/root) is not a supplementary group of an ordinary user.
+        if !metadata::group_is_settable(0) && dest_gid != 0 {
+            let mut unsettable = FileEntry::new_file("f.txt".into(), 1, 0o644);
+            unsettable.set_mtime(1_600_000_000, 0);
+            unsettable.set_gid(0);
+            let flags = ctx.itemize_existing_flags(&unsettable, &path, Some(&meta), 0);
+            assert!(
+                flags & ItemFlags::ITEM_REPORT_GROUP == 0,
+                "FLAG_SKIP_GROUP suppresses `g` for a group the process cannot \
+                 set: {flags:#06x}"
+            );
+        }
     }
 
     /// upstream: generator.c:513-517. `keep_time` is type-gated, not simply
