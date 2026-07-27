@@ -103,7 +103,7 @@ impl ReceiverContext {
         dir_path: &std::path::Path,
     ) -> u32 {
         match std::fs::metadata(dir_path) {
-            Ok(meta) => self.itemize_existing_flags(entry, Some(&meta), 0),
+            Ok(meta) => self.itemize_existing_flags(entry, dir_path, Some(&meta), 0),
             // Not `None`: a failed stat is upstream's benign "no change"
             // outcome here, not the `statret < 0` ITEM_IS_NEW leg.
             Err(_) => 0,
@@ -169,7 +169,7 @@ impl ReceiverContext {
                     // upstream: itemize() compares an existing dir's pre-apply
                     // stat and prints its name only when an attribute differs.
                     Ok(meta) if meta.is_dir() => crate::generator::ItemFlags::from_raw(
-                        self.itemize_existing_flags(entry, Some(&meta), 0),
+                        self.itemize_existing_flags(entry, &dir_path, Some(&meta), 0),
                     )
                     .has_significant_flags(),
                     // Present but not a directory: upstream deletes it and

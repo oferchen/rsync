@@ -649,6 +649,15 @@ impl ReceiverContext {
         // preserve_xattrs >= 2, so the level has to reach the reader.
         .with_xattr_level(u32::from(self.config.flags.xattrs_level))
         .with_preserve_atimes(self.config.flags.atimes)
+        // upstream: flist.c:743-746 - `recv_file_entry()` reads the crtime
+        // varlong whenever `crtimes_ndx` is set and XMIT_CRTIME_EQ_MTIME is
+        // clear, exactly as it reads the atime above. Without this the receiver
+        // desynchronises from the sender's file list the moment a file's birth
+        // time differs from its mtime: the crtime bytes get parsed as the mode
+        // field and the transfer dies with "received file entry with
+        // zero-length filename". The generator side already sets it
+        // (generator/context.rs:467).
+        .with_preserve_crtimes(self.config.flags.crtimes)
         .with_delete_missing_args(self.config.file_selection.delete_missing_args)
         .with_relative_paths(self.config.flags.relative);
 
