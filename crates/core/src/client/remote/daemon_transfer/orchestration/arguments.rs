@@ -699,12 +699,15 @@ pub(super) fn build_full_daemon_args(
     // (!am_sender || protocol_version >= 30)) --no-implied-dirs`. The flag is
     // forwarded only for relative transfers (implied dirs exist solely for
     // relative-rooted paths). The `(!am_sender || protocol_version >= 30)` guard
-    // is always satisfied on the daemon path (proto >= 30 for rsync:// modules),
-    // so gating on relative_paths alone matches upstream. Without the
-    // relative_paths gate a non-relative transfer with implied_dirs=0
-    // (options.c:2207) would wrongly forward the flag, which the remote sender
-    // then stats as a source path.
-    if config.relative_paths() && !config.implied_dirs() {
+    // drops the flag on a PUSH below protocol 30 - reachable here because
+    // `--protocol=N` caps the version negotiated from the `@RSYNCD:` greeting.
+    // Without the relative_paths gate a non-relative transfer with
+    // implied_dirs=0 (options.c:2207) would wrongly forward the flag, which the
+    // remote sender then stats as a source path.
+    if config.relative_paths()
+        && !config.implied_dirs()
+        && (!we_are_sender || protocol.as_u8() >= 30)
+    {
         args.push("--no-implied-dirs".to_owned());
     }
 
@@ -1669,6 +1672,32 @@ mod server_option_fidelity_tests {
             !args(&non_relative, false)
                 .iter()
                 .any(|a| a == "--no-implied-dirs")
+        );
+    }
+
+    // upstream: options.c:2976 - the `(!am_sender || protocol_version >= 30)`
+    // half of the guard. A daemon PUSH below protocol 30 (reachable once
+    // `--protocol=N` caps the `@RSYNCD:` negotiation) must not forward the
+    // option to a peer that predates it; a PULL forwards it at every version.
+    #[test]
+    fn no_implied_dirs_gated_on_protocol_for_daemon_push() {
+        let config = ClientConfig::builder()
+            .relative_paths(true)
+            .implied_dirs(false)
+            .build();
+        // The 4th argument is the REMOTE's role, not ours: `is_sender: false`
+        // means the daemon is the receiver, i.e. we are the sender (a push).
+        // The polarity is inverted at the top of build_full_daemon_args
+        // (`let we_are_sender = !is_sender;`) - do not "correct" it here.
+        let push_28 = build_full_daemon_args(&config, &request(), ProtocolVersion::V28, false);
+        assert!(
+            !push_28.iter().any(|a| a == "--no-implied-dirs"),
+            "daemon push below protocol 30 must not forward --no-implied-dirs: {push_28:?}"
+        );
+        let pull_28 = build_full_daemon_args(&config, &request(), ProtocolVersion::V28, true);
+        assert!(
+            pull_28.iter().any(|a| a == "--no-implied-dirs"),
+            "daemon pull forwards --no-implied-dirs at every protocol: {pull_28:?}"
         );
     }
 

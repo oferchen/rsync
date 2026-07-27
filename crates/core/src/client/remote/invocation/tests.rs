@@ -4628,3 +4628,111 @@ fn open_noatime_suppressed_with_double_atimes() {
         "-UU must suppress --open-noatime: {args:?}"
     );
 }
+
+// upstream: options.c:3025-3028 maybe_add_e_option() - "checking the
+// pre-negotiated value allows the user to use a --protocol=29 override to avoid
+// the use of this -eFLAGS opt". At protocol 28/29 the compact flag string must
+// carry the transfer letters ONLY; a stock 3.4.4 client sends `-r`, not
+// `-re.iLsfxCIvu`. Without this the requested version never reaches the server
+// argv and every pre-30 code path stays unreachable from the client side.
+#[test]
+fn capability_suffix_omitted_below_protocol_30() {
+    for requested in [28u8, 29] {
+        let version = protocol::ProtocolVersion::try_from(requested).expect("supported version");
+        let config = ClientConfig::builder()
+            .recursive(true)
+            .protocol_version(Some(version))
+            .build();
+        assert_eq!(
+            build_sender_args(&config),
+            vec!["rsync", "--server", "-r", ".", "/path"],
+            "protocol {requested} push argv must match upstream"
+        );
+        assert_eq!(
+            build_receiver_args(&config),
+            vec!["rsync", "--server", "--sender", "-r", ".", "/path"],
+            "protocol {requested} pull argv must match upstream"
+        );
+    }
+}
+
+// upstream: options.c:3028 - the `>= 30` gate keeps the suffix for every
+// protocol the capability string is defined for, so a 30/31/32 request is
+// wire-identical to the uncapped default.
+#[test]
+fn capability_suffix_retained_at_protocol_30_and_above() {
+    let suffix = build_capability_string_suffix(true);
+    for requested in [None, Some(30u8), Some(31), Some(32)] {
+        let version = requested
+            .map(|raw| protocol::ProtocolVersion::try_from(raw).expect("supported version"));
+        let config = ClientConfig::builder()
+            .recursive(true)
+            .protocol_version(version)
+            .build();
+        assert_eq!(
+            build_sender_args(&config),
+            vec![
+                "rsync".to_owned(),
+                "--server".to_owned(),
+                format!("-r{suffix}"),
+                ".".to_owned(),
+                "/path".to_owned()
+            ],
+            "protocol {requested:?} must still advertise capabilities"
+        );
+    }
+}
+
+// upstream: options.c:2730 - `if (x > 1) args[ac++] = argstr;`. Once the
+// capability suffix is gated on protocol >= 30 the compact flag string can
+// collapse to a bare `-`, which upstream never places on the command line.
+#[test]
+fn empty_flag_string_omitted_below_protocol_30() {
+    let version = protocol::ProtocolVersion::try_from(28).expect("supported version");
+    let config = ClientConfig::builder()
+        .recursive(false)
+        .protocol_version(Some(version))
+        .build();
+    assert_eq!(
+        build_sender_args(&config),
+        vec!["rsync", "--server", ".", "/path"],
+        "a bare '-' must never be emitted"
+    );
+}
+
+// upstream: options.c:2976 - `if (relative_paths && !implied_dirs && (!am_sender
+// || protocol_version >= 30))`. The `am_sender` half of the guard drops
+// --no-implied-dirs on a PUSH below protocol 30; a PULL forwards it at every
+// version.
+#[test]
+fn no_implied_dirs_gated_on_protocol_for_push_only() {
+    let version = protocol::ProtocolVersion::try_from(28).expect("supported version");
+    let config = ClientConfig::builder()
+        .relative_paths(true)
+        .implied_dirs(false)
+        .protocol_version(Some(version))
+        .build();
+    assert!(
+        !build_sender_args(&config)
+            .iter()
+            .any(|a| a == "--no-implied-dirs"),
+        "push below protocol 30 must not forward --no-implied-dirs"
+    );
+    assert!(
+        build_receiver_args(&config)
+            .iter()
+            .any(|a| a == "--no-implied-dirs"),
+        "pull forwards --no-implied-dirs at every protocol"
+    );
+
+    let modern = ClientConfig::builder()
+        .relative_paths(true)
+        .implied_dirs(false)
+        .build();
+    assert!(
+        build_sender_args(&modern)
+            .iter()
+            .any(|a| a == "--no-implied-dirs"),
+        "push at protocol 30+ forwards --no-implied-dirs"
+    );
+}
