@@ -1,5 +1,20 @@
 use std::io::{self, Cursor, Read, Write};
 
+/// The `@RSYNCD:` line the client sends once the legacy handshake completes.
+///
+/// The greeting's exact contents - in particular that the advertised digest list
+/// is this build's own and not the server's - are pinned by literal-byte
+/// assertions in `daemon::negotiate`'s unit tests. Here the line is incidental:
+/// these tests check that it survives the stream wrappers intact, so they name it
+/// rather than restate it.
+pub(super) fn client_greeting(version: u8) -> Vec<u8> {
+    format!(
+        "@RSYNCD: {version}.0 {}\n",
+        protocol::daemon_auth_digest_list()
+    )
+    .into_bytes()
+}
+
 #[derive(Clone, Debug)]
 pub(super) struct MemoryTransport {
     reader: Cursor<Vec<u8>>,

@@ -88,7 +88,7 @@ fn negotiate_session_detects_legacy_transport() {
         Err(_) => panic!("legacy handshake expected"),
     };
 
-    assert_eq!(transport.writes(), b"@RSYNCD: 31.0\n");
+    assert_eq!(transport.writes(), client_greeting(31));
     assert_eq!(transport.flushes(), 1);
 }
 
@@ -244,7 +244,7 @@ fn session_into_inner_returns_legacy_transport() {
         negotiate_session(transport, ProtocolVersion::NEWEST).expect("legacy handshake succeeds");
 
     let mut raw = handshake.into_inner();
-    assert_eq!(raw.writes(), b"@RSYNCD: 31.0\n");
+    assert_eq!(raw.writes(), client_greeting(31));
     assert_eq!(raw.flushes(), 1);
 
     let mut replay = Vec::new();
@@ -282,7 +282,7 @@ fn session_parts_into_inner_returns_legacy_transport() {
         negotiate_session_parts(transport, ProtocolVersion::NEWEST).expect("legacy parts succeed");
 
     let mut raw = parts.into_inner();
-    assert_eq!(raw.writes(), b"@RSYNCD: 31.0\n");
+    assert_eq!(raw.writes(), client_greeting(31));
     assert_eq!(raw.flushes(), 1);
 
     let mut replay = Vec::new();
@@ -338,7 +338,7 @@ fn negotiate_session_parts_from_stream_handles_legacy_transport() {
     assert_eq!(greeting.advertised_protocol(), 31);
 
     let transport = parts.into_handshake().into_inner();
-    assert_eq!(transport.writes(), b"@RSYNCD: 31.0\n");
+    assert_eq!(transport.writes(), client_greeting(31));
     assert_eq!(transport.flushes(), 1);
 }
 
@@ -387,7 +387,7 @@ fn negotiate_session_parts_exposes_legacy_metadata() {
 
     let stream_parts = legacy_parts.into_stream_parts();
     let transport = stream_parts.into_stream().into_inner();
-    assert_eq!(transport.writes(), b"@RSYNCD: 31.0\n");
+    assert_eq!(transport.writes(), client_greeting(31));
     assert_eq!(transport.flushes(), 1);
 }
 
@@ -446,7 +446,7 @@ fn negotiate_session_parts_with_sniffer_supports_reuse() {
 
     let (_greeting, _negotiated, stream_parts) = parts2.into_legacy().expect("legacy parts");
     let transport2 = stream_parts.into_stream().into_inner();
-    assert_eq!(transport2.writes(), b"@RSYNCD: 31.0\n");
+    assert_eq!(transport2.writes(), client_greeting(31));
     assert_eq!(transport2.flushes(), 1);
 }
 
@@ -492,6 +492,6 @@ fn negotiate_session_with_sniffer_supports_reuse() {
         .expect("second handshake is legacy")
         .into_stream()
         .into_inner();
-    assert_eq!(transport2.writes(), b"@RSYNCD: 31.0\n");
+    assert_eq!(transport2.writes(), client_greeting(31));
     assert_eq!(transport2.flushes(), 1);
 }

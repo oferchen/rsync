@@ -72,7 +72,7 @@ fn as_variant_mut_helpers_allow_mutating_streams() {
         .expect("handshake remains legacy")
         .into_stream()
         .into_inner();
-    let mut expected = b"@RSYNCD: 31.0\n".to_vec();
+    let mut expected = client_greeting(31);
     expected.extend_from_slice(b"payload");
     assert_eq!(transport.writes(), expected.as_slice());
 }

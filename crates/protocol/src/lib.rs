@@ -178,8 +178,11 @@ pub use iconv::{
     converter_from_locale,
 };
 pub use legacy::{
-    DigestListTokens, LEGACY_DAEMON_PREFIX, LEGACY_DAEMON_PREFIX_BYTES, LEGACY_DAEMON_PREFIX_LEN,
-    LegacyDaemonGreeting, LegacyDaemonGreetingOwned, LegacyDaemonMessage, MissingGreetingToken,
+    DAEMON_AUTH_DIGEST_NAMES, DigestListTokens, LEGACY_DAEMON_PREFIX, LEGACY_DAEMON_PREFIX_BYTES,
+    LEGACY_DAEMON_PREFIX_LEN, LegacyDaemonGreeting, LegacyDaemonGreetingOwned, LegacyDaemonMessage,
+    MissingGreetingToken, daemon_auth_digest_list, write_daemon_auth_digest_list,
+};
+pub use legacy::{
     format_legacy_daemon_greeting, format_legacy_daemon_message, is_version_banner,
     missing_greeting_token, parse_legacy_daemon_greeting, parse_legacy_daemon_greeting_bytes,
     parse_legacy_daemon_greeting_bytes_details, parse_legacy_daemon_greeting_bytes_owned,
