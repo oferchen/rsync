@@ -40,6 +40,51 @@ pub(in crate::receiver) type DryRunItem<'a> = (usize, &'a FileEntry, u32);
 ///
 /// upstream: `receiver.c:736-738` - `stats.created_dirs++` under
 /// `iflags & ITEM_IS_NEW`, which runs whether or not the mkdir happened.
+/// The itemize seed for a regular file the generator is about to request.
+///
+/// upstream: `generator.c:1940-1942`
+///
+/// ```c
+/// int iflags = ITEM_TRANSFER;
+/// if (always_checksum > 0)
+///     iflags |= ITEM_REPORT_CHANGE;
+/// ```
+///
+/// Shared by the live candidate pass and the `--dry-run` planner so `-i` and
+/// `-ni` cannot disagree about the `c` glyph.
+const fn transfer_seed(always_checksum: bool) -> u32 {
+    use crate::generator::ItemFlags;
+    if always_checksum {
+        ItemFlags::ITEM_TRANSFER | ItemFlags::ITEM_REPORT_CHANGE
+    } else {
+        ItemFlags::ITEM_TRANSFER
+    }
+}
+
+/// The destination's mtime as `(seconds, nanoseconds)`, the pair upstream's
+/// `mtime_differs()` reads out of `stp->st_mtime` / `stp->ST_MTIME_NSEC`
+/// (`generator.c:396-401`).
+///
+/// The nanosecond component only participates when `--modify-window` is
+/// negative (`util1.c:1482`), but it has to be carried so that mode works.
+/// A destination whose mtime predates the epoch or cannot be read compares as
+/// `(0, 0)`, which differs from any real sender mtime and therefore reports the
+/// time as changed - the safe direction.
+fn dest_mtime(meta: &fs::Metadata) -> (i64, u32) {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        (meta.mtime(), meta.mtime_nsec() as u32)
+    }
+    #[cfg(not(unix))]
+    {
+        meta.modified()
+            .ok()
+            .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+            .map_or((0, 0), |d| (d.as_secs() as i64, d.subsec_nanos()))
+    }
+}
+
 pub(in crate::receiver) fn new_dir_count(plan: &[DryRunItem<'_>]) -> u64 {
     plan.iter()
         .filter(|(_, entry, iflags)| {
@@ -248,6 +293,14 @@ impl ReceiverContext {
         // per-file method dispatch for the common no-itemize case.
         let emit_itemize = self.should_emit_itemize();
 
+        // upstream: generator.c:1940-1942 - the seed the generator hands to
+        // itemize() at `notify_others` is `ITEM_TRANSFER`, plus
+        // `ITEM_REPORT_CHANGE` whenever `always_checksum > 0`. Under
+        // `--checksum` every transferred file therefore carries the position-2
+        // `c` glyph, because the checksum - not the mtime - is what decided the
+        // file changed.
+        let transfer_seed = transfer_seed(always_checksum.is_some());
+
         // Pre-compute whether ACLs and xattrs are enabled. When disabled
         // (the common case), the per-file function call overhead is avoided
         // entirely in the no-change path. At 100K files this eliminates
@@ -354,14 +407,12 @@ impl ReceiverContext {
                     // up-to-date file; the attr-comparison may still surface a
                     // metadata-only row (perms/owner/group differing while
                     // size+mtime match).
-                    let mut unchanged_iflags = self.itemize_existing_flags(entry, Some(meta), 0);
-                    // upstream: generator.c:566-572 - ITEM_REPORT_XATTR when the
-                    // destination's xattrs differ from the sender's. Computed on
-                    // the -X itemize path only (matching upstream's lazy
-                    // get_xattr) and before the apply below overwrites them.
-                    if emit_itemize && has_xattrs && self.dest_xattrs_differ(entry, &file_path) {
-                        unchanged_iflags |= crate::generator::ItemFlags::ITEM_REPORT_XATTR;
-                    }
+                    // The `x` column is now part of itemize_existing_flags
+                    // itself (upstream generator.c:564-571), and this call
+                    // still runs before the apply below overwrites the
+                    // destination's xattrs.
+                    let unchanged_iflags =
+                        self.itemize_existing_flags(entry, &file_path, Some(meta), 0);
                     self.apply_no_change_metadata(
                         writer,
                         idx,
@@ -425,11 +476,8 @@ impl ReceiverContext {
             // changes against the pre-transfer destination. A non-existent dest
             // (statret < 0) is ITEM_IS_NEW; an existing one OR-s the per-attr
             // report bits onto ITEM_TRANSFER.
-            let base_iflags = self.itemize_existing_flags(
-                entry,
-                dest_meta.as_ref(),
-                crate::generator::ItemFlags::ITEM_TRANSFER,
-            );
+            let base_iflags =
+                self.itemize_existing_flags(entry, &file_path, dest_meta.as_ref(), transfer_seed);
             if base_iflags & crate::generator::ItemFlags::ITEM_IS_NEW != 0 {
                 // upstream: receiver.c:777-778 - a regular file being received
                 // whose destination was absent (ITEM_IS_NEW) bumps
@@ -612,11 +660,11 @@ impl ReceiverContext {
                     ) {
                         0
                     } else {
-                        ItemFlags::ITEM_TRANSFER
+                        transfer_seed(always_checksum.is_some())
                     };
-                    self.itemize_existing_flags(entry, Some(&meta), base)
+                    self.itemize_existing_flags(entry, dest_path, Some(&meta), base)
                 }
-                Err(_) => new_iflags(ItemFlags::ITEM_TRANSFER),
+                Err(_) => new_iflags(transfer_seed(always_checksum.is_some())),
             }
         }
     }
@@ -637,58 +685,148 @@ impl ReceiverContext {
     /// pre-transfer destination stat). Both regular files (quick-check match)
     /// and existing directories reach this path: the `ITEM_REPORT_SIZE` check
     /// is gated on `entry.is_file()` so it never fires for a directory, and
-    /// `keep_time` reduces to the `--times` preservation flag in both cases
-    /// (`--omit-dir-times` is not modelled by the server flag set, matching
-    /// [`super::super::directory::creation`]'s `touch_up_dirs`).
+    /// `keep_time` follows upstream's per-type gating on `--omit-dir-times` /
+    /// `--omit-link-times` (`generator.c:513-517`).
     pub(in crate::receiver) fn itemize_existing_flags(
         &self,
         entry: &FileEntry,
+        path: &Path,
         dest_meta: Option<&fs::Metadata>,
         base: u32,
     ) -> u32 {
         use crate::generator::ItemFlags;
         let mut iflags = base;
         let Some(dest_meta) = dest_meta else {
-            // upstream: generator.c:578 - the `statret < 0` leg contributes only
-            // ITEM_IS_NEW; there is no destination stat to compare against.
+            // upstream: generator.c:572-576 - the `statret < 0` leg is not
+            // ITEM_IS_NEW alone: it first runs `xattr_diff(file, NULL, 1)`,
+            // which compares the sender's list against an empty destination
+            // (xattrs.c:555-561 sets `rec_cnt = 0` for a NULL `sxp`), so a
+            // brand-new file carrying xattrs reports the `x` column too.
+            if self.xattr_itemize_active() && self.dest_xattrs_differ(entry, None) {
+                iflags |= ItemFlags::ITEM_REPORT_XATTR;
+            }
             return iflags | ItemFlags::ITEM_IS_NEW;
         };
         // upstream: generator.c:521 - S_ISREG(file->mode) && F_LENGTH(file) != st_size
         if entry.is_file() && entry.size() != dest_meta.len() {
             iflags |= ItemFlags::ITEM_REPORT_SIZE;
         }
-        // upstream: generator.c:526-530 - keep_time ? mtime_differs(&st, file).
-        // For regular files keep_time == preserve_mtimes (`--times`).
-        if self.config.flags.times {
-            #[cfg(unix)]
-            {
-                use std::os::unix::fs::MetadataExt;
-                if dest_meta.mtime() != entry.mtime() {
-                    iflags |= ItemFlags::ITEM_REPORT_TIME;
-                }
-            }
-            #[cfg(not(unix))]
-            {
-                let dest_secs = dest_meta
-                    .modified()
-                    .ok()
-                    .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
-                    .map(|d| d.as_secs() as i64);
-                if dest_secs != Some(entry.mtime()) {
-                    iflags |= ItemFlags::ITEM_REPORT_TIME;
-                }
+        // upstream: generator.c:526-530 - REPORT_TIME is a TWO-branch ternary,
+        // not a single `keep_time &&` test:
+        //
+        //     } else if (keep_time
+        //      ? mtime_differs(&sxp->st, file)
+        //      : iflags & (ITEM_TRANSFER|ITEM_LOCAL_CHANGE) && !(iflags & ITEM_MATCHED)
+        //       && (!(iflags & ITEM_XNAME_FOLLOWS) || *xname))
+        //             iflags |= ITEM_REPORT_TIME;
+        //
+        // With `keep_time` the row reports a genuine mtime difference. Without
+        // it (no `--times`) every transfer/local-change row reports the time as
+        // changed, because the receiver is about to leave the destination mtime
+        // at "now" instead of the sender's value - which is what makes a plain
+        // `rsync -i src/ dst/` print `>f..T......` rather than `>f.........`.
+        // upstream: generator.c:513-517 - `keep_time` is not `preserve_mtimes`;
+        // it is type-gated:
+        //
+        //     int keep_time = !preserve_mtimes ? 0
+        //         : S_ISDIR(file->mode) ? !omit_dir_times
+        //         : S_ISLNK(file->mode) ? !omit_link_times
+        //         : 1;
+        //
+        // Under `-O`/`-J` the receiver deliberately leaves that type's mtime
+        // alone, so upstream drops to the `!keep_time` branch for it rather
+        // than comparing a timestamp it is not going to set. Both flags do
+        // reach the receiver's flag set (core sets them on the embedded-SSH and
+        // daemon pull paths); an older comment here claimed otherwise.
+        let keep_time = self.config.flags.times
+            && !(entry.is_dir() && self.config.flags.omit_dir_times)
+            && !(entry.is_symlink() && self.config.flags.omit_link_times);
+        let report_time = if keep_time {
+            // upstream: generator.c:396-401 - `mtime_differs()` is
+            // `!same_time(...)`, which applies the `--modify-window` tolerance
+            // and, for a negative window, compares nanoseconds too
+            // (util1.c:1478-1489). A raw `!=` on whole seconds ignored both.
+            let (dest_secs, dest_nsec) = dest_mtime(dest_meta);
+            !self.config.file_selection.modify_window.same_time(
+                dest_secs,
+                dest_nsec,
+                entry.mtime(),
+                entry.mtime_nsec(),
+            )
+        } else {
+            // upstream: generator.c:528-530 - all three conjuncts.
+            //
+            // ITEM_MATCHED (rsync.h:229, log-only bit 18) is set by upstream's
+            // `unchanged_attrs()`/hard-link bookkeeping; nothing in oc sets it
+            // yet, so this conjunct cannot fire today. It is written out
+            // anyway so the predicate stays a faithful transcription and
+            // starts working the moment the bit is produced.
+            //
+            // The third conjunct is `!(iflags & ITEM_XNAME_FOLLOWS) || *xname`.
+            // `xname` (the fuzzy-basis / hard-link-leader name) is not part of
+            // this function's inputs and no call site seeds
+            // ITEM_XNAME_FOLLOWS, so the `|| *xname` alternative is
+            // unreachable; the conservative `== 0` half is transcribed here.
+            iflags & (ItemFlags::ITEM_TRANSFER | ItemFlags::ITEM_LOCAL_CHANGE) != 0
+                && iflags & ItemFlags::ITEM_MATCHED == 0
+                && iflags & ItemFlags::ITEM_XNAME_FOLLOWS == 0
+        };
+        if report_time {
+            iflags |= ItemFlags::ITEM_REPORT_TIME;
+        }
+        // upstream: generator.c:535-540 - under `--crtimes` the generator reads
+        // the destination's creation time and reports a difference through
+        // `same_time()`:
+        //
+        //     if (crtimes_ndx) {
+        //         if (sxp->crtime == 0)
+        //             sxp->crtime = get_create_time(fnamecmp, &sxp->st);
+        //         if (!same_time(sxp->crtime, 0, F_CRTIME(file), 0))
+        //             iflags |= ITEM_REPORT_CRTIME;
+        //     }
+        //
+        // `get_create_time()` yields 0 when the birth time cannot be read
+        // (utils.c), which `created()` returning `Err` reproduces: 0 differs
+        // from any real sender crtime, so the column reports a change - the
+        // same direction upstream takes. Upstream places this test between the
+        // atime and perms comparisons; the order of independently OR-ed bits is
+        // immaterial, and keeping it out of the `cfg(unix)` block below lets
+        // Windows (which does carry a creation time) report the column too.
+        if self.config.flags.crtimes {
+            let dest_crtime = dest_meta
+                .created()
+                .ok()
+                .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                .map_or(0, |d| d.as_secs() as i64);
+            // upstream: util1.c:1478 - `same_time()` honours `--modify-window`,
+            // and both crtime arguments carry a zero nsec component.
+            if !self.config.file_selection.modify_window.same_time(
+                dest_crtime,
+                0,
+                entry.crtime(),
+                0,
+            ) {
+                iflags |= ItemFlags::ITEM_REPORT_CRTIME;
             }
         }
         #[cfg(unix)]
         {
             use std::os::unix::fs::MetadataExt;
-            // upstream: generator.c:531-533 - atimes_ndx && !S_ISDIR && !S_ISLNK
-            //   && !same_time(F_ATIME(file), 0, st_atime, 0). same_time with a
-            //   zero nsec compares whole seconds, matching the mtime check above.
+            // upstream: generator.c:531-533 - `atimes_ndx && !S_ISDIR &&
+            // !S_ISLNK && !same_time(F_ATIME(file), 0, sxp->st.st_atime, 0)`.
+            // Both nsec arguments are literal zeros upstream, but the
+            // comparison still goes through `same_time()`, so a positive
+            // `--modify-window` tolerates drift here exactly as it does for the
+            // mtime. A raw `!=` ignored the window.
             if self.config.flags.atimes
                 && !entry.is_dir()
                 && !entry.is_symlink()
-                && dest_meta.atime() != entry.atime()
+                && !self.config.file_selection.modify_window.same_time(
+                    entry.atime(),
+                    0,
+                    dest_meta.atime(),
+                    0,
+                )
             {
                 iflags |= ItemFlags::ITEM_REPORT_ATIME;
             }
@@ -700,9 +838,30 @@ impl ReceiverContext {
             // the `#ifndef` at generator.c:542-544 compiles out and upstream
             // does compare. Mirrors the same guard in engine's local-copy
             // change-set detection; revisit both with symlink-mode support.
-            if self.config.flags.perms && !entry.is_symlink() {
-                const CHMOD_BITS: u32 = 0o7777;
-                if (dest_meta.mode() & CHMOD_BITS) != (entry.mode() & CHMOD_BITS) {
+            //
+            // The compare itself is an if/else-if (generator.c:546-552), not a
+            // lone `preserve_perms` test:
+            //
+            //     if (preserve_perms) {
+            //         if (!BITS_EQUAL(sxp->st.st_mode, file->mode, CHMOD_BITS))
+            //             iflags |= ITEM_REPORT_PERMS;
+            //     } else if (preserve_executability
+            //      && ((sxp->st.st_mode & 0111 ? 1 : 0) ^ (file->mode & 0111 ? 1 : 0)))
+            //         iflags |= ITEM_REPORT_PERMS;
+            //
+            // Under `-E` without `-p` the receiver copies only the
+            // executability bit, so only a change in *whether* the file is
+            // executable is a permission change - the other mode bits stay as
+            // they are and must not raise the `p` column.
+            if !entry.is_symlink() {
+                if self.config.flags.perms {
+                    const CHMOD_BITS: u32 = 0o7777;
+                    if (dest_meta.mode() & CHMOD_BITS) != (entry.mode() & CHMOD_BITS) {
+                        iflags |= ItemFlags::ITEM_REPORT_PERMS;
+                    }
+                } else if self.config.flags.preserve_executability
+                    && (dest_meta.mode() & 0o111 != 0) != (entry.mode() & 0o111 != 0)
+                {
                     iflags |= ItemFlags::ITEM_REPORT_PERMS;
                 }
             }
@@ -714,16 +873,42 @@ impl ReceiverContext {
                     }
                 }
             }
-            // upstream: generator.c:555-556 - gid_ndx && !FLAG_SKIP_GROUP && gid differs
+            // upstream: generator.c:555-556 - `gid_ndx && !(file->flags &
+            // FLAG_SKIP_GROUP) && sxp->st.st_gid != (gid_t)F_GROUP(file)`.
+            //
+            // FLAG_SKIP_GROUP is stamped on the mapped id at uidlist.c:284
+            // (`!am_root && !is_in_group(id2)`), so a non-root receiver that
+            // does not belong to the sender's group neither chowns
+            // (rsync.c:527) nor reports the group as changed. Without this
+            // test an unprivileged pull printed `g` on every file whose group
+            // it could never set.
             if self.config.flags.group {
                 if let Some(gid) = entry.gid() {
-                    if dest_meta.gid() != gid {
+                    if dest_meta.gid() != gid && metadata::group_is_settable(gid) {
                         iflags |= ItemFlags::ITEM_REPORT_GROUP;
                     }
                 }
             }
         }
+        // upstream: generator.c:564-571 - the last thing the `statret >= 0` leg
+        // does is a lazy `get_xattr(fnamecmp, sxp)` followed by
+        // `xattr_diff(file, sxp, 1)`. It runs for every itemized entry, not
+        // just for one that was skipped as up to date.
+        if self.xattr_itemize_active() && self.dest_xattrs_differ(entry, Some(path)) {
+            iflags |= ItemFlags::ITEM_REPORT_XATTR;
+        }
         iflags
+    }
+
+    /// Whether the `x` column's destination read should run at all.
+    ///
+    /// `preserve_xattrs` is the only gate upstream places *inside* `itemize()`
+    /// (`generator.c:564`); the `itemizing` test sits at each of its call sites
+    /// (`generator.c:1816`, `:1939`). Folding both in here keeps the extra
+    /// `listxattr`/`getxattr` pair off the no-itemize scan path, where oc calls
+    /// this function for its `ITEM_IS_NEW` answer alone.
+    fn xattr_itemize_active(&self) -> bool {
+        self.config.flags.xattrs && self.should_emit_itemize()
     }
 
     /// Whether the destination's extended attributes differ from the sender's,
@@ -737,7 +922,16 @@ impl ReceiverContext {
     /// pre-transfer destination. A sender with no xattrs differs exactly when
     /// the destination still carries some, which the empty-list case expresses
     /// without a second code path.
-    pub(in crate::receiver) fn dest_xattrs_differ(&self, entry: &FileEntry, path: &Path) -> bool {
+    ///
+    /// `path` is `None` for upstream's `xattr_diff(file, NULL, 1)`
+    /// (`generator.c:573`): there is no destination to read, so the sender's
+    /// list is compared against an empty one and the answer is simply "does
+    /// the sender carry any xattrs".
+    pub(in crate::receiver) fn dest_xattrs_differ(
+        &self,
+        entry: &FileEntry,
+        path: Option<&Path>,
+    ) -> bool {
         // upstream: xattrs.c:250-252 - `saw_xattr_filter` is a global consulted
         // on every `rsync_xal_get()` call, so the generator's destination read
         // screens names through the same `x`-modifier rules the sender applied
@@ -764,7 +958,16 @@ impl ReceiverContext {
             checksum_seed: self.checksum_seed,
         };
         let sender = self.resolve_xattr_list(entry).unwrap_or_default();
-        metadata::dest_xattrs_differ(&sender, path, &opts)
+        match path {
+            Some(path) => metadata::dest_xattrs_differ(&sender, path, &opts),
+            // upstream: xattrs.c:555-561 - a NULL `sxp` yields `rec_cnt = 0`,
+            // so the count test at :574 already decides the answer.
+            None => protocol::xattr::xattr_diff(
+                &sender,
+                &protocol::xattr::XattrList::default(),
+                self.checksum_seed,
+            ),
+        }
     }
 
     /// Emits the upstream size-bound SKIP notice for a candidate whose flist
@@ -949,6 +1152,8 @@ mod itemize_order_tests {
     use std::ffi::OsString;
     use std::path::Path;
 
+    use super::transfer_seed;
+
     use protocol::ProtocolVersion;
     use protocol::flist::FileEntry;
 
@@ -1031,7 +1236,7 @@ mod itemize_order_tests {
         with_u.flags.times = true;
         with_u.flags.atimes = true;
         let ctx = ReceiverContext::new_for_test(&hs, with_u);
-        let flags = ctx.itemize_existing_flags(&entry, Some(&meta), 0);
+        let flags = ctx.itemize_existing_flags(&entry, &path, Some(&meta), 0);
         assert!(
             flags & ItemFlags::ITEM_REPORT_ATIME != 0,
             "atime row missing under -U: {flags:#06x}"
@@ -1045,10 +1250,486 @@ mod itemize_order_tests {
         without_u.flags.times = true;
         without_u.flags.atimes = false;
         let ctx = ReceiverContext::new_for_test(&hs, without_u);
-        let flags = ctx.itemize_existing_flags(&entry, Some(&meta), 0);
+        let flags = ctx.itemize_existing_flags(&entry, &path, Some(&meta), 0);
         assert!(
             flags & ItemFlags::ITEM_REPORT_ATIME == 0,
             "atime row must be gated on --atimes: {flags:#06x}"
+        );
+    }
+
+    /// upstream: generator.c:526-530. REPORT_TIME is a two-branch ternary. The
+    /// `!keep_time` branch is what makes a plain `rsync -i` (no `--times`)
+    /// print `>f..T......` for every transferred file: the receiver is about to
+    /// leave the destination mtime at "now", so the time column reports a
+    /// change even though nothing was compared.
+    ///
+    /// Why it matters: without this branch the `T` glyph is unreachable on the
+    /// receiver, so `-i` without `-t` silently under-reports. Verified against
+    /// rsync 3.4.4, which prints `>f.sT......` where oc printed `>f.s.......`.
+    ///
+    /// The branch must stay inert for a metadata-only row (`base == 0`, no
+    /// ITEM_TRANSFER / ITEM_LOCAL_CHANGE) - upstream's first conjunct - and must
+    /// not fire when `--times` is on and the mtimes agree.
+    #[test]
+    fn itemize_existing_flags_reports_time_without_times_on_transfer() {
+        use crate::generator::ItemFlags;
+
+        let dir = test_support::create_tempdir();
+        let path = dir.path().join("f.txt");
+        std::fs::write(&path, b"x").unwrap();
+        filetime::set_file_times(
+            &path,
+            filetime::FileTime::from_unix_time(1_600_000_000, 0),
+            filetime::FileTime::from_unix_time(1_600_000_000, 0),
+        )
+        .unwrap();
+        let meta = std::fs::symlink_metadata(&path).unwrap();
+
+        // Source mtime deliberately equals the destination's, so the
+        // `keep_time` branch can never be the reason the bit appears.
+        let mut entry = FileEntry::new_file("f.txt".into(), 1, 0o644);
+        entry.set_mtime(1_600_000_000, 0);
+
+        let hs = handshake();
+
+        let mut no_times = itemize_client_config();
+        no_times.flags.times = false;
+        let ctx = ReceiverContext::new_for_test(&hs, no_times);
+
+        let transfer =
+            ctx.itemize_existing_flags(&entry, &path, Some(&meta), ItemFlags::ITEM_TRANSFER);
+        assert!(
+            transfer & ItemFlags::ITEM_REPORT_TIME != 0,
+            "a transfer without --times must report the time as changed: {transfer:#06x}"
+        );
+
+        let local =
+            ctx.itemize_existing_flags(&entry, &path, Some(&meta), ItemFlags::ITEM_LOCAL_CHANGE);
+        assert!(
+            local & ItemFlags::ITEM_REPORT_TIME != 0,
+            "ITEM_LOCAL_CHANGE is the second half of upstream's first conjunct: {local:#06x}"
+        );
+
+        let metadata_only = ctx.itemize_existing_flags(&entry, &path, Some(&meta), 0);
+        assert!(
+            metadata_only & ItemFlags::ITEM_REPORT_TIME == 0,
+            "an attribute-only row is neither a transfer nor a local change: {metadata_only:#06x}"
+        );
+
+        // With --times the `keep_time` branch governs, and the mtimes agree.
+        let mut with_times = itemize_client_config();
+        with_times.flags.times = true;
+        let ctx = ReceiverContext::new_for_test(&hs, with_times);
+        let kept = ctx.itemize_existing_flags(&entry, &path, Some(&meta), ItemFlags::ITEM_TRANSFER);
+        assert!(
+            kept & ItemFlags::ITEM_REPORT_TIME == 0,
+            "--times with equal mtimes must leave the time column clear: {kept:#06x}"
+        );
+    }
+
+    /// upstream: generator.c:564-571 (`statret >= 0`) and :573-575
+    /// (`statret < 0`). Both legs of `itemize()` compare xattrs, so the `x`
+    /// column belongs on the *transfer* seed as much as on the up-to-date row.
+    ///
+    /// Why it matters: the comparison used to live at the quick-check skip site
+    /// alone, so `x` could only ever appear on a file that was NOT transferred.
+    /// A file whose data and xattrs both changed printed `>f.s.......` where
+    /// upstream prints `>f.s......x`.
+    ///
+    /// Linux-only: macOS attaches `com.apple.provenance` to every file, which
+    /// the sender and the generator-side read do not currently agree on (a
+    /// separate, pre-existing defect in the shared comparison), so the
+    /// destination-read half of this assertion is not stable there.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn itemize_existing_flags_reports_xattr_on_a_transfer() {
+        use crate::generator::ItemFlags;
+        use protocol::xattr::{XattrEntry, XattrList};
+
+        let dir = test_support::create_tempdir();
+        let path = dir.path().join("f.txt");
+        std::fs::write(&path, b"x").unwrap();
+        // The destination carries an xattr; the sender entry carries none, so
+        // upstream's `xattr_diff` reports a differing count.
+        let list = XattrList::with_entries(vec![XattrEntry::new(
+            b"user.itemize".to_vec(),
+            b"v".to_vec(),
+        )]);
+        if metadata::apply_xattrs_from_list(&path, &list, true, None).is_err() {
+            // A filesystem without user-namespace xattr support cannot
+            // exercise the comparison; skip rather than assert a false pass.
+            return;
+        }
+        let meta = std::fs::symlink_metadata(&path).unwrap();
+
+        let mut entry = FileEntry::new_file("f.txt".into(), 1, 0o644);
+        entry.set_mtime(1_600_000_000, 0);
+
+        let hs = handshake();
+        let mut with_x = itemize_client_config();
+        with_x.flags.times = true;
+        with_x.flags.xattrs = true;
+        let ctx = ReceiverContext::new_for_test(&hs, with_x);
+
+        let transfer =
+            ctx.itemize_existing_flags(&entry, &path, Some(&meta), ItemFlags::ITEM_TRANSFER);
+        assert!(
+            transfer & ItemFlags::ITEM_REPORT_XATTR != 0,
+            "a transferred file with differing xattrs must report `x`: {transfer:#06x}"
+        );
+
+        let skipped = ctx.itemize_existing_flags(&entry, &path, Some(&meta), 0);
+        assert!(
+            skipped & ItemFlags::ITEM_REPORT_XATTR != 0,
+            "the up-to-date row must keep reporting `x`: {skipped:#06x}"
+        );
+
+        // Without -X the destination is never read and the column stays clear.
+        let mut without_x = itemize_client_config();
+        without_x.flags.times = true;
+        without_x.flags.xattrs = false;
+        let ctx = ReceiverContext::new_for_test(&hs, without_x);
+        let off = ctx.itemize_existing_flags(&entry, &path, Some(&meta), ItemFlags::ITEM_TRANSFER);
+        assert!(
+            off & ItemFlags::ITEM_REPORT_XATTR == 0,
+            "the `x` column is gated on --xattrs: {off:#06x}"
+        );
+    }
+
+    /// upstream: generator.c:542-552. The permission compare is an
+    /// `if (preserve_perms) ... else if (preserve_executability ...)`, so `-E`
+    /// without `-p` reports `p` only when the *executability* changes - the
+    /// only bit the receiver is going to copy.
+    ///
+    /// Why it matters: oc tested `preserve_perms` alone, so `-tE` never
+    /// produced a `p` column at all; rsync 3.4.4 prints `.f...p..... f` when
+    /// the exec bit differs and nothing when only the other mode bits do.
+    #[cfg(unix)]
+    #[test]
+    fn perms_column_follows_the_executability_leg_without_dash_p() {
+        use crate::generator::ItemFlags;
+        use std::os::unix::fs::PermissionsExt;
+
+        let dir = test_support::create_tempdir();
+        let path = dir.path().join("f.txt");
+        std::fs::write(&path, b"x").unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o644)).unwrap();
+        let meta = std::fs::symlink_metadata(&path).unwrap();
+
+        let hs = handshake();
+        let mut dash_e = itemize_client_config();
+        dash_e.flags.times = true;
+        dash_e.flags.perms = false;
+        dash_e.flags.preserve_executability = true;
+        let ctx = ReceiverContext::new_for_test(&hs, dash_e);
+
+        let mut executable = FileEntry::new_file("f.txt".into(), 1, 0o755);
+        executable.set_mtime(1_600_000_000, 0);
+        let flipped = ctx.itemize_existing_flags(&executable, &path, Some(&meta), 0);
+        assert!(
+            flipped & ItemFlags::ITEM_REPORT_PERMS != 0,
+            "-E reports a change in executability: {flipped:#06x}"
+        );
+
+        // Same executability, different other bits: nothing -E would copy.
+        let mut same_exec = FileEntry::new_file("f.txt".into(), 1, 0o640);
+        same_exec.set_mtime(1_600_000_000, 0);
+        let unchanged = ctx.itemize_existing_flags(&same_exec, &path, Some(&meta), 0);
+        assert!(
+            unchanged & ItemFlags::ITEM_REPORT_PERMS == 0,
+            "-E must ignore mode bits it does not copy: {unchanged:#06x}"
+        );
+
+        // -p takes the other branch and compares all CHMOD_BITS.
+        let mut with_p = itemize_client_config();
+        with_p.flags.times = true;
+        with_p.flags.perms = true;
+        let ctx = ReceiverContext::new_for_test(&hs, with_p);
+        let full = ctx.itemize_existing_flags(&same_exec, &path, Some(&meta), 0);
+        assert!(
+            full & ItemFlags::ITEM_REPORT_PERMS != 0,
+            "-p compares every CHMOD bit: {full:#06x}"
+        );
+
+        // Neither flag: no permission comparison at all.
+        let mut neither = itemize_client_config();
+        neither.flags.times = true;
+        let ctx = ReceiverContext::new_for_test(&hs, neither);
+        let off = ctx.itemize_existing_flags(&executable, &path, Some(&meta), 0);
+        assert!(
+            off & ItemFlags::ITEM_REPORT_PERMS == 0,
+            "without -p or -E the `p` column stays clear: {off:#06x}"
+        );
+    }
+
+    /// upstream: generator.c:555-556 + uidlist.c:284. FLAG_SKIP_GROUP is
+    /// stamped on any group a non-root process does not belong to, and the
+    /// itemize test is `!(file->flags & FLAG_SKIP_GROUP)`.
+    ///
+    /// Why it matters: an unprivileged pull of a root:wheel file reported
+    /// `.f.....g...` in oc for a group it could never set; rsync 3.4.4 prints
+    /// no row. Verified against a real `/usr/share/dict/propernames` (gid 0)
+    /// pull with the destination chgrp'd to a group the user does belong to.
+    ///
+    /// Running as root makes every group settable, so the negative half only
+    /// means something unprivileged; it is skipped under root rather than
+    /// asserted vacuously.
+    #[cfg(unix)]
+    #[test]
+    fn group_column_skips_a_group_the_process_cannot_set() {
+        use crate::generator::ItemFlags;
+        use std::os::unix::fs::MetadataExt;
+
+        let dir = test_support::create_tempdir();
+        let path = dir.path().join("f.txt");
+        std::fs::write(&path, b"x").unwrap();
+        let meta = std::fs::symlink_metadata(&path).unwrap();
+
+        let hs = handshake();
+        let mut config = itemize_client_config();
+        config.flags.times = true;
+        config.flags.group = true;
+        let ctx = ReceiverContext::new_for_test(&hs, config);
+
+        // A gid the process can set: its own, made to differ from the
+        // destination's by picking a different member group when possible.
+        let dest_gid = meta.gid();
+        let mut settable = FileEntry::new_file("f.txt".into(), 1, 0o644);
+        settable.set_mtime(1_600_000_000, 0);
+        settable.set_gid(dest_gid.wrapping_add(1));
+        if metadata::group_is_settable(dest_gid.wrapping_add(1)) {
+            let flags = ctx.itemize_existing_flags(&settable, &path, Some(&meta), 0);
+            assert!(
+                flags & ItemFlags::ITEM_REPORT_GROUP != 0,
+                "a settable, differing group reports `g`: {flags:#06x}"
+            );
+        }
+
+        if metadata::am_root() {
+            return;
+        }
+        // gid 0 (wheel/root) is not a supplementary group of an ordinary user.
+        if !metadata::group_is_settable(0) && dest_gid != 0 {
+            let mut unsettable = FileEntry::new_file("f.txt".into(), 1, 0o644);
+            unsettable.set_mtime(1_600_000_000, 0);
+            unsettable.set_gid(0);
+            let flags = ctx.itemize_existing_flags(&unsettable, &path, Some(&meta), 0);
+            assert!(
+                flags & ItemFlags::ITEM_REPORT_GROUP == 0,
+                "FLAG_SKIP_GROUP suppresses `g` for a group the process cannot \
+                 set: {flags:#06x}"
+            );
+        }
+    }
+
+    /// upstream: generator.c:513-517. `keep_time` is type-gated, not simply
+    /// `preserve_mtimes`: under `--omit-dir-times` a directory and under
+    /// `--omit-link-times` a symlink drop to the `!keep_time` branch, because
+    /// the receiver is not going to set that type's mtime at all.
+    ///
+    /// Why it matters: oc compared the mtime for every type, so `-tO` printed
+    /// `.d..t...... sub/` for a directory whose mtime differs while rsync 3.4.4
+    /// prints nothing.
+    #[test]
+    fn keep_time_is_gated_per_type_by_omit_dir_and_link_times() {
+        use crate::generator::ItemFlags;
+
+        let dir = test_support::create_tempdir();
+        let path = dir.path().join("sub");
+        std::fs::create_dir(&path).unwrap();
+        filetime::set_file_mtime(&path, filetime::FileTime::from_unix_time(1_600_000_000, 0))
+            .unwrap();
+        let meta = std::fs::symlink_metadata(&path).unwrap();
+
+        let mut entry = FileEntry::new_directory("sub".into(), 0o755);
+        entry.set_mtime(1_700_000_000, 0);
+
+        let hs = handshake();
+
+        let mut plain = itemize_client_config();
+        plain.flags.times = true;
+        let ctx = ReceiverContext::new_for_test(&hs, plain);
+        let reported = ctx.itemize_existing_flags(&entry, &path, Some(&meta), 0);
+        assert!(
+            reported & ItemFlags::ITEM_REPORT_TIME != 0,
+            "a directory mtime difference is reported under plain -t: {reported:#06x}"
+        );
+
+        let mut omit_dirs = itemize_client_config();
+        omit_dirs.flags.times = true;
+        omit_dirs.flags.omit_dir_times = true;
+        let ctx = ReceiverContext::new_for_test(&hs, omit_dirs);
+        let omitted = ctx.itemize_existing_flags(&entry, &path, Some(&meta), 0);
+        assert!(
+            omitted & ItemFlags::ITEM_REPORT_TIME == 0,
+            "-O drops the directory to the !keep_time branch, and base == 0 \
+             there is neither a transfer nor a local change: {omitted:#06x}"
+        );
+
+        // --omit-link-times must not affect a directory.
+        let mut omit_links = itemize_client_config();
+        omit_links.flags.times = true;
+        omit_links.flags.omit_link_times = true;
+        let ctx = ReceiverContext::new_for_test(&hs, omit_links);
+        let unaffected = ctx.itemize_existing_flags(&entry, &path, Some(&meta), 0);
+        assert!(
+            unaffected & ItemFlags::ITEM_REPORT_TIME != 0,
+            "-J is symlink-only and must leave the directory comparison alone: {unaffected:#06x}"
+        );
+    }
+
+    /// upstream: generator.c:396-401 + util1.c:1478-1489. `mtime_differs()` is
+    /// `!same_time(...)`, so the mtime comparison honours `--modify-window`
+    /// (and, for a negative window, nanoseconds). oc used a raw `!=` on whole
+    /// seconds and so reported `t` for a difference the user asked it to
+    /// tolerate: `-t --modify-window=200` on files two minutes apart printed
+    /// `.f..t...... f` where rsync 3.4.4 prints nothing.
+    #[test]
+    fn mtime_comparison_honours_the_modify_window() {
+        use crate::generator::ItemFlags;
+
+        let dir = test_support::create_tempdir();
+        let path = dir.path().join("f.txt");
+        std::fs::write(&path, b"x").unwrap();
+        filetime::set_file_mtime(
+            &path,
+            filetime::FileTime::from_unix_time(1_600_000_000, 500),
+        )
+        .unwrap();
+        let meta = std::fs::symlink_metadata(&path).unwrap();
+
+        let mut entry = FileEntry::new_file("f.txt".into(), 1, 0o644);
+        entry.set_mtime(1_600_000_120, 900);
+
+        let hs = handshake();
+        let mut config = itemize_client_config();
+        config.flags.times = true;
+
+        let ctx = ReceiverContext::new_for_test(&hs, config.clone());
+        let outside = ctx.itemize_existing_flags(&entry, &path, Some(&meta), 0);
+        assert!(
+            outside & ItemFlags::ITEM_REPORT_TIME != 0,
+            "120s apart with a zero window is a difference: {outside:#06x}"
+        );
+
+        config.file_selection.modify_window = metadata::ModifyWindow::from_secs(200);
+        let ctx = ReceiverContext::new_for_test(&hs, config.clone());
+        let inside = ctx.itemize_existing_flags(&entry, &path, Some(&meta), 0);
+        assert!(
+            inside & ItemFlags::ITEM_REPORT_TIME == 0,
+            "a 200s window tolerates a 120s difference: {inside:#06x}"
+        );
+
+        // upstream: util1.c:1482 - a negative window compares nanoseconds too,
+        // which a whole-second `!=` could never express.
+        entry.set_mtime(1_600_000_000, 900);
+        config.file_selection.modify_window = metadata::ModifyWindow::from_secs(-1);
+        let ctx = ReceiverContext::new_for_test(&hs, config);
+        let nsec = ctx.itemize_existing_flags(&entry, &path, Some(&meta), 0);
+        assert!(
+            nsec & ItemFlags::ITEM_REPORT_TIME != 0,
+            "a negative window makes the nsec difference significant: {nsec:#06x}"
+        );
+    }
+
+    /// upstream: generator.c:535-540. Under `--crtimes` the row reports the
+    /// destination's creation time against the sender's through `same_time()`.
+    ///
+    /// Why it matters: the `n` glyph (log.c:725) was rendered but never
+    /// produced on a network receive, so `-N -i` printed `.f.........` where
+    /// upstream prints `.f......n..`. The column is gated on `--crtimes`: a run
+    /// without it must never surface a birth-time difference.
+    #[test]
+    fn itemize_existing_flags_reports_crtime_only_under_dash_n() {
+        use crate::generator::ItemFlags;
+
+        let dir = test_support::create_tempdir();
+        let path = dir.path().join("f.txt");
+        std::fs::write(&path, b"x").unwrap();
+        let meta = std::fs::symlink_metadata(&path).unwrap();
+        let Ok(created) = meta.created() else {
+            // No birth time on this filesystem; upstream's get_create_time
+            // would return 0 here too, so there is nothing to compare.
+            return;
+        };
+        let created_secs = created
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |d| d.as_secs() as i64);
+
+        let mut entry = FileEntry::new_file("f.txt".into(), 1, 0o644);
+        entry.set_mtime(1_600_000_000, 0);
+        // Mirror the destination's mtime so only the crtime can differ.
+        let hs = handshake();
+        let mut with_n = itemize_client_config();
+        with_n.flags.times = false;
+        with_n.flags.crtimes = true;
+
+        entry.set_crtime(created_secs + 86_400);
+        let ctx = ReceiverContext::new_for_test(&hs, with_n.clone());
+        let differs = ctx.itemize_existing_flags(&entry, &path, Some(&meta), 0);
+        assert!(
+            differs & ItemFlags::ITEM_REPORT_CRTIME != 0,
+            "a differing crtime must report `n` under --crtimes: {differs:#06x}"
+        );
+
+        entry.set_crtime(created_secs);
+        let same = ctx.itemize_existing_flags(&entry, &path, Some(&meta), 0);
+        assert!(
+            same & ItemFlags::ITEM_REPORT_CRTIME == 0,
+            "an equal crtime must leave `n` clear: {same:#06x}"
+        );
+
+        entry.set_crtime(created_secs + 86_400);
+        let mut without_n = itemize_client_config();
+        without_n.flags.crtimes = false;
+        let ctx = ReceiverContext::new_for_test(&hs, without_n);
+        let off = ctx.itemize_existing_flags(&entry, &path, Some(&meta), 0);
+        assert!(
+            off & ItemFlags::ITEM_REPORT_CRTIME == 0,
+            "the `n` column is gated on --crtimes: {off:#06x}"
+        );
+    }
+
+    /// upstream: generator.c:1940-1942. `--checksum` seeds every transfer with
+    /// `ITEM_REPORT_CHANGE`, because the checksum - not the mtime - is what
+    /// decided the file changed, so `rsync -rtci` prints `>fc........`.
+    ///
+    /// The live pass and the `--dry-run` planner share this seed, so `-i` and
+    /// `-ni` cannot disagree about the `c` glyph.
+    #[test]
+    fn transfer_seed_carries_change_only_under_checksum() {
+        use crate::generator::ItemFlags;
+
+        assert_eq!(
+            transfer_seed(true),
+            ItemFlags::ITEM_TRANSFER | ItemFlags::ITEM_REPORT_CHANGE
+        );
+        assert_eq!(transfer_seed(false), ItemFlags::ITEM_TRANSFER);
+    }
+
+    /// upstream: generator.c:572-576. The `statret < 0` leg runs
+    /// `xattr_diff(file, NULL, 1)` before adding ITEM_IS_NEW, and a NULL `sxp`
+    /// means an empty receiver list (xattrs.c:555-561). A sender entry with no
+    /// xattrs must therefore leave the `x` column clear - otherwise every
+    /// brand-new file under `-X` would print `x` instead of `+`.
+    #[test]
+    fn itemize_existing_flags_absent_dest_reports_xattr_only_when_the_sender_has_some() {
+        use crate::generator::ItemFlags;
+
+        let dir = test_support::create_tempdir();
+        let path = dir.path().join("absent.txt");
+        let entry = FileEntry::new_file("absent.txt".into(), 1, 0o644);
+
+        let hs = handshake();
+        let mut with_x = itemize_client_config();
+        with_x.flags.xattrs = true;
+        let ctx = ReceiverContext::new_for_test(&hs, with_x);
+
+        let flags = ctx.itemize_existing_flags(&entry, &path, None, ItemFlags::ITEM_TRANSFER);
+        assert_eq!(
+            flags,
+            ItemFlags::ITEM_TRANSFER | ItemFlags::ITEM_IS_NEW,
+            "an absent destination with no sender xattrs is ITEM_IS_NEW alone: {flags:#06x}"
         );
     }
 

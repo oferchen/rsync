@@ -251,6 +251,7 @@ pub use acl_noop::{
     sync_acls, sync_acls_via_fake_super,
 };
 
+pub use apply::group_is_settable;
 #[cfg(unix)]
 pub use apply::{
     apply_dest_mode_pre_transfer, apply_file_metadata_with_fd,

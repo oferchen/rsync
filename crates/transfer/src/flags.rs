@@ -368,14 +368,16 @@ pub struct ParsedServerFlags {
 
     /// Preserve executability (long-form `--executability` / `-E`).
     ///
-    /// Receiver-side only. Not part of the compact flag string built by
-    /// `build_server_flag_string`: upstream `options.c:2692-2693` packs `'E'`
-    /// into `server_options` only inside the `else if (preserve_executability &&
-    /// am_sender)` branch, so on a pull the flag is never sent over the wire and
-    /// the local client (which IS the receiver) must apply it itself. When set
-    /// without `--perms`, the receiver copies only the executability bits from
-    /// the source mode, mirroring upstream `rsync.c:457-465` (`set_file_attrs()`
-    /// layers `-E` on top when `!preserve_perms`).
+    /// Receiver-side in effect, but it reaches the receiver by two different
+    /// routes. Upstream `options.c:2692-2693` packs `'E'` into
+    /// `server_options` inside the `else if (preserve_executability &&
+    /// am_sender)` branch: on a **push** the flag rides the compact string to
+    /// the remote server, which is the receiver, so the flag parser has to
+    /// accept it; on a **pull** it is never sent, because the local client IS
+    /// the receiver and applies it itself. When set without `--perms`, the
+    /// receiver copies only the executability bits from the source mode,
+    /// mirroring upstream `rsync.c:457-465` (`set_file_attrs()` layers `-E` on
+    /// top when `!preserve_perms`).
     pub preserve_executability: bool,
 
     /// Engage the opt-in parallel sender-side delta scan for large files
@@ -584,6 +586,15 @@ impl ParsedServerFlags {
             // upstream: options.c:2631 - 'b' = backup.
             b'b' => self.backup = true,
             b'N' => self.crtimes = true,
+            // upstream: options.c:2692-2693 - `'E'` rides the compact flag
+            // string in the `else if (preserve_executability && am_sender)`
+            // branch, i.e. on a *push*, where the remote server IS the
+            // receiver and has to honour it. (On a pull the local client is
+            // the receiver and applies `-E` itself, which is why the field's
+            // doc calls it receiver-side.) Without parsing it a pushed `-E`
+            // left the server receiver with executability preservation off:
+            // it neither copied the exec bit nor reported the `p` column.
+            b'E' => self.preserve_executability = true,
             // upstream: options.c:764 - 'L' = copy_links (resolve symlinks).
             b'L' => self.copy_links = true,
             // upstream: options.c:688 - 'K' = keep_dirlinks (preserve
@@ -799,6 +810,21 @@ mod tests {
     fn one_file_system_not_set_by_default() {
         let flags = ParsedServerFlags::parse("-r").unwrap();
         assert_eq!(flags.one_file_system, 0);
+    }
+
+    #[test]
+    fn parses_executability_flag_from_a_push_flag_string() {
+        // upstream: options.c:2692-2693 - a pushing client packs 'E' into the
+        // compact string, e.g. `--server -tEre.iLsfxCIvu`.
+        let flags = ParsedServerFlags::parse("-tEre.iLsfxCIvu").unwrap();
+        assert!(flags.preserve_executability);
+        assert!(flags.times);
+        assert!(flags.recursive);
+        assert!(
+            !ParsedServerFlags::parse("-tre.")
+                .unwrap()
+                .preserve_executability
+        );
     }
 
     #[test]

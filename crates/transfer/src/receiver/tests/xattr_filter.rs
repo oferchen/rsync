@@ -79,7 +79,7 @@ fn an_excluded_name_does_not_flip_the_x_column() {
     // pass for the wrong reason.
     let unfiltered = receiver_with(vec![platform_noise_rule()]);
     assert!(
-        unfiltered.dest_xattrs_differ(&entry, &file),
+        unfiltered.dest_xattrs_differ(&entry, Some(&file)),
         "a destination-only xattr must raise the x column when nothing excludes it",
     );
 
@@ -90,7 +90,7 @@ fn an_excluded_name_does_not_flip_the_x_column() {
         platform_noise_rule(),
     ]);
     assert!(
-        !filtered.dest_xattrs_differ(&entry, &file),
+        !filtered.dest_xattrs_differ(&entry, Some(&file)),
         "an x-modifier exclusion must screen the generator's destination read",
     );
 }
@@ -121,7 +121,7 @@ fn a_name_the_filter_admits_still_flips_the_x_column() {
         platform_noise_rule(),
     ]);
     assert!(
-        ctx.dest_xattrs_differ(&entry, &file),
+        ctx.dest_xattrs_differ(&entry, Some(&file)),
         "an unrelated x-modifier rule must not suppress a real xattr difference",
     );
 }
@@ -147,7 +147,7 @@ fn a_plain_path_rule_does_not_screen_the_destination_read() {
 
     let ctx = receiver_with(vec![::filters::FilterRule::exclude(local_name("drop"))]);
     assert!(
-        ctx.dest_xattrs_differ(&entry, &file),
+        ctx.dest_xattrs_differ(&entry, Some(&file)),
         "a rule without the x modifier matches paths, never xattr names",
     );
 }
