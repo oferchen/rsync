@@ -62,6 +62,22 @@ impl<'a> RemoteInvocationBuilder<'a> {
         Self { config, role }
     }
 
+    /// Returns the pre-negotiated protocol version that shapes the server argv.
+    ///
+    /// upstream: `options.c:84` seeds the global `protocol_version` with
+    /// `PROTOCOL_VERSION` and `options.c:846` lets `--protocol=N` lower it
+    /// before `server_options()` runs, so the argv is derived from the
+    /// *requested* ceiling rather than a negotiated value (which does not exist
+    /// yet - see the comment at `options.c:3025`). The actual session version is
+    /// `MIN(this, remote_protocol)` (compat.c:604-607), applied later by
+    /// `perform_handshake_with_max`; the request is therefore a cap composed
+    /// with peer negotiation, never an override that could raise the version.
+    fn requested_protocol(&self) -> protocol::ProtocolVersion {
+        self.config
+            .protocol_version()
+            .unwrap_or(protocol::ProtocolVersion::NEWEST)
+    }
+
     /// Builds the complete invocation argument vector.
     ///
     /// The first element is the rsync binary name (either from `--rsync-path`
@@ -203,10 +219,23 @@ impl<'a> RemoteInvocationBuilder<'a> {
         // NDX_FLIST_EOF the remote still emits, leaving its trailing bytes
         // to trip read_varint overflow on the next decode.
         // upstream: io.c:1816 read_varint - rejects encodings with extra > 4.
-        let advertise_inc_recurse =
-            self.config.inc_recursive_send() && self.role != RemoteRole::Receiver;
-        flags.push_str(&build_capability_string_suffix(advertise_inc_recurse));
-        args.push(OsString::from(flags));
+        //
+        // upstream: options.c:3025-3028 maybe_add_e_option() - the whole `e.xxx`
+        // suffix is emitted ONLY when the pre-negotiated `protocol_version` is
+        // >= 30, "so that the user can use a --protocol=29 override to avoid the
+        // use of this -eFLAGS opt". At protocol 28/29 the compact flag string
+        // must end at the transfer letters (`-r`, not `-re.iLsfxCIvu`).
+        if self.requested_protocol().as_u8() >= 30 {
+            let advertise_inc_recurse =
+                self.config.inc_recursive_send() && self.role != RemoteRole::Receiver;
+            flags.push_str(&build_capability_string_suffix(advertise_inc_recurse));
+        }
+        // upstream: options.c:2730 - `if (x > 1) args[ac++] = argstr;`. A bare
+        // `-` is never emitted; below protocol 30 the capability suffix no
+        // longer guarantees a non-empty letter set, so the guard matters.
+        if flags.len() > 1 {
+            args.push(OsString::from(flags));
+        }
 
         if let Some(arg) = self.iconv_arg() {
             args.push(arg);
@@ -680,13 +709,17 @@ impl<'a> RemoteInvocationBuilder<'a> {
         // "--no-implied-dirs";`. The flag is forwarded to the peer only when
         // relative paths are active; implied dirs exist solely for
         // relative-rooted transfers, so a non-relative transfer never sends it.
-        // The `(!am_sender || protocol_version >= 30)` guard is always satisfied
-        // for oc's modern protocol (>= 30), so gating on `relative_paths` alone
-        // matches upstream. Without the `relative_paths` gate a non-relative
-        // transfer with `implied_dirs = 0` (options.c:2207 forces this) would
-        // wrongly forward `--no-implied-dirs`, which the remote sender then
-        // link_stat()s as a source path (exit 23).
-        if self.config.relative_paths() && !self.config.implied_dirs() {
+        // The `(!am_sender || protocol_version >= 30)` guard suppresses the flag
+        // on a PUSH below protocol 30, where the pre-30 receiver derives implied
+        // dirs itself and does not understand the option. Without the
+        // `relative_paths` gate a non-relative transfer with `implied_dirs = 0`
+        // (options.c:2207 forces this) would wrongly forward
+        // `--no-implied-dirs`, which the remote sender then link_stat()s as a
+        // source path (exit 23).
+        if self.config.relative_paths()
+            && !self.config.implied_dirs()
+            && (self.role != RemoteRole::Sender || self.requested_protocol().as_u8() >= 30)
+        {
             args.push(OsString::from("--no-implied-dirs"));
         }
 
