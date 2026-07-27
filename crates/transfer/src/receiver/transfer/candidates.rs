@@ -61,24 +61,27 @@ const fn transfer_seed(always_checksum: bool) -> u32 {
     }
 }
 
-/// The destination's mtime in whole seconds since the epoch, as upstream's
-/// `sxp->st.st_mtime` supplies it to `mtime_differs()` (`generator.c:396`).
+/// The destination's mtime as `(seconds, nanoseconds)`, the pair upstream's
+/// `mtime_differs()` reads out of `stp->st_mtime` / `stp->ST_MTIME_NSEC`
+/// (`generator.c:396-401`).
 ///
+/// The nanosecond component only participates when `--modify-window` is
+/// negative (`util1.c:1482`), but it has to be carried so that mode works.
 /// A destination whose mtime predates the epoch or cannot be read compares as
-/// `0`, which differs from any real sender mtime and therefore reports the
+/// `(0, 0)`, which differs from any real sender mtime and therefore reports the
 /// time as changed - the safe direction.
-fn dest_mtime_secs(meta: &fs::Metadata) -> i64 {
+fn dest_mtime(meta: &fs::Metadata) -> (i64, u32) {
     #[cfg(unix)]
     {
         use std::os::unix::fs::MetadataExt;
-        meta.mtime()
+        (meta.mtime(), meta.mtime_nsec() as u32)
     }
     #[cfg(not(unix))]
     {
         meta.modified()
             .ok()
             .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
-            .map_or(0, |d| d.as_secs() as i64)
+            .map_or((0, 0), |d| (d.as_secs() as i64, d.subsec_nanos()))
     }
 }
 
@@ -682,9 +685,8 @@ impl ReceiverContext {
     /// pre-transfer destination stat). Both regular files (quick-check match)
     /// and existing directories reach this path: the `ITEM_REPORT_SIZE` check
     /// is gated on `entry.is_file()` so it never fires for a directory, and
-    /// `keep_time` reduces to the `--times` preservation flag in both cases
-    /// (`--omit-dir-times` is not modelled by the server flag set, matching
-    /// [`super::super::directory::creation`]'s `touch_up_dirs`).
+    /// `keep_time` follows upstream's per-type gating on `--omit-dir-times` /
+    /// `--omit-link-times` (`generator.c:513-517`).
     pub(in crate::receiver) fn itemize_existing_flags(
         &self,
         entry: &FileEntry,
@@ -723,9 +725,34 @@ impl ReceiverContext {
         // changed, because the receiver is about to leave the destination mtime
         // at "now" instead of the sender's value - which is what makes a plain
         // `rsync -i src/ dst/` print `>f..T......` rather than `>f.........`.
-        let keep_time = self.config.flags.times;
+        // upstream: generator.c:513-517 - `keep_time` is not `preserve_mtimes`;
+        // it is type-gated:
+        //
+        //     int keep_time = !preserve_mtimes ? 0
+        //         : S_ISDIR(file->mode) ? !omit_dir_times
+        //         : S_ISLNK(file->mode) ? !omit_link_times
+        //         : 1;
+        //
+        // Under `-O`/`-J` the receiver deliberately leaves that type's mtime
+        // alone, so upstream drops to the `!keep_time` branch for it rather
+        // than comparing a timestamp it is not going to set. Both flags do
+        // reach the receiver's flag set (core sets them on the embedded-SSH and
+        // daemon pull paths); an older comment here claimed otherwise.
+        let keep_time = self.config.flags.times
+            && !(entry.is_dir() && self.config.flags.omit_dir_times)
+            && !(entry.is_symlink() && self.config.flags.omit_link_times);
         let report_time = if keep_time {
-            dest_mtime_secs(dest_meta) != entry.mtime()
+            // upstream: generator.c:396-401 - `mtime_differs()` is
+            // `!same_time(...)`, which applies the `--modify-window` tolerance
+            // and, for a negative window, compares nanoseconds too
+            // (util1.c:1478-1489). A raw `!=` on whole seconds ignored both.
+            let (dest_secs, dest_nsec) = dest_mtime(dest_meta);
+            !self.config.file_selection.modify_window.same_time(
+                dest_secs,
+                dest_nsec,
+                entry.mtime(),
+                entry.mtime_nsec(),
+            )
         } else {
             // upstream: generator.c:528-530 - all three conjuncts.
             //
@@ -785,13 +812,21 @@ impl ReceiverContext {
         #[cfg(unix)]
         {
             use std::os::unix::fs::MetadataExt;
-            // upstream: generator.c:531-533 - atimes_ndx && !S_ISDIR && !S_ISLNK
-            //   && !same_time(F_ATIME(file), 0, st_atime, 0). same_time with a
-            //   zero nsec compares whole seconds, matching the mtime check above.
+            // upstream: generator.c:531-533 - `atimes_ndx && !S_ISDIR &&
+            // !S_ISLNK && !same_time(F_ATIME(file), 0, sxp->st.st_atime, 0)`.
+            // Both nsec arguments are literal zeros upstream, but the
+            // comparison still goes through `same_time()`, so a positive
+            // `--modify-window` tolerates drift here exactly as it does for the
+            // mtime. A raw `!=` ignored the window.
             if self.config.flags.atimes
                 && !entry.is_dir()
                 && !entry.is_symlink()
-                && dest_meta.atime() != entry.atime()
+                && !self.config.file_selection.modify_window.same_time(
+                    entry.atime(),
+                    0,
+                    dest_meta.atime(),
+                    0,
+                )
             {
                 iflags |= ItemFlags::ITEM_REPORT_ATIME;
             }
@@ -1329,6 +1364,116 @@ mod itemize_order_tests {
         assert!(
             off & ItemFlags::ITEM_REPORT_XATTR == 0,
             "the `x` column is gated on --xattrs: {off:#06x}"
+        );
+    }
+
+    /// upstream: generator.c:513-517. `keep_time` is type-gated, not simply
+    /// `preserve_mtimes`: under `--omit-dir-times` a directory and under
+    /// `--omit-link-times` a symlink drop to the `!keep_time` branch, because
+    /// the receiver is not going to set that type's mtime at all.
+    ///
+    /// Why it matters: oc compared the mtime for every type, so `-tO` printed
+    /// `.d..t...... sub/` for a directory whose mtime differs while rsync 3.4.4
+    /// prints nothing.
+    #[test]
+    fn keep_time_is_gated_per_type_by_omit_dir_and_link_times() {
+        use crate::generator::ItemFlags;
+
+        let dir = test_support::create_tempdir();
+        let path = dir.path().join("sub");
+        std::fs::create_dir(&path).unwrap();
+        filetime::set_file_mtime(&path, filetime::FileTime::from_unix_time(1_600_000_000, 0))
+            .unwrap();
+        let meta = std::fs::symlink_metadata(&path).unwrap();
+
+        let mut entry = FileEntry::new_directory("sub".into(), 0o755);
+        entry.set_mtime(1_700_000_000, 0);
+
+        let hs = handshake();
+
+        let mut plain = itemize_client_config();
+        plain.flags.times = true;
+        let ctx = ReceiverContext::new_for_test(&hs, plain);
+        let reported = ctx.itemize_existing_flags(&entry, &path, Some(&meta), 0);
+        assert!(
+            reported & ItemFlags::ITEM_REPORT_TIME != 0,
+            "a directory mtime difference is reported under plain -t: {reported:#06x}"
+        );
+
+        let mut omit_dirs = itemize_client_config();
+        omit_dirs.flags.times = true;
+        omit_dirs.flags.omit_dir_times = true;
+        let ctx = ReceiverContext::new_for_test(&hs, omit_dirs);
+        let omitted = ctx.itemize_existing_flags(&entry, &path, Some(&meta), 0);
+        assert!(
+            omitted & ItemFlags::ITEM_REPORT_TIME == 0,
+            "-O drops the directory to the !keep_time branch, and base == 0 \
+             there is neither a transfer nor a local change: {omitted:#06x}"
+        );
+
+        // --omit-link-times must not affect a directory.
+        let mut omit_links = itemize_client_config();
+        omit_links.flags.times = true;
+        omit_links.flags.omit_link_times = true;
+        let ctx = ReceiverContext::new_for_test(&hs, omit_links);
+        let unaffected = ctx.itemize_existing_flags(&entry, &path, Some(&meta), 0);
+        assert!(
+            unaffected & ItemFlags::ITEM_REPORT_TIME != 0,
+            "-J is symlink-only and must leave the directory comparison alone: {unaffected:#06x}"
+        );
+    }
+
+    /// upstream: generator.c:396-401 + util1.c:1478-1489. `mtime_differs()` is
+    /// `!same_time(...)`, so the mtime comparison honours `--modify-window`
+    /// (and, for a negative window, nanoseconds). oc used a raw `!=` on whole
+    /// seconds and so reported `t` for a difference the user asked it to
+    /// tolerate: `-t --modify-window=200` on files two minutes apart printed
+    /// `.f..t...... f` where rsync 3.4.4 prints nothing.
+    #[test]
+    fn mtime_comparison_honours_the_modify_window() {
+        use crate::generator::ItemFlags;
+
+        let dir = test_support::create_tempdir();
+        let path = dir.path().join("f.txt");
+        std::fs::write(&path, b"x").unwrap();
+        filetime::set_file_mtime(
+            &path,
+            filetime::FileTime::from_unix_time(1_600_000_000, 500),
+        )
+        .unwrap();
+        let meta = std::fs::symlink_metadata(&path).unwrap();
+
+        let mut entry = FileEntry::new_file("f.txt".into(), 1, 0o644);
+        entry.set_mtime(1_600_000_120, 900);
+
+        let hs = handshake();
+        let mut config = itemize_client_config();
+        config.flags.times = true;
+
+        let ctx = ReceiverContext::new_for_test(&hs, config.clone());
+        let outside = ctx.itemize_existing_flags(&entry, &path, Some(&meta), 0);
+        assert!(
+            outside & ItemFlags::ITEM_REPORT_TIME != 0,
+            "120s apart with a zero window is a difference: {outside:#06x}"
+        );
+
+        config.file_selection.modify_window = metadata::ModifyWindow::from_secs(200);
+        let ctx = ReceiverContext::new_for_test(&hs, config.clone());
+        let inside = ctx.itemize_existing_flags(&entry, &path, Some(&meta), 0);
+        assert!(
+            inside & ItemFlags::ITEM_REPORT_TIME == 0,
+            "a 200s window tolerates a 120s difference: {inside:#06x}"
+        );
+
+        // upstream: util1.c:1482 - a negative window compares nanoseconds too,
+        // which a whole-second `!=` could never express.
+        entry.set_mtime(1_600_000_000, 900);
+        config.file_selection.modify_window = metadata::ModifyWindow::from_secs(-1);
+        let ctx = ReceiverContext::new_for_test(&hs, config);
+        let nsec = ctx.itemize_existing_flags(&entry, &path, Some(&meta), 0);
+        assert!(
+            nsec & ItemFlags::ITEM_REPORT_TIME != 0,
+            "a negative window makes the nsec difference significant: {nsec:#06x}"
         );
     }
 
