@@ -29,7 +29,10 @@ impl FileListWalker {
         safe_links: bool,
     ) -> Result<Self, FileListError> {
         let root = absolutize(root)?;
-        debug_log!(Flist, 1, "building file list from {:?}", root);
+        // The walk root is deliberately not announced: upstream's counterpart
+        // (flist.c:2248 `rprintf(FLOG, "building file list\n")`) is an FLOG
+        // message that log.c:rwrite() drops for a client with no --log-file,
+        // whereas every DiagnosticEvent from this crate reaches stdout.
 
         // upstream: flist.c:readlink_stat() - use stat() when copy_links is
         // set, lstat() otherwise.

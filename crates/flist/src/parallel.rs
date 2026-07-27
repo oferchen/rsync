@@ -7,7 +7,6 @@
 use std::fs;
 use std::path::PathBuf;
 
-use logging::info_log;
 use rayon::prelude::*;
 
 use crate::batched_stat::BatchedStatCache;
@@ -38,12 +37,12 @@ use crate::file_list_walker::FileListWalker;
 /// let entries = collect_entries(walker)?;
 /// println!("Found {} entries", entries.len());
 /// ```
+// Enumeration is silent: upstream announces a completed file list only via the
+// `sending incremental file list` FCLIENT banner (flist.c:2252) or the
+// `building file list ... done` progress pair (flist.c:2250/2524), never as an
+// entry count, so a count emitted here would have no upstream analog on stdout.
 pub fn collect_entries(walker: FileListWalker) -> Result<Vec<FileListEntry>, FileListError> {
-    let entries: Result<Vec<_>, _> = walker.collect();
-    if let Ok(ref list) = entries {
-        info_log!(Flist, 1, "built file list with {} entries", list.len());
-    }
-    entries
+    walker.collect()
 }
 
 /// Collects all file list entries sequentially from the walker.
