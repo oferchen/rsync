@@ -237,13 +237,11 @@ impl GeneratorContext {
             }
         }
 
-        // Pre-populate the explicit-directory set with every --files-from
-        // entry that is itself a directory. The implied-parent loop below
-        // skips emission for entries already in this set so the explicit
-        // top-level walk owns their emission. Keys are the (base, wire-relative)
-        // pair so two entries that resolve to the same filesystem path but
-        // through different `/./` anchors do not collide on the wire-side
-        // dedup map.
+        // Every --files-from entry that is itself a directory. Used only to
+        // derive `implied_only_dirs` below, which suppresses the top-level walk
+        // for ancestors that are NOT also explicit entries. Keys are the
+        // (base, wire-relative) pair so two entries that resolve to the same
+        // filesystem path but through different `/./` anchors do not collide.
         let mut explicit_dirs: HashSet<(PathBuf, PathBuf)> = HashSet::new();
         for entry in entries {
             if let Ok(rel) = entry.path.strip_prefix(&entry.base) {
@@ -264,14 +262,28 @@ impl GeneratorContext {
         // upstream: flist.c:send_implied_dirs() - creates directory entries
         // for every intermediate path component of a --files-from entry.
         //
-        // `emitted_dirs` starts with the explicit-dir pre-population so a
-        // parent that is ALSO an explicit --files-from entry is not emitted
-        // here (the top-level walk below owns its emission). The loop adds
-        // every purely implied ancestor it pushes; the difference set
+        // upstream: flist.c:1950 - `filter_list.head = filter_list.tail = NULL;
+        // /* Don't filter implied dirs. */`. The implied-parent emission is
+        // structurally exempt from the filter chain: it stats and pushes each
+        // ancestor directly, never consulting the exclude rules. Seeding this
+        // set from `explicit_dirs` broke that exemption for an ancestor that is
+        // ALSO an explicit --files-from entry - emission was delegated to the
+        // filtered top-level walk, so an `--exclude` matching that parent
+        // dropped it from the list entirely and a real upstream receiver
+        // rejected the orphaned child ("ABORTING due to invalid path from
+        // sender", flist.c:2693 exit 4 under inc-recurse, generator.c:1326
+        // exit 2 without it). Starting empty restores the exemption and
+        // reproduces upstream's two `make_file()` calls for a directory that is
+        // both an implied parent and an unfiltered explicit argument: the
+        // duplicate rides the wire exactly as upstream sends it and the
+        // receiver merges the pair in `flist_sort_and_clean()`
+        // (flist.c:3073-3076, oc: `flist::sort::resolve_duplicate`).
+        //
+        // The loop records every ancestor it pushes; the difference set
         // `implied_only_dirs` is later consulted by
-        // `try_walk_source_entry_dedup` to suppress the duplicate top-level
-        // walk that would re-emit an implied parent.
-        let mut emitted_dirs: HashSet<(PathBuf, PathBuf)> = explicit_dirs.clone();
+        // `try_walk_source_entry_dedup` to suppress the top-level walk for
+        // ancestors that upstream never walks (not explicit arguments).
+        let mut emitted_dirs: HashSet<(PathBuf, PathBuf)> = HashSet::new();
         // upstream: options.c:2207-2208 - `if (!relative_paths) implied_dirs = 0;`.
         // Under --no-relative (relative_paths == 0) the sender FLATTENS every
         // --files-from entry to its transmitted name and emits NO implied parent
@@ -287,9 +299,8 @@ impl GeneratorContext {
         // without their source metadata. Mirror the same gate as the positional
         // path (build_file_list): emit only in relative mode, and then when
         // implied dirs are on OR the protocol forces them. When suppressed,
-        // `emitted_dirs` stays equal to `explicit_dirs`, so `implied_only_dirs`
-        // below is empty and the explicit top-level walk is left untouched
-        // (dedup unchanged).
+        // `emitted_dirs` stays empty, so `implied_only_dirs` below is empty and
+        // the explicit top-level walk is left untouched (dedup unchanged).
         if self.config.flags.relative
             && (!self.config.flags.no_implied_dirs || self.protocol.as_u8() >= 30)
         {
@@ -338,11 +349,14 @@ impl GeneratorContext {
         }
 
         // Directories emitted purely as implied parents of some other entry
-        // (i.e. not also listed explicitly in --files-from). The top-level
-        // walk skips these so we do not produce a duplicate file-list entry
-        // that upstream's `implied_filter_list` check (flist.c:1026) would
-        // reject as "unrequested". Explicit --files-from dirs remain walkable
-        // so their recursive contents continue to flow normally.
+        // (i.e. not also listed explicitly in --files-from). upstream only ever
+        // walks the arguments themselves (flist.c:2476 `send_if_directory()` is
+        // reached from the argument loop); `send_implied_dirs()` emits an
+        // ancestor as a bare entry and never recurses into it. Walking one here
+        // would inject its whole subtree, and those names ARE unrequested -
+        // upstream's `implied_filter_list` check (flist.c:1026) rejects them.
+        // Explicit --files-from dirs stay walkable so their recursive contents
+        // continue to flow normally.
         let implied_only_dirs: HashSet<(PathBuf, PathBuf)> =
             emitted_dirs.difference(&explicit_dirs).cloned().collect();
 
