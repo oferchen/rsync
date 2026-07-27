@@ -170,6 +170,38 @@ impl GeneratorContext {
         sum_head.write(&mut XferSink::new(writer, divert))
     }
 
+    /// Dispatches queued INC_RECURSE sub-lists until the receiver has at least
+    /// `MIN_FILECNT_LOOKAHEAD` entries queued ahead of the list it is working
+    /// through.
+    ///
+    /// Upstream calls `send_extra_file_list(f_out, MIN_FILECNT_LOOKAHEAD)` from
+    /// two points in the send loop (`sender.c:231` and `sender.c:265`); this is
+    /// that one function, so both call sites share a single expression of the
+    /// rule. The loop condition lives in [`SegmentScheduler::next_to_send`],
+    /// which folds each dispatch into the backlog before returning - so, like
+    /// upstream's `while (file_total - file_old_total < at_least)`, the test is
+    /// re-evaluated on every iteration and stops the burst as soon as enough
+    /// entries are queued.
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `flist.c:2124-2139` - `send_extra_file_list()` loop head
+    /// - `sender.c:231,265` - the two call sites this method serves
+    fn send_extra_file_lists<W: Write>(
+        &mut self,
+        writer: &mut super::super::super::writer::ServerWriter<W>,
+        scheduler: &mut SegmentScheduler,
+        flist_writer: &mut protocol::flist::FileListWriter,
+        ndx_codec: &mut MonotonicNdxWriter,
+        flist_done_remaining: &mut usize,
+    ) -> io::Result<()> {
+        while let Some(seg) = scheduler.next_to_send() {
+            self.encode_and_send_segment(&mut *writer, seg, flist_writer, ndx_codec.inner_mut())?;
+            *flist_done_remaining += 1;
+        }
+        Ok(())
+    }
+
     /// Runs the main file transfer loop, reading NDX requests from receiver.
     ///
     /// This method processes file transfer requests in phases until all phases complete.
@@ -301,23 +333,12 @@ impl GeneratorContext {
         // instance for sub-lists would diff-encode negative offsets against an
         // independent prev_negative, desyncing the receiver's unified read
         // state. Route sub-list writes through ndx_write_codec.inner_mut().
-        let mut segments_sent: usize = 0;
         // upstream: sender.c:242-250 - tracks remaining flist-free NDX_DONEs.
         // With INC_RECURSE, the client sends one NDX_DONE per completed flist
         // (initial + sub-lists). The sender echoes these without phase change
         // until all flists are freed, then falls through to the normal phase
         // transition. This counter tracks how many flist-free echoes remain.
         let mut flist_done_remaining: usize = 0;
-
-        // upstream: flist.c:104,2195 - file_total tracks entries the receiver
-        // knows about (initial segment + dispatched sub-lists). Used for the
-        // MIN_FILECNT_LOOKAHEAD comparison in send_extra_file_list().
-        // Unlike self.file_list.len() which includes undispatched segments,
-        // this only counts entries already sent to the receiver.
-        let mut dispatched_entry_count: usize = self
-            .incremental
-            .initial_segment_count
-            .unwrap_or(self.file_list.len());
 
         // upstream: sender.c - dry-run skips data transfer; daemon may close early
         let tolerant = self.config.flags.dry_run;
@@ -330,26 +351,23 @@ impl GeneratorContext {
             crate::shared::check_shutdown()?;
             // upstream: sender.c:227 - send extra file lists at top of loop
             if inc_recurse {
-                // upstream: flist.c:2139 - file_total - file_old_total < at_least
-                // remaining = entries the receiver knows about minus transferred
-                let remaining = dispatched_entry_count.saturating_sub(files_transferred);
-                while let Some(seg) = scheduler.next_if_needed(remaining) {
-                    self.encode_and_send_segment(
-                        &mut *writer,
-                        seg,
-                        &mut flist_writer,
-                        ndx_write_codec.inner_mut(),
-                    )?;
-                    segments_sent += 1;
-                    flist_done_remaining += 1;
-                    dispatched_entry_count += seg.count;
-                }
+                self.send_extra_file_lists(
+                    &mut *writer,
+                    &mut scheduler,
+                    &mut flist_writer,
+                    &mut ndx_write_codec,
+                    &mut flist_done_remaining,
+                )?;
 
                 // upstream: flist.c:2534-2545 - send NDX_FLIST_EOF when all sub-lists
                 // have been dispatched. Must happen inside the loop (not after) because
                 // the receiver waits for NDX_FLIST_EOF before sending NDX_DONE.
                 if !self.incremental.flist_eof_sent && scheduler.is_exhausted() {
-                    self.send_flist_eof(&mut *writer, ndx_write_codec.inner_mut(), segments_sent)?;
+                    self.send_flist_eof(
+                        &mut *writer,
+                        ndx_write_codec.inner_mut(),
+                        scheduler.dispatched_count(),
+                    )?;
                 }
             }
 
@@ -392,6 +410,13 @@ impl GeneratorContext {
                             // reduce RSS. Entries stay in place for NDX indexing but
                             // their PathBuf/extras allocations are freed.
                             self.reclaim_oldest_segment();
+                            // upstream: sender.c:251 - `file_old_total =
+                            // cur_flist->used`. The freed list drops out of the
+                            // lookahead backlog and the next sub-list becomes
+                            // the one the receiver is working through, so the
+                            // backlog shrinks by that list's entry count and
+                            // the throttle admits another segment.
+                            scheduler.retire_current_flist();
 
                             // upstream: sender.c:249-253 - after freeing the oldest
                             // flist, `if (first_flist)` is still true (another flist
@@ -1061,18 +1086,13 @@ impl GeneratorContext {
 
             // upstream: sender.c:261 - send extra file lists at bottom of loop
             if inc_recurse {
-                let remaining = dispatched_entry_count.saturating_sub(files_transferred);
-                while let Some(seg) = scheduler.next_if_needed(remaining) {
-                    self.encode_and_send_segment(
-                        &mut *writer,
-                        seg,
-                        &mut flist_writer,
-                        ndx_write_codec.inner_mut(),
-                    )?;
-                    segments_sent += 1;
-                    flist_done_remaining += 1;
-                    dispatched_entry_count += seg.count;
-                }
+                self.send_extra_file_lists(
+                    &mut *writer,
+                    &mut scheduler,
+                    &mut flist_writer,
+                    &mut ndx_write_codec,
+                    &mut flist_done_remaining,
+                )?;
             }
 
             // Check deadline at file boundary after sending each file.
@@ -1089,21 +1109,28 @@ impl GeneratorContext {
         }
 
         // Flush any remaining INC_RECURSE segments and send NDX_FLIST_EOF.
+        // The lookahead throttle is deliberately bypassed here: the receiver
+        // will not send its final NDX_DONE until it has seen NDX_FLIST_EOF, so
+        // there is no longer anyone to drain the backlog.
+        //
         // No need to track flist_done_remaining here: the EOF flush is the
         // final write loop in this function, so the counter is never read
-        // again. Mid-transfer increments at line ~435 are still needed for
-        // the in-loop accounting at line ~158.
+        // again. Mid-transfer increments in the NDX_DONE arm are still needed
+        // for the in-loop accounting.
         if inc_recurse && !self.incremental.flist_eof_sent {
-            for seg in scheduler.remaining() {
+            while let Some(seg) = scheduler.next_forced() {
                 self.encode_and_send_segment(
                     &mut *writer,
                     seg,
                     &mut flist_writer,
                     ndx_write_codec.inner_mut(),
                 )?;
-                segments_sent += 1;
             }
-            self.send_flist_eof(&mut *writer, ndx_write_codec.inner_mut(), segments_sent)?;
+            self.send_flist_eof(
+                &mut *writer,
+                ndx_write_codec.inner_mut(),
+                scheduler.dispatched_count(),
+            )?;
         }
 
         // Cache flist_writer back for potential reuse (e.g., phase 2).
@@ -1868,6 +1895,177 @@ mod append_redo_tests {
         assert_eq!(
             consumed, total,
             "resend left the redo block signature unread -> wire desync"
+        );
+    }
+}
+
+#[cfg(test)]
+mod inc_recurse_lookahead_tests {
+    //! Sub-list pacing guard for the INC_RECURSE sender.
+    //!
+    //! upstream: `sender.c:231,265` call `send_extra_file_list(f_out,
+    //! MIN_FILECNT_LOOKAHEAD)`, whose loop head
+    //! (`flist.c:2139 while (file_total - file_old_total < at_least)`) is
+    //! re-tested on every iteration. The sender therefore keeps roughly 1000
+    //! entries queued ahead of the sub-list the receiver is working through and
+    //! stops - it never pushes the whole tree up front.
+    //!
+    //! The WHY this pins: pacing is invisible in an oc-to-oc run, because both
+    //! halves are eager and neither ever blocks the other. It is only observable
+    //! against a peer that throttles, where an unbounded up-front burst fills the
+    //! socket buffer before the receiver has drained it. So the guard has to be
+    //! an ordering assertion - how many sub-lists reached the wire *before* the
+    //! sender first blocked for a receiver NDX - not an assertion on the final
+    //! wire contents, which are identical either way.
+
+    use std::cell::Cell;
+    use std::io::{self, Cursor, Read};
+    use std::path::Path;
+    use std::rc::Rc;
+    use std::sync::Arc;
+
+    use protocol::codec::{MonotonicNdxWriter, NdxCodec};
+    use protocol::flist::FileEntry;
+    use protocol::{CompatibilityFlags, ProtocolVersion};
+
+    use crate::config::ServerConfig;
+    use crate::generator::segments::MIN_FILECNT_LOOKAHEAD;
+    use crate::generator::{GeneratorContext, segment_dispatch_totals};
+    use crate::handshake::HandshakeResult;
+    use crate::role::ServerRole;
+    use crate::writer::ServerWriter;
+
+    /// Sub-directories in the fixture; one INC_RECURSE sub-list each.
+    const DIRS: usize = 30;
+    /// Files per sub-directory, so each sub-list carries exactly this many
+    /// entries. Chosen to divide `MIN_FILECNT_LOOKAHEAD` evenly, making the
+    /// expected first burst an exact count rather than a range.
+    const FILES_PER_DIR: usize = 100;
+    /// Sub-lists the sender must send before it first blocks on the receiver:
+    /// enough to reach `MIN_FILECNT_LOOKAHEAD` queued entries, and no more.
+    const EXPECTED_FIRST_BURST: usize = MIN_FILECNT_LOOKAHEAD / FILES_PER_DIR;
+
+    /// Wire reader that records the sub-list dispatch count at the moment the
+    /// sender first blocks for a receiver NDX.
+    struct FirstReadProbe {
+        wire: Cursor<Vec<u8>>,
+        dispatched_at_first_read: Rc<Cell<Option<u64>>>,
+    }
+
+    impl Read for FirstReadProbe {
+        fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+            if self.dispatched_at_first_read.get().is_none() {
+                self.dispatched_at_first_read
+                    .set(Some(segment_dispatch_totals().0));
+            }
+            self.wire.read(buf)
+        }
+    }
+
+    /// Builds an INC_RECURSE generator over a `DIRS * FILES_PER_DIR` tree.
+    ///
+    /// Entries are pushed in the sorted order a real `-r` scan produces
+    /// (`.`, `d00`, `d00/f000`..., `d01`, ...) so the partitioner sees the same
+    /// shape it does in production.
+    fn generator_with_segmented_tree() -> GeneratorContext {
+        let handshake = HandshakeResult {
+            protocol: ProtocolVersion::try_from(32u8).unwrap(),
+            buffered: Vec::new(),
+            compat_exchanged: true,
+            client_args: None,
+            io_timeout: None,
+            negotiated_algorithms: None,
+            compat_flags: Some(CompatibilityFlags::INC_RECURSE),
+            checksum_seed: 0,
+        };
+        let config = ServerConfig {
+            role: ServerRole::Generator,
+            protocol: ProtocolVersion::try_from(32u8).unwrap(),
+            flag_string: "-logDtpre.".to_owned(),
+            ..Default::default()
+        };
+        let mut ctx = GeneratorContext::new_for_test(&handshake, config);
+        assert!(ctx.inc_recurse(), "fixture must negotiate INC_RECURSE");
+
+        let base: Arc<Path> = Arc::from(Path::new(""));
+        let push = |ctx: &mut GeneratorContext, entry: FileEntry| {
+            ctx.file_list.push(entry);
+            ctx.source_bases.push(Arc::clone(&base));
+        };
+        push(&mut ctx, FileEntry::new_directory(".".into(), 0o755));
+        for d in 0..DIRS {
+            push(
+                &mut ctx,
+                FileEntry::new_directory(format!("d{d:02}").into(), 0o755),
+            );
+            for f in 0..FILES_PER_DIR {
+                push(
+                    &mut ctx,
+                    FileEntry::new_file(format!("d{d:02}/f{f:03}").into(), 0, 0o644),
+                );
+            }
+        }
+
+        ctx.partition_file_list_for_inc_recurse();
+        assert_eq!(
+            ctx.incremental.pending_segments.len(),
+            DIRS,
+            "one pending sub-list per sub-directory"
+        );
+        assert!(
+            ctx.incremental
+                .pending_segments
+                .iter()
+                .all(|s| s.count == FILES_PER_DIR),
+            "each sub-list must carry exactly {FILES_PER_DIR} entries"
+        );
+        ctx
+    }
+
+    #[test]
+    fn sub_lists_are_paced_against_receiver_progress() {
+        // The receiver acknowledges each completed file-list and then closes out
+        // the three phases; it never requests a transfer, so every read the
+        // sender performs is a genuine block on receiver progress.
+        let mut ndx = MonotonicNdxWriter::new(32);
+        let mut wire = Vec::new();
+        for _ in 0..(DIRS + 3) {
+            ndx.write_ndx_done(&mut wire).unwrap();
+        }
+
+        let dispatched_at_first_read = Rc::new(Cell::new(None));
+        let mut reader = FirstReadProbe {
+            wire: Cursor::new(wire),
+            dispatched_at_first_read: Rc::clone(&dispatched_at_first_read),
+        };
+        let mut writer = ServerWriter::new_plain(Vec::new());
+        let mut progress: Option<&mut dyn crate::TransferProgressCallback> = None;
+        let mut itemize: Option<&mut dyn crate::ItemizeCallback> = None;
+
+        let mut ctx = generator_with_segmented_tree();
+        let before = segment_dispatch_totals().0;
+        ctx.run_transfer_loop(&mut reader, &mut writer, &mut progress, &mut itemize)
+            .expect("sender loop must run to completion");
+        let after = segment_dispatch_totals().0;
+
+        let first_burst = dispatched_at_first_read
+            .get()
+            .expect("sender must block for a receiver NDX")
+            - before;
+
+        // Pre-fix, the lookahead was computed once outside the dispatch loop, so
+        // the very first `while` drained all DIRS sub-lists before the sender
+        // ever read a byte back. Upstream re-tests the condition each iteration
+        // and stops at MIN_FILECNT_LOOKAHEAD queued entries.
+        assert_eq!(
+            first_burst as usize, EXPECTED_FIRST_BURST,
+            "sender must queue {MIN_FILECNT_LOOKAHEAD} entries ahead and then wait, \
+             not push all {DIRS} sub-lists up front"
+        );
+        assert_eq!(
+            (after - before) as usize,
+            DIRS,
+            "every sub-list must still reach the receiver by end of transfer"
         );
     }
 }

@@ -8,18 +8,19 @@
 //!
 //! # Upstream Reference
 //!
-//! - `flist.c:46` - `#define MIN_FILECNT_LOOKAHEAD 1000`
-//! - `flist.c:2498-2510` - `send_extra_file_list()` lookahead throttling
+//! - `rsync.h:151` - `#define MIN_FILECNT_LOOKAHEAD 1000`
+//! - `flist.c:2124-2139` - `send_extra_file_list()` lookahead throttling
 //! - `sender.c:231,265` - send loop calls into segment scheduling at top/bottom
 
-/// Minimum file count lookahead before the sender emits the next incremental
-/// sub-list. The sender accumulates at least this many unsent entries before
-/// flushing a new segment to the receiver, amortizing per-segment overhead.
+/// Entries the sender keeps queued in sub-lists beyond the one the receiver is
+/// currently working through. Once the backlog reaches this many entries the
+/// sender stops emitting sub-lists and waits for the receiver to catch up, so a
+/// peer that throttles is never flooded with the whole tree up front.
 ///
 /// # Upstream Reference
 ///
-/// - `flist.c:46` - `#define MIN_FILECNT_LOOKAHEAD 1000`
-/// - `sender.c:send_files()` line 250 - `send_extra_file_list(f, MIN_FILECNT_LOOKAHEAD)`
+/// - `rsync.h:151` - `#define MIN_FILECNT_LOOKAHEAD 1000`
+/// - `sender.c:231,265` - `send_extra_file_list(f_out, MIN_FILECNT_LOOKAHEAD)`
 pub const MIN_FILECNT_LOOKAHEAD: usize = 1000;
 
 /// A pending file list sub-segment for incremental recursion sending.
@@ -81,53 +82,116 @@ pub(crate) struct DirSegment {
 
 /// Cursor-based scheduler that yields pending segments on demand.
 ///
-/// Controls *when* sub-lists are sent during the transfer loop using
-/// upstream's `MIN_FILECNT_LOOKAHEAD` throttling heuristic. The transfer
-/// loop calls `next_if_needed()` at top and bottom of each iteration,
-/// matching upstream `sender.c:231,265`.
+/// Owns the whole of upstream's `send_extra_file_list()` throttling rule: both
+/// the `MIN_FILECNT_LOOKAHEAD` threshold and the `file_total - file_old_total`
+/// backlog it is compared against. The transfer loop drives it at the top and
+/// bottom of each iteration (upstream `sender.c:231,265`) and tells it when the
+/// receiver has finished a sub-list, but never re-derives the condition itself.
+///
+/// # Lookahead accounting
+///
+/// Upstream's loop condition is `file_total - file_old_total < at_least`
+/// (`flist.c:2139`), where `file_total` counts entries in every live file-list
+/// and `file_old_total` counts entries in the lists from `first_flist` through
+/// `cur_flist`. The difference is therefore the number of entries queued in
+/// sub-lists *beyond the one the receiver is currently working through* - a
+/// pure lookahead backlog. It is not "sent minus transferred": it steps by
+/// whole sub-lists, at `flist_free()` time, never per transferred file.
+///
+/// [`Self::lookahead_total`] reproduces that difference directly: dispatching a
+/// sub-list adds its entry count (`flist.c:2195` `file_total += flist->used`,
+/// with `file_old_total` untouched), and retiring the current sub-list on the
+/// receiver's `NDX_DONE` subtracts the count of the sub-list promoted in its
+/// place (`sender.c:247-251`).
 ///
 /// # Upstream Reference
 ///
 /// - `sender.c:231,265` - checks `inc_recurse` at top/bottom of send loop
-/// - `flist.c:2498` - `send_extra_file_list()` uses `MIN_FILECNT_LOOKAHEAD`
+/// - `flist.c:2124-2139` - `send_extra_file_list()` re-tests the lookahead
+///   condition on every iteration
 #[derive(Debug)]
 pub(crate) struct SegmentScheduler {
     segments: Vec<PendingSegment>,
+    /// Number of segments handed to the wire so far.
     cursor: usize,
+    /// Number of segments the receiver has already worked through, i.e. the
+    /// index of the segment playing upstream's `cur_flist` role. Always
+    /// `<= cursor`.
+    promoted: usize,
+    /// Entries in `segments[promoted..cursor]`: upstream's
+    /// `file_total - file_old_total`.
+    lookahead_total: usize,
 }
 
 impl SegmentScheduler {
     /// Creates a scheduler that will yield segments in order.
+    ///
+    /// The backlog starts at zero because the initial file list is `cur_flist`:
+    /// `send_file_list()` adds its `used` to both `file_total` and
+    /// `file_old_total` (`flist.c:2545-2546`), leaving the difference at 0.
     pub(crate) fn new(segments: Vec<PendingSegment>) -> Self {
         Self {
             segments,
             cursor: 0,
+            promoted: 0,
+            lookahead_total: 0,
         }
     }
 
-    /// Returns the next segment if the lookahead heuristic indicates we should send.
+    /// Returns the next segment when the lookahead backlog is under
+    /// `MIN_FILECNT_LOOKAHEAD`, accounting for the dispatch before returning.
     ///
-    /// Yields when `remaining_in_current` drops below `MIN_FILECNT_LOOKAHEAD`,
-    /// matching upstream's throttling in `flist.c:2498-2510`.
-    pub(crate) fn next_if_needed(
-        &mut self,
-        remaining_in_current: usize,
-    ) -> Option<&PendingSegment> {
-        if self.cursor >= self.segments.len() {
+    /// Because the backlog is updated here, driving this in a `while let` loop
+    /// re-evaluates upstream's condition on every iteration exactly as
+    /// `flist.c:2139` does, and the loop stops as soon as enough entries are
+    /// queued ahead.
+    pub(crate) fn next_to_send(&mut self) -> Option<&PendingSegment> {
+        if self.lookahead_total >= MIN_FILECNT_LOOKAHEAD {
             return None;
         }
-        if remaining_in_current < MIN_FILECNT_LOOKAHEAD {
-            let seg = &self.segments[self.cursor];
-            self.cursor += 1;
-            Some(seg)
-        } else {
-            None
+        self.advance()
+    }
+
+    /// Returns the next segment unconditionally, ignoring the lookahead.
+    ///
+    /// Used for the end-of-transfer flush, where every sub-list must reach the
+    /// receiver before `NDX_FLIST_EOF` regardless of the backlog.
+    pub(crate) fn next_forced(&mut self) -> Option<&PendingSegment> {
+        self.advance()
+    }
+
+    /// Hands out `segments[cursor]` and folds its entry count into the backlog.
+    fn advance(&mut self) -> Option<&PendingSegment> {
+        let idx = self.cursor;
+        let count = self.segments.get(idx)?.count;
+        self.cursor = idx + 1;
+        self.lookahead_total += count;
+        Some(&self.segments[idx])
+    }
+
+    /// Records that the receiver has finished the sub-list it was working on,
+    /// promoting the oldest queued segment to `cur_flist`.
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `sender.c:247-251` - `file_old_total -= first_flist->used` followed by
+    ///   `flist_free()` and `file_old_total = cur_flist->used`
+    pub(crate) fn retire_current_flist(&mut self) {
+        if self.promoted < self.cursor {
+            self.lookahead_total -= self.segments[self.promoted].count;
+            self.promoted += 1;
         }
     }
 
-    /// Returns a slice of all remaining unconsumed segments.
-    pub(crate) fn remaining(&self) -> &[PendingSegment] {
-        &self.segments[self.cursor..]
+    /// Number of segments dispatched so far.
+    pub(crate) fn dispatched_count(&self) -> usize {
+        self.cursor
+    }
+
+    /// Entries queued in sub-lists beyond the receiver's current one.
+    #[cfg(test)]
+    pub(crate) fn lookahead_total(&self) -> usize {
+        self.lookahead_total
     }
 
     /// Returns `true` when all segments have been dispatched.
