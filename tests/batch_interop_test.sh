@@ -3,11 +3,14 @@
 #
 # Tests batch mode compatibility between oc-rsync and upstream rsync versions.
 #
-# NOTE: All tests are currently informational. Failures do not block CI.
+# Exit status: non-zero when any sub-test fails without an exemption in
+# tools/ci/known_failures.conf, and also when an exempted sub-test passes -
+# an unexpected pass means the exemption has outlived the limitation and must
+# be deleted. Only the legs listed in that file may fail.
 #
 # oc-rsync can read upstream rsync batch files (including compressed delta
 # batches with CPRES_ZLIB dictionary sync). Cross-tool interop from oc-rsync
-# to upstream is limited because oc-rsync uses a different batch body format.
+# to upstream is exempted; see the batch rule in known_failures.conf.
 #
 # Known upstream bug: rsync 3.4.1+ cannot read back its own compressed delta
 # batch files due to missing inflate dictionary synchronization in the batch
@@ -16,7 +19,7 @@
 # Environment variable overrides:
 #   OC_RSYNC              - path to oc-rsync binary
 #   UPSTREAM_INSTALL_ROOT - root of upstream installs (expects {version}/bin/rsync)
-#   UPSTREAM_VERSIONS     - space-separated list of versions (default: "3.0.9 3.1.3 3.4.1 3.4.2")
+#   UPSTREAM_VERSIONS     - space-separated list of versions
 
 set -euo pipefail
 
@@ -27,7 +30,13 @@ WORKSPACE_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 # Paths (overridable via environment)
 OC_RSYNC="${OC_RSYNC:-${WORKSPACE_ROOT}/target/release/oc-rsync}"
 UPSTREAM_INSTALL_ROOT="${UPSTREAM_INSTALL_ROOT:-${WORKSPACE_ROOT}/target/interop/upstream-install}"
-UPSTREAM_VERSIONS="${UPSTREAM_VERSIONS:-3.0.9 3.1.3 3.4.1 3.4.2}"
+# Default matches the versions built by tools/ci/run_interop.sh; anything else
+# is silently skipped because the binary is not installed.
+UPSTREAM_VERSIONS="${UPSTREAM_VERSIONS:-3.0.9 3.1.3 3.4.4}"
+
+# Shared known failure definitions (is_known_failure_from_conf, version_le).
+# shellcheck source=tools/ci/known_failures.conf
+source "${WORKSPACE_ROOT}/tools/ci/known_failures.conf"
 
 # Create a temp directory with cleanup trap
 TEST_DIR="$(mktemp -d)"
@@ -38,6 +47,8 @@ TESTS_RUN=0
 TESTS_PASSED=0
 TESTS_FAILED=0
 TESTS_SKIPPED=0
+TESTS_XFAIL=0
+TESTS_XPASS=0
 
 log_info() {
     echo "[INFO] $1"
@@ -54,6 +65,46 @@ log_error() {
 log_test() {
     echo ""
     echo "=== $1 ==="
+}
+
+# Is this leg exempted in tools/ci/known_failures.conf?
+# Arguments: known_failure_name upstream_version
+# An empty name means the leg carries no exemption and must pass.
+batch_leg_is_exempt() {
+    local kf_name=$1 version=$2
+    [ -n "$kf_name" ] || return 1
+    BATCH_KNOWN_FAILURE_REASON=""
+    is_known_failure_from_conf batch "$kf_name" "" "$version"
+}
+
+# Record a failed sub-test. Exempted legs are reported as XFAIL and do not
+# fail the run; every other failure does.
+# Arguments: known_failure_name upstream_version test_name detail
+record_fail() {
+    local kf_name=$1 version=$2 test_name=$3 detail=$4
+    if batch_leg_is_exempt "$kf_name" "$version"; then
+        log_info "$test_name: XFAIL ($detail)"
+        log_info "  expected: ${BATCH_KNOWN_FAILURE_REASON}"
+        TESTS_XFAIL=$((TESTS_XFAIL + 1))
+        return 0
+    fi
+    log_error "$test_name: FAIL ($detail)"
+    TESTS_FAILED=$((TESTS_FAILED + 1))
+}
+
+# Record a passing sub-test. A pass on an exempted leg fails the run: the
+# exemption has outlived the limitation and must be deleted.
+# Arguments: known_failure_name upstream_version test_name
+record_pass() {
+    local kf_name=$1 version=$2 test_name=$3
+    if batch_leg_is_exempt "$kf_name" "$version"; then
+        log_error "$test_name: UNEXPECTED PASS"
+        log_error "  drop the batch:${kf_name} exemption from tools/ci/known_failures.conf"
+        TESTS_XPASS=$((TESTS_XPASS + 1))
+        return 0
+    fi
+    log_info "$test_name: PASS"
+    TESTS_PASSED=$((TESTS_PASSED + 1))
 }
 
 # Cross-platform checksum: prefers md5sum (Linux), falls back to md5 (macOS)
@@ -155,15 +206,13 @@ test_oc_roundtrip() {
     if ! "$OC_RSYNC" -av --no-whole-file --ignore-times \
         --write-batch="$work_dir/mybatch" \
         "$work_dir/src/" "$work_dir/dest/" > "$work_dir/write.log" 2>&1; then
-        log_warn "$test_name: oc-rsync --write-batch failed"
         cat "$work_dir/write.log" >&2
-        TESTS_FAILED=$((TESTS_FAILED + 1))
+        record_fail "" "" "$test_name" "oc-rsync --write-batch failed"
         return 0
     fi
 
     if [ ! -f "$work_dir/mybatch" ]; then
-        log_warn "$test_name: Batch file not created"
-        TESTS_FAILED=$((TESTS_FAILED + 1))
+        record_fail "" "" "$test_name" "batch file not created"
         return 0
     fi
 
@@ -172,18 +221,15 @@ test_oc_roundtrip() {
 
     log_info "Replaying batch with oc-rsync..."
     if ! "$OC_RSYNC" --read-batch="$work_dir/mybatch" "$work_dir/final/" > "$work_dir/read.log" 2>&1; then
-        log_warn "$test_name: oc-rsync --read-batch failed (known limitation: batch format mismatch)"
         cat "$work_dir/read.log" >&2
-        TESTS_FAILED=$((TESTS_FAILED + 1))
+        record_fail "" "" "$test_name" "oc-rsync --read-batch failed"
         return 0
     fi
 
     if verify_files_match "$work_dir/src/testfile.bin" "$work_dir/final/testfile.bin" "$test_name"; then
-        log_info "$test_name: PASS"
-        TESTS_PASSED=$((TESTS_PASSED + 1))
+        record_pass "" "" "$test_name"
     else
-        log_warn "$test_name: FAIL (known limitation)"
-        TESTS_FAILED=$((TESTS_FAILED + 1))
+        record_fail "" "" "$test_name" "replayed file differs from source"
     fi
 }
 
@@ -208,15 +254,13 @@ test_oc_to_upstream() {
     if ! "$OC_RSYNC" -av --no-whole-file --ignore-times \
         --write-batch="$work_dir/mybatch" \
         "$work_dir/src/" "$work_dir/dest/" > "$work_dir/write.log" 2>&1; then
-        log_warn "$test_name: oc-rsync --write-batch failed"
         cat "$work_dir/write.log" >&2
-        TESTS_FAILED=$((TESTS_FAILED + 1))
+        record_fail "" "" "$test_name" "oc-rsync --write-batch failed"
         return 0
     fi
 
     if [ ! -f "$work_dir/mybatch" ]; then
-        log_warn "$test_name: Batch file not created"
-        TESTS_FAILED=$((TESTS_FAILED + 1))
+        record_fail "" "" "$test_name" "batch file not created"
         return 0
     fi
 
@@ -224,18 +268,16 @@ test_oc_to_upstream() {
 
     log_info "Replaying batch with upstream rsync $version..."
     if ! "$upstream_rsync" --read-batch="$work_dir/mybatch" "$work_dir/final/" > "$work_dir/read.log" 2>&1; then
-        log_warn "$test_name: upstream rsync --read-batch failed (known limitation)"
         cat "$work_dir/read.log" >&2
-        TESTS_FAILED=$((TESTS_FAILED + 1))
+        record_fail "oc-to-upstream" "$version" "$test_name" \
+            "upstream rsync --read-batch failed"
         return 0
     fi
 
     if verify_files_match "$work_dir/src/testfile.bin" "$work_dir/final/testfile.bin" "$test_name"; then
-        log_info "$test_name: PASS"
-        TESTS_PASSED=$((TESTS_PASSED + 1))
+        record_pass "oc-to-upstream" "$version" "$test_name"
     else
-        log_warn "$test_name: files differ (known limitation)"
-        TESTS_FAILED=$((TESTS_FAILED + 1))
+        record_fail "oc-to-upstream" "$version" "$test_name" "replayed file differs from source"
     fi
 }
 
@@ -256,15 +298,13 @@ test_upstream_to_oc() {
     if ! "$upstream_rsync" -av --no-whole-file --ignore-times \
         --write-batch="$work_dir/mybatch" \
         "$work_dir/src/" "$work_dir/dest/" > "$work_dir/write.log" 2>&1; then
-        log_warn "$test_name: upstream rsync --write-batch failed"
         cat "$work_dir/write.log" >&2
-        TESTS_FAILED=$((TESTS_FAILED + 1))
+        record_fail "" "" "$test_name" "upstream rsync --write-batch failed"
         return 0
     fi
 
     if [ ! -f "$work_dir/mybatch" ]; then
-        log_warn "$test_name: Batch file not created"
-        TESTS_FAILED=$((TESTS_FAILED + 1))
+        record_fail "" "" "$test_name" "batch file not created"
         return 0
     fi
 
@@ -272,18 +312,15 @@ test_upstream_to_oc() {
 
     log_info "Replaying batch with oc-rsync..."
     if ! "$OC_RSYNC" --read-batch="$work_dir/mybatch" "$work_dir/final/" > "$work_dir/read.log" 2>&1; then
-        log_warn "$test_name: oc-rsync --read-batch failed (known limitation)"
         cat "$work_dir/read.log" >&2
-        TESTS_FAILED=$((TESTS_FAILED + 1))
+        record_fail "" "" "$test_name" "oc-rsync --read-batch failed"
         return 0
     fi
 
     if verify_files_match "$work_dir/src/testfile.bin" "$work_dir/final/testfile.bin" "$test_name"; then
-        log_info "$test_name: PASS"
-        TESTS_PASSED=$((TESTS_PASSED + 1))
+        record_pass "" "" "$test_name"
     else
-        log_warn "$test_name: files differ (known limitation)"
-        TESTS_FAILED=$((TESTS_FAILED + 1))
+        record_fail "" "" "$test_name" "replayed file differs from source"
     fi
 }
 
@@ -319,15 +356,13 @@ test_upstream_compressed_to_oc() {
     if ! "$upstream_rsync" -av -z --no-whole-file --ignore-times \
         --write-batch="$work_dir/mybatch" \
         "$work_dir/src/" "$work_dir/dest/" > "$work_dir/write.log" 2>&1; then
-        log_warn "$test_name: upstream rsync --write-batch -z failed"
         cat "$work_dir/write.log" >&2
-        TESTS_FAILED=$((TESTS_FAILED + 1))
+        record_fail "" "" "$test_name" "upstream rsync --write-batch -z failed"
         return 0
     fi
 
     if [ ! -f "$work_dir/mybatch" ]; then
-        log_warn "$test_name: Batch file not created"
-        TESTS_FAILED=$((TESTS_FAILED + 1))
+        record_fail "" "" "$test_name" "batch file not created"
         return 0
     fi
 
@@ -335,18 +370,15 @@ test_upstream_compressed_to_oc() {
 
     log_info "Replaying compressed batch with oc-rsync..."
     if ! "$OC_RSYNC" --read-batch="$work_dir/mybatch" "$work_dir/final/" > "$work_dir/read.log" 2>&1; then
-        log_warn "$test_name: oc-rsync --read-batch failed"
         cat "$work_dir/read.log" >&2
-        TESTS_FAILED=$((TESTS_FAILED + 1))
+        record_fail "" "" "$test_name" "oc-rsync --read-batch failed"
         return 0
     fi
 
     if verify_files_match "$work_dir/src/testfile.bin" "$work_dir/final/testfile.bin" "$test_name"; then
-        log_info "$test_name: PASS"
-        TESTS_PASSED=$((TESTS_PASSED + 1))
+        record_pass "" "" "$test_name"
     else
-        log_warn "$test_name: FAIL"
-        TESTS_FAILED=$((TESTS_FAILED + 1))
+        record_fail "" "" "$test_name" "replayed file differs from source"
     fi
 }
 
@@ -356,9 +388,8 @@ main() {
     log_info "Upstream install root: $UPSTREAM_INSTALL_ROOT"
     log_info "Test directory: $TEST_DIR"
     log_info ""
-    log_info "NOTE: All batch tests are currently informational."
-    log_info "The batch write/read pipeline has known format mismatches."
-    log_info "Results are reported for tracking but do not block CI."
+    log_info "Only the legs exempted in tools/ci/known_failures.conf may fail."
+    log_info "Any other failure, and any pass on an exempted leg, fails the run."
 
     # Verify oc-rsync binary exists
     if [ ! -x "$OC_RSYNC" ]; then
@@ -411,20 +442,17 @@ main() {
     echo "========================================="
     echo "Total tests run:    $TESTS_RUN"
     echo "Tests passed:       $TESTS_PASSED"
-    echo "Tests failed:       $TESTS_FAILED  (informational)"
+    echo "Tests failed:       $TESTS_FAILED"
+    echo "Expected failures:  $TESTS_XFAIL"
+    echo "Unexpected passes:  $TESTS_XPASS"
     echo "Tests skipped:      $TESTS_SKIPPED"
     echo "========================================="
 
-    if [ $TESTS_FAILED -gt 0 ]; then
-        log_info "Batch test failures are expected (known limitations)."
-        log_info "See test script header for details."
+    if [ $TESTS_FAILED -gt 0 ] || [ $TESTS_XPASS -gt 0 ]; then
+        log_error "Batch mode interoperability tests failed"
+        exit 1
     fi
 
-    if [ $TESTS_PASSED -gt 0 ]; then
-        log_info "$TESTS_PASSED test(s) passed!"
-    fi
-
-    # Always exit 0 — all tests are informational
     exit 0
 }
 
