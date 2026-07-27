@@ -300,6 +300,110 @@ fn daemon_refuses_a_protocol_32_greeting_without_a_digest_list() {
     let _ = finish_daemon(handle);
 }
 
+/// Drives one daemon with a greeting advertising an EMPTY digest list and
+/// asserts the refusal.
+///
+/// One daemon per call, mirroring the single-daemon sibling tests above: an
+/// in-process `--once` daemon's accept-loop thread lingers after serving on
+/// Windows (see `finish_daemon`), so a test that spawned two daemons in a loop
+/// would race the second spawn against the first's detached thread. Splitting by
+/// protocol level keeps every test to a single daemon.
+fn assert_empty_digest_list_refused(greeting: &str) {
+    let _lock = ENV_LOCK.lock().expect("env lock");
+    let _primary = EnvGuard::set(DAEMON_FALLBACK_ENV, OsStr::new("0"));
+    let _secondary = EnvGuard::set(CLIENT_FALLBACK_ENV, OsStr::new("0"));
+
+    let dir = tempdir().expect("config dir");
+    let (mut stream, handle) = start_auth_digest_daemon(dir.path());
+    let mut reader = BufReader::new(stream.try_clone().expect("clone stream"));
+
+    let answer = negotiate_protected_module(&mut stream, &mut reader, greeting);
+    assert_eq!(
+        answer,
+        "@ERROR: your client does not support one of our daemon-auth checksums: \
+         sha512 sha256 sha1 md5 md4",
+        "an empty digest list must be refused, not treated as absent: {greeting:?}",
+    );
+
+    // No challenge may follow: upstream refuses before `gen_challenge()`.
+    let mut line = String::new();
+    let read = reader.read_line(&mut line).expect("eof after error");
+    assert_eq!(read, 0, "no challenge may follow the refusal, got: {line:?}");
+
+    drop(reader);
+    drop(stream);
+    let _ = finish_daemon(handle);
+}
+
+/// A protocol-31 greeting whose only trailing byte is the separating space
+/// advertises an EMPTY digest list, and upstream refuses it.
+///
+/// upstream: clientserver.c:199-203 - `daemon_auth_choices = strchr(buf + 9, ' ')`
+/// finds that trailing space, so `strdup(daemon_auth_choices + 1)` is a
+/// **non-NULL empty string**. `negotiate_daemon_auth()` therefore takes the
+/// `if (daemon_auth_choices)` branch, never sets `md4_is_old`, and
+/// `parse_negotiate_str()` returns 0 on the empty walk - so the daemon answers
+/// `@ERROR: your client does not support one of our daemon-auth checksums: %s`
+/// and calls `exit_cleanup(RERR_UNSUPPORTED)`.
+///
+/// Reading that empty list as *absent* instead sends the daemon down upstream's
+/// no-list fallback, which always succeeds - authenticating a client upstream
+/// turns away, off one extra byte on an otherwise valid greeting. Protocol 31
+/// never had a digest-list presence requirement, so it reaches the checksum
+/// refusal directly. Verified against rsync 3.4.4.
+#[test]
+fn daemon_auth_refuses_a_protocol_31_client_advertising_an_empty_digest_list() {
+    assert_empty_digest_list_refused("@RSYNCD: 31.0 \n");
+}
+
+/// The protocol-32 companion: an empty list *satisfies* the `remote_protocol >
+/// 31` presence gate (the space is there), so `exchange_protocols()` does not
+/// refuse it early - it falls through to the same checksum refusal in
+/// `negotiate_daemon_auth()`. Splitting it from the protocol-31 case keeps each
+/// test to a single daemon; both refuse identically. Verified against rsync
+/// 3.4.4.
+#[test]
+fn daemon_auth_refuses_a_protocol_32_client_advertising_an_empty_digest_list() {
+    assert_empty_digest_list_refused("@RSYNCD: 32.0 \n");
+}
+
+/// The contrast case: a greeting with no space at all advertises no list, and
+/// upstream's no-list fallback authenticates it.
+///
+/// upstream: compat.c:857-862 - `daemon_auth_choices` is NULL, so the substitute
+/// `protocol_version >= 30 ? "md5" : "md4"` is negotiated instead. Protocol 31
+/// is the newest version that can reach this: `remote_protocol > 31` without a
+/// list is refused earlier by `exchange_protocols()`. Verified against rsync
+/// 3.4.4, which answers `@RSYNCD: AUTHREQD <22-char challenge>` to
+/// `@RSYNCD: 31.0`.
+///
+/// Pairing this with the empty-list test is the point: the two greetings differ
+/// by one byte and must land on opposite verdicts.
+#[test]
+fn daemon_auth_falls_back_when_the_client_advertised_no_digest_list() {
+    let _lock = ENV_LOCK.lock().expect("env lock");
+    let _primary = EnvGuard::set(DAEMON_FALLBACK_ENV, OsStr::new("0"));
+    let _secondary = EnvGuard::set(CLIENT_FALLBACK_ENV, OsStr::new("0"));
+
+    let dir = tempdir().expect("config dir");
+    let (mut stream, handle) = start_auth_digest_daemon(dir.path());
+    let mut reader = BufReader::new(stream.try_clone().expect("clone stream"));
+
+    let answer = negotiate_protected_module(&mut stream, &mut reader, "@RSYNCD: 31.0\n");
+    let challenge = answer
+        .strip_prefix("@RSYNCD: AUTHREQD ")
+        .unwrap_or_else(|| panic!("an absent digest list must fall back, got: {answer}"));
+    assert_eq!(
+        challenge.len(),
+        DaemonAuthDigest::Md5.base64_len(),
+        "the protocol-keyed substitute at 31 is md5"
+    );
+
+    drop(reader);
+    drop(stream);
+    let _ = finish_daemon(handle);
+}
+
 /// The single-session entry points (stdio, inetd) surface a session-fatal refusal
 /// as the process exit status, the way upstream's forked child does.
 ///

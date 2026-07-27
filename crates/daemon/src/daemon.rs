@@ -37,8 +37,8 @@ use clap::{Arg, ArgAction, Command, builder::OsStringValueParser};
 use core::client::TcpFastOpenMode;
 use core::{
     auth::{
-        DaemonAuthDigest, digests_for_protocol, negotiate_server_daemon_digest,
-        supported_daemon_digest_list, verify_daemon_auth_response,
+        DaemonAuthDigest, negotiate_server_daemon_digest, supported_daemon_digest_list,
+        verify_daemon_auth_response,
     },
     bandwidth::{
         BandwidthLimitComponents, BandwidthLimiter, BandwidthParseError, LimiterChange,
@@ -55,13 +55,14 @@ use core::{
 };
 use logging_sink::MessageSink;
 use protocol::{
-    LEGACY_DAEMON_PREFIX_LEN, LegacyDaemonMessage, MessageCode, MessageFrame, ProtocolVersion,
-    filters::FilterRuleWireFormat, format_legacy_daemon_message, iconv::FilenameConverter,
-    is_version_banner, missing_greeting_token, parse_legacy_daemon_greeting_details,
-    parse_legacy_daemon_message,
+    AdvertisedDigests, LEGACY_DAEMON_PREFIX_LEN, LegacyDaemonMessage, MessageCode, MessageFrame,
+    ProtocolVersion, filters::FilterRuleWireFormat, format_legacy_daemon_message,
+    iconv::FilenameConverter, is_version_banner, missing_greeting_token,
+    parse_legacy_daemon_greeting_details, parse_legacy_daemon_message,
 };
 
 use crate::{
+    auth::ChallengeGenerator,
     config::DaemonConfig,
     connection::{ConnectionState, InvalidTransition},
     daemon_stream::DaemonStream,

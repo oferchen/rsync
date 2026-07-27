@@ -1,42 +1,52 @@
 use super::*;
-use crate::auth::DaemonAuthDigest;
+use crate::auth as core_auth;
+use crate::auth::{DaemonAuthDigest, parse_daemon_digest_list};
 
-#[test]
-fn parse_digest_list_from_greeting_with_full_list() {
-    let greeting = "@RSYNCD: 31.0 sha512 sha256 sha1 md5 md4\n";
-    let digests = parse_digest_list_from_greeting(greeting);
-    assert_eq!(digests.len(), 5);
-    assert_eq!(digests[0], DaemonAuthDigest::Sha512);
-    assert_eq!(digests[1], DaemonAuthDigest::Sha256);
-    assert_eq!(digests[2], DaemonAuthDigest::Sha1);
-    assert_eq!(digests[3], DaemonAuthDigest::Md5);
-    assert_eq!(digests[4], DaemonAuthDigest::Md4);
+fn digests_of(greeting: &str) -> Vec<DaemonAuthDigest> {
+    parse_daemon_digest_list(
+        advertised_digests_in_greeting(greeting)
+            .names()
+            .unwrap_or_default(),
+    )
 }
 
 #[test]
-fn parse_digest_list_from_greeting_with_partial_list() {
-    let greeting = "@RSYNCD: 30.0 sha256 md5\n";
-    let digests = parse_digest_list_from_greeting(greeting);
-    assert_eq!(digests.len(), 2);
-    assert_eq!(digests[0], DaemonAuthDigest::Sha256);
-    assert_eq!(digests[1], DaemonAuthDigest::Md5);
+fn greeting_digest_list_parses_the_full_advertisement() {
+    let digests = digests_of("@RSYNCD: 31.0 sha512 sha256 sha1 md5 md4\n");
+    assert_eq!(
+        digests,
+        [
+            DaemonAuthDigest::Sha512,
+            DaemonAuthDigest::Sha256,
+            DaemonAuthDigest::Sha1,
+            DaemonAuthDigest::Md5,
+            DaemonAuthDigest::Md4,
+        ]
+    );
 }
 
 #[test]
-fn parse_digest_list_from_greeting_without_digests() {
-    let greeting = "@RSYNCD: 29.0\n";
-    let digests = parse_digest_list_from_greeting(greeting);
-    assert!(digests.is_empty());
+fn greeting_digest_list_parses_a_partial_advertisement() {
+    let digests = digests_of("@RSYNCD: 30.0 sha256 md5\n");
+    assert_eq!(digests, [DaemonAuthDigest::Sha256, DaemonAuthDigest::Md5]);
 }
 
 #[test]
-fn parse_digest_list_from_greeting_ignores_unknown() {
-    let greeting = "@RSYNCD: 31.0 sha512 unknown sha1 bogus md4\n";
-    let digests = parse_digest_list_from_greeting(greeting);
-    assert_eq!(digests.len(), 3);
-    assert_eq!(digests[0], DaemonAuthDigest::Sha512);
-    assert_eq!(digests[1], DaemonAuthDigest::Sha1);
-    assert_eq!(digests[2], DaemonAuthDigest::Md4);
+fn greeting_digest_list_is_empty_when_none_was_advertised() {
+    assert!(digests_of("@RSYNCD: 29.0\n").is_empty());
+}
+
+#[test]
+fn greeting_digest_list_ignores_unknown_names() {
+    let digests = digests_of("@RSYNCD: 31.0 sha512 unknown sha1 bogus md4\n");
+    assert_eq!(
+        digests,
+        [
+            DaemonAuthDigest::Sha512,
+            DaemonAuthDigest::Sha1,
+            DaemonAuthDigest::Md4,
+        ]
+    );
 }
 
 #[test]
@@ -47,42 +57,48 @@ fn parse_protocol_from_greeting_extracts_version() {
 }
 
 #[test]
-fn extract_digest_list_strips_trailing_newline() {
+fn advertised_digests_strip_the_trailing_newline() {
     // upstream: compat.c:843-844 - the level-2 NSTR echo must render the
     // digest list verbatim, without the greeting's trailing newline.
-    let greeting = "@RSYNCD: 31.0 sha512 sha256 sha1 md5 md4\n";
-    let list = extract_digest_list_from_greeting(greeting);
-    assert_eq!(list, Some("sha512 sha256 sha1 md5 md4"));
+    assert_eq!(
+        advertised_digests_in_greeting("@RSYNCD: 31.0 sha512 sha256 sha1 md5 md4\n").names(),
+        Some("sha512 sha256 sha1 md5 md4"),
+    );
+    assert_eq!(
+        advertised_digests_in_greeting("@RSYNCD: 30.0 md5 md4\r\n").names(),
+        Some("md5 md4"),
+    );
 }
 
 #[test]
-fn extract_digest_list_handles_crlf() {
-    let greeting = "@RSYNCD: 30.0 md5 md4\r\n";
-    let list = extract_digest_list_from_greeting(greeting);
-    assert_eq!(list, Some("md5 md4"));
+fn advertised_digests_are_absent_for_a_version_only_greeting() {
+    assert!(advertised_digests_in_greeting("@RSYNCD: 29.0\n").is_absent());
+    assert!(advertised_digests_in_greeting("@RSYNCD: 30.0\r\n").is_absent());
+}
+
+// upstream: clientserver.c:199-203 - a server greeting that ends in the
+// separating space advertises an EMPTY list, which the client must NOT read as
+// "no list": upstream aborts on it (compat.c:383-406) instead of falling back to
+// the protocol-keyed default.
+#[test]
+fn a_trailing_space_in_the_server_greeting_advertises_an_empty_list() {
+    let advertised = advertised_digests_in_greeting("@RSYNCD: 31.0 \n");
+    assert!(advertised.is_present());
+    assert_eq!(advertised.names(), Some(""));
+    assert_eq!(
+        negotiate_client_daemon_digest(advertised, 31),
+        Err(core_auth::NoMutualDaemonAuthDigest),
+    );
 }
 
 #[test]
-fn extract_digest_list_returns_none_for_version_only() {
-    let greeting = "@RSYNCD: 29.0\n";
-    let list = extract_digest_list_from_greeting(greeting);
-    assert!(list.is_none());
-}
-
-#[test]
-fn extract_digest_list_returns_none_for_blank_after_version() {
-    let greeting = "@RSYNCD: 30.0\r\n";
-    let list = extract_digest_list_from_greeting(greeting);
-    assert!(list.is_none());
-}
-
-#[test]
-fn extract_digest_list_preserves_unknown_tokens() {
+fn advertised_digests_preserve_unknown_tokens() {
     // upstream: compat.c:844 emits the raw banner string, including
     // unknown algorithm names. Parity matters for the diagnostic.
-    let greeting = "@RSYNCD: 31.0 sha512 unknown sha1 bogus md4\n";
-    let list = extract_digest_list_from_greeting(greeting);
-    assert_eq!(list, Some("sha512 unknown sha1 bogus md4"));
+    assert_eq!(
+        advertised_digests_in_greeting("@RSYNCD: 31.0 sha512 unknown sha1 bogus md4\n").names(),
+        Some("sha512 unknown sha1 bogus md4"),
+    );
 }
 
 #[test]

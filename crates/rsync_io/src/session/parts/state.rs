@@ -280,7 +280,7 @@ mod tests {
             SessionHandshakeParts::from_legacy_components(greeting, proto31, stream.into_parts());
         if let SessionHandshakeParts::Legacy(legacy_parts) = parts {
             let greeting = legacy_parts.server_greeting();
-            assert!(greeting.digest_list().is_some());
+            assert!(greeting.digest_names().is_some());
         } else {
             panic!("expected Legacy variant");
         }
