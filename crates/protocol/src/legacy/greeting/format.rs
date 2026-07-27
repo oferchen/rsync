@@ -55,6 +55,55 @@ pub fn format_legacy_daemon_greeting(version: ProtocolVersion) -> String {
     banner
 }
 
+/// Daemon-auth digest names this build advertises, in upstream table order.
+///
+/// upstream: checksum.c:71-84 `valid_auth_checksums_items[]`. This is the wire
+/// spelling of the set, and the only place it is written down; `core::auth` maps
+/// its `DaemonAuthDigest` preference order onto this table and a lockstep test
+/// keeps the two from drifting.
+///
+/// The seeded `CSUM_MD4_OLD` variant is deliberately absent. It shares the `md4`
+/// token with plain MD4 and exists only as the sub-protocol-30 substitute for an
+/// *absent* list (compat.c:857-862), so advertising it would emit `md4` twice.
+pub const DAEMON_AUTH_DIGEST_NAMES: [&str; 5] = ["sha512", "sha256", "sha1", "md5", "md4"];
+
+/// Writes the advertised daemon-auth digest names, space separated, with no newline.
+///
+/// upstream: compat.c:462 `get_default_nno_list()` walks the table in order and
+/// joins the names with a single space.
+///
+/// # Errors
+///
+/// Propagates any error reported by `writer`.
+pub fn write_daemon_auth_digest_list<W: FmtWrite>(writer: &mut W) -> fmt::Result {
+    for (index, name) in DAEMON_AUTH_DIGEST_NAMES.iter().enumerate() {
+        if index > 0 {
+            writer.write_char(' ')?;
+        }
+        writer.write_str(name)?;
+    }
+
+    Ok(())
+}
+
+/// Returns the daemon-auth digest list this build advertises in its `@RSYNCD:` greeting.
+///
+/// The list states *our own* capabilities and is never derived from the peer's
+/// greeting, on either side of the connection: `output_daemon_greeting()`
+/// (compat.c:838-842) renders `get_default_nno_list()` and is called before the
+/// peer's greeting has even been read (clientserver.c:157 precedes the
+/// `read_line_old()` at clientserver.c:174).
+///
+/// It is likewise never filtered by protocol version. Verified against rsync
+/// 3.4.4: a client forced to `--protocol=28` still greets with
+/// `@RSYNCD: 28.0 sha512 sha256 sha1 md5 md4`.
+#[must_use]
+pub fn daemon_auth_digest_list() -> String {
+    let mut list = String::with_capacity(32);
+    write_daemon_auth_digest_list(&mut list).expect("writing to a String cannot fail");
+    list
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -109,5 +158,33 @@ mod tests {
     fn greeting_contains_version_and_minor() {
         let greeting = format_legacy_daemon_greeting(ProtocolVersion::V32);
         assert!(greeting.contains(".0"));
+    }
+
+    // upstream: checksum.c:71-84 joined by compat.c:462 `get_default_nno_list()`.
+    // Measured against rsync 3.4.4 driven at a stub daemon: every greeting it
+    // sends carries exactly this list, so the bytes are load-bearing.
+    #[test]
+    fn daemon_auth_digest_list_matches_upstream_bytes() {
+        assert_eq!(daemon_auth_digest_list(), "sha512 sha256 sha1 md5 md4");
+    }
+
+    // The seeded CSUM_MD4_OLD shares the "md4" token with plain MD4, so a table
+    // built by mapping over digest variants would advertise `md4` twice and
+    // upstream's parser would see a duplicate this build never intends to offer.
+    #[test]
+    fn daemon_auth_digest_names_are_unique() {
+        for (index, name) in DAEMON_AUTH_DIGEST_NAMES.iter().enumerate() {
+            assert!(
+                !DAEMON_AUTH_DIGEST_NAMES[..index].contains(name),
+                "{name} is advertised more than once",
+            );
+        }
+    }
+
+    #[test]
+    fn write_daemon_auth_digest_list_appends_without_newline() {
+        let mut sink = String::from("@RSYNCD: 28.0 ");
+        write_daemon_auth_digest_list(&mut sink).expect("writing to a String cannot fail");
+        assert_eq!(sink, "@RSYNCD: 28.0 sha512 sha256 sha1 md5 md4");
     }
 }

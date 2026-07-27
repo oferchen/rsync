@@ -11,7 +11,10 @@ mod tokens;
 mod types;
 mod validate;
 
-pub use format::{format_legacy_daemon_greeting, write_legacy_daemon_greeting};
+pub use format::{
+    DAEMON_AUTH_DIGEST_NAMES, daemon_auth_digest_list, format_legacy_daemon_greeting,
+    write_daemon_auth_digest_list, write_legacy_daemon_greeting,
+};
 pub use parse::{
     parse_legacy_daemon_greeting, parse_legacy_daemon_greeting_details,
     parse_legacy_daemon_greeting_owned,

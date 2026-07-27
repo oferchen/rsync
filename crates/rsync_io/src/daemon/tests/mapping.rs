@@ -1,5 +1,5 @@
 use super::super::*;
-use super::common::{InstrumentedTransport, MemoryTransport};
+use super::common::{InstrumentedTransport, MemoryTransport, client_greeting};
 use protocol::ProtocolVersion;
 use std::io::{self, Write};
 
@@ -33,7 +33,10 @@ fn map_stream_inner_preserves_state_and_transforms_transport() {
 
     let inner = instrumented.into_inner();
     assert_eq!(inner.flushes(), 2);
-    assert_eq!(inner.written(), b"@RSYNCD: 31.0\n@RSYNCD: OK\n");
+    assert_eq!(
+        inner.written(),
+        [client_greeting(31), b"@RSYNCD: OK\n".to_vec()].concat()
+    );
 }
 
 #[test]
@@ -88,7 +91,10 @@ fn parts_map_stream_inner_transforms_transport() {
     assert_eq!(instrumented.flushes(), 1);
 
     let inner = instrumented.into_inner();
-    assert_eq!(inner.written(), b"@RSYNCD: 31.0\nOK\n");
+    assert_eq!(
+        inner.written(),
+        [client_greeting(31), b"OK\n".to_vec()].concat()
+    );
 }
 
 #[test]
@@ -167,5 +173,5 @@ fn try_map_stream_inner_preserves_original_on_error() {
     assert_eq!(err.error().kind(), io::ErrorKind::Other);
     let original = err.into_original();
     let transport = original.into_stream().into_inner();
-    assert_eq!(transport.written(), b"@RSYNCD: 31.0\n");
+    assert_eq!(transport.written(), client_greeting(31));
 }

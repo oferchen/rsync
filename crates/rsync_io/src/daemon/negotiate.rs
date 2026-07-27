@@ -5,7 +5,7 @@ use crate::negotiation::{
 use logging::debug_log;
 use protocol::{
     LEGACY_DAEMON_PREFIX, LEGACY_DAEMON_PREFIX_LEN, LegacyDaemonGreetingOwned, NegotiationPrologue,
-    NegotiationPrologueSniffer, ProtocolVersion,
+    NegotiationPrologueSniffer, ProtocolVersion, write_daemon_auth_digest_list,
 };
 use std::cmp;
 use std::io::{self, Read, Write};
@@ -61,7 +61,7 @@ where
 /// [`sniff_negotiation_stream`] (or its sniffer-backed counterpart) and drives
 /// the remainder of the daemon handshake without repeating the prologue
 /// detection. The stream is verified to contain the `@RSYNCD:` prefix before the
-/// greeting is parsed and echoed back to the server.
+/// server's greeting is parsed and this client's own greeting is sent.
 ///
 /// # Errors
 ///
@@ -116,17 +116,25 @@ where
     ))
 }
 
+/// Renders the client's `@RSYNCD:` greeting line.
+///
+/// The advertised digest list states *this build's* daemon-auth capabilities and
+/// is never derived from the server's greeting. Upstream cannot derive it even in
+/// principle: `exchange_protocols()` calls `output_daemon_greeting()`
+/// (clientserver.c:157) before `read_line_old()` has read the server's line
+/// (clientserver.c:174), so the client always renders its own
+/// `get_default_nno_list()` (compat.c:462). Echoing the server's list instead
+/// would let the server pick the digest out of a set it fully controls, since a
+/// name we confirm as ours is a name we have agreed to accept.
+///
+/// The list is also never filtered by protocol version. Verified against rsync
+/// 3.4.4: a client forced to `--protocol=28` still greets with
+/// `@RSYNCD: 28.0 sha512 sha256 sha1 md5 md4`.
 fn build_client_greeting(
     server_greeting: &LegacyDaemonGreetingOwned,
     negotiated_protocol: ProtocolVersion,
 ) -> Vec<u8> {
-    let mut greeting = String::with_capacity(
-        LEGACY_DAEMON_PREFIX.len()
-            + 16
-            + server_greeting
-                .digest_list()
-                .map_or(0, |list| list.len() + 1),
-    );
+    let mut greeting = String::with_capacity(LEGACY_DAEMON_PREFIX.len() + 48);
 
     greeting.push_str(LEGACY_DAEMON_PREFIX);
     greeting.push(' ');
@@ -140,10 +148,8 @@ fn build_client_greeting(
     };
     greeting.push_str(&fractional.to_string());
 
-    if let Some(digests) = server_greeting.digest_list() {
-        greeting.push(' ');
-        greeting.push_str(digests);
-    }
+    greeting.push(' ');
+    write_daemon_auth_digest_list(&mut greeting).expect("writing to a String cannot fail");
 
     greeting.push('\n');
     greeting.into_bytes()
@@ -210,31 +216,56 @@ mod tests {
         assert!(greeting_str.contains("29.0"), "got: {greeting_str}");
     }
 
+    // The greeting must state OUR capabilities, never the server's. Measured
+    // against rsync 3.4.4 driven at a stub advertising exactly `md4 md5 xxh3`:
+    // the client still answered `@RSYNCD: 32.0 sha512 sha256 sha1 md5 md4`.
+    // A server that advertises only weak names must not be able to make us
+    // confirm that narrowed set as our own, because a name we advertise is a
+    // name we have agreed to accept.
     #[test]
-    fn build_greeting_includes_digest_list_when_present() {
+    fn build_greeting_advertises_our_digests_not_the_servers() {
         let server = parse_greeting("@RSYNCD: 31.0 md4 md5 xxh3");
         let protocol = ProtocolVersion::from_supported(31).unwrap();
         let greeting = build_client_greeting(&server, protocol);
-        let greeting_str = String::from_utf8_lossy(&greeting);
-        assert!(greeting_str.contains("md4 md5 xxh3"), "got: {greeting_str}");
+        assert_eq!(greeting, b"@RSYNCD: 31.0 sha512 sha256 sha1 md5 md4\n");
     }
 
+    // upstream: clientserver.c:157 sends the greeting before clientserver.c:174
+    // reads the server's, so a server that names no list cannot suppress ours.
     #[test]
-    fn build_greeting_omits_digest_list_when_absent() {
+    fn build_greeting_advertises_digests_when_the_server_named_none() {
         let server = parse_greeting("@RSYNCD: 30.0");
         let protocol = ProtocolVersion::from_supported(30).unwrap();
         let greeting = build_client_greeting(&server, protocol);
-        let greeting_str = String::from_utf8_lossy(&greeting);
-        assert_eq!(greeting_str.trim(), "@RSYNCD: 30.0");
+        assert_eq!(greeting, b"@RSYNCD: 30.0 sha512 sha256 sha1 md5 md4\n");
     }
 
+    // The narrowest possible restriction: a single weak name. Verified against
+    // rsync 3.4.4 under the same stub - the list it sends is unchanged.
     #[test]
-    fn build_greeting_with_single_digest() {
-        let server = parse_greeting("@RSYNCD: 31.0 xxh3");
+    fn build_greeting_ignores_a_single_digest_restriction() {
+        let server = parse_greeting("@RSYNCD: 31.0 md5");
         let protocol = ProtocolVersion::from_supported(31).unwrap();
         let greeting = build_client_greeting(&server, protocol);
-        let greeting_str = String::from_utf8_lossy(&greeting);
-        assert!(greeting_str.contains(" xxh3"), "got: {greeting_str}");
+        assert_eq!(greeting, b"@RSYNCD: 31.0 sha512 sha256 sha1 md5 md4\n");
+    }
+
+    // upstream: compat.c:838-842 `output_daemon_greeting()` emits
+    // `get_default_nno_list()` verbatim with no version filtering. Verified
+    // against rsync 3.4.4: `--protocol=28` through `--protocol=32` all send the
+    // identical five names, differing only in the version field.
+    #[test]
+    fn build_greeting_digest_list_is_protocol_independent() {
+        for version in [28u8, 29, 30, 31, 32] {
+            let server = parse_greeting(&format!("@RSYNCD: {version}.0"));
+            let protocol = ProtocolVersion::from_supported(version).unwrap();
+            let greeting = build_client_greeting(&server, protocol);
+            assert_eq!(
+                greeting,
+                format!("@RSYNCD: {version}.0 sha512 sha256 sha1 md5 md4\n").into_bytes(),
+                "protocol {version} must advertise the full list",
+            );
+        }
     }
 
     #[test]
@@ -282,26 +313,34 @@ mod tests {
     }
 
     #[test]
-    fn build_greeting_complete_without_digests() {
-        let server = parse_greeting("@RSYNCD: 30.0");
-        let protocol = ProtocolVersion::from_supported(30).unwrap();
-        let greeting = build_client_greeting(&server, protocol);
-        assert_eq!(greeting, b"@RSYNCD: 30.0\n");
-    }
-
-    #[test]
-    fn build_greeting_complete_with_digests() {
-        let server = parse_greeting("@RSYNCD: 31.0 md5 xxh3");
-        let protocol = ProtocolVersion::from_supported(31).unwrap();
-        let greeting = build_client_greeting(&server, protocol);
-        assert_eq!(greeting, b"@RSYNCD: 31.0 md5 xxh3\n");
-    }
-
-    #[test]
-    fn build_greeting_downgraded_with_digests() {
+    fn build_greeting_downgraded_still_advertises_our_digests() {
         let server = parse_greeting("@RSYNCD: 31.5 md4 md5");
         let protocol = ProtocolVersion::from_supported(29).unwrap();
         let greeting = build_client_greeting(&server, protocol);
-        assert_eq!(greeting, b"@RSYNCD: 29.0 md4 md5\n");
+        assert_eq!(greeting, b"@RSYNCD: 29.0 sha512 sha256 sha1 md5 md4\n");
+    }
+
+    // The greeting is a pure function of what WE support, so no combination of
+    // server-controlled digest names may change the bytes after the version.
+    #[test]
+    fn build_greeting_digest_list_is_independent_of_the_server_greeting() {
+        let protocol = ProtocolVersion::from_supported(31).unwrap();
+        let expected = b"@RSYNCD: 31.0 sha512 sha256 sha1 md5 md4\n".to_vec();
+
+        for advertised in [
+            "@RSYNCD: 31.0",
+            "@RSYNCD: 31.0 md5",
+            "@RSYNCD: 31.0 sha512 md5",
+            "@RSYNCD: 31.0 md4",
+            "@RSYNCD: 31.0 sha512 sha256 sha1 md5 md4",
+            "@RSYNCD: 31.0 blake3 sponge",
+        ] {
+            let server = parse_greeting(advertised);
+            assert_eq!(
+                build_client_greeting(&server, protocol),
+                expected,
+                "server greeting {advertised:?} must not change our advertised list",
+            );
+        }
     }
 }
