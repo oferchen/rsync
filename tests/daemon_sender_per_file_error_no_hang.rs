@@ -87,11 +87,11 @@ fn upstream_rsync_client() -> Option<PathBuf> {
     if let Some(explicit) = std::env::var_os("OC_RSYNC_UPSTREAM_RSYNC") {
         candidates.push(PathBuf::from(explicit));
     }
-    for version in ["3.4.4", "3.4.1", "3.1.3"] {
-        candidates.push(PathBuf::from(format!(
-            "target/interop/upstream-install/{version}/bin/rsync"
-        )));
-    }
+    candidates.extend(
+        ["3.4.4", "3.4.1", "3.1.3"]
+            .into_iter()
+            .filter_map(test_support::upstream_install_bin),
+    );
     candidates.push(PathBuf::from("rsync"));
 
     candidates.into_iter().find(|candidate| {

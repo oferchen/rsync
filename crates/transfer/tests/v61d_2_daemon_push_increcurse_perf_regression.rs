@@ -83,12 +83,10 @@ const MAX_SLOWDOWN_RATIO: f64 = 5.0;
 /// Locate the upstream rsync binary for the requested version.
 ///
 /// Looks under `target/interop/upstream-install/<version>/bin/rsync`,
-/// the canonical install path populated by `tools/ci/run_interop.sh`.
+/// the canonical install path populated by `tools/ci/run_interop.sh`,
+/// anchored at the workspace root (the test CWD is `crates/transfer/`).
 fn upstream_rsync_binary(version: &str) -> Option<PathBuf> {
-    let path = PathBuf::from(format!(
-        "target/interop/upstream-install/{version}/bin/rsync"
-    ));
-    if path.is_file() { Some(path) } else { None }
+    test_support::upstream_install_bin(version)
 }
 
 /// Build a ~1 MiB source tree spread across small directories.

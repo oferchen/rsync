@@ -34,35 +34,20 @@
 
 mod integration;
 
-use std::path::Path;
-
 use filetime::{FileTime, set_file_times};
 use integration::helpers::*;
 use std::fs;
 
-/// Path to upstream rsync 3.0.9 binary (protocol 30).
-const UPSTREAM_RSYNC_3_0_9: &str = "target/interop/upstream-install/3.0.9/bin/rsync";
-
-/// Path to upstream rsync 3.1.3 binary (protocol 31).
-const UPSTREAM_RSYNC_3_1_3: &str = "target/interop/upstream-install/3.1.3/bin/rsync";
-
-/// Path to upstream rsync 3.4.1 binary (protocol 32).
-const UPSTREAM_RSYNC_3_4_1: &str = "target/interop/upstream-install/3.4.1/bin/rsync";
-
 // ============ Helper Functions ============
 
-/// Check if an upstream rsync binary is available.
-fn upstream_binary_available(path: &str) -> bool {
-    Path::new(path).is_file()
-}
-
-/// Skip test if upstream binary is not available.
+/// Skip test if the workspace-anchored upstream binary is not available.
 macro_rules! require_upstream_binary {
-    ($path:expr, $version:expr) => {
-        if !upstream_binary_available($path) {
+    ($version:expr) => {
+        if integration::helpers::upstream_rsync_binary($version).is_none() {
             eprintln!(
-                "Skipping test: upstream rsync {} not found at {}",
-                $version, $path
+                "Skipping test: upstream rsync {} not found under \
+                 target/interop/upstream-install/",
+                $version
             );
             eprintln!("Run interop build script to install upstream versions");
             return;
@@ -74,7 +59,7 @@ macro_rules! require_upstream_binary {
 
 #[test]
 fn oc_rsync_compatible_with_rsync_3_0_9() {
-    require_upstream_binary!(UPSTREAM_RSYNC_3_0_9, "3.0.9");
+    require_upstream_binary!("3.0.9");
 
     let test_dir = TestDir::new().expect("create test dir");
     let src_dir = test_dir.mkdir("src").unwrap();
@@ -101,7 +86,7 @@ fn oc_rsync_compatible_with_rsync_3_0_9() {
 
 #[test]
 fn oc_rsync_compatible_with_rsync_3_1_3() {
-    require_upstream_binary!(UPSTREAM_RSYNC_3_1_3, "3.1.3");
+    require_upstream_binary!("3.1.3");
 
     let test_dir = TestDir::new().expect("create test dir");
     let src_dir = test_dir.mkdir("src").unwrap();
@@ -128,7 +113,7 @@ fn oc_rsync_compatible_with_rsync_3_1_3() {
 
 #[test]
 fn oc_rsync_compatible_with_rsync_3_4_1() {
-    require_upstream_binary!(UPSTREAM_RSYNC_3_4_1, "3.4.1");
+    require_upstream_binary!("3.4.1");
 
     let test_dir = TestDir::new().expect("create test dir");
     let src_dir = test_dir.mkdir("src").unwrap();

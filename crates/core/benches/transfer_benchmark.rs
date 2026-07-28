@@ -24,9 +24,13 @@ use std::time::{Duration, Instant};
 use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
 use tempfile::TempDir;
 
-// Upstream binary paths
-const UPSTREAM_341: &str = "target/interop/upstream-install/3.4.1/bin/rsync";
-const OC_RSYNC: &str = "target/release/oc-rsync";
+// Binary paths, anchored at the workspace root at compile time; benches run
+// with CWD `crates/core/`, where a CWD-relative path would never resolve.
+const UPSTREAM_341: &str = concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/../../target/interop/upstream-install/3.4.1/bin/rsync"
+);
+const OC_RSYNC: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../../target/release/oc-rsync");
 
 // Port allocation for benchmarks
 static NEXT_PORT: AtomicU16 = AtomicU16::new(14000);

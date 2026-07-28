@@ -24,7 +24,7 @@ pub use skip::{
 };
 pub use upstream_compat::{
     UpstreamRsync, UpstreamVersion, locate_upstream_rsync, require_upstream_rsync,
-    upstream_compat_enabled,
+    upstream_compat_enabled, upstream_install_bin, workspace_root,
 };
 
 use std::sync::{Mutex, MutexGuard, OnceLock};

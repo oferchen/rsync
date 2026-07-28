@@ -378,13 +378,10 @@ fn upstream_binary() -> Option<PathBuf> {
             return Some(p);
         }
     }
-    // Fall back to the versions installed by tools/ci/run_interop.sh.
-    for candidate in [
-        "target/interop/upstream-install/3.4.2/bin/rsync",
-        "target/interop/upstream-install/3.4.1/bin/rsync",
-    ] {
-        let p = PathBuf::from(candidate);
-        if p.is_file() {
+    // Fall back to the versions installed by tools/ci/run_interop.sh,
+    // anchored at the workspace root so the lookup is CWD-independent.
+    for version in ["3.4.2", "3.4.1"] {
+        if let Some(p) = test_support::upstream_install_bin(version) {
             return Some(p);
         }
     }

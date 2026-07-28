@@ -105,18 +105,27 @@ pub fn locate_upstream_rsync(version: UpstreamVersion) -> Option<PathBuf> {
         }
     }
 
-    let workspace_root = workspace_root()?;
-    let candidate = workspace_root
+    upstream_install_bin(version.directory())
+}
+
+/// Locate the interop-harness install of upstream rsync `version`.
+///
+/// Resolves `target/interop/upstream-install/<version>/bin/rsync` anchored
+/// at the workspace root, so the result is identical no matter which
+/// directory Cargo happens to run the test from. Accepts any version
+/// string the harness installs (e.g. `"3.4.2"`), not just the
+/// [`UpstreamVersion`] variants. Returns `None` when the binary is absent,
+/// letting callers self-skip or fall back.
+#[must_use]
+pub fn upstream_install_bin(version: &str) -> Option<PathBuf> {
+    let candidate = workspace_root()?
         .join("target")
         .join("interop")
         .join("upstream-install")
-        .join(version.directory())
+        .join(version)
         .join("bin")
         .join("rsync");
-    if candidate.is_file() {
-        return Some(candidate);
-    }
-    None
+    candidate.is_file().then_some(candidate)
 }
 
 /// Self-skip helper. Returns `Some(UpstreamRsync)` when the binary
@@ -164,13 +173,62 @@ pub fn require_upstream_rsync(version: UpstreamVersion) -> Option<UpstreamRsync>
     Some(UpstreamRsync { binary, version })
 }
 
-/// Resolve the workspace root from `CARGO_MANIFEST_DIR`.
+/// Resolve the workspace root from the consuming test's `CARGO_MANIFEST_DIR`.
 ///
-/// `CARGO_MANIFEST_DIR` for the consuming test crate points at
-/// `crates/<crate>/`. The workspace root is its parent's parent.
-fn workspace_root() -> Option<PathBuf> {
-    let manifest_dir = std::env::var_os("CARGO_MANIFEST_DIR")?;
-    let manifest_dir = PathBuf::from(manifest_dir);
-    let crates_dir = manifest_dir.parent()?;
-    crates_dir.parent().map(Path::to_path_buf)
+/// Cargo runs every test with its CWD and `CARGO_MANIFEST_DIR` set to the
+/// PACKAGE root, not the workspace root, so `target/...` paths built
+/// relative to either are wrong for any test target under
+/// `crates/<name>/tests/`. This walks up from the manifest dir to the
+/// first directory whose `Cargo.toml` declares `[workspace]`, which also
+/// handles the root package (its manifest dir IS the workspace root).
+#[must_use]
+pub fn workspace_root() -> Option<PathBuf> {
+    let manifest_dir = PathBuf::from(std::env::var_os("CARGO_MANIFEST_DIR")?);
+    manifest_dir
+        .ancestors()
+        .find(|dir| {
+            std::fs::read_to_string(dir.join("Cargo.toml"))
+                .is_ok_and(|manifest| manifest.contains("[workspace]"))
+        })
+        .map(Path::to_path_buf)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn workspace_root_is_an_ancestor_declaring_a_workspace() {
+        // Why: every anchored upstream-binary lookup rests on this walk-up.
+        // If it ever resolved a non-workspace dir (or None), the lookups
+        // would silently miss target/interop and tests would dark-skip -
+        // the exact failure mode the anchoring exists to eliminate.
+        let root = workspace_root().expect("workspace root resolves under cargo");
+        let manifest =
+            std::fs::read_to_string(root.join("Cargo.toml")).expect("workspace Cargo.toml");
+        assert!(manifest.contains("[workspace]"));
+        assert!(
+            PathBuf::from(env!("CARGO_MANIFEST_DIR")).starts_with(&root),
+            "workspace root must be an ancestor of the consuming manifest dir"
+        );
+    }
+
+    #[test]
+    fn upstream_install_bin_is_workspace_anchored_and_cwd_independent() {
+        // Why: the resolver must produce the same path no matter where
+        // Cargo set the CWD; a CWD-relative probe is exactly the bug this
+        // module replaces. The binary may legitimately be absent (macOS
+        // dev machines), so assert on the anchored shape via the root
+        // rather than on existence.
+        let root = workspace_root().expect("workspace root resolves under cargo");
+        let expected = root.join("target/interop/upstream-install/3.4.4/bin/rsync");
+        match upstream_install_bin("3.4.4") {
+            Some(found) => assert_eq!(found, expected),
+            None => assert!(
+                !expected.is_file(),
+                "resolver returned None while {} exists",
+                expected.display()
+            ),
+        }
+    }
 }
