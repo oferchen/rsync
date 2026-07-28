@@ -212,12 +212,15 @@ impl<'a> RemoteInvocationBuilder<'a> {
         // `-e.xxx` argument would confuse the server-side parser which treats
         // only the first short-flag argument as the compact flag string.
         // upstream: compat.c:162-181 set_allow_inc_recurse(),
-        // options.c:3036 maybe_add_e_option() - 'i' is only advertised when
-        // the local side honors INC_RECURSE on its receive path. The local
-        // Receiver role strips CF_INC_RECURSE from compat_flags after reading
-        // (compat.c:723) but receive_extra_file_lists then skips the
-        // NDX_FLIST_EOF the remote still emits, leaving its trailing bytes
-        // to trip read_varint overflow on the next decode.
+        // options.c:3036 maybe_add_e_option() - `allow_inc_recurse` resolves
+        // the option state (`ClientConfig::allow_inc_recurse`, which folds in
+        // upstream's `!recurse || use_qsort` gate); the local restriction on
+        // top is that 'i' is only advertised when this side honors INC_RECURSE
+        // on its receive path. The local Receiver role strips CF_INC_RECURSE
+        // from compat_flags after reading (compat.c:723) but
+        // receive_extra_file_lists then skips the NDX_FLIST_EOF the remote
+        // still emits, leaving its trailing bytes to trip read_varint overflow
+        // on the next decode.
         // upstream: io.c:1816 read_varint - rejects encodings with extra > 4.
         //
         // upstream: options.c:3025-3028 maybe_add_e_option() - the whole `e.xxx`
@@ -227,7 +230,7 @@ impl<'a> RemoteInvocationBuilder<'a> {
         // must end at the transfer letters (`-r`, not `-re.iLsfxCIvu`).
         if self.requested_protocol().as_u8() >= 30 {
             let advertise_inc_recurse =
-                self.config.inc_recursive_send() && self.role != RemoteRole::Receiver;
+                self.config.allow_inc_recurse() && self.role != RemoteRole::Receiver;
             flags.push_str(&build_capability_string_suffix(advertise_inc_recurse));
         }
         // upstream: options.c:2730 - `if (x > 1) args[ac++] = argstr;`. A bare

@@ -231,6 +231,33 @@ impl ClientConfig {
     pub const fn inc_recursive_send(&self) -> bool {
         self.inc_recursive_send
     }
+
+    /// Resolves whether this side may advertise the INC_RECURSE (`'i'`)
+    /// capability, mirroring upstream `set_allow_inc_recurse()`.
+    ///
+    /// Upstream runs the resolution from `server_options()` immediately before
+    /// it builds the `-e` string, so `--inc-recursive` never survives a
+    /// non-recursive or `--qsort` transfer: `if (!recurse || use_qsort)
+    /// allow_inc_recurse = 0;`. `recurse` is a level rather than a flag - `-r`
+    /// sets 2, `-a` and `--old-dirs` set 1, and `--files-from` clears only
+    /// level 1 - but the gate is a plain non-zero test, which is exactly what
+    /// `recursive()` already answers once the CLI has folded those rules in.
+    ///
+    /// Upstream's remaining clause (`!am_sender` with `--delete-before`,
+    /// `--delete-after`, `--delay-updates` or `--prune-empty-dirs`) needs no
+    /// mirror here: oc-rsync never advertises `'i'` from a receiving client at
+    /// all, which is a strict superset of that condition. Both callers apply
+    /// that role restriction on top of this value.
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `compat.c:172 set_allow_inc_recurse()` - `!recurse || use_qsort`.
+    /// - `options.c:2725` - the call site inside `server_options()`.
+    /// - `options.c:3039 maybe_add_e_option()` - `if (allow_inc_recurse)`.
+    #[must_use]
+    pub const fn allow_inc_recurse(&self) -> bool {
+        self.inc_recursive_send && self.recursive && !self.qsort
+    }
 }
 
 #[cfg(test)]
@@ -342,5 +369,50 @@ mod tests {
     fn inc_recursive_send_default_is_true() {
         let config = default_config();
         assert!(config.inc_recursive_send());
+    }
+
+    #[test]
+    fn allow_inc_recurse_requires_recursion() {
+        // upstream: compat.c:172 - `if (!recurse || use_qsort)
+        // allow_inc_recurse = 0;`. `--inc-recursive` does not survive it.
+        assert!(!default_config().allow_inc_recurse());
+        assert!(
+            !ClientConfig::builder()
+                .recursive(false)
+                .inc_recursive_send(true)
+                .build()
+                .allow_inc_recurse()
+        );
+        assert!(
+            !ClientConfig::builder()
+                .recursive(false)
+                .dirs(true)
+                .build()
+                .allow_inc_recurse()
+        );
+        assert!(
+            ClientConfig::builder()
+                .recursive(true)
+                .build()
+                .allow_inc_recurse()
+        );
+    }
+
+    #[test]
+    fn allow_inc_recurse_is_cleared_by_qsort_and_no_inc_recursive() {
+        assert!(
+            !ClientConfig::builder()
+                .recursive(true)
+                .qsort(true)
+                .build()
+                .allow_inc_recurse()
+        );
+        assert!(
+            !ClientConfig::builder()
+                .recursive(true)
+                .inc_recursive_send(false)
+                .build()
+                .allow_inc_recurse()
+        );
     }
 }
