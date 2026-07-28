@@ -635,6 +635,55 @@ impl ReceiverContext {
         Ok(())
     }
 
+    /// Records a metadata-only itemize record a server-mode receiver must
+    /// forward over the wire, so the pushing client's sender prints the row.
+    ///
+    /// Mirrors the wire half of upstream's `itemize()`: at protocol >= 29 the
+    /// generator writes `NDX + write_shortint(iflags)` for a quick-check-matched
+    /// file whose attributes still differ, and the peer's sender - not this
+    /// process - renders the client-visible row. A client-mode receiver (a
+    /// pull) prints locally instead and records nothing here.
+    ///
+    /// The framing bits (`ITEM_BASIS_TYPE_FOLLOWS`, `ITEM_XNAME_FOLLOWS`) and
+    /// `ITEM_REPORT_XATTR` are stripped: a no-change record carries no basis
+    /// byte, no xname vstring, and this path writes no trailing xattr request
+    /// (the transfer-request path strips the same bits, see
+    /// `send_file_request_xattr`), so leaving them set would make the sender
+    /// read trailing fields that never arrive.
+    ///
+    /// The significance gate mirrors `generator.c:582-583`: emit when any
+    /// significant flag survives, under `-vv` (`INFO_GTE(NAME, 2)`), or under
+    /// `-ii` (`stdout_format_has_i > 1`, tracked as `itemize_unchanged`).
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `generator.c:582-593` - `itemize()` wire emission and its gate
+    /// - `sender.c:292-294` - the sender logs the row and echoes the attrs
+    pub(in crate::receiver) fn record_server_no_transfer_itemize(
+        &self,
+        flist_idx: usize,
+        iflags: u32,
+    ) {
+        if self.config.connection.client_mode || !self.protocol.supports_iflags() {
+            return;
+        }
+        const STRIPPED: u32 = crate::generator::ItemFlags::ITEM_REPORT_XATTR
+            | crate::generator::ItemFlags::ITEM_BASIS_TYPE_FOLLOWS
+            | crate::generator::ItemFlags::ITEM_XNAME_FOLLOWS;
+        // upstream: generator.c:581 `iflags &= 0xffff` - the full low word goes
+        // on the wire; the significance mask below is only the emission gate.
+        let wire = ((iflags & !STRIPPED) & 0xFFFF) as u16;
+        if wire & (crate::generator::ItemFlags::SIGNIFICANT_ITEM_FLAGS as u16) == 0
+            && !logging::info_gte(logging::InfoFlag::Name, 2)
+            && !self.config.flags.info_flags.itemize_unchanged
+        {
+            return;
+        }
+        self.server_no_transfer_itemize
+            .borrow_mut()
+            .push((flist_idx, wire));
+    }
+
     /// Emits an itemize row immediately, or buffers it for the deferred
     /// flist-index-order flush when [`Self::defer_itemize`] is set.
     ///
