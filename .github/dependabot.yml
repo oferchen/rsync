@@ -22,6 +22,14 @@ updates:
       include: "scope"
     labels:
       - "dependencies"
+    ignore:
+      # serial_test 4.x raises its MSRV to rustc 1.93.1; this workspace pins
+      # Rust 1.88.0 (rust-toolchain.toml), so its major bumps are not takeable
+      # without a toolchain upgrade. Hold at 3.x until the pinned toolchain moves.
+      - dependency-name: "serial_test"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "serial_test_derive"
+        update-types: ["version-update:semver-major"]
     groups:
       # RustCrypto trait family must move together: md4/sha1/sha2 internally
       # depend on a specific digest version range, and cargo_metadata's
