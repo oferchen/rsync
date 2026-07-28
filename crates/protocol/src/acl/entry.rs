@@ -487,60 +487,57 @@ impl RsyncAcl {
         self.other_obj = NO_ENTRY;
     }
 
-    /// Compares two ACLs for semantic equivalence.
+    /// Reports whether the extended (non-permission-bit) entries of two ACLs
+    /// match closely enough that the rest of the ACL is handled by the normal
+    /// mode-preservation code. Meaningful only for access ACLs.
     ///
-    /// Two ACLs are "equal enough" when they produce the same effective
-    /// permissions. When neither ACL has named entries, the mask is
-    /// irrelevant (it only limits named entry permissions), so mask
-    /// differences are ignored in that case. Named entries (ida_entries)
-    /// are compared element-by-element when present.
+    /// Mirrors upstream exactly: `self` (`racl1`) is a fully-populated
+    /// `rsync_acl`, while `other` (`racl2`) may be a *condensed* ACL whose
+    /// permission objects can be `NO_ENTRY` because they were derivable from
+    /// the mode. `mode` is the file mode used to recover a stripped
+    /// `group_obj`. Only `mask_obj`, `group_obj` (when a mask makes it an
+    /// extended entry), and the named user/group entries are compared.
+    /// `user_obj` and `other_obj` are deliberately NOT compared - upstream
+    /// leaves them to the mode-preservation code.
     ///
     /// # Upstream Reference
     ///
-    /// Mirrors `rsync_acl_equal_enough()` in `acls.c` lines 282-332.
+    /// Mirrors `rsync_acl_equal_enough()` in `acls.c` lines 205-224.
     #[must_use]
-    pub fn equal_enough(&self, other: &RsyncAcl) -> bool {
-        // upstream: acls.c:284-285 - compare user_obj and other_obj first
-        if self.user_obj != other.user_obj {
-            return false;
-        }
-        if self.other_obj != other.other_obj {
-            return false;
-        }
-
-        // upstream: acls.c:292-295 - compare named entries
-        if self.names.len() != other.names.len() {
+    pub fn equal_enough(&self, other: &RsyncAcl, mode: u32) -> bool {
+        // upstream: acls.c:208-209 - one has a mask and the other doesn't.
+        // NO_ENTRY (0x80) is the sole bit distinguishing a real perm (0-7)
+        // from an absent entry, so the XOR isolates a mask/no-mask mismatch.
+        if (self.mask_obj ^ other.mask_obj) & NO_ENTRY != 0 {
             return false;
         }
 
-        for (a, b) in self.names.iter().zip(other.names.iter()) {
-            if a.id != b.id || a.access != b.access {
+        // upstream: acls.c:211-222 - when there's a mask, the group_obj
+        // becomes an extended entry and must be compared.
+        if self.mask_obj != NO_ENTRY {
+            // upstream: acls.c:216-221 - a condensed ACL with a mask omits
+            // group_obj only when it equalled the mask, hence also the mode's
+            // group bits; recover that comparison from the mode. Otherwise
+            // compare the group_obj values directly.
+            if other.group_obj == NO_ENTRY {
+                if u32::from(self.group_obj) != ((mode >> 3) & 7) {
+                    return false;
+                }
+            } else if self.group_obj != other.group_obj {
                 return false;
             }
         }
 
-        // upstream: acls.c:309-331 - mask and group_obj comparison depends
-        // on whether named entries exist
-        if self.names.is_empty() {
-            // upstream: acls.c:310-315 - without named entries, mask is
-            // irrelevant; the effective group is mask_obj if present, else
-            // group_obj
-            let self_group = if self.has_mask_obj() {
-                self.mask_obj
-            } else {
-                self.group_obj
-            };
-            let other_group = if other.has_mask_obj() {
-                other.mask_obj
-            } else {
-                other.group_obj
-            };
-            self_group == other_group
-        } else {
-            // upstream: acls.c:325-331 - with named entries, both mask and
-            // group must match exactly
-            self.group_obj == other.group_obj && self.mask_obj == other.mask_obj
+        // upstream: acls.c:223 - ida_entries_equal: the named user/group
+        // entries must have equal count and equal (access, id) pairs. The
+        // resolved name is not part of the comparison.
+        if self.names.len() != other.names.len() {
+            return false;
         }
+        self.names
+            .iter()
+            .zip(other.names.iter())
+            .all(|(a, b)| a.access == b.access && a.id == b.id)
     }
 }
 
