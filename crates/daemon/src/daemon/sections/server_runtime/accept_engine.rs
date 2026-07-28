@@ -41,11 +41,55 @@ enum AcceptOutcome {
     Closed,
 }
 
-/// Single-listener accept engine: non-blocking `accept` with a 50ms idle sleep.
+/// Signal-check cadence for the portable engines' readiness wait, in
+/// milliseconds.
+///
+/// Bounds the `poll(2)` park so shutdown/reload/graceful-exit flags are
+/// re-inspected at the same 50ms interval the previous `WouldBlock` sleep
+/// provided - shutdown latency is unchanged, only the idle mechanism differs.
+const READINESS_WAIT_MILLIS: u16 = 50;
+
+/// Parks until `listener` has a pending connection or `timeout_millis` elapses.
+///
+/// Returns `Ok(true)` when the listener is readable (an `accept` attempt is
+/// warranted) and `Ok(false)` on timeout or `EINTR` (the caller re-checks
+/// signal flags and parks again). Replaces the previous
+/// non-blocking-`accept`-plus-sleep idle shape, which burned one `accept4`
+/// `EAGAIN` per wakeup on a quiet daemon; parking on readiness means `accept`
+/// is invoked roughly once per connection.
+///
+/// upstream: socket.c `start_accept_loop()` parks in `select(2)` over the
+/// listener fds before calling `accept(2)`; this is the single-fd equivalent.
+#[cfg(unix)]
+fn wait_for_incoming(listener: &TcpListener, timeout_millis: u16) -> io::Result<bool> {
+    use nix::poll::{PollFd, PollFlags, PollTimeout, poll};
+    use std::os::fd::AsFd;
+
+    let mut fds = [PollFd::new(listener.as_fd(), PollFlags::POLLIN)];
+    match poll(&mut fds, PollTimeout::from(timeout_millis)) {
+        Ok(0) => Ok(false),
+        Ok(_) => Ok(true),
+        Err(nix::errno::Errno::EINTR) => Ok(false),
+        Err(errno) => Err(io::Error::from(errno)),
+    }
+}
+
+/// Portable fallback for targets without `poll(2)`: sleep the signal-check
+/// interval, then report readiness so the caller falls back to a non-blocking
+/// `accept` probe - the pre-readiness idle shape, kept only where no readiness
+/// primitive is available (the daemon accept path is Unix-only in practice).
+#[cfg(not(unix))]
+fn wait_for_incoming(_listener: &TcpListener, timeout_millis: u16) -> io::Result<bool> {
+    thread::sleep(Duration::from_millis(u64::from(timeout_millis)));
+    Ok(true)
+}
+
+/// Single-listener accept engine: parks on listener readiness, then accepts.
 ///
 /// Used when exactly one address family is bound (IPv4-only or IPv6-only). The
-/// 50ms WouldBlock interval bounds first-connection latency on a quiet daemon
-/// while still letting the loop body re-check signal flags promptly.
+/// bounded readiness wait ([`READINESS_WAIT_MILLIS`]) lets the loop body
+/// re-check signal flags promptly while a quiet daemon sleeps in the kernel
+/// instead of busy-polling `accept`.
 struct SingleListenerEngine {
     listener: TcpListener,
     local_addr: SocketAddr,
@@ -71,6 +115,20 @@ impl SingleListenerEngine {
 
 impl AcceptEngine for SingleListenerEngine {
     fn poll(&mut self) -> Result<AcceptOutcome, DaemonError> {
+        match wait_for_incoming(&self.listener, READINESS_WAIT_MILLIS) {
+            Ok(true) => {}
+            // Timeout or EINTR: let the caller re-check signal flags. The
+            // wait itself parked, so no additional sleep is needed.
+            Ok(false) => return Ok(AcceptOutcome::Idle),
+            Err(error) => {
+                // A poll(2) failure on a valid listener fd is as transient as
+                // an accept(2) failure: log, back off so a persistent error
+                // cannot hot-spin, and keep serving.
+                warn_transient_accept_failure(self.log_sink.as_ref(), self.local_addr, &error);
+                thread::sleep(Duration::from_millis(50));
+                return Ok(AcceptOutcome::Idle);
+            }
+        }
         match self.listener.accept() {
             Ok((tcp_stream, raw_peer_addr)) => {
                 if let Err(error) = tcp_stream.set_nonblocking(false) {
@@ -85,11 +143,9 @@ impl AcceptEngine for SingleListenerEngine {
                 Ok(AcceptOutcome::Connection(tcp_stream, raw_peer_addr))
             }
             Err(error) if error.kind() == io::ErrorKind::WouldBlock => {
-                // No pending connection - sleep briefly then let the caller
-                // re-check signal flags. The 50ms interval matches the
-                // dual-stack engine so first-connection latency on a quiet
-                // daemon is bounded by half the sleep interval.
-                thread::sleep(Duration::from_millis(50));
+                // Spurious readiness (the pending connection was reset before
+                // accept could take it). No sleep: the next poll parks in the
+                // readiness wait again.
                 Ok(AcceptOutcome::Idle)
             }
             Err(error) if error.kind() == io::ErrorKind::Interrupted => Ok(AcceptOutcome::Idle),
@@ -162,10 +218,10 @@ fn relay_accept_item(
 /// Dual-stack accept engine: one acceptor thread per listener, fanned into an
 /// MPSC channel.
 ///
-/// Used when multiple address families are bound. Each acceptor thread runs a
-/// non-blocking accept loop so it can observe the shutdown flag, and forwards
-/// accepted (blocking) streams through the channel. A single family failing
-/// does not tear down the daemon: the engine tracks live acceptors and only
+/// Used when multiple address families are bound. Each acceptor thread parks
+/// on its listener's readiness with a bounded wait so it can observe the
+/// shutdown flag, and forwards accepted (blocking) streams through the
+/// channel. A single family failing does not tear down the daemon: the engine tracks live acceptors and only
 /// escalates an accept error to a fatal exit once every family has dropped out.
 ///
 /// upstream: socket.c `start_accept_loop()` - one busted descriptor does not
@@ -200,7 +256,8 @@ impl MultiListenerEngine {
             let log_sink = log_sink.clone();
 
             // Set non-blocking so acceptor threads can check the shutdown flag
-            // without getting stuck in a blocking accept() call.
+            // without getting stuck in a blocking accept() call; the bounded
+            // readiness wait below does the actual idle parking.
             if let Err(error) = listener.set_nonblocking(true) {
                 return Err(bind_error(local_addr, error));
             }
@@ -209,6 +266,23 @@ impl MultiListenerEngine {
                 while !shutdown.load(Ordering::Relaxed)
                     && !graceful_exit.load(Ordering::Relaxed)
                 {
+                    match wait_for_incoming(&listener, READINESS_WAIT_MILLIS) {
+                        Ok(true) => {}
+                        // Timeout or EINTR: re-check the shutdown flags.
+                        Ok(false) => continue,
+                        Err(error) => {
+                            // Transient like an accept(2) failure: log, back
+                            // off so a persistent error cannot hot-spin, keep
+                            // accepting.
+                            warn_transient_accept_failure(
+                                log_sink.as_ref(),
+                                local_addr,
+                                &error,
+                            );
+                            thread::sleep(Duration::from_millis(50));
+                            continue;
+                        }
+                    }
                     match listener.accept() {
                         Ok((stream, peer_addr)) => {
                             // BSD-derived kernels (macOS, FreeBSD) propagate the
@@ -228,7 +302,8 @@ impl MultiListenerEngine {
                             }
                         }
                         Err(error) if error.kind() == io::ErrorKind::WouldBlock => {
-                            thread::sleep(Duration::from_millis(50));
+                            // Spurious readiness; the next iteration parks in
+                            // the readiness wait again, so no sleep here.
                             continue;
                         }
                         Err(error) if error.kind() == io::ErrorKind::Interrupted => {
@@ -316,12 +391,10 @@ impl AcceptEngine for MultiListenerEngine {
 /// macOS `kqueue` accept engine: one `EVFILT_READ` registration per listener,
 /// readiness-driven `accept` that yields exactly one connection per poll.
 ///
-/// Replaces the busy-wait shape of the portable engines (non-blocking `accept`
-/// plus a 50ms `WouldBlock` sleep) with a single `kevent(2)` wait over all
-/// listener fds. On a quiet daemon the thread parks in the kernel until a
-/// connection arrives or the 100ms signal-check timeout elapses, so
-/// first-connection latency drops from up to 50ms to a syscall round-trip while
-/// still bounding shutdown-flag inspection to the same 100ms cadence the
+/// Replaces the portable engines' per-listener `poll(2)` park with a single
+/// `kevent(2)` wait over all listener fds. On a quiet daemon the thread parks
+/// in the kernel until a connection arrives or the 100ms signal-check timeout
+/// elapses, bounding shutdown-flag inspection to the same cadence the
 /// dual-stack engine uses.
 ///
 /// # One connection per poll (admission correctness)
