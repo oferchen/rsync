@@ -742,6 +742,23 @@ impl LocalCopySummary {
         }
     }
 
+    /// Records a would-be transfer for a `--dry-run`, mirroring upstream's
+    /// sender under `dry_run`.
+    ///
+    /// upstream: `sender.c:342-343` increments `stats.xferred_files` and
+    /// `stats.total_transferred_size += F_LENGTH(file)` before the
+    /// `if (!do_xfers)` guard, so both count the file even in a dry run. The
+    /// guard then `continue`s before `match_sums()`, which is the sole place
+    /// `stats.literal_data` (`match.c:436`) and `stats.matched_data`
+    /// (`match.c:121`) are accumulated - so both stay 0 under `--dry-run`.
+    /// `transmitted` feeds `bytes_sent` (total written) exactly as `record_file`
+    /// would, keeping the "Total bytes sent" line unchanged.
+    pub(in crate::local_copy) fn record_dry_run_file(&mut self, file_size: u64, transmitted: u64) {
+        self.files_copied = self.files_copied.saturating_add(1);
+        self.transferred_file_size = self.transferred_file_size.saturating_add(file_size);
+        self.bytes_sent = self.bytes_sent.saturating_add(transmitted);
+    }
+
     pub(in crate::local_copy) const fn record_regular_file_total(&mut self) {
         self.regular_files_total = self.regular_files_total.saturating_add(1);
     }
@@ -1209,6 +1226,26 @@ mod tests {
         assert_eq!(summary.compressed_bytes(), 400);
         assert!(summary.compression_used());
         assert_eq!(summary.bytes_sent(), 400);
+    }
+
+    #[test]
+    fn record_dry_run_file_leaves_literal_and_matched_zero() {
+        // upstream: under --dry-run the sender counts the file
+        // (sender.c:342-343) but never reaches match_sums(), so
+        // stats.literal_data (match.c:436) and stats.matched_data (match.c:121)
+        // stay 0. A dry-run that WOULD transfer must not inflate either.
+        let mut summary = LocalCopySummary::default();
+        summary.record_dry_run_file(1000, 1000);
+
+        assert_eq!(summary.files_copied(), 1);
+        assert_eq!(summary.transferred_file_size(), 1000);
+        assert_eq!(summary.bytes_copied(), 0, "Literal data must be 0 under -n");
+        assert_eq!(
+            summary.matched_bytes(),
+            0,
+            "Matched data must be 0 under -n"
+        );
+        assert_eq!(summary.bytes_sent(), 1000);
     }
 
     #[test]
