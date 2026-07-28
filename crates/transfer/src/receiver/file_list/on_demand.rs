@@ -478,8 +478,11 @@ mod tests {
         // receive_file_list); ensure_flat_idx must never touch the reader.
         let mut ctx = ReceiverContext::new_for_test(&test_handshake(), test_config());
         ctx.flist_eof = true;
-        ctx.file_list
-            .push(FileEntry::new_file("only.txt".into(), 7, 0o100644));
+        std::sync::Arc::make_mut(&mut ctx.file_list).push(FileEntry::new_file(
+            "only.txt".into(),
+            7,
+            0o100644,
+        ));
 
         // A reader that would error if read from, proving no wire access.
         let mut reader = Cursor::new(Vec::<u8>::new());

@@ -25,7 +25,7 @@ fn receiver_with_trust(entries: Vec<FileEntry>, trust_sender: bool) -> ReceiverC
         ..Default::default()
     };
     let mut ctx = ReceiverContext::new_for_test(&handshake, config);
-    ctx.file_list = entries;
+    ctx.file_list = std::sync::Arc::new(entries);
     ctx
 }
 
@@ -47,7 +47,7 @@ fn receiver_with_trust_and_relative(
         ..Default::default()
     };
     let mut ctx = ReceiverContext::new_for_test(&handshake, config);
-    ctx.file_list = entries;
+    ctx.file_list = std::sync::Arc::new(entries);
     ctx
 }
 

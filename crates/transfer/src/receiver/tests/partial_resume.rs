@@ -197,7 +197,7 @@ mod relative_parents {
             ..Default::default()
         };
         let mut ctx = ReceiverContext::new_for_test(&handshake, config);
-        ctx.file_list = entries;
+        ctx.file_list = std::sync::Arc::new(entries);
         ctx
     }
 
@@ -211,7 +211,7 @@ mod relative_parents {
             ..Default::default()
         };
         let mut ctx = ReceiverContext::new_for_test(&handshake, config);
-        ctx.file_list = entries;
+        ctx.file_list = std::sync::Arc::new(entries);
         ctx
     }
 
@@ -332,11 +332,11 @@ mod relative_parents {
             ..Default::default()
         };
         let mut ctx = ReceiverContext::new_for_test(&handshake, config);
-        ctx.file_list = vec![FileEntry::new_file(
+        ctx.file_list = std::sync::Arc::new(vec![FileEntry::new_file(
             "deep/nested/file.txt".into(),
             100,
             0o644,
-        )];
+        )]);
 
         ctx.ensure_relative_parents(dest);
 

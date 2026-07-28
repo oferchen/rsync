@@ -7,6 +7,7 @@
 
 use std::io::{self, Read};
 use std::path::Path;
+use std::sync::Arc;
 
 use logging::debug_log;
 use protocol::CompatibilityFlags;
@@ -49,7 +50,7 @@ impl ReceiverContext {
         while let Some(entry) =
             flist_reader.read_entry_with_flist(reader, &self.file_list[seg_start..])?
         {
-            self.file_list.push(entry);
+            self.file_list_mut().push(entry);
             count += 1;
         }
 
@@ -109,7 +110,7 @@ impl ReceiverContext {
         if self.config.flags.hard_links {
             let &(_flat_start, ndx_start) =
                 self.ndx_segments.last().expect("initial segment exists");
-            for (i, entry) in self.file_list.iter_mut().enumerate() {
+            for (i, entry) in self.file_list_mut().iter_mut().enumerate() {
                 if entry.hlink_first() {
                     entry.set_hardlink_idx((ndx_start + i as i32) as u32);
                 }
@@ -152,13 +153,13 @@ impl ReceiverContext {
         // sides".
         let pre29 = self.protocol.as_u8() < 29;
         if !self.iconv_reorder_suppressed() {
-            let list = std::mem::take(&mut self.file_list);
+            let list = std::mem::take(self.file_list_mut());
             // am_sender=false: the receiver always runs the duplicate-clean,
             // tombstoning dropped duplicates in place so NDX stays aligned with
             // the sender's full un-deduped array (flist.c:3031,3089).
             let (cleaned, _clean) =
                 sort_and_clean_file_list(list, self.config.qsort, pre29, false, inc_recurse);
-            self.file_list = cleaned;
+            *self.file_list_mut() = cleaned;
         }
 
         // upstream: flist.c:recv_file_list() appends every directory to
@@ -178,10 +179,16 @@ impl ReceiverContext {
         // match_hard_links() in recv_file_list(). Only the receiver runs this
         // pass (am_sender is false); the sender ships every directory.
         if self.config.flags.prune_empty_dirs {
-            prune_empty_dirs_pass(&mut self.file_list, &self.filter_chain);
+            prune_empty_dirs_pass(
+                Arc::make_mut(&mut self.file_list).as_mut_slice(),
+                &self.filter_chain,
+            );
         }
 
-        match_hard_links(&mut self.file_list, &mut self.prior_hlinks);
+        match_hard_links(
+            Arc::make_mut(&mut self.file_list).as_mut_slice(),
+            &mut self.prior_hlinks,
+        );
 
         // For protocol < 30, normalize (dev, ino) pairs into hardlink_idx and
         // hlink_first flags so the rest of the code handles both protocol versions
@@ -189,7 +196,7 @@ impl ReceiverContext {
         // no-op for pre-30 entries that lack hardlink_idx).
         // upstream: hlink.c:init_hard_links() builds the idev table from dev/ino
         if self.protocol.as_u8() < 30 && self.config.flags.hard_links {
-            normalize_pre30_hardlinks(&mut self.file_list);
+            normalize_pre30_hardlinks(self.file_list_mut());
         }
 
         // upstream: flist.c:recv_file_entry() uses static variables that persist
@@ -320,7 +327,7 @@ impl ReceiverContext {
         while let Some(entry) =
             flist_reader.read_entry_with_flist(reader, &self.file_list[flat_start..])?
         {
-            self.file_list.push(entry);
+            self.file_list_mut().push(entry);
             segment_count += 1;
         }
 
@@ -335,7 +342,10 @@ impl ReceiverContext {
         // upstream: flist.c:1646 - leader GNUM is readdir-order wire NDX,
         // assigned before sorting.
         if self.config.flags.hard_links {
-            for (i, entry) in self.file_list[flat_start..].iter_mut().enumerate() {
+            for (i, entry) in Arc::make_mut(&mut self.file_list)[flat_start..]
+                .iter_mut()
+                .enumerate()
+            {
                 if entry.hlink_first() {
                     entry.set_hardlink_idx((seg_ndx_start + i as i32) as u32);
                 }
@@ -358,16 +368,19 @@ impl ReceiverContext {
         // array in scan order so the receiver can resolve generator requests
         // against the bytes the sender emitted.
         if !self.iconv_reorder_suppressed() {
-            let tail = self.file_list.split_off(flat_start);
+            let tail = self.file_list_mut().split_off(flat_start);
             // Receiver sub-list clean: am_sender=false, inc_recurse=true.
             let (cleaned, _clean) = sort_and_clean_file_list(tail, true, false, false, true);
-            self.file_list.extend(cleaned);
+            self.file_list_mut().extend(cleaned);
         }
-        match_hard_links(&mut self.file_list[flat_start..], &mut self.prior_hlinks);
+        match_hard_links(
+            &mut Arc::make_mut(&mut self.file_list)[flat_start..],
+            &mut self.prior_hlinks,
+        );
 
         // Normalize pre-30 hardlinks in this segment.
         if self.protocol.as_u8() < 30 && self.config.flags.hard_links {
-            normalize_pre30_hardlinks(&mut self.file_list[flat_start..]);
+            normalize_pre30_hardlinks(&mut self.file_list_mut()[flat_start..]);
         }
 
         // upstream: flist.c:2695-2701 - directories in this sub-list are appended
@@ -505,7 +518,7 @@ impl ReceiverContext {
                 let basename = self.file_list[i].name().to_owned();
                 let cur = self.file_list[i].dirname().display().to_string();
                 // Drop this segment's entries so nothing escapes the tree.
-                self.file_list.truncate(flat_start);
+                self.file_list_mut().truncate(flat_start);
                 return Err(io::Error::new(
                     io::ErrorKind::Unsupported,
                     format!(

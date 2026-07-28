@@ -88,7 +88,7 @@ impl ReceiverContext {
             return Ok(());
         };
 
-        for entry in &self.file_list {
+        for entry in self.file_list.iter() {
             let path = entry.path().as_path();
             // upstream: flist.c:1019 - the transfer root (`.` / `/.`) is never
             // re-checked. Cleared entries (empty name, mode 0) are no-ops.
@@ -184,7 +184,7 @@ impl ReceiverContext {
             return Ok(());
         }
 
-        for entry in &self.file_list {
+        for entry in self.file_list.iter() {
             let path = entry.path().as_path();
             // upstream: flist.c:1019 - the transfer root (`.` / `/.`) is exempt.
             if path.as_os_str().is_empty() || path == Path::new(".") {

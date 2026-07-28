@@ -555,7 +555,7 @@ impl ReceiverContext {
 
         let mut created: std::collections::HashSet<PathBuf> = std::collections::HashSet::new();
 
-        for entry in &self.file_list {
+        for entry in self.file_list.iter() {
             let relative_path = entry.path();
             if relative_path.as_os_str() == "." {
                 continue;
@@ -1136,7 +1136,8 @@ mod touch_up_dirs_tests {
 
         let hs = handshake();
         let mut ctx = ReceiverContext::new_for_test(&hs, config);
-        ctx.file_list = vec![FileEntry::new_directory("missing".into(), 0o755)];
+        ctx.file_list =
+            std::sync::Arc::new(vec![FileEntry::new_directory("missing".into(), 0o755)]);
 
         let opts = metadata::MetadataOptions::default();
         let mut writer = crate::writer::ServerWriter::new_plain(Vec::new());
@@ -1200,7 +1201,10 @@ mod touch_up_dirs_tests {
         // bumps the root's on-disk mtime mid-pass.
         let mut root_entry = FileEntry::new_directory(".".into(), 0o755);
         root_entry.set_mtime(root_secs, 0);
-        ctx.file_list = vec![root_entry, FileEntry::new_directory("sub".into(), 0o755)];
+        ctx.file_list = std::sync::Arc::new(vec![
+            root_entry,
+            FileEntry::new_directory("sub".into(), 0o755),
+        ]);
 
         let opts = metadata::MetadataOptions::default();
         let mut writer = crate::writer::ServerWriter::new_plain(Vec::new());
@@ -1258,7 +1262,7 @@ mod touch_up_dirs_tests {
         let hs = handshake();
         let config = config_with_times(true);
         let mut ctx = ReceiverContext::new_for_test(&hs, config);
-        ctx.file_list = vec![entry];
+        ctx.file_list = std::sync::Arc::new(vec![entry]);
 
         ctx.touch_up_dirs(
             dir.path(),
@@ -1299,7 +1303,7 @@ mod touch_up_dirs_tests {
         let mut config = config_with_times(true);
         config.flags.omit_dir_times = true;
         let mut ctx = ReceiverContext::new_for_test(&hs, config);
-        ctx.file_list = vec![entry];
+        ctx.file_list = std::sync::Arc::new(vec![entry]);
 
         ctx.touch_up_dirs(
             dir.path(),
@@ -1357,7 +1361,7 @@ mod touch_up_dirs_tests {
         let hs = handshake();
         let mut ctx = ReceiverContext::new_for_test(&hs, config);
         // Read-only directory mode: r-xr-xr-x, no user write bit.
-        ctx.file_list = vec![FileEntry::new_directory("sub".into(), 0o555)];
+        ctx.file_list = std::sync::Arc::new(vec![FileEntry::new_directory("sub".into(), 0o555)]);
 
         let opts = metadata::MetadataOptions::default();
         let mut writer = crate::writer::ServerWriter::new_plain(Vec::new());
@@ -1412,7 +1416,7 @@ mod touch_up_dirs_tests {
         let hs = handshake();
         let config = config_with_times(false);
         let mut ctx = ReceiverContext::new_for_test(&hs, config);
-        ctx.file_list = vec![entry];
+        ctx.file_list = std::sync::Arc::new(vec![entry]);
 
         ctx.touch_up_dirs(
             dir.path(),
@@ -1451,7 +1455,7 @@ mod touch_up_dirs_tests {
         let config = config_with_times(true);
         let mut ctx = ReceiverContext::new_for_test(&hs, config);
         // Parent comes first in file list (natural order).
-        ctx.file_list = vec![parent_entry, child_entry];
+        ctx.file_list = std::sync::Arc::new(vec![parent_entry, child_entry]);
 
         ctx.touch_up_dirs(
             dir.path(),
@@ -1485,7 +1489,7 @@ mod touch_up_dirs_tests {
         let hs = handshake();
         let config = config_with_times(true);
         let mut ctx = ReceiverContext::new_for_test(&hs, config);
-        ctx.file_list = vec![entry];
+        ctx.file_list = std::sync::Arc::new(vec![entry]);
 
         ctx.touch_up_dirs(
             dir.path(),
@@ -1514,7 +1518,7 @@ mod touch_up_dirs_tests {
         let hs = handshake();
         let config = config_with_times(true);
         let mut ctx = ReceiverContext::new_for_test(&hs, config);
-        ctx.file_list = vec![file_entry];
+        ctx.file_list = std::sync::Arc::new(vec![file_entry]);
 
         ctx.touch_up_dirs(
             dir.path(),

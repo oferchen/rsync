@@ -83,9 +83,11 @@ fn wire_to_flat_ndx_round_trips_with_flat_to_wire() {
 
     // Simulate INC_RECURSE: initial segment (0, 1) plus two extras.
     ctx.ndx_segments = vec![(0, 1), (5, 7), (12, 15)];
-    ctx.file_list = (0..18)
-        .map(|i| FileEntry::new_file(PathBuf::from(format!("f{i}")), 0, 0o644))
-        .collect();
+    ctx.file_list = std::sync::Arc::new(
+        (0..18)
+            .map(|i| FileEntry::new_file(PathBuf::from(format!("f{i}")), 0, 0o644))
+            .collect(),
+    );
 
     for flat in 0..18usize {
         let wire = ctx.flat_to_wire_ndx(flat);

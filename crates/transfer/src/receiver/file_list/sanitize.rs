@@ -35,7 +35,7 @@ impl ReceiverContext {
         } else {
             let original_len = self.file_list.len();
 
-            self.file_list.retain(|entry| {
+            self.file_list_mut().retain(|entry| {
                 let path = entry.path();
 
                 // Check for absolute paths (reject unless --relative is active).
@@ -103,7 +103,7 @@ impl ReceiverContext {
         // Runs unconditionally: leading-slash stripping is a functional
         // requirement for --relative mode, not a security check.
         if relative_paths {
-            for entry in &mut self.file_list {
+            for entry in self.file_list_mut() {
                 if entry.path().has_root() {
                     entry.strip_leading_slashes();
                 }

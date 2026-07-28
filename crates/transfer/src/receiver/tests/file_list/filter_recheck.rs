@@ -29,12 +29,17 @@ fn chain_excluding(pattern: &str) -> FilterChain {
 fn excluded_name_rejected_via_filter_chain() {
     let mut ctx = ReceiverContext::new_for_test(&test_handshake(), test_config());
     ctx.set_filter_chain(chain_excluding("*.log"));
-    ctx.file_list
-        .push(FileEntry::new_directory(".".into(), 0o755));
-    ctx.file_list
-        .push(FileEntry::new_file("keep.txt".into(), 10, 0o644));
-    ctx.file_list
-        .push(FileEntry::new_file("debug.log".into(), 20, 0o644));
+    std::sync::Arc::make_mut(&mut ctx.file_list).push(FileEntry::new_directory(".".into(), 0o755));
+    std::sync::Arc::make_mut(&mut ctx.file_list).push(FileEntry::new_file(
+        "keep.txt".into(),
+        10,
+        0o644,
+    ));
+    std::sync::Arc::make_mut(&mut ctx.file_list).push(FileEntry::new_file(
+        "debug.log".into(),
+        20,
+        0o644,
+    ));
 
     let err = ctx.recheck_received_filter().unwrap_err();
     assert_eq!(err.kind(), io::ErrorKind::Unsupported);
@@ -48,11 +53,13 @@ fn excluded_name_rejected_via_filter_chain() {
 fn included_names_pass_via_filter_chain() {
     let mut ctx = ReceiverContext::new_for_test(&test_handshake(), test_config());
     ctx.set_filter_chain(chain_excluding("*.log"));
-    ctx.file_list
-        .push(FileEntry::new_directory(".".into(), 0o755));
-    ctx.file_list
-        .push(FileEntry::new_file("keep.txt".into(), 10, 0o644));
-    ctx.file_list
+    std::sync::Arc::make_mut(&mut ctx.file_list).push(FileEntry::new_directory(".".into(), 0o755));
+    std::sync::Arc::make_mut(&mut ctx.file_list).push(FileEntry::new_file(
+        "keep.txt".into(),
+        10,
+        0o644,
+    ));
+    std::sync::Arc::make_mut(&mut ctx.file_list)
         .push(FileEntry::new_directory("subdir".into(), 0o755));
 
     ctx.recheck_received_filter()
@@ -67,8 +74,11 @@ fn trust_sender_skips_recheck() {
     config.trust_sender = true;
     let mut ctx = ReceiverContext::new_for_test(&test_handshake(), config);
     ctx.set_filter_chain(chain_excluding("*.log"));
-    ctx.file_list
-        .push(FileEntry::new_file("debug.log".into(), 20, 0o644));
+    std::sync::Arc::make_mut(&mut ctx.file_list).push(FileEntry::new_file(
+        "debug.log".into(),
+        20,
+        0o644,
+    ));
 
     ctx.recheck_received_filter()
         .expect("trust_sender must skip the receiver-side re-check");
@@ -78,8 +88,11 @@ fn trust_sender_skips_recheck() {
 fn empty_filter_chain_is_a_no_op() {
     // No receiver-owned rules: a normal transfer must not be disturbed.
     let mut ctx = ReceiverContext::new_for_test(&test_handshake(), test_config());
-    ctx.file_list
-        .push(FileEntry::new_file("anything.log".into(), 20, 0o644));
+    std::sync::Arc::make_mut(&mut ctx.file_list).push(FileEntry::new_file(
+        "anything.log".into(),
+        20,
+        0o644,
+    ));
 
     ctx.recheck_received_filter()
         .expect("an empty filter chain re-checks nothing");
@@ -96,8 +109,11 @@ fn per_dir_merge_defers_to_sender() {
 
     let mut ctx = ReceiverContext::new_for_test(&test_handshake(), test_config());
     ctx.set_filter_chain(chain);
-    ctx.file_list
-        .push(FileEntry::new_file("debug.log".into(), 20, 0o644));
+    std::sync::Arc::make_mut(&mut ctx.file_list).push(FileEntry::new_file(
+        "debug.log".into(),
+        20,
+        0o644,
+    ));
 
     ctx.recheck_received_filter()
         .expect("a per-directory merge rule defers filtering to the sender");
@@ -112,10 +128,12 @@ fn client_pull_excluded_name_rejected() {
     config.connection.client_mode = true;
     config.connection.filter_rules = vec![FilterRuleWireFormat::exclude("*.log".to_owned())];
     let mut ctx = ReceiverContext::new_for_test(&test_handshake(), config);
-    ctx.file_list
-        .push(FileEntry::new_directory(".".into(), 0o755));
-    ctx.file_list
-        .push(FileEntry::new_file("secret.log".into(), 20, 0o644));
+    std::sync::Arc::make_mut(&mut ctx.file_list).push(FileEntry::new_directory(".".into(), 0o755));
+    std::sync::Arc::make_mut(&mut ctx.file_list).push(FileEntry::new_file(
+        "secret.log".into(),
+        20,
+        0o644,
+    ));
 
     let err = ctx.recheck_received_filter().unwrap_err();
     assert_eq!(err.kind(), io::ErrorKind::Unsupported);
@@ -135,8 +153,11 @@ fn delete_excluded_does_not_weaken_recheck() {
     config.deletion.delete_excluded = true;
     let mut ctx = ReceiverContext::new_for_test(&test_handshake(), config);
     ctx.set_filter_chain(chain_excluding("*.log"));
-    ctx.file_list
-        .push(FileEntry::new_file("x.log".into(), 20, 0o644));
+    std::sync::Arc::make_mut(&mut ctx.file_list).push(FileEntry::new_file(
+        "x.log".into(),
+        20,
+        0o644,
+    ));
 
     let err = ctx.recheck_received_filter().unwrap_err();
     assert_eq!(err.kind(), io::ErrorKind::Unsupported);
@@ -156,14 +177,16 @@ fn anchored_dir_exclude_does_not_reject_included_children() {
             .unwrap();
     let mut ctx = ReceiverContext::new_for_test(&test_handshake(), test_config());
     ctx.set_filter_chain(FilterChain::new(global));
-    ctx.file_list
-        .push(FileEntry::new_directory(".".into(), 0o755));
-    ctx.file_list
+    std::sync::Arc::make_mut(&mut ctx.file_list).push(FileEntry::new_directory(".".into(), 0o755));
+    std::sync::Arc::make_mut(&mut ctx.file_list)
         .push(FileEntry::new_directory("bar".into(), 0o755));
-    ctx.file_list
+    std::sync::Arc::make_mut(&mut ctx.file_list)
         .push(FileEntry::new_directory("bar/down".into(), 0o755));
-    ctx.file_list
-        .push(FileEntry::new_file("bar/down/to/file".into(), 10, 0o644));
+    std::sync::Arc::make_mut(&mut ctx.file_list).push(FileEntry::new_file(
+        "bar/down/to/file".into(),
+        10,
+        0o644,
+    ));
 
     ctx.recheck_received_filter().expect(
         "children under an included parent must not be rejected by a slashless \
@@ -188,12 +211,11 @@ fn directory_only_wire_rule_does_not_reject_files_under_it() {
         FilterRuleWireFormat::exclude("foo/*".to_owned()).with_directory_only(true),
     ];
     let mut ctx = ReceiverContext::new_for_test(&test_handshake(), config);
-    ctx.file_list
-        .push(FileEntry::new_directory(".".into(), 0o755));
-    ctx.file_list
+    std::sync::Arc::make_mut(&mut ctx.file_list).push(FileEntry::new_directory(".".into(), 0o755));
+    std::sync::Arc::make_mut(&mut ctx.file_list)
         .push(FileEntry::new_directory("bar/down/to/foo".into(), 0o755));
     // A regular file directly under `foo` - a dir-only rule must NOT match it.
-    ctx.file_list.push(FileEntry::new_file(
+    std::sync::Arc::make_mut(&mut ctx.file_list).push(FileEntry::new_file(
         "bar/down/to/foo/+ file3".into(),
         6,
         0o644,
@@ -215,9 +237,8 @@ fn directory_only_wire_rule_still_rejects_a_smuggled_directory() {
     config.connection.filter_rules =
         vec![FilterRuleWireFormat::exclude("foo/*".to_owned()).with_directory_only(true)];
     let mut ctx = ReceiverContext::new_for_test(&test_handshake(), config);
-    ctx.file_list
-        .push(FileEntry::new_directory(".".into(), 0o755));
-    ctx.file_list
+    std::sync::Arc::make_mut(&mut ctx.file_list).push(FileEntry::new_directory(".".into(), 0o755));
+    std::sync::Arc::make_mut(&mut ctx.file_list)
         .push(FileEntry::new_directory("foo/secret".into(), 0o755));
 
     let err = ctx.recheck_received_filter().unwrap_err();
@@ -230,8 +251,7 @@ fn transfer_root_never_rejected() {
     // re-check even when a catch-all exclude would otherwise match it.
     let mut ctx = ReceiverContext::new_for_test(&test_handshake(), test_config());
     ctx.set_filter_chain(chain_excluding("*"));
-    ctx.file_list
-        .push(FileEntry::new_directory(".".into(), 0o755));
+    std::sync::Arc::make_mut(&mut ctx.file_list).push(FileEntry::new_directory(".".into(), 0o755));
 
     ctx.recheck_received_filter()
         .expect("the transfer root must never be rejected by the re-check");

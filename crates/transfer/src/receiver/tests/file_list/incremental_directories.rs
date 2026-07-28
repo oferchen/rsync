@@ -798,10 +798,13 @@ mod incremental_mode_tests {
         let mut ctx = ReceiverContext::new_for_test(&handshake, config);
 
         // Sender's flist: "." plus the single kept file.
-        ctx.file_list
+        std::sync::Arc::make_mut(&mut ctx.file_list)
             .push(FileEntry::new_directory(".".into(), 0o755));
-        ctx.file_list
-            .push(FileEntry::new_file("keep.txt".into(), 4, 0o644));
+        std::sync::Arc::make_mut(&mut ctx.file_list).push(FileEntry::new_file(
+            "keep.txt".into(),
+            4,
+            0o644,
+        ));
 
         // Call the delete pass the same way `run_pipelined_incremental` does.
         let mut writer = TestDeletionWriter;
@@ -881,12 +884,15 @@ mod incremental_mode_tests {
 
         // Sender's flist references `subdir/child.txt`, so the worker
         // map keys `subdir` as a scan target.
-        ctx.file_list
+        std::sync::Arc::make_mut(&mut ctx.file_list)
             .push(FileEntry::new_directory(".".into(), 0o755));
-        ctx.file_list
+        std::sync::Arc::make_mut(&mut ctx.file_list)
             .push(FileEntry::new_directory("subdir".into(), 0o755));
-        ctx.file_list
-            .push(FileEntry::new_file("subdir/child.txt".into(), 4, 0o644));
+        std::sync::Arc::make_mut(&mut ctx.file_list).push(FileEntry::new_file(
+            "subdir/child.txt".into(),
+            4,
+            0o644,
+        ));
 
         let mut writer = TestDeletionWriter;
         let (_stats, _limit_exceeded, io_bits) = ctx
@@ -965,16 +971,22 @@ fn delete_itemize_order_is_deterministic_and_upstream_sorted() {
         config.args = vec![OsString::from(dest.to_str().unwrap())];
         let mut ctx = ReceiverContext::new_for_test(&handshake, config);
 
-        ctx.file_list
+        std::sync::Arc::make_mut(&mut ctx.file_list)
             .push(FileEntry::new_directory(".".into(), 0o755));
-        ctx.file_list
+        std::sync::Arc::make_mut(&mut ctx.file_list)
             .push(FileEntry::new_directory("alpha".into(), 0o755));
-        ctx.file_list
+        std::sync::Arc::make_mut(&mut ctx.file_list)
             .push(FileEntry::new_directory("beta".into(), 0o755));
-        ctx.file_list
-            .push(FileEntry::new_file("alpha/keep.txt".into(), 1, 0o644));
-        ctx.file_list
-            .push(FileEntry::new_file("beta/keep.txt".into(), 1, 0o644));
+        std::sync::Arc::make_mut(&mut ctx.file_list).push(FileEntry::new_file(
+            "alpha/keep.txt".into(),
+            1,
+            0o644,
+        ));
+        std::sync::Arc::make_mut(&mut ctx.file_list).push(FileEntry::new_file(
+            "beta/keep.txt".into(),
+            1,
+            0o644,
+        ));
 
         let mut writer = CapturingDeletionWriter::default();
         ctx.delete_extraneous_files(dest, None, &mut writer)

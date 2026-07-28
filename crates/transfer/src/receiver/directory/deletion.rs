@@ -665,7 +665,7 @@ impl ReceiverContext {
         let mut root_is_content_dir = false;
         let mut content_dirs: HashSet<PathBuf> = HashSet::new();
 
-        for entry in &self.file_list {
+        for entry in self.file_list.iter() {
             let relative = entry.path();
             if relative.as_os_str() == "." {
                 if entry.is_dir() && entry.content_dir() {

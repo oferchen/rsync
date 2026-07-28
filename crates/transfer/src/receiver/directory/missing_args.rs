@@ -66,7 +66,7 @@ impl ReceiverContext {
             return Ok(());
         }
 
-        for entry in &self.file_list {
+        for entry in self.file_list.iter() {
             // upstream: generator.c:1348 - sentinel is identified by mode == 0.
             if entry.mode() != 0 {
                 continue;

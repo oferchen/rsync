@@ -110,9 +110,8 @@ fn receiver_ignores_sentinel_when_delete_missing_args_off() {
     config.args = vec![OsString::from(dest.to_str().unwrap())];
     let mut ctx = ReceiverContext::new_for_test(&handshake, config);
 
-    ctx.file_list
-        .push(FileEntry::new_directory(".".into(), 0o755));
-    ctx.file_list.push(sentinel_entry("ghost.txt"));
+    std::sync::Arc::make_mut(&mut ctx.file_list).push(FileEntry::new_directory(".".into(), 0o755));
+    std::sync::Arc::make_mut(&mut ctx.file_list).push(sentinel_entry("ghost.txt"));
 
     ctx.process_missing_args_sentinels(
         dest,
@@ -140,9 +139,8 @@ fn receiver_sentinel_for_missing_destination_is_noop() {
     config.args = vec![OsString::from(dest.to_str().unwrap())];
     let mut ctx = ReceiverContext::new_for_test(&handshake, config);
 
-    ctx.file_list
-        .push(FileEntry::new_directory(".".into(), 0o755));
-    ctx.file_list.push(sentinel_entry("never-existed.txt"));
+    std::sync::Arc::make_mut(&mut ctx.file_list).push(FileEntry::new_directory(".".into(), 0o755));
+    std::sync::Arc::make_mut(&mut ctx.file_list).push(sentinel_entry("never-existed.txt"));
 
     // Should not error even though the destination path does not exist.
     ctx.process_missing_args_sentinels(
@@ -169,9 +167,8 @@ fn receiver_sentinel_dry_run_skips_deletion() {
     config.args = vec![OsString::from(dest.to_str().unwrap())];
     let mut ctx = ReceiverContext::new_for_test(&handshake, config);
 
-    ctx.file_list
-        .push(FileEntry::new_directory(".".into(), 0o755));
-    ctx.file_list.push(sentinel_entry("ghost.txt"));
+    std::sync::Arc::make_mut(&mut ctx.file_list).push(FileEntry::new_directory(".".into(), 0o755));
+    std::sync::Arc::make_mut(&mut ctx.file_list).push(sentinel_entry("ghost.txt"));
 
     ctx.process_missing_args_sentinels(
         dest,
@@ -203,9 +200,8 @@ fn receiver_sentinel_removes_directory_recursively() {
     config.args = vec![OsString::from(dest.to_str().unwrap())];
     let mut ctx = ReceiverContext::new_for_test(&handshake, config);
 
-    ctx.file_list
-        .push(FileEntry::new_directory(".".into(), 0o755));
-    ctx.file_list.push(sentinel_entry("ghost-dir"));
+    std::sync::Arc::make_mut(&mut ctx.file_list).push(FileEntry::new_directory(".".into(), 0o755));
+    std::sync::Arc::make_mut(&mut ctx.file_list).push(sentinel_entry("ghost-dir"));
 
     ctx.process_missing_args_sentinels(
         dest,

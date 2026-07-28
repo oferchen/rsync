@@ -666,7 +666,7 @@ impl ReceiverContext {
             // Leaders committed during pipelined transfer are already recorded;
             // this covers leaders that matched quick-check (not transferred) or
             // were processed via the sync path.
-            for entry in &self.file_list {
+            for entry in self.file_list.iter() {
                 if entry.hlink_first() {
                     let gnum = match entry.hardlink_idx() {
                         Some(idx) => idx,

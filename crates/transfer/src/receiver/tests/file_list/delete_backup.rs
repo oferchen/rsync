@@ -45,10 +45,12 @@ fn build_receiver(
     config.args = vec![OsString::from(dest.to_str().unwrap())];
 
     let mut ctx = ReceiverContext::new_for_test(&handshake, config);
-    ctx.file_list
-        .push(FileEntry::new_directory(".".into(), 0o755));
-    ctx.file_list
-        .push(FileEntry::new_file("keep.txt".into(), 6, 0o644));
+    std::sync::Arc::make_mut(&mut ctx.file_list).push(FileEntry::new_directory(".".into(), 0o755));
+    std::sync::Arc::make_mut(&mut ctx.file_list).push(FileEntry::new_file(
+        "keep.txt".into(),
+        6,
+        0o644,
+    ));
     ctx
 }
 

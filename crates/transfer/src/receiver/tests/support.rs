@@ -140,7 +140,7 @@ pub(super) fn receiver_with_hardlinks(entries: Vec<FileEntry>) -> ReceiverContex
         ..Default::default()
     };
     let mut ctx = ReceiverContext::new_for_test(&handshake, config);
-    ctx.file_list = entries;
+    ctx.file_list = std::sync::Arc::new(entries);
     ctx
 }
 

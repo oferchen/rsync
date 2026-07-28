@@ -170,7 +170,7 @@ impl ReceiverContext {
             let names = self.uid_list.names_snapshot();
             let has_rules = mapping.as_ref().is_some_and(|m| !m.is_empty());
             if !uid_map.is_empty() || has_rules {
-                for entry in self.file_list.iter_mut() {
+                for entry in self.file_list_mut().iter_mut() {
                     if let Some(uid) = entry.uid() {
                         let mapped = mapping.as_ref().and_then(|m| {
                             m.map_uid_named(uid, names.get(&uid).map(Vec::as_slice), false)
@@ -189,7 +189,7 @@ impl ReceiverContext {
             let names = self.gid_list.names_snapshot();
             let has_rules = mapping.as_ref().is_some_and(|m| !m.is_empty());
             if !gid_map.is_empty() || has_rules {
-                for entry in self.file_list.iter_mut() {
+                for entry in self.file_list_mut().iter_mut() {
                     if let Some(gid) = entry.gid() {
                         let mapped = mapping.as_ref().and_then(|m| {
                             m.map_gid_named(gid, names.get(&gid).map(Vec::as_slice), false)

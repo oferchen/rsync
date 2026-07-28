@@ -41,7 +41,7 @@ fn delete_pipeline_hook_publishes_one_plan_per_segment() {
     // Build a flist matching what the receiver would have after the
     // initial segment plus two INC_RECURSE segments. Segment table is
     // laid out so wire NDX 1 -> "sub1", wire NDX 2 -> "sub2".
-    ctx.file_list = vec![
+    ctx.file_list = std::sync::Arc::new(vec![
         FileEntry::new_directory(PathBuf::from("sub1"), 0o755),
         FileEntry::new_directory(PathBuf::from("sub2"), 0o755),
         // sub1 segment entries (flat 2..=3)
@@ -50,7 +50,7 @@ fn delete_pipeline_hook_publishes_one_plan_per_segment() {
         // sub2 segment entries (flat 4..=5)
         FileEntry::new_file(PathBuf::from("keep"), 0, 0o644),
         FileEntry::new_directory(PathBuf::from("nested2"), 0o755),
-    ];
+    ]);
     // Initial segment owns wire 1..=2 at flat 0..=1; segments owning
     // wire 4..=5 at flat 2..=3, then 7..=8 at flat 4..=5.
     ctx.ndx_segments = vec![(0, 1), (2, 4), (4, 7)];
@@ -125,7 +125,8 @@ fn delete_pipeline_hook_is_noop_when_no_context_attached() {
     let handshake = test_handshake();
     let config = test_config();
     let mut ctx = ReceiverContext::new_for_test(&handshake, config);
-    ctx.file_list = vec![FileEntry::new_directory(PathBuf::from("sub"), 0o755)];
+    ctx.file_list =
+        std::sync::Arc::new(vec![FileEntry::new_directory(PathBuf::from("sub"), 0o755)]);
     ctx.ndx_segments = vec![(0, 1)];
 
     // Should not panic, should not touch any external state. The

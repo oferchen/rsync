@@ -430,7 +430,7 @@ fn receiver_reclaim_oldest_segment_frees_entries() {
 
     // Manually populate the file list with 6 entries across 3 segments.
     for i in 0..6 {
-        ctx.file_list.push(FileEntry::new_file(
+        std::sync::Arc::make_mut(&mut ctx.file_list).push(FileEntry::new_file(
             format!("file_{i}.txt").into(),
             (i + 1) as u64 * 100,
             0o644,
@@ -467,8 +467,11 @@ fn receiver_reclaim_noop_with_single_segment() {
     let config = test_config();
     let mut ctx = ReceiverContext::new_for_test(&handshake, config);
 
-    ctx.file_list
-        .push(FileEntry::new_file("f.txt".into(), 100, 0o644));
+    std::sync::Arc::make_mut(&mut ctx.file_list).push(FileEntry::new_file(
+        "f.txt".into(),
+        100,
+        0o644,
+    ));
     // Single segment - no reclamation possible.
     ctx.reclaim_oldest_segment();
     assert_eq!(ctx.first_segment_idx, 0);

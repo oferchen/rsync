@@ -45,7 +45,15 @@ pub struct ReceiverContext {
     /// Server configuration.
     pub(in crate::receiver) config: ServerConfig,
     /// List of files to receive.
-    pub(in crate::receiver) file_list: Vec<FileEntry>,
+    ///
+    /// Shared via `Arc` with the disk-commit pipeline (`DiskCommitConfig`) so a
+    /// pull transfer keeps a single resident copy of the flist rather than
+    /// deep-cloning it for the commit thread. The receiver uniquely owns the
+    /// `Arc` while it builds, sorts, and cleans the list (see
+    /// [`file_list_mut`](Self::file_list_mut)); it is shared only for the
+    /// read-only transfer window and reclaimed afterward once the disk thread
+    /// has released its clone.
+    pub(in crate::receiver) file_list: Arc<Vec<FileEntry>>,
     /// Negotiated checksum and compression algorithms from Protocol 30+ capability negotiation.
     /// None for protocols < 30 or when negotiation was skipped.
     pub(in crate::receiver) negotiated_algorithms: Option<NegotiationResult>,
@@ -430,7 +438,7 @@ impl ReceiverContext {
         Self {
             protocol: handshake.protocol,
             config,
-            file_list: Vec::new(),
+            file_list: Arc::new(Vec::new()),
             negotiated_algorithms: handshake.negotiated_algorithms,
             compat_flags: handshake.compat_flags,
             checksum_seed: handshake.checksum_seed,
@@ -905,9 +913,28 @@ impl ReceiverContext {
             first
         );
 
-        for entry in &mut self.file_list[start..end] {
-            entry.reclaim_heap_data();
+        // Reclaim runs during finalization, after the disk-commit thread has
+        // released its shared clone of the flist, so the receiver is the sole
+        // owner here. Freeing per-entry heap is a pure RSS optimization: if a
+        // clone somehow lingers, skip the reclaim rather than deep-clone the
+        // whole list (which would defeat the sharing this reclaim complements).
+        if let Some(list) = Arc::get_mut(&mut self.file_list) {
+            for entry in &mut list[start..end] {
+                entry.reclaim_heap_data();
+            }
         }
         self.first_segment_idx += 1;
+    }
+
+    /// Returns a mutable reference to the owned file list.
+    ///
+    /// The receiver mutates the flist only while it uniquely owns the `Arc`
+    /// (during reception, sort, clean, prune, and hardlink matching, all of
+    /// which precede the point where the disk-commit pipeline is handed a shared
+    /// clone). `Arc::make_mut` therefore returns the existing allocation without
+    /// copying; it would clone only if called while the list is shared, which
+    /// the receive workflow never does.
+    pub(in crate::receiver) fn file_list_mut(&mut self) -> &mut Vec<FileEntry> {
+        Arc::make_mut(&mut self.file_list)
     }
 }

@@ -504,12 +504,12 @@ mod itemize_order_tests {
         let hs = handshake();
         let mut ctx = ReceiverContext::new_for_test(&hs, itemize_client_config());
         ctx.defer_itemize = true;
-        ctx.file_list = vec![
+        ctx.file_list = std::sync::Arc::new(vec![
             FileEntry::new_directory("a".into(), 0o755),  // idx 0
             FileEntry::new_file("a/f1".into(), 5, 0o644), // idx 1
             FileEntry::new_directory("b".into(), 0o755),  // idx 2
             FileEntry::new_file("b/f2".into(), 5, 0o644), // idx 3
-        ];
+        ]);
 
         let opts = metadata::MetadataOptions::default();
         let mut writer = crate::writer::ServerWriter::new_plain(Vec::new());
@@ -617,10 +617,10 @@ mod itemize_order_tests {
         config.flags.dry_run = true;
         let mut ctx = ReceiverContext::new_for_test(&hs, config);
         ctx.defer_itemize = true;
-        ctx.file_list = vec![
+        ctx.file_list = std::sync::Arc::new(vec![
             FileEntry::new_directory("newdir".into(), 0o755),
             FileEntry::new_file("newdir/f1".into(), 5, 0o644),
-        ];
+        ]);
 
         let opts = metadata::MetadataOptions::default();
         let mut writer = crate::writer::ServerWriter::new_plain(Vec::new());

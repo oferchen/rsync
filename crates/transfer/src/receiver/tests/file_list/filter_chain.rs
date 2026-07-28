@@ -28,10 +28,12 @@ fn receiver_filter_chain_protects_from_deletion() {
     let mut ctx = ReceiverContext::new_for_test(&handshake, config);
 
     // File list includes "." and "source.txt" - anything else at dest is extraneous
-    ctx.file_list
-        .push(FileEntry::new_directory(".".into(), 0o755));
-    ctx.file_list
-        .push(FileEntry::new_file("source.txt".into(), 11, 0o644));
+    std::sync::Arc::make_mut(&mut ctx.file_list).push(FileEntry::new_directory(".".into(), 0o755));
+    std::sync::Arc::make_mut(&mut ctx.file_list).push(FileEntry::new_file(
+        "source.txt".into(),
+        11,
+        0o644,
+    ));
 
     // Set up filter chain with protect rule for *.conf
     let global =
@@ -84,10 +86,12 @@ fn receiver_filter_chain_empty_allows_all_deletions() {
     let mut ctx = ReceiverContext::new_for_test(&handshake, config);
 
     // File list has "." and "keep.txt" - file1/file2 are extraneous
-    ctx.file_list
-        .push(FileEntry::new_directory(".".into(), 0o755));
-    ctx.file_list
-        .push(FileEntry::new_file("keep.txt".into(), 4, 0o644));
+    std::sync::Arc::make_mut(&mut ctx.file_list).push(FileEntry::new_directory(".".into(), 0o755));
+    std::sync::Arc::make_mut(&mut ctx.file_list).push(FileEntry::new_file(
+        "keep.txt".into(),
+        4,
+        0o644,
+    ));
 
     // Empty filter chain - all deletions should proceed
     let mut writer = TestDeletionWriter;
@@ -133,10 +137,12 @@ fn single_char_wildcard_exclude_does_not_block_top_level_deletion() {
     let mut ctx = ReceiverContext::new_for_test(&handshake, config);
 
     // Source advertises only `.` and `keep.txt`; `delete.txt` is extraneous.
-    ctx.file_list
-        .push(FileEntry::new_directory(".".into(), 0o755));
-    ctx.file_list
-        .push(FileEntry::new_file("keep.txt".into(), 5, 0o644));
+    std::sync::Arc::make_mut(&mut ctx.file_list).push(FileEntry::new_directory(".".into(), 0o755));
+    std::sync::Arc::make_mut(&mut ctx.file_list).push(FileEntry::new_file(
+        "keep.txt".into(),
+        5,
+        0o644,
+    ));
 
     // Daemon-level `exclude = ? foobar.baz` reproduction.
     let global = ::filters::FilterSet::from_rules([
@@ -207,12 +213,15 @@ fn implied_non_content_subdir_is_not_scanned_for_deletion() {
     // `subdir/file` is an actual transferred entry.
     let mut root = FileEntry::new_directory(".".into(), 0o755);
     root.set_content_dir(false);
-    ctx.file_list.push(root);
+    std::sync::Arc::make_mut(&mut ctx.file_list).push(root);
     let mut implied = FileEntry::new_directory("subdir".into(), 0o755);
     implied.set_content_dir(false);
-    ctx.file_list.push(implied);
-    ctx.file_list
-        .push(FileEntry::new_file("subdir/file".into(), 11, 0o644));
+    std::sync::Arc::make_mut(&mut ctx.file_list).push(implied);
+    std::sync::Arc::make_mut(&mut ctx.file_list).push(FileEntry::new_file(
+        "subdir/file".into(),
+        11,
+        0o644,
+    ));
 
     let mut writer = TestDeletionWriter;
     let (stats, _, _) = ctx
@@ -295,12 +304,14 @@ fn delete_ordinary_subdir_succeeds_with_no_io_error() {
     let mut ctx = ReceiverContext::new_for_test(&handshake, config);
 
     // Sender's flist: "." + subdir + subdir/keep.txt. extraneous.txt is missing.
-    ctx.file_list
-        .push(FileEntry::new_directory(".".into(), 0o755));
-    ctx.file_list
+    std::sync::Arc::make_mut(&mut ctx.file_list).push(FileEntry::new_directory(".".into(), 0o755));
+    std::sync::Arc::make_mut(&mut ctx.file_list)
         .push(FileEntry::new_directory("subdir".into(), 0o755));
-    ctx.file_list
-        .push(FileEntry::new_file("subdir/keep.txt".into(), 4, 0o644));
+    std::sync::Arc::make_mut(&mut ctx.file_list).push(FileEntry::new_file(
+        "subdir/keep.txt".into(),
+        4,
+        0o644,
+    ));
 
     let sandbox = Arc::new(::fast_io::DirSandbox::open_root(&dest).expect("open sandbox"));
 
@@ -386,11 +397,10 @@ fn delete_symlinked_subdir_surfaces_ioerr_general() {
     // attacker-controlled destination is a symlink, so the
     // sandbox-anchored `read_dir` must refuse the leaf with ELOOP /
     // ENOTDIR rather than enumerating the outside tree.
-    ctx.file_list
-        .push(FileEntry::new_directory(".".into(), 0o755));
-    ctx.file_list
+    std::sync::Arc::make_mut(&mut ctx.file_list).push(FileEntry::new_directory(".".into(), 0o755));
+    std::sync::Arc::make_mut(&mut ctx.file_list)
         .push(FileEntry::new_directory("symlinkattack".into(), 0o755));
-    ctx.file_list.push(FileEntry::new_file(
+    std::sync::Arc::make_mut(&mut ctx.file_list).push(FileEntry::new_file(
         "symlinkattack/keep.txt".into(),
         4,
         0o644,

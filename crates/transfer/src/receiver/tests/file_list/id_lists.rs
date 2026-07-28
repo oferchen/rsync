@@ -152,7 +152,7 @@ fn remap_rewrites_flist_uid_from_sent_name() {
     // A file owned by the nonexistent sender uid.
     let mut entry = FileEntry::new_file("f".into(), 0, 0o644);
     entry.set_uid(4_000_123);
-    ctx.file_list.push(entry);
+    std::sync::Arc::make_mut(&mut ctx.file_list).push(entry);
 
     ctx.remap_flist_ownership_from_id_lists();
 
@@ -176,7 +176,7 @@ fn remap_keeps_raw_uid_under_numeric_ids() {
 
     let mut entry = FileEntry::new_file("f".into(), 0, 0o644);
     entry.set_uid(4_000_123);
-    ctx.file_list.push(entry);
+    std::sync::Arc::make_mut(&mut ctx.file_list).push(entry);
 
     ctx.remap_flist_ownership_from_id_lists();
 
@@ -212,7 +212,7 @@ fn remap_uid_with_usermap(sender_uid: u32, sender_name: &[u8], usermap: &str) ->
 
     let mut entry = FileEntry::new_file("f".into(), 0, 0o644);
     entry.set_uid(sender_uid);
-    ctx.file_list.push(entry);
+    std::sync::Arc::make_mut(&mut ctx.file_list).push(entry);
 
     ctx.remap_flist_ownership_from_id_lists();
     ctx.file_list[0].uid()

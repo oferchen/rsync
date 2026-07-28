@@ -487,7 +487,10 @@ fn receiver_backs_up_existing_symlink_before_replacing() {
 
     let handshake = test_handshake();
     let mut ctx = ReceiverContext::new_for_test(&handshake, config);
-    ctx.file_list = vec![FileEntry::new_symlink("mylink".into(), "new-target".into())];
+    ctx.file_list = std::sync::Arc::new(vec![FileEntry::new_symlink(
+        "mylink".into(),
+        "new-target".into(),
+    )]);
 
     let mut writer = MockMsgInfoWriter::new();
     ctx.create_symlinks(dest, None, &mut writer)

@@ -145,7 +145,7 @@ fn drive(mode: NonTransferMode, dest: &std::path::Path) -> Vec<u8> {
         ..Default::default()
     });
     ctx.config.connection.client_mode = false;
-    ctx.file_list = vec![entry];
+    ctx.file_list = std::sync::Arc::new(vec![entry]);
 
     let setup = PipelineSetup {
         dest_dir: dest.to_path_buf(),

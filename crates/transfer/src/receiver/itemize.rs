@@ -44,7 +44,7 @@ impl ReceiverContext {
         let mut symlinks = 0u64;
         let mut devices = 0u64;
         let mut specials = 0u64;
-        for entry in &self.file_list {
+        for entry in self.file_list.iter() {
             if entry.is_dir() {
                 dirs += 1;
             } else if entry.is_symlink() {
@@ -588,7 +588,7 @@ impl ReceiverContext {
         // its leader in the xname the peer renders after "=>".
         let mut leader_names: std::collections::HashMap<u32, &str> =
             std::collections::HashMap::new();
-        for entry in &self.file_list {
+        for entry in self.file_list.iter() {
             if entry.hlink_first() {
                 if let Some(gnum) = entry.hardlink_idx() {
                     leader_names.entry(gnum).or_insert_with(|| entry.name());

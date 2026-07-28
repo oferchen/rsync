@@ -81,7 +81,7 @@ fn sender_echo(ndx: i32, iflags: u16) -> Vec<u8> {
 #[test]
 fn server_push_pipeline_forwards_metadata_only_record_and_drains_echo() {
     let mut ctx = push_receiver();
-    ctx.file_list = vec![FileEntry::new_file("f".into(), 1, 0o600)];
+    ctx.file_list = std::sync::Arc::new(vec![FileEntry::new_file("f".into(), 1, 0o600)]);
     let iflags = ItemFlags::ITEM_REPORT_PERMS as u16;
     ctx.server_no_transfer_itemize
         .borrow_mut()

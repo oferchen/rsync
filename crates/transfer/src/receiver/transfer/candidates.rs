@@ -1243,7 +1243,7 @@ mod itemize_order_tests {
             config.flags.times = true;
             config.flags.perms = true;
             let mut ctx = ReceiverContext::new_for_test(&hs, config);
-            ctx.file_list = vec![entry.clone()];
+            ctx.file_list = std::sync::Arc::new(vec![entry.clone()]);
             let mut writer = crate::writer::ServerWriter::new_plain(Vec::new());
             let mut metadata_errors = Vec::new();
             let mut stats = TransferStats::default();
@@ -1313,7 +1313,7 @@ mod itemize_order_tests {
             config.file_selection.size_only = false;
             mutate(&path, &mut config);
             let mut ctx = ReceiverContext::new_for_test(&hs, config);
-            ctx.file_list = vec![entry.clone()];
+            ctx.file_list = std::sync::Arc::new(vec![entry.clone()]);
             let mut writer = crate::writer::ServerWriter::new_plain(Vec::new());
             let mut metadata_errors = Vec::new();
             let mut stats = TransferStats::default();
@@ -1972,12 +1972,12 @@ mod itemize_order_tests {
         let hs = handshake();
         let mut ctx = ReceiverContext::new_for_test(&hs, itemize_client_config());
         ctx.defer_itemize = true;
-        ctx.file_list = vec![
+        ctx.file_list = std::sync::Arc::new(vec![
             FileEntry::new_directory("a".into(), 0o755),  // idx 0
             FileEntry::new_file("a/f1".into(), 5, 0o644), // idx 1
             FileEntry::new_directory("b".into(), 0o755),  // idx 2
             FileEntry::new_file("b/f2".into(), 5, 0o644), // idx 3
-        ];
+        ]);
 
         let opts = metadata::MetadataOptions::default();
         let mut writer = crate::writer::ServerWriter::new_plain(Vec::new());
@@ -2110,11 +2110,11 @@ mod itemize_order_tests {
         config.flags.dry_run = true;
         let mut ctx = ReceiverContext::new_for_test(&hs, config);
         ctx.defer_itemize = true;
-        ctx.file_list = vec![
+        ctx.file_list = std::sync::Arc::new(vec![
             FileEntry::new_directory("d".into(), 0o755),  // idx 0
             FileEntry::new_file("d/f1".into(), 5, 0o644), // idx 1
             FileEntry::new_symlink("d/lnk".into(), "target".into()), // idx 2
-        ];
+        ]);
 
         // Read-only pass against an empty destination: every entry is new.
         let (plan, rows) = dry_run_pass(&ctx, dest);
@@ -2190,7 +2190,7 @@ mod itemize_order_tests {
         config.flags.dry_run = true;
         let mut ctx = ReceiverContext::new_for_test(&hs, config);
         ctx.defer_itemize = true;
-        ctx.file_list = vec![FileEntry::new_file("f".into(), 1, 0o644)];
+        ctx.file_list = std::sync::Arc::new(vec![FileEntry::new_file("f".into(), 1, 0o644)]);
 
         let (plan, rows) = dry_run_pass(&ctx, dest);
 
@@ -2221,10 +2221,10 @@ mod itemize_order_tests {
         config.connection.client_mode = false;
         let mut ctx = ReceiverContext::new_for_test(&hs, config);
         ctx.defer_itemize = true;
-        ctx.file_list = vec![
+        ctx.file_list = std::sync::Arc::new(vec![
             FileEntry::new_directory("d".into(), 0o755),
             FileEntry::new_file("d/f1".into(), 5, 0o644),
-        ];
+        ]);
 
         let (plan, rows) = dry_run_pass(&ctx, dest);
 
@@ -2332,7 +2332,7 @@ mod skip_notice_tests {
 
         let hs = handshake();
         let mut ctx = ReceiverContext::new_for_test(&hs, config);
-        ctx.file_list = files;
+        ctx.file_list = std::sync::Arc::new(files);
 
         let mut writer = CaptureWriter::default();
         let opts = MetadataOptions::default();

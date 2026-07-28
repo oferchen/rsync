@@ -207,7 +207,11 @@ impl ReceiverContext {
         } else {
             None
         };
-        let file_list_arc = Arc::new(self.file_list.clone());
+        // Share the receiver's flist with the disk-commit thread instead of
+        // deep-cloning it: the list is read-only for the whole transfer window
+        // (this method borrows `&self`), so an Arc pointer clone keeps a single
+        // resident copy rather than two.
+        let file_list_arc = Arc::clone(&self.file_list);
         // upstream: cleanup.c - compute partial mode from --partial / --partial-dir flags
         let partial_mode = if let Some(ref dir) = self.config.partial_dir {
             PartialMode::PartialDir(dir.clone())

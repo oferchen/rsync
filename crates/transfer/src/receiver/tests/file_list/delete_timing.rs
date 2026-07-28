@@ -123,10 +123,13 @@ fn delete_delay_defers_unlink_until_execute_phase() {
         config.deletion.late_delete = true; // --delete-delay
         config.args = vec![OsString::from(dest.to_str().unwrap())];
         let mut ctx = ReceiverContext::new_for_test(&handshake, config);
-        ctx.file_list
+        std::sync::Arc::make_mut(&mut ctx.file_list)
             .push(FileEntry::new_directory(".".into(), 0o755));
-        ctx.file_list
-            .push(FileEntry::new_file("keep.txt".into(), 6, 0o644));
+        std::sync::Arc::make_mut(&mut ctx.file_list).push(FileEntry::new_file(
+            "keep.txt".into(),
+            6,
+            0o644,
+        ));
         ctx
     };
 
@@ -220,14 +223,19 @@ fn build_receiver_with_perdir_merge(dest: &std::path::Path) -> ReceiverContext {
     config.args = vec![OsString::from(dest.to_str().unwrap())];
     let mut ctx = ReceiverContext::new_for_test(&handshake, config);
 
-    ctx.file_list
-        .push(FileEntry::new_directory(".".into(), 0o755));
-    ctx.file_list
+    std::sync::Arc::make_mut(&mut ctx.file_list).push(FileEntry::new_directory(".".into(), 0o755));
+    std::sync::Arc::make_mut(&mut ctx.file_list)
         .push(FileEntry::new_directory("sub".into(), 0o755));
-    ctx.file_list
-        .push(FileEntry::new_file("source.txt".into(), 11, 0o644));
-    ctx.file_list
-        .push(FileEntry::new_file(".rsync-filter".into(), 8, 0o644));
+    std::sync::Arc::make_mut(&mut ctx.file_list).push(FileEntry::new_file(
+        "source.txt".into(),
+        11,
+        0o644,
+    ));
+    std::sync::Arc::make_mut(&mut ctx.file_list).push(FileEntry::new_file(
+        ".rsync-filter".into(),
+        8,
+        0o644,
+    ));
 
     // Register the dest-side per-directory `.rsync-filter` merge config on the
     // receiver's wire-populated `filter_chain`, exactly as a server receiver does

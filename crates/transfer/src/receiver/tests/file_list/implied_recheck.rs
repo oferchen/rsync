@@ -25,14 +25,19 @@ fn injected_name_rejected_with_exit_code_4() {
     config.flags.recursive = true;
     config.connection.implied_source_args = vec!["dir".to_owned()];
     let mut ctx = ReceiverContext::new_for_test(&test_handshake(), config);
-    ctx.file_list
-        .push(FileEntry::new_directory(".".into(), 0o755));
-    ctx.file_list
+    std::sync::Arc::make_mut(&mut ctx.file_list).push(FileEntry::new_directory(".".into(), 0o755));
+    std::sync::Arc::make_mut(&mut ctx.file_list)
         .push(FileEntry::new_directory("dir".into(), 0o755));
-    ctx.file_list
-        .push(FileEntry::new_file("dir/wanted.txt".into(), 10, 0o644));
-    ctx.file_list
-        .push(FileEntry::new_file("evil".into(), 20, 0o644));
+    std::sync::Arc::make_mut(&mut ctx.file_list).push(FileEntry::new_file(
+        "dir/wanted.txt".into(),
+        10,
+        0o644,
+    ));
+    std::sync::Arc::make_mut(&mut ctx.file_list).push(FileEntry::new_file(
+        "evil".into(),
+        20,
+        0o644,
+    ));
 
     let err = ctx.recheck_received_implied_includes().unwrap_err();
     // io::ErrorKind::Unsupported maps to ExitCode::Unsupported (4), matching
@@ -50,14 +55,19 @@ fn requested_names_and_subtree_pass() {
     config.flags.recursive = true;
     config.connection.implied_source_args = vec!["dir".to_owned()];
     let mut ctx = ReceiverContext::new_for_test(&test_handshake(), config);
-    ctx.file_list
-        .push(FileEntry::new_directory(".".into(), 0o755));
-    ctx.file_list
+    std::sync::Arc::make_mut(&mut ctx.file_list).push(FileEntry::new_directory(".".into(), 0o755));
+    std::sync::Arc::make_mut(&mut ctx.file_list)
         .push(FileEntry::new_directory("dir".into(), 0o755));
-    ctx.file_list
-        .push(FileEntry::new_file("dir/a.txt".into(), 10, 0o644));
-    ctx.file_list
-        .push(FileEntry::new_file("dir/sub/b.txt".into(), 10, 0o644));
+    std::sync::Arc::make_mut(&mut ctx.file_list).push(FileEntry::new_file(
+        "dir/a.txt".into(),
+        10,
+        0o644,
+    ));
+    std::sync::Arc::make_mut(&mut ctx.file_list).push(FileEntry::new_file(
+        "dir/sub/b.txt".into(),
+        10,
+        0o644,
+    ));
 
     ctx.recheck_received_implied_includes()
         .expect("names under the requested directory must pass");
@@ -72,16 +82,17 @@ fn relative_implied_parent_directories_pass() {
     config.flags.relative = true;
     config.connection.implied_source_args = vec!["a/b/c".to_owned()];
     let mut ctx = ReceiverContext::new_for_test(&test_handshake(), config);
-    ctx.file_list
-        .push(FileEntry::new_directory(".".into(), 0o755));
-    ctx.file_list
-        .push(FileEntry::new_directory("a".into(), 0o755));
-    ctx.file_list
+    std::sync::Arc::make_mut(&mut ctx.file_list).push(FileEntry::new_directory(".".into(), 0o755));
+    std::sync::Arc::make_mut(&mut ctx.file_list).push(FileEntry::new_directory("a".into(), 0o755));
+    std::sync::Arc::make_mut(&mut ctx.file_list)
         .push(FileEntry::new_directory("a/b".into(), 0o755));
-    ctx.file_list
+    std::sync::Arc::make_mut(&mut ctx.file_list)
         .push(FileEntry::new_directory("a/b/c".into(), 0o755));
-    ctx.file_list
-        .push(FileEntry::new_file("a/b/c/leaf".into(), 10, 0o644));
+    std::sync::Arc::make_mut(&mut ctx.file_list).push(FileEntry::new_file(
+        "a/b/c/leaf".into(),
+        10,
+        0o644,
+    ));
 
     ctx.recheck_received_implied_includes()
         .expect("implied parent directories of a relative arg must pass");
@@ -96,10 +107,12 @@ fn relative_sibling_injection_rejected() {
     config.flags.relative = true;
     config.connection.implied_source_args = vec!["a/b/c".to_owned()];
     let mut ctx = ReceiverContext::new_for_test(&test_handshake(), config);
-    ctx.file_list
-        .push(FileEntry::new_directory("a".into(), 0o755));
-    ctx.file_list
-        .push(FileEntry::new_file("a/evil".into(), 20, 0o644));
+    std::sync::Arc::make_mut(&mut ctx.file_list).push(FileEntry::new_directory("a".into(), 0o755));
+    std::sync::Arc::make_mut(&mut ctx.file_list).push(FileEntry::new_file(
+        "a/evil".into(),
+        20,
+        0o644,
+    ));
 
     let err = ctx.recheck_received_implied_includes().unwrap_err();
     assert_eq!(err.kind(), io::ErrorKind::Unsupported);
@@ -118,15 +131,21 @@ fn wildcard_arg_stays_active_and_admits_matching_names() {
     config.flags.recursive = true;
     config.connection.implied_source_args = vec!["d*".to_owned()];
     let mut ctx = ReceiverContext::new_for_test(&test_handshake(), config);
-    ctx.file_list
+    std::sync::Arc::make_mut(&mut ctx.file_list)
         .push(FileEntry::new_directory("data".into(), 0o755));
-    ctx.file_list
-        .push(FileEntry::new_file("data/file".into(), 10, 0o644));
+    std::sync::Arc::make_mut(&mut ctx.file_list).push(FileEntry::new_file(
+        "data/file".into(),
+        10,
+        0o644,
+    ));
     ctx.recheck_received_implied_includes()
         .expect("names matching the wildcard request must pass");
 
-    ctx.file_list
-        .push(FileEntry::new_file("evil".into(), 20, 0o644));
+    std::sync::Arc::make_mut(&mut ctx.file_list).push(FileEntry::new_file(
+        "evil".into(),
+        20,
+        0o644,
+    ));
     let err = ctx.recheck_received_implied_includes().unwrap_err();
     assert_eq!(err.kind(), io::ErrorKind::Unsupported);
     assert_eq!(
@@ -154,14 +173,19 @@ fn daemon_files_from_subdir_entry_passes_without_module_strip() {
     config.connection.implied_skip_daemon_module = false;
     config.connection.implied_source_args = vec!["a.txt".to_owned(), "sub/d.txt".to_owned()];
     let mut ctx = ReceiverContext::new_for_test(&test_handshake(), config);
-    ctx.file_list
-        .push(FileEntry::new_directory(".".into(), 0o755));
-    ctx.file_list
-        .push(FileEntry::new_file("a.txt".into(), 10, 0o644));
-    ctx.file_list
+    std::sync::Arc::make_mut(&mut ctx.file_list).push(FileEntry::new_directory(".".into(), 0o755));
+    std::sync::Arc::make_mut(&mut ctx.file_list).push(FileEntry::new_file(
+        "a.txt".into(),
+        10,
+        0o644,
+    ));
+    std::sync::Arc::make_mut(&mut ctx.file_list)
         .push(FileEntry::new_directory("sub".into(), 0o755));
-    ctx.file_list
-        .push(FileEntry::new_file("sub/d.txt".into(), 10, 0o644));
+    std::sync::Arc::make_mut(&mut ctx.file_list).push(FileEntry::new_file(
+        "sub/d.txt".into(),
+        10,
+        0o644,
+    ));
 
     ctx.recheck_received_implied_includes()
         .expect("a files-from subdir entry on a daemon pull must not be rejected");
@@ -179,8 +203,11 @@ fn daemon_files_from_still_rejects_unrequested_name() {
     config.connection.implied_skip_daemon_module = false;
     config.connection.implied_source_args = vec!["a.txt".to_owned(), "sub/d.txt".to_owned()];
     let mut ctx = ReceiverContext::new_for_test(&test_handshake(), config);
-    ctx.file_list
-        .push(FileEntry::new_file("evil".into(), 20, 0o644));
+    std::sync::Arc::make_mut(&mut ctx.file_list).push(FileEntry::new_file(
+        "evil".into(),
+        20,
+        0o644,
+    ));
 
     let err = ctx.recheck_received_implied_includes().unwrap_err();
     assert_eq!(err.kind(), io::ErrorKind::Unsupported);
@@ -202,10 +229,13 @@ fn daemon_module_operand_still_strips_module_name() {
     config.connection.implied_skip_daemon_module = true;
     config.connection.implied_source_args = vec!["m/dir".to_owned()];
     let mut ctx = ReceiverContext::new_for_test(&test_handshake(), config);
-    ctx.file_list
+    std::sync::Arc::make_mut(&mut ctx.file_list)
         .push(FileEntry::new_directory("dir".into(), 0o755));
-    ctx.file_list
-        .push(FileEntry::new_file("dir/file".into(), 10, 0o644));
+    std::sync::Arc::make_mut(&mut ctx.file_list).push(FileEntry::new_file(
+        "dir/file".into(),
+        10,
+        0o644,
+    ));
 
     ctx.recheck_received_implied_includes()
         .expect("module-stripped daemon operand must admit its own subtree");
@@ -221,8 +251,11 @@ fn trust_sender_skips_implied_check() {
     config.flags.recursive = true;
     config.connection.implied_source_args = vec!["dir".to_owned()];
     let mut ctx = ReceiverContext::new_for_test(&test_handshake(), config);
-    ctx.file_list
-        .push(FileEntry::new_file("evil".into(), 20, 0o644));
+    std::sync::Arc::make_mut(&mut ctx.file_list).push(FileEntry::new_file(
+        "evil".into(),
+        20,
+        0o644,
+    ));
 
     ctx.recheck_received_implied_includes()
         .expect("trust_sender must skip the implied-include check");
@@ -235,8 +268,11 @@ fn no_source_args_is_a_no_op() {
     let mut config = test_config();
     config.flags.recursive = true;
     let mut ctx = ReceiverContext::new_for_test(&test_handshake(), config);
-    ctx.file_list
-        .push(FileEntry::new_file("anything".into(), 20, 0o644));
+    std::sync::Arc::make_mut(&mut ctx.file_list).push(FileEntry::new_file(
+        "anything".into(),
+        20,
+        0o644,
+    ));
 
     ctx.recheck_received_implied_includes()
         .expect("no recorded source args means nothing to validate");

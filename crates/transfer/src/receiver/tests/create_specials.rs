@@ -72,7 +72,7 @@ fn receiver_creates_fifo_from_flist_entry() {
 
     let handshake = test_handshake();
     let mut ctx = ReceiverContext::new_for_test(&handshake, special_receiver_config());
-    ctx.file_list = vec![FileEntry::new_fifo("pipe".into(), 0o640)];
+    ctx.file_list = std::sync::Arc::new(vec![FileEntry::new_fifo("pipe".into(), 0o640)]);
 
     let mut writer = CapturingMsgInfoWriter;
     ctx.create_specials(dest, None, &mut writer)
@@ -114,7 +114,12 @@ fn receiver_creates_char_device_from_flist_entry() {
 
     let handshake = test_handshake();
     let mut ctx = ReceiverContext::new_for_test(&handshake, special_receiver_config());
-    ctx.file_list = vec![FileEntry::new_char_device("nulllike".into(), 0o600, 1, 3)];
+    ctx.file_list = std::sync::Arc::new(vec![FileEntry::new_char_device(
+        "nulllike".into(),
+        0o600,
+        1,
+        3,
+    )]);
 
     let mut writer = CapturingMsgInfoWriter;
     ctx.create_specials(dest, None, &mut writer)
@@ -155,7 +160,7 @@ fn receiver_backs_up_existing_entry_before_creating_special() {
 
     let handshake = test_handshake();
     let mut ctx = ReceiverContext::new_for_test(&handshake, config);
-    ctx.file_list = vec![FileEntry::new_fifo("pipe".into(), 0o640)];
+    ctx.file_list = std::sync::Arc::new(vec![FileEntry::new_fifo("pipe".into(), 0o640)]);
 
     let mut writer = CapturingMsgInfoWriter;
     ctx.create_specials(dest, None, &mut writer)
@@ -190,7 +195,7 @@ fn receiver_skips_fifo_without_specials_flag() {
 
     let handshake = test_handshake();
     let mut ctx = ReceiverContext::new_for_test(&handshake, config);
-    ctx.file_list = vec![FileEntry::new_fifo("pipe".into(), 0o640)];
+    ctx.file_list = std::sync::Arc::new(vec![FileEntry::new_fifo("pipe".into(), 0o640)]);
 
     let mut writer = CapturingMsgInfoWriter;
     ctx.create_specials(dest, None, &mut writer)

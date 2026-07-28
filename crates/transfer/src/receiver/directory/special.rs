@@ -287,7 +287,7 @@ impl ReceiverContext {
             return Ok(());
         }
 
-        for entry in &self.file_list {
+        for entry in self.file_list.iter() {
             let gated = (entry.is_device() && self.config.flags.devices)
                 || (entry.is_special() && self.config.flags.specials);
             if !gated {

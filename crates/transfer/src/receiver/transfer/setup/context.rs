@@ -695,7 +695,7 @@ impl ReceiverContext {
         if basename_path.components().count() != 1 {
             return dest_dir;
         }
-        if let Some(entry) = self.file_list.first_mut() {
+        if let Some(entry) = self.file_list_mut().first_mut() {
             entry.set_name(PathBuf::from(&target_basename));
         }
         parent.unwrap_or_else(|| PathBuf::from("."))
