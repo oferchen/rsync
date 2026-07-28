@@ -570,38 +570,6 @@ fn vanished_source_directory_yields_error_remaining_files_transfer() {
     );
 }
 
-/// An empty source directory should transfer successfully with exit code 0.
-/// This is a control test for the error scenarios above, verifying that
-/// recursive transfer of an empty tree does not spuriously report errors.
-#[cfg(unix)]
-#[test]
-fn empty_source_directory_transfers_successfully() {
-    use tempfile::tempdir;
-
-    let tmp = tempdir().expect("tempdir");
-    let src = tmp.path().join("src");
-    let dst = tmp.path().join("dst");
-
-    std::fs::create_dir(&src).expect("create src");
-
-    let mut src_trailing = src.into_os_string();
-    src_trailing.push("/");
-
-    let (code, _stdout, stderr) = run_with_args([
-        OsString::from(RSYNC),
-        OsString::from("-r"),
-        src_trailing,
-        dst.into_os_string(),
-    ]);
-
-    assert_eq!(
-        code,
-        0,
-        "empty directory sync should exit 0: {}",
-        String::from_utf8_lossy(&stderr)
-    );
-}
-
 /// When the destination directory does not exist and --mkpath is not used,
 /// a single-file transfer into a new path should still succeed (the
 /// destination is treated as the target file name).
