@@ -2344,3 +2344,119 @@ fn local_atimes_zeroes_atime_nsec() {
         "upstream zeroes the atime nanosecond field"
     );
 }
+
+// Symlink-mode application only exists where the OS can chmod a link
+// (`CAN_CHMOD_SYMLINK` = macOS/BSD). The two tests below encode WHY it matters:
+// a receiver/local-copy that reports a `p` column for a symlink must also apply
+// that mode, or report and action would drift (upstream rsync.c:658-668 chmods
+// every file type; syscall.c:761 do_chmod() uses lchmod/setattrlist for
+// symlinks). They fail on pre-fix code, which skipped the symlink chmod.
+#[cfg(target_os = "macos")]
+#[test]
+fn symlink_own_mode_applied_from_entry_under_preserve_perms() {
+    use protocol::flist::FileEntry;
+    use std::os::unix::fs::{PermissionsExt, symlink};
+
+    assert!(
+        crate::CAN_CHMOD_SYMLINK,
+        "macOS must advertise symlink chmod support"
+    );
+
+    let temp = tempdir().expect("tempdir");
+    let target = temp.path().join("target.txt");
+    let link = temp.path().join("link");
+    fs::write(&target, b"data").expect("write target");
+    symlink(&target, &link).expect("create link");
+
+    // Seed the link at a mode that differs from the sender's, so a correct
+    // apply is observable as a state change rather than a no-op.
+    fast_io::secure_chmod_at(&link, 0o777, false).expect("seed link mode");
+    assert_eq!(
+        fs::symlink_metadata(&link).unwrap().permissions().mode() & 0o7777,
+        0o777
+    );
+
+    let mut entry = FileEntry::new_symlink("link".into(), "target.txt".into());
+    entry.set_mode(0o120741);
+
+    super::apply_symlink_metadata_from_entry(
+        &link,
+        &entry,
+        &MetadataOptions::new().preserve_permissions(true),
+    )
+    .expect("apply symlink metadata");
+
+    assert_eq!(
+        fs::symlink_metadata(&link).unwrap().permissions().mode() & 0o7777,
+        0o741,
+        "the link's own mode must track the sender under -p"
+    );
+    // The chmod must not have followed the link into its target.
+    assert_eq!(
+        fs::metadata(&target).unwrap().permissions().mode() & 0o7777,
+        0o644,
+        "the symlink chmod must not touch the target file"
+    );
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+fn symlink_own_mode_applied_from_source_metadata_local_copy() {
+    use std::os::unix::fs::{PermissionsExt, symlink};
+
+    let temp = tempdir().expect("tempdir");
+    let target = temp.path().join("t.txt");
+    let src = temp.path().join("src");
+    let dst = temp.path().join("dst");
+    fs::write(&target, b"data").expect("write target");
+    symlink(&target, &src).expect("create src link");
+    symlink(&target, &dst).expect("create dst link");
+
+    fast_io::secure_chmod_at(&src, 0o714, false).expect("seed src mode");
+    fast_io::secure_chmod_at(&dst, 0o777, false).expect("seed dst mode");
+
+    let src_meta = fs::symlink_metadata(&src).expect("src link metadata");
+    super::apply_symlink_metadata_with_options(
+        &dst,
+        &src_meta,
+        &MetadataOptions::new().preserve_permissions(true),
+    )
+    .expect("apply symlink metadata");
+
+    assert_eq!(
+        fs::symlink_metadata(&dst).unwrap().permissions().mode() & 0o7777,
+        0o714,
+        "local-copy must carry the source link's own mode where the OS allows"
+    );
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn symlink_own_mode_is_noop_on_linux() {
+    use std::os::unix::fs::{PermissionsExt, symlink};
+
+    // On Linux a symlink's st_mode is a fixed 0o777 and fchmodat rejects
+    // AT_SYMLINK_NOFOLLOW, so the capability const is false and the apply must
+    // neither error nor change anything - report and action stay silent as one.
+    assert!(!crate::CAN_CHMOD_SYMLINK);
+
+    let temp = tempdir().expect("tempdir");
+    let target = temp.path().join("t.txt");
+    let dst = temp.path().join("dst");
+    fs::write(&target, b"data").expect("write target");
+    symlink(&target, &dst).expect("create dst link");
+
+    let src_meta = fs::symlink_metadata(&dst).expect("dst link metadata");
+    super::apply_symlink_metadata_with_options(
+        &dst,
+        &src_meta,
+        &MetadataOptions::new().preserve_permissions(true),
+    )
+    .expect("apply must be a no-op, not an error, on Linux");
+
+    assert_eq!(
+        fs::symlink_metadata(&dst).unwrap().permissions().mode() & 0o7777,
+        0o777,
+        "a Linux symlink keeps its fixed 0o777 mode"
+    );
+}

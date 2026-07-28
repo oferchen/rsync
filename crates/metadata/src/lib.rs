@@ -204,6 +204,28 @@ pub fn am_root() -> bool {
     }
 }
 
+/// Whether this platform can change a symbolic link's own permission bits.
+///
+/// Mirrors upstream rsync's `CAN_CHMOD_SYMLINK` (`rsync.h:438-440`), defined
+/// whenever `HAVE_LCHMOD` or `HAVE_SETATTRLIST` is probed
+/// (`configure.ac:911,918`). Upstream `syscall.c:761 do_chmod()` chmods a
+/// symlink with `lchmod()` and then `setattrlist(..., FSOPT_NOFOLLOW)`; both
+/// exist on macOS and the BSDs but not on Linux, where `fchmodat(2)` rejects
+/// `AT_SYMLINK_NOFOLLOW` with `EOPNOTSUPP` and every symlink's `st_mode` is a
+/// fixed `0o777`.
+///
+/// This const gates BOTH the itemize `p` comparison and the symlink chmod so
+/// oc can never report a permission change it will not perform - reporting a
+/// `p` change that is never applied would be worse than staying silent.
+pub const CAN_CHMOD_SYMLINK: bool = cfg!(any(
+    target_os = "macos",
+    target_os = "ios",
+    target_os = "freebsd",
+    target_os = "netbsd",
+    target_os = "openbsd",
+    target_os = "dragonfly",
+));
+
 pub use acl_idmap::AclIdMapper;
 
 #[cfg(all(
