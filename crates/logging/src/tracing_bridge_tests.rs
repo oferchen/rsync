@@ -35,6 +35,7 @@ fn test_tracing_with_verbosity_level_2() {
             flag,
             level,
             message,
+            ..
         } => {
             assert_eq!(*flag, DebugFlag::Deltasum);
             assert_eq!(*level, 1);
