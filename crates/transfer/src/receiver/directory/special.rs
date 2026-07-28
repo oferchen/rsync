@@ -249,6 +249,7 @@ impl ReceiverContext {
                 // upstream: generator.c:1145 - "%s is uptodate" at INFO_GTE(NAME, 2)
                 let iflags = ItemFlags::from_raw(0);
                 let _ = self.emit_or_record_itemize(writer, flist_idx, &iflags, entry);
+                self.record_server_no_transfer_itemize(flist_idx, iflags.raw());
                 info_log!(Name, 2, "{} is uptodate", relative_path.display());
             } else {
                 // upstream: generator.c:1462 itemize() sets ITEM_IS_NEW when the
@@ -256,6 +257,7 @@ impl ReceiverContext {
                 let iflags =
                     ItemFlags::from_raw(ItemFlags::ITEM_LOCAL_CHANGE | ItemFlags::ITEM_IS_NEW);
                 let _ = self.emit_or_record_itemize(writer, flist_idx, &iflags, entry);
+                self.record_server_no_transfer_itemize(flist_idx, iflags.raw());
                 if !dest_existed {
                     // upstream: receiver.c:743-746 - a newly created device
                     // (created_devices) or FIFO/socket (created_specials),

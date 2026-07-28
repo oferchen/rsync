@@ -1098,6 +1098,7 @@ impl ReceiverContext {
             // metadata-only row interleaves with directory and transfer rows in
             // flist-index order at flush time; emitted immediately otherwise.
             let _ = self.emit_or_record_itemize(writer, flist_idx, &iflags, entry);
+            self.record_server_no_transfer_itemize(flist_idx, unchanged_iflags);
         }
 
         // upstream: generator.c:468 unchanged_attrs() - fast-path check avoids
@@ -1196,6 +1197,118 @@ mod itemize_order_tests {
         };
         config.connection.client_mode = true;
         config
+    }
+
+    /// A server-mode push receiver with `-i`: the remote end of a push.
+    fn itemize_server_config() -> ServerConfig {
+        let mut config = itemize_client_config();
+        config.connection.client_mode = false;
+        config
+    }
+
+    /// upstream: generator.c:582-593 - on a push the server-side generator
+    /// writes `NDX + write_shortint(iflags)` for a quick-check-matched file
+    /// whose attributes still differ; the pushing client's sender renders the
+    /// `.f...p.....` row from those wire iflags (sender.c:292-293
+    /// `maybe_log_item`). A server receiver that drops the record makes every
+    /// metadata-only change invisible under `-i` on a push - against another
+    /// oc peer and against upstream 3.4.4 alike - while a pull stays correct,
+    /// so only the push direction ever exposes the loss.
+    #[cfg(unix)]
+    #[test]
+    fn server_push_candidate_scan_records_metadata_only_wire_row() {
+        use std::os::unix::fs::PermissionsExt;
+
+        use crate::generator::ItemFlags;
+
+        let dir = test_support::create_tempdir();
+        let dest = dir.path();
+        let path = dest.join("f.txt");
+        std::fs::write(&path, b"x").unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o644)).unwrap();
+        let t = filetime::FileTime::from_unix_time(1_600_000_000, 0);
+        filetime::set_file_times(&path, t, t).unwrap();
+
+        let mut entry = FileEntry::new_file("f.txt".into(), 1, 0o600);
+        entry.set_mtime(1_600_000_000, 0);
+
+        let hs = handshake();
+        let run = |client_mode: bool| {
+            let mut config = itemize_server_config();
+            config.connection.client_mode = client_mode;
+            config.flags.times = true;
+            config.flags.perms = true;
+            let mut ctx = ReceiverContext::new_for_test(&hs, config);
+            ctx.file_list = vec![entry.clone()];
+            let mut writer = crate::writer::ServerWriter::new_plain(Vec::new());
+            let mut metadata_errors = Vec::new();
+            let mut stats = TransferStats::default();
+            let files = ctx.build_files_to_transfer(
+                &mut writer,
+                dest,
+                &metadata::MetadataOptions::default(),
+                None,
+                &mut metadata_errors,
+                &mut stats,
+                None,
+                None,
+            );
+            assert!(
+                files.is_empty(),
+                "a quick-check match must not request a transfer"
+            );
+            ctx.server_no_transfer_itemize.borrow().clone()
+        };
+
+        assert_eq!(
+            run(false),
+            vec![(0usize, ItemFlags::ITEM_REPORT_PERMS as u16)],
+            "the server-mode candidate scan must record the metadata-only row \
+             for the wire; without it the pushing client prints nothing"
+        );
+        assert!(
+            run(true).is_empty(),
+            "a client-mode (pull) receiver prints its row locally; recording \
+             it for the wire too would double every row"
+        );
+    }
+
+    /// upstream: generator.c:581-583 - `iflags &= 0xffff` puts the full low
+    /// word on the wire, but the record is only emitted when a significant
+    /// flag survives (or `-ii` / `-vv` force unchanged rows), and this
+    /// no-trailing-fields path must never advertise `ITEM_REPORT_XATTR`,
+    /// `ITEM_BASIS_TYPE_FOLLOWS`, or `ITEM_XNAME_FOLLOWS` - the peer's sender
+    /// would block reading a basis byte, xname vstring, or xattr request that
+    /// never arrives.
+    #[test]
+    fn record_server_no_transfer_itemize_strips_framing_and_gates_significance() {
+        use crate::generator::ItemFlags;
+
+        let hs = handshake();
+        let ctx = ReceiverContext::new_for_test(&hs, itemize_server_config());
+        ctx.record_server_no_transfer_itemize(
+            2,
+            ItemFlags::ITEM_REPORT_PERMS
+                | ItemFlags::ITEM_REPORT_XATTR
+                | ItemFlags::ITEM_BASIS_TYPE_FOLLOWS
+                | ItemFlags::ITEM_XNAME_FOLLOWS,
+        );
+        ctx.record_server_no_transfer_itemize(3, 0);
+        assert_eq!(
+            ctx.server_no_transfer_itemize.borrow().as_slice(),
+            &[(2usize, ItemFlags::ITEM_REPORT_PERMS as u16)],
+            "framing bits are stripped and an all-clear record is dropped"
+        );
+
+        let mut ii = itemize_server_config();
+        ii.flags.info_flags.itemize_unchanged = true;
+        let ctx = ReceiverContext::new_for_test(&hs, ii);
+        ctx.record_server_no_transfer_itemize(3, 0);
+        assert_eq!(
+            ctx.server_no_transfer_itemize.borrow().as_slice(),
+            &[(3usize, 0u16)],
+            "-ii (stdout_format_has_i > 1) keeps the unchanged record"
+        );
     }
 
     /// upstream: generator.c:531-533. Under `--atimes` (`-U`), an otherwise

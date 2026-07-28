@@ -144,6 +144,7 @@ impl ReceiverContext {
                         // flist-index order immediately before its children at
                         // flush time, matching run_pipelined and upstream.
                         let _ = self.emit_or_record_itemize(writer, flist_idx, &iflags, file_entry);
+                        self.record_server_no_transfer_itemize(flist_idx, iflags.raw());
                     }
                     None => {
                         stats.directories_failed += 1;

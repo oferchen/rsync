@@ -411,6 +411,7 @@ impl ReceiverContext {
                 // flist-index order (immediately before its children) at flush
                 // time; emitted immediately on every other path.
                 let _ = self.emit_or_record_itemize(writer, *idx, &iflags, entry);
+                self.record_server_no_transfer_itemize(*idx, iflags.raw());
             }
         }
 
