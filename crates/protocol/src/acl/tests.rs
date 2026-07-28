@@ -1589,158 +1589,226 @@ mod strip_perms_tests {
 
 /// Tests for `RsyncAcl::equal_enough`.
 ///
-/// Validates semantic ACL comparison that ignores mask when no named
-/// entries exist. Upstream: `rsync_acl_equal_enough()` in `acls.c`.
+/// Encodes the exact contract of upstream `rsync_acl_equal_enough()`
+/// (`acls.c` lines 205-224): the first ACL is fully populated, the second may
+/// be a condensed ACL with `NO_ENTRY` fields, and the file mode recovers a
+/// stripped `group_obj`. Only `mask_obj` presence, the `group_obj` extended
+/// entry, and the named user/group entries participate; `user_obj` and
+/// `other_obj` are deliberately left to the mode-preservation code.
+///
+/// Each `WHY` note records the upstream semantics the case pins. The
+/// discriminating cases below (all but the two named-entry guards) return the
+/// opposite result under the old, non-upstream logic that compared
+/// `user_obj`/`other_obj` and mask values - proving the fix is exercised.
 mod equal_enough_tests {
     use super::*;
 
     #[test]
-    fn identical_acls_are_equal() {
+    fn reflexive() {
+        // WHY: an ACL is trivially equal enough to itself.
         let acl = RsyncAcl::from_mode(0o755);
-        assert!(acl.equal_enough(&acl));
-    }
-
-    #[test]
-    fn different_user_obj_not_equal() {
-        let a = RsyncAcl::from_mode(0o755);
-        let b = RsyncAcl::from_mode(0o655);
-        assert!(!a.equal_enough(&b));
-    }
-
-    #[test]
-    fn different_other_obj_not_equal() {
-        let a = RsyncAcl::from_mode(0o750);
-        let b = RsyncAcl::from_mode(0o751);
-        assert!(!a.equal_enough(&b));
-    }
-
-    #[test]
-    fn different_group_obj_not_equal() {
-        let a = RsyncAcl::from_mode(0o750);
-        let b = RsyncAcl::from_mode(0o740);
-        assert!(!a.equal_enough(&b));
-    }
-
-    #[test]
-    fn mask_ignored_when_no_named_entries() {
-        // Two ACLs with same effective permissions but different mask state.
-        // Without named entries, mask is irrelevant.
-        let a = RsyncAcl::from_mode(0o755);
-
-        let mut b = RsyncAcl::new();
-        b.user_obj = 7;
-        b.group_obj = 0; // different group_obj
-        b.mask_obj = 5; // but mask provides the effective group perms
-        b.other_obj = 5;
-
-        // a has group_obj=5, no mask. b has group_obj=0, mask=5.
-        // Without named entries, effective group = mask if present, else group_obj.
-        assert!(a.equal_enough(&b));
-
-        // Reverse comparison should also hold
-        assert!(b.equal_enough(&a));
-    }
-
-    #[test]
-    fn mask_compared_when_named_entries_present() {
-        let mut a = RsyncAcl::new();
-        a.user_obj = 7;
-        a.group_obj = 5;
-        a.mask_obj = 7;
-        a.other_obj = 5;
-        a.names.push(IdAccess::user(1000, 0x07));
-
-        let mut b = a.clone();
-        b.mask_obj = 3; // different mask
-
-        // With named entries, mask must match exactly
-        assert!(!a.equal_enough(&b));
-    }
-
-    #[test]
-    fn group_obj_compared_when_named_entries_present() {
-        let mut a = RsyncAcl::new();
-        a.user_obj = 7;
-        a.group_obj = 5;
-        a.mask_obj = 7;
-        a.other_obj = 5;
-        a.names.push(IdAccess::user(1000, 0x07));
-
-        let mut b = a.clone();
-        b.group_obj = 3; // different group
-
-        assert!(!a.equal_enough(&b));
-    }
-
-    #[test]
-    fn different_named_entry_count_not_equal() {
-        let mut a = RsyncAcl::from_mode(0o755);
-        a.names.push(IdAccess::user(1000, 0x07));
-
-        let b = RsyncAcl::from_mode(0o755);
-
-        assert!(!a.equal_enough(&b));
-    }
-
-    #[test]
-    fn different_named_entry_id_not_equal() {
-        let mut a = RsyncAcl::from_mode(0o755);
-        a.mask_obj = 7;
-        a.names.push(IdAccess::user(1000, 0x07));
-
-        let mut b = RsyncAcl::from_mode(0o755);
-        b.mask_obj = 7;
-        b.names.push(IdAccess::user(2000, 0x07));
-
-        assert!(!a.equal_enough(&b));
-    }
-
-    #[test]
-    fn different_named_entry_perms_not_equal() {
-        let mut a = RsyncAcl::from_mode(0o755);
-        a.mask_obj = 7;
-        a.names.push(IdAccess::user(1000, 0x07));
-
-        let mut b = RsyncAcl::from_mode(0o755);
-        b.mask_obj = 7;
-        b.names.push(IdAccess::user(1000, 0x05));
-
-        assert!(!a.equal_enough(&b));
+        assert!(acl.equal_enough(&acl, 0o755));
     }
 
     #[test]
     fn empty_acls_are_equal() {
+        // WHY: acls.c:208 - both masks NO_ENTRY (xor bit clear), no group
+        // check (no mask), no named entries -> equal enough.
         let a = RsyncAcl::new();
         let b = RsyncAcl::new();
-        assert!(a.equal_enough(&b));
+        assert!(a.equal_enough(&b, 0o644));
     }
 
     #[test]
-    fn both_masks_present_no_names_effective_group_matches() {
+    fn user_obj_differs_but_extended_entries_equal_is_equal_enough() {
+        // WHY: acls.c:205-206,208-223 - user_obj is NOT part of the
+        // comparison; upstream leaves it to the mode. Mask absent on both,
+        // named entries identical -> equal enough despite differing user_obj
+        // (and other_obj). The old code compared user_obj first and wrongly
+        // returned false here.
         let mut a = RsyncAcl::new();
         a.user_obj = 7;
-        a.group_obj = 3;
-        a.mask_obj = 5;
+        a.group_obj = 5;
+        a.mask_obj = NO_ENTRY;
+        a.other_obj = 5;
+        a.names.push(IdAccess::user(1000, 0x07));
+
+        let mut b = a.clone();
+        b.user_obj = 1; // differs - ignored by upstream
+        b.other_obj = 0; // differs - ignored by upstream
+
+        assert!(a.equal_enough(&b, 0o755));
+    }
+
+    #[test]
+    fn other_obj_differs_no_mask_is_equal_enough() {
+        // WHY: acls.c:205-206 - other_obj is left to the mode and never
+        // compared. The old code compared other_obj and wrongly rejected.
+        let mut a = RsyncAcl::new();
+        a.user_obj = 7;
+        a.group_obj = 5;
+        a.mask_obj = NO_ENTRY;
+        a.other_obj = 5;
+
+        let mut b = a.clone();
+        b.other_obj = 0; // differs - ignored by upstream
+
+        assert!(a.equal_enough(&b, 0o750));
+    }
+
+    #[test]
+    fn stripped_group_obj_recovered_from_mode_matches_is_equal() {
+        // WHY: acls.c:216-219 - a condensed ACL omits group_obj (NO_ENTRY)
+        // only when it equalled the mask and thus the mode's group bits.
+        // With mode 0o750 the group bits are 5, and racl1.group_obj is 5, so
+        // the recovered comparison holds. The old code, seeing named entries,
+        // compared user_obj (7 vs NO_ENTRY) and wrongly returned false.
+        let mut a = RsyncAcl::new();
+        a.user_obj = 7;
+        a.group_obj = 5; // == (0o750 >> 3) & 7
+        a.mask_obj = 7;
+        a.other_obj = 0;
+        a.names.push(IdAccess::user(1000, 0x07));
+
+        let mut b = RsyncAcl::new();
+        b.user_obj = NO_ENTRY;
+        b.group_obj = NO_ENTRY; // stripped: recovered from mode
+        b.mask_obj = 7;
+        b.other_obj = NO_ENTRY;
+        b.names.push(IdAccess::user(1000, 0x07));
+
+        assert!(a.equal_enough(&b, 0o750));
+    }
+
+    #[test]
+    fn stripped_group_obj_mismatching_mode_is_not_equal() {
+        // WHY: acls.c:216-219 - when racl2 omits group_obj, racl1.group_obj
+        // must equal the mode's group bits. Here group_obj is 4 but mode
+        // 0o700 has group bits 0, so upstream returns false. The old code
+        // ignored group_obj entirely when there were no named entries (it
+        // compared only the mask), so it wrongly returned true - this case
+        // proves the mode-recovery branch is honored.
+        let mut a = RsyncAcl::new();
+        a.user_obj = 7;
+        a.group_obj = 4; // != (0o700 >> 3) & 7 == 0
+        a.mask_obj = 6;
         a.other_obj = 0;
 
         let mut b = RsyncAcl::new();
         b.user_obj = 7;
-        b.group_obj = 1;
-        b.mask_obj = 5;
+        b.group_obj = NO_ENTRY; // stripped
+        b.mask_obj = 6;
         b.other_obj = 0;
 
-        // No named entries - effective group is mask_obj for both = 5
-        assert!(a.equal_enough(&b));
+        assert!(!a.equal_enough(&b, 0o700));
     }
 
     #[test]
-    fn reflexive_with_named_entries() {
-        let mut acl = RsyncAcl::from_mode(0o755);
-        acl.mask_obj = 7;
-        acl.names.push(IdAccess::user(1000, 0x07));
-        acl.names.push(IdAccess::group(100, 0x05));
+    fn present_group_obj_compared_directly() {
+        // WHY: acls.c:220-221 - when both carry a mask and racl2 keeps its
+        // group_obj, the two group_obj values are compared directly (the mode
+        // is not consulted).
+        let mut a = RsyncAcl::new();
+        a.user_obj = 7;
+        a.group_obj = 5;
+        a.mask_obj = 7;
+        a.other_obj = 0;
 
-        assert!(acl.equal_enough(&acl));
+        let mut b = a.clone();
+        b.group_obj = 3; // differs
+
+        assert!(!a.equal_enough(&b, 0o777));
+    }
+
+    #[test]
+    fn mask_presence_differs_is_not_equal() {
+        // WHY: acls.c:208-209 - if one ACL has a mask and the other doesn't,
+        // they are never equal enough. The old code, with no named entries,
+        // collapsed both to their "effective group" (mask if present, else
+        // group_obj); with both effective groups 6 it wrongly returned true.
+        let mut a = RsyncAcl::new();
+        a.user_obj = 7;
+        a.group_obj = 2;
+        a.mask_obj = 6; // has a mask
+        a.other_obj = 5;
+
+        let mut b = RsyncAcl::new();
+        b.user_obj = 7;
+        b.group_obj = 6;
+        b.mask_obj = NO_ENTRY; // no mask
+        b.other_obj = 5;
+
+        assert!(!a.equal_enough(&b, 0o000));
+    }
+
+    #[test]
+    fn differing_mask_values_do_not_matter_when_group_and_names_match() {
+        // WHY: acls.c:208 only tests mask PRESENCE (the NO_ENTRY bit), never
+        // the mask value; the actual mask is reconstructed by the
+        // mode-preservation code. With both masks present, matching group_obj,
+        // and equal named entries, upstream returns true even though the mask
+        // values differ. The old code compared mask VALUES (5 vs 7) and
+        // wrongly returned false.
+        let mut a = RsyncAcl::new();
+        a.user_obj = 7;
+        a.group_obj = 4;
+        a.mask_obj = 5;
+        a.other_obj = 0;
+
+        let mut b = a.clone();
+        b.mask_obj = 7; // different mask value - upstream ignores it
+
+        assert!(a.equal_enough(&b, 0o740));
+    }
+
+    #[test]
+    fn different_named_entry_perms_not_equal() {
+        // WHY: acls.c:223 (ida_entries_equal) - named entries must match in
+        // access and id. No mask, so only the named entries are compared.
+        // This guard also holds under the old code (both compared named
+        // entries), so it protects shared behavior rather than the fix.
+        let mut a = RsyncAcl::new();
+        a.group_obj = 5;
+        a.names.push(IdAccess::user(1000, 0x07));
+
+        let mut b = a.clone();
+        b.names.clear();
+        b.names.push(IdAccess::user(1000, 0x05)); // different perms
+
+        assert!(!a.equal_enough(&b, 0o755));
+    }
+
+    #[test]
+    fn different_named_entry_count_not_equal() {
+        // WHY: acls.c:223 (ida_entries_equal) - a differing entry count is
+        // never equal. No mask, so only the named entries are compared.
+        // Shared-behavior guard, like the case above.
+        let mut a = RsyncAcl::new();
+        a.group_obj = 5;
+        a.names.push(IdAccess::user(1000, 0x07));
+
+        let mut b = RsyncAcl::new();
+        b.group_obj = 5;
+
+        assert!(!a.equal_enough(&b, 0o755));
+    }
+
+    #[test]
+    fn resolved_name_is_ignored_in_named_entry_comparison() {
+        // WHY: acls.c:223 (ida_entries_equal) compares only access and id,
+        // not the resolved name. Two entries with the same id/access but
+        // different names remain equal enough. No mask here, so the group
+        // branch is skipped and only the named entries are compared.
+        let mut a = RsyncAcl::new();
+        a.group_obj = 5;
+        a.names
+            .push(IdAccess::user_with_name(1000, 0x07, b"alice".to_vec()));
+
+        let mut b = RsyncAcl::new();
+        b.group_obj = 5;
+        b.names.push(IdAccess::user(1000, 0x07));
+
+        assert!(a.equal_enough(&b, 0o755));
     }
 }
 
