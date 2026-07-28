@@ -66,8 +66,14 @@ jobs:
           packages: build-essential pkg-config zlib1g-dev curl autoconf automake libtool libacl1-dev libattr1-dev
           version: v1
 
+      # Prebuilt binary, matching the overnight fuzz workflows. Compiling
+      # cargo-fuzz from source runs under the repo's pinned stable toolchain
+      # (rust-toolchain.toml), which current cargo-fuzz lockfiles no longer
+      # support - every weekly run since 2026-06-15 failed at this step.
       - name: Install cargo-fuzz
-        run: cargo install cargo-fuzz --locked
+        uses: taiki-e/install-action@41049aa56687c35e0afa74eed4f09cec4f9afabf # v2
+        with:
+          tool: cargo-fuzz
 
       - name: Enumerate fuzz targets
         id: targets
@@ -112,6 +118,7 @@ jobs:
         run: |
           set -uo pipefail
           mkdir -p coverage
+          host_triple="${{ steps.host.outputs.triple }}"
           while IFS= read -r target; do
               [[ -z "${target}" ]] && continue
               echo "::group::coverage ${target}"
@@ -126,7 +133,6 @@ jobs:
                   echo "::endgroup::"
                   continue
               fi
-              host_triple=$(rustc -vV | awk '/^host:/ { print $2 }')
               binary="fuzz/target/${host_triple}/coverage/${host_triple}/release/${target}"
               if [[ ! -x "${binary}" ]]; then
                   binary="fuzz/target/${host_triple}/release/${target}"
