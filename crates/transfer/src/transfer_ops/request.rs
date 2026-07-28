@@ -121,15 +121,33 @@ pub fn send_file_request_xattr<W: Write + ?Sized>(
         // bits from itemize(), including ITEM_IS_NEW when the destination did
         // not exist). The sender reads them, echoes them back, and prints the
         // row via log_item(FCLIENT), so on a push a brand-new file shows
-        // `<f+++++++++` rather than `<f.........`. Keep only the low 16-bit
-        // report/new bits and drop the ones this function manages itself
-        // (XATTR/BASIS/XNAME require trailing wire fields written below);
-        // always force ITEM_TRANSFER so the sender still reads the sum head.
-        const MANAGED: u16 = SenderAttrs::ITEM_REPORT_XATTR
-            | SenderAttrs::ITEM_BASIS_TYPE_FOLLOWS
-            | SenderAttrs::ITEM_XNAME_FOLLOWS;
-        let mut iflags = ((base_iflags & 0xFFFF) as u16 & !MANAGED) | SenderAttrs::ITEM_TRANSFER;
-        if has_xattr_request && config.preserve_xattrs {
+        // `<f+++++++++` rather than `<f.........`.
+        //
+        // upstream: generator.c:581 `iflags &= 0xffff` keeps every low-16
+        // report bit - including ITEM_REPORT_XATTR (1<<8), which itemize() set
+        // from the xattr_diff() comparison (generator.c:565-576). Only bits
+        // 16-18 (ITEM_MISSING_DATA/DELETED/MATCHED, all log-only locals) are
+        // masked off, and ITEM_REPORT_XATTR is not among them. We additionally
+        // strip the two trailing-field bits (BASIS/XNAME) because this function
+        // re-derives them from fnamecmp_type/xname below and writes their
+        // payloads itself; the xattr bit is re-applied from the value diff so a
+        // pushed file with differing xattrs shows `<f.s......x`, not
+        // `<f.s.......`. Always force ITEM_TRANSFER so the sender still reads
+        // the sum head.
+        const MANAGED: u16 =
+            SenderAttrs::ITEM_BASIS_TYPE_FOLLOWS | SenderAttrs::ITEM_XNAME_FOLLOWS;
+        let mut iflags = ((base_iflags & 0xFFFF) as u16
+            & !(MANAGED | SenderAttrs::ITEM_REPORT_XATTR))
+            | SenderAttrs::ITEM_TRANSFER;
+        // upstream: generator.c:566/575 gate the xattr comparison on
+        // preserve_xattrs, so base_iflags only carries the bit when -X is
+        // active; re-gate here for safety. The bit is set from the itemized
+        // value diff (base_iflags) or from a TODO/abbrev request in xattr_list.
+        let base_reports_xattr =
+            base_iflags & u32::from(SenderAttrs::ITEM_REPORT_XATTR) != 0;
+        let report_xattr =
+            config.preserve_xattrs && (base_reports_xattr || has_xattr_request);
+        if report_xattr {
             iflags |= SenderAttrs::ITEM_REPORT_XATTR;
         }
         // upstream: generator.c:1942-1943 - a non-FNAME basis sets
@@ -161,10 +179,27 @@ pub fn send_file_request_xattr<W: Write + ?Sized>(
             protocol::write_vstring(writer, xname.unwrap_or(&[]))?;
         }
 
-        // upstream: sender.c:193-196 - write xattr request data after iflags
-        if has_xattr_request && config.preserve_xattrs {
-            if let Some(list) = xattr_list {
-                write_xattr_request(writer, list)?;
+        // upstream: generator.c:592-599 - the xattr request payload follows the
+        // basis/xname fields whenever ITEM_REPORT_XATTR is on the wire; the
+        // peer's send_files() reads it under the identical condition
+        // (sender.c:85-87). want_xattr_optim combined with
+        // ITEM_XNAME_FOLLOWS+ITEM_LOCAL_CHANGE suppresses the payload on both
+        // sides (generator.c:595-596), so the bit rides the wire with no
+        // trailing request. Coupling the payload to the same `report_xattr`
+        // value that set the bit keeps the two in lockstep: an upstream sender
+        // that sees the bit always reads exactly the bytes we write here.
+        if report_xattr {
+            let optim_skip = config.want_xattr_optim
+                && iflags & SenderAttrs::ITEM_XNAME_FOLLOWS != 0
+                && iflags & SenderAttrs::ITEM_LOCAL_CHANGE != 0;
+            if !optim_skip {
+                match xattr_list {
+                    Some(list) => write_xattr_request(writer, list)?,
+                    // upstream: send_xattr_request() with no XSTATE_TODO items
+                    // writes only the terminating `write_byte(f_out, 0)`, read
+                    // back as a varint by recv_xattr_request (xattrs.c:685).
+                    None => protocol::write_varint(writer, 0)?,
+                }
             }
         }
     }
