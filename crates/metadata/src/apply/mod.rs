@@ -305,6 +305,18 @@ pub fn metadata_unchanged(
             return false;
         }
 
+        // upstream: generator.c:418-426 perms_differ() - without --perms,
+        // --executability compares only executability presence. dest_mode()
+        // (rsync.c:449-473) tweaks x-bits solely for regular files, so
+        // non-regular entries never differ on this leg.
+        if !options.permissions()
+            && options.executability()
+            && entry.file_type().is_regular()
+            && (cached_meta.mode() & 0o111 != 0) != (entry.permissions() & 0o111 != 0)
+        {
+            return false;
+        }
+
         // upstream: generator.c:496-497 - ownership_differs(file, sxp)
         if options.owner() {
             if let Some(uid) = entry.uid() {
