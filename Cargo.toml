@@ -292,7 +292,7 @@ toml = "1.1"
 # CLI argument parser - shared by cli/daemon/xtask binaries
 clap = { version = "4.5", features = ["std"] }
 # Base64 codec - daemon auth + core module list parsing
-base64 = "0.22"
+base64 = "0.23"
 # Modern syscall wrappers - used by core, engine, metadata, fast_io
 rustix = "1.1"
 # CLI integration testing - dev-dep across cli and root bin
