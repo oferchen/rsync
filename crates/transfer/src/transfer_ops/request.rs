@@ -134,8 +134,7 @@ pub fn send_file_request_xattr<W: Write + ?Sized>(
         // pushed file with differing xattrs shows `<f.s......x`, not
         // `<f.s.......`. Always force ITEM_TRANSFER so the sender still reads
         // the sum head.
-        const MANAGED: u16 =
-            SenderAttrs::ITEM_BASIS_TYPE_FOLLOWS | SenderAttrs::ITEM_XNAME_FOLLOWS;
+        const MANAGED: u16 = SenderAttrs::ITEM_BASIS_TYPE_FOLLOWS | SenderAttrs::ITEM_XNAME_FOLLOWS;
         let mut iflags = ((base_iflags & 0xFFFF) as u16
             & !(MANAGED | SenderAttrs::ITEM_REPORT_XATTR))
             | SenderAttrs::ITEM_TRANSFER;
@@ -143,10 +142,8 @@ pub fn send_file_request_xattr<W: Write + ?Sized>(
         // preserve_xattrs, so base_iflags only carries the bit when -X is
         // active; re-gate here for safety. The bit is set from the itemized
         // value diff (base_iflags) or from a TODO/abbrev request in xattr_list.
-        let base_reports_xattr =
-            base_iflags & u32::from(SenderAttrs::ITEM_REPORT_XATTR) != 0;
-        let report_xattr =
-            config.preserve_xattrs && (base_reports_xattr || has_xattr_request);
+        let base_reports_xattr = base_iflags & u32::from(SenderAttrs::ITEM_REPORT_XATTR) != 0;
+        let report_xattr = config.preserve_xattrs && (base_reports_xattr || has_xattr_request);
         if report_xattr {
             iflags |= SenderAttrs::ITEM_REPORT_XATTR;
         }

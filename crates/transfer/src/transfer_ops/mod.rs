@@ -544,8 +544,7 @@ mod tests {
         // base_iflags as itemize_existing_flags would produce it for a
         // transferred file whose destination xattrs differ: ITEM_TRANSFER plus
         // the xattr value-diff bit.
-        let base =
-            u32::from(SenderAttrs::ITEM_TRANSFER | SenderAttrs::ITEM_REPORT_XATTR);
+        let base = u32::from(SenderAttrs::ITEM_TRANSFER | SenderAttrs::ITEM_REPORT_XATTR);
         send_file_request(
             &mut bytes,
             &mut ndx_codec,
