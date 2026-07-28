@@ -43,13 +43,17 @@ pub(super) fn is_hardlink_follower(entry: &FileEntry) -> bool {
 /// 1. Size mismatch - always needs transfer
 /// 2. `always_checksum` - compute file checksum and compare (ignores mtime)
 /// 3. `size_only` - size matched, skip transfer
-/// 4. `!preserve_times` (implies `ignore_times`) - force transfer
+/// 4. `ignore_times` (`-I`) - force transfer regardless of mtime
 /// 5. mtime comparison, tolerating `--modify-window` seconds of drift
+///
+/// Note: `-t`/`--times` affects only whether mtime is *applied* to the
+/// destination, never whether this quick-check compares it (upstream
+/// `generator.c:642` gates solely on `ignore_times`).
 pub(super) fn quick_check_matches(
     entry: &FileEntry,
     dest_path: &Path,
     dest_meta: &fs::Metadata,
-    preserve_times: bool,
+    ignore_times: bool,
     size_only: bool,
     always_checksum: Option<protocol::ChecksumAlgorithm>,
     modify_window: ModifyWindow,
@@ -72,8 +76,8 @@ pub(super) fn quick_check_matches(
     if size_only {
         return true;
     }
-    // upstream: generator.c:642 - ignore_times forces transfer
-    if !preserve_times {
+    // upstream: generator.c:642 - `if (ignore_times) return 0;` forces transfer
+    if ignore_times {
         return false;
     }
     // upstream: generator.c:645 - `mtime_differs()` -> `same_time()` applies the
@@ -262,7 +266,7 @@ fn best_reference_match<'a>(
     entry: &FileEntry,
     relative_path: &Path,
     reference_directories: &'a [ReferenceDirectory],
-    preserve_times: bool,
+    ignore_times: bool,
     size_only: bool,
     always_checksum: Option<protocol::ChecksumAlgorithm>,
     modify_window: ModifyWindow,
@@ -288,7 +292,7 @@ fn best_reference_match<'a>(
             entry,
             &ref_path,
             &ref_meta,
-            preserve_times,
+            ignore_times,
             size_only,
             always_checksum,
             modify_window,
@@ -355,7 +359,7 @@ pub(super) fn try_reference_dest(
     entry: &FileEntry,
     dest_dir: &Path,
     reference_directories: &[ReferenceDirectory],
-    preserve_times: bool,
+    ignore_times: bool,
     size_only: bool,
     always_checksum: Option<protocol::ChecksumAlgorithm>,
     modify_window: ModifyWindow,
@@ -374,7 +378,7 @@ pub(super) fn try_reference_dest(
         entry,
         relative_path,
         reference_directories,
-        preserve_times,
+        ignore_times,
         size_only,
         always_checksum,
         modify_window,
@@ -1072,6 +1076,8 @@ mod symlink_basis_tests {
             &entry,
             dest_dir,
             std::slice::from_ref(&reference),
+            // ignore_times=false: exercise the real quick-check path; size_only
+            // below short-circuits before the mtime gate regardless.
             false,
             true,
             None,
@@ -1282,7 +1288,7 @@ mod modify_window_tests {
     use super::{ModifyWindow, quick_check_matches};
 
     /// Builds a dest file at `dest_secs` and a source entry claiming `src_secs`,
-    /// both the same size, then runs the quick-check with `preserve_times=true`,
+    /// both the same size, then runs the quick-check with `ignore_times=false`,
     /// `size_only=false`, no checksum, at the given `window`.
     fn run_window(src_secs: i64, dest_secs: i64, window: ModifyWindow) -> bool {
         run_window_nsec(src_secs, 0, dest_secs, 0, window)
@@ -1316,7 +1322,7 @@ mod modify_window_tests {
         let mut entry = FileEntry::new_file("payload.bin".into(), payload.len() as u64, 0o644);
         entry.set_mtime(src_secs, src_nsec);
 
-        quick_check_matches(&entry, &dest_path, &dest_meta, true, false, None, window)
+        quick_check_matches(&entry, &dest_path, &dest_meta, false, false, None, window)
     }
 
     /// A destination whose mtime is within `--modify-window=2` of the source
@@ -1452,7 +1458,7 @@ mod alt_dest_match_level_tests {
         entry: &FileEntry,
         dest_dir: &Path,
         refs: &[ReferenceDirectory],
-        preserve_times: bool,
+        ignore_times: bool,
         size_only: bool,
     ) -> bool {
         let opts = MetadataOptions::default();
@@ -1461,7 +1467,7 @@ mod alt_dest_match_level_tests {
             entry,
             dest_dir,
             refs,
-            preserve_times,
+            ignore_times,
             size_only,
             None,
             ModifyWindow::from_secs(0),
@@ -1505,7 +1511,7 @@ mod alt_dest_match_level_tests {
             path: ref_dir.clone(),
         }];
 
-        let handled = run(&entry, &dest_dir, &refs, true, true);
+        let handled = run(&entry, &dest_dir, &refs, false, true);
         let dest_path = dest_dir.join("payload.bin");
 
         assert!(handled, "a matching basis must be handled locally");
@@ -1543,7 +1549,7 @@ mod alt_dest_match_level_tests {
             path: ref_dir.clone(),
         }];
 
-        let handled = run(&entry, &dest_dir, &refs, true, false);
+        let handled = run(&entry, &dest_dir, &refs, false, false);
         let dest_path = dest_dir.join("payload.bin");
 
         assert!(handled, "identical basis must be handled locally");
@@ -1581,7 +1587,7 @@ mod alt_dest_match_level_tests {
             path: ref_dir.clone(),
         }];
 
-        let handled = run(&entry, &dest_dir, &refs, true, false);
+        let handled = run(&entry, &dest_dir, &refs, false, false);
         let dest_path = dest_dir.join("payload.bin");
 
         assert!(handled, "level-2 compare-dest must handle the file locally");
@@ -1611,7 +1617,7 @@ mod alt_dest_match_level_tests {
             path: ref_dir.clone(),
         }];
 
-        let handled = run(&entry, &dest_dir, &refs, true, false);
+        let handled = run(&entry, &dest_dir, &refs, false, false);
         let dest_path = dest_dir.join("payload.bin");
 
         assert!(
@@ -1657,7 +1663,7 @@ mod alt_dest_match_level_tests {
             },
         ];
 
-        let handled = run(&entry, &dest_dir, &refs, true, false);
+        let handled = run(&entry, &dest_dir, &refs, false, false);
         let dest_path = dest_dir.join("payload.bin");
 
         assert!(handled, "a level-3 basis in a later dir must be handled");
