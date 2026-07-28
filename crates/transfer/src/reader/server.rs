@@ -317,6 +317,19 @@ impl<R: Read> ServerReader<R> {
     }
 }
 
+impl<R: Read> super::BufferedInputHint for ServerReader<R> {
+    /// Only the multiplex reader tracks a demuxed frame buffer whose remaining
+    /// bytes guarantee a non-blocking next read. Plain and compressed modes have
+    /// no such peekable buffer, so they answer `false` and keep the conservative
+    /// pre-read flush.
+    fn has_buffered_input(&self) -> bool {
+        match &self.inner {
+            ServerReaderInner::Multiplex(mux) => mux.has_buffered_payload(),
+            ServerReaderInner::Plain(_) | ServerReaderInner::Compressed(_) => false,
+        }
+    }
+}
+
 impl<R: Read> Read for ServerReader<R> {
     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
         match &mut self.inner {

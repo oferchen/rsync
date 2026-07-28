@@ -28,6 +28,7 @@ use super::super::{
     GeneratorContext, SegmentScheduler, TransferLoopResult, flush_with_count, is_early_close_error,
 };
 use crate::delta_config::DeltaGeneratorConfig;
+use crate::reader::BufferedInputHint;
 use crate::receiver::SumHead;
 use crate::writer::{BatchRoute, MsgInfoSender};
 
@@ -211,7 +212,7 @@ impl GeneratorContext {
     ///
     /// - `sender.c:send_files()` - Main send loop (lines 210-462)
     /// - `io.c:read_ndx/write_ndx` - NDX protocol encoding
-    pub(super) fn run_transfer_loop<R: Read, W: Write>(
+    pub(super) fn run_transfer_loop<R: Read + BufferedInputHint, W: Write>(
         &mut self,
         reader: &mut R,
         writer: &mut super::super::super::writer::ServerWriter<W>,
@@ -371,11 +372,20 @@ impl GeneratorContext {
                 }
             }
 
-            // upstream: io.c perform_io() flushes buffered output while waiting
-            // for input via select(). Our Read/Write traits are independent, so
-            // we must explicitly flush before blocking on read to prevent deadlock
-            // when buffered delta data hasn't reached the receiver yet.
-            flush_with_count(writer)?;
+            // upstream: io.c:640-724 perform_io() flushes buffered output only
+            // while genuinely waiting for input via select(); when the next
+            // request is already buffered (iobuf.in.len >= needed, io.c:643) it
+            // returns immediately without draining output. Our Read/Write traits
+            // are independent, so we mirror that: flush before a read that would
+            // actually block (no demuxed request buffered), but skip it while
+            // more requests remain in the reader's frame buffer. Skipping is
+            // deadlock-safe precisely because a buffered read cannot block, and
+            // it lets the writer coalesce per-file deltas up to its buffer bound
+            // - ~24 files per socket write, matching upstream's iobuf.out
+            // batching instead of one write() per file.
+            if !reader.has_buffered_input() {
+                flush_with_count(writer)?;
+            }
 
             // upstream: generator.c:2138-2144 - during the send loop, emit a
             // keepalive once the I/O lull has elapsed so the receiver's timeout
@@ -1643,6 +1653,11 @@ mod phase2_guard_tests {
     use crate::role::ServerRole;
     use crate::writer::ServerWriter;
 
+    // The crafted-wire tests feed a plain in-memory cursor, which has no
+    // peekable frame buffer: it keeps the conservative pre-read flush (the
+    // trait default), so these tests exercise the unchanged flush cadence.
+    impl crate::reader::BufferedInputHint for Cursor<Vec<u8>> {}
+
     /// `ITEM_TRANSFER` (0x8000) as its 2-byte little-endian wire encoding, the
     /// shortint iflags the receiver sends for a real file transfer request
     /// (proto >= 29, `item_flags.rs::read`).
@@ -1962,6 +1977,12 @@ mod inc_recurse_lookahead_tests {
         }
     }
 
+    // The probe models a peer whose NDXs the sender must genuinely block for,
+    // so it keeps the conservative pre-read flush (the trait default). The
+    // pacing assertion measures dispatch-before-first-block, which the flush
+    // gate does not affect.
+    impl crate::reader::BufferedInputHint for FirstReadProbe {}
+
     /// Builds an INC_RECURSE generator over a `DIRS * FILES_PER_DIR` tree.
     ///
     /// Entries are pushed in the sorted order a real `-r` scan produces
@@ -2066,6 +2087,167 @@ mod inc_recurse_lookahead_tests {
             (after - before) as usize,
             DIRS,
             "every sub-list must still reach the receiver by end of transfer"
+        );
+    }
+}
+
+#[cfg(test)]
+mod sender_batch_flush_tests {
+    //! Daemon-sender write-batching guard (#190).
+    //!
+    //! upstream: io.c:640-724 `perform_io()` drains `iobuf.out` only while
+    //! blocking on input; a request already buffered (io.c:643
+    //! `iobuf.in.len >= needed`) returns without a flush, so the sender
+    //! coalesces many per-file deltas into one socket write (~24 files/write)
+    //! rather than forcing a flush per file. This pins that contract: with every
+    //! request already buffered, the sender must NOT flush once per transferred
+    //! file. The WHY: the extra flushes are invisible in an oc-to-oc run (both
+    //! ends keep pace), and only show up as a syscall-rate regression against a
+    //! real peer - so the guard has to assert flush cadence, not wire contents,
+    //! which are byte-identical either way.
+
+    use std::cell::Cell;
+    use std::ffi::OsString;
+    use std::io::{self, Cursor, Read, Write};
+    use std::path::PathBuf;
+    use std::rc::Rc;
+
+    use protocol::ProtocolVersion;
+    use protocol::codec::{MonotonicNdxWriter, NdxCodec};
+
+    use crate::config::ServerConfig;
+    use crate::generator::GeneratorContext;
+    use crate::handshake::HandshakeResult;
+    use crate::reader::BufferedInputHint;
+    use crate::receiver::SumHead;
+    use crate::role::ServerRole;
+    use crate::writer::ServerWriter;
+
+    /// `ITEM_TRANSFER` (0x8000) little-endian, the iflags for a file request.
+    const ITEM_TRANSFER_LE: [u8; 2] = [0x00, 0x80];
+
+    /// Reader modelling a peer whose entire request stream is already buffered
+    /// in user space: while any wire byte remains unread the next read cannot
+    /// block, so `has_buffered_input` is true and the sender may skip its
+    /// pre-read flush - exactly upstream's `iobuf.in.len >= needed` fast path.
+    struct FullyBufferedWire {
+        cur: Cursor<Vec<u8>>,
+    }
+
+    impl Read for FullyBufferedWire {
+        fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+            self.cur.read(buf)
+        }
+    }
+
+    impl BufferedInputHint for FullyBufferedWire {
+        fn has_buffered_input(&self) -> bool {
+            (self.cur.position() as usize) < self.cur.get_ref().len()
+        }
+    }
+
+    /// Plain sink that counts `flush()` calls. In plain mode `ServerWriter`
+    /// delegates `flush` straight through, so the count is the sender's
+    /// socket-write cadence.
+    struct FlushCountingSink {
+        flushes: Rc<Cell<usize>>,
+    }
+
+    impl Write for FlushCountingSink {
+        fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+            Ok(buf.len())
+        }
+
+        fn flush(&mut self) -> io::Result<()> {
+            self.flushes.set(self.flushes.get() + 1);
+            Ok(())
+        }
+    }
+
+    fn test_handshake() -> HandshakeResult {
+        HandshakeResult {
+            protocol: ProtocolVersion::try_from(32u8).unwrap(),
+            buffered: Vec::new(),
+            compat_exchanged: false,
+            client_args: None,
+            io_timeout: None,
+            negotiated_algorithms: None,
+            compat_flags: None,
+            checksum_seed: 0,
+        }
+    }
+
+    /// Builds a generator over `n` small source files, so wire NDX `0..n` are
+    /// valid in-range whole-file transfer requests.
+    fn generator_with_files(n: usize) -> (tempfile::TempDir, GeneratorContext, Vec<PathBuf>) {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let mut paths = Vec::with_capacity(n);
+        for i in 0..n {
+            let file = dir.path().join(format!("f{i:03}.txt"));
+            std::fs::write(&file, format!("payload-{i}")).expect("write source");
+            paths.push(file);
+        }
+        let handshake = test_handshake();
+        let config = ServerConfig {
+            role: ServerRole::Generator,
+            protocol: ProtocolVersion::try_from(32u8).unwrap(),
+            flag_string: "-logDtpre.".to_owned(),
+            args: paths.iter().map(OsString::from).collect(),
+            ..Default::default()
+        };
+        let mut ctx = GeneratorContext::new_for_test(&handshake, config);
+        ctx.build_file_list(&paths).expect("build file list");
+        (dir, ctx, paths)
+    }
+
+    #[test]
+    fn buffered_requests_do_not_flush_per_file() {
+        const FILES: usize = 12;
+        let (_dir, mut ctx, _paths) = generator_with_files(FILES);
+
+        // Receiver request stream: one whole-file transfer request per file
+        // (NDX + ITEM_TRANSFER iflags + empty sum_head), then three NDX_DONEs to
+        // drain phases 0 -> 1 -> 2 -> break.
+        let mut ndx = MonotonicNdxWriter::new(32);
+        let mut wire = Vec::new();
+        for i in 0..FILES {
+            ndx.write_ndx(&mut wire, i as i32).unwrap();
+            wire.extend_from_slice(&ITEM_TRANSFER_LE);
+            SumHead::empty().write(&mut wire).unwrap();
+        }
+        ndx.write_ndx_done(&mut wire).unwrap();
+        ndx.write_ndx_done(&mut wire).unwrap();
+        ndx.write_ndx_done(&mut wire).unwrap();
+
+        let flushes = Rc::new(Cell::new(0usize));
+        let mut reader = FullyBufferedWire {
+            cur: Cursor::new(wire),
+        };
+        let mut writer = ServerWriter::new_plain(FlushCountingSink {
+            flushes: Rc::clone(&flushes),
+        });
+        let mut progress: Option<&mut dyn crate::TransferProgressCallback> = None;
+        let mut itemize: Option<&mut dyn crate::ItemizeCallback> = None;
+
+        let result = ctx
+            .run_transfer_loop(&mut reader, &mut writer, &mut progress, &mut itemize)
+            .expect("sender loop completes with batched writes");
+
+        assert_eq!(
+            result.files_transferred, FILES,
+            "every requested file must still transfer"
+        );
+        // Pre-fix the top-of-loop flush ran unconditionally, so the sender
+        // flushed once per iteration: FILES transfers plus the phase-boundary
+        // NDX_DONE echoes = FILES + 2 flushes. With the buffered-input gate the
+        // per-file flush is skipped entirely and only the phase-boundary echoes
+        // flush. The strict `< FILES` bound fails the instant a per-file flush
+        // returns.
+        assert!(
+            flushes.get() < FILES,
+            "sender flushed {} times for {FILES} files - expected batched writes, \
+             not one flush per file",
+            flushes.get()
         );
     }
 }
