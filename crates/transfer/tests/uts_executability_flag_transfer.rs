@@ -25,7 +25,8 @@ use std::fs;
 use std::os::unix::fs::PermissionsExt;
 use std::path::Path;
 
-use test_support::{OcRsyncCliRunner, create_tempdir, require_binary};
+use filetime::{FileTime, set_file_mtime};
+use test_support::{LSH_STUB_BIN, LshRunnerStub, OcRsyncCliRunner, create_tempdir, require_binary};
 
 fn mode_of(path: &Path) -> u32 {
     fs::metadata(path).expect("stat file").permissions().mode() & 0o7777
@@ -33,6 +34,54 @@ fn mode_of(path: &Path) -> u32 {
 
 fn set_mode(path: &Path, mode: u32) {
     fs::set_permissions(path, fs::Permissions::from_mode(mode)).expect("set mode");
+}
+
+/// Writes `content` and pins mode + a fixed mtime so a later `-t` transfer
+/// takes the quick-check (attribute-only) path rather than re-sending data.
+fn write_fixed(path: &Path, content: &[u8], mode: u32) {
+    fs::write(path, content).expect("write file");
+    set_mode(path, mode);
+    set_file_mtime(path, FileTime::from_unix_time(1_600_000_000, 0)).expect("set mtime");
+}
+
+/// Builds the up-to-date source/destination pair used by the remote-shell
+/// attribute-only tests: identical bytes and mtimes, differing exec bits.
+fn attr_only_fixture(from: &Path, to: &Path) {
+    fs::create_dir_all(from).expect("create from dir");
+    fs::create_dir_all(to).expect("create to dir");
+    // gains exec: source executable, destination not
+    write_fixed(&from.join("gain"), b"aaa\n", 0o755);
+    write_fixed(&to.join("gain"), b"aaa\n", 0o644);
+    // loses exec: source not executable, destination is
+    write_fixed(&from.join("lose"), b"bbb\n", 0o644);
+    write_fixed(&to.join("lose"), b"bbb\n", 0o755);
+    // keeps exec: both sides carry an exec bit, dest bits stay verbatim
+    write_fixed(&from.join("keep"), b"ccc\n", 0o755);
+    write_fixed(&to.join("keep"), b"ccc\n", 0o654);
+}
+
+/// Asserts the upstream `dest_mode()` outcome for [`attr_only_fixture`].
+///
+/// upstream: rsync.c:449-473 dest_mode() - existing dest keeps its perm bits;
+/// with `-E` a non-executable source strips 0111, an executable source grants
+/// exec to every class that can read, and a dest that already has any exec
+/// bit is left verbatim.
+fn assert_attr_only_outcome(to: &Path) {
+    assert_eq!(
+        mode_of(&to.join("gain")),
+        0o755,
+        "-E must grant exec to every readable class on an up-to-date dest"
+    );
+    assert_eq!(
+        mode_of(&to.join("lose")),
+        0o644,
+        "-E must strip exec bits when the source is not executable"
+    );
+    assert_eq!(
+        mode_of(&to.join("keep")),
+        0o654,
+        "-E must leave a dest that already has an exec bit verbatim"
+    );
 }
 
 /// Full three-phase replay of the upstream `executability.test`: a plain
@@ -140,5 +189,118 @@ fn executability_flag_transfers_only_exec_bits() {
         mode_of(&d2) & 0o666,
         0o604,
         "-E must leave dest 2's read/write bits untouched"
+    );
+}
+
+/// Regression: `-rtE` over a remote shell (push) must chmod up-to-date files.
+///
+/// With identical bytes and mtimes the quick check skips the transfer, so the
+/// only way the exec bits can follow the source is the receiver's
+/// attribute-only pass. The network receiver used to skip that pass because
+/// `metadata_unchanged` never consulted `--executability`, leaving the
+/// destination at its old mode while the itemized output claimed a `p` change.
+///
+/// upstream: generator.c:418-426 perms_differ() feeds unchanged_attrs(), so an
+/// executability-presence mismatch forces set_file_attrs() on the skip path
+/// (generator.c:1827).
+#[test]
+fn executability_applies_on_up_to_date_files_over_rsh_push() {
+    if !require_binary("oc-rsync") || !require_binary(LSH_STUB_BIN) {
+        return;
+    }
+    let stub = LshRunnerStub::locate().expect("lsh-stub located");
+
+    let tmp = create_tempdir();
+    let from = tmp.path().join("from");
+    let to = tmp.path().join("to");
+    attr_only_fixture(&from, &to);
+
+    OcRsyncCliRunner::new()
+        .arg("-rtE")
+        .arg(format!("--rsh={}", stub.path().display()))
+        .arg(format!(
+            "--rsync-path={}",
+            test_support::oc_rsync_bin().display()
+        ))
+        .arg(format!("{}/", from.display()))
+        .arg(format!("localhost:{}/", to.display()))
+        .run()
+        .expect("push run")
+        .assert_success();
+
+    assert_attr_only_outcome(&to);
+}
+
+/// Regression: `-rtE` over a remote shell (pull) must chmod up-to-date files.
+///
+/// Same attribute-only scenario as the push test, but the local client is the
+/// receiver. Note `-E` never rides the wire on a pull (options.c:2692 packs
+/// 'E' only when `am_sender`); the local receiver must honour its own flag.
+#[test]
+fn executability_applies_on_up_to_date_files_over_rsh_pull() {
+    if !require_binary("oc-rsync") || !require_binary(LSH_STUB_BIN) {
+        return;
+    }
+    let stub = LshRunnerStub::locate().expect("lsh-stub located");
+
+    let tmp = create_tempdir();
+    let from = tmp.path().join("from");
+    let to = tmp.path().join("to");
+    attr_only_fixture(&from, &to);
+
+    OcRsyncCliRunner::new()
+        .arg("-rtE")
+        .arg(format!("--rsh={}", stub.path().display()))
+        .arg(format!(
+            "--rsync-path={}",
+            test_support::oc_rsync_bin().display()
+        ))
+        .arg(format!("localhost:{}/", from.display()))
+        .arg(format!("{}/", to.display()))
+        .run()
+        .expect("pull run")
+        .assert_success();
+
+    assert_attr_only_outcome(&to);
+}
+
+/// `-rtpE`: `--perms` wins and `-E` is a no-op - up-to-date files get the
+/// source mode copied exactly, including the read/write bits `-E` alone would
+/// leave untouched.
+///
+/// upstream: options.c:2690-2693 - the server arg string carries 'p', never
+/// 'E', when both are set; generator.c:418-421 perms_differ() compares the
+/// full mode under preserve_perms.
+#[test]
+fn executability_is_noop_when_perms_active_over_rsh() {
+    if !require_binary("oc-rsync") || !require_binary(LSH_STUB_BIN) {
+        return;
+    }
+    let stub = LshRunnerStub::locate().expect("lsh-stub located");
+
+    let tmp = create_tempdir();
+    let from = tmp.path().join("from");
+    let to = tmp.path().join("to");
+    attr_only_fixture(&from, &to);
+
+    OcRsyncCliRunner::new()
+        .arg("-rtpE")
+        .arg(format!("--rsh={}", stub.path().display()))
+        .arg(format!(
+            "--rsync-path={}",
+            test_support::oc_rsync_bin().display()
+        ))
+        .arg(format!("{}/", from.display()))
+        .arg(format!("localhost:{}/", to.display()))
+        .run()
+        .expect("push run with -p")
+        .assert_success();
+
+    assert_eq!(mode_of(&to.join("gain")), 0o755, "-p copies the exact mode");
+    assert_eq!(mode_of(&to.join("lose")), 0o644, "-p copies the exact mode");
+    assert_eq!(
+        mode_of(&to.join("keep")),
+        0o755,
+        "-p overrides -E and copies the exact source mode"
     );
 }
