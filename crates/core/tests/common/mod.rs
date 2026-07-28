@@ -30,15 +30,29 @@ const DEFAULT_READY_TIMEOUT: Duration = Duration::from_secs(5);
 /// Polling interval for TCP readiness probe.
 const READY_POLL_INTERVAL: Duration = Duration::from_millis(50);
 
-/// Upstream rsync binary paths (relative to workspace root).
+/// Upstream rsync binary paths, anchored at the workspace root at compile
+/// time. Cargo runs these tests with CWD `crates/core/`, so a path relative
+/// to the CWD would never resolve and every consumer would silently skip.
 #[allow(dead_code)]
-pub const UPSTREAM_3_0_9: &str = "target/interop/upstream-install/3.0.9/bin/rsync";
+pub const UPSTREAM_3_0_9: &str = concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/../../target/interop/upstream-install/3.0.9/bin/rsync"
+);
 #[allow(dead_code)]
-pub const UPSTREAM_3_1_3: &str = "target/interop/upstream-install/3.1.3/bin/rsync";
+pub const UPSTREAM_3_1_3: &str = concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/../../target/interop/upstream-install/3.1.3/bin/rsync"
+);
 #[allow(dead_code)]
-pub const UPSTREAM_3_4_1: &str = "target/interop/upstream-install/3.4.1/bin/rsync";
+pub const UPSTREAM_3_4_1: &str = concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/../../target/interop/upstream-install/3.4.1/bin/rsync"
+);
 #[allow(dead_code)]
-pub const UPSTREAM_3_4_4: &str = "target/interop/upstream-install/3.4.4/bin/rsync";
+pub const UPSTREAM_3_4_4: &str = concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/../../target/interop/upstream-install/3.4.4/bin/rsync"
+);
 
 /// Selects which daemon binary to launch.
 #[allow(dead_code)]
@@ -313,7 +327,10 @@ pub fn require_upstream(binary_path: &str) {
 #[allow(dead_code)]
 const UPSTREAM_CANDIDATES: &[&str] = &[
     UPSTREAM_3_4_4,
-    "target/interop/upstream-src/rsync-3.4.4/rsync",
+    concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../target/interop/upstream-src/rsync-3.4.4/rsync"
+    ),
     UPSTREAM_3_4_1,
     "/opt/homebrew/bin/rsync",
     "/usr/local/bin/rsync",

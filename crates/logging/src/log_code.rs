@@ -1,51 +1,77 @@
-use ::core::convert::TryFrom;
-use ::core::fmt;
-use ::core::str::FromStr;
+//! Upstream rsync's `enum logcode` vocabulary.
+//!
+//! Every upstream diagnostic carries a logcode that `rwrite()` uses to pick
+//! its destination: the client's stdout/stderr, the daemon log or `--log-file`,
+//! or the multiplexed message stream (upstream: rsync.h:275-282, log.c:rwrite()).
+//! This module is the single canonical definition of that vocabulary; the
+//! `protocol` crate re-exports it for wire-side `MSG_*` conversions and the
+//! diagnostics event model tags every [`DiagnosticEvent`](crate::DiagnosticEvent)
+//! with one of these codes.
 
-use std::string::String;
+use std::fmt;
+use std::str::FromStr;
 
 /// Log classification used by upstream rsync's `enum logcode` table.
 ///
-/// The numeric values mirror the identifiers found in `rsync.h` so the logging
-/// subsystem can translate between multiplexed tags and the log severities used
-/// by upstream traces. While only a subset of log codes flow over the
-/// multiplexed stream, the complete enum is provided for parity (including
-/// `FNONE`, which upstream reserves for internal use).
+/// The numeric values mirror the identifiers found in `rsync.h:275-282` so the
+/// logging subsystem can translate between multiplexed tags and the log
+/// destinations used by upstream traces. While only a subset of log codes flow
+/// over the multiplexed stream, the complete enum is provided for parity
+/// (including `FNONE`, which upstream reserves for internal use).
+///
+/// Each variant documents its routing rule from `log.c:rwrite()`.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 #[repr(u8)]
 pub enum LogCode {
     #[doc(alias = "FNONE")]
-    /// Placeholder that is never transmitted on the wire (`FNONE`).
+    /// Placeholder that is never passed to `rwrite()` and never transmitted
+    /// on the wire (`FNONE`, upstream: rsync.h:276 "never sent").
     None = 0,
     #[doc(alias = "FERROR_XFER")]
-    /// Fatal transfer error (`FERROR_XFER`).
+    /// Transfer error (`FERROR_XFER`). Routed to stderr and records that a
+    /// transfer error occurred (upstream: log.c:310-316 sets `got_xfer_error`);
+    /// sent over the socket as `MSG_ERROR_XFER` at every protocol
+    /// (upstream: rsync.h:277).
     ErrorXfer = 1,
     #[doc(alias = "FINFO")]
-    /// Informational log message (`FINFO`).
+    /// Informational message (`FINFO`). Routed to the client's stdout unless
+    /// `--quiet` (upstream: log.c:317-320) and additionally to the daemon
+    /// log/`--log-file` when one is active (upstream: log.c:290-305).
     Info = 2,
     #[doc(alias = "FERROR")]
-    /// Non-fatal error (`FERROR`).
+    /// Non-transfer error (`FERROR`). Routed to stderr (upstream:
+    /// log.c:313-316); sent over the socket as `MSG_ERROR` at protocols >= 30
+    /// and downgraded to `MSG_ERROR_XFER` below (upstream: log.c:332-335).
     Error = 3,
     #[doc(alias = "FWARNING")]
-    /// Warning message (`FWARNING`).
+    /// Warning (`FWARNING`). Routed to stderr (upstream: log.c:314-316); sent
+    /// over the socket as `MSG_WARNING` at protocols >= 30 and downgraded to
+    /// `MSG_INFO` below (upstream: log.c:332-337).
     Warning = 4,
     #[doc(alias = "FERROR_SOCKET")]
-    /// Error emitted by the sibling process over the receiver/generator pipe
-    /// (`FERROR_SOCKET`).
+    /// Error travelling over the receiver -> generator pipe (`FERROR_SOCKET`);
+    /// a non-sibling simplifies it to `FERROR` on arrival (upstream:
+    /// log.c:281-282, rsync.h:279).
     ErrorSocket = 5,
     #[doc(alias = "FLOG")]
-    /// Log message only written to the daemon logs (`FLOG`).
+    /// Log-file-only message (`FLOG`). Written to the daemon log/`--log-file`
+    /// and never to the client's stdout; discarded outright when no log
+    /// destination is active (upstream: log.c:290-307).
     Log = 6,
     #[doc(alias = "FCLIENT")]
-    /// Client-only message (`FCLIENT`).
+    /// Client-only message (`FCLIENT`). Never transmitted on the wire and
+    /// converted to `FINFO` before dispatch, skipping the daemon-log branch
+    /// (upstream: log.c:288-289, rsync.h:281).
     Client = 7,
     #[doc(alias = "FERROR_UTF8")]
-    /// UTF-8 conversion problem reported by a sibling (`FERROR_UTF8`).
+    /// UTF-8-encoded error travelling over the receiver -> generator pipe
+    /// (`FERROR_UTF8`); flags the text as UTF-8 and becomes `FERROR`
+    /// (upstream: log.c:283-286, rsync.h:280).
     ErrorUtf8 = 8,
 }
 
 impl LogCode {
-    /// Ordered list of all log codes understood by rsync 3.4.1.
+    /// Ordered list of all log codes understood by rsync 3.4.4.
     pub const ALL: [LogCode; 9] = [
         LogCode::None,
         LogCode::ErrorXfer,
@@ -146,10 +172,10 @@ impl FromStr for LogCode {
 /// Error returned when parsing a log code from its representation fails.
 #[derive(Clone, Debug, Eq, PartialEq, thiserror::Error)]
 pub enum ParseLogCodeError {
-    /// The provided numeric identifier is not known to rsync 3.4.1.
+    /// The provided numeric identifier is not known to rsync 3.4.4.
     #[error("unknown log code value: {0}")]
     InvalidValue(u8),
-    /// The provided mnemonic name is not known to rsync 3.4.1.
+    /// The provided mnemonic name is not known to rsync 3.4.4.
     #[error("unknown log code name: \"{0}\"")]
     InvalidName(String),
 }
@@ -188,17 +214,27 @@ impl ParseLogCodeError {
 mod tests {
     use super::*;
 
+    /// Pins the variant set 1:1 against upstream's `enum logcode` table
+    /// (upstream: rsync.h:275-282). A new upstream code, a renamed code, or a
+    /// changed discriminant must fail here.
     #[test]
-    fn as_u8_returns_correct_values() {
-        assert_eq!(LogCode::None.as_u8(), 0);
-        assert_eq!(LogCode::ErrorXfer.as_u8(), 1);
-        assert_eq!(LogCode::Info.as_u8(), 2);
-        assert_eq!(LogCode::Error.as_u8(), 3);
-        assert_eq!(LogCode::Warning.as_u8(), 4);
-        assert_eq!(LogCode::ErrorSocket.as_u8(), 5);
-        assert_eq!(LogCode::Log.as_u8(), 6);
-        assert_eq!(LogCode::Client.as_u8(), 7);
-        assert_eq!(LogCode::ErrorUtf8.as_u8(), 8);
+    fn variant_set_matches_upstream_enum_logcode() {
+        const UPSTREAM: [(&str, u8); 9] = [
+            ("FNONE", 0),         // rsync.h:276 - never sent
+            ("FERROR_XFER", 1),   // rsync.h:277 - sent over socket for any protocol
+            ("FINFO", 2),         // rsync.h:277 - sent over socket for any protocol
+            ("FERROR", 3),        // rsync.h:278 - sent over socket for protocols >= 30
+            ("FWARNING", 4),      // rsync.h:278 - sent over socket for protocols >= 30
+            ("FERROR_SOCKET", 5), // rsync.h:279 - receiver -> generator pipe only
+            ("FLOG", 6),          // rsync.h:279 - receiver -> generator pipe only
+            ("FCLIENT", 7),       // rsync.h:281 - never transmitted
+            ("FERROR_UTF8", 8),   // rsync.h:280 - receiver -> generator pipe only
+        ];
+        assert_eq!(LogCode::ALL.len(), UPSTREAM.len());
+        for (code, (name, value)) in LogCode::ALL.iter().zip(UPSTREAM) {
+            assert_eq!(code.name(), name);
+            assert_eq!(code.as_u8(), value);
+        }
     }
 
     #[test]
@@ -214,25 +250,6 @@ mod tests {
         assert!(LogCode::from_u8(9).is_none());
         assert!(LogCode::from_u8(100).is_none());
         assert!(LogCode::from_u8(255).is_none());
-    }
-
-    #[test]
-    fn all_contains_9_codes() {
-        assert_eq!(LogCode::ALL.len(), 9);
-        assert_eq!(LogCode::all().len(), 9);
-    }
-
-    #[test]
-    fn name_returns_f_prefix() {
-        assert_eq!(LogCode::None.name(), "FNONE");
-        assert_eq!(LogCode::ErrorXfer.name(), "FERROR_XFER");
-        assert_eq!(LogCode::Info.name(), "FINFO");
-        assert_eq!(LogCode::Error.name(), "FERROR");
-        assert_eq!(LogCode::Warning.name(), "FWARNING");
-        assert_eq!(LogCode::ErrorSocket.name(), "FERROR_SOCKET");
-        assert_eq!(LogCode::Log.name(), "FLOG");
-        assert_eq!(LogCode::Client.name(), "FCLIENT");
-        assert_eq!(LogCode::ErrorUtf8.name(), "FERROR_UTF8");
     }
 
     #[test]

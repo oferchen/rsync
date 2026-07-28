@@ -1712,6 +1712,97 @@ fn metadata_unchanged_ignores_perms_when_not_preserved() {
     );
 }
 
+/// upstream: generator.c:418-426 perms_differ() - without --perms,
+/// --executability must flag an executability-presence mismatch so the
+/// receiver's quick-check skip path still runs the attribute pass. Before the
+/// fix the network attr-only path left an up-to-date 0644 file at 0644 when
+/// the source was 0755 under `-rtE`.
+#[cfg(unix)]
+#[test]
+fn metadata_unchanged_detects_executability_presence_mismatch() {
+    use protocol::flist::FileEntry;
+    use std::os::unix::fs::PermissionsExt;
+
+    let temp = tempdir().expect("tempdir");
+    let dest = temp.path().join("exec-mismatch.txt");
+    fs::write(&dest, b"data").expect("write dest");
+    fs::set_permissions(&dest, fs::Permissions::from_mode(0o644)).expect("chmod dest");
+
+    let meta = fs::metadata(&dest).expect("metadata");
+    let mtime = FileTime::from_last_modification_time(&meta);
+
+    let mut entry = FileEntry::new_file("exec-mismatch.txt".into(), 4, 0o755);
+    entry.set_mtime(mtime.unix_seconds(), mtime.nanoseconds());
+
+    // MetadataOptions::new() defaults preserve_permissions to true; -E
+    // without -p means it must be explicitly off here, otherwise the perms
+    // leg masks the executability leg and the test passes pre-fix.
+    let opts = MetadataOptions::new()
+        .preserve_permissions(false)
+        .preserve_executability(true)
+        .preserve_times(true);
+
+    assert!(
+        !metadata_unchanged(&entry, &opts, &meta),
+        "executable source vs non-executable dest must force the attr pass"
+    );
+
+    // The reverse direction (source lost its exec bits) must also differ.
+    let mut entry = FileEntry::new_file("exec-mismatch.txt".into(), 4, 0o600);
+    entry.set_mtime(mtime.unix_seconds(), mtime.nanoseconds());
+    fs::set_permissions(&dest, fs::Permissions::from_mode(0o755)).expect("chmod dest");
+    let meta = fs::metadata(&dest).expect("metadata");
+    assert!(
+        !metadata_unchanged(&entry, &opts, &meta),
+        "non-executable source vs executable dest must force the attr pass"
+    );
+}
+
+/// upstream: generator.c:423-426 - perms_differ() under --executability
+/// compares only exec-bit PRESENCE; read/write differences and matching
+/// presence must not trigger the attribute pass, and non-regular entries are
+/// never tweaked by dest_mode() (rsync.c:456 S_ISREG check).
+#[cfg(unix)]
+#[test]
+fn metadata_unchanged_executability_ignores_matching_presence_and_non_files() {
+    use protocol::flist::FileEntry;
+    use std::os::unix::fs::PermissionsExt;
+
+    let temp = tempdir().expect("tempdir");
+    let dest = temp.path().join("exec-match.txt");
+    fs::write(&dest, b"data").expect("write dest");
+    fs::set_permissions(&dest, fs::Permissions::from_mode(0o654)).expect("chmod dest");
+
+    let meta = fs::metadata(&dest).expect("metadata");
+    let mtime = FileTime::from_last_modification_time(&meta);
+
+    let opts = MetadataOptions::new()
+        .preserve_permissions(false)
+        .preserve_executability(true)
+        .preserve_times(true);
+
+    // Both sides executable (any exec bit counts) with differing rw bits.
+    let mut entry = FileEntry::new_file("exec-match.txt".into(), 4, 0o700);
+    entry.set_mtime(mtime.unix_seconds(), mtime.nanoseconds());
+    assert!(
+        metadata_unchanged(&entry, &opts, &meta),
+        "matching exec presence must not force the attr pass"
+    );
+
+    // A directory whose exec presence differs is out of scope for -E.
+    let dir = temp.path().join("subdir");
+    fs::create_dir(&dir).expect("create dir");
+    fs::set_permissions(&dir, fs::Permissions::from_mode(0o600)).expect("chmod dir");
+    let dir_meta = fs::metadata(&dir).expect("dir metadata");
+    let dir_mtime = FileTime::from_last_modification_time(&dir_meta);
+    let mut dir_entry = FileEntry::new_directory("subdir".into(), 0o755);
+    dir_entry.set_mtime(dir_mtime.unix_seconds(), dir_mtime.nanoseconds());
+    assert!(
+        metadata_unchanged(&dir_entry, &opts, &dir_meta),
+        "-E never applies to directories"
+    );
+}
+
 #[cfg(unix)]
 #[test]
 fn metadata_unchanged_returns_false_when_chmod_would_change_mode() {
