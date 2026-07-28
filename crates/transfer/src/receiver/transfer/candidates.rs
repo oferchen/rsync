@@ -894,6 +894,15 @@ impl ReceiverContext {
                 }
             }
         }
+        // upstream: generator.c:557-563 - with `preserve_acls` and a non-symlink
+        // the generator reads the destination ACL (`get_acl`) and probes whether
+        // applying the sender's cached ACL would change it
+        // (`set_acl(NULL, file, sxp, file->mode)`); a non-zero return lights the
+        // `a` column. Symlinks are excluded exactly as upstream's
+        // `!S_ISLNK(file->mode)` guard, since their own ACL is never applied.
+        if self.acl_itemize_active() && !entry.is_symlink() && self.dest_acl_differs(entry, path) {
+            iflags |= ItemFlags::ITEM_REPORT_ACL;
+        }
         // upstream: generator.c:564-571 - the last thing the `statret >= 0` leg
         // does is a lazy `get_xattr(fnamecmp, sxp)` followed by
         // `xattr_diff(file, sxp, 1)`. It runs for every itemized entry, not
@@ -972,6 +981,57 @@ impl ReceiverContext {
                 self.checksum_seed,
             ),
         }
+    }
+
+    /// Whether the `a` column's destination ACL read should run at all.
+    ///
+    /// Mirrors the two gates upstream places on the ACL leg: `preserve_acls`
+    /// inside `itemize()` (`generator.c:558`) and the `itemizing` test at each
+    /// call site. Folding both in here keeps the extra `getfacl` off the
+    /// no-itemize scan path, matching [`Self::xattr_itemize_active`].
+    fn acl_itemize_active(&self) -> bool {
+        self.config.flags.acls && self.should_emit_itemize()
+    }
+
+    /// Whether the destination's ACL differs from the sender's, for the
+    /// `ITEM_REPORT_ACL` (`a`) itemize column.
+    ///
+    /// Resolves the sender's cached (condensed) access and, for directories,
+    /// default ACLs from the flist reader's ACL cache - the same cache the apply
+    /// path reads - and hands both sides to [`metadata::dest_acl_differs`], which
+    /// reads the pre-transfer destination ACL and probes it exactly as upstream's
+    /// `set_acl(NULL, file, sxp, mode)` does (`generator.c:561`,
+    /// `acls.c:1024-1054`). Named-entry ids are remapped through the same
+    /// cross-host id map the apply path uses (`build_acl_id_mapper`), so the
+    /// comparison sees the local ids the receiver would write and an identical
+    /// ACL never lights the column.
+    ///
+    /// An entry with no cached ACL index (`acl_ndx() == None`) yields `None`
+    /// sender ACLs, matching upstream's `ndx >= 0` guard: no sender ACL, no `a`.
+    pub(in crate::receiver) fn dest_acl_differs(&self, entry: &FileEntry, path: &Path) -> bool {
+        let Some(reader) = self.flist_reader_cache.as_ref() else {
+            return false;
+        };
+        let cache = reader.acl_cache();
+        let sender_access = entry.acl_ndx().and_then(|ndx| cache.get_access(ndx));
+        let sender_default = entry.def_acl_ndx().and_then(|ndx| cache.get_default(ndx));
+        if sender_access.is_none() && sender_default.is_none() {
+            return false;
+        }
+        // upstream: acls.c:1059-1081 match_acl_ids() - the cached ACL's named
+        // entries are converted to local ids before use. Built per call because
+        // the ACL itemize path is off unless `-A` and already dominated by the
+        // `getfacl` syscall; the snapshot is otherwise identical to the one the
+        // apply path builds once at setup.
+        let id_map = self.build_acl_id_mapper();
+        metadata::dest_acl_differs(
+            path,
+            sender_access,
+            sender_default,
+            entry.mode(),
+            entry.is_dir(),
+            Some(&id_map),
+        )
     }
 
     /// Emits the upstream size-bound SKIP notice for a candidate whose flist

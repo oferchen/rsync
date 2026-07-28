@@ -487,6 +487,31 @@ impl RsyncAcl {
         self.other_obj = NO_ENTRY;
     }
 
+    /// Reports whether two ACLs are exactly equal in every object and named
+    /// entry. Used for the default ACL of a directory, which upstream compares
+    /// with strict equality (default ACLs are transmitted un-stripped, so both
+    /// sides carry a fully-populated `rsync_acl`).
+    ///
+    /// # Upstream Reference
+    ///
+    /// Mirrors `rsync_acl_equal()` in `acls.c` lines 190-197.
+    #[must_use]
+    pub fn equal(&self, other: &RsyncAcl) -> bool {
+        // upstream: acls.c:192-196 - all four permission objects plus the named
+        // entries must match (ida_entries_equal compares count and each
+        // (access, id) pair in order).
+        self.user_obj == other.user_obj
+            && self.group_obj == other.group_obj
+            && self.mask_obj == other.mask_obj
+            && self.other_obj == other.other_obj
+            && self.names.len() == other.names.len()
+            && self
+                .names
+                .iter()
+                .zip(other.names.iter())
+                .all(|(a, b)| a.access == b.access && a.id == b.id)
+    }
+
     /// Reports whether the extended (non-permission-bit) entries of two ACLs
     /// match closely enough that the rest of the ACL is handled by the normal
     /// mode-preservation code. Meaningful only for access ACLs.

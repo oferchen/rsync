@@ -703,7 +703,7 @@ impl ReceiverContext {
     ///
     /// upstream: uidlist.c:483-484 + acls.c:1059-1081 - `match_acl_ids()`.
     #[cfg(unix)]
-    fn build_acl_id_mapper(&self) -> metadata::AclIdMapper {
+    pub(in crate::receiver) fn build_acl_id_mapper(&self) -> metadata::AclIdMapper {
         metadata::AclIdMapper::new(
             self.uid_list.resolved_map(),
             self.gid_list.resolved_map(),
@@ -715,7 +715,7 @@ impl ReceiverContext {
 
     /// Builds the cross-host ACL id remapper (non-Unix: no `--usermap`).
     #[cfg(not(unix))]
-    fn build_acl_id_mapper(&self) -> metadata::AclIdMapper {
+    pub(in crate::receiver) fn build_acl_id_mapper(&self) -> metadata::AclIdMapper {
         metadata::AclIdMapper::new(
             self.uid_list.resolved_map(),
             self.gid_list.resolved_map(),
