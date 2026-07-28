@@ -484,6 +484,40 @@ mod runtime_options_tests {
     }
 
     #[test]
+    fn parse_config_without_listen_backlog_leaves_option_unset() {
+        // upstream: daemon-parm.txt declares `INTEGER listen_backlog 5`. An
+        // absent directive must leave the option unset so the accept loop
+        // falls back to DEFAULT_LISTEN_BACKLOG, pinned at upstream's 5 by
+        // default_listen_backlog_matches_upstream.
+        let mut file = NamedTempFile::new().expect("config file");
+        writeln!(file, "[share]\npath = /srv/share\n").expect("write config");
+
+        let args = vec![
+            OsString::from("--config"),
+            file.path().as_os_str().to_os_string(),
+        ];
+        let options = RuntimeOptions::parse(&args).expect("parse");
+        assert_eq!(options.listen_backlog(), None);
+    }
+
+    #[test]
+    fn parse_config_listen_backlog_directive_overrides_default() {
+        // upstream: socket.c:554 passes lp_listen_backlog() to listen(2), so
+        // a configured `listen backlog` must reach RuntimeOptions intact or
+        // the directive is cosmetic and the accept queue silently stays at 5.
+        let mut file = NamedTempFile::new().expect("config file");
+        writeln!(file, "listen backlog = 128\n[share]\npath = /srv/share\n")
+            .expect("write config");
+
+        let args = vec![
+            OsString::from("--config"),
+            file.path().as_os_str().to_os_string(),
+        ];
+        let options = RuntimeOptions::parse(&args).expect("parse");
+        assert_eq!(options.listen_backlog(), Some(128));
+    }
+
+    #[test]
     fn unsupported_option_is_rejected() {
         let args = vec![OsString::from("--unknown-option")];
         let result = RuntimeOptions::parse(&args);
