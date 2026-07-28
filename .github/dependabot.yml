@@ -1,9 +1,18 @@
 version: 2
 
 updates:
-  # Rust dependencies
+  # Rust dependencies. The root workspace and the three cargo-fuzz
+  # workspaces each carry their own Cargo.lock, so all four directories
+  # are listed here to keep every lockfile in step on a shared-dep bump
+  # (the fuzz workspaces are excluded from the root workspace). The groups
+  # below apply across every directory, so one shared bump updates all
+  # four lockfiles in a single PR.
   - package-ecosystem: "cargo"
-    directory: "/"
+    directories:
+      - "/"
+      - "/fuzz"
+      - "/crates/protocol/fuzz"
+      - "/crates/filters/fuzz"
     schedule:
       interval: "weekly"
       day: "monday"
