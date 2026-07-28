@@ -266,6 +266,20 @@ impl<R> MultiplexReader<R> {
         }
     }
 
+    /// Returns true when the next `read()` is serviceable entirely from the
+    /// already-demuxed frame buffer, so it never touches `inner` and cannot
+    /// block.
+    ///
+    /// This is the exact guard `Read::read` uses to short-circuit into
+    /// `drain_buffered`: deliverable payload exists only when no frame is
+    /// mid-decode (`!in_progress`) and `pos` has not caught up to the buffered
+    /// length. The sender loop consults it to skip its pre-read flush while more
+    /// requests remain buffered, matching upstream `perform_io()` (io.c:640-724)
+    /// which drains output only while genuinely waiting on input.
+    pub(super) fn has_buffered_payload(&self) -> bool {
+        !self.frames.in_progress() && self.pos < self.buffer.len()
+    }
+
     /// Enables client-side rendering of received `MSG_DELETED` frames.
     ///
     /// Called only on the client-sender reader (a push, where the remote

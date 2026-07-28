@@ -80,6 +80,47 @@ fn server_reader_plain_empty_read() {
 }
 
 #[test]
+fn buffered_input_hint_plain_is_false() {
+    // A plain reader has no peekable frame buffer, so it always keeps the
+    // conservative pre-read flush.
+    let reader = ServerReader::new_plain(Cursor::new(vec![1u8, 2, 3]));
+    assert!(!reader.has_buffered_input());
+}
+
+#[test]
+fn buffered_input_hint_tracks_demuxed_frame() {
+    // has_buffered_input mirrors Read::read's short-circuit: it is true exactly
+    // while unconsumed demuxed payload remains, guaranteeing the next read is
+    // served from the buffer without touching the socket.
+    let mut stream = Vec::new();
+    protocol::send_msg(&mut stream, protocol::MessageCode::Data, b"hello").unwrap();
+    let mut reader = ServerReader::new_plain(Cursor::new(stream))
+        .activate_multiplex()
+        .unwrap();
+
+    // Nothing demuxed yet: the next read must go to the socket.
+    assert!(!reader.has_buffered_input());
+
+    // Read 2 of 5 payload bytes; 3 remain buffered.
+    let mut buf = [0u8; 2];
+    assert_eq!(reader.read(&mut buf).unwrap(), 2);
+    assert_eq!(&buf, b"he");
+    assert!(
+        reader.has_buffered_input(),
+        "unconsumed demuxed payload must report buffered input"
+    );
+
+    // Drain the rest; the buffer empties, so a further read would block again.
+    let mut rest = [0u8; 3];
+    assert_eq!(reader.read(&mut rest).unwrap(), 3);
+    assert_eq!(&rest, b"llo");
+    assert!(
+        !reader.has_buffered_input(),
+        "a drained frame buffer must report no buffered input"
+    );
+}
+
+#[test]
 fn server_reader_activate_compression_on_plain_fails() {
     let data = vec![1, 2, 3, 4, 5];
     let reader = ServerReader::new_plain(Cursor::new(data));
