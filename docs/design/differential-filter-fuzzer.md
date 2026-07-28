@@ -64,7 +64,7 @@ inclusion decisions over the entire tree.
   one-shot merges via `merge`/`.` directives.
 - **Daemon directives**: `rsyncd.conf` `filter`, `exclude`, `include`,
   `exclude from`, `include from` parameters consumed by
-  `crates/daemon/src/rsyncd_config/sections.rs:155-159` and assembled
+  `crates/daemon/src/daemon/sections/config_parsing/module_directives.rs` and assembled
   into the daemon filter list at
   `crates/daemon/src/daemon/sections/module_access/helpers.rs:223-280`.
   This addresses the gap noted in #1366 and the daemon hide/show
