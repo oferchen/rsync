@@ -91,10 +91,19 @@ jobs:
           # Pick a free localhost port for the oc-rsync daemon.
           OC_PORT="$(python3 -c 'import socket; s=socket.socket(); s.bind(("127.0.0.1",0)); print(s.getsockname()[1]); s.close()')"
 
+          # This job regression-tests the daemon's concurrency CEILING, not
+          # the kernel accept queue. The upstream-faithful default backlog of
+          # 5 (daemon-parm.txt: listen_backlog) overflows under 64 parallel
+          # connects, resetting a handful of pulls before the greeting (job
+          # 89938299936 saw 8/3000 pulls die rc=12 with the daemon healthy).
+          # Raise the backlog explicitly so accept-queue overflow - which is
+          # upstream-faithful behaviour and not under test here - cannot fail
+          # the soak.
           cat > "$WORK/oc-rsyncd.conf" <<CONF
           use chroot = no
           port = $OC_PORT
           max connections = ${DAEMON_MAX_CONNECTIONS}
+          listen backlog = 128
           pid file = $WORK/oc-rsyncd.pid
           log file = $WORK/oc-rsyncd.log
           [soak]
