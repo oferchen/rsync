@@ -6,16 +6,19 @@
 //! before any credentials are validated:
 //!
 //! - [`verify_client_response`] consumes the base64 response string sent by
-//!   the client in reply to an `@RSYNCD: AUTHREQD` challenge. The verifier
-//!   length-disambiguates the response across MD4, MD5, SHA-1, SHA-256, and
-//!   SHA-512 digests and selects the protocol-appropriate algorithm.
+//!   the client in reply to an `@RSYNCD: AUTHREQD` challenge and checks it
+//!   against the digest negotiated for the session (upstream:
+//!   `authenticate.c:auth_server()`).
 //! - [`SecretsFile::parse`] reads `username:password` entries from an admin
 //!   secrets file. Malformed lines must surface as `io::Error` rather than
 //!   panic the daemon at startup.
 //!
 //! Coverage is split between the two parsers based on the first input byte
 //! so libFuzzer can fan out across both attack surfaces under a single
-//! corpus. Any panic on malformed bytes is a finding.
+//! corpus. Beyond panic-freedom, the verifier is held to a completeness /
+//! soundness oracle per digest: the response produced by
+//! [`compute_auth_response`] for the fuzzed credentials must verify, and any
+//! fuzzed response must verify only if it equals that computed response.
 //!
 //! # Running
 //!
@@ -25,7 +28,10 @@
 
 use libfuzzer_sys::fuzz_target;
 
-use daemon::auth::{SecretsFile, verify_client_response};
+use daemon::auth::{
+    DaemonAuthDigest, SUPPORTED_DAEMON_DIGESTS, SecretsFile, compute_auth_response,
+    verify_client_response,
+};
 
 fuzz_target!(|data: &[u8]| {
     if data.is_empty() {
@@ -50,11 +56,11 @@ fuzz_target!(|data: &[u8]| {
 });
 
 /// Drives [`verify_client_response`] with arbitrary password, challenge, and
-/// response substrings sliced out of the payload, plus a fuzzed protocol
-/// version selector.
+/// response substrings sliced out of the payload, plus a fuzzed digest
+/// selector covering every supported daemon auth algorithm.
 fn fuzz_verify_response(payload: &[u8]) {
-    // Need at least one byte to seed the protocol selector.
-    let Some((proto_byte, rest)) = payload.split_first() else {
+    // Need at least one byte to seed the digest selector.
+    let Some((digest_byte, rest)) = payload.split_first() else {
         return;
     };
 
@@ -74,20 +80,25 @@ fn fuzz_verify_response(payload: &[u8]) {
         return;
     };
 
-    // Cycle through legitimate protocol versions (28..=32) plus an
-    // out-of-range probe to exercise the unknown-protocol branch.
-    let protocol_version = match proto_byte % 8 {
-        0 => None,
-        1 => Some(28),
-        2 => Some(29),
-        3 => Some(30),
-        4 => Some(31),
-        5 => Some(32),
-        6 => Some(0),
-        _ => Some(255),
-    };
+    // Cycle through every negotiable digest so all hash branches stay hot.
+    let digests = SUPPORTED_DAEMON_DIGESTS;
+    let digest: DaemonAuthDigest = digests[usize::from(*digest_byte) % digests.len()];
 
-    let _ = verify_client_response(password, challenge, response, protocol_version);
+    // Soundness: an arbitrary fuzzed response must verify only if it equals
+    // the correct response for these credentials.
+    let expected = compute_auth_response(password, challenge, digest);
+    let accepted = verify_client_response(password, challenge, response, digest);
+    assert_eq!(
+        accepted,
+        response == expected,
+        "verifier accepted a forged response (digest {digest:?})",
+    );
+
+    // Completeness: the correct response must always verify.
+    assert!(
+        verify_client_response(password, challenge, &expected, digest),
+        "verifier rejected the correct response (digest {digest:?})",
+    );
 }
 
 /// Drives [`SecretsFile::parse`] with arbitrary UTF-8 input. The parser is
