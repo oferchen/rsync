@@ -96,11 +96,19 @@ GATED_SUBCOMMANDS=(
 # the repo-relative path. Add new entries only with reviewer signoff
 # and document the rationale here.
 #
-# Currently empty: the lockfile-sync workflows
-# (`cargo-lockfile-weekly.yml`, `cargo-lockfile-sync.yml`) only invoke
-# `cargo update`, which is not a gated subcommand, so they need no
-# explicit allowlist entry.
+# The lockfile-sync workflows (`cargo-lockfile-weekly.yml`,
+# `cargo-lockfile-sync.yml`) only invoke `cargo update`, which is not a
+# gated subcommand, so they need no explicit allowlist entry.
+#
+# check_fuzz_workspaces.sh:43 - the fuzz-workspace guard runs `cargo check`
+# WITHOUT --locked on purpose. Its whole job is to tolerate lockfile drift
+# in the excluded fuzz workspaces (whose standalone lockfiles are never
+# refreshed by main-workspace manifest changes) while still catching real
+# fuzz-target compile breaks. Running online without --locked lets that one
+# `cargo check` both re-sync the fuzz lockfile and compile; --locked would
+# reject the drift the guard exists to absorb. See that script's header.
 ALLOWLIST=(
+    "tools/ci/check_fuzz_workspaces.sh:43"
 )
 
 # Scan roots. Tests can replace these via OC_RSYNC_LOCKED_SCAN_ROOTS
