@@ -1812,6 +1812,66 @@ mod equal_enough_tests {
     }
 }
 
+/// Tests for `RsyncAcl::equal`, the strict comparison used for a directory's
+/// default ACL (upstream `rsync_acl_equal()`, `acls.c` lines 190-197). Unlike
+/// `equal_enough`, every object and named entry participates.
+mod equal_tests {
+    use super::*;
+
+    #[test]
+    fn reflexive() {
+        let acl = RsyncAcl::from_mode(0o755);
+        assert!(acl.equal(&acl));
+    }
+
+    #[test]
+    fn differing_user_obj_is_not_equal() {
+        // WHY: acls.c:192 - user_obj IS part of the strict comparison (it is
+        // not for equal_enough), so a difference here rejects.
+        let a = RsyncAcl::from_mode(0o755);
+        let mut b = a.clone();
+        b.user_obj = 1;
+        assert!(!a.equal(&b));
+    }
+
+    #[test]
+    fn differing_other_obj_is_not_equal() {
+        // WHY: acls.c:195 - other_obj participates in the strict comparison.
+        let a = RsyncAcl::from_mode(0o755);
+        let mut b = a.clone();
+        b.other_obj = 0;
+        assert!(!a.equal(&b));
+    }
+
+    #[test]
+    fn identical_named_entries_are_equal() {
+        let mut a = RsyncAcl::from_mode(0o644);
+        a.mask_obj = 7;
+        a.names.push(IdAccess::user(1000, 0x06));
+        a.names.push(IdAccess::group(2000, 0x04));
+        let b = a.clone();
+        assert!(a.equal(&b));
+    }
+
+    #[test]
+    fn differing_named_entry_id_is_not_equal() {
+        // WHY: acls.c:196 - ida_entries_equal compares each (access, id) pair.
+        let mut a = RsyncAcl::from_mode(0o644);
+        a.names.push(IdAccess::user(1000, 0x06));
+        let mut b = a.clone();
+        b.names = std::iter::once(IdAccess::user(1001, 0x06)).collect();
+        assert!(!a.equal(&b));
+    }
+
+    #[test]
+    fn differing_named_entry_count_is_not_equal() {
+        let mut a = RsyncAcl::from_mode(0o644);
+        a.names.push(IdAccess::user(1000, 0x06));
+        let b = RsyncAcl::from_mode(0o644);
+        assert!(!a.equal(&b));
+    }
+}
+
 /// Tests for `IdaEntries::clear`.
 mod ida_entries_clear_tests {
     use super::*;
