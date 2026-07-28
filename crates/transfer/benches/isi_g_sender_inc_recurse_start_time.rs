@@ -216,10 +216,18 @@ impl Sender {
         }
     }
 
+    /// Default binary path, anchored at the workspace root at compile time;
+    /// benches run with CWD `crates/transfer/`, where a CWD-relative path
+    /// would never resolve.
     fn default_path(self) -> &'static str {
         match self {
-            Sender::Baseline | Sender::IncRecurse => "target/release/oc-rsync",
-            Sender::Upstream => "target/interop/upstream-install/3.4.1/bin/rsync",
+            Sender::Baseline | Sender::IncRecurse => {
+                concat!(env!("CARGO_MANIFEST_DIR"), "/../../target/release/oc-rsync")
+            }
+            Sender::Upstream => concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/../../target/interop/upstream-install/3.4.1/bin/rsync"
+            ),
         }
     }
 
