@@ -126,7 +126,7 @@
 //! - `daemon::sections::module_access`: Server-side authentication flow during module requests
 //! - This module: High-level documentation and helper utilities
 //!
-//! [`ChallengeGenerator`] is the sole challenge implementation; the module-access
+//! `ChallengeGenerator` is the sole challenge implementation; the module-access
 //! authentication flow calls it rather than keeping a second copy.
 
 pub use core::auth::{
