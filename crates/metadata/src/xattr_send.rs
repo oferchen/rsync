@@ -168,7 +168,65 @@ pub fn dest_xattrs_differ(
     let Ok(dest) = crate::read_xattrs_for_wire(destination, dest_opts) else {
         return false;
     };
-    xattr_diff(sender, &dest, dest_opts.checksum_seed)
+
+    // On macOS the kernel attaches provenance metadata (com.apple.provenance)
+    // to executables and quarantined files on its own, independently of the
+    // file's user data, and each inode receives its own value. It reaches this
+    // wire-format comparison as `user.com.apple.provenance`. Diffing it
+    // dest-vs-source would light the itemize `x` column (and fail quick-check)
+    // for two otherwise identical files on every run, so it is screened out of
+    // the difference comparison only - never from an explicit xattr transfer.
+    // Upstream rsync is Linux-centric and has no provenance concept, so this is
+    // an oc macOS-platform-fidelity screen rather than an upstream divergence.
+    #[cfg(target_os = "macos")]
+    let differ = {
+        let sender = without_macos_auto_xattrs(sender);
+        let dest = without_macos_auto_xattrs(&dest);
+        xattr_diff(&sender, &dest, dest_opts.checksum_seed)
+    };
+    #[cfg(not(target_os = "macos"))]
+    let differ = xattr_diff(sender, &dest, dest_opts.checksum_seed);
+    differ
+}
+
+/// macOS extended attributes the kernel attaches to an inode on its own,
+/// independently of the file's user data.
+///
+/// This is the single, authoritative list of names screened out of the
+/// destination-vs-source difference that drives the itemize `x` column and
+/// quick-check. Extend it here if another OS-managed attribute is found to
+/// auto-attach on write.
+///
+/// `com.apple.quarantine` is deliberately absent: it is genuine Gatekeeper
+/// metadata that rsync transfers, is not attached by a plain write, and
+/// screening it would hide real changes. `com.apple.provenance` is the one
+/// confirmed offender - the kernel re-attaches its own per-inode value to any
+/// executable, so a freshly written destination never matches the source.
+///
+/// Names are stored without the `user.` prefix that the macOS wire encoding
+/// (`protocol::xattr::local_to_wire`) prepends; [`is_macos_auto_xattr`] strips
+/// it before matching.
+#[cfg(target_os = "macos")]
+const MACOS_AUTO_XATTRS: &[&[u8]] = &[b"com.apple.provenance"];
+
+/// Whether `wire_name` names a macOS OS-attached attribute from
+/// [`MACOS_AUTO_XATTRS`], tolerating the `user.` wire prefix.
+#[cfg(target_os = "macos")]
+fn is_macos_auto_xattr(wire_name: &[u8]) -> bool {
+    let local = wire_name.strip_prefix(b"user.").unwrap_or(wire_name);
+    MACOS_AUTO_XATTRS.contains(&local)
+}
+
+/// Returns `list` without any [`MACOS_AUTO_XATTRS`] entry, for the itemize
+/// difference comparison. Both the sender list and the freshly read
+/// destination list pass through here so an OS-attached attribute present on
+/// only one side cannot report a change.
+#[cfg(target_os = "macos")]
+fn without_macos_auto_xattrs(list: &XattrList) -> XattrList {
+    list.iter()
+        .filter(|entry| !is_macos_auto_xattr(entry.name()))
+        .cloned()
+        .collect()
 }
 
 #[cfg(test)]
@@ -215,5 +273,60 @@ mod tests {
     fn is_sender_reports_the_upstream_am_sender_global() {
         assert!(XattrRole::Sender.is_sender());
         assert!(!XattrRole::Generator.is_sender());
+    }
+}
+
+#[cfg(all(test, target_os = "macos", feature = "xattr"))]
+mod macos_provenance_tests {
+    use super::{XattrRole, XattrSendOptions, dest_xattrs_differ};
+    use protocol::xattr::{XattrEntry, XattrList};
+    use std::fs;
+    use tempfile::tempdir;
+
+    /// macOS attaches `com.apple.provenance` to executables and quarantined
+    /// files on its own, and each inode receives its own value. Before the fix
+    /// the generator's dest-vs-source xattr diff counted that OS-attached
+    /// attribute as a real change and lit the itemize `x` column for two
+    /// otherwise identical files on every run. It must be ignored from the
+    /// difference comparison, while a genuine user-xattr difference is still
+    /// reported. This test fails on pre-fix code, where the differing
+    /// provenance value alone flips the comparison to "differ".
+    #[test]
+    fn provenance_is_excluded_from_the_dest_diff_but_real_changes_are_not() {
+        let dir = tempdir().expect("temp dir");
+        let dest = dir.path().join("bin");
+        fs::write(&dest, "content").expect("write dest");
+
+        // `xattr::set` writes the bare local name; `read_xattrs_for_wire` then
+        // wire-encodes it to `user.<name>` exactly as the sender does, so the
+        // dest list carries `user.com.apple.provenance` and `user.shared`.
+        if xattr::set(&dest, "com.apple.provenance", b"dest-value").is_err() {
+            eprintln!("cannot set com.apple.provenance here, skipping");
+            return;
+        }
+        xattr::set(&dest, "shared", b"v").expect("set shared attr");
+
+        let opts = XattrSendOptions::new(XattrRole::Generator);
+
+        // Sender list as it arrives on the wire: a *different* provenance value
+        // (its own inode's) but the same genuine user attribute.
+        let matching = XattrList::with_entries(vec![
+            XattrEntry::new(b"user.com.apple.provenance".to_vec(), b"src-value".to_vec()),
+            XattrEntry::new(b"user.shared".to_vec(), b"v".to_vec()),
+        ]);
+        assert!(
+            !dest_xattrs_differ(&matching, &dest, &opts),
+            "a differing com.apple.provenance must not report an xattr change",
+        );
+
+        // A genuine user-attribute difference is still detected.
+        let changed = XattrList::with_entries(vec![
+            XattrEntry::new(b"user.com.apple.provenance".to_vec(), b"src-value".to_vec()),
+            XattrEntry::new(b"user.shared".to_vec(), b"different".to_vec()),
+        ]);
+        assert!(
+            dest_xattrs_differ(&changed, &dest, &opts),
+            "a real user-xattr difference must still report an xattr change",
+        );
     }
 }
