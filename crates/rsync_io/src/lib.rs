@@ -73,6 +73,8 @@ pub mod channel_adapter;
 mod daemon;
 mod handshake_util;
 mod negotiation;
+#[cfg(feature = "quic")]
+pub mod quic;
 mod session;
 /// SSH transport implementations and helpers.
 pub mod ssh;

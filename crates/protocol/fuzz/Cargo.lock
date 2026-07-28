@@ -181,6 +181,9 @@ dependencies = [
 [[package]]
 name = "logging"
 version = "0.6.4"
+dependencies = [
+ "thiserror",
+]
 
 [[package]]
 name = "lz4_flex"
