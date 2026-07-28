@@ -535,7 +535,10 @@ fn run_one(input: Input) {
     // Edge-case shapes (NULL bytes, very long patterns) cannot survive a
     // child argv. Skip the differential probe but keep the oc-rsync side
     // exercised, which is the whole point of the FCV-7 extension.
-    if !rule_lines.iter().all(|line| line_is_upstream_compatible(line)) {
+    if !rule_lines
+        .iter()
+        .all(|line| line_is_upstream_compatible(line))
+    {
         return;
     }
     let Some(upstream_verdict) = upstream_verdict(rsync_bin, &rule_lines, &rel_path, input.is_dir)

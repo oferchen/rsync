@@ -124,6 +124,47 @@ jobs:
         run: bash tools/ci/check_daemon_no_detach.sh
 
   # ===========================================================================
+  # Fuzz Workspace Check - compile-gate the excluded fuzz workspaces
+  # ---------------------------------------------------------------------------
+  # The fuzz workspaces (fuzz/, crates/protocol/fuzz/, crates/filters/fuzz/)
+  # are excluded from the root workspace so libfuzzer-sys never enters
+  # ordinary builds. That exclusion also hides breakage from every PR gate:
+  # API drift in a main workspace crate can break a fuzz target and stay
+  # invisible until a scheduled fuzz workflow runs. This job runs a plain
+  # `cargo check` + `cargo fmt --check` per fuzz workspace on stable - no
+  # fuzzing, no nightly, no libFuzzer link - so the PR that introduces the
+  # drift fails, not the next overnight fuzz run. Runs in its own job rather
+  # than inside `lint` because it compiles workspace crates into three
+  # separate fuzz target dirs; expected wall time is ~5 minutes cold and
+  # ~2 minutes with a warm cache.
+  # ===========================================================================
+  fuzz-workspace-check:
+    name: fuzz workspaces check
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+
+      - name: Install Rust (stable)
+        uses: dtolnay/rust-toolchain@4be9e76fd7c4901c61fb841f559994984270fce7 # stable
+        with:
+          components: rustfmt
+
+      - name: Rust cache
+        uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2
+        with:
+          shared-key: fuzz-check-${{ runner.os }}-cargo-${{ env.CACHE_VERSION }}-${{ hashFiles('**/Cargo.lock') }}
+          workspaces: |
+            fuzz
+            crates/protocol/fuzz
+            crates/filters/fuzz
+
+      - name: Check fuzz workspaces
+        run: bash tools/ci/check_fuzz_workspaces.sh
+
+  # ===========================================================================
   # Unsafe SAFETY Comment Audit - Informational (non-blocking) check
   # ---------------------------------------------------------------------------
   # Runs `tools/audit/unsafe_safety_comment_audit.py` to surface `unsafe { ... }`

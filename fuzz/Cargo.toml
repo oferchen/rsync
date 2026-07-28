@@ -147,13 +147,6 @@ doc = false
 bench = false
 
 [[bin]]
-name = "rsyncd_conf"
-path = "fuzz_targets/rsyncd_conf.rs"
-test = false
-doc = false
-bench = false
-
-[[bin]]
 name = "auth_response"
 path = "fuzz_targets/auth_response.rs"
 test = false

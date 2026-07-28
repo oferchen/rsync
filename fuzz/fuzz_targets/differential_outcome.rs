@@ -185,10 +185,7 @@ fn oc_rsync_binary() -> Option<&'static Path> {
                 return Some(p);
             }
         }
-        for candidate in [
-            "target/release/oc-rsync",
-            "target/debug/oc-rsync",
-        ] {
+        for candidate in ["target/release/oc-rsync", "target/debug/oc-rsync"] {
             let p = PathBuf::from(candidate);
             if p.is_file() {
                 return Some(p);
@@ -239,12 +236,7 @@ struct RunOutcome {
 /// Run an rsync-compatible binary with the given arguments.
 ///
 /// Returns `None` if the child process could not be spawned or timed out.
-fn run_rsync(
-    binary: &Path,
-    src_dir: &Path,
-    dst_dir: &Path,
-    flags: &[&str],
-) -> Option<RunOutcome> {
+fn run_rsync(binary: &Path, src_dir: &Path, dst_dir: &Path, flags: &[&str]) -> Option<RunOutcome> {
     let mut cmd = Command::new(binary);
     cmd.args(flags);
 
@@ -267,10 +259,7 @@ fn run_rsync(
 /// Wait for a child process with a timeout. Kills the child if it exceeds
 /// the deadline. Returns `None` on timeout or if the process state cannot
 /// be read.
-fn wait_with_timeout(
-    mut child: std::process::Child,
-    timeout: Duration,
-) -> Option<RunOutcome> {
+fn wait_with_timeout(mut child: std::process::Child, timeout: Duration) -> Option<RunOutcome> {
     let start = std::time::Instant::now();
     loop {
         match child.try_wait() {

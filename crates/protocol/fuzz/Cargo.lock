@@ -55,7 +55,7 @@ dependencies = [
 
 [[package]]
 name = "compress"
-version = "0.6.0"
+version = "0.6.4"
 dependencies = [
  "flate2",
  "lz4_flex",
@@ -180,13 +180,13 @@ dependencies = [
 
 [[package]]
 name = "logging"
-version = "0.6.0"
+version = "0.6.4"
 
 [[package]]
 name = "lz4_flex"
-version = "0.11.5"
+version = "0.14.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "08ab2867e3eeeca90e844d1940eab391c9dc5228783db2ed999acbc0a9ed375a"
+checksum = "ecbdfe44b1bd960b68170b417450a628c43f7cf56bb3c5317e61cb230ee7f226"
 dependencies = [
  "twox-hash",
 ]
@@ -234,7 +234,7 @@ dependencies = [
 
 [[package]]
 name = "protocol"
-version = "0.6.0"
+version = "0.6.4"
 dependencies = [
  "compress",
  "flate2",

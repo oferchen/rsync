@@ -99,8 +99,7 @@ fn parse_input(data: &[u8]) -> Option<(u8, Vec<Record>)> {
         return None;
     }
     let file_count = (data[0] % MAX_FILES) + 1;
-    let payload_log2 = MIN_PAYLOAD_LOG2
-        + (data[1] % (MAX_PAYLOAD_LOG2 - MIN_PAYLOAD_LOG2 + 1));
+    let payload_log2 = MIN_PAYLOAD_LOG2 + (data[1] % (MAX_PAYLOAD_LOG2 - MIN_PAYLOAD_LOG2 + 1));
     let payload_size = 1usize << payload_log2;
     let record_size = 1 + 2 + payload_size;
 
@@ -223,13 +222,13 @@ fn parallel_destination_hashes(
     for file in 0..file_count {
         let (sink, buf) = VecSink::new();
         applier
-            .register_file(u64::from(file), Box::new(sink) as Box<dyn Write + Send>)
+            .register_file(u32::from(file), Box::new(sink) as Box<dyn Write + Send>)
             .ok()?;
         buffers.insert(file, buf);
     }
     for r in records {
         let chunk = DeltaChunk::literal(
-            u64::from(r.file_ndx),
+            u32::from(r.file_ndx),
             u64::from(r.chunk_sequence),
             r.payload.clone(),
         );
@@ -263,7 +262,8 @@ fuzz_target!(|data: &[u8]| {
         return;
     };
     assert_eq!(
-        actual, expected,
+        actual,
+        expected,
         "parallel receive-delta SHA-256 divergence \
          (file_count={file_count}, records={})",
         records.len(),

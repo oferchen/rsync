@@ -350,17 +350,28 @@ fn parse_wire_rule(buf: &[u8], protocol: ProtocolVersion) -> io::Result<FilterRu
 
 /// Parses a wire rule using old-style prefix rules (protocol < 29).
 ///
-/// Only three forms are valid:
+/// The `"- "` and `"+ "` prefixes are *optional*: a bare pattern is an
+/// exclude, matching upstream where the sender emits plain excludes with no
+/// prefix at these protocols (`get_rule_prefix()` sets `legal_len = 0`).
+/// Valid forms:
 /// - `"- pattern"` - exclude
 /// - `"+ pattern"` - include
-/// - `"!"` - clear list
+/// - `"!"` - clear list (a longer `"!..."` text is an exclude pattern)
+/// - `"pattern"` - exclude
 ///
-/// No modifier flags are parsed. The pattern is the raw text after the
-/// 2-character prefix.
+/// No modifier flags are parsed.
 ///
 /// # Upstream Reference
 ///
-/// `exclude.c:1119-1133` - `XFLG_OLD_PREFIXES` branch
+/// `exclude.c:1125-1133` - `XFLG_OLD_PREFIXES` branch treats the prefixes
+/// as optional; `exclude.c:1315-1323` cancels a tentative `'!'` clear when
+/// more text follows.
+///
+/// # Errors
+///
+/// Returns `InvalidData` when a prefix is followed by an empty pattern,
+/// mirroring upstream's "unexpected end of filter rule" `RERR_SYNTAX` exit
+/// (exclude.c:1324-1327).
 fn parse_wire_rule_old_prefix(text: &str) -> io::Result<FilterRuleWireFormat> {
     if text == "!" {
         return Ok(FilterRuleWireFormat {
@@ -374,11 +385,17 @@ fn parse_wire_rule_old_prefix(text: &str) -> io::Result<FilterRuleWireFormat> {
     } else if let Some(pat) = text.strip_prefix("+ ") {
         (RuleType::Include, pat)
     } else {
+        (RuleType::Exclude, text)
+    };
+
+    if pattern_text.is_empty() {
+        // upstream: exclude.c:1324-1327 exits RERR_SYNTAX on a rule that
+        // ends right after its prefix.
         return Err(io::Error::new(
             io::ErrorKind::InvalidData,
-            format!("invalid old-style filter prefix in: {text:?}"),
+            format!("unexpected end of filter rule: {text:?}"),
         ));
-    };
+    }
 
     let mut rule = FilterRuleWireFormat {
         rule_type,
@@ -585,6 +602,43 @@ mod tests {
         assert_eq!(parsed.len(), 1);
         assert_eq!(parsed[0].rule_type, RuleType::Exclude);
         assert_eq!(parsed[0].pattern, "*.log");
+    }
+
+    /// A plain exclude round-trips at protocol 28, where the sender emits
+    /// the bare pattern with no `"- "` prefix (upstream `get_rule_prefix()`
+    /// sets `legal_len = 0`, exclude.c:1542) and the receiver treats the
+    /// old-style prefixes as optional (exclude.c:1125-1133).
+    #[test]
+    fn old_prefix_bare_exclude_roundtrip() {
+        let protocol = ProtocolVersion::from_supported(28).unwrap();
+        let rule = FilterRuleWireFormat::exclude("*.tmp".to_owned());
+
+        let mut buf = Vec::new();
+        write_filter_list(&mut buf, std::slice::from_ref(&rule), protocol).unwrap();
+        // Bare pattern on the wire: length prefix + "*.tmp" + terminator.
+        assert_eq!(buf, b"\x05\0\0\0*.tmp\0\0\0\0");
+
+        let parsed = read_filter_list(&mut &buf[..], protocol).unwrap();
+        assert_eq!(parsed, vec![rule]);
+    }
+
+    /// A `'!'` followed by more text is not a clear-list marker under the
+    /// old prefixes: upstream cancels the tentative clear when the token is
+    /// longer than one byte (exclude.c:1315-1323) and the text becomes an
+    /// exclude pattern.
+    #[test]
+    fn old_prefix_bang_with_trailing_text_is_exclude() {
+        let protocol = ProtocolVersion::from_supported(28).unwrap();
+        let payload = b"!keep";
+        let mut buf = Vec::new();
+        buf.extend_from_slice(&(payload.len() as i32).to_le_bytes());
+        buf.extend_from_slice(payload);
+        buf.extend_from_slice(&0i32.to_le_bytes());
+
+        let parsed = read_filter_list(&mut &buf[..], protocol).unwrap();
+        assert_eq!(parsed.len(), 1);
+        assert_eq!(parsed[0].rule_type, RuleType::Exclude);
+        assert_eq!(parsed[0].pattern, "!keep");
     }
 
     #[test]

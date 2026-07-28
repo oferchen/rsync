@@ -154,18 +154,20 @@ fn build_entry(fields: &EntryFields) -> Option<FileEntry> {
 
     // Construct the entry based on file type.
     let permissions = u32::from(fields.mode_bits) & 0o7777;
-    let entry = match fields.file_type {
-        FileTypeSelector::Regular => {
-            FileEntry::new_file(path, fields.size, permissions)
-        }
-        FileTypeSelector::Directory => {
-            FileEntry::new_directory(path, permissions)
-        }
+    let mut entry = match fields.file_type {
+        FileTypeSelector::Regular => FileEntry::new_file(path, fields.size, permissions),
+        FileTypeSelector::Directory => FileEntry::new_directory(path, permissions),
         FileTypeSelector::Symlink => {
             let target = sanitise_target(&fields.symlink_target_bytes)?;
             FileEntry::new_symlink(path, PathBuf::from(target))
         }
     };
+
+    // Apply the fuzzed metadata so mtime and ownership reach the wire
+    // encoder (they are elided or delta-encoded per protocol version).
+    entry.set_mtime(i64::from(fields.mtime), 0);
+    entry.set_uid(fields.uid);
+    entry.set_gid(fields.gid);
 
     Some(entry)
 }
@@ -252,7 +254,8 @@ fn check_roundtrip(input: &FlistInput) {
     let original_name = entry.name_bytes();
     let decoded_name = decoded.name_bytes();
     assert_eq!(
-        original_name, decoded_name,
+        original_name,
+        decoded_name,
         "name round-trip mismatch: original={:?} decoded={:?}",
         String::from_utf8_lossy(&original_name),
         String::from_utf8_lossy(&decoded_name),
