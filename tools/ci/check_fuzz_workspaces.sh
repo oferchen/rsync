@@ -11,6 +11,18 @@
 # No fuzzing and no sanitizer instrumentation happen here: `cargo check`
 # type-checks the fuzz targets without linking libFuzzer, so the stable
 # toolchain is sufficient and the run stays cheap and cache-friendly.
+#
+# Lockfile drift is tolerated by design. The fuzz workspaces are excluded
+# from the root workspace, so a dependency edge a main-workspace crate gains
+# (e.g. a new `thiserror` use) never refreshes their standalone lockfiles.
+# `cargo check` is run online and WITHOUT `--locked`: in one pass it both
+# minimally re-syncs each fuzz lockfile against the current manifests and
+# type-checks every fuzz target. A genuine API-drift compile break still
+# fails loudly; only stale-lockfile false positives self-heal. An offline
+# pre-sync (`cargo update --offline`) cannot do this - it dies on a cold
+# registry cache and leaves `--locked` to reject the very drift this guard
+# exists to absorb. Dropping `--locked` here is the sole sanctioned
+# exception, recorded in tools/ci/check_locked_flags.sh's ALLOWLIST.
 
 set -euo pipefail
 
@@ -27,14 +39,8 @@ for ws in "${FUZZ_WORKSPACES[@]}"; do
         echo "error: expected fuzz workspace ${ws}/Cargo.toml is missing" >&2
         exit 1
     fi
-    # Re-sync the lockfile against Cargo.toml first (same idiom as the lint
-    # job) so workspace version bumps that did not refresh the fuzz lockfile
-    # do not block CI. Offline regen can fail on a cold registry cache; the
-    # --locked check below still surfaces any real mismatch loudly.
-    echo "==> cargo update --workspace --offline (${ws})"
-    cargo update --workspace --offline --manifest-path "${ws}/Cargo.toml" || true
     echo "==> cargo check (${ws})"
-    cargo check --locked --manifest-path "${ws}/Cargo.toml"
+    cargo check --manifest-path "${ws}/Cargo.toml"
     echo "==> cargo fmt --check (${ws})"
     cargo fmt --manifest-path "${ws}/Cargo.toml" --all -- --check
 done
