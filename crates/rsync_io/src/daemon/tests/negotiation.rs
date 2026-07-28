@@ -31,7 +31,7 @@ fn negotiate_legacy_daemon_session_exchanges_banners() {
     assert!(!handshake.local_protocol_was_capped());
 
     let transport = handshake.into_stream().into_inner();
-    assert_eq!(transport.written(), client_greeting(31));
+    assert_eq!(transport.written(), client_greeting(32));
     assert_eq!(transport.flushes(), 1);
 }
 
@@ -169,7 +169,7 @@ fn into_parts_round_trips_legacy_handshake() {
     assert_eq!(transport.flushes(), 2);
     assert_eq!(
         transport.written(),
-        [client_greeting(31), b"@RSYNCD: OK\n".to_vec()].concat()
+        [client_greeting(32), b"@RSYNCD: OK\n".to_vec()].concat()
     );
 }
 
@@ -260,7 +260,9 @@ fn into_stream_parts_exposes_legacy_state() {
 
     let transport = stream.into_inner();
     assert_eq!(transport.flushes(), 1);
-    assert_eq!(transport.written(), client_greeting(negotiated.as_u8()));
+    // upstream: clientserver.c:157 - the greeting advertises this side's own
+    // desired protocol, not the negotiated (possibly clamped/decremented) value.
+    assert_eq!(transport.written(), client_greeting(desired.as_u8()));
 }
 
 #[test]
@@ -320,11 +322,8 @@ fn from_stream_parts_rehydrates_legacy_handshake() {
     let transport = rehydrated.into_stream().into_inner();
     assert_eq!(transport.flushes(), 2);
 
-    let expected = [
-        client_greeting(negotiated.as_u8()),
-        b"@RSYNCD: OK\n".to_vec(),
-    ]
-    .concat();
+    // The greeting advertises our own desired protocol, not the negotiated value.
+    let expected = [client_greeting(desired.as_u8()), b"@RSYNCD: OK\n".to_vec()].concat();
     assert_eq!(transport.written(), expected);
 }
 
@@ -379,9 +378,11 @@ fn legacy_client_greeting_advertises_our_digests_not_the_servers() {
     stream.flush().expect("flush propagates");
 
     let inner = stream.into_inner();
+    // Version is our own 32.0 (upstream advertises its max before reading the
+    // server), digests are our full list - never the server's `sha512 md5`.
     assert_eq!(
         inner.written(),
-        b"@RSYNCD: 31.0 sha512 sha256 sha1 md5 md4\n@RSYNCD: OK\n"
+        b"@RSYNCD: 32.0 sha512 sha256 sha1 md5 md4\n@RSYNCD: OK\n"
     );
 }
 
@@ -399,7 +400,7 @@ fn legacy_client_greeting_ignores_a_single_weak_server_digest() {
     let inner = handshake.into_stream().into_inner();
     assert_eq!(
         inner.written(),
-        b"@RSYNCD: 31.0 sha512 sha256 sha1 md5 md4\n"
+        b"@RSYNCD: 32.0 sha512 sha256 sha1 md5 md4\n"
     );
 }
 
@@ -427,4 +428,35 @@ fn legacy_client_greeting_respects_protocol_cap() {
         inner.written(),
         b"@RSYNCD: 29.0 sha512 sha256 sha1 md5 md4\n@RSYNCD: OK\n"
     );
+}
+
+// Task #149 end-to-end regression: a discriminating stub advertises a DIFFERENT
+// version (30) AND a nonzero subprotocol (5). Pre-fix code echoed the server's
+// `30.5` into the client greeting and negotiated protocol 30 (a bare min); a
+// non-discriminating fixture whose version equals ours would hide both bugs.
+//
+// upstream: clientserver.c:157 writes our own greeting before reading the
+// server's, so rsync 3.4.4 sends `@RSYNCD: 32.0 ...` here (verified against the
+// real binary), and clientserver.c:215-219 decrements the session protocol to 29
+// because the server's nonzero subprotocol differs from our release sub 0.
+#[test]
+fn discriminating_server_greeting_advertises_ours_and_decrements() {
+    let transport = MemoryTransport::new(b"@RSYNCD: 30.5 sha512 sha256 sha1 md5 md4\n");
+    let handshake = negotiate_legacy_daemon_session(transport, ProtocolVersion::NEWEST)
+        .expect("handshake should succeed");
+
+    // The session protocol decrements: min(32, 30) = 30, then -1 for the nonzero
+    // server subprotocol.
+    assert_eq!(
+        handshake.negotiated_protocol(),
+        ProtocolVersion::from_supported(29).expect("protocol 29 supported"),
+    );
+    assert_eq!(
+        handshake.server_protocol(),
+        ProtocolVersion::from_supported(30).expect("protocol 30 supported"),
+    );
+
+    // The greeting advertises our own 32.0, never the server's 30.5.
+    let transport = handshake.into_stream().into_inner();
+    assert_eq!(transport.written(), client_greeting(32));
 }

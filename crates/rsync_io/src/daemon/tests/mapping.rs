@@ -35,7 +35,7 @@ fn map_stream_inner_preserves_state_and_transforms_transport() {
     assert_eq!(inner.flushes(), 2);
     assert_eq!(
         inner.written(),
-        [client_greeting(31), b"@RSYNCD: OK\n".to_vec()].concat()
+        [client_greeting(32), b"@RSYNCD: OK\n".to_vec()].concat()
     );
 }
 
@@ -93,7 +93,7 @@ fn parts_map_stream_inner_transforms_transport() {
     let inner = instrumented.into_inner();
     assert_eq!(
         inner.written(),
-        [client_greeting(31), b"OK\n".to_vec()].concat()
+        [client_greeting(32), b"OK\n".to_vec()].concat()
     );
 }
 
@@ -173,5 +173,5 @@ fn try_map_stream_inner_preserves_original_on_error() {
     assert_eq!(err.error().kind(), io::ErrorKind::Other);
     let original = err.into_original();
     let transport = original.into_stream().into_inner();
-    assert_eq!(transport.written(), client_greeting(31));
+    assert_eq!(transport.written(), client_greeting(32));
 }
