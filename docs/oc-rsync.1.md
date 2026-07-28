@@ -1159,6 +1159,94 @@ and are not intended for direct use:
 **OC_RSYNC_BRAND**
 :   Override the branding identity (for testing and development).
 
+The following oc-rsync extension variables tune local performance and
+diagnostics. They are never forwarded to a remote peer and never change
+wire behaviour, transferred contents, or exit codes. See
+*docs/oc-extension-env-reference.md* in the source distribution for full
+values, defaults, and required build features.
+
+**OC_RSYNC_BUFFER_POOL_SIZE**
+:   Number of buffers retained by the global I/O buffer pool.
+
+**OC_RSYNC_BYTE_BUDGET**
+:   Soft cap in bytes on pooled buffer memory; **0** disables the cap.
+
+**OC_RSYNC_BUFFER_POOL_MEMORY_CAP**
+:   Hard cap in bytes (or **auto**) on outstanding buffer memory.
+
+**OC_BUFFER_POOL_BLOCK_SIZE**
+:   Per-buffer block size as a size spec (for example **4M**).
+
+**OC_RSYNC_BUFFER_POOL_STATS**
+:   Set to **1** to print buffer-pool telemetry to stderr on shutdown.
+
+**OC_RSYNC_ADAPTIVE_QUEUE**
+:   Set to **0** to pin a static work-queue depth instead of the
+    adaptive controller.
+
+**OC_RSYNC_REORDER_RING_CAP**
+:   Pin the per-file reorder-ring capacity of the parallel delta applier.
+
+**OC_RSYNC_DASHMAP_SHARDS**
+:   Pin the shard count of the parallel delta applier's concurrent map.
+
+**OC_RSYNC_PARALLEL_CHECKSUM**
+:   Set to **0** to force the sequential basis-checksum generator;
+    overridden by **--checksum-threads**.
+
+**OC_RSYNC_DISABLE_IOURING**
+:   Set to **1** to disable io_uring; equivalent to **--no-io-uring**.
+
+**OC_RSYNC_MMAP_TO_SQPOLL_THRESHOLD_BYTES**
+:   Basis-file size above which reads prefer io_uring over mmap.
+
+**OC_RSYNC_BWLIMIT_BACKEND**
+:   Sleep backend for **--bwlimit** pacing (**std** or **kqueue**).
+
+**OC_RSYNC_FORCE_ROOTLESS_CONTAINER**
+:   Set to **1** to force rootless-container detection and skip SQPOLL.
+
+**OC_RSYNC_WIN_CHUNK_BYTES**
+:   Windows chunked-reader chunk size (power of two, 4 KiB to 64 MiB).
+
+**OC_RSYNC_WINDOWS_RIO**
+:   Windows daemon Registered I/O socket path (**off**, **auto**, **on**).
+
+**OC_RSYNC_SPILL_DIR**
+:   Directory for reorder-buffer spill files; equivalent to
+    **--spill-dir**, which takes precedence.
+
+**OC_RSYNC_SPILL_THRESHOLD_BYTES**
+:   Spill threshold in bytes; equivalent to **--spill-threshold-bytes**,
+    which takes precedence.
+
+**OC_RSYNC_NO_SPILL**
+:   Set to **1** to keep the reorder buffer in memory only; equivalent
+    to **--no-spill**, which takes precedence.
+
+**OC_RSYNC_SPILL_COMPRESSION**
+:   Spill payload compression (**none**, **zstd**, or **zstd:***N*);
+    zstd requires the spill-compression build feature.
+
+**OC_RSYNC_DAEMON_ADDRESS_FAMILY**
+:   Force the daemon listener address family (**ipv4**, **ipv6**,
+    **both**).
+
+**OC_RSYNC_NO_SECCOMP**
+:   Set to **1** to disable the daemon worker seccomp filter (builds
+    with the daemon-seccomp feature).
+
+**OC_RSYNC_DAEMON_SECCOMP**
+:   Set to **0** to disable the same seccomp filter (inverse alias).
+
+**OC_RSYNC_ASYNC_DAEMON**
+:   Opt in to the async daemon accept loop (builds with the
+    async-daemon feature).
+
+**OC_RSYNC_ASYNC_SSH**
+:   Set to **1** to use the async SSH transport (builds with the
+    async-ssh feature).
+
 # FILES
 
 **~/.rsync-filter**
