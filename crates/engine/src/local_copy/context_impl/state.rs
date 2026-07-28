@@ -169,6 +169,8 @@ impl<'a> CopyContext<'a> {
             batch_flist_writer,
             batch_delta_buf,
             batch_delta_entries: Vec::new(),
+            batch_delta_sum_head: protocol::wire::SumHead::WHOLE_FILE,
+            batch_delta_sum_head_offset: 0,
             batch_entry_sort_data: Vec::new(),
             batch_current_delta_idx: 0,
             batch_flist_index: 0,
