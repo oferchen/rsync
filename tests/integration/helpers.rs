@@ -697,9 +697,9 @@ impl TransferResult {
 }
 
 /// Locate an upstream rsync binary by version.
+///
+/// Delegates to the workspace-anchored resolver so the lookup is
+/// independent of the CWD Cargo runs the test from.
 pub fn upstream_rsync_binary(version: &str) -> Option<PathBuf> {
-    let path = PathBuf::from(format!(
-        "target/interop/upstream-install/{version}/bin/rsync"
-    ));
-    if path.is_file() { Some(path) } else { None }
+    test_support::upstream_install_bin(version)
 }
