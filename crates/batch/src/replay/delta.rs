@@ -6,7 +6,6 @@
 //!
 //! - [`apply_delta_ops`] writes the reconstructed file from a basis + ops.
 //! - [`write_literals_to_file`] handles the no-basis (literal-only) path.
-//! - [`choose_block_length`] mirrors upstream `match.c:choose_block_size()`.
 //! - [`default_xfer_sum_len`] returns the per-file transfer checksum length.
 
 use std::fs::{File, OpenOptions};
@@ -63,16 +62,29 @@ pub(super) fn write_literals_to_file(
     Ok(())
 }
 
+/// Widens a wire block index for [`protocol::wire::SumHead::block_span`],
+/// which mirrors upstream's signed `i < 0 || i >= sum.count` test.
+///
+/// A `u32` past [`i32::MAX`] is an index upstream would have read back as
+/// negative, so it maps to -1 and is rejected rather than truncated.
+pub(super) const fn block_index_as_i32(block_index: u32) -> i32 {
+    if block_index > i32::MAX as u32 {
+        -1
+    } else {
+        block_index as i32
+    }
+}
+
 /// Applies delta operations to reconstruct a file from a basis file.
 ///
 /// Reads copy and literal tokens from `delta_ops` and writes the
 /// reconstructed output to `dest_path`. Copy tokens reference blocks in
 /// `basis_path` at offsets computed as `block_index * block_length`.
 ///
-/// `block_count` is the number of blocks in the basis file's signature.
-/// `remainder` is the size of the last block (which may be shorter than
-/// `block_length`). For the last block (index == block_count - 1), the copy
-/// uses `remainder` bytes instead of `block_length`.
+/// `sum_head` is the block geometry the batch advertised for this file. Every
+/// copy token is resolved through it, so a token that references a block the
+/// header does not describe fails here rather than reconstructing the wrong
+/// bytes - the same check upstream performs at `receiver.c:414`.
 ///
 /// upstream: receiver.c:recv_files() / match.c - block_length for all blocks
 /// except the last, which uses remainder.
@@ -80,14 +92,13 @@ pub(super) fn write_literals_to_file(
 /// # Errors
 ///
 /// Returns [`BatchError::Io`] if the basis file cannot be opened, the output
-/// file cannot be created, or any read/write/seek operation fails.
+/// file cannot be created, any read/write/seek operation fails, or a copy
+/// token references a block outside `sum_head`.
 pub fn apply_delta_ops(
     basis_path: &Path,
     dest_path: &Path,
     delta_ops: Vec<protocol::wire::DeltaOp>,
-    block_length: usize,
-    block_count: u32,
-    remainder: usize,
+    sum_head: protocol::wire::SumHead,
 ) -> BatchResult<()> {
     let basis_file = File::open(basis_path).map_err(|e| {
         BatchError::Io(std::io::Error::new(
@@ -133,7 +144,19 @@ pub fn apply_delta_ops(
                 block_index,
                 length,
             } => {
-                let offset = u64::from(block_index) * (block_length as u64);
+                // Token-format block matches encode length=0 because the
+                // receiver derives the block span from the advertised
+                // geometry. Resolving through the sum_head is what rejects a
+                // header that does not describe this body.
+                // upstream: receiver.c:414-422
+                let (offset, span) = sum_head
+                    .block_span(block_index_as_i32(block_index))
+                    .map_err(|error| {
+                        BatchError::Io(std::io::Error::new(
+                            std::io::ErrorKind::InvalidData,
+                            format!("{error} while replaying '{}'", dest_path.display()),
+                        ))
+                    })?;
 
                 basis.seek(SeekFrom::Start(offset)).map_err(|e| {
                     BatchError::Io(std::io::Error::new(
@@ -142,17 +165,10 @@ pub fn apply_delta_ops(
                     ))
                 })?;
 
-                // Token-format block matches encode length=0 because the
-                // receiver derives block size from the signature. Use
-                // block_length for all blocks except the last, which uses
-                // remainder (the last block is typically shorter).
-                // upstream: receiver.c - block size for last block is remainder.
                 let effective_length = if length > 0 {
                     length as usize
-                } else if block_count > 0 && block_index == block_count - 1 {
-                    remainder
                 } else {
-                    block_length
+                    span as usize
                 };
                 let mut remaining = effective_length;
                 while remaining > 0 {
@@ -194,23 +210,4 @@ pub fn apply_delta_ops(
 pub(super) fn default_xfer_sum_len(protocol_version: i32) -> usize {
     let _ = protocol_version;
     16
-}
-
-/// Chooses block length using the same heuristic as upstream rsync.
-///
-/// Upstream `match.c:choose_block_size()` computes the block length as the
-/// integer square root of the file size, clamped to `[BLOCK_SIZE (700),
-/// MAX_BLOCK_SIZE (128 * 1024)]`. For batch replay the exact same
-/// derivation ensures copy-token offsets align with the blocks that the
-/// sender used during the original transfer.
-pub(super) fn choose_block_length(file_size: u64) -> usize {
-    const MIN_BLOCK: usize = 700;
-    const MAX_BLOCK: usize = 128 * 1024;
-
-    if file_size == 0 {
-        return MIN_BLOCK;
-    }
-
-    let sqrt = (file_size as f64).sqrt() as usize;
-    sqrt.clamp(MIN_BLOCK, MAX_BLOCK)
 }
