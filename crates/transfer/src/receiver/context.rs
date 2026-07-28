@@ -158,10 +158,13 @@ pub struct ReceiverContext {
     /// it can reload each destination directory's per-directory merge files
     /// while scanning, but those rules must not perturb prune-empty-dirs.
     ///
-    /// On a local-client pull the wire filter list is never received
-    /// (`should_read_filter_list()` is false in client mode), so this is built
-    /// in `setup_transfer` from the local CLI filter rules. On a daemon/server
-    /// receiver it is cloned from the wire-populated `filter_chain`.
+    /// Cloned from `filter_chain` (with `--delete-excluded` folded in) by the
+    /// single `compile_receiver_filter_chains` path in `setup_transfer`. On a
+    /// daemon/server receiver `filter_chain` is wire-populated; on a
+    /// local-client pull the wire filter list is never received
+    /// (`should_read_filter_list()` is false in client mode) so it is populated
+    /// from the local CLI filter rules instead - either way both chains carry
+    /// the same rules.
     ///
     /// # Upstream Reference
     ///

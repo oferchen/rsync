@@ -32,10 +32,17 @@ use protocol::flist::FileEntry;
 /// subtrees contain no kept non-directory entries, mirroring upstream
 /// `flist.c:3121-3184`.
 ///
-/// `filter_chain` is consulted via [`FilterChain::allows`] with `is_dir=true`
-/// to mirror upstream's `is_excluded(name, NAME_IS_DIR, ALL_FILTERS)` call.
-/// Upstream returns 1 when the dir is excluded; we mirror that by checking
-/// `!filter_chain.allows(path, true)`.
+/// `filter_chain` is consulted via [`FilterChain::allows_deletion`] with
+/// `is_dir=true` to mirror upstream's `is_excluded(name, NAME_IS_DIR,
+/// ALL_FILTERS)` call. `ALL_FILTERS` evaluates the receiver-side view of the
+/// rule list (`exclude.c:name_is_excluded` walks `filter_list` without the
+/// sender's `LOCAL_RULE` elision), so a receiver-only rule - a `protect`/`P`
+/// or an `-r` receiver-side exclude - counts as excluded here even though the
+/// sender never applied it and shipped the directory. The transfer-side
+/// [`FilterChain::allows`] elides exactly those rules, so it is the wrong
+/// predicate for the prune reprieve. Upstream returns 1 when the dir is
+/// excluded; we mirror that by checking `!filter_chain.allows_deletion(path,
+/// true)`.
 ///
 /// Pruned entries are cleared in place (name reset, mode zeroed) rather than
 /// removed so that flat-array indices continue to map directly to the
@@ -102,8 +109,12 @@ pub(in crate::receiver) fn prune_empty_dirs_pass(
 
             // upstream: flist.c:3142 - is_excluded(name, 1, ALL_FILTERS).
             // Returns 1 when the dir is excluded by the receiver's filter
-            // chain. In that branch, upstream reprieves the chain.
-            let dir_is_excluded = !filter_chain.allows(entry.path().as_path(), true);
+            // chain. In that branch, upstream reprieves the chain. ALL_FILTERS
+            // is the receiver-side view, so use allows_deletion (which honours
+            // protect/risk and receiver-side rules) rather than the sender-side
+            // allows(), which elides exactly the rules that leave a shipped dir
+            // excluded on the receiver.
+            let dir_is_excluded = !filter_chain.allows_deletion(entry.path().as_path(), true);
 
             if dir_is_excluded {
                 // upstream: flist.c:3143-3150 - "Keep dirs through this dir."
@@ -303,6 +314,70 @@ mod tests {
                 "expected {empty} to be pruned, kept={kept:?}"
             );
         }
+    }
+
+    /// A receiver-only rule must reprieve an otherwise-empty directory,
+    /// mirroring upstream `flist.c:3142` `is_excluded(name, 1, ALL_FILTERS)`.
+    ///
+    /// A `protect`/`P` rule is receiver-side only: the sender never applies it
+    /// and ships the empty directory, so the prune pass is the only place the
+    /// client's rule can act. It must consult the receiver-side decision
+    /// (`allows_deletion`), which honours protect/risk and `-r` rules, rather
+    /// than the sender-side `allows`, which elides exactly those rules and
+    /// would prune the directory the user asked to keep. Verified against real
+    /// rsync 3.4.4: `--prune-empty-dirs --filter='P emptyprot'` keeps the dir.
+    #[test]
+    fn receiver_side_rule_reprieves_empty_dir() {
+        use filters::{FilterRule, FilterSet};
+
+        let mut list = vec![
+            FileEntry::new_directory(PathBuf::from("keep"), 0o755),
+            FileEntry::new_file(PathBuf::from("keep/real.txt"), 4, 0o644),
+            FileEntry::new_directory(PathBuf::from("emptyprot"), 0o755),
+        ];
+        sort_file_list(&mut list, false, false);
+
+        let global = FilterSet::from_rules([FilterRule::protect("emptyprot")]).unwrap();
+        prune_empty_dirs_pass(&mut list, &FilterChain::new(global));
+
+        let kept: Vec<String> = list
+            .iter()
+            .filter(|e| !e.name().is_empty())
+            .map(|e| e.name().to_string())
+            .collect();
+        assert!(
+            kept.iter().any(|n| n == "emptyprot"),
+            "a receiver-side protect rule must reprieve the empty dir, kept={kept:?}"
+        );
+        assert!(kept.iter().any(|n| n == "keep/real.txt"));
+    }
+
+    /// Control for [`receiver_side_rule_reprieves_empty_dir`]: with no matching
+    /// rule the same empty directory IS pruned, proving the reprieve is driven
+    /// by the filter rule rather than an unconditional keep.
+    #[test]
+    fn empty_dir_without_matching_rule_is_pruned() {
+        use filters::{FilterRule, FilterSet};
+
+        let mut list = vec![
+            FileEntry::new_directory(PathBuf::from("keep"), 0o755),
+            FileEntry::new_file(PathBuf::from("keep/real.txt"), 4, 0o644),
+            FileEntry::new_directory(PathBuf::from("emptyprot"), 0o755),
+        ];
+        sort_file_list(&mut list, false, false);
+
+        let global = FilterSet::from_rules([FilterRule::protect("other")]).unwrap();
+        prune_empty_dirs_pass(&mut list, &FilterChain::new(global));
+
+        let kept: Vec<String> = list
+            .iter()
+            .filter(|e| !e.name().is_empty())
+            .map(|e| e.name().to_string())
+            .collect();
+        assert!(
+            !kept.iter().any(|n| n == "emptyprot"),
+            "an unrelated protect rule must not reprieve the empty dir, kept={kept:?}"
+        );
     }
 
     /// Empty flist must be a no-op.
