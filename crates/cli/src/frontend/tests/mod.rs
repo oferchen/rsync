@@ -60,6 +60,8 @@ mod daemon_tests;
 mod delete_tests;
 #[path = "dry_run.rs"]
 mod dry_run_tests;
+#[path = "empty_flist_transfer.rs"]
+mod empty_flist_transfer_tests;
 #[cfg(unix)]
 #[path = "error_recovery_integration.rs"]
 mod error_recovery_integration_tests;
