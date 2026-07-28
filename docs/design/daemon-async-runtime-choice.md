@@ -220,8 +220,8 @@ What still needs to happen:
    `.await` the join handle. The blocking closure is the existing
    worker body factored out of `connection.rs`.
 3. Add `use-async-listener` as a boolean directive in
-   `crates/daemon/src/rsyncd_config/sections.rs` and validate it in
-   `crates/daemon/src/rsyncd_config/validation.rs`. Default false.
+   `crates/daemon/src/daemon/sections/config_parsing/global_directives.rs`
+   and validate it inline in the same parser. Default false.
 4. The async features the daemon needs are exactly
    `["rt-multi-thread", "net", "macros", "signal", "sync", "time"]`.
    `rt-multi-thread` and `signal` are not currently in the daemon's

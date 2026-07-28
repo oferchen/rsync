@@ -242,8 +242,9 @@ Behaviour:
 - If unset, `N = num_cpus::get() * 2`.
 - If set to a positive integer, that value is used verbatim.
 - If set to `0`, fall back to the default.
-- Validated at config parse time via the existing
-  `crates/daemon/src/rsyncd_config/validation.rs` machinery.
+- Validated at config parse time by the existing
+  `crates/daemon/src/daemon/sections/config_parsing/` parser (validation
+  is inline in the directive parsing, not a separate pass).
 
 The knob is intentionally a global; per-module worker sizing would force
 per-module pools and would not interact well with `--max-connections`. A
@@ -554,10 +555,9 @@ Files that the implementation phase will add or extend:
 - `crates/daemon/src/daemon/async_session/listener.rs` - replace the
   inline `tokio::spawn(handle_async_session(...))` with a handoff into
   `TransferWorkerPool`.
-- `crates/daemon/src/rsyncd_config/sections.rs` - add
-  `transfer-worker-threads` directive parsing.
-- `crates/daemon/src/rsyncd_config/validation.rs` - validate the new
-  directive.
+- `crates/daemon/src/daemon/sections/config_parsing/global_directives.rs` -
+  add `transfer-worker-threads` directive parsing and validate the new
+  directive inline.
 - `crates/daemon/Cargo.toml` - no change required; the existing
   `async` feature flag is the on/off switch.
 

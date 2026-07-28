@@ -115,7 +115,7 @@ traceability.
 | File | Missing reference | Upstream source |
 |------|------------------|-----------------|
 | `auth.rs` | Challenge-response MD4/MD5 computation | authenticate.c:auth_server() |
-| `rsyncd_config/` (various) | Configuration parameter parsing | loadparm.c (partially covered) |
+| `daemon/sections/config_parsing/` (various) | Configuration parameter parsing | loadparm.c (partially covered) |
 
 ### Checksums Crate
 

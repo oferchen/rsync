@@ -144,7 +144,7 @@ auth complete -> validate_module_path -> apply_module_privilege_restrictions
 
 The set of paths passed to `restrict_to_paths` is the union of:
 
-1. `module.path` - mandatory, always present (`crates/daemon/src/rsyncd_config/sections.rs:142`).
+1. `module.path` - mandatory, always present (parsed in `crates/daemon/src/daemon/sections/config_parsing/module_directives.rs`).
 2. The module lock file directory, if configured (`module.lock_file` - the daemon needs to update the file during the connection).
 3. Any auxiliary log paths the daemon writes per-connection (transfer log, xfer log).
 
