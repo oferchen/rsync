@@ -275,7 +275,9 @@ impl ReceiverContext {
                 .collect();
         }
 
-        let preserve_times = self.config.flags.times && !self.config.flags.ignore_times;
+        // upstream: generator.c:642 - the quick-check mtime gate keys on
+        // ignore_times alone; -t/--times only governs whether mtime is applied.
+        let ignore_times = self.config.flags.ignore_times;
         let size_only = self.config.file_selection.size_only;
         // upstream: generator.c:quick_check_ok() -> same_time() honours the
         // `--modify-window` tolerance for every transfer, not just local copies.
@@ -357,7 +359,7 @@ impl ReceiverContext {
                             entry,
                             &file_path,
                             meta,
-                            preserve_times,
+                            ignore_times,
                             size_only,
                             always_checksum,
                             modify_window,
@@ -398,7 +400,7 @@ impl ReceiverContext {
                     entry,
                     &file_path,
                     meta,
-                    preserve_times,
+                    ignore_times,
                     size_only,
                     always_checksum,
                     modify_window,
@@ -457,7 +459,7 @@ impl ReceiverContext {
                         entry,
                         dest_dir,
                         &self.config.reference_directories,
-                        preserve_times,
+                        ignore_times,
                         size_only,
                         always_checksum,
                         modify_window,
@@ -553,7 +555,9 @@ impl ReceiverContext {
         dest_dir: &Path,
         candidates: &[(usize, &'a FileEntry, PathBuf, u32)],
     ) -> Vec<DryRunItem<'a>> {
-        let preserve_times = self.config.flags.times && !self.config.flags.ignore_times;
+        // upstream: generator.c:642 - the quick-check mtime gate keys on
+        // ignore_times alone; -t/--times only governs whether mtime is applied.
+        let ignore_times = self.config.flags.ignore_times;
         let size_only = self.config.file_selection.size_only;
         let modify_window = self.config.file_selection.modify_window;
         let always_checksum = if self.config.flags.checksum {
@@ -577,7 +581,7 @@ impl ReceiverContext {
             let raw = self.dry_run_entry_iflags(
                 entry,
                 &dest_path,
-                preserve_times,
+                ignore_times,
                 size_only,
                 always_checksum,
                 modify_window,
@@ -608,7 +612,7 @@ impl ReceiverContext {
         &self,
         entry: &FileEntry,
         dest_path: &Path,
-        preserve_times: bool,
+        ignore_times: bool,
         size_only: bool,
         always_checksum: Option<protocol::ChecksumAlgorithm>,
         modify_window: metadata::ModifyWindow,
@@ -653,7 +657,7 @@ impl ReceiverContext {
                         entry,
                         dest_path,
                         &meta,
-                        preserve_times,
+                        ignore_times,
                         size_only,
                         always_checksum,
                         modify_window,
@@ -1028,7 +1032,7 @@ impl ReceiverContext {
         entry: &FileEntry,
         dest_path: &Path,
         dest_meta: &fs::Metadata,
-        preserve_times: bool,
+        ignore_times: bool,
         size_only: bool,
         always_checksum: Option<protocol::ChecksumAlgorithm>,
         modify_window: metadata::ModifyWindow,
@@ -1043,7 +1047,7 @@ impl ReceiverContext {
             entry,
             dest_path,
             dest_meta,
-            preserve_times,
+            ignore_times,
             size_only,
             always_checksum,
             modify_window,
@@ -1270,6 +1274,100 @@ mod itemize_order_tests {
             run(true).is_empty(),
             "a client-mode (pull) receiver prints its row locally; recording \
              it for the wire too would double every row"
+        );
+    }
+
+    /// upstream: generator.c:642 `quick_check_ok()` - the mtime quick-check runs
+    /// whenever `ignore_times` is off; `-t`/`--times` only decides whether the
+    /// mtime is *applied* to the destination, never whether the comparison runs.
+    /// A bare `-r` (recursion, no `-t`, no `-I`) over an unchanged tree must
+    /// therefore request zero transfers - the same result upstream produces.
+    ///
+    /// This encodes WHY the divergence mattered: gating on `!preserve_times`
+    /// (i.e. `!times || ignore_times`) re-sent every byte of an already-current
+    /// tree under a plain `-r`, an invisible efficiency regression because the
+    /// on-disk result stayed byte-identical. The matrix below pins each gate to
+    /// its own upstream rule so the fix cannot over-correct: `-I` still forces,
+    /// `--size-only` still skips on a size match regardless of mtime.
+    #[cfg(unix)]
+    #[test]
+    fn recursive_without_times_still_quick_checks_mtime() {
+        let dir = test_support::create_tempdir();
+        let dest = dir.path();
+        let path = dest.join("f.txt");
+        std::fs::write(&path, b"payload").unwrap();
+        let matching = filetime::FileTime::from_unix_time(1_600_000_000, 0);
+        filetime::set_file_times(&path, matching, matching).unwrap();
+
+        let mut entry = FileEntry::new_file("f.txt".into(), b"payload".len() as u64, 0o644);
+        entry.set_mtime(1_600_000_000, 0);
+
+        let hs = handshake();
+        // Returns how many files the generator would request a transfer for,
+        // starting from a bare `-r` config the closure may further mutate.
+        let requested = |mutate: &dyn Fn(&std::path::Path, &mut ServerConfig)| -> usize {
+            let mut config = itemize_client_config();
+            config.flags.times = false;
+            config.flags.ignore_times = false;
+            config.flags.perms = false;
+            config.file_selection.size_only = false;
+            mutate(&path, &mut config);
+            let mut ctx = ReceiverContext::new_for_test(&hs, config);
+            ctx.file_list = vec![entry.clone()];
+            let mut writer = crate::writer::ServerWriter::new_plain(Vec::new());
+            let mut metadata_errors = Vec::new();
+            let mut stats = TransferStats::default();
+            ctx.build_files_to_transfer(
+                &mut writer,
+                dest,
+                &metadata::MetadataOptions::default(),
+                None,
+                &mut metadata_errors,
+                &mut stats,
+                None,
+                None,
+            )
+            .len()
+        };
+
+        // Bare `-r`, size+mtime match -> skip (upstream requests 0). Pre-fix oc
+        // forced a transfer here because `!preserve_times` was true without -t.
+        assert_eq!(
+            requested(&|_, _| {}),
+            0,
+            "-r without -t must skip an unchanged (size+mtime) file"
+        );
+
+        // `-I`/--ignore-times is the sole flag that forces a transfer on a match.
+        assert_eq!(
+            requested(&|_, config| config.flags.ignore_times = true),
+            1,
+            "-I must force the transfer despite matching size+mtime"
+        );
+
+        // --size-only skips on a size match even when the mtime differs, which
+        // distinguishes it from the plain mtime gate (which would transfer).
+        assert_eq!(
+            requested(&|p, config| {
+                config.file_selection.size_only = true;
+                let stale = filetime::FileTime::from_unix_time(1_500_000_000, 0);
+                filetime::set_file_times(p, stale, stale).unwrap();
+            }),
+            0,
+            "--size-only skips on a size match regardless of mtime"
+        );
+
+        // Restore the matching mtime the size-only case perturbed, then confirm
+        // the plain mtime gate DOES transfer when only the mtime differs - so the
+        // -r skip above is genuinely the size+mtime match, not a dead gate.
+        filetime::set_file_times(&path, matching, matching).unwrap();
+        assert_eq!(
+            requested(&|p, _| {
+                let stale = filetime::FileTime::from_unix_time(1_500_000_000, 0);
+                filetime::set_file_times(p, stale, stale).unwrap();
+            }),
+            1,
+            "-r with a differing mtime (same size) must transfer"
         );
     }
 
