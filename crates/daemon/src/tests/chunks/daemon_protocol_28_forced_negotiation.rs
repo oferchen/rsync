@@ -67,18 +67,14 @@ fn daemon_protocol_28_forced_client_greeting_accepted() {
 }
 
 #[test]
-fn daemon_protocol_28_forced_greeting_has_no_digest_list() {
-    // Verify that the daemon greeting formatted for protocol 28 omits the
-    // digest list entirely. Pre-protocol-30 clients do not expect digests.
+fn daemon_protocol_28_forced_greeting_carries_the_full_digest_list() {
+    // upstream: compat.c:838-842 - `output_daemon_greeting()` never filters the
+    // list by protocol, so forcing the daemon down to 28 changes only the
+    // version number. Verified against rsync 3.4.4, whose `--daemon
+    // --protocol=28` banner is `@RSYNCD: 28.0 sha512 sha256 sha1 md5 md4`.
     let greeting = legacy_daemon_greeting_for_protocol(ProtocolVersion::V28);
 
-    assert_eq!(
-        greeting, "@RSYNCD: 28.0\n",
-        "Protocol 28 greeting must be exactly '@RSYNCD: 28.0\\n' with no digest list"
-    );
-    assert_eq!(greeting.len(), 14, "greeting must be exactly 14 bytes");
-    assert!(!greeting.contains("md4"), "must not contain digest names");
-    assert!(!greeting.contains("md5"), "must not contain digest names");
+    assert_eq!(greeting, "@RSYNCD: 28.0 sha512 sha256 sha1 md5 md4\n");
 }
 
 #[test]

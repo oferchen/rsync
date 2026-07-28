@@ -186,7 +186,7 @@ fn read_and_parse_legacy_daemon_greeting_details_from_stream() {
         details.protocol(),
         ProtocolVersion::from_supported(31).unwrap()
     );
-    assert_eq!(details.digest_list(), Some("md4 md5"));
+    assert_eq!(details.digest_names(), Some("md4 md5"));
     assert!(details.has_subprotocol());
     assert_eq!(line, b"@RSYNCD: 31.0 md4 md5\n");
 }

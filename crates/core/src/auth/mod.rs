@@ -13,7 +13,7 @@
 use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD_NO_PAD;
 use checksums::strong::{Md4, Md5, Sha1, Sha256, Sha512};
-use protocol::ProtocolVersion;
+use protocol::AdvertisedDigests;
 
 /// Digest algorithms supported for daemon challenge/response authentication.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -121,40 +121,13 @@ pub const SUPPORTED_DAEMON_DIGESTS: &[DaemonAuthDigest; 5] = &[
     DaemonAuthDigest::Md4,
 ];
 
-/// Returns the authentication digests appropriate for the given protocol version.
+/// Parses the whitespace-separated digest list advertised in a greeting.
 ///
-/// upstream: csprotocol.txt - digest negotiation rules depend on protocol era:
-///
-/// - **Protocol >= 31**: all digests (SHA-512, SHA-256, SHA-1, MD5, MD4).
-///   Rsync 3.2.7 introduced the digest list in the greeting for protocol 31+.
-/// - **Protocol 30**: MD5 and MD4. SHA-family digests were not available before
-///   protocol 31.
-/// - **Protocol < 30**: MD4 only. MD5 was introduced in protocol 30.
+/// Names this build does not implement are dropped while the peer's ordering is
+/// preserved, mirroring how `parse_negotiate_str()` (compat.c:333-356) skips
+/// entries `get_nni_by_name()` cannot resolve.
 #[must_use]
-pub fn digests_for_protocol(version: ProtocolVersion) -> &'static [DaemonAuthDigest] {
-    let v = version.as_u8();
-    if v >= 31 {
-        SUPPORTED_DAEMON_DIGESTS
-    } else if v >= 30 {
-        PROTOCOL_30_DIGESTS
-    } else {
-        LEGACY_DIGESTS
-    }
-}
-
-/// Digests available for protocol 30 (MD5 + MD4).
-const PROTOCOL_30_DIGESTS: &[DaemonAuthDigest] = &[DaemonAuthDigest::Md5, DaemonAuthDigest::Md4];
-
-/// Digests available for protocols before 30 (MD4 only).
-const LEGACY_DIGESTS: &[DaemonAuthDigest] = &[DaemonAuthDigest::Md4];
-
-/// Parses the whitespace-separated digest list advertised by a daemon greeting.
-#[must_use]
-pub fn parse_daemon_digest_list(list: Option<&str>) -> Vec<DaemonAuthDigest> {
-    let Some(list) = list else {
-        return Vec::new();
-    };
-
+pub fn parse_daemon_digest_list(list: &str) -> Vec<DaemonAuthDigest> {
     list.split_whitespace()
         .filter_map(|token| match token.to_ascii_lowercase().as_str() {
             "sha512" => Some(DaemonAuthDigest::Sha512),
@@ -167,26 +140,39 @@ pub fn parse_daemon_digest_list(list: Option<&str>) -> Vec<DaemonAuthDigest> {
         .collect()
 }
 
-/// Selects the strongest mutually supported digest between the local implementation and the advertised list.
+/// Negotiates the daemon-auth digest from the client's point of view.
 ///
-/// When no advertised digest matches, falls back based on `protocol_version`:
-/// MD5 for protocol >= 30, MD4 for protocol < 30.
+/// `server_digests` is the list the daemon advertised in its `@RSYNCD:`
+/// greeting (upstream's `daemon_auth_choices`, clientserver.c:199-203).
 ///
-/// upstream: compat.c:858 - `protocol_version >= 30 ? "md5" : "md4"`
-#[must_use]
-pub fn select_daemon_digest(
-    advertised: &[DaemonAuthDigest],
+/// upstream: compat.c:848 `negotiate_daemon_auth(f_out, 1)` from
+/// `auth_client()`. With `am_server == 0`, `parse_negotiate_str()`
+/// (compat.c:333-356) walks the *server's* list to completion and keeps the
+/// entry with the lowest ordinal in *our* table, so our preference order
+/// decides. An absent list is replaced by `protocol_version >= 30 ? "md5" :
+/// "md4"` (compat.c:859-862), which always negotiates.
+///
+/// # Errors
+///
+/// Returns [`NoMutualDaemonAuthDigest`] when the server advertised a list -
+/// empty included - that names no digest this build implements. Upstream aborts
+/// there rather than substituting a default: `recv_negotiate_str()` reports
+/// `Failed to negotiate a daemon auth checksum choice.` and calls
+/// `exit_cleanup(RERR_UNSUPPORTED)` (compat.c:383-406).
+pub fn negotiate_client_daemon_digest(
+    server_digests: AdvertisedDigests<'_>,
     protocol_version: u8,
-) -> DaemonAuthDigest {
-    for preferred in SUPPORTED_DAEMON_DIGESTS.iter().copied() {
-        if advertised.contains(&preferred) {
-            return preferred;
-        }
-    }
+) -> Result<DaemonAuthDigest, NoMutualDaemonAuthDigest> {
+    let Some(list) = server_digests.names() else {
+        return Ok(default_legacy_digest(protocol_version));
+    };
 
-    // upstream: compat.c:858 - when no daemon_auth_choices are configured the default
-    // digest depends on the negotiated protocol version.
-    default_legacy_digest(protocol_version)
+    let advertised = parse_daemon_digest_list(list);
+    SUPPORTED_DAEMON_DIGESTS
+        .iter()
+        .copied()
+        .find(|preferred| advertised.contains(preferred))
+        .ok_or(NoMutualDaemonAuthDigest)
 }
 
 /// Returns the digest to use when the peer advertised no list at all.
@@ -219,9 +205,15 @@ pub fn compute_daemon_auth_response(
 
 /// Renders the daemon-auth digest list this implementation advertises.
 ///
+/// This is the *only* advertised-list producer: the `@RSYNCD:` greeting, the
+/// daemon's refusal line, and the client's abort diagnostic all render it.
+///
 /// upstream: compat.c:462 `get_default_nno_list()` walks
 /// `valid_auth_checksums_items[]` (checksum.c:71-84) in table order and joins the
-/// names with a single space. The list is never filtered by protocol version.
+/// names with a single space. The list is never filtered by protocol version -
+/// `output_daemon_greeting()` (compat.c:838-842) emits it verbatim, so an
+/// rsync 3.4.4 daemon forced to `--protocol=28` still greets with
+/// `@RSYNCD: 28.0 sha512 sha256 sha1 md5 md4`.
 ///
 /// The names live in `protocol` because the client's `@RSYNCD:` greeting is built
 /// there and `protocol` sits below this crate. Deriving the string here instead
@@ -232,13 +224,14 @@ pub fn supported_daemon_digest_list() -> String {
     protocol::daemon_auth_digest_list()
 }
 
-/// No digest offered by the client is supported by this implementation.
+/// The peer advertised a digest list naming nothing this build implements.
 ///
-/// upstream: compat.c:871-875 - when `parse_negotiate_str()` finds no mutual
-/// choice the daemon writes `@ERROR: your client does not support one of our
-/// daemon-auth checksums: <list>` and calls `exit_cleanup(RERR_UNSUPPORTED)`.
+/// Both roles treat this as fatal with `RERR_UNSUPPORTED`, differing only in the
+/// diagnostic: the daemon writes `@ERROR: your client does not support one of
+/// our daemon-auth checksums: <list>` (compat.c:871-875) and the client prints
+/// `Failed to negotiate a daemon auth checksum choice.` (compat.c:383-406).
 #[derive(Clone, Copy, Debug, Eq, PartialEq, thiserror::Error)]
-#[error("your client does not support one of our daemon-auth checksums")]
+#[error("failed to negotiate a daemon auth checksum choice")]
 pub struct NoMutualDaemonAuthDigest;
 
 /// Negotiates the daemon-auth digest from the server's point of view.
@@ -254,22 +247,27 @@ pub struct NoMutualDaemonAuthDigest;
 /// `protocol_version >= 30 ? "md5" : "md4"` (compat.c:860) and negotiates against
 /// that, which always succeeds because both names are compiled in.
 ///
+/// An *empty* advertised list is not the same as an absent one: upstream keeps
+/// `strdup("")` non-NULL, skips the substitution, and walks a list that matches
+/// nothing. Hence [`AdvertisedDigests`] rather than an `Option<&str>` whose
+/// `Some("")` reads like `None`.
+///
 /// # Errors
 ///
-/// Returns [`NoMutualDaemonAuthDigest`] when the client offered a list but none of
-/// its names is supported here.
+/// Returns [`NoMutualDaemonAuthDigest`] when the client offered a list - empty
+/// included - none of whose names is supported here.
 pub fn negotiate_server_daemon_digest(
-    client_digests: Option<&str>,
+    client_digests: AdvertisedDigests<'_>,
     protocol_version: u8,
 ) -> Result<DaemonAuthDigest, NoMutualDaemonAuthDigest> {
-    let Some(list) = client_digests else {
+    let Some(list) = client_digests.names() else {
         return Ok(default_legacy_digest(protocol_version));
     };
 
     // `parse_daemon_digest_list` drops names this build does not implement while
     // preserving the client's order, so the first survivor is exactly upstream's
     // "first acceptable client choice".
-    parse_daemon_digest_list(Some(list))
+    parse_daemon_digest_list(list)
         .first()
         .copied()
         .ok_or(NoMutualDaemonAuthDigest)
@@ -334,7 +332,7 @@ mod tests {
 
     #[test]
     fn advertised_list_preserves_order_and_filters_unknown() {
-        let list = parse_daemon_digest_list(Some("sha512 sponge sha1 md5"));
+        let list = parse_daemon_digest_list("sha512 sponge sha1 md5");
         assert_eq!(
             list,
             [
@@ -345,29 +343,62 @@ mod tests {
         );
     }
 
+    // upstream: compat.c:333-356 with `am_server == 0` - the client scans the
+    // whole server list and keeps the entry ranked highest in OUR table, so our
+    // preference decides rather than the server's ordering.
     #[test]
-    fn selection_prefers_strongest_supported_digest() {
-        let digests = [
-            DaemonAuthDigest::Md5,
-            DaemonAuthDigest::Sha1,
-            DaemonAuthDigest::Sha256,
-        ];
-        assert_eq!(select_daemon_digest(&digests, 31), DaemonAuthDigest::Sha256);
+    fn client_negotiation_prefers_our_strongest_mutual_digest() {
+        assert_eq!(
+            negotiate_client_daemon_digest(AdvertisedDigests::Present("md5 sha1 sha256"), 31),
+            Ok(DaemonAuthDigest::Sha256)
+        );
     }
 
+    // upstream: compat.c:859-862 - only an ABSENT list is substituted, and the
+    // substitute is protocol-keyed. `md4_is_old` is set on that path, so the
+    // pre-protocol-30 outcome is the seeded CSUM_MD4_OLD (compat.c:879-881).
     #[test]
-    fn selection_falls_back_to_md5_for_protocol_30_plus() {
-        assert_eq!(select_daemon_digest(&[], 30), DaemonAuthDigest::Md5);
-        assert_eq!(select_daemon_digest(&[], 31), DaemonAuthDigest::Md5);
-        assert_eq!(select_daemon_digest(&[], 32), DaemonAuthDigest::Md5);
+    fn client_negotiation_substitutes_only_for_an_absent_list() {
+        assert_eq!(
+            negotiate_client_daemon_digest(AdvertisedDigests::Absent, 30),
+            Ok(DaemonAuthDigest::Md5)
+        );
+        assert_eq!(
+            negotiate_client_daemon_digest(AdvertisedDigests::Absent, 32),
+            Ok(DaemonAuthDigest::Md5)
+        );
+        assert_eq!(
+            negotiate_client_daemon_digest(AdvertisedDigests::Absent, 29),
+            Ok(DaemonAuthDigest::Md4Old)
+        );
+        assert_eq!(
+            negotiate_client_daemon_digest(AdvertisedDigests::Absent, 28),
+            Ok(DaemonAuthDigest::Md4Old)
+        );
     }
 
+    // upstream: compat.c:383-406 - a server list with no mutual name makes the
+    // client ABORT with RERR_UNSUPPORTED. Falling back to the protocol-keyed
+    // default would send a hash upstream never sends, and at protocol < 30 that
+    // hash is the seeded CSUM_MD4_OLD. Verified against rsync 3.4.4, which
+    // answers `Failed to negotiate a daemon auth checksum choice.` + exit 4.
     #[test]
-    fn selection_falls_back_to_seeded_md4_for_protocol_below_30() {
-        // upstream: compat.c:879-881 - the absent-list `md4` fallback is rewritten
-        // to CSUM_MD4_OLD, which seeds the digest with four zero bytes.
-        assert_eq!(select_daemon_digest(&[], 29), DaemonAuthDigest::Md4Old);
-        assert_eq!(select_daemon_digest(&[], 28), DaemonAuthDigest::Md4Old);
+    fn client_negotiation_aborts_when_the_server_list_has_no_mutual_name() {
+        for protocol in [28u8, 29, 30, 31, 32] {
+            assert_eq!(
+                negotiate_client_daemon_digest(
+                    AdvertisedDigests::Present("bogus1 bogus2"),
+                    protocol
+                ),
+                Err(NoMutualDaemonAuthDigest),
+                "protocol {protocol} must abort rather than fall back",
+            );
+            assert_eq!(
+                negotiate_client_daemon_digest(AdvertisedDigests::Present(""), protocol),
+                Err(NoMutualDaemonAuthDigest),
+                "protocol {protocol} must abort on an empty server list",
+            );
+        }
     }
 
     #[test]
@@ -381,12 +412,13 @@ mod tests {
         assert_eq!(DaemonAuthDigest::Md4Old.name(), "md4");
         assert!(!SUPPORTED_DAEMON_DIGESTS.contains(&DaemonAuthDigest::Md4Old));
         // An explicitly named `md4` stays plain, at every protocol version.
+        assert_eq!(parse_daemon_digest_list("md4"), [DaemonAuthDigest::Md4]);
         assert_eq!(
-            parse_daemon_digest_list(Some("md4")),
-            [DaemonAuthDigest::Md4]
+            negotiate_server_daemon_digest(AdvertisedDigests::Present("md4"), 29),
+            Ok(DaemonAuthDigest::Md4)
         );
         assert_eq!(
-            negotiate_server_daemon_digest(Some("md4"), 29),
+            negotiate_client_daemon_digest(AdvertisedDigests::Present("md4"), 29),
             Ok(DaemonAuthDigest::Md4)
         );
     }
@@ -429,11 +461,11 @@ mod tests {
         // upstream: compat.c:354 - `if (best == 1 || am_server) break;`, so the
         // server honours the client's ordering rather than its own preference.
         assert_eq!(
-            negotiate_server_daemon_digest(Some("md5 sha512"), 32),
+            negotiate_server_daemon_digest(AdvertisedDigests::Present("md5 sha512"), 32),
             Ok(DaemonAuthDigest::Md5)
         );
         assert_eq!(
-            negotiate_server_daemon_digest(Some("sha1 md5"), 32),
+            negotiate_server_daemon_digest(AdvertisedDigests::Present("sha1 md5"), 32),
             Ok(DaemonAuthDigest::Sha1)
         );
     }
@@ -441,7 +473,10 @@ mod tests {
     #[test]
     fn server_negotiation_skips_unsupported_client_names() {
         assert_eq!(
-            negotiate_server_daemon_digest(Some("sponge blake3 sha256 md5"), 32),
+            negotiate_server_daemon_digest(
+                AdvertisedDigests::Present("sponge blake3 sha256 md5"),
+                32
+            ),
             Ok(DaemonAuthDigest::Sha256)
         );
     }
@@ -449,7 +484,7 @@ mod tests {
     #[test]
     fn server_negotiation_rejects_a_wholly_foreign_client_list() {
         assert_eq!(
-            negotiate_server_daemon_digest(Some("sponge blake3"), 32),
+            negotiate_server_daemon_digest(AdvertisedDigests::Present("sponge blake3"), 32),
             Err(NoMutualDaemonAuthDigest)
         );
     }
@@ -458,11 +493,11 @@ mod tests {
     fn server_negotiation_falls_back_when_the_client_offered_no_list() {
         // upstream: compat.c:860 - the absent-list substitute is protocol-keyed.
         assert_eq!(
-            negotiate_server_daemon_digest(None, 31),
+            negotiate_server_daemon_digest(AdvertisedDigests::Absent, 31),
             Ok(DaemonAuthDigest::Md5)
         );
         assert_eq!(
-            negotiate_server_daemon_digest(None, 29),
+            negotiate_server_daemon_digest(AdvertisedDigests::Absent, 29),
             Ok(DaemonAuthDigest::Md4Old)
         );
     }
@@ -576,40 +611,23 @@ mod tests {
         }
     }
 
+    // upstream: compat.c:838-842 `output_daemon_greeting()` renders
+    // `get_default_nno_list(&valid_auth_checksums, ...)` with no protocol
+    // filtering whatsoever, so this single producer serves the greeting, the
+    // daemon refusal, and the client abort alike. Confirmed against rsync
+    // 3.4.4: `--daemon --protocol=28` still greets
+    // `@RSYNCD: 28.0 sha512 sha256 sha1 md5 md4`.
     #[test]
-    fn digests_for_protocol_32_returns_all() {
-        let digests = digests_for_protocol(ProtocolVersion::V32);
-        assert_eq!(digests.len(), 5);
-        assert_eq!(digests[0], DaemonAuthDigest::Sha512);
-        assert_eq!(digests[4], DaemonAuthDigest::Md4);
-    }
+    fn the_advertised_list_is_never_filtered_by_protocol() {
+        let rendered = supported_daemon_digest_list();
+        assert_eq!(rendered, "sha512 sha256 sha1 md5 md4");
 
-    #[test]
-    fn digests_for_protocol_31_returns_all() {
-        let digests = digests_for_protocol(ProtocolVersion::V31);
-        assert_eq!(digests.len(), 5);
-        assert_eq!(digests[0], DaemonAuthDigest::Sha512);
-    }
-
-    #[test]
-    fn digests_for_protocol_30_returns_md5_and_md4() {
-        let digests = digests_for_protocol(ProtocolVersion::V30);
-        assert_eq!(digests.len(), 2);
-        assert_eq!(digests[0], DaemonAuthDigest::Md5);
-        assert_eq!(digests[1], DaemonAuthDigest::Md4);
-    }
-
-    #[test]
-    fn digests_for_protocol_29_returns_md4_only() {
-        let digests = digests_for_protocol(ProtocolVersion::V29);
-        assert_eq!(digests.len(), 1);
-        assert_eq!(digests[0], DaemonAuthDigest::Md4);
-    }
-
-    #[test]
-    fn digests_for_protocol_28_returns_md4_only() {
-        let digests = digests_for_protocol(ProtocolVersion::V28);
-        assert_eq!(digests.len(), 1);
-        assert_eq!(digests[0], DaemonAuthDigest::Md4);
+        // Every name we advertise must round-trip back through the parser;
+        // advertising a name we would then reject is what makes two producers
+        // dangerous.
+        assert_eq!(
+            parse_daemon_digest_list(&rendered),
+            SUPPORTED_DAEMON_DIGESTS.as_slice(),
+        );
     }
 }

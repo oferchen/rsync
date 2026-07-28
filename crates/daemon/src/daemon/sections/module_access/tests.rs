@@ -4,56 +4,6 @@ mod module_access_tests {
     use std::io::Cursor;
 
     #[test]
-    fn generate_auth_challenge_includes_ip_and_timestamp() {
-        let peer_ip = "192.168.1.1".parse::<IpAddr>().unwrap();
-        let challenge = generate_auth_challenge(peer_ip, DaemonAuthDigest::Md5);
-
-        // Challenge should be base64-encoded hash (22 characters without padding)
-        assert_eq!(challenge.len(), 22);
-        assert!(
-            challenge
-                .chars()
-                .all(|c| c.is_alphanumeric() || c == '+' || c == '/')
-        );
-    }
-
-    #[test]
-    fn generate_auth_challenge_uses_the_negotiated_md4_digest() {
-        let peer_ip = "192.168.1.1".parse::<IpAddr>().unwrap();
-        let challenge = generate_auth_challenge(peer_ip, DaemonAuthDigest::Md4);
-
-        // MD4 also produces 16-byte hash = 22 base64 characters
-        assert_eq!(challenge.len(), 22);
-        assert!(
-            challenge
-                .chars()
-                .all(|c| c.is_alphanumeric() || c == '+' || c == '/')
-        );
-    }
-
-    #[test]
-    fn generate_auth_challenge_produces_different_values() {
-        let peer_ip = "10.0.0.1".parse::<IpAddr>().unwrap();
-        let challenge1 = generate_auth_challenge(peer_ip, DaemonAuthDigest::Md5);
-
-        // Retry until the microsecond timestamp changes (bounded)
-        let mut challenge2 = challenge1.clone();
-        for i in 0..200 {
-            challenge2 = generate_auth_challenge(peer_ip, DaemonAuthDigest::Md5);
-            if challenge2 != challenge1 {
-                break;
-            }
-            assert!(
-                i < 199,
-                "challenge did not change after 200 retries"
-            );
-            std::thread::sleep(std::time::Duration::from_millis(1));
-        }
-
-        assert_ne!(challenge1, challenge2);
-    }
-
-    #[test]
     fn sanitize_module_identifier_preserves_clean_input() {
         let clean = "my_module-123";
         let result = sanitize_module_identifier(clean);

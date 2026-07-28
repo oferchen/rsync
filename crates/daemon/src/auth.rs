@@ -59,6 +59,7 @@
 //! ```no_run
 //! use core::auth::{DaemonAuthDigest, negotiate_server_daemon_digest};
 //! use daemon::auth::{ChallengeGenerator, SecretsFile, verify_client_response};
+//! use protocol::AdvertisedDigests;
 //! use std::net::IpAddr;
 //! use std::path::Path;
 //!
@@ -67,7 +68,7 @@
 //! let secrets = SecretsFile::from_file(Path::new("/etc/rsyncd.secrets"))?;
 //!
 //! // Pin one digest for the whole exchange, from the client's greeting list.
-//! let digest = negotiate_server_daemon_digest(Some("sha512 md5"), 31)
+//! let digest = negotiate_server_daemon_digest(AdvertisedDigests::Present("sha512 md5"), 31)
 //!     .expect("client offered a supported digest");
 //!
 //! // Generate challenge
@@ -125,15 +126,13 @@
 //! - `daemon::sections::module_access`: Server-side authentication flow during module requests
 //! - This module: High-level documentation and helper utilities
 //!
-//! Challenge generation and response verification are implemented directly in
-//! `daemon::sections::module_access` to minimize coupling and keep the authentication
-//! flow co-located with the module request handling code.
+//! [`ChallengeGenerator`] is the sole challenge implementation; the module-access
+//! authentication flow calls it rather than keeping a second copy.
 
 pub use core::auth::{
     DaemonAuthDigest, NoMutualDaemonAuthDigest, SUPPORTED_DAEMON_DIGESTS,
-    compute_daemon_auth_response as compute_auth_response, digests_for_protocol,
-    negotiate_server_daemon_digest, supported_daemon_digest_list,
-    verify_daemon_auth_response as verify_client_response,
+    compute_daemon_auth_response as compute_auth_response, negotiate_server_daemon_digest,
+    supported_daemon_digest_list, verify_daemon_auth_response as verify_client_response,
 };
 
 use std::collections::HashMap;
@@ -151,6 +150,9 @@ use std::time::{SystemTime, UNIX_EPOCH};
 /// - Process ID
 ///
 /// This ensures challenges are unique across sessions and resistant to prediction.
+///
+/// This is the single challenge implementation; the daemon's authentication
+/// handler calls it directly rather than keeping a private copy.
 pub struct ChallengeGenerator;
 
 impl ChallengeGenerator {
@@ -165,8 +167,12 @@ impl ChallengeGenerator {
     /// `digest` is the algorithm fixed by [`negotiate_server_daemon_digest`]; the
     /// same one must verify the response.
     ///
-    /// upstream: authenticate.c:76 `gen_challenge()` hashes the buffer with
-    /// `valid_auth_checksums.negotiated_nni`.
+    /// upstream: authenticate.c:62-81 `gen_challenge()` - a 32-byte zeroed
+    /// buffer holding `strlcpy(input, addr, 17)`, `SIVAL(input, 16, tv_sec)`,
+    /// `SIVAL(input, 20, tv_usec)` and `SIVAL(input, 24, getpid())`, hashed with
+    /// `valid_auth_checksums.negotiated_nni`. This is deliberately not a CSPRNG:
+    /// `SIVAL` is little-endian by definition, so `to_le_bytes` reproduces
+    /// upstream's bytes exactly.
     ///
     /// # Examples
     ///
@@ -614,31 +620,30 @@ mod tests {
         ));
     }
 
-    /// Validates that `digests_for_protocol` returns the correct set for each era.
+    // upstream: compat.c:838-842 `output_daemon_greeting()` prints
+    // `get_default_nno_list(&valid_auth_checksums, ...)` verbatim into
+    // `@RSYNCD: %d.%d %s\n` with no protocol filtering, so there is exactly one
+    // advertised list and every protocol era sees it. Confirmed against rsync
+    // 3.4.4: `--daemon --protocol=28` greets
+    // `@RSYNCD: 28.0 sha512 sha256 sha1 md5 md4`.
     #[test]
-    fn digests_for_protocol_covers_all_eras() {
+    fn the_daemon_greeting_advertises_the_same_list_at_every_protocol() {
         use protocol::ProtocolVersion;
 
-        // Protocol 28: MD4 only
-        let d28 = digests_for_protocol(ProtocolVersion::V28);
-        assert_eq!(d28, &[DaemonAuthDigest::Md4]);
-
-        // Protocol 29: MD4 only
-        let d29 = digests_for_protocol(ProtocolVersion::V29);
-        assert_eq!(d29, &[DaemonAuthDigest::Md4]);
-
-        // Protocol 30: MD5 + MD4
-        let d30 = digests_for_protocol(ProtocolVersion::V30);
-        assert_eq!(d30, &[DaemonAuthDigest::Md5, DaemonAuthDigest::Md4]);
-
-        // Protocol 31: all five
-        let d31 = digests_for_protocol(ProtocolVersion::V31);
-        assert_eq!(d31.len(), 5);
-        assert_eq!(d31[0], DaemonAuthDigest::Sha512);
-        assert_eq!(d31[4], DaemonAuthDigest::Md4);
-
-        // Protocol 32: all five
-        let d32 = digests_for_protocol(ProtocolVersion::V32);
-        assert_eq!(d32.len(), 5);
+        let expected = format!(" {}", supported_daemon_digest_list());
+        for version in [
+            ProtocolVersion::V28,
+            ProtocolVersion::V29,
+            ProtocolVersion::V30,
+            ProtocolVersion::V31,
+            ProtocolVersion::V32,
+        ] {
+            let greeting = crate::daemon::legacy_daemon_greeting_for_protocol(version);
+            assert!(
+                greeting.ends_with(&format!("{expected}\n")),
+                "protocol {} greeting must carry the unfiltered list: {greeting:?}",
+                version.as_u8(),
+            );
+        }
     }
 }
