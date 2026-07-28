@@ -1,35 +1,20 @@
 /// Builds the legacy `@RSYNCD:` greeting for the given protocol version.
 ///
-/// The digest list appended to the version announcement is protocol-version-aware:
-///
-/// - **Protocol >= 31**: all supported digests (sha512, sha256, sha1, md5, md4).
-/// - **Protocol 30**: md5 and md4. SHA-family digests were not available before
-///   protocol 31.
-/// - **Protocol < 30**: md4 only. MD5 was introduced in protocol 30; no digest
-///   list is appended since legacy clients do not expect one.
-///
-/// upstream: csprotocol.txt - the daemon greeting carries the digest list that
-/// informs the client which challenge/response algorithms the server accepts.
+/// The digest list is [`supported_daemon_digest_list`] verbatim, at every
+/// protocol version. Upstream never filters it: `output_daemon_greeting()`
+/// (compat.c:838-842) prints
+/// `get_default_nno_list(&valid_auth_checksums, ...)` straight into
+/// `@RSYNCD: %d.%d %s\n`, so an rsync 3.4.4 daemon forced to `--protocol=28`
+/// greets with `@RSYNCD: 28.0 sha512 sha256 sha1 md5 md4`. Filtering here would
+/// give the codebase a second, disagreeing advertised list - the refusal path
+/// already renders the unfiltered one.
 pub(crate) fn legacy_daemon_greeting_for_protocol(version: ProtocolVersion) -> String {
-    let mut greeting =
-        format_legacy_daemon_message(LegacyDaemonMessage::Version(version));
+    let mut greeting = format_legacy_daemon_message(LegacyDaemonMessage::Version(version));
     debug_assert!(greeting.ends_with('\n'));
 
-    let digests = digests_for_protocol(version);
-
-    // Pre-protocol-30 greetings omit the digest list entirely; clients assume
-    // MD4 by convention (upstream: csprotocol.txt).
-    if digests.is_empty() || version.as_u8() < 30 {
-        return greeting;
-    }
-
     greeting.pop();
-
-    for digest in digests {
-        greeting.push(' ');
-        greeting.push_str(digest.name());
-    }
-
+    greeting.push(' ');
+    greeting.push_str(&supported_daemon_digest_list());
     greeting.push('\n');
     greeting
 }

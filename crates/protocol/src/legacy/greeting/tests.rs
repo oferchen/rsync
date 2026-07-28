@@ -56,7 +56,7 @@ fn parses_legacy_daemon_greeting_details_with_digest_list() {
     assert_eq!(greeting.advertised_protocol(), 31);
     assert!(greeting.has_subprotocol());
     assert_eq!(greeting.subprotocol(), 0);
-    assert_eq!(greeting.digest_list(), Some("md4 md5"));
+    assert_eq!(greeting.digest_names(), Some("md4 md5"));
     assert!(greeting.has_digest_list());
 }
 
@@ -65,8 +65,54 @@ fn greeting_details_accepts_trailing_whitespace_in_digest_list() {
     let greeting = parse_legacy_daemon_greeting_details("@RSYNCD: 31.0   md4   md5  \r\n")
         .expect("digest list should tolerate padding");
 
-    assert_eq!(greeting.digest_list(), Some("md4   md5"));
+    assert_eq!(greeting.digest_names(), Some("md4   md5"));
     assert!(greeting.has_digest_list());
+}
+
+// upstream: clientserver.c:199-203 - `daemon_auth_choices = strchr(buf + 9, ' ')`
+// succeeds on a greeting whose last byte is that space, so
+// `strdup(daemon_auth_choices + 1)` is a non-NULL EMPTY string. The parser is
+// shared by the daemon and the client, and both decide whether to authenticate
+// on this distinction: an empty list matches nothing and is fatal, an absent one
+// is replaced by a protocol-keyed default that always succeeds. Collapsing the
+// two authenticated peers rsync 3.4.4 refuses.
+#[test]
+fn greeting_details_keep_an_empty_digest_list_distinct_from_an_absent_one() {
+    for line in ["@RSYNCD: 31.0 \n", "@RSYNCD: 31.0 \r\n", "@RSYNCD: 31.0   "] {
+        let greeting = parse_legacy_daemon_greeting_details(line).expect("well-formed greeting");
+        assert_eq!(
+            greeting.advertised_digests(),
+            AdvertisedDigests::Present(""),
+            "a trailing space advertises an empty list: {line:?}",
+        );
+        assert!(greeting.has_digest_list());
+        assert_eq!(greeting.digest_tokens().count(), 0);
+    }
+
+    let absent = parse_legacy_daemon_greeting_details("@RSYNCD: 31.0\n").expect("valid greeting");
+    assert_eq!(absent.advertised_digests(), AdvertisedDigests::Absent);
+    assert!(!absent.has_digest_list());
+    assert_eq!(absent.digest_tokens().count(), 0);
+}
+
+// The owned view must carry the distinction across the buffer it was parsed
+// from: the daemon stashes the list while the greeting line is recycled.
+#[test]
+fn owned_greeting_round_trips_an_empty_digest_list() {
+    let owned = parse_legacy_daemon_greeting_owned("@RSYNCD: 31.0 \n").expect("valid greeting");
+
+    assert_eq!(
+        owned.advertised_digests(),
+        AdvertisedDigests::Present(""),
+        "the owned view must not lose the empty list"
+    );
+    assert!(owned.has_digest_list());
+    assert_eq!(owned.digest_names(), Some(""));
+    assert_eq!(owned.clone().into_digest_list(), Some(String::new()));
+    assert_eq!(
+        owned.as_borrowed().advertised_digests(),
+        AdvertisedDigests::Present("")
+    );
 }
 
 #[test]
@@ -118,7 +164,7 @@ fn parse_owned_greeting_retains_metadata() {
     );
     assert_eq!(owned.advertised_protocol(), 29);
     assert_eq!(owned.subprotocol_raw(), Some(1));
-    assert_eq!(owned.digest_list(), Some("md4"));
+    assert_eq!(owned.digest_names(), Some("md4"));
     assert!(owned.has_digest_list());
 }
 
@@ -161,13 +207,13 @@ fn owned_greeting_captures_digest_list_and_subprotocol() {
     assert_eq!(owned.protocol(), borrowed.protocol());
     assert_eq!(owned.advertised_protocol(), borrowed.advertised_protocol());
     assert_eq!(owned.subprotocol_raw(), borrowed.subprotocol_raw());
-    assert_eq!(owned.digest_list(), borrowed.digest_list());
+    assert_eq!(owned.digest_names(), borrowed.digest_names());
     assert!(owned.has_subprotocol());
     assert!(owned.has_digest_list());
 
     let reborrowed = owned.as_borrowed();
     assert_eq!(reborrowed.protocol(), borrowed.protocol());
-    assert_eq!(reborrowed.digest_list(), borrowed.digest_list());
+    assert_eq!(reborrowed.digest_names(), borrowed.digest_names());
 }
 
 #[test]
@@ -178,7 +224,7 @@ fn owned_greeting_tracks_absent_fields() {
     assert_eq!(owned.protocol().as_u8(), 29);
     assert!(!owned.has_subprotocol());
     assert_eq!(owned.subprotocol_raw(), None);
-    assert!(owned.digest_list().is_none());
+    assert!(owned.digest_names().is_none());
     assert!(!owned.has_digest_list());
 }
 
@@ -191,7 +237,7 @@ fn borrowed_into_owned_preserves_metadata_without_cloning() {
     assert_eq!(owned.protocol(), borrowed.protocol());
     assert_eq!(owned.advertised_protocol(), borrowed.advertised_protocol());
     assert_eq!(owned.subprotocol_raw(), borrowed.subprotocol_raw());
-    assert_eq!(owned.digest_list(), borrowed.digest_list());
+    assert_eq!(owned.digest_names(), borrowed.digest_names());
 }
 
 #[test]
@@ -229,7 +275,7 @@ fn from_parts_replicates_parser_behaviour() {
         parsed.advertised_protocol()
     );
     assert_eq!(constructed.subprotocol_raw(), parsed.subprotocol_raw());
-    assert_eq!(constructed.digest_list(), parsed.digest_list());
+    assert_eq!(constructed.digest_names(), parsed.digest_names());
 }
 
 #[test]

@@ -135,9 +135,9 @@ use std::time::Duration;
 
 #[allow(unused_imports)] // REASON: convenience re-export; not all items used in every module
 pub(crate) use self::error::{
-    connect_timeout_error, daemon_access_denied_error, daemon_authentication_failed_error,
-    daemon_authentication_required_error, daemon_error, daemon_listing_unavailable_error,
-    daemon_protocol_error, socket_error,
+    connect_timeout_error, daemon_access_denied_error, daemon_auth_negotiation_error,
+    daemon_authentication_failed_error, daemon_authentication_required_error, daemon_error,
+    daemon_listing_unavailable_error, daemon_protocol_error, socket_error,
 };
 /// Default per-read/write socket I/O timeout for the daemon handshake when
 /// `--timeout` is unset.

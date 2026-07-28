@@ -65,7 +65,9 @@ fn access_effective_read_only(module_read_only: bool, access: UserAccessLevel) -
 ///
 /// `client_digests` is the digest name list the client advertised in its
 /// `@RSYNCD:` greeting; it fixes the single algorithm used for both the challenge
-/// and the verification.
+/// and the verification. An advertised-but-empty list refuses the client -
+/// upstream keeps `strdup("")` non-NULL and so never reaches its no-list
+/// substitute (compat.c:857-862).
 ///
 /// upstream: authenticate.c:242 - `auth_server()` calls
 /// `negotiate_daemon_auth(f_out, 0)` *before* `gen_challenge()`, so a client with
@@ -80,7 +82,7 @@ fn perform_module_authentication(
     peer_ip: IpAddr,
     messages: &LegacyMessageCache,
     protocol_version: Option<ProtocolVersion>,
-    client_digests: Option<&str>,
+    client_digests: AdvertisedDigests<'_>,
 ) -> io::Result<AuthenticationStatus> {
     // upstream: authenticate.c:76 `gen_challenge` and :90 `generate_hash` both
     // call `sum_init(valid_auth_checksums.negotiated_nni, 0)`, so one negotiated
@@ -99,7 +101,7 @@ fn perform_module_authentication(
         }
     };
 
-    let challenge = generate_auth_challenge(peer_ip, digest);
+    let challenge = ChallengeGenerator::generate(peer_ip, digest);
     {
         let stream = reader.get_mut();
         messages.write(
@@ -164,38 +166,6 @@ fn perform_module_authentication(
         username: username.to_owned(),
         access_level: auth_user.access_level,
     })
-}
-
-/// Generates a unique authentication challenge string.
-///
-/// The challenge is created by combining the peer IP address, current timestamp,
-/// and process ID, then hashing with the negotiated digest and encoding as
-/// base64. This produces a unique, time-sensitive challenge for each
-/// authentication attempt.
-///
-/// upstream: authenticate.c:62-81 `gen_challenge()` - a 32-byte zeroed buffer
-/// holding `strlcpy(input, addr, 17)`, `SIVAL(input, 16, tv_sec)`,
-/// `SIVAL(input, 20, tv_usec)` and `SIVAL(input, 24, getpid())`, hashed with
-/// `valid_auth_checksums.negotiated_nni`. `SIVAL` is little-endian by definition.
-fn generate_auth_challenge(peer_ip: IpAddr, digest: DaemonAuthDigest) -> String {
-    let mut input = [0u8; 32];
-    let address_text = peer_ip.to_string();
-    let address_bytes = address_text.as_bytes();
-    let copy_len = address_bytes.len().min(16);
-    input[..copy_len].copy_from_slice(&address_bytes[..copy_len]);
-
-    let timestamp = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap_or_default();
-    let seconds = (timestamp.as_secs() & u64::from(u32::MAX)) as u32;
-    let micros = timestamp.subsec_micros();
-    let pid = std::process::id();
-
-    input[16..20].copy_from_slice(&seconds.to_le_bytes());
-    input[20..24].copy_from_slice(&micros.to_le_bytes());
-    input[24..28].copy_from_slice(&pid.to_le_bytes());
-
-    digest.base64_digest(&[&input])
 }
 
 /// Verifies a client's authentication response against the secrets file.

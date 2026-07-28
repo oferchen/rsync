@@ -8,15 +8,15 @@ use std::io::{BufRead, BufReader, Write};
 use std::path::Path;
 
 use protocol::ProtocolVersion;
-use protocol::missing_greeting_token;
 use protocol::nstr::{trace_daemon_auth_negotiated, trace_daemon_greeting_auth_list};
+use protocol::{advertised_digests_in_greeting, missing_greeting_token};
 
-use crate::auth::{
-    DaemonAuthDigest, compute_daemon_auth_response, parse_daemon_digest_list, select_daemon_digest,
-};
+use crate::auth::{compute_daemon_auth_response, negotiate_client_daemon_digest};
 
 use super::super::super::CLIENT_SERVER_PROTOCOL_EXIT_CODE;
-use super::super::super::error::{ClientError, daemon_error, socket_error};
+use super::super::super::error::{
+    ClientError, daemon_auth_negotiation_error, daemon_error, socket_error,
+};
 use super::super::super::module_list::{DaemonAddress, load_daemon_password};
 use crate::client::error::invalid_argument_error;
 
@@ -131,35 +131,6 @@ fn parse_protocol_from_greeting(greeting: &str) -> Result<ProtocolVersion, Clien
     })
 }
 
-/// Parses the digest list from a daemon greeting.
-///
-/// Format: `@RSYNCD: XX.Y [digest_list]`
-///
-/// Returns the list of advertised digests for authentication.
-fn parse_digest_list_from_greeting(greeting: &str) -> Vec<DaemonAuthDigest> {
-    parse_daemon_digest_list(extract_digest_list_from_greeting(greeting))
-}
-
-/// Extracts the raw digest-list slice from a daemon greeting.
-///
-/// Returns the substring after the protocol version (trimmed of trailing
-/// newlines) so callers can emit it verbatim for `--debug=NSTR`
-/// diagnostics. Returns `None` when no digest list is present.
-fn extract_digest_list_from_greeting(greeting: &str) -> Option<&str> {
-    let rest = greeting.get(9..).unwrap_or("");
-
-    let after_version = rest
-        .split_once(char::is_whitespace)
-        .map_or("", |(_, rest)| rest)
-        .trim_end_matches(['\r', '\n']);
-
-    if after_version.is_empty() {
-        None
-    } else {
-        Some(after_version)
-    }
-}
-
 /// Echoes a daemon `@ERROR` line to stderr and constructs the matching
 /// client error.
 ///
@@ -242,13 +213,17 @@ pub(crate) fn perform_daemon_handshake<R: std::io::Read, W: Write>(
         ));
     }
 
-    let advertised_digests = parse_digest_list_from_greeting(&greeting);
+    // upstream: clientserver.c:199-203 - `daemon_auth_choices` is whatever
+    // follows the first space past the `"@RSYNCD: "` head, empty string
+    // included. The shared helper owns that rule so the presence gate above and
+    // this list can never disagree.
+    let advertised_digests = advertised_digests_in_greeting(&greeting);
 
     // upstream: compat.c:843-844 - `am_client && DEBUG_GTE(NSTR, 2)` emits
     // "Client auth list (on client): <list>" using the raw token sequence
     // from `valid_auth_checksums`. The daemon greeting carries the same
     // list verbatim, so we echo whatever the server advertised.
-    if let Some(list) = extract_digest_list_from_greeting(&greeting) {
+    if let Some(list) = advertised_digests.names() {
         trace_daemon_greeting_auth_list(list);
     }
 
@@ -346,8 +321,18 @@ pub(crate) fn perform_daemon_handshake<R: std::io::Read, W: Write>(
                     .unwrap_or_else(|_| "rsync".to_owned())
             });
 
-            // upstream: compat.c:858 - fallback depends on protocol version
-            let digest = select_daemon_digest(&advertised_digests, remote_protocol.as_u8());
+            // upstream: authenticate.c:242 `auth_client()` negotiates only
+            // after the daemon asked for credentials. An absent list falls back
+            // to the protocol-keyed default (compat.c:859-862); a list that
+            // names nothing we implement - the empty list included - aborts
+            // with RERR_UNSUPPORTED rather than falling back (compat.c:383-406).
+            let digest =
+                negotiate_client_daemon_digest(advertised_digests, remote_protocol.as_u8())
+                    .map_err(|_| {
+                        daemon_auth_negotiation_error(
+                            advertised_digests.names().unwrap_or_default(),
+                        )
+                    })?;
 
             // upstream: compat.c:865-868 - `DEBUG_GTE(NSTR, 1)` emits
             // "Client negotiated auth: <name>" after the strongest mutual

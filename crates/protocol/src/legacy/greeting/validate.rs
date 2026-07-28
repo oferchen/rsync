@@ -10,6 +10,7 @@
 //! exact gates without duplicating the logic.
 
 use super::super::{LEGACY_DAEMON_PREFIX, LEGACY_DAEMON_PREFIX_LEN};
+use super::advertised::AdvertisedDigests;
 
 /// A required `@RSYNCD:` greeting token that the peer omitted.
 ///
@@ -55,6 +56,33 @@ fn scan_protocol_digits(trimmed: &str) -> Option<(&str, usize)> {
         .take_while(|byte| byte.is_ascii_digit())
         .count();
     (digits > 0).then_some((rest, digits))
+}
+
+/// Splits the digest name list off a raw `@RSYNCD:` greeting line.
+///
+/// This is upstream's `daemon_auth_choices = strchr(buf + 9, ' ')` followed by
+/// `strdup(daemon_auth_choices + 1)` (clientserver.c:199-203): the first space
+/// past the nine-byte `"@RSYNCD: "` head opens the list, and everything after
+/// that space *is* the list - the empty string when the space ends the line.
+/// Trailing `\r`/`\n` are stripped first because upstream operates on the
+/// newline-stripped `read_line_old()` buffer.
+///
+/// One rule, one implementation: both the presence gate in
+/// [`missing_greeting_token`] and the greeting parser read the list through this
+/// function, so they can never disagree about whether a peer advertised one.
+#[doc(alias = "daemon_auth_choices")]
+#[doc(alias = "@RSYNCD")]
+#[must_use]
+pub fn advertised_digests_in_greeting(line: &str) -> AdvertisedDigests<'_> {
+    let trimmed = line.trim_end_matches(['\r', '\n']);
+    let Some(tail) = trimmed.get(LEGACY_DAEMON_PREFIX_LEN + 1..) else {
+        return AdvertisedDigests::Absent;
+    };
+
+    match tail.find(' ') {
+        Some(offset) => AdvertisedDigests::Present(&tail[offset + 1..]),
+        None => AdvertisedDigests::Absent,
+    }
 }
 
 /// Reports whether `line` is an `@RSYNCD:` version banner at all.
@@ -104,13 +132,11 @@ pub fn missing_greeting_token(line: &str) -> Option<MissingGreetingToken> {
         return Some(MissingGreetingToken::Subprotocol);
     }
 
-    // upstream: `daemon_auth_choices = strchr(buf + 9, ' ')` - any space past
-    // "@RSYNCD: " marks the start of the digest-name list.
-    let has_digest_list = trimmed
-        .as_bytes()
-        .get(LEGACY_DAEMON_PREFIX_LEN + 1..)
-        .is_some_and(|tail| tail.contains(&b' '));
-    if !has_digest_list && remote_protocol > 31 {
+    // upstream: the gate is `daemon_auth_choices == NULL`, i.e. no space past
+    // "@RSYNCD: " at all. A greeting that ends in that space advertised an
+    // *empty* list, which is present and so passes this gate - it is refused
+    // later, by digest negotiation.
+    if advertised_digests_in_greeting(trimmed).is_absent() && remote_protocol > 31 {
         return Some(MissingGreetingToken::DigestList);
     }
 
@@ -119,7 +145,62 @@ pub fn missing_greeting_token(line: &str) -> Option<MissingGreetingToken> {
 
 #[cfg(test)]
 mod tests {
-    use super::{MissingGreetingToken, missing_greeting_token};
+    use super::{
+        AdvertisedDigests, MissingGreetingToken, advertised_digests_in_greeting,
+        missing_greeting_token,
+    };
+
+    // upstream: clientserver.c:199-203 - `strchr(buf + 9, ' ')` finds the
+    // trailing space, so `strdup(that + 1)` is a non-NULL EMPTY string. That is
+    // a different state from the NULL a space-less greeting yields, and the
+    // difference decides whether the peer is authenticated or refused.
+    #[test]
+    fn trailing_space_advertises_an_empty_list_not_an_absent_one() {
+        assert_eq!(
+            advertised_digests_in_greeting("@RSYNCD: 31.0 "),
+            AdvertisedDigests::Present(""),
+        );
+        assert_eq!(
+            advertised_digests_in_greeting("@RSYNCD: 31.0"),
+            AdvertisedDigests::Absent,
+        );
+        assert_eq!(
+            advertised_digests_in_greeting("@RSYNCD: 32.0 \r\n"),
+            AdvertisedDigests::Present(""),
+        );
+        assert_eq!(
+            advertised_digests_in_greeting("@RSYNCD: 32.0 md5 md4\n"),
+            AdvertisedDigests::Present("md5 md4"),
+        );
+    }
+
+    // Lines shorter than the nine-byte "@RSYNCD: " head cannot carry a list;
+    // upstream's `buf + 9` walks straight into the terminator.
+    #[test]
+    fn short_lines_advertise_nothing() {
+        assert_eq!(
+            advertised_digests_in_greeting("@RSYNCD:"),
+            AdvertisedDigests::Absent,
+        );
+        assert_eq!(
+            advertised_digests_in_greeting(""),
+            AdvertisedDigests::Absent
+        );
+    }
+
+    // Regression for the refusal this fixes: at protocol 32 an EMPTY list is
+    // still a list, so upstream does NOT answer "omitted the digest name list"
+    // - it falls through to the daemon-auth checksum refusal. Verified against
+    // rsync 3.4.4, which answers `@ERROR: your client does not support one of
+    // our daemon-auth checksums: ...` for `@RSYNCD: 32.0 `.
+    #[test]
+    fn empty_digest_list_passes_the_presence_gate_at_protocol_32() {
+        assert_eq!(missing_greeting_token("@RSYNCD: 32.0 "), None);
+        assert_eq!(
+            missing_greeting_token("@RSYNCD: 32.0"),
+            Some(MissingGreetingToken::DigestList),
+        );
+    }
 
     // upstream: clientserver.c:188-197 - the subprotocol suffix is mandatory the
     // moment protocol reaches 30, not 31; both 30 and 32 without ".NNN" are fatal.

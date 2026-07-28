@@ -36,8 +36,10 @@ struct ModuleRequestContext<'a> {
     ///
     /// upstream: clientserver.c:199-211 - `exchange_protocols()` stores it in the
     /// `daemon_auth_choices` global, which `negotiate_daemon_auth()` consumes at
-    /// authentication time (compat.c:857).
-    client_digests: Option<&'a str>,
+    /// authentication time (compat.c:857). An advertised-but-empty list is a
+    /// different state from no list at all, so the distinction is carried in the
+    /// type rather than in an `Option<&str>`.
+    client_digests: AdvertisedDigests<'a>,
     /// Set when the session must end the way upstream's forked child would
     /// `exit_cleanup()`, carrying that exit code.
     ///
@@ -563,7 +565,7 @@ fn respond_with_module_request(
     reverse_lookup: bool,
     messages: &LegacyMessageCache,
     negotiated_protocol: Option<ProtocolVersion>,
-    client_digests: Option<&str>,
+    client_digests: AdvertisedDigests<'_>,
     session_exit_code: &mut Option<ExitCode>,
     early_input_data: Option<Vec<u8>>,
     conn_state: ConnectionState,

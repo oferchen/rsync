@@ -3,6 +3,7 @@ use crate::version::ProtocolVersion;
 use std::borrow::ToOwned;
 
 use super::super::LEGACY_DAEMON_PREFIX;
+use super::advertised::AdvertisedDigests;
 use super::tokens::DigestListTokens;
 
 /// Owned representation of a legacy ASCII daemon greeting.
@@ -14,6 +15,10 @@ use super::tokens::DigestListTokens;
 /// subprotocol suffix, and digest list without tying them to an external
 /// allocation. The structure intentionally mirrors the borrowed API so call
 /// sites can switch between the two with minimal friction.
+///
+/// `digest_list` stores upstream's `daemon_auth_choices` verbatim: `None` is its
+/// NULL and `Some(names)` its `strdup` result, the empty string included. Read
+/// it through [`Self::advertised_digests`], which names both states.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct LegacyDaemonGreetingOwned {
     protocol: ProtocolVersion,
@@ -35,7 +40,7 @@ pub struct LegacyDaemonGreeting<'a> {
     protocol: ProtocolVersion,
     advertised_protocol: u32,
     subprotocol: Option<u32>,
-    digest_list: Option<&'a str>,
+    digest_list: AdvertisedDigests<'a>,
 }
 
 impl<'a> LegacyDaemonGreeting<'a> {
@@ -83,22 +88,37 @@ impl<'a> LegacyDaemonGreeting<'a> {
         self.subprotocol.is_some()
     }
 
-    /// Returns the digest list announced by the daemon, if any.
-    pub const fn digest_list(self) -> Option<&'a str> {
+    /// Returns the digest name list the peer advertised.
+    ///
+    /// The result distinguishes a list that was never advertised from one that
+    /// was advertised empty; see [`AdvertisedDigests`] for why upstream treats
+    /// those two as different.
+    #[must_use]
+    pub const fn advertised_digests(self) -> AdvertisedDigests<'a> {
         self.digest_list
     }
 
-    /// Reports whether the daemon advertised a digest list used for challenge/response authentication.
+    /// Returns the advertised digest names, or `None` when none were advertised.
+    ///
+    /// Convenience over [`Self::advertised_digests`] for call sites that only
+    /// need to render or forward the raw text; `Some("")` still means an empty
+    /// list was advertised.
+    #[must_use]
+    pub const fn digest_names(self) -> Option<&'a str> {
+        self.digest_list.names()
+    }
+
+    /// Reports whether the peer advertised a digest list, empty or not.
     #[must_use]
     pub const fn has_digest_list(self) -> bool {
-        self.digest_list.is_some()
+        self.digest_list.is_present()
     }
 
     pub(super) const fn new(
         protocol: ProtocolVersion,
         advertised_protocol: u32,
         subprotocol: Option<u32>,
-        digest_list: Option<&'a str>,
+        digest_list: AdvertisedDigests<'a>,
     ) -> Self {
         Self {
             protocol,
@@ -127,16 +147,11 @@ impl<'a> LegacyDaemonGreeting<'a> {
     /// # Ok::<_, protocol::NegotiationError>(())
     /// ```
     #[must_use]
-    pub fn digest_tokens(&self) -> DigestListTokens<'_> {
-        DigestListTokens::new(self.digest_list())
+    pub fn digest_tokens(&self) -> DigestListTokens<'a> {
+        self.digest_list.tokens()
     }
 
     /// Reports whether the daemon advertised support for the specified digest algorithm.
-    ///
-    /// The comparison follows upstream rsync's behaviour by matching ASCII tokens without
-    /// allocating new strings. Whitespace surrounding the query is ignored and matching is
-    /// case-insensitive because the daemon may emit lowercase names while callers often
-    /// canonicalise constants using uppercase letters.
     ///
     /// # Examples
     ///
@@ -151,13 +166,7 @@ impl<'a> LegacyDaemonGreeting<'a> {
     /// ```
     #[must_use]
     pub fn supports_digest(&self, name: &str) -> bool {
-        let trimmed = name.trim_matches(|ch: char| ch.is_ascii_whitespace());
-        if trimmed.is_empty() {
-            return false;
-        }
-
-        self.digest_tokens()
-            .any(|token| token.eq_ignore_ascii_case(trimmed))
+        self.digest_list.supports(name)
     }
 
     /// Converts the borrowed greeting into an owned representation.
@@ -179,7 +188,7 @@ impl<'a> LegacyDaemonGreeting<'a> {
     ///
     /// assert_eq!(owned.advertised_protocol(), 29);
     /// assert_eq!(owned.subprotocol_raw(), Some(1));
-    /// assert_eq!(owned.digest_list(), Some("md4"));
+    /// assert_eq!(owned.digest_names(), Some("md4"));
     /// # Ok::<_, protocol::NegotiationError>(())
     /// ```
     #[must_use]
@@ -225,10 +234,16 @@ impl LegacyDaemonGreetingOwned {
     /// Constructs an owned legacy daemon greeting from its parsed components.
     ///
     /// The helper mirrors [`crate::parse_legacy_daemon_greeting_details`] by clamping
-    /// future protocol advertisements, normalising digest lists, and enforcing
+    /// future protocol advertisements, trimming digest lists, and enforcing
     /// the rule that protocol 31 and newer must include a fractional suffix.
     /// This is primarily useful in tests that want to exercise higher layers
     /// without round-tripping through string formatting.
+    ///
+    /// `digest_list` follows upstream's `daemon_auth_choices`: `None` means the
+    /// greeting advertised no list, and `Some(names)` means it advertised one -
+    /// including `Some("")`, an empty list, which upstream keeps distinct from
+    /// `None` and refuses. Padding around the names is trimmed because it never
+    /// changes which tokens they split into.
     ///
     /// # Errors
     ///
@@ -252,7 +267,7 @@ impl LegacyDaemonGreetingOwned {
     ///     greeting.protocol(),
     ///     ProtocolVersion::from_supported(31).unwrap()
     /// );
-    /// assert_eq!(greeting.digest_list(), Some("md4 md5"));
+    /// assert_eq!(greeting.digest_names(), Some("md4 md5"));
     /// assert!(greeting.has_digest_list());
     /// # Ok::<_, protocol::NegotiationError>(())
     /// ```
@@ -262,14 +277,12 @@ impl LegacyDaemonGreetingOwned {
         subprotocol: Option<u32>,
         digest_list: Option<String>,
     ) -> Result<Self, NegotiationError> {
-        let digest_list = digest_list.and_then(|list| {
+        let digest_list = digest_list.map(|list| {
             let trimmed = list.trim();
-            if trimmed.is_empty() {
-                None
-            } else if trimmed.len() == list.len() {
-                Some(list)
+            if trimmed.len() == list.len() {
+                list
             } else {
-                Some(trimmed.to_owned())
+                trimmed.to_owned()
             }
         });
 
@@ -292,12 +305,26 @@ impl LegacyDaemonGreetingOwned {
         })
     }
 
-    /// Returns the digest list announced by the daemon, if any.
-    pub fn digest_list(&self) -> Option<&str> {
+    /// Returns the digest name list the peer advertised.
+    ///
+    /// Mirrors [`LegacyDaemonGreeting::advertised_digests`], keeping an empty
+    /// advertised list distinct from an absent one.
+    #[must_use]
+    pub fn advertised_digests(&self) -> AdvertisedDigests<'_> {
+        AdvertisedDigests::from(self.digest_list.as_deref())
+    }
+
+    /// Returns the advertised digest names, or `None` when none were advertised.
+    ///
+    /// Convenience over [`Self::advertised_digests`] for call sites that only
+    /// need to render or forward the raw text; `Some("")` still means an empty
+    /// list was advertised.
+    #[must_use]
+    pub fn digest_names(&self) -> Option<&str> {
         self.digest_list.as_deref()
     }
 
-    /// Reports whether the daemon advertised a digest list used for challenge/response authentication.
+    /// Reports whether the peer advertised a digest list, empty or not.
     #[must_use]
     pub const fn has_digest_list(&self) -> bool {
         self.digest_list.is_some()
@@ -322,7 +349,7 @@ impl LegacyDaemonGreetingOwned {
     /// ```
     #[must_use]
     pub fn digest_tokens(&self) -> DigestListTokens<'_> {
-        DigestListTokens::new(self.digest_list())
+        self.advertised_digests().tokens()
     }
 
     /// Reports whether the daemon advertised support for the specified digest algorithm.
@@ -332,13 +359,7 @@ impl LegacyDaemonGreetingOwned {
     /// without re-parsing the original banner.
     #[must_use]
     pub fn supports_digest(&self, name: &str) -> bool {
-        let trimmed = name.trim_matches(|ch: char| ch.is_ascii_whitespace());
-        if trimmed.is_empty() {
-            return false;
-        }
-
-        self.digest_tokens()
-            .any(|token| token.eq_ignore_ascii_case(trimmed))
+        self.advertised_digests().supports(name)
     }
 
     /// Returns a borrowed representation of the greeting.
@@ -348,7 +369,7 @@ impl LegacyDaemonGreetingOwned {
             protocol: self.protocol,
             advertised_protocol: self.advertised_protocol,
             subprotocol: self.subprotocol,
-            digest_list: self.digest_list.as_deref(),
+            digest_list: self.advertised_digests(),
         }
     }
 
@@ -402,7 +423,7 @@ impl<'a> From<LegacyDaemonGreeting<'a>> for LegacyDaemonGreetingOwned {
             protocol: greeting.protocol(),
             advertised_protocol: greeting.advertised_protocol(),
             subprotocol: greeting.subprotocol_raw(),
-            digest_list: greeting.digest_list().map(ToOwned::to_owned),
+            digest_list: greeting.advertised_digests().names().map(ToOwned::to_owned),
         }
     }
 }
@@ -415,7 +436,7 @@ mod tests {
         protocol: ProtocolVersion,
         advertised: u32,
         subprotocol: Option<u32>,
-        digest_list: Option<&'a str>,
+        digest_list: AdvertisedDigests<'a>,
     ) -> LegacyDaemonGreeting<'a> {
         LegacyDaemonGreeting::new(protocol, advertised, subprotocol, digest_list)
     }
@@ -423,21 +444,21 @@ mod tests {
     #[test]
     fn borrowed_greeting_protocol() {
         let proto = ProtocolVersion::from_supported(30).unwrap();
-        let greeting = make_borrowed(proto, 30, None, None);
+        let greeting = make_borrowed(proto, 30, None, AdvertisedDigests::Absent);
         assert_eq!(greeting.protocol(), proto);
     }
 
     #[test]
     fn borrowed_greeting_advertised_protocol() {
         let proto = ProtocolVersion::from_supported(31).unwrap();
-        let greeting = make_borrowed(proto, 32, Some(0), None);
+        let greeting = make_borrowed(proto, 32, Some(0), AdvertisedDigests::Absent);
         assert_eq!(greeting.advertised_protocol(), 32);
     }
 
     #[test]
     fn borrowed_greeting_subprotocol_present() {
         let proto = ProtocolVersion::from_supported(31).unwrap();
-        let greeting = make_borrowed(proto, 31, Some(5), None);
+        let greeting = make_borrowed(proto, 31, Some(5), AdvertisedDigests::Absent);
         assert_eq!(greeting.subprotocol(), 5);
         assert!(greeting.has_subprotocol());
         assert_eq!(greeting.subprotocol_raw(), Some(5));
@@ -446,7 +467,7 @@ mod tests {
     #[test]
     fn borrowed_greeting_subprotocol_absent() {
         let proto = ProtocolVersion::from_supported(29).unwrap();
-        let greeting = make_borrowed(proto, 29, None, None);
+        let greeting = make_borrowed(proto, 29, None, AdvertisedDigests::Absent);
         assert_eq!(greeting.subprotocol(), 0);
         assert!(!greeting.has_subprotocol());
         assert_eq!(greeting.subprotocol_raw(), None);
@@ -455,23 +476,41 @@ mod tests {
     #[test]
     fn borrowed_greeting_digest_list_present() {
         let proto = ProtocolVersion::from_supported(30).unwrap();
-        let greeting = make_borrowed(proto, 30, None, Some("md4 md5"));
-        assert_eq!(greeting.digest_list(), Some("md4 md5"));
+        let greeting = make_borrowed(proto, 30, None, AdvertisedDigests::Present("md4 md5"));
+        assert_eq!(
+            greeting.advertised_digests(),
+            AdvertisedDigests::Present("md4 md5")
+        );
         assert!(greeting.has_digest_list());
     }
 
     #[test]
     fn borrowed_greeting_digest_list_absent() {
         let proto = ProtocolVersion::from_supported(30).unwrap();
-        let greeting = make_borrowed(proto, 30, None, None);
-        assert_eq!(greeting.digest_list(), None);
+        let greeting = make_borrowed(proto, 30, None, AdvertisedDigests::Absent);
+        assert_eq!(greeting.advertised_digests(), AdvertisedDigests::Absent);
         assert!(!greeting.has_digest_list());
+    }
+
+    // An empty advertised list is still advertised. Reporting it as absent would
+    // send the daemon down upstream's no-list fallback and authenticate a peer
+    // upstream refuses.
+    #[test]
+    fn borrowed_greeting_empty_digest_list_is_still_advertised() {
+        let proto = ProtocolVersion::from_supported(31).unwrap();
+        let greeting = make_borrowed(proto, 31, Some(0), AdvertisedDigests::Present(""));
+        assert_eq!(
+            greeting.advertised_digests(),
+            AdvertisedDigests::Present("")
+        );
+        assert!(greeting.has_digest_list());
+        assert_eq!(greeting.digest_tokens().count(), 0);
     }
 
     #[test]
     fn borrowed_greeting_supports_digest_case_insensitive() {
         let proto = ProtocolVersion::from_supported(30).unwrap();
-        let greeting = make_borrowed(proto, 30, None, Some("md4 MD5"));
+        let greeting = make_borrowed(proto, 30, None, AdvertisedDigests::Present("md4 MD5"));
         assert!(greeting.supports_digest("md4"));
         assert!(greeting.supports_digest("MD4"));
         assert!(greeting.supports_digest("md5"));
@@ -482,7 +521,7 @@ mod tests {
     #[test]
     fn borrowed_greeting_supports_digest_empty_query() {
         let proto = ProtocolVersion::from_supported(30).unwrap();
-        let greeting = make_borrowed(proto, 30, None, Some("md4"));
+        let greeting = make_borrowed(proto, 30, None, AdvertisedDigests::Present("md4"));
         assert!(!greeting.supports_digest(""));
         assert!(!greeting.supports_digest("   "));
     }
@@ -490,7 +529,7 @@ mod tests {
     #[test]
     fn borrowed_greeting_digest_tokens() {
         let proto = ProtocolVersion::from_supported(30).unwrap();
-        let greeting = make_borrowed(proto, 30, None, Some("md4 md5 sha1"));
+        let greeting = make_borrowed(proto, 30, None, AdvertisedDigests::Present("md4 md5 sha1"));
         let tokens: Vec<_> = greeting.digest_tokens().collect();
         assert_eq!(tokens, vec!["md4", "md5", "sha1"]);
     }
@@ -498,12 +537,12 @@ mod tests {
     #[test]
     fn borrowed_greeting_into_owned() {
         let proto = ProtocolVersion::from_supported(30).unwrap();
-        let borrowed = make_borrowed(proto, 30, Some(5), Some("md4"));
+        let borrowed = make_borrowed(proto, 30, Some(5), AdvertisedDigests::Present("md4"));
         let owned = borrowed.into_owned();
         assert_eq!(owned.protocol(), proto);
         assert_eq!(owned.advertised_protocol(), 30);
         assert_eq!(owned.subprotocol(), 5);
-        assert_eq!(owned.digest_list(), Some("md4"));
+        assert_eq!(owned.digest_names(), Some("md4"));
     }
 
     #[test]
@@ -513,21 +552,31 @@ mod tests {
         assert_eq!(owned.advertised_protocol(), 30);
         assert_eq!(owned.subprotocol(), 5);
         assert!(owned.has_subprotocol());
-        assert_eq!(owned.digest_list(), Some("md4 md5"));
+        assert_eq!(owned.digest_names(), Some("md4 md5"));
     }
 
     #[test]
     fn owned_greeting_from_parts_trims_digest_list() {
         let owned =
             LegacyDaemonGreetingOwned::from_parts(29, None, Some("  md4 md5  ".into())).unwrap();
-        assert_eq!(owned.digest_list(), Some("md4 md5"));
+        assert_eq!(owned.digest_names(), Some("md4 md5"));
     }
 
+    // upstream: clientserver.c:199-203 - a whitespace-only list is what
+    // `strdup(strchr(buf + 9, ' ') + 1)` yields for `@RSYNCD: 31.0  `. It is a
+    // list the peer advertised, so it must NOT decay into "no list advertised":
+    // upstream refuses it, and collapsing it grants access instead.
     #[test]
-    fn owned_greeting_from_parts_empty_digest_becomes_none() {
+    fn owned_greeting_from_parts_keeps_an_empty_digest_list_present() {
         let owned = LegacyDaemonGreetingOwned::from_parts(29, None, Some("   ".into())).unwrap();
-        assert!(owned.digest_list().is_none());
-        assert!(!owned.has_digest_list());
+        assert_eq!(owned.advertised_digests(), AdvertisedDigests::Present(""));
+        assert_eq!(owned.digest_names(), Some(""));
+        assert!(owned.has_digest_list());
+        assert_eq!(owned.digest_tokens().count(), 0);
+
+        let absent = LegacyDaemonGreetingOwned::from_parts(29, None, None).unwrap();
+        assert_eq!(absent.advertised_digests(), AdvertisedDigests::Absent);
+        assert!(!absent.has_digest_list());
     }
 
     #[test]
@@ -566,7 +615,10 @@ mod tests {
         let borrowed = owned.as_borrowed();
         assert_eq!(borrowed.advertised_protocol(), 30);
         assert_eq!(borrowed.subprotocol(), 5);
-        assert_eq!(borrowed.digest_list(), Some("md4"));
+        assert_eq!(
+            borrowed.advertised_digests(),
+            AdvertisedDigests::Present("md4")
+        );
     }
 
     #[test]
@@ -590,8 +642,8 @@ mod tests {
     #[test]
     fn borrowed_greeting_eq() {
         let proto = ProtocolVersion::from_supported(30).unwrap();
-        let a = make_borrowed(proto, 30, Some(5), Some("md4"));
-        let b = make_borrowed(proto, 30, Some(5), Some("md4"));
+        let a = make_borrowed(proto, 30, Some(5), AdvertisedDigests::Present("md4"));
+        let b = make_borrowed(proto, 30, Some(5), AdvertisedDigests::Present("md4"));
         assert_eq!(a, b);
     }
 
@@ -605,11 +657,11 @@ mod tests {
     #[test]
     fn from_borrowed_to_owned_conversion() {
         let proto = ProtocolVersion::from_supported(30).unwrap();
-        let borrowed = make_borrowed(proto, 30, Some(5), Some("md4"));
+        let borrowed = make_borrowed(proto, 30, Some(5), AdvertisedDigests::Present("md4"));
         let owned: LegacyDaemonGreetingOwned = borrowed.into();
         assert_eq!(owned.protocol(), proto);
         assert_eq!(owned.advertised_protocol(), 30);
         assert_eq!(owned.subprotocol_raw(), Some(5));
-        assert_eq!(owned.digest_list(), Some("md4"));
+        assert_eq!(owned.digest_names(), Some("md4"));
     }
 }

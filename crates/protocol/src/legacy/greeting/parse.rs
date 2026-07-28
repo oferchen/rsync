@@ -2,7 +2,9 @@ use crate::error::NegotiationError;
 use crate::version::ProtocolVersion;
 
 use super::super::{LEGACY_DAEMON_PREFIX, malformed_legacy_greeting};
+use super::advertised::AdvertisedDigests;
 use super::types::{LegacyDaemonGreeting, LegacyDaemonGreetingOwned};
+use super::validate::advertised_digests_in_greeting;
 
 /// Parses a legacy ASCII daemon greeting of the form `@RSYNCD: <version>`.
 ///
@@ -74,7 +76,6 @@ pub fn parse_legacy_daemon_greeting_details(
         let had_leading_whitespace = trimmed_remainder.len() != remainder.len();
 
         if trimmed_remainder.is_empty() {
-            remainder = trimmed_remainder;
             break;
         }
 
@@ -90,11 +91,12 @@ pub fn parse_legacy_daemon_greeting_details(
             continue;
         }
 
+        // Anything else must be the digest list, which upstream only recognises
+        // after a separating space.
         if !had_leading_whitespace {
             return Err(malformed());
         }
 
-        remainder = trimmed_remainder;
         break;
     }
 
@@ -102,11 +104,14 @@ pub fn parse_legacy_daemon_greeting_details(
         return Err(malformed());
     }
 
-    let digest_list = remainder.trim();
-    let digest_list = if digest_list.is_empty() {
-        None
-    } else {
-        Some(digest_list)
+    // The digest list is read with upstream's own rule rather than from the
+    // structural remainder, so the parser and the presence gate in
+    // `missing_greeting_token` can never disagree. Whitespace padding is
+    // trimmed off the *names* - it never changes which tokens they split into -
+    // but a list that is present and empty stays present.
+    let digest_list = match advertised_digests_in_greeting(trimmed) {
+        AdvertisedDigests::Absent => AdvertisedDigests::Absent,
+        AdvertisedDigests::Present(names) => AdvertisedDigests::Present(names.trim()),
     };
 
     let protocol = ProtocolVersion::from_peer_advertisement(advertised_protocol)?;

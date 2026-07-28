@@ -323,7 +323,7 @@ mod tests {
 
         assert_eq!(greeting.protocol().as_u8(), 31);
         // Should have checksum digests
-        assert!(greeting.digest_list().is_some());
+        assert!(greeting.digest_names().is_some());
     }
 
     #[test]
