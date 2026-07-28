@@ -507,20 +507,6 @@ pub(super) fn build_full_daemon_args(
         args.push(format!("--checksum-seed={seed}"));
     }
 
-    // oc-specific: forward `--zero-copy`/`--no-zero-copy` to the daemon-sender
-    // (pull) so its socket write side can opt into io_uring SEND_ZC. This is a
-    // non-upstream flag with no `server_options()` counterpart, forwarded only
-    // when the daemon is the sender (`is_sender`) and the user set a non-Auto
-    // policy - same opt-in precedent as `--io-uring-depth`. Auto is the default
-    // and is never forwarded, so the daemon keeps its byte-identical writer.
-    if is_sender {
-        match config.zero_copy_policy() {
-            fast_io::ZeroCopyPolicy::Enabled => args.push("--zero-copy".to_owned()),
-            fast_io::ZeroCopyPolicy::Disabled => args.push("--no-zero-copy".to_owned()),
-            fast_io::ZeroCopyPolicy::Auto => {}
-        }
-    }
-
     // upstream: options.c:2896-2897
     if config.ignore_errors() {
         args.push("--ignore-errors".to_owned());
@@ -569,9 +555,6 @@ pub(super) fn build_full_daemon_args(
         }
         if config.fsync() {
             args.push("--fsync".to_owned());
-        }
-        if let Some(depth) = config.io_uring_depth() {
-            args.push(format!("--io-uring-depth={depth}"));
         }
 
         // upstream: options.c:2933-2941 - --compare-dest/copy-dest/link-dest
@@ -1721,68 +1704,183 @@ mod server_option_fidelity_tests {
 }
 
 #[cfg(test)]
-mod zero_copy_forwarding_tests {
+mod oc_flag_forwarding_tests {
+    use std::num::{NonZeroU8, NonZeroUsize};
+    use std::path::PathBuf;
+
     use super::build_full_daemon_args;
     use crate::client::ClientConfig;
+    use crate::client::config::TcpFastOpenMode;
     use crate::client::remote::daemon_transfer::connection::DaemonTransferRequest;
     use protocol::ProtocolVersion;
+
+    /// Long options recognized by upstream rsync 3.4.4 (options.c
+    /// long_options[]) that this arg builder may emit. Upstream's `--server`
+    /// aborts the whole transfer on the first unknown option, so every `--`
+    /// token the builder produces MUST appear in this allowlist. oc-invented
+    /// tuning flags (--io-uring-depth, --zero-copy, ...) are local resource
+    /// knobs and must never reach the peer argv.
+    const UPSTREAM_SERVER_LONG_OPTS: &[&str] = &[
+        "--append",
+        "--append-verify",
+        "--backup-dir",
+        "--block-size",
+        "--bwlimit",
+        "--checksum-choice",
+        "--checksum-seed",
+        "--compare-dest",
+        "--compress-choice",
+        "--compress-level",
+        "--copy-dest",
+        "--copy-devices",
+        "--copy-unsafe-links",
+        "--debug",
+        "--delay-updates",
+        "--delete",
+        "--delete-after",
+        "--delete-before",
+        "--delete-delay",
+        "--delete-during",
+        "--delete-excluded",
+        "--delete-missing-args",
+        "--existing",
+        "--files-from",
+        "--force",
+        "--from0",
+        "--fsync",
+        "--groupmap",
+        "--iconv",
+        "--ignore-errors",
+        "--ignore-existing",
+        "--ignore-missing-args",
+        "--ignore-times",
+        "--info",
+        "--inplace",
+        "--link-dest",
+        "--list-only",
+        "--log-format",
+        "--max-alloc",
+        "--max-delete",
+        "--max-size",
+        "--min-size",
+        "--mkpath",
+        "--modify-window",
+        "--msgs2stderr",
+        "--new-compress",
+        "--no-implied-dirs",
+        "--no-msgs2stderr",
+        "--no-r",
+        "--no-relative",
+        "--no-specials",
+        "--numeric-ids",
+        "--old-compress",
+        "--only-write-batch",
+        "--open-noatime",
+        "--partial",
+        "--partial-dir",
+        "--preallocate",
+        "--read-batch",
+        "--remove-sent-files",
+        "--remove-source-files",
+        "--safe-links",
+        "--secluded-args",
+        "--sender",
+        "--server",
+        "--size-only",
+        "--skip-compress",
+        "--specials",
+        "--stop-at",
+        "--suffix",
+        "--temp-dir",
+        "--timeout",
+        // upstream: options.c:2908-2909 - server_options() spells the qsort
+        // request as `--use-qsort` even though the popt table entry is
+        // `qsort`; we mirror the emitted spelling.
+        "--use-qsort",
+        "--usermap",
+        "--write-batch",
+        "--write-devices",
+    ];
 
     fn request() -> DaemonTransferRequest {
         DaemonTransferRequest::parse_rsync_url("rsync://host/mod/path").expect("valid rsync url")
     }
 
-    fn args_for(policy: fast_io::ZeroCopyPolicy, is_sender: bool) -> Vec<String> {
-        let config = ClientConfig::builder().zero_copy_policy(policy).build();
-        build_full_daemon_args(&config, &request(), ProtocolVersion::V31, is_sender)
+    /// Sets every oc-invented tuning knob to a non-default value. These are
+    /// local resource knobs with no upstream counterpart; a real upstream
+    /// 3.4.4 daemon rejects any of them with an unknown-option error.
+    fn kitchen_sink_config() -> ClientConfig {
+        ClientConfig::builder()
+            .io_uring_policy(fast_io::IoUringPolicy::Enabled)
+            .io_uring_depth(Some(128))
+            .cow_policy(fast_io::CowPolicy::Required)
+            .zero_copy_policy(fast_io::ZeroCopyPolicy::Enabled)
+            .parallel_delta_scan(true)
+            .compression_threads(NonZeroU8::new(4))
+            .xxh64_dedup(true)
+            .rayon_threads(NonZeroUsize::new(8))
+            .tokio_threads(NonZeroUsize::new(4))
+            .sparse_detect(engine::SparseDetectStrategy::Map)
+            .tcp_fastopen(TcpFastOpenMode::On)
+            .spill_dir(Some(PathBuf::from("/tmp/spill")))
+            .spill_threshold_bytes(Some(1024))
+            .build()
     }
 
-    // The daemon-sender (pull, `is_sender = true`) socket write side is the
-    // only place SEND_ZC helps, so `--zero-copy` is forwarded there when the
-    // user opted in. Both ends must be oc-rsync for the daemon to parse it.
+    fn assert_upstream_recognized(args: &[String]) {
+        for arg in args {
+            if let Some(rest) = arg.strip_prefix("--") {
+                let name = rest.split('=').next().unwrap_or(rest);
+                let long = format!("--{name}");
+                assert!(
+                    UPSTREAM_SERVER_LONG_OPTS.contains(&long.as_str()),
+                    "`{arg}` is not an upstream rsync 3.4.4 option; an \
+                     upstream `--server` peer aborts the transfer on it \
+                     (full argv: {args:?})"
+                );
+            }
+        }
+    }
+
     #[test]
-    fn enabled_forwards_zero_copy_on_daemon_sender() {
-        let args = args_for(fast_io::ZeroCopyPolicy::Enabled, true);
-        assert!(
-            args.iter().any(|a| a == "--zero-copy"),
-            "daemon-sender pull with --zero-copy must forward the flag: {args:?}"
+    fn oc_tuning_flags_never_reach_daemon_sender_argv() {
+        let baseline = build_full_daemon_args(
+            &ClientConfig::builder().build(),
+            &request(),
+            ProtocolVersion::V31,
+            true,
         );
-        assert!(!args.iter().any(|a| a == "--no-zero-copy"));
-    }
-
-    // Default (Auto) must never forward the flag: the daemon then keeps its
-    // byte- and behavior-identical writer. This is the HARD default-path
-    // invariant, asserted at the wire-arg boundary.
-    #[test]
-    fn auto_never_forwards_zero_copy() {
-        let args = args_for(fast_io::ZeroCopyPolicy::Auto, true);
-        assert!(
-            !args
-                .iter()
-                .any(|a| a == "--zero-copy" || a == "--no-zero-copy"),
-            "Auto policy must not forward any zero-copy flag: {args:?}"
+        let args = build_full_daemon_args(
+            &kitchen_sink_config(),
+            &request(),
+            ProtocolVersion::V31,
+            true,
+        );
+        assert_upstream_recognized(&args);
+        assert_eq!(
+            args, baseline,
+            "oc-invented tuning knobs must not alter the daemon peer argv"
         );
     }
 
-    // `--no-zero-copy` pins the daemon-sender's policy to Disabled explicitly.
     #[test]
-    fn disabled_forwards_no_zero_copy_on_daemon_sender() {
-        let args = args_for(fast_io::ZeroCopyPolicy::Disabled, true);
-        assert!(
-            args.iter().any(|a| a == "--no-zero-copy"),
-            "Disabled policy must forward --no-zero-copy: {args:?}"
+    fn oc_tuning_flags_never_reach_daemon_receiver_argv() {
+        let baseline = build_full_daemon_args(
+            &ClientConfig::builder().build(),
+            &request(),
+            ProtocolVersion::V31,
+            false,
         );
-        assert!(!args.iter().any(|a| a == "--zero-copy"));
-    }
-
-    // On a push (`is_sender = false`, daemon is the receiver) the daemon's
-    // socket write side carries no bulk data, so SEND_ZC is not forwarded even
-    // when the user opted in - matching the sender-only benefit.
-    #[test]
-    fn enabled_does_not_forward_on_daemon_receiver() {
-        let args = args_for(fast_io::ZeroCopyPolicy::Enabled, false);
-        assert!(
-            !args.iter().any(|a| a == "--zero-copy"),
-            "daemon-receiver push must not forward --zero-copy: {args:?}"
+        let args = build_full_daemon_args(
+            &kitchen_sink_config(),
+            &request(),
+            ProtocolVersion::V31,
+            false,
+        );
+        assert_upstream_recognized(&args);
+        assert_eq!(
+            args, baseline,
+            "oc-invented tuning knobs must not alter the daemon peer argv"
         );
     }
 }
