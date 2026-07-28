@@ -176,9 +176,15 @@ pub(super) fn handle_dry_run(
     context.capture_batch_whole_file(source, file_size)?;
     context.finalize_batch_file_delta(source)?;
 
+    // upstream: sender.c:342-343 counts the file into stats.xferred_files and
+    // stats.total_transferred_size, then the `if (!do_xfers)` guard `continue`s
+    // before match_sums(), so stats.literal_data (match.c:436) and
+    // stats.matched_data (match.c:121) stay 0 under --dry-run. record_file would
+    // fold `bytes_transferred` into the literal tally; record_dry_run_file keeps
+    // those transferred-byte counters at 0 while still counting the file.
     context
         .summary_mut()
-        .record_file(file_size, bytes_transferred, None);
+        .record_dry_run_file(file_size, bytes_transferred);
 
     // upstream: generator.c:1942-1960 - a dry-run still itemizes the file
     // against the existing destination via itemize()/report_flags, so an
