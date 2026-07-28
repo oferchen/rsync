@@ -103,7 +103,7 @@ rustix = { workspace = true, features = ["fs"] }
 base64 = { workspace = true }
 libc = { workspace = true }
 apple-fs = { path = "../apple-fs" }
-serial_test = "3.5"
+serial_test = "4.0"
 criterion = { workspace = true }
 toml = { workspace = true }
 
