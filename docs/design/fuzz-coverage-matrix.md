@@ -34,7 +34,6 @@ The matrix below tracks per-target coverage metrics. Columns:
 | Target                    | Category | Lines | Branches | Edge % | Corpus | Last run |
 | ------------------------- | -------- | ----- | -------- | ------ | ------ | -------- |
 | `filter_list_wire`        | parser   | -     | -        | -      | 0      | -        |
-| `rsyncd_conf`             | parser   | -     | -        | -      | 0      | -        |
 | `capability_flags`        | parser   | -     | -        | -      | 0      | -        |
 | `auth_response`           | parser   | -     | -        | -      | 0      | -        |
 | `vstring`                 | parser   | -     | -        | -      | 0      | -        |
@@ -89,7 +88,6 @@ distance below threshold. Update this list after each coverage run.
 | P3       | `flist_entry_decode`    | protocol | -              | -     | Seed from interop captures        |
 | P4       | `incremental_flist`     | protocol | -              | -     | Generate multi-segment INC corpus |
 | P5       | `filter_list_wire`      | parser   | -              | -     | Expand rule-grammar seeds         |
-| P6       | `rsyncd_conf`           | parser   | -              | -     | Real-world rsyncd.conf samples    |
 
 Targets with existing corpora (e.g., `varint_decode` with 14 seeds) may
 already be adequate - verify by running coverage collection.
@@ -143,7 +141,7 @@ set -euo pipefail
 TARGETS=(
     protocol_wire multiplex_frame_parse flist_entry_decode incremental_flist
     ndx_codec varint_decode legacy_greeting daemon_greeting
-    filter_list_wire rsyncd_conf capability_flags auth_response
+    filter_list_wire capability_flags auth_response
     vstring batch_reader acl_xattr_wire bwlimit
     decompressor_zlib decompressor_zstd simd_checksum_parity
     filter_differential filter_rules_vs_upstream

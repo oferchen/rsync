@@ -515,10 +515,10 @@ transfer-worker-threads = 0           # treat as default (adaptive)
 ```
 
 Parsed at config load by extending the existing
-`crates/daemon/src/rsyncd_config/sections.rs` parser. Validation lives
-in `crates/daemon/src/rsyncd_config/validation.rs`. The validator
-accepts the literal string `adaptive` or any positive integer in the
-range `[1, 4096]` (an upper sanity bound).
+`crates/daemon/src/daemon/sections/config_parsing/global_directives.rs`
+parser, which validates directives inline as it parses them. The
+validator accepts the literal string `adaptive` or any positive integer
+in the range `[1, 4096]` (an upper sanity bound).
 
 ### 11.3 BufferPool API
 
@@ -611,8 +611,8 @@ listed here so reviewers can plan implementation order:
   `BufferPoolStats::shard_overflows` and the shard hit rate.
 - **Daemon worker pool integration TODO**: wire
   `TransferWorkerPool` to the sizer; extend
-  `crates/daemon/src/rsyncd_config/sections.rs` for the
-  `adaptive | <fixed>` parser; gate behind the existing
+  `crates/daemon/src/daemon/sections/config_parsing/global_directives.rs`
+  for the `adaptive | <fixed>` parser; gate behind the existing
   `async-daemon` feature so non-async builds keep the sync model.
 - **Telemetry / dashboard TODO**: add the `-vv` structured-log line in
   every sizing decision; add the `BufferPoolStats` snapshot of the
