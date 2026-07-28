@@ -4,6 +4,7 @@
 //! control how the disk thread writes, syncs, commits files, and handles
 //! interrupted transfers.
 
+use std::env;
 use std::ffi::OsString;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -75,6 +76,30 @@ const MIN_CHANNEL_CAPACITY: usize = 8;
 /// Maximum allowed channel capacity (prevents unbounded memory growth).
 const MAX_CHANNEL_CAPACITY: usize = 4096;
 
+/// Environment variable overriding the default disk-commit channel capacity.
+///
+/// Parsed as an unsigned integer and clamped to `[8, 4096]`. Unset or
+/// unparseable values fall back to [`DEFAULT_CHANNEL_CAPACITY`]. Local
+/// tuning knob only - never forwarded to a remote peer and never observable
+/// on the wire.
+pub const ENV_CHANNEL_CAPACITY: &str = "OC_RSYNC_DISK_COMMIT_CHANNEL_CAP";
+
+/// Resolves the default channel capacity, honoring [`ENV_CHANNEL_CAPACITY`].
+///
+/// Read once at config construction. Invalid values are ignored in favor
+/// of [`DEFAULT_CHANNEL_CAPACITY`], matching the tolerant parse style of
+/// the other `OC_RSYNC_*` tuning knobs.
+fn channel_capacity_from_env() -> usize {
+    env::var(ENV_CHANNEL_CAPACITY)
+        .ok()
+        .and_then(|raw| raw.trim().parse::<u64>().ok())
+        .map_or(DEFAULT_CHANNEL_CAPACITY, |value| {
+            usize::try_from(value)
+                .unwrap_or(MAX_CHANNEL_CAPACITY)
+                .clamp(MIN_CHANNEL_CAPACITY, MAX_CHANNEL_CAPACITY)
+        })
+}
+
 /// Configuration for the disk commit thread.
 #[derive(Debug, Clone)]
 pub struct DiskCommitConfig {
@@ -138,7 +163,9 @@ pub struct DiskCommitConfig {
     /// network thread and the disk thread. Clamped to
     /// `MIN_CHANNEL_CAPACITY..=MAX_CHANNEL_CAPACITY` at runtime.
     ///
-    /// Defaults to [`DEFAULT_CHANNEL_CAPACITY`] (128).
+    /// Defaults to [`DEFAULT_CHANNEL_CAPACITY`] (128), overridable via the
+    /// [`ENV_CHANNEL_CAPACITY`] environment variable read at config
+    /// construction.
     pub channel_capacity: usize,
     /// Policy controlling io_uring usage for disk writes.
     ///
@@ -239,7 +266,7 @@ impl Default for DiskCommitConfig {
             acl_cache: None,
             acl_id_map: None,
             xattr_filter: None,
-            channel_capacity: DEFAULT_CHANNEL_CAPACITY,
+            channel_capacity: channel_capacity_from_env(),
             io_uring_policy: fast_io::IoUringPolicy::Auto,
             io_uring_depth: None,
             iocp_policy: fast_io::IocpPolicy::Auto,
