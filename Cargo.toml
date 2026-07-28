@@ -243,11 +243,15 @@ dashmap = "6.1"
 # 0.9.x) by upgrading to rsa 0.10 with the constant-time rewrite. The keys
 # helpers (formerly russh-keys) are now re-exported under russh::keys.
 russh = { version = "0.62.1", default-features = false, features = ["flate2", "ring", "rsa"] }
-# QUIC transport (feature-gated spike) - quinn with the rustls/ring provider.
-# default-features off keeps the aws-lc-rs provider and the platform
-# certificate verifier out of the dependency graph; `ring` 0.17 is already
-# pinned via russh.
-quinn = { version = "0.11.9", default-features = false, features = ["runtime-tokio", "rustls-ring"] }
+# QUIC transport (feature-gated) - quinn's sans-IO core with the rustls/ring
+# provider, driven directly from a dedicated I/O thread (no tokio, no quinn
+# runtime layer). default-features off keeps the aws-lc-rs provider and the
+# platform certificate verifier out of the dependency graph; `ring` 0.17 is
+# already pinned via russh.
+quinn-proto = { version = "0.11.16", default-features = false, features = ["rustls-ring"] }
+# Byte buffers for the quinn-proto datagram interface (already in the tree
+# as quinn-proto's own buffer type).
+bytes = "1.12"
 rustls = { version = "0.23", default-features = false, features = ["ring", "std"] }
 # Self-signed certificate generation for QUIC loopback tests
 rcgen = { version = "0.14", default-features = false, features = ["crypto", "ring"] }
