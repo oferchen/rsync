@@ -322,11 +322,8 @@ fn from_stream_parts_rehydrates_legacy_handshake() {
     let transport = rehydrated.into_stream().into_inner();
     assert_eq!(transport.flushes(), 2);
 
-    let expected = [
-        client_greeting(negotiated.as_u8()),
-        b"@RSYNCD: OK\n".to_vec(),
-    ]
-    .concat();
+    // The greeting advertises our own desired protocol, not the negotiated value.
+    let expected = [client_greeting(desired.as_u8()), b"@RSYNCD: OK\n".to_vec()].concat();
     assert_eq!(transport.written(), expected);
 }
 
