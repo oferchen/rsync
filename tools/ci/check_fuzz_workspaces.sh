@@ -27,8 +27,14 @@ for ws in "${FUZZ_WORKSPACES[@]}"; do
         echo "error: expected fuzz workspace ${ws}/Cargo.toml is missing" >&2
         exit 1
     fi
+    # Re-sync the lockfile against Cargo.toml first (same idiom as the lint
+    # job) so workspace version bumps that did not refresh the fuzz lockfile
+    # do not block CI. Offline regen can fail on a cold registry cache; the
+    # --locked check below still surfaces any real mismatch loudly.
+    echo "==> cargo update --workspace --offline (${ws})"
+    cargo update --workspace --offline --manifest-path "${ws}/Cargo.toml" || true
     echo "==> cargo check (${ws})"
-    cargo check --manifest-path "${ws}/Cargo.toml"
+    cargo check --locked --manifest-path "${ws}/Cargo.toml"
     echo "==> cargo fmt --check (${ws})"
     cargo fmt --manifest-path "${ws}/Cargo.toml" --all -- --check
 done
