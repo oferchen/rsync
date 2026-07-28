@@ -38,8 +38,9 @@ fn parts_stream_parts_mut_allows_inner_mutation() {
 
     let inner = parts.into_handshake().into_stream().into_inner();
     assert_eq!(inner.flushes(), 2);
+    // The greeting advertises our own newest version (32), not the server's 31.
     assert_eq!(
         inner.written(),
-        [client_greeting(31), b"@RSYNCD: OK\n".to_vec()].concat()
+        [client_greeting(32), b"@RSYNCD: OK\n".to_vec()].concat()
     );
 }
