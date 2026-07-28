@@ -266,8 +266,14 @@ test_oc_to_upstream() {
 
     cp "$work_dir/basis/testfile.bin" "$work_dir/final/testfile.bin"
 
+    # A delta batch must be replayed with the option set it was recorded
+    # under - that is exactly what upstream's generated "<batch>.sh" companion
+    # re-runs (batch.c:write_batch_shell_file). Replaying a delta batch bare
+    # crashes upstream 3.4.1 and 3.4.4 with SIGSEGV, reproducible with a batch
+    # upstream wrote itself, so a bare invocation here tests the wrong thing.
     log_info "Replaying batch with upstream rsync $version..."
-    if ! "$upstream_rsync" --read-batch="$work_dir/mybatch" "$work_dir/final/" > "$work_dir/read.log" 2>&1; then
+    if ! "$upstream_rsync" -a --no-whole-file --ignore-times \
+        --read-batch="$work_dir/mybatch" "$work_dir/final/" > "$work_dir/read.log" 2>&1; then
         cat "$work_dir/read.log" >&2
         record_fail "oc-to-upstream" "$version" "$test_name" \
             "upstream rsync --read-batch failed"

@@ -23,7 +23,7 @@ use super::ReplayResult;
 #[cfg(feature = "zstd")]
 use super::codec::detect_compression_codec;
 use super::codec::{CompressionCodec, create_compressed_decoder};
-use super::delta::{choose_block_length, default_xfer_sum_len};
+use super::delta::default_xfer_sum_len;
 use super::dispatch::{
     ITEM_TRANSFER, apply_file_delta, read_and_discard_file_checksum,
     read_compressed_deltas_streaming, read_iflags_and_skip_meta, read_sum_head,
@@ -253,7 +253,6 @@ fn process_file_ndx(
     };
 
     let entry_name = entries[flat_index].name().to_owned();
-    let entry_size = entries[flat_index].size();
     // Only regular files are valid delta targets. A directory or symlink must
     // never be opened as a basis file or overwritten with literal data - on
     // Unix `File::open` on a directory succeeds (so a stray transfer record is
@@ -267,22 +266,16 @@ fn process_file_ndx(
     let stream = reader
         .inner_reader()
         .ok_or_else(|| BatchError::Io(std::io::Error::other("batch file not open")))?;
-    let (block_count, block_length_wire, remainder_wire) = read_sum_head(stream)?;
+    // The advertised geometry is the only description of the body that
+    // follows. Substituting a guessed block length when the header carries
+    // zeros is what let a whole-file-shaped head sit in front of a body full
+    // of block matches: oc replayed it happily while upstream aborted at
+    // receiver.c:414. Every copy token below is resolved through this head.
+    let sum_head = read_sum_head(stream)?;
 
-    // Compute block geometry before token reading - needed for CPRES_ZLIB
-    // see_token() calls which reference basis blocks by index. A non-regular
-    // dest never has a usable basis (and must not be opened as one).
+    // A non-regular dest never has a usable basis (and must not be opened as
+    // one).
     let basis_exists = is_regular && dest_path.exists();
-    let block_length = if block_length_wire > 0 {
-        block_length_wire as usize
-    } else {
-        choose_block_length(entry_size)
-    };
-    let remainder = if remainder_wire > 0 {
-        remainder_wire as usize
-    } else {
-        block_length
-    };
 
     // Auto-detect compression codec on the first compressed file before
     // building delta operations. Detection runs once per batch.
@@ -294,9 +287,7 @@ fn process_file_ndx(
         &dest_path,
         basis_exists,
         &entry_name,
-        block_length,
-        block_count,
-        remainder,
+        sum_head,
     )?;
 
     {
@@ -315,14 +306,7 @@ fn process_file_ndx(
     // files; directories and symlinks were created in the flist phase and must
     // not be overwritten with a delta-reconstructed file.
     if is_regular {
-        apply_file_delta(
-            &dest_path,
-            basis_exists,
-            delta_ops,
-            block_length,
-            block_count as u32,
-            remainder,
-        )
+        apply_file_delta(&dest_path, basis_exists, delta_ops, sum_head)
     } else {
         Ok(())
     }
@@ -336,16 +320,13 @@ fn process_file_ndx(
 ///
 /// upstream: token.c:recv_token() dispatches to recv_deflated_token() or
 /// simple_recv_token() based on do_compression.
-#[allow(clippy::too_many_arguments)]
 fn read_delta_tokens(
     reader: &mut BatchReader,
     codec_state: &mut CodecState,
     dest_path: &Path,
     basis_exists: bool,
     entry_name: &str,
-    block_length: usize,
-    block_count: i32,
-    remainder: usize,
+    sum_head: protocol::wire::SumHead,
 ) -> BatchResult<Vec<protocol::wire::DeltaOp>> {
     let Some(decoder) = codec_state.decoder.as_mut() else {
         return reader.read_file_delta_tokens().map_err(|e| {
@@ -369,15 +350,7 @@ fn read_delta_tokens(
         let stream = reader
             .inner_reader()
             .ok_or_else(|| BatchError::Io(std::io::Error::other("batch file not open")))?;
-        read_compressed_deltas_streaming(
-            decoder,
-            stream,
-            &basis_data,
-            entry_name,
-            block_length,
-            block_count,
-            remainder,
-        )
+        read_compressed_deltas_streaming(decoder, stream, &basis_data, entry_name, sum_head)
     } else {
         // CPRES_ZLIBX or no basis: eager read - see_token() is a no-op.
         reader.read_compressed_delta_tokens(decoder).map_err(|e| {

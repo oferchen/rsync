@@ -260,6 +260,13 @@ impl<'a> CopyContext<'a> {
     /// after reading it from the batch file, so NDX values must reference
     /// sorted positions, not traversal order.
     ///
+    /// The sum_head is likewise deferred: which blocks the body will reference
+    /// is not known until the copy has run, so a whole-file placeholder is
+    /// reserved here and [`Self::finalize_batch_file_delta`] overwrites it with
+    /// the geometry the body was actually built against. Composing the head up
+    /// front is what produced batches advertising `count=0` ahead of a body
+    /// full of block matches, which upstream rejects at `receiver.c:414`.
+    ///
     /// Must be called before any token writes for this file (before
     /// `capture_batch_whole_file` or inline delta token writes).
     ///
@@ -306,29 +313,65 @@ impl<'a> CopyContext<'a> {
                 })?;
         }
 
-        // upstream: io.c:read_sum_head() / sender.c - write sum_head (4 x i32 LE).
-        // For local copy whole-file transfers: count=0, blength=0, s2length=16
-        // (MD5 checksum length), remainder=0.
-        const FILE_SUM_LENGTH: i32 = 16;
-        let count: i32 = 0;
-        let blength: i32 = 0;
-        let s2length: i32 = FILE_SUM_LENGTH;
-        let remainder: i32 = 0;
-
-        let mut sum_buf = [0u8; 16];
-        sum_buf[0..4].copy_from_slice(&count.to_le_bytes());
-        sum_buf[4..8].copy_from_slice(&blength.to_le_bytes());
-        sum_buf[8..12].copy_from_slice(&s2length.to_le_bytes());
-        sum_buf[12..16].copy_from_slice(&remainder.to_le_bytes());
-        delta_file.write_all(&sum_buf).map_err(|e| {
-            crate::local_copy::LocalCopyError::io(
-                "write batch sum_head",
-                std::path::PathBuf::new(),
-                e,
-            )
-        })?;
+        // upstream: io.c:write_sum_head() - four i32 LE fields. Reserve the
+        // slot with the whole-file (all-zero) head; the delta path replaces it
+        // via `record_batch_delta_geometry` once the basis geometry is known,
+        // and `finalize_batch_file_delta` patches the reserved bytes.
+        self.batch_delta_sum_head = protocol::wire::SumHead::WHOLE_FILE;
+        self.batch_delta_sum_head_offset = delta_file.get_ref().len();
+        delta_file
+            .write_all(&protocol::wire::SumHead::WHOLE_FILE.encode())
+            .map_err(|e| {
+                crate::local_copy::LocalCopyError::io(
+                    "write batch sum_head",
+                    std::path::PathBuf::new(),
+                    e,
+                )
+            })?;
 
         Ok(())
+    }
+
+    /// Records the basis geometry the current file's delta body is being built
+    /// against.
+    ///
+    /// Called by the delta executor once it has a basis signature, before any
+    /// block-match token is emitted. Every subsequent match token is validated
+    /// against this head, and the head is what
+    /// [`Self::finalize_batch_file_delta`] writes into the reserved slot - so
+    /// the head and the body it describes can only ever be built together.
+    ///
+    /// A file that never reaches the delta path keeps the whole-file head,
+    /// matching upstream's `write_sum_head(f, NULL)`.
+    pub(crate) fn record_batch_delta_geometry(&mut self, head: protocol::wire::SumHead) {
+        if self.batch_delta_buf.is_some() {
+            self.batch_delta_sum_head = head;
+        }
+    }
+
+    /// Resolves a basis block index against the current file's recorded
+    /// geometry, refusing to record a token the replaying receiver would
+    /// reject.
+    ///
+    /// upstream: `receiver.c:414` aborts with `RERR_PROTOCOL` on an index that
+    /// is not below `sum.count`. Checking here means a sum_head/body mismatch
+    /// fails while writing the batch instead of silently shipping a file that
+    /// crashes the peer replaying it.
+    pub(crate) fn check_batch_block_index(
+        &self,
+        block_index: u32,
+    ) -> Result<(), crate::local_copy::LocalCopyError> {
+        let index = i32::try_from(block_index).unwrap_or(-1);
+        self.batch_delta_sum_head
+            .block_span(index)
+            .map(|_| ())
+            .map_err(|error| {
+                crate::local_copy::LocalCopyError::io(
+                    "write batch block match token",
+                    std::path::PathBuf::new(),
+                    std::io::Error::from(error),
+                )
+            })
     }
 
     /// Writes a token-format end marker and file checksum to the batch delta
@@ -398,8 +441,32 @@ impl<'a> CopyContext<'a> {
 
         // Move the completed per-file data to batch_delta_entries.
         // The NDX will be written at flush time using the sort-order mapping.
-        let data = std::mem::take(delta_file.get_mut());
+        let mut data = std::mem::take(delta_file.get_mut());
         delta_file.set_position(0);
+
+        // Patch the reserved sum_head with the geometry the body was built
+        // against. Deferring it to here is what keeps the head and the tokens
+        // it describes in agreement: the delta path records the basis geometry
+        // as it matches blocks, and a whole-file body never records one, so it
+        // keeps upstream's all-zero head.
+        let head = std::mem::replace(
+            &mut self.batch_delta_sum_head,
+            protocol::wire::SumHead::WHOLE_FILE,
+        );
+        let start = self.batch_delta_sum_head_offset;
+        let end = start + protocol::wire::SumHead::WIRE_LEN;
+        let Some(slot) = data.get_mut(start..end) else {
+            return Err(crate::local_copy::LocalCopyError::io(
+                "write batch sum_head",
+                source.to_path_buf(),
+                std::io::Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    "batch delta buffer is missing its reserved sum_head",
+                ),
+            ));
+        };
+        slot.copy_from_slice(&head.encode());
+
         let idx = self.batch_current_delta_idx;
         self.batch_delta_entries.push((idx, data));
 

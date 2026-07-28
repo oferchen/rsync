@@ -22,12 +22,14 @@
 //! ## Submodules
 //!
 //! - `int_encoding` - Fundamental 4-byte LE integer read/write primitives
+//! - `sum_head` - Block geometry every token stream is read and written against
 //! - `token` - Upstream token-based wire format (literals, block matches, end markers)
 //! - `internal` - Internal opcode-based delta format for backward compatibility
 //! - `types` - Core types and constants (`DeltaOp`, `CHUNK_SIZE`)
 
 mod int_encoding;
 mod internal;
+mod sum_head;
 mod token;
 mod types;
 
@@ -36,6 +38,7 @@ mod tests;
 
 pub use self::int_encoding::{read_int, write_int};
 pub use self::internal::{read_delta, read_delta_op, write_delta, write_delta_op};
+pub use self::sum_head::{MAX_BLOCK_SIZE, MAX_STRONG_SUM_LEN, SumHead, SumHeadError};
 pub use self::token::{
     check_literal_token_len, read_token, write_token_block_match, write_token_end,
     write_token_literal, write_token_stream, write_whole_file_delta,

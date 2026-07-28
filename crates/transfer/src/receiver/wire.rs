@@ -174,13 +174,18 @@ impl SumHead {
 
     /// Writes the sum_head to the wire in rsync format.
     ///
-    /// All four fields are written as 32-bit little-endian integers.
+    /// All four fields are written as 32-bit little-endian integers. The
+    /// geometry is checked against the same rules the read path applies, so a
+    /// header this peer would reject is never one it emits.
     pub fn write<W: Write + ?Sized>(&self, writer: &mut W) -> io::Result<()> {
-        writer.write_all(&(self.count as i32).to_le_bytes())?;
-        writer.write_all(&(self.blength as i32).to_le_bytes())?;
-        writer.write_all(&(self.s2length as i32).to_le_bytes())?;
-        writer.write_all(&(self.remainder as i32).to_le_bytes())?;
-        Ok(())
+        protocol::wire::SumHead::with_blocks(
+            self.count,
+            self.blength,
+            self.s2length,
+            self.remainder,
+        )
+        .map_err(Self::malformed)?
+        .write(writer)
     }
 
     /// Decodes and validates a sum_head from its 16-byte little-endian wire
@@ -201,73 +206,23 @@ impl SumHead {
     /// - `io.c:2025-2067` - `read_sum_head()` validates every field and calls
     ///   `exit_cleanup(RERR_PROTOCOL)` on any out-of-range value.
     fn from_wire_bytes(buf: &[u8; 16]) -> io::Result<Self> {
-        // Fields are signed on the wire (write_int/read_int); decode as i32 so
-        // the negative-value guards below mirror upstream's `< 0` checks.
-        let count = i32::from_le_bytes([buf[0], buf[1], buf[2], buf[3]]);
-        let blength = i32::from_le_bytes([buf[4], buf[5], buf[6], buf[7]]);
-        let s2length = i32::from_le_bytes([buf[8], buf[9], buf[10], buf[11]]);
-        let remainder = i32::from_le_bytes([buf[12], buf[13], buf[14], buf[15]]);
-
-        // upstream: io.c:2029 - reject negative block count.
-        if count < 0 {
-            return Err(Self::malformed(format!("invalid checksum count {count}")));
-        }
-        // upstream: io.c:2039-2048 - guard against overflow in the downstream
-        // `count * per_entry_size` allocation arithmetic. Each signature block
-        // occupies `4 + s2length` wire bytes; MAX_STRONG_SUM_LEN bounds the
-        // second factor so the product cannot overflow usize.
-        let per_entry = 4usize + Self::MAX_STRONG_SUM_LEN;
-        if (count as usize).checked_mul(per_entry).is_none() {
-            return Err(Self::malformed(format!(
-                "invalid checksum count {count} (allocation overflow)"
-            )));
-        }
-        // upstream: io.c:2050-2054 - blength in (0, max_blength]. We use the
-        // legacy MAX_BLOCK_SIZE (1<<29) as the permissive ceiling so any header
-        // accepted by either protocol era is accepted here; a zero/negative
-        // block length is nonsense (division-by-zero) when count > 0.
-        if blength < 0
-            || blength as u32 > signature::MAX_BLOCK_SIZE_OLD
-            || (count > 0 && blength == 0)
-        {
-            return Err(Self::malformed(format!("invalid block length {blength}")));
-        }
-        // upstream: io.c:2056-2060 - s2length in [0, xfer_sum_len]. oc's longest
-        // negotiable transfer digest is SHA1 at MAX_STRONG_SUM_LEN (20) bytes.
-        if s2length < 0 || s2length as usize > Self::MAX_STRONG_SUM_LEN {
-            return Err(Self::malformed(format!(
-                "invalid checksum length {s2length}"
-            )));
-        }
-        // upstream: io.c:2061-2066 - remainder in [0, blength].
-        if remainder < 0 || remainder > blength {
-            return Err(Self::malformed(format!(
-                "invalid remainder length {remainder}"
-            )));
-        }
-
+        let head = protocol::wire::SumHead::decode(*buf).map_err(Self::malformed)?;
         Ok(Self {
-            count: count as u32,
-            blength: blength as u32,
-            s2length: s2length as u32,
-            remainder: remainder as u32,
+            count: head.count(),
+            blength: head.blength(),
+            s2length: head.s2length(),
+            remainder: head.remainder(),
         })
     }
-
-    /// Maximum strong-sum length accepted in a sum_head, in bytes.
-    ///
-    /// Mirrors upstream's `xfer_sum_len` ceiling (`io.c:2056`): the length of
-    /// the longest transfer checksum oc can negotiate. SHA1 (20 bytes) is the
-    /// longest supported transfer digest, so s2length may not exceed 20.
-    const MAX_STRONG_SUM_LEN: usize = 20;
 
     /// Builds a `RERR_PROTOCOL`-mapped error for a malformed sum_head field.
     ///
     /// upstream: io.c:2032-2065 `read_sum_head()` validates every field and
     /// calls `exit_cleanup(RERR_PROTOCOL)` (exit 2) on any out-of-range value.
     /// The error is tagged so the core exit-code mapper yields RERR_PROTOCOL(2)
-    /// rather than RERR_STREAMIO(12).
-    fn malformed(detail: String) -> io::Error {
+    /// rather than RERR_STREAMIO(12), and carries the role trailer upstream
+    /// prints via `who_am_i()`.
+    fn malformed(detail: protocol::wire::SumHeadError) -> io::Error {
         protocol::protocol_violation(format!(
             "malformed sum_head: {detail} {}{}",
             crate::role_trailer::error_location!(),

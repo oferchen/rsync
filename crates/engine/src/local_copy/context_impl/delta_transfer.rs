@@ -5,6 +5,46 @@ pub(super) struct SparseCopy<'state> {
     state: &'state mut SparseWriteState,
 }
 
+/// Derives the `sum_head` describing the basis a delta body is matched against.
+///
+/// The three geometry fields are read straight off the index the matcher uses,
+/// so the header a `--write-batch` records and the block indices its tokens
+/// carry can only ever come from the same block layout.
+///
+/// upstream: `generator.c:sum_sizes_sqroot()` fills `struct sum_struct`, whose
+/// four fields `io.c:write_sum_head()` serialises; `remainder` is the length of
+/// the trailing short block, or 0 when the basis divides evenly.
+fn batch_sum_head(
+    index: &DeltaSignatureIndex,
+) -> Result<protocol::wire::SumHead, LocalCopyError> {
+    let reject = |detail: String| {
+        LocalCopyError::io(
+            "derive batch sum_head",
+            std::path::PathBuf::new(),
+            io::Error::new(io::ErrorKind::InvalidData, detail),
+        )
+    };
+    let field = |value: usize, name: &str| {
+        u32::try_from(value).map_err(|_| reject(format!("basis {name} {value} exceeds the wire field")))
+    };
+
+    let count = field(index.block_count(), "block count")?;
+    let blength = field(index.block_length(), "block length")?;
+    let s2length = field(index.strong_length(), "strong sum length")?;
+    let remainder = match count.checked_sub(1) {
+        // upstream: the trailing block is short only when the basis does not
+        // divide evenly, in which case `remainder` carries its real length.
+        Some(last) => {
+            let last_len = field(index.block(last as usize).len(), "trailing block length")?;
+            if last_len == blength { 0 } else { last_len }
+        }
+        None => 0,
+    };
+
+    protocol::wire::SumHead::with_blocks(count, blength, s2length, remainder)
+        .map_err(|error| reject(error.to_string()))
+}
+
 impl<'a> CopyContext<'a> {
     /// Copies `source`'s content to `writer` by matching blocks against
     /// `index` and writing literal bytes for the unmatched runs in between.
@@ -45,6 +85,12 @@ impl<'a> CopyContext<'a> {
         // is freshly opened and contains nothing. Force every matched block
         // through the copy path by treating the run as non-inplace.
         let inplace_mode = self.inplace_enabled() && !basis_separate_from_writer;
+
+        // The batch body about to be written references blocks of this basis,
+        // so the reserved sum_head must describe exactly this geometry.
+        // upstream: match.c:match_sums() writes the sum_head it received from
+        // the generator immediately before the tokens built against it.
+        self.record_batch_delta_geometry(batch_sum_head(index)?);
 
         // On NTFS the sparse zero-run seeks below only deallocate blocks once
         // the handle is flagged sparse via FSCTL_SET_SPARSE. Elsewhere this is a
@@ -490,6 +536,11 @@ impl<'a> CopyContext<'a> {
         }
 
         let block_index = matched.descriptor().index() as u32;
+
+        // The token references a basis block by index, so the sum_head this
+        // file reserved must already describe that block. Anything else is the
+        // stream upstream aborts on at receiver.c:414.
+        self.check_batch_block_index(block_index)?;
 
         let mut see_data = Vec::new();
         if self.batch_token_encoder.is_some() {

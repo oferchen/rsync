@@ -1,35 +1,18 @@
 //! Unit tests for the replay submodules.
 //!
-//! These tests cover the low-level building blocks: block-length derivation,
-//! delta application, literal-only writes, and compressed-token decoder
-//! construction. The end-to-end replay path is covered by the integration
+//! These tests cover the low-level building blocks: delta application,
+//! literal-only writes, and compressed-token decoder construction. The end-to-end replay path is covered by the integration
 //! tests in `crates/batch/src/tests.rs`.
 
 use std::fs;
 use tempfile::TempDir;
 
 use super::codec::{CompressionCodec, create_compressed_decoder};
-use super::delta::{apply_delta_ops, choose_block_length, write_literals_to_file};
+use super::delta::{apply_delta_ops, write_literals_to_file};
 
-#[test]
-fn choose_block_length_small_file() {
-    // Files smaller than 700^2 = 490_000 bytes get MIN_BLOCK (700).
-    assert_eq!(choose_block_length(0), 700);
-    assert_eq!(choose_block_length(1000), 700);
-    assert_eq!(choose_block_length(489_999), 700);
-}
-
-#[test]
-fn choose_block_length_medium_file() {
-    assert_eq!(choose_block_length(1_000_000), 1000);
-}
-
-#[test]
-fn choose_block_length_large_file() {
-    // Files larger than (128*1024)^2 get MAX_BLOCK.
-    let max_block = 128 * 1024;
-    let threshold = (max_block as u64) * (max_block as u64);
-    assert_eq!(choose_block_length(threshold + 1), max_block);
+/// Builds the geometry a batch would have advertised for these tests.
+fn head(count: u32, blength: u32, remainder: u32) -> protocol::wire::SumHead {
+    protocol::wire::SumHead::with_blocks(count, blength, 2, remainder).expect("valid geometry")
 }
 
 #[test]
@@ -41,7 +24,13 @@ fn apply_delta_ops_literal_only() {
     fs::write(&basis_path, b"").unwrap();
 
     let ops = vec![protocol::wire::DeltaOp::Literal(b"hello world".to_vec())];
-    apply_delta_ops(&basis_path, &dest_path, ops, 700, 0, 700).unwrap();
+    apply_delta_ops(
+        &basis_path,
+        &dest_path,
+        ops,
+        protocol::wire::SumHead::WHOLE_FILE,
+    )
+    .unwrap();
 
     let result = fs::read(&dest_path).unwrap();
     assert_eq!(result, b"hello world");
@@ -59,7 +48,7 @@ fn apply_delta_ops_copy_from_basis() {
         block_index: 0,
         length: 10,
     }];
-    apply_delta_ops(&basis_path, &dest_path, ops, 10, 1, 10).unwrap();
+    apply_delta_ops(&basis_path, &dest_path, ops, head(1, 10, 10)).unwrap();
 
     let result = fs::read(&dest_path).unwrap();
     assert_eq!(result, b"0123456789");
@@ -81,7 +70,7 @@ fn apply_delta_ops_mixed() {
         },
         protocol::wire::DeltaOp::Literal(b"<<".to_vec()),
     ];
-    apply_delta_ops(&basis_path, &dest_path, ops, 5, 1, 5).unwrap();
+    apply_delta_ops(&basis_path, &dest_path, ops, head(1, 5, 5)).unwrap();
 
     let result = fs::read(&dest_path).unwrap();
     assert_eq!(result, b">>ABCDE<<");
@@ -97,7 +86,7 @@ fn apply_delta_ops_nonexistent_basis() {
         block_index: 0,
         length: 10,
     }];
-    let result = apply_delta_ops(&basis_path, &dest_path, ops, 10, 1, 10);
+    let result = apply_delta_ops(&basis_path, &dest_path, ops, head(1, 10, 10));
     assert!(result.is_err());
 }
 
@@ -123,7 +112,7 @@ fn apply_delta_last_block_uses_remainder() {
         },
         protocol::wire::DeltaOp::Literal(b"END".to_vec()),
     ];
-    apply_delta_ops(&basis_path, &dest_path, ops, 10, 2, 5).unwrap();
+    apply_delta_ops(&basis_path, &dest_path, ops, head(2, 10, 5)).unwrap();
 
     let result = fs::read(&dest_path).unwrap();
     // Must copy 5 bytes from block 1 ("12345"), not 10 bytes (would overread).
