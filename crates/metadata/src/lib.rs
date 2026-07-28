@@ -149,6 +149,10 @@ pub use device_size::device_readable_size;
 /// would otherwise escape the module root.
 pub mod symlink_munge;
 
+/// Destination-side ACL comparison for the itemize `a` column.
+pub mod acl_diff;
+pub use acl_diff::dest_acl_differs;
+
 pub mod xattr_send;
 
 #[cfg(all(feature = "xattr", any(unix, windows)))]
