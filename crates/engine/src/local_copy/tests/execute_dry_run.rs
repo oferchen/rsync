@@ -26,9 +26,12 @@ fn dry_run_single_file_lists_but_does_not_copy() {
         .execute_with_options(LocalCopyExecution::DryRun, LocalCopyOptions::default())
         .expect("dry run succeeds");
 
-    // Summary reports what *would* happen.
+    // Summary reports what *would* happen. upstream: a dry run counts the file
+    // and its size (sender.c:342-343) but never reaches match_sums(), so
+    // literal_data (match.c:436) stays 0 - only transferred_file_size is 7.
     assert_eq!(summary.files_copied(), 1);
-    assert_eq!(summary.bytes_copied(), 7); // "payload" is 7 bytes
+    assert_eq!(summary.bytes_copied(), 0);
+    assert_eq!(summary.transferred_file_size(), 7); // "payload" is 7 bytes
     assert!(!destination.exists(), "dry run must not create destination file");
 }
 
@@ -529,10 +532,19 @@ fn dry_run_statistics_match_apply_mode_statistics() {
         summary_apply.directories_created(),
         "directories_created should match between dry-run and apply"
     );
+    // upstream: the transferred *size* (sender.c:342-343) matches between a dry
+    // run and a real run, but literal_data (match.c:436) is only accumulated by
+    // the real run - a dry run never calls match_sums(), so its bytes_copied
+    // stays 0 while the apply run reports the moved bytes.
+    assert_eq!(
+        summary_dry.transferred_file_size(),
+        summary_apply.transferred_file_size(),
+        "transferred_file_size should match between dry-run and apply"
+    );
     assert_eq!(
         summary_dry.bytes_copied(),
-        summary_apply.bytes_copied(),
-        "bytes_copied should match between dry-run and apply"
+        0,
+        "dry-run literal data is always 0"
     );
     assert_eq!(
         summary_dry.total_source_bytes(),
@@ -558,7 +570,9 @@ fn dry_run_total_source_bytes_correct() {
         .expect("dry run succeeds");
 
     assert_eq!(summary.files_copied(), 2);
-    assert_eq!(summary.bytes_copied(), 10);
+    // upstream: dry-run literal_data stays 0; the scanned size is still tallied.
+    assert_eq!(summary.bytes_copied(), 0);
+    assert_eq!(summary.transferred_file_size(), 10);
     assert_eq!(summary.total_source_bytes(), 10);
 }
 
@@ -819,7 +833,11 @@ fn dry_run_multiple_files_all_reported() {
 
     let summary = report.summary();
     assert_eq!(summary.files_copied(), 3);
-    assert_eq!(summary.bytes_copied(), 24); // 8 * 3
+    // upstream: a --dry-run never reaches match_sums(), so stats.literal_data
+    // (match.c:436) stays 0; only the scan-derived transferred size (8 * 3)
+    // and the transferred-file count are tallied (sender.c:342-343).
+    assert_eq!(summary.bytes_copied(), 0);
+    assert_eq!(summary.transferred_file_size(), 24); // 8 * 3
 
     let records = report.records();
     let file_paths: Vec<_> = records
@@ -852,7 +870,9 @@ fn dry_run_is_idempotent() {
             .expect("dry run succeeds");
 
         assert_eq!(summary.files_copied(), 1);
-        assert_eq!(summary.bytes_copied(), 14);
+        // upstream: dry-run literal_data stays 0; the scanned size is tallied.
+        assert_eq!(summary.bytes_copied(), 0);
+        assert_eq!(summary.transferred_file_size(), 14);
         assert!(!ctx.dest.exists());
     }
 }
@@ -878,7 +898,9 @@ fn dry_run_large_file_reports_correct_byte_count() {
         .expect("dry run succeeds");
 
     assert_eq!(summary.files_copied(), 1);
-    assert_eq!(summary.bytes_copied(), 256 * 1024);
+    // upstream: dry-run literal_data stays 0; the scanned size is tallied.
+    assert_eq!(summary.bytes_copied(), 0);
+    assert_eq!(summary.transferred_file_size(), 256 * 1024);
     assert!(!destination.exists());
 }
 
@@ -1015,7 +1037,9 @@ fn dry_run_whole_file_reports_transfer() {
         .expect("dry run succeeds");
 
     assert_eq!(summary.files_copied(), 1);
-    assert_eq!(summary.bytes_copied(), 18);
+    // upstream: dry-run literal_data stays 0; the scanned size is tallied.
+    assert_eq!(summary.bytes_copied(), 0);
+    assert_eq!(summary.transferred_file_size(), 18);
     assert!(!destination.exists());
 }
 
@@ -1086,7 +1110,9 @@ fn dry_run_with_no_implied_dirs_and_missing_parent_succeeds() {
         .expect("dry run with --no-implied-dirs must succeed");
 
     assert_eq!(summary.files_copied(), 1);
-    assert_eq!(summary.bytes_copied(), 5);
+    // upstream: dry-run literal_data stays 0; the scanned size is tallied.
+    assert_eq!(summary.bytes_copied(), 0);
+    assert_eq!(summary.transferred_file_size(), 5);
     assert!(
         !dest_root.join("sub").exists(),
         "dry run must not create directories"
