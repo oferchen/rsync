@@ -53,10 +53,13 @@ impl<R> LegacyDaemonHandshakeParts<R> {
         self.negotiated_protocol
     }
 
-    /// Returns the protocol version the client advertised to the daemon.
+    /// Returns the effective local protocol after negotiation.
     ///
-    /// Mirrors [`Self::negotiated_protocol`] (the legacy handshake echoes the
-    /// final value); exposed explicitly to match the binary helper shape.
+    /// Returns the same value as [`Self::negotiated_protocol`]; exposed
+    /// explicitly to match the binary helper shape. Note this is the negotiated
+    /// (post-clamp) protocol, not the version placed in the greeting line - the
+    /// greeting advertises the caller's own newest/`--protocol` cap ahead of
+    /// reading the server (upstream: clientserver.c:157), which may be higher.
     #[doc(alias = "--protocol")]
     #[must_use]
     pub const fn local_advertised_protocol(&self) -> ProtocolVersion {
