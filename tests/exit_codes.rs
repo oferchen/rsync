@@ -426,18 +426,19 @@ mod exit_code_23_partial_transfer {
     }
 
     #[test]
-    fn missing_operands_returns_partial_transfer() {
-        // Running without source operands
-        let test_dir = TestDir::new().expect("create test dir");
-        let dest_dir = test_dir.mkdir("dest").unwrap();
+    fn missing_operands_returns_syntax_error() {
+        // Genuinely missing operands means zero positional arguments. upstream
+        // main.c:1791 - `rsync` with no operands prints usage and exits 1
+        // (syntax/usage error), not 23. A lone existing operand is NOT a
+        // missing-operands case: upstream options.c:2194 (`argc < 2 &&
+        // !read_batch && !am_server => list_only`) reinterprets it as a source
+        // to list and exits 0.
+        let output = run_rsync(&[]);
 
-        let output = run_rsync(&[dest_dir.to_str().unwrap()]);
-
-        // Note: Missing operands typically returns 23 (partial) in upstream
         let code = output.status.code().unwrap_or(-1);
         assert!(
-            code == 1 || code == 23,
-            "Missing operands should return 1 (syntax) or 23 (partial), got {code}"
+            code == 1,
+            "no operands should return 1 (syntax/usage), got {code}"
         );
     }
 }
