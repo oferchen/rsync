@@ -82,15 +82,16 @@ impl ReceiverContext {
     /// `(files_transferred, bytes, literal, matched, redo_indices, delayed_updates)`.
     #[allow(clippy::too_many_arguments)]
     pub(in crate::receiver) fn run_pipeline_loop_decoupled<
+        'a,
         R: Read,
         W: Write + crate::writer::MsgInfoSender + ?Sized,
     >(
-        &self,
+        &'a self,
         reader: &mut crate::reader::ServerReader<R>,
         writer: &mut W,
         pipeline_config: PipelineConfig,
         setup: &PipelineSetup,
-        files_to_transfer: Vec<(usize, &FileEntry, PathBuf, u32)>,
+        files_to_transfer: Vec<(usize, &'a FileEntry, PathBuf, u32)>,
         metadata_errors: &mut Vec<(PathBuf, String)>,
         is_redo_pass: bool,
         total_files: usize,
@@ -99,6 +100,36 @@ impl ReceiverContext {
         use crate::disk_commit::{BackupConfig, DiskCommitConfig, PartialMode};
         use crate::pipeline::receiver::PipelinedReceiver;
         use crate::shared::TransferDeadline;
+
+        // upstream: generator.c:582-593 - itemize() also writes NDX + iflags
+        // for entries with significant attribute diffs but no ITEM_TRANSFER,
+        // interleaved with the transfer requests in flist order; the peer's
+        // sender prints each row and echoes the attrs back (sender.c:292-294).
+        // Merge the recorded metadata-only rows into the request stream so the
+        // wire order matches upstream's single flist walk. The recording passes
+        // (directories, then symlinks, then specials, then the candidate scan)
+        // are each ascending but run back to back, so restore global
+        // flist-index order before merging with the ascending transfer list.
+        let mut no_transfer_rows =
+            std::mem::take(&mut *self.server_no_transfer_itemize.borrow_mut());
+        no_transfer_rows.sort_by_key(|&(idx, _)| idx);
+        let files_to_transfer = if no_transfer_rows.is_empty() {
+            files_to_transfer
+        } else {
+            let mut merged = Vec::with_capacity(files_to_transfer.len() + no_transfer_rows.len());
+            let mut rows = no_transfer_rows.into_iter().peekable();
+            for item in files_to_transfer {
+                while let Some(&(idx, iflags)) = rows.peek().filter(|&&(idx, _)| idx < item.0) {
+                    rows.next();
+                    merged.push((idx, &self.file_list[idx], PathBuf::new(), u32::from(iflags)));
+                }
+                merged.push(item);
+            }
+            for (idx, iflags) in rows {
+                merged.push((idx, &self.file_list[idx], PathBuf::new(), u32::from(iflags)));
+            }
+            merged
+        };
 
         // Early return when there is nothing to transfer - avoids spawning
         // the disk-commit thread, creating codecs, and pipeline state.
@@ -272,7 +303,13 @@ impl ReceiverContext {
                         let sig_results: Vec<_> = if batch.len() >= sig_threshold {
                             batch
                                 .par_iter()
-                                .map(|(_, file_entry, file_path, _)| {
+                                .map(|(_, file_entry, file_path, base_iflags)| {
+                                    // A metadata-only record transfers no data,
+                                    // so no basis search is needed.
+                                    if base_iflags & crate::generator::ItemFlags::ITEM_TRANSFER == 0
+                                    {
+                                        return crate::receiver::basis::BasisFileResult::EMPTY;
+                                    }
                                     let basis_config = BasisFileConfig {
                                         file_path,
                                         dest_dir,
@@ -294,7 +331,11 @@ impl ReceiverContext {
                         } else {
                             batch
                                 .iter()
-                                .map(|(_, file_entry, file_path, _)| {
+                                .map(|(_, file_entry, file_path, base_iflags)| {
+                                    if base_iflags & crate::generator::ItemFlags::ITEM_TRANSFER == 0
+                                    {
+                                        return crate::receiver::basis::BasisFileResult::EMPTY;
+                                    }
                                     let basis_config = BasisFileConfig {
                                         file_path,
                                         dest_dir,
@@ -319,6 +360,19 @@ impl ReceiverContext {
                         for ((file_idx, file_entry, file_path, base_iflags), basis_result) in
                             batch.into_iter().zip(sig_results)
                         {
+                            if base_iflags & crate::generator::ItemFlags::ITEM_TRANSFER == 0 {
+                                self.send_no_transfer_itemize(
+                                    writer,
+                                    &mut ndx_write_codec,
+                                    &mut pipeline,
+                                    &mut pending_files_info,
+                                    file_idx,
+                                    file_entry,
+                                    file_path,
+                                    base_iflags,
+                                )?;
+                                continue;
+                            }
                             let pending = send_file_request(
                                 writer,
                                 &mut ndx_write_codec,
@@ -344,6 +398,19 @@ impl ReceiverContext {
                     } else {
                         // Redo pass or empty batch: no basis files, skip signatures.
                         for (file_idx, file_entry, file_path, base_iflags) in batch {
+                            if base_iflags & crate::generator::ItemFlags::ITEM_TRANSFER == 0 {
+                                self.send_no_transfer_itemize(
+                                    writer,
+                                    &mut ndx_write_codec,
+                                    &mut pipeline,
+                                    &mut pending_files_info,
+                                    file_idx,
+                                    file_entry,
+                                    file_path,
+                                    base_iflags,
+                                )?;
+                                continue;
+                            }
                             let pending = send_file_request(
                                 writer,
                                 &mut ndx_write_codec,
@@ -384,6 +451,20 @@ impl ReceiverContext {
                 flushed_pending = flushed_pending.saturating_sub(1);
                 let (file_idx, file_path, file_entry, base_iflags) =
                     pending_files_info.pop_front().expect("pipeline not empty");
+
+                // upstream: sender.c:292-294 - a non-transfer item is logged by
+                // the sender and echoed back via write_ndx_and_attrs(); consume
+                // the echo here so the response stream stays aligned with the
+                // transfer replies that follow it in FIFO order.
+                if base_iflags & crate::generator::ItemFlags::ITEM_TRANSFER == 0 {
+                    let _ = crate::receiver::wire::SenderAttrs::read_with_codec_xattr(
+                        &mut *reader,
+                        &mut ndx_read_codec,
+                        request_config.preserve_xattrs,
+                        request_config.want_xattr_optim,
+                    )?;
+                    continue;
+                }
 
                 // upstream: receiver.c:708-709 DEBUG_GTE(RECV, 1)
                 debug_log!(Recv, 1, "recv_files({})", file_entry.path().display());
@@ -563,6 +644,43 @@ impl ReceiverContext {
         let _ = pipelined_receiver.shutdown();
 
         result
+    }
+
+    /// Writes one metadata-only itemize record (`NDX + iflags`, nothing else)
+    /// and queues its pending echo behind the in-flight transfer requests.
+    ///
+    /// The record produces no sum head, basis byte, or xname - the framing
+    /// bits were stripped at record time (`record_server_no_transfer_itemize`).
+    /// The sender answers it with a bare `write_ndx_and_attrs()` echo, so a
+    /// placeholder pending rides the FIFO queue and the pop side consumes the
+    /// echo in order with the transfer replies.
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `generator.c:584-587` - `write_ndx()` + `write_shortint(iflags)`
+    /// - `sender.c:292-294` - the sender logs the row, then echoes the attrs
+    #[allow(clippy::too_many_arguments)]
+    fn send_no_transfer_itemize<'a, W: Write + ?Sized>(
+        &self,
+        writer: &mut W,
+        ndx_write_codec: &mut impl protocol::codec::NdxCodec,
+        pipeline: &mut PipelineState,
+        pending_files_info: &mut VecDeque<(usize, PathBuf, &'a FileEntry, u32)>,
+        file_idx: usize,
+        file_entry: &'a FileEntry,
+        file_path: PathBuf,
+        base_iflags: u32,
+    ) -> io::Result<()> {
+        let wire_ndx = self.flat_to_wire_ndx(file_idx);
+        ndx_write_codec.write_ndx(&mut *writer, wire_ndx)?;
+        writer.write_all(&((base_iflags & 0xFFFF) as u16).to_le_bytes())?;
+        pipeline.push(crate::pipeline::PendingTransfer::new_full_transfer(
+            wire_ndx,
+            file_path.clone(),
+            0,
+        ));
+        pending_files_info.push_back((file_idx, file_path, file_entry, base_iflags));
+        Ok(())
     }
 
     /// Dry-run transfer loop: sends NDX requests without data transfer.

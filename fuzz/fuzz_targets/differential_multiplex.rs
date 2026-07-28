@@ -46,8 +46,8 @@ use arbitrary::{Arbitrary, Unstructured};
 use libfuzzer_sys::fuzz_target;
 
 use protocol::{
-    recv_msg, BorrowedMessageFrame, BorrowedMessageFrames, MessageCode, MessageFrame,
-    MessageHeader, MESSAGE_HEADER_LEN,
+    BorrowedMessageFrame, BorrowedMessageFrames, MESSAGE_HEADER_LEN, MessageCode, MessageFrame,
+    MessageHeader, recv_msg,
 };
 
 /// Structured input for differential testing of the multiplex layer.

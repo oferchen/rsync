@@ -2129,6 +2129,7 @@ version = "0.6.4"
 dependencies = [
  "serde",
  "serde_json",
+ "thiserror",
  "tracing",
  "tracing-subscriber",
 ]
