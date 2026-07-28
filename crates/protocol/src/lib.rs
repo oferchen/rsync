@@ -178,18 +178,18 @@ pub use iconv::{
     converter_from_locale,
 };
 pub use legacy::{
-    DAEMON_AUTH_DIGEST_NAMES, DigestListTokens, LEGACY_DAEMON_PREFIX, LEGACY_DAEMON_PREFIX_BYTES,
-    LEGACY_DAEMON_PREFIX_LEN, LegacyDaemonGreeting, LegacyDaemonGreetingOwned, LegacyDaemonMessage,
-    MissingGreetingToken, daemon_auth_digest_list, write_daemon_auth_digest_list,
-};
-pub use legacy::{
-    format_legacy_daemon_greeting, format_legacy_daemon_message, is_version_banner,
-    missing_greeting_token, parse_legacy_daemon_greeting, parse_legacy_daemon_greeting_bytes,
+    AdvertisedDigests, DAEMON_AUTH_DIGEST_NAMES, DigestListTokens, LEGACY_DAEMON_PREFIX,
+    LEGACY_DAEMON_PREFIX_BYTES, LEGACY_DAEMON_PREFIX_LEN, LegacyDaemonGreeting,
+    LegacyDaemonGreetingOwned, LegacyDaemonMessage, MissingGreetingToken,
+    advertised_digests_in_greeting, daemon_auth_digest_list, format_legacy_daemon_greeting,
+    format_legacy_daemon_message, is_version_banner, missing_greeting_token,
+    parse_legacy_daemon_greeting, parse_legacy_daemon_greeting_bytes,
     parse_legacy_daemon_greeting_bytes_details, parse_legacy_daemon_greeting_bytes_owned,
     parse_legacy_daemon_greeting_details, parse_legacy_daemon_greeting_owned,
     parse_legacy_daemon_message, parse_legacy_daemon_message_bytes, parse_legacy_error_message,
     parse_legacy_error_message_bytes, parse_legacy_warning_message,
-    parse_legacy_warning_message_bytes, write_legacy_daemon_greeting, write_legacy_daemon_message,
+    parse_legacy_warning_message_bytes, write_daemon_auth_digest_list,
+    write_legacy_daemon_greeting, write_legacy_daemon_message,
 };
 pub use max_alloc::{DEFAULT_MAX_ALLOC, effective_max_alloc, set_max_alloc};
 #[cfg(feature = "async")]

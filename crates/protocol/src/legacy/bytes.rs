@@ -147,7 +147,7 @@ mod tests {
             greeting.protocol(),
             ProtocolVersion::from_supported(31).unwrap()
         );
-        assert_eq!(greeting.digest_list(), Some("md4 md5"));
+        assert_eq!(greeting.digest_names(), Some("md4 md5"));
         assert!(greeting.has_subprotocol());
     }
 

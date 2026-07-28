@@ -311,7 +311,7 @@ fn read_and_parse_legacy_daemon_greeting_details_exposes_metadata() {
             .expect("legacy greeting should parse");
 
     assert_eq!(greeting.protocol().as_u8(), 31);
-    assert_eq!(greeting.digest_list(), Some("md4 md5"));
+    assert_eq!(greeting.digest_names(), Some("md4 md5"));
     assert!(greeting.has_subprotocol());
     assert_eq!(line, b"@RSYNCD: 31.0 md4 md5\n");
 }

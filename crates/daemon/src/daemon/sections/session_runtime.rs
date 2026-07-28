@@ -338,10 +338,14 @@ fn handle_legacy_session(
                 // `daemon_auth_choices = strchr(buf + 9, ' ')` keeps the client's
                 // digest name list for negotiate_daemon_auth(). The Version
                 // variant carries only the version, so re-parse the raw line for
-                // the rest of it.
+                // the rest of it. `None` here is upstream's NULL and `Some("")`
+                // its non-NULL empty `strdup`; the two negotiate differently, so
+                // the empty case must survive the round trip through `String`.
                 client_digests = parse_legacy_daemon_greeting_details(&line)
                     .ok()
-                    .and_then(|greeting| greeting.digest_list().map(ToOwned::to_owned));
+                    .and_then(|greeting| {
+                        greeting.advertised_digests().names().map(ToOwned::to_owned)
+                    });
                 // Record the negotiated protocol version but do NOT send @RSYNCD: OK here.
                 // The OK is only sent after the module is selected and approved, not after
                 // the version exchange. Sending OK here causes the client to misinterpret
@@ -436,7 +440,7 @@ fn handle_legacy_session(
             reverse_lookup,
             messages,
             negotiated_protocol,
-            client_digests.as_deref(),
+            AdvertisedDigests::from(client_digests.as_deref()),
             &mut session_exit_code,
             early_input_data,
             conn_state,
