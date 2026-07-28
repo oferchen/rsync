@@ -259,6 +259,47 @@ fn receiver_set_and_get_filter_chain() {
     assert!(!ctx.filter_chain().is_empty());
 }
 
+/// A local-client pull never reads a wire filter list, but its own CLI
+/// `--filter`/`--exclude`/`--include` rules must still reach the receiver's
+/// `filter_chain` so consumers that read it - the `--prune-empty-dirs` pass -
+/// honour the client's rules. Before this fix the client path built only the
+/// deletion chain and left `filter_chain` empty, so prune silently ignored a
+/// client-side rule.
+///
+/// upstream: `exclude.c:parse_filter_str()` parses argv rules into the single
+/// `filter_list` that `flist.c:3142 is_excluded()` consults during prune.
+#[test]
+fn client_pull_populates_filter_chain_from_cli_rules() {
+    use protocol::filters::{FilterRuleWireFormat, RuleType};
+
+    let handshake = test_handshake();
+    let mut config = test_config();
+    config.connection.client_mode = true;
+    config.connection.filter_rules = vec![FilterRuleWireFormat {
+        rule_type: RuleType::Protect,
+        pattern: "emptyprot".to_owned(),
+        ..FilterRuleWireFormat::default()
+    }];
+    let mut ctx = ReceiverContext::new_for_test(&handshake, config);
+
+    // A client-mode receiver starts with an empty chain and only gets one
+    // when it compiles its own CLI rules (no wire list is ever read).
+    assert!(ctx.filter_chain().is_empty());
+    ctx.populate_client_filter_chains().unwrap();
+
+    // The client's own rule now lives in filter_chain, and it is a
+    // receiver-side rule (protect) so the prune reprieve can see it.
+    assert!(
+        !ctx.filter_chain().is_empty(),
+        "client CLI filter rules must populate filter_chain"
+    );
+    assert!(
+        !ctx.filter_chain()
+            .allows_deletion(std::path::Path::new("emptyprot"), true),
+        "the client's protect rule must be visible to the prune reprieve"
+    );
+}
+
 /// UTS-16.b.7 regression: an ordinary in-module subdir deletion must succeed
 /// with no io_error bits set, even when the sandbox is plumbed. Pins the
 /// "no over-correction" invariant: the chdir-symlink-race fix in
