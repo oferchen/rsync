@@ -121,7 +121,7 @@ impl ReceiverContext {
         } else if self.config.connection.client_mode
             && !self.config.connection.filter_rules.is_empty()
         {
-            self.build_client_deletion_filter_chain()?;
+            self.populate_client_filter_chains()?;
         }
 
         // FSM: filter list reading is complete. Advance to FileListTransfer.
@@ -522,90 +522,84 @@ impl ReceiverContext {
             combined
         };
 
-        // Build a FilterChain from the combined rules for deletion filtering.
+        // Compile the combined rules into the receiver's filter chains.
         // upstream: generator.c:delete_in_dir() - is_excluded() before deletion
         if !combined.is_empty() {
-            let (filter_set, merge_configs) =
-                parse_wire_filters_for_receiver(&combined).map_err(|e| {
-                    io::Error::new(
-                        e.kind(),
-                        format!(
-                            "filter error: {e} {}{}",
-                            crate::role_trailer::error_location!(),
-                            crate::role_trailer::receiver()
-                        ),
-                    )
-                })?;
-            let mut chain = FilterChain::new(filter_set);
-            for config in merge_configs {
-                chain.add_merge_config(config);
-            }
-            self.filter_chain = chain;
-
-            // upstream: exclude.c:recv_filter_list() parses every received rule
-            // into the same `filter_list` the generator's delete_in_dir()
-            // consults via change_local_filter_dir()/push_local_filters(). A
-            // server-side receiver must therefore register the client's
-            // transmitted dir-merge directive (a `-F` `.rsync-filter`, sent as a
-            // per-directory merge rule by exclude.c:send_rules()) on the
-            // dedicated deletion chain, not only on `filter_chain`. Without it a
-            // merge file's own protect rule is absent when the --delete pass
-            // decides candidates, so up-client -> oc-receiver + dir-merge deletes
-            // entries upstream -> upstream preserves. Mirror the local-pull
-            // build_client_deletion_filter_chain(): same combined rules, with
-            // --delete-excluded applied. Cloned from `filter_chain` so the global
-            // rules and merge configs stay identical; the delete-pass consults
-            // this chain (deletion.rs) whenever it is non-empty.
-            self.deletion_filter_chain = self
-                .filter_chain
-                .clone()
-                .with_delete_excluded(self.config.deletion.delete_excluded);
+            self.compile_receiver_filter_chains(&combined)?;
         }
         Ok(())
     }
 
-    /// Builds the dedicated deletion-pass filter chain from the local CLI filter
-    /// rules on a local-client pull, where the wire filter list is never
-    /// received.
+    /// Populates the client-receiver's filter chains from its own CLI
+    /// `--filter`/`--exclude`/`--include` rules on a local-client pull, where
+    /// the wire filter list is never received
+    /// (`should_read_filter_list()` is false in client mode).
     ///
-    /// upstream: generator.c:delete_in_dir() -> change_local_filter_dir()
-    /// reloads each DESTINATION directory's per-directory merge files before
-    /// deciding deletions. On a local-client pull the wire filter list is never
-    /// received (`should_read_filter_list()` is false in client mode), so the
-    /// receiver's `--delete` pass would otherwise run against an empty filter
-    /// chain and mis-handle dir-merge-governed trees (over-deleting
-    /// self-protected `.filt`/`.filt2` merge files, under-deleting extraneous
-    /// entries in filter-hidden dirs). Build a dedicated deletion chain from the
-    /// same local CLI filter rules the generator consumes (generator/filters.rs),
-    /// so the per-directory merge reload in `delete_extraneous_files` has the
-    /// dir-merge configs. Held separately from `filter_chain` so
-    /// `--prune-empty-dirs` is unaffected. Only the deletion pass consults this,
-    /// so it is inert when `--delete` is not active.
-    fn build_client_deletion_filter_chain(&mut self) -> io::Result<()> {
-        let (filter_set, merge_configs) =
-            parse_wire_filters_for_receiver(&self.config.connection.filter_rules).map_err(|e| {
-                io::Error::new(
-                    e.kind(),
-                    format!(
-                        "filter error: {e} {}{}",
-                        crate::role_trailer::error_location!(),
-                        crate::role_trailer::receiver()
-                    ),
-                )
-            })?;
-        let mut chain =
-            FilterChain::new(filter_set).with_delete_excluded(self.config.deletion.delete_excluded);
+    /// A server-receiver reads its rules off the wire and compiles them in
+    /// [`apply_received_filter_rules`](Self::apply_received_filter_rules); the
+    /// client-receiver has no wire list and keeps its rules in
+    /// `config.connection.filter_rules`. Both funnel through the same
+    /// [`compile_receiver_filter_chains`](Self::compile_receiver_filter_chains)
+    /// so the receiver holds an identical `filter_chain` +
+    /// `deletion_filter_chain` regardless of transfer role.
+    pub(in crate::receiver) fn populate_client_filter_chains(&mut self) -> io::Result<()> {
+        let rules = self.config.connection.filter_rules.clone();
+        self.compile_receiver_filter_chains(&rules)
+    }
+
+    /// Compiles the receiver's own filter rules into both the transfer-facing
+    /// `filter_chain` (consulted by the `--prune-empty-dirs` pass) and the
+    /// dedicated `deletion_filter_chain` (consulted by the `--delete` pass, with
+    /// `--delete-excluded` folded in).
+    ///
+    /// This is the single population path shared by a server-receiver (whose
+    /// `rules` are the wire list its client transmitted, prepended with any
+    /// daemon rules) and a local-client pull (whose `rules` are its own CLI
+    /// filter rules). On either side these are the same single rule list, so
+    /// keeping one compilation site means the client's `-f`/`--exclude`/
+    /// `--include` reach every receiver decision point exactly as a server's
+    /// wire rules do - including `--prune-empty-dirs`, which reads
+    /// `filter_chain` and previously saw an empty chain in client mode.
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `exclude.c:recv_filter_list()` parses every rule into the single
+    ///   `filter_list` that both `generator.c:delete_in_dir()` (the `--delete`
+    ///   pass) and `flist.c:3142` (`is_excluded()` in the `--prune-empty-dirs`
+    ///   pass) consult. The client parses its argv rules into that same list at
+    ///   startup (`exclude.c:parse_filter_str`), so its own rules reach both
+    ///   decision points unchanged. `deletion_filter_chain` is cloned from
+    ///   `filter_chain` and folds in `--delete-excluded` (exclude.c:1685) so the
+    ///   per-directory merge reload in `delete_extraneous_files` keeps the same
+    ///   global rules and dir-merge configs while `--prune-empty-dirs` stays
+    ///   unperturbed.
+    fn compile_receiver_filter_chains(&mut self, rules: &[FilterRuleWireFormat]) -> io::Result<()> {
+        let (filter_set, merge_configs) = parse_wire_filters_for_receiver(rules).map_err(|e| {
+            io::Error::new(
+                e.kind(),
+                format!(
+                    "filter error: {e} {}{}",
+                    crate::role_trailer::error_location!(),
+                    crate::role_trailer::receiver()
+                ),
+            )
+        })?;
+        let mut chain = FilterChain::new(filter_set);
         for config in merge_configs {
             chain.add_merge_config(config);
         }
+        self.filter_chain = chain;
+        self.deletion_filter_chain = self
+            .filter_chain
+            .clone()
+            .with_delete_excluded(self.config.deletion.delete_excluded);
         logging::debug_log!(
             Del,
             2,
-            "deletion filter chain built: delete_excluded={} merge_configs_active={}",
+            "receiver filter chains built: delete_excluded={} merge_configs_active={}",
             self.config.deletion.delete_excluded,
-            chain.has_per_dir_merge()
+            self.deletion_filter_chain.has_per_dir_merge()
         );
-        self.deletion_filter_chain = chain;
         Ok(())
     }
 
