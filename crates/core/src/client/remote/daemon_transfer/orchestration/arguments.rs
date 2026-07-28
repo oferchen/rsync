@@ -314,8 +314,11 @@ pub(super) fn build_full_daemon_args(
 
     if protocol.as_u8() >= 30 {
         // upstream: compat.c:162-181 set_allow_inc_recurse() and
-        // options.c:3036 maybe_add_e_option() - 'i' is only advertised when
-        // the local side actually honors INC_RECURSE on its receive path.
+        // options.c:3036 maybe_add_e_option() - `allow_inc_recurse` resolves
+        // the option state (`ClientConfig::allow_inc_recurse`, which folds in
+        // upstream's `!recurse || use_qsort` gate); the local restriction on
+        // top is that 'i' is only advertised when this side actually honors
+        // INC_RECURSE on its receive path.
         // For daemon pull (`is_sender=true` means daemon is sender; we are
         // receiver) the receiver clears CF_INC_RECURSE in compat.rs after
         // reading it. If we still advertise 'i' the daemon writes the file
@@ -324,7 +327,7 @@ pub(super) fn build_full_daemon_args(
         // trips `read_varint` overflow on the next decode.
         // upstream: io.c:1816 read_varint - rejects encodings with extra > 4.
         let we_are_receiver = is_sender;
-        let advertise_inc_recurse = config.inc_recursive_send() && !we_are_receiver;
+        let advertise_inc_recurse = config.allow_inc_recurse() && !we_are_receiver;
         let capability_suffix = build_capability_string_suffix(advertise_inc_recurse);
         flag_string.push_str(&capability_suffix);
     }

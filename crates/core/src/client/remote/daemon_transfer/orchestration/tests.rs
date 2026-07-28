@@ -149,12 +149,13 @@ mod protect_args_daemon_tests {
     #[test]
     fn build_full_args_push_includes_inc_recurse_capability_by_default() {
         // ISI.h: sender-side INC_RECURSE is default-on, matching upstream
-        // rsync 3.4.x. The daemon push capability includes 'i' by default.
-        // upstream: capability string is embedded in the compact flag string.
+        // rsync 3.4.x. A recursive daemon push capability includes 'i' by
+        // default. upstream: the capability string is embedded in the compact
+        // flag string.
         let protocol = ProtocolVersion::try_from(32u8).unwrap();
         let request = test_daemon_request();
 
-        let config_default = ClientConfig::default();
+        let config_default = ClientConfig::builder().recursive(true).build();
         let args_default = build_full_daemon_args(&config_default, &request, protocol, false);
         let flags_default = find_flag_string(&args_default);
         let caps_default = flags_default
@@ -166,7 +167,10 @@ mod protect_args_daemon_tests {
             "default push capability must include 'i': {flags_default}"
         );
 
-        let config_off = ClientConfig::builder().inc_recursive_send(false).build();
+        let config_off = ClientConfig::builder()
+            .recursive(true)
+            .inc_recursive_send(false)
+            .build();
         let args_off = build_full_daemon_args(&config_off, &request, protocol, false);
         let flags_off = find_flag_string(&args_off);
         let caps_off = flags_off
@@ -177,6 +181,30 @@ mod protect_args_daemon_tests {
             !caps_off.contains('i'),
             "--no-inc-recursive must suppress 'i' on push capability: {flags_off}"
         );
+    }
+
+    #[test]
+    fn build_full_args_push_omits_inc_recurse_without_recursion() {
+        // upstream: compat.c:172 set_allow_inc_recurse() clears
+        // allow_inc_recurse when `!recurse || use_qsort`, and options.c:3039
+        // only emits 'i' when it survives. Verified against rsync 3.4.4: a
+        // non-recursive push sends `-e.LsfxCIvu` and `-r --qsort` sends
+        // `-re.LsfxCIvu`, while `-r` alone sends `-re.iLsfxCIvu`.
+        let protocol = ProtocolVersion::try_from(32u8).unwrap();
+        let request = test_daemon_request();
+
+        for (label, config) in [
+            ("non-recursive", ClientConfig::default()),
+            (
+                "--qsort",
+                ClientConfig::builder().recursive(true).qsort(true).build(),
+            ),
+        ] {
+            let args = build_full_daemon_args(&config, &request, protocol, false);
+            let flags = find_flag_string(&args);
+            let caps = flags.split("e.").nth(1).expect("capability suffix present");
+            assert!(!caps.contains('i'), "{label} push must omit 'i': {flags}");
+        }
     }
 
     #[test]
