@@ -791,10 +791,18 @@ impl ReceiverContext {
                             if link_meta.dev() == leader_meta.dev()
                                 && link_meta.ino() == leader_meta.ino()
                             {
-                                // upstream: hlink.c - hardlink already correct, metadata only
+                                // upstream: hlink.c:218-222 - hardlink already
+                                // correct, metadata only; the itemize xname is
+                                // the empty string, so no ` => ` suffix renders
+                                // (log.c:644 gates on `hlink && *hlink`).
                                 let iflags = ItemFlags::from_raw(0);
-                                let _ =
-                                    self.emit_itemize_indexed(writer, follower_ndx, &iflags, entry);
+                                let _ = self.emit_itemize_indexed(
+                                    writer,
+                                    follower_ndx,
+                                    &iflags,
+                                    entry,
+                                    None,
+                                );
                                 // upstream: hlink.c:223 - "%s is uptodate"
                                 // emitted at INFO_GTE(NAME, 2) when the
                                 // destination already hard-links to the leader.
@@ -896,13 +904,24 @@ impl ReceiverContext {
                     self.hardlink_tracker = Some(tracker);
                     return Err(e);
                 }
-                // upstream: hlink.c:finish_hard_link() - itemize new hardlink
+                // upstream: hlink.c:finish_hard_link() - itemize new hardlink.
+                // The xname is the leader's transfer-relative name so the row
+                // renders the `%L` ` => <leader>` suffix (hlink.c:232-234 pass
+                // `realname`; log.c:643-646 render ` => hlink`).
                 let iflags = ItemFlags::from_raw(
                     ItemFlags::ITEM_LOCAL_CHANGE
                         | ItemFlags::ITEM_XNAME_FOLLOWS
                         | ItemFlags::ITEM_IS_NEW,
                 );
-                let _ = self.emit_itemize_indexed(writer, follower_ndx, &iflags, entry);
+                let leader_rel = leader_path.strip_prefix(dest_dir).unwrap_or(&leader_path);
+                let xname = leader_rel.display().to_string();
+                let _ = self.emit_itemize_indexed(
+                    writer,
+                    follower_ndx,
+                    &iflags,
+                    entry,
+                    Some(xname.as_bytes()),
+                );
                 // upstream: hlink.c:236 - "%s => %s" at INFO_GTE(NAME, 1)
                 // when a hardlink follower is linked to its leader.
                 info_log!(
