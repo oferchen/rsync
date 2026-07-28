@@ -71,14 +71,10 @@ use super::config::IoUringConfig;
 
 /// Default submission queue depth for per-thread rings.
 ///
-/// 64 entries match the default of [`IoUringConfig::sq_entries`] and the
-/// session-wide `IoUringDiskBatch` ring, so bench comparisons between
-/// shared-ring and per-thread topologies are like-for-like. See IUR-2
-/// design doc section 2.2 for the sizing rationale (32 is too shallow
-/// for batched `POLL_ADD + SEND` pairs, 256 inflates per-ring pinned
-/// pages without bench evidence the receiver write path queues that
-/// deeply).
-pub const DEFAULT_RING_DEPTH: u32 = 64;
+/// Re-exported from the single source of truth in
+/// [`crate::io_uring_depth::DEFAULT_IO_URING_DEPTH`] so the real ring and its
+/// non-Linux stub cannot drift. See that constant for the sizing rationale.
+pub const DEFAULT_RING_DEPTH: u32 = crate::io_uring_depth::DEFAULT_IO_URING_DEPTH;
 
 /// Newtype wrapping the underlying [`io_uring::IoUring`] for the
 /// per-thread topology.
