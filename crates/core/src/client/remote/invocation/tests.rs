@@ -107,6 +107,41 @@ fn ssh_sender_omits_inc_recurse_when_no_inc_recursive_set() {
 }
 
 #[test]
+fn ssh_sender_omits_inc_recurse_without_recursion_or_under_qsort() {
+    // upstream: compat.c:172 set_allow_inc_recurse() runs `if (!recurse ||
+    // use_qsort) allow_inc_recurse = 0;` from server_options() right before
+    // maybe_add_e_option(), so a non-recursive push never advertises 'i' even
+    // though `allow_inc_recurse` initializes to 1 (options.c:114).
+    //
+    // Ground truth from rsync 3.4.4 (protocol 32), server argv captured with a
+    // stub `-e` shell:
+    //   rsync src/a.txt host:dst/     -> --server -e.LsfxCIvu
+    //   rsync -d src/ host:dst/       -> --server -de.LsfxCIvu
+    //   rsync -r --qsort src/ host:dst/ -> --server -re.LsfxCIvu --use-qsort
+    //   rsync -r src/ host:dst/       -> --server -re.iLsfxCIvu
+    for (label, config) in [
+        (
+            "non-recursive",
+            ClientConfig::builder().recursive(false).build(),
+        ),
+        (
+            "--dirs without -r",
+            ClientConfig::builder().recursive(false).dirs(true).build(),
+        ),
+        ("--qsort", ClientConfig::builder().qsort(true).build()),
+    ] {
+        let builder = RemoteInvocationBuilder::new(&config, RemoteRole::Sender);
+        let args = builder.build("/remote/path");
+        let flag_str = args[2].to_string_lossy();
+        let caps_portion = flag_str.split("e.").nth(1).expect("e. separator");
+        assert!(
+            !caps_portion.contains('i'),
+            "{label} sender must omit 'i': {flag_str}"
+        );
+    }
+}
+
+#[test]
 fn ssh_receiver_omits_inc_recurse_capability_by_default() {
     // The local Receiver never advertises 'i' because its receive path
     // strips CF_INC_RECURSE from compat_flags (lib.rs::compute_allow_inc_recurse).

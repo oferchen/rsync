@@ -301,7 +301,7 @@ fn legacy_daemon_greeting_details_are_exposed() {
         greeting.protocol(),
         ProtocolVersion::from_supported(31).unwrap()
     );
-    assert_eq!(greeting.digest_list(), Some("md4 md5"));
+    assert_eq!(greeting.digest_names(), Some("md4 md5"));
     assert!(greeting.has_subprotocol());
     assert_eq!(greeting.subprotocol_raw(), Some(0));
 

@@ -22,8 +22,9 @@ use rsync_io::negotiate_legacy_daemon_session;
 use super::super::{
     CLIENT_SERVER_PROTOCOL_EXIT_CODE, ClientError, DAEMON_SOCKET_TIMEOUT,
     PARTIAL_TRANSFER_EXIT_CODE, TransferTimeout, daemon_access_denied_error,
-    daemon_authentication_failed_error, daemon_authentication_required_error, daemon_error,
-    daemon_listing_unavailable_error, daemon_protocol_error, socket_error,
+    daemon_auth_negotiation_error, daemon_authentication_failed_error,
+    daemon_authentication_required_error, daemon_error, daemon_listing_unavailable_error,
+    daemon_protocol_error, socket_error,
 };
 use super::auth::{
     DaemonAuthContext, SensitiveBytes, is_motd_payload, load_daemon_password,
@@ -36,7 +37,7 @@ use super::errors::{legacy_daemon_error_payload, map_daemon_handshake_error, rea
 use super::request::ModuleListOptions;
 use super::request::ModuleListRequest;
 use super::types::DaemonAddress;
-use crate::auth::{parse_daemon_digest_list, select_daemon_digest};
+use crate::auth::negotiate_client_daemon_digest;
 
 /// Collection of daemon modules together with MOTD, warnings, and capabilities.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -233,8 +234,6 @@ pub fn run_module_list_with_password_and_options(
     let negotiated_protocol = handshake.negotiated_protocol();
     let server_greeting = handshake.server_greeting().clone();
     reject_incomplete_daemon_greeting(&server_greeting)?;
-    let advertised_digests = parse_daemon_digest_list(server_greeting.digest_list());
-    let selected_digest = select_daemon_digest(&advertised_digests, negotiated_protocol.as_u8());
     let mut reader = BufReader::new(handshake.into_stream());
 
     reader
@@ -328,6 +327,24 @@ pub fn run_module_list_with_password_and_options(
                                 )
                             })?
                     };
+
+                    // upstream: authenticate.c:242 `auth_client()` calls
+                    // `negotiate_daemon_auth(f_out, 1)` only once the daemon has
+                    // asked for credentials, so a server list we cannot match is
+                    // fatal here and nowhere earlier - an unauthenticated
+                    // listing never negotiates at all.
+                    let selected_digest = negotiate_client_daemon_digest(
+                        server_greeting.advertised_digests(),
+                        negotiated_protocol.as_u8(),
+                    )
+                    .map_err(|_| {
+                        daemon_auth_negotiation_error(
+                            server_greeting
+                                .advertised_digests()
+                                .names()
+                                .unwrap_or_default(),
+                        )
+                    })?;
 
                     let context =
                         DaemonAuthContext::new(username.to_owned(), secret, selected_digest);
@@ -455,7 +472,7 @@ fn reconstruct_daemon_greeting_line(greeting: &LegacyDaemonGreetingOwned) -> Str
         banner.push('.');
         banner.push_str(&subprotocol.to_string());
     }
-    if let Some(digests) = greeting.digest_list() {
+    if let Some(digests) = greeting.digest_names() {
         banner.push(' ');
         banner.push_str(digests);
     }

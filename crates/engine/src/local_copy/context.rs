@@ -240,6 +240,21 @@ pub(crate) struct CopyContext<'a> {
     /// Data contains iflags + sum_head + tokens + checksum without NDX.
     /// NDX is computed from sort-order mapping at flush time.
     batch_delta_entries: Vec<(i32, Vec<u8>)>,
+    /// Basis block geometry the current file's delta body is being built
+    /// against, and the offset of the reserved sum_head slot inside
+    /// `batch_delta_buf`.
+    ///
+    /// `begin_batch_file_delta()` reserves the slot with the whole-file head,
+    /// the delta executor records the real geometry through
+    /// `record_batch_delta_geometry()`, and `finalize_batch_file_delta()`
+    /// patches the slot. Emitting the head before the body is composed is what
+    /// let `--write-batch` advertise `count=0` ahead of block-match tokens.
+    ///
+    /// upstream: `io.c:write_sum_head()`; `receiver.c:414` rejects a block
+    /// index that the advertised count cannot cover.
+    batch_delta_sum_head: protocol::wire::SumHead,
+    /// Byte offset of the reserved sum_head inside `batch_delta_buf`.
+    batch_delta_sum_head_offset: usize,
     /// Sort metadata for each flist entry in traversal order: (name_bytes, is_dir).
     /// Used to compute the traversal→sorted index mapping that upstream's
     /// `flist_sort_and_clean()` produces after reading the batch flist.

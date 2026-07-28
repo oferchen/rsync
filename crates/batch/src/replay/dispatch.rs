@@ -19,7 +19,7 @@ use protocol::wire::{CompressedToken, CompressedTokenDecoder};
 
 use crate::error::{BatchError, BatchResult};
 
-use super::delta::{apply_delta_ops, write_literals_to_file};
+use super::delta::{apply_delta_ops, block_index_as_i32, write_literals_to_file};
 
 /// ITEM_BASIS_TYPE_FOLLOWS - 1-byte fnamecmp_type follows iflags.
 /// upstream: rsync.c:403-418
@@ -107,24 +107,20 @@ pub(super) fn read_iflags_and_skip_meta(
     Ok(iflags)
 }
 
-/// Read the 16-byte `sum_head` and return `(block_count, block_length_wire, remainder_wire)`.
+/// Read the 16-byte `sum_head` describing the delta body that follows.
 ///
-/// upstream: receiver.c:338 - `read_sum_head()` reads 4 x i32.
-/// The `s2length` field is read and discarded - oc-rsync derives the strong
-/// checksum length from the negotiated checksum algorithm, not from the wire.
-pub(super) fn read_sum_head(stream: &mut BufReader<File>) -> BatchResult<(i32, i32, i32)> {
-    let mut sum_buf = [0u8; 16];
-    stream.read_exact(&mut sum_buf).map_err(|e| {
+/// upstream: receiver.c:338 - `read_sum_head()` reads 4 x i32 and rejects any
+/// field that cannot describe a block layout. Decoding through
+/// [`protocol::wire::SumHead`] applies those same rules, and every copy token
+/// in the body is later resolved through the returned geometry, so a header
+/// that does not match its body is refused instead of guessed at.
+pub(super) fn read_sum_head(stream: &mut BufReader<File>) -> BatchResult<protocol::wire::SumHead> {
+    protocol::wire::SumHead::read(stream).map_err(|e| {
         BatchError::Io(std::io::Error::new(
             e.kind(),
             format!("failed to read sum_head: {e}"),
         ))
-    })?;
-    let block_count = i32::from_le_bytes([sum_buf[0], sum_buf[1], sum_buf[2], sum_buf[3]]);
-    let block_length_wire = i32::from_le_bytes([sum_buf[4], sum_buf[5], sum_buf[6], sum_buf[7]]);
-    let _s2length = i32::from_le_bytes([sum_buf[8], sum_buf[9], sum_buf[10], sum_buf[11]]);
-    let remainder_wire = i32::from_le_bytes([sum_buf[12], sum_buf[13], sum_buf[14], sum_buf[15]]);
-    Ok((block_count, block_length_wire, remainder_wire))
+    })
 }
 
 /// Read the per-file transfer checksum and discard it.
@@ -160,9 +156,7 @@ pub(super) fn read_compressed_deltas_streaming(
     stream: &mut BufReader<File>,
     basis_data: &[u8],
     entry_name: &str,
-    block_length: usize,
-    block_count: i32,
-    remainder: usize,
+    sum_head: protocol::wire::SumHead,
 ) -> BatchResult<Vec<protocol::wire::DeltaOp>> {
     let mut ops = Vec::new();
     loop {
@@ -183,14 +177,20 @@ pub(super) fn read_compressed_deltas_streaming(
             }
             CompressedToken::BlockMatch(block_index) => {
                 // Feed matched block's basis data into dictionary.
-                // upstream: receiver.c - see_token(map, len) after block match
-                let offset = block_index as usize * block_length;
-                let len = if block_index == block_count as u32 - 1 {
-                    remainder
-                } else {
-                    block_length
-                };
-                let end = (offset + len).min(basis_data.len());
+                // upstream: receiver.c - see_token(map, len) after block match.
+                // The span comes from the advertised geometry, so a token the
+                // sum_head cannot describe aborts here instead of underflowing
+                // the block-count arithmetic.
+                let (offset, len) = sum_head
+                    .block_span(block_index_as_i32(block_index))
+                    .map_err(|error| {
+                        BatchError::Io(std::io::Error::new(
+                            std::io::ErrorKind::InvalidData,
+                            format!("{error} while replaying '{entry_name}'"),
+                        ))
+                    })?;
+                let offset = offset as usize;
+                let end = (offset + len as usize).min(basis_data.len());
                 if offset < basis_data.len() {
                     decoder
                         .see_token(&basis_data[offset..end])
@@ -216,23 +216,14 @@ pub(super) fn apply_file_delta(
     dest_path: &Path,
     basis_exists: bool,
     delta_ops: Vec<protocol::wire::DeltaOp>,
-    block_length: usize,
-    block_count: u32,
-    remainder: usize,
+    sum_head: protocol::wire::SumHead,
 ) -> BatchResult<()> {
     if !basis_exists {
         write_literals_to_file(dest_path, &delta_ops)?;
         return Ok(());
     }
     let temp_path = dest_path.with_extension("~batch-tmp");
-    apply_delta_ops(
-        dest_path,
-        &temp_path,
-        delta_ops,
-        block_length,
-        block_count,
-        remainder,
-    )?;
+    apply_delta_ops(dest_path, &temp_path, delta_ops, sum_head)?;
     fs::rename(&temp_path, dest_path).map_err(|e| {
         BatchError::Io(std::io::Error::new(
             e.kind(),

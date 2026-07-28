@@ -37,6 +37,11 @@ pub use self::delta::{
     CHUNK_SIZE,
     // Internal format
     DeltaOp,
+    MAX_BLOCK_SIZE,
+    MAX_STRONG_SUM_LEN,
+    // Block geometry shared by a delta body and the head that describes it
+    SumHead,
+    SumHeadError,
     read_delta,
     read_delta_op,
     read_int,

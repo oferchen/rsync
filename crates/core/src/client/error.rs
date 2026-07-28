@@ -4,6 +4,7 @@ use std::path::Path;
 
 use thiserror::Error;
 
+use crate::auth::supported_daemon_digest_list;
 use crate::exit_code::{ErrorCodification, ExitCode, HasExitCode};
 use crate::message::{Message, Role};
 use crate::rsync_error;
@@ -29,6 +30,8 @@ pub const IPC_EXIT_CODE: i32 = ExitCode::Ipc.as_i32();
 pub const PARTIAL_TRANSFER_EXIT_CODE: i32 = ExitCode::PartialTransfer.as_i32();
 /// Exit code returned when remote command is not found.
 pub const REMOTE_COMMAND_NOT_FOUND_EXIT_CODE: i32 = ExitCode::CommandNotFound.as_i32();
+/// Exit code returned when a negotiated capability is not supported.
+pub const UNSUPPORTED_EXIT_CODE: i32 = ExitCode::Unsupported.as_i32();
 
 /// Error returned when the client orchestration fails.
 ///
@@ -470,6 +473,26 @@ pub(crate) fn daemon_error(text: impl Into<String>, exit_code: i32) -> ClientErr
     let code = ExitCode::from_i32(exit_code).unwrap_or(ExitCode::PartialTransfer);
     let message = rsync_error!(code.as_i32(), "{}", text.into()).with_role(Role::Client);
     ClientError::with_code(code, message)
+}
+
+/// Reports the fatal failure to agree on a daemon-auth digest with the server.
+///
+/// upstream: compat.c:383-406 - when `parse_negotiate_str()` finds no mutual
+/// name the client prints three lines to stderr and calls
+/// `exit_cleanup(RERR_UNSUPPORTED)`. There is no fallback digest on this path:
+/// substituting one sends a hash upstream never sends, so callers must surface
+/// this rather than continuing.
+///
+/// `server_list` is echoed verbatim, exactly as upstream echoes its `tmpbuf`.
+#[cold]
+pub(crate) fn daemon_auth_negotiation_error(server_list: &str) -> ClientError {
+    // upstream prints the failure, the peer's list, then our own - the last one
+    // rebuilt from `nno->saw` with a leading space, hence "list:" not "list: ".
+    eprintln!("Failed to negotiate a daemon auth checksum choice.");
+    eprintln!("Server list: {server_list}");
+    eprintln!("Client list: {}", supported_daemon_digest_list());
+
+    daemon_error(ExitCode::Unsupported.description(), UNSUPPORTED_EXIT_CODE)
 }
 
 #[cold]
