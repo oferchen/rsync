@@ -332,6 +332,21 @@ pub struct ReceiverContext {
     /// before [`Self::read_expected_ndx_done`] expects the sender's NDX_DONE.
     /// `Cell` because the emit site runs behind a `&self` pipeline closure.
     pub(in crate::receiver) hardlink_follower_echoes: std::cell::Cell<usize>,
+    /// Metadata-only itemize records a server-mode receiver must forward over
+    /// the wire, as `(flist index, wire iflags)` in flist order.
+    ///
+    /// A quick-check-matched file whose attributes still differ produces no
+    /// transfer request, but upstream's generator writes `NDX +
+    /// write_shortint(iflags)` for it anyway (generator.c:582-593) so the
+    /// pushing client's sender can print the `.f...p.....`-style row
+    /// (sender.c:292-293 `maybe_log_item`). The candidate scan records those
+    /// rows here and the transfer loop interleaves them with the file requests
+    /// in flist-index order, consuming the sender's per-record echo
+    /// (sender.c:294 `write_ndx_and_attrs`) inline. Empty on a pull: a
+    /// client-mode receiver prints its rows locally instead.
+    ///
+    /// upstream: generator.c:582-593 - `itemize()` wire emission gate.
+    pub(in crate::receiver) server_no_transfer_itemize: RefCell<Vec<(usize, u16)>>,
     /// Per-type tally of entries this receiver created (destination absent
     /// before the transfer), keyed by `ITEM_IS_NEW`. Reconstructs the
     /// `--stats` "Number of created files" breakdown locally, exactly as
@@ -449,6 +464,7 @@ impl ReceiverContext {
             names_to_stderr: false,
             progress_active: false,
             hardlink_follower_echoes: std::cell::Cell::new(0),
+            server_no_transfer_itemize: RefCell::new(Vec::new()),
             created_stats: std::cell::Cell::new(protocol::stats::CreatedStats::new()),
             got_xfer_error: std::cell::Cell::new(false),
             delayed_delete_victims: Vec::new(),

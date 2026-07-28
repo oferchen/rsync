@@ -25,6 +25,7 @@ fn info_log_emits_when_level_sufficient() {
             flag,
             level,
             message,
+            ..
         } => {
             assert_eq!(*flag, InfoFlag::Name);
             assert_eq!(*level, 1);

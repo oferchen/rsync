@@ -147,6 +147,7 @@ fn verbose_level_2_outputs_itemized_changes() {
                 flag: InfoFlag::Name,
                 level: 2,
                 message,
+                ..
             } => Some(message.as_str()),
             _ => None,
         })

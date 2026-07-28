@@ -78,6 +78,7 @@ mod config;
 /// Upstream-compatible error and warning formatting.
 pub mod error_format;
 mod levels;
+mod log_code;
 mod macros;
 mod phase_timer;
 mod thread_local;
@@ -93,10 +94,11 @@ pub use error_format::{
     file_basename, format_rsync_error, format_rsync_warning, strip_repo_prefix,
 };
 pub use levels::{DebugFlag, DebugLevels, InfoFlag, InfoLevels};
+pub use log_code::{LogCode, ParseLogCodeError};
 pub use phase_timer::PhaseTimer;
 pub use thread_local::{
     DiagnosticEvent, apply_debug_flag, apply_info_flag, debug_gte, drain_events, emit_debug,
-    emit_info, info_gte, init,
+    emit_debug_coded, emit_info, emit_info_coded, info_gte, init,
 };
 
 #[cfg(feature = "tracing")]

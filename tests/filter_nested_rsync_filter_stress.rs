@@ -42,7 +42,8 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::Duration;
 
-/// Candidate locations for the upstream rsync 3.4.2 binary.
+/// Candidate locations for the upstream rsync 3.4.2 binary, relative to
+/// the workspace root.
 const UPSTREAM_CANDIDATES: &[&str] = &[
     "target/interop/upstream-install/3.4.2/bin/rsync",
     "target/interop/upstream-src/rsync-3.4.2/rsync",
@@ -51,19 +52,14 @@ const UPSTREAM_CANDIDATES: &[&str] = &[
 /// Default timeout for spawned rsync processes.
 const SPAWN_TIMEOUT: Duration = Duration::from_secs(60);
 
-/// Locate the upstream rsync 3.4.2 binary, walking upward from the test cwd
-/// so the lookup works regardless of which crate triggered the test.
+/// Locate the upstream rsync 3.4.2 binary, anchored at the workspace root
+/// so the lookup works regardless of the CWD Cargo runs the test from.
 fn locate_upstream() -> Option<PathBuf> {
-    let cwd = std::env::current_dir().ok()?;
-    for ancestor in cwd.ancestors() {
-        for candidate in UPSTREAM_CANDIDATES {
-            let path = ancestor.join(candidate);
-            if path.is_file() {
-                return Some(path);
-            }
-        }
-    }
-    None
+    let root = test_support::workspace_root()?;
+    UPSTREAM_CANDIDATES
+        .iter()
+        .map(|candidate| root.join(candidate))
+        .find(|path| path.is_file())
 }
 
 /// Build a nested source tree with `.rsync-filter` files at four depth levels.

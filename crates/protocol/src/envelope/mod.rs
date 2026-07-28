@@ -14,14 +14,16 @@ mod constants;
 mod conversion;
 mod error;
 mod header;
-mod log_code;
 mod message_code;
 
 pub use constants::{HEADER_LEN, MAX_PAYLOAD_LENGTH, MPLEX_BASE};
 pub use conversion::LogCodeConversionError;
 pub use error::EnvelopeError;
 pub use header::MessageHeader;
-pub use log_code::{LogCode, ParseLogCodeError};
+// The canonical `enum logcode` vocabulary lives in the `logging` crate so the
+// diagnostics event model can carry it; re-exported here so wire-side users
+// keep their `protocol::LogCode` paths.
+pub use logging::{LogCode, ParseLogCodeError};
 pub use message_code::{MessageCode, ParseMessageCodeError};
 
 pub(crate) use constants::PAYLOAD_MASK;
