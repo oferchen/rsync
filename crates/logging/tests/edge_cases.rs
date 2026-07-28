@@ -6,7 +6,7 @@
 //! Reference: rsync 3.4.1 log.c for message handling edge cases.
 
 use logging::{
-    DebugFlag, DiagnosticEvent, InfoFlag, VerbosityConfig, apply_info_flag, debug_log,
+    DebugFlag, DiagnosticEvent, InfoFlag, LogCode, VerbosityConfig, apply_info_flag, debug_log,
     drain_events, info_log, init,
 };
 
@@ -449,6 +449,7 @@ fn diagnostic_event_info_fields() {
             flag,
             level,
             message,
+            ..
         } => {
             assert_eq!(*flag, InfoFlag::Copy);
             assert_eq!(*level, 2);
@@ -474,6 +475,7 @@ fn diagnostic_event_debug_fields() {
             flag,
             level,
             message,
+            ..
         } => {
             assert_eq!(*flag, DebugFlag::Recv);
             assert_eq!(*level, 2);
@@ -489,6 +491,7 @@ fn diagnostic_event_clone() {
     let event = DiagnosticEvent::Info {
         flag: InfoFlag::Name,
         level: 1,
+        code: LogCode::Info,
         message: "cloneable".to_owned(),
     };
 
@@ -498,6 +501,7 @@ fn diagnostic_event_clone() {
             flag,
             level,
             message,
+            ..
         } => {
             assert_eq!(flag, InfoFlag::Name);
             assert_eq!(level, 1);
@@ -513,6 +517,7 @@ fn diagnostic_event_debug_trait() {
     let event = DiagnosticEvent::Debug {
         flag: DebugFlag::Io,
         level: 3,
+        code: LogCode::Info,
         message: "debug trait test".to_owned(),
     };
 

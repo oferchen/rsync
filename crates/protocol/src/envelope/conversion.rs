@@ -1,7 +1,7 @@
 use ::core::convert::TryFrom;
 
-use super::log_code::LogCode;
 use super::message_code::MessageCode;
+use logging::LogCode;
 use thiserror::Error;
 
 /// Errors that arise when converting between [`LogCode`] and [`MessageCode`].

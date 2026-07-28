@@ -61,6 +61,7 @@ pub fn render_diagnostic_events<O: Write, E: Write>(
                 flag: _,
                 level: _,
                 message,
+                ..
             } => {
                 if msgs2stderr {
                     writeln!(err, "{message}")?;
@@ -72,6 +73,7 @@ pub fn render_diagnostic_events<O: Write, E: Write>(
                 flag: _,
                 level: _,
                 message,
+                ..
             } => {
                 // upstream: log.c:rwrite() prints debug messages verbatim via
                 // rprintf(FINFO, ...) with no flag-category bracket. FINFO
@@ -120,13 +122,14 @@ pub fn flush_diagnostics<O: Write, E: Write>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use logging::{DebugFlag, InfoFlag};
+    use logging::{DebugFlag, InfoFlag, LogCode};
 
     #[test]
     fn test_info_event_renders_to_stdout() {
         let events = vec![DiagnosticEvent::Info {
             flag: InfoFlag::Progress,
             level: 1,
+            code: LogCode::Info,
             message: "transferred 1024 bytes".to_owned(),
         }];
 
@@ -150,6 +153,7 @@ mod tests {
         let events = vec![DiagnosticEvent::Debug {
             flag: DebugFlag::Filter,
             level: 1,
+            code: LogCode::Info,
             message: "excluding file foo.txt".to_owned(),
         }];
 
@@ -171,11 +175,13 @@ mod tests {
             DiagnosticEvent::Info {
                 flag: InfoFlag::Progress,
                 level: 1,
+                code: LogCode::Info,
                 message: "info message".to_owned(),
             },
             DiagnosticEvent::Debug {
                 flag: DebugFlag::Filter,
                 level: 1,
+                code: LogCode::Info,
                 message: "debug message".to_owned(),
             },
         ];
@@ -200,16 +206,19 @@ mod tests {
             DiagnosticEvent::Info {
                 flag: InfoFlag::Progress,
                 level: 1,
+                code: LogCode::Info,
                 message: "first".to_owned(),
             },
             DiagnosticEvent::Debug {
                 flag: DebugFlag::Io,
                 level: 2,
+                code: LogCode::Info,
                 message: "second".to_owned(),
             },
             DiagnosticEvent::Info {
                 flag: InfoFlag::Stats,
                 level: 1,
+                code: LogCode::Info,
                 message: "third".to_owned(),
             },
         ];

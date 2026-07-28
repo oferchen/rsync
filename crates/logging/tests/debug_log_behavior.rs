@@ -25,6 +25,7 @@ fn debug_log_emits_when_level_sufficient() {
             flag,
             level,
             message,
+            ..
         } => {
             assert_eq!(*flag, DebugFlag::Recv);
             assert_eq!(*level, 1);

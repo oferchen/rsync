@@ -76,6 +76,7 @@ fn verbose_1_emits_file_names() {
                 flag: InfoFlag::Name,
                 level: 1,
                 message,
+                ..
             } => Some(message.clone()),
             _ => None,
         })
@@ -207,6 +208,7 @@ fn verbose_1_no_itemize_format() {
             flag: InfoFlag::Name,
             level: 1,
             message,
+            ..
         } => {
             assert_eq!(message, "file.txt");
             // Should NOT contain itemize characters like ">f+++++++++"

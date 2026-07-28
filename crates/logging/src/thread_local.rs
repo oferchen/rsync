@@ -17,6 +17,7 @@
 
 use super::config::VerbosityConfig;
 use super::levels::{DebugFlag, InfoFlag};
+use super::log_code::LogCode;
 use std::cell::RefCell;
 
 thread_local! {
@@ -28,7 +29,9 @@ thread_local! {
 /// A diagnostic event collected during execution.
 ///
 /// Events are buffered per-thread and drained by the caller for output.
-/// The two variants correspond to the info and debug flag systems.
+/// The two variants correspond to the info and debug flag systems. Every
+/// event additionally carries the upstream [`LogCode`] that classifies its
+/// destination (upstream: log.c:rwrite() dispatches on `enum logcode`).
 #[derive(Clone, Debug)]
 pub enum DiagnosticEvent {
     /// Info-level diagnostic event.
@@ -37,6 +40,8 @@ pub enum DiagnosticEvent {
         flag: InfoFlag,
         /// The verbosity level.
         level: u8,
+        /// The upstream log code classifying the event's destination.
+        code: LogCode,
         /// The diagnostic message.
         message: String,
     },
@@ -46,9 +51,21 @@ pub enum DiagnosticEvent {
         flag: DebugFlag,
         /// The verbosity level.
         level: u8,
+        /// The upstream log code classifying the event's destination.
+        code: LogCode,
         /// The diagnostic message.
         message: String,
     },
+}
+
+impl DiagnosticEvent {
+    /// Returns the upstream [`LogCode`] carried by this event.
+    #[must_use]
+    pub const fn code(&self) -> LogCode {
+        match self {
+            DiagnosticEvent::Info { code, .. } | DiagnosticEvent::Debug { code, .. } => *code,
+        }
+    }
 }
 
 /// Initialize verbosity configuration for the current thread.
@@ -79,12 +96,27 @@ pub fn debug_gte(flag: DebugFlag, level: u8) -> bool {
 ///
 /// The caller is responsible for checking [`info_gte`] first; the
 /// [`info_log!`](crate::info_log) macro handles this automatically.
+///
+/// The event is tagged [`LogCode::Info`], the code whose upstream routing
+/// (client stdout, subject to verbosity) matches how the renderer treats
+/// every drained event today. Producers that mirror a different upstream
+/// `rprintf()` code use [`emit_info_coded`].
 // upstream: log.c:rwrite() dispatches FINFO messages
 pub fn emit_info(flag: InfoFlag, level: u8, message: String) {
+    emit_info_coded(flag, level, LogCode::Info, message);
+}
+
+/// Emit an info diagnostic event carrying an explicit upstream [`LogCode`].
+///
+/// Use this when the producing site mirrors an upstream `rprintf(code, ...)`
+/// whose code is not `FINFO` (upstream: log.c:rwrite() dispatches on the
+/// code to pick the client stream versus the log file).
+pub fn emit_info_coded(flag: InfoFlag, level: u8, code: LogCode, message: String) {
     EVENTS.with(|e| {
         e.borrow_mut().push(DiagnosticEvent::Info {
             flag,
             level,
+            code,
             message,
         });
     });
@@ -94,12 +126,26 @@ pub fn emit_info(flag: InfoFlag, level: u8, message: String) {
 ///
 /// The caller is responsible for checking [`debug_gte`] first; the
 /// [`debug_log!`](crate::debug_log) macro handles this automatically.
-// upstream: log.c:rwrite() dispatches FLOG/FCLIENT debug messages
+///
+/// The event is tagged [`LogCode::Info`]: upstream debug traces are emitted
+/// through `rprintf(FINFO, ...)` and share FINFO routing. Producers that
+/// mirror a different upstream code use [`emit_debug_coded`].
+// upstream: log.c:rwrite() dispatches FINFO debug messages
 pub fn emit_debug(flag: DebugFlag, level: u8, message: String) {
+    emit_debug_coded(flag, level, LogCode::Info, message);
+}
+
+/// Emit a debug diagnostic event carrying an explicit upstream [`LogCode`].
+///
+/// Use this when the producing site mirrors an upstream `rprintf(code, ...)`
+/// whose code is not `FINFO` (upstream: log.c:rwrite() dispatches on the
+/// code to pick the client stream versus the log file).
+pub fn emit_debug_coded(flag: DebugFlag, level: u8, code: LogCode, message: String) {
     EVENTS.with(|e| {
         e.borrow_mut().push(DiagnosticEvent::Debug {
             flag,
             level,
+            code,
             message,
         });
     });
@@ -167,6 +213,7 @@ mod tests {
                 flag,
                 level,
                 message,
+                ..
             } => {
                 assert_eq!(*flag, InfoFlag::Copy);
                 assert_eq!(*level, 1);
@@ -180,6 +227,7 @@ mod tests {
                 flag,
                 level,
                 message,
+                ..
             } => {
                 assert_eq!(*flag, DebugFlag::Recv);
                 assert_eq!(*level, 2);
@@ -191,11 +239,62 @@ mod tests {
         assert_eq!(drain_events().len(), 0);
     }
 
+    /// The behaviour-preserving default: every event emitted through the
+    /// legacy emitters (and therefore through `info_log!`/`debug_log!`) is
+    /// tagged FINFO, the code whose upstream routing - client stdout,
+    /// subject to verbosity (upstream: log.c:317-320) - matches how the
+    /// renderer already treats all drained events.
+    #[test]
+    fn default_emitters_tag_events_finfo() {
+        init(VerbosityConfig::default());
+        drain_events();
+
+        emit_info(InfoFlag::Copy, 1, "info default".to_owned());
+        emit_debug(DebugFlag::Recv, 1, "debug default".to_owned());
+
+        let events = drain_events();
+        assert_eq!(events.len(), 2);
+        for event in &events {
+            assert_eq!(event.code(), LogCode::Info);
+        }
+    }
+
+    /// Coded emitters attach the producer's real upstream logcode, e.g. FLOG
+    /// for log-file-only banners (upstream: log.c:290-307).
+    #[test]
+    fn coded_emitters_carry_explicit_logcode() {
+        init(VerbosityConfig::default());
+        drain_events();
+
+        emit_info_coded(
+            InfoFlag::Flist,
+            1,
+            LogCode::Log,
+            "building file list".to_owned(),
+        );
+        emit_debug_coded(
+            DebugFlag::Recv,
+            1,
+            LogCode::Client,
+            "client-only".to_owned(),
+        );
+
+        let events = drain_events();
+        assert_eq!(events.len(), 2);
+        assert_eq!(events[0].code(), LogCode::Log);
+        assert_eq!(events[1].code(), LogCode::Client);
+        assert!(matches!(
+            &events[0],
+            DiagnosticEvent::Info { code: LogCode::Log, message, .. } if message == "building file list"
+        ));
+    }
+
     #[test]
     fn diagnostic_event_clone() {
         let info_event = DiagnosticEvent::Info {
             flag: InfoFlag::Copy,
             level: 1,
+            code: LogCode::Info,
             message: "test".to_owned(),
         };
         let cloned = info_event;
@@ -204,6 +303,7 @@ mod tests {
                 flag,
                 level,
                 message,
+                ..
             } => {
                 assert_eq!(flag, InfoFlag::Copy);
                 assert_eq!(level, 1);
@@ -215,6 +315,7 @@ mod tests {
         let debug_event = DiagnosticEvent::Debug {
             flag: DebugFlag::Bind,
             level: 2,
+            code: LogCode::Info,
             message: "debug".to_owned(),
         };
         let cloned = debug_event;
@@ -223,6 +324,7 @@ mod tests {
                 flag,
                 level,
                 message,
+                ..
             } => {
                 assert_eq!(flag, DebugFlag::Bind);
                 assert_eq!(level, 2);
@@ -237,6 +339,7 @@ mod tests {
         let info_event = DiagnosticEvent::Info {
             flag: InfoFlag::Del,
             level: 3,
+            code: LogCode::Info,
             message: "delete".to_owned(),
         };
         let debug = format!("{info_event:?}");
@@ -246,6 +349,7 @@ mod tests {
         let debug_event = DiagnosticEvent::Debug {
             flag: DebugFlag::Io,
             level: 4,
+            code: LogCode::Info,
             message: "io debug".to_owned(),
         };
         let debug = format!("{debug_event:?}");

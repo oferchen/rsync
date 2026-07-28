@@ -4,7 +4,7 @@ use ::core::str::FromStr;
 use std::string::String;
 
 use super::error::EnvelopeError;
-use super::log_code::LogCode;
+use logging::LogCode;
 use thiserror::Error;
 
 /// Tags used for multiplexed messages flowing over the rsync protocol stream.
