@@ -509,3 +509,132 @@ fn receiver_backs_up_existing_symlink_before_replacing() {
         "the prior symlink target must be preserved in the ~ backup",
     );
 }
+
+/// A pull-mode receiver context with `-i`, `-l`, and `-t` that defers itemize
+/// rows so tests can read them back in flist-index order.
+#[cfg(unix)]
+fn repointed_symlink_ctx(file_list: Vec<FileEntry>) -> ReceiverContext {
+    let mut config = test_config();
+    config.flags.links = true;
+    config.flags.times = true;
+    config.flags.info_flags.itemize = true;
+    config.connection.client_mode = true;
+    let handshake = test_handshake();
+    let mut ctx = ReceiverContext::new_for_test(&handshake, config);
+    ctx.defer_itemize = true;
+    ctx.file_list = file_list;
+    ctx
+}
+
+/// #241/#248: replacing a destination symlink that points elsewhere must
+/// itemize as a CHANGE against the pre-replace lstat - `cLc........` - and
+/// must NOT bump the created-symlinks tally.
+///
+/// upstream: generator.c:1604-1610 - after `atomic_create`, `itemize()` runs
+/// with `ITEM_LOCAL_CHANGE|ITEM_REPORT_CHANGE` and `statret == 0` (the old
+/// destination entry IS a symlink), so ITEM_IS_NEW never fires and the row
+/// carries attribute dots, not `+++++++++`. receiver.c:733-741 counts creates
+/// only from ITEM_IS_NEW.
+#[test]
+#[cfg(unix)]
+fn replaced_symlink_itemizes_as_change_not_create() {
+    use std::os::unix::fs::MetadataExt;
+
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let dest = tmp.path();
+    std::os::unix::fs::symlink("old-target", dest.join("mylink")).expect("seed old symlink");
+    let old_meta = std::fs::symlink_metadata(dest.join("mylink")).expect("lstat old symlink");
+
+    let mut entry = FileEntry::new_symlink("mylink".into(), "new-target".into());
+    // Same whole second as the on-disk link: `t` must stay dark (same_time()
+    // compares whole seconds at modify_window 0, util1.c:1478).
+    entry.set_mtime(old_meta.mtime(), 0);
+    let ctx = repointed_symlink_ctx(vec![entry]);
+
+    let mut writer = MockMsgInfoWriter::new();
+    ctx.create_symlinks(dest, None, &mut writer)
+        .expect("create_symlinks must succeed");
+
+    let buffered = ctx.itemize_rows.borrow();
+    let rows = buffered.get(&0).expect("row buffered at flist index 0");
+    assert_eq!(rows.len(), 1);
+    assert!(
+        rows[0].starts_with("cLc........ "),
+        "a re-pointed symlink is a change row, not all-new: {:?}",
+        rows[0]
+    );
+    assert!(
+        rows[0].contains("mylink -> new-target"),
+        "row = {:?}",
+        rows[0]
+    );
+    assert_eq!(
+        ctx.created_stats.get().symlinks,
+        0,
+        "a replaced symlink is not a creation (receiver.c:733-741)"
+    );
+}
+
+/// Control for #241/#248: a genuinely absent destination symlink still renders
+/// the all-new row (`cL+++++++++`) and bumps the created tally.
+///
+/// upstream: generator.c:1608 with `statret < 0` -> itemize() adds ITEM_IS_NEW
+/// (generator.c:578); receiver.c:733-741 counts it.
+#[test]
+#[cfg(unix)]
+fn absent_symlink_still_itemizes_as_all_new() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let dest = tmp.path();
+
+    let entry = FileEntry::new_symlink("mylink".into(), "new-target".into());
+    let ctx = repointed_symlink_ctx(vec![entry]);
+
+    let mut writer = MockMsgInfoWriter::new();
+    ctx.create_symlinks(dest, None, &mut writer)
+        .expect("create_symlinks must succeed");
+
+    let buffered = ctx.itemize_rows.borrow();
+    let rows = buffered.get(&0).expect("row buffered at flist index 0");
+    assert!(
+        rows[0].starts_with("cL+++++++++ "),
+        "an absent symlink is the true all-new case: {:?}",
+        rows[0]
+    );
+    assert_eq!(ctx.created_stats.get().symlinks, 1, "created_symlinks");
+}
+
+/// A non-symlink obstacle replaced by a symlink renders all-new AND counts as
+/// a creation: upstream forces `statret = -1` when `stype != FT_SYMLINK`
+/// (generator.c:1606-1607), so the wire carries ITEM_IS_NEW and
+/// receiver.c:733-741 bumps created_symlinks.
+#[test]
+#[cfg(unix)]
+fn non_symlink_obstacle_replacement_itemizes_as_all_new() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let dest = tmp.path();
+    std::fs::write(dest.join("mylink"), b"obstacle").expect("seed obstacle file");
+
+    let entry = FileEntry::new_symlink("mylink".into(), "new-target".into());
+    let ctx = repointed_symlink_ctx(vec![entry]);
+
+    let mut writer = MockMsgInfoWriter::new();
+    ctx.create_symlinks(dest, None, &mut writer)
+        .expect("create_symlinks must succeed");
+
+    assert_eq!(
+        std::fs::read_link(dest.join("mylink")).expect("symlink replaces obstacle"),
+        std::path::Path::new("new-target"),
+    );
+    let buffered = ctx.itemize_rows.borrow();
+    let rows = buffered.get(&0).expect("row buffered at flist index 0");
+    assert!(
+        rows[0].starts_with("cL+++++++++ "),
+        "a replaced non-symlink obstacle renders all-new (statret forced to -1): {:?}",
+        rows[0]
+    );
+    assert_eq!(
+        ctx.created_stats.get().symlinks,
+        1,
+        "an obstacle replacement is ITEM_IS_NEW and counts as created"
+    );
+}
