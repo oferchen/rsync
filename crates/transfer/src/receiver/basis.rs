@@ -108,12 +108,6 @@ pub struct BasisFileConfig<'a> {
     pub checksum_algorithm: engine::signature::SignatureAlgorithm,
     /// When true, skip basis file search entirely (upstream `--whole-file`).
     pub whole_file: bool,
-    /// Mutually negotiated compatibility flags. Only the private
-    /// [`protocol::CompatibilityFlags::CONSECUTIVE_MATCH`] bit is consulted
-    /// here, to decide whether the per-block strong-sum length is halved (see
-    /// [`protocol::effective_s2length`]). `None` (local copy / no negotiation)
-    /// leaves the strong sum at full length, byte-identical to upstream.
-    pub compat_flags: Option<protocol::CompatibilityFlags>,
 }
 
 /// Configuration for generating a signature from a basis file.
@@ -129,8 +123,6 @@ struct SignatureGenerationConfig {
     checksum_length: NonZeroU8,
     /// Algorithm for strong checksums.
     checksum_algorithm: engine::signature::SignatureAlgorithm,
-    /// Mutually negotiated compatibility flags (see [`BasisFileConfig::compat_flags`]).
-    compat_flags: Option<protocol::CompatibilityFlags>,
 }
 
 impl SignatureGenerationConfig {
@@ -140,7 +132,6 @@ impl SignatureGenerationConfig {
             protocol: config.protocol,
             checksum_length: config.checksum_length,
             checksum_algorithm: config.checksum_algorithm,
-            compat_flags: config.compat_flags,
         }
     }
 }
@@ -388,9 +379,7 @@ fn generate_basis_signature(
     // default 16-byte digests (MD5, MD4, XXH3-128) this is a no-op and the
     // SumHead stays byte-identical to upstream; a short digest (XXH64 / XXH3-64 =
     // 8 bytes) bounds s2length so we never write a zero-padded strong sum wider
-    // than the checksum the sender expects. This runs before the private
-    // CAP_CONSECUTIVE_MATCH halving below, mirroring upstream's order (cap in
-    // sum_sizes_sqroot, then any extension).
+    // than the checksum the sender expects.
     // upstream: generator.c:705 sum_sizes_sqroot() `max_s2length`,
     // checksum.c:214 csum_len_for_type().
     let digest_len =
@@ -403,33 +392,6 @@ fn generate_basis_signature(
     let layout = match calculate_signature_layout(params) {
         Ok(layout) => layout,
         Err(_) => return BasisFileResult::EMPTY,
-    };
-
-    // Iron invariant choke-point: the per-block strong-sum length is shrunk
-    // here, and ONLY here, and ONLY when the mutually negotiated compat flags
-    // carry the private CAP_CONSECUTIVE_MATCH bit. That bit can only survive the
-    // negotiation AND when both peers are oc and both opted in, in which case
-    // the sender applies seq_matches=2 gating to compensate for the shorter
-    // checksum. Against any upstream peer, or without the opt-in, the mutual bit
-    // is absent and `effective_s2length` returns the full length verbatim,
-    // yielding a SumHead byte-identical to upstream.
-    let layout = {
-        let base_len = layout.strong_sum_length().get();
-        let negotiated = config
-            .compat_flags
-            .unwrap_or(protocol::CompatibilityFlags::EMPTY);
-        let eff_len = protocol::effective_s2length(negotiated, base_len);
-        if eff_len == base_len {
-            layout
-        } else {
-            let eff_nz = NonZeroU8::new(eff_len).expect("effective_s2length floors at 1");
-            SignatureLayout::from_raw_parts(
-                layout.block_length(),
-                layout.remainder(),
-                layout.block_count(),
-                eff_nz,
-            )
-        }
     };
 
     let parallel = parallel_checksum_enabled();
@@ -951,7 +913,6 @@ mod tests {
             protocol: ProtocolVersion::NEWEST,
             checksum_length: NonZeroU8::new(16).unwrap(),
             checksum_algorithm: SignatureAlgorithm::Md4,
-            compat_flags: None,
         };
 
         // Production path (windowed BufReader over the basis file).
@@ -1019,7 +980,6 @@ mod tests {
             protocol: ProtocolVersion::NEWEST,
             checksum_length: NonZeroU8::new(16).unwrap(),
             checksum_algorithm: SignatureAlgorithm::Md4,
-            compat_flags: None,
         };
 
         // Open the basis exactly as the live path does, then let "another
@@ -1086,7 +1046,6 @@ mod tests {
             checksum_length: NonZeroU8::new(16).unwrap(),
             checksum_algorithm: SignatureAlgorithm::Md4,
             whole_file: false,
-            compat_flags: None,
         };
 
         let result = find_basis_file_with_config(&config);
@@ -1139,7 +1098,6 @@ mod tests {
             checksum_length: NonZeroU8::new(16).unwrap(),
             checksum_algorithm: SignatureAlgorithm::Md4,
             whole_file: false,
-            compat_flags: None,
         };
 
         let result = find_basis_file_with_config(&config);
@@ -1181,7 +1139,6 @@ mod tests {
             checksum_length: NonZeroU8::new(16).unwrap(),
             checksum_algorithm: SignatureAlgorithm::Md4,
             whole_file: false,
-            compat_flags: None,
         };
 
         let result = find_basis_file_with_config(&config);
@@ -1257,7 +1214,6 @@ mod tests {
             checksum_length: NonZeroU8::new(16).unwrap(),
             checksum_algorithm: SignatureAlgorithm::Md4,
             whole_file: false,
-            compat_flags: None,
         };
 
         let result = find_basis_file_with_config(&config);
@@ -1328,7 +1284,6 @@ mod tests {
             checksum_length: NonZeroU8::new(16).unwrap(),
             checksum_algorithm: SignatureAlgorithm::Md4,
             whole_file: false,
-            compat_flags: None,
         };
 
         let result = find_basis_file_with_config(&config);
@@ -1388,7 +1343,6 @@ mod tests {
             checksum_length: NonZeroU8::new(16).unwrap(),
             checksum_algorithm: SignatureAlgorithm::Md4,
             whole_file: false,
-            compat_flags: None,
         };
 
         let result = find_basis_file_with_config(&config);
@@ -1448,7 +1402,6 @@ mod tests {
             checksum_algorithm: SignatureAlgorithm::Md4,
             // Not --whole-file: the redo path must still search for a basis.
             whole_file: false,
-            compat_flags: None,
         };
 
         let strong_len = |result: &BasisFileResult| -> u8 {
@@ -1490,73 +1443,6 @@ mod tests {
     }
 
     #[test]
-    fn consecutive_match_cap_halves_strong_sum_length() {
-        use std::io::Write;
-
-        let data: Vec<u8> = (0..4096u32).map(|i| (i % 251) as u8).collect();
-        let tmp = tempfile::tempdir().expect("tempdir");
-        let path = tmp.path().join("basis.bin");
-        {
-            let mut f = fs::File::create(&path).expect("create");
-            f.write_all(&data).expect("write");
-            f.flush().expect("flush");
-        }
-
-        let strong_len = |cfg: SignatureGenerationConfig| -> u8 {
-            generate_basis_signature(
-                fast_io::open_basis_nofollow(&path).expect("open"),
-                data.len() as u64,
-                path.clone(),
-                protocol::FnameCmpType::Fname,
-                None,
-                cfg,
-            )
-            .signature
-            .as_ref()
-            .expect("signature")
-            .layout()
-            .strong_sum_length()
-            .get()
-        };
-
-        let base = SignatureGenerationConfig {
-            protocol: ProtocolVersion::NEWEST,
-            checksum_length: NonZeroU8::new(16).unwrap(),
-            checksum_algorithm: SignatureAlgorithm::Md4,
-            compat_flags: None,
-        };
-
-        // No flags -> full length (byte-identical to upstream).
-        assert_eq!(strong_len(base), 16);
-
-        // Iron invariant: flags WITHOUT the private CAP bit never shrink it,
-        // even a rich set of standard flags.
-        let no_cap = protocol::CompatibilityFlags::INC_RECURSE
-            | protocol::CompatibilityFlags::SAFE_FILE_LIST
-            | protocol::CompatibilityFlags::CHECKSUM_SEED_FIX;
-        assert_eq!(
-            strong_len(SignatureGenerationConfig {
-                compat_flags: Some(no_cap),
-                ..base
-            }),
-            16
-        );
-
-        // CAP present in the mutual flags -> halved. This is the ONLY input
-        // that shrinks the strong-sum length.
-        let with_cap = protocol::CompatibilityFlags::INC_RECURSE
-            | protocol::CompatibilityFlags::CONSECUTIVE_MATCH;
-        assert_eq!(
-            strong_len(SignatureGenerationConfig {
-                compat_flags: Some(with_cap),
-                ..base
-            }),
-            8,
-            "CAP_CONSECUTIVE_MATCH must halve the strong-sum length"
-        );
-    }
-
-    #[test]
     fn s2length_capped_by_negotiated_digest_length() {
         use std::io::Write;
         use std::num::NonZeroU32;
@@ -1586,7 +1472,6 @@ mod tests {
                 protocol: ProtocolVersion::NEWEST,
                 checksum_length: NonZeroU8::new(phase_len).unwrap(),
                 checksum_algorithm: algo,
-                compat_flags: None,
             };
             let params = SignatureLayoutParams::new(
                 file_size,

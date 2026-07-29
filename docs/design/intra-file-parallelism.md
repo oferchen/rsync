@@ -670,8 +670,6 @@ search - is **already implemented and shipped** as the opt-in, default-off
   - duplicate-content basis -> pruned sequential scan
     (`crates/transfer/src/generator/delta.rs:411`,
     `index.has_duplicate_blocks()`);
-  - consecutive-match extension (`seq_matches >= 2`) -> sequential gated scan
-    (`crates/matching/src/generator.rs:997`);
   - in-place / `updating_basis_file` (upstream `match.c:211`) -> sequential
     scan that tracks the true global cursor
     (`crates/matching/src/generator.rs:1005`);

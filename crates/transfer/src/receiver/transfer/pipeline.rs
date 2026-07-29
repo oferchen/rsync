@@ -288,7 +288,6 @@ impl ReceiverContext {
                         let ref_dirs = &self.config.reference_directories;
                         let partial_dir = self.config.partial_dir.as_deref();
                         let protocol = self.protocol;
-                        let compat_flags = self.compat_flags;
                         let whole_file = self.config.flags.whole_file;
                         let dest_dir = &setup.dest_dir;
                         let checksum_length = setup.checksum_length;
@@ -323,7 +322,6 @@ impl ReceiverContext {
                                         checksum_length,
                                         checksum_algorithm,
                                         whole_file,
-                                        compat_flags,
                                     };
                                     find_basis_file_with_config(&basis_config)
                                 })
@@ -349,7 +347,6 @@ impl ReceiverContext {
                                         checksum_length,
                                         checksum_algorithm,
                                         whole_file,
-                                        compat_flags,
                                     };
                                     find_basis_file_with_config(&basis_config)
                                 })
@@ -916,7 +913,6 @@ impl ReceiverContext {
                 checksum_length: setup.checksum_length,
                 checksum_algorithm: setup.checksum_algorithm,
                 whole_file: self.config.flags.whole_file,
-                compat_flags: self.compat_flags,
             };
             let basis = find_basis_file_with_config(&basis_config);
 

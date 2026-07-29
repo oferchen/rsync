@@ -160,7 +160,7 @@ pub mod xattr;
 
 pub use compatibility::{
     CompatibilityFlags, KnownCompatibilityFlag, KnownCompatibilityFlagsIter,
-    ParseKnownCompatibilityFlagError, effective_s2length,
+    ParseKnownCompatibilityFlagError,
 };
 pub use envelope::{
     EnvelopeError, HEADER_LEN as MESSAGE_HEADER_LEN, LogCode, LogCodeConversionError,

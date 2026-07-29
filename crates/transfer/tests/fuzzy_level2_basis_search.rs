@@ -75,7 +75,6 @@ fn fuzzy_level2_finds_basis_in_reference_directory() {
         checksum_length: NonZeroU8::new(16).unwrap(),
         checksum_algorithm: signature::SignatureAlgorithm::Md4,
         whole_file: false,
-        compat_flags: None,
     };
 
     let result = find_basis_file_with_config(&config);
@@ -135,7 +134,6 @@ fn fuzzy_level1_does_not_search_reference_directories() {
         checksum_length: NonZeroU8::new(16).unwrap(),
         checksum_algorithm: signature::SignatureAlgorithm::Md4,
         whole_file: false,
-        compat_flags: None,
     };
 
     let result = find_basis_file_with_config(&config);
@@ -198,7 +196,6 @@ fn fuzzy_level2_selects_best_match_across_reference_dirs() {
         checksum_length: NonZeroU8::new(16).unwrap(),
         checksum_algorithm: signature::SignatureAlgorithm::Md4,
         whole_file: false,
-        compat_flags: None,
     };
 
     let result = find_basis_file_with_config(&config);
@@ -254,7 +251,6 @@ fn fuzzy_level2_generates_valid_signature_from_basis() {
         checksum_length: NonZeroU8::new(16).unwrap(),
         checksum_algorithm: signature::SignatureAlgorithm::Md4,
         whole_file: false,
-        compat_flags: None,
     };
 
     let result = find_basis_file_with_config(&config);
@@ -313,7 +309,6 @@ fn fuzzy_level0_skips_search() {
         checksum_length: NonZeroU8::new(16).unwrap(),
         checksum_algorithm: signature::SignatureAlgorithm::Md4,
         whole_file: false,
-        compat_flags: None,
     };
 
     let result = find_basis_file_with_config(&config);
@@ -362,7 +357,6 @@ fn whole_file_bypasses_fuzzy_search() {
         checksum_length: NonZeroU8::new(16).unwrap(),
         checksum_algorithm: signature::SignatureAlgorithm::Md4,
         whole_file: true,
-        compat_flags: None,
     };
 
     let result = find_basis_file_with_config(&config);
@@ -413,7 +407,6 @@ fn fuzzy_basis_selection_emits_debug_fuzzy_line() {
         checksum_length: NonZeroU8::new(16).unwrap(),
         checksum_algorithm: signature::SignatureAlgorithm::Md4,
         whole_file: false,
-        compat_flags: None,
     };
 
     let result = find_basis_file_with_config(&config);
