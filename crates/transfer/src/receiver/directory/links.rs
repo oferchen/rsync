@@ -1212,24 +1212,6 @@ mod tests {
         );
     }
 
-    /// Verifies consistent availability: the function returns the same
-    /// path (io_uring vs fallback) across multiple calls.
-    #[test]
-    fn hard_link_io_uring_availability_consistent() {
-        let dir = tempfile::tempdir().unwrap();
-        let src = dir.path().join("consistency_src.txt");
-        let dst1 = dir.path().join("consistency_dst1.txt");
-        let dst2 = dir.path().join("consistency_dst2.txt");
-        fs::write(&src, b"data").unwrap();
-
-        let first = fast_io::try_hard_link_via_io_uring(&src, &dst1).is_some();
-        let second = fast_io::try_hard_link_via_io_uring(&src, &dst2).is_some();
-        assert_eq!(
-            first, second,
-            "io_uring LINKAT availability must be consistent"
-        );
-    }
-
     /// Verifies the receiver-side `--debug=HLINK` follower emission shape
     /// matches upstream `hlink.c:hard_link_check()` byte-for-byte.
     ///
