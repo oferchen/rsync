@@ -39,7 +39,7 @@ SUPPORT="${TESTS_DIR}/support.rs"
 
 # Lower this when a migration slice converts call sites to the guarded helpers.
 # It must never be raised.
-PENDING_CEILING=110
+PENDING_CEILING=77
 
 violations=0
 

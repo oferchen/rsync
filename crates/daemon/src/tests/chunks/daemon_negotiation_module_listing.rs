@@ -28,7 +28,7 @@ fn daemon_negotiation_module_list_sends_listing_directly() {
         ])
         .build();
 
-    let (mut stream, handle) = start_daemon_pending_no_detach(config, port, held_listener);
+    let (mut stream, handle) = start_daemon(config, port, held_listener);
     let mut reader = BufReader::new(stream.try_clone().expect("clone stream"));
 
     let mut line = String::new();
@@ -91,7 +91,7 @@ fn daemon_negotiation_module_list_respects_listable_flag() {
         ])
         .build();
 
-    let (mut stream, handle) = start_daemon_pending_no_detach(config, port, held_listener);
+    let (mut stream, handle) = start_daemon(config, port, held_listener);
     let mut reader = BufReader::new(stream.try_clone().expect("clone stream"));
 
     let mut line = String::new();
@@ -154,7 +154,7 @@ fn daemon_negotiation_module_list_includes_comments() {
         ])
         .build();
 
-    let (mut stream, handle) = start_daemon_pending_no_detach(config, port, held_listener);
+    let (mut stream, handle) = start_daemon(config, port, held_listener);
     let mut reader = BufReader::new(stream.try_clone().expect("clone stream"));
 
     let mut line = String::new();
@@ -197,7 +197,7 @@ fn daemon_negotiation_module_list_empty_when_no_modules() {
         ])
         .build();
 
-    let (mut stream, handle) = start_daemon_pending_no_detach(config, port, held_listener);
+    let (mut stream, handle) = start_daemon(config, port, held_listener);
     let mut reader = BufReader::new(stream.try_clone().expect("clone stream"));
 
     let mut line = String::new();

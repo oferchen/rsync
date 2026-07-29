@@ -62,7 +62,7 @@ fn daemon_negotiation_auth_challenge_is_unique_per_session() {
     // release the test's holding listener so the daemon's bind to the same
     // port succeeds (the held listener was only needed to reserve the port).
     drop(held_listener);
-    let handle = spawn_daemon_pending_no_detach(config);
+    let handle = spawn_daemon(config);
 
     let mut challenges = Vec::new();
     for _ in 0..2 {
@@ -154,7 +154,7 @@ fn daemon_negotiation_auth_denies_wrong_password() {
         ])
         .build();
 
-    let (mut stream, handle) = start_daemon_pending_no_detach(config, port, held_listener);
+    let (mut stream, handle) = start_daemon(config, port, held_listener);
     let mut reader = BufReader::new(stream.try_clone().expect("clone stream"));
 
     let mut line = String::new();
@@ -176,11 +176,16 @@ fn daemon_negotiation_auth_denies_wrong_password() {
         .strip_prefix("@RSYNCD: AUTHREQD ")
         .expect("challenge prefix");
 
-    // Compute digest with WRONG password
-    let mut hasher = Md5::new();
-    hasher.update(b"wrongpassword");
-    hasher.update(challenge.as_bytes());
-    let digest = STANDARD_NO_PAD.encode(hasher.finalize());
+    // Compute digest with WRONG password. The greeting offers sha512 first and
+    // upstream's server takes the first client-offered name it supports
+    // (compat.c:354 - `if (best == 1 || am_server) break;`), so the correctly
+    // negotiated digest over the wrong password isolates the password check as
+    // the reason for the refusal.
+    let digest = core::auth::compute_daemon_auth_response(
+        b"wrongpassword",
+        challenge,
+        DaemonAuthDigest::Sha512,
+    );
     let response = format!("alice {digest}\n");
 
     stream
@@ -246,7 +251,7 @@ fn daemon_negotiation_auth_denies_unknown_user() {
         ])
         .build();
 
-    let (mut stream, handle) = start_daemon_pending_no_detach(config, port, held_listener);
+    let (mut stream, handle) = start_daemon(config, port, held_listener);
     let mut reader = BufReader::new(stream.try_clone().expect("clone stream"));
 
     let mut line = String::new();
@@ -268,11 +273,12 @@ fn daemon_negotiation_auth_denies_unknown_user() {
         .strip_prefix("@RSYNCD: AUTHREQD ")
         .expect("challenge prefix");
 
-    // Compute digest with unknown user
-    let mut hasher = Md5::new();
-    hasher.update(b"password");
-    hasher.update(challenge.as_bytes());
-    let digest = STANDARD_NO_PAD.encode(hasher.finalize());
+    // Compute a correctly negotiated digest (sha512 leads the offered list;
+    // upstream's server takes the first client-offered name it supports,
+    // compat.c:354) for an unknown user, so the username lookup is the reason
+    // for the refusal.
+    let digest =
+        core::auth::compute_daemon_auth_response(b"password", challenge, DaemonAuthDigest::Sha512);
     let response = format!("bob {digest}\n");
 
     stream
@@ -329,7 +335,7 @@ fn daemon_negotiation_auth_skipped_for_unprotected_module() {
         ])
         .build();
 
-    let (mut stream, handle) = start_daemon_pending_no_detach(config, port, held_listener);
+    let (mut stream, handle) = start_daemon(config, port, held_listener);
     let mut reader = BufReader::new(stream.try_clone().expect("clone stream"));
 
     let mut line = String::new();
@@ -403,7 +409,7 @@ fn daemon_negotiation_auth_denies_empty_credentials() {
         ])
         .build();
 
-    let (mut stream, handle) = start_daemon_pending_no_detach(config, port, held_listener);
+    let (mut stream, handle) = start_daemon(config, port, held_listener);
     let mut reader = BufReader::new(stream.try_clone().expect("clone stream"));
 
     let mut line = String::new();
@@ -490,7 +496,7 @@ fn daemon_negotiation_auth_successful_sends_ok() {
         ])
         .build();
 
-    let (mut stream, handle) = start_daemon_pending_no_detach(config, port, held_listener);
+    let (mut stream, handle) = start_daemon(config, port, held_listener);
     let mut reader = BufReader::new(stream.try_clone().expect("clone stream"));
 
     let mut line = String::new();
@@ -512,11 +518,17 @@ fn daemon_negotiation_auth_successful_sends_ok() {
         .strip_prefix("@RSYNCD: AUTHREQD ")
         .expect("challenge prefix");
 
-    // Compute correct digest
-    let mut hasher = Md5::new();
-    hasher.update(b"secretpass");
-    hasher.update(challenge.as_bytes());
-    let digest = STANDARD_NO_PAD.encode(hasher.finalize());
+    // Compute the correct digest. The greeting offers sha512 first and
+    // upstream's server takes the first client-offered name it supports
+    // (compat.c:354 - `if (best == 1 || am_server) break;`), so the exchange
+    // is SHA-512. Verified against rsync 3.4.4: the same greeting and a
+    // sha512 response over `secretpass` + challenge yields `@RSYNCD: OK`,
+    // while an MD5 response is refused with `@ERROR: auth failed`.
+    let digest = core::auth::compute_daemon_auth_response(
+        b"secretpass",
+        challenge,
+        DaemonAuthDigest::Sha512,
+    );
     let response = format!("alice {digest}\n");
 
     stream

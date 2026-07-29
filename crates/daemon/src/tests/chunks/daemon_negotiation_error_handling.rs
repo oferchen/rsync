@@ -21,7 +21,7 @@ fn daemon_negotiation_error_unknown_module() {
         ])
         .build();
 
-    let (mut stream, handle) = start_daemon_pending_no_detach(config, port, held_listener);
+    let (mut stream, handle) = start_daemon(config, port, held_listener);
     let mut reader = BufReader::new(stream.try_clone().expect("clone"));
 
     let mut line = String::new();
@@ -75,7 +75,7 @@ fn daemon_negotiation_error_empty_module_request() {
         ])
         .build();
 
-    let (mut stream, handle) = start_daemon_pending_no_detach(config, port, held_listener);
+    let (mut stream, handle) = start_daemon(config, port, held_listener);
     let mut reader = BufReader::new(stream.try_clone().expect("clone"));
 
     let mut line = String::new();
@@ -136,7 +136,7 @@ fn daemon_negotiation_error_host_denied() {
         ])
         .build();
 
-    let (mut stream, handle) = start_daemon_pending_no_detach(config, port, held_listener);
+    let (mut stream, handle) = start_daemon(config, port, held_listener);
     let mut reader = BufReader::new(stream.try_clone().expect("clone"));
 
     let mut line = String::new();
@@ -200,7 +200,7 @@ fn daemon_negotiation_error_refused_options() {
         ])
         .build();
 
-    let (mut stream, handle) = start_daemon_pending_no_detach(config, port, held_listener);
+    let (mut stream, handle) = start_daemon(config, port, held_listener);
     let mut reader = BufReader::new(stream.try_clone().expect("clone"));
 
     let mut line = String::new();
@@ -283,7 +283,7 @@ fn daemon_negotiation_error_max_connections_exceeded() {
         ])
         .build();
 
-    let (mut stream1, handle) = start_daemon_pending_no_detach(config, port, held_listener);
+    let (mut stream1, handle) = start_daemon(config, port, held_listener);
 
     // First connection should succeed (up to the OK)
     let mut reader1 = BufReader::new(stream1.try_clone().expect("clone"));
@@ -358,7 +358,7 @@ fn daemon_negotiation_error_sanitizes_module_name_in_response() {
         ])
         .build();
 
-    let (mut stream, handle) = start_daemon_pending_no_detach(config, port, held_listener);
+    let (mut stream, handle) = start_daemon(config, port, held_listener);
     let mut reader = BufReader::new(stream.try_clone().expect("clone"));
 
     let mut line = String::new();
@@ -412,7 +412,7 @@ fn daemon_negotiation_error_no_exit_after_error() {
         ])
         .build();
 
-    let (mut stream, handle) = start_daemon_pending_no_detach(config, port, held_listener);
+    let (mut stream, handle) = start_daemon(config, port, held_listener);
     let mut reader = BufReader::new(stream.try_clone().expect("clone"));
 
     let mut line = String::new();
@@ -467,7 +467,7 @@ fn daemon_negotiation_error_connection_closed_early() {
         ])
         .build();
 
-    let (stream, handle) = start_daemon_pending_no_detach(config, port, held_listener);
+    let (stream, handle) = start_daemon(config, port, held_listener);
     let mut reader = BufReader::new(stream.try_clone().expect("clone"));
 
     let mut line = String::new();
@@ -501,7 +501,7 @@ fn daemon_negotiation_error_invalid_greeting_response() {
         ])
         .build();
 
-    let (mut stream, handle) = start_daemon_pending_no_detach(config, port, held_listener);
+    let (mut stream, handle) = start_daemon(config, port, held_listener);
     let mut reader = BufReader::new(stream.try_clone().expect("clone"));
 
     let mut line = String::new();
