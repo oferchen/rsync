@@ -439,21 +439,22 @@ fn ssh_rsync_path_not_found() {
     });
 }
 
-/// Verify that SSH stderr output is captured and included in the error message
-/// when a connection fails.
+/// Verify a failed SSH connection maps to the child's exit code without
+/// re-appending the child's stderr to the returned error message.
 ///
-/// This validates the fix from PR #3183: when `perform_handshake()` fails because
-/// the SSH process exited (e.g., "Connection refused"), the stderr from the SSH
-/// child must be captured via `wait_with_stderr()` and surfaced in the error
-/// message. Previously, stderr was lost because the error returned before the
-/// child was waited on.
+/// The SSH child's stderr (here "Connection refused") is streamed to our own
+/// stderr in real time by the aux-channel drain thread, mirroring upstream's
+/// inherited ssh fd 2 passthrough. The returned `rsync error:` line must NOT
+/// additionally embed that text under an `SSH stderr:` header - doing so
+/// printed every diagnostic twice. Live-stream visibility itself is covered by
+/// the binary-level test in `tests/ssh_stderr_no_double_print.rs`, which can
+/// capture the process's real stderr; here we assert the message-level
+/// non-duplication contract.
 ///
 /// The test uses a shell script as a fake SSH program that writes a known error
 /// to stderr and exits with code 255, simulating a connection-refused scenario.
-/// This avoids dependency on a running SSH server while exercising the full
-/// stderr capture pipeline through `run_server_over_ssh_connection`.
 #[test]
-fn ssh_stderr_visible_on_connection_failure() {
+fn ssh_stderr_not_reappended_to_error_message() {
     run_with_timeout(SSH_TIMEOUT, || {
         let temp = tempdir().expect("tempdir");
         let src_dir = temp.path().join("src");
@@ -496,15 +497,20 @@ fn ssh_stderr_visible_on_connection_failure() {
         let err = result.expect_err("connection with fake SSH should fail");
         let err_msg = err.to_string();
 
-        // The error message must contain the SSH stderr output so the user
-        // knows why the connection failed.
-        assert!(
-            err_msg.contains("Connection refused"),
-            "error message should contain SSH stderr 'Connection refused', got: {err_msg}"
+        // ssh exits 255; the returned diagnostic reports that raw code, tagged
+        // with the local role - never the invented "SSH stderr:" echo.
+        assert_eq!(
+            err.code().as_i32(),
+            255,
+            "ssh 255 must propagate, got: {err_msg}"
         );
         assert!(
-            err_msg.contains("SSH stderr:"),
-            "error message should contain 'SSH stderr:' prefix, got: {err_msg}"
+            !err_msg.contains("SSH stderr:"),
+            "captured ssh stderr must not be re-appended to the error line: {err_msg}"
+        );
+        assert!(
+            !err_msg.contains("Connection refused"),
+            "the live drain owns that line; it must not also ride the error: {err_msg}"
         );
     });
 }

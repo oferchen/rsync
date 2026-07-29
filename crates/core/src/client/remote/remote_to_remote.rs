@@ -301,20 +301,16 @@ fn run_bidirectional_relay(
             }
         })??;
 
-    // upstream: propagate the worst exit code from either child.
-    let (source_exit, source_stderr) = match source_handle.wait_with_stderr() {
-        Ok((status, stderr_bytes)) => (
-            super::ssh_transfer::map_child_exit_status(status),
-            stderr_bytes,
-        ),
-        Err(_) => (ExitCode::WaitChild, Vec::new()),
+    // upstream: propagate the worst exit code from either child. `wait()` joins
+    // each child's stderr drain (which already live-forwarded any diagnostics)
+    // and hands back only the exit status.
+    let source_exit = match source_handle.wait() {
+        Ok(status) => super::ssh_transfer::map_child_exit_status(status),
+        Err(_) => ExitCode::WaitChild,
     };
-    let (dest_exit, dest_stderr) = match dest_handle.wait_with_stderr() {
-        Ok((status, stderr_bytes)) => (
-            super::ssh_transfer::map_child_exit_status(status),
-            stderr_bytes,
-        ),
-        Err(_) => (ExitCode::WaitChild, Vec::new()),
+    let dest_exit = match dest_handle.wait() {
+        Ok(status) => super::ssh_transfer::map_child_exit_status(status),
+        Err(_) => ExitCode::WaitChild,
     };
 
     let worst_exit = if source_exit.as_i32() >= dest_exit.as_i32() {
@@ -324,16 +320,14 @@ fn run_bidirectional_relay(
     };
 
     if !worst_exit.is_success() {
-        let mut combined_stderr = source_stderr;
-        if !combined_stderr.is_empty() && !dest_stderr.is_empty() {
-            combined_stderr.push(b'\n');
-        }
-        combined_stderr.extend_from_slice(&dest_stderr);
-        let stderr_text = super::ssh_transfer::format_stderr_context(&combined_stderr);
-
+        // Each remote child's stderr is live-forwarded to our stderr by its
+        // SSH aux-channel drain (rsync_io::ssh drain_loop), mirroring upstream's
+        // inherited ssh fd2 passthrough. Re-appending the captured bytes here
+        // would print every diagnostic a second time, so the error line carries
+        // only the worst exit code's description.
         return Err(invalid_argument_error_typed(
             &format!(
-                "remote process exited with error: {}{stderr_text}",
+                "remote process exited with error: {}",
                 worst_exit.description()
             ),
             worst_exit,

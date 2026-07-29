@@ -280,7 +280,7 @@ fn map_server_transfer_error(error: std::io::Error, role: Role) -> ClientError {
     }
     if let Some(code) = remote_exit_code(&error) {
         let exit = ExitCode::from_i32(code).unwrap_or(ExitCode::PartialTransfer);
-        return remote_exit_error(exit, role, "");
+        return remote_exit_error(exit, role);
     }
     invalid_argument_error(&format!("transfer failed: {error}"), 23)
 }

@@ -213,11 +213,14 @@ pub(crate) fn invalid_argument_error_typed_with_role(
 /// rerr_name (log.c:903) - or "unexplained error" for an unknown raw code
 /// (log.c:904-905) - as `rsync error: <name> (code N) at ... [<role>=<ver>]`.
 /// The role is who_am_i() (rsync.c:823): the local process role, not "client".
-/// `context` carries any captured remote stderr and is appended verbatim.
+///
+/// Any stderr the remote/child wrote (genuine ssh-transport diagnostics or the
+/// remote rsync's own error lines) is streamed to our stderr in real time by
+/// the SSH aux-channel drain, mirroring upstream's inherited ssh fd2
+/// passthrough, so it is never re-appended here.
 #[cold]
-pub(crate) fn remote_exit_error(exit_code: ExitCode, role: Role, context: &str) -> ClientError {
-    let text = format!("{}{context}", exit_code.description());
-    let message = rsync_error!(exit_code.as_i32(), "{}", text).with_role(role);
+pub(crate) fn remote_exit_error(exit_code: ExitCode, role: Role) -> ClientError {
+    let message = rsync_error!(exit_code.as_i32(), "{}", exit_code.description()).with_role(role);
     ClientError::with_code(exit_code, message)
 }
 
@@ -954,7 +957,7 @@ mod tests {
         /// and the role from who_am_i() (rsync.c:823).
         #[test]
         fn remote_exit_error_renders_unexplained_error_with_sender_role() {
-            let error = remote_exit_error(ExitCode::Other(42), Role::Sender, "");
+            let error = remote_exit_error(ExitCode::Other(42), Role::Sender);
 
             assert_eq!(error.exit_code(), 42);
             assert_eq!(error.code(), ExitCode::Other(42));
@@ -979,7 +982,7 @@ mod tests {
         /// `log_exit()` for both winning-code paths.
         #[test]
         fn remote_exit_error_uses_receiver_role_and_named_rerr() {
-            let error = remote_exit_error(ExitCode::StreamIo, Role::Receiver, "");
+            let error = remote_exit_error(ExitCode::StreamIo, Role::Receiver);
             let rendered = error.to_string();
             assert!(
                 rendered.contains("error in rsync protocol data stream (code 12)"),
@@ -988,15 +991,20 @@ mod tests {
             assert!(rendered.contains("[receiver="), "missing role: {rendered}");
         }
 
-        /// Captured remote stderr context is appended after the rerr_name so
-        /// the leading upstream phrasing still matches.
+        /// The remote/child's stderr is live-forwarded by the SSH aux-channel
+        /// drain, never merged into this error line, so the rendered text is
+        /// exactly the rerr_name and role - no trailing stderr echo.
         #[test]
-        fn remote_exit_error_appends_stderr_context() {
-            let error = remote_exit_error(ExitCode::Other(42), Role::Sender, ": boom");
+        fn remote_exit_error_never_appends_stderr_context() {
+            let error = remote_exit_error(ExitCode::Other(42), Role::Sender);
             let rendered = error.to_string();
             assert!(
-                rendered.contains("unexplained error: boom (code 42)"),
-                "context must trail the rerr_name: {rendered}"
+                rendered.contains("unexplained error (code 42)"),
+                "rerr_name must stand alone: {rendered}"
+            );
+            assert!(
+                !rendered.contains("SSH stderr"),
+                "captured ssh stderr must not be re-appended: {rendered}"
             );
         }
 

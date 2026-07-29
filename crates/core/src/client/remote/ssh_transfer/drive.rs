@@ -28,9 +28,7 @@ use super::super::implied_source::implied_source_args_for_pull;
 use super::super::invocation::{RemoteOperands, RemoteRole, TransferSpec, determine_transfer_role};
 use super::super::itemize_sink::ItemizeEventSink;
 use super::connection::build_ssh_connection;
-use super::exit_status::{
-    convert_server_stats_to_summary, format_stderr_context, map_child_exit_status,
-};
+use super::exit_status::{convert_server_stats_to_summary, map_child_exit_status};
 use super::parse::{parse_remote_operands, parse_single_remote, remote_operand_source_paths};
 use super::progress::ServerProgressAdapter;
 use super::server_config::{build_server_config_for_generator, build_server_config_for_receiver};
@@ -345,12 +343,16 @@ fn run_server_over_ssh_connection(
             // failure exiting 255) must survive rather than be masked by the
             // handshake error.
             drop(writer);
-            let (child_exit, stderr_text) = match child_handle.wait_with_stderr() {
-                Ok((status, stderr_bytes)) => (
-                    map_child_exit_status(status),
-                    format_stderr_context(&stderr_bytes),
-                ),
-                Err(_) => (ExitCode::WaitChild, String::new()),
+            // Genuine ssh-transport diagnostics on the child's stderr (auth
+            // failures, "connection refused", "command not found") are already
+            // streamed to our stderr in real time by the aux-channel drain
+            // thread (rsync_io::ssh drain_loop), mirroring upstream's inherited
+            // ssh fd2 passthrough. `wait()` joins that drain so the output is
+            // flushed before we build the error; re-appending the captured
+            // bytes here would print every line a second time.
+            let child_exit = match child_handle.wait() {
+                Ok(status) => map_child_exit_status(status),
+                Err(_) => ExitCode::WaitChild,
             };
 
             // upstream: io.c:232 whine_about_eof() maps an unexpected EOF
@@ -374,14 +376,14 @@ fn run_server_over_ssh_connection(
                 // the final `rsync error:` line reports that winning code by its
                 // rerr_name, or "unexplained error" for an unknown raw code
                 // (log.c:903-905), not the EOF whine text.
-                return Err(remote_exit_error(child_exit, local_role, &stderr_text));
+                return Err(remote_exit_error(child_exit, local_role));
             }
             let detail = if base == ExitCode::StreamIo {
                 // upstream: io.c:228-232 - the EOF whine omits the underlying
                 // error and reports the byte count received so far.
-                format!("connection unexpectedly closed (0 bytes received so far){stderr_text}")
+                "connection unexpectedly closed (0 bytes received so far)".to_string()
             } else {
-                format!("handshake failed: {e}{stderr_text}")
+                format!("handshake failed: {e}")
             };
             return Err(invalid_argument_error_typed_with_role(
                 &detail, base, local_role,
@@ -441,13 +443,14 @@ fn run_server_over_ssh_connection(
 
     let collected_events = itemize_sink.take_events();
 
-    // upstream: main.c wait_process_with_flush() - wait for child and map status.
-    let (child_exit_code, stderr_text) = match child_handle.wait_with_stderr() {
-        Ok((status, stderr_bytes)) => {
-            let stderr_text = format_stderr_context(&stderr_bytes);
-            (map_child_exit_status(status), stderr_text)
-        }
-        Err(_) => (ExitCode::WaitChild, String::new()),
+    // upstream: main.c wait_process_with_flush() - wait for child and map
+    // status. The child's stderr was live-forwarded by the aux-channel drain
+    // thread (see the handshake-failure path above); `wait()` joins that drain
+    // so it is flushed before we build the final error. We take only the exit
+    // status - re-appending the captured stderr would double-print it.
+    let child_exit_code = match child_handle.wait() {
+        Ok(status) => map_child_exit_status(status),
+        Err(_) => ExitCode::WaitChild,
     };
 
     match transfer_result {
@@ -458,16 +461,16 @@ fn run_server_over_ssh_connection(
             } else {
                 // upstream: log.c:912 log_exit() renders the winning child code
                 // by its rerr_name tagged with the local role, not "client".
-                Err(remote_exit_error(child_exit_code, local_role, &stderr_text))
+                Err(remote_exit_error(child_exit_code, local_role))
             }
         }
         Err(transfer_error) => {
             let transfer_exit = ExitCode::from_io_error(&transfer_error);
             if child_exit_code.as_i32() > transfer_exit.as_i32() {
-                Err(remote_exit_error(child_exit_code, local_role, &stderr_text))
+                Err(remote_exit_error(child_exit_code, local_role))
             } else {
                 Err(invalid_argument_error(
-                    &format!("transfer failed: {transfer_error}{stderr_text}"),
+                    &format!("transfer failed: {transfer_error}"),
                     transfer_exit.as_i32(),
                 ))
             }
