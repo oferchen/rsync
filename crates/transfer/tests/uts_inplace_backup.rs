@@ -39,7 +39,7 @@ use std::path::Path;
 
 use filetime::{FileTime, set_file_mtime};
 use tempfile::TempDir;
-use test_support::{OcRsyncCliRunner, require_binary};
+use test_support::{OcRsyncCliRunner, require_binaries};
 
 /// Backdate `path` well before the freshly written source so rsync's
 /// quick-check (matching size + mtime) never short-circuits the transfer.
@@ -71,9 +71,7 @@ fn slash(path: &Path) -> std::ffi::OsString {
 /// backup line.
 #[test]
 fn inplace_backup_copies_original_and_preserves_dest_inode() {
-    if !require_binary("oc-rsync") {
-        return;
-    }
+    require_binaries!("oc-rsync");
     let root: TempDir = tempfile::tempdir().expect("tempdir");
     let base = root.path();
     let from = base.join("from");
@@ -131,9 +129,7 @@ fn inplace_backup_copies_original_and_preserves_dest_inode() {
 /// original.
 #[test]
 fn inplace_whole_file_backup_preserves_dest_inode() {
-    if !require_binary("oc-rsync") {
-        return;
-    }
+    require_binaries!("oc-rsync");
     let root: TempDir = tempfile::tempdir().expect("tempdir");
     let base = root.path();
     let from = base.join("from");
@@ -187,9 +183,7 @@ fn inplace_whole_file_backup_preserves_dest_inode() {
 /// preserved.
 #[test]
 fn inplace_backup_dir_relocates_copy_and_preserves_inode() {
-    if !require_binary("oc-rsync") {
-        return;
-    }
+    require_binaries!("oc-rsync");
     let root: TempDir = tempfile::tempdir().expect("tempdir");
     let base = root.path();
     let from = base.join("from");
@@ -242,9 +236,7 @@ fn inplace_backup_dir_relocates_copy_and_preserves_inode() {
 /// behaviour is specific to `--inplace` and must not leak into the default path.
 #[test]
 fn backup_without_inplace_changes_dest_inode() {
-    if !require_binary("oc-rsync") {
-        return;
-    }
+    require_binaries!("oc-rsync");
     let root: TempDir = tempfile::tempdir().expect("tempdir");
     let base = root.path();
     let from = base.join("from");

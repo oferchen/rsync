@@ -45,7 +45,7 @@ use std::fs;
 use std::os::unix::fs::PermissionsExt;
 use std::path::Path;
 
-use test_support::{OcRsyncCliRunner, require_binary};
+use test_support::{OcRsyncCliRunner, require_binaries, test_name};
 
 /// Low 12 permission bits (`0o7777`) of `path`, following the entry itself.
 fn mode_bits(path: &Path) -> u32 {
@@ -84,9 +84,7 @@ fn running_as_root() -> bool {
 /// - `dir2`: 0770 -> `a+rX` -> 0775; `D+w` keeps group/other write (0775).
 #[test]
 fn chmod_strip_setid_and_add_rx_dir_write() {
-    if !require_binary("oc-rsync") {
-        return;
-    }
+    require_binaries!("oc-rsync");
     let root = tempfile::tempdir().expect("tempdir");
     let from = root.path().join("from");
     let to = root.path().join("to");
@@ -142,9 +140,7 @@ fn chmod_strip_setid_and_add_rx_dir_write() {
 /// - `foo`: directory untouched by the `F`-only chmod -> 0755.
 #[test]
 fn chmod_file_only_clears_world_execute() {
-    if !require_binary("oc-rsync") {
-        return;
-    }
+    require_binaries!("oc-rsync");
     let root = tempfile::tempdir().expect("tempdir");
     let from = root.path().join("from");
     let to = root.path().join("to");
@@ -191,7 +187,9 @@ fn chmod_file_only_clears_world_execute() {
 /// script must observe, not silently succeed.
 #[test]
 fn chmod_transfer_root_self_locks_without_owner_execute() {
-    if !require_binary("oc-rsync") || running_as_root() {
+    require_binaries!("oc-rsync");
+    if running_as_root() {
+        eprintln!("SKIP {}: requires a non-root user", test_name!());
         return;
     }
     for (spec, expected_mode) in [("ug=rw", 0o665u32), ("a=r,g=w", 0o424), ("u=r", 0o455)] {
@@ -252,7 +250,9 @@ fn chmod_transfer_root_self_locks_without_owner_execute() {
 /// leaves it at 0o455 (owner not writable, strict mode restored).
 #[test]
 fn chmod_subdir_owner_writable_regains_execute() {
-    if !require_binary("oc-rsync") || running_as_root() {
+    require_binaries!("oc-rsync");
+    if running_as_root() {
+        eprintln!("SKIP {}: requires a non-root user", test_name!());
         return;
     }
     for (spec, expected_mode) in [("ug=rw", 0o765u32), ("u=r", 0o455)] {

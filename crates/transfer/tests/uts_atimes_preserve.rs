@@ -36,7 +36,7 @@ use std::fs;
 use std::path::Path;
 use std::time::{Duration, SystemTime};
 
-use test_support::{OcRsyncCliRunner, require_binary};
+use test_support::{OcRsyncCliRunner, require_binaries};
 
 /// Fixed source atime, matching the spirit of upstream's
 /// `touch -a -t 200102031717.42` (2001-02-03 17:17:42 UTC = 981_213_462).
@@ -67,9 +67,7 @@ fn atime_secs(path: &Path) -> i64 {
 // upstream: --atimes restores st_atime on the receiver
 #[test]
 fn atimes_flag_preserves_source_access_time() {
-    if !require_binary("oc-rsync") {
-        return;
-    }
+    require_binaries!("oc-rsync");
     let root = tempfile::tempdir().expect("tempdir");
     let from = root.path().join("from");
     let to = root.path().join("to");

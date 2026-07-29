@@ -45,7 +45,7 @@ use std::fs;
 use std::path::Path;
 
 use tempfile::TempDir;
-use test_support::{OcRsyncCliRunner, require_binary};
+use test_support::{OcRsyncCliRunner, require_binaries};
 
 /// Build the shared source/destination fixture used by both legs.
 ///
@@ -85,9 +85,7 @@ fn slash(p: &Path) -> std::ffi::OsString {
 /// exist at the destination, and must not create anything on disk.
 #[test]
 fn ignore_non_existing_dry_run_is_quiet_and_touches_nothing() {
-    if !require_binary("oc-rsync") {
-        return;
-    }
+    require_binaries!("oc-rsync");
     let root = setup();
     let from = root.path().join("from");
     let to = root.path().join("to");
@@ -126,9 +124,7 @@ fn ignore_non_existing_dry_run_is_quiet_and_touches_nothing() {
 /// directory is dry-missing at the destination.
 #[test]
 fn delete_after_dry_run_still_itemizes_deletion() {
-    if !require_binary("oc-rsync") {
-        return;
-    }
+    require_binaries!("oc-rsync");
     let root = setup();
     let from = root.path().join("from");
     let to = root.path().join("to");

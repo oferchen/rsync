@@ -42,7 +42,7 @@
 use std::fs;
 use std::path::Path;
 
-use test_support::{OcRsyncCliRunner, require_binary};
+use test_support::{OcRsyncCliRunner, require_binaries};
 
 /// Trailing-slash form so rsync copies a directory's contents.
 fn slash(p: &Path) -> std::ffi::OsString {
@@ -56,9 +56,7 @@ fn slash(p: &Path) -> std::ffi::OsString {
 // upstream: --delay-updates stages under .~tmp~ then renames at finish
 #[test]
 fn delay_updates_atomic_rename_and_cleanup() {
-    if !require_binary("oc-rsync") {
-        return;
-    }
+    require_binaries!("oc-rsync");
     let root = tempfile::tempdir().expect("tempdir");
     let from = root.path().join("from");
     let to = root.path().join("to");

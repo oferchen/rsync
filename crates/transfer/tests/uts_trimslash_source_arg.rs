@@ -48,7 +48,7 @@ use std::fs;
 use std::path::Path;
 
 use tempfile::TempDir;
-use test_support::{OcRsyncCliRunner, require_binary};
+use test_support::{OcRsyncCliRunner, require_binaries};
 
 /// Build a `src` dir containing a single nested file, so the contents-vs-dir
 /// distinction is observable purely from which directory names appear in dest.
@@ -87,9 +87,7 @@ fn with_slashes(path: &Path, n: usize) -> std::ffi::OsString {
 
 #[test]
 fn trailing_slashes_collapse_to_single_slash_semantics() {
-    if !require_binary("oc-rsync") {
-        return;
-    }
+    require_binaries!("oc-rsync");
     let root: TempDir = tempfile::tempdir().expect("tempdir");
     let base = root.path();
     let src = build_src(base);

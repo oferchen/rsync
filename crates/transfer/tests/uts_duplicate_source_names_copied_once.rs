@@ -25,16 +25,14 @@
 
 use std::fs;
 
-use test_support::{OcRsyncCliRunner, create_tempdir, require_binary};
+use test_support::{OcRsyncCliRunner, create_tempdir, require_binaries};
 
 /// The same source directory repeated many times on the command line must
 /// still copy each contained file exactly once - both on disk and in the
 /// verbose transfer log.
 #[test]
 fn repeated_source_directory_copies_each_file_exactly_once() {
-    if !require_binary("oc-rsync") {
-        return;
-    }
+    require_binaries!("oc-rsync");
 
     let tmp = create_tempdir();
     let from = tmp.path().join("from");

@@ -51,7 +51,7 @@
 use std::fs;
 use std::path::Path;
 
-use test_support::{OcRsyncCliRunner, require_binary};
+use test_support::{OcRsyncCliRunner, require_binaries};
 
 /// Trailing-slash form so rsync copies a directory's contents.
 fn slash(p: &Path) -> std::ffi::OsString {
@@ -115,9 +115,7 @@ fn seed_fuzzy_pair(root: &Path) -> (std::path::PathBuf, std::path::PathBuf, u64)
 // upstream: generator.c find_fuzzy() basis selection
 #[test]
 fn fuzzy_local_reuses_differently_named_basis() {
-    if !require_binary("oc-rsync") {
-        return;
-    }
+    require_binaries!("oc-rsync");
     let root = tempfile::tempdir().expect("tempdir");
     let (from, to, size) = seed_fuzzy_pair(root.path());
 
@@ -159,9 +157,7 @@ fn fuzzy_local_reuses_differently_named_basis() {
 // upstream: generator.c - no fuzzy basis is consulted without --fuzzy
 #[test]
 fn without_fuzzy_local_resends_whole_file_as_literal() {
-    if !require_binary("oc-rsync") {
-        return;
-    }
+    require_binaries!("oc-rsync");
     let root = tempfile::tempdir().expect("tempdir");
     let (from, to, size) = seed_fuzzy_pair(root.path());
 

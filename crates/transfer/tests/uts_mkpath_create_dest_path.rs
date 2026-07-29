@@ -49,7 +49,7 @@ use std::fs;
 use std::path::Path;
 
 use tempfile::TempDir;
-use test_support::{OcRsyncCliRunner, require_binary};
+use test_support::{OcRsyncCliRunner, require_binaries};
 
 /// Trailing-slash form of a path (as an `OsString` argument).
 fn slash(path: &Path) -> std::ffi::OsString {
@@ -76,9 +76,7 @@ where
 
 #[test]
 fn mkpath_creates_missing_destination_prefix() {
-    if !require_binary("oc-rsync") {
-        return;
-    }
+    require_binaries!("oc-rsync");
     let root: TempDir = tempfile::tempdir().expect("tempdir");
     let base = root.path();
 

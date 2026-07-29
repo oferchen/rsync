@@ -50,7 +50,7 @@ use std::fs;
 use std::path::Path;
 
 use tempfile::TempDir;
-use test_support::{DirDiff, DirDiffOptions, OcRsyncCliRunner, require_binary};
+use test_support::{DirDiff, DirDiffOptions, OcRsyncCliRunner, require_binaries};
 
 /// Write `contents` to `path`, creating parent directories as needed.
 fn write(path: &Path, contents: &str) {
@@ -116,9 +116,7 @@ fn slash(p: &Path) -> std::ffi::OsString {
 
 #[test]
 fn multiple_sources_merge_into_one_destination() {
-    if !require_binary("oc-rsync") {
-        return;
-    }
+    require_binaries!("oc-rsync");
     let root: TempDir = tempfile::tempdir().expect("tempdir");
     let base = root.path();
     build_sources(base);
