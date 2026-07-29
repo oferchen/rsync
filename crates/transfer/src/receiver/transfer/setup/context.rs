@@ -61,7 +61,10 @@ impl ReceiverContext {
     ///
     /// - `main.c:1342-1343` - client receiver activates multiplex at protocol >= 23
     /// - `main.c:1167-1168` - server receiver activates multiplex at protocol >= 30
-    pub(in crate::receiver) fn setup_transfer<R: Read, W: io::Write + ?Sized>(
+    pub(in crate::receiver) fn setup_transfer<
+        R: Read,
+        W: io::Write + crate::writer::MsgInfoSender + ?Sized,
+    >(
         &mut self,
         reader: crate::reader::ServerReader<R>,
         writer: &mut W,
@@ -166,7 +169,71 @@ impl ReceiverContext {
         let file_count = self.receive_file_list(&mut reader)?;
 
         let (file_count, setup) = self.build_pipeline_setup(file_count)?;
+
+        // upstream: main.c:807-808 - the receiver prints `created directory
+        // <dest>` right after the file list arrives, before generate_files()
+        // drives the per-entry itemize rows. Emit it here, after the dest-root
+        // pre-flight mkdir recorded `dest_root_created` and before the drivers
+        // enter their transfer loops, so the notice precedes the per-file
+        // output on every driver (`run_sync`, `run_pipelined`,
+        // `run_pipelined_incremental`).
+        self.announce_created_directory(writer, &setup.dest_dir)?;
+
         Ok((reader, file_count, setup))
+    }
+
+    /// Emits upstream's `created directory <dest>` notice when the receiver
+    /// pre-flight-mkdir'd the destination root.
+    ///
+    /// Routing is delegated to [`emit_info_line`](ReceiverContext::emit_info_line):
+    /// a client-mode receiver (pull) writes to its own stdout, while a
+    /// server-mode receiver (the SSH/daemon side of a push) frames the line as
+    /// `MSG_INFO` so the pushing client renders it - exactly as upstream's
+    /// `rprintf(FINFO, ...)` routes through `rwrite()`.
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `main.c:807-808` - `if (INFO_GTE(NAME, 1) || stdout_format_has_i)
+    ///   rprintf(FINFO, "created directory %s\n", dest_path)`. The print
+    ///   precedes the `dry_run++` at `main.c:810`, so a dry run still reports
+    ///   the directory it would create.
+    /// - `main.c:788-789` - `*cp = '\0'` lops the operand's trailing slash
+    ///   before the print, so `dest/` is reported as `dest`.
+    ///
+    /// The gate reads the `NAME` info category (seeded on the server receiver
+    /// from the client's forwarded `-v`/`--info` by
+    /// `cli::frontend::server::run`) rather than the raw verbose count, so
+    /// `--info=name0` suppresses the notice even under `-v`. The itemize half of
+    /// the OR is `stdout_format_has_i` (`out_format_forwards_i`): `-i` sets it
+    /// via the default `"%i %n%L"` format, a custom `--out-format` carrying
+    /// `%i` sets it without `-i`, and a `%i`-less `--out-format` clears it even
+    /// under `-i`. The notice covers the destination root only; alt-basis dirs
+    /// (`--copy-dest`/`--link-dest`/`--compare-dest`) never trigger it because
+    /// `get_local_name()` only mkdir's `dest_path`.
+    fn announce_created_directory<W: crate::writer::MsgInfoSender + ?Sized>(
+        &self,
+        writer: &mut W,
+        dest_dir: &std::path::Path,
+    ) -> io::Result<()> {
+        if !self.dest_root_created {
+            return Ok(());
+        }
+        if !(logging::info_gte(logging::InfoFlag::Name, 1)
+            || self.config.flags.info_flags.out_format_forwards_i)
+        {
+            return Ok(());
+        }
+        // upstream lops the operand's single trailing slash (main.c:788-789);
+        // mirror that here so `dest/` renders as `dest`, while keeping a bare
+        // separator (a root path) intact.
+        let shown = dest_dir.to_string_lossy();
+        let trimmed = shown.trim_end_matches('/');
+        let trimmed = if trimmed.is_empty() {
+            shown.as_ref()
+        } else {
+            trimmed
+        };
+        self.emit_info_line(writer, &format!("created directory {trimmed}\n"))
     }
 
     /// Whether this receiver prints the `receiving incremental file list` banner
@@ -358,34 +425,14 @@ impl ReceiverContext {
         self.dest_root_created = created_dest_root;
         if created_dest_root {
             debug_log!(Recv, 1, "created destination root {}", dest_dir.display());
-            // upstream: main.c:807-808 - `rprintf(FINFO, "created directory %s\n", dest_path)`
-            // gated on `INFO_GTE(NAME, 1) || stdout_format_has_i`. The notice
-            // is for the receiver's destination root only; alt-basis dirs
-            // (`--copy-dest`, `--link-dest`, `--compare-dest`) never produce
-            // this message because upstream's get_local_name() only mkdir's
-            // `dest_path`, not the ref_dirs.
-            //
-            // Restrict the println to client-mode runs: server-mode receivers
-            // (SSH/daemon) share stdout with the rsync multiplex stream, so a
-            // raw `println!` would inject "created directory ..." bytes into
-            // the wire protocol and corrupt the transfer (this is the
-            // alt-dest interop regression). The client-side
-            // `cli::frontend::progress::render` path already emits this
-            // notice for local-mode transfers via the local-copy summary, so
-            // gating here on client_mode keeps the upstream itemize.test
-            // golden satisfied without breaking SSH/daemon paths.
-            //
-            // The itemize half of the gate is `stdout_format_has_i`
-            // (`out_format_forwards_i`), not the `-i` flag: `-i` sets it via the
-            // default `"%i %n%L"` format, a custom `--out-format` carrying `%i`
-            // sets it without `-i`, and a `%i`-less `--out-format` clears it even
-            // under `-i` - matching upstream, which drops the notice there.
-            if self.config.flags.info_flags.out_format_forwards_i
-                && self.config.connection.client_mode
-            {
-                println!("created directory {}", dest_dir.display());
-            }
         }
+        // The `created directory <dest>` notice is emitted by
+        // `announce_created_directory` from `setup_transfer`, where the
+        // `MSG_INFO`-capable writer is in scope. Deferring it there lets a
+        // server-mode (SSH/daemon) receiver forward the notice to the pushing
+        // client over the multiplex stream instead of corrupting that stream
+        // with a raw `println!`. See that method for the upstream citation and
+        // the `INFO_GTE(NAME, 1) || stdout_format_has_i` gate.
 
         // UTS-SLDB: when the dest root is a symlink that resolved to a real
         // directory via the stat path in ensure_dest_root_exists, lock the
@@ -838,5 +885,145 @@ mod merge_chmod_tests {
         let client = ChmodModifiers::parse("F640").expect("parse");
         let merged = merge_chmod(Some(daemon), Some(client)).expect("some");
         assert_eq!(merged.apply(0o600, regular_file_type()) & 0o777, 0o640);
+    }
+}
+
+/// A remote push creates the destination root on the server-mode receiver, and
+/// upstream reports it with `created directory <dest>` via `rprintf(FINFO, ...)`
+/// (main.c:807-808). These tests pin that the server receiver frames the notice
+/// as `MSG_INFO` (so the pushing client renders it) exactly when upstream's
+/// `INFO_GTE(NAME, 1) || stdout_format_has_i` gate is satisfied, and stays
+/// silent otherwise.
+#[cfg(test)]
+mod created_directory_notice_tests {
+    use std::io;
+    use std::path::Path;
+
+    use logging::{InfoFlag, VerbosityConfig};
+    use protocol::ProtocolVersion;
+
+    use crate::config::ServerConfig;
+    use crate::flags::ParsedServerFlags;
+    use crate::handshake::HandshakeResult;
+    use crate::receiver::ReceiverContext;
+    use crate::role::ServerRole;
+
+    /// Captures the `MSG_INFO` frames a server-mode receiver emits, standing in
+    /// for the pushing client's multiplex reader.
+    #[derive(Default)]
+    struct CaptureWriter {
+        info: Vec<String>,
+    }
+
+    impl io::Write for CaptureWriter {
+        fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+            Ok(buf.len())
+        }
+        fn flush(&mut self) -> io::Result<()> {
+            Ok(())
+        }
+    }
+
+    impl crate::writer::MsgInfoSender for CaptureWriter {
+        fn send_msg_info(&mut self, data: &[u8]) -> io::Result<()> {
+            self.info.push(String::from_utf8_lossy(data).into_owned());
+            Ok(())
+        }
+    }
+
+    fn handshake() -> HandshakeResult {
+        HandshakeResult {
+            protocol: ProtocolVersion::try_from(32u8).unwrap(),
+            buffered: Vec::new(),
+            compat_exchanged: false,
+            client_args: None,
+            io_timeout: None,
+            negotiated_algorithms: None,
+            compat_flags: None,
+            checksum_seed: 0,
+        }
+    }
+
+    /// Builds a server-mode (push) receiver whose pre-flight mkdir created the
+    /// destination root, with an optional `%i`-bearing out-format.
+    fn server_ctx(created: bool, out_format_forwards_i: bool) -> ReceiverContext {
+        let mut config = ServerConfig {
+            role: ServerRole::Receiver,
+            protocol: ProtocolVersion::try_from(32u8).unwrap(),
+            flags: ParsedServerFlags::default(),
+            ..Default::default()
+        };
+        config.flags.info_flags.out_format_forwards_i = out_format_forwards_i;
+        // Server-mode receiver: the notice must route through MSG_INFO, not the
+        // shared stdout stream.
+        config.connection.client_mode = false;
+
+        let hs = handshake();
+        let mut ctx = ReceiverContext::new_for_test(&hs, config);
+        ctx.dest_root_created = created;
+        ctx
+    }
+
+    fn run(ctx: &ReceiverContext, dest: &str) -> Vec<String> {
+        let mut writer = CaptureWriter::default();
+        ctx.announce_created_directory(&mut writer, Path::new(dest))
+            .expect("announce");
+        writer.info
+    }
+
+    /// upstream: main.c:807-808 - `-v` raises `INFO_NAME` to 1, so a push that
+    /// created the dest root reports `created directory <dest>` as a `MSG_INFO`
+    /// frame. The trailing slash of the `dest/` operand is lopped
+    /// (main.c:788-789), so `dst/` renders as `dst`.
+    #[test]
+    fn push_dash_v_reports_created_directory_via_msg_info() {
+        logging::init(VerbosityConfig::from_verbose_level(1));
+        let ctx = server_ctx(true, false);
+        assert_eq!(
+            run(&ctx, "dst/"),
+            vec!["created directory dst\n".to_string()]
+        );
+    }
+
+    /// upstream: main.c:807-808 - without `-v` and without `%i` in the
+    /// out-format, `INFO_GTE(NAME, 1) || stdout_format_has_i` is false, so the
+    /// notice is suppressed even though the dest root was created.
+    #[test]
+    fn push_without_name_or_itemize_stays_silent() {
+        logging::init(VerbosityConfig::from_verbose_level(0));
+        let ctx = server_ctx(true, false);
+        assert!(run(&ctx, "dst/").is_empty());
+    }
+
+    /// upstream: main.c:807-808 - the `stdout_format_has_i` half of the OR fires
+    /// the notice under a `%i`-bearing out-format even without `-v`.
+    #[test]
+    fn push_with_itemize_reports_even_without_verbose() {
+        logging::init(VerbosityConfig::from_verbose_level(0));
+        let ctx = server_ctx(true, true);
+        assert_eq!(
+            run(&ctx, "dst"),
+            vec!["created directory dst\n".to_string()]
+        );
+    }
+
+    /// upstream: main.c:807-808 - `--info=name0` drops `INFO_NAME` to 0 even
+    /// under `-v`, suppressing the notice, matching the local-copy gate.
+    #[test]
+    fn push_info_name0_suppresses_notice_under_verbose() {
+        let mut cfg = VerbosityConfig::from_verbose_level(1);
+        cfg.info.set(InfoFlag::Name, 0);
+        logging::init(cfg);
+        let ctx = server_ctx(true, false);
+        assert!(run(&ctx, "dst/").is_empty());
+    }
+
+    /// When the dest root already existed, upstream never reaches the mkdir
+    /// branch, so no notice is emitted regardless of verbosity.
+    #[test]
+    fn preexisting_dest_root_emits_nothing() {
+        logging::init(VerbosityConfig::from_verbose_level(1));
+        let ctx = server_ctx(false, false);
+        assert!(run(&ctx, "dst/").is_empty());
     }
 }
