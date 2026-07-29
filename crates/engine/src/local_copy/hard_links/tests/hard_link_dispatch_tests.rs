@@ -1,13 +1,17 @@
-//! Tests for the io_uring LINKAT dispatch in hardlink creation.
+//! Tests for hardlink creation dispatch through `fast_io::hard_link`.
 //!
-//! These tests verify that `fast_io::hard_link` works correctly regardless
-//! of whether io_uring handles the link or `std::fs::hard_link` does.
+//! `fast_io::hard_link` issues a direct `linkat(2)` / `link(2)` syscall on
+//! every platform - upstream's model (`hlink.c:hard_link_one()` ->
+//! `syscall.c:do_link_at()`). These tests verify the engine's link paths
+//! produce correct hardlinks through that direct-syscall entry point; the
+//! structure-level assertion that no io_uring ring is built per link lives
+//! in `fast_io::io_uring_ops`.
 
 use crate::local_copy::hard_links::{HardlinkApplyResult, HardlinkApplyTracker};
 use crate::local_copy::test_support;
 
 #[test]
-fn hard_link_via_io_uring_or_fallback_creates_link() {
+fn hard_link_direct_syscall_creates_link() {
     let temp = test_support::create_tempdir();
     let src = temp.path().join("linkat_src.txt");
     let dst = temp.path().join("linkat_dst.txt");
@@ -25,7 +29,7 @@ fn hard_link_via_io_uring_or_fallback_creates_link() {
 
 #[cfg(unix)]
 #[test]
-fn hard_link_via_io_uring_or_fallback_shares_inode() {
+fn hard_link_direct_syscall_shares_inode() {
     use std::os::unix::fs::MetadataExt;
 
     let temp = test_support::create_tempdir();
@@ -41,7 +45,7 @@ fn hard_link_via_io_uring_or_fallback_shares_inode() {
 }
 
 #[test]
-fn apply_follower_uses_io_uring_or_fallback() {
+fn apply_follower_links_via_direct_syscall() {
     let temp = test_support::create_tempdir();
     let leader = temp.path().join("leader_dispatch.txt");
     let follower = temp.path().join("follower_dispatch.txt");
@@ -59,7 +63,7 @@ fn apply_follower_uses_io_uring_or_fallback() {
 }
 
 #[test]
-fn resolve_deferred_uses_io_uring_or_fallback() {
+fn resolve_deferred_links_via_direct_syscall() {
     let temp = test_support::create_tempdir();
     let leader = temp.path().join("deferred_leader.txt");
     let follower1 = temp.path().join("deferred_f1.txt");
@@ -91,17 +95,4 @@ fn resolve_deferred_uses_io_uring_or_fallback() {
         std::fs::read_to_string(&follower2).unwrap(),
         "deferred content"
     );
-}
-
-#[test]
-fn try_hard_link_via_io_uring_returns_consistent_availability() {
-    let dir = test_support::create_tempdir();
-    let src = dir.path().join("probe_src.txt");
-    let dst1 = dir.path().join("probe_dst1.txt");
-    let dst2 = dir.path().join("probe_dst2.txt");
-    std::fs::write(&src, b"data").unwrap();
-
-    let first = fast_io::try_hard_link_via_io_uring(&src, &dst1).is_some();
-    let second = fast_io::try_hard_link_via_io_uring(&src, &dst2).is_some();
-    assert_eq!(first, second, "availability must be consistent");
 }

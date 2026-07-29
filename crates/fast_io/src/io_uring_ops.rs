@@ -3,9 +3,9 @@
 //!
 //! Each `try_*` function returns `Option<io::Result<_>>` so callers can
 //! distinguish "io_uring not available" (`None`) from "io_uring tried and
-//! returned an error" (`Some(Err(_))`). The combined [`hard_link`] helper
-//! folds the try-then-fallback pattern into a single call for the common
-//! case where the caller does not care which mechanism was used.
+//! returned an error" (`Some(Err(_))`). The [`hard_link`] helper is the
+//! deliberate exception: it issues the plain syscall directly because a
+//! per-call transient ring costs far more than the `linkat(2)` it wraps.
 
 use crate::io_uring::StatxResult;
 #[cfg(all(target_os = "linux", feature = "io_uring"))]
@@ -183,38 +183,27 @@ fn try_statx_batch_via_io_uring_impl(
     None
 }
 
-/// Creates a hard link from `src` to `dst`, trying io_uring first.
-///
-/// On Linux 5.15+ with io_uring `IORING_OP_LINKAT` support, the link is
-/// submitted as an asynchronous SQE on a transient ring, avoiding a
-/// synchronous `linkat(2)` syscall. On all other platforms, older kernels,
-/// or when the `io_uring` feature is disabled, falls back to
-/// [`std::fs::hard_link`].
+/// Creates a hard link from `src` to `dst` via a direct syscall.
 ///
 /// This is the recommended single entry point for hard-link creation across
-/// the codebase. It consolidates the try-io_uring-then-fallback pattern so
-/// callers do not need to handle the `Option` from
-/// [`try_hard_link_via_io_uring`] themselves.
+/// the codebase. It deliberately does NOT route through io_uring: the only
+/// available submission mode ([`try_hard_link_via_io_uring`]) builds a
+/// transient ring per call, and the ring setup/teardown (`io_uring_setup(2)`
+/// plus two `mmap(2)`/`munmap(2)` pairs) dwarfs the single cheap `linkat(2)`
+/// it wraps. On a 1900-hardlink local `-aH` copy that per-file churn was
+/// measured at 40% of total syscall time.
 ///
 /// # Errors
 ///
-/// Returns an error when both the io_uring path and the `std::fs::hard_link`
-/// fallback fail (e.g., `EEXIST`, `EACCES`, `EXDEV`).
+/// Returns the `std::fs::hard_link` error unchanged (e.g., `EEXIST`,
+/// `EACCES`, `EXDEV`).
 ///
 /// # Upstream reference
 ///
-/// Upstream rsync uses synchronous `link(2)` / `linkat(2)` for hardlink
-/// creation (`hlink.c`). The io_uring fast path is a latency optimisation.
+/// Upstream rsync uses a synchronous `linkat(2)` / `link(2)` for hardlink
+/// creation (`hlink.c:hard_link_one()` -> `syscall.c:do_link_at()`); this
+/// matches that model.
 pub fn hard_link(src: &std::path::Path, dst: &std::path::Path) -> std::io::Result<()> {
-    if let Some(result) = try_hard_link_via_io_uring(src, dst) {
-        return result;
-    }
-    logging::debug_log!(
-        Io,
-        2,
-        "io_uring LINKAT unavailable, falling back to std::fs::hard_link for {}",
-        dst.display()
-    );
     std::fs::hard_link(src, dst)
 }
 
@@ -480,6 +469,28 @@ mod hard_link_convenience_tests {
 
         let result = hard_link(&src, &dst);
         assert!(result.is_err(), "must fail when source does not exist");
+    }
+
+    /// Structure-level assertion for the direct-syscall path: `hard_link`
+    /// must never consult the io_uring LINKAT machinery, so the process-wide
+    /// support probe stays uninitialized after a link is created. Relies on
+    /// nextest's process-per-test model: nothing else in this process
+    /// initializes the probe.
+    #[cfg(all(target_os = "linux", feature = "io_uring"))]
+    #[test]
+    fn hard_link_does_not_touch_io_uring_probe() {
+        let dir = tempfile::tempdir().unwrap();
+        let src = dir.path().join("hl_probe_src.txt");
+        let dst = dir.path().join("hl_probe_dst.txt");
+        fs::write(&src, b"probe check").unwrap();
+
+        hard_link(&src, &dst).unwrap();
+
+        assert!(dst.exists(), "hard link must be created");
+        assert!(
+            !crate::io_uring::linkat::linkat_probe_initialized(),
+            "hard_link must take the direct syscall path, not io_uring LINKAT"
+        );
     }
 
     /// Verifies that writing to the source after hard-linking is visible

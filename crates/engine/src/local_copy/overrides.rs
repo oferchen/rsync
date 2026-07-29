@@ -51,10 +51,9 @@ where
 
 /// Creates a hard link from `source` to `destination`.
 ///
-/// On Linux 5.15+ with io_uring available, the link is submitted as an
-/// `IORING_OP_LINKAT` SQE instead of a synchronous `link(2)` syscall.
-/// Falls back to `std::fs::hard_link` on all other platforms or when the
-/// kernel lacks the opcode.
+/// Delegates to `fast_io::hard_link`, which issues a direct `linkat(2)` /
+/// `link(2)` syscall on every platform, matching upstream's
+/// `hlink.c:hard_link_one()` -> `syscall.c:do_link_at()`.
 pub(super) fn create_hard_link(source: &Path, destination: &Path) -> io::Result<()> {
     #[cfg(test)]
     if let Some(result) = HARD_LINK_OVERRIDE.with(|cell| {
