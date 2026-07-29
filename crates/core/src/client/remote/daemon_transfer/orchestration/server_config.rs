@@ -274,3 +274,46 @@ fn apply_common_daemon_config(
     }
     server_config.stop_at = config.stop_at();
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::client::SkipCompressList;
+
+    // WHY: `--skip-compress` on a `-z` sender must mirror upstream 3.4.4, where
+    // set_compression()'s per-file suffix lookup is compiled out (`#if 0`, "No
+    // compression algorithms currently allow mid-stream changing of the level.")
+    // and a non-daemon `--skip-compress` is discarded entirely: token.c:182 sets
+    // `f = ""` before building the match list, so the client sender never lowers
+    // its whole-stream deflate level. Even a bare `*` on the client side must NOT
+    // collapse the client sender's zlib stream to store - whole-stream store
+    // (`dont_compress_match_all`) is reachable ONLY through a daemon module's
+    // `dont compress = *` (token.c:206-211, applied server-side in loadparm). If a
+    // future change wired the client's own `--skip-compress=*` into
+    // `dont_compress_match_all`, every `-z --skip-compress=*` push would silently
+    // stop compressing, diverging from upstream's observable wire output. This
+    // pins that a client `-z --skip-compress=*` push keeps compression enabled and
+    // leaves whole-stream store off.
+    #[test]
+    fn client_skip_compress_match_all_never_stores_sender_stream() {
+        let config = ClientConfig::builder()
+            .compress(true)
+            .skip_compress(SkipCompressList::parse("*").expect("`*` parses"))
+            .skip_compress_spec(Some("*".to_owned()))
+            .build();
+
+        let server_config = build_server_config_for_generator(&config, &[], Vec::new())
+            .expect("generator config builds");
+
+        assert!(
+            server_config.flags.compress,
+            "a `-z` push must keep the sender compressing"
+        );
+        assert!(
+            !server_config.connection.dont_compress_match_all,
+            "a client `--skip-compress=*` must not collapse the sender's zlib \
+             stream to store (upstream token.c:182 discards it; whole-stream \
+             store is daemon `dont compress = *` only)"
+        );
+    }
+}
