@@ -142,6 +142,21 @@ fn open_source_mmap(path: &std::path::Path, use_noatime: bool) -> io::Result<fas
     fast_io::MmapReader::from_file(file)
 }
 
+/// Formats the sender-side re-lstat/remove failure diagnostic.
+///
+/// Mirrors upstream `sender.c:176-177`
+/// `rsyserr(FERROR_XFER, errno, "sender failed to %s %s", failed_op, fname)`:
+/// the path is emitted with a bare `%s`, never `full_fname()`, so it carries no
+/// surrounding quotes.
+fn sender_op_failure(op: &str, path: &Path, error: &io::Error) -> String {
+    format!(
+        "rsync: [sender] sender failed to {} {}: {}",
+        op,
+        path.display(),
+        engine::local_copy::upstream_io_error(error),
+    )
+}
+
 impl GeneratorContext {
     /// Writes one file's NDX + iflags (+ optional xattr response) header and the
     /// sum head that follows it.
@@ -1256,11 +1271,7 @@ impl GeneratorContext {
             // upstream: sender.c:151-153,176-177 - any other re-lstat failure is
             // rsyserr(FERROR_XFER, ...), setting got_xfer_error -> exit 23.
             Err(error) => {
-                eprintln!(
-                    "rsync: [sender] sender failed to re-lstat \"{}\": {}",
-                    source_path.display(),
-                    engine::local_copy::upstream_io_error(&error),
-                );
+                eprintln!("{}", sender_op_failure("re-lstat", source_path, &error));
                 return IOERR_GENERAL;
             }
         };
@@ -1296,11 +1307,7 @@ impl GeneratorContext {
             // upstream: sender.c:172-173,176-177 - rsyserr(FERROR_XFER, ...) on
             // unlink failure sets got_xfer_error -> exit 23.
             Err(error) => {
-                eprintln!(
-                    "rsync: [sender] sender failed to remove \"{}\": {}",
-                    source_path.display(),
-                    engine::local_copy::upstream_io_error(&error),
-                );
+                eprintln!("{}", sender_op_failure("remove", source_path, &error));
                 IOERR_GENERAL
             }
         }
@@ -1512,7 +1519,38 @@ mod parallel_delta_gate_tests {
 
 #[cfg(test)]
 mod sender_remove_guard_tests {
-    use super::{RecordedSourceIdentity, source_changed_since_flist, stat_identity};
+    use super::{
+        RecordedSourceIdentity, sender_op_failure, source_changed_since_flist, stat_identity,
+    };
+    use std::io;
+    use std::path::Path;
+
+    #[test]
+    fn re_lstat_failure_leaves_the_path_unquoted() {
+        // Output fidelity: upstream sender.c:176-177 emits the path with a bare
+        // %s, never full_fname(), so the diagnostic carries no surrounding
+        // quotes. This fails on the pre-fix code that wrapped the path in `"`.
+        let error = io::Error::from_raw_os_error(13);
+        let msg = sender_op_failure("re-lstat", Path::new("src/data.bin"), &error);
+        assert!(
+            msg.starts_with("rsync: [sender] sender failed to re-lstat src/data.bin: "),
+            "unexpected diagnostic: {msg}"
+        );
+        assert!(!msg.contains('"'), "path must not be quoted: {msg}");
+    }
+
+    #[test]
+    fn remove_failure_leaves_the_path_unquoted() {
+        // Same bare-%s contract as re-lstat: the "remove" op word is the only
+        // difference upstream, and the path is still emitted unquoted.
+        let error = io::Error::from_raw_os_error(13);
+        let msg = sender_op_failure("remove", Path::new("src/data.bin"), &error);
+        assert!(
+            msg.starts_with("rsync: [sender] sender failed to remove src/data.bin: "),
+            "unexpected diagnostic: {msg}"
+        );
+        assert!(!msg.contains('"'), "path must not be quoted: {msg}");
+    }
 
     fn recorded(size: u64, mtime: i64, mtime_nsec: u32) -> RecordedSourceIdentity {
         RecordedSourceIdentity {
