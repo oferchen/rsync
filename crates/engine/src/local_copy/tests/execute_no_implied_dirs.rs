@@ -6,7 +6,7 @@
 
 
 #[test]
-#[ignore] // TODO: Feature not fully implemented - currently creates directories implicitly
+#[ignore = "--no-implied-dirs not fully implemented; intermediate directories are still created implicitly"]
 fn no_implied_dirs_does_not_create_intermediate_directories() {
     let temp = tempdir().expect("tempdir");
     let source_root = temp.path().join("source");
