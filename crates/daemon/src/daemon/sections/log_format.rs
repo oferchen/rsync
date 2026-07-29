@@ -141,61 +141,6 @@ fn log_transfer(format: &str, ctx: &LogFormatContext<'_>, log_sink: &SharedLogSi
     log_message(log_sink, &message);
 }
 
-/// Maximum epoch seconds accepted for timestamp formatting.
-///
-/// Corresponds to 9999-12-31 23:59:59 UTC - the last representable date in
-/// a 4-digit year `YYYY/MM/DD HH:MM:SS` format. Values beyond this would
-/// produce a 5+ digit year that breaks fixed-width log formats.
-///
-/// upstream: log.c `timestring()` returns "unknown" when `localtime_r()`
-/// returns NULL for out-of-range `time_t` values (3.4.3 defence-in-depth).
-const MAX_TIMESTAMP_EPOCH_SECS: u64 = 253_402_300_799;
-
-/// Formats a Unix epoch timestamp as `YYYY/MM/DD HH:MM:SS`.
-///
-/// Returns a fallback placeholder for out-of-range values, matching upstream
-/// rsync's `timestring()` NULL-check on `localtime_r()` (3.4.3).
-///
-/// Upstream: `log.c` uses `strftime("%Y/%m/%d %H:%M:%S", ...)` via `timestring()`.
-/// This implementation performs the conversion manually to avoid external crate
-/// dependencies while matching the upstream output format.
-fn format_daemon_timestamp(epoch_secs: u64) -> String {
-    // upstream: log.c timestring() - NULL-check equivalent (3.4.3)
-    if epoch_secs > MAX_TIMESTAMP_EPOCH_SECS {
-        return "0000/00/00 00:00:00".to_owned();
-    }
-
-    // Days from 1970-01-01 to the given epoch seconds.
-    let total_days = epoch_secs / 86400;
-    let day_seconds = (epoch_secs % 86400) as u32;
-    let hours = day_seconds / 3600;
-    let minutes = (day_seconds % 3600) / 60;
-    let seconds = day_seconds % 60;
-
-    // Civil date from day count using the algorithm from
-    // Howard Hinnant's `chrono`-compatible date conversion.
-    let (year, month, day) = civil_from_days(total_days as i64);
-
-    format!("{year:04}/{month:02}/{day:02} {hours:02}:{minutes:02}:{seconds:02}")
-}
-
-/// Converts a day count (days since 1970-01-01) to a civil date (year, month, day).
-///
-/// Algorithm from Howard Hinnant's date library (public domain).
-fn civil_from_days(days: i64) -> (i32, u32, u32) {
-    let z = days + 719468;
-    let era = if z >= 0 { z } else { z - 146096 } / 146097;
-    let doe = (z - era * 146097) as u32;
-    let yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365;
-    let y = yoe as i64 + era * 400;
-    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
-    let mp = (5 * doy + 2) / 153;
-    let d = doy - (153 * mp + 2) / 5 + 1;
-    let m = if mp < 10 { mp + 3 } else { mp - 9 };
-    let y = if m <= 2 { y + 1 } else { y };
-    (y as i32, m, d)
-}
-
 /// Returns the effective log format string for a module.
 ///
 /// Falls back to `DEFAULT_LOG_FORMAT` when the module does not specify a
@@ -484,59 +429,6 @@ mod log_format_tests {
 
 
     #[test]
-    fn timestamp_unix_epoch() {
-        assert_eq!(format_daemon_timestamp(0), "1970/01/01 00:00:00");
-    }
-
-    #[test]
-    fn timestamp_known_date() {
-        // 2026-02-21 14:30:00 UTC = 1771684200 epoch seconds
-        // (verified via `datetime.datetime(2026,2,21,14,30,0,tzinfo=utc).timestamp()`)
-        let ts = format_daemon_timestamp(1_771_684_200);
-        assert_eq!(ts, "2026/02/21 14:30:00");
-    }
-
-    #[test]
-    fn timestamp_end_of_day() {
-        // 1970-01-01 23:59:59 = 86399
-        assert_eq!(format_daemon_timestamp(86399), "1970/01/01 23:59:59");
-    }
-
-    #[test]
-    fn timestamp_start_of_second_day() {
-        // 1970-01-02 00:00:00 = 86400
-        assert_eq!(format_daemon_timestamp(86400), "1970/01/02 00:00:00");
-    }
-
-    #[test]
-    fn timestamp_leap_year_date() {
-        // 2024-02-29 12:00:00 UTC = 1709208000
-        let ts = format_daemon_timestamp(1_709_208_000);
-        assert_eq!(ts, "2024/02/29 12:00:00");
-    }
-
-    /// upstream: log.c timestring() NULL-check equivalent (3.4.3)
-    #[test]
-    fn timestamp_out_of_range_returns_placeholder() {
-        // Values beyond year 9999 should return the fallback placeholder.
-        assert_eq!(
-            format_daemon_timestamp(MAX_TIMESTAMP_EPOCH_SECS + 1),
-            "0000/00/00 00:00:00"
-        );
-        assert_eq!(
-            format_daemon_timestamp(u64::MAX),
-            "0000/00/00 00:00:00"
-        );
-    }
-
-    /// The boundary value (9999-12-31 23:59:59) should format correctly.
-    #[test]
-    fn timestamp_at_max_boundary() {
-        let ts = format_daemon_timestamp(MAX_TIMESTAMP_EPOCH_SECS);
-        assert_eq!(ts, "9999/12/31 23:59:59");
-    }
-
-    #[test]
     fn push_u64_zero() {
         let mut buf = String::new();
         push_u64(&mut buf, 0);
@@ -555,17 +447,5 @@ mod log_format_tests {
         let mut buf = String::new();
         push_u32(&mut buf, 12345);
         assert_eq!(buf, "12345");
-    }
-
-
-    #[test]
-    fn civil_from_days_epoch() {
-        assert_eq!(civil_from_days(0), (1970, 1, 1));
-    }
-
-    #[test]
-    fn civil_from_days_known_date() {
-        // 2026-02-21 is day 20505 from epoch
-        assert_eq!(civil_from_days(20505), (2026, 2, 21));
     }
 }

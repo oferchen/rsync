@@ -69,12 +69,36 @@ fn run_daemon_records_log_file_entries() {
     }
 
     let log_contents = fs::read_to_string(&log_path).expect("read log file");
+    // upstream: log.c:122-132 logit() writes the raw rwrite() buffer after
+    // the `%Y/%m/%d %H:%M:%S [pid] ` prefix; FLOG/FINFO bodies carry no
+    // severity tag (e.g. `rsyncd version %s starting`, clientserver.c:1580).
     assert!(
         log_contents
             .lines()
-            .any(|line| line.contains("oc-rsync info: rsyncd version")),
-        "log should use oc-rsync branding: {log_contents:?}"
+            .any(|line| line.contains("rsyncd version") && !line.contains("info:")),
+        "log lines must carry the raw upstream body: {log_contents:?}"
     );
+    let prefix_ok = |line: &str| {
+        let bytes = line.as_bytes();
+        bytes.len() > 21
+            && bytes[..19].iter().enumerate().all(|(i, b)| match i {
+                4 | 7 => *b == b'/',
+                10 => *b == b' ',
+                13 | 16 => *b == b':',
+                _ => b.is_ascii_digit(),
+            })
+            && bytes[19] == b' '
+            && bytes[20] == b'['
+            && line[21..]
+                .split_once("] ")
+                .is_some_and(|(pid, _)| !pid.is_empty() && pid.bytes().all(|b| b.is_ascii_digit()))
+    };
+    for line in log_contents.lines() {
+        assert!(
+            prefix_ok(line),
+            "log line missing upstream `timestamp [pid] ` prefix (log.c:127): {line:?}"
+        );
+    }
     assert!(log_contents.contains("connect from"));
     assert!(log_contents.contains("127.0.0.1"));
     assert!(log_contents.contains("module 'docs'"));

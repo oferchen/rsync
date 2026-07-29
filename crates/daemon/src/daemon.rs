@@ -24,7 +24,7 @@ use std::sync::{
     atomic::{AtomicBool, AtomicUsize, Ordering},
 };
 use std::thread;
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, SystemTime};
 #[cfg(feature = "tracing")]
 use tracing::instrument;
 
@@ -50,7 +50,7 @@ use core::{
     rsync_error, rsync_info, rsync_warning,
     server::{
         HandshakeResult, ReferenceDirectory, ReferenceDirectoryKind, ServerConfig, ServerResult,
-        ServerRole, run_server_with_handshake,
+        ServerRole, ServerStats, run_server_with_handshake,
     },
 };
 use logging_sink::MessageSink;
@@ -253,7 +253,9 @@ pub(crate) use self::module_state::{
     set_test_netgroup_members,
 };
 
-type SharedLogSink = Arc<Mutex<MessageSink<std::fs::File>>>;
+// upstream: log.c:122-132 logit() - every daemon log-file line is stamped
+// with `%Y/%m/%d %H:%M:%S [pid] `, provided by the LogFileWriter wrapper.
+type SharedLogSink = Arc<Mutex<MessageSink<logging_sink::logfile::LogFileWriter<std::fs::File>>>>;
 
 include!("daemon/runtime_options/types.rs");
 include!("daemon/runtime_options/parsing.rs");

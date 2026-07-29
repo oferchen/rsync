@@ -97,8 +97,8 @@ pub use levels::{DebugFlag, DebugLevels, InfoFlag, InfoLevels};
 pub use log_code::{LogCode, ParseLogCodeError};
 pub use phase_timer::PhaseTimer;
 pub use thread_local::{
-    DiagnosticEvent, apply_debug_flag, apply_info_flag, debug_gte, drain_events, emit_debug,
-    emit_debug_coded, emit_info, emit_info_coded, info_gte, init,
+    DiagnosticEvent, apply_debug_flag, apply_info_flag, debug_gte, drain_events,
+    drain_events_coded, emit_debug, emit_debug_coded, emit_info, emit_info_coded, info_gte, init,
 };
 
 #[cfg(feature = "tracing")]

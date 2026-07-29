@@ -432,14 +432,20 @@ fn open_privilege_fallback_sink() -> SharedLogSink {
         .unwrap_or_else(|_| {
             tempfile::tempfile().expect("open temporary file for privilege log sink")
         });
-    Arc::new(Mutex::new(MessageSink::with_brand(file, Brand::Oc)))
+    Arc::new(Mutex::new(MessageSink::with_brand(
+        logging_sink::logfile::LogFileWriter::new(file),
+        Brand::Oc,
+    )))
 }
 
 /// Creates a [`SharedLogSink`] backed by a temporary file for testing.
 #[cfg(test)]
 fn test_log_sink() -> SharedLogSink {
     let file = tempfile::tempfile().expect("create temp file for test log sink");
-    Arc::new(Mutex::new(MessageSink::with_brand(file, Brand::Oc)))
+    Arc::new(Mutex::new(MessageSink::with_brand(
+        logging_sink::logfile::LogFileWriter::new(file),
+        Brand::Oc,
+    )))
 }
 
 #[cfg(test)]

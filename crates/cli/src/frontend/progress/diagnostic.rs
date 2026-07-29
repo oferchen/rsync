@@ -56,6 +56,14 @@ pub fn render_diagnostic_events<O: Write, E: Write>(
     msgs2stderr: bool,
 ) -> io::Result<()> {
     for event in events {
+        // upstream: log.c:304-307 - an FLOG message goes to the log file when
+        // one is active and is otherwise discarded; it never reaches the
+        // client's stdout/stderr. The log-file sink consumes FLOG events via
+        // `logging::drain_events_coded` before this renderer runs, so any
+        // FLOG event still queued here has no log destination and is dropped.
+        if event.code() == logging::LogCode::Log {
+            continue;
+        }
         match event {
             DiagnosticEvent::Info {
                 flag: _,

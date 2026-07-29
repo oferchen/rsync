@@ -321,6 +321,16 @@ fn execute_transfer(
         );
         let message = rsync_info!(text).with_role(Role::Daemon);
         log_message(log, &message);
+
+        // upstream: the daemon sender announces the walk with the FLOG-only
+        // `building file list` (flist.c:2248) and the daemon receiver mirrors
+        // it with `receiving file list` (flist.c:2608); both land in the
+        // daemon log via rwrite()'s am_daemon branch (log.c:290-303).
+        let banner = match role {
+            ServerRole::Generator => "building file list",
+            ServerRole::Receiver => "receiving file list",
+        };
+        log_message(log, &rsync_info!(banner).with_role(Role::Daemon));
     }
 
     // Use standard buffered I/O for daemon socket communication.
@@ -330,8 +340,19 @@ fn execute_transfer(
     // matching upstream rsync's socket I/O model.
     let result = run_daemon_transfer(config, handshake, read_stream, write_stream);
 
+    // upstream: log.c:290-305 - FLOG-classified diagnostics emitted while the
+    // transfer ran belong in the daemon log only; they never travel to the
+    // client. Consume them from the thread-local queue by log code.
+    if let Some(log) = ctx.log_sink {
+        for event in logging::drain_events_coded(logging::LogCode::Log) {
+            let (logging::DiagnosticEvent::Info { message, .. }
+            | logging::DiagnosticEvent::Debug { message, .. }) = event;
+            log_message(log, &rsync_info!(message).with_role(Role::Daemon));
+        }
+    }
+
     match result {
-        Ok(_server_stats) => {
+        Ok(server_stats) => {
             if let Some(log) = ctx.log_sink {
                 if module.transfer_logging {
                     let operation = match role {
@@ -341,11 +362,10 @@ fn execute_transfer(
                     let addr_str = ctx.peer_ip.to_string();
                     let path_str = module.path.display().to_string();
                     let pid = std::process::id();
-                    let now = SystemTime::now()
-                        .duration_since(UNIX_EPOCH)
-                        .unwrap_or_default();
-                    let secs = now.as_secs();
-                    let timestamp = format_daemon_timestamp(secs);
+                    // upstream: log.c:664 `%t` renders timestring(time(NULL)) -
+                    // the same localtime formatter that stamps log-file lines.
+                    let timestamp =
+                        logging_sink::logfile::format_log_timestamp(SystemTime::now());
 
                     let log_ctx = LogFormatContext {
                         operation,
@@ -367,14 +387,23 @@ fn execute_transfer(
                     log_transfer(fmt, &log_ctx, log);
                 }
 
+                // upstream: cleanup.c:222-226 - `am_daemon` always runs
+                // log_exit(), whose FLOG totals trailer
+                // `sent %s bytes  received %s bytes  total size %s`
+                // (log.c:894-899, plain `big_num()` digits) closes every
+                // daemon transfer in the log.
+                let (sent, received, total_size) = match &server_stats {
+                    ServerStats::Generator(stats) => {
+                        (stats.bytes_sent, stats.bytes_read, stats.total_size)
+                    }
+                    ServerStats::Receiver(stats) => {
+                        (stats.bytes_sent, stats.bytes_received, stats.total_source_bytes)
+                    }
+                };
                 let text = format!(
-                    "transfer to {} ({}): module={} status=success",
-                    ctx.effective_host().unwrap_or("unknown"),
-                    ctx.peer_ip,
-                    ctx.request
+                    "sent {sent} bytes  received {received} bytes  total size {total_size}"
                 );
-                let message = rsync_info!(text).with_role(Role::Daemon);
-                log_message(log, &message);
+                log_message(log, &rsync_info!(text).with_role(Role::Daemon));
             }
             0
         }

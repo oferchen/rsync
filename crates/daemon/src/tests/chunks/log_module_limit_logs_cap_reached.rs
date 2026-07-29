@@ -17,8 +17,11 @@ fn log_module_limit_logs_cap_reached() {
     drop(log);
 
     let contents = fs::read_to_string(&path).expect("read log");
+    // upstream: log.c:122-132 logit() stamps `%Y/%m/%d %H:%M:%S [pid] ` ahead
+    // of the rendered warning body.
+    let body = contents.split_once("] ").map_or(contents.as_str(), |(_, body)| body);
     assert!(
-        contents.starts_with("oc-rsync warning:"),
+        body.starts_with("oc-rsync warning:"),
         "expected warning-level message, got: {contents}"
     );
     assert!(

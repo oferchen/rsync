@@ -1,5 +1,11 @@
 use super::*;
 
+/// Strips the upstream `%Y/%m/%d %H:%M:%S [pid] ` log-file prefix
+/// (upstream: log.c:122-132 logit()) so body assertions see the rendered text.
+fn log_body(contents: &str) -> &str {
+    contents.split_once("] ").map_or(contents, |(_, body)| body)
+}
+
 #[test]
 fn format_connection_status_zero_connections() {
     assert_eq!(format_connection_status(0), "Idle; waiting for connections");
@@ -587,7 +593,7 @@ fn parse_socket_options_unknown_option_logs_warning() {
     drop(log_sink);
     let contents = std::fs::read_to_string(&log_path).expect("read log");
     assert!(
-        contents.starts_with("oc-rsync warning:"),
+        log_body(&contents).starts_with("oc-rsync warning:"),
         "expected warning level, got: {contents}"
     );
     assert!(
@@ -613,7 +619,7 @@ fn parse_socket_options_opt_on_value_warns_and_applies() {
     drop(log_sink);
     let contents = std::fs::read_to_string(&log_path).expect("read log");
     assert!(
-        contents.starts_with("oc-rsync warning:"),
+        log_body(&contents).starts_with("oc-rsync warning:"),
         "expected warning level, got: {contents}"
     );
     assert!(
@@ -811,7 +817,7 @@ fn apply_socket_options_warns_and_continues_on_per_option_failure() {
     drop(log_sink);
     let contents = std::fs::read_to_string(&log_path).expect("read log");
     assert!(
-        contents.starts_with("oc-rsync warning:"),
+        log_body(&contents).starts_with("oc-rsync warning:"),
         "expected warning level, got: {contents}"
     );
     assert!(
@@ -1122,7 +1128,7 @@ fn refuse_if_at_capacity_emits_structured_warning() {
 
     let contents = std::fs::read_to_string(&log_path).expect("read log");
     assert!(
-        contents.starts_with("oc-rsync warning:"),
+        log_body(&contents).starts_with("oc-rsync warning:"),
         "expected warning level, got: {contents}"
     );
     assert!(
