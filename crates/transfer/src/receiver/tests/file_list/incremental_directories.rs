@@ -158,6 +158,7 @@ fn transfer_stats_has_incremental_fields() {
         bytes_received: 0,
         bytes_sent: 0,
         total_source_bytes: 0,
+        flist_size: 0,
         metadata_errors: vec![],
         io_error: 0,
         got_xfer_error: false,

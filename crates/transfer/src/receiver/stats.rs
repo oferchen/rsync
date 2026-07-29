@@ -111,6 +111,19 @@ pub struct TransferStats {
     /// This is the sum of all file sizes from the received file list,
     /// used to calculate speedup ratio (total_size / bytes_transferred).
     pub total_source_bytes: u64,
+    /// Raw wire bytes occupied by the received file list (`File list size`).
+    ///
+    /// Accumulated as the delta of the raw transport read counter across every
+    /// `recv_file_list` span (initial list plus INC_RECURSE sub-lists), so it
+    /// includes multiplex frame headers, the id lists, and the pre-30 io_error
+    /// int - exactly the raw-descriptor span upstream measures. Never sent over
+    /// the wire; each role prints its own local figure (`main.c:445`).
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `flist.c:2615` - `start_read = stats.total_read;`
+    /// - `flist.c:2789` - `stats.flist_size += stats.total_read - start_read;`
+    pub flist_size: u64,
     /// Metadata errors encountered (path, error message).
     pub metadata_errors: Vec<(PathBuf, String)>,
     /// Accumulated I/O error flags from the sender's file list trailer.

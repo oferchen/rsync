@@ -69,17 +69,24 @@ impl ReceiverContext {
         reader: &mut R,
         ndx_codec: &mut NdxCodecEnum,
     ) -> io::Result<FrameKind> {
+        // Snapshot before the ndx read: upstream's raw counter ticks on arrival
+        // (io.c:820), so a segment header or the EOF marker is attributed to an
+        // adjacent recv_file_list span on any real link. The span is kept only
+        // when the frame turns out to be flist traffic; NDX_DONE and per-file
+        // replies are transfer-phase frames upstream never counts.
+        let span_start = self.flist_span_start();
         let ndx = ndx_codec.read_ndx(reader)?;
 
         if ndx == NDX_FLIST_EOF {
             self.flist_eof = true;
+            self.flist_span_end(span_start);
             return Ok(FrameKind::FlistEof);
         }
         if ndx == NDX_DONE {
             return Ok(FrameKind::Done);
         }
         if ndx <= NDX_FLIST_OFFSET {
-            self.receive_one_extra_segment(reader, ndx)?;
+            self.receive_one_extra_segment(reader, ndx, span_start)?;
             return Ok(FrameKind::Segment(NDX_FLIST_OFFSET - ndx));
         }
         Ok(FrameKind::Reply(ndx))
