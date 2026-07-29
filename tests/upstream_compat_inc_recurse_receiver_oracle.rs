@@ -252,7 +252,7 @@ fn assert_success(output: &Output, context: &str) {
 }
 
 /// Remote-shell baseline: a real upstream 3.4.4 sender pushes the
-/// >1000-file tree into oc as the ssh-style server-receiver. Asserts the
+/// 1080-file tree into oc as the ssh-style server-receiver. Asserts the
 /// transfer succeeds, the tree is byte-identical, the client OFFERED the `i`
 /// capability, and oc DECLINED it (no incremental marker) - the current
 /// non-negotiation baseline.
