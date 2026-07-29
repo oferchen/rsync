@@ -99,8 +99,13 @@ fn run_daemon_records_log_file_entries() {
             "log line missing upstream `timestamp [pid] ` prefix (log.c:127): {line:?}"
         );
     }
+    // upstream: clientserver.c:1393 - `connect from %s (%s)`
     assert!(log_contents.contains("connect from"));
     assert!(log_contents.contains("127.0.0.1"));
-    assert!(log_contents.contains("module 'docs'"));
+    // upstream: clientserver.c:742 - `rsync allowed access on module %s from %s (%s)`
+    assert!(
+        log_contents.contains("rsync allowed access on module docs"),
+        "log should record upstream module-access grant: {log_contents:?}"
+    );
 }
 
