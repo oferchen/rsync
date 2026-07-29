@@ -26,7 +26,9 @@ use std::os::unix::fs::PermissionsExt;
 use std::path::Path;
 
 use filetime::{FileTime, set_file_mtime};
-use test_support::{LSH_STUB_BIN, LshRunnerStub, OcRsyncCliRunner, create_tempdir, require_binary};
+use test_support::{
+    LSH_STUB_BIN, LshRunnerStub, OcRsyncCliRunner, create_tempdir, require_binaries,
+};
 
 fn mode_of(path: &Path) -> u32 {
     fs::metadata(path).expect("stat file").permissions().mode() & 0o7777
@@ -89,9 +91,7 @@ fn assert_attr_only_outcome(to: &Path) {
 /// executability bits without disturbing the read/write bits.
 #[test]
 fn executability_flag_transfers_only_exec_bits() {
-    if !require_binary("oc-rsync") {
-        return;
-    }
+    require_binaries!("oc-rsync");
 
     let tmp = create_tempdir();
     let from = tmp.path().join("from");
@@ -205,9 +205,7 @@ fn executability_flag_transfers_only_exec_bits() {
 /// (generator.c:1827).
 #[test]
 fn executability_applies_on_up_to_date_files_over_rsh_push() {
-    if !require_binary("oc-rsync") || !require_binary(LSH_STUB_BIN) {
-        return;
-    }
+    require_binaries!("oc-rsync", LSH_STUB_BIN);
     let stub = LshRunnerStub::locate().expect("lsh-stub located");
 
     let tmp = create_tempdir();
@@ -238,9 +236,7 @@ fn executability_applies_on_up_to_date_files_over_rsh_push() {
 /// 'E' only when `am_sender`); the local receiver must honour its own flag.
 #[test]
 fn executability_applies_on_up_to_date_files_over_rsh_pull() {
-    if !require_binary("oc-rsync") || !require_binary(LSH_STUB_BIN) {
-        return;
-    }
+    require_binaries!("oc-rsync", LSH_STUB_BIN);
     let stub = LshRunnerStub::locate().expect("lsh-stub located");
 
     let tmp = create_tempdir();
@@ -273,9 +269,7 @@ fn executability_applies_on_up_to_date_files_over_rsh_pull() {
 /// full mode under preserve_perms.
 #[test]
 fn executability_is_noop_when_perms_active_over_rsh() {
-    if !require_binary("oc-rsync") || !require_binary(LSH_STUB_BIN) {
-        return;
-    }
+    require_binaries!("oc-rsync", LSH_STUB_BIN);
     let stub = LshRunnerStub::locate().expect("lsh-stub located");
 
     let tmp = create_tempdir();

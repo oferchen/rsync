@@ -44,21 +44,55 @@ pub fn locate_workspace_binary(name: &str) -> Option<PathBuf> {
 
 /// Skip unless the workspace binary `name` is present.
 ///
-/// Wraps [`locate_workspace_binary`] with the self-skip convention: prints the
-/// exact path that was probed and returns `false` when the binary is not
-/// built. Tests that must never be allowed to self-skip should call
-/// [`crate::workspace_bin`] instead, which panics.
+/// Wraps [`locate_workspace_binary`] with the self-skip convention: prints a
+/// `SKIP <test>: ...` line naming the exact path that was probed, so harness
+/// logs record the coverage hole, and returns `false` when the binary is not
+/// built. Call through [`crate::require_binaries!`], which supplies the
+/// enclosing test name. Tests that must never be allowed to self-skip should
+/// call [`crate::workspace_bin`] instead, which panics.
 #[must_use]
-pub fn require_binary(name: &str) -> bool {
+pub fn require_binary(test: &str, name: &str) -> bool {
     if locate_workspace_binary(name).is_some() {
         true
     } else {
         eprintln!(
-            "Skipping upstream-compat test: workspace binary '{name}' not built at {}",
+            "SKIP {test}: workspace binary '{name}' not built at {}",
             crate::bin_path::workspace_bin_path(name).display()
         );
         false
     }
+}
+
+/// Fully qualified name of the enclosing function.
+///
+/// Expands to a `&'static str` such as
+/// `uts_chmod_option::chmod_option_applies_dest_modes`, resolved at compile
+/// time from the type name of a local item. Self-skip lines use it so a
+/// harness log attributes every skip to the exact test that did not run.
+#[macro_export]
+macro_rules! test_name {
+    () => {{
+        fn here() {}
+        let name = ::std::any::type_name_of_val(&here);
+        name.strip_suffix("::here").unwrap_or(name)
+    }};
+}
+
+/// Loud self-skip gate for upstream-compat ports.
+///
+/// Probes each workspace binary in order via [`require_binary`]; on the first
+/// miss it prints `SKIP <test>: workspace binary '<name>' not built at <path>`
+/// and returns from the enclosing test, so nextest still reports the test
+/// green while the log shows the coverage hole.
+#[macro_export]
+macro_rules! require_binaries {
+    ($($name:expr),+ $(,)?) => {
+        $(
+            if !$crate::require_binary($crate::test_name!(), $name) {
+                return;
+            }
+        )+
+    };
 }
 
 /// Locate an external command on `PATH`.
@@ -160,6 +194,35 @@ mod tests {
         // there is always at least the deps dir. A missing-name lookup must
         // return None rather than panic.
         assert!(locate_workspace_binary("definitely-not-built-xyzzy").is_none());
+    }
+
+    #[test]
+    fn test_name_names_the_enclosing_function() {
+        // Why: the macro exists to attribute a skip line to the test that
+        // skipped; a wrong or truncated name would make a logged skip
+        // untraceable, which is the silent-coverage hole all over again.
+        let name = crate::test_name!();
+        assert!(
+            name.ends_with("tests::test_name_names_the_enclosing_function"),
+            "unexpected enclosing-function name: {name}"
+        );
+    }
+
+    #[test]
+    fn require_binary_skips_a_missing_binary() {
+        // Why: the predicate must agree with the locator, or a port could
+        // run against a binary that is not there (opaque spawn failure) or
+        // skip while it is present (dark coverage loss).
+        assert!(!require_binary("skip::tests", "definitely-not-built-xyzzy"));
+    }
+
+    #[test]
+    fn require_binaries_returns_early_on_a_missing_binary() {
+        // Why: the early return is the macro's whole contract - without it
+        // the test body would fall through and fail opaquely inside
+        // Command::spawn instead of skipping loudly.
+        crate::require_binaries!("definitely-not-built-xyzzy");
+        panic!("must not reach past a missing-binary gate");
     }
 
     #[test]
