@@ -60,7 +60,13 @@ pub(crate) fn open_log_sink(path: &Path, brand: Brand) -> Result<SharedLogSink, 
         .append(true)
         .open(path)
         .map_err(|error| log_file_error(path, error))?;
-    Ok(Arc::new(Mutex::new(MessageSink::with_brand(file, brand))))
+    // upstream: log.c:122-132 logit() stamps `%Y/%m/%d %H:%M:%S [pid] ` on
+    // every log-file line; the wrapper applies the same shared formatter used
+    // by the client `--log-file` sink.
+    Ok(Arc::new(Mutex::new(MessageSink::with_brand(
+        logging_sink::logfile::LogFileWriter::new(file),
+        brand,
+    ))))
 }
 
 /// Reopens the connection's log sink to the selected module's `log file`.
@@ -130,10 +136,22 @@ fn lock_file_error(path: &Path, error: io::Error) -> DaemonError {
 }
 
 /// Writes a message to the shared log sink with proper locking.
+///
+/// upstream: log.c:122-132 logit() writes the raw `rwrite()` buffer after the
+/// timestamp prefix. FINFO/FLOG bodies carry no severity tag (e.g.
+/// `connect from host (addr)`, clientserver.c:1393), so info messages are
+/// written as bare text; error and warning bodies already embed their
+/// `rsync error:`-style text upstream, so they keep the sink's rendering.
 fn log_message(log: &SharedLogSink, message: &Message) {
-    if let Ok(mut sink) = log.lock()
-        && sink.write(message).is_ok()
-    {
+    let Ok(mut sink) = log.lock() else {
+        return;
+    };
+    let written = if message.severity() == core::message::Severity::Info {
+        writeln!(sink.writer_mut(), "{}", message.text()).is_ok()
+    } else {
+        sink.write(message).is_ok()
+    };
+    if written {
         let _ = sink.flush();
     }
 }

@@ -211,6 +211,24 @@ fn run_client_internal(
         None
     };
 
+    // upstream: send_file_list() announces the walk with an FLOG-only
+    // `rprintf(FLOG, "building file list\n")` (flist.c:2248), and the first
+    // recv_file_list() mirrors it with `rprintf(FLOG, "receiving file list\n")`
+    // (flist.c:2608). Both are unconditional (no verbosity gate): rwrite()
+    // routes FLOG to the log file when one is active and discards it
+    // otherwise (log.c:290-307), so the event is emitted here regardless of
+    // `-v` and the sink decides its fate by consuming the FLOG code.
+    logging::emit_info_coded(
+        logging::InfoFlag::Flist,
+        1,
+        logging::LogCode::Log,
+        if config.is_pull() {
+            "receiving file list".to_owned()
+        } else {
+            "building file list".to_owned()
+        },
+    );
+
     let has_daemon_url = config.transfer_args().iter().any(|arg| {
         arg.to_string_lossy().starts_with("rsync://") || arg.to_string_lossy().contains("::")
     });
