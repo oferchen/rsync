@@ -1,5 +1,3 @@
-#![cfg(target_os = "windows")]
-
 //! Windows-specific metadata helpers.
 //!
 //! Houses native NTFS metadata facilities that have no upstream rsync
