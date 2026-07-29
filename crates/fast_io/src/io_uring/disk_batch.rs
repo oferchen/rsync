@@ -8,8 +8,14 @@
 //!
 //! The disk commit thread opens files, writes chunks, then commits. Instead
 //! of creating a separate io_uring ring per file (as [`super::IoUringWriter`]
-//! does), `IoUringDiskBatch` reuses one ring across the entire commit phase,
-//! re-registering file descriptors as files rotate.
+//! does), `IoUringDiskBatch` reuses one ring across the entire commit phase.
+//!
+//! The commit thread rotates a fresh fd for every file, so the ring uses plain
+//! (non-registered) fds in its write SQEs. A fixed-file table would buy nothing
+//! here - it would have to be re-registered per file, and each
+//! `IORING_REGISTER_FILES`/`UNREGISTER_FILES` pair quiesces the ring
+//! (pre-6.0 `synchronize_rcu`), adding two register syscalls per file with no
+//! offsetting benefit (the write path uses `opcode::Write`, not `WriteFixed`).
 //!
 //! # Upstream Reference
 //!
@@ -22,7 +28,7 @@ use std::os::unix::io::AsRawFd;
 
 use io_uring::{IoUring as RawIoUring, opcode};
 
-use super::batching::{NO_FIXED_FD, maybe_fixed_file, sqe_fd, submit_write_batch, try_register_fd};
+use super::batching::{NO_FIXED_FD, maybe_fixed_file, sqe_fd, submit_write_batch};
 use super::config::{IoUringConfig, is_io_uring_available};
 
 /// Default write buffer capacity for the batched disk writer (256 KB).
@@ -35,8 +41,7 @@ const DEFAULT_BUFFER_CAPACITY: usize = 256 * 1024;
 ///
 /// Owns a single io_uring ring and reuses it across multiple file operations.
 /// When a new file is started via [`begin_file`](Self::begin_file), the
-/// previous file's data is flushed, the fd registration is updated, and the
-/// internal write position resets.
+/// previous file's data is flushed and the internal write position resets.
 ///
 /// # Thread Safety
 ///
@@ -58,8 +63,6 @@ struct ActiveFile {
     file: File,
     /// Cumulative bytes written (flushed) to this file.
     bytes_written: u64,
-    /// Fixed-file slot index, or `NO_FIXED_FD` when not registered.
-    fixed_fd_slot: i32,
 }
 
 impl IoUringDiskBatch {
@@ -92,23 +95,19 @@ impl IoUringDiskBatch {
 
     /// Begins a new file for writing.
     ///
-    /// Flushes any buffered data for the previous file, unregisters the old fd,
-    /// and registers the new file with the ring. The caller is responsible for
-    /// opening the file with appropriate flags.
+    /// Flushes any buffered data for the previous file and resets the write
+    /// position. The caller is responsible for opening the file with
+    /// appropriate flags. The rotating fd is used directly in the ring's write
+    /// SQEs; no per-file fixed-file registration is performed.
     ///
     /// # Errors
     ///
     /// Returns an error if flushing the previous file fails.
     pub fn begin_file(&mut self, file: File) -> io::Result<()> {
         self.flush_current()?;
-        self.finalize_current_file();
-
-        let fixed_fd_slot =
-            try_register_fd(&self.ring, file.as_raw_fd(), self.config.register_files);
         self.current_file = Some(ActiveFile {
             file,
             bytes_written: 0,
-            fixed_fd_slot,
         });
         Ok(())
     }
@@ -181,8 +180,6 @@ impl IoUringDiskBatch {
             self.submit_fsync(&active)?;
         }
 
-        self.unregister_fd(&active);
-
         Ok((active.file, bytes_written))
     }
 
@@ -213,7 +210,7 @@ impl IoUringDiskBatch {
             )
         })?;
 
-        let fd = sqe_fd(active.file.as_raw_fd(), active.fixed_fd_slot);
+        let fd = sqe_fd(active.file.as_raw_fd(), NO_FIXED_FD);
         let len = self.buffer_pos;
         let offset = active.bytes_written;
 
@@ -224,7 +221,7 @@ impl IoUringDiskBatch {
             offset,
             self.config.buffer_size,
             self.config.sq_entries as usize,
-            active.fixed_fd_slot,
+            NO_FIXED_FD,
         )?;
 
         active.bytes_written += written as u64;
@@ -234,9 +231,9 @@ impl IoUringDiskBatch {
 
     /// Submits an fsync SQE for the active file and waits for completion.
     fn submit_fsync(&mut self, active: &ActiveFile) -> io::Result<()> {
-        let fd = sqe_fd(active.file.as_raw_fd(), active.fixed_fd_slot);
+        let fd = sqe_fd(active.file.as_raw_fd(), NO_FIXED_FD);
         let entry = opcode::Fsync::new(fd).build().user_data(0);
-        let entry = maybe_fixed_file(entry, active.fixed_fd_slot);
+        let entry = maybe_fixed_file(entry, NO_FIXED_FD);
 
         // SAFETY: The SQE references a valid fd that outlives the submission.
         // The fsync opcode does not reference any user buffers.
@@ -261,22 +258,6 @@ impl IoUringDiskBatch {
         }
         Ok(())
     }
-
-    /// Unregisters the fd from the ring's fixed file table.
-    fn unregister_fd(&self, active: &ActiveFile) {
-        if active.fixed_fd_slot != NO_FIXED_FD {
-            // Best-effort unregister - ignore errors since the ring may
-            // not have the fd registered (e.g., after a failed registration).
-            let _ = self.ring.submitter().unregister_files();
-        }
-    }
-
-    /// Flushes and drops the current file without returning it.
-    fn finalize_current_file(&mut self) {
-        if let Some(active) = self.current_file.take() {
-            self.unregister_fd(&active);
-        }
-    }
 }
 
 impl Write for IoUringDiskBatch {
@@ -293,7 +274,7 @@ impl Write for IoUringDiskBatch {
 impl Drop for IoUringDiskBatch {
     fn drop(&mut self) {
         let _ = self.flush_current();
-        self.finalize_current_file();
+        self.current_file = None;
     }
 }
 
