@@ -22,6 +22,36 @@ use crate::role_trailer::error_location;
 use crate::transfer_state::TransferPhase;
 
 impl GeneratorContext {
+    /// Prints the `sending incremental file list` banner on the client's own
+    /// output at file-list-send time, ahead of any per-file rows.
+    ///
+    /// Mirrors upstream `flist.c:2248-2252`: the banner fires only for a
+    /// client-side sender (`!am_server` -> `client_mode`), under incremental
+    /// recursion - which upstream disables when `!recurse` (compat.c:172-173),
+    /// so a non-recursive single-file `-v` push prints nothing - and when the
+    /// FLIST info category is at level >= 1, so `--info=flist0` suppresses it
+    /// even at `-v`. This is the send-side twin of the receiver's `receiving
+    /// incremental file list` banner in `receiver/transfer/setup/context.rs`.
+    fn announce_incremental_flist(&self) -> io::Result<()> {
+        if !self.should_announce_incremental_flist() {
+            return Ok(());
+        }
+        let banner: &[u8] = b"sending incremental file list\n";
+        if self.config.flags.msgs_to_stderr {
+            io::stderr().write_all(banner)
+        } else {
+            io::stdout().write_all(banner)
+        }
+    }
+
+    /// Whether this sender prints the `sending incremental file list` banner
+    /// on its own client-visible output (see [`Self::announce_incremental_flist`]).
+    pub(crate) fn should_announce_incremental_flist(&self) -> bool {
+        self.config.connection.client_mode
+            && self.config.flags.recursive
+            && logging::info_gte(logging::InfoFlag::Flist, 1)
+    }
+
     /// Runs the generator role to completion.
     ///
     /// Orchestrates the full send operation: build file list, send it, process
@@ -67,6 +97,16 @@ impl GeneratorContext {
 
         // upstream: main.c:1276 - recv_filter_list() in server mode
         self.receive_filter_list_if_server(&mut reader)?;
+
+        // upstream: flist.c:2248-2252 send_file_list() - a client-side sender
+        // announces `sending incremental file list` at file-list-send time,
+        // before the walk produces any per-file output. Write it DIRECTLY to
+        // the client stream: the deferred `info_log!` event buffer is only
+        // drained by the CLI after the live per-file rows and the summary
+        // stats, which would print the banner dead last on every ssh/daemon
+        // push. Mirrors the receive-side banner in
+        // `receiver/transfer/setup/context.rs`.
+        self.announce_incremental_flist()?;
 
         // upstream: flist.c:2240-2264 - resolve --files-from paths if configured
         let files_from_entries = self.resolve_files_from_paths(paths, &mut reader)?;

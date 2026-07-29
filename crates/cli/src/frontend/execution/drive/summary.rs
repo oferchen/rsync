@@ -139,7 +139,15 @@ where
     //   push and a local copy, and the receiver on a pull (which separately
     //   prints "receiving incremental file list"), so suppress it on a pull
     //   (`!config.is_pull()`) to avoid printing both banners.
-    let emit_flist_banner = config.recursive() && info_gte(InfoFlag::Flist, 1) && !config.is_pull();
+    //
+    // A remote push prints the banner live at file-list-send time instead
+    // (generator/transfer/orchestrator.rs `announce_incremental_flist`), ahead
+    // of the per-file rows that stream straight to stdout during the transfer;
+    // rendering it here again would both duplicate it and print it dead last.
+    // Only a local copy - whose per-file rows are all rendered post-hoc from
+    // the collected events - still gets the banner from this deferred path.
+    let emit_flist_banner =
+        config.recursive() && info_gte(InfoFlag::Flist, 1) && !config.is_pull() && !is_sender;
     // Capture the preserve-links state before `config` is consumed so the
     // `--list-only` renderer knows whether to append the ` -> <target>` arrow
     // to symlink rows (upstream: generator.c:1183 gates it on preserve_links).

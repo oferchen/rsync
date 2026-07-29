@@ -273,8 +273,10 @@ fn send_file_list_first_byte_latency_recorded_for_empty_list() {
 fn sender_flist_path_emits_no_debug_instrumentation_at_verbose() {
     // Regression: a verbose (-v) push must not leak the sender's internal
     // file-list instrumentation to stdout. Upstream's only stdout file-list
-    // line is the "sending incremental file list" banner (emitted by the CLI
-    // layer). "building file list", "built file list with N", and the
+    // line is the "sending incremental file list" banner (written directly by
+    // `announce_incremental_flist` at file-list-send time on a client-mode
+    // push, and by the CLI's deferred renderer on a local copy).
+    // "building file list", "built file list with N", and the
     // first-byte latency timing are development-only diagnostics with no
     // upstream stdout analog; every DiagnosticEvent::Info renders to the
     // client's stdout, so any such event on the sender path is a leak.
@@ -6051,4 +6053,47 @@ fn flist_vanished_warning_downgrades_to_info_below_protocol_30() {
             "the flush must drain the queue so a later flush cannot repeat it"
         );
     }
+}
+
+/// Builds a generator context with the given client/recursive flags for the
+/// `sending incremental file list` banner gate tests.
+fn banner_ctx(client_mode: bool, recursive: bool) -> GeneratorContext {
+    let handshake = test_handshake();
+    let mut config = test_config();
+    config.connection.client_mode = client_mode;
+    config.flags.recursive = recursive;
+    GeneratorContext::new_for_test(&handshake, config)
+}
+
+/// The canonical case: a recursive client-side push at `-v` (FLIST level 1)
+/// announces the incremental file list (upstream flist.c:2248-2252).
+#[test]
+fn client_recursive_flist1_announces_sending_banner() {
+    logging::init(logging::VerbosityConfig::from_verbose_level(1));
+    assert!(banner_ctx(true, true).should_announce_incremental_flist());
+}
+
+/// `--info=flist0` (FLIST level 0) suppresses the banner even for a recursive
+/// client push, mirroring the upstream `INFO_GTE(FLIST, 1)` gate.
+#[test]
+fn flist0_suppresses_sending_banner() {
+    logging::init(logging::VerbosityConfig::from_verbose_level(0));
+    assert!(!banner_ctx(true, true).should_announce_incremental_flist());
+}
+
+/// A non-recursive `-v` push prints no banner: upstream leaves inc_recurse
+/// off without `-r` (compat.c:172-173), so flist.c:2252 is not reached.
+#[test]
+fn non_recursive_prints_no_sending_banner() {
+    logging::init(logging::VerbosityConfig::from_verbose_level(1));
+    assert!(!banner_ctx(true, false).should_announce_incremental_flist());
+}
+
+/// A server-side sender (`am_server`) never prints the banner locally; on a
+/// pull the client receiver announces `receiving incremental file list`
+/// instead (flist.c:2606-2607).
+#[test]
+fn server_mode_prints_no_sending_banner() {
+    logging::init(logging::VerbosityConfig::from_verbose_level(1));
+    assert!(!banner_ctx(false, true).should_announce_incremental_flist());
 }
