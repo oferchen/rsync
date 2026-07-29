@@ -8,12 +8,50 @@
 //! For lists below `min_parallel`, falls back to sequential `Iterator::map`
 //! to avoid thread-pool dispatch overhead.
 
+use std::env;
+
 use rayon::prelude::*;
 
 /// Default threshold for parallel stat operations (filesystem metadata lookups).
 ///
 /// Below this count, sequential iteration avoids rayon thread-pool dispatch overhead.
 pub const DEFAULT_STAT_THRESHOLD: usize = 64;
+
+/// Minimum allowed stat threshold (`1` forces the parallel path for any
+/// non-empty list rather than disabling dispatch entirely).
+const MIN_STAT_THRESHOLD: usize = 1;
+
+/// Maximum allowed stat threshold (guards against an absurd value that would
+/// pin every stat pass to the sequential path and defeat the sweep).
+const MAX_STAT_THRESHOLD: usize = 65536;
+
+/// Environment variable overriding the default parallel-stat threshold.
+///
+/// Parsed as an unsigned integer and clamped to `[1, 65536]`. Unset or
+/// unparseable values fall back to [`DEFAULT_STAT_THRESHOLD`]. Local dispatch
+/// tuning knob only - it governs the generator's parallel-stat crossover
+/// (`ParallelOp::Stat`), is never forwarded to a remote peer, and is never
+/// observable on the wire. The sibling thresholds (signature/metadata/deletion)
+/// keep their compile-time defaults; the stat pass is the primary sweep target
+/// per the CONC-4 batch-size audit.
+pub const ENV_STAT_THRESHOLD: &str = "OC_RSYNC_PARALLEL_STAT_THRESHOLD";
+
+/// Resolves the default stat threshold, honoring [`ENV_STAT_THRESHOLD`].
+///
+/// Read at [`ParallelThresholds::default`] construction. Invalid or
+/// out-of-range values are ignored in favor of [`DEFAULT_STAT_THRESHOLD`],
+/// matching the tolerant parse-and-clamp style of the other `OC_RSYNC_*`
+/// tuning knobs (`OC_RSYNC_DISK_COMMIT_CHANNEL_CAP`, `OC_RSYNC_PIPELINE_WINDOW`).
+fn stat_threshold_from_env() -> usize {
+    env::var(ENV_STAT_THRESHOLD)
+        .ok()
+        .and_then(|raw| raw.trim().parse::<u64>().ok())
+        .map_or(DEFAULT_STAT_THRESHOLD, |value| {
+            usize::try_from(value)
+                .unwrap_or(MAX_STAT_THRESHOLD)
+                .clamp(MIN_STAT_THRESHOLD, MAX_STAT_THRESHOLD)
+        })
+}
 
 /// Default threshold for parallel signature computation.
 ///
@@ -90,7 +128,10 @@ pub struct ParallelThresholds {
 impl Default for ParallelThresholds {
     fn default() -> Self {
         Self {
-            stat: DEFAULT_STAT_THRESHOLD,
+            // The stat crossover is the primary CONC-4 sweep target and is
+            // overridable via `OC_RSYNC_PARALLEL_STAT_THRESHOLD`. The sibling
+            // thresholds keep their compile-time defaults.
+            stat: stat_threshold_from_env(),
             signature: DEFAULT_SIGNATURE_THRESHOLD,
             metadata: DEFAULT_METADATA_THRESHOLD,
             deletion: DEFAULT_DELETION_THRESHOLD,
@@ -228,6 +269,7 @@ mod tests {
 
     #[test]
     fn test_parallel_thresholds_default() {
+        let _guard = platform::env::EnvGuard::remove(ENV_STAT_THRESHOLD);
         let t = ParallelThresholds::default();
         assert_eq!(t.stat, DEFAULT_STAT_THRESHOLD);
         assert_eq!(t.signature, DEFAULT_SIGNATURE_THRESHOLD);
@@ -237,11 +279,57 @@ mod tests {
 
     #[test]
     fn test_parallel_thresholds_default_values() {
+        let _guard = platform::env::EnvGuard::remove(ENV_STAT_THRESHOLD);
         let t = ParallelThresholds::default();
         assert_eq!(t.stat, 64);
         assert_eq!(t.signature, 32);
         assert_eq!(t.metadata, 64);
         assert_eq!(t.deletion, 64);
+    }
+
+    #[test]
+    fn env_stat_threshold_unset_uses_default() {
+        let _guard = platform::env::EnvGuard::remove(ENV_STAT_THRESHOLD);
+        assert_eq!(stat_threshold_from_env(), DEFAULT_STAT_THRESHOLD);
+        assert_eq!(ParallelThresholds::default().stat, DEFAULT_STAT_THRESHOLD);
+    }
+
+    #[test]
+    fn env_stat_threshold_valid_value_honored() {
+        let _guard = platform::env::EnvGuard::set(ENV_STAT_THRESHOLD, std::ffi::OsStr::new("256"));
+        assert_eq!(stat_threshold_from_env(), 256);
+        assert_eq!(ParallelThresholds::default().stat, 256);
+        // Sibling thresholds are unaffected by the stat knob.
+        let t = ParallelThresholds::default();
+        assert_eq!(t.signature, DEFAULT_SIGNATURE_THRESHOLD);
+        assert_eq!(t.metadata, DEFAULT_METADATA_THRESHOLD);
+        assert_eq!(t.deletion, DEFAULT_DELETION_THRESHOLD);
+    }
+
+    #[test]
+    fn env_stat_threshold_below_min_clamped() {
+        let _guard = platform::env::EnvGuard::set(ENV_STAT_THRESHOLD, std::ffi::OsStr::new("0"));
+        assert_eq!(stat_threshold_from_env(), MIN_STAT_THRESHOLD);
+    }
+
+    #[test]
+    fn env_stat_threshold_above_max_clamped() {
+        let _guard =
+            platform::env::EnvGuard::set(ENV_STAT_THRESHOLD, std::ffi::OsStr::new("99999999"));
+        assert_eq!(stat_threshold_from_env(), MAX_STAT_THRESHOLD);
+    }
+
+    #[test]
+    fn env_stat_threshold_garbage_falls_back_to_default() {
+        let _guard =
+            platform::env::EnvGuard::set(ENV_STAT_THRESHOLD, std::ffi::OsStr::new("not_a_number"));
+        assert_eq!(stat_threshold_from_env(), DEFAULT_STAT_THRESHOLD);
+    }
+
+    #[test]
+    fn env_stat_threshold_negative_falls_back_to_default() {
+        let _guard = platform::env::EnvGuard::set(ENV_STAT_THRESHOLD, std::ffi::OsStr::new("-8"));
+        assert_eq!(stat_threshold_from_env(), DEFAULT_STAT_THRESHOLD);
     }
 
     #[test]
