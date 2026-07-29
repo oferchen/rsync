@@ -126,7 +126,9 @@ pub(super) fn try_clone(
     }
 
     if fast_io::try_ficlone(source, destination).is_err() {
-        let _ = std::fs::remove_file(destination);
+        // try_ficlone owns cleanup of any destination it created, so there is
+        // nothing to unlink here. On a non-reflink filesystem (ext4) the probe
+        // short-circuits before creating the destination at all.
         return Ok(false);
     }
 

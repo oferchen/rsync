@@ -152,19 +152,35 @@ mod imp {
     const ZFS_SUPER_MAGIC: i64 = 0x2FC1_2FC1;
 
     pub(super) fn detect_cow_support(path: &Path) -> io::Result<CowSupport> {
-        let (fs_id, fs_type) = statfs_for_path(path)?;
-        let cache = cache();
-        if let Some(cached) = lookup(cache, fs_id) {
+        // Path fast-path: the fs_id cache still needs a statfs(2) to compute
+        // its key, so on the local-copy hot path it would pay one statfs per
+        // file even when the answer is fixed per mount. Cache by the probed
+        // directory path so repeated files in one directory skip the syscall
+        // entirely - upstream rsync probes the filesystem zero times.
+        if let Some(cached) = lookup_path(path) {
             return Ok(cached);
         }
-        let support = classify(fs_type);
-        insert(cache, fs_id, support);
+        let (fs_id, fs_type) = statfs_for_path(path)?;
+        let cache = cache();
+        let support = match lookup(cache, fs_id) {
+            Some(cached) => cached,
+            None => {
+                let support = classify(fs_type);
+                insert(cache, fs_id, support);
+                support
+            }
+        };
+        insert_path(path, support);
         Ok(support)
     }
 
     pub(super) fn record_probe_outcome(path: &Path, outcome: CowSupport) -> io::Result<()> {
         let (fs_id, _) = statfs_for_path(path)?;
         insert(cache(), fs_id, outcome);
+        // Keep the path cache coherent with a confirming FICLONE probe so a
+        // Probable->No/Yes transition is visible to later files in the same
+        // directory without re-running statfs(2).
+        insert_path(path, outcome);
         Ok(())
     }
 
@@ -195,6 +211,31 @@ mod imp {
         };
         if let Ok(mut guard) = lock.lock() {
             guard.insert(fs_id, support);
+        }
+    }
+
+    // Directory-path cache layered above the fs_id cache: it lets repeated
+    // probes of the same directory return without a statfs(2), which the
+    // fs_id key would otherwise always require.
+    type PathCache = OnceLock<Mutex<HashMap<std::path::PathBuf, CowSupport>>>;
+
+    fn path_cache() -> &'static PathCache {
+        static PATH_CACHE: PathCache = OnceLock::new();
+        PATH_CACHE.get_or_init(|| Mutex::new(HashMap::new()));
+        &PATH_CACHE
+    }
+
+    fn lookup_path(path: &Path) -> Option<CowSupport> {
+        let guard = path_cache().get()?.lock().ok()?;
+        guard.get(path).copied()
+    }
+
+    fn insert_path(path: &Path, support: CowSupport) {
+        let Some(lock) = path_cache().get() else {
+            return;
+        };
+        if let Ok(mut guard) = lock.lock() {
+            guard.insert(path.to_path_buf(), support);
         }
     }
 

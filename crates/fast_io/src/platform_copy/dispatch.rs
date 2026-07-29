@@ -710,7 +710,8 @@ pub(super) fn try_refs_reflink_impl(_src: &Path, _dst: &Path) -> io::Result<()> 
 ///
 /// Creates the destination file, then attempts a reflink clone from the source.
 /// On success, source and destination share storage blocks (copy-on-write).
-/// On failure, the caller is responsible for cleaning up the destination.
+/// On failure this function removes any destination it created, so the caller
+/// never needs to unlink; the `CowSupport::No` short-circuit creates nothing.
 #[cfg(target_os = "linux")]
 pub(super) fn try_ficlone_impl(src: &Path, dst: &Path) -> io::Result<()> {
     use std::fs::File;
@@ -747,6 +748,13 @@ pub(super) fn try_ficlone_impl(src: &Path, dst: &Path) -> io::Result<()> {
             if matches!(raw, libc::EOPNOTSUPP | libc::EXDEV | libc::EINVAL) {
                 let _ = record_probe_outcome(probe_path, CowSupport::No);
             }
+            // We created `dst` above via File::create; clean up the empty
+            // inode ourselves so the caller never issues an unlink. The
+            // CowSupport::No short-circuit returns before File::create and
+            // therefore leaves nothing to remove - matching upstream rsync,
+            // which does no filesystem-capability probe on the receive path.
+            drop(destination);
+            let _ = std::fs::remove_file(dst);
             Err(io::Error::from_raw_os_error(raw))
         }
     }
