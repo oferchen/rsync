@@ -107,6 +107,7 @@ pub(crate) fn warn_permissions_unsupported(options: &MetadataOptions) {
 mod tests {
     use super::*;
     use crate::chmod::ChmodModifiers;
+    #[cfg(unix)]
     use crate::{GroupMapping, UserMapping};
     use std::cell::Cell;
 
@@ -125,12 +126,19 @@ mod tests {
         assert!(ownership_requested(&plain().preserve_group(true)));
         assert!(ownership_requested(&plain().with_owner_override(Some(0))));
         assert!(ownership_requested(&plain().with_group_override(Some(0))));
-        assert!(ownership_requested(
-            &plain().with_user_mapping(Some(UserMapping::default()))
-        ));
-        assert!(ownership_requested(
-            &plain().with_group_mapping(Some(GroupMapping::default()))
-        ));
+        // --usermap/--groupmap can only be constructed on Unix; the Windows
+        // mapping type is a deliberately never-constructible placeholder, so
+        // user_mapping()/group_mapping() are always None there and these legs
+        // of ownership_requested are only reachable on Unix.
+        #[cfg(unix)]
+        {
+            assert!(ownership_requested(
+                &plain().with_user_mapping(Some(UserMapping::default()))
+            ));
+            assert!(ownership_requested(
+                &plain().with_group_mapping(Some(GroupMapping::default()))
+            ));
+        }
     }
 
     #[test]
