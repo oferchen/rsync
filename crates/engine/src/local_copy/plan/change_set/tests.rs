@@ -899,7 +899,7 @@ fn for_recreated_symlink_ignores_sub_second_mtime_drift() {
 
 #[cfg(unix)]
 #[test]
-fn for_recreated_symlink_omit_link_times_suppresses_time_flag() {
+fn for_recreated_symlink_omit_link_times_still_reports_time() {
     use filetime::{FileTime, set_symlink_file_times};
     use std::os::unix::fs::symlink;
 
@@ -935,7 +935,11 @@ fn for_recreated_symlink_omit_link_times_suppresses_time_flag() {
     );
 
     assert!(change_set.checksum_changed());
-    assert_eq!(change_set.time_change(), None);
+    // upstream: generator.c:526-530 - `-J` drops keep_time, so the recreate
+    // path sets ITEM_REPORT_TIME unconditionally; with `-t` still active
+    // log.c:714-717 renders it as a lowercase `t` (`cLc.t......`), verified
+    // against rsync 3.4.4.
+    assert_eq!(change_set.time_change(), Some(TimeChange::Modified));
 }
 
 #[cfg(unix)]
