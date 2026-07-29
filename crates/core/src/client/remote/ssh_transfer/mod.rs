@@ -34,7 +34,7 @@ mod progress;
 mod server_config;
 
 pub use drive::run_ssh_transfer;
-pub(super) use exit_status::{format_stderr_context, map_child_exit_status};
+pub(super) use exit_status::map_child_exit_status;
 
 #[cfg(any(feature = "async-ssh", feature = "embedded-ssh"))]
 pub(super) use exit_status::convert_server_stats_to_summary;
@@ -227,39 +227,6 @@ mod tests {
     fn no_warning_when_neither_compresses() {
         assert!(!should_warn_double_compression(false, false));
         warn_double_compression_once(false, false);
-    }
-
-    #[test]
-    fn format_stderr_context_empty_input() {
-        assert_eq!(format_stderr_context(&[]), "");
-    }
-
-    #[test]
-    fn format_stderr_context_whitespace_only() {
-        assert_eq!(format_stderr_context(b"  \n\n  "), "");
-    }
-
-    #[test]
-    fn format_stderr_context_single_line() {
-        let output = format_stderr_context(b"Permission denied (publickey).\n");
-        assert_eq!(output, "\nSSH stderr:\nPermission denied (publickey).");
-    }
-
-    #[test]
-    fn format_stderr_context_multi_line() {
-        let input = b"Warning: Permanently added 'host' to known hosts.\nrsync error: some error\n";
-        let output = format_stderr_context(input);
-        assert!(output.starts_with("\nSSH stderr:\n"));
-        assert!(output.contains("Warning: Permanently added"));
-        assert!(output.contains("rsync error: some error"));
-    }
-
-    #[test]
-    fn format_stderr_context_invalid_utf8() {
-        let input = b"error: \xff\xfe bad bytes\n";
-        let output = format_stderr_context(input);
-        assert!(output.starts_with("\nSSH stderr:\n"));
-        assert!(output.contains("error:"));
     }
 
     #[cfg(unix)]

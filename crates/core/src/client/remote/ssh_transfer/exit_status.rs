@@ -1,10 +1,11 @@
-//! Result mapping: server statistics to client summary, SSH child exit-status
-//! to rsync exit codes, and stderr context formatting.
+//! Result mapping: server statistics to client summary and SSH child
+//! exit-status to rsync exit codes.
 //!
-//! These helpers translate the outcome of an SSH transfer (the server stats,
-//! the remote child's exit status, and any captured stderr) into the
-//! client-facing summary and error surfaces, mirroring upstream
-//! `main.c:wait_process_with_flush()` and `log.c:log_exit()`.
+//! These helpers translate the outcome of an SSH transfer (the server stats and
+//! the remote child's exit status) into the client-facing summary and error
+//! surfaces, mirroring upstream `main.c:wait_process_with_flush()` and
+//! `log.c:log_exit()`. The remote child's stderr is streamed to our stderr in
+//! real time by the SSH aux-channel drain, not formatted here.
 
 use std::time::Duration;
 
@@ -135,22 +136,4 @@ pub(in crate::client::remote) fn map_child_exit_status(
         // upstream: main.c:206/218 - a failed waitpid() maps to RERR_WAITCHILD.
         None => ExitCode::WaitChild,
     }
-}
-
-/// Formats captured SSH stderr output as a suffix for error messages.
-///
-/// Returns an empty string when `stderr_bytes` is empty. Otherwise returns
-/// a newline-separated block prefixed with "SSH stderr:" that gives the user
-/// visibility into what the remote process wrote to stderr before exiting.
-/// The output is trimmed to remove trailing whitespace.
-pub(in crate::client::remote) fn format_stderr_context(stderr_bytes: &[u8]) -> String {
-    if stderr_bytes.is_empty() {
-        return String::new();
-    }
-    let text = String::from_utf8_lossy(stderr_bytes);
-    let trimmed = text.trim();
-    if trimmed.is_empty() {
-        return String::new();
-    }
-    format!("\nSSH stderr:\n{trimmed}")
 }
