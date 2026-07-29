@@ -54,7 +54,7 @@ fn build_deep_tree(root: &Path, depth: usize) -> std::io::Result<PathBuf> {
     let mut current = root.to_path_buf();
     for index in 0..depth {
         // 25-character segment: prefix + zero-padded index.
-        let segment = format!("longpath_seg_{:0>10}", index);
+        let segment = format!("longpath_seg_{index:0>10}");
         current.push(segment);
         fs::create_dir(&current)?;
     }
