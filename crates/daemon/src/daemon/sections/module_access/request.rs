@@ -490,9 +490,10 @@ fn handle_authentication(
             username,
             access_level,
         } => {
-            if let Some(log) = ctx.log_sink {
-                log_module_auth_success(log, ctx.effective_host(), ctx.peer_ip, ctx.request);
-            }
+            // upstream: authenticate.c auth_server() logs nothing on success -
+            // the granted access is observable via the earlier "rsync allowed
+            // access on module" line (clientserver.c:742), so no auth-success
+            // line is emitted here.
             // `@RSYNCD: OK` is deferred to the caller (see the no-auth path
             // above): it is emitted only after chroot + privilege drop succeed.
             Ok(Some((Some(username), access_level)))
