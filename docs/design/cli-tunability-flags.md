@@ -657,8 +657,8 @@ the cell text says "see 4.x".
   set it once and forget; per-knob granularity is the documented
   policy.
 - **No `OC_RSYNC_*` env var equivalents for the new flags.** The
-  existing env vars (`OC_RSYNC_BUFFER_POOL_SIZE`,
-  `OC_RSYNC_FORCE_NO_COMPRESS_TEST`, etc.) remain for back-compat.
+  existing env vars (`OC_RSYNC_BUFFER_POOL_SIZE`, etc.) remain for
+  back-compat.
   New tunables ship as CLI flags only because env vars do not
   propagate cleanly through the SSH child and the daemon worker
   pool. The daemon-side equivalent is the `oc-rsyncd.conf`

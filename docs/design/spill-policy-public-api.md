@@ -117,7 +117,7 @@ fluent `.with_dir(...)`, `.with_reclaim(...)`, `.with_granularity(...)`,
 
 Names align with the existing `OC_RSYNC_*` namespace seen in `branding`,
 `fast_io`, and `core` (`OC_RSYNC_BRAND`, `OC_RSYNC_DISABLE_IOURING`,
-`OC_RSYNC_ASYNC_SSH`, `OC_RSYNC_FORCE_NO_COMPRESS`).
+`OC_RSYNC_ASYNC_SSH`).
 
 | Variable | Maps to | Accepted values |
 |----------|---------|-----------------|
@@ -128,8 +128,9 @@ Names align with the existing `OC_RSYNC_*` namespace seen in `branding`,
 | `OC_RSYNC_SPILL_COMPRESSION` | `compression` | `none` -> `None`; `zstd` -> `Zstd { level: 3 }` (zstd default); `zstd:LEVEL` -> `Zstd { level: LEVEL }`. |
 
 Precedence (highest wins): CLI flag > env var > programmatic `SpillPolicy` >
-`SpillPolicy::default()`. This mirrors the precedence used by
-`OC_RSYNC_FORCE_NO_COMPRESS` in `crates/cli/src/frontend/execution/drive/options.rs:389`.
+`SpillPolicy::default()`. This mirrors the precedence used by the
+`--skip-compress` flag and its `RSYNC_SKIP_COMPRESS` env fallback in
+`crates/cli/src/frontend/execution/drive/options.rs`.
 
 ## 4. CLI flags (ops-friendly subset)
 
