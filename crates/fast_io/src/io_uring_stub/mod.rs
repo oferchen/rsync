@@ -28,8 +28,6 @@ mod disk_batch;
 mod file_factory;
 mod file_reader;
 mod file_writer;
-/// Stub `LINKAT` API mirroring the Linux backend.
-pub mod linkat;
 /// Stub linked-SQE chain API mirroring the Linux backend.
 pub mod linked_chain;
 /// Stub per-thread io_uring ring primitive mirroring the Linux backend
@@ -83,10 +81,6 @@ pub use file_factory::{
 };
 pub use file_reader::IoUringReader;
 pub use file_writer::IoUringWriter;
-pub use linkat::{
-    LinkAtArgs, build_linkat_sqe, build_linkat_sqe_unchecked, linkat_supported,
-    submit_linkat_blocking,
-};
 pub use linked_chain::{CqeResult, LinkedChain, read_then_write};
 pub use per_thread_ring::DEFAULT_RING_DEPTH as PER_THREAD_RING_DEPTH;
 pub use registered_buffers::{RegisteredBufferGroup, RegisteredBufferSlot};

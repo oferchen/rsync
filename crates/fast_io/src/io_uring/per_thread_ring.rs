@@ -24,8 +24,8 @@
 //!
 //! # When NOT to use this
 //!
-//! - **One-shot kernel probes** (`linkat::linkat_supported`,
-//!   `renameat2::renameat2_supported`, `statx::statx_supported`) run once at
+//! - **One-shot kernel probes** (`renameat2::renameat2_supported`,
+//!   `statx::statx_supported`) run once at
 //!   startup and contribute zero hot-path syscalls; per-thread storage would
 //!   add a TLS slot per probe site for no measurable gain. They stay on
 //!   shared/single rings.

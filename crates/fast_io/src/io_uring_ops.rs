@@ -10,8 +10,7 @@
 use crate::io_uring::StatxResult;
 #[cfg(all(target_os = "linux", feature = "io_uring"))]
 use crate::io_uring::{
-    LinkAtArgs, RenameAt2Args, linkat_supported, renameat2_blocking, renameat2_supported,
-    statx_supported, submit_linkat_blocking, submit_statx_batch,
+    RenameAt2Args, renameat2_blocking, renameat2_supported, statx_supported, submit_statx_batch,
 };
 
 /// Attempts to rename a file via io_uring `IORING_OP_RENAMEAT`.
@@ -78,65 +77,6 @@ fn try_rename_via_io_uring_impl(
     None
 }
 
-/// Attempts to create a hard link via io_uring `IORING_OP_LINKAT`.
-///
-/// On Linux with kernel 5.15+ and io_uring available, submits a blocking
-/// LINKAT SQE on a transient ring and returns the result. On all other
-/// platforms, or when the kernel lacks the opcode, returns `None` so the
-/// caller can fall back to `std::fs::hard_link`.
-///
-/// # Errors
-///
-/// Returns `Some(Err(...))` when io_uring is available and the link was
-/// submitted but the kernel returned an error (e.g., `EEXIST`, `EACCES`).
-pub fn try_hard_link_via_io_uring(
-    src_path: &std::path::Path,
-    dst_path: &std::path::Path,
-) -> Option<std::io::Result<()>> {
-    try_hard_link_via_io_uring_impl(src_path, dst_path)
-}
-
-#[cfg(all(target_os = "linux", feature = "io_uring"))]
-fn try_hard_link_via_io_uring_impl(
-    src_path: &std::path::Path,
-    dst_path: &std::path::Path,
-) -> Option<std::io::Result<()>> {
-    use std::ffi::CString;
-    use std::os::unix::ffi::OsStrExt;
-
-    if !linkat_supported() {
-        return None;
-    }
-    let old_c = match CString::new(src_path.as_os_str().as_bytes()) {
-        Ok(c) => c,
-        Err(_) => return Some(Err(std::io::Error::other("path contains interior NUL"))),
-    };
-    let new_c = match CString::new(dst_path.as_os_str().as_bytes()) {
-        Ok(c) => c,
-        Err(_) => return Some(Err(std::io::Error::other("path contains interior NUL"))),
-    };
-    let args = LinkAtArgs {
-        old_dirfd: libc::AT_FDCWD,
-        old_path: &old_c,
-        new_dirfd: libc::AT_FDCWD,
-        new_path: &new_c,
-        flags: 0,
-    };
-    match submit_linkat_blocking(args) {
-        Ok(_) => Some(Ok(())),
-        Err(e) if e.kind() == std::io::ErrorKind::Unsupported => None,
-        Err(e) => Some(Err(e)),
-    }
-}
-
-#[cfg(not(all(target_os = "linux", feature = "io_uring")))]
-fn try_hard_link_via_io_uring_impl(
-    _src_path: &std::path::Path,
-    _dst_path: &std::path::Path,
-) -> Option<std::io::Result<()>> {
-    None
-}
-
 /// Attempts to stat files via io_uring `IORING_OP_STATX` batch submission.
 ///
 /// On Linux with kernel 5.11+ and io_uring available, submits all paths
@@ -186,11 +126,11 @@ fn try_statx_batch_via_io_uring_impl(
 /// Creates a hard link from `src` to `dst` via a direct syscall.
 ///
 /// This is the recommended single entry point for hard-link creation across
-/// the codebase. It deliberately does NOT route through io_uring: the only
-/// available submission mode ([`try_hard_link_via_io_uring`]) builds a
-/// transient ring per call, and the ring setup/teardown (`io_uring_setup(2)`
-/// plus two `mmap(2)`/`munmap(2)` pairs) dwarfs the single cheap `linkat(2)`
-/// it wraps. On a 1900-hardlink local `-aH` copy that per-file churn was
+/// the codebase. It deliberately does NOT route through io_uring: an
+/// `IORING_OP_LINKAT` submission needs a ring, and building a transient ring
+/// per call means ring setup/teardown (`io_uring_setup(2)` plus two
+/// `mmap(2)`/`munmap(2)` pairs) that dwarfs the single cheap `linkat(2)` it
+/// wraps. On a 1900-hardlink local `-aH` copy that per-file churn was
 /// measured at 40% of total syscall time.
 ///
 /// # Errors
@@ -269,68 +209,6 @@ mod rename_dispatch_tests {
             "must return None on non-Linux platforms"
         );
         assert!(src.exists(), "source must be untouched");
-    }
-}
-
-#[cfg(test)]
-mod hard_link_dispatch_tests {
-    use super::*;
-    use std::fs;
-
-    #[test]
-    fn try_hard_link_via_io_uring_links_or_returns_none() {
-        let dir = tempfile::tempdir().unwrap();
-        let src = dir.path().join("link_src.txt");
-        let dst = dir.path().join("link_dst.txt");
-        fs::write(&src, b"link payload").unwrap();
-
-        match try_hard_link_via_io_uring(&src, &dst) {
-            Some(Ok(())) => {
-                // io_uring path succeeded - verify hard link created.
-                assert!(src.exists());
-                assert!(dst.exists());
-                assert_eq!(fs::read(&dst).unwrap(), b"link payload");
-            }
-            Some(Err(e)) => {
-                panic!("io_uring hard_link returned error: {e}");
-            }
-            None => {
-                // Not available on this platform/kernel.
-                assert!(src.exists());
-                assert!(!dst.exists());
-            }
-        }
-    }
-
-    #[test]
-    fn try_hard_link_via_io_uring_returns_none_consistently() {
-        let dir = tempfile::tempdir().unwrap();
-        let src = dir.path().join("link_consistency_src.txt");
-        let dst1 = dir.path().join("link_consistency_dst1.txt");
-        let dst2 = dir.path().join("link_consistency_dst2.txt");
-        fs::write(&src, b"data").unwrap();
-
-        let first = try_hard_link_via_io_uring(&src, &dst1).is_some();
-        let second = try_hard_link_via_io_uring(&src, &dst2).is_some();
-        assert_eq!(
-            first, second,
-            "availability must be consistent across calls"
-        );
-    }
-
-    #[cfg(not(target_os = "linux"))]
-    #[test]
-    fn try_hard_link_via_io_uring_returns_none_on_non_linux() {
-        let dir = tempfile::tempdir().unwrap();
-        let src = dir.path().join("non_linux_link_src.txt");
-        let dst = dir.path().join("non_linux_link_dst.txt");
-        fs::write(&src, b"data").unwrap();
-
-        assert!(
-            try_hard_link_via_io_uring(&src, &dst).is_none(),
-            "must return None on non-Linux platforms"
-        );
-        assert!(!dst.exists(), "destination must not exist");
     }
 }
 
@@ -469,28 +347,6 @@ mod hard_link_convenience_tests {
 
         let result = hard_link(&src, &dst);
         assert!(result.is_err(), "must fail when source does not exist");
-    }
-
-    /// Structure-level assertion for the direct-syscall path: `hard_link`
-    /// must never consult the io_uring LINKAT machinery, so the process-wide
-    /// support probe stays uninitialized after a link is created. Relies on
-    /// nextest's process-per-test model: nothing else in this process
-    /// initializes the probe.
-    #[cfg(all(target_os = "linux", feature = "io_uring"))]
-    #[test]
-    fn hard_link_does_not_touch_io_uring_probe() {
-        let dir = tempfile::tempdir().unwrap();
-        let src = dir.path().join("hl_probe_src.txt");
-        let dst = dir.path().join("hl_probe_dst.txt");
-        fs::write(&src, b"probe check").unwrap();
-
-        hard_link(&src, &dst).unwrap();
-
-        assert!(dst.exists(), "hard link must be created");
-        assert!(
-            !crate::io_uring::linkat::linkat_probe_initialized(),
-            "hard_link must take the direct syscall path, not io_uring LINKAT"
-        );
     }
 
     /// Verifies that writing to the source after hard-linking is visible
