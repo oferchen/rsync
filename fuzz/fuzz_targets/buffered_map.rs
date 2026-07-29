@@ -99,13 +99,40 @@ fuzz_target!(|data: &[u8]| {
     // production crash math (file=48128, MAX_MAP_SIZE=262144) is hit
     // whenever `request_start + request_len` reaches the cached-window
     // edge near EOF.
-    let _ = MapStrategy::map_ptr(&mut map, request_start, request_len as usize);
+    check_window(&mut map, &payload, request_start, request_len as usize);
 
     // Second request - drives the forward-overlap branch of `load_window`
     // when `second_start` falls inside the prior window, which is the path
     // that historically panicked via `copy_within`.
-    let _ = MapStrategy::map_ptr(&mut map, second_start, second_len as usize);
+    check_window(&mut map, &payload, second_start, second_len as usize);
 });
+
+/// Oracle for a single `map_ptr` request: beyond not panicking, a successful
+/// map MUST return exactly `len` bytes, and those bytes MUST equal the
+/// backing file's contents at `[offset, offset + len)`. Because the backing
+/// file is a deterministic function of the fuzz input, the exact expected
+/// bytes are known, so a window that returns the wrong extent or copies the
+/// wrong region (the `load_window` / `copy_within` reuse path) is caught
+/// here rather than only when it panics. `map_ptr` guarantees
+/// `offset + len <= file_size` on the `Ok` path, so indexing `payload` is
+/// always in bounds.
+fn check_window(map: &mut BufferedMap, payload: &[u8], offset: u64, len: usize) {
+    if let Ok(slice) = MapStrategy::map_ptr(map, offset, len) {
+        assert_eq!(
+            slice.len(),
+            len,
+            "map_ptr returned {} bytes for a {len}-byte request at offset {offset}",
+            slice.len(),
+        );
+        let start = offset as usize;
+        let end = start + len;
+        assert_eq!(
+            slice,
+            &payload[start..end],
+            "map_ptr returned the wrong bytes for offset {offset} len {len}",
+        );
+    }
+}
 
 /// Tile `seed` (or zero-fill on empty seed) to exactly `len` bytes. Keeping
 /// payloads deterministic from the fuzz input gives libFuzzer a stable

@@ -20,6 +20,19 @@
 //! `CF_INC_RECURSE`) wire formats are exercised. Any panic from
 //! decoding, dependency tracking, or finalization is a finding.
 //!
+//! # Oracle
+//!
+//! No-panic is the only sound oracle here. This is a tolerant state machine,
+//! not a codec: it reorders entries by parent-directory dependency and
+//! synthesizes placeholder directories for orphaned children, so the output
+//! is deliberately not a byte-faithful echo of the input and cannot be
+//! round-tripped. There is no reference implementation to diff against
+//! without duplicating the dependency tracker, and any structural invariant
+//! strong enough to catch a reordering bug would have to reconstruct that
+//! same expected ordering. Manufacturing an assertion would be fake, so this
+//! target is held to panic-freedom across decode, dependency tracking, and
+//! finalization.
+//!
 //! # Running
 //!
 //! ```bash

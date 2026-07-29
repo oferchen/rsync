@@ -23,6 +23,17 @@
 //! bytes are handed to [`negotiate_capabilities`] as the peer's stream so
 //! the vstring reader consumes them directly.
 //!
+//! # Oracle
+//!
+//! No-panic is the only sound oracle here. `read_vstring` is `pub(super)`
+//! and reachable from outside the crate solely through
+//! [`negotiate_capabilities`], which consumes the peer stream opaquely and
+//! returns negotiated capabilities rather than the decoded vstring. There is
+//! no exposed decoded value to round-trip or assert an invariant on, and the
+//! negotiation outcome is not a pure function of a single vstring, so any
+//! manufactured assertion would be fake. This target is deliberately held to
+//! panic-freedom on the pre-auth reader.
+//!
 //! # Running
 //!
 //! ```bash

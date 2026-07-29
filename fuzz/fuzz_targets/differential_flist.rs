@@ -242,12 +242,24 @@ fn check_roundtrip(input: &FlistInput) {
     // newer protocols).
     wire.push(0);
 
-    // Decode the entry.
+    // Decode the entry. These bytes were produced by our own writer, so a
+    // decode failure - or an early end-of-list before the entry we wrote - is
+    // a genuine round-trip bug, not a tolerated malformed-input case. Swallowing
+    // it (the previous `Err(_) => return`) would have hidden exactly the class
+    // of encode/decode divergence this differential target exists to catch, so
+    // both are hard failures.
     let mut cursor = Cursor::new(wire.as_slice());
     let decoded = match reader.read_entry(&mut cursor) {
         Ok(Some(d)) => d,
-        Ok(None) => return, // End-of-list reached before entry - structural issue but not a panic.
-        Err(_) => return,   // Parse error on our own output - investigate if this persists.
+        Ok(None) => panic!(
+            "writer produced bytes the reader treats as end-of-list before the entry: \
+             name={:?}",
+            String::from_utf8_lossy(&entry.name_bytes()),
+        ),
+        Err(e) => panic!(
+            "reader failed to decode the writer's own output: name={:?} error={e}",
+            String::from_utf8_lossy(&entry.name_bytes()),
+        ),
     };
 
     // Invariant 1: name must round-trip exactly.
