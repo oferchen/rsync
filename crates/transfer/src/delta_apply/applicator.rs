@@ -72,36 +72,32 @@ type BasisMapStrategy = BufferedMap;
 
 /// Kind of writer paired with the [`DeltaApplicator`].
 ///
-/// Drives the basis-file mapping policy: when the writer is io_uring-backed,
-/// the basis file must be opened via [`crate::map_file::BufferedMap`] (a sliding-window
-/// `pread(2)` reader) rather than `mmap(2)`. Submitting an `mmap`-backed
-/// pointer to an `io_uring` SQE has two failure modes:
+/// The basis file is always opened via [`crate::map_file::BufferedMap`] (a
+/// sliding-window `read(2)` reader) rather than `mmap(2)`, regardless of the
+/// writer kind. Memory-mapping the basis has two failure modes this avoids:
 ///
-/// 1. Cold-page faults are serviced under the SQE submission thread (or the
-///    SQPOLL kernel thread when SQPOLL is enabled), turning a "free" zero-copy
-///    write into a synchronous fault and stalling other in-flight SQEs on the
-///    same poller.
-/// 2. A concurrent truncation of the basis file raises `SIGBUS` while the
-///    kernel is dereferencing the page on our behalf - recovery from
-///    in-kernel `SIGBUS` is not signal-safe.
+/// 1. A concurrent truncation of the basis file raises `SIGBUS` while the
+///    kernel is dereferencing the now-unmapped page on our behalf - recovery
+///    from in-kernel `SIGBUS` is not signal-safe. A windowed `read(2)` past
+///    the shrunk EOF instead returns short and surfaces as an `io::Error`.
+/// 2. When paired with an io_uring writer, cold-page faults on an mmap-backed
+///    pointer submitted in an SQE are serviced under the SQE submission thread
+///    (or the SQPOLL kernel thread), turning a "free" zero-copy write into a
+///    synchronous fault and stalling other in-flight SQEs on the same poller.
 ///
 /// Upstream rsync deliberately avoids `mmap(2)` for basis files for the same
-/// truncation reason - see `fileio.c:214-217` in upstream rsync 3.4.1.
+/// truncation reason - see `fileio.c:214-217` + `map_ptr()` in upstream rsync.
 ///
 /// See `docs/design/basis-file-io-policy.md` and audit
-/// `docs/audits/mmap-iouring-co-usage.md` finding F1.
+/// `docs/audits/mmap-iouring-co-usage.md` finding F1. The variant is retained
+/// for callers and future policy (e.g. a SIGBUS-guarded mmap fast path) but no
+/// longer changes the basis read strategy.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum BasisWriterKind {
     /// Standard buffered writer (or any writer not backed by io_uring).
-    ///
-    /// On Unix the basis file is opened with the adaptive strategy, which
-    /// selects `mmap(2)` for files >= 1 MiB. This matches existing behaviour.
     #[default]
     Standard,
     /// io_uring-backed writer (e.g. `IoUringWriter` or `IoUringDiskBatch`).
-    ///
-    /// Forces the basis file onto [`crate::map_file::BufferedMap`] regardless of size to keep
-    /// `mmap`-backed pointers out of any io_uring submission queue entry.
     IoUring,
 }
 
@@ -169,19 +165,17 @@ pub struct DeltaApplyResult {
 ///
 /// # Performance Optimizations
 ///
-/// - Uses `MapFile` with `BasisMapStrategy` for basis file access. The
-///   exact strategy is policy-driven via [`DeltaApplyConfig::writer_kind`]:
-///   - Unix, [`BasisWriterKind::Standard`]: `AdaptiveMapStrategy` -
-///     files < 1MB use buffered I/O (256KB sliding window), files >= 1MB
-///     use mmap for zero-copy access.
-///   - Unix, [`BasisWriterKind::IoUring`]: forced to `BufferedMap` for all
-///     sizes. Submitting an mmap-backed pointer to an io_uring SQE can
-///     stall the SQPOLL kernel thread on cold-page faults and raises
-///     `SIGBUS` on concurrent truncation. Mirrors upstream rsync's
-///     deliberate avoidance of `mmap(2)` for basis files
-///     (`fileio.c:214-217`). See `docs/design/basis-file-io-policy.md`.
-///   - Non-Unix: `BufferedMap` - buffered I/O with 256KB sliding window
-///     for all files.
+/// - Uses `MapFile` for basis file access via a 256KB sliding-window
+///   `read(2)` reader (`BufferedMap`) on every platform and for every
+///   [`BasisWriterKind`]. The basis is never memory-mapped: a concurrent
+///   truncation by another process would raise `SIGBUS` when the kernel
+///   faults the unmapped tail on our behalf, whereas a windowed `read(2)`
+///   past the shrunk EOF returns short and surfaces as an ordinary
+///   `io::Error`. Windowed reads also keep mmap-backed pointers out of any
+///   io_uring SQE, whose cold-page faults would stall the SQPOLL kernel
+///   thread. Mirrors upstream rsync's deliberate use of `read(2)` for basis
+///   files (`fileio.c:214-217` + `map_ptr()`). See
+///   `docs/design/basis-file-io-policy.md`.
 /// - Uses `TokenBuffer` for literal data, reusing the same allocation across
 ///   all tokens to avoid per-token heap allocations.
 pub struct DeltaApplicator<'a> {
@@ -212,18 +206,15 @@ impl<'a> DeltaApplicator<'a> {
     /// Creates a new delta applicator.
     ///
     /// If `basis_path` is provided, opens the file once and caches it for
-    /// efficient block reference lookups. Basis-file mapping policy:
-    ///
-    /// - **Unix, standard writer**: `AdaptiveMapStrategy` - mmap for files
-    ///   >= 1 MiB, buffered for smaller (existing behaviour).
-    /// - **Unix, io_uring writer**: forces `BufferedMap` regardless of size.
-    ///   Mmap'd basis pointers must never reach an io_uring SQE: cold-page
-    ///   faults stall the SQPOLL kernel thread, and truncation by another
-    ///   process raises `SIGBUS` inside the kernel SQE service path. Mirrors
-    ///   upstream rsync's `fileio.c:214-217` rationale for using `read(2)`
-    ///   instead of `mmap(2)` on basis files. See
-    ///   `docs/design/basis-file-io-policy.md`.
-    /// - **Non-Unix**: always `BufferedMap` (no mmap path is wired).
+    /// efficient block reference lookups. The basis is always read through a
+    /// 256KB sliding-window `read(2)` reader (`BufferedMap`), never memory
+    /// mapped, so a concurrent truncation of the basis by another process
+    /// surfaces as an ordinary short-read `io::Error` instead of a `SIGBUS`
+    /// the kernel raises while faulting an unmapped page on our behalf. This
+    /// also keeps mmap-backed pointers out of any io_uring SQE. Mirrors
+    /// upstream rsync's `fileio.c:214-217` rationale for using `read(2)`
+    /// instead of `mmap(2)` on basis files. See
+    /// `docs/design/basis-file-io-policy.md`.
     pub fn new(
         output: File,
         config: &DeltaApplyConfig,
@@ -232,21 +223,23 @@ impl<'a> DeltaApplicator<'a> {
         basis_path: Option<&'a Path>,
     ) -> io::Result<Self> {
         let basis_map = if let Some(path) = basis_path {
+            // Always read the basis through the windowed read() reader, never
+            // mmap. If another process truncates the basis mid-transfer (the
+            // canonical case upstream cites: a mailer rewriting the file), a
+            // dereference of the now-unmapped tail raises SIGBUS while the
+            // kernel is faulting the page in on our behalf - unrecoverable
+            // without a signal handler. A read(2) past the shrunk EOF instead
+            // returns short and surfaces as an ordinary io::Error the receiver
+            // reports as a transfer failure. Buffered reads also keep
+            // mmap-backed pointers out of any io_uring SQE, whose cold-page
+            // faults would otherwise stall the SQPOLL kernel thread.
+            // upstream: fileio.c:214-217 comment + map_ptr() deliberately use
+            // read(2) instead of mmap(2) on basis files for this exact reason.
+            let _ = config.writer_kind;
             #[cfg(unix)]
-            let map = if config.writer_kind.is_io_uring() {
-                // Avoid mmap when paired with io_uring (#1906, audit F1).
-                MapFile::open_adaptive_buffered(path)
-            } else {
-                MapFile::open_adaptive(path)
-            };
+            let map = MapFile::open_adaptive_buffered(path);
             #[cfg(not(unix))]
-            let map = {
-                // BufferedMap is the only basis strategy on non-Unix; the
-                // io_uring path itself is Linux-only, so the writer_kind
-                // signal is consumed indirectly via the cfg gate.
-                let _ = config.writer_kind;
-                MapFile::<BufferedMap>::open(path)
-            };
+            let map = MapFile::<BufferedMap>::open(path);
 
             Some(map.map_err(|e| {
                 io::Error::new(e.kind(), format!("failed to open basis file {path:?}: {e}"))
@@ -271,9 +264,10 @@ impl<'a> DeltaApplicator<'a> {
 
     /// Returns true if a basis file is open and is using the mmap strategy.
     ///
-    /// Used by tests to verify the policy decision in
-    /// [`Self::new`]: an io_uring-backed writer must never produce a
-    /// mmap-backed basis. See `docs/design/basis-file-io-policy.md`.
+    /// Used by tests to verify the policy decision in [`Self::new`]: the basis
+    /// is always opened through the windowed `BufferedMap` reader, so this must
+    /// return `false` for every writer kind and file size. See
+    /// `docs/design/basis-file-io-policy.md`.
     #[must_use]
     pub fn basis_uses_mmap(&self) -> bool {
         #[cfg(unix)]
@@ -319,15 +313,12 @@ impl<'a> DeltaApplicator<'a> {
 
     /// Applies a block reference by copying from basis file.
     ///
-    /// Uses the cached `MapFile` opened in [`Self::new`]. The mapping
-    /// strategy depends on the configured [`BasisWriterKind`]:
-    /// - Standard writer (Unix): adaptive - 256KB sliding window for files
-    ///   < 1MB, zero-copy mmap for files >= 1MB.
-    /// - io_uring writer: 256KB sliding window via `BufferedMap`,
-    ///   regardless of size, to keep mmap pointers out of any io_uring SQE
-    ///   (audit `docs/audits/mmap-iouring-co-usage.md` finding F1; upstream
-    ///   `fileio.c:214-217`).
-    /// - Non-Unix: 256KB sliding window for all files.
+    /// Uses the cached `MapFile` opened in [`Self::new`], which always reads
+    /// the basis through a 256KB sliding-window `read(2)` reader
+    /// (`BufferedMap`) on every platform. The basis is never memory-mapped so
+    /// a concurrent truncation cannot raise `SIGBUS`, and no mmap pointer can
+    /// reach an io_uring SQE (audit `docs/audits/mmap-iouring-co-usage.md`
+    /// finding F1; upstream `fileio.c:214-217` + `map_ptr()`).
     ///
     /// # Errors
     ///
@@ -983,8 +974,8 @@ mod tests {
     }
 
     /// Creates a 2 MiB basis file and an output file, returning paths.
-    /// 2 MiB is above `MMAP_THRESHOLD` (1 MiB) so the adaptive strategy
-    /// would otherwise pick mmap on Unix.
+    /// 2 MiB is above the legacy `MMAP_THRESHOLD` (1 MiB); the applicator must
+    /// still open it via the windowed `BufferedMap` reader, never mmap.
     fn make_large_basis(dir: &tempfile::TempDir) -> (std::path::PathBuf, File) {
         let basis_path = dir.path().join("basis.bin");
         let out_path = dir.path().join("out.bin");
@@ -1000,7 +991,7 @@ mod tests {
     }
 
     #[test]
-    fn standard_writer_kind_uses_mmap_on_unix_for_large_basis() {
+    fn standard_writer_kind_never_mmaps_large_basis() {
         let dir = tempdir().expect("tempdir");
         let (basis_path, out) = make_large_basis(&dir);
         let config = DeltaApplyConfig {
@@ -1013,16 +1004,16 @@ mod tests {
             DeltaApplicator::new(out, &config, verifier, None, Some(basis_path.as_path()))
                 .expect("construct applicator");
         assert!(applicator.has_basis());
-        // On Unix, AdaptiveMapStrategy picks mmap for files >= 1 MiB.
-        // On non-Unix only BufferedMap exists, so basis_uses_mmap() is
-        // always false.
-        #[cfg(unix)]
+        // The load-bearing correctness invariant: even a 2 MiB basis (above
+        // the legacy 1 MiB mmap threshold) with the standard writer must use
+        // the windowed read() reader, never mmap. Memory-mapping the basis
+        // would raise SIGBUS if another process truncates it mid-transfer;
+        // read(2) past the shrunk EOF surfaces as an ordinary io::Error
+        // instead (upstream fileio.c:214-217 + map_ptr()).
         assert!(
-            applicator.basis_uses_mmap(),
-            "standard writer + 2 MiB basis should pick mmap on Unix"
+            !applicator.basis_uses_mmap(),
+            "standard writer must read the basis via windowed read(), never mmap"
         );
-        #[cfg(not(unix))]
-        assert!(!applicator.basis_uses_mmap());
     }
 
     #[test]
@@ -1064,6 +1055,93 @@ mod tests {
             DeltaApplicator::new(out, &config, verifier, None, None).expect("construct applicator");
         assert!(!applicator.has_basis());
         assert!(!applicator.basis_uses_mmap());
+    }
+
+    /// Regression (#277): a basis truncated by another process after the
+    /// applicator opened it must surface as an ordinary `io::Error`, never a
+    /// `SIGBUS` that kills the process. The pre-fix Standard path mmap'd any
+    /// basis of 1 MiB or larger, so dereferencing a block past the shrunk EOF
+    /// faulted an unmapped page and raised `SIGBUS` (exit 135 Linux, 138 Darwin).
+    /// The windowed `read(2)` reader instead hits EOF early and returns
+    /// `UnexpectedEof`. Surviving to the assertion (no signal death) is the
+    /// load-bearing part; the error kind pins the graceful-degradation contract.
+    #[test]
+    fn basis_apply_survives_concurrent_truncation() {
+        use std::num::NonZeroU8;
+
+        let dir = tempdir().expect("tempdir");
+        let basis_path = dir.path().join("basis.bin");
+        let out_path = dir.path().join("out.bin");
+
+        // 2 MiB basis: above the legacy 1 MiB mmap threshold, so the pre-fix
+        // Standard path would have mmap'd it.
+        const BASIS_LEN: usize = 2 * 1024 * 1024;
+        let basis_bytes: Vec<u8> = (0..BASIS_LEN).map(|i| (i % 251) as u8).collect();
+        {
+            let mut f = File::create(&basis_path).expect("create basis");
+            f.write_all(&basis_bytes).expect("write basis");
+            f.sync_all().ok();
+        }
+
+        // Signature over the full, untruncated basis - the block layout the
+        // applicator will index against.
+        let layout =
+            engine::delta::calculate_signature_layout(engine::delta::SignatureLayoutParams::new(
+                BASIS_LEN as u64,
+                None,
+                protocol::ProtocolVersion::NEWEST,
+                NonZeroU8::new(16).unwrap(),
+            ))
+            .expect("layout");
+        let signature = engine::signature::generate_file_signature(
+            File::open(&basis_path).expect("reopen basis"),
+            layout,
+            engine::signature::SignatureAlgorithm::Md4,
+        )
+        .expect("signature");
+        let last_block = (signature.layout().block_count() as usize)
+            .checked_sub(1)
+            .expect("basis has at least one block");
+
+        let out = File::create(&out_path).expect("create out");
+        let config = DeltaApplyConfig {
+            sparse: false,
+            writer_kind: BasisWriterKind::Standard,
+            cow_policy: fast_io::CowPolicy::Auto,
+        };
+        let verifier = ChecksumVerifier::for_algorithm(protocol::ChecksumAlgorithm::MD5);
+        let mut applicator = DeltaApplicator::new(
+            out,
+            &config,
+            verifier,
+            Some(&signature),
+            Some(basis_path.as_path()),
+        )
+        .expect("construct applicator");
+        assert!(
+            !applicator.basis_uses_mmap(),
+            "basis must not be mmap-backed"
+        );
+
+        // Another process truncates the basis to a few KiB while we hold it
+        // open. The last block now lies far past the new EOF.
+        File::options()
+            .write(true)
+            .open(&basis_path)
+            .expect("reopen for truncation")
+            .set_len(8 * 1024)
+            .expect("truncate basis");
+
+        // Referencing the now-missing tail block must return an error, not
+        // crash the process with a bus error.
+        let err = applicator
+            .apply_block_ref(last_block)
+            .expect_err("block past truncated EOF must return Err, not SIGBUS");
+        assert_eq!(
+            err.kind(),
+            io::ErrorKind::UnexpectedEof,
+            "short read past the shrunk basis must surface as UnexpectedEof, got {err:?}",
+        );
     }
 
     #[test]
