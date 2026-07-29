@@ -31,6 +31,10 @@ impl ReceiverContext {
     /// After the file list entries, this also consumes the UID/GID lists that follow
     /// (unless using incremental recursion). See upstream `recv_id_list()` in uidlist.c.
     pub fn receive_file_list<R: Read + ?Sized>(&mut self, reader: &mut R) -> io::Result<usize> {
+        // upstream: flist.c:2615 - `start_read = stats.total_read;` snapshots the
+        // raw wire counter before any list byte is read; the span (through the id
+        // lists and the pre-30 io_error int) accumulates into stats.flist_size.
+        let span_start = self.flist_span_start();
         let mut flist_reader = self.build_flist_reader();
 
         // Set ndx_start so the reader can distinguish abbreviated vs
@@ -196,6 +200,9 @@ impl ReceiverContext {
         // across recv_file_list() calls - cache the reader to preserve that state.
         self.flist_reader_cache = Some(flist_reader);
 
+        // upstream: flist.c:2789 - `stats.flist_size += stats.total_read - start_read;`
+        self.flist_span_end(span_start);
+
         Ok(count)
     }
 
@@ -234,15 +241,21 @@ impl ReceiverContext {
         let mut total_extra = 0;
 
         loop {
+            // Snapshot before the header ndx: upstream's raw counter ticks on
+            // arrival (io.c:820), so the segment header and EOF marker bytes are
+            // attributed to an adjacent recv_file_list span on any real link;
+            // covering them here reproduces upstream's observable flist_size.
+            let span_start = self.flist_span_start();
             let ndx = ndx_codec.read_ndx(reader)?;
 
             if ndx == NDX_FLIST_EOF {
                 debug_log!(Flist, 2, "received NDX_FLIST_EOF, file list complete");
                 self.flist_eof = true;
+                self.flist_span_end(span_start);
                 break;
             }
 
-            total_extra += self.receive_one_extra_segment(reader, ndx)?;
+            total_extra += self.receive_one_extra_segment(reader, ndx, span_start)?;
         }
 
         debug_log!(
@@ -279,6 +292,7 @@ impl ReceiverContext {
         &mut self,
         reader: &mut R,
         ndx: i32,
+        span_start: u64,
     ) -> io::Result<usize> {
         if ndx > NDX_FLIST_OFFSET {
             return Err(io::Error::new(
@@ -401,6 +415,11 @@ impl ReceiverContext {
             segment_count,
             seg_ndx_start
         );
+
+        // upstream: flist.c:2789 - each sub-list's raw wire bytes accumulate
+        // into stats.flist_size via `+=` on every recv_file_list() call.
+        self.flist_span_end(span_start);
+
         Ok(segment_count)
     }
 

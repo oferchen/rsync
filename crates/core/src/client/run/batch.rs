@@ -420,6 +420,9 @@ fn replay_batch(
         std::time::Duration::ZERO,
         total_size,
         0,
+        // The --read-batch replay engine decodes the flist from the batch file
+        // without a raw wire counter, so no flist span is measured.
+        0,
         protocol::DeleteStats::new(),
         // The --read-batch replay engine does not reconstruct a per-type
         // ITEM_IS_NEW breakdown, so carry every replayed entry as a created
