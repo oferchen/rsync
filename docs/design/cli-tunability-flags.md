@@ -28,7 +28,8 @@ The seven knobs and their existing back-end APIs are:
   documented in `lib.rs:48-67`. There is no CLI surface; users who
   want to bypass io_uring on a 5.6+ kernel where it misbehaves must
   rebuild without the `io_uring` feature. (#1821 wired the
-  `IoBackend` dispatch trait; #1824 surfaces the selector.)
+  `IoBackend` dispatch trait; the #1824 unified selector is descoped,
+  see section 3.1.)
 - **SIMD backend selection.** `crates/checksums/src/simd_batch/md5_dispatcher.rs:80`
   exposes `Dispatcher::detect()` which walks a precedence list
   (AVX-512 -> AVX2 -> SSE4.1 -> SSSE3 -> SSE2 -> NEON -> WASM SIMD ->
@@ -74,10 +75,9 @@ The seven knobs and their existing back-end APIs are:
 
 The pattern across all seven is the same: an internal `Default::default()`
 or `detect()` call picks a value that is correct for 95% of users, and
-the remaining 5% need an override. This design defines the seven CLI
-flags as a single coherent set so the cli, parsing, validation, help-
-text, and test layers can land together rather than seven separate
-half-PRs.
+the remaining 5% need an override. This design defines the CLI flags
+as a single coherent set so the cli, parsing, validation, help-text,
+and test layers can land together rather than as separate half-PRs.
 
 There is **zero wire-protocol impact**. Every knob is process-internal.
 The conflict matrix in section 4 documents this explicitly.
@@ -86,10 +86,9 @@ The conflict matrix in section 4 documents this explicitly.
 
 | Flag | Default value | Valid values | Internal API touched | Validation rule | Interaction with other flags |
 |------|---------------|--------------|----------------------|-----------------|------------------------------|
-| `--io-backend=MODE` | `auto` | `auto`, `io_uring`, `kqueue`, `iocp`, `poll`, `epoll` | `IoUringPolicy`, `IocpPolicy`, `fast_io::traits::FileReader/FileWriter` factories | Reject if `MODE` not in the enumerated set. Warn-and-fallback if `MODE` is unsupported on this OS or this build. | `--io-uring-depth` only meaningful when backend resolves to `io_uring`; otherwise warn. |
 | `--simd=MODE` | `auto` | `auto`, `avx512`, `avx2`, `sse4`, `neon`, `none` | `Dispatcher::detect()` in `crates/checksums/src/simd_batch/*` and rolling SIMD | Reject if `MODE` not in the enumerated set. Hard-fail when an explicit ISA is named and the running CPU lacks it. | None. SIMD is independent of I/O backend, COW, and zero-copy. |
 | `--cow` / `--no-cow` | enabled (try reflink) | bool toggle | `fast_io::platform_copy::DefaultPlatformCopy::try_*` chain | Tri-state per `tri_state_flag_positive_first`; `--no-cow` wins on tie. | `--inplace` overrides any reflink decision (no clone for in-place writes); `--whole-file` benefits most from `--cow`. |
-| `--zero-copy` / `--no-zero-copy` | enabled | bool toggle | `fast_io::sendfile::send_file_to_fd`, `fast_io::splice::try_splice_to_file` | Tri-state per `tri_state_flag_positive_first`; `--no-zero-copy` wins on tie. | `--bwlimit` and the multiplex token frame both force a fallback to read/write irrespective of this flag (see section 4.4). |
+| `--zero-copy` / `--no-zero-copy` | enabled | bool toggle | `fast_io::sendfile::send_file_to_fd`, `fast_io::splice::try_splice_to_file` | Tri-state per `tri_state_flag_positive_first`; `--no-zero-copy` wins on tie. | `--bwlimit` and the multiplex token frame both force a fallback to read/write irrespective of this flag (see section 3.4). |
 | `--sparse-detect=MODE` | `auto` | `auto`, `seek`, `map`, `none` | `fast_io::zero_detect::detect_zero_run`, `lseek(SEEK_DATA)`, `FSCTL_QUERY_ALLOCATED_RANGES` | Reject if `MODE` not in the enumerated set. `seek` requires Linux/macOS; `map` requires Windows ReFS or `FIEMAP`; warn-and-fallback otherwise. | `--sparse` / `--no-sparse` controls *whether* sparse handling runs at all; `--sparse-detect` controls *how* it runs when it does. |
 | `--rayon-threads=N` / `--tokio-threads=N` | `available_parallelism()` per pool | `1..=4096` | `rayon::ThreadPoolBuilder::num_threads`, `tokio::runtime::Builder::worker_threads` | Reject 0 and values above 4096. Warn if `N > 4 * cpu_count`. | Pinning either pool disables the adaptive sizer (see `docs/design/adaptive-thread-pool-sizing.md`) for that pool only. |
 | `--io-uring-depth=N` | 64 (or 256 for large-file profile) | power-of-two in `1..=4096` | `IoUringConfig::sq_entries` | Reject 0 and values above 4096. Reject non-power-of-two. | Ignored unless the resolved I/O backend is `io_uring`; then a warning is emitted. |
@@ -99,71 +98,27 @@ flags are zero-impact when omitted.
 
 ## 3. Detailed Per-Flag Spec
 
-### 3.1 `--io-backend=MODE` (#1824)
+### 3.1 `--io-backend=MODE` (#1824) - DESCOPED
 
-**Parse rule.** Single-value option. Clap definition:
+**Status: descoped.** The unified selector was never implemented and
+is withdrawn from this design. Two findings drove the decision:
 
-```rust
-Arg::new("io-backend")
-    .long("io-backend")
-    .value_name("MODE")
-    .help("Force a specific I/O backend (auto, io_uring, kqueue, iocp, poll, epoll).")
-    .num_args(1)
-    .value_parser(["auto", "io_uring", "kqueue", "iocp", "poll", "epoll"])
-    .action(ArgAction::Set)
-```
+- Backend selection is already served by the shipped per-backend
+  flags: `--io-uring` / `--no-io-uring` force the io_uring path on or
+  off, `--no-io-uring-sqpoll` disables SQPOLL, and `--io-uring-depth`
+  tunes the ring (section 3.7). IOCP is selected automatically on
+  Windows, with `OC_RSYNC_WINDOWS_RIO` opting into Registered I/O.
+  Together these cover the force-on, force-off, and tuning cases the
+  unified selector promised, with no new flag surface.
+- The `kqueue`, `poll`, and `epoll` arms name backends that do not
+  exist as selectable data paths. The `fast_io` kqueue module is an
+  event-loop primitive (the bandwidth limiter's `EVFILT_TIMER`
+  sleeper), not a `FileReader`/`FileWriter` backend, and no poll or
+  epoll data path exists at all. A selector whose enum is mostly
+  aspirational would add surface without working backends behind it.
 
-The value parser uses Clap's `PossibleValuesParser`-equivalent string
-list so invalid values surface as a Clap parse error (consistent with
-`--checksum-choice` and `--compress-choice`).
-
-**Value resolution at runtime.** A new enum lives in
-`crates/cli/src/frontend/execution/options.rs`:
-
-```rust
-pub enum IoBackendChoice {
-    Auto,
-    IoUring,
-    Kqueue,
-    Iocp,
-    Poll,
-    Epoll,
-}
-```
-
-The frontend translates `IoBackendChoice` into the existing
-`IoUringPolicy` and `IocpPolicy` plus a new `PortableBackend` enum
-inside `fast_io`:
-
-| Choice | Linux build | macOS build | Windows build |
-|--------|-------------|-------------|---------------|
-| `auto` | io_uring -> epoll -> poll | kqueue -> poll | iocp -> poll |
-| `io_uring` | force io_uring; error if unavailable | warn-fallback | warn-fallback |
-| `kqueue` | warn-fallback | force kqueue | warn-fallback |
-| `iocp` | warn-fallback | warn-fallback | force iocp |
-| `poll` | force poll | force poll | force poll |
-| `epoll` | force epoll | warn-fallback | warn-fallback |
-
-The "force" path maps onto `IoUringPolicy::Enabled` and the analogous
-`IocpPolicy::Enabled`. The "warn-fallback" path emits a single
-diagnostic line at startup (matching the `OC_RSYNC_BUFFER_POOL_STATS`
-log style) and uses `auto`. The fallback is intentionally non-fatal so
-that wrapper scripts written for one OS keep working when shipped on
-another, mirroring upstream rsync's behaviour for `--remote-option`.
-
-**Override semantics.** When the user names an explicit backend that
-the OS lacks, the policy is warn-and-fallback. When the user names a
-backend that the build lacks (e.g., `--io-backend=io_uring` on a
-non-`io_uring`-feature build), the same warn-and-fallback applies. When
-the user names `auto` and *no* backend is available, the fallback is
-the buffered standard-library path; this is the same behaviour the
-codebase already provides today, and there is no error condition.
-
-**Error mode.** Hard exit only on a parse failure (`MODE` not in the
-enumerated set). All runtime mismatches are warn-and-fallback. The
-exit-code mapping is the existing `ExitCode::SyntaxOrUsage` (1) for
-parse errors, identical to how upstream rsync exits when an option
-value fails to parse.
+If a new selectable data-path backend ships later, a unified selector
+can be re-proposed against real implementations.
 
 ### 3.2 `--simd=MODE` (#1825)
 
@@ -212,8 +167,8 @@ elsewhere.
 
 **Error mode.** Hard exit on (a) parse failure, (b) requested ISA
 absent on this CPU, (c) canary round-trip mismatch. No warn-and-
-fallback; the asymmetry against `--io-backend` is intentional because
-checksum correctness is non-negotiable.
+fallback; the asymmetry against the warn-and-fallback I/O backend
+flags is intentional because checksum correctness is non-negotiable.
 
 ### 3.3 `--cow` / `--no-cow` (#1826)
 
@@ -431,16 +386,15 @@ The matrix records every pair where one flag's effect is constrained,
 ignored, or overridden by another. Empty cells mean "independent; no
 interaction expected". Cells with text are documented and tested.
 
-|                       | `--io-backend` | `--simd` | `--cow` | `--zero-copy` | `--sparse-detect` | `--rayon-threads` | `--tokio-threads` | `--io-uring-depth` |
-|-----------------------|----------------|----------|---------|---------------|-------------------|-------------------|-------------------|--------------------|
-| `--io-backend`        | -              |          |         |               |                   |                   |                   | gates io-uring-depth |
-| `--simd`              |                | -        |         |               |                   |                   |                   |                    |
-| `--cow`               |                |          | -       |               |                   |                   |                   |                    |
-| `--zero-copy`         | see 4.4        |          |         | -             |                   |                   |                   |                    |
-| `--sparse-detect`     |                |          |         |               | -                 |                   |                   |                    |
-| `--rayon-threads`     |                |          |         |               |                   | -                 |                   |                    |
-| `--tokio-threads`     |                |          |         |               |                   |                   | -                 |                    |
-| `--io-uring-depth`    | gates 4.5      |          |         |               |                   |                   |                   | -                  |
+|                       | `--simd` | `--cow` | `--zero-copy` | `--sparse-detect` | `--rayon-threads` | `--tokio-threads` | `--io-uring-depth` |
+|-----------------------|----------|---------|---------------|-------------------|-------------------|-------------------|--------------------|
+| `--simd`              | -        |         |               |                   |                   |                   |                    |
+| `--cow`               |          | -       |               |                   |                   |                   |                    |
+| `--zero-copy`         |          |         | -             |                   |                   |                   |                    |
+| `--sparse-detect`     |          |         |               | -                 |                   |                   |                    |
+| `--rayon-threads`     |          |         |               |                   | -                 |                   |                    |
+| `--tokio-threads`     |          |         |               |                   |                   | -                 |                    |
+| `--io-uring-depth`    |          |         |               |                   |                   |                   | -                  |
 
 External-flag interactions (rows below the diagonal that involve
 upstream-rsync flags rather than the new family):
@@ -458,15 +412,14 @@ upstream-rsync flags rather than the new family):
 - **`--whole-file` benefits most from `--cow`.** No conflict; whole-
   file copies are exactly the case where reflinks have the largest
   measurable speedup. Documentation only.
+- **`--no-io-uring` makes `--io-uring-depth` a no-op.** Section 4.5
+  documents the warning.
 
-### 4.1 `--io-backend=io_uring` on macOS
+### 4.1 Reserved
 
-Warn-and-fallback to `auto` (kqueue+poll). The user gets a single
-startup line:
-
-```
-io_uring not available on this platform; falling back to kqueue
-```
+This subsection covered `--io-backend=io_uring` on macOS. It is
+descoped with the flag (section 3.1); the number is kept so the
+later subsection numbers stay stable.
 
 ### 4.2 `--cow` on a non-COW filesystem
 
@@ -485,28 +438,28 @@ the avx512f and avx512bw features. Use --simd=auto to detect, or
 --simd=none to force scalar.
 ```
 
-The asymmetry against `--io-backend` is documented in section 3.2.
+The asymmetry against the warn-and-fallback I/O backend flags is
+documented in section 3.2.
 
-### 4.4 `--io-backend=poll` and `--zero-copy=true`
+### 4.4 Reserved
 
-Independent; no interaction. The poll backend uses non-zero-copy
-buffered I/O for its event loop, but the `sendfile` path is still
-available for the file-to-pipe data plane. Documented in the matrix
-explicitly so that future maintainers do not assume an unstated
-constraint.
+This subsection covered `--io-backend=poll` with `--zero-copy=true`.
+It is descoped with the flag (section 3.1); the number is kept so the
+later subsection numbers stay stable.
 
-### 4.5 `--io-uring-depth=N` and `--io-backend != io_uring`
+### 4.5 `--io-uring-depth=N` when io_uring is not the resolved backend
 
 Warn at `-vv`:
 
 ```
-oc-rsync: --io-uring-depth=N has no effect when --io-backend resolves
-to <other>; ignoring.
+oc-rsync: --io-uring-depth=N has no effect when the resolved I/O
+backend is not io_uring; ignoring.
 ```
 
-The flag is honoured if a later option flips the backend back to
-io_uring; the warning fires once at startup based on the resolved
-backend at config-build time.
+This fires when `--no-io-uring` is given, when the build lacks the
+`io_uring` feature, or when the platform has no io_uring. The warning
+fires once at startup based on the resolved backend at config-build
+time.
 
 ## 5. Help-Text Wording
 
@@ -514,8 +467,6 @@ Single-line `--help` summaries, matching upstream rsync's style of
 imperative-mood verb phrases under 78 characters:
 
 ```
---io-backend=MODE       force a specific I/O backend (auto, io_uring,
-                        kqueue, iocp, poll, epoll)
 --simd=MODE             force a specific SIMD backend (auto, avx512,
                         avx2, sse4, neon, none)
 --cow                   try copy-on-write reflinks where supported
@@ -532,12 +483,11 @@ Long-form help text (printed under each flag with `--help`) names the
 default explicitly:
 
 ```
-  --io-backend=MODE
-      Force a specific I/O backend. The default is "auto", which picks
-      the best backend available on this platform: io_uring on Linux
-      5.6+, IOCP on Windows, kqueue on macOS, otherwise poll. Naming a
-      backend that this OS or this build does not support warns at
-      startup and falls back to "auto".
+  --simd=MODE
+      Force a specific SIMD backend. The default is "auto", which
+      walks the detection precedence list (avx512 -> avx2 -> sse4 ->
+      neon -> scalar). Naming an ISA the running CPU lacks is a hard
+      error; "none" forces the scalar fallback.
 ```
 
 This style matches the existing `--checksum-choice`, `--compress-choice`,
@@ -567,18 +517,17 @@ plumbing changes last.
    rayon use, and tokio's runtime must be built before any
    `transport` use. The frontend's `main` becomes the single
    construction site. Fourth PR.
-5. **Phase 5: `--io-backend=MODE`.** This is the largest plumbing
-   change because it widens the existing `IoUringPolicy` /
-   `IocpPolicy` pair into a portable `IoBackend` enum. The trait
-   wiring at #1821 is the prerequisite; if it is not landed, this
-   phase blocks until it is. Fifth PR.
-6. **Phase 6: `--io-uring-depth=N`.** Trivial once phase 5 is in: the
-   override threads through `IoUringConfig::sq_entries`. Combined
-   with phase 5 in the same release branch but split into a separate
-   PR for review locality.
+5. **Phase 5: `--io-backend=MODE`.** Descoped - see section 3.1. The
+   shipped `--io-uring` / `--no-io-uring` / `--no-io-uring-sqpoll`
+   flags already cover backend forcing.
+6. **Phase 6: `--io-uring-depth=N`.** The override threads through
+   `IoUringConfig::sq_entries`; it gates on the auto-resolved backend
+   rather than on the descoped selector. Shipped as
+   `--io-uring-depth` alongside the io_uring toggle flags.
 
 Phases 1, 2, 3, and 4 are independent of each other and of the trait
-wiring; they can land in parallel. Phases 5 and 6 are sequential.
+wiring; they can land in parallel. Phase 6 is independent as well now
+that phase 5 is descoped.
 
 ## 7. Test Strategy
 
@@ -590,16 +539,9 @@ same naming pattern.
 
 ### 7.1 `--io-backend`
 
-```
-parse_args_recognises_io_backend.rs
-- default_omitted_resolves_to_auto()
-- explicit_io_uring_sets_force_policy_on_linux()
-- explicit_invalid_value_rejected()
-- explicit_io_uring_warns_on_macos_and_falls_back_to_auto()
-```
-
-The fourth case asserts on the structured warning emitted to stderr
-under `OC_RSYNC_LOG_FORMAT=structured`, not on raw text.
+Descoped with the flag (section 3.1). No test file ships; the shipped
+io_uring toggle flags are covered by the existing `parse_args` tests
+for `--io-uring` / `--no-io-uring` / `--no-io-uring-sqpoll`.
 
 ### 7.2 `--simd`
 
@@ -611,7 +553,7 @@ parse_args_recognises_simd.rs
 - explicit_avx512_on_non_avx512_cpu_hard_exits_with_protocol_code()
 ```
 
-The fourth case is the asymmetry test against `--io-backend`. It
+The fourth case is the hard-exit asymmetry test (section 3.2). It
 runs on every CI runner; on AVX-512 boxes it skips with
 `#[cfg_attr(target_feature = "avx512f", ignore)]`.
 
@@ -670,7 +612,7 @@ parse_args_recognises_io_uring_depth.rs
 - default_omitted_uses_64_or_256_per_profile()
 - explicit_power_of_two_pins_sq_entries()
 - explicit_non_power_of_two_rejected()
-- explicit_value_warns_when_io_backend_is_not_io_uring()
+- explicit_value_warns_when_io_uring_is_not_the_resolved_backend()
 ```
 
 Each test uses the existing `parse_args` test harness from
@@ -706,7 +648,7 @@ the cell text says "see 4.x".
   new flag occupies a name that upstream rsync 3.4.1 does not use.
   Concretely: `options.c` in
   `target/interop/upstream-src/rsync-3.4.1/options.c` defines no
-  long option named `--io-backend`, `--simd`, `--cow`, `--no-cow`,
+  long option named `--simd`, `--cow`, `--no-cow`,
   `--zero-copy`, `--no-zero-copy`, `--sparse-detect`,
   `--rayon-threads`, `--tokio-threads`, or `--io-uring-depth`. The
   family is fully namespaced under names upstream has not claimed.
@@ -725,13 +667,13 @@ the cell text says "see 4.x".
 
 ## 9. Risks
 
-- **Flag count creep.** Seven flags is a lot of new surface. The
+- **Flag count creep.** Six flag families are a lot of new surface. The
   mitigation is grouping under a single design note and a single
   release; users see the family as a coherent whole rather than as
-  seven independent additions. The help-text section is one page.
+  independent additions. The help-text section is one page.
 - **Validation footguns.** `--simd=avx512` on a CPU without AVX-512
-  hard-exits, while `--io-backend=io_uring` on macOS warns and
-  falls back. The asymmetry is documented in section 3.2 and 3.5;
+  hard-exits, while the I/O backend flags warn and fall back on a
+  platform mismatch. The asymmetry is documented in section 3.2 and 3.5;
   the rationale is that checksum correctness is non-negotiable while
   I/O-backend choice is a performance hint. Reviewers must agree on
   this asymmetry before merge.
@@ -747,11 +689,11 @@ the cell text says "see 4.x".
   (matching the `--block-size` validator pattern at upstream
   rsync's `parse_size_arg`). This is the lowest-friction approach;
   silently rounding would surprise more.
-- **Test runtime.** Each flag has four integration tests; seven
-  flags means ~28 new integration tests. They run inside the
+- **Test runtime.** Each flag has four integration tests; six flag
+  families mean ~24 new integration tests. They run inside the
   existing `parse_args` harness which is fast (microseconds per
   case); total CI delta is well under one second.
-- **Help-text clutter.** The seven flags are placed in a new
+- **Help-text clutter.** The flags are placed in a new
   "Tunability" section in `--help` output, after "Connection options"
   and before "Output options", to avoid bloating any existing
   section.
@@ -759,12 +701,12 @@ the cell text says "see 4.x".
 ## 10. Decision
 
 Land the design now. Implementation proceeds per section 6.
-Phases 1-4 are independent and reviewer-parallelizable. Phases 5
-and 6 land sequentially after #1821 (`IoBackend` trait wiring) is
-in. Each phase ships its own PR with the four-assertion test file
-described in section 7. The conflict matrix in section 4 is a
-contract: every cell with text gets a regression test under
-`crates/cli/tests/cli_tunability_interactions.rs`.
+Phases 1-4 are independent and reviewer-parallelizable. Phase 5 is
+descoped (section 3.1); phase 6 (`--io-uring-depth`) has shipped
+independently. Each remaining phase ships its own PR with the
+four-assertion test file described in section 7. The conflict matrix
+in section 4 is a contract: every cell with text gets a regression
+test under `crates/cli/tests/cli_tunability_interactions.rs`.
 
 The `OC_RSYNC_*` env-var policy stays as documented in section 8;
 no new env vars are introduced by this design.
