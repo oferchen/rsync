@@ -201,7 +201,7 @@ fn all_sessions_complete_at_128() {
 /// exhaust file descriptor limits or cause scheduling stalls on
 /// resource-constrained GitHub Actions runners.
 #[test]
-#[ignore]
+#[ignore = "256 concurrent TCP pairs plus spawn_blocking threads can exhaust fd limits on CI runners"]
 fn all_sessions_complete_at_256() {
     let metrics = run_sessions(256).expect("256 concurrent sessions");
     assert_eq!(
@@ -217,7 +217,7 @@ fn all_sessions_complete_at_256() {
 /// Ignored in CI: same resource constraints as the 256-session test,
 /// amplified. Run locally with `cargo nextest run --run-ignored all`.
 #[test]
-#[ignore]
+#[ignore = "512 concurrent sessions amplify the same fd-exhaustion constraints as the 256 case; run locally with --run-ignored"]
 fn all_sessions_complete_at_512() {
     let metrics = run_sessions(512).expect("512 concurrent sessions");
     assert_eq!(
@@ -269,7 +269,7 @@ fn percentiles_are_monotonic() {
 /// The criterion bench provides meaningful scaling data; this test is for
 /// local validation only.
 #[test]
-#[ignore]
+#[ignore = "timing-based assertions are flaky on shared CI runners; local validation only"]
 fn wall_time_scales_sublinearly() {
     let m16 = run_sessions(16).expect("16 concurrent sessions");
     let m64 = run_sessions(64).expect("64 concurrent sessions");
