@@ -6,6 +6,15 @@ CPU cores. All approaches in this note are **purely in-memory** - they MUST NOT
 change anything serialized on the wire, the protocol-32 negotiation, the
 signature payload format, or the COPY/LITERAL token stream byte sequence.
 
+> **Status: superseded by a measured Go/No-Go decision.** The design-space
+> exploration below (approaches A/B/C, the receiver-side size threshold, the
+> `ParallelDeltaPipeline` framing) predates the wire-invariant and Amdahl
+> analysis. The formal verdict - what is wire-safe, what is already realized,
+> and what must be removed - lives in
+> [Go-No-Go decision (2026-07-29)](#go-no-go-decision-2026-07-29) at the end of
+> this note. Read that section first; treat everything between here and it as
+> historical context, not as guidance to implement.
+
 ## Problem statement
 
 A 100 GB single-file transfer pegs one core on the receiver doing rolling-hash
@@ -574,6 +583,195 @@ This note records the design space; the keep-or-revert decision for each
 of A, B, C is recorded in the per-technique PR descriptions once
 benchmarks land. The default for any path that does not show >= 1.5x
 speedup on a 16-core machine for a 1 GB synthetic file is to revert.
+
+## Go-No-Go decision (2026-07-29)
+
+This section supersedes the exploratory body above. It records the formal
+keep-build-or-remove decision for wire-compatible intra-file parallel delta
+processing, grounded in the upstream rsync 3.4.4 C source
+(`target/interop/upstream-src/rsync-3.4.4/`, protocol 32) and in the current
+oc-rsync tree. Every upstream and oc-rsync line reference below was verified
+against the source at the time of writing.
+
+### What the delta stage actually is
+
+Intra-file delta has two halves that upstream runs back to back on a single
+file, and they have opposite parallelism profiles:
+
+- The **sender search** decides, for each input offset, whether the input
+  matches a basis block. This is CPU-bound (rolling-checksum advance plus
+  strong-checksum verify on tag hits) and is the only half with a wire-safe
+  parallel decomposition.
+- The **token emit + codec + whole-file checksum + receiver apply** is a
+  strictly ordered pipeline. Every stage carries streaming state that is a
+  pure function of everything emitted before it. It cannot be reordered
+  without changing the bytes on the wire or the reconstructed file.
+
+### Serial-vs-parallelizable invariant table
+
+| Concern | Upstream location (rsync 3.4.4) | Why it is serial / parallelizable |
+|---------|----------------------------------|-----------------------------------|
+| Token stream **order** | `match.c:117` `send_token(f, i, buf, last_match, n, ...)`, called from `matched()`; monotone cursor `last_match` declared `match.c:91`, advanced `match.c:131-133` | **SERIAL.** Tokens are emitted in ascending scan order against one monotone `last_match` cursor. The receiver depends on this order; any reordering changes the wire stream. |
+| Token **run-length delta coding** | `token.c:347-349` run state (`last_token`, `run_start`, `last_run_end`); run emit `token.c:393-409` | **SERIAL.** Each token is delta-coded off the previous token index (`TOKEN_REL`/`TOKENRUN_REL` relative to `run_start`/`last_run_end`). The encoding of token _k_ depends on token _k-1_. |
+| Compression codec **streaming state** | single `z_stream tx_strm` `token.c:352`, `deflateInit2` `token.c:378`; single `ZSTD_CCtx *zstd_cctx` `token.c:730`, created `token.c:740` | **SERIAL - dominant floor under `-z`.** One deflate/zstd stream spans the whole file; each `send_*_token` call mutates shared codec state. Output bytes are non-deterministic under any block reordering. |
+| **Whole-file transfer checksum** | `sum_init(xfer_sum_nni, ...)` `match.c:370`, `sum_update(...)` `match.c:127`/`match.c:378`/`match.c:386`, `sum_end(sender_file_sum)` `match.c:411` | **SERIAL.** The negotiated MD5/xxh128 whole-file digest is fed in scan order and is not a tree/Merkle construction - it is not combinable from independently-hashed segments. |
+| **Receiver reconstruct / apply** | `recv_token` `token.c:1097` (streaming inflate via single `rx_strm`); `receive_data` `receiver.c:305`, single monotone output cursor `offset` advanced at `receiver.c:409`/`:450`/`:478` | **SERIAL by construction.** The receiver inflates one stream and writes to one file behind a single monotonically-increasing `offset`. There is no out-of-order apply that preserves the output bytes. |
+| **Sender rolling search** over the basis (spatial stripe split) | `hash_search()` / `match_sums()` `match.c:362` | **PARALLELIZABLE (sender-side, CPU-bound).** The signature index is read-only during the scan; the input range can be split into overlapping stripes matched independently, then merged back into scan order before token emit. |
+| **Per-block strong-sum + rolling checksum** | `get_checksum1/2` (checksum.c); oc SIMD in `crates/checksums` | **PARALLELIZABLE.** Already SIMD-accelerated (NEON/AVX2/SSE2 with scalar parity). Embarrassingly parallel per block. |
+
+Refinement to the pre-existing prose: the earlier `#304/#305` note attributed
+the receiver-apply cursor to `token.c:512`. That line sits in the send-side
+`send_deflated_token`/`recv_state` region; the load-bearing monotone
+output cursor is `receive_data`'s `offset` in `receiver.c` (declared and
+advanced at `receiver.c:305`/`:409`), with the single receiver inflate stream
+in `recv_token` (`token.c:1097`). The table above cites those directly.
+
+### Amdahl framing
+
+Let _p_ be the fraction of single-file wall time spent in the parallelizable
+sender search (rolling advance + strong-sum verify), and _1 - p_ the serial
+floor (token emit + run coding + codec + whole-file checksum + receiver
+apply). The best achievable speedup on _N_ cores is
+`1 / ((1 - p) + p/N)`, capped at `1 / (1 - p)`.
+
+Two facts collapse the design space:
+
+- **Under `-z` (and `--zc`/zstd), the codec is the dominant serial term.** A
+  single `z_stream`/`ZSTD_CCtx` streams the whole file (`token.c:352`/`:730`).
+  When compression is on, _1 - p_ is large and the ceiling is near 1x - there
+  is essentially nothing to win by parallelizing the search.
+- **The serial floor is also paid on the receiver**, which is unparallelizable
+  by construction (`receiver.c:305` single `offset`). Even an uncompressed,
+  search-dominated transfer still pays token emit + whole-file checksum +
+  receiver apply serially end to end.
+
+The consequence: **any real win is confined to large, uncompressed,
+sender-side transfers where the rolling search genuinely dominates.** That is
+exactly the envelope the existing `--parallel-delta-scan` targets, and it is a
+narrow envelope.
+
+### What is already realized (wire-safe, shipped)
+
+The one wire-safe CPU win - the spatial stripe split of the sender rolling
+search - is **already implemented and shipped** as the opt-in, default-off
+`--parallel-delta-scan`:
+
+- Parallel range-split scan: `crates/matching/src/generator.rs:986`
+  `DeltaGenerator::generate_chunked`, `par_iter` over overlapping stripes at
+  `crates/matching/src/generator.rs:1051`, merged back into source order by
+  `merge_copy_runs` (`crates/matching/src/generator.rs:173`).
+- Engaged only for a large, duplicate-free basis: gated at
+  `crates/transfer/src/generator/transfer/transfer_loop.rs:816`
+  (`self.config.flags.parallel_delta_scan && should_parallel_delta(...)`,
+  helper at `transfer_loop.rs:124`), through the wrapper
+  `generate_delta_from_signature_chunked`
+  (`crates/transfer/src/generator/delta.rs:394`).
+- Correct fallbacks preserve byte-identical output:
+  - duplicate-content basis -> pruned sequential scan
+    (`crates/transfer/src/generator/delta.rs:411`,
+    `index.has_duplicate_blocks()`);
+  - consecutive-match extension (`seq_matches >= 2`) -> sequential gated scan
+    (`crates/matching/src/generator.rs:997`);
+  - in-place / `updating_basis_file` (upstream `match.c:211`) -> sequential
+    scan that tracks the true global cursor
+    (`crates/matching/src/generator.rs:1005`);
+  - too-small-to-split or `block_len == 0` -> pruned sequential scan
+    (`crates/matching/src/generator.rs`, `chunks <= 1` guard).
+- It is wire-neutral (reconstruction and matched/literal stats unchanged;
+  literal-token framing may differ by a few bytes only at a range boundary),
+  local-only, and never forwarded to a remote peer
+  (`crates/cli/src/frontend/help.rs:162`).
+
+Note the attribution correction versus the exploratory body: the
+`has_duplicate_blocks` eligibility check lives in the transfer-crate wrapper
+`generate_delta_from_signature_chunked` (`delta.rs:411`), not inside
+`generate_chunked` itself; and the matcher crate is `crates/matching`, not the
+`crates/match` path used in the older prose above.
+
+### Ruled out as not wire-compatible
+
+The following are explicitly **NO-GO** because they change the negotiated wire
+contract, not merely internal work distribution:
+
+- **zsync-style out-of-order range fetch** - the receiver requests arbitrary
+  basis ranges. Upstream reconstructs in a single monotone pass
+  (`receiver.c:305`); there is no wire primitive for out-of-order fetch.
+- **A published per-block index** (zsync's server-side `.zsync`) - not part of
+  protocol 32; the signature is exchanged inline, per file, per transfer.
+- **Content-defined chunking** - changes block boundaries and therefore the
+  token stream and whole-file checksum feed order.
+- **BLAKE3 / tree (Merkle) hashing for the negotiated sums** - the whole-file
+  digest is a linear streaming hash (`match.c:370`/`:411`), not tree-combinable;
+  swapping in a tree hash changes the negotiated checksum and breaks interop.
+
+### The dead receiver-side stack
+
+A receiver-side parallel-apply stack exists in the tree but is **test-only
+dead code**, confirmed by the `#247` investigation:
+
+- `crates/transfer/src/delta_pipeline/` - `ParallelDeltaPipeline`,
+  `SequentialDeltaPipeline`, `ThresholdDeltaPipeline`, `ReceiverDeltaPipeline`.
+- `crates/engine/src/concurrent_delta/` - `DeltaConsumer`, `DynamicWorkQueue`,
+  `AdaptiveQueueController`, `bounded_dynamic`, plus the
+  `OC_RSYNC_ADAPTIVE_QUEUE` env knob
+  (`crates/engine/src/concurrent_delta/work_queue/controller.rs:60`).
+
+This stack sits on the **receiver apply** path - precisely the stage the
+invariant table marks unparallelizable by construction (single monotone
+`offset`, single inflate stream). That is why it was never wired into a live
+transfer: there is no wire-safe work for it to do. It is reachable only from
+its own unit and fuzz tests
+(`crates/transfer/tests/wire_format_parallel_scheduling_fuzz.rs`,
+`crates/transfer/tests/pip_7_parallel_receive_delta_corruption_repro.rs`).
+
+### Verdict
+
+- **NO-GO** on any new zsync-style scheme or receiver-parallel delta apply.
+  Each is either wire-incompatible or lands on the receiver's
+  serial-by-construction path.
+- **Already realized:** the sole wire-safe CPU win (parallel sender rolling
+  search) ships as `--parallel-delta-scan`. No new pipeline is warranted.
+- **Remove the dead stack (follow-up to `#283`):** the receiver-side
+  `ParallelDeltaPipeline` / `AdaptiveQueueController` stack has no wire-safe
+  purpose - it parallelizes nothing reachable - and should be removed in a
+  dedicated follow-up task. That removal MUST preserve `--parallel-delta-scan`,
+  which is a **different, sender-side** mechanism
+  (`crates/matching/src/generator.rs` + the transfer-loop gate), unrelated to
+  the receiver-apply stack.
+
+### Forward design space (small, low-to-moderate payoff)
+
+The only viable extensions widen or sharpen the **existing** sender scan; none
+is a new pipeline. Candidate future work, with honest payoff estimates:
+
+1. **Relax the `updating_basis_file` fallback**
+   (`crates/matching/src/generator.rs:1005`). Today any in-place transfer
+   drops to the sequential scan to track the global cursor. A stripe scheme
+   that reconstructs the true global offset per stripe could re-enable
+   parallelism for `--inplace` large files. Payoff: moderate, but only for the
+   `--inplace` + large-file + uncompressed intersection; correctness risk at
+   the monotonicity guard (`match.c:211`) is real and must be proven with a
+   parity test.
+2. **Relax the duplicate-content fallback**
+   (`crates/transfer/src/generator/delta.rs:411`). Duplicate-heavy bases
+   (VM images, container layers) currently force the sequential pruned scan
+   because parallel stripes cannot share the `consumed` bitset. A merge that
+   reconciles per-stripe match choices deterministically could parallelize
+   these. Payoff: low-to-moderate; the pruning interaction is the hard part
+   and the win competes with codec cost since such payloads are often
+   compressed.
+3. **Improve the merge** (`merge_copy_runs`,
+   `crates/matching/src/generator.rs:173`) - cheaper boundary reconciliation
+   or a wider overlap heuristic to shave the per-stripe overlap rescan.
+   Payoff: low; it only trims a constant-factor overhead, not the Amdahl
+   ceiling.
+
+None of these changes the wire contract; all are opt-in refinements of an
+already-shipped, wire-neutral sender optimization. The Amdahl ceiling
+(codec-dominated under `-z`, serial receiver floor always) caps their
+aggregate value, which is why the recommendation is to invest only if a
+measured, uncompressed, large-file workload shows the sender search as the
+proven bottleneck.
 
 ## References
 
