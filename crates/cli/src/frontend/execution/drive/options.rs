@@ -7,8 +7,8 @@ use std::num::{NonZeroU8, NonZeroU32};
 use compress::algorithm::CompressionAlgorithm;
 use compress::zlib::CompressionLevel;
 use core::client::{
-    BandwidthLimit, CompressionSetting, SkipCompressList, force_no_compress_from_env,
-    parse_skip_compress_list, skip_compress_from_env,
+    BandwidthLimit, CompressionSetting, SkipCompressList, parse_skip_compress_list,
+    skip_compress_from_env,
 };
 use logging_sink::MessageSink;
 
@@ -466,19 +466,6 @@ where
                 }
             }
         }
-    }
-
-    let force_no_compress = match force_no_compress_from_env("OC_RSYNC_FORCE_NO_COMPRESS") {
-        Ok(value) => value,
-        Err(message) => return Err(fail_with_message(message, stderr)),
-    };
-
-    if force_no_compress == Some(true) {
-        compress = false;
-        compression_level_override = None;
-        compress_level_setting = Some(CompressLevelArg::Disable);
-        compression_algorithm = None;
-        compress_choice_name = None;
     }
 
     // upstream: options.c:150 - the `skip_compress` global is NULL unless the

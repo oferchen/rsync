@@ -106,8 +106,8 @@ pub use self::config::{
     CompressionSetting, ConfigConflict, DeleteMode, FilesFromPlan, FilesFromSource, FilterRuleKind,
     FilterRuleSpec, HumanReadableMode, HumanReadableModeParseError, IconvParseError, IconvSetting,
     ParseTcpFastOpenModeError, ReferenceDirectory, ReferenceDirectoryKind, StrongChecksumAlgorithm,
-    StrongChecksumChoice, TcpFastOpenMode, TransferTimeout, force_no_compress_from_env,
-    parse_skip_compress_list, skip_compress_from_env,
+    StrongChecksumChoice, TcpFastOpenMode, TransferTimeout, parse_skip_compress_list,
+    skip_compress_from_env,
 };
 pub use self::error::{
     CLIENT_SERVER_PROTOCOL_EXIT_CODE, ClientError, FEATURE_UNAVAILABLE_EXIT_CODE,

@@ -190,8 +190,8 @@ layer:
 The adapter tees every byte read or written to a buffered `File` writer
 behind a varint-prefixed record format. Activation is gated on the env var
 `OC_RSYNC_CAPTURE_PATH`; when unset, the adapter is bypassed entirely and
-the cost is zero. This mirrors how `OC_RSYNC_FORCE_NO_COMPRESS` is used at
-`crates/cli/src/frontend/execution/drive/options.rs:374` and how
+the cost is zero. This mirrors how `RSYNC_SKIP_COMPRESS` is consumed at
+`crates/cli/src/frontend/execution/drive/options.rs` and how
 `OC_RSYNC_BUILD_OVERRIDE` is consumed at `crates/branding/build.rs:14`.
 
 ### Pre- vs post-compression
@@ -407,8 +407,8 @@ understands with a clear error pointing at the recorder's version. The
   `crates/protocol/src/multiplex/io/recv.rs:14,31`,
   `crates/protocol/src/multiplex/frame.rs:10`.
 - Client orchestration: `crates/core/src/client/run/mod.rs:113,166`.
-- Existing env-var patterns: `crates/cli/src/frontend/execution/drive/options.rs:374`
-  (`OC_RSYNC_FORCE_NO_COMPRESS`), `crates/branding/build.rs:14`
+- Existing env-var patterns: `crates/cli/src/frontend/execution/drive/options.rs`
+  (`RSYNC_SKIP_COMPRESS`), `crates/branding/build.rs:14`
   (`OC_RSYNC_BUILD_OVERRIDE`).
 - Design-pattern guidance: project's "Strategy Pattern" and "Dependency
   Inversion" notes - both directly applicable here.

@@ -134,7 +134,6 @@ are highest impact.
 | 24 | Result | `crates/core/src/version/report/renderer.rs:186` | `write_human_readable` |
 | 25 | Result | `crates/core/src/client/progress.rs:167` | `new` |
 | 26 | Result | `crates/core/src/client/config/iconv.rs:25` | `parse` |
-| 27 | Result | `crates/core/src/client/config/compress_env.rs:19` | `force_no_compress_from_env` |
 | 28 | Result | `crates/core/src/client/config/skip_compress.rs:35` | `parse_skip_compress_list` |
 | 29 | Result | `crates/core/src/client/config/skip_compress.rs:58` | `skip_compress_from_env` |
 | 30 | Result | `crates/core/src/client/config/bandwidth.rs:70` | `parse` |
