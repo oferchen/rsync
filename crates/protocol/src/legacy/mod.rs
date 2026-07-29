@@ -34,6 +34,27 @@ pub const LEGACY_DAEMON_PREFIX_LEN: usize = LEGACY_DAEMON_PREFIX.len();
 /// conversions via [`str::as_bytes`].
 pub const LEGACY_DAEMON_PREFIX_BYTES: &[u8; LEGACY_DAEMON_PREFIX_LEN] = b"@RSYNCD:";
 
+/// Command prefix for the early-input exchange in the legacy daemon handshake.
+///
+/// The client announces `--early-input` data by sending this prefix followed
+/// by the payload length before the module request line; the daemon detects
+/// the same prefix when parsing the first non-`@RSYNCD:` line. Both sides
+/// share this constant so the wire literal cannot drift.
+///
+/// upstream: clientserver.c - `#define EARLY_INPUT_CMD "#early_input="`
+pub const EARLY_INPUT_CMD: &str = "#early_input=";
+
+/// Maximum early-input payload size in bytes for the legacy daemon handshake.
+///
+/// Upstream caps the `--early-input` file at `BIGPATHBUFLEN` bytes; the
+/// manpage documents this as "up to 5K of data". The client truncates the
+/// file to this size before sending and the daemon rejects announced lengths
+/// above it, so both crates must agree on the exact value.
+///
+/// upstream: rsync.h - `BIGPATHBUFLEN` is `MAXPATHLEN + 1024` (`4096 + 1024`
+/// = 5120 on systems where `MAXPATHLEN >= 4096`).
+pub const EARLY_INPUT_MAX_SIZE: usize = 5120;
+
 mod bytes;
 mod greeting;
 mod lines;
@@ -88,6 +109,15 @@ pub(super) fn lossy_trimmed_input(bytes: &[u8]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn early_input_constants_match_upstream() {
+        // upstream: clientserver.c EARLY_INPUT_CMD; rsync.h BIGPATHBUFLEN
+        // (MAXPATHLEN + 1024 = 5120). Both daemon and client crates consume
+        // these constants, so this pin is the single drift guard.
+        assert_eq!(EARLY_INPUT_CMD, "#early_input=");
+        assert_eq!(EARLY_INPUT_MAX_SIZE, 4096 + 1024);
+    }
 
     #[test]
     fn lossy_trimmed_input_drops_trailing_newlines() {

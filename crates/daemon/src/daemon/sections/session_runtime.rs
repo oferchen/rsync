@@ -450,16 +450,6 @@ fn handle_legacy_session(
     Ok(session_exit_code)
 }
 
-/// Command prefix for the early-input protocol message.
-///
-/// upstream: clientserver.c - `#define EARLY_INPUT_CMD "#early_input="`
-const EARLY_INPUT_CMD: &str = "#early_input=";
-
-/// Maximum early-input data size in bytes.
-///
-/// upstream: rsync.h - `BIGPATHBUFLEN` is `MAXPATHLEN + 1024` (typically 5120).
-const EARLY_INPUT_MAX_SIZE: usize = 5120;
-
 /// Checks whether `line` is an `#early_input=<len>` command and, if so, reads
 /// the specified number of raw bytes from the stream.
 ///

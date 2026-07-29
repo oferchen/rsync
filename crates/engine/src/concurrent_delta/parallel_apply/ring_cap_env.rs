@@ -24,26 +24,48 @@
 //! - Unset env var is the common case; [`resolve_ring_capacity`] returns the
 //!   caller-supplied default with no allocation or syscall.
 //!
-//! The override has no upper clamp by design: operators who set
+//! The override is clamped to `[1, MAX_RING_CAP]` (65536). Operators who set
 //! `OC_RSYNC_REORDER_RING_CAP=8192` to confirm a hypothesis about adversarial
-//! workload reordering should get exactly 8192. The natural ceiling is
-//! [`usize::MAX`], which would OOM the host before it could damage the
-//! applier; the parser rejects `0` since a zero-capacity ring would panic
-//! [`super::ReorderBuffer::new`] at construction time.
+//! workload reordering get exactly 8192; the ceiling is 1024x the hard 64
+//! default, far deeper than any in-flight window the worker pool can produce,
+//! so every legitimate experiment fits below it. Values above the ceiling
+//! are almost always unit typos (a byte count pasted as a slot count), and
+//! because the ring is per-file and spill-to-disk is disabled by default,
+//! honouring them verbatim would pin unbounded RAM with no relief valve.
+//! Over-max values warn and clamp to the ceiling; the parser rejects `0`
+//! since a zero-capacity ring would panic [`super::ReorderBuffer::new`] at
+//! construction time.
 
 use std::sync::OnceLock;
 
 /// Environment variable that pins the per-file reorder-ring capacity for
 /// every [`super::ParallelDeltaApplier`] constructed in this process.
 ///
-/// Accepts any positive integer parseable as [`usize`]. `0` and unparseable
-/// values trigger a one-shot `eprintln!` warning and the applier falls back
-/// to the caller-supplied default (typically
-/// [`super::ParallelDeltaApplier::DEFAULT_PER_FILE_REORDER_CAPACITY`]).
+/// Accepts a positive integer parseable as [`usize`], clamped to
+/// [`MAX_RING_CAP`]. `0` and unparseable values trigger a one-shot
+/// `eprintln!` warning and the applier falls back to the caller-supplied
+/// default (typically
+/// [`super::ParallelDeltaApplier::DEFAULT_PER_FILE_REORDER_CAPACITY`]);
+/// values above the ceiling warn and clamp.
 ///
 /// Read once per process at first construction; subsequent reads return the
 /// cached value without touching the environment again.
 pub(super) const RING_CAP_ENV: &str = "OC_RSYNC_REORDER_RING_CAP";
+
+/// Upper clamp for the [`RING_CAP_ENV`] override.
+///
+/// 65536 is 1024x the hard 64 default
+/// ([`super::ParallelDeltaApplier::DEFAULT_PER_FILE_REORDER_CAPACITY`]),
+/// which comfortably covers the deepest documented experiment (pinning 8192
+/// to study adversarial reordering) while refusing typo-scale values. The
+/// ring is allocated per file and spill-to-disk is disabled by default, so an
+/// uncapped override (e.g. a byte count pasted as a slot count) would pin
+/// unbounded RAM with no relief valve. Sibling knobs are clamped the same
+/// way: disk-commit channel capacity uses `[8, 4096]`
+/// (`transfer::disk_commit::config`) and [`super::shard_sizing`] uses
+/// `[4, 1024]`; this ceiling is wider only because deep-ring experiments are
+/// a documented use of the knob.
+pub(super) const MAX_RING_CAP: usize = 65536;
 
 /// Process-wide cache for the parsed override value.
 ///
@@ -55,11 +77,12 @@ static OVERRIDE: OnceLock<Option<usize>> = OnceLock::new();
 
 /// Resolves the per-file reorder-ring capacity for a fresh applier.
 ///
-/// Returns the cached env-override when set to a positive integer; otherwise
-/// returns `default`. Initialisation reads the environment at most once per
-/// process; an unparseable or zero-valued env var emits a one-shot
-/// `eprintln!` warning on the first call so operators learn about the typo
-/// rather than silently inheriting the default.
+/// Returns the cached env-override when set to a positive integer (clamped
+/// to [`MAX_RING_CAP`]); otherwise returns `default`. Initialisation reads
+/// the environment at most once per process; an unparseable, zero-valued, or
+/// over-max env var emits a one-shot `eprintln!` warning on the first call
+/// so operators learn about the typo rather than silently inheriting the
+/// default or an unbounded ring.
 #[must_use]
 pub(super) fn resolve_ring_capacity(default: usize) -> usize {
     OVERRIDE.get_or_init(load_from_env).unwrap_or(default)
@@ -82,6 +105,12 @@ fn load_from_env() -> Option<usize> {
                 "oc-rsync: {RING_CAP_ENV}=0 is invalid (capacity must be positive); falling back to default"
             );
             None
+        }
+        Ok(n) if n > MAX_RING_CAP => {
+            eprintln!(
+                "oc-rsync: {RING_CAP_ENV}={n} exceeds the maximum of {MAX_RING_CAP}; clamping to {MAX_RING_CAP}"
+            );
+            Some(MAX_RING_CAP)
         }
         Ok(n) => Some(n),
         Err(err) => {
@@ -164,12 +193,32 @@ mod tests {
     }
 
     #[test]
-    fn load_from_env_accepts_very_large_value() {
-        // No upper clamp: an operator pinning a deep ring for an adversarial
-        // workload must get exactly the value they set. Memory exhaustion is
-        // the natural ceiling; the parser only refuses zero.
+    fn load_from_env_accepts_deep_experimental_value() {
+        // The documented adversarial-reorder experiment pins 8192; the clamp
+        // ceiling must never take that use case away.
+        let _guard = EnvGuard::set("8192");
+        assert_eq!(load_from_env(), Some(8192));
+    }
+
+    #[test]
+    fn load_from_env_accepts_max_ring_cap_exactly() {
+        let _guard = EnvGuard::set(&MAX_RING_CAP.to_string());
+        assert_eq!(load_from_env(), Some(MAX_RING_CAP));
+    }
+
+    #[test]
+    fn load_from_env_clamps_above_max_ring_cap() {
+        // A typo-scale value (a byte count pasted as a slot count) must not
+        // pin an unbounded per-file ring: the parser warns and clamps to
+        // MAX_RING_CAP instead of honouring it verbatim.
         let _guard = EnvGuard::set("1048576");
-        assert_eq!(load_from_env(), Some(1_048_576));
+        assert_eq!(load_from_env(), Some(MAX_RING_CAP));
+    }
+
+    #[test]
+    fn load_from_env_clamps_usize_max() {
+        let _guard = EnvGuard::set(&usize::MAX.to_string());
+        assert_eq!(load_from_env(), Some(MAX_RING_CAP));
     }
 
     #[test]

@@ -9,7 +9,9 @@ use std::path::Path;
 
 use protocol::ProtocolVersion;
 use protocol::nstr::{trace_daemon_auth_negotiated, trace_daemon_greeting_auth_list};
-use protocol::{advertised_digests_in_greeting, missing_greeting_token};
+use protocol::{
+    EARLY_INPUT_CMD, EARLY_INPUT_MAX_SIZE, advertised_digests_in_greeting, missing_greeting_token,
+};
 
 use crate::auth::{compute_daemon_auth_response, negotiate_client_daemon_digest};
 
@@ -386,20 +388,6 @@ pub(crate) fn perform_daemon_handshake<R: std::io::Read, W: Write>(
 
     Ok(negotiated)
 }
-
-/// Maximum early-input file size in bytes.
-///
-/// Upstream rsync limits the file to `BIGPATHBUFLEN` (typically 5120 bytes on
-/// systems where `MAXPATHLEN >= 4096`). The manpage documents this as "up to
-/// 5K of data".
-///
-/// upstream: rsync.h - `BIGPATHBUFLEN` is `MAXPATHLEN + 1024` or `4096 + 1024`.
-pub(crate) const EARLY_INPUT_MAX_SIZE: usize = 5120;
-
-/// Command prefix for the early-input protocol message.
-///
-/// upstream: clientserver.c - `#define EARLY_INPUT_CMD "#early_input="`
-const EARLY_INPUT_CMD: &str = "#early_input=";
 
 /// Reads the early-input file content, capping at [`EARLY_INPUT_MAX_SIZE`] bytes.
 ///
