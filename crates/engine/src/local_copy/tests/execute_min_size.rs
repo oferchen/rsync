@@ -390,7 +390,7 @@ fn min_size_prunes_empty_directories_when_enabled() {
 
 #[cfg(unix)]
 #[test]
-#[ignore] // TODO: Symlinks may be filtered by min-size - behavior needs clarification
+#[ignore = "symlinks are currently filtered by --min-size; size-exempt symlink handling not yet implemented"]
 fn min_size_does_not_affect_symlinks() {
     let ctx = test_helpers::setup_copy_test();
 

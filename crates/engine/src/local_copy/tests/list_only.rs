@@ -478,7 +478,7 @@ fn list_only_with_recursive_shows_nested_structure() {
 }
 
 #[test]
-#[ignore] // TODO: Non-recursive listing with trailing slash behavior needs clarification
+#[ignore = "non-recursive list-only with a trailing-slash source does not yet emit top-level entries"]
 fn list_only_without_recursive_shows_only_top_level() {
     let temp = tempdir().expect("tempdir");
     let source = temp.path().join("source");
