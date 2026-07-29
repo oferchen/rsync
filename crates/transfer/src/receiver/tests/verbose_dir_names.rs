@@ -85,6 +85,39 @@ fn names_only_created_or_changed_dirs() {
     );
 }
 
+/// A dry run against a missing destination root still names `./`, on both
+/// receiver drivers (this helper is shared; the CI feature matrix runs it with
+/// `incremental-flist` on and off). Upstream "creates" the missing root even
+/// under `-n` (`main.c:796-808`; `do_mkdir` is a dry-run no-op), and
+/// `FLAG_DIR_CREATED` then forces the NAME row (`generator.c:1465-1466`,
+/// `generator.c:1503-1505`; `rsync.c:498-499` returns 1 for the missing dest
+/// under dry-run). `--list-only` never reaches that mkdir (`main.c:743`), so
+/// the root stays silent there.
+#[test]
+fn missing_dest_root_is_named_on_dry_run_but_not_list_only() {
+    let t: i64 = 1_000_000_000;
+    let entries = vec![dir(".", t), dir("sub", t)];
+    let mut c = ctx_with(entries, true);
+    c.config.flags.dry_run = true;
+
+    let parent = tempfile::tempdir().unwrap();
+    let missing = parent.path().join("nonexistent-dest");
+    assert_eq!(
+        c.verbose_dir_name_lines(&missing),
+        vec![(0usize, "./".to_string()), (1usize, "sub/".to_string())],
+        "a dry run against a missing dest root must name ./ first",
+    );
+
+    c.config.flags.dry_run = false;
+    c.config.flags.list_only = true;
+    assert!(
+        !c.verbose_dir_name_lines(&missing)
+            .iter()
+            .any(|(_, name)| name == "./"),
+        "--list-only never creates the dest root, so ./ must stay silent",
+    );
+}
+
 /// With `--times` off, an existing directory reports no time change, so an
 /// unchanged re-sync names nothing (upstream prints no directory lines when
 /// set_file_attrs() makes no change). The absent root is not created here.
