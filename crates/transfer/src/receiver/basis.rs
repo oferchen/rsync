@@ -18,6 +18,7 @@ use engine::signature::{
 use protocol::ProtocolVersion;
 
 use crate::config::ReferenceDirectory;
+use crate::constants::MAX_MAP_SIZE;
 
 /// Result of searching for a basis file via [`find_basis_file_with_config`].
 ///
@@ -433,52 +434,27 @@ fn generate_basis_signature(
 
     let parallel = parallel_checksum_enabled();
 
-    // Large regular baseses read the whole file block-by-block to hash it. A
-    // raw `File` costs one read syscall per block (default block ~700 bytes),
-    // so a multi-GB basis issues millions of syscalls. Memory-mapping the basis
-    // replaces those syscalls with demand-paged access while reading the exact
-    // same bytes in the same order - the per-block rolling and strong sums, and
-    // therefore the wire signature and the resulting delta, are byte-identical.
-    // Small baseses stay on the buffered path (mmap setup is not worth it) and
-    // any mmap failure (NFS/FUSE/procfs, ENOMEM, non-regular file) falls back
-    // to the raw `File` reader.
-    #[cfg(unix)]
-    let signature = if basis_size >= MMAP_BASIS_THRESHOLD_BYTES {
-        match fast_io::MmapReader::from_file(basis_file) {
-            Ok(mapped) => {
-                let _ = mapped.advise_sequential();
-                compute_basis_signature(
-                    mapped,
-                    basis_size,
-                    layout,
-                    config.checksum_algorithm,
-                    parallel,
-                )
-            }
-            Err(_) => match reopen_basis(&basis_path) {
-                Some(file) => compute_basis_signature(
-                    file,
-                    basis_size,
-                    layout,
-                    config.checksum_algorithm,
-                    parallel,
-                ),
-                None => return BasisFileResult::EMPTY,
-            },
-        }
-    } else {
-        compute_basis_signature(
-            basis_file,
-            basis_size,
-            layout,
-            config.checksum_algorithm,
-            parallel,
-        )
-    };
-
-    #[cfg(not(unix))]
+    // Hash the basis block-by-block through a sliding read() window, never by
+    // memory-mapping it. A large basis read one block at a time from a raw
+    // `File` costs one read syscall per block (default block ~700 bytes), so a
+    // multi-GB basis would issue millions of syscalls; a large buffered reader
+    // amortises that to one read() per `MAX_MAP_SIZE` window while touching the
+    // exact same bytes in the same order, so the per-block rolling and strong
+    // sums - and therefore the wire signature and resulting delta - are
+    // byte-identical to any other read path.
+    //
+    // The basis must never be mmap'd here: if another process truncates the
+    // file mid-read (upstream's canonical example is a mailer rewriting the
+    // file), dereferencing the now-unmapped tail raises SIGBUS while the kernel
+    // faults the page in on our behalf, killing the process with no signal-safe
+    // recovery. A read(2) past the shrunk EOF instead returns short, which the
+    // signature generator reports as an I/O error; the caller then drops the
+    // basis and falls back to a whole-file transfer.
+    // upstream: fileio.c:214-217 comment + map_ptr() deliberately use read(2)
+    // instead of mmap(2) on basis files for exactly this reason.
+    let reader = std::io::BufReader::with_capacity(MAX_MAP_SIZE, basis_file);
     let signature = compute_basis_signature(
-        basis_file,
+        reader,
         basis_size,
         layout,
         config.checksum_algorithm,
@@ -493,32 +469,6 @@ fn generate_basis_signature(
             xname,
         },
         Err(_) => BasisFileResult::EMPTY,
-    }
-}
-
-/// Minimum basis-file size at which the receiver memory-maps the basis for
-/// signature hashing instead of reading it through a raw `File`.
-///
-/// Matches `fast_io::MmapReader`'s own `MMAP_THRESHOLD` (64 KiB). Below this the
-/// buffered read wins because mmap setup and page-fault overhead outweigh the
-/// saved syscalls; above it the syscall-per-block cost dominates. The choice is
-/// a pure local performance knob: the computed signature is byte-identical
-/// either way, so it is never negotiated or sent over the wire.
-#[cfg(unix)]
-const MMAP_BASIS_THRESHOLD_BYTES: u64 = 64 * 1024;
-
-/// Re-opens a basis file through the same hardened, symlink-refusing open used
-/// for the original lookup, so the mmap fallback path never re-introduces a
-/// symlinked-basename window. Returns `None` if the file can no longer be
-/// opened as a regular file, in which case the caller treats the basis as
-/// absent and falls back to whole-file transfer.
-#[cfg(unix)]
-fn reopen_basis(path: &std::path::Path) -> Option<fs::File> {
-    let file = fast_io::open_basis_nofollow(path).ok()?;
-    if file.metadata().ok()?.is_file() {
-        Some(file)
-    } else {
-        None
     }
 }
 
@@ -899,19 +849,20 @@ mod tests {
         );
     }
 
-    /// Byte-transparency gate for the default-mmap basis read: the signature
-    /// computed by memory-mapping a large basis (`MmapReader::from_file`) MUST
-    /// be byte-identical to the signature computed by reading the same basis
-    /// through a raw `File`. The signature is what the sender matches against,
-    /// so any divergence between the two read paths would change the delta and
-    /// break interop. Size exceeds `MMAP_BASIS_THRESHOLD_BYTES` so the mmap
-    /// branch is exercised.
+    /// Byte-transparency gate for the windowed basis read: the signature
+    /// computed by streaming a large basis through the production
+    /// `BufReader`-over-`File` reader MUST be byte-identical to the signature
+    /// computed by reading the same basis straight through a raw `File`. The
+    /// signature is what the sender matches against, so any divergence between
+    /// the two read paths would change the delta and break interop. Size spans
+    /// several `MAX_MAP_SIZE` windows so the sliding read is exercised.
     #[cfg(unix)]
     #[test]
-    fn mmap_basis_signature_equals_buffered_file_signature() {
-        use std::io::Write;
+    fn windowed_basis_signature_equals_raw_file_signature() {
+        use std::io::{BufReader, Write};
 
-        let size = (MMAP_BASIS_THRESHOLD_BYTES + 4096) as usize;
+        // Multiple 256 KiB windows so the buffered reader refills repeatedly.
+        let size = MAX_MAP_SIZE * 3 + 4096;
         // Non-trivial, non-repeating bytes so blocks hash distinctly and a
         // mis-read (wrong offset/length) would surface as a signature diff.
         let data: Vec<u8> = (0..size).map(|i| ((i * 31 + 7) % 251) as u8).collect();
@@ -932,13 +883,18 @@ mod tests {
         ))
         .expect("layout");
 
-        let mapped = fast_io::MmapReader::from_file(
+        let windowed = BufReader::with_capacity(
+            MAX_MAP_SIZE,
             fast_io::open_basis_nofollow(&path).expect("open basis"),
+        );
+        let via_windowed = compute_basis_signature(
+            windowed,
+            size as u64,
+            layout,
+            SignatureAlgorithm::Md4,
+            false,
         )
-        .expect("mmap basis");
-        let via_mmap =
-            compute_basis_signature(mapped, size as u64, layout, SignatureAlgorithm::Md4, false)
-                .expect("mmap signature");
+        .expect("windowed signature");
 
         let file = fast_io::open_basis_nofollow(&path).expect("open basis");
         let via_file =
@@ -946,40 +902,41 @@ mod tests {
                 .expect("file signature");
 
         assert_eq!(
-            via_mmap, via_file,
-            "mmap basis signature diverged from buffered-file signature",
+            via_windowed, via_file,
+            "windowed basis signature diverged from raw-file signature",
         );
 
-        // Also assert against the parallel path so the mmap read composes with
-        // both signature generators used in production.
-        let mapped_par = fast_io::MmapReader::from_file(
+        // Also assert against the parallel path so the windowed read composes
+        // with both signature generators used in production.
+        let windowed_par = BufReader::with_capacity(
+            MAX_MAP_SIZE,
             fast_io::open_basis_nofollow(&path).expect("open basis"),
-        )
-        .expect("mmap basis");
-        let via_mmap_parallel = compute_basis_signature(
-            mapped_par,
+        );
+        let via_windowed_parallel = compute_basis_signature(
+            windowed_par,
             size as u64,
             layout,
             SignatureAlgorithm::Md4,
             true,
         )
-        .expect("mmap parallel signature");
+        .expect("windowed parallel signature");
         assert_eq!(
-            via_mmap_parallel, via_file,
-            "mmap parallel basis signature diverged from buffered-file signature",
+            via_windowed_parallel, via_file,
+            "windowed parallel basis signature diverged from raw-file signature",
         );
     }
 
-    /// End-to-end check that `generate_basis_signature` (the production entry
-    /// that now defaults to mmap for large baseses) yields the same signature
-    /// the raw-`File` path produces. Guards against the dispatch wrapper picking
-    /// a divergent branch.
+    /// End-to-end check that `generate_basis_signature` (the production entry,
+    /// which streams the basis through the windowed `BufReader` reader) yields
+    /// the same signature the raw-`File` path produces. Guards against the
+    /// dispatch wrapper picking a divergent branch.
     #[cfg(unix)]
     #[test]
-    fn generate_basis_signature_mmap_default_matches_raw_file() {
+    fn generate_basis_signature_matches_raw_file() {
         use std::io::Write;
 
-        let size = (MMAP_BASIS_THRESHOLD_BYTES + 1234) as usize;
+        // Span several windows so the sliding read is genuinely exercised.
+        let size = MAX_MAP_SIZE * 2 + 1234;
         let data: Vec<u8> = (0..size).map(|i| ((i * 17 + 3) % 251) as u8).collect();
 
         let tmp = tempfile::tempdir().expect("tempdir");
@@ -997,7 +954,7 @@ mod tests {
             compat_flags: None,
         };
 
-        // Production path (mmap default engaged because size >= threshold).
+        // Production path (windowed BufReader over the basis file).
         let via_default = generate_basis_signature(
             fast_io::open_basis_nofollow(&path).expect("open basis"),
             size as u64,
@@ -1027,9 +984,68 @@ mod tests {
         assert_eq!(
             via_default.signature.as_ref(),
             Some(&via_raw),
-            "generate_basis_signature mmap-default diverged from raw-file signature",
+            "generate_basis_signature windowed read diverged from raw-file signature",
         );
         assert_eq!(via_default.basis_path.as_deref(), Some(path.as_path()));
+    }
+
+    /// Regression (#277): `generate_basis_signature` must survive the basis
+    /// being truncated by another process after it is opened, returning an
+    /// empty result (whole-file fallback) instead of dying by `SIGBUS`. The
+    /// pre-fix path mmap'd baseses >= 64 KiB, so hashing a block past the
+    /// shrunk EOF faulted an unmapped page and killed the process (exit 135 on
+    /// Linux, 138 on Darwin). The windowed `read(2)` reader hits EOF early, the
+    /// signature generator returns an error, and the basis is dropped. The
+    /// layout is derived from the ORIGINAL size, mirroring the live path where
+    /// the generator sizes the layout from the pre-truncation stat.
+    #[cfg(unix)]
+    #[test]
+    fn generate_basis_signature_survives_concurrent_truncation() {
+        use std::io::Write;
+
+        // 1 MiB basis: well above the pre-fix 64 KiB mmap threshold.
+        const BASIS_LEN: usize = 1024 * 1024;
+        let data: Vec<u8> = (0..BASIS_LEN).map(|i| (i % 251) as u8).collect();
+
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let path = tmp.path().join("basis.bin");
+        {
+            let mut f = fs::File::create(&path).expect("create basis");
+            f.write_all(&data).expect("write basis");
+            f.sync_all().ok();
+        }
+
+        let cfg = SignatureGenerationConfig {
+            protocol: ProtocolVersion::NEWEST,
+            checksum_length: NonZeroU8::new(16).unwrap(),
+            checksum_algorithm: SignatureAlgorithm::Md4,
+            compat_flags: None,
+        };
+
+        // Open the basis exactly as the live path does, then let "another
+        // process" truncate it before the bytes are hashed.
+        let basis_file = fast_io::open_basis_nofollow(&path).expect("open basis");
+        fs::OpenOptions::new()
+            .write(true)
+            .open(&path)
+            .expect("reopen for truncation")
+            .set_len(8 * 1024)
+            .expect("truncate basis");
+
+        // Must not SIGBUS. Surviving to inspect the result is the assertion;
+        // the shrunk basis yields the empty (whole-file fallback) result.
+        let result = generate_basis_signature(
+            basis_file,
+            BASIS_LEN as u64,
+            path.clone(),
+            protocol::FnameCmpType::Fname,
+            None,
+            cfg,
+        );
+        assert!(
+            result.signature.is_none(),
+            "a basis truncated mid-read must fall back to whole-file transfer",
+        );
     }
 
     /// Issue #264 regression: when the destination is absent but an
