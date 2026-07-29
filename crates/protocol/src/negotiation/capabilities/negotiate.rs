@@ -9,7 +9,8 @@ use crate::nstr::{
 };
 
 use super::algorithms::{
-    ChecksumAlgorithm, CompressionAlgorithm, SUPPORTED_CHECKSUMS, supported_compressions,
+    ChecksumAlgorithm, CompressionAlgorithm, SUPPORTED_CHECKSUMS, resolve_checksum_name,
+    resolve_compression_name, supported_compressions,
 };
 use super::env_list;
 
@@ -113,7 +114,9 @@ pub struct NegotiationResult {
 ///
 /// - Protocol < 30: Not an error, returns default algorithms (MD4, Zlib)
 /// - `do_negotiation=false`: Returns defaults (MD5, Zlib if `-z`) without I/O
-/// - Peer chooses unsupported algorithm: InvalidData error
+/// - No mutual algorithm in the peer's list: `Unsupported` error, matching
+///   upstream's `RERR_UNSUPPORTED` abort (compat.c:406); unknown names inside
+///   the list are skipped, never an error
 /// - I/O errors during send/receive
 ///
 /// # Examples
@@ -419,10 +422,19 @@ pub fn negotiate_capabilities_with_override(
         None => {
             let list = remote_checksum_list.as_deref().unwrap_or("");
             // upstream: compat.c:350 - selection matches remote names against our
-            // local `saw` list, which the env override reorders/restricts.
+            // local `saw` list, which the env override reorders/restricts. With
+            // no override, the default candidates drop `none` on the client
+            // (compat.c:485-486).
+            let default_candidates;
             let candidates: &[&str] = match &checksum_env {
                 Some(env) => &env.candidates,
-                None => SUPPORTED_CHECKSUMS,
+                None => {
+                    default_candidates = default_selection_candidates(
+                        SUPPORTED_CHECKSUMS.iter().copied(),
+                        is_server,
+                    );
+                    &default_candidates
+                }
             };
             choose_checksum_algorithm_in(list, is_server, candidates)?
         }
@@ -435,9 +447,14 @@ pub fn negotiate_capabilities_with_override(
         forced
     } else if let Some(ref list) = remote_compression_list {
         let supported = supported_compressions();
+        let default_candidates;
         let candidates: &[&str] = match &compression_env {
             Some(env) => &env.candidates,
-            None => &supported,
+            None => {
+                default_candidates =
+                    default_selection_candidates(supported.iter().copied(), is_server);
+                &default_candidates
+            }
         };
         choose_compression_algorithm_in(list, is_server, candidates)?
     } else {
@@ -554,20 +571,59 @@ fn resolved_compress_level(compression: CompressionAlgorithm, raw_level: i32) ->
     }
 }
 
+/// Selects the mutual algorithm name from the peer's space-separated list.
+///
+/// Mirrors upstream `parse_negotiate_str()` (compat.c:333-364) token by token:
+///
+/// - Each remote token is resolved via the case-insensitive, alias-aware
+///   lookup (`get_nni_by_name()`, compat.c:223-238); an unrecognised name -
+///   e.g. a future `sha256` from a newer peer - is skipped without error
+///   (compat.c:350 `if (!nni || !nno->saw[nni->num] || ...) continue;`).
+/// - A recognised token must also be in `local` (upstream's `nno->saw`, which
+///   the env override reorders/restricts); the token with the lowest `local`
+///   ordinal wins, matching upstream's `best` tracking.
+/// - The server stops at the first acceptable client choice, the client keeps
+///   scanning for its best own-preference match and stops early only on a
+///   perfect one (compat.c:354 `if (best == 1 || am_server) break;`).
+///
+/// Returns `None` when nothing matched, which callers turn into upstream's
+/// hard `RERR_UNSUPPORTED` failure (compat.c:369-406 `recv_negotiate_str`).
+fn select_from_peer_list<'a>(
+    remote_list: &str,
+    is_server: bool,
+    local: &[&'a str],
+    resolve: impl Fn(&str) -> Option<&'static str>,
+) -> Option<&'a str> {
+    let mut best: Option<usize> = None;
+    for token in remote_list.split_whitespace() {
+        // upstream: compat.c:350 - unknown names are skipped, never an error.
+        let Some(canonical) = resolve(token) else {
+            continue;
+        };
+        let Some(pos) = local.iter().position(|&name| name == canonical) else {
+            continue;
+        };
+        if best.is_none_or(|current| pos < current) {
+            best = Some(pos);
+            // upstream: compat.c:354 - the server stops at the first
+            // acceptable client choice; the client stops only on its own
+            // top preference.
+            if pos == 0 || is_server {
+                break;
+            }
+        }
+    }
+    best.map(|pos| local[pos])
+}
+
 /// Chooses a checksum algorithm using upstream rsync's precedence rules.
 ///
-/// upstream: compat.c:332-363 `parse_negotiate_str()` - both sides converge on
+/// upstream: compat.c:333-364 `parse_negotiate_str()` - both sides converge on
 /// the first entry in the client's list that also appears in the server's list.
 ///
-/// - Server (`is_server=true`): iterates the remote (client's) list, returns the
-///   first entry that appears in our local list. This is the server-side fast path
-///   where the server breaks on first acceptable client choice.
-/// - Client (`is_server=false`): iterates our local list, returns the first entry
-///   that also appears in the remote (server's) list. This finds the best local
-///   preference among mutually supported algorithms.
-///
 /// Returns an error if no common algorithm is found - upstream rsync treats
-/// this as a hard failure (compat.c:383-406 `recv_negotiate_str`).
+/// this as a hard failure (compat.c:383-406 `recv_negotiate_str`, exiting with
+/// `RERR_UNSUPPORTED`).
 ///
 /// This is the default-list convenience wrapper exercised by the test suite;
 /// production callers use [`choose_checksum_algorithm_in`] so the
@@ -577,58 +633,41 @@ pub(super) fn choose_checksum_algorithm(
     remote_list: &str,
     is_server: bool,
 ) -> io::Result<ChecksumAlgorithm> {
-    choose_checksum_algorithm_in(remote_list, is_server, SUPPORTED_CHECKSUMS)
+    choose_checksum_algorithm_in(
+        remote_list,
+        is_server,
+        &default_selection_candidates(SUPPORTED_CHECKSUMS.iter().copied(), is_server),
+    )
 }
 
 /// Chooses a checksum algorithm from an explicit local candidate list.
 ///
 /// Behaves like [`choose_checksum_algorithm`] but takes the ordered local
 /// candidate names as a parameter so the caller can substitute the
-/// `RSYNC_CHECKSUM_LIST` env override (upstream `nno->saw`, compat.c:350). With
-/// the default [`SUPPORTED_CHECKSUMS`] list the behaviour is unchanged.
+/// `RSYNC_CHECKSUM_LIST` env override (upstream `nno->saw`, compat.c:350).
 pub(super) fn choose_checksum_algorithm_in(
     remote_list: &str,
     is_server: bool,
     local: &[&str],
 ) -> io::Result<ChecksumAlgorithm> {
-    let remote_items: Vec<&str> = remote_list.split_whitespace().collect();
-
-    if is_server {
-        // Server: iterate client's (remote) list, first match in our list wins.
-        // upstream: compat.c:353 `if (best == 1 || am_server) break;`
-        for algo in &remote_items {
-            if let Ok(checksum) = ChecksumAlgorithm::parse(algo) {
-                if local.contains(&checksum.as_str()) {
-                    return Ok(checksum);
-                }
-            }
-        }
-    } else {
-        // Client: iterate our local list, first item also in server's (remote)
-        // list wins. This gives client preference order priority.
-        // upstream: compat.c:349-354 - client continues iterating to find the
-        // local item with the best (lowest) position in our own list.
-        for &name in local {
-            if remote_items.contains(&name) {
-                return ChecksumAlgorithm::parse(name)
-                    .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e.to_string()));
-            }
-        }
+    match select_from_peer_list(remote_list, is_server, local, resolve_checksum_name) {
+        Some(name) => ChecksumAlgorithm::parse(name)
+            .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e.to_string())),
+        // upstream: compat.c:387,406 - "Failed to negotiate a %s choice." with
+        // exit_cleanup(RERR_UNSUPPORTED); ErrorKind::Unsupported maps to exit 4.
+        None => Err(io::Error::new(
+            io::ErrorKind::Unsupported,
+            "Failed to negotiate a checksum choice.",
+        )),
     }
-
-    // upstream: compat.c:383-406 - failure to negotiate is a hard error
-    Err(io::Error::new(
-        io::ErrorKind::InvalidData,
-        format!("failed to negotiate a common checksum algorithm (remote offers: {remote_list})"),
-    ))
 }
 
 /// Chooses a compression algorithm using upstream rsync's precedence rules.
 ///
-/// Same asymmetric logic as [`choose_checksum_algorithm`] - both sides converge
-/// on the first entry in the client's list that also appears in the server's list.
+/// Same convergence logic as [`choose_checksum_algorithm`] - both sides pick
+/// the first entry in the client's list that also appears in the server's list.
 ///
-/// upstream: compat.c:332-363 `parse_negotiate_str()`
+/// upstream: compat.c:333-364 `parse_negotiate_str()`
 ///
 /// This is the default-list convenience wrapper exercised by the test suite;
 /// production callers use [`choose_compression_algorithm_in`] so the
@@ -639,44 +678,52 @@ pub(super) fn choose_compression_algorithm(
     is_server: bool,
 ) -> io::Result<CompressionAlgorithm> {
     let supported = supported_compressions();
-    choose_compression_algorithm_in(remote_list, is_server, &supported)
+    choose_compression_algorithm_in(
+        remote_list,
+        is_server,
+        &default_selection_candidates(supported.iter().copied(), is_server),
+    )
 }
 
 /// Chooses a compression algorithm from an explicit local candidate list.
 ///
 /// Behaves like [`choose_compression_algorithm`] but takes the ordered local
 /// candidate names as a parameter so the caller can substitute the
-/// `RSYNC_COMPRESS_LIST` env override. With the default
-/// [`supported_compressions`] list the behaviour is unchanged.
+/// `RSYNC_COMPRESS_LIST` env override.
 pub(super) fn choose_compression_algorithm_in(
     remote_list: &str,
     is_server: bool,
     local: &[&str],
 ) -> io::Result<CompressionAlgorithm> {
-    let remote_items: Vec<&str> = remote_list.split_whitespace().collect();
-
-    if is_server {
-        // Server: iterate client's (remote) list, first match in our list wins.
-        for algo in &remote_items {
-            if let Ok(compression) = CompressionAlgorithm::parse(algo) {
-                if local.contains(algo) {
-                    return Ok(compression);
-                }
-            }
-        }
-    } else {
-        // Client: iterate our local list, first item also in server's (remote)
-        // list wins.
-        for &name in local {
-            if remote_items.contains(&name) {
-                return CompressionAlgorithm::parse(name)
-                    .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e.to_string()));
-            }
-        }
+    match select_from_peer_list(remote_list, is_server, local, resolve_compression_name) {
+        Some(name) => CompressionAlgorithm::parse(name)
+            .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e.to_string())),
+        // upstream: compat.c:387,406 recv_negotiate_str - a compression list
+        // with no mutual algorithm is the same hard RERR_UNSUPPORTED failure
+        // as an unmatched checksum list; "none" is never a silent fallback.
+        None => Err(io::Error::new(
+            io::ErrorKind::Unsupported,
+            "Failed to negotiate a compress choice.",
+        )),
     }
+}
 
-    // No common algorithm found - use "none"
-    Ok(CompressionAlgorithm::None)
+/// Builds the default local selection candidates for one side.
+///
+/// upstream: compat.c:485-486 `get_default_nno_list()` skips the
+/// zero-numbered entry (`none` for both checksums and compressions) on the
+/// client, so a client can neither advertise nor accept `none` unless the
+/// operator re-enables it through `RSYNC_*_LIST`; the server keeps it. The
+/// `saw` array that `parse_negotiate_str()` consults is populated by that same
+/// loop, so the selection candidates must apply the identical filter.
+fn default_selection_candidates<'a>(
+    names: impl IntoIterator<Item = &'a str>,
+    is_server: bool,
+) -> Vec<&'a str> {
+    names
+        .into_iter()
+        .filter(|&name| is_server || name != "none")
+        .collect()
 }
 
 /// Builds the space-separated algorithm list a peer advertises during

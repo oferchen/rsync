@@ -809,7 +809,9 @@ fn v32_checksum_algorithm_parsing() {
     assert!(ChecksumAlgorithm::parse("md5").is_ok());
     assert!(ChecksumAlgorithm::parse("sha1").is_ok());
     assert!(ChecksumAlgorithm::parse("xxh64").is_ok());
-    assert!(ChecksumAlgorithm::parse("xxh").is_ok()); // xxh is alias for xxh64
+    assert!(ChecksumAlgorithm::parse("xxhash").is_ok()); // alias for xxh64
+    // upstream checksum.c:49-65 has no bare "xxh" entry
+    assert!(ChecksumAlgorithm::parse("xxh").is_err());
     assert!(ChecksumAlgorithm::parse("xxh3").is_ok());
     assert!(ChecksumAlgorithm::parse("xxh128").is_ok());
 
