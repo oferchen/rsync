@@ -47,19 +47,19 @@ pub(crate) fn copy_sources(
     options: LocalCopyOptions,
     handler: Option<&mut dyn LocalCopyRecordHandler>,
 ) -> Result<CopyOutcome, LocalCopyError> {
-    // upstream: rsync.c:do_as_root() - switch effective UID/GID before receiver
-    // file operations. The RAII guard restores the original identity on drop.
-    let _copy_as_guard = options
-        .copy_as_ids()
-        .map(::metadata::switch_effective_ids)
-        .transpose()
-        .map_err(|err| {
+    // upstream: main.c become_copy_as_user() - permanently drop to the target
+    // uid/gid (setgid/setgroups/setuid) before any receiver file operation. The
+    // drop is irreversible by design: the process can never regain root and
+    // never retains root's supplementary groups while writing files.
+    if let Some(ids) = options.copy_as_ids() {
+        ::metadata::become_copy_as_user(ids).map_err(|err| {
             LocalCopyError::io(
-                "switch effective identity for --copy-as",
+                "drop to --copy-as identity",
                 plan.destination_spec().path(),
                 err,
             )
         })?;
+    }
 
     // upstream: main.c:1763 `starttime = time(NULL)` - the transfer rate span
     // is measured between two whole-second time_t marks, not a fractional clock.
