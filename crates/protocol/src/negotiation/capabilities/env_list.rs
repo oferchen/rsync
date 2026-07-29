@@ -31,9 +31,7 @@
 
 use std::io;
 
-use super::algorithms::{
-    ChecksumAlgorithm, CompressionAlgorithm, SUPPORTED_CHECKSUMS, supported_compressions,
-};
+use super::algorithms::{resolve_checksum_name, resolve_compression_name};
 
 /// Environment variable that overrides the checksum negotiation list.
 const CHECKSUM_LIST_ENV: &str = "RSYNC_CHECKSUM_LIST";
@@ -70,9 +68,9 @@ pub(super) fn checksum_candidates(
 ) -> Option<EnvOverride> {
     if write_batch {
         let forced = if protocol >= 30 { "md5" } else { "md4" };
-        return parse_list(forced, resolve_checksum);
+        return parse_list(forced, resolve_checksum_name);
     }
-    parse_env(CHECKSUM_LIST_ENV, is_server, resolve_checksum)
+    parse_env(CHECKSUM_LIST_ENV, is_server, resolve_checksum_name)
 }
 
 /// Returns the compression candidate override from `RSYNC_COMPRESS_LIST`, or
@@ -83,9 +81,9 @@ pub(super) fn checksum_candidates(
 /// upstream: `compat.c:412-414 getenv_nstr()`.
 pub(super) fn compression_candidates(is_server: bool, write_batch: bool) -> Option<EnvOverride> {
     if write_batch {
-        return parse_list("zlib", resolve_compression);
+        return parse_list("zlib", resolve_compression_name);
     }
-    parse_env(COMPRESS_LIST_ENV, is_server, resolve_compression)
+    parse_env(COMPRESS_LIST_ENV, is_server, resolve_compression_name)
 }
 
 /// Refuses a client-forced `--checksum-choice` whose algorithm is absent from
@@ -112,7 +110,7 @@ pub(super) fn compression_candidates(is_server: bool, write_batch: bool) -> Opti
 /// - `compat.c:426-449 validate_choice_vs_env()` - the refusal check itself.
 /// - `checksum.c:185-186` - the server-only call site.
 pub(super) fn validate_checksum_choice(choice: &str) -> io::Result<()> {
-    validate_choice(CHECKSUM_LIST_ENV, "checksum", choice, resolve_checksum)
+    validate_choice(CHECKSUM_LIST_ENV, "checksum", choice, resolve_checksum_name)
 }
 
 /// Refuses a client-forced `--compress-choice` whose algorithm is absent from
@@ -127,7 +125,12 @@ pub(super) fn validate_checksum_choice(choice: &str) -> io::Result<()> {
 /// - `compat.c:426-449 validate_choice_vs_env()`.
 /// - `compat.c:193-194` - the server-only call site.
 pub(super) fn validate_compress_choice(choice: &str) -> io::Result<()> {
-    validate_choice(COMPRESS_LIST_ENV, "compress", choice, resolve_compression)
+    validate_choice(
+        COMPRESS_LIST_ENV,
+        "compress",
+        choice,
+        resolve_compression_name,
+    )
 }
 
 /// Refuses the forced fallback default checksum on the non-negotiated path when
@@ -147,7 +150,7 @@ pub(super) fn validate_default_checksum(default: &str, is_server: bool) -> io::R
         "checksum",
         default,
         is_server,
-        resolve_checksum,
+        resolve_checksum_name,
     )
 }
 
@@ -164,7 +167,7 @@ pub(super) fn validate_default_compress(default: &str, is_server: bool) -> io::R
         "compress",
         default,
         is_server,
-        resolve_compression,
+        resolve_compression_name,
     )
 }
 
@@ -252,31 +255,6 @@ fn validate_default(
             format!("Failed to negotiate a {kind} choice."),
         )),
     }
-}
-
-/// Resolves a checksum name to its canonical wire spelling, or `None` when the
-/// name is not a build-supported algorithm. Accepts the `xxhash` alias and any
-/// ASCII casing, mirroring upstream's case-insensitive `get_nni_by_name`.
-fn resolve_checksum(name: &str) -> Option<&'static str> {
-    let canonical = ChecksumAlgorithm::parse(&name.to_ascii_lowercase())
-        .ok()?
-        .as_str();
-    SUPPORTED_CHECKSUMS
-        .contains(&canonical)
-        .then_some(canonical)
-}
-
-/// Resolves a compression name to its canonical wire spelling, or `None` when
-/// the name is not a build-supported algorithm. Feature-gated codecs (lz4,
-/// zstd) absent from this build are treated as unrecognised, matching upstream's
-/// compile-time `valid_compressions_items[]` gating.
-fn resolve_compression(name: &str) -> Option<&'static str> {
-    let canonical = CompressionAlgorithm::parse(&name.to_ascii_lowercase())
-        .ok()?
-        .as_str();
-    supported_compressions()
-        .contains(&canonical)
-        .then_some(canonical)
 }
 
 /// Core parser shared by both variables.

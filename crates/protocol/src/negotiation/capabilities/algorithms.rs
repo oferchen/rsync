@@ -46,6 +46,40 @@ pub(super) fn supported_compressions() -> Vec<&'static str> {
     list
 }
 
+/// Resolves a checksum name to its canonical wire spelling, or `None` when the
+/// name is not a build-supported algorithm.
+///
+/// Mirrors upstream `get_nni_by_name()` (compat.c:223-238): the lookup is
+/// case-insensitive (`strncasecmp`), and an alias entry resolves to its
+/// `main_nni` canonical name (`xxhash` becomes `xxh64`). Unrecognised names
+/// resolve to `None` so callers skip them, exactly as upstream's negotiation
+/// and env-list parsing do - this is what keeps a future name such as
+/// `sha256` from breaking interop.
+pub(super) fn resolve_checksum_name(name: &str) -> Option<&'static str> {
+    let canonical = ChecksumAlgorithm::parse(&name.to_ascii_lowercase())
+        .ok()?
+        .as_str();
+    SUPPORTED_CHECKSUMS
+        .contains(&canonical)
+        .then_some(canonical)
+}
+
+/// Resolves a compression name to its canonical wire spelling, or `None` when
+/// the name is not a build-supported algorithm.
+///
+/// The compression counterpart of [`resolve_checksum_name`]. Feature-gated
+/// codecs (lz4, zstd) absent from this build are treated as unrecognised,
+/// matching upstream's compile-time `valid_compressions_items[]` gating
+/// (compat.c:101-112).
+pub(super) fn resolve_compression_name(name: &str) -> Option<&'static str> {
+    let canonical = CompressionAlgorithm::parse(&name.to_ascii_lowercase())
+        .ok()?
+        .as_str();
+    supported_compressions()
+        .contains(&canonical)
+        .then_some(canonical)
+}
+
 /// Checksum algorithm negotiated between rsync peers.
 ///
 /// Protocol 30+ peers exchange space-separated lists of supported algorithms
@@ -89,15 +123,17 @@ impl ChecksumAlgorithm {
     /// Parses an algorithm from its wire protocol name.
     ///
     /// Accepts "xxhash" as an alias for XXH64, matching upstream rsync's
-    /// `valid_checksums_items` table in `checksum.c` where both "xxh64" and
-    /// "xxhash" map to `CSUM_XXH64`.
+    /// `valid_checksums_items` table (checksum.c:49-65) where both "xxh64" and
+    /// "xxhash" map to `CSUM_XXH64`. No other spellings exist in that table,
+    /// so anything else - including a shortened "xxh" - is unrecognised, just
+    /// as upstream's `get_nni_by_name()` reports.
     pub fn parse(name: &str) -> io::Result<Self> {
         match name {
             "none" => Ok(Self::None),
             "md4" => Ok(Self::MD4),
             "md5" => Ok(Self::MD5),
             "sha1" => Ok(Self::SHA1),
-            "xxh" | "xxh64" | "xxhash" => Ok(Self::XXH64),
+            "xxh64" | "xxhash" => Ok(Self::XXH64),
             "xxh3" => Ok(Self::XXH3),
             "xxh128" => Ok(Self::XXH128),
             _ => Err(io::Error::new(

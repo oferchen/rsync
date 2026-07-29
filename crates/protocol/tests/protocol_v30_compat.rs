@@ -762,9 +762,10 @@ mod protocol_30_edge_cases {
         let result =
             negotiate_capabilities(protocol, &mut stdin, &mut stdout, true, true, false, true);
 
-        // No valid checksum in the list - negotiation fails
+        // No valid checksum in the list - negotiation fails with upstream's
+        // RERR_UNSUPPORTED semantics (compat.c:406).
         assert!(result.is_err());
-        assert_eq!(result.unwrap_err().kind(), std::io::ErrorKind::InvalidData);
+        assert_eq!(result.unwrap_err().kind(), std::io::ErrorKind::Unsupported);
     }
 
     /// Protocol 30 rejects empty capability lists.
@@ -792,7 +793,7 @@ mod protocol_30_edge_cases {
 
         // Empty checksum list is a negotiation failure per upstream
         assert!(result.is_err());
-        assert_eq!(result.unwrap_err().kind(), std::io::ErrorKind::InvalidData);
+        assert_eq!(result.unwrap_err().kind(), std::io::ErrorKind::Unsupported);
     }
 
     /// Protocol 30 handles truncated capability negotiation.
@@ -1451,9 +1452,10 @@ mod protocol_30_vstring_format {
         let result =
             negotiate_capabilities(protocol, &mut stdin, &mut stdout, true, false, false, true);
 
-        // No valid checksum in the list - negotiation fails
+        // No valid checksum in the list - negotiation fails with upstream's
+        // RERR_UNSUPPORTED semantics (compat.c:406).
         assert!(result.is_err());
-        assert_eq!(result.unwrap_err().kind(), std::io::ErrorKind::InvalidData);
+        assert_eq!(result.unwrap_err().kind(), std::io::ErrorKind::Unsupported);
     }
 }
 
