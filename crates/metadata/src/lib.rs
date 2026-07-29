@@ -325,7 +325,7 @@ pub use xattr_stub::{
     apply_xattrs_from_list, read_xattrs_for_wire, strip_source_xattrs, sync_xattrs, xattrs_match,
 };
 
-pub use copy_as::{CopyAsGuard, CopyAsIds, parse_copy_as_spec, switch_effective_ids};
+pub use copy_as::{CopyAsIds, become_copy_as_user, parse_copy_as_spec};
 
 pub use fake_super::{
     FAKE_SUPER_ACCESS_ACL_XATTR, FAKE_SUPER_DEFAULT_ACL_XATTR, FAKE_SUPER_XATTR, FakeSuperStat,

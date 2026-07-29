@@ -2,17 +2,20 @@
 
 //! Privilege switching for `--copy-as=USER[:GROUP]`.
 //!
-//! This module provides effective UID/GID switching so that file I/O on the
-//! receiver/generator side executes under the specified user (and optionally
-//! group) identity. The switch is reversible: [`CopyAsGuard`] restores the
-//! original effective identifiers when dropped, mirroring upstream rsync's
-//! `do_as_root` / `undo_as_root` bracket in `rsync.c`.
+//! This module provides a permanent, irreversible privilege drop so that file
+//! I/O on the receiver/generator side executes under the specified user (and
+//! optionally group) identity, mirroring upstream rsync's
+//! `become_copy_as_user()` (main.c). Unlike a reversible `seteuid` switch, the
+//! drop sets the real, effective, AND saved-set uid and clears root's
+//! supplementary groups, so the process can never regain root and never
+//! retains privileged group memberships while writing files.
 //!
 //! # Platform Support
 //!
-//! - **Unix**: Uses `seteuid(2)` / `setegid(2)` via libc. Requires the
-//!   process to be running as root (euid 0) or to possess `CAP_SETUID` /
-//!   `CAP_SETGID`.
+//! - **Unix**: `setgid` -> `setgroups`/`initgroups` -> `setuid` -> `seteuid`
+//!   via `nix` safe wrappers (with a `libc` `setgroups` fallback on Apple
+//!   targets). Requires the process to be running as root (euid 0) or to
+//!   possess `CAP_SETUID` / `CAP_SETGID`.
 //! - **Windows**: Returns a descriptive `Unsupported` error. The POSIX
 //!   `--copy-as=USER` flow takes no password and assumes the process can
 //!   change effective identity without one (root or a `CAP_SETUID`
@@ -26,8 +29,8 @@
 //!
 //! # Upstream Reference
 //!
-//! - `rsync.c:do_as_root()` - switches euid/egid before privileged operations
-//! - `rsync.c:undo_as_root()` - restores original euid/egid
+//! - `main.c:become_copy_as_user()` (rsync 3.2.0+) - the permanent
+//!   `setgid`/`setgroups`/`setuid` drop this module mirrors
 //! - `main.c` - `--copy-as` parsing and initial identity resolution
 
 use std::ffi::OsStr;
@@ -124,133 +127,132 @@ fn resolve_group_by_name(name: &str) -> io::Result<u32> {
     }
 }
 
-/// RAII guard that restores original effective UID/GID on drop.
+/// Maps a `nix` errno into a `std::io::Error`.
+#[cfg(unix)]
+fn nix_to_io(err: nix::errno::Errno) -> io::Error {
+    io::Error::from_raw_os_error(err as i32)
+}
+
+/// Replaces the process supplementary group set with exactly `gids`.
 ///
-/// Created by [`switch_effective_ids`]. When dropped, restores the process's
-/// effective user and group IDs to their values at the time of the switch.
-/// Drop failures are silently ignored since there is no mechanism to propagate
-/// errors from `Drop`; however, if the original identity cannot be restored,
-/// subsequent file operations will use the switched identity.
-#[cfg(unix)]
-#[derive(Debug)]
-pub struct CopyAsGuard {
-    original_euid: u32,
-    original_egid: u32,
-    switched_egid: bool,
-    // While held, the metadata identity accessors read live instead of the
-    // cached startup value, so ownership gates observe the switched euid/egid.
-    // Dropped after the euid/egid are restored (fields drop after Drop::drop),
-    // so the restored identity is what later cached reads capture.
-    _switch: crate::identity::SwitchScope,
+/// Uses `nix::unistd::setgroups` where available; falls back to `libc` on
+/// Apple targets (where `nix` does not expose `setgroups`), mirroring
+/// `platform::privilege::set_supplementary_groups`.
+#[cfg(all(unix, not(any(target_os = "macos", target_os = "ios"))))]
+fn set_supplementary_groups(gids: &[nix::unistd::Gid]) -> io::Result<()> {
+    nix::unistd::setgroups(gids).map_err(nix_to_io)
 }
 
-#[cfg(unix)]
-impl CopyAsGuard {
-    /// Returns the original effective UID that will be restored on drop.
-    #[cfg(test)]
-    pub fn original_euid(&self) -> u32 {
-        self.original_euid
-    }
-
-    /// Returns the original effective GID that will be restored on drop.
-    #[cfg(test)]
-    pub fn original_egid(&self) -> u32 {
-        self.original_egid
-    }
-}
-
-#[cfg(unix)]
+#[cfg(any(target_os = "macos", target_os = "ios"))]
 #[allow(unsafe_code)]
-impl Drop for CopyAsGuard {
-    fn drop(&mut self) {
-        // upstream: rsync.c:undo_as_root() -- restore egid first, then euid.
-        // Restoring euid first could fail if the target egid requires root.
-        if self.switched_egid {
-            // SAFETY: `setegid` is a standard POSIX call. The gid_t value was
-            // previously our effective GID, so it is known-valid.
-            unsafe {
-                libc::setegid(self.original_egid);
-            }
-        }
-        // SAFETY: `seteuid` is a standard POSIX call. The uid_t value was
-        // previously our effective UID, so it is known-valid.
-        unsafe {
-            libc::seteuid(self.original_euid);
-        }
+fn set_supplementary_groups(gids: &[nix::unistd::Gid]) -> io::Result<()> {
+    let raw: Vec<libc::gid_t> = gids.iter().map(|gid| gid.as_raw()).collect();
+    // SAFETY: `setgroups` reads exactly `raw.len()` entries from `raw`, which
+    // is a live, correctly-sized slice for the duration of the call.
+    let rc = unsafe { libc::setgroups(raw.len() as libc::c_int, raw.as_ptr()) };
+    if rc != 0 {
+        return Err(io::Error::last_os_error());
     }
+    Ok(())
 }
 
-/// Switches the process effective UID and optionally GID to the specified values.
+/// Installs the user's full supplementary group set (upstream `initgroups`).
 ///
-/// Returns a [`CopyAsGuard`] whose `Drop` implementation restores the original
-/// effective identifiers. The switch sequence follows upstream rsync's ordering:
-/// 1. `setegid` (if a group was specified) -- must happen while still root
-/// 2. `seteuid` -- dropping to the target user
+/// Uses `nix::unistd::initgroups` where available; falls back to `libc` on
+/// Apple targets (where `nix` does not expose `initgroups`), mirroring the
+/// `set_supplementary_groups` split.
+#[cfg(all(unix, not(any(target_os = "macos", target_os = "ios"))))]
+fn install_user_groups(user: &std::ffi::CStr, gid: nix::unistd::Gid) -> io::Result<()> {
+    nix::unistd::initgroups(user, gid).map_err(nix_to_io)
+}
+
+#[cfg(any(target_os = "macos", target_os = "ios"))]
+#[allow(unsafe_code)]
+fn install_user_groups(user: &std::ffi::CStr, gid: nix::unistd::Gid) -> io::Result<()> {
+    // SAFETY: `user` is a live null-terminated C string for the duration of the
+    // call; `initgroups` reads it and installs the caller's group set. The
+    // `basegid` argument is `c_int` on Apple targets, hence the `as _` cast.
+    let rc = unsafe { libc::initgroups(user.as_ptr(), gid.as_raw() as _) };
+    if rc != 0 {
+        return Err(io::Error::last_os_error());
+    }
+    Ok(())
+}
+
+/// Permanently drops the process to the `--copy-as` user (and group)
+/// identity, mirroring upstream rsync's `become_copy_as_user()`.
+///
+/// The drop is COMPLETE and IRREVERSIBLE, in the canonical secure order
+/// ("Setuid Demystified"): supplementary groups are cleared/replaced, the gid
+/// is set, then the uid is set LAST via `setuid(2)`, which sets the real,
+/// effective, AND saved-set uid. Consequences that match upstream and that the
+/// prior reversible `seteuid`-only switch did NOT provide:
+///
+/// - the process cannot regain root (saved-set uid is no longer 0), so a
+///   compromised transfer has no re-elevation path, and
+/// - root's supplementary group memberships are dropped, so files are never
+///   created with groups the target user does not hold.
 ///
 /// # Errors
 ///
-/// Returns an error if `seteuid(2)` or `setegid(2)` fails. Common causes
-/// include insufficient privileges (not running as root or lacking capabilities).
+/// Returns an error if the target uid cannot be resolved to a passwd entry, or
+/// if any of `setgid`/`setgroups`/`initgroups`/`setuid`/`seteuid` fails
+/// (typically insufficient privilege: the process must be root or hold
+/// `CAP_SETUID`/`CAP_SETGID`).
 ///
 /// # Upstream Reference
 ///
-/// - `rsync.c:do_as_root()` - same ordering: egid first, then euid
+/// - `main.c:become_copy_as_user()` (rsync 3.2.0+): `setgid` ->
+///   `setgroups(1,&gid)`/`initgroups(user,gid)` -> `setuid` -> `seteuid`, then
+///   re-cache `our_uid`/`our_gid`/`am_root`.
 #[cfg(unix)]
-#[allow(unsafe_code)]
-pub fn switch_effective_ids(ids: &CopyAsIds) -> io::Result<CopyAsGuard> {
-    // SAFETY: `geteuid` and `getegid` are standard POSIX calls with no side effects.
-    let original_euid = unsafe { libc::geteuid() };
-    let original_egid = unsafe { libc::getegid() };
+pub fn become_copy_as_user(ids: &CopyAsIds) -> io::Result<()> {
+    use nix::unistd::{Gid, Uid, User};
 
-    let mut switched_egid = false;
+    // Resolve the target user's passwd entry once: its login gid (used when no
+    // explicit `--copy-as` group is given) and name (needed for initgroups).
+    let user = User::from_uid(Uid::from_raw(ids.uid))
+        .map_err(nix_to_io)?
+        .ok_or_else(|| {
+            io::Error::new(
+                io::ErrorKind::NotFound,
+                format!("unknown uid {} for --copy-as", ids.uid),
+            )
+        })?;
 
-    // upstream: rsync.c:do_as_root() - egid first while still root
-    if let Some(gid) = ids.gid {
-        // SAFETY: `setegid` is a standard POSIX call. The gid_t value comes from
-        // a resolved group specification and is validated by the kernel.
-        let ret = unsafe { libc::setegid(gid) };
-        if ret != 0 {
-            return Err(io::Error::last_os_error());
-        }
-        switched_egid = true;
+    // Explicit `--copy-as=user:group` gid, else the user's login gid
+    // (upstream uses `pw->pw_gid` when no group is specified).
+    let gid = Gid::from_raw(ids.gid.unwrap_or_else(|| user.gid.as_raw()));
+
+    // Order is load-bearing and every call must run while still privileged:
+    //   1. setgid, 2. drop/replace supplementary groups, 3. setuid LAST.
+    nix::unistd::setgid(gid).map_err(nix_to_io)?;
+
+    if ids.gid.is_some() {
+        // Explicit group: restrict the supplementary set to just it
+        // (upstream `setgroups(1, &gid)`).
+        set_supplementary_groups(&[gid])?;
+    } else {
+        // No explicit group: install the user's full group set
+        // (upstream `initgroups(user, gid)`), which also clears root's groups.
+        let cname = std::ffi::CString::new(user.name.as_bytes())
+            .map_err(|err| io::Error::new(io::ErrorKind::InvalidInput, err))?;
+        install_user_groups(&cname, gid)?;
     }
 
-    // upstream: rsync.c:do_as_root() - euid last (may drop root)
-    // SAFETY: `seteuid` is a standard POSIX call. The uid_t value comes from
-    // a resolved user specification and is validated by the kernel.
-    let ret = unsafe { libc::seteuid(ids.uid) };
-    if ret != 0 {
-        // upstream: rsync.c:do_as_root() - restore egid on euid failure
-        if switched_egid {
-            unsafe {
-                libc::setegid(original_egid);
-            }
-        }
-        return Err(io::Error::last_os_error());
-    }
+    // `setuid` sets the real, effective, and SAVED uid, making the drop
+    // irreversible; the trailing `seteuid` mirrors upstream's belt-and-braces.
+    let uid = Uid::from_raw(ids.uid);
+    nix::unistd::setuid(uid).map_err(nix_to_io)?;
+    nix::unistd::seteuid(uid).map_err(nix_to_io)?;
 
-    Ok(CopyAsGuard {
-        original_euid,
-        original_egid,
-        switched_egid,
-        _switch: crate::identity::SwitchScope::enter(),
-    })
+    // Re-cache the process identity so the metadata ownership gates observe the
+    // new uid/gid (upstream re-runs `our_uid = MY_UID(); am_root = ...`).
+    crate::identity::set_process_identity(ids.uid, gid.as_raw());
+    Ok(())
 }
 
-/// Placeholder guard for non-Unix platforms.
-///
-/// On Windows and other non-Unix targets, [`switch_effective_ids`] currently
-/// fails before any switch occurs, so this struct is never constructed at
-/// runtime. It exists so the public type alias compiles on every platform
-/// and downstream callers can hold an `Option<CopyAsGuard>` without
-/// `cfg`-gating their own code.
-#[cfg(not(unix))]
-#[derive(Debug)]
-pub struct CopyAsGuard {
-    _private: (),
-}
-
-/// Attempts to switch the calling process identity on Windows.
+/// Attempts to drop to the `--copy-as` identity on Windows.
 ///
 /// The POSIX `--copy-as` contract is "drop to USER[:GROUP] without a
 /// password". On Windows this maps to `LogonUserW` +
@@ -277,7 +279,7 @@ pub struct CopyAsGuard {
 /// - `rsync.c:do_as_root()` - POSIX equivalent that this routine mirrors.
 #[cfg(windows)]
 #[allow(unsafe_code)]
-pub fn switch_effective_ids(_ids: &CopyAsIds) -> io::Result<CopyAsGuard> {
+pub fn become_copy_as_user(_ids: &CopyAsIds) -> io::Result<()> {
     if has_impersonate_privilege()? {
         Err(io::Error::new(
             io::ErrorKind::Unsupported,
@@ -386,7 +388,7 @@ fn has_impersonate_privilege() -> io::Result<bool> {
 /// Returns `Unsupported` so callers surface a loud error instead of
 /// silently dropping `--copy-as`.
 #[cfg(not(any(unix, windows)))]
-pub fn switch_effective_ids(_ids: &CopyAsIds) -> io::Result<CopyAsGuard> {
+pub fn become_copy_as_user(_ids: &CopyAsIds) -> io::Result<()> {
     Err(io::Error::new(
         io::ErrorKind::Unsupported,
         "--copy-as is not supported on this platform",
@@ -476,40 +478,41 @@ mod tests {
 
     #[cfg(unix)]
     #[test]
-    fn switch_to_current_user_succeeds() {
+    fn become_copy_as_user_unknown_uid_fails_before_dropping() {
+        // `become_copy_as_user` performs a PERMANENT, irreversible privilege
+        // drop, so it cannot be exercised for real inside the shared test
+        // process without corrupting every later test. The one branch that is
+        // safe to unit-test is the passwd lookup, which runs BEFORE any
+        // privileged syscall: an unresolvable uid must fail with NotFound and
+        // leave the process identity untouched. The real drop is validated by
+        // an as-root integration run against upstream, not here.
+        //
         // SAFETY: `geteuid`/`getegid` are POSIX accessors with no inputs and
         // no side effects beyond returning the calling process's IDs.
-        let euid = unsafe { libc::geteuid() };
-        let egid = unsafe { libc::getegid() };
-        let ids = CopyAsIds {
-            uid: euid,
-            gid: Some(egid),
-        };
-        let guard = switch_effective_ids(&ids).unwrap();
-        assert_eq!(guard.original_euid(), euid);
-        assert_eq!(guard.original_egid(), egid);
-        drop(guard);
-        // SAFETY: see above; pure read of the calling process's effective IDs.
-        assert_eq!(unsafe { libc::geteuid() }, euid);
-        assert_eq!(unsafe { libc::getegid() }, egid);
-    }
+        let euid_before = unsafe { libc::geteuid() };
+        let egid_before = unsafe { libc::getegid() };
 
-    #[cfg(unix)]
-    #[test]
-    fn switch_without_group_preserves_egid() {
-        // SAFETY: `geteuid`/`getegid` are POSIX accessors with no inputs and
-        // no side effects beyond returning the calling process's IDs.
-        let euid = unsafe { libc::geteuid() };
-        let egid = unsafe { libc::getegid() };
-        let ids = CopyAsIds {
-            uid: euid,
-            gid: None,
+        // No single uid constant is portably unallocated: macOS maps `nobody`
+        // to `(uid_t)-2` == 0xFFFF_FFFE, Linux maps it to 65534. Scan down from
+        // the top of the range until we find a uid with no passwd entry, so the
+        // lookup inside become_copy_as_user misses BEFORE any privileged syscall.
+        let uid = {
+            use nix::unistd::{Uid, User};
+            let mut raw = 0xFFFF_FFFEu32;
+            loop {
+                if User::from_uid(Uid::from_raw(raw)).ok().flatten().is_none() {
+                    break raw;
+                }
+                raw -= 1;
+            }
         };
-        let guard = switch_effective_ids(&ids).unwrap();
-        assert!(!guard.switched_egid);
-        drop(guard);
-        // SAFETY: see above; pure read of the calling process's effective gid.
-        assert_eq!(unsafe { libc::getegid() }, egid);
+        let ids = CopyAsIds { uid, gid: None };
+        let err = become_copy_as_user(&ids).unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::NotFound);
+
+        // SAFETY: see above; pure read of the calling process's effective IDs.
+        assert_eq!(unsafe { libc::geteuid() }, euid_before);
+        assert_eq!(unsafe { libc::getegid() }, egid_before);
     }
 
     #[test]
@@ -563,7 +566,7 @@ mod tests {
             uid: 1000,
             gid: Some(1000),
         };
-        let err = switch_effective_ids(&ids).unwrap_err();
+        let err = become_copy_as_user(&ids).unwrap_err();
         assert!(
             matches!(
                 err.kind(),
@@ -583,7 +586,7 @@ mod tests {
     #[test]
     fn windows_switch_without_group_returns_error() {
         let ids = CopyAsIds { uid: 0, gid: None };
-        let err = switch_effective_ids(&ids).unwrap_err();
+        let err = become_copy_as_user(&ids).unwrap_err();
         assert!(matches!(
             err.kind(),
             io::ErrorKind::PermissionDenied | io::ErrorKind::Unsupported

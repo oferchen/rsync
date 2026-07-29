@@ -26,21 +26,26 @@
 //! `MY_UID()` sees it. `rustix` issues the raw syscall and would report the
 //! real non-root euid, gating chowns away where upstream performs them.
 //!
-//! # `--copy-as` / `do_as_root`
+//! # `--copy-as`
 //!
-//! [`switch_effective_ids`](crate::copy_as::switch_effective_ids) temporarily
-//! changes the effective ids for the duration of a [`SwitchScope`]. While such
-//! a scope is active the accessors fall back to a live lookup so a switched
-//! identity is observed, preserving the exact pre-cache behaviour for that
-//! opt-in path. Outside any scope - the common case - the cached startup value
-//! is returned with no syscall.
+//! [`become_copy_as_user`](crate::copy_as::become_copy_as_user) performs a
+//! permanent, irreversible privilege drop (`setgid`/`setgroups`/`setuid`) and
+//! then calls [`set_process_identity`] with the new uid/gid. The accessors
+//! consult that override first, so every subsequent ownership/permission gate
+//! sees the dropped identity - even though the OnceLock cache may already hold
+//! the pre-drop (root) value from an earlier call. This mirrors upstream, which
+//! drops privilege once in `become_copy_as_user()` (main.c) before the first
+//! file is processed and never re-elevates.
 
 use std::sync::OnceLock;
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicI64, Ordering};
 
-/// Number of currently-active effective-id switch scopes. While non-zero the
-/// accessors perform a live lookup instead of returning the cached value.
-static SWITCH_DEPTH: AtomicUsize = AtomicUsize::new(0);
+/// Overridden effective uid/gid installed by a permanent privilege drop
+/// ([`set_process_identity`]). `-1` means "unset"; a non-negative value takes
+/// precedence over the OnceLock cache so a post-drop identity is always
+/// observed regardless of what the cache captured before the drop.
+static OVERRIDE_UID: AtomicI64 = AtomicI64::new(-1);
+static OVERRIDE_GID: AtomicI64 = AtomicI64::new(-1);
 
 static CACHED_EUID: OnceLock<u32> = OnceLock::new();
 static CACHED_EGID: OnceLock<u32> = OnceLock::new();
@@ -59,23 +64,25 @@ fn live_egid() -> u32 {
     unsafe { libc::getegid() }
 }
 
-/// The process effective uid. Cached at first use and reused thereafter,
-/// except while an effective-id [`SwitchScope`] is active (`--copy-as`), when a
-/// live lookup is performed so the switched identity is observed.
+/// The process effective uid. A permanent-drop override ([`set_process_identity`])
+/// wins when set (`--copy-as`); otherwise the value is cached at first use and
+/// reused thereafter with no syscall, matching upstream's startup `our_uid`.
 #[must_use]
 pub fn effective_uid() -> u32 {
-    if SWITCH_DEPTH.load(Ordering::Acquire) > 0 {
-        return live_euid();
+    let overridden = OVERRIDE_UID.load(Ordering::Acquire);
+    if overridden >= 0 {
+        return overridden as u32;
     }
     *CACHED_EUID.get_or_init(live_euid)
 }
 
-/// The process effective gid. See [`effective_uid`] for the caching and
-/// switch-scope semantics.
+/// The process effective gid. See [`effective_uid`] for the override and
+/// caching semantics.
 #[must_use]
 pub fn effective_gid() -> u32 {
-    if SWITCH_DEPTH.load(Ordering::Acquire) > 0 {
-        return live_egid();
+    let overridden = OVERRIDE_GID.load(Ordering::Acquire);
+    if overridden >= 0 {
+        return overridden as u32;
     }
     *CACHED_EGID.get_or_init(live_egid)
 }
@@ -87,27 +94,15 @@ pub fn is_root() -> bool {
     effective_uid() == 0
 }
 
-/// RAII marker that makes the identity accessors read live for its lifetime.
-/// Held by the `--copy-as`/`do_as_root` guard so that a temporarily switched
-/// effective identity is observed by the ownership gates, matching the
-/// behaviour before the cache existed.
-#[derive(Debug)]
-pub struct SwitchScope {
-    _private: (),
-}
-
-impl SwitchScope {
-    /// Enters an effective-id switch scope. The accessors read live until the
-    /// returned guard is dropped.
-    #[must_use]
-    pub fn enter() -> Self {
-        SWITCH_DEPTH.fetch_add(1, Ordering::Release);
-        Self { _private: () }
-    }
-}
-
-impl Drop for SwitchScope {
-    fn drop(&mut self) {
-        SWITCH_DEPTH.fetch_sub(1, Ordering::Release);
-    }
+/// Records the process's effective identity after a permanent privilege drop.
+///
+/// Called by [`become_copy_as_user`](crate::copy_as::become_copy_as_user) once
+/// the `setgid`/`setgroups`/`setuid` sequence has completed. The stored uid/gid
+/// take precedence over the OnceLock cache in [`effective_uid`]/[`effective_gid`],
+/// so ownership gates observe the dropped identity even if the cache was primed
+/// with the pre-drop (root) value earlier in the run. The drop is irreversible,
+/// so there is no corresponding clear operation.
+pub fn set_process_identity(uid: u32, gid: u32) {
+    OVERRIDE_UID.store(i64::from(uid), Ordering::Release);
+    OVERRIDE_GID.store(i64::from(gid), Ordering::Release);
 }
