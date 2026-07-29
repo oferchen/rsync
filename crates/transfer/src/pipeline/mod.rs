@@ -34,7 +34,8 @@
 //!    requests. This simplifies synchronization.
 //!
 //! 2. **Bounded pipeline window**: Limits memory usage and prevents overwhelming
-//!    the sender. Configurable via `--pipeline-window` CLI option.
+//!    the sender. Configurable via the `OC_RSYNC_PIPELINE_WINDOW` environment
+//!    variable.
 //!
 //! 3. **Signature generation during wait**: While waiting for responses, we can
 //!    generate signatures for upcoming files, utilizing otherwise idle CPU time.
@@ -61,6 +62,8 @@ pub mod receiver;
 pub mod spsc;
 mod state;
 
+use std::env;
+
 pub use job::{FileJob, FileList, MAX_RETRY_COUNT, TransferFlags};
 pub use pending::PendingTransfer;
 pub use state::PipelineState;
@@ -81,6 +84,30 @@ pub const MIN_PIPELINE_WINDOW: usize = 1;
 /// Limits memory usage. 256 requests × ~500 bytes = ~128KB.
 pub const MAX_PIPELINE_WINDOW: usize = 256;
 
+/// Environment variable overriding the default pipeline window size.
+///
+/// Parsed as an unsigned integer and clamped to `[1, 256]`. Unset or
+/// unparseable values fall back to [`DEFAULT_PIPELINE_WINDOW`]. Local
+/// tuning knob only - never forwarded to a remote peer and never observable
+/// on the wire.
+pub const ENV_PIPELINE_WINDOW: &str = "OC_RSYNC_PIPELINE_WINDOW";
+
+/// Resolves the default window size, honoring [`ENV_PIPELINE_WINDOW`].
+///
+/// Read once at config construction. Invalid values are ignored in favor
+/// of [`DEFAULT_PIPELINE_WINDOW`], matching the tolerant parse style of
+/// the other `OC_RSYNC_*` tuning knobs.
+fn window_size_from_env() -> usize {
+    env::var(ENV_PIPELINE_WINDOW)
+        .ok()
+        .and_then(|raw| raw.trim().parse::<u64>().ok())
+        .map_or(DEFAULT_PIPELINE_WINDOW, |value| {
+            usize::try_from(value)
+                .unwrap_or(MAX_PIPELINE_WINDOW)
+                .clamp(MIN_PIPELINE_WINDOW, MAX_PIPELINE_WINDOW)
+        })
+}
+
 /// Configuration for pipelined transfers.
 #[derive(Debug, Clone)]
 pub struct PipelineConfig {
@@ -91,7 +118,7 @@ pub struct PipelineConfig {
 impl Default for PipelineConfig {
     fn default() -> Self {
         Self {
-            window_size: DEFAULT_PIPELINE_WINDOW,
+            window_size: window_size_from_env(),
         }
     }
 }
@@ -113,10 +140,61 @@ impl PipelineConfig {
 
 #[cfg(test)]
 mod tests {
+    use std::ffi::OsStr;
+    use std::sync::Mutex;
+
+    use platform::env::EnvGuard;
+
     use super::*;
+
+    /// Serializes env mutation across this module's tests so concurrent
+    /// test threads do not race on shared process state.
+    static ENV_LOCK: Mutex<()> = Mutex::new(());
 
     #[test]
     fn default_config_uses_default_window() {
+        let _lock = ENV_LOCK.lock().unwrap();
+        let _guard = EnvGuard::remove(ENV_PIPELINE_WINDOW);
+        let config = PipelineConfig::default();
+        assert_eq!(config.window_size, DEFAULT_PIPELINE_WINDOW);
+    }
+
+    #[test]
+    fn env_window_valid_value_applied() {
+        let _lock = ENV_LOCK.lock().unwrap();
+        let _guard = EnvGuard::set(ENV_PIPELINE_WINDOW, OsStr::new("32"));
+        let config = PipelineConfig::default();
+        assert_eq!(config.window_size, 32);
+    }
+
+    #[test]
+    fn env_window_below_min_clamped() {
+        let _lock = ENV_LOCK.lock().unwrap();
+        let _guard = EnvGuard::set(ENV_PIPELINE_WINDOW, OsStr::new("0"));
+        let config = PipelineConfig::default();
+        assert_eq!(config.window_size, MIN_PIPELINE_WINDOW);
+    }
+
+    #[test]
+    fn env_window_above_max_clamped() {
+        let _lock = ENV_LOCK.lock().unwrap();
+        let _guard = EnvGuard::set(ENV_PIPELINE_WINDOW, OsStr::new("100000"));
+        let config = PipelineConfig::default();
+        assert_eq!(config.window_size, MAX_PIPELINE_WINDOW);
+    }
+
+    #[test]
+    fn env_window_garbage_falls_back_to_default() {
+        let _lock = ENV_LOCK.lock().unwrap();
+        let _guard = EnvGuard::set(ENV_PIPELINE_WINDOW, OsStr::new("not_a_number"));
+        let config = PipelineConfig::default();
+        assert_eq!(config.window_size, DEFAULT_PIPELINE_WINDOW);
+    }
+
+    #[test]
+    fn env_window_negative_falls_back_to_default() {
+        let _lock = ENV_LOCK.lock().unwrap();
+        let _guard = EnvGuard::set(ENV_PIPELINE_WINDOW, OsStr::new("-4"));
         let config = PipelineConfig::default();
         assert_eq!(config.window_size, DEFAULT_PIPELINE_WINDOW);
     }
