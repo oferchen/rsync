@@ -100,6 +100,20 @@ default. Read at pipeline config construction. Larger windows hide more
 per-file round-trip latency on high-latency links; each pending request
 costs roughly 500 bytes.
 
+### OC_RSYNC_PARALLEL_STAT_THRESHOLD
+
+Minimum item count at which the generator switches its stat pass from
+sequential iteration to the rayon work-stealing pool (`ParallelOp::Stat`).
+Unsigned integer, clamped to 1..=65536 (`1` forces the parallel path for
+any non-empty list). Default: 64. Unset or unparseable values fall back to
+the default. Read at `ParallelThresholds` default construction. Purely a
+serial-vs-parallel dispatch crossover: it changes only internal scheduling,
+never wire bytes, stdout, stats, or exit code. The warm-cache local crossover
+sits near the default, but networked filesystems (NFS/FUSE) push per-lstat
+cost up 100-1000x and move the crossover; this knob exists to sweep it
+without recompiling. Governs the stat pass specifically - the sibling
+signature/metadata/deletion thresholds keep their compile-time defaults.
+
 ### OC_RSYNC_REORDER_RING_CAP
 
 Pins the per-file reorder-ring capacity used by the parallel delta
