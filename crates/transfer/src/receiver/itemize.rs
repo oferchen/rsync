@@ -121,6 +121,14 @@ impl ReceiverContext {
     /// the root's metadata (and before child mkdirs bump the root mtime), so the
     /// stat reflects the pre-transfer state - the same pre-mkdir gate the `-i`
     /// root row uses (see `existing_dir_iflags`).
+    ///
+    /// A destination root that is absent pre-transfer is still named: upstream
+    /// "creates" it even under `--dry-run` (`main.c:796-808`; `do_mkdir` is a
+    /// dry-run no-op, syscall.c), `FLAG_DIR_CREATED` then forces `statret = -1`
+    /// (`generator.c:1465-1466`) and `set_file_attrs()` returns 1 for the
+    /// missing dest under dry-run (`rsync.c:498-499`), so the `./` row prints.
+    /// `--list-only` never reaches `get_local_name()`'s mkdir (`main.c:743`),
+    /// so no row is added there.
     pub(in crate::receiver) fn root_verbose_name_emit(&self, dest_dir: &std::path::Path) -> bool {
         if self.dest_root_created {
             return true;
@@ -128,9 +136,15 @@ impl ReceiverContext {
         self.file_list
             .iter()
             .find(|entry| entry.is_dir() && entry.path().as_os_str() == ".")
-            .is_some_and(|entry| {
-                crate::generator::ItemFlags::from_raw(self.existing_dir_iflags(entry, dest_dir))
-                    .has_significant_flags()
+            .is_some_and(|entry| match std::fs::metadata(dest_dir) {
+                Ok(meta) => crate::generator::ItemFlags::from_raw(self.itemize_existing_flags(
+                    entry,
+                    dest_dir,
+                    Some(&meta),
+                    0,
+                ))
+                .has_significant_flags(),
+                Err(_) => !self.config.flags.list_only,
             })
     }
 
