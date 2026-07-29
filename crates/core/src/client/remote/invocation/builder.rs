@@ -353,10 +353,6 @@ impl<'a> RemoteInvocationBuilder<'a> {
             args.push(OsString::from("--fsync"));
         }
 
-        if let Some(depth) = self.config.io_uring_depth() {
-            args.push(OsString::from(format!("--io-uring-depth={depth}")));
-        }
-
         // upstream: options.c:2747-2748 - `if (list_only > 1) "--list-only"`.
         // Only the EXPLICIT `--list-only` (list_only == 2) is forwarded; the
         // implicit single-source listing (list_only == 1) is not. The compact
