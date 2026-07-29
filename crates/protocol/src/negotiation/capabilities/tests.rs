@@ -1087,7 +1087,21 @@ fn test_client_rejects_none_only_compression_from_server() {
 
     let err = result.unwrap_err();
     assert_eq!(err.kind(), io::ErrorKind::Unsupported);
-    assert_eq!(err.to_string(), "Failed to negotiate a compress choice.");
+    // upstream: compat.c:381-405 - the client prints the offered lists. The
+    // headline and the received `Server list:` are deterministic; the rebuilt
+    // `Client list:` order depends on which optional codecs are compiled in, so
+    // assert its presence rather than a feature-dependent tail.
+    let msg = err.to_string();
+    let mut lines = msg.lines();
+    assert_eq!(
+        lines.next().unwrap(),
+        "Failed to negotiate a compress choice."
+    );
+    assert_eq!(lines.next().unwrap(), "Server list: none");
+    assert!(
+        lines.next().unwrap().starts_with("Client list: "),
+        "missing Client list detail line: {msg:?}"
+    );
 }
 
 #[test]
@@ -2874,7 +2888,18 @@ fn forward_compat_only_unknown_names_hard_error() {
     for is_server in [true, false] {
         let err = choose_checksum_algorithm("sha256 sha512 blake3", is_server).unwrap_err();
         assert_eq!(err.kind(), io::ErrorKind::Unsupported, "server={is_server}");
-        assert_eq!(err.to_string(), "Failed to negotiate a checksum choice.");
+        // upstream: compat.c:382 - the offered lists print only on the client;
+        // the server (`am_server && do_negotiated_strings`) aborts on the
+        // headline alone.
+        let expected = if is_server {
+            "Failed to negotiate a checksum choice.".to_string()
+        } else {
+            "Failed to negotiate a checksum choice.\n\
+             Server list: sha256 sha512 blake3\n\
+             Client list: xxh128 xxh3 xxh64 md5 md4 sha1"
+                .to_string()
+        };
+        assert_eq!(err.to_string(), expected, "server={is_server}");
     }
 }
 
@@ -3279,7 +3304,7 @@ mod env_list_overrides {
     use platform::env::EnvGuard;
 
     use super::super::env_list;
-    use super::super::negotiate::{choose_checksum_algorithm_in, read_vstring};
+    use super::super::negotiate::{choose_checksum_algorithm_in, read_vstring, write_vstring};
     use super::*;
 
     /// Serialises env-mutating tests since the process environment is global.
@@ -3427,10 +3452,87 @@ mod env_list_overrides {
         assert_eq!(over.advertised, "INVALID");
 
         // An INVALID list cannot match any remote offer, so selection errors -
-        // upstream exits with RERR_UNSUPPORTED here.
+        // upstream exits with RERR_UNSUPPORTED here. With no surviving own
+        // candidate, upstream rebuilds the `Client list:` as " INVALID"
+        // (compat.c:403-404).
         let err =
             choose_checksum_algorithm_in("xxh128 md5 md4", false, &over.candidates).unwrap_err();
         assert_eq!(err.kind(), io::ErrorKind::Unsupported);
+        assert_eq!(
+            err.to_string(),
+            "Failed to negotiate a checksum choice.\n\
+             Server list: xxh128 md5 md4\n\
+             Client list: INVALID"
+        );
+    }
+
+    // Disjoint RSYNC_CHECKSUM_LIST on each side: the client offers only md5
+    // while the server offers only md4, so there is no mutual choice. Upstream's
+    // recv_negotiate_str prints the full three-line block on the client and
+    // aborts with RERR_UNSUPPORTED (compat.c:381-406). This is the observable
+    // remainder of the exit-4 negotiation failure.
+    #[test]
+    fn disjoint_checksum_lists_emit_full_failure_block() {
+        let _lock = ENV_LOCK.lock().unwrap();
+        let _cs = EnvGuard::set(CHECKSUM_ENV, OsStr::new("md5"));
+        let _cp = EnvGuard::remove(COMPRESS_ENV);
+
+        // The client's selection candidates come from its env override (md5).
+        let over = env_list::checksum_candidates(false, false, 32).unwrap();
+        assert_eq!(over.candidates, vec!["md5"]);
+
+        // The server advertised only md4 - no mutual algorithm.
+        let err = choose_checksum_algorithm_in("md4", false, &over.candidates).unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::Unsupported);
+        assert_eq!(
+            err.to_string(),
+            "Failed to negotiate a checksum choice.\n\
+             Server list: md4\n\
+             Client list: md5"
+        );
+
+        // upstream: compat.c:382 - the server side of the same mismatch keeps
+        // the offered lists to itself (am_server && do_negotiated_strings) and
+        // aborts on the headline alone.
+        let server_err = choose_checksum_algorithm_in("md4", true, &over.candidates).unwrap_err();
+        assert_eq!(
+            server_err.to_string(),
+            "Failed to negotiate a checksum choice."
+        );
+    }
+
+    // The same disjoint-list failure driven through the full `negotiate_the_strings`
+    // wire path: the client advertises its md5-only list, reads the server's
+    // md4-only vstring, finds no match and surfaces upstream's three-line block.
+    #[test]
+    fn disjoint_checksum_lists_fail_through_negotiate() {
+        let _lock = ENV_LOCK.lock().unwrap();
+        let _cs = EnvGuard::set(CHECKSUM_ENV, OsStr::new("md5"));
+        let _cp = EnvGuard::remove(COMPRESS_ENV);
+
+        let protocol = crate::ProtocolVersion::try_from(32).unwrap();
+        let mut server_list = Vec::new();
+        write_vstring(&mut server_list, "md4").unwrap();
+        let mut stdin = &server_list[..];
+        let mut stdout = Vec::new();
+
+        let err = crate::negotiate_capabilities(
+            protocol,
+            &mut stdin,
+            &mut stdout,
+            true,  // do_negotiation
+            false, // send_compression
+            false, // is_daemon_mode (SSH)
+            false, // is_server = client
+        )
+        .unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::Unsupported);
+        assert_eq!(
+            err.to_string(),
+            "Failed to negotiate a checksum choice.\n\
+             Server list: md4\n\
+             Client list: md5"
+        );
     }
 
     // (d'') Forward compatibility: an env list naming a checksum this build
@@ -3751,16 +3853,31 @@ mod env_list_overrides {
         let _cs = EnvGuard::set(CHECKSUM_ENV, OsStr::new("xxh3 xxh128"));
         let err = env_list::validate_default_checksum("md5", true).unwrap_err();
         assert_eq!(err.kind(), std::io::ErrorKind::Unsupported);
-        assert_eq!(err.to_string(), "Failed to negotiate a checksum choice.");
+        // upstream: compat.c:381-405 - the non-negotiated path prints the lists
+        // on both sides; on the server tmpbuf ("md5") is the `Client list:` and
+        // the env-restricted saw is the `Server list:`.
+        assert_eq!(
+            err.to_string(),
+            "Failed to negotiate a checksum choice.\n\
+             Client list: md5\n\
+             Server list: xxh3 xxh128"
+        );
     }
 
     #[test]
     fn validate_default_refuses_compress_when_excluded() {
         let _lock = ENV_LOCK.lock().unwrap();
-        let _cp = EnvGuard::set(COMPRESS_ENV, OsStr::new("zstd"));
+        // `zlibx` is always compiled in (unlike the optional zstd/lz4 codecs),
+        // so the rebuilt own-list line is deterministic across feature sets.
+        let _cp = EnvGuard::set(COMPRESS_ENV, OsStr::new("zlibx"));
         let err = env_list::validate_default_compress("zlib", true).unwrap_err();
         assert_eq!(err.kind(), std::io::ErrorKind::Unsupported);
-        assert_eq!(err.to_string(), "Failed to negotiate a compress choice.");
+        assert_eq!(
+            err.to_string(),
+            "Failed to negotiate a compress choice.\n\
+             Client list: zlib\n\
+             Server list: zlibx"
+        );
     }
 
     /// Drives the non-negotiated branch (`do_negotiation = false`, peer lacks
@@ -3809,7 +3926,12 @@ mod env_list_overrides {
         let _cp = EnvGuard::remove(COMPRESS_ENV);
         let err = negotiate_nonego(true, false).unwrap_err();
         assert_eq!(err.kind(), std::io::ErrorKind::Unsupported);
-        assert_eq!(err.to_string(), "Failed to negotiate a checksum choice.");
+        assert_eq!(
+            err.to_string(),
+            "Failed to negotiate a checksum choice.\n\
+             Client list: md5\n\
+             Server list: xxh3 xxh128"
+        );
     }
 
     // (f) End-to-end: env includes md5 - the default is returned.
@@ -3828,10 +3950,17 @@ mod env_list_overrides {
     fn nonego_refuses_zlib_default_when_env_excludes_it() {
         let _lock = ENV_LOCK.lock().unwrap();
         let _cs = EnvGuard::remove(CHECKSUM_ENV);
-        let _cp = EnvGuard::set(COMPRESS_ENV, OsStr::new("zstd"));
+        // `zlibx` is unconditionally compiled in, keeping the own-list line
+        // deterministic regardless of the optional zstd/lz4 features.
+        let _cp = EnvGuard::set(COMPRESS_ENV, OsStr::new("zlibx"));
         let err = negotiate_nonego(true, true).unwrap_err();
         assert_eq!(err.kind(), std::io::ErrorKind::Unsupported);
-        assert_eq!(err.to_string(), "Failed to negotiate a compress choice.");
+        assert_eq!(
+            err.to_string(),
+            "Failed to negotiate a compress choice.\n\
+             Client list: zlib\n\
+             Server list: zlibx"
+        );
     }
 
     // (h) End-to-end compress: env includes zlib - the default is returned.

@@ -236,11 +236,12 @@ fn validate_choice(
 /// `recv_negotiate_str` when the env list excludes it.
 ///
 /// A no-op when the variable is unset or the default is a member. On refusal,
-/// emits upstream's `recv_negotiate_str` wording (`compat.c:387` "Failed to
-/// negotiate a %s choice.", where `%s` is the nno `type`, `"checksum"` or
-/// `"compress"`) with [`io::ErrorKind::Unsupported`], which the core exit-code
-/// mapper turns into `RERR_UNSUPPORTED` (exit 4), matching
-/// `exit_cleanup(RERR_UNSUPPORTED)` at `compat.c:406`.
+/// emits upstream's full `recv_negotiate_str` block via
+/// [`super::failure::negotiation_failure`] - the `Failed to negotiate a %s
+/// choice.` line plus the offered Server/Client lists (`compat.c:381-405`) -
+/// with [`io::ErrorKind::Unsupported`], which the core exit-code mapper turns
+/// into `RERR_UNSUPPORTED` (exit 4), matching `exit_cleanup(RERR_UNSUPPORTED)`
+/// at `compat.c:406`. The non-negotiated path prints the lists on both sides.
 fn validate_default(
     key: &str,
     kind: &str,
@@ -248,12 +249,27 @@ fn validate_default(
     is_server: bool,
     resolve: impl Fn(&str) -> Option<&'static str>,
 ) -> io::Result<()> {
-    match env_membership(key, is_server, default, resolve) {
+    // upstream: compat.c:369-406 recv_negotiate_str - the non-negotiated path
+    // prefills `tmpbuf` with the old-style default (compat.c:551-563) and, when
+    // the env-parsed saw list rejects it, prints the offered lists on BOTH
+    // sides (do_negotiated_strings == 0 makes `!am_server || ...` always true).
+    match env_membership(key, is_server, default, &resolve) {
         EnvMembership::Unset | EnvMembership::Present => Ok(()),
-        EnvMembership::Absent => Err(io::Error::new(
-            io::ErrorKind::Unsupported,
-            format!("Failed to negotiate a {kind} choice."),
-        )),
+        EnvMembership::Absent => {
+            // Rebuild upstream's full block: the prefilled default IS its
+            // `tmpbuf`, so it is the peer-list line; our env-parsed saw list is
+            // the own-list line. Re-parse (cold error path) to recover it.
+            let candidates = parse_env(key, is_server, resolve)
+                .map(|env| env.candidates)
+                .unwrap_or_default();
+            Err(super::failure::negotiation_failure(
+                kind,
+                is_server,
+                false,
+                default,
+                &candidates,
+            ))
+        }
     }
 }
 

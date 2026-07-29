@@ -653,11 +653,16 @@ pub(super) fn choose_checksum_algorithm_in(
     match select_from_peer_list(remote_list, is_server, local, resolve_checksum_name) {
         Some(name) => ChecksumAlgorithm::parse(name)
             .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e.to_string())),
-        // upstream: compat.c:387,406 - "Failed to negotiate a %s choice." with
-        // exit_cleanup(RERR_UNSUPPORTED); ErrorKind::Unsupported maps to exit 4.
-        None => Err(io::Error::new(
-            io::ErrorKind::Unsupported,
-            "Failed to negotiate a checksum choice.",
+        // upstream: compat.c:381-406 recv_negotiate_str - "Failed to negotiate
+        // a %s choice." plus the offered Server/Client lists, then
+        // exit_cleanup(RERR_UNSUPPORTED). The negotiated path always runs with
+        // do_negotiated_strings set, so pass `true`.
+        None => Err(super::failure::negotiation_failure(
+            "checksum",
+            is_server,
+            true,
+            remote_list,
+            local,
         )),
     }
 }
@@ -698,12 +703,16 @@ pub(super) fn choose_compression_algorithm_in(
     match select_from_peer_list(remote_list, is_server, local, resolve_compression_name) {
         Some(name) => CompressionAlgorithm::parse(name)
             .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e.to_string())),
-        // upstream: compat.c:387,406 recv_negotiate_str - a compression list
+        // upstream: compat.c:381-406 recv_negotiate_str - a compression list
         // with no mutual algorithm is the same hard RERR_UNSUPPORTED failure
-        // as an unmatched checksum list; "none" is never a silent fallback.
-        None => Err(io::Error::new(
-            io::ErrorKind::Unsupported,
-            "Failed to negotiate a compress choice.",
+        // as an unmatched checksum list, with the same Server/Client detail
+        // lines; "none" is never a silent fallback.
+        None => Err(super::failure::negotiation_failure(
+            "compress",
+            is_server,
+            true,
+            remote_list,
+            local,
         )),
     }
 }
