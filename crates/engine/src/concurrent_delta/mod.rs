@@ -169,7 +169,6 @@
 //! - [`crate::delta`] for block-matching primitives
 //! - `transfer::pipeline` for the pipelined receiver architecture
 
-pub mod adaptive;
 pub mod chunk_adapter;
 pub mod config;
 pub mod consumer;
@@ -182,7 +181,6 @@ pub mod strategy;
 mod types;
 pub mod work_queue;
 
-pub use adaptive::{AdaptiveCapacityPolicy, ReorderStats};
 pub use chunk_adapter::{ChunkPayload, ChunkSource, DeltaChunkAdapter, delta_work_to_chunk};
 pub use config::ConcurrentDeltaConfig;
 pub use consumer::{DeltaConsumer, DeltaConsumerStats};

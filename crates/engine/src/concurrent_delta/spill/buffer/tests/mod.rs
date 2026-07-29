@@ -10,7 +10,6 @@ use std::io::{self, Read, Write};
 
 use super::super::{SpillCodec, SpillableReorderBuffer};
 
-mod adaptive;
 mod basic;
 mod compression;
 mod enospc_degradation;
@@ -19,6 +18,7 @@ mod granularity;
 mod hardening;
 mod in_memory_only;
 mod memory_pressure;
+mod observability;
 mod preflight;
 mod reclaim;
 mod reload_fault;
