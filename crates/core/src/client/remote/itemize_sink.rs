@@ -63,6 +63,7 @@ impl crate::server::ItemizeCallback for ItemizeEventSink {
                     is_dir: row.is_dir,
                     is_symlink: row.is_symlink,
                     symlink_target: row.symlink_target.map(std::path::Path::to_path_buf),
+                    hardlink_leader: row.hardlink_leader.map(std::path::Path::to_path_buf),
                     is_new: row.is_new,
                     is_deletion: row.is_deletion,
                 }));
