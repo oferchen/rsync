@@ -301,7 +301,7 @@ fn sparse_match_1mb_block4096() {
 /// testing run it explicitly via `cargo nextest run --run-ignored
 /// only`.
 #[test]
-#[ignore]
+#[ignore = "16 MB rolling-hash stress case; opt-in via --run-ignored to keep the default matrix fast"]
 fn sparse_match_16mb_block1024() {
     exercise_matrix(16 * 1024 * 1024, 1024, false);
 }
@@ -309,7 +309,7 @@ fn sparse_match_16mb_block1024() {
 /// 16 MB stress case, block_size = 4096. Same gating rationale as
 /// [`sparse_match_16mb_block1024`].
 #[test]
-#[ignore]
+#[ignore = "16 MB rolling-hash stress case; opt-in via --run-ignored to keep the default matrix fast"]
 fn sparse_match_16mb_block4096() {
     exercise_matrix(16 * 1024 * 1024, 4096, false);
 }
