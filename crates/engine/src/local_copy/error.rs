@@ -433,10 +433,9 @@ impl LocalCopyArgumentError {
             Self::ReplaceNonDirectoryWithDirectory => {
                 "cannot replace non-directory destination with directory"
             }
-            Self::RemoteOperandUnsupported => concat!(
-                "remote operands are not supported: this build handles local filesystem copies only; ",
-                "set OC_RSYNC_FALLBACK to point to an upstream rsync binary for remote transfers",
-            ),
+            Self::RemoteOperandUnsupported => {
+                "remote operands are not supported: this build handles local filesystem copies only"
+            }
         }
     }
 }
@@ -638,11 +637,13 @@ mod tests {
         assert!(error.message().contains("existing directory"));
     }
 
+    /// The external-rsync delegation mechanism was removed, so the message
+    /// must not steer users toward the dead `OC_RSYNC_FALLBACK` env var.
     #[test]
     fn local_copy_argument_error_remote_operand_message() {
         let error = LocalCopyArgumentError::RemoteOperandUnsupported;
         assert!(error.message().contains("remote operands"));
-        assert!(error.message().contains("OC_RSYNC_FALLBACK"));
+        assert!(!error.message().contains("OC_RSYNC_FALLBACK"));
     }
 
     #[test]
