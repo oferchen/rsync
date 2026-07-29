@@ -673,7 +673,9 @@ where
         match open_log_file(path) {
             Ok(file) => {
                 log_file_for_local = Some(summary::LogFileConfig {
-                    file,
+                    // upstream: log.c:122-132 logit() - every log-file line is
+                    // stamped with `%Y/%m/%d %H:%M:%S [pid] `.
+                    file: logging_sink::logfile::LogFileWriter::new(file),
                     format: template.clone(),
                 });
             }
