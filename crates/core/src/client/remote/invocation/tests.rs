@@ -4879,7 +4879,6 @@ mod oc_flag_forwarding {
             .zero_copy_policy(fast_io::ZeroCopyPolicy::Enabled)
             .parallel_delta_scan(true)
             .compression_threads(NonZeroU8::new(4))
-            .xxh64_dedup(true)
             .rayon_threads(NonZeroUsize::new(8))
             .tokio_threads(NonZeroUsize::new(4))
             .sparse_detect(engine::SparseDetectStrategy::Map)
