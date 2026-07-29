@@ -93,8 +93,9 @@ pub fn upstream_compat_enabled() -> bool {
 /// 1. `OC_RSYNC_UPSTREAM_BIN_<VERSION>` env var (CI override).
 /// 2. `target/interop/upstream-install/<version>/bin/rsync` relative to
 ///    the workspace root resolved from `CARGO_MANIFEST_DIR`.
+/// 3. macOS only: `/opt/homebrew/bin/rsync` (Homebrew's upstream build).
 ///
-/// Returns `None` if neither path resolves to an executable. Tests then
+/// Returns `None` if no path resolves to an executable. Tests then
 /// self-skip via [`require_upstream_rsync`].
 #[must_use]
 pub fn locate_upstream_rsync(version: UpstreamVersion) -> Option<PathBuf> {
@@ -105,7 +106,24 @@ pub fn locate_upstream_rsync(version: UpstreamVersion) -> Option<PathBuf> {
         }
     }
 
-    upstream_install_bin(version.directory())
+    upstream_install_bin(version.directory()).or_else(homebrew_rsync_bin)
+}
+
+/// macOS last-resort candidate: Homebrew installs upstream rsync at
+/// `/opt/homebrew/bin/rsync`. The path alone proves nothing -
+/// [`require_upstream_rsync`] verifies the `--version` banner, so a
+/// Homebrew install of a different release is rejected with a skip.
+/// `/usr/bin/rsync` (openrsync on macOS) is deliberately never probed.
+#[cfg(target_os = "macos")]
+fn homebrew_rsync_bin() -> Option<PathBuf> {
+    let candidate = PathBuf::from("/opt/homebrew/bin/rsync");
+    candidate.is_file().then_some(candidate)
+}
+
+/// No Homebrew fallback outside macOS.
+#[cfg(not(target_os = "macos"))]
+fn homebrew_rsync_bin() -> Option<PathBuf> {
+    None
 }
 
 /// Locate the interop-harness install of upstream rsync `version`.

@@ -89,6 +89,20 @@ jobs:
             sudo cp "$UPSTREAM" /usr/local/bin/rsync
           fi
 
+      - name: Install cargo-nextest
+        uses: taiki-e/install-action@41049aa56687c35e0afa74eed4f09cec4f9afabf # v2
+        with:
+          tool: cargo-nextest
+
+      # INC-S1a oracle: oc sender vs the real upstream 3.4.4 receiver under
+      # INC_RECURSE. Gated on OC_RSYNC_UPSTREAM_COMPAT so the standard
+      # nextest cells stay upstream-binary-free; this cell has the
+      # upstream-install tree built above.
+      - name: Run inc_recurse sender oracle (oc sender vs upstream receiver)
+        env:
+          OC_RSYNC_UPSTREAM_COMPAT: "1"
+        run: cargo nextest run --locked --profile ci -p bin -E 'binary(upstream_compat_inc_recurse_sender_oracle)'
+
       - name: Run interop tests
         run: |
           set -euo pipefail
