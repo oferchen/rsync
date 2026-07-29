@@ -51,8 +51,13 @@ use crate::daemon::{
     // From sections/greeting.rs
     legacy_daemon_greeting,
     legacy_daemon_greeting_for_protocol,
+    log_list_request,
+    log_module_auth_failure,
     log_module_bandwidth_change,
+    log_module_denied,
     log_module_limit,
+    log_module_request,
+    log_unknown_module,
     module_peer_hostname,
     open_log_sink,
     // From sections/config_helpers.rs
@@ -127,6 +132,7 @@ include!("tests/chunks/cached_legacy_daemon_greeting_matches_per_call_bytes.rs")
 include!("tests/chunks/legacy_daemon_greeting_digest_list_is_protocol_independent.rs");
 include!("tests/chunks/legacy_daemon_greeting_has_single_newline.rs");
 include!("tests/chunks/legacy_daemon_greeting_includes_version_and_digests.rs");
+include!("tests/chunks/log_bodies_match_upstream_wording.rs");
 include!("tests/chunks/log_file_open_failure_returns_message_io.rs");
 include!("tests/chunks/log_module_bandwidth_change_ignores_unchanged.rs");
 include!("tests/chunks/log_module_bandwidth_change_logs_disable.rs");

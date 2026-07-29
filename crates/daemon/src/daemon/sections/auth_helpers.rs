@@ -56,20 +56,25 @@ fn log_connection(log: &SharedLogSink, host: Option<&str>, peer_addr: SocketAddr
     log_message(log, &message);
 }
 
-fn log_list_request(log: &SharedLogSink, host: Option<&str>, peer_addr: SocketAddr) {
+pub(crate) fn log_list_request(log: &SharedLogSink, host: Option<&str>, peer_addr: SocketAddr) {
     let display = format_host(host, peer_addr.ip());
     let ip = peer_addr.ip();
-    let text = format!("list request from {display} ({ip})");
+    // upstream: clientserver.c:1421 - `module-list request from %s (%s)`
+    let text = format!("module-list request from {display} ({ip})");
     let message = rsync_info!(text).with_role(Role::Daemon);
     log_message(log, &message);
 }
 
-fn log_module_request(log: &SharedLogSink, host: Option<&str>, peer_ip: IpAddr, module: &str) {
+pub(crate) fn log_module_request(
+    log: &SharedLogSink,
+    host: Option<&str>,
+    peer_ip: IpAddr,
+    module: &str,
+) {
     let display = format_host(host, peer_ip);
     let module_display = sanitize_module_identifier(module);
-    let text = format!(
-        "module '{module_display}' requested from {display} ({peer_ip})"
-    );
+    // upstream: clientserver.c:742 - `rsync allowed access on module %s from %s (%s)`
+    let text = format!("rsync allowed access on module {module_display} from {display} ({peer_ip})");
     let message = rsync_info!(text).with_role(Role::Daemon);
     log_message(log, &message);
 }
@@ -134,42 +139,47 @@ fn log_module_refused_option(
     log_message(log, &message);
 }
 
-fn log_module_auth_failure(log: &SharedLogSink, host: Option<&str>, peer_ip: IpAddr, module: &str) {
+pub(crate) fn log_module_auth_failure(
+    log: &SharedLogSink,
+    host: Option<&str>,
+    peer_ip: IpAddr,
+    module: &str,
+) {
     let display = format_host(host, peer_ip);
     let module_display = sanitize_module_identifier(module);
-    let text = format!(
-        "authentication failed for module '{module_display}' from {display} ({peer_ip})"
-    );
+    // upstream: authenticate.c:249 / :335 - `auth failed on module %s from %s (%s)`.
+    // Upstream appends the specific reason (`: invalid challenge response`, or
+    // ` for %s: %s`); the failure reason is not propagated to this emission point,
+    // so only the invariant prefix is reproduced here.
+    let text = format!("auth failed on module {module_display} from {display} ({peer_ip})");
     let message = rsync_info!(text).with_role(Role::Daemon);
     log_message(log, &message);
 }
 
-fn log_module_auth_success(log: &SharedLogSink, host: Option<&str>, peer_ip: IpAddr, module: &str) {
+pub(crate) fn log_module_denied(
+    log: &SharedLogSink,
+    host: Option<&str>,
+    peer_ip: IpAddr,
+    module: &str,
+) {
     let display = format_host(host, peer_ip);
     let module_display = sanitize_module_identifier(module);
-    let text = format!(
-        "authentication succeeded for module '{module_display}' from {display} ({peer_ip})"
-    );
+    // upstream: clientserver.c:729 - `rsync denied on module %s from %s (%s)`
+    let text = format!("rsync denied on module {module_display} from {display} ({peer_ip})");
     let message = rsync_info!(text).with_role(Role::Daemon);
     log_message(log, &message);
 }
 
-fn log_module_denied(log: &SharedLogSink, host: Option<&str>, peer_ip: IpAddr, module: &str) {
+pub(crate) fn log_unknown_module(
+    log: &SharedLogSink,
+    host: Option<&str>,
+    peer_ip: IpAddr,
+    module: &str,
+) {
     let display = format_host(host, peer_ip);
     let module_display = sanitize_module_identifier(module);
-    let text = format!(
-        "access denied to module '{module_display}' from {display} ({peer_ip})"
-    );
-    let message = rsync_info!(text).with_role(Role::Daemon);
-    log_message(log, &message);
-}
-
-fn log_unknown_module(log: &SharedLogSink, host: Option<&str>, peer_ip: IpAddr, module: &str) {
-    let display = format_host(host, peer_ip);
-    let module_display = sanitize_module_identifier(module);
-    let text = format!(
-        "unknown module '{module_display}' requested from {display} ({peer_ip})"
-    );
+    // upstream: clientserver.c:1434 - `unknown module '%s' tried from %s (%s)`
+    let text = format!("unknown module '{module_display}' tried from {display} ({peer_ip})");
     let message = rsync_info!(text).with_role(Role::Daemon);
     log_message(log, &message);
 }
