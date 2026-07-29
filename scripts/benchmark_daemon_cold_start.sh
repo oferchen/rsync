@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
 # Daemon cold-start benchmark harness for oc-rsync vs upstream rsync.
 #
-# Reproduces the DIS-1 baseline gap: a single rsync pull from an oc-rsync
-# daemon currently costs ~1.35s end-to-end vs ~0.36s for upstream rsync on
-# the same corpus and host (~3.7x slower). The harness exists so DIS-2
-# profiling and DIS-4.a-e audits can measure progress against a stable
-# reference number, and DIS-6 fixes can prove regressions/improvements.
+# Measures the daemon cold-start gap: a single rsync pull from an oc-rsync
+# daemon vs upstream rsync on the same corpus and host. The harness exists
+# so DIS-2 profiling and DIS-4.a-e audits can measure progress, and DIS-6
+# fixes can prove regressions/improvements, always against freshly measured
+# numbers rather than a baked-in reference.
 #
 # Design notes:
 #   - Two daemons (oc-rsync, upstream) run side-by-side on different ports
@@ -353,8 +353,8 @@ run_cold_start_bench() {
 }
 
 print_ratio() {
-    # When --export-json is set, parse it and print the ratio explicitly so
-    # the 3.7x reference gap is visible without re-reading the JSON.
+    # When --export-json is set, parse it and print the measured oc/upstream
+    # ratio explicitly without re-reading the JSON.
     if [[ -z "${JSON_FILE}" ]] || ! command -v python3 >/dev/null 2>&1; then
         return 0
     fi
@@ -378,7 +378,6 @@ print("=== Cold-start ratio ===")
 print(f"  upstream-daemon mean:  {up_ms:8.2f} ms")
 print(f"  oc-rsync-daemon mean:  {oc_ms:8.2f} ms")
 print(f"  ratio (oc / upstream): {ratio:6.2f}x")
-print("  DIS-1 reference gap:     ~3.70x  (1.35s vs 0.36s)")
 PY
 }
 
