@@ -627,17 +627,21 @@ impl ReceiverContext {
                 Err(_) => new_iflags(ItemFlags::ITEM_LOCAL_CHANGE),
             }
         } else if entry.is_symlink() {
-            // upstream: generator.c:1561-1594 - an up-to-date symlink (same
-            // target) is metadata-only; an absent, obstructed, or re-pointed one
-            // is (re)created and itemized ITEM_LOCAL_CHANGE (+ ITEM_IS_NEW when
-            // absent). Mirror the receiver's own create_symlinks classification.
+            // upstream: generator.c:1572-1610 - an up-to-date symlink (same
+            // target) is metadata-only. A recreated one is itemized with base
+            // ITEM_LOCAL_CHANGE|ITEM_REPORT_CHANGE (generator.c:1608-1609):
+            // when the existing destination is itself a symlink, `statret`
+            // stays 0 and itemize() diffs the attributes against that lstat; a
+            // non-symlink obstacle flips `statret` to -1 (generator.c:1606-1607)
+            // and an absent destination arrives with it, so both are
+            // ITEM_IS_NEW. Mirror the receiver's create_symlinks classification.
+            let base = ItemFlags::ITEM_LOCAL_CHANGE | ItemFlags::ITEM_REPORT_CHANGE;
             match fs::symlink_metadata(dest_path) {
                 Ok(meta) if meta.file_type().is_symlink() => match fs::read_link(dest_path) {
                     Ok(target) if entry.link_target() == Some(&target) => 0,
-                    _ => new_iflags(ItemFlags::ITEM_LOCAL_CHANGE),
+                    _ => self.itemize_existing_flags(entry, dest_path, Some(&meta), base),
                 },
-                Ok(_) => new_iflags(ItemFlags::ITEM_LOCAL_CHANGE),
-                Err(_) => new_iflags(ItemFlags::ITEM_LOCAL_CHANGE),
+                Ok(_) | Err(_) => self.itemize_existing_flags(entry, dest_path, None, base),
             }
         } else if entry.is_device() || entry.is_special() {
             // upstream: generator.c:1462 - a node newly materialised via do_mknod
@@ -2208,7 +2212,16 @@ mod itemize_order_tests {
             vec![
                 (0, ItemFlags::ITEM_LOCAL_CHANGE | ItemFlags::ITEM_IS_NEW),
                 (1, ItemFlags::ITEM_TRANSFER | ItemFlags::ITEM_IS_NEW),
-                (2, ItemFlags::ITEM_LOCAL_CHANGE | ItemFlags::ITEM_IS_NEW),
+                // upstream: generator.c:1608-1609 - the symlink create path
+                // passes ITEM_LOCAL_CHANGE|ITEM_REPORT_CHANGE to itemize(), so
+                // the wire bits carry REPORT_CHANGE even when ITEM_IS_NEW makes
+                // the rendered row all `+`.
+                (
+                    2,
+                    ItemFlags::ITEM_LOCAL_CHANGE
+                        | ItemFlags::ITEM_REPORT_CHANGE
+                        | ItemFlags::ITEM_IS_NEW,
+                ),
             ],
             "the wire plan must carry the directory and symlink too, each with \
              the itemize flags a real run would have sent"
@@ -2299,6 +2312,59 @@ mod itemize_order_tests {
             ],
             "the client sender renders `cd+++++++++` / `<f+++++++++` from exactly \
              these bits, so they must survive the server-mode row suppression"
+        );
+    }
+
+    /// #241/#248 dry-run leg: a destination symlink pointing elsewhere must
+    /// classify as a CHANGE (`ITEM_LOCAL_CHANGE|ITEM_REPORT_CHANGE`, statret
+    /// kept at 0 - generator.c:1604-1610), never ITEM_IS_NEW, and must not
+    /// bump the created tally (receiver.c:733-741 counts only ITEM_IS_NEW).
+    #[test]
+    #[cfg(unix)]
+    fn dry_run_plan_classifies_repointed_symlink_as_change() {
+        use crate::generator::ItemFlags;
+
+        let dir = test_support::create_tempdir();
+        let dest = dir.path();
+        std::os::unix::fs::symlink("oldtgt", dest.join("lnk")).expect("seed dest symlink");
+
+        let hs = handshake();
+        let mut config = itemize_client_config();
+        config.flags.dry_run = true;
+        config.flags.links = true;
+        // With `-t` and a same-whole-second mtime the `t` column stays dark,
+        // leaving exactly the base change bits on the wire.
+        config.flags.times = true;
+        let mut ctx = ReceiverContext::new_for_test(&hs, config);
+        ctx.defer_itemize = true;
+        let mut entry = FileEntry::new_symlink("lnk".into(), "newtgt".into());
+        {
+            use std::os::unix::fs::MetadataExt;
+            let old_meta = std::fs::symlink_metadata(dest.join("lnk")).expect("lstat");
+            entry.set_mtime(old_meta.mtime(), 0);
+        }
+        ctx.file_list = vec![entry];
+
+        let (plan, rows) = dry_run_pass(&ctx, dest);
+
+        assert_eq!(
+            plan,
+            vec![(
+                0,
+                ItemFlags::ITEM_LOCAL_CHANGE | ItemFlags::ITEM_REPORT_CHANGE
+            )],
+            "a re-pointed symlink keeps statret == 0: change bits, no ITEM_IS_NEW"
+        );
+        assert_eq!(rows.len(), 1);
+        assert!(
+            rows[0].1.starts_with("cLc"),
+            "dry-run row is a change row, not `cL+++++++++`: {:?}",
+            rows[0].1
+        );
+        assert_eq!(
+            ctx.created_stats.get().symlinks,
+            0,
+            "a replaced symlink is not a creation"
         );
     }
 }

@@ -251,8 +251,10 @@ impl LocalCopyChangeSet {
     /// `itemize(... ITEM_LOCAL_CHANGE|ITEM_REPORT_CHANGE ...)`.
     /// `ITEM_REPORT_CHANGE` lights up the `c` glyph in position 2 to signal
     /// that the link target itself changed. `itemize()` then adds
-    /// `ITEM_REPORT_TIME` when the symlink's mtime differs from the existing
-    /// link's mtime (gated by `!omit_link_times`).
+    /// `ITEM_REPORT_TIME` when `keep_time` holds and the symlink's mtime
+    /// differs from the existing link's mtime; without `keep_time` (no `-t`,
+    /// or `-J`) the `ITEM_LOCAL_CHANGE` branch at generator.c:526-530 sets it
+    /// unconditionally.
     ///
     /// The mtime comparison uses `same_time()` semantics via
     /// `system_time_within_window`, not exact equality: upstream `itemize()` at
@@ -284,6 +286,18 @@ impl LocalCopyChangeSet {
                     change_set = change_set.with_time_change(Some(TimeChange::Modified));
                 }
             }
+        } else {
+            // upstream: generator.c:526-530 - without `keep_time` the
+            // ITEM_LOCAL_CHANGE branch sets ITEM_REPORT_TIME unconditionally
+            // for a recreated link. log.c:714-717 renders it `t` when mtimes
+            // are preserved (`-J` only drops keep_time, not preserve_mtimes)
+            // and `T` when they are not.
+            let change = if metadata_options.times() {
+                TimeChange::Modified
+            } else {
+                TimeChange::TransferTime
+            };
+            change_set = change_set.with_time_change(Some(change));
         }
 
         // No perm/owner/group slots are lit for a recreated symlink: oc does
