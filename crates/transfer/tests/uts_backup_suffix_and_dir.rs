@@ -48,7 +48,7 @@ use std::path::Path;
 
 use filetime::{FileTime, set_file_mtime};
 use tempfile::TempDir;
-use test_support::{OcRsyncCliRunner, require_binary};
+use test_support::{OcRsyncCliRunner, require_binaries};
 
 /// A fixed old timestamp used to backdate destination files so rsync's
 /// quick-check (matching size + mtime) never short-circuits the transfer.
@@ -66,9 +66,7 @@ fn seed_dest(dest: &Path, old: &str) {
 
 #[test]
 fn backup_default_suffix_preserves_prior_version() {
-    if !require_binary("oc-rsync") {
-        return;
-    }
+    require_binaries!("oc-rsync");
     let root: TempDir = tempfile::tempdir().expect("tempdir");
     let base = root.path();
     let from = base.join("from");
@@ -107,9 +105,7 @@ fn backup_default_suffix_preserves_prior_version() {
 
 #[test]
 fn backup_custom_suffix_names_the_backup() {
-    if !require_binary("oc-rsync") {
-        return;
-    }
+    require_binaries!("oc-rsync");
     let root: TempDir = tempfile::tempdir().expect("tempdir");
     let base = root.path();
     let from = base.join("from");
@@ -149,9 +145,7 @@ fn backup_custom_suffix_names_the_backup() {
 
 #[test]
 fn backup_dir_relocates_prior_version_without_suffix() {
-    if !require_binary("oc-rsync") {
-        return;
-    }
+    require_binaries!("oc-rsync");
     let root: TempDir = tempfile::tempdir().expect("tempdir");
     let base = root.path();
     let from = base.join("from");

@@ -22,7 +22,7 @@ use std::fs;
 use std::os::unix::fs::symlink;
 use std::path::Path;
 
-use test_support::{OcRsyncCliRunner, create_tempdir, require_binary};
+use test_support::{OcRsyncCliRunner, create_tempdir, require_binaries};
 
 /// Build the same symlink fixture `rsync.fns`'s `build_symlinks` creates: a
 /// real regular file `referent` plus three symlinks that must all be ignored.
@@ -42,9 +42,7 @@ fn build_symlinks(from: &Path) {
 /// at all" policy.
 #[test]
 fn recursive_copy_without_links_flag_drops_all_symlinks() {
-    if !require_binary("oc-rsync") {
-        return;
-    }
+    require_binaries!("oc-rsync");
 
     let tmp = create_tempdir();
     let from = tmp.path().join("from");
