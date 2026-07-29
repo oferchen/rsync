@@ -62,7 +62,7 @@ fn render_itemize_new_file_transfer() {
     // upstream: log.c:707-710 - a server-mode receiver is the remote end of a
     // push (the client is the sender), so the transfer glyph is `<`.
     assert_eq!(
-        ctx.render_itemize_line(&iflags, &entry).as_deref(),
+        ctx.render_itemize_line(&iflags, &entry, None).as_deref(),
         Some("<f+++++++++ docs/readme.txt\n")
     );
 }
@@ -78,7 +78,7 @@ fn render_itemize_updated_file_transfer() {
 
     // upstream: log.c:707-710 - server-mode receiver renders the push `<` glyph.
     assert_eq!(
-        ctx.render_itemize_line(&iflags, &entry).as_deref(),
+        ctx.render_itemize_line(&iflags, &entry, None).as_deref(),
         Some("<f......... data.bin\n")
     );
 }
@@ -93,7 +93,7 @@ fn render_itemize_directory_creation() {
     let iflags = ItemFlags::from_raw(ItemFlags::ITEM_LOCAL_CHANGE | ItemFlags::ITEM_IS_NEW);
 
     assert_eq!(
-        ctx.render_itemize_line(&iflags, &entry).as_deref(),
+        ctx.render_itemize_line(&iflags, &entry, None).as_deref(),
         Some("cd+++++++++ subdir/\n")
     );
 }
@@ -116,7 +116,7 @@ fn render_itemize_root_directory_emits_creation_glyph_when_freshly_created() {
     let iflags = ItemFlags::from_raw(0);
 
     assert_eq!(
-        ctx.render_itemize_line(&iflags, &entry).as_deref(),
+        ctx.render_itemize_line(&iflags, &entry, None).as_deref(),
         Some("cd+++++++++ ./\n")
     );
 }
@@ -137,7 +137,7 @@ fn render_itemize_root_directory_no_glyph_when_dest_root_preexisted() {
     let entry = FileEntry::new_directory(".".into(), 0o755);
     let iflags = ItemFlags::from_raw(0);
 
-    assert_eq!(ctx.render_itemize_line(&iflags, &entry), None);
+    assert_eq!(ctx.render_itemize_line(&iflags, &entry, None), None);
 }
 
 #[test]
@@ -152,7 +152,7 @@ fn render_itemize_up_to_date_file() {
 
     // upstream: generator.c:574-576 - no line when iflags has no significant
     // flags (file is completely unchanged)
-    assert_eq!(ctx.render_itemize_line(&iflags, &entry), None);
+    assert_eq!(ctx.render_itemize_line(&iflags, &entry, None), None);
 }
 
 #[test]
@@ -171,7 +171,8 @@ fn emit_itemize_server_mode_does_not_forward_msg_info() {
     let entry = FileEntry::new_file("docs/readme.txt".into(), 1024, 0o644);
     let iflags = ItemFlags::from_raw(ItemFlags::ITEM_TRANSFER | ItemFlags::ITEM_IS_NEW);
 
-    ctx.emit_itemize(&mut writer, &iflags, &entry).unwrap();
+    ctx.emit_itemize(&mut writer, &iflags, &entry, None)
+        .unwrap();
 
     assert!(writer.messages.is_empty());
 }
@@ -191,7 +192,8 @@ fn emit_itemize_client_mode_uses_stdout_not_msg_info() {
     let entry = FileEntry::new_file("test.txt".into(), 100, 0o644);
     let iflags = ItemFlags::from_raw(ItemFlags::ITEM_TRANSFER | ItemFlags::ITEM_IS_NEW);
 
-    ctx.emit_itemize(&mut writer, &iflags, &entry).unwrap();
+    ctx.emit_itemize(&mut writer, &iflags, &entry, None)
+        .unwrap();
 
     assert!(writer.messages.is_empty());
 }
@@ -340,7 +342,7 @@ fn indexed_emit_off_out_format_uses_immediate_path() {
     let entry = FileEntry::new_file("leader.txt".into(), 10, 0o644);
     let iflags = ItemFlags::from_raw(ItemFlags::ITEM_LOCAL_CHANGE | ItemFlags::ITEM_IS_NEW);
 
-    ctx.emit_itemize_indexed(&mut writer, 1, &iflags, &entry)
+    ctx.emit_itemize_indexed(&mut writer, 1, &iflags, &entry, None)
         .unwrap();
 
     // Server-mode receiver writes no client-visible row and collects nothing.
@@ -397,7 +399,8 @@ fn emit_itemize_skipped_without_itemize_flag() {
     let entry = FileEntry::new_file("test.txt".into(), 100, 0o644);
     let iflags = ItemFlags::from_raw(ItemFlags::ITEM_TRANSFER | ItemFlags::ITEM_IS_NEW);
 
-    ctx.emit_itemize(&mut writer, &iflags, &entry).unwrap();
+    ctx.emit_itemize(&mut writer, &iflags, &entry, None)
+        .unwrap();
 
     assert!(writer.messages.is_empty());
 }
@@ -412,7 +415,7 @@ fn render_itemize_symlink_with_target() {
     let iflags = ItemFlags::from_raw(ItemFlags::ITEM_LOCAL_CHANGE | ItemFlags::ITEM_IS_NEW);
 
     assert_eq!(
-        ctx.render_itemize_line(&iflags, &entry).as_deref(),
+        ctx.render_itemize_line(&iflags, &entry, None).as_deref(),
         Some("cL+++++++++ mylink -> target\n")
     );
 }

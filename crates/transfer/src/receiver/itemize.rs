@@ -304,19 +304,23 @@ impl ReceiverContext {
     /// rows.
     ///
     /// Pure formatting: applies the created-root-directory override and the
-    /// significance gate, then formats via `format_itemize_line`. Routing to a
-    /// sink (stdout vs MSG_INFO vs suppression) is the caller's concern - see
-    /// [`Self::emit_itemize`].
+    /// significance gate, then formats via `format_itemize_line`. `xname` is the
+    /// alternate-basis name (the hard-link leader from `hlink.c:232-234`); when
+    /// present and non-empty it renders the `%L` ` => <xname>` suffix. Routing
+    /// to a sink (stdout vs MSG_INFO vs suppression) is the caller's concern -
+    /// see [`Self::emit_itemize`].
     ///
     /// # Upstream Reference
     ///
     /// - `generator.c:574-576` - `iflags & (SIGNIFICANT_ITEM_FLAGS|ITEM_REPORT_XATTR)`
     /// - `main.c:803-805` - `FLAG_DIR_CREATED` for a pre-flight-mkdir'd root
+    /// - `log.c:643-655` - `%L` renders ` => hlink` for a non-empty xname
     /// - `log.c:707-710` - direction glyph selection
     pub(in crate::receiver) fn render_itemize_line(
         &self,
         iflags: &crate::generator::ItemFlags,
         entry: &protocol::flist::FileEntry,
+        xname: Option<&[u8]>,
     ) -> Option<String> {
         let effective_iflags = self.itemize_effective_flags(iflags, entry)?;
         let ctx = self.itemize_context();
@@ -325,7 +329,7 @@ impl ReceiverContext {
             entry,
             self.itemize_is_sender(),
             &ctx,
-            None,
+            xname,
         ))
     }
 
@@ -480,6 +484,7 @@ impl ReceiverContext {
         writer: &mut W,
         iflags: &crate::generator::ItemFlags,
         entry: &protocol::flist::FileEntry,
+        xname: Option<&[u8]>,
     ) -> std::io::Result<()> {
         if !self.should_emit_itemize() {
             return Ok(());
@@ -493,7 +498,7 @@ impl ReceiverContext {
         if self.collect_out_format_events() {
             return Ok(());
         }
-        let Some(line) = self.render_itemize_line(iflags, entry) else {
+        let Some(line) = self.render_itemize_line(iflags, entry, xname) else {
             return Ok(());
         };
         if self.config.connection.client_mode {
@@ -516,9 +521,12 @@ impl ReceiverContext {
     /// Unlike symlinks and specials (which route through
     /// [`emit_or_record_itemize`](Self::emit_or_record_itemize) so their default
     /// `-i` rows also defer into flist order), a follower's default `-i` row keeps
-    /// the immediate path: its deferred string form cannot yet reproduce the
-    /// ` => leader` xname suffix, and its leader-selection order is a separate
-    /// divergence, so deferring it would change more than ordering.
+    /// the immediate path: its leader-selection order is a separate divergence,
+    /// so deferring it would change more than ordering.
+    ///
+    /// `xname` carries the hard-link leader's transfer-relative name so the
+    /// default `-i` row renders the `%L` ` => <leader>` suffix
+    /// (upstream `hlink.c:232-234` + `log.c:643-646`).
     ///
     /// Off a custom `--out-format` this defers to the unchanged immediate path.
     pub(in crate::receiver) fn emit_itemize_indexed<W: crate::writer::MsgInfoSender + ?Sized>(
@@ -527,12 +535,13 @@ impl ReceiverContext {
         flist_idx: usize,
         iflags: &crate::generator::ItemFlags,
         entry: &protocol::flist::FileEntry,
+        xname: Option<&[u8]>,
     ) -> std::io::Result<()> {
         if self.collect_out_format_events() {
             self.record_itemize(flist_idx, iflags, entry);
             return Ok(());
         }
-        self.emit_itemize(writer, iflags, entry)
+        self.emit_itemize(writer, iflags, entry, xname)
     }
 
     /// Emits over-the-wire itemize records for every hardlink follower so a
@@ -703,7 +712,7 @@ impl ReceiverContext {
             self.record_itemize(flist_idx, iflags, entry);
             Ok(())
         } else {
-            self.emit_itemize(writer, iflags, entry)
+            self.emit_itemize(writer, iflags, entry, None)
         }
     }
 
@@ -742,7 +751,7 @@ impl ReceiverContext {
         if !self.should_emit_itemize() {
             return;
         }
-        if let Some(line) = self.render_itemize_line(iflags, entry) {
+        if let Some(line) = self.render_itemize_line(iflags, entry, None) {
             self.itemize_rows
                 .borrow_mut()
                 .entry(flist_idx)
