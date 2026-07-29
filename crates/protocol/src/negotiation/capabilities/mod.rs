@@ -29,6 +29,7 @@
 
 mod algorithms;
 mod env_list;
+mod failure;
 mod negotiate;
 
 pub use algorithms::{ChecksumAlgorithm, CompressionAlgorithm};
