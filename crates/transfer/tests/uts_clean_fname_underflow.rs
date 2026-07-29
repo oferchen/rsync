@@ -39,7 +39,7 @@
 
 use std::fs;
 
-use test_support::{OcRsyncCliRunner, require_binary};
+use test_support::{OcRsyncCliRunner, require_binaries};
 
 /// The server-sender invocation with the crafted `merge a/../test` filter must
 /// terminate cleanly - any exit code is acceptable, a signal death is not.
@@ -51,9 +51,7 @@ use test_support::{OcRsyncCliRunner, require_binary};
 // upstream: util1.c clean_fname() underflow hardening
 #[test]
 fn clean_fname_handles_dotdot_without_crashing() {
-    if !require_binary("oc-rsync") {
-        return;
-    }
+    require_binaries!("oc-rsync");
     let root = tempfile::tempdir().expect("tempdir");
     let workdir = root.path().join("workdir");
     fs::create_dir_all(workdir.join("mod")).expect("mkdir workdir/mod");
