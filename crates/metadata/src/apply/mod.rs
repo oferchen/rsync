@@ -138,7 +138,7 @@ pub fn transfer_root_chmod_self_lock(
     else {
         return Ok(None);
     };
-    let running_as_root = nix::unistd::geteuid().is_root();
+    let running_as_root = crate::identity::is_root();
     Ok(Some((
         tweaked,
         crate::transfer_root_self_locks(tweaked, running_as_root),
