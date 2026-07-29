@@ -110,6 +110,33 @@ impl ReceiverContext {
         }
     }
 
+    /// Upstream's `itemize()` sets `ITEM_REPORT_TIME` for an up-to-date symlink
+    /// (same target) whenever the link's own mtime differs from the sender and
+    /// times are preserved for links - `keep_time = !omit_link_times` at
+    /// `generator.c:513-517`, compared at `generator.c:526-530`. The up-to-date
+    /// branch still calls `itemize(fname, file, ndx, 0, &sx, 0, 0, NULL)`
+    /// (`generator.c:1573-1577`), so an mtime-only difference prints
+    /// `.L..t......`. The previous receiver behaviour passed `iflags == 0` for
+    /// every up-to-date symlink, so that row was never produced.
+    ///
+    /// Must be called BEFORE the symlink's metadata is (re)applied: upstream's
+    /// `link_stat` fills `sx` before `set_file_attrs()` runs, so the compared
+    /// mtime is the pre-transfer on-disk value, not the value the receiver is
+    /// about to write. Uses `symlink_metadata` (an `lstat`, no target follow)
+    /// so the compared mtime is the link's own. Returns raw flags (0 when
+    /// nothing differs or the lstat fails - upstream's benign "no change"
+    /// outcome, not the `statret < 0` ITEM_IS_NEW leg).
+    pub(in crate::receiver) fn existing_symlink_iflags(
+        &self,
+        entry: &protocol::flist::FileEntry,
+        link_path: &std::path::Path,
+    ) -> u32 {
+        match std::fs::symlink_metadata(link_path) {
+            Ok(meta) => self.itemize_existing_flags(entry, link_path, Some(&meta), 0),
+            Err(_) => 0,
+        }
+    }
+
     /// Whether upstream would print the transfer root's plain-`-v` NAME line
     /// (`./`) for this run.
     ///

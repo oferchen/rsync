@@ -120,6 +120,14 @@ impl ReceiverContext {
             // upstream: generator.c:1573 - quick_check_ok(FT_SYMLINK, ...)
             if let Ok(existing_target) = std::fs::read_link(&link_path) {
                 if existing_target == *target {
+                    // upstream: generator.c:1573-1577 - the up-to-date branch
+                    // still calls `itemize(fname, file, ndx, 0, &sx, 0, 0, NULL)`.
+                    // Compute the row from the pre-apply lstat so an mtime-only
+                    // difference lights the `t` column (keep_time =
+                    // !omit_link_times); `sx` was filled by `link_stat` before
+                    // `set_file_attrs` runs, so this must precede the apply below.
+                    let iflags =
+                        ItemFlags::from_raw(self.existing_symlink_iflags(entry, &link_path));
                     // upstream: generator.c:1575 - even on the up-to-date branch
                     // `set_file_attrs(fname, file, &sx, NULL, maybe_ATTRS_REPORT)`
                     // still runs so a stale on-disk mtime is corrected.
@@ -141,8 +149,6 @@ impl ReceiverContext {
                             error
                         );
                     }
-                    // upstream: generator.c:1565 - symlink up-to-date, metadata only
-                    let iflags = ItemFlags::from_raw(0);
                     let _ = self.emit_or_record_itemize(writer, flist_idx, &iflags, entry);
                     self.record_server_no_transfer_itemize(flist_idx, iflags.raw());
                     // upstream: log.c log_item / send_directory NAME emissions
@@ -432,6 +438,14 @@ impl ReceiverContext {
             // upstream: generator.c:1573 - quick_check_ok(FT_SYMLINK, ...)
             if let Ok(existing_target) = std::fs::read_link(&link_path) {
                 if existing_target == *target {
+                    // upstream: generator.c:1573-1577 - the up-to-date branch
+                    // still calls `itemize(fname, file, ndx, 0, &sx, 0, 0, NULL)`.
+                    // Compute the row from the pre-apply lstat so an mtime-only
+                    // difference lights the `t` column (keep_time =
+                    // !omit_link_times); `sx` was filled by `link_stat` before
+                    // `set_file_attrs` runs, so this must precede the apply below.
+                    let iflags =
+                        ItemFlags::from_raw(self.existing_symlink_iflags(entry, &link_path));
                     // upstream: generator.c:1563 - refresh metadata even when the
                     // link is already up-to-date so a stale mtime is corrected.
                     let symlink_options = MetadataOptions::new()
@@ -452,8 +466,6 @@ impl ReceiverContext {
                             error
                         );
                     }
-                    // upstream: generator.c:1565 - symlink up-to-date, metadata only
-                    let iflags = ItemFlags::from_raw(0);
                     let _ = self.emit_or_record_itemize(writer, flist_idx, &iflags, entry);
                     self.record_server_no_transfer_itemize(flist_idx, iflags.raw());
                     // upstream: generator.c:1145 - "%s is uptodate" at INFO_GTE(NAME, 2)
@@ -1095,6 +1107,101 @@ mod tests {
         assert!(
             !ctx.preserve_symlink_times(),
             "without -t there is no source mtime to preserve"
+        );
+    }
+
+    /// A symlink whose only difference from the sender is its mtime still
+    /// itemizes: upstream's up-to-date branch calls `itemize(fname, file, ndx,
+    /// 0, &sx, 0, 0, NULL)` (`generator.c:1573-1577`), and inside `itemize()`
+    /// `keep_time` is true for a symlink under `-t` without `-J`
+    /// (`generator.c:513-517`), so `mtime_differs()` lights `ITEM_REPORT_TIME`
+    /// (`generator.c:526-530`) and the row renders `.L..t......`. `--omit-link-times`
+    /// and a run without `--times` both drop `keep_time`, suppressing the row.
+    #[cfg(unix)]
+    #[test]
+    fn mtime_only_symlink_change_itemizes_dot_l_dot_t() {
+        use std::ffi::OsString;
+        use std::os::unix::fs::symlink;
+        use std::path::PathBuf;
+
+        use protocol::ProtocolVersion;
+        use protocol::flist::FileEntry;
+
+        use crate::config::ServerConfig;
+        use crate::flags::ParsedServerFlags;
+        use crate::generator::ItemFlags;
+        use crate::generator::itemize::{ItemizeContext, format_iflags};
+        use crate::handshake::HandshakeResult;
+        use crate::receiver::ReceiverContext;
+        use crate::role::ServerRole;
+
+        let handshake = HandshakeResult {
+            protocol: ProtocolVersion::try_from(32u8).unwrap(),
+            buffered: Vec::new(),
+            compat_exchanged: false,
+            client_args: None,
+            io_timeout: None,
+            negotiated_algorithms: None,
+            compat_flags: None,
+            checksum_seed: 0,
+        };
+        let config = |times: bool, omit: bool| ServerConfig {
+            role: ServerRole::Receiver,
+            protocol: ProtocolVersion::try_from(32u8).unwrap(),
+            flag_string: "-r".to_owned(),
+            flags: ParsedServerFlags {
+                times,
+                omit_link_times: omit,
+                recursive: true,
+                ..ParsedServerFlags::default()
+            },
+            args: vec![OsString::from(".")],
+            ..Default::default()
+        };
+
+        let dir = tempfile::tempdir().unwrap();
+        let link_path = dir.path().join("link");
+        symlink("target", &link_path).unwrap();
+
+        // Sender's view: same target, but an mtime far from the freshly created
+        // on-disk link (which carries ~now). Same target routes through the
+        // up-to-date branch; the differing mtime is the only change.
+        let mut entry = FileEntry::new_symlink(PathBuf::from("link"), PathBuf::from("target"));
+        entry.set_mtime(1_000_000_000, 0);
+
+        // -t without -J: keep_time is true, so the mtime difference lights `t`.
+        let ctx = ReceiverContext::new_for_test(&handshake, config(true, false));
+        let raw = ctx.existing_symlink_iflags(&entry, &link_path);
+        assert_ne!(
+            raw & ItemFlags::ITEM_REPORT_TIME,
+            0,
+            "an mtime-only symlink change must set ITEM_REPORT_TIME"
+        );
+        let row = format_iflags(
+            &ItemFlags::from_raw(raw),
+            &entry,
+            false,
+            &ItemizeContext::default(),
+        );
+        assert_eq!(
+            row, ".L..t......",
+            "upstream itemizes an mtime-only symlink change as .L..t......"
+        );
+
+        // -J drops the symlink mtime leg, so no significant flag survives.
+        let ctx = ReceiverContext::new_for_test(&handshake, config(true, true));
+        assert_eq!(
+            ctx.existing_symlink_iflags(&entry, &link_path) & ItemFlags::SIGNIFICANT_ITEM_FLAGS,
+            0,
+            "--omit-link-times must suppress the mtime-only symlink row"
+        );
+
+        // Without -t there is no mtime comparison at all.
+        let ctx = ReceiverContext::new_for_test(&handshake, config(false, false));
+        assert_eq!(
+            ctx.existing_symlink_iflags(&entry, &link_path) & ItemFlags::SIGNIFICANT_ITEM_FLAGS,
+            0,
+            "without --times there is no mtime comparison for the symlink"
         );
     }
 
