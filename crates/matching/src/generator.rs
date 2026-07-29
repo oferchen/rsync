@@ -357,7 +357,15 @@ impl DeltaGenerator {
         reader: R,
         index: &DeltaSignatureIndex,
     ) -> io::Result<DeltaScript> {
-        if self.consecutive_match_needed >= 2 {
+        // The gated scan only matches full-length blocks, so it can form a run
+        // of `needed` only when the basis holds at least `needed` full blocks.
+        // With fewer (e.g. one full block plus a short tail) every match is
+        // "lone" and gets demoted to a literal, re-sending the whole file. Fall
+        // back to the ungated scan, mirroring zsync's rule of dropping to
+        // sequential_matches=1 when there are too few blocks.
+        if self.consecutive_match_needed >= 2
+            && index.full_block_count() >= self.consecutive_match_needed as usize
+        {
             return self.generate_gated(reader, index);
         }
         #[cfg(any(test, feature = "bench-internal"))]
@@ -994,7 +1002,14 @@ impl DeltaGenerator {
         // gated scan rather than the parallel range split. This path is only
         // ever taken on the wire sender (never local copy), which already uses
         // the sequential `generate`, so no parallelism is lost in practice.
-        if self.consecutive_match_needed >= 2 {
+        // Mirror `generate`'s fallback: the gated scan matches only full-length
+        // blocks, so it needs at least `needed` of them to form a run. zsync
+        // 0.7.2 indexes a run-start only when it has `seqMatches-1` followers
+        // (`hash.go`), dropping to sequential_matches=1 otherwise; with too few
+        // full blocks every match is lone and gating re-sends the whole file.
+        if self.consecutive_match_needed >= 2
+            && index.full_block_count() >= self.consecutive_match_needed as usize
+        {
             return self.generate_gated(Cursor::new(source), index);
         }
 
@@ -1505,6 +1520,72 @@ mod tests {
             .count();
         assert_eq!(copies, 2, "both consecutive blocks must be copied");
         assert_eq!(reconstruct(&basis, &index, &script), input);
+    }
+
+    #[test]
+    fn gated_single_block_basis_still_matches() {
+        // zsync uses sequential_matches=1 when the basis has only one block: a
+        // lone block can never form a >= 2 run, so gating would demote an
+        // otherwise-perfect single-block match to a literal and re-send the
+        // whole file (zsync NEWS: the sequential_matches==1 false-negative that
+        // wasted local source data). A single-block basis must therefore fall
+        // back to the ungated scan and still Copy an identical block.
+        const BLOCK_LEN: u32 = 512;
+        let basis = pseudo_random(BLOCK_LEN as usize, 0x51ec_0001);
+        let index = build_index_fixed(&basis, BLOCK_LEN);
+        assert_eq!(index.block_count(), 1, "basis must be exactly one block");
+
+        let script = DeltaGenerator::new()
+            .with_consecutive_match_needed(2)
+            .generate(&basis[..], &index)
+            .expect("script");
+
+        let copies = script
+            .tokens()
+            .iter()
+            .filter(|t| matches!(t, DeltaToken::Copy { .. }))
+            .count();
+        assert_eq!(
+            copies, 1,
+            "a single identical block must be copied, not demoted to a literal"
+        );
+        assert_eq!(script.literal_bytes(), 0);
+        assert_eq!(reconstruct(&basis, &index, &script), basis);
+    }
+
+    #[test]
+    fn gated_one_full_block_plus_short_tail_still_matches_the_full_block() {
+        // The real network case: a file of one full block plus a short trailing
+        // block has block_count() == 2 but only ONE full-length block, so no
+        // >= 2 run can form. Gating on block_count would demote the lone full
+        // match to a literal and re-send the whole file; gating on
+        // full_block_count() (mirroring zsync 0.7.2 hash.go, which only indexes
+        // run-starts that have a follower) falls back to the ungated scan and
+        // still Copies the full block.
+        const BLOCK_LEN: u32 = 512;
+        let basis = pseudo_random(BLOCK_LEN as usize + 200, 0x51ec_0002);
+        let index = build_index_fixed(&basis, BLOCK_LEN);
+        assert_eq!(index.block_count(), 2, "one full block plus a short tail");
+        assert_eq!(index.full_block_count(), 1, "only one full-length block");
+
+        let script = DeltaGenerator::new()
+            .with_consecutive_match_needed(2)
+            .generate(&basis[..], &index)
+            .expect("script");
+
+        let copied: usize = script
+            .tokens()
+            .iter()
+            .filter_map(|t| match t {
+                DeltaToken::Copy { len, .. } => Some(*len),
+                _ => None,
+            })
+            .sum();
+        assert_eq!(
+            copied, BLOCK_LEN as usize,
+            "the full block must be Copied, not demoted to a literal"
+        );
+        assert_eq!(reconstruct(&basis, &index, &script), basis);
     }
 
     #[test]

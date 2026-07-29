@@ -277,6 +277,23 @@ impl DeltaSignatureIndex {
         self.blocks.len()
     }
 
+    /// Returns the number of full-length basis blocks, excluding a trailing
+    /// partial (short) block.
+    ///
+    /// The consecutive-match gated scan only matches full-length blocks, so it
+    /// can never form a run of `>= 2` unless the basis holds at least two full
+    /// blocks. A file that is one full block plus a short tail has
+    /// `block_count() == 2` but only one matchable block; gating it would demote
+    /// the lone match to a literal and re-send the whole file. Callers use this
+    /// (not `block_count`) to decide whether gating is viable.
+    #[must_use]
+    pub fn full_block_count(&self) -> usize {
+        self.blocks
+            .iter()
+            .filter(|b| b.len() == self.block_length)
+            .count()
+    }
+
     /// Returns the strong checksum length used by the signature.
     #[must_use]
     pub const fn strong_length(&self) -> usize {
