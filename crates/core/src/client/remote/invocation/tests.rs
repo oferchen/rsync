@@ -4771,3 +4771,166 @@ fn no_implied_dirs_gated_on_protocol_for_push_only() {
         "push at protocol 30+ forwards --no-implied-dirs"
     );
 }
+
+mod oc_flag_forwarding {
+    use std::num::{NonZeroU8, NonZeroUsize};
+    use std::path::PathBuf;
+
+    use super::super::RemoteRole;
+    use super::super::builder::RemoteInvocationBuilder;
+    use crate::client::config::{ClientConfig, TcpFastOpenMode};
+
+    /// Long options recognized by upstream rsync 3.4.4 (options.c
+    /// long_options[]) that the remote invocation builder may emit. Upstream's
+    /// `rsync --server` aborts the whole transfer on the first unknown option,
+    /// so every `--` token in the built argv MUST appear in this allowlist.
+    /// oc-invented tuning flags (--io-uring-depth, --zero-copy, ...) are local
+    /// resource knobs and must never reach the peer argv.
+    const UPSTREAM_SERVER_LONG_OPTS: &[&str] = &[
+        "--append",
+        "--append-verify",
+        "--backup-dir",
+        "--block-size",
+        "--bwlimit",
+        "--checksum-choice",
+        "--checksum-seed",
+        "--compare-dest",
+        "--compress-choice",
+        "--compress-level",
+        "--copy-dest",
+        "--copy-devices",
+        "--copy-unsafe-links",
+        "--debug",
+        "--delay-updates",
+        "--delete",
+        "--delete-after",
+        "--delete-before",
+        "--delete-delay",
+        "--delete-during",
+        "--delete-excluded",
+        "--delete-missing-args",
+        "--existing",
+        "--files-from",
+        "--force",
+        "--from0",
+        "--fsync",
+        "--groupmap",
+        "--iconv",
+        "--ignore-errors",
+        "--ignore-existing",
+        "--ignore-missing-args",
+        "--ignore-times",
+        "--info",
+        "--inplace",
+        "--link-dest",
+        "--list-only",
+        "--log-format",
+        "--max-alloc",
+        "--max-delete",
+        "--max-size",
+        "--min-size",
+        "--mkpath",
+        "--modify-window",
+        "--msgs2stderr",
+        "--new-compress",
+        "--no-implied-dirs",
+        "--no-msgs2stderr",
+        "--no-r",
+        "--no-relative",
+        "--no-specials",
+        "--numeric-ids",
+        "--old-compress",
+        "--only-write-batch",
+        "--open-noatime",
+        "--partial",
+        "--partial-dir",
+        "--preallocate",
+        "--read-batch",
+        "--remove-sent-files",
+        "--remove-source-files",
+        "--safe-links",
+        "--secluded-args",
+        "--sender",
+        "--server",
+        "--size-only",
+        "--skip-compress",
+        "--specials",
+        "--stop-at",
+        "--suffix",
+        "--temp-dir",
+        "--timeout",
+        // upstream: options.c:2908-2909 - server_options() spells the qsort
+        // request as `--use-qsort` even though the popt table entry is
+        // `qsort`; we mirror the emitted spelling.
+        "--use-qsort",
+        "--usermap",
+        "--write-batch",
+        "--write-devices",
+    ];
+
+    /// Sets every oc-invented tuning knob to a non-default value. These are
+    /// local resource knobs with no upstream counterpart; a real upstream
+    /// 3.4.4 server rejects any of them with an unknown-option error.
+    fn kitchen_sink_config() -> ClientConfig {
+        ClientConfig::builder()
+            .io_uring_policy(fast_io::IoUringPolicy::Enabled)
+            .io_uring_depth(Some(128))
+            .cow_policy(fast_io::CowPolicy::Required)
+            .zero_copy_policy(fast_io::ZeroCopyPolicy::Enabled)
+            .parallel_delta_scan(true)
+            .compression_threads(NonZeroU8::new(4))
+            .xxh64_dedup(true)
+            .rayon_threads(NonZeroUsize::new(8))
+            .tokio_threads(NonZeroUsize::new(4))
+            .sparse_detect(engine::SparseDetectStrategy::Map)
+            .tcp_fastopen(TcpFastOpenMode::On)
+            .spill_dir(Some(PathBuf::from("/tmp/spill")))
+            .spill_threshold_bytes(Some(1024))
+            .build()
+    }
+
+    fn build_args(config: &ClientConfig, role: RemoteRole) -> Vec<String> {
+        RemoteInvocationBuilder::new(config, role)
+            .build("/remote/path")
+            .into_iter()
+            .map(|arg| arg.to_string_lossy().into_owned())
+            .collect()
+    }
+
+    fn assert_upstream_recognized(args: &[String]) {
+        for arg in args {
+            if let Some(rest) = arg.strip_prefix("--") {
+                let name = rest.split('=').next().unwrap_or(rest);
+                let long = format!("--{name}");
+                assert!(
+                    UPSTREAM_SERVER_LONG_OPTS.contains(&long.as_str()),
+                    "`{arg}` is not an upstream rsync 3.4.4 option; an \
+                     upstream `--server` peer aborts the transfer on it \
+                     (full argv: {args:?})"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn oc_tuning_flags_never_reach_ssh_pull_argv() {
+        let baseline = build_args(&ClientConfig::builder().build(), RemoteRole::Receiver);
+        let args = build_args(&kitchen_sink_config(), RemoteRole::Receiver);
+        assert_upstream_recognized(&args);
+        assert_eq!(
+            args, baseline,
+            "oc-invented tuning knobs must not alter the remote --server argv"
+        );
+    }
+
+    #[test]
+    fn oc_tuning_flags_never_reach_ssh_push_argv() {
+        let baseline = build_args(&ClientConfig::builder().build(), RemoteRole::Sender);
+        let args = build_args(&kitchen_sink_config(), RemoteRole::Sender);
+        assert_upstream_recognized(&args);
+        assert_eq!(
+            args, baseline,
+            "oc-invented tuning knobs must not alter the remote --server argv"
+        );
+    }
+}
