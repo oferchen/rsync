@@ -17,6 +17,19 @@ pub const IO_URING_DEPTH_MIN: u32 = 1;
 /// rejected at parse time rather than at ring construction time.
 pub const IO_URING_DEPTH_MAX: u32 = 32768;
 
+/// Default submission queue depth for io_uring rings when the
+/// `--io-uring-depth` tunable is left unset.
+///
+/// Single source of truth shared by the Linux per-thread ring and its
+/// non-Linux stub (both re-export it as `PER_THREAD_RING_DEPTH`). 64 entries
+/// match `IoUringConfig::sq_entries` and the session-wide `IoUringDiskBatch`
+/// ring, so bench comparisons between shared-ring and per-thread topologies
+/// stay like-for-like. See IUR-2 design doc section 2.2 for the sizing
+/// rationale (32 is too shallow for batched `POLL_ADD + SEND` pairs; 256
+/// inflates per-ring pinned pages without bench evidence the receiver write
+/// path queues that deeply).
+pub const DEFAULT_IO_URING_DEPTH: u32 = 64;
+
 /// Errors returned by [`validate_io_uring_depth`] when the requested submission
 /// queue depth is outside the supported range or not a power of two.
 ///
