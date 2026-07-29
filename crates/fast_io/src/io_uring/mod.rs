@@ -102,8 +102,6 @@ mod disk_batch;
 mod file_factory;
 mod file_reader;
 mod file_writer;
-/// io_uring `LINKAT` opcode wrapper and kernel availability probe.
-pub mod linkat;
 /// Linked SQE chains for the read -> checksum -> write pipeline.
 pub mod linked_chain;
 /// Per-thread io_uring ring primitive (IUR-3.a).
@@ -134,6 +132,7 @@ mod tests;
 use std::fs::File;
 use std::io::{self, Write};
 
+pub use crate::io_uring_common::{IORING_OP_LINKAT, LINKAT_MIN_KERNEL};
 pub use bgid_lease::{BgidLease, DEFAULT_LEASE_BATCH, with_thread_lease};
 pub use buffer_ring::{
     BgidAllocError, BgidAllocator, BgidSessionStats, BgidSnapshot, BufferRing, BufferRingConfig,
@@ -156,10 +155,6 @@ pub use file_factory::{
 };
 pub use file_reader::IoUringReader;
 pub use file_writer::IoUringWriter;
-pub use linkat::{
-    IORING_OP_LINKAT, LINKAT_MIN_KERNEL, LinkAtArgs, build_linkat_sqe, build_linkat_sqe_unchecked,
-    linkat_supported, submit_linkat_blocking,
-};
 pub use linked_chain::{CqeResult, LinkedChain, read_then_write};
 pub use per_thread_ring::{DEFAULT_RING_DEPTH as PER_THREAD_RING_DEPTH, PerThreadRing};
 pub use registered_buffers::{
