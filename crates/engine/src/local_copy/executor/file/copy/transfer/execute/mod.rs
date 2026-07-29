@@ -39,9 +39,7 @@ use crate::local_copy::{
 };
 
 use super::super::super::append::{AppendMode, determine_append_mode};
-use super::super::super::comparison::{
-    Xxh64DedupOutcome, build_delta_signature, xxh64_dedup_check,
-};
+use super::super::super::comparison::build_delta_signature;
 use super::super::super::compute_backup_path;
 use super::super::super::guard::remove_incomplete_destination;
 use super::super::super::preallocate::maybe_preallocate_destination;
@@ -50,7 +48,7 @@ use super::finalize::finalize_guard_and_metadata;
 use super::open::open_source_file;
 use super::write_strategy::{open_destination_writer, select_write_strategy};
 
-use skip::{record_metadata_only_skip, try_skip_up_to_date};
+use skip::try_skip_up_to_date;
 
 /// Executes the data transfer for a single regular file.
 ///
@@ -377,42 +375,6 @@ pub(in crate::local_copy) fn execute_transfer(
         reader
             .seek(SeekFrom::Start(append_offset))
             .map_err(|error| LocalCopyError::io("copy file", source, error))?;
-    }
-
-    // Internal-only xxh64 file-dedup heuristic. Runs only when explicitly
-    // opted in via `enable_xxh64_dedup`. When source and destination produce
-    // identical xxh64 digests, treat the transfer as a metadata-only sync.
-    // The heuristic is local-only and never affects the wire protocol.
-    if append_offset == 0 && context.xxh64_dedup_enabled() && copy_source_override.is_none() {
-        if let Some(existing) = existing_metadata {
-            if existing.is_file() && metadata.is_file() {
-                let outcome = xxh64_dedup_check(
-                    source,
-                    destination,
-                    file_size,
-                    existing.len(),
-                    context.xxh64_dedup_size_limit(),
-                )
-                .map_err(|error| {
-                    LocalCopyError::io("xxh64 dedup check", destination.to_path_buf(), error)
-                })?;
-                if matches!(outcome, Xxh64DedupOutcome::Match) {
-                    record_metadata_only_skip(
-                        context,
-                        source,
-                        destination,
-                        metadata,
-                        &metadata_options,
-                        record_path,
-                        existing,
-                        &flags,
-                        mode,
-                        "xxh64 dedup match",
-                    )?;
-                    return Ok(());
-                }
-            }
-        }
     }
 
     // Discard the pre-computed delta signature when appending - delta transfer

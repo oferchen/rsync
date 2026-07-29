@@ -121,10 +121,10 @@ pub(super) fn try_skip_up_to_date(
 
 /// Records a metadata-only skip outcome and applies destination metadata.
 ///
-/// Used by both the up-to-date quick check and the xxh64 dedup heuristic.
-/// The caller has already established that the source and destination are
-/// content-identical, so the only remaining work is to sync metadata,
-/// xattrs, ACLs, and emit the `MetadataReused` event.
+/// Used by the up-to-date quick check. The caller has already established
+/// that the source and destination are content-identical, so the only
+/// remaining work is to sync metadata, xattrs, ACLs, and emit the
+/// `MetadataReused` event.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn record_metadata_only_skip(
     context: &mut CopyContext,
