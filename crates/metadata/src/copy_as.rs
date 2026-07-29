@@ -137,6 +137,11 @@ pub struct CopyAsGuard {
     original_euid: u32,
     original_egid: u32,
     switched_egid: bool,
+    // While held, the metadata identity accessors read live instead of the
+    // cached startup value, so ownership gates observe the switched euid/egid.
+    // Dropped after the euid/egid are restored (fields drop after Drop::drop),
+    // so the restored identity is what later cached reads capture.
+    _switch: crate::identity::SwitchScope,
 }
 
 #[cfg(unix)]
@@ -228,6 +233,7 @@ pub fn switch_effective_ids(ids: &CopyAsIds) -> io::Result<CopyAsGuard> {
         original_euid,
         original_egid,
         switched_egid,
+        _switch: crate::identity::SwitchScope::enter(),
     })
 }
 

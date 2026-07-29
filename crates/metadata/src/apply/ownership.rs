@@ -223,7 +223,7 @@ fn post_chown_bookkeeping(
 #[cfg(unix)]
 #[allow(unsafe_code)]
 pub(super) fn process_in_group(gid: unix_fs::Gid) -> bool {
-    if nix::unistd::getegid() == nix::unistd::Gid::from_raw(gid.as_raw()) {
+    if crate::identity::effective_gid() == gid.as_raw() {
         return true;
     }
     let target = gid.as_raw();
@@ -257,10 +257,11 @@ pub(super) fn process_in_group(gid: unix_fs::Gid) -> bool {
 /// owned by another user, or under a non-root `--chown=user:group`.
 #[cfg(unix)]
 pub(super) fn gate_preserved_owner(owner: Option<unix_fs::Uid>) -> Option<unix_fs::Uid> {
-    // nix (libc `geteuid`) so the euid reflects fakeroot's faked identity,
-    // making `am_root` true under fakeroot exactly like upstream. rustix's raw
-    // syscall would report the real non-root euid and gate the chown away.
-    owner.filter(|_| nix::unistd::geteuid().is_root())
+    // The cached identity is libc-based (like `nix`), so the euid reflects
+    // fakeroot's faked identity, making `am_root` true under fakeroot exactly
+    // like upstream. A rustix raw syscall would report the real non-root euid
+    // and gate the chown away.
+    owner.filter(|_| crate::identity::is_root())
 }
 
 /// Gates a resolved group GID against process privilege, whether it came from
@@ -272,9 +273,9 @@ pub(super) fn gate_preserved_owner(owner: Option<unix_fs::Uid>) -> Option<unix_f
 /// is skipped rather than attempted and failed.
 #[cfg(unix)]
 pub(super) fn gate_preserved_group(group: Option<unix_fs::Gid>) -> Option<unix_fs::Gid> {
-    // See `gate_preserved_owner`: nix (libc `geteuid`) so fakeroot's faked root
-    // euid is honoured, matching upstream's `am_root` gate.
-    group.filter(|gid| nix::unistd::geteuid().is_root() || process_in_group(*gid))
+    // See `gate_preserved_owner`: the cached identity is libc-based so
+    // fakeroot's faked root euid is honoured, matching upstream's `am_root` gate.
+    group.filter(|gid| crate::identity::is_root() || process_in_group(*gid))
 }
 
 /// Whether this process may set a file's group to `gid`, i.e. whether upstream
@@ -293,9 +294,9 @@ pub(super) fn gate_preserved_group(group: Option<unix_fs::Gid>) -> Option<unix_f
 pub fn group_is_settable(gid: u32) -> bool {
     #[cfg(unix)]
     {
-        // See `gate_preserved_group`: nix (libc `geteuid`) so a fakeroot euid
-        // counts as root, matching upstream's `am_root`.
-        nix::unistd::geteuid().is_root() || process_in_group(unix_fs::Gid::from_raw(gid))
+        // See `gate_preserved_group`: the cached identity is libc-based so a
+        // fakeroot euid counts as root, matching upstream's `am_root`.
+        crate::identity::is_root() || process_in_group(unix_fs::Gid::from_raw(gid))
     }
     #[cfg(not(unix))]
     {
