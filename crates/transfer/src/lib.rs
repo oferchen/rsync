@@ -775,8 +775,16 @@ pub fn run_server_with_handshake_adopting<W: Write>(
         });
     }
 
+    // upstream: io.c:859 - stats.total_written counts every byte the raw
+    // descriptor accepts, multiplex frame headers included, in perform_io().
+    // Wrap the transport below the multiplex framer so the shared counter
+    // mirrors that raw wire total; the sender samples it at its handle_stats
+    // point (main.c:979-980) and reports it as "Total bytes sent".
+    let counting_stdout = writer::CountingWriter::new_shared(stdout);
+    let bytes_sent_counter = counting_stdout.counter();
+
     // MultiplexWriter provides 64KB buffering (matching upstream iobuf_out).
-    let mut writer = writer::ServerWriter::new_plain(stdout);
+    let mut writer = writer::ServerWriter::new_plain(counting_stdout);
 
     let mplex_out = requires_multiplex_output(
         config.connection.client_mode,
@@ -903,6 +911,10 @@ pub fn run_server_with_handshake_adopting<W: Write>(
 
     // Input multiplex activation deferred to each role after reading filter list.
 
+    // Captured before `config` is moved into the role context below; the client
+    // receiver reports the sender's transmitted counters, not its own wire tally.
+    let client_mode = config.connection.client_mode;
+
     match config.role {
         ServerRole::Receiver => {
             let mut ctx = ReceiverContext::new(&handshake, config, pipeline);
@@ -920,6 +932,20 @@ pub fn run_server_with_handshake_adopting<W: Write>(
             // wire bytes, not the post-decompression literal byte total.
             stats.bytes_received =
                 bytes_received_counter.load(std::sync::atomic::Ordering::Relaxed);
+
+            // upstream: main.c:325-372 handle_stats() - the sender is the only
+            // process with the authoritative byte totals. A client receiver reads
+            // the sender's cached raw counters over the wire (main.c:365-372) and
+            // swaps their meaning: it prints the sender's total_read as "Total
+            // bytes sent" and the sender's total_written as "Total bytes received".
+            // Its own wire tally diverges by the trailing stats/goodbye bytes the
+            // sender wrote after sampling, so prefer the transmitted figures.
+            // Absent (empty file list, no stats trailer) keeps the local tally,
+            // matching upstream's `if (f < 0 && !am_sender)` no-op (main.c:363).
+            if client_mode && let Some(sender_stats) = ctx.sender_stats() {
+                stats.bytes_sent = sender_stats.total_read;
+                stats.bytes_received = sender_stats.total_written;
+            }
 
             // A custom `--out-format` on a pull buffered its per-file rows as
             // metadata events (the receiver suppressed its own stdout). Hand each
@@ -940,6 +966,14 @@ pub fn run_server_with_handshake_adopting<W: Write>(
 
             let mut ctx = GeneratorContext::new(&handshake, config, pipeline);
             ctx.batch_stats_sink = batch_stats_sink;
+            // upstream: io.c:820/859 - the sender's handle_stats() reports the raw
+            // descriptor counters. Hand the generator the transport-level wire
+            // counters so it samples total_written/total_read at its handle_stats
+            // point (main.c:979-980), below multiplex framing, matching upstream.
+            ctx.set_wire_counters(
+                std::sync::Arc::clone(&bytes_sent_counter),
+                std::sync::Arc::clone(&bytes_received_counter),
+            );
             let stats = ctx.run(chained_reader, &mut writer, &paths, progress, itemize)?;
 
             Ok(ServerStats::Generator(stats))

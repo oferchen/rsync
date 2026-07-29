@@ -183,6 +183,18 @@ pub struct GeneratorContext {
     /// - `main.c:374-383` - `handle_stats()` `else if (write_batch)` arm,
     ///   reached only when `am_sender` and `!am_server`.
     pub(crate) batch_stats_sink: Option<BatchStatsSink>,
+    /// Shared handle on the raw wire byte counter for bytes written to the
+    /// transport, below multiplex framing (upstream `stats.total_written`,
+    /// io.c:859). Sampled at the `handle_stats` point (main.c:979-980) so the
+    /// sender reports raw wire bytes - the count the client sender prints and the
+    /// server sender transmits over the wire - instead of a logical token tally.
+    /// `None` in unit tests, where the logical fallback is used.
+    pub(crate) wire_write_counter: Option<Arc<std::sync::atomic::AtomicU64>>,
+    /// Shared handle on the raw wire byte counter for bytes read from the
+    /// transport (upstream `stats.total_read`, io.c:820). Sampled alongside
+    /// [`Self::wire_write_counter`] at the `handle_stats` point. `None` in unit
+    /// tests, where the logical fallback is used.
+    pub(crate) wire_read_counter: Option<Arc<std::sync::atomic::AtomicU64>>,
 }
 
 /// Handle on the `--write-batch` file, held by a client sender so it can write
@@ -272,7 +284,24 @@ impl GeneratorContext {
             curr_dir: None,
             pipeline,
             batch_stats_sink: None,
+            wire_write_counter: None,
+            wire_read_counter: None,
         }
+    }
+
+    /// Attaches the raw wire byte counters used for `handle_stats()` reporting.
+    ///
+    /// Both counters must wrap the raw transport (below multiplex framing),
+    /// matching upstream's descriptor counters `stats.total_written` (io.c:859)
+    /// and `stats.total_read` (io.c:820). Must be set before [`run`](Self::run)
+    /// for the sender to report raw wire byte totals.
+    pub fn set_wire_counters(
+        &mut self,
+        write_counter: Arc<std::sync::atomic::AtomicU64>,
+        read_counter: Arc<std::sync::atomic::AtomicU64>,
+    ) {
+        self.wire_write_counter = Some(write_counter);
+        self.wire_read_counter = Some(read_counter);
     }
 
     /// Creates a generator context for unit testing with a default pipeline.

@@ -283,7 +283,12 @@ impl ReceiverContext {
         self.exchange_phase_done(reader, writer, &mut ndx_write_codec, &mut ndx_read_codec)?;
 
         if self.config.connection.client_mode {
-            let _sender_stats = self.receive_stats(reader)?;
+            // upstream: main.c:365-372 - the client receiver reads the sender's
+            // cached raw descriptor counters here and reports them (with read/write
+            // swapped) as "Total bytes sent/received". Retain them for the summary
+            // instead of discarding, so the figures match the sender exactly rather
+            // than diverging by this trailer and the goodbye bytes that follow.
+            self.sender_stats = Some(self.receive_stats(reader)?);
         }
 
         self.handle_goodbye(reader, writer, &mut ndx_write_codec, &mut ndx_read_codec)?;

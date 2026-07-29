@@ -35,6 +35,7 @@ mod parallel_delta_notice;
 mod partial_resume;
 mod post_decision_name_emission;
 mod push_metadata_itemize;
+mod sender_stats;
 mod support;
 mod symlinks_and_devices;
 #[cfg(unix)]

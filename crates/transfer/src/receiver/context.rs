@@ -214,6 +214,16 @@ pub struct ReceiverContext {
     ///
     /// - `flist.c:2789` - `stats.flist_size += stats.total_read - start_read;`
     pub(in crate::receiver) flist_size: u64,
+    /// Byte totals the remote sender transmitted in its `handle_stats()` trailer,
+    /// captured by `finalize_transfer` on a client pull.
+    ///
+    /// Upstream's client receiver reports the sender's cached raw descriptor
+    /// counters, swapping their meaning (main.c:365-372): the sender's total_read
+    /// becomes "Total bytes sent" and its total_written becomes "Total bytes
+    /// received". `None` until the trailer is read (e.g. an empty file list never
+    /// sends one), and always `None` on a server receiver, which upstream never
+    /// has read the trailer at all.
+    pub(in crate::receiver) sender_stats: Option<crate::receiver::stats::SenderStats>,
     /// Per-operation thresholds for switching between sequential and parallel execution.
     ///
     /// Different operations have different overhead profiles: CPU-bound signature
@@ -469,6 +479,7 @@ impl ReceiverContext {
             flist_io_error: 0,
             raw_read_counter: None,
             flist_size: 0,
+            sender_stats: None,
             parallel_thresholds: ParallelThresholds::default(),
             delete_ctx: None,
             pending_del_stats: DeleteStats::new(),
@@ -561,6 +572,18 @@ impl ReceiverContext {
     #[must_use]
     pub fn flist_size(&self) -> u64 {
         self.flist_size
+    }
+
+    /// Returns the byte totals the sender transmitted in its `handle_stats()`
+    /// trailer, or `None` when no trailer was read (empty file list, or a server
+    /// receiver that never reads one).
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `main.c:365-372` - client receiver reads the sender's cached counters.
+    #[must_use]
+    pub fn sender_stats(&self) -> Option<&crate::receiver::stats::SenderStats> {
+        self.sender_stats.as_ref()
     }
 
     /// Snapshots the raw read counter at the start of a file-list span.
