@@ -282,3 +282,9 @@ executable name. Intended for testing and development.
 `OC_RSYNC_FALLBACK` and `OC_RSYNC_DAEMON_FALLBACK` are historical names
 that are no longer consulted by any production code path; setting them
 has no effect on current builds.
+
+`OC_RSYNC_SPILL_RECLAIM` and `OC_RSYNC_SPILL_GRANULARITY` appeared in
+early spill-policy design documents but were never wired to a read
+site; setting them has no effect on current builds. The corresponding
+`SpillPolicy` fields (`reclaim_mode`, `granularity`) are settable only
+through the builder API.
