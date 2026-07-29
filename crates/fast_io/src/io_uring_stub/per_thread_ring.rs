@@ -13,11 +13,12 @@ use std::io;
 
 /// Default submission queue depth declared for cross-platform API parity.
 ///
-/// The Linux backend uses this value when lazily constructing the
-/// per-thread ring. On non-Linux targets the constant is retained so
-/// callers can compile against the same surface; the stub `with_ring`
-/// always returns [`io::ErrorKind::Unsupported`].
-pub const DEFAULT_RING_DEPTH: u32 = 64;
+/// Re-exported from the single source of truth in
+/// [`crate::io_uring_depth::DEFAULT_IO_URING_DEPTH`] so the stub and the Linux
+/// backend cannot drift. On non-Linux targets the constant is retained so
+/// callers compile against the same surface; the stub `with_ring` always
+/// returns [`io::ErrorKind::Unsupported`].
+pub const DEFAULT_RING_DEPTH: u32 = crate::io_uring_depth::DEFAULT_IO_URING_DEPTH;
 
 /// Always returns [`io::ErrorKind::Unsupported`] on this platform.
 ///
