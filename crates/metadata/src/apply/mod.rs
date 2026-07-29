@@ -7,6 +7,7 @@
 
 mod ownership;
 mod permissions;
+mod platform_warn;
 mod timestamps;
 
 pub use ownership::group_is_settable;
