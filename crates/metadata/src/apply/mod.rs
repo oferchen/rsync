@@ -427,21 +427,24 @@ pub fn apply_symlink_metadata(
 
 /// Applies symbolic link metadata using explicit [`MetadataOptions`].
 ///
-/// Only ownership and timestamps are applied. oc does not currently set a
-/// symlink's own mode, so permissions are skipped here.
+/// Applies ownership, permissions, and timestamps. The link's own mode is set
+/// only on platforms where [`crate::CAN_CHMOD_SYMLINK`] holds (macOS/BSD);
+/// elsewhere the chmod is a no-op, matching upstream where `CAN_CHMOD_SYMLINK`
+/// is undefined and a symlink's `st_mode` is a fixed `0o777`.
 ///
-/// This is an oc limitation, not upstream behaviour: `rsync.c:658-668` calls
-/// `do_chmod_at()` for every file type with no `S_ISLNK` gate (the comment at
-/// `rsync.c:667`, "ret == 1 if symlink could not be set", shows a failed
-/// symlink chmod is a soft outcome). All the portability lives in
-/// `syscall.c:761 do_chmod()`, which tries `lchmod()`, falls through to
-/// `setattrlist(FSOPT_NOFOLLOW)` for `S_ISLNK`, and only then gives up.
+/// `rsync.c:658-668` calls `do_chmod_at()` for every file type with no
+/// `S_ISLNK` gate (the comment at `rsync.c:667`, "ret == 1 if symlink could
+/// not be set", shows a failed symlink chmod is a soft outcome). All the
+/// portability lives in `syscall.c:761 do_chmod()`, which tries `lchmod()`,
+/// falls through to `setattrlist(FSOPT_NOFOLLOW)` for `S_ISLNK`, and only then
+/// gives up.
 pub fn apply_symlink_metadata_with_options(
     destination: &Path,
     metadata: &fs::Metadata,
     options: &MetadataOptions,
 ) -> Result<(), MetadataError> {
     ownership::set_owner_like(metadata, destination, false, options, None)?;
+    permissions::apply_symlink_permissions_like(destination, metadata, options)?;
     if options.times() {
         timestamps::set_timestamp_like(metadata, destination, false, None, Some(options))?;
     }
@@ -453,8 +456,8 @@ pub fn apply_symlink_metadata_with_options(
 ///
 /// Mirrors [`apply_metadata_from_file_entry`] but uses `lstat` for the cached
 /// stat and `lutimes` / `utimensat(AT_SYMLINK_NOFOLLOW)` for timestamps so the
-/// link's own mtime is updated instead of the target's. Permissions are
-/// skipped because oc does not currently set a symlink's own mode; ownership
+/// link's own mtime is updated instead of the target's. The link's own mode is
+/// set only where [`crate::CAN_CHMOD_SYMLINK`] holds (macOS/BSD); ownership
 /// (when applicable) is applied with `AT_SYMLINK_NOFOLLOW`.
 ///
 /// This is the receiver-side counterpart to [`apply_symlink_metadata`] that
@@ -465,9 +468,9 @@ pub fn apply_symlink_metadata_with_options(
 /// # Upstream Reference
 ///
 /// - `rsync.c:658-668` - upstream chmods every file type with no `S_ISLNK`
-///   gate; skipping the mode here is an oc limitation, not upstream's rule.
-///   Symlink portability lives in `syscall.c:761 do_chmod()` (`lchmod()`, then
-///   `setattrlist(FSOPT_NOFOLLOW)`).
+///   gate; oc mirrors this on platforms where [`crate::CAN_CHMOD_SYMLINK`]
+///   holds. Symlink portability lives in `syscall.c:761 do_chmod()`
+///   (`lchmod()`, then `setattrlist(FSOPT_NOFOLLOW)`).
 /// - `rsync.c:set_times()` - uses `lutimes` when the target is a symlink
 /// - `generator.c:1604` - `set_file_attrs(fname, file, NULL, NULL, 0)` runs
 ///   after `atomic_create` -> `do_symlink` so the new symlink's mtime matches
@@ -492,6 +495,13 @@ pub fn apply_symlink_metadata_from_entry(
         let _ = options;
         let _ = cached_meta.as_ref();
     }
+
+    permissions::apply_symlink_permissions_from_entry(
+        destination,
+        entry,
+        options,
+        cached_meta.as_ref(),
+    )?;
 
     if options.times() {
         timestamps::apply_symlink_timestamps_from_entry(
