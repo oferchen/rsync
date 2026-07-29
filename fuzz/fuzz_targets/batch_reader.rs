@@ -13,19 +13,47 @@
 //! Upstream reference: `batch.c` - batch file body is a raw protocol-stream
 //! tee, framed by a small custom header.
 //!
+//! # Oracle
+//!
+//! Beyond panic-freedom this target round-trips the batch header. The header
+//! encoding is canonical for a fixed protocol version, so re-encoding a
+//! parsed [`BatchHeader`] and decoding it again must reproduce an equal
+//! header (an encode/decode fixpoint). A decode failure on the reader's own
+//! output is itself a finding, not a silent return - it would mean the
+//! writer emits bytes the reader cannot accept.
+//!
 //! # Running
 //!
 //! ```bash
 //! cargo +nightly fuzz run batch_reader
 //! ```
 
-use std::io::Write;
+use std::io::{Cursor, Write};
 
 use libfuzzer_sys::fuzz_target;
 
-use batch::{BatchConfig, BatchMode, BatchReader};
+use batch::{BatchConfig, BatchHeader, BatchMode, BatchReader};
 
 fuzz_target!(|data: &[u8]| {
+    // Header round-trip: parse a header off the raw bytes, then assert the
+    // writer/reader pair is a fixpoint on it. `BatchHeader::read_from`
+    // adopts the protocol version from the wire, so this exercises both the
+    // pre-30 (no compat-flags varint) and post-30 header shapes.
+    let mut header_cursor = Cursor::new(data);
+    if let Ok(header) = BatchHeader::read_from(&mut header_cursor) {
+        let mut reencoded = Vec::new();
+        header
+            .write_to(&mut reencoded)
+            .expect("writing a parsed header into a Vec cannot fail");
+        let mut verify_cursor = Cursor::new(reencoded.as_slice());
+        let reparsed = BatchHeader::read_from(&mut verify_cursor)
+            .expect("re-decoding a self-encoded batch header must succeed");
+        assert_eq!(
+            header, reparsed,
+            "batch header did not round-trip: {header:?}",
+        );
+    }
+
     // BatchReader::new opens the path on disk, so we materialise the fuzzer
     // input as a temporary file and feed its path through the public API.
     let Ok(dir) = tempfile::tempdir() else {
