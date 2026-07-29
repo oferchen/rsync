@@ -215,14 +215,41 @@ impl GeneratorContext {
         // --write-batch, writes the same five values straight to batch_fd
         // (main.c:374-383). Both land BEFORE read_final_goodbye tees the goodbye
         // NDX_DONE, which is the order --read-batch parses them back in.
+        //
+        // upstream: main.c:979 io_flush(FULL_FLUSH) then main.c:330-331
+        // handle_stats() caches stats.total_read/total_written (the raw descriptor
+        // counters, io.c:820/859) BEFORE the stats trailer and read_final_goodbye.
+        // Flush buffered transfer output to the transport counter, then snapshot
+        // both raw wire totals here so the trailing stats + goodbye bytes stay
+        // excluded, exactly as upstream's cache-then-write ordering does. Absent
+        // counters (unit tests) fall back to the logical token/byte tallies.
+        writer.flush()?;
+        let total_written = self
+            .wire_write_counter
+            .as_ref()
+            .map_or(transfer_result.bytes_sent, |c| {
+                c.load(std::sync::atomic::Ordering::Relaxed)
+            });
+        let total_read = self
+            .wire_read_counter
+            .as_ref()
+            .map_or(self.timing.total_bytes_read, |c| {
+                c.load(std::sync::atomic::Ordering::Relaxed)
+            });
         let flist_buildtime =
             calculate_duration_ms(self.timing.flist_build_start, self.timing.flist_build_end);
         let flist_xfertime =
             calculate_duration_ms(self.timing.flist_xfer_start, self.timing.flist_xfer_end);
         if !self.config.connection.client_mode {
-            self.send_stats(writer, &transfer_result, flist_buildtime, flist_xfertime)?;
+            self.send_stats(
+                writer,
+                total_read,
+                total_written,
+                flist_buildtime,
+                flist_xfertime,
+            )?;
         } else {
-            self.record_batch_stats(&transfer_result, flist_buildtime, flist_xfertime)?;
+            self.record_batch_stats(total_read, total_written, flist_buildtime, flist_xfertime)?;
         }
 
         let mut ndx_read_codec = transfer_result.ndx_read_codec;
@@ -430,8 +457,12 @@ impl GeneratorContext {
             num_specials: flist_send_stats.num_specials,
             files_transferred: transfer_result.files_transferred,
             transferred_file_size: transfer_result.transferred_file_size,
-            bytes_sent: transfer_result.bytes_sent,
-            bytes_read: self.timing.total_bytes_read,
+            // upstream: main.c:330-331,454-457 - a client sender reports its own
+            // cached raw descriptor counters as "Total bytes sent/received". Use
+            // the raw wire totals snapshotted at the handle_stats point above, not
+            // the logical delta/token tallies.
+            bytes_sent: total_written,
+            bytes_read: total_read,
             matched_data: transfer_result.matched_data,
             literal_data: transfer_result.literal_data,
             total_size: flist_send_stats.total_size,
