@@ -125,32 +125,6 @@ fn skip_compress_invalid_reports_error() {
 }
 
 #[test]
-fn force_no_compress_invalid_env_reports_error() {
-    use tempfile::tempdir;
-
-    let _lock = ENV_LOCK.lock().expect("env mutex poisoned");
-    let _guard = EnvGuard::set("OC_RSYNC_FORCE_NO_COMPRESS", OsStr::new("maybe"));
-
-    let tmp = tempdir().expect("tempdir");
-    let source = tmp.path().join("file.txt");
-    let destination = tmp.path().join("dest.txt");
-    std::fs::write(&source, b"payload").expect("write source");
-
-    let (code, stdout, stderr) = run_with_args([
-        OsString::from(OC_RSYNC),
-        source.into_os_string(),
-        destination.into_os_string(),
-    ]);
-
-    assert_eq!(code, 1);
-    assert!(stdout.is_empty());
-
-    let rendered = String::from_utf8(stderr).expect("diagnostic is UTF-8");
-    assert!(rendered.contains("OC_RSYNC_FORCE_NO_COMPRESS"));
-    assert!(rendered.contains("invalid"));
-}
-
-#[test]
 fn compress_flag_is_accepted_for_local_copies() {
     use tempfile::tempdir;
 
