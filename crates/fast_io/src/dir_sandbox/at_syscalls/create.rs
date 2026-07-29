@@ -254,9 +254,9 @@ pub fn symlinkat_via_sandbox_or_fallback(
 ///   limits this cutover to single-component leaves under
 ///   `dest_dir`.
 /// - In every other case the helper falls back to
-///   [`fast_io::hard_link`](crate::hard_link) which preserves the
-///   existing io_uring `LINKAT` fast path plus
-///   [`std::fs::hard_link`] error semantics (`EXDEV`, `EPERM`, ...).
+///   [`fast_io::hard_link`](crate::hard_link), a direct `linkat(2)`
+///   syscall that preserves [`std::fs::hard_link`] error semantics
+///   (`EXDEV`, `EPERM`, ...).
 ///
 /// # Errors
 ///

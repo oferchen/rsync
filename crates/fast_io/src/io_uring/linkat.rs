@@ -97,6 +97,15 @@ pub fn linkat_supported() -> bool {
     }
 }
 
+/// Test-only: whether the process-wide LINKAT support probe has run.
+///
+/// Lets tests assert that the direct-syscall `crate::hard_link` path never
+/// consults the io_uring LINKAT machinery.
+#[cfg(test)]
+pub(crate) fn linkat_probe_initialized() -> bool {
+    LINKAT_SUPPORTED.get().is_some()
+}
+
 /// Probes the live kernel for `IORING_OP_LINKAT` support.
 ///
 /// Mirrors the convention used by `shared_ring::probe_poll_add`: short-
