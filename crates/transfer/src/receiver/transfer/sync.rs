@@ -630,6 +630,8 @@ impl ReceiverContext {
             bytes_received,
             bytes_sent: 0,
             total_source_bytes,
+            // upstream: flist.c:2789 - accumulated across recv_file_list spans.
+            flist_size: self.flist_size,
             metadata_errors,
             io_error: self.flist_reader_cache.as_ref().map_or(0, |r| r.io_error())
                 | self.flist_io_error
