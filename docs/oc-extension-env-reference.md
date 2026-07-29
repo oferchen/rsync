@@ -82,6 +82,24 @@ value (`0`, `false`, `off`, `no` - case-insensitive) pins the
 deterministic static queue depth with no controller, for reproducible
 runs and debugging. Any other value (or unset) keeps adaptation on.
 
+### OC_RSYNC_DISK_COMMIT_CHANNEL_CAP
+
+Capacity, in messages, of the SPSC channel between the receiver's network
+thread and the disk-commit thread. Unsigned integer, clamped to 8..=4096.
+Default: 128 (roughly 4 MiB of buffered chunks at the average chunk
+size). Unset or unparseable values fall back to the default. Read at
+disk-commit config construction. Purely a memory/pipelining trade-off:
+larger values absorb burstier disk latency at the cost of peak RSS.
+
+### OC_RSYNC_PIPELINE_WINDOW
+
+Number of concurrent file requests the pipelined receiver keeps in
+flight. Unsigned integer, clamped to 1..=256 (`1` is synchronous
+operation). Default: 64. Unset or unparseable values fall back to the
+default. Read at pipeline config construction. Larger windows hide more
+per-file round-trip latency on high-latency links; each pending request
+costs roughly 500 bytes.
+
 ### OC_RSYNC_REORDER_RING_CAP
 
 Pins the per-file reorder-ring capacity used by the parallel delta

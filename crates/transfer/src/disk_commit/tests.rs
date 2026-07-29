@@ -12,6 +12,8 @@ use super::thread::spawn_disk_thread;
 
 #[test]
 fn default_config() {
+    let _lock = channel_cap_env::ENV_LOCK.lock().unwrap();
+    let _guard = platform::env::EnvGuard::remove(super::config::ENV_CHANNEL_CAPACITY);
     let config = DiskCommitConfig::default();
     assert!(!config.do_fsync);
     assert!(!config.delay_updates);
@@ -20,6 +22,71 @@ fn default_config() {
         super::config::DEFAULT_CHANNEL_CAPACITY
     );
     assert_eq!(config.io_uring_policy, fast_io::IoUringPolicy::Auto);
+}
+
+mod channel_cap_env {
+    use std::ffi::OsStr;
+    use std::sync::Mutex;
+
+    use platform::env::EnvGuard;
+
+    use crate::disk_commit::config::{
+        DEFAULT_CHANNEL_CAPACITY, DiskCommitConfig, ENV_CHANNEL_CAPACITY,
+    };
+
+    /// Serializes env mutation across this module's tests so concurrent
+    /// test threads do not race on shared process state.
+    pub(super) static ENV_LOCK: Mutex<()> = Mutex::new(());
+
+    #[test]
+    fn unset_uses_default() {
+        let _lock = ENV_LOCK.lock().unwrap();
+        let _guard = EnvGuard::remove(ENV_CHANNEL_CAPACITY);
+        let config = DiskCommitConfig::default();
+        assert_eq!(config.channel_capacity, DEFAULT_CHANNEL_CAPACITY);
+        assert_eq!(config.effective_channel_capacity(), 128);
+    }
+
+    #[test]
+    fn valid_value_applied() {
+        let _lock = ENV_LOCK.lock().unwrap();
+        let _guard = EnvGuard::set(ENV_CHANNEL_CAPACITY, OsStr::new("256"));
+        let config = DiskCommitConfig::default();
+        assert_eq!(config.channel_capacity, 256);
+        assert_eq!(config.effective_channel_capacity(), 256);
+    }
+
+    #[test]
+    fn below_min_clamped() {
+        let _lock = ENV_LOCK.lock().unwrap();
+        let _guard = EnvGuard::set(ENV_CHANNEL_CAPACITY, OsStr::new("1"));
+        let config = DiskCommitConfig::default();
+        assert_eq!(config.channel_capacity, 8);
+    }
+
+    #[test]
+    fn above_max_clamped() {
+        let _lock = ENV_LOCK.lock().unwrap();
+        let _guard = EnvGuard::set(ENV_CHANNEL_CAPACITY, OsStr::new("100000"));
+        let config = DiskCommitConfig::default();
+        assert_eq!(config.channel_capacity, 4096);
+    }
+
+    #[test]
+    fn garbage_falls_back_to_default() {
+        let _lock = ENV_LOCK.lock().unwrap();
+        let _guard = EnvGuard::set(ENV_CHANNEL_CAPACITY, OsStr::new("not_a_number"));
+        let config = DiskCommitConfig::default();
+        assert_eq!(config.channel_capacity, DEFAULT_CHANNEL_CAPACITY);
+    }
+
+    #[test]
+    fn negative_falls_back_to_default() {
+        let _lock = ENV_LOCK.lock().unwrap();
+        let _guard = EnvGuard::set(ENV_CHANNEL_CAPACITY, OsStr::new("-8"));
+        let config = DiskCommitConfig::default();
+        assert_eq!(config.channel_capacity, DEFAULT_CHANNEL_CAPACITY);
+    }
 }
 
 #[test]
