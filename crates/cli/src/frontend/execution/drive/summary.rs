@@ -10,8 +10,8 @@ use core::{
     },
     message::Message,
 };
-use logging::{InfoFlag, info_gte};
-use logging_sink::MessageSink;
+use logging::{InfoFlag, LogCode, info_gte};
+use logging_sink::{MessageSink, logfile::LogFileWriter};
 
 use crate::frontend::{
     out_format::{OutFormat, OutFormatContext},
@@ -25,8 +25,12 @@ use super::messages::emit_message_with_fallback;
 use super::with_output_writer;
 
 /// Configuration for writing transfer output to a log file.
+///
+/// The handle is wrapped in a [`LogFileWriter`] so every line the renderers
+/// produce is stamped with upstream's `"%Y/%m/%d %H:%M:%S [pid] "` prefix
+/// (upstream: log.c:122-132 `logit()`).
 pub(crate) struct LogFileConfig {
-    pub(crate) file: File,
+    pub(crate) file: LogFileWriter<File>,
     pub(crate) format: OutFormat,
 }
 
@@ -233,6 +237,7 @@ where
                 && let Err(error) = emit_log_output(EmitLogOutputParams {
                     summary: &summary,
                     log: &mut log,
+                    flog_events: logging::drain_events_coded(LogCode::Log),
                     verbosity,
                     stats_level,
                     list_only,
@@ -287,6 +292,10 @@ where
 struct EmitLogOutputParams<'a> {
     summary: &'a ClientSummary,
     log: &'a mut LogFileConfig,
+    /// FLOG-classified diagnostic events consumed from the thread-local queue
+    /// (e.g. `building file list`, flist.c:2248). These lines belong to the
+    /// log file only (upstream: log.c:304-305).
+    flog_events: Vec<logging::DiagnosticEvent>,
     verbosity: u8,
     stats_level: u8,
     list_only: bool,
@@ -326,6 +335,7 @@ fn emit_log_output(params: EmitLogOutputParams<'_>) -> io::Result<()> {
     let EmitLogOutputParams {
         summary,
         log,
+        flog_events,
         verbosity,
         stats_level,
         list_only,
@@ -357,9 +367,18 @@ fn emit_log_output(params: EmitLogOutputParams<'_>) -> io::Result<()> {
         .with_eight_bit_output(eight_bit_output)
         .with_preserve_links(preserve_links)
         .with_full_checksum(full_checksum_algorithm, always_checksum);
+    // upstream: log.c:290-305 - FLOG messages are written to the log file
+    // before any client-stream output and never reach stdout. The queue holds
+    // them in emission order, so "building file list" (flist.c:2248) or
+    // "receiving file list" (flist.c:2608) precedes the per-file lines.
+    for event in &flog_events {
+        let (logging::DiagnosticEvent::Info { message, .. }
+        | logging::DiagnosticEvent::Debug { message, .. }) = event;
+        writeln!(log.file, "{message}")?;
+    }
     // The FCLIENT "sending incremental file list" banner is stdout only;
     // upstream's parallel "building file list" line (flist.c:2248) is an FLOG
-    // log-file message that a plain client without --log-file discards.
+    // log-file message consumed from the FLOG event queue above.
     emit_transfer_summary(
         summary,
         verbosity,
@@ -384,5 +403,21 @@ fn emit_log_output(params: EmitLogOutputParams<'_>) -> io::Result<()> {
         eight_bit_output,
         &mut log.file,
     )?;
+    // upstream: cleanup.c:222-226 gates log_exit() on
+    // `logfile_name && (am_server || !INFO_GTE(STATS, 1))`, and log_exit()
+    // writes the FLOG-only totals trailer
+    // `sent %s bytes  received %s bytes  total size %s` via `big_num()`
+    // (plain digits, inums.h:19-23) at log.c:894-899. A `-v`/`--stats` run
+    // raises STATS >= 1 and mirrors the FINFO trailer into the log instead
+    // (rendered by emit_transfer_summary above).
+    if verbosity == 0 && stats_level == 0 {
+        writeln!(
+            log.file,
+            "sent {} bytes  received {} bytes  total size {}",
+            summary.bytes_sent(),
+            summary.bytes_received(),
+            summary.total_source_bytes(),
+        )?;
+    }
     log.file.flush()
 }

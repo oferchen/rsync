@@ -144,7 +144,10 @@ mod hardening_tests {
     fn capturing_sink() -> (SharedLogSink, std::fs::File) {
         let file = tempfile::tempfile().expect("create capturing tempfile");
         let reader = file.try_clone().expect("clone capturing tempfile");
-        let sink = Arc::new(Mutex::new(MessageSink::with_brand(file, Brand::Oc)));
+        let sink = Arc::new(Mutex::new(MessageSink::with_brand(
+            logging_sink::logfile::LogFileWriter::new(file),
+            Brand::Oc,
+        )));
         (sink, reader)
     }
 

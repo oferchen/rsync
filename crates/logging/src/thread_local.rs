@@ -159,6 +159,29 @@ pub fn drain_events() -> Vec<DiagnosticEvent> {
     EVENTS.with(|e| e.borrow_mut().drain(..).collect())
 }
 
+/// Drain only the events carrying `code`, leaving all other events queued.
+///
+/// This is how a log-file sink consumes `FLOG`-classified events without
+/// disturbing the client-stream events that a later [`drain_events`] renders:
+/// upstream's `rwrite()` writes an FLOG message to the log file and returns
+/// before the client-stream dispatch (upstream: log.c:290-307), so the two
+/// destinations drain independently. Returns matches in emission order.
+pub fn drain_events_coded(code: LogCode) -> Vec<DiagnosticEvent> {
+    EVENTS.with(|e| {
+        let mut events = e.borrow_mut();
+        let mut matched = Vec::new();
+        events.retain(|event| {
+            if event.code() == code {
+                matched.push(event.clone());
+                false
+            } else {
+                true
+            }
+        });
+        matched
+    })
+}
+
 /// Apply an info flag token to the current thread's configuration.
 ///
 /// Parses tokens like `"copy2"` or `"del"` and updates the corresponding
