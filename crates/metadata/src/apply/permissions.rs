@@ -302,7 +302,9 @@ pub(super) fn set_permissions_like(
 
     #[cfg(not(unix))]
     {
-        let _ = options;
+        // Only the read-only bit survives on Windows; warn once when the user
+        // requested full POSIX modes, --chmod, or -E.
+        super::platform_warn::warn_permissions_unsupported(options);
         let readonly = metadata.permissions().readonly();
         let mut destination_permissions = fs::metadata(destination)
             .map_err(|error| {
@@ -1201,6 +1203,9 @@ pub(super) fn apply_permissions_from_entry(
     #[cfg(not(unix))]
     {
         let _ = pre_transfer_meta;
+        // Only the read-only bit survives on Windows; warn once when the user
+        // requested full POSIX modes, --chmod, or -E.
+        super::platform_warn::warn_permissions_unsupported(options);
         if options.permissions() {
             let readonly = entry.permissions() & 0o200 == 0;
             let dest_perms_meta = if let Some(meta) = cached_meta {
