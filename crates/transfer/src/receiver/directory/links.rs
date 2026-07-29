@@ -849,9 +849,9 @@ impl ReceiverContext {
                 // 0)` so a mid-syscall symlink swap on the follower's
                 // parent cannot redirect the create to an
                 // attacker-chosen directory. Falls back to
-                // `fast_io::hard_link` (io_uring LINKAT on Linux 5.15+,
-                // else `std::fs::hard_link`) for the multi-component
-                // and no-sandbox cases, preserving the existing
+                // `fast_io::hard_link` (direct `linkat(2)` syscall) for
+                // the multi-component and no-sandbox cases, preserving
+                // the existing
                 // `EXDEV` / `EPERM` error semantics. Windows stays on
                 // the path-based fallback per the SEC-1.l NTFS-handle
                 // audit.
