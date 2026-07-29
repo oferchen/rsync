@@ -107,6 +107,8 @@ mod chmod;
 /// Privilege switching for `--copy-as=USER[:GROUP]`.
 pub mod copy_as;
 mod error;
+#[cfg(unix)]
+pub mod identity;
 
 /// Signed `--modify-window` tolerance and the `same_time()` mtime comparison.
 pub mod modify_window;
